@@ -10,6 +10,7 @@ import type { FunctionRegistry } from '@vostride/agent-qa-agent'
 import { AuthoringDraftEditOutputSchema } from '@vostride/agent-qa-schema'
 import {
   createFeedbackPortForHost,
+  MarkWriterLeaseBusyError,
   type MarkWriterAuthority,
   type WholeMarkDelegate,
 } from '../gates/feedback-host.js'
@@ -181,7 +182,8 @@ import {
   resolveConfig,
 } from '../config.js'
 import { listTargets, resolveTarget } from '../targets.js'
-import { invokeViaDaemon } from '../daemon/client.js'
+import { DaemonNotRunningError, invokeViaDaemon } from '../daemon/client.js'
+import { classifyDaemonRegistration } from '../daemon/registration.js'
 import { resolveCliAnalysisTokenBudget, resolveCliJobModel } from '../llm-utils.js'
 import { createCliCapabilityCatalogPort } from '../capability-catalog/explain-port.js'
 import { analyticsEvent } from './analytics-host.js'
@@ -2282,34 +2284,63 @@ export function delegateKnowledgeChangeViaDaemon(input: {
 }
 
 /**
+ * 2026-10-02 (261002-mrk follow-up): how long a mark waits for a writer lease held by an agent-qa
+ * process that is not a daemon (a dashboard's post-run curation, another terminal's knowledge
+ * change) before it refuses. Those holds last the length of one curation or one change, a few
+ * seconds on a normal run, so 10 s covers them without making a stuck holder feel like a hang.
+ */
+export const MARK_LEASE_HOLDER_RELEASE_BUDGET_MS = 10_000
+const MARK_LEASE_HOLDER_POLL_MS = 100
+
+/**
  * 2026-10-02 (quick 261002-mrk, 432-13 #1): the CLI's delegate for a whole mark.
  *
- * When the writer lease is fresh, the same `runs.mark` call goes to the daemon over `/invoke` and
- * its answer is returned unchanged. The retry identity is the mark intent in the run's mark ledger,
- * which both processes share. A fresh lease no live daemon answers for refuses with the client's
- * `DaemonNotRunningError`, as a delegated knowledge change does. No fresh lease: `undefined`, and
- * the mark runs locally.
+ * Decided before the mark takes any lock, lease or write, from the writer lease and the daemon
+ * registration:
+ *  - no fresh lease: `undefined`, and the mark runs locally;
+ *  - the holder is a live daemon: the same `runs.mark` call goes over `/invoke` and its answer is
+ *    returned unchanged (the retry identity is the mark intent in the shared run ledger);
+ *  - the lease names a registered daemon nobody answers for: `DaemonNotRunningError`;
+ *  - any other holder is another agent-qa process: waited out for a bounded time, then the mark runs
+ *    locally, or refuses with `MarkWriterLeaseBusyError` if the holder outlasts the budget.
  */
 export function delegateMarkViaDaemon(input: {
   readonly agentQaRoot: string
   readonly resolveKnowledgeRoot: () => string | Promise<string>
+  readonly holderReleaseBudgetMs?: number
+  readonly pollIntervalMs?: number
 }): WholeMarkDelegate {
+  const budgetMs = input.holderReleaseBudgetMs ?? MARK_LEASE_HOLDER_RELEASE_BUDGET_MS
+  const pollMs = input.pollIntervalMs ?? MARK_LEASE_HOLDER_POLL_MS
   return async (mark) => {
     const knowledgeRoot = await input.resolveKnowledgeRoot()
-    const lease = LOCAL_DAEMON_CAPABILITIES.readWriterLease(knowledgeRoot)
-    if (lease.kind !== 'parsed') return undefined
-    const freshness = LOCAL_DAEMON_CAPABILITIES.deriveWriterLeaseFreshness(
-      knowledgeRoot,
-      lease.lease,
-      Date.now(),
-    )
-    if (freshness.kind !== 'fresh') return undefined
-    return RunsMarkOutcomeSchema.parse(await invokeViaDaemon({
-      agentQaRoot: input.agentQaRoot,
-      knowledgeRoot,
-      functionId: RUNS_MARK_FUNCTION_ID,
-      input: mark,
-    }))
+    const startedAt = Date.now()
+    while (true) {
+      const lease = LOCAL_DAEMON_CAPABILITIES.readWriterLease(knowledgeRoot)
+      if (lease.kind !== 'parsed') return undefined
+      const freshness = LOCAL_DAEMON_CAPABILITIES.deriveWriterLeaseFreshness(
+        knowledgeRoot,
+        lease.lease,
+        Date.now(),
+      )
+      if (freshness.kind !== 'fresh') return undefined
+      const daemon = await classifyDaemonRegistration({ agentQaRoot: input.agentQaRoot, knowledgeRoot })
+      if (daemon.kind === 'live-confirmed') {
+        return RunsMarkOutcomeSchema.parse(await invokeViaDaemon({
+          agentQaRoot: input.agentQaRoot,
+          knowledgeRoot,
+          functionId: RUNS_MARK_FUNCTION_ID,
+          input: mark,
+        }))
+      }
+      if ((daemon.kind === 'unreachable-lease-fresh' || daemon.kind === 'unreachable-lease-stale')
+        && daemon.registration.pid === lease.lease.pid) {
+        throw new DaemonNotRunningError(daemon.kind)
+      }
+      const waitedMs = Date.now() - startedAt
+      if (waitedMs >= budgetMs) throw new MarkWriterLeaseBusyError(lease.lease.pid, waitedMs)
+      await new Promise(resolveWait => setTimeout(resolveWait, Math.min(pollMs, budgetMs - waitedMs)))
+    }
   }
 }
 

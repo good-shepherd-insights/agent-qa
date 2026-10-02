@@ -19,6 +19,15 @@
 // OBSERVED RED against agent-qa 527739eb4 (before the delegation), 2026-10-02:
 //
 //   Error: Mark evidence writer lease held; gold landed, no mark receipt appended
+//
+// Follow-up (2026-10-02): a holder that is not a daemon is waited out, bounded, before any refusal.
+// OBSERVED RED against agent-qa 749bd9c7a, before the wait:
+//
+//   C-MRK-HOLDER-RELEASES  DaemonNotRunningError: agent-qa daemon is not running (absent).
+//   C-MRK-HOLDER-KEEPS     expected DaemonNotRunningError … to match object { name: 'MarkWriterLeaseBusyError', … }
+//
+// C-MRK-DELEGATED-ONCE and C-MRK-DAEMON-UNREACHABLE are the controls: a daemon holder is delegated
+// to, or refused at once, exactly as before.
 
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
@@ -37,7 +46,8 @@ import {
   delegateMarkViaDaemon,
 } from '../composition/local-agent-host.js'
 import { runDaemonHost, type DaemonHostOperations, type DaemonHostTraceStep } from '../daemon/host.js'
-import { readDaemonRegistration } from '../daemon/registration.js'
+import { DAEMON_REGISTRATION_SCHEMA_VERSION, readDaemonRegistration, writeDaemonRegistration } from '../daemon/registration.js'
+import type { WholeMarkDelegate } from '../gates/feedback-host.js'
 import { bundles, canonicalKnowledge, files, markFixture } from '../gates/__tests__/feedback-fixture.js'
 
 type Fixture = ReturnType<typeof markFixture>
@@ -71,8 +81,9 @@ function blockReceipt(runDir: string): () => void {
 }
 
 /** One mark through the CLI's own composition and function door, the host closed after. */
-async function markThroughCli(f: Fixture, input: RunsMarkInput): Promise<RunsMarkOutcome> {
-  const host = composeCliLocalAgent({ configPath: f.configPath, agentQaRoot: f.agentQaRoot })
+async function markThroughCli(f: Fixture, input: RunsMarkInput, wholeMarkDelegate?: WholeMarkDelegate): Promise<RunsMarkOutcome> {
+  const host = composeCliLocalAgent({ configPath: f.configPath, agentQaRoot: f.agentQaRoot,
+    ...(wholeMarkDelegate === undefined ? {} : { wholeMarkDelegate }) })
   try {
     return RunsMarkOutcomeSchema.parse(
       await invokeFunction(host.registry, RUNS_MARK_FUNCTION_ID, input, CLI_FUNCTION_CALLER),
@@ -145,6 +156,26 @@ async function startDaemon(f: Fixture): Promise<LiveDaemon> {
       await expect(running).resolves.toBe(0)
     },
   }
+}
+
+/** A writer lease held in this process with no daemon registered: another agent-qa process's hold. */
+function holdLease(f: Fixture) {
+  const held = LOCAL_CURATION_CAPABILITIES.maintenance.acquireWriterLease(f.knowledgeRoot)
+  if (held.kind !== 'acquired') throw new Error('fixture could not take the lease')
+  let released = false
+  return {
+    leaseId: held.leaseId,
+    release: () => {
+      if (!released) LOCAL_CURATION_CAPABILITIES.maintenance.releaseLease({ knowledgeRoot: f.knowledgeRoot, leaseId: held.leaseId })
+      released = true
+    },
+  }
+}
+
+/** The shipped delegate with a short injected wait budget. */
+function shortBudget(f: Fixture, holderReleaseBudgetMs: number) {
+  return delegateMarkViaDaemon({ agentQaRoot: f.agentQaRoot, resolveKnowledgeRoot: () => f.knowledgeRoot,
+    holderReleaseBudgetMs, pollIntervalMs: 20 } as Parameters<typeof delegateMarkViaDaemon>[0])
 }
 
 function daemonLease(f: Fixture) {
@@ -249,30 +280,73 @@ describe('a mark under a lease-holding daemon is delegated whole (432-13 #1)', (
     expect(receiptLines(f)).toBe(1)
   }, 60_000)
 
-  it('C-MRK-UNREACHABLE-HOLDER: a live holder no daemon answers for refuses by name, writes nothing, and a retry resumes', async () => {
+  // 2026-10-02 (261002-mrk follow-up): a lease held by another agent-qa process that is NOT a
+  // daemon (a dashboard's post-run curation, another terminal's change) is waited out for a bounded
+  // time, and only a holder that outlasts the budget refuses, by name. Short injected budgets here.
+  it('C-MRK-HOLDER-RELEASES: a non-daemon holder that releases within the budget lets the mark land locally, once', async () => {
     const f = fixture()
-    const held = LOCAL_CURATION_CAPABILITIES.maintenance.acquireWriterLease(f.knowledgeRoot)
-    if (held.kind !== 'acquired') throw new Error('fixture could not take the lease')
-    let released = false
-    const release = () => {
-      if (!released) LOCAL_CURATION_CAPABILITIES.maintenance.releaseLease({ knowledgeRoot: f.knowledgeRoot, leaseId: held.leaseId })
-      released = true
+    const holder = holdLease(f)
+    const timer = setTimeout(holder.release, 150)
+    try {
+      const result = await markThroughCli(f, { runId: f.handoff.runId, kind: 'false-fail' }, shortBudget(f, 5_000))
+      expect(result).toMatchObject({ kind: 'marked', receipt: { ordinal: 1, evidence: { confirmed: 1 },
+        disposition: { kind: 'applied', fix: 'fact' } } })
+      if (result.kind !== 'marked') throw new Error('expected a mark')
+      expect(evidenceFor(f, result.receipt.markId), 'evidence once').toHaveLength(1)
+      expect(receiptLines(f)).toBe(1)
+      expect(readDaemonRegistration(f.agentQaRoot).kind, 'no daemon was involved').toBe('absent')
+    } finally {
+      clearTimeout(timer)
+      holder.release()
     }
+  }, 60_000)
+
+  it('C-MRK-HOLDER-KEEPS: a non-daemon holder that outlasts the budget refuses by name, writes nothing, and a retry resumes', async () => {
+    const f = fixture()
+    const holder = holdLease(f)
     try {
       const before = hashes(f.root)
-      await expect(markThroughCli(f, { runId: f.handoff.runId, kind: 'false-fail' }))
-        .rejects.toMatchObject({ name: 'DaemonNotRunningError' })
+      const refusal = await markThroughCli(f, { runId: f.handoff.runId, kind: 'false-fail' }, shortBudget(f, 200))
+        .then(() => undefined, (error: unknown) => error as Error & { holderPid?: number })
+      expect(refusal).toMatchObject({ name: 'MarkWriterLeaseBusyError', holderPid: process.pid })
+      expect(refusal?.message).toContain(`Another agent-qa process (pid ${process.pid})`)
+      expect(refusal?.message).toContain('Retry the mark when it finishes')
       expect(hashes(f.root), 'nothing was written: no gold, no intent, no evidence').toEqual(before)
       const lease = readWriterLease(f.knowledgeRoot)
-      expect(lease.kind === 'parsed' && lease.lease.leaseId, 'the holder keeps its lease').toBe(held.leaseId)
-      release()
+      expect(lease.kind === 'parsed' && lease.lease.leaseId, 'the holder keeps its lease').toBe(holder.leaseId)
+      holder.release()
 
-      const retried = await markThroughCli(f, { runId: f.handoff.runId, kind: 'false-fail' })
+      const retried = await markThroughCli(f, { runId: f.handoff.runId, kind: 'false-fail' }, shortBudget(f, 200))
       expect(retried).toMatchObject({ kind: 'marked', receipt: { ordinal: 1, evidence: { confirmed: 1 },
         disposition: { kind: 'applied', fix: 'fact' } } })
       expect(receiptLines(f)).toBe(1)
     } finally {
-      release()
+      holder.release()
+    }
+  }, 60_000)
+
+  it('C-MRK-DAEMON-UNREACHABLE: a lease that names a registered daemon nobody answers for refuses with DaemonNotRunningError at once', async () => {
+    const f = fixture()
+    const holder = holdLease(f)
+    const socketRoot = mkdtempSync('/tmp/aq-mrk-')
+    roots.push(socketRoot)
+    writeDaemonRegistration(f.agentQaRoot, {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: '55555555-5555-4555-8555-555555555555',
+      pid: process.pid,
+      socketPath: join(socketRoot, 'gone.sock'),
+      startedAtMs: Date.now(),
+    })
+    try {
+      const before = hashes(f.knowledgeRoot)
+      const started = Date.now()
+      await expect(markThroughCli(f, { runId: f.handoff.runId, kind: 'false-fail' }, shortBudget(f, 30_000)))
+        .rejects.toMatchObject({ name: 'DaemonNotRunningError' })
+      expect(Date.now() - started, 'a daemon holder is not waited out').toBeLessThan(15_000)
+      expect(hashes(f.knowledgeRoot)).toEqual(before)
+      expect(existsSync(join(f.runDir, 'mark-intent.json'))).toBe(false)
+    } finally {
+      holder.release()
     }
   }, 60_000)
 })

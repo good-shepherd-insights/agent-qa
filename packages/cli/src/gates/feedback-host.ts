@@ -51,6 +51,18 @@ export interface MarkWriterAuthority {
   readonly authority: () => { readonly leaseId: string; readonly epoch: number }
 }
 
+/**
+ * 2026-10-02 (261002-mrk follow-up): another agent-qa process that is not a daemon held the knowledge
+ * writer lease for the whole wait budget, so the mark was not started and nothing was written.
+ */
+export class MarkWriterLeaseBusyError extends Error {
+  constructor(readonly holderPid: number, readonly waitedMs: number) {
+    super(`Another agent-qa process (pid ${holderPid}) is writing to this knowledge store; waited ${waitedMs}ms `
+      + 'and nothing was marked. Retry the mark when it finishes.')
+    this.name = 'MarkWriterLeaseBusyError'
+  }
+}
+
 /** The fix's target left the store between planning and publication; gold and evidence stand, no receipt. */
 export class MarkFixNotAppliedError extends Error {
   constructor(readonly reason: string) {
