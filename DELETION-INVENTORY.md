@@ -1172,7 +1172,7 @@ census's exception list honest rather than to freeze these names.
 | Session JSONL, `.agent-qa/sessions/chat-*.jsonl`, including files whose header carries `surface: 'dashboard'` | **Left alone (D-08):** no migration, no deletion and no listing filter; the files are the user's. CLI chat lists and reopens them, reading headers only and never branching on `surface`. The header's optional `surface` field and the reader's guard stay; the only writer of `'dashboard'` (the door's `sessionSurface`) is gone, so no new file carries it. **Named, not fixed (D-09): `user_message.text` and `clause_receipt.clause` may hold typed credentials in cleartext. CLI chat keeps writing such files after this phase. Pre-430 dashboard sessions are part of that population.** The repair needs a chat-session-scoped masking context that does not exist yet; it is owned by `.planning/todos/pending/399.1-transcript-cleartext-masking.md` (v2.1 FIX-S2), which stays pending. Nothing in this phase masks, rewrites or scrubs these files. | `DASHBOARD-ERA-SESSION-LISTED`, `DASHBOARD-ERA-SESSION-REOPENS`; `C430-NO-SESSION-SURFACE-OPTION`; leg `R21` (the census) and `R22` |
 | Routes | **Deleted:** `POST /api/chat/turn`, `POST /api/chat/confirm`, `GET /api/chat/capabilities`, `GET /api/chat/catalog`, `GET /api/chat/sessions/:id/events` (each now the router's generic 404 with the shared wildcard grant), and the `/chat` UI route (falls through to `/runs`). **Retained, owned by Phase 432:** `POST /api/run-confirm/answer` and `GET /api/run-confirm/channel`, in `chat-routes.ts`, dispatched ahead of `cors()`. | `C430-DELETED-CHAT-ROUTES-SHARED-404`, `NO-CHAT-ROUTE`, `NO-CHAT-IN-SHIPPED-BUNDLE`, process survival s5; `C430-RUN-CONFIRM-PREFIX-STILL-ROUTED`, `C430-CHAT-ROUTE-TABLE-EXACT`; legs `R01`, `R06`, `R07`, `R19`, `R20` |
 | Config keys | **None retired.** No config key ever belonged to Chat. `services.dashboard.baseUrl` and `services.dashboard.workspace` (`core/src/schema/services-schema.ts:61`, `:65`) stay: they are 400 D-16's knob for CLI and MCP hosts' card urls, read by `mcp/src/live-link.ts` and the card producer (`agent/src/functions/entity-cards/card-context.ts:28-29`). Only the door's own self-overlay use left with the door; the overlay function itself stays for co-hosted MCP (RETAINED above). | `dashboard-door-host.test.ts` card-url cells |
-| Persisted `'dashboard'` surface values | **Still readable and valid:** the session-header `surface`; proposal `origin.surface: 'dashboard'`; past `approval_decision` events. **Correction to D-08 (RESEARCH P19):** the persisted `origin.surface: 'dashboard'` values were minted only by dashboard-chat config proposals through `mintingSurface`, never by marks (mark-drafted proposals carry no surface). After 430 no writer produces new ones. | `proposal-author-attribution.test.ts` cell (1) (a persisted record with `origin.surface: 'dashboard'`, accepted from the CLI, is still authored as the dashboard), the dashboard-era session cells |
+| Persisted `'dashboard'` surface values | **Still readable and valid:** the session-header `surface`; proposal `origin.surface: 'dashboard'`; past `approval_decision` events. **Correction to D-08 (RESEARCH P19):** the persisted `origin.surface: 'dashboard'` values were minted only by dashboard-chat config proposals through `mintingSurface`, never by marks (mark-drafted proposals carry no surface). After 430 no writer produces new ones. *Corrected 2026-10-02 by Phase 432 (430-REVIEW WR-01; the 2026-10-02 section below, "Correction to the 2026-09-28 attribution row"): config proposals minted over the dashboard's co-hosted MCP endpoint carried `'dashboard'` too before 430, and none after it. The sentence above is kept as written.* | `proposal-author-attribution.test.ts` cell (1) (a persisted record with `origin.surface: 'dashboard'`, accepted from the CLI, is still authored as the dashboard), the dashboard-era session cells |
 
 ### The instruments that notice a return
 
@@ -1255,3 +1255,351 @@ at `7b19e5102`), `validate:428-live-contract-mutation` and `validate:429-config-
 `denial-block.test.tsx`) and 430-13's two scripts and their `package.json` entries.
 
 **Toolchain:** node 24.15.0 · pnpm 10.6.1 · vitest 4.1.5 · turbo 2.9.7.
+
+## 2026-10-02 — Phase 432: Approval and permission removal (PXH-SAFE-01..05)
+
+This section appends to the register. It rewrites no earlier section; the one change above it is a
+dated pointer added to the 2026-09-28 persisted-values row (430-REVIEW WR-01, below). Phase 432
+deleted every approval prompt and every permission. Runs, marks and generated changes now apply in
+the one call a person or agent makes, on every door. What it kept: production as a config
+declaration, the local network boundary, masking and egress, and the readers of persisted history.
+The section follows the 2026-09-28 shape and adds two things that shape does not carry: the legacy
+state left on disk and never read, and the one historical reader kept with no writer.
+
+### The ruling
+
+> Think of it like this as a agent clicking y / n is tricky we shouldn't have those, and the same
+> applies for the UI for humans too. So pls remove all such complexities and keep things simple
+
+> drop as much as you can, keep things simple
+
+> for the MCP and all having permissions read write etc is not worth at all. Since we are early
+> having such knobs causes friction. And we should not have those at all. All intereactions should
+> have all the capabilities
+
+> let's keep it simple no token pls drop it. It makes things complicated. Also drop the scope too.
+> Drop entire mcp.tokens
+
+> out of 100 knowledge gathered there's I think < 1% chance of undo, so for that 1% change I think
+> having all such guardrails is not worth it, is someone wants to undo something why can't a new
+> knowledge override it?
+
+The owner, verbatim, in the 2026-09-29 Phase 432 discussion (D-01 in
+`.planning/phases/432-approval-gate-removal-provenance-and-undo/432-CONTEXT.md`, REQUIREMENTS
+note 105). Where a choice was open, the version with fewer moving parts won and deleting won over
+keeping. It extends the 2026-09-25 decision (REQUIREMENTS note 56) and supersedes it where they
+differ: Undo, provenance labels, the hard destructive block and the tokens were all dropped.
+
+### How this inventory is measured
+
+| Instrument | What it claims | Where |
+|---|---|---|
+| the census | One named cell per removed member, `C432-RETURN-A01`..`A78`, each scanning its member's own region through a lexer that blanks comments and keeps string, template and regex literals, so dated history notes stay and a returning declaration, route, op id, tool name or prompt literal reds by name. A59/A61/A63/A65 also parse a config through the rebuilt public `AgentQaConfigSchema` (`packages/core/dist/index.js`) in an isolated Node process: the control parses, and the removed key is refused as unrecognized and not kept. A64 asks the rebuilt `dist/cli.js run --help`. Beside them: `C432-DELETED-SYMBOLS` (30 deleted module paths absent, 43 deleted export names absent from 11 barrels and from every production declaration), `C432-LEFTOVERS-UNREAD` (no production code spells a legacy grant, proposal or execution-audit path; the historical `approval_decision` reader stays with no writer) and two `C432-MUTATION-ALL-MEMBERS` cells. 100 cells, in `validate:arch`. | `packages/arch/src/__tests__/432-approval-permission-deleted.test.ts` (432-42 `c916d4c2e`, 432-43 `bc3260240`) |
+| the prompt census | 21 decision-prompt and approval-surface needles over 1,437 shipped source files (raw, comments included), every built bundle and the skills, packaged skills and catalogue; readline questions only at the two named value-input sites; no browser `confirm(`; the built `cache purge`, `knowledge purge`, `knowledge rollback`, `run` and `mcp` help declare no `--force`, `--yes`, `--confirm`, trust or token option; a BOM-led CRLF multi-byte file keeps every witness and a census pass writes nothing. 74 cells. | `packages/cli/src/__tests__/432-prompt-census.test.ts` (`C432-NO-APPROVAL-PROMPTS`) |
+| the door matrix | Nine doors (run, fn, ask, chat, MCP HTTP, MCP stdio, the dashboard Run control, the run service, the daemon) each run a non-production test in one call with stdin replaced by a stream that records and throws; each refuses a declared production test before any effect, naming the target and `allowProduction: true`; each runs it once only when the config opts in. The three knowledge and six config operations apply in one call each. 30 cells. | `packages/cli/src/__tests__/conformance/432-direct-parity.test.ts` (`C432-DOOR-NONPRODUCTION`) |
+| the stdio and no-git cells | A tokenless spawned stdio caller sees exactly twenty tools, changes config and marks in one call each, and the next brief serves the changed record (3 cells). Config change, mark fix and authored test make no git commit in a repository, a dirty tree and no repository; a faulted mark lands its fix once on retry; a fresh project creates no grant ledger, proposal store or execution audit; sealed, malformed legacy files change no answer and stay byte- and mode-identical (6 cells). | `432-mcp-direct-stdio.test.ts` (`C432-TOKENLESS-CATALOG`, `C432-NEXT-RUN-SERVES`), `432-no-git.test.ts` (`C432-NO-GIT-COMMIT`, `C432-LEFTOVERS-UNREAD`) |
+| the runtime key sets | `C432-RUNTIME-SETS`, `C432-NO-GRANT-CONTRACTS`, `C432-NO-ENVELOPE-EXPORTS`, `C432-PLAIN-REFUSAL` and `C432-DECLARATION-KEYS`: runtime sets beside their types (compile-checked exact key sets and `@ts-expect-error` lines), narrowed by each deleting plan in turn (432-09, 18, 19, 22, 39, 42). | `packages/schema/src/__tests__/432-deleted-runtime-sets.test.ts`, `432-direct-contracts.test.ts`; agent `declaration-immutability.test.ts` |
+| the historical reader | `C432-HISTORICAL-READER`: a pre-432 session file carrying `approval_decision` rows still parses; no build writes one. | `packages/schema/src/chat/__tests__/chat-vocabulary.test.ts` |
+| the 432 mutation gate | 94 legs keyed by mutation-map row: 78 put one removed member back where the map puts it (22 of them create a deleted module at its old path) and 16 break one retained behaviour. Each leg requires its own named assertion RED inside its own cell, restores every byte (and deletes every created module), rebuilds and passes a positive control. Ends `APPROVAL_PERMISSION_MUTATION_OK legs=94 named-red=94 byte-identical-restoration=55`. | `scripts/432-approval-permission-mutation.sh` (`pnpm run validate:432-approval-permission-mutation`) |
+| its selftest and map test | The 94 id, target and RED triples spelled independently; every leg neutered (each FATALs `suite stayed green` after a green child); a dirty subject refused and left as found; fatal, SIGINT, SIGTERM and SIGHUP each restoring all 55 paths and rebuilding: 103/103. The node map test spells the map a third time and joins the three by id under five registration orders (EDGE-16): 7/7. | `scripts/432-approval-permission-mutation-selftest.sh`, `scripts/__tests__/432-mutation-map.test.cjs` |
+| the inherited drivers | The nine legacy 394/395/396-06/399 drivers rebuilt on the shared 423 engine, 430 R12-R15 carried to four new cells, the 426/429/430 legs re-aimed: 12 drivers, 177/177 legs named-red, four selftests 160/160 (432-44). The five 396 MCP drivers rebuilt the same way, 397 parity and 398 catalog re-measured, the 423/427 drivers re-anchored: 10 drivers, 94/94 legs named-red (432-45). | `scripts/39{4,5,6,7,8,9}-*`, `scripts/4{23,26,27,29,30}-*`; tables in `432-44-SUMMARY.md` and `432-45-SUMMARY.md` |
+
+**This file names retired tokens literally, as the 2026-09-02 section explains for the whole
+register.** `DELETION-INVENTORY.md` sits outside every census universe; inside them, removed names
+are spelled as two halves (the census's `Halves` tuples), so the census cannot satisfy its own
+inventory.
+
+### What was deleted
+
+**Both ends of the derivation, stated so it can be re-run.** Baseline
+`1158ca14261a91f239036c98366b1170ccd29099`, the parent of Phase 432's first agent-qa commit
+(`e62a4d110`, 432-01). Closing HEAD `0721f61f04b47ee0bb414ab830e679bf1fc758ff` (`agent-qa`, branch
+`version-0.2`), the last code commit of the phase and agent-qa HEAD before this section's commit.
+The lists below are DERIVED from `git -C agent-qa diff 1158ca142..0721f61f0` (`--shortstat`,
+`--diff-filter=D`, `--diff-filter=A` and `git log -S` per token), not transcribed from any plan
+summary: 112 commits, every one signed (`%G?` = G); 754 files, +44666/−56532 (under `packages/`:
+711 files, +39969/−51665); 56 files deleted and 32 added. The deleted files are 50 production
+modules (10,404 lines) and 6 test files (3,068 lines). The "hits" columns count a token over
+`packages/*/src` (`.ts`/`.tsx`) as `hits/files`, at the baseline and at the closing HEAD, measured
+with `git grep -F -c` at each revision; "prod" excludes `__tests__/` and `*.test.*`. Every closing
+production hit listed is a dated comment, except where the row says otherwise.
+
+#### Files deleted
+
+The census column says whether the path is one of `C432-DELETED-SYMBOLS`' 30 module rows. Where it
+is not, the claim is carried by the named cell in the last column.
+
+| File (under `packages/`) | Lines at baseline | Deleting commit | Census module row | Return cell / carrier |
+|---|---|---|---|---|
+| `safety/src/policy/gate.ts` | 419 | `39c0316cc` (432-19) | yes | `C432-RETURN-A12` (`resolveAsk`), `A13` (`evaluate`), `A14` (`baseVerdict`) |
+| `safety/src/policy/gate-hook.ts` | 42 | `39c0316cc` (432-19) | yes | `A15` |
+| `safety/src/policy/scope.ts` | 36 | `39c0316cc` (432-19) | yes | `C432-DELETED-SYMBOLS` |
+| `safety/src/ports/policy-ports.ts` | 62 | `39c0316cc` (432-19) | yes | `A16` (`ConfirmPort`) |
+| `safety-local/src/readline-confirm.ts` | 68 | `39c0316cc` (432-19) | yes | `A17` |
+| `schema/src/safety/remedies.ts` | 150 | `39c0316cc` (432-19) | yes | `A69`-`A72` (one cell per remedy kind) |
+| `schema/src/safety/standing-approval.ts` | 14 | `39c0316cc` (432-19) | yes | `A22` |
+| `dashboard-server/src/chat/chat-routes.ts` | 490 | `18fb76a0a` (432-14) | yes | `A07` (GET channel), `A08` (POST answer) |
+| `dashboard-server/src/chat/confirm-registry.ts` | 377 | `18fb76a0a` (432-14) | yes | `A11` |
+| `dashboard-ui/src/components/run-confirm-dialog.tsx` | 347 | `18fb76a0a` (432-14) | yes | `A09` |
+| `dashboard-ui/src/components/run-detail/feedback-approval.tsx` | 78 | `18fb76a0a` (432-14) | yes | `A10` |
+| `dashboard-ui/src/lib/mark-confirm-route.ts` | 27 | `18fb76a0a` (432-14) | no | `C432-NO-APPROVAL-DIALOG` (432-14) |
+| `knowledge-local/src/grants/ledger.ts` | 296 | `38b78c764` (432-18) | yes | `A20` (the `grants.jsonl` writer) |
+| `knowledge-local/src/grants/reader.ts` | 99 | `38b78c764` (432-18) | yes | `A21` (the reader) |
+| `knowledge-local/src/grants/operations.ts` | 334 | `38b78c764` (432-18) | no | `C432-GRANTS-UNREAD-WRITER-ABSENT`, `C432-NO-GRANT-OPS` |
+| `schema/src/safety/grant-ledger.ts` | 240 | `38b78c764` (432-18) | yes | `C432-NO-GRANT-CONTRACTS` |
+| `schema/src/safety/protected-classes.ts` | 60 | `38b78c764` (432-18) | yes | `A23` (`fn:proposals.accept`), `A24` (`fn:grants.revoke`) |
+| `schema/src/chat/pin-overlay.ts` | 37 | `38b78c764` (432-18) | yes | `C432-PIN-ABSENT` |
+| `agent/src/chat/pin-overlay.ts` | 203 | `38b78c764` (432-18) | yes | `A68` |
+| `agent-local/src/composition/dispatch-grants.ts` | 163 | `38b78c764` (432-18) | yes | `C432-GRANT-DEPS-ABSENT` |
+| `agent/src/functions/ops/grants-list.ts` | 77 | `38b78c764` (432-18) | no | `A18` (the id returned over a live spec) |
+| `agent/src/functions/ops/grants-revoke.ts` | 88 | `38b78c764` (432-18) | no | `A19` |
+| `agent/src/functions/ops/proposals-list.ts` | 71 | `54edac799` (432-17) | no | `A25` |
+| `agent/src/functions/ops/proposals-show.ts` | 54 | `54edac799` (432-17) | no | `A26` |
+| `agent/src/functions/ops/proposals-accept.ts` | 611 | `54edac799` (432-17) | no | `A27` |
+| `agent/src/functions/ops/proposals-reject.ts` | 86 | `54edac799` (432-17) | no | `A28` |
+| `agent/src/functions/ops/knowledge-proposal-apply.ts` | 86 | `54edac799` (432-17) | no | `A29` |
+| `agent/src/functions/ops/config-proposal-apply.ts` | 265 | `54edac799` (432-17) | no | `A30` |
+| `agent/src/functions/ops/config-undo-propose.ts` | 88 | `54edac799` (432-17) | no | `A31` |
+| `cli/src/commands/proposals.ts` | 508 | `54edac799` (432-17) | yes | `A44`, `C432-NO-PROPOSAL-CLI` |
+| `knowledge-local/src/review/proposals-store.ts` | 1098 | `54edac799` (432-17) | yes | `A42` |
+| `knowledge-local/src/review/proposals-inbox.ts` | 131 | `54edac799` (432-17) | yes | `A43` |
+| `knowledge-local/src/review/proposals-data.ts` | 237 | `54edac799` (432-17) | no | `C432-PROPOSAL-FILES-UNREAD` |
+| `schema/src/proposal/envelope.ts` | 311 | `54edac799` (432-17) | yes | `A41`, `C432-NO-ENVELOPE-EXPORTS` |
+| `schema/src/proposal/inbox-ops.ts` | 462 | `54edac799` (432-17) | no | `C432-NO-ENVELOPE-EXPORTS` |
+| `schema/src/proposal/index.ts` | 65 | `54edac799` (432-17) | no | `C432-NO-ENVELOPE-EXPORTS` (the directory is gone with it) |
+| `schema/src/config-mutation/proposal.ts` | 324 | `54edac799` (432-17) | no | `C432-DIRECT-CONTRACTS` |
+| `schema/src/knowledge/proposal.ts` | 241 | `54edac799` (432-17) | no | `C432-DIRECT-CONTRACTS`, `C432-KNOWLEDGE-CHANGE-OPS` |
+| `knowledge-local/src/review/gate-inconsistency.ts` | 41 | `e7fa7379a` (432-10) | no | `C432-INCONSISTENCY-HOLD` (the hold stays in `promotion-gate.ts`; mutation leg B11) |
+| `knowledge-local/src/review/gate-inconsistency-read.ts` | 118 | `e7fa7379a` (432-10) | no | the same |
+| `mcp/src/apply-refusal.ts` | 539 | `8310bdbad` (432-12) | yes | `C432-MCP-DIRECT-RECEIPT`, `C432-MCP-NO-ELICITATION`; 396-06 leg A3 |
+| `mcp/src/visibility.ts` | 55 | `50045b34c` (432-20) | yes | `A58` |
+| `cli/src/composition/mcp-token-resolution.ts` | 219 | `4e3c9760b` (432-21) | yes | `A59`, `A60` |
+| `cli/src/composition/run-service-token-resolution.ts` | 186 | `4e3c9760b` (432-21) | no | `A61`, `A62` |
+| `schema/src/config/mcp.ts` | 77 | `0bbd409b5` (432-22) | yes | `A59`, `A63` (through the rebuilt public parser) |
+| `schema/src/config/run-service.ts` | 51 | `0bbd409b5` (432-22) | yes | `A61` (the same) |
+| `schema/src/safety/grant-ops.ts` | 239 | `0bbd409b5` (432-22) | yes | `C432-RUNTIME-SETS` (`TrustScopeSchema` absent) |
+| `dashboard-ui/src/components/config-manager/token-list.tsx` | 390 | `0bbd409b5` (432-22) | no | `C432-NO-TOKEN-CONTROLS`; 429 UI leg U42 |
+| `schema/src/functions/function-scope.ts` | 79 | `06798dccc` (432-39) | yes | `A46` (the union), `A47`-`A52` (one cell per scope literal) |
+| `schema/src/safety/trust-credential.ts` | 65 | `c916d4c2e` (432-42) | yes | `C432-DELETED-SYMBOLS`, `C432-RUNTIME-SETS` |
+| test `agent/src/functions/__tests__/proposals-accept.test.ts` | 576 | `54edac799` (432-17) | — | 18 cells → `C432-NO-PROPOSAL-OPS` (`registry-invariants`: not registered, `UnknownFunctionError`) |
+| test `agent/src/functions/__tests__/apply-action-classes.test.ts` | 382 | `54edac799` (432-17) | — | 8 cells: the accept verb's apply-class table went with the verb; `C432-NO-PROPOSAL-OPS` |
+| test `knowledge-local/src/review/__tests__/authoring-proposals-store.test.ts` | 382 | `54edac799` (432-17) | — | 13 cells → 432-08's `C432-TEST-WRITE-*` (authored tests are written directly) and `C432-DIRECT-CONTRACTS` |
+| test `schema/src/__tests__/proposal-envelope.test.ts` | 255 | `54edac799` (432-17) | — | 25 cells → `C432-NO-ENVELOPE-EXPORTS`; four claims kept under their names in `432-direct-contracts.test.ts` |
+| test `cli/src/__tests__/proposals-digest-commands.test.ts` | 775 | `54edac799` (432-17) | — | renamed `digest-command.test.ts` (296 lines): the 4 digest cells and the L10 source cell kept; the 12 `proposals …` cells → `C432-NO-PROPOSAL-CLI` |
+| test `knowledge-local/src/grants/__tests__/operations.test.ts` | 698 | `38b78c764` (432-18) | — | 25 cells: lease and egress claims → `C432-GRANTS-UNREAD-WRITER-ABSENT` on the direct writers |
+
+#### Routes, commands and options deleted
+
+| Surface | Deleting commit | Now | Cell |
+|---|---|---|---|
+| `POST /api/run-confirm/answer`, `GET /api/run-confirm/channel` (the last two routes of the 430 chat router) | `18fb76a0a` (432-14) | the router's generic 404 | `C432-CONFIRM-ROUTES-404`; `A07`, `A08`; 430 leg R07 re-aimed |
+| `agent-qa proposals` with `list`, `show`, `accept`, `reject` and `grants list \| revoke` | `54edac799` (432-17) | unknown command; no alias (D-02) | `C432-NO-PROPOSAL-CLI`, `A44` |
+| `agent-qa run --trust-session` | `fb8ba05eb` (432-13) | Commander's "unknown option" | `A64` (the rebuilt binary's `run --help`) |
+| `knowledge rollback`'s y/N and `--yes`; `knowledge purge`'s repeated-id `--confirm`; `cache purge`'s y/N and `--force` | `70e2fe9ba` (432-15) | running the command is the intent | `A04`, `A05`, `A06`; `432-maintenance-direct.test.ts`, `432-cache-direct.test.ts` |
+| `run`'s TTY confirm, `createTtyConfirmPort` (`fn`, `ask`, `runs mark`), CLI chat's `[y/a/N]` (`createChatConfirmPort`) | `fb8ba05eb` (432-13: unread), `ce1822027` (432-16: deleted) | no prompt | `A01`, `A02`, `A03`; `C432-NO-APPROVAL-PROMPTS` |
+| CLI chat's `/pin` directive | `fb8ba05eb` (432-13) | an unhandled clause | `A67` |
+
+#### Operations and MCP tools deleted or renamed
+
+| Before | After | Commit | Cell |
+|---|---|---|---|
+| `proposals.list`, `proposals.show`, `proposals.accept`, `proposals.reject`, `knowledge.proposal.apply`, `config.proposal.apply`, `config.undo.propose` | deleted; `UnknownFunctionError` on every door | `54edac799` (432-17) | `A25`-`A31`, `C432-NO-PROPOSAL-OPS` |
+| `grants.list`, `grants.revoke` | deleted (registry 46 → 44) | `38b78c764` (432-18) | `A18`, `A19`, `C432-NO-GRANT-OPS` |
+| `knowledge.accept.propose`, `knowledge.reject.propose`, `knowledge.forget.propose` | `knowledge.accept`, `knowledge.reject`, `knowledge.forget`, applied in the call; no old-id alias | `8310bdbad` (432-12) | `A32`-`A34`, `C432-KNOWLEDGE-CHANGE-OPS` |
+| `agent_qa_propose_knowledge_change`, `agent_qa_propose_config_change` | `agent_qa_change_knowledge`, `agent_qa_change_config` | `8310bdbad` (432-12) | `A35`, `A37`, `C432-MCP-TWENTY-TOOLS` |
+| `agent_qa_apply_proposal`, `agent_qa_apply_config_proposal`, `agent_qa_list_proposals`, `agent_qa_show_proposal`; the apply confirmation round (`confirmed: true`, the elicitation) | deleted: 24 → 20 tools | `8310bdbad` (432-12) | `A36`, `A38`-`A40`, `C432-MCP-NO-ELICITATION`, `C432-TOKENLESS-CATALOG` |
+
+Registry 53 → 44 ops (seven left with 432-17, two with 432-18); MCP 24 → 20 tools (30 ops
+projected behind them, 14 unprojected); golden ledger 53 → 44 rows; capability catalogue 62 → 52
+rows, 33 migration entries (the 432-45 regenerations found no diff).
+
+#### Config keys deleted
+
+| Key | Commit | A config still holding it | Cell |
+|---|---|---|---|
+| `safety` (with `trustMode`) | `0bbd409b5` (432-22) | fails with the normal strict "unrecognized key" error; no `retired-keys.ts` message (D-22) | `A65`, `C432-OLD-KEYS-STRICT` |
+| `services.mcp.tokens` | `0bbd409b5` (432-22) | the same | `A59`, `C432-OLD-KEYS-STRICT` |
+| `services.mcp.stdio` (with `grantConfigWrite`) | `0bbd409b5` (432-22) | the same | `A63` |
+| `services.dashboard.runServiceTokens` | `0bbd409b5` (432-22) | the same | `A61` |
+
+The strict schema has 92 leaves and the config page 88 writable controls after the removal
+(`C432-CONFIG-LEAVES-92`, `C432-CONFIG-WRITABLE-88`; mutation legs B09, B10). One key was added:
+top-level `allowProduction` (432-02, `03c7c6bc4`), with its masking-map leaf.
+
+#### Members removed from kept containers
+
+| Member | Container (kept) | Hits all (baseline → closing) | Hits prod (baseline → closing) | Commit | Cell |
+|---|---|---|---|---|---|
+| `requiresHumanOrigin` | `FunctionMetadata` / `FunctionSpec` / `FunctionDeclaration` (`agent/src/functions/spec.ts`) | 65/37 → 51/27 | 31/17 → 7/6 | optional `50045b34c` (432-20), deleted `06798dccc` (432-39) | `A45`, `C432-DECLARATION-KEYS` |
+| `requiredScopes` | the same | 255/123 → 93/46 | 81/66 → 6/6 | `50045b34c`, `0dc867e58`..`91bae8521` (432-23..27), `06798dccc` | `A53` |
+| `grantedScopes`, `safeMode`, `credential`, `sessionId` | `FunctionCaller` (`schema/src/functions/function-caller.ts`), now `surface` and `origin` | `grantedScopes` 206/123 → 114/70; `safeMode` 151/117 → 97/65 | `grantedScopes` 25/11 → 2/2; `safeMode` 14/9 → 4/3 | `50045b34c`, the 432-28..38 fixture sweeps, `06798dccc` | `A54`-`A57` |
+| the scope check in `invokeFunction`, MCP's per-tool hiding | `invoke.ts`, the MCP server factory | `visibleToCaller` 41/15 → 16/11 | 20/8 → 6/4 | `50045b34c` (432-20) | `C432-ALL-OPS-AVAILABLE`, `C432-TOKENLESS-CATALOG`; 396 visibility V1/V2/V5 |
+| the MCP bearer check, the run-service `verifyBearer` and the caller credential | `cli/src/commands/mcp.ts`, `dashboard-server/src/run-service/run-service-routes.ts` | — | — | `4e3c9760b` (432-21) | `A60`, `A62`, `C432-TOKENLESS-MCP-MARK` |
+| `requiresFailClosed` | `safety/src/policy/execution-context.ts` (the detector stays) | 20/15 → 14/9 | 7/6 → 1/1 | `39c0316cc` (432-19) | `A66` |
+| `HARD_DESTRUCTIVE_PATTERNS` and the soft verb list | `safety/src/policy/lexicon.ts` | 2/1 → 0/0 | 2/1 → 0/0 | `39c0316cc` (432-19) | `A75` |
+| `appendExecutionAudit` and the `execution_audit.jsonl` path | `JsonlAuditSink` (`safety-local/src/jsonl-audit-sink.ts`), now the guardrail append only | 139/113 → 6/5 | 9/6 → 0/0 | `39c0316cc` (432-19) | `A76`, `C432-AUDIT-UNREAD` |
+| `ExecutionAuditRow` | `AuditSink` (`safety/src/ports/audit-sink.ts`) | 94/27 → 14/7 | 11/4 → 0/0 | `39c0316cc` (432-19) | `A77` |
+| the remedy output branches | `cli/src/commands/receipt-line.ts`; `DenialBlock` (`dashboard-ui/.../denial-block.tsx`, emptied by 430-04) | `GATE_REMEDY_SURFACES` 25/7 → 3/2 | 9/4 → 0/0 | `39c0316cc` (432-19) | `A73`, `A74`, `C432-REMEDY-TYPES-ABSENT` |
+| the product git commit (`applyConfigProposalAsOneCommit`, `applyTestDraftAsOneCommit`, the human-first preserve commit, the `Agent-QA-Proposal:` trailer, the commit-author map, `createConfigUndoSourcePort`, the dirty-tree and git-unavailable refusals) | `cli/src/composition/local-agent-host.ts` | `applyTestDraftAsOneCommit` 36/3 → 4/2 | 6/2 → 0/0 | `ce1822027` (432-16) | `A78`, `C432-NO-GIT-COMMIT` |
+| `confirmScope`, `AgentHost.confirms`, `enterRunTriggerScope`, the `awaiting-approval` state, the dashboard posture machinery (`askingSessionOf`, `postureFor`, `watchedAndInFlight`, `reachableFor`, `postureOf`) | `dashboard-server`, `dashboard-ui`, `cli/src/commands/dashboard.ts` | `RunConfirmHost` 10/5 → 0/0 | — | `18fb76a0a` (432-14) | `C432-NO-APPROVAL-DIALOG`; 430 leg R08 re-aimed |
+| `RiskActionDescriptor.command`/`.disclosure`, `confirmPausedMs` and the live-pause seam, `MarkDeniedError`/`MarkRefusalSchema`, per-op `disclose`/`discloses`, `TRUST_SCOPE_KEYS`/`TrustScopeKey`, the `proposals` and `grants` taxonomy rows | schema, runner, cli, dashboard-ui, agent | `confirmPausedMs` 33/14 → 8/4 | 13/6 → 1/1 | `c916d4c2e` (432-42) | `C432-LEFTOVERS-UNREAD`, `C432-RUNTIME-SETS` |
+| the `propose-only` refusal in `applyReview`'s mark and policy arms; `local-headless` mapped to `drain-to-active` | `knowledge-local/src/review/apply-review.ts`, `curator/author-contract.ts` | — | — | `144a5dcdf` (432-06), `ca5983da5` (432-01) | `C432-EXPLICIT-ALL-CONTEXTS` (B04), `C432-CURATION-CONTEXT` (B05) |
+
+The remaining closing hits are dated comments, absence assertions and the smuggled witnesses the
+census counts as retained (a legacy caller field cast past the type to prove nothing reads it).
+`HARD_NAME_VERBS` (2/1 prod at both ends) is not a deleted member: it is the risk classifier's name
+signal, kept because eval scoring reads the tiers it feeds (D-15/D-16).
+
+#### Claim transfers in the mutation scripts (old label → current cell)
+
+No script was deleted or turned into a success-only stub. The per-driver tables with leg counts
+are in `432-44-SUMMARY.md` and `432-45-SUMMARY.md`; the labels the mutation map asked this register
+to record are:
+
+- **430 R12-R15** (`c9991fbd0`): R12/R13 `C430-REMEDY-MEMBERSHIPS-EXACT` + `C430-DASHBOARD-PROJECTION-EMPTY`
+  → `C432-430-R12-ANSWER-CONFIRM-ABSENT` / `C432-430-R13-SESSION-PIN-ABSENT`; R14 `DENIAL-REASON-ONLY`
+  → `C432-430-R14-REASON-ONLY` (the old cell stays, an allowed co-red); R15 "no source or test spells
+  the dashboard remedy text table" → `C432-430-R15-REMEDY-TABLE-ABSENT` (the old cell stays). R06/R08
+  → `C430-CHAT-ROUTE-TABLE-EXACT` in its absence form; R07 → `C430-DELETED-CHAT-ROUTES-SHARED-404` ×5;
+  R10 → "(5) no rostered door supplies a minting surface".
+- **395-grant-two-sided** (`c9991fbd0`): G0 retired; MINT → G1 `C432-RETURN-A20` + G5
+  config-grant-enforcement; READ → G2 `A21`, G3 `A18`, G6 `C432-NO-GRANT-OPS`; revoke → G4 `A19`.
+- **396-06-credential**: C4 apply-refusal teach → `A36`; C5 declared-token seed → env seed; new C6
+  `A59`, C7 `A60`, C8 `A56`.
+- **399-1-fail-closed**: U/V kept (they plant into `classify.ts`, never `gate.ts`); new W1 → `A66`,
+  X1 → masked-serialization X5.
+- **399.1-render**: H1-H4 unchanged; new R1-R4 → `A69`-`A72`, R5 `A73`, R6 `A74`, P1
+  `C432-PLAIN-REFUSAL`, P2 the refusal-line hygiene cells.
+- **394-apply** M/N1/N2 → the dirty-tree and no-commit cells, new N3 `A78`; **394-apply-rollback**
+  W/V/N/T/P → W1, W2, T1; **394-refinement** proposal refinement → S1/S2 `C432-TEST-REFINE-WRITTEN`;
+  **395-apply-bytecompare** A1-A5 → the direct config writer's digest, no-commit, dirty-scan,
+  partial-write and freshness cells.
+- **429 UI** U42 `ADD-MCP-TOKEN-KEEPS-EVERY-SCOPE` → `C432-NO-TOKEN-CONTROLS`; **429 contract** C03,
+  C19, C26, C37 re-spelled with measured co-reds (`0f709400c`).
+- **396-visibility** (`5004782b1`): W1 "the config tools are ABSENT" → V1 "1 · a read-only caller
+  sees the config tool" and V5 "4 · a config-write-only grant and a read-only grant list the same
+  tools"; W2 → V2 "3 · serves a config op to a caller without the scope, with no scope refusal";
+  K1 → V4 "9 · the masker the COMMAND composes hides the environment secret it was seeded with";
+  K2 → V3 "9 · serves an undeclared legacy bearer like none and NEVER echoes it"; new V6 `A58`.
+- **396-resources** R3 → `C432-RESOURCES-ALL-CALLERS`, new R8; **396-06** A1-A4 →
+  `C432-MCP-DIRECT-RECEIPT`, `C432-MCP-NO-ELICITATION`, `C432-DELETED-SYMBOLS`; **396-mapping** M3 →
+  `MCP-OPS-EXACT` over the feedback reads, new M5/M6 `C432-MCP-TWENTY-TOOLS`, M7 `A37`.
+- **397-parity**: "pins the config-write listing delta…" → `C432-TOKENLESS-CATALOG: pins an EMPTY
+  listing delta…`; "refuses at the GATE WALL… naming the one withheld grant" →
+  `C432-ALL-OPS-AVAILABLE…`; "diverges… on exactly the human-origin capabilities" →
+  `C432-NO-GRANT-OPS…`; "reaches the ask…" → "dispatches every ask-capable capability directly…";
+  leg B `proposals.list` → `config.get`. **398-catalog**: new leg G → `C432-CATALOG-CURRENT`.
+
+In-file re-spellings (a cell whose subject was deleted becomes an absence cell under its own title,
+or a re-titled cell with a dated note citing the old title) are tabulated per plan in each
+`432-NN-SUMMARY.md` "claim transfer" table. The coverage ledger missed co-owned files six times
+(deferred 432-15 #1, 432-16 #4, 432-18 #4, 432-22 #1, 432-24 #2, 432-25 #2); each was re-spelled in
+place by the plan that turned it, with its claim table in that plan's summary. No test assertion
+was deleted without its claim carried.
+
+### What was RETAINED, and why
+
+| Item | Where (at `0721f61f0`) | Why kept | What pins it |
+|---|---|---|---|
+| production as a config declaration: `TargetSchema.environment` gains `production`, top-level `allowProduction: true` | `core/src/schema/registry-schema.ts`, `schema/src/config/production.ts`, the run core's pre-assembly check (`agent-local/src/composition/run-invocation-core.ts`) | law 4's audited boundary, met by an explicit refusal naming the target and the line to add (D-17/D-18); never a prompt, flag or grant | `C432-PRODUCTION-BEFORE-EFFECTS` (B01), `C432-MIXED-SUITE-PRODUCTION` (B02), `C432-EDITOR-PRODUCTION` (B03), `C432-DOOR-NONPRODUCTION` |
+| `ExecutionContext` and its detector | `safety/src/policy/execution-context.ts`, safety-local | a durable field on handoffs, bus events, deltas, bundles and run DTOs; D-08's CI switch reads it | `C432-EXECUTION-CONTEXT-RETAINED`, `C432-CURATION-CONTEXT` (B05) |
+| `classifyRisk`, `TIER_ORDER` and the name verbs | `safety/src/policy/` | eval scoring uses the tiers (`eval/src/match/risk.ts`) | `C432-EVAL-RISK-PARITY` |
+| the guardrail audit: `AuditSink`, `JsonlAuditSink.appendGuardrailAudit`, `guardrail_audit.jsonl` | `safety/src/ports/audit-sink.ts`, `safety-local/src/jsonl-audit-sink.ts` | masking and egress are unchanged and their rows are still written | `C432-GUARDRAIL-AUDIT-RETAINED` (B16), `C432-RETAINED-SAFETY` |
+| `registerFirstPartySafetyHooks`' masking and guardrail middleware | `safety/src/hooks/first-party.ts`, `model/src/registry.ts:59` | masking before guardrail, pinned by `validate:safety` | `validate:safety` (9 cells), `C432-RETAINED-SAFETY` |
+| loopback binding, the dashboard's cross-site refusal, MCP's Host and Origin guards, the live-view link token | `dashboard-server/src/server/cross-site.ts`, `cli/src/commands/mcp.ts`, the run-service live link | they stop other machines and websites, and nobody configures them (D-13) | `C432-RETAINED-HOST` (B12), `-ORIGIN` (B13), `-CROSS-SITE` (B14), `-LIVE-LINK` (B15); `C432-RUN-ROUTES-CROSS-SITE` |
+| the historical `approval_decision` reader | `schema/src/chat/session-events.ts` (the kind, `ChatApprovalDecisionEvent` and its exact key set) | the session guard throws on an unknown kind, so a pre-432 session file must keep parsing (430 D-08, D-22); no writer remains | `C432-HISTORICAL-READER`, `C432-LEFTOVERS-UNREAD` |
+| the dashboard config Undo (429 D-24) | `dashboard-server/src/config/undo-store.ts` | it is not an approval | 429's own cells |
+| `knowledge rollback` (without its prompt), `knowledge purge`, `cache purge` | `cli/src/commands/knowledge-maintain.ts`, `cache.ts` | maintenance commands; running one is the intent (D-14) | `432-maintenance-direct.test.ts`, `432-cache-direct.test.ts` |
+| `FunctionRegistry.list(caller)`'s unread argument | `agent/src/functions/registry.ts` | dropping it touches 159 call sites and changes no behaviour (432-42, dated rationale) | `C432-TOKENLESS-CATALOG` and `C432-ALL-OPS-AVAILABLE` red any per-caller filter |
+| `ToolProjectionKind`'s `'apply'` | `mcp/src/mapping.ts` | a published MCP value pinned by three bump-guard assertions; the mark door applies its fix in the call (432-42) | `mapping-bump-guard.test.ts` |
+| the `env-var-name` masking class | `schema/src/config/masking.ts` | a shared display vocabulary and a reference kind; it gates nothing (432-42) | `C432-RUNTIME-SETS` |
+| the forget receipt's field name `proposalId` (`prop_<operationId>`, `schemaVersion: 1`) | `knowledge.forget`'s `forgetReceipt` | **decided 2026-10-02 (orchestrator, 432-42 #2):** a persisted, versioned receipt; renaming it needs a schema bump, a dual reader and a public contract change at phase end, more risk than value. The id is the forget operation's receipt id and names no filed proposal | the door matrix's operations cell (no proposal store; this field excluded from the wording check with a dated note) |
+| the `policyPoints` column of the conformance scenario table | `cli/src/__tests__/conformance/scenario-table.ts` | test-only; every value is the direct claim and it feeds retained cells (432-42) | `C432-REGISTRY-GOLDEN`, `C432-ALL-OPS-AVAILABLE` |
+
+### What degrades, stated plainly
+
+- **Nothing asks, so nothing stops a mistaken run, mark or change before it applies.** Production
+  is the one refusal, and only for a target declared `environment: production`. An undeclared,
+  `local` or `shared` target runs in the call on every door, CI included.
+- **There is no Undo and no person/agent label** (D-09, D-10). Wrong knowledge is overridden by a
+  later mark or by the knowledge change tool's forget arm; files are reverted with git. Nothing
+  records who asked for a change beyond what records already stored (`originClass`, mark receipts).
+- **agent-qa makes no git commits** (D-07). Config changes, test edits and new tests are plain
+  uncommitted edits; `git status` and `git diff` show them.
+- **Anything that can reach the local endpoints can call every operation** (D-12). The loopback
+  bind, the Host/Origin guards and the cross-site refusal are what stand between a website or
+  another machine and the doors. A hosted or team version needs front-door authentication first
+  (forward note in REQUIREMENTS).
+- **Old configs that carry a removed key stop parsing** with the normal strict error. There is no
+  migration, alias or first-run notice (D-02, D-22).
+- **Background curation now replaces and retires knowledge on this machine without a person** (D-08);
+  CI and cloud still record those changes as proposed.
+
+### Persisted values the narrowed contract governs
+
+| Persisted value | Disposition | Evidence |
+|---|---|---|
+| `agent-qa-knowledge/grants.jsonl` | **Left untouched and never read (D-22).** No reader, writer or init probe remains (the probe that kept it git-visible went in 432-18). A malformed or unreadable ledger changes no answer and stays byte- and mode-identical. | `C432-GRANTS-UNREAD-WRITER-ABSENT`, `C432-LEFTOVERS-UNREAD` (source and runtime halves); legs `A20`, `A21` |
+| `.agent-qa/proposals/*.json` (pending knowledge, config and test-draft proposals, pre-432 gate-inconsistency files) | **Left untouched and never read (D-22).** No op, verb or view opens the directory; a pre-432 proposal id answers `UnknownFunctionError`; an unreadable inbox changes nothing. The test planters `pre-432-config-proposal.ts` and `pre-432-knowledge-proposal.ts` write legacy bytes only to prove they stay unread. | `C432-PROPOSAL-FILES-UNREAD`, `C432-LEFTOVERS-UNREAD`; legs `A41`-`A43` |
+| old `execution_audit.jsonl` files | **Left untouched and never read (D-17, D-22).** Nothing writes or reads the file. | `C432-AUDIT-UNREAD`, `C432-LEFTOVERS-UNREAD`; legs `A76`, `A77` |
+| `approval_decision` events in `.agent-qa/sessions/chat-*.jsonl` | **Reader-only, retained (D-22).** The kind and its key set stay so pre-432 sessions parse; no build writes one. | `C432-HISTORICAL-READER` |
+| `guardrail_audit.jsonl` | **Actively retained.** Masking and egress guardrail rows are still appended. | `C432-GUARDRAIL-AUDIT-RETAINED` (leg B16) |
+| config keys `safety.trustMode`, `services.mcp.tokens`, `services.mcp.stdio.grantConfigWrite`, `services.dashboard.runServiceTokens` | **Refused** with the normal strict unrecognized-key error; no message added. | `C432-OLD-KEYS-STRICT`; legs `A59`, `A61`, `A63`, `A65` |
+| persisted `origin.surface: 'dashboard'` on old proposal records | **Never read again**, with the rest of the proposal store (432-17). See the correction below. | `C432-PROPOSAL-FILES-UNREAD` |
+
+The live `demo/init/agent-qa.config.yaml` lost its `services.mcp.tokens` block in the
+super-repository (`fde2c636`, 432-22, the owner's 2026-10-01 decision), so the CLI tests that read
+it keep parsing.
+
+### Correction to the 2026-09-28 attribution row (430-REVIEW WR-01)
+
+The 2026-09-28 row "Persisted `'dashboard'` surface values" says persisted `origin.surface:
+'dashboard'` values "were minted only by dashboard-chat config proposals". 430-REVIEW WR-01 showed
+that is incomplete: the dashboard's co-hosted MCP endpoint served the same composition's registry,
+so config proposals minted over it before 430 carried `'dashboard'` too, and after 430 they carried
+no surface and were committed as `agent-qa (proposed by an unrecorded surface)`. Phase 432 closes
+WR-01 by deletion: 432-16 (`ce1822027`) deleted the commit and the author map, so a config change
+from any door, the co-hosted endpoint included, writes the file and commits nothing, and 432-17
+(`54edac799`) deleted the proposal store, so no old record is read or attributed. The stale test
+comment was corrected in 432-16 (`proposal-author-attribution.test.ts` header). The old row is
+kept as written, with a dated pointer here; REQUIREMENTS note 92(d) carries the same correction.
+
+### The instruments that notice a return
+
+- **`pnpm validate:arch`**: the 432 census beside the 430 census and the earlier ones. It runs in
+  the workspace's `turbo test` (after the core and CLI builds, `turbo.json`, 432-42), so a returning
+  member, route, op id, tool name, config key or prompt literal reds by name on the commit that
+  adds it.
+- **The prompt census, the door matrix, the stdio, no-git and runtime-set cells** run in the
+  ordinary package suites.
+- **`pnpm run validate:432-approval-permission-mutation`** and its **`-selftest`**: the bar that
+  proves the census and the retained-behaviour cells are not decoration. Like every
+  `validate:*-mutation` script, neither is in CI; both are phase-gate instruments run by hand.
+
+### Not observed, stated as such
+
+- **Live lanes.** `395-live-from-zero.sh`, `demo/init/scripts/drain-394-loop.sh` and the 413
+  campaign were edited statically and not run (a real model, devices, writes under `demo/init`);
+  `bash -n` and `C432-LIVE-CALLERS` (16/16) cover their syntax and rung 1. Unobserved, for 433.
+- **A real coding-agent session** over MCP stdio/HTTP, a real dashboard click-through and a
+  device/model/container-backed editor run were not performed; the deterministic fixtures above
+  stand in for them and are not claimed as live observations.
+- **`agent-qa-miniwob-bench`** is the owner's separate repository: untracked in the super-repository
+  (`?? agent-qa-miniwob-bench/`), with its own `.git` and no commits. 432-41's two-line edit to
+  `src/agent_qa_miniwob_bench/product.py` (`--trust-session` removed from `describe()`'s flags and
+  from `run_goal`'s argv) is still in its working tree, uncommitted and unreviewed; the original is
+  in the 432-41 session scratchpad. It is disclosed here and is not part of any agent-qa commit.
+- **The 399 runbook gate** (`demo/acceptance/399/399-runbook-gate.sh`) is red at rest: its
+  `RUNBOOK.md` names ops 432 deleted (deferred 432-44 #2; the owner's 399 history).
+
+### Reconciliation
+
+The planning record carries this phase's dated notes in `.planning/REQUIREMENTS.md` § "Phase 432
+reconciliation (2026-10-02)", notes 106 onward: the per-decision notes (D-06, D-08, D-09, D-10,
+D-12/D-13, D-16, D-17, D-21, D-22), law 4, the forward notes for M6, M7, MC and the hosted
+version, the WR-01 correction to note 92(d), and the WINDOWS and todo dispositions.
+`.planning/WINDOWS.md` carries the matching `RECONCILIATION-432` block (#130 and #134 fixed, #194
+and #217 closed by deletion), `.planning/PROJECT.md` retires the v43 approvals constraint and
+corrects the v56 PXH-SAFE bullets, and
+`.planning/phases/432-approval-gate-removal-provenance-and-undo/432-ACCEPTANCE.md` records the
+final-tree gate. The spec files stay read-only.
