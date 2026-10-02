@@ -121,12 +121,26 @@ async function lensProof(page: Page, point: { x: number; y: number }, name: stri
   // settled media pixels, not the transient pre-observer rectangle.
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
   const media = page.locator('[data-media-transform] > video, [data-media-transform] > img')
+  // 2026-10-02 (quick 261002-tmo): wait, bounded, until the media reports its natural size and a
+  // laid-out box. Read too early (a video whose metadata had not landed after the mode change),
+  // the origin divided by a zero natural width and `mouse.move` got a non-finite point: `Protocol
+  // error (Input.dispatchMouseEvent): Invalid parameters` (432-12 forced run 1, load ~16).
+  await page.waitForFunction(() => {
+    const element = document.querySelector<HTMLVideoElement | HTMLImageElement>('[data-media-transform] > video, [data-media-transform] > img')
+    if (element === null) return false
+    const natural = element instanceof HTMLVideoElement ? element.videoWidth * element.videoHeight : element.naturalWidth * element.naturalHeight
+    const rect = element.getBoundingClientRect()
+    return natural > 0 && rect.width > 0 && rect.height > 0
+  }, undefined, { timeout: 30_000 })
   const origin = await media.evaluate((element, point) => {
     const rect = element.getBoundingClientRect()
     const width = element instanceof HTMLVideoElement ? element.videoWidth : (element as HTMLImageElement).naturalWidth
     const height = element instanceof HTMLVideoElement ? element.videoHeight : (element as HTMLImageElement).naturalHeight
     return { x: rect.x + point.x / width * rect.width, y: rect.y + point.y / height * rect.height }
   }, point)
+  if (!Number.isFinite(origin.x) || !Number.isFinite(origin.y)) {
+    throw new Error(`The lens origin for ${name} is not a point on the page: ${JSON.stringify(origin)}`)
+  }
   if (await page.getByRole('button', { name: 'Enable magnifier', exact: true }).count()) await page.getByRole('button', { name: 'Enable magnifier', exact: true }).click()
   const pressed = page.getByRole('button', { name: 'Disable magnifier', exact: true })
   expect(await pressed.getAttribute('aria-pressed')).toBe('true')

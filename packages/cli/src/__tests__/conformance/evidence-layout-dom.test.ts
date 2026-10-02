@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { guardRunAnalysisArtifact, slugBranch, type RunDetailProjection } from '@vostride/agent-qa-schema'
 import { chromium, type BrowserContext, type Page } from 'playwright-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { capture, recordingFixture, type RecordingFixture } from './recording-dom-fixture.js'
+import { capture, recordingFixture, zoomFixtureTab, type RecordingFixture } from './recording-dom-fixture.js'
 import { populatedRunSpawnEnv, POPULATED_SECRET_ENV_VAR, POPULATED_SECRET_VALUE } from './populated-run-fixture.js'
 import { cleanupTempRoots, reserveEphemeralPort, spawnDashboard, trackTempRoot } from './spawned-chat.js'
 
@@ -140,17 +140,7 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
       const zoomPage = await zoomContext.newPage()
       await zoomPage.goto(url)
       const before = await zoomPage.evaluate(() => ({ width: innerWidth, dpr: devicePixelRatio }))
-      const factor = await worker.evaluate(async url => {
-        const tabs = (globalThis as unknown as { chrome: { tabs: {
-          query(query: { url: string }): Promise<Array<{ id?: number }>>
-          setZoom(id: number, factor: number): Promise<void>
-          getZoom(id: number): Promise<number>
-        } } }).chrome.tabs
-        const [tab] = await tabs.query({ url })
-        if (tab?.id === undefined) throw new Error('The isolated extension found no fixture tab')
-        await tabs.setZoom(tab.id, 2)
-        return await tabs.getZoom(tab.id)
-      }, url)
+      const factor = await zoomFixtureTab(worker, url, 2)
       await zoomPage.waitForFunction(dpr => devicePixelRatio >= dpr * 1.99, before.dpr)
       const after = await zoomPage.evaluate(() => ({ width: innerWidth, dpr: devicePixelRatio }))
       zoom = { factor, beforeWidth: before.width, afterWidth: after.width, beforeDpr: before.dpr, afterDpr: after.dpr }

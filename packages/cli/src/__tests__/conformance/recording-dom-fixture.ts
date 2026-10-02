@@ -6,7 +6,7 @@ import { createServer } from 'node:http'
 import { dirname, join } from 'node:path'
 import { parse, stringify } from 'yaml'
 import { generateTestId } from '@vostride/agent-qa-ids'
-import { chromium, type Browser, type Page } from 'playwright-core'
+import { chromium, type Browser, type Page, type Worker } from 'playwright-core'
 import {
   POPULATED_RUN_ANCHORED_BUILDS, RUN_BUDGET_MS, drivePopulatedRun,
   populatedRunFixtureProject, populatedRunSpawnEnv, startStubModelServer, startTargetPageServer,
@@ -156,4 +156,40 @@ export async function capture(page: Page, name: string) {
   if (!directory) return
   mkdirSync(directory, { recursive: true })
   await page.screenshot({ path: join(directory, `${name}.png`), fullPage: true, animations: 'disabled' })
+}
+
+/** How long the isolated zoom extension may take to see the tab the cell just navigated. */
+export const FIXTURE_TAB_WAIT_MS = 30_000
+
+/**
+ * Zoom the fixture tab to `factor` through the isolated MV3 extension's own `chrome.tabs` API and
+ * answer Chrome's reported zoom.
+ *
+ * 2026-10-02 (quick 261002-tmo): the service worker's `chrome.tabs.query({ url })` can run before
+ * the extension's tab model has the page the cell just navigated, so a single query raced the
+ * navigation and threw `The isolated extension found no fixture tab` (432-08 #5, 432-21 #7, 432-46
+ * #1: up to six layout cells per forced gate at load 16-74). The query is now a bounded condition
+ * wait; on expiry the error keeps that sentence and names the url and every tab the extension saw.
+ */
+export async function zoomFixtureTab(worker: Worker, url: string, factor: number): Promise<number> {
+  return await worker.evaluate(async ({ url, factor, waitMs }) => {
+    const tabs = (globalThis as unknown as { chrome: { tabs: {
+      query(query: { url?: string }): Promise<Array<{ id?: number; url?: string }>>
+      setZoom(id: number, factor: number): Promise<void>
+      getZoom(id: number): Promise<number>
+    } } }).chrome.tabs
+    const deadline = Date.now() + waitMs
+    for (;;) {
+      const [tab] = await tabs.query({ url })
+      if (tab?.id !== undefined) {
+        await tabs.setZoom(tab.id, factor)
+        return await tabs.getZoom(tab.id)
+      }
+      if (Date.now() >= deadline) {
+        const seen = (await tabs.query({})).map(entry => entry.url ?? '<no url>')
+        throw new Error(`The isolated extension found no fixture tab for ${url} within ${waitMs} ms; tabs seen: ${JSON.stringify(seen)}`)
+      }
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
+  }, { url, factor, waitMs: FIXTURE_TAB_WAIT_MS })
 }
