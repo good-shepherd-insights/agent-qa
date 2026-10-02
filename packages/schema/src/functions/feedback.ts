@@ -27,9 +27,23 @@ export type MarkFixKind = (typeof MARK_FIX_KINDS)[number]
 // 2026-09-30, 432-09 (D-04/D-22): a mark applies its fix in the call, so the writer's vocabulary is
 // `applied`. `drafted` is the pre-432 receipt that filed a proposal instead: it stays readable in an
 // existing ledger (430 D-08) and no writer produces it.
+// 2026-10-03 (quick 261003-mqc): `not-applied` closes a mark whose own planned fix was refused,
+// under the mark's own identity, so its gold and evidence count once and the run takes a new mark.
 // prettier-ignore
-export const MARK_DISPOSITIONS = ['quarantined', 'applied', 'no-draftable-fix', 'confirmed-bug'] as const
+export const MARK_DISPOSITIONS = ['quarantined', 'applied', 'no-draftable-fix', 'confirmed-bug', 'not-applied'] as const
 export const MARK_HISTORICAL_DISPOSITIONS = ['drafted'] as const
+
+/**
+ * Why a mark's planned fix was not applied. Each comes from the plan itself, so retrying the same
+ * plan could never apply it: the knowledge target is gone, the policy text is refused, or the test
+ * file is outside the workspace.
+ */
+export const MARK_FIX_REFUSALS = [
+  'target-not-found',
+  'policy-materialize-refused',
+  'outside-workspace',
+] as const
+export type MarkFixRefusal = (typeof MARK_FIX_REFUSALS)[number]
 
 export const MARK_APPLIED_CHANGE_KINDS = ['knowledge', 'test-file'] as const
 
@@ -72,6 +86,12 @@ export const MarkDispositionSchema = z.discriminatedUnion('kind', [
   }),
   z.object({ kind: z.literal('no-draftable-fix'), checked: NoDraftableFixCheckedSchema }).strict(),
   z.object({ kind: z.literal('confirmed-bug'), confirmedRecords: indexSchema }).strict(),
+  /** The mark's planned fix was refused, so nothing was changed; the mark itself stands. */
+  z.object({
+    kind: z.literal('not-applied'),
+    fix: z.enum(MARK_FIX_KINDS),
+    reason: z.enum(MARK_FIX_REFUSALS),
+  }).strict(),
   /** Historical (read only): a pre-432 mark that filed a proposal. Its change was never recorded. */
   z.object({
     kind: z.literal('drafted'),

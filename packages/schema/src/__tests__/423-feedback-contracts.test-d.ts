@@ -34,7 +34,8 @@ import type {
 // Plan 423-23 owns the mutation script; C423-FEEDBACK-RESULTS-EXACT is its required RED cell.
 type HistoryOutcome = 'history' | 'run-not-found' | 'ledger-corrupt' | 'ledger-unavailable'
 type AppliedChangeKind = 'knowledge' | 'test-file'
-type WrittenDisposition = 'quarantined' | 'applied' | 'no-draftable-fix' | 'confirmed-bug'
+// 2026-10-03 (quick 261003-mqc): `not-applied` closes a mark whose planned fix was refused.
+type WrittenDisposition = 'quarantined' | 'applied' | 'no-draftable-fix' | 'confirmed-bug' | 'not-applied'
 type Refusal = 'run-not-found' | 'member-not-found' | 'step-not-found' | 'ambiguous-address' | 'ambiguous-correction'
 type PreviewOutcome = 'consequences' | 'quarantined' | 'already-marked' | Refusal
 type MarkOutcome = 'marked' | 'already-marked' | Refusal

@@ -23,6 +23,9 @@ describe('432 prohibition 2: applied-change presentation claims only what the re
       { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } },
       { kind: 'confirmed-bug', confirmedRecords: 1 },
       { kind: 'quarantined', class: 'flake' },
+      // 2026-10-03 (quick 261003-mqc): the refused-fix receipt claims nothing changed.
+      { kind: 'not-applied', fix: 'fact', reason: 'target-not-found' },
+      { kind: 'not-applied', fix: 'test-edit', reason: 'outside-workspace' },
     ] as unknown as Parameters<typeof feedbackView.dispositionText>[0][]
     for (const disposition of dispositions) {
       sentences.push(feedbackView.dispositionText(disposition), feedbackView.feedbackRecordedText(disposition))

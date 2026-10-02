@@ -9,6 +9,7 @@ import type {
   Mark,
   MarkDisposition,
   MarkFixKind,
+  MarkFixRefusal,
   MarkHistoryEntry,
   MarkPreviewBasis,
   MarkPreviewDraft,
@@ -613,6 +614,12 @@ export const DISPOSITION_TEXT = {
   drafted: 'Recorded — a fix was drafted before fixes applied directly',
   'no-draftable-fix': 'Recorded — no fix could be drafted',
   'confirmed-bug': 'Recorded — kept as a real product bug; nothing changed',
+  // 2026-10-03 (quick 261003-mqc): the mark stands; its planned fix was refused, nothing changed.
+  'not-applied': {
+    'target-not-found': 'Recorded — the fix was not applied: the knowledge it replaces is gone',
+    'policy-materialize-refused': 'Recorded — the fix was not applied: its policy text was refused',
+    'outside-workspace': 'Recorded — the fix was not applied: the test file is outside the workspace',
+  } satisfies Record<MarkFixRefusal, string>,
 } as const
 
 export function dispositionText(disposition: MarkDisposition): string {
@@ -627,6 +634,8 @@ export function dispositionText(disposition: MarkDisposition): string {
       return DISPOSITION_TEXT['no-draftable-fix']
     case 'confirmed-bug':
       return DISPOSITION_TEXT['confirmed-bug']
+    case 'not-applied':
+      return DISPOSITION_TEXT['not-applied'][disposition.reason]
     default:
       return disposition satisfies never
   }

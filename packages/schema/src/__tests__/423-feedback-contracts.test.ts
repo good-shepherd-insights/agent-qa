@@ -46,7 +46,8 @@ const RECORD_EVIDENCE_KINDS = ['effects', 'unreadable'] as const
 // 2026-09-15, 423-25: the inherited 419 vocabularies the quarantined and already-marked arms carry.
 const QUARANTINE_CLASSES = ['flake', 'environment', 'timeout'] as const
 // 2026-09-30, 432-09: the writer's vocabulary is `applied`; `drafted` is a readable pre-432 receipt.
-const DISPOSITIONS = ['quarantined', 'applied', 'no-draftable-fix', 'confirmed-bug'] as const
+// 2026-10-03 (quick 261003-mqc): `not-applied` closes a mark whose planned fix was refused.
+const DISPOSITIONS = ['quarantined', 'applied', 'no-draftable-fix', 'confirmed-bug', 'not-applied'] as const
 const HISTORICAL_DISPOSITIONS = ['drafted'] as const
 
 const runId = asRunId('run-feedback-contract')
@@ -187,6 +188,7 @@ describe('C423-FEEDBACK-RESULTS-EXACT', () => {
       drafted: { kind: 'drafted', fix: 'fact', proposalId: 'proposal-1', proposalKind: 'knowledge' },
       'no-draftable-fix': { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } },
       'confirmed-bug': { kind: 'confirmed-bug', confirmedRecords: 0 },
+      'not-applied': { kind: 'not-applied', fix: 'fact', reason: 'target-not-found' },
     }
     for (const kind of [...DISPOSITIONS, ...HISTORICAL_DISPOSITIONS]) {
       expect(RunsMarkPreviewResultSchema.safeParse({ ...repeat, prior: { ...repeat.prior, disposition: cases[kind] } }).success, kind).toBe(true)

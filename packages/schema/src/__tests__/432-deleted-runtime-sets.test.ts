@@ -24,15 +24,16 @@ const exported = (name: string) => (schema as Record<string, unknown>)[name]
 
 describe('432-09 applied output key sets', () => {
   it('C432-RUNTIME-SETS: marks, history, preview, digest and run knowledge carry applied changes and no inbox member', () => {
+    // 2026-10-03 (quick 261003-mqc): `not-applied` closes a mark whose planned fix was refused.
     expect(exported('MARK_DISPOSITIONS'), 'the written dispositions')
-      .toEqual(['quarantined', 'applied', 'no-draftable-fix', 'confirmed-bug'])
+      .toEqual(['quarantined', 'applied', 'no-draftable-fix', 'confirmed-bug', 'not-applied'])
     expect(exported('MARK_HISTORICAL_DISPOSITIONS'), 'read, never written').toEqual(['drafted'])
     expect(exported('MARK_APPLIED_CHANGE_KINDS')).toEqual(['knowledge', 'test-file'])
 
     const dispositions = exported('MarkDispositionSchema')
     expect(armOf(dispositions, 'kind', 'applied'), 'the applied arm').toBeDefined()
     expect((dispositions as Options).options.map(option => option.shape.kind!.value))
-      .toEqual(['quarantined', 'applied', 'no-draftable-fix', 'confirmed-bug', 'drafted'])
+      .toEqual(['quarantined', 'applied', 'no-draftable-fix', 'confirmed-bug', 'not-applied', 'drafted'])
     expect(keysOf(armOf(dispositions, 'kind', 'applied')), 'an applied fix names its change, never a proposal')
       .toEqual(sorted(['kind', 'fix', 'change']))
 

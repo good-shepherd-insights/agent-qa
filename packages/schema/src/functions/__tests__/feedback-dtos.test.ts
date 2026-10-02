@@ -52,7 +52,8 @@ describe('Gate-3 neutral feedback contracts (419)', () => {
   it('pins the quarantine, disposition and fix vocabularies in declaration order', () => {
     expect(MARK_QUARANTINE_CLASSES).toEqual(['flake', 'environment', 'timeout'])
     // 2026-09-30, 432-09: the writer applies a fix; `drafted` is only read back (MARK_HISTORICAL_DISPOSITIONS).
-    expect(MARK_DISPOSITIONS).toEqual(['quarantined', 'applied', 'no-draftable-fix', 'confirmed-bug'])
+    // 2026-10-03 (quick 261003-mqc): `not-applied` closes a mark whose planned fix was refused.
+    expect(MARK_DISPOSITIONS).toEqual(['quarantined', 'applied', 'no-draftable-fix', 'confirmed-bug', 'not-applied'])
     expect(MARK_FIX_KINDS).toEqual(['fact', 'caution', 'procedure-hint', 'test-edit'])
   })
 

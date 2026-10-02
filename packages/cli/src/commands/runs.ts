@@ -18,6 +18,7 @@ export function renderMarkOutcome(dto: RunsMarkOutcome): string {
       // A pre-432 receipt read back from an existing ledger; no writer produces it now.
       : d.kind === 'drafted' ? `drafted: ${d.fix} (recorded before fixes applied directly)`
       : d.kind === 'no-draftable-fix' ? 'no draftable fix'
+      : d.kind === 'not-applied' ? `${d.fix} not applied: ${d.reason}`
       : `confirmed-bug: ${d.confirmedRecords} record(s) confirmed`
     return `marked ${r.kind} on ${r.runId} test ${r.testIndex}${r.stepIndex === undefined ? '' : ` step ${r.stepIndex}`} · ${disposition} · receipt ${r.markId} #${r.ordinal}`
   }

@@ -4,11 +4,11 @@ import type { KnowledgeReaderPort } from '@vostride/agent-qa-agent'
 import type { FeedbackPort } from '@vostride/agent-qa-schema'
 import { RUNS_MARK_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import { applyKnowledgeChange, createKnowledgeReader, LOCAL_CURATION_CAPABILITIES, type ExplicitReviewDelegate, type LocalCurationCapabilities } from '@vostride/agent-qa-agent-local'
-import { RunsMarkInputSchema, type AuthoringDraftEditInput, type AuthoringDraftEditOutput, type MarkReceipt, type RunsMarkInput, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
+import { MARK_FIX_REFUSALS, RunsMarkInputSchema, type MarkFixRefusal, type AuthoringDraftEditInput, type AuthoringDraftEditOutput, type MarkReceipt, type RunsMarkInput, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
 import { resolveConfiguredKnowledgeRoot } from '../config.js'
 import { wordImprovementPlan } from './feedback-wording.js'
 import { decideMarkDraft, loadMarkTarget, markEvidenceCurationJobIds, markFeedbackInput, planMarkFeedback, readMarkDraftFacts } from './feedback-plan.js'
-import { resolveEvalSession, resolveProductPartition, FsMarkLedger, freezeGoldenTrajectory, MARK_INTENT_FILE, RUNS_SUBDIR, slugBranch } from '../eval-session-composition.js'
+import { resolveEvalSession, resolveProductPartition, FsMarkLedger, freezeGoldenTrajectory, RUNS_SUBDIR, slugBranch } from '../eval-session-composition.js'
 import { answerRecordedMarkEdit, clearMarkEditRecord, MARK_EDIT_RECORD_FILE, withMarkEditScope } from './mark-edit-record.js'
 
 export { resolveMarkMember } from './feedback-plan.js'
@@ -92,38 +92,23 @@ export class KnowledgeWriterLeaseBusyError extends Error {
 }
 
 /**
- * The mark's fix was not applied; gold and evidence stand, no receipt.
+ * The mark's fix was not applied this time and a retry can apply it: gold and evidence stand, no
+ * receipt, and the unfinished mark resumes on retry.
  *
- * 2026-10-03 (quick 261003-lgd, Phase 432 review WR-04): "Retry the mark" only where a retry can
- * succeed. A retry reuses the fix this mark already planned (its intent keeps the plan), so a
- * refusal that comes from the plan itself (its knowledge target is gone, its policy text is
- * refused, its test file is outside the workspace) recurs on every retry, and the unfinished mark
- * holds the run. Those name the intent file to remove; marking again then starts a new mark.
+ * 2026-10-03 (quick 261003-mqc): a refusal that comes from the mark's own planned fix
+ * (MARK_FIX_REFUSALS) never reaches here. A retry reuses that plan and could never apply it, so
+ * the mark closes instead, under its own identity, with a `not-applied` receipt.
  */
 export class MarkFixNotAppliedError extends Error {
-  constructor(readonly reason: string, readonly intentPath?: string) {
-    super(markFixNotAppliedMessage(reason, intentPath))
+  constructor(readonly reason: string) {
+    super(`Mark fix was not applied (${reason}); gold and evidence landed, no mark receipt `
+      + 'appended. Retry the mark.')
     this.name = 'MarkFixNotAppliedError'
   }
 }
 
-const PLANNED_FIX_REFUSALS: Readonly<Record<string, string>> = {
-  'target-not-found':
-    'the knowledge record this mark\'s fix replaces is no longer in the knowledge store',
-  'policy-materialize-refused': 'the policy text this mark\'s fix writes was refused',
-  'outside-workspace': 'the test file this mark\'s fix edits is outside the workspace',
-}
-
-function markFixNotAppliedMessage(reason: string, intentPath: string | undefined): string {
-  const planned = PLANNED_FIX_REFUSALS[reason]
-  if (planned === undefined || intentPath === undefined) {
-    return `Mark fix was not applied (${reason}); gold and evidence landed, no mark receipt `
-      + 'appended. Retry the mark.'
-  }
-  return `Mark fix was not applied (${reason}): ${planned}, and a retry reuses the same planned `
-    + 'fix. Gold and evidence landed and no mark receipt was appended. To give this mark up, '
-    + `remove ${intentPath}, then mark again.`
-}
+const isPlannedFixRefusal = (reason: string): reason is MarkFixRefusal =>
+  (MARK_FIX_REFUSALS as readonly string[]).includes(reason)
 
 export class FeedbackFreezeRefusedError extends Error {
   constructor(readonly outcome: unknown) {
@@ -198,9 +183,7 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
         if (intent.stage !== 'applied') {
         const session = await resolveEvalSession({ configPath: deps.configPath, keyOnly: true })
         const configDir = dirname(resolve(deps.configPath))
-        const runDir = join(deps.agentQaRoot, RUNS_SUBDIR, slugBranch(input.runId))
-        const editRecordPath = join(runDir, MARK_EDIT_RECORD_FILE)
-        const intentPath = join(runDir, MARK_INTENT_FILE)
+        const editRecordPath = join(deps.agentQaRoot, RUNS_SUBDIR, slugBranch(input.runId), MARK_EDIT_RECORD_FILE)
         const knowledgeRoot = resolveConfiguredKnowledgeRoot(session.config, configDir)
         const held = heldAuthority(knowledgeRoot)
         const frozen = freezeGoldenTrajectory({ agentQaRoot: deps.agentQaRoot,
@@ -252,9 +235,13 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
               ...(held === undefined ? {} : { writerAuthority: held }),
               ...(deps.knowledgeChangeDelegate === undefined ? {} : { delegate: deps.knowledgeChangeDelegate }),
             })
-            if (applied.outcome !== 'applied') throw new MarkFixNotAppliedError(applied.outcome, intentPath)
-            mark.disposition = { kind: 'applied', fix: knowledgePlan.fix,
-              change: { kind: 'knowledge', changeId: applied.changeId, recordIds: [...applied.recordIds] } }
+            if (applied.outcome !== 'applied') {
+              if (!isPlannedFixRefusal(applied.outcome)) throw new MarkFixNotAppliedError(applied.outcome)
+              mark.disposition = { kind: 'not-applied', fix: knowledgePlan.fix, reason: applied.outcome }
+            } else {
+              mark.disposition = { kind: 'applied', fix: knowledgePlan.fix,
+                change: { kind: 'knowledge', changeId: applied.changeId, recordIds: [...applied.recordIds] } }
+            }
           } else if (draft.kind === 'test-edit') {
             // decideMarkDraft admits a test edit only when this host binds the authoring edit, which
             // writes the edited file itself, guarded by the digest it read (432-08). 261002-mrk: the
@@ -264,9 +251,13 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
             const written = answerRecordedMarkEdit({ ...editScope, configDir })
               ?? (await withMarkEditScope(editScope, () => deps.invokeAuthoringDraftEdit!({
                 testRef: draft.plan.testRef, intent: draft.plan.intent }))).written
-            if (written.kind !== 'written') throw new MarkFixNotAppliedError(written.reason, intentPath)
-            mark.disposition = { kind: 'applied', fix: 'test-edit',
-              change: { kind: 'test-file', filePath: written.filePath, contentDigest: written.contentDigest } }
+            if (written.kind !== 'written') {
+              if (!isPlannedFixRefusal(written.reason)) throw new MarkFixNotAppliedError(written.reason)
+              mark.disposition = { kind: 'not-applied', fix: 'test-edit', reason: written.reason }
+            } else {
+              mark.disposition = { kind: 'applied', fix: 'test-edit',
+                change: { kind: 'test-file', filePath: written.filePath, contentDigest: written.contentDigest } }
+            }
           } else {
             mark.disposition = { kind: 'no-draftable-fix', checked: draft.checked }
           }
