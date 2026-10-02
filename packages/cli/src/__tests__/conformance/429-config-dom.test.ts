@@ -234,6 +234,11 @@ class Harness {
     for (const page of opened.context.pages()) {
       const seen = await page.evaluate(() => (window as unknown as { __dialogsSeen?: string[] }).__dialogsSeen ?? []).catch(() => [])
       this.dialogs.push(...seen)
+      // 2026-10-02 (quick 261002-tmo): let a route handler still in flight finish before the
+      // context goes. OUTSIDE-EDIT-INTERLEAVED-SHIPPED's PATCH handler was mid `route.fetch()` when
+      // the context closed under a forced gate at load up to 165, an unhandled `Request context
+      // disposed` rejection that failed the CLI task with every cell green.
+      await page.unrouteAll({ behavior: 'wait' })
     }
     await opened.context.close()
   }
