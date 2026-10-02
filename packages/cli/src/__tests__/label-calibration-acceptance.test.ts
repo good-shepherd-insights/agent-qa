@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Command } from 'commander'
 import { PassThrough, Writable } from 'node:stream'
@@ -252,13 +252,17 @@ it('adopts a real prior generation in new bundle/index hosts and matches report,
   expect(bytes(f.root)).toEqual(beforeDoctor)
   await f.mark(20)
   // 432-09 (D-04): the marks now commit their fixes, and that commit leaves the index database
-  // checkpointed with no WAL sidecars. The doctor's read-open recreates SQLite's transient -wal/-shm
-  // files beside it, which are not content; every other byte, the database included, is unchanged.
-  const content = (root: string) => bytes(root).filter(([path]) => !/knowledge\.db-(?:wal|shm)$/.test(path!))
-  const beforeStale = content(f.root), stale = await doctor()
+  // checkpointed with no WAL sidecars. 2026-10-02 (quick 261002-hyg, 432-09 #5): the doctor opens a
+  // checkpointed index immutably, so asking it creates no -wal/-shm beside it; every byte, sidecar
+  // names included, is unchanged (this cell compared around the two sidecars until then).
+  const beforeStale = bytes(f.root)
+  expect(beforeStale.filter(([path]) => /knowledge\.db$/.test(path!))).toHaveLength(1)
+  const stale = await doctor()
   expect(stale.message).toContain('goldDigest stale')
   expect(stale.message).toContain(publication.artifact.generationId)
-  expect(content(f.root)).toEqual(beforeStale)
+  const afterStale = bytes(f.root)
+  expect(afterStale.map(([path]) => relative(f.root, path!))).toEqual(beforeStale.map(([path]) => relative(f.root, path!)))
+  expect(afterStale).toEqual(beforeStale)
   expect(buildTrustPriorsResolver({ ...f, inspectCalibration: true })).toMatchObject({ kind: 'ready', calibration: expect.stringContaining('stale') })
 }, MARK_DRIVE_TIMEOUT_MS)
 

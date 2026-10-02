@@ -136,6 +136,17 @@ interface IndexOpenOptions {
   vecLoadablePath?: string
 }
 
+export interface IndexReaderOpenOptions extends IndexOpenOptions {
+  /**
+   * For a probe that only ASKS about the index and releases the connection at once (`doctor`).
+   * With no `-wal` beside the database, no connection holds it in WAL mode and the writer's close
+   * checkpointed every page into the main file, so the open is `mode=ro&immutable=1` and SQLite
+   * creates no `-wal`/`-shm` (432-09 #5). With a `-wal` present the open is the ordinary read-only
+   * one, so a live writer's frames are still read. Serving readers never set it.
+   */
+  inspectCheckpointedImmutably?: boolean
+}
+
 export function indexDbPath(knowledgeRoot: string): string {
   return join(knowledgeRoot, 'memory', 'index', INDEX_DB_FILE)
 }
@@ -813,9 +824,17 @@ export function openIndexWriter(
 
 export function openIndexReaderConnection(
   knowledgeRoot: string,
-  opts: IndexOpenOptions = {},
+  opts: IndexReaderOpenOptions = {},
 ): IndexReaderConnection {
-  const db = new DatabaseSync(indexDbPath(knowledgeRoot), {
+  const path = indexDbPath(knowledgeRoot)
+  let location = path
+  if (opts.inspectCheckpointedImmutably === true && !existsSync(`${path}-wal`)) {
+    const immutableUri = pathToFileURL(path)
+    immutableUri.searchParams.set('mode', 'ro')
+    immutableUri.searchParams.set('immutable', '1')
+    location = immutableUri.href
+  }
+  const db = new DatabaseSync(location, {
     readOnly: true,
     allowExtension: true,
     timeout: READER_BUSY_TIMEOUT_MS,

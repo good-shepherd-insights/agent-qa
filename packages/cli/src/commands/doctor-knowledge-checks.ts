@@ -104,7 +104,7 @@ const SKIPPED: CheckResult = { status: 'skip', message: NO_KNOWLEDGE_ROOT_MESSAG
 
 export interface KnowledgeCheckProbes {
   buildPromotionPosture?: typeof buildPromotionPostureResolver
-  classifyIndexFace?: (knowledgeRoot: string) => IndexFace
+  classifyIndexFace?: (knowledgeRoot: string, options: { inspectCheckpointedImmutably: true }) => IndexFace
   resolveEmbedderCapability?: (options: {
     preferredProfile: EmbeddingProfile
     allowDownload: false
@@ -595,7 +595,9 @@ export function createKnowledgeChecks(
 
   async function runProbe(root: string): Promise<KnowledgeProbe> {
     const trustPriors = priors()
-    const face = classify(root)
+    // Asking must not change the knowledge root: a checkpointed index is opened immutably, so the
+    // probe creates no SQLite -wal/-shm beside it (quick 261002-hyg, 432-09 #5).
+    const face = classify(root, { inspectCheckpointedImmutably: true })
     let learning: PromotionPostureResolution
     try {
       if (trustPriors.kind === 'refused') throw new Error(trustPriors.reason)

@@ -837,9 +837,14 @@ type ClassifiedIndex =
   | { face: { source: 'index' }; connection: IndexReaderConnection }
   | { face: Extract<IndexFace, { source: 'scan' }>; connection?: undefined }
 
+export interface ClassifyIndexFaceOptions extends OpenKnowledgeReaderOptions {
+  /** `IndexReaderOpenOptions.inspectCheckpointedImmutably`: the probe only, never the facade. */
+  inspectCheckpointedImmutably?: boolean
+}
+
 function classifyIndexFaceWithConnection(
   knowledgeRoot: string,
-  opts: OpenKnowledgeReaderOptions,
+  opts: ClassifyIndexFaceOptions,
 ): ClassifiedIndex {
   if (!existsSync(indexDbPath(knowledgeRoot))) {
     return {
@@ -899,7 +904,7 @@ function classifyIndexFaceWithConnection(
  */
 export function classifyIndexFace(
   knowledgeRoot: string,
-  opts: OpenKnowledgeReaderOptions = {},
+  opts: ClassifyIndexFaceOptions = {},
 ): IndexFace {
   const result = classifyIndexFaceWithConnection(knowledgeRoot, opts)
   if (result.connection !== undefined) closeBestEffort(result.connection)
@@ -922,7 +927,10 @@ export function openKnowledgeReader(
   opts: OpenKnowledgeReaderOptions = {},
 ): KnowledgeReader {
   const priors = snapshotTrustPriors(opts.priors)
-  const result = classifyIndexFaceWithConnection(knowledgeRoot, opts)
+  const result = classifyIndexFaceWithConnection(knowledgeRoot, {
+    ...opts,
+    inspectCheckpointedImmutably: false,
+  })
   if (result.connection === undefined) {
     // The marker write lives HERE, in the serving facade, and not in the classifier: requesting a
     // rebuild is what a reader that just failed to serve from the index owes the drainer.
