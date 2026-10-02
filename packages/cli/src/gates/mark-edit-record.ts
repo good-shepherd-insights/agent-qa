@@ -9,7 +9,6 @@
 // `.agent-qa/`, beside the mark intent.
 
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { createHash } from 'node:crypto'
 import {
   closeSync,
   fsyncSync,
@@ -21,7 +20,7 @@ import {
 } from 'node:fs'
 import { resolve } from 'node:path'
 
-import type { TestFileWrite } from '@vostride/agent-qa-schema'
+import { sha256hexBytes, type TestFileWrite } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
 export const MARK_EDIT_RECORD_FILE = 'mark-edit.json'
@@ -80,7 +79,7 @@ export function recordMarkEditAhead(write: PendingTestWrite): void {
 
 function digestOf(path: string): string | undefined {
   try {
-    return createHash('sha256').update(readFileSync(path)).digest('hex')
+    return sha256hexBytes(readFileSync(path))
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
     throw error

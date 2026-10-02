@@ -1,5 +1,4 @@
 import { dirname, join, resolve } from 'node:path'
-import { RUNS_SUBDIR } from '@vostride/agent-qa-runner-local'
 import { trustPriorsForHost, type ResolveTrustPriors } from '../curation/trust-priors.js'
 import type { KnowledgeReaderPort } from '@vostride/agent-qa-agent'
 import type { FeedbackPort } from '@vostride/agent-qa-schema'
@@ -9,7 +8,7 @@ import { RunsMarkInputSchema, type AuthoringDraftEditInput, type AuthoringDraftE
 import { resolveConfiguredKnowledgeRoot } from '../config.js'
 import { wordImprovementPlan } from './feedback-wording.js'
 import { decideMarkDraft, loadMarkTarget, markEvidenceCurationJobIds, markFeedbackInput, planMarkFeedback, readMarkDraftFacts } from './feedback-plan.js'
-import { resolveEvalSession, resolveProductPartition, FsMarkLedger, freezeGoldenTrajectory, slugBranch } from '../eval-session-composition.js'
+import { resolveEvalSession, resolveProductPartition, FsMarkLedger, freezeGoldenTrajectory, RUNS_SUBDIR, slugBranch } from '../eval-session-composition.js'
 import { answerRecordedMarkEdit, clearMarkEditRecord, MARK_EDIT_RECORD_FILE, withMarkEditScope } from './mark-edit-record.js'
 
 export { resolveMarkMember } from './feedback-plan.js'
