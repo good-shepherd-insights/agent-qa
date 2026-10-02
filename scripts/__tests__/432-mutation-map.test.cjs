@@ -246,6 +246,28 @@ test('C432-MUTATION-ALL-MEMBERS: the five public returns pin their declarations,
   assert.deepEqual(Object.values(byId).filter(leg => leg.id.startsWith('A') && leg.crossing !== null).map(leg => leg.id), Object.keys(pins))
 })
 
+test('C432-MUTATION-ALL-MEMBERS: every created path is a deleted module the census names, and every edited path is tracked', () => {
+  const census = fs.readFileSync(path.join(ROOT, 'packages/arch', CENSUS), 'utf8')
+  const atHead = file => spawnSync('git', ['cat-file', '-e', `HEAD:${file}`], { cwd: ROOT }).status === 0
+  const created = new Set()
+  for (const leg of listDriver()) {
+    for (const file of pathsOf(leg)) {
+      if (atHead(file)) {
+        assert.ok(fs.existsSync(path.join(ROOT, file)), `${leg.id}: ${file} is tracked but missing on disk`)
+        continue
+      }
+      // A path the leg creates: absent on disk and at HEAD, a module the phase deleted, and named by
+      // the census's deleted-module inventory, so its return reds C432-DELETED-SYMBOLS as well.
+      assert.ok(leg.id.startsWith('A'), `${leg.id}: a retained-behaviour leg creates ${file}`)
+      assert.ok(!fs.existsSync(path.join(ROOT, file)), `${leg.id}: ${file} already exists`)
+      assert.ok(census.includes(`'${file.slice(P.length)}',`), `${leg.id}: ${file} is not in the census's deleted-module inventory`)
+      created.add(file)
+    }
+  }
+  assert.equal(created.size, 22, `created modules: ${[...created].join(', ')}`)
+  console.log(`MAP created-modules=${created.size}`)
+})
+
 test('C432-MUTATION-SELFTEST: the selftest spells every leg, target and RED itself, equal to the map and the driver', () => {
   const expected = selftestExpected()
   assert.equal(expected.length, 94)

@@ -598,12 +598,33 @@ afterAll(() => {
   if (helpRoot !== '') rmSync(helpRoot, { recursive: true, force: true })
 })
 
+// The named assertions a C432-RETURN cell reports, spelled once for the cells below and for
+// C432-MUTATION-ALL-MEMBERS, which holds every mutation leg to an assertion this census makes.
+const backMessage = (leg: ReturnLeg, file: string): string => `${leg.leg}: ${file} is back`
+const returnedMessage = (leg: ReturnLeg, spelled: string): string => `${leg.leg}: ${leg.subject} returned (${spelled})`
+const reshapedMessage = (leg: ReturnLeg): string => `${leg.leg}: ${leg.subject} returned:`
+const acceptedMessage = (kind: keyof ConfigObservations['members']): string =>
+  `the public parser accepts the removed member (${REFUSED_AT[kind]})`
+const FLAG_BACK_MESSAGE = 'the run command registers the trust flag again'
+
+/**
+ * The assertions that name THIS member: its own spellings, its declaration shape, its public return.
+ * A returning module's file (`… is back`) is shared by every member of that module, so it is never one.
+ */
+function memberAssertions(leg: ReturnLeg): string[] {
+  return [
+    ...(leg.needles ?? []).map((needle) => returnedMessage(leg, joined(needle))),
+    ...(leg.pattern === undefined ? [] : [reshapedMessage(leg)]),
+    ...(leg.runtime === undefined ? [] : [leg.runtime === 'trust-flag' ? FLAG_BACK_MESSAGE : acceptedMessage(leg.runtime)]),
+  ]
+}
+
 function assertRuntime(kind: NonNullable<ReturnLeg['runtime']>): void {
   if (kind === 'trust-flag') {
     expect(runHelpStatus, `the rebuilt binary could not print run --help:\n${runHelp}`).toBe(0)
     // Positive control: this is the real `run` command's help, with a retained option on it.
     expect(runHelp).toContain('--reporter')
-    expect(runHelp, 'the run command registers the trust flag again').not.toContain(joined(['--trust-', 'session']))
+    expect(runHelp, FLAG_BACK_MESSAGE).not.toContain(joined(['--trust-', 'session']))
     return
   }
   expect(config, `the rebuilt public parser could not be loaded: ${configFailure}`).toBeDefined()
@@ -612,7 +633,7 @@ function assertRuntime(kind: NonNullable<ReturnLeg['runtime']>): void {
   const member = config!.members[kind]
   // Soft, so a returned member reports both facts: the parse accepted it AND kept it (432-43's driver
   // requires the acceptance line by name for A59/A61/A63/A65).
-  expect.soft(member.success, `the public parser accepts the removed member (${REFUSED_AT[kind]})`).toBe(false)
+  expect.soft(member.success, acceptedMessage(kind)).toBe(false)
   expect.soft(member.retained, `the public parser keeps the removed member (${REFUSED_AT[kind]})`).toBe(false)
   expect(member.unrecognized, 'the removed member is not refused as an unrecognized key').toContain(REFUSED_AT[kind])
 }
@@ -646,16 +667,16 @@ describe('C432-RETURN: every removed approval and permission member reds by name
   for (const leg of RETURN_LEGS) {
     it(`C432-RETURN-${leg.leg}: ${leg.subject} stays deleted`, () => {
       for (const file of leg.absentFiles ?? []) {
-        expect.soft(existsSync(join(PACKAGES_DIR, file)), `${leg.leg}: ${file} is back`).toBe(false)
+        expect.soft(existsSync(join(PACKAGES_DIR, file)), backMessage(leg, file)).toBe(false)
       }
       const regions = leg.regions ?? []
       for (const needle of leg.needles ?? []) {
         const hits = hitsIn(regions, joined(needle))
-        expect.soft(hits, `${leg.leg}: ${leg.subject} returned (${joined(needle)}):\n${hits.join('\n')}`).toEqual([])
+        expect.soft(hits, `${returnedMessage(leg, joined(needle))}:\n${hits.join('\n')}`).toEqual([])
       }
       if (leg.pattern !== undefined) {
         const hits = regexHitsIn(regions, new RegExp(joined(leg.pattern)))
-        expect.soft(hits, `${leg.leg}: ${leg.subject} returned:\n${hits.join('\n')}`).toEqual([])
+        expect.soft(hits, `${reshapedMessage(leg)}\n${hits.join('\n')}`).toEqual([])
       }
       if (leg.runtime !== undefined) assertRuntime(leg.runtime)
     })
@@ -725,15 +746,14 @@ describe('C432-MUTATION-ALL-MEMBERS: every removed member has exactly one mutati
     expect(ids.filter((id) => id.startsWith('B')).sort()).toEqual(
       Array.from({ length: 16 }, (_, index) => `B${String(index + 1).padStart(2, '0')}`))
     expect(legs).toHaveLength(94)
+    const census = new Map(RETURN_LEGS.map((leg) => [leg.leg, leg]))
     for (const leg of legs.filter((entry) => entry.id.startsWith('A'))) {
-      // The named assertion is the member's own: its returned spelling, its declaration shape, its
-      // public-parser acceptance, or the rebuilt binary's trust flag — never the cell alone.
+      // The named assertion is one THIS census makes for THIS member: its returned spelling, its
+      // declaration shape, its public-parser acceptance or the rebuilt binary's trust flag — never the
+      // cell alone, and never the module file a sibling member reds by too.
       const message = /\[(.+)\]$/.exec(leg.reds[0]!)?.[1] ?? ''
-      expect(
-        message.startsWith(`${leg.id}: `) || message.startsWith('the public parser accepts the removed member (')
-          || message === 'the run command registers the trust flag again',
-        `${leg.id} names no assertion of its own: ${leg.reds[0]}`,
-      ).toBe(true)
+      expect(memberAssertions(census.get(leg.id)!), `${leg.id} names an assertion this census does not make for it: ${message}`)
+        .toContain(message)
     }
     // The five public returns cross a rebuilt dist; nothing else in the A table does.
     expect(legs.filter((leg) => leg.crossing !== null && leg.id.startsWith('A')).map((leg) => `${leg.id}:${leg.crossing}`)).toEqual([
