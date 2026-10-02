@@ -56,13 +56,20 @@ const statusOnlyCalls: Record<string, number> = {
 }
 
 describe('420 maintenance prior dispositions', () => {
-  it('restricts every unpriorized fold to a semantic status counter or validity boundary', () => {
+  // 2026-10-02 (quick 261002-tmo): a whole-program static census, CPU-bound and synchronous,
+  // so there is nothing to wait on. Its program now roots only the non-test sources it
+  // visits (the visited file set is asserted unchanged below): 886 ms -> 432 ms to build.
+  // The budget is a hang ceiling, not a claim: 0.97 s alone, over 15 s under the forced
+  // gate at load 20-37 (432-04 #2, 432-11 #4), so it carries 120 s as C432-EXPLICIT-ALL-CONTEXTS does.
+  it('restricts every unpriorized fold to a semantic status counter or validity boundary', { timeout: 120_000 }, () => {
     const config = ts.readConfigFile('tsconfig.json', ts.sys.readFile)
     const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, process.cwd())
-    const program = ts.createProgram(parsed.fileNames, parsed.options)
+    const sourceRoots = parsed.fileNames.filter(name => !relative(resolve('src'), name).includes('__tests__'))
+    const program = ts.createProgram(sourceRoots, parsed.options)
     const checker = program.getTypeChecker()
     const census: Record<string, number> = {}
     const unsafe: string[] = []
+    const visited: string[] = []
     const sourceRoot = resolve('src')
     for (const source of program.getSourceFiles()) {
       const file = relative(sourceRoot, source.fileName)
@@ -90,30 +97,34 @@ describe('420 maintenance prior dispositions', () => {
         }
         ts.forEachChild(node, visit)
       }
+      visited.push(source.fileName)
       visit(source)
     }
+    expect(visited.sort()).toEqual(sourceRoots.map(name => resolve(name)).sort())
     expect(census).toEqual(statusOnlyCalls)
     expect(unsafe, 'unpriorized trust remains numerically accessible at these boundaries').toEqual([])
   })
 
-  it('keeps inspect show and lineage projections identical across absent empty and altered priors', () => {
-    for (const entry of baseline.cases) {
-      const f = persist(entry)
-      const original = inspectRecords({ knowledgeRoot: f.knowledgeRoot, filter: {} })
-      expect(original).toHaveLength(1)
-      expect(original[0]).toMatchObject({ status: f.expected.status, confirmations: f.expected.counters.confirmed,
-        contradictions: f.expected.counters.contradicted, openedAtOrdinal: f.expected.validity.openedAtOrdinal })
-      expect(Object.keys(original[0]!).sort()).toEqual(['anchors', 'confirmations', 'contradictions', 'evidenceTokens', 'kind', 'lastEventOrdinal', 'openedAtOrdinal', 'product', 'recordId', 'schemaVersion', 'scope', 'status'])
-      const lineage = scanCanonicalBundles(f.knowledgeRoot)
-      expect(Object.keys(lineage[0]!).sort()).toEqual(['anchors', 'createdAtOrdinal', 'events', 'kind', 'recordId', 'scope', 'status'])
-      for (const priors of [undefined, {}, { 'agent-observed': { alpha: 1.8, beta: 0.2 } }]) {
-        fold.priors = priors
-        expect(inspectRecords({ knowledgeRoot: f.knowledgeRoot, filter: {} })).toEqual(original)
-        const shown = showRecord({ knowledgeRoot: f.knowledgeRoot, recordId: f.id })
-        if (shown.kind !== 'found') throw new Error('saved record not found')
-        expect(shown.record).toEqual(original[0])
-        expect(scanCanonicalBundles(f.knowledgeRoot)).toEqual(lineage)
-      }
+  // 2026-10-02 (quick 261002-tmo): one cell per origin. The loop over all eight origins
+  // shared one 15 s budget (5.2 s alone beside the other two trust-prior files). Each
+  // origin keeps every assertion and carries its own budget; trust-prior-serving pins
+  // the eight origin names of the shared fixture.
+  it.each(baseline.cases)('keeps inspect show and lineage projections identical across absent empty and altered priors: $name', entry => {
+    const f = persist(entry)
+    const original = inspectRecords({ knowledgeRoot: f.knowledgeRoot, filter: {} })
+    expect(original).toHaveLength(1)
+    expect(original[0]).toMatchObject({ status: f.expected.status, confirmations: f.expected.counters.confirmed,
+      contradictions: f.expected.counters.contradicted, openedAtOrdinal: f.expected.validity.openedAtOrdinal })
+    expect(Object.keys(original[0]!).sort()).toEqual(['anchors', 'confirmations', 'contradictions', 'evidenceTokens', 'kind', 'lastEventOrdinal', 'openedAtOrdinal', 'product', 'recordId', 'schemaVersion', 'scope', 'status'])
+    const lineage = scanCanonicalBundles(f.knowledgeRoot)
+    expect(Object.keys(lineage[0]!).sort()).toEqual(['anchors', 'createdAtOrdinal', 'events', 'kind', 'recordId', 'scope', 'status'])
+    for (const priors of [undefined, {}, { 'agent-observed': { alpha: 1.8, beta: 0.2 } }]) {
+      fold.priors = priors
+      expect(inspectRecords({ knowledgeRoot: f.knowledgeRoot, filter: {} })).toEqual(original)
+      const shown = showRecord({ knowledgeRoot: f.knowledgeRoot, recordId: f.id })
+      if (shown.kind !== 'found') throw new Error('saved record not found')
+      expect(shown.record).toEqual(original[0])
+      expect(scanCanonicalBundles(f.knowledgeRoot)).toEqual(lineage)
     }
   })
 

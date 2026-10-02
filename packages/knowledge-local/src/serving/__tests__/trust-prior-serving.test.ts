@@ -16,6 +16,7 @@ const baseline = JSON.parse(readFileSync(new URL('../../__tests__/fixtures/420-p
   cases: { name: string; input: PublishBundleInput; appended: unknown[]; snapshots: { expectedBytes: string }[] }[]
 }
 const roots: string[] = []
+const BASELINE_ORIGINS = ['user-clean', 'user-incomplete', 'agent-verified-clean', 'agent-verified-incomplete', 'agent-observed-clean', 'agent-observed-incomplete', 'import-clean', 'import-incomplete']
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 const prior = (): TrustPriorTable => ({ 'agent-observed': { alpha: 1.8, beta: 0.2 } })
 
@@ -74,17 +75,22 @@ describe('420 serving prior continuity', () => {
     expect(await serving.read(f.id)).toEqual(await openKnowledgeReader({ knowledgeRoot: f.knowledgeRoot }).read(f.id))
   })
 
-  it('absent and empty priors preserve independent old bytes for every origin', async () => {
-    for (const entry of baseline.cases) {
-      const f = await persist(entry.name)
-      expect(canonicalJson(deriveBundleTrust(f.bundle))).toBe(f.expectedBytes)
-      const original = openKnowledgeReader({ knowledgeRoot: f.knowledgeRoot })
-      const empty = openKnowledgeReader({ knowledgeRoot: f.knowledgeRoot, priors: {} })
-      expect(await empty.search('Sign in', { scope: f.bundle.frontmatter.scope })).toEqual(await original.search('Sign in', { scope: f.bundle.frontmatter.scope }))
-      expect((await empty.search('Sign in', { scope: f.bundle.frontmatter.scope }))[0]!.trust).toBe(f.expected.trust)
-      expect(listBundles(f.knowledgeRoot, {})[0]!.trust).toBe(f.expected.trust)
-      expect(scanBundles({ knowledgeRoot: f.knowledgeRoot, priors: {} })[0]!.trust).toBe(f.expected.trust)
-    }
+  // 2026-10-02 (quick 261002-tmo): one cell per origin. The single cell persisted and
+  // re-indexed all eight origins under one 15 s budget: 2.1 s alone, 17.9 s at load ~217
+  // (432-41 #10). Each origin keeps every assertion and now carries its own budget.
+  it('names every origin in the baseline', () => {
+    expect(baseline.cases.map(entry => entry.name)).toEqual(BASELINE_ORIGINS)
+  })
+
+  it.each(baseline.cases)('absent and empty priors preserve independent old bytes for every origin: $name', async entry => {
+    const f = await persist(entry.name)
+    expect(canonicalJson(deriveBundleTrust(f.bundle))).toBe(f.expectedBytes)
+    const original = openKnowledgeReader({ knowledgeRoot: f.knowledgeRoot })
+    const empty = openKnowledgeReader({ knowledgeRoot: f.knowledgeRoot, priors: {} })
+    expect(await empty.search('Sign in', { scope: f.bundle.frontmatter.scope })).toEqual(await original.search('Sign in', { scope: f.bundle.frontmatter.scope }))
+    expect((await empty.search('Sign in', { scope: f.bundle.frontmatter.scope }))[0]!.trust).toBe(f.expected.trust)
+    expect(listBundles(f.knowledgeRoot, {})[0]!.trust).toBe(f.expected.trust)
+    expect(scanBundles({ knowledgeRoot: f.knowledgeRoot, priors: {} })[0]!.trust).toBe(f.expected.trust)
   })
 
   it('keeps product scope candidate history and integrity admission', async () => {

@@ -124,16 +124,18 @@ describe('420 retrieval prior continuity', () => {
     } finally { reader.close() }
   })
 
-  it('absent and empty readers preserve original persisted trust and lifecycle', async () => {
-    for (const entry of baseline.cases) {
-      const f = persist(entry.name)
-      await rebuildIndex({ knowledgeRoot: f.knowledgeRoot })
-      const original = openKnowledgeReader(f.knowledgeRoot)
-      const empty = openKnowledgeReader(f.knowledgeRoot, { priors: {} })
-      try {
-        expect(empty.getById(f.id)).toEqual(original.getById(f.id))
-        expect(empty.getById(f.id)).toMatchObject({ trust: f.expected.trust, status: f.expected.status, validity: f.expected.validity })
-      } finally { empty.close(); original.close() }
-    }
+  // 2026-10-02 (quick 261002-tmo): one cell per origin. The loop re-indexed all eight
+  // origins under one 15 s budget: 2.1 s alone, 16.4-18.6 s under forced gates at load
+  // 22-217 (432-37 #5, 432-41 #10). Each origin keeps every assertion and its own budget;
+  // trust-prior-serving pins the eight origin names of the shared fixture.
+  it.each(baseline.cases)('absent and empty readers preserve original persisted trust and lifecycle: $name', async entry => {
+    const f = persist(entry.name)
+    await rebuildIndex({ knowledgeRoot: f.knowledgeRoot })
+    const original = openKnowledgeReader(f.knowledgeRoot)
+    const empty = openKnowledgeReader(f.knowledgeRoot, { priors: {} })
+    try {
+      expect(empty.getById(f.id)).toEqual(original.getById(f.id))
+      expect(empty.getById(f.id)).toMatchObject({ trust: f.expected.trust, status: f.expected.status, validity: f.expected.validity })
+    } finally { empty.close(); original.close() }
   })
 })
