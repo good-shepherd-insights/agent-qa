@@ -15,6 +15,7 @@ import { canonicalJson, slugBranch } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
 import { durableRename, fsyncDirectory, fsyncFile, fsyncTree } from '../durable-fs.js'
+import { assertWithinKnowledgeRoot } from '../knowledge-containment.js'
 
 export const BUNDLE_MUTATION_JOURNAL_VERSION = 1
 
@@ -101,6 +102,20 @@ function assertBundleLocation(knowledgeRoot: string, bundleDir: string, bundleId
   const rel = relative(resolve(knowledgeRoot), resolve(bundleDir)).split(sep)
   if (rel.length !== 4 || rel[0] !== 'memory' || rel[2] !== 'bundles') {
     throw new TypeError('bundleDir must use the canonical memory/<product>/bundles/<id> layout')
+  }
+  // 261003-mqc: the checks above are lexical. A `memory/`, product, `bundles/` or bundle directory
+  // linked out of the knowledge root is refused before any journal or replacement is written.
+  assertWithinKnowledgeRoot(knowledgeRoot, bundleDir)
+  assertWithinKnowledgeRoot(knowledgeRoot, join(dirname(bundleDir), '.staging'))
+}
+
+function assertTargetsContained(
+  knowledgeRoot: string,
+  bundleDir: string,
+  targetRelPaths: readonly string[],
+): void {
+  for (const targetRelPath of targetRelPaths) {
+    assertWithinKnowledgeRoot(knowledgeRoot, dirname(join(bundleDir, targetRelPath)))
   }
 }
 
@@ -289,6 +304,8 @@ export function commitBundleMutation(input: BundleMutationInput): void {
   const leaseId = input.writerLeaseId ?? DIRECT_LIBRARY_LEASE_ID
   assertSafeSegment(leaseId, 'writerLeaseId')
   const replacements = orderedReplacements(input.replacements)
+  assertTargetsContained(input.knowledgeRoot, input.bundleDir,
+    replacements.map((replacement) => replacement.targetRelPath))
   const bundlesDir = dirname(input.bundleDir)
   const stagingRoot = join(bundlesDir, '.staging')
   const transactionDir = join(
@@ -392,6 +409,8 @@ export function recoverExpiredBundleMutations(
       }
       const bundleDir = join(dirname(stagingRoot), journal.bundleId)
       assertBundleLocation(knowledgeRoot, bundleDir, journal.bundleId)
+      assertTargetsContained(knowledgeRoot, bundleDir,
+        journal.replacements.map((replacement) => replacement.targetRelPath))
       applyJournal(bundleDir, transactionDir, journal)
       removeCompletedTransaction(transactionDir)
       recoveredBundleIds.push(journal.bundleId)

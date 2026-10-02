@@ -17,7 +17,6 @@ import {
   openSync,
   readdirSync,
   readFileSync,
-  realpathSync,
   renameSync,
   rmdirSync,
   rmSync,
@@ -25,11 +24,13 @@ import {
   writeFileSync,
 } from 'node:fs'
 import type { Dirent, Stats } from 'node:fs'
-import { basename, dirname, isAbsolute, join, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { threadId } from 'node:worker_threads'
 
 import { z } from 'zod'
+
+import { assertWithinKnowledgeRoot } from '../knowledge-containment.js'
 
 export const LEASE_FILE = '.lease'
 export const EPOCH_FILE = '.epoch'
@@ -597,31 +598,6 @@ class MutationLockGenerationLostError extends Error {
 
 class LeaseGuardBusyError extends Error {
   override readonly name = 'LeaseGuardBusyError'
-}
-
-/**
- * The lease guard's directory chain leaves the knowledge root through a link (CR-01).
- *
- * The knowledge root is a shared git repository, and a tracked symlink is checked out even under
- * an ignored directory, so `memory/` or `memory/queue/` can point anywhere. No guard work starts
- * through such a link: nothing is created, claimed or removed, and the lease is left as it is.
- */
-export class LeaseGuardContainmentError extends Error {
-  override readonly name = 'LeaseGuardContainmentError'
-  readonly path: string
-  readonly resolvedTo: string | undefined
-
-  constructor(path: string, resolvedTo: string | undefined, knowledgeRoot: string) {
-    const where = resolvedTo === undefined
-      ? 'is a link that resolves nowhere'
-      : `resolves to ${resolvedTo}`
-    super(
-      `writer lease guard refused: ${path} ${where}, outside the knowledge root `
-        + `${knowledgeRoot}. Remove the link ${path} and retry.`,
-    )
-    this.path = path
-    this.resolvedTo = resolvedTo
-  }
 }
 
 function mutationLockNowMs(): number {
@@ -1266,37 +1242,6 @@ function lstatOrAbsent(path: string): Stats | undefined {
   }
 }
 
-/**
- * Refuse, before any guard work, a guard directory chain that leaves the knowledge root (CR-01).
- *
- * Each of `memory/` and `memory/queue/` that exists must resolve inside the knowledge root's own
- * real path, so a link that stays inside the root is fine and one that leaves it, or resolves
- * nowhere, is refused by name. A component that does not exist yet is created as a real directory.
- */
-function assertLeaseGuardContained(knowledgeRoot: string): void {
-  let realRoot: string
-  try {
-    realRoot = realpathSync(knowledgeRoot)
-  } catch (error) {
-    if (errnoOf(error) === 'ENOENT') return
-    throw error
-  }
-  let dir = knowledgeRoot
-  for (const part of dirname(LEASE_GUARD_DIR).split('/')) {
-    dir = join(dir, part)
-    if (lstatOrAbsent(dir) === undefined) return
-    let real: string | undefined
-    try {
-      real = realpathSync(dir)
-    } catch (error) {
-      if (errnoOf(error) !== 'ENOENT' && errnoOf(error) !== 'ELOOP') throw error
-    }
-    if (real === undefined || (real !== realRoot && !real.startsWith(`${realRoot}${sep}`))) {
-      throw new LeaseGuardContainmentError(dir, real, knowledgeRoot)
-    }
-  }
-}
-
 /** Move a directory nothing can attribute aside, whole: its entries are never ours to delete. */
 function moveLeaseGuardAside(guard: string): void {
   const aside = join(dirname(guard), `${LEASE_GUARD_RESIDUE_PREFIX}${randomUUID()}`)
@@ -1486,7 +1431,8 @@ function withLeaseGuard<T>(
   hooks: LeaseGuardHooks = {},
 ): T {
   const guard = join(knowledgeRoot, LEASE_GUARD_DIR)
-  assertLeaseGuardContained(knowledgeRoot)
+  // CR-01: nothing is created, claimed or removed through a chain that leaves the root.
+  assertWithinKnowledgeRoot(knowledgeRoot, dirname(guard))
   const claimedAtNs = process.hrtime.bigint()
   const token = randomUUID()
   const ownerFile = `${LEASE_GUARD_OWNER_PREFIX}${token}`

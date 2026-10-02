@@ -10,6 +10,7 @@ import type {
 import { deriveBundleTrust, loadBundle } from './bundle-read.js'
 import type { LoadedBundle } from './bundle-read.js'
 import { enumerateBundleDirs } from './bundle-scan.js'
+import { assertWithinKnowledgeRoot } from './knowledge-containment.js'
 import {
   foldSupersessionLineage,
   scanCanonicalBundles,
@@ -276,7 +277,11 @@ export function runKnowledgeGc(
     withCurrentWriterAuthority(
       input.knowledgeRoot,
       writerAuthority,
-      () => rmSync(candidate.dir, { recursive: true, force: false }),
+      () => {
+        // 261003-mqc: never delete a bundle reached through a link out of the knowledge root.
+        assertWithinKnowledgeRoot(input.knowledgeRoot, candidate.dir)
+        rmSync(candidate.dir, { recursive: true, force: false })
+      },
     )
   }
   return {

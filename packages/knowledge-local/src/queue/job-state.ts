@@ -16,6 +16,7 @@ import { dirname, join } from 'node:path'
 import { canonicalJson } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
+import { assertWithinKnowledgeRoot } from '../knowledge-containment.js'
 import {
   withCurrentWriterAuthority,
   type CurrentWriterAuthority,
@@ -195,7 +196,9 @@ export function writeJobStateWithinCurrentAuthority(
     updatedAt: new Date().toISOString(),
   })
   const file = jobStatePath(opts.knowledgeRoot, opts.candidateId)
+  assertWithinKnowledgeRoot(opts.knowledgeRoot, jobsRoot(opts.knowledgeRoot))
   if (state.lifecycle === 'done') {
+    assertWithinKnowledgeRoot(opts.knowledgeRoot, claimedLeaseDir(opts.knowledgeRoot, opts.authority.leaseId))
     rmSync(file, { force: true })
     bestEffortFsyncDirectory(jobsRoot(opts.knowledgeRoot))
     removeClaimedCandidate(opts.knowledgeRoot, opts.authority, opts.candidateId)

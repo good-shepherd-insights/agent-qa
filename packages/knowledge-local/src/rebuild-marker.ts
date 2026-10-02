@@ -16,6 +16,8 @@ import { dirname, join } from 'node:path'
 
 import { z } from 'zod'
 
+import { assertWithinKnowledgeRoot } from './knowledge-containment.js'
+
 export const REBUILD_MARKER_FILE = '.rebuild-requested'
 
 export type RebuildReason = 'absent' | 'corrupt' | 'locked' | 'schema-version'
@@ -54,6 +56,7 @@ function markerPath(knowledgeRoot: string): string {
  */
 export function requestRebuild(opts: RequestRebuildOptions): void {
   const file = markerPath(opts.knowledgeRoot)
+  assertWithinKnowledgeRoot(opts.knowledgeRoot, dirname(file))
   mkdirSync(dirname(file), { recursive: true })
   if (existsSync(file)) return
 
@@ -95,5 +98,6 @@ export function readRebuildRequest(knowledgeRoot: string): ReadRebuildRequestOut
 
 /** Consume the durable rebuild signal. Clearing an absent marker is intentionally a no-op. */
 export function clearRebuildRequest(knowledgeRoot: string): void {
+  assertWithinKnowledgeRoot(knowledgeRoot, dirname(markerPath(knowledgeRoot)))
   rmSync(markerPath(knowledgeRoot), { force: true })
 }

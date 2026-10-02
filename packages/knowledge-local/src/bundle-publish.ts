@@ -38,6 +38,7 @@ import { checkpointCommittedParts } from './bundle-egress.js'
 import { renderBundleParts } from './bundle-parts.js'
 import type { RenderBundlePartsInput } from './bundle-parts.js'
 import { durableRename, fsyncDirectory, fsyncTree } from './durable-fs.js'
+import { assertWithinKnowledgeRoot } from './knowledge-containment.js'
 
 export interface BundleStoreConfig {
   /** Absolute committed-root path. Deliberately no working-directory default. */
@@ -256,6 +257,9 @@ export function stageBundle(
   }
 
   const stagingRoot = join(bundlesDir, '.staging')
+  // 261003-mqc: a `memory/`, product or `bundles/` linked out of the knowledge root is refused
+  // before anything is staged; the rename into `bundlesDir` then stays inside it too.
+  assertWithinKnowledgeRoot(config.knowledgeRoot, stagingRoot)
   const stagingBasename = `.staged-epoch-${config.writerEpoch ?? 0}-${randomUUID()}`
   const stagingDir = join(stagingRoot, stagingBasename)
   mkdirSync(stagingDir, { recursive: true })

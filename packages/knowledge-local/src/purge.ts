@@ -30,6 +30,7 @@ import type { RecordId } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
 import { checkpointCommittedParts } from './bundle-egress.js'
+import { assertWithinKnowledgeRoot } from './knowledge-containment.js'
 import { loadBundle } from './bundle-read.js'
 import type { LoadedBundle } from './bundle-read.js'
 import { queuedCanaryPayloadSchema } from './canary-emit.js'
@@ -631,6 +632,10 @@ function sweepQueuePayloads(
 ): void {
   const root = queueRoot(input.knowledgeRoot)
   for (const target of targets) {
+    // 261003-mqc: never delete through a queue directory linked out of the knowledge root.
+    assertWithinKnowledgeRoot(input.knowledgeRoot, target.candidateDir)
+    assertWithinKnowledgeRoot(input.knowledgeRoot,
+      dirname(jobStatePath(input.knowledgeRoot, target.candidateId)))
     fenceWriterAuthority(input)
     rmSync(target.candidateDir, { recursive: true, force: true })
     fenceWriterAuthority(input)
@@ -1299,6 +1304,9 @@ function publishReceiptAndRetire(
   receiptCycle: number,
 ): PurgeRecordOutcome {
   input.hooks?.beforeReceiptPublish?.()
+  // 261003-mqc: `memory/receipts/` linked out of the knowledge root is refused before writing.
+  assertWithinKnowledgeRoot(input.knowledgeRoot,
+    dirname(receiptCyclePath(input.knowledgeRoot, input.recordId, receiptCycle)))
   const writeOutcome = writeDurableExclusive(
     receiptCyclePath(input.knowledgeRoot, input.recordId, receiptCycle),
     receiptText,
@@ -1352,6 +1360,7 @@ function resumeFromIntent(input: PurgeRecordInput, intent: PurgeIntent): PurgeRe
   )
   input.hooks?.afterProjectionPurge?.()
   for (const dir of intent.bundleDirs) {
+    assertWithinKnowledgeRoot(input.knowledgeRoot, join(input.knowledgeRoot, dir))
     fenceWriterAuthority(input)
     rmSync(join(input.knowledgeRoot, dir), { recursive: true, force: true })
     input.hooks?.afterBundleRemoval?.()
@@ -1359,6 +1368,7 @@ function resumeFromIntent(input: PurgeRecordInput, intent: PurgeIntent): PurgeRe
   const root = queueRoot(input.knowledgeRoot)
   for (const dir of intent.queuePayloadDirs) {
     const candidateDir = join(input.knowledgeRoot, dir)
+    assertWithinKnowledgeRoot(input.knowledgeRoot, candidateDir)
     fenceWriterAuthority(input)
     rmSync(candidateDir, { recursive: true, force: true })
     removeEmptyQueueParents(candidateDir, root, () => fenceWriterAuthority(input))
@@ -1439,6 +1449,7 @@ export function purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome {
     queueSweepTargets,
     resolved.affectedSet!,
   )
+  assertWithinKnowledgeRoot(input.knowledgeRoot, dirname(intentPath(input.knowledgeRoot, input.recordId)))
   const intentOutcome = writeDurableExclusive(
     intentPath(input.knowledgeRoot, input.recordId),
     committedFileText(intent),
@@ -1466,6 +1477,7 @@ export function purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome {
 
   // Capture metadata above before the only true-delete operation removes the committed tree.
   for (const match of matches) {
+    assertWithinKnowledgeRoot(input.knowledgeRoot, match.dir)
     fenceWriterAuthority(input)
     rmSync(match.dir, { recursive: true, force: true })
     input.hooks?.afterBundleRemoval?.()

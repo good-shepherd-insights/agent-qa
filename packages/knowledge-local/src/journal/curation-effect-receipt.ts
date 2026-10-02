@@ -11,6 +11,7 @@ import { z } from 'zod'
 
 import { checkpointCommittedParts, type BundleEgressOptions } from '../bundle-egress.js'
 import { fsyncDirectory } from '../durable-fs.js'
+import { assertWithinKnowledgeRoot } from '../knowledge-containment.js'
 import { withCurrentWriterAuthority, type CurrentWriterAuthority } from '../lease/writer-lease.js'
 import { loadBundle, verifyBundleIntegrity } from '../bundle-read.js'
 import { BundleTargetResolutionError, resolveProductQualifiedBundleDir } from '../bundle-scan.js'
@@ -115,6 +116,7 @@ export function writeCurationEffectReceiptWithinCurrentAuthority(
   if (!parsed.success) throw new TypeError('invalid curation effect receipt')
   const row = parsed.data
   const file = join(receiptRoot(opts.knowledgeRoot), receiptName(row))
+  assertWithinKnowledgeRoot(opts.knowledgeRoot, dirname(file))
   const text = `${canonicalJson(row)}\n`
   if (existsSync(file)) {
     const existing = parseReceipt(readFileSync(file, 'utf8'), receiptName(row))

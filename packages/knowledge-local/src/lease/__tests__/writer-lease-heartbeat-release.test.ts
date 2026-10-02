@@ -25,6 +25,7 @@ import {
   readWriterLease,
   releaseLease,
 } from '../writer-lease.js'
+import { RESOLVE_TS_SOURCE_HOOK } from './source-import-hook.js'
 
 /**
  * 2026-10-02 (quick 261002-lse): a heartbeat must never resurrect a released lease.
@@ -49,6 +50,7 @@ const WINDOW_WAIT_MS = 15_000
 
 const RELEASE_WORKER_SOURCE = String.raw`
 'use strict'
+${RESOLVE_TS_SOURCE_HOOK}
 const { parentPort, workerData } = require('node:worker_threads')
 const { url, knowledgeRoot, leaseId, signals } = workerData
 const flags = new Int32Array(signals)
@@ -414,6 +416,7 @@ const HOLDER_PROCEED = 2
 
 const HOLDER_WORKER_SOURCE = String.raw`
 'use strict'
+${RESOLVE_TS_SOURCE_HOOK}
 const { parentPort, workerData } = require('node:worker_threads')
 const { url, knowledgeRoot, leaseId, signals } = workerData
 const flags = new Int32Array(signals)
@@ -474,6 +477,7 @@ describe('two reclaimers of one stale guard (261002-lse follow-up)', () => {
   /** A real process that dies by SIGKILL inside its beat's guarded section. */
   function leaveDeadGuard(leaseId: string): void {
     const died = spawnSync(process.execPath, ['--input-type=module', '-e', [
+      RESOLVE_TS_SOURCE_HOOK,
       'const lease = await import(process.env.LEASE_SOURCE_URL)',
       "Date.now = () => { process.kill(process.pid, 'SIGKILL'); return 0 }",
       'const { LEASE_ROOT: knowledgeRoot, LEASE_ID: leaseId } = process.env',

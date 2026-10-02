@@ -1068,7 +1068,7 @@ async function withEntityResolutionDeps<T>(
   // the KNOWLEDGE root rather than the agent-qa root because it is derived from knowledge
   // the same way the memidex index is, and it is disposable in exactly that sense — while
   // the ledger, one directory tree away, is the thing that must never be rebuilt.
-  const entityIndex = openEntityIndex({ path: entityIndexDbPath(knowledgeRoot) })
+  const entityIndex = openEntityIndex({ path: entityIndexDbPath(knowledgeRoot), knowledgeRoot })
   try {
     // AWAITED inside the try, not returned from it: tier (b)'s dense leg is asynchronous, so
     // returning the promise would close both databases while the resolution was still using
@@ -1122,7 +1122,7 @@ export async function sweepEntityIndexProjection(
   const ledger = openAddressingLedger({
     path: join(input.agentQaRoot, ADDRESSING_LEDGER_DB_FILE),
   })
-  const entityIndex = openEntityIndex({ path: entityIndexDbPath(knowledgeRoot) })
+  const entityIndex = openEntityIndex({ path: entityIndexDbPath(knowledgeRoot), knowledgeRoot })
   try {
     const report = sweepEntityIndex(entityIndex, describeAllEntities({
       ledger,

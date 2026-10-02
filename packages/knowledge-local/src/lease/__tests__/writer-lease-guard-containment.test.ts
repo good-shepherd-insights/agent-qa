@@ -27,6 +27,7 @@ import {
   readWriterLease,
   releaseLease,
 } from '../writer-lease.js'
+import { RESOLVE_TS_SOURCE_HOOK } from './source-import-hook.js'
 
 /**
  * 2026-10-03 (quick 261003-lgd, Phase 432 review CR-01, WR-11, IN-24).
@@ -142,8 +143,9 @@ describe('the lease guard never reaches through a link or out of the knowledge r
     const beat = attempt(() => heartbeatLease({ knowledgeRoot, leaseId }))
 
     expect({ released, beat }).toMatchObject({
-      released: { kind: 'threw', name: 'LeaseGuardContainmentError' },
-      beat: { kind: 'threw', name: 'LeaseGuardContainmentError' },
+      // 2026-10-03 (261003-mqc): the shared knowledge-root containment error, named for every writer.
+      released: { kind: 'threw', name: 'KnowledgeRootContainmentError' },
+      beat: { kind: 'threw', name: 'KnowledgeRootContainmentError' },
     })
     expect(String(released.message)).toContain(link)
     // Nothing was created, claimed or removed outside the root, and the lease is untouched.
@@ -189,6 +191,7 @@ describe('the lease guard never reaches through a link or out of the knowledge r
     symlinkSync(fifo, join(guardDir(), ownerName), 'file')
 
     const child = spawnSync(process.execPath, ['--input-type=module', '-e', [
+      RESOLVE_TS_SOURCE_HOOK,
       'const lease = await import(process.env.LEASE_SOURCE_URL)',
       'const outcome = lease.releaseLease({ knowledgeRoot: process.env.LEASE_ROOT, leaseId: process.env.LEASE_ID })',
       'process.stdout.write(JSON.stringify(outcome))',

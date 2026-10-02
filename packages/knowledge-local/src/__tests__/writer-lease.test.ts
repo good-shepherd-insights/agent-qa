@@ -43,8 +43,17 @@ import {
   type WriterAuthorityLostReason,
   type WriterLease,
 } from '../lease/writer-lease.js'
+import { RESOLVE_TS_SOURCE_HOOK } from '../lease/__tests__/source-import-hook.js'
 
 const WRITER_LEASE_MODULE_URL = new URL('../lease/writer-lease.ts', import.meta.url).href
+/**
+ * 2026-10-03 (quick 261003-mqc): `writer-lease.ts` now imports the shared knowledge-root
+ * containment check, so a child loading it from source resolves its `.js` specifiers to `.ts`.
+ */
+const LEASE_SOURCE_CHILD_ARGV = [
+  '--experimental-strip-types', '--input-type=module',
+  '--import', `data:text/javascript,${encodeURIComponent(RESOLVE_TS_SOURCE_HOOK)}`,
+]
 
 /** WR-04 crash seam: the acquired path publishes the epoch before it publishes the lease. */
 type AcquireWithEpochSeam = (
@@ -166,7 +175,7 @@ function spawnLeaseAcquirer(
   `
   return spawn(
     process.execPath,
-    ['--experimental-strip-types', '--input-type=module', '--eval', source],
+    [...LEASE_SOURCE_CHILD_ARGV, '--eval', source],
     {
       env: {
         ...process.env,
@@ -214,7 +223,7 @@ function spawnAuthorityHolder(
   `
   return spawn(
     process.execPath,
-    ['--experimental-strip-types', '--input-type=module', '--eval', source],
+    [...LEASE_SOURCE_CHILD_ARGV, '--eval', source],
     {
       env: {
         ...process.env,
@@ -246,7 +255,7 @@ function spawnClaimedLeaseAcquirer(
   `
   return spawn(
     process.execPath,
-    ['--experimental-strip-types', '--input-type=module', '--eval', source],
+    [...LEASE_SOURCE_CHILD_ARGV, '--eval', source],
     {
       env: {
         ...process.env,
@@ -276,7 +285,7 @@ function spawnIdleSurrogate(exitPermitFile: string): ChildProcessWithoutNullStre
   `
   return spawn(
     process.execPath,
-    ['--experimental-strip-types', '--input-type=module', '--eval', source],
+    [...LEASE_SOURCE_CHILD_ARGV, '--eval', source],
     {
       env: { ...process.env, AGENT_QA_LEASE_TEST_EXIT_PERMIT: exitPermitFile },
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -314,7 +323,7 @@ function spawnAuthorityDbBlocker(
   `
   return spawn(
     process.execPath,
-    ['--experimental-strip-types', '--input-type=module', '--eval', source],
+    [...LEASE_SOURCE_CHILD_ARGV, '--eval', source],
     {
       env: {
         ...process.env,
@@ -1533,7 +1542,7 @@ describe('mutation-lock owner process incarnation (CR-04)', () => {
     const winnerHoldMs = 1_500
     const winner = track(spawn(
       process.execPath,
-      ['--experimental-strip-types', '--input-type=module', '--eval', `
+      [...LEASE_SOURCE_CHILD_ARGV, '--eval', `
         const { DatabaseSync } = await import('node:sqlite');
         const { writeFileSync } = await import('node:fs');
         const db = new DatabaseSync(process.env.AGENT_QA_LEASE_TEST_DB);
@@ -1682,7 +1691,7 @@ describe('escalation cost and budget on the acquisition hot path (W-05)', () => 
     const pidFile = join(root, 'orphan.pid')
     track(spawn(
       process.execPath,
-      ['--experimental-strip-types', '--input-type=module', '--eval', `
+      [...LEASE_SOURCE_CHILD_ARGV, '--eval', `
         const { spawn } = await import('node:child_process');
         const { writeFileSync } = await import('node:fs');
         const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
@@ -1773,7 +1782,7 @@ describe('escalation cost and budget on the acquisition hot path (W-05)', () => 
         `
         const contender = track(spawn(
           process.execPath,
-          ['--experimental-strip-types', '--input-type=module', '--eval', source],
+          [...LEASE_SOURCE_CHILD_ARGV, '--eval', source],
           {
             env: { ...process.env, AGENT_QA_LEASE_TEST_ROOT: knowledgeRoot },
             stdio: ['pipe', 'pipe', 'pipe'],
@@ -1906,7 +1915,7 @@ describe('writer lease acquisition deadline against an unreclaimable owner (V-02
     `
     return track(spawn(
       process.execPath,
-      ['--experimental-strip-types', '--input-type=module', '--eval', source],
+      [...LEASE_SOURCE_CHILD_ARGV, '--eval', source],
       {
         env: {
           ...process.env,
@@ -1998,7 +2007,7 @@ describe('writer lease acquisition deadline against an unreclaimable owner (V-02
     `
     return track(spawn(
       process.execPath,
-      ['--experimental-strip-types', '--input-type=module', '--eval', source],
+      [...LEASE_SOURCE_CHILD_ARGV, '--eval', source],
       {
         env: {
           ...process.env,
@@ -2166,7 +2175,7 @@ describe('budget-capped process-incarnation resolution on the escalation path (W
   ): ChildProcessWithoutNullStreams {
     return track(spawn(
       process.execPath,
-      ['--experimental-strip-types', '--input-type=module', '--eval', source],
+      [...LEASE_SOURCE_CHILD_ARGV, '--eval', source],
       {
         env: {
           ...process.env,

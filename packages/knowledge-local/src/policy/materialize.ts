@@ -6,6 +6,7 @@ import {
   loadGuardrailPolicy, type AuditSink,
 } from '@vostride/agent-qa-safety'
 import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
+import { assertWithinKnowledgeRoot } from '../knowledge-containment.js'
 import { withCurrentWriterAuthority, type CurrentWriterAuthority } from '../lease/writer-lease.js'
 import { stripPolicyHtmlComments } from '../serving/policy-ladder.js'
 
@@ -60,6 +61,8 @@ function materializeUnderAuthority(input: MaterializePolicyInput): MaterializeOu
   }
   const { open, close } = policySectionMarkers(input.recordId)
   const path = policyShelfPath(input.knowledgeRoot, input.scope)
+  // 261003-mqc: a `policies/` linked out of the knowledge root is refused before any write.
+  assertWithinKnowledgeRoot(input.knowledgeRoot, dirname(path))
   const relPath = relative(input.knowledgeRoot, path)
   const section = `\n${open}\n${input.title ? `### ${input.title}\n` : ''}${input.ruleText.trim()}\n${close}\n`
   const sectionBytes = Buffer.byteLength(section)

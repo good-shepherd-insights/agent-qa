@@ -27,6 +27,7 @@ import {
 } from '@vostride/agent-qa-schema'
 
 import { fsyncDirectory } from '../durable-fs.js'
+import { assertWithinKnowledgeRoot } from '../knowledge-containment.js'
 import { JOURNAL_SUBDIR } from '../journal/intent-journal.js'
 import { withCurrentWriterAuthority, type CurrentWriterAuthority } from '../lease/writer-lease.js'
 
@@ -69,6 +70,7 @@ export function recordForgetReceipt(
   receipt: ForgetReceiptV1,
 ): void {
   const file = receiptFile(knowledgeRoot, ForgetReceiptV1Schema.parse(receipt).proposalId)
+  assertWithinKnowledgeRoot(knowledgeRoot, dirname(file))
   const text = `${JSON.stringify(receipt)}\n`
   withCurrentWriterAuthority(knowledgeRoot, authority, () => {
     mkdirSync(dirname(file), { recursive: true })

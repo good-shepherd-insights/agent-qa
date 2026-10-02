@@ -19,6 +19,7 @@ import {
 } from '@vostride/agent-qa-schema'
 import type { EmbeddingProfile } from '@vostride/agent-qa-schema'
 
+import { assertWithinKnowledgeRoot } from './knowledge-containment.js'
 import { getLoadablePath } from './sqlite-vec-loadable.js'
 
 export const INDEX_DB_FILE = 'knowledge.db'
@@ -718,6 +719,7 @@ export function openIndexWriter(
   opts: IndexOpenOptions = {},
 ): IndexWriterHandle {
   const path = indexDbPath(knowledgeRoot)
+  assertWithinKnowledgeRoot(knowledgeRoot, dirname(path))
   mkdirSync(dirname(path), { recursive: true })
 
   const db = new DatabaseSync(path, {

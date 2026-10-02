@@ -46,6 +46,7 @@ import {
 } from '@vostride/agent-qa-schema'
 
 import type { EmbedderPort } from '../embedder-port.js'
+import { assertWithinKnowledgeRoot } from '../knowledge-containment.js'
 import {
   embeddingProfileKey,
   resolveActiveProfile,
@@ -199,6 +200,11 @@ export interface EntityIndexHandle {
 export interface OpenEntityIndexOptions {
   /** Absolute path to the projection file, typically `entityIndexDbPath(knowledgeRoot)`. */
   readonly path: string
+  /**
+   * The knowledge root the path lives under. When given, the path's directory chain must stay
+   * inside it (261003-mqc): a linked `memory/` or `memory/index/` is refused before the open.
+   */
+  readonly knowledgeRoot?: string
   readonly timeoutMs?: number
 }
 
@@ -212,6 +218,9 @@ function toNumber(value: unknown): number {
 }
 
 export function openEntityIndex(options: OpenEntityIndexOptions): EntityIndexHandle {
+  if (options.knowledgeRoot !== undefined) {
+    assertWithinKnowledgeRoot(options.knowledgeRoot, dirname(options.path))
+  }
   mkdirSync(dirname(options.path), { recursive: true })
   const db = new DatabaseSync(options.path, {
     timeout: options.timeoutMs ?? ENTITY_INDEX_BUSY_TIMEOUT_MS,

@@ -14,6 +14,7 @@ import {
 } from '@vostride/agent-qa-schema'
 
 import { anchorSchema } from './anchor-schema.js'
+import { assertWithinKnowledgeRoot } from './knowledge-containment.js'
 import {
   bestEffortFsyncDirectory,
   durableWrite,
@@ -158,6 +159,8 @@ export function enqueueCanaryOutcome(
   })
   const entryId = canaryOutcomeContentAddress(payload)
   const stagingRoot = queueStagingRoot(knowledgeRoot)
+  assertWithinKnowledgeRoot(knowledgeRoot, stagingRoot)
+  assertWithinKnowledgeRoot(knowledgeRoot, queuedRoot(knowledgeRoot))
   const stagingDir = join(stagingRoot, randomUUID())
   mkdirSync(stagingDir, { recursive: true })
   try {

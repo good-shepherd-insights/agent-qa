@@ -41,6 +41,7 @@ import {
   type CommitIntent,
   type ListedCommitIntent,
 } from './intent-journal.js'
+import { assertWithinKnowledgeRoot } from '../knowledge-containment.js'
 import { recoverExpiredBundleMutations } from './bundle-mutation.js'
 import {
   isCurationEffectCommitted,
@@ -136,6 +137,7 @@ function removeExpiredLeaseStaging(
   if (expiredLeaseIds.size === 0) return removed
 
   for (const stagingRoot of stagingRoots(knowledgeRoot)) {
+    assertWithinKnowledgeRoot(knowledgeRoot, stagingRoot)
     for (const entryName of childDirectories(stagingRoot)) {
       if (
         [...expiredLeaseIds].some((leaseId) =>

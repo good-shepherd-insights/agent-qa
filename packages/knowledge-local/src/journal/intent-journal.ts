@@ -22,6 +22,7 @@ import { dirname, isAbsolute, join } from 'node:path'
 import { canonicalJson } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 import { curationObservationSchema } from './curation-effect-receipt.js'
+import { assertWithinKnowledgeRoot } from '../knowledge-containment.js'
 
 export const JOURNAL_SUBDIR = 'memory/queue/journal'
 export const COMMIT_INTENT_SCHEMA_VERSION = 1
@@ -109,6 +110,7 @@ function atomicRewrite(file: string, text: string): void {
 /** Durably replace one candidate's intent before any reader-visible bundle mutation. */
 export function writeCommitIntent(knowledgeRoot: string, intent: CommitIntent): void {
   const parsed = commitIntentSchema.parse(intent)
+  assertWithinKnowledgeRoot(knowledgeRoot, journalRoot(knowledgeRoot))
   atomicRewrite(
     intentPath(knowledgeRoot, parsed.candidateId),
     `${canonicalJson(parsed)}\n`,
@@ -137,6 +139,7 @@ export function writeReconciledEpochWithinCurrentAuthority(
   epoch: number,
 ): void {
   const validated = z.number().int().positive().parse(epoch)
+  assertWithinKnowledgeRoot(knowledgeRoot, journalRoot(knowledgeRoot))
   atomicRewrite(join(knowledgeRoot, RECONCILED_EPOCH_FILE), `${validated}\n`)
 }
 
@@ -166,6 +169,7 @@ export function quarantineStaleCommitIntent(
   epoch: number,
 ): QuarantineStaleCommitIntentOutcome {
   const file = intentPath(knowledgeRoot, candidateId)
+  assertWithinKnowledgeRoot(knowledgeRoot, dirname(file))
   const quarantined = `.stale-${epoch}-${candidateId}-${randomUUID()}.intent.json`
   try {
     renameSync(file, join(dirname(file), quarantined))
@@ -180,6 +184,7 @@ export function quarantineStaleCommitIntent(
 /** Clear one confirmed intent after its index projection has been applied. */
 export function clearCommitIntent(knowledgeRoot: string, candidateId: string): void {
   const file = intentPath(knowledgeRoot, candidateId)
+  assertWithinKnowledgeRoot(knowledgeRoot, dirname(file))
   rmSync(file, { force: true })
   bestEffortFsyncDirectory(dirname(file))
 }

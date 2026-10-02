@@ -16,6 +16,7 @@ import { canonicalJson } from '@vostride/agent-qa-schema'
 import { ZodError } from 'zod'
 
 import { copyArtifacts } from '../artifact-copy.js'
+import { assertWithinKnowledgeRoot } from '../knowledge-containment.js'
 import type {
   ArtifactCopyInput,
   ArtifactCopySkipReason,
@@ -310,6 +311,9 @@ export function claimNextJob(opts: ClaimNextJobOptions): ClaimNextJobOutcome | u
   if (opts.leaseId !== opts.authority.leaseId) {
     throw new TypeError('claimNextJob leaseId must match writer authority')
   }
+  assertWithinKnowledgeRoot(opts.knowledgeRoot, queuedRoot(opts.knowledgeRoot))
+  assertWithinKnowledgeRoot(opts.knowledgeRoot, claimedLeaseDir(opts.knowledgeRoot, opts.leaseId))
+  assertWithinKnowledgeRoot(opts.knowledgeRoot, jobsRoot(opts.knowledgeRoot))
   return withCurrentWriterAuthority(opts.knowledgeRoot, opts.authority, () => {
     for (const candidateId of listQueuedCandidates(opts.knowledgeRoot)) {
       const sourceDir = queuedCandidateDir(opts.knowledgeRoot, candidateId)
@@ -376,6 +380,9 @@ export function requeueClaimedWithinCurrentAuthority(
   opts: RequeueClaimedWithinCurrentAuthorityOptions,
 ): string[] {
   const leaseDir = claimedLeaseDir(opts.knowledgeRoot, opts.leaseId)
+  assertWithinKnowledgeRoot(opts.knowledgeRoot, leaseDir)
+  assertWithinKnowledgeRoot(opts.knowledgeRoot, queuedRoot(opts.knowledgeRoot))
+  assertWithinKnowledgeRoot(opts.knowledgeRoot, jobsRoot(opts.knowledgeRoot))
   const candidateIds = directoryNames(leaseDir).filter((name) => CANDIDATE_ID.test(name))
   const requeued: string[] = []
   mkdirSync(queuedRoot(opts.knowledgeRoot), { recursive: true })
@@ -442,6 +449,9 @@ export function quarantineClaimed(opts: QuarantineClaimedOptions): string {
   if (opts.leaseId !== opts.authority.leaseId) {
     throw new TypeError('quarantineClaimed leaseId must match writer authority')
   }
+  assertWithinKnowledgeRoot(opts.knowledgeRoot, claimedLeaseDir(opts.knowledgeRoot, opts.leaseId))
+  assertWithinKnowledgeRoot(opts.knowledgeRoot, quarantinedRoot(opts.knowledgeRoot))
+  assertWithinKnowledgeRoot(opts.knowledgeRoot, jobsRoot(opts.knowledgeRoot))
   return withCurrentWriterAuthority(opts.knowledgeRoot, opts.authority, () => {
     const sourceDir = claimedCandidateDir(
       opts.knowledgeRoot,
@@ -767,6 +777,8 @@ export function enqueueCurationCandidateProjection(
   if (sourceInputs.kind === 'refused') return sourceInputs
 
   const stagingRoot = queueStagingRoot(opts.knowledgeRoot)
+  assertWithinKnowledgeRoot(opts.knowledgeRoot, stagingRoot)
+  assertWithinKnowledgeRoot(opts.knowledgeRoot, queuedRoot(opts.knowledgeRoot))
   const stagingDir = join(stagingRoot, randomUUID())
   mkdirSync(stagingDir, { recursive: true })
   try {
