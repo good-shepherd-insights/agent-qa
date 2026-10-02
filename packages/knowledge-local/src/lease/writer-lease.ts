@@ -11,6 +11,7 @@ import {
   closeSync,
   existsSync,
   fsyncSync,
+  linkSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -23,6 +24,7 @@ import {
 import type { Dirent } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { threadId } from 'node:worker_threads'
 
 import { z } from 'zod'
 
@@ -72,6 +74,19 @@ const MUTATION_LOCK_TERMINATION_TIMEOUT_MS = 5_000
 const MUTATION_LOCK_TERMINATION_WAIT = new Int32Array(
   new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT),
 )
+
+/**
+ * Transient guard serializing the beat's read-check-write with release's read-check-delete.
+ *
+ * It exists only for the length of one of those sections, so a quiet knowledge root never carries
+ * it, exactly like `atomicRewrite`'s `.tmp-*` siblings.
+ */
+export const LEASE_GUARD_FILE = '.lease.guard'
+
+/** A guard older than this cannot belong to a live section (each is one read and one write). */
+export const LEASE_GUARD_STALE_MS = 10_000
+
+const LEASE_GUARD_POLL_MS = 2
 
 const writerLeaseSchema = z
   .object({
@@ -136,6 +151,12 @@ export type AcquireWriterLeaseOutcome =
 export interface LeaseOperationOptions {
   knowledgeRoot: string
   leaseId: string
+}
+
+/** Test/chaos seam on the lease-file guard taken by `heartbeatLease` and `releaseLease`. */
+export interface LeaseGuardHooks {
+  /** Fires once, when the guard is first found held by a live section other than this caller's. */
+  onLeaseGuardContended?: () => void
 }
 
 export type HeartbeatLeaseOutcome =
@@ -536,6 +557,10 @@ class MutationLockBusyError extends Error {
 
 class MutationLockGenerationLostError extends Error {
   override readonly name = 'MutationLockGenerationLostError'
+}
+
+class LeaseGuardBusyError extends Error {
+  override readonly name = 'LeaseGuardBusyError'
 }
 
 function mutationLockNowMs(): number {
@@ -1143,6 +1168,154 @@ function atomicRewrite(file: string, text: string): void {
   }
 }
 
+const leaseGuardOwnerSchema = z
+  .object({
+    pid: z.number().int().positive(),
+    threadId: z.number().int().nonnegative(),
+    token: z.string().uuid(),
+    claimedAtNs: z.string().regex(/^[0-9]+$/),
+  })
+  .strict()
+
+type LeaseGuardOwner = z.infer<typeof leaseGuardOwnerSchema>
+
+type ObservedLeaseGuard =
+  | { kind: 'absent' }
+  | { kind: 'present'; raw: string; owner?: LeaseGuardOwner }
+
+function observeLeaseGuard(guard: string): ObservedLeaseGuard {
+  let raw: string
+  try {
+    raw = readFileSync(guard, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { kind: 'absent' }
+    throw error
+  }
+  try {
+    const parsed = leaseGuardOwnerSchema.safeParse(JSON.parse(raw))
+    return parsed.success ? { kind: 'present', raw, owner: parsed.data } : { kind: 'present', raw }
+  } catch {
+    return { kind: 'present', raw }
+  }
+}
+
+/**
+ * True when no live section can still be behind the guard.
+ *
+ * A guard is published whole (staged, then hard-linked), so unattributable bytes are residue. So
+ * is a claim from a dead process, one older than the bound (a thread terminated inside its
+ * section leaves its live process's pid behind), and one stamped ahead of this monotonic clock,
+ * which can only come from a previous boot.
+ */
+function leaseGuardIsResidue(owner: LeaseGuardOwner | undefined): boolean {
+  if (owner === undefined) return true
+  const ageMs = Number(process.hrtime.bigint() - BigInt(owner.claimedAtNs)) / 1e6
+  if (ageMs < 0 || ageMs >= LEASE_GUARD_STALE_MS) return true
+  return owner.pid !== process.pid && !processIsAlive(owner.pid)
+}
+
+function removeLeaseGuardResidue(guard: string, observedRaw: string): void {
+  const parked = `${guard}.residue-${randomUUID()}`
+  try {
+    renameSync(guard, parked)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+    throw error
+  }
+  try {
+    let parkedRaw: string | undefined
+    try {
+      parkedRaw = readFileSync(parked, 'utf8')
+    } catch {
+      parkedRaw = undefined
+    }
+    // A section published between the observation and the rename was displaced, not residue.
+    if (parkedRaw !== observedRaw) {
+      try {
+        linkSync(parked, guard)
+      } catch {
+        // A third claimant already published; the displaced owner's own release is token-checked.
+      }
+    }
+  } finally {
+    rmSync(parked, { force: true })
+  }
+}
+
+function releaseLeaseGuard(guard: string, raw: string): void {
+  try {
+    if (readFileSync(guard, 'utf8') === raw) rmSync(guard, { force: true })
+  } catch {
+    // Whatever is left is residue, and the age bound reclaims it.
+  }
+}
+
+/**
+ * Run one lease-file section under the guard shared by `heartbeatLease` and `releaseLease`.
+ *
+ * Governed mutations and acquisitions never take it, so a mutation of any length cannot starve the
+ * beat (CR-03 stands) and a beat cannot block an acquisition. Waiting is bounded by the same
+ * MUTATION_LOCK_BUSY_TIMEOUT_MS window a contended mutation lock gets; a guard held by an enclosing
+ * section on this very thread can never be let go by waiting, so that claim fails at once.
+ */
+function withLeaseGuard<T>(
+  knowledgeRoot: string,
+  section: () => T,
+  hooks: LeaseGuardHooks = {},
+): T {
+  const guard = join(knowledgeRoot, LEASE_GUARD_FILE)
+  const claimedAtNs = process.hrtime.bigint()
+  const raw = `${JSON.stringify({
+    pid: process.pid,
+    threadId,
+    token: randomUUID(),
+    claimedAtNs: String(claimedAtNs),
+  })}\n`
+  const staged = `${guard}.tmp-${randomUUID()}`
+  writeFileSync(staged, raw, { encoding: 'utf8', flag: 'wx' })
+  let contended = false
+  try {
+    while (true) {
+      try {
+        linkSync(staged, guard)
+        break
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      }
+      const observed = observeLeaseGuard(guard)
+      if (observed.kind === 'absent') continue
+      const owner = observed.owner
+      if (leaseGuardIsResidue(owner)) {
+        removeLeaseGuardResidue(guard, observed.raw)
+        continue
+      }
+      if (owner?.pid === process.pid && owner.threadId === threadId) {
+        throw new LeaseGuardBusyError(
+          'writer lease guard is held by an enclosing section on this thread',
+        )
+      }
+      if (!contended) {
+        contended = true
+        hooks.onLeaseGuardContended?.()
+      }
+      if (monotonicElapsedMs(claimedAtNs) >= MUTATION_LOCK_BUSY_TIMEOUT_MS) {
+        throw new LeaseGuardBusyError(
+          `writer lease guard stayed held by pid ${owner?.pid ?? 'unknown'} for `
+            + `${MUTATION_LOCK_BUSY_TIMEOUT_MS}ms`,
+        )
+      }
+      Atomics.wait(MUTATION_LOCK_TERMINATION_WAIT, 0, 0, LEASE_GUARD_POLL_MS)
+    }
+  } finally {
+    rmSync(staged, { force: true })
+  }
+  try {
+    return section()
+  } finally {
+    releaseLeaseGuard(guard, raw)
+  }
+}
+
 /**
  * Read and strictly validate current writer authority without acquiring or refreshing it.
  *
@@ -1586,46 +1759,61 @@ export function withCurrentWriterAuthority<T>(
  * wrong kill is unrecoverable, a wedged contender is not.
  *
  * Identity is still proven first, and every refusal below leaves `.lease` byte-identical.
+ *
+ * 2026-10-02 (quick 261002-lse, 432-19 #7): the ladder and the write run under the lease-file
+ * guard `releaseLease` also takes. Without it a beat that read before a release wrote after it,
+ * and since release deliberately keeps the epoch, the resurrected lease named the CURRENT epoch:
+ * the fence above contains a reclaim but not a release, and the next acquire answered `held`.
+ * The guard is not the mutation lock, so everything said above about CR-03 still holds.
  */
-export function heartbeatLease(opts: LeaseOperationOptions): HeartbeatLeaseOutcome {
+export function heartbeatLease(
+  opts: LeaseOperationOptions,
+  hooks: LeaseGuardHooks = {},
+): HeartbeatLeaseOutcome {
   assertAbsoluteKnowledgeRoot(opts.knowledgeRoot)
-  const current = readWriterLease(opts.knowledgeRoot)
-  if (current.kind === 'absent') return { kind: 'refused', reason: 'lease-missing' }
-  if (current.kind === 'malformed') return { kind: 'refused', reason: 'lease-malformed' }
-  // CR-01: a beat that cannot read the lease cannot prove it owns it, so it may not rewrite it.
-  if (current.kind === 'unreadable') return { kind: 'refused', reason: 'lease-unreadable' }
-  if (current.lease.leaseId !== opts.leaseId) {
-    return { kind: 'refused', reason: 'lease-id-mismatch', holder: current.lease }
+  // Nothing to resurrect and nothing to guard: absence is answered before any guard is staged.
+  if (readWriterLease(opts.knowledgeRoot).kind === 'absent') {
+    return { kind: 'refused', reason: 'lease-missing' }
   }
-  let observedEpoch: number
-  try {
-    observedEpoch = readEpoch(opts.knowledgeRoot)
-  } catch (error) {
-    if (error instanceof CorruptEpochStateError) {
+  return withLeaseGuard(opts.knowledgeRoot, (): HeartbeatLeaseOutcome => {
+    const current = readWriterLease(opts.knowledgeRoot)
+    if (current.kind === 'absent') return { kind: 'refused', reason: 'lease-missing' }
+    if (current.kind === 'malformed') return { kind: 'refused', reason: 'lease-malformed' }
+    // CR-01: a beat that cannot read the lease cannot prove it owns it, so it may not rewrite it.
+    if (current.kind === 'unreadable') return { kind: 'refused', reason: 'lease-unreadable' }
+    if (current.lease.leaseId !== opts.leaseId) {
+      return { kind: 'refused', reason: 'lease-id-mismatch', holder: current.lease }
+    }
+    let observedEpoch: number
+    try {
+      observedEpoch = readEpoch(opts.knowledgeRoot)
+    } catch (error) {
+      if (error instanceof CorruptEpochStateError) {
+        return {
+          kind: 'refused',
+          reason: 'corrupt-epoch-state',
+          holder: current.lease,
+          error,
+        }
+      }
+      throw error
+    }
+    if (current.lease.epoch !== observedEpoch) {
       return {
         kind: 'refused',
-        reason: 'corrupt-epoch-state',
+        reason: 'stale-epoch',
         holder: current.lease,
-        error,
+        observedEpoch,
       }
     }
-    throw error
-  }
-  if (current.lease.epoch !== observedEpoch) {
-    return {
-      kind: 'refused',
-      reason: 'stale-epoch',
-      holder: current.lease,
-      observedEpoch,
-    }
-  }
 
-  const holder = writerLeaseSchema.parse({
-    ...current.lease,
-    heartbeatAtMs: Date.now(),
-  })
-  atomicRewrite(leasePath(opts.knowledgeRoot), `${JSON.stringify(holder)}\n`)
-  return { kind: 'heartbeated', holder }
+    const holder = writerLeaseSchema.parse({
+      ...current.lease,
+      heartbeatAtMs: Date.now(),
+    })
+    atomicRewrite(leasePath(opts.knowledgeRoot), `${JSON.stringify(holder)}\n`)
+    return { kind: 'heartbeated', holder }
+  }, hooks)
 }
 
 /**
@@ -1672,22 +1860,35 @@ export function refreshWriterLeaseAuthority(
   return authority
 }
 
-/** Remove only the matching lease file; the monotonic epoch is deliberately retained forever. */
-export function releaseLease(opts: LeaseOperationOptions): ReleaseLeaseOutcome {
+/**
+ * Remove only the matching lease file; the monotonic epoch is deliberately retained forever.
+ *
+ * The read and the deletion run under the lease-file guard, taken inside the mutation lock, so a
+ * heartbeat in flight finishes before the lease is read and any later beat finds it gone
+ * (261002-lse). The guard is always taken second, and the beat never takes the mutation lock, so
+ * the two cannot wait on each other.
+ */
+export function releaseLease(
+  opts: LeaseOperationOptions,
+  hooks: LeaseGuardHooks = {},
+): ReleaseLeaseOutcome {
   assertAbsoluteKnowledgeRoot(opts.knowledgeRoot)
   return withMutationLock(opts.knowledgeRoot, () => {
-    const current = readWriterLease(opts.knowledgeRoot)
-    if (current.kind === 'absent') return { kind: 'refused', reason: 'lease-missing' }
-    if (current.kind === 'malformed') return { kind: 'refused', reason: 'lease-malformed' }
-    // CR-01: release is a deletion. An unreadable lease could belong to anybody, including a
-    // successor that reclaimed while this caller was away, so it is never removed unseen.
-    if (current.kind === 'unreadable') return { kind: 'refused', reason: 'lease-unreadable' }
-    if (current.lease.leaseId !== opts.leaseId) {
-      return { kind: 'refused', reason: 'lease-id-mismatch', holder: current.lease }
-    }
+    const outcome = withLeaseGuard(opts.knowledgeRoot, (): ReleaseLeaseOutcome => {
+      const current = readWriterLease(opts.knowledgeRoot)
+      if (current.kind === 'absent') return { kind: 'refused', reason: 'lease-missing' }
+      if (current.kind === 'malformed') return { kind: 'refused', reason: 'lease-malformed' }
+      // CR-01: release is a deletion. An unreadable lease could belong to anybody, including a
+      // successor that reclaimed while this caller was away, so it is never removed unseen.
+      if (current.kind === 'unreadable') return { kind: 'refused', reason: 'lease-unreadable' }
+      if (current.lease.leaseId !== opts.leaseId) {
+        return { kind: 'refused', reason: 'lease-id-mismatch', holder: current.lease }
+      }
 
-    rmSync(leasePath(opts.knowledgeRoot), { force: true })
-    bestEffortFsyncDirectory(opts.knowledgeRoot)
-    return { kind: 'released' }
+      rmSync(leasePath(opts.knowledgeRoot), { force: true })
+      return { kind: 'released' }
+    }, hooks)
+    if (outcome.kind === 'released') bestEffortFsyncDirectory(opts.knowledgeRoot)
+    return outcome
   })
 }
