@@ -67,6 +67,7 @@ import {
   applyExplicitReview,
 } from '../apply-review.js'
 import type { ExplicitReviewDelegate, ExplicitReviewRequest } from '../apply-review.js'
+import { FORGET_RECEIPTS_SUBDIR } from '../forget-receipt-journal.js'
 import { FORGET_SCRUBBED_PROJECTIONS } from '../propose-review.js'
 
 const ANCHOR: Anchor = { t: 'el', role: 'Button', name: 'Checkout' }
@@ -697,6 +698,72 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     expect(firstReceipt?.projectionsScrubbed).toEqual([...FORGET_SCRUBBED_PROJECTIONS])
     // …and nothing was destroyed a second time: the record still exists with the same status.
     expect(listBundles(knowledgeRoot)).toEqual(afterFirst)
+  })
+
+  // 2026-10-02 (quick 261002-lse, 432-16 #3): a RETRY of the same forget (the same operation
+  // identity) is the same change, so it answers the receipt its first application recorded, byte
+  // for byte. It used to re-mint `forgottenAt` and claim no scrubs, where reject's retry already
+  // answered identically. A SECOND, independently minted forget (the cell above) keeps WR-02's
+  // empty scrub list.
+  it('answers a retried forget with its first receipt, byte for byte, and lands nothing twice', async () => {
+    const recordId = publish('checkout button')
+    await projectIndex()
+    const proposalId = proposeForget(recordId)
+
+    const first = await applyReview({ agentQaRoot, knowledgeRoot, proposalId, now: () => 10 })
+    const afterFirst = listBundles(knowledgeRoot)
+    const retried = await applyReview({ agentQaRoot, knowledgeRoot, proposalId, now: () => 20 })
+
+    expect(first.forgetReceipt).toMatchObject({
+      forgottenAt: 10,
+      projectionsScrubbed: [...FORGET_SCRUBBED_PROJECTIONS],
+    })
+    expect(retried.forgetReceipt).toEqual(first.forgetReceipt)
+    expect(JSON.stringify(retried)).toBe(JSON.stringify(first))
+
+    // The records and the tombstone landed once: one forget event for this change, nothing else.
+    expect(listBundles(knowledgeRoot)).toEqual(afterFirst)
+    const forgetEvents = enumerateBundleDirs(knowledgeRoot)
+      .map(entry => loadBundle(entry.dir))
+      .flatMap(loaded => loaded.kind === 'loaded' ? loaded.bundle.events : [])
+      .filter(event => event.type === 'deprecated' && event.reason === `forget:${proposalId}`)
+    expect(forgetEvents).toHaveLength(1)
+  })
+
+  it('a tombstone this forget committed but never recorded still answers its scrubs, then stays stable (261002-lse)', async () => {
+    const recordId = publish('checkout button')
+    await projectIndex()
+    const proposalId = proposeForget(recordId)
+    await applyReview({ agentQaRoot, knowledgeRoot, proposalId, now: () => 10 })
+    // The commit landed and the process died before the receipt was recorded.
+    rmSync(join(knowledgeRoot, FORGET_RECEIPTS_SUBDIR), { recursive: true, force: true })
+
+    const recovered = await applyReview({ agentQaRoot, knowledgeRoot, proposalId, now: () => 20 })
+    const again = await applyReview({ agentQaRoot, knowledgeRoot, proposalId, now: () => 30 })
+
+    expect(recovered.forgetReceipt).toMatchObject({
+      forgottenAt: 20,
+      projectionsScrubbed: [...FORGET_SCRUBBED_PROJECTIONS],
+    })
+    expect(JSON.stringify(again)).toBe(JSON.stringify(recovered))
+  })
+
+  it('a second, independent forget keeps WR-02 empty scrubs, and its own retry is identical (261002-lse)', async () => {
+    const recordId = publish('checkout button')
+    await projectIndex()
+    const firstId = proposeForget(recordId)
+    await applyReview({ agentQaRoot, knowledgeRoot, proposalId: firstId, now: () => 10 })
+    const secondId = proposeForget(recordId)
+
+    const second = await applyReview({
+      agentQaRoot, knowledgeRoot, proposalId: secondId, now: () => 20,
+    })
+    const secondRetried = await applyReview({
+      agentQaRoot, knowledgeRoot, proposalId: secondId, now: () => 30,
+    })
+
+    expect(second.forgetReceipt).toMatchObject({ forgottenAt: 20, projectionsScrubbed: [] })
+    expect(JSON.stringify(secondRetried)).toBe(JSON.stringify(second))
   })
 
   // ── CR-03: deleted 2026-10-01 (432-17). The four claim-window cases (a parked claim refused by

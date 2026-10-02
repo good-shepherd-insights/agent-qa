@@ -243,8 +243,9 @@ describe('a knowledge change routes by lease state (D-18)', () => {
     expect(rows.map((row) => row.status)).toEqual(['deprecated'])
 
     // 432-16 task 2: the retry edge. The same identity delegated again lands once — the same
-    // records answered, the same one deprecated record — and the lease is still the holder's. (The
-    // retried forget re-mints its receipt's `forgottenAt` and scrub list; see deferred-items.)
+    // records answered, the same one deprecated record — and the lease is still the holder's.
+    // 2026-10-02 (quick 261002-lse, 432-16 #3): and it answers the FIRST receipt byte for byte; it
+    // used to re-mint `forgottenAt` and an empty scrub list on the holder's side.
     const retried = await invokeFunction(caller.registry, 'knowledge.forget', {
       target: { grain: 'record', recordId }, operationId,
     }, CALLER) as KnowledgeChangeOutput
@@ -252,6 +253,9 @@ describe('a knowledge change routes by lease state (D-18)', () => {
     if (retried.outcome !== 'applied') throw new Error('unreachable')
     expect(retried).toMatchObject({ verb: 'forget', operationId, recordIds: applied.recordIds })
     expect(retried.forgetReceipt?.tombstonedRecords).toEqual(applied.forgetReceipt?.tombstonedRecords)
+    expect(applied.forgetReceipt?.projectionsScrubbed).toEqual(['fts', 'vec', 'graph'])
+    expect(retried.forgetReceipt).toEqual(applied.forgetReceipt)
+    expect(JSON.stringify(retried)).toBe(JSON.stringify(applied))
     expect(delegated).toHaveLength(2)
     expect((await invokeFunction(holderHost.registry, 'knowledge.bundles.list', {}, CALLER) as {
       status: string

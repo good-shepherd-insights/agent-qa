@@ -441,6 +441,11 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
     expect(first.value).toMatchObject({ outcome: 'applied', operationId, recordIds: [recordId] })
     expect((retry.value as { recordIds?: unknown }).recordIds)
       .toEqual((first.value as { recordIds?: unknown }).recordIds)
+    // 2026-10-02 (quick 261002-lse, 432-16 #3): the retry answers the first forget receipt byte for
+    // byte, scrub list and `forgottenAt` included, as reject's retry already did.
+    expect((first.value as { forgetReceipt?: ForgetReceiptV1 }).forgetReceipt?.projectionsScrubbed)
+      .toEqual(['fts', 'vec', 'graph'])
+    expect(JSON.stringify(retry.value)).toBe(JSON.stringify(first.value))
     expect(await statuses(host)).toEqual(['deprecated'])
   })
 

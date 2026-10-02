@@ -65,6 +65,7 @@ import { materializePolicy, policyShelfPath, PolicyTextRefusedError } from '../p
 import { acquireWriterLease, releaseLease, withCurrentWriterAuthority } from '../lease/writer-lease.js'
 import type { WriterLease } from '../lease/writer-lease.js'
 import { memoryStatusForBundle } from '../memory-status.js'
+import { readRecordedForgetReceipt, recordForgetReceipt } from './forget-receipt-journal.js'
 import { FORGET_SCRUBBED_PROJECTIONS, resolveReviewTarget, reviewDeltasFor } from './propose-review.js'
 import type { ResolveBundleShortId, ReviewChangeRequest } from './propose-review.js'
 
@@ -215,6 +216,15 @@ function alreadyTombstoned(knowledgeRoot: string, change: ReviewChange): boolean
     const located = locateRecord(knowledgeRoot, recordId)
     return located !== undefined && memoryStatusForBundle(located.status) === 'tombstoned'
   })
+}
+
+/** Whether every record a forget names carries the tombstone this very change committed. */
+function tombstonedByThisForget(knowledgeRoot: string, change: ReviewChange): boolean {
+  const reason = `forget:${change.id}`
+  const ids = targetRecordIds(change)
+  return ids.length > 0 && ids.every((recordId) =>
+    (locateRecord(knowledgeRoot, recordId)?.bundle.events ?? [])
+      .some((event) => event.type === 'deprecated' && event.reason === reason))
 }
 
 /** Every record id a change's deltas name — the enumeration a forget receipt is built over. */
@@ -611,9 +621,23 @@ async function writeReviewChange(
     const recordIds = targetRecordIds(change)
     // reject carries no receipt on any path; the record ids are the whole answer.
     if (change.verb !== 'forget') return { kind: 'applied', recordIds }
-    // WR-02: no commit ran on this branch, so no projection was rebuilt and no recall row was
-    // removed. The scrub list is EMPTY because that is what happened.
-    const forgetReceipt = assembleForgetReceipt(writer.knowledgeRoot, change, (writer.now ?? Date.now)(), [])
+    // 2026-10-02 (quick 261002-lse, 432-16 #3): a retry of the SAME change answers the receipt its
+    // first application recorded, byte for byte, as reject's retry already answers its record ids.
+    const recorded = readRecordedForgetReceipt(writer.knowledgeRoot, change.id)
+    const recordedIds = recorded?.tombstonedRecords.map(row => row.recordId)
+    if (recorded !== undefined && canonicalJson(recordedIds) === canonicalJson(recordIds)) {
+      return { kind: 'applied', recordIds, forgetReceipt: recorded }
+    }
+    // WR-02: when something ELSE tombstoned these records, no commit ran for this change, so no
+    // projection was rebuilt and no recall row was removed. The scrub list is EMPTY because that
+    // is what happened. A tombstone this change itself committed (its receipt was never recorded)
+    // did scrub them, and says so.
+    const scrubbed = tombstonedByThisForget(writer.knowledgeRoot, change)
+      ? FORGET_SCRUBBED_PROJECTIONS
+      : []
+    const forgetReceipt = assembleForgetReceipt(
+      writer.knowledgeRoot, change, (writer.now ?? Date.now)(), scrubbed)
+    recordForgetReceipt(writer.knowledgeRoot, authority, forgetReceipt)
     return { kind: 'applied', recordIds, forgetReceipt }
   }
 
@@ -628,6 +652,7 @@ async function writeReviewChange(
     (writer.now ?? Date.now)(),
     FORGET_SCRUBBED_PROJECTIONS,
   )
+  recordForgetReceipt(writer.knowledgeRoot, authority, forgetReceipt)
   return { kind: 'applied', recordIds, forgetReceipt }
 }
 
