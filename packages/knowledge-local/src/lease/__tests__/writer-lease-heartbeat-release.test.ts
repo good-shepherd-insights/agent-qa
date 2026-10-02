@@ -19,7 +19,7 @@ import {
   LEASE_FILE,
   LEASE_GUARD_DIR,
   LEASE_GUARD_STALE_MS,
-  MUTATION_LOCK_BUSY_TIMEOUT_MS,
+  LEASE_GUARD_WAIT_MS,
   acquireWriterLease,
   heartbeatLease,
   readWriterLease,
@@ -308,10 +308,6 @@ describe('the lease-file guard itself (261002-lse)', () => {
       mkdirSync(dirname(guardDir()), { recursive: true })
       writeFileSync(guardDir(), 'not a guard\n', 'utf8')
     }],
-    ['a guard directory with no owner in it', () => {
-      mkdirSync(guardDir(), { recursive: true })
-      writeFileSync(join(guardDir(), 'stray'), 'not a guard\n', 'utf8')
-    }],
   ])('reclaims %s and releases', (_label, plant) => {
     const acquired = acquireWriterLease(knowledgeRoot)
     if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
@@ -323,23 +319,65 @@ describe('the lease-file guard itself (261002-lse)', () => {
     expect(guardEntries()).toEqual([])
   })
 
-  it('waits a live foreign section out for the busy window only, then refuses by name and writes nothing', () => {
+  /**
+   * 2026-10-03 (quick 261003-lgd, Phase 432 review CR-01 and WR-11): two cells here re-spelled.
+   *
+   * 'reclaims a guard directory with no owner in it and releases' asserted that the stray was
+   * unlinked; that bulk unlink is CR-01's deletion through a planted link. An ownerless directory
+   * is now moved aside whole (writer-lease-guard-containment.test.ts, cell d), and the release
+   * still lands. 'waits a live foreign section out for the busy window only' pinned WR-11: a
+   * guard with this process's pid and another thread's id, claimed just now, made the waiter
+   * throw before the residue bound could ever be reached. The waiter now outlasts the bound and
+   * reclaims (cell e there). What still refuses by name is a guard held by LIVE sections for the
+   * whole wait, which this cell now drives: each residue is reclaimed, a fresh live section takes
+   * the guard at that moment, and the waiter gives up after LEASE_GUARD_WAIT_MS, touching none.
+   */
+  it('moves an ownerless guard directory aside whole, keeping its entries, and releases', () => {
     const acquired = acquireWriterLease(knowledgeRoot)
     if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
+    mkdirSync(guardDir(), { recursive: true })
+    writeFileSync(join(guardDir(), 'stray'), 'not a guard\n', 'utf8')
+
+    expect(releaseLease({ knowledgeRoot, leaseId: acquired.leaseId })).toEqual({
+      kind: 'released',
+    })
+    const entries = guardEntries()
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatch(/^lease-guard\.residue-/)
+    expect(readFileSync(join(dirname(guardDir()), entries[0]!, 'stray'), 'utf8'))
+      .toBe('not a guard\n')
+  })
+
+  it('waits out a guard held by live sections for the whole wait, then refuses by name and writes nothing', () => {
+    const acquired = acquireWriterLease(knowledgeRoot)
+    if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
+    // A residue one second from the bound, so the cell does not spend the whole bound on it.
     plantGuard({
       pid: process.pid,
       threadId: threadId + 1_000,
-      claimedAtNs: process.hrtime.bigint(),
+      claimedAtNs: process.hrtime.bigint() - BigInt(LEASE_GUARD_STALE_MS - 1_000) * 1_000_000n,
     })
     const leaseBefore = readFileSync(join(knowledgeRoot, LEASE_FILE))
     let contentions = 0
+    let reclaims = 0
 
     const startedAtNs = process.hrtime.bigint()
     const beat = (() => {
       try {
         return heartbeatLease(
           { knowledgeRoot, leaseId: acquired.leaseId },
-          { onLeaseGuardContended: () => { contentions += 1 } },
+          {
+            onLeaseGuardContended: () => { contentions += 1 },
+            // As each residue is reclaimed, a fresh live section takes the guard.
+            beforeLeaseGuardReclaim: () => {
+              reclaims += 1
+              plantGuard({
+                pid: process.pid,
+                threadId: threadId + 1_000 + reclaims,
+                claimedAtNs: process.hrtime.bigint(),
+              })
+            },
+          },
         )
       } catch (error) {
         return { kind: 'threw', name: (error as Error).name }
@@ -349,12 +387,14 @@ describe('the lease-file guard itself (261002-lse)', () => {
 
     expect(beat).toEqual({ kind: 'threw', name: 'LeaseGuardBusyError' })
     expect(contentions).toBe(1)
-    expect(waitedMs).toBeGreaterThanOrEqual(MUTATION_LOCK_BUSY_TIMEOUT_MS)
-    expect(waitedMs).toBeLessThan(LEASE_GUARD_STALE_MS)
+    expect(reclaims).toBeGreaterThanOrEqual(1)
+    expect(waitedMs).toBeGreaterThanOrEqual(LEASE_GUARD_WAIT_MS)
+    expect(waitedMs).toBeLessThan(LEASE_GUARD_WAIT_MS + LEASE_GUARD_STALE_MS)
     expect(readFileSync(join(knowledgeRoot, LEASE_FILE))).toEqual(leaseBefore)
-    // The foreign section's guard is not the beat's to remove.
+    // The live section's guard is not the beat's to remove.
     expect(guardEntries()).toEqual([basename(guardDir())])
-  }, 15_000)
+    expect(readdirSync(guardDir())).toHaveLength(1)
+  }, 40_000)
 })
 
 /**

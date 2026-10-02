@@ -356,6 +356,40 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
     expect(maxActiveAuthors).toBe(1)
   })
 
+  // 2026-10-03 (quick 261003-lgd, Phase 432 review WR-11): a beat that throws (the lease guard
+  // stayed busy for its whole wait, or its chain was refused) is recorded like a refusal, never
+  // thrown out of the drain loop.
+  it('records a heartbeat that throws as a heartbeat failure and stops claiming', async () => {
+    const candidateId = enqueue('beat-throws')
+    const author = vi.fn<CuratorAuthor>()
+    const busy = new Error('writer lease guard stayed held by pid 1 for 12000ms')
+    busy.name = 'LeaseGuardBusyError'
+
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author,
+      executionContext: 'local-interactive',
+      policy,
+      operations: {
+        ...noWriterPass(),
+        heartbeatLease: () => {
+          throw busy
+        },
+        openKnowledgeReader: () => fakeReader(),
+        retrieve: async () => [],
+      },
+    }).catch((error: unknown) => ({ kind: 'threw', name: (error as Error).name }))
+
+    expect(report).toMatchObject({ kind: 'drained', jobsProcessed: 1 })
+    expect((report as { failureDetails?: unknown }).failureDetails).toEqual([
+      expect.objectContaining({ stage: 'heartbeat', candidateId }),
+    ])
+    const details = (report as { failureDetails: Array<{ message: string }> }).failureDetails
+    expect(details[0]!.message).toContain('writer lease guard stayed held')
+    expect(author).not.toHaveBeenCalled()
+  })
+
   it('uses the budget only as a gate before new claims', async () => {
     enqueue('first')
     enqueue('second')

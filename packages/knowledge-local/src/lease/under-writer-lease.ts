@@ -25,13 +25,40 @@
 // fence, which is larger than either phase took.
 
 import {
+  LEASE_HEARTBEAT_TTL_MS,
   WriterAuthorityLostError,
   acquireWriterLease,
   assertEpochCurrent,
   readWriterLease,
   releaseLease,
 } from './writer-lease.js'
-import type { WriterLease, WriterLeaseAuthority } from './writer-lease.js'
+import type { LeaseOperationOptions, WriterLease, WriterLeaseAuthority } from './writer-lease.js'
+
+/** `process.emitWarning` code for a lease not given back after the work it guarded. */
+export const LEASE_RELEASE_DEFERRED_WARNING = 'AGENT_QA_LEASE_RELEASE_DEFERRED'
+
+/**
+ * Give a lease back after the work it guarded, without letting the release decide that work's
+ * outcome (2026-10-03, quick 261003-lgd, Phase 432 review WR-11).
+ *
+ * Called from a `finally`. A release that throws there (the lease guard stayed busy for its
+ * whole wait, or its directory chain was refused) would replace a committed result with that
+ * throw, or mask the work's own error. It is a named warning instead, and the lease lapses by
+ * its heartbeat TTL, or at once when this process exits and its pid is gone. A typed refusal was
+ * already left to the same lapse.
+ */
+export function releaseLeaseAfterWork(opts: LeaseOperationOptions): void {
+  try {
+    releaseLease(opts)
+  } catch (error) {
+    const reason = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+    process.emitWarning(
+      `the knowledge writer lease ${opts.leaseId} was not released after its work (${reason}); `
+        + `it lapses within ${LEASE_HEARTBEAT_TTL_MS / 1_000} s, or when this process exits`,
+      { code: LEASE_RELEASE_DEFERRED_WARNING },
+    )
+  }
+}
 
 /**
  * A `decide` that returns a promise, refused at COMPILE time (390-12 / WR-02).
@@ -150,7 +177,8 @@ export async function underKnowledgeWriterLease<T>(
     return decide()
   } finally {
     // Given back on EVERY exit, including the typed ledger refusals the read raises: a verb that
-    // failed must not leave the next drain locked out of the knowledge root.
-    releaseLease({ knowledgeRoot, leaseId: acquired.leaseId })
+    // failed must not leave the next drain locked out of the knowledge root. A release that throws
+    // never replaces the verb's own result or error (WR-11).
+    releaseLeaseAfterWork({ knowledgeRoot, leaseId: acquired.leaseId })
   }
 }

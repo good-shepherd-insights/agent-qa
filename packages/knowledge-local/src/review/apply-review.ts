@@ -62,7 +62,8 @@ import {
 import { snapshotTrustPriors } from '../promotion-gate-input.js'
 import { diffSince } from '../diff-since.js'
 import { materializePolicy, policyShelfPath, PolicyTextRefusedError } from '../policy/materialize.js'
-import { acquireWriterLease, releaseLease, withCurrentWriterAuthority } from '../lease/writer-lease.js'
+import { acquireWriterLease, withCurrentWriterAuthority } from '../lease/writer-lease.js'
+import { releaseLeaseAfterWork } from '../lease/under-writer-lease.js'
 import type { WriterLease } from '../lease/writer-lease.js'
 import { memoryStatusForBundle } from '../memory-status.js'
 import { readRecordedForgetReceipt, recordForgetReceipt } from './forget-receipt-journal.js'
@@ -876,6 +877,7 @@ export async function applyExplicitReview(input: ApplyExplicitReviewInput): Prom
   try {
     return await applyExplicitAsHolder(writer, request, changeId, acquired, input.resolveBundleShortId)
   } finally {
-    releaseLease({ knowledgeRoot: input.knowledgeRoot, leaseId: acquired.leaseId })
+    // An applied change is never reported as failed because the release after it threw (WR-11).
+    releaseLeaseAfterWork({ knowledgeRoot: input.knowledgeRoot, leaseId: acquired.leaseId })
   }
 }

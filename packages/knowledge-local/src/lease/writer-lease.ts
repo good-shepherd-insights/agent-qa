@@ -9,20 +9,23 @@ import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import {
   closeSync,
+  constants as fsConstants,
   existsSync,
   fsyncSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmdirSync,
   rmSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
-import type { Dirent } from 'node:fs'
-import { dirname, isAbsolute, join } from 'node:path'
+import type { Dirent, Stats } from 'node:fs'
+import { basename, dirname, isAbsolute, join, sep } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { threadId } from 'node:worker_threads'
 
@@ -90,6 +93,30 @@ const LEASE_GUARD_OWNER_PREFIX = 'owner-'
 
 /** A guard older than this cannot belong to a live section (each is one read and one write). */
 export const LEASE_GUARD_STALE_MS = 10_000
+
+/**
+ * How long a waiter keeps trying for the guard: deliberately LONGER than the residue bound.
+ *
+ * 2026-10-03 (quick 261003-lgd, Phase 432 review WR-11): the wait used to reuse the 2 s
+ * MUTATION_LOCK_BUSY_TIMEOUT_MS, shorter than the 10 s bound. A guard left by a thread terminated
+ * inside its section carries this live process's pid, so only the age bound can judge it residue,
+ * and no waiter ever lived long enough to see it cross: every beat and release after a terminated
+ * beat worker threw. The bound is kept and the wait made to outlast it, rather than the bound cut
+ * below the wait, because a bound short enough to fit a 2 s wait could cut a live section short
+ * under heavy load. Measured whole calls (stage, claim, section, release), 400 beats and 100
+ * releases at load 4 on 12 cores: beat p50 12 ms, p99 15 ms, max 21 ms; release p50 9 ms, p99
+ * 13 ms. Load 126-255 is about 10-21 times oversubscribed, so even a p99 stretched that far stays
+ * well under the 10 s bound. Live contention still clears in milliseconds; only a residue costs a
+ * waiter up to the bound, once.
+ */
+export const LEASE_GUARD_WAIT_MS = LEASE_GUARD_STALE_MS + 2_000
+
+/** A staging directory lives at most as long as its waiter, so one older than this is a leak. */
+const LEASE_GUARD_STAGING_STALE_MS = LEASE_GUARD_WAIT_MS + LEASE_GUARD_STALE_MS
+
+const LEASE_GUARD_STAGING_PREFIX = `${basename(LEASE_GUARD_DIR)}.tmp-`
+
+const LEASE_GUARD_RESIDUE_PREFIX = `${basename(LEASE_GUARD_DIR)}.residue-`
 
 const LEASE_GUARD_POLL_MS = 2
 
@@ -570,6 +597,31 @@ class MutationLockGenerationLostError extends Error {
 
 class LeaseGuardBusyError extends Error {
   override readonly name = 'LeaseGuardBusyError'
+}
+
+/**
+ * The lease guard's directory chain leaves the knowledge root through a link (CR-01).
+ *
+ * The knowledge root is a shared git repository, and a tracked symlink is checked out even under
+ * an ignored directory, so `memory/` or `memory/queue/` can point anywhere. No guard work starts
+ * through such a link: nothing is created, claimed or removed, and the lease is left as it is.
+ */
+export class LeaseGuardContainmentError extends Error {
+  override readonly name = 'LeaseGuardContainmentError'
+  readonly path: string
+  readonly resolvedTo: string | undefined
+
+  constructor(path: string, resolvedTo: string | undefined, knowledgeRoot: string) {
+    const where = resolvedTo === undefined
+      ? 'is a link that resolves nowhere'
+      : `resolves to ${resolvedTo}`
+    super(
+      `writer lease guard refused: ${path} ${where}, outside the knowledge root `
+        + `${knowledgeRoot}. Remove the link ${path} and retry.`,
+    )
+    this.path = path
+    this.resolvedTo = resolvedTo
+  }
 }
 
 function mutationLockNowMs(): number {
@@ -1200,45 +1252,180 @@ function ignoreErrno(run: () => void, codes: readonly string[]): void {
   }
 }
 
+function errnoOf(error: unknown): string {
+  return (error as NodeJS.ErrnoException).code ?? ''
+}
+
+/** `lstat` that answers `undefined` for a missing entry; it never follows a link. */
+function lstatOrAbsent(path: string): Stats | undefined {
+  try {
+    return lstatSync(path)
+  } catch (error) {
+    if (errnoOf(error) === 'ENOENT') return undefined
+    throw error
+  }
+}
+
+/**
+ * Refuse, before any guard work, a guard directory chain that leaves the knowledge root (CR-01).
+ *
+ * Each of `memory/` and `memory/queue/` that exists must resolve inside the knowledge root's own
+ * real path, so a link that stays inside the root is fine and one that leaves it, or resolves
+ * nowhere, is refused by name. A component that does not exist yet is created as a real directory.
+ */
+function assertLeaseGuardContained(knowledgeRoot: string): void {
+  let realRoot: string
+  try {
+    realRoot = realpathSync(knowledgeRoot)
+  } catch (error) {
+    if (errnoOf(error) === 'ENOENT') return
+    throw error
+  }
+  let dir = knowledgeRoot
+  for (const part of dirname(LEASE_GUARD_DIR).split('/')) {
+    dir = join(dir, part)
+    if (lstatOrAbsent(dir) === undefined) return
+    let real: string | undefined
+    try {
+      real = realpathSync(dir)
+    } catch (error) {
+      if (errnoOf(error) !== 'ENOENT' && errnoOf(error) !== 'ELOOP') throw error
+    }
+    if (real === undefined || (real !== realRoot && !real.startsWith(`${realRoot}${sep}`))) {
+      throw new LeaseGuardContainmentError(dir, real, knowledgeRoot)
+    }
+  }
+}
+
+/** Move a directory nothing can attribute aside, whole: its entries are never ours to delete. */
+function moveLeaseGuardAside(guard: string): void {
+  const aside = join(dirname(guard), `${LEASE_GUARD_RESIDUE_PREFIX}${randomUUID()}`)
+  ignoreErrno(() => renameSync(guard, aside), ['ENOENT'])
+}
+
+/** Read an owner file without following a link or blocking on a special file. */
+function readLeaseGuardOwner(path: string, name: string): LeaseGuardOwner | undefined {
+  const fd = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK)
+  let raw: string
+  try {
+    raw = readFileSync(fd, 'utf8')
+  } finally {
+    closeSync(fd)
+  }
+  try {
+    const parsed = leaseGuardOwnerSchema.safeParse(JSON.parse(raw))
+    return parsed.success && `${LEASE_GUARD_OWNER_PREFIX}${parsed.data.token}` === name
+      ? parsed.data
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Observe the guard path without ever reaching through it (CR-01).
+ *
+ * A guard is only ever a real directory holding one regular `owner-<token>` file. Anything else at
+ * the path, a symlink wherever it points or a plain file, is removed as an entry: `unlink` removes
+ * a link, never its target. A directory nothing can attribute (entries but no owner, or an owner
+ * that is not a regular file) is moved aside whole and its entries are never unlinked; no live
+ * guard can look like that, because a guard is only published by renaming a staged directory onto
+ * an empty one.
+ */
 function observeLeaseGuard(guard: string): ObservedLeaseGuard {
+  const stat = lstatOrAbsent(guard)
+  if (stat === undefined) return { kind: 'vacant' }
+  if (!stat.isDirectory()) {
+    ignoreErrno(() => unlinkSync(guard), ['ENOENT', 'EISDIR', 'EPERM'])
+    return { kind: 'vacant' }
+  }
   let names: string[]
   try {
     names = readdirSync(guard)
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code
-    if (code === 'ENOENT') return { kind: 'vacant' }
-    // A guard is always a directory, and `unlink` cannot remove one: no live guard is touched.
-    if (code === 'ENOTDIR') {
-      ignoreErrno(() => unlinkSync(guard), ['ENOENT', 'EISDIR', 'EPERM'])
+    // Replaced between the two calls: the next observation judges whatever is there now.
+    if (errnoOf(error) === 'ENOENT' || errnoOf(error) === 'ENOTDIR') return { kind: 'vacant' }
+    throw error
+  }
+  if (names.length === 0) {
+    ignoreErrno(() => rmdirSync(guard), ['ENOENT', 'ENOTEMPTY', 'EEXIST', 'ENOTDIR'])
+    return { kind: 'vacant' }
+  }
+  const ownerFile = names.filter((name) => name.startsWith(LEASE_GUARD_OWNER_PREFIX)).sort()[0]
+  const ownerStat = ownerFile === undefined ? undefined : lstatOrAbsent(join(guard, ownerFile))
+  if (ownerFile === undefined || (ownerStat !== undefined && !ownerStat.isFile())) {
+    moveLeaseGuardAside(guard)
+    return { kind: 'vacant' }
+  }
+  if (ownerStat === undefined) return { kind: 'vacant' }
+  let owner: LeaseGuardOwner | undefined
+  try {
+    owner = readLeaseGuardOwner(join(guard, ownerFile), ownerFile)
+  } catch (error) {
+    if (errnoOf(error) === 'ENOENT') return { kind: 'vacant' }
+    if (errnoOf(error) === 'ELOOP') {
+      moveLeaseGuardAside(guard)
       return { kind: 'vacant' }
     }
     throw error
   }
-  const owners = names.filter((name) => name.startsWith(LEASE_GUARD_OWNER_PREFIX)).sort()
-  if (owners.length === 0) {
-    // Empty, or strays nothing publishes: a live guard always carries its owner file.
-    for (const stray of names) {
-      ignoreErrno(() => unlinkSync(join(guard, stray)), ['ENOENT', 'EISDIR', 'EPERM'])
-    }
-    ignoreErrno(() => rmdirSync(guard), ['ENOENT', 'ENOTEMPTY', 'EEXIST'])
-    return { kind: 'vacant' }
-  }
-  const ownerFile = owners[0]!
-  let raw: string
+  return owner === undefined ? { kind: 'held', ownerFile } : { kind: 'held', ownerFile, owner }
+}
+
+/**
+ * Sweep staging directories a holder leaked by dying between staging and claiming (IN-24).
+ *
+ * A staging directory is exactly one owner file in a real directory, and lives no longer than its
+ * waiter, so one is swept only when its owner is residue under that longer bound (or its process
+ * is gone). The sweep is the same compare-and-swap as a reclaim: the owner's own name, then
+ * `rmdir`. A link, or a directory holding anything else, is left exactly as it is. Housekeeping
+ * only: nothing here may fail the section.
+ */
+function sweepLeakedLeaseGuardStaging(parent: string, ownStaged: string): void {
+  let names: string[]
   try {
-    raw = readFileSync(join(guard, ownerFile), 'utf8')
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { kind: 'vacant' }
-    throw error
-  }
-  try {
-    const parsed = leaseGuardOwnerSchema.safeParse(JSON.parse(raw))
-    return parsed.success && `${LEASE_GUARD_OWNER_PREFIX}${parsed.data.token}` === ownerFile
-      ? { kind: 'held', ownerFile, owner: parsed.data }
-      : { kind: 'held', ownerFile }
+    names = readdirSync(parent)
   } catch {
-    return { kind: 'held', ownerFile }
+    return
   }
+  for (const name of names) {
+    if (!name.startsWith(LEASE_GUARD_STAGING_PREFIX)) continue
+    const dir = join(parent, name)
+    if (dir === ownStaged) continue
+    try {
+      sweepLeakedStagingDirectory(dir)
+    } catch {
+      // Left for a later sweep.
+    }
+  }
+}
+
+function sweepLeakedStagingDirectory(dir: string): void {
+  const stat = lstatOrAbsent(dir)
+  if (stat === undefined || !stat.isDirectory()) return
+  const entries = readdirSync(dir)
+  // Wall clock, not `Date.now()`: the beat's only `Date.now()` is a seam the race cells use.
+  const nowMs = mutationLockNowMs()
+  if (entries.length === 0) {
+    // Staged, not yet written: judged by its own age only.
+    if (nowMs - stat.mtimeMs >= LEASE_GUARD_STAGING_STALE_MS) {
+      ignoreErrno(() => rmdirSync(dir), ['ENOENT', 'ENOTEMPTY', 'EEXIST', 'ENOTDIR'])
+    }
+    return
+  }
+  const ownerFile = entries[0]!
+  if (entries.length !== 1 || !ownerFile.startsWith(LEASE_GUARD_OWNER_PREFIX)) return
+  const ownerPath = join(dir, ownerFile)
+  const ownerStat = lstatOrAbsent(ownerPath)
+  if (ownerStat === undefined || !ownerStat.isFile()) return
+  const owner = readLeaseGuardOwner(ownerPath, ownerFile)
+  // An owner being written can read as nothing yet, so unattributable bytes wait out the bound.
+  const residue = owner === undefined
+    ? nowMs - ownerStat.mtimeMs >= LEASE_GUARD_STAGING_STALE_MS
+    : leaseGuardOwnerIsResidue(owner, LEASE_GUARD_STAGING_STALE_MS)
+  if (!residue) return
+  ignoreErrno(() => unlinkSync(ownerPath), ['ENOENT'])
+  ignoreErrno(() => rmdirSync(dir), ['ENOENT', 'ENOTEMPTY', 'EEXIST', 'ENOTDIR'])
 }
 
 /**
@@ -1250,8 +1437,12 @@ function observeLeaseGuard(guard: string): ObservedLeaseGuard {
  */
 function leaseGuardIsResidue(owner: LeaseGuardOwner | undefined): boolean {
   if (owner === undefined) return true
+  return leaseGuardOwnerIsResidue(owner, LEASE_GUARD_STALE_MS)
+}
+
+function leaseGuardOwnerIsResidue(owner: LeaseGuardOwner, staleMs: number): boolean {
   const ageMs = Number(process.hrtime.bigint() - BigInt(owner.claimedAtNs)) / 1e6
-  if (ageMs < 0 || ageMs >= LEASE_GUARD_STALE_MS) return true
+  if (ageMs < 0 || ageMs >= staleMs) return true
   return owner.pid !== process.pid && !processIsAlive(owner.pid)
 }
 
@@ -1266,13 +1457,13 @@ function leaseGuardIsResidue(owner: LeaseGuardOwner | undefined): boolean {
 function reclaimLeaseGuard(guard: string, ownerFile: string, hooks: LeaseGuardHooks): void {
   ignoreErrno(() => unlinkSync(join(guard, ownerFile)), ['ENOENT'])
   hooks.duringLeaseGuardReclaim?.()
-  ignoreErrno(() => rmdirSync(guard), ['ENOENT', 'ENOTEMPTY', 'EEXIST'])
+  ignoreErrno(() => rmdirSync(guard), ['ENOENT', 'ENOTEMPTY', 'EEXIST', 'ENOTDIR'])
 }
 
 function releaseLeaseGuard(guard: string, ownerFile: string): void {
   try {
     unlinkSync(join(guard, ownerFile))
-    ignoreErrno(() => rmdirSync(guard), ['ENOENT', 'ENOTEMPTY', 'EEXIST'])
+    ignoreErrno(() => rmdirSync(guard), ['ENOENT', 'ENOTEMPTY', 'EEXIST', 'ENOTDIR'])
   } catch {
     // Whatever is left is residue, and the age bound reclaims it.
   }
@@ -1284,9 +1475,10 @@ function releaseLeaseGuard(guard: string, ownerFile: string): void {
  * Claiming is renaming a staged directory onto the guard path, which succeeds only where no guard
  * or an empty one sits. Governed mutations and acquisitions never take the guard, so a mutation of
  * any length cannot starve the beat (CR-03 stands) and a beat cannot block an acquisition. Waiting
- * is bounded by the same MUTATION_LOCK_BUSY_TIMEOUT_MS window a contended mutation lock gets; a
- * guard held by an enclosing section on this very thread can never be let go by waiting, so that
- * claim fails at once.
+ * is bounded by LEASE_GUARD_WAIT_MS, which outlasts the residue bound so that a guard left by a
+ * terminated thread of this process is always reclaimed in time (WR-11); a guard held by an
+ * enclosing section on this very thread can never be let go by waiting, so that claim fails at
+ * once. Nothing here reaches through a link or out of the knowledge root (CR-01).
  */
 function withLeaseGuard<T>(
   knowledgeRoot: string,
@@ -1294,6 +1486,7 @@ function withLeaseGuard<T>(
   hooks: LeaseGuardHooks = {},
 ): T {
   const guard = join(knowledgeRoot, LEASE_GUARD_DIR)
+  assertLeaseGuardContained(knowledgeRoot)
   const claimedAtNs = process.hrtime.bigint()
   const token = randomUUID()
   const ownerFile = `${LEASE_GUARD_OWNER_PREFIX}${token}`
@@ -1347,10 +1540,10 @@ function withLeaseGuard<T>(
           contended = true
           hooks.onLeaseGuardContended?.()
         }
-        if (monotonicElapsedMs(claimedAtNs) >= MUTATION_LOCK_BUSY_TIMEOUT_MS) {
+        if (monotonicElapsedMs(claimedAtNs) >= LEASE_GUARD_WAIT_MS) {
           throw new LeaseGuardBusyError(
             `writer lease guard stayed held by pid ${owner?.pid ?? 'unknown'} for `
-              + `${MUTATION_LOCK_BUSY_TIMEOUT_MS}ms`,
+              + `${LEASE_GUARD_WAIT_MS}ms`,
           )
         }
         Atomics.wait(MUTATION_LOCK_TERMINATION_WAIT, 0, 0, LEASE_GUARD_POLL_MS)
@@ -1360,6 +1553,7 @@ function withLeaseGuard<T>(
       rmSync(staged, { recursive: true, force: true })
     }
     try {
+      sweepLeakedLeaseGuardStaging(parent, staged)
       return section()
     } finally {
       releaseLeaseGuard(guard, ownerFile)

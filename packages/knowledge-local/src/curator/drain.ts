@@ -44,6 +44,7 @@ import {
   releaseLease,
   WriterAuthorityLostError,
   type CurrentWriterAuthority,
+  type HeartbeatLeaseOutcome,
   type WriterLease,
 } from '../lease/writer-lease.js'
 import {
@@ -964,10 +965,18 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
       const executionContext = claimedExecutionContext(claimed, options.executionContext)
 
       if (drainOwnsLease) {
-        const heartbeat = operations.heartbeatLease({
-          knowledgeRoot: options.knowledgeRoot,
-          leaseId: lease.leaseId,
-        })
+        // A beat that throws (the lease guard stayed busy for its whole wait, or was refused) is
+        // a heartbeat failure like a refusal, never a throw out of the loop (WR-11).
+        let heartbeat: HeartbeatLeaseOutcome
+        try {
+          heartbeat = operations.heartbeatLease({
+            knowledgeRoot: options.knowledgeRoot,
+            leaseId: lease.leaseId,
+          })
+        } catch (error) {
+          recordFailure(result, 'heartbeat', error, claimed.candidateId)
+          break
+        }
         if (heartbeat.kind === 'refused') {
           recordFailure(result, 'heartbeat', heartbeat.reason, claimed.candidateId)
           break
