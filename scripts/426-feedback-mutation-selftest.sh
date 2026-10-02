@@ -21,7 +21,8 @@ const HOOK_SRC = 'packages/dashboard-ui/src/hooks/use-run-feedback.ts'
 const ROW_SRC = 'packages/dashboard-ui/src/components/run-detail/step-tree-item.tsx'
 const HISTORY_SRC = 'packages/dashboard-ui/src/components/run-detail/feedback-history.tsx'
 const PREVIEW_SRC = 'packages/dashboard-ui/src/components/run-detail/feedback-preview.tsx'
-const APPROVAL_SRC = 'packages/dashboard-ui/src/components/run-detail/feedback-approval.tsx'
+// 2026-10-02 (432-44, D-14): F12's subject is the composer; the approval component it wrapped is deleted.
+const COMPOSER_SRC = 'packages/dashboard-ui/src/components/run-detail/feedback-composer.tsx'
 
 const VIEW = 'src/lib/__tests__/feedback-view.test.ts'
 const VIEW_D = 'src/lib/__tests__/feedback-view.test-d.ts'
@@ -64,7 +65,7 @@ runSelftest({
       reds: [`${COMPOSER} > NO-INTERNAL-NAME-IN-COPY (x3)`] },
     { id: 'F11', claim: 'SUBMIT-NEEDS-CURRENT-PREVIEW', subject: VIEW_SRC,
       reds: [`${PAGE} > SUBMIT-NEEDS-CURRENT-PREVIEW`] },
-    { id: 'F12', claim: 'NO-DIALOG-ON-MARK-PATH', subject: APPROVAL_SRC,
+    { id: 'F12', claim: 'NO-DIALOG-ON-MARK-PATH', subject: COMPOSER_SRC,
       reds: [`${DOM} > NO-DIALOG-ON-MARK-PATH`], crossing: '@vostride/agent-qa-dashboard-ui' },
     { id: 'F13', claim: 'HISTORY-REPLACED-EXPLAINED', subject: HISTORY_SRC,
       reds: [`${HISTORY} > HISTORY-REPLACED-EXPLAINED`] },

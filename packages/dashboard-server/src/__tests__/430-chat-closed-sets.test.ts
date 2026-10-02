@@ -10,7 +10,11 @@ import { describe, expect, it } from 'vitest'
 
 import { AGENT_HOST_MEMBERS } from '../chat/host.js'
 
-const CHAT_DIR = fileURLToPath(new URL('../chat/', import.meta.url))
+// 2026-10-02 (432-44): the directory is named as a literal under a URL root, the shape the mutation
+// engine's arrival proof follows, so a route-table module CREATED beside the host seam (430 leg R06)
+// provably reaches this cell. Same directory, same claim.
+const SERVER_SRC = new URL('../', import.meta.url)
+const CHAT_DIR = fileURLToPath(new URL('chat/', SERVER_SRC))
 
 describe('the confirm router closed sets (430)', () => {
   // RE-SPELLED 2026-10-01 (432-14, D-14): was 'the router serves the run-confirm pair and nothing

@@ -22,6 +22,9 @@
 # subject, so the subjects stay at eighteen. U44 now reds EXPLICIT-FAILURE-RESTORES-ROW as well (the
 # review's IN-15), which moved there from its allowed list.
 #
+# 2026-10-02 (432-44, D-12): token-list.tsx is deleted (432-22), so U42's subject is the MCP section
+# and its RED is C432-NO-TOKEN-CONTROLS; the subjects stay at eighteen.
+#
 # Runs in place on the real tree. Slow; a phase gate, not a per-commit sample.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -46,7 +49,7 @@ const PAGE_SRC = 'packages/dashboard-ui/src/pages/config.tsx'
 const FIELDS_SRC = 'packages/dashboard-ui/src/lib/config-fields.ts'
 const EVAL_SRC = 'packages/dashboard-ui/src/components/config-manager/eval-section.tsx'
 const WORKSPACE_SRC = 'packages/dashboard-ui/src/lib/model-workspace.ts'
-const TOKEN_SRC = 'packages/dashboard-ui/src/components/config-manager/token-list.tsx'
+const MCP_SECTION_SRC = 'packages/dashboard-ui/src/components/config-manager/mcp-section.tsx'
 
 const TABS_T = 'src/lib/__tests__/config-tabs.test.ts'
 const TABS_D = 'src/lib/__tests__/config-tabs.test-d.ts'
@@ -163,8 +166,8 @@ runSelftest({
       reds: [`${ADD_ROW_T} > CONNECT-REFUSAL-COPY`] },
     { id: 'U41', claim: 'CONNECT-REFUSAL-COPY-TOTAL', subject: COPY_SRC,
       reds: [`${COPY_T} > CONNECT-REFUSAL-COPY-TOTAL: every code the connect door can answer has its own full sentence`] },
-    { id: 'U42', claim: 'ADD-MCP-TOKEN-KEEPS-EVERY-SCOPE', subject: TOKEN_SRC,
-      reds: [`${TOKEN_T} > ADD-MCP-TOKEN-KEEPS-EVERY-SCOPE`] },
+    { id: 'U42', claim: 'C432-NO-TOKEN-CONTROLS', subject: MCP_SECTION_SRC,
+      reds: [`${TOKEN_T} > C432-NO-TOKEN-CONTROLS: the MCP and dashboard sections render their fields and no token list, row, add row or stdio switch`] },
     { id: 'U43', claim: 'OUTSIDE-EDIT-INTERLEAVED-SHIPPED', subject: HOOK_SRC, crossing: UI,
       reds: [`${DOM_T} > OUTSIDE-EDIT-INTERLEAVED-SHIPPED`] },
     // The re-verification gap's leg (429-53, WR-06).

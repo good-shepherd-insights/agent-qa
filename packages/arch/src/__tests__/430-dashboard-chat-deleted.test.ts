@@ -239,6 +239,12 @@ const EVERY_NEEDLE: NeedleEntry[] = [
   ...CONTRACT_ONLY,
 ]
 
+const REMEDY_TABLE_NEEDLE: NeedleEntry = (() => {
+  const entry = UI_ONLY.find((candidate) => candidate.label === 'the dashboard remedy text table')
+  if (entry === undefined) throw new Error('the remedy text table needle left the inventory')
+  return entry
+})()
+
 /** The kept names (D-11), each with the universe whose production source must still spell it. */
 // 2026-10-01 (432-14, D-14): the confirm vocabulary, the channel frames, the confirm router and its
 // table are deleted with the run-confirm pair, so they leave this list rather than being excused.
@@ -478,6 +484,21 @@ describe('no hidden second Chat remains in the dashboard UI, server or door comp
     expect(block).not.toContain('remed' + 'ies=')
     // The 430 R14 subject is the DenialBlock's own render, and it is still a kept name.
     expect(TOLERATED.map(([name]) => name)).toContain('DenialBlock')
+  })
+
+  // 2026-10-02 (432-44): the current owner of the 430 mutation leg R15 (was the remedy text table
+  // needle cell above, which stays). The table was a module-level constant of the denial block, so
+  // this cell reads that module's declarations as well as every UI source: no declaration naming a
+  // remedy, and no spelling of the table, may return.
+  it('C432-430-R15-REMEDY-TABLE-ABSENT: the denial block declares no remedy table and no UI source spells one', () => {
+    const blockFile = 'dashboard-ui/src/components/run-detail/denial-block.tsx'
+    const block = read(blockFile)
+    expect(block, 'non-vacuity: the kept denial block was read').toContain('export function DenialBlock(')
+    const remedyDeclarations = block.split('\n').flatMap((text, index) =>
+      /\b(?:const|let|var|function|type|interface)\s+\w*remed/i.test(text) ? [`${blockFile}:${index + 1}: ${text.trim()}`] : [])
+    const table = REMEDY_TABLE_NEEDLE.halves[0] + REMEDY_TABLE_NEEDLE.halves[1]
+    const spelled = census(table, UNIVERSE_FOR.ui)
+    expect([...remedyDeclarations, ...spelled], `the dashboard remedy text table returned:\n${[...remedyDeclarations, ...spelled].join('\n')}`).toEqual([])
   })
 
   // This file is outside every universe, but a whole spelling here would still be an inventory

@@ -10,6 +10,9 @@
 # reason a total read off the gate would be worthless: it would agree with the gate however the gate
 # moved.
 #
+# 2026-10-02 (432-44): R06-R08, R10 and R12-R15 are re-spelled here independently of the gate to the
+# subjects and current cells the 432 tree carries (432-MUTATION-MAP.md, 430 carry map).
+#
 # Runs in place on the real tree. Slow; a phase gate, not a per-commit sample.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -38,13 +41,8 @@ const CENSUS = 'src/__tests__/430-dashboard-chat-deleted.test.ts'
 const SETS_T = 'src/__tests__/430-chat-closed-sets.test.ts'
 const SETS_D = 'src/__tests__/430-chat-closed-sets.test-d.ts'
 const REMEDY_T = 'src/safety/__tests__/430-remedy-memberships.test.ts'
-const REMEDY_D = 'src/safety/__tests__/430-remedy-memberships.test-d.ts'
-const remedyReds = [
-  `${REMEDY_T} > C430-REMEDY-MEMBERSHIPS-EXACT`,
-  `${REMEDY_D} > C430-REMEDY-MEMBERSHIPS-EXACT`,
-  `${REMEDY_T} > C430-DASHBOARD-PROJECTION-EMPTY`,
-  `${REMEDY_D} > C430-DASHBOARD-PROJECTION-EMPTY`,
-]
+// 2026-10-02 (432-44): R12-R15 re-spelled to their current absence cells, each named with the
+// assertion its RED must carry; R06, R12 and R13 create their deleted module, so each spells `paths`.
 
 runSelftest({
   slug: '430-chat-removal-mutation',
@@ -61,16 +59,16 @@ runSelftest({
     { id: 'R03', claim: 'CENSUS-SESSION-PROVIDER', subject: APP_SRC, reds: [`${CENSUS} > no source or test spells the session provider`] },
     { id: 'R04', claim: 'SIDEBAR-NAV-EXACT', subject: SIDEBAR_SRC, reds: ['src/components/__tests__/app-sidebar.test.tsx > SIDEBAR-NAV-EXACT'] },
     { id: 'R05', claim: 'PALETTE-PAGES-EXACT', subject: PALETTE_SRC, reds: ['src/components/__tests__/command-palette.test.tsx > PALETTE-PAGES-EXACT'] },
-    { id: 'R06', claim: 'C430-CHAT-ROUTE-TABLE-EXACT', subject: CHAT_ROUTES_SRC, reds: [`${SETS_T} > C430-CHAT-ROUTE-TABLE-EXACT`] },
+    { id: 'R06', claim: 'C430-CHAT-ROUTE-TABLE-EXACT', subject: CHAT_ROUTES_SRC, reds: [`${SETS_T} > C430-CHAT-ROUTE-TABLE-EXACT`], paths: [CHAT_ROUTES_SRC] },
     { id: 'R07', claim: 'C430-DELETED-CHAT-ROUTES-SHARED-404', subject: ROUTES_SRC, reds: ['src/__tests__/430-chat-routes-deleted.test.ts > C430-DELETED-CHAT-ROUTES-SHARED-404 (x5)'] },
-    { id: 'R08', claim: 'C430-CHAT-ROUTE-HANDLERS-EXACT', subject: CHAT_ROUTES_SRC, reds: [`${SETS_D} > C430-CHAT-ROUTE-TABLE-EXACT`] },
+    { id: 'R08', claim: 'C430-CHAT-ROUTE-HANDLERS-EXACT', subject: HOST_SRC, reds: [`${SETS_D} > C430-CHAT-ROUTE-TABLE-EXACT`] },
     { id: 'R09', claim: 'ROSTER-FOUR-SURFACES', subject: ROSTER_SRC, reds: ['src/__tests__/conformance/parity.test.ts > pins the roster at the four surfaces that exist today'] },
-    { id: 'R10', claim: 'MODULE-FOR-DOOR-EXACT', subject: ATTRIBUTION_SRC, reds: ['src/__tests__/proposal-author-attribution.test.ts > (5) every rostered door supplies a minting surface — the census, over the roster itself'] },
+    { id: 'R10', claim: 'MODULE-FOR-DOOR-EXACT', subject: ATTRIBUTION_SRC, reds: ['src/__tests__/proposal-author-attribution.test.ts > (5) no rostered door supplies a minting surface — the census, over the roster itself'] },
     { id: 'R11', claim: 'C430-AGENT-HOST-MEMBERS-EXACT', subject: HOST_SRC, reds: [`${SETS_D} > C430-AGENT-HOST-MEMBERS-EXACT`] },
-    { id: 'R12', claim: 'C430-ANSWER-CONFIRM-MEMBERSHIP', subject: REMEDIES_SRC, reds: remedyReds },
-    { id: 'R13', claim: 'C430-SESSION-PIN-FINAL-MEMBERSHIP', subject: REMEDIES_SRC, reds: remedyReds },
-    { id: 'R14', claim: 'DENIAL-REASON-ONLY', subject: DENIAL_SRC, reds: ['src/components/run-detail/__tests__/denial-block.test.tsx > DENIAL-REASON-ONLY'] },
-    { id: 'R15', claim: 'CENSUS-DASHBOARD-REMEDY-TEXT', subject: DENIAL_SRC, reds: [`${CENSUS} > no source or test spells the dashboard remedy text table`] },
+    { id: 'R12', claim: 'C430-ANSWER-CONFIRM-MEMBERSHIP', subject: REMEDIES_SRC, reds: [`${REMEDY_T} > C432-430-R12-ANSWER-CONFIRM-ABSENT [the confirm-answering remedy returned]`], paths: [REMEDIES_SRC] },
+    { id: 'R13', claim: 'C430-SESSION-PIN-FINAL-MEMBERSHIP', subject: REMEDIES_SRC, reds: [`${REMEDY_T} > C432-430-R13-SESSION-PIN-ABSENT [the session-pin finality remedy returned]`], paths: [REMEDIES_SRC] },
+    { id: 'R14', claim: 'DENIAL-REASON-ONLY', subject: DENIAL_SRC, reds: ['src/components/run-detail/__tests__/denial-block.test.tsx > C432-430-R14-REASON-ONLY [a remedy line rendered beside the reason]'] },
+    { id: 'R15', claim: 'CENSUS-DASHBOARD-REMEDY-TEXT', subject: DENIAL_SRC, reds: [`${CENSUS} > C432-430-R15-REMEDY-TABLE-ABSENT [the dashboard remedy text table returned]`] },
     { id: 'R16', claim: 'CENSUS-PARSER-IMPORT', subject: APP_SRC, reds: [`${CENSUS} > no source or test spells the parser import, double-quoted`] },
     { id: 'R17', claim: 'CENSUS-PARSER-IN-CONTRACT', subject: CONTRACT_SRC, reds: [`${CENSUS} > no source or test spells the parser in the ownership contract`] },
     { id: 'R18', claim: 'CENSUS-CHAT-DIRECTORY-IMPORT', subject: APP_SRC, reds: [`${CENSUS} > no source or test spells the UI chat module import alias`] },

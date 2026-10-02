@@ -51,6 +51,17 @@
 # answers no confirm and LEG 6 grades a prompt-free ask road. Legs 2-4 are not re-authored here:
 # their proposal-era expectations are recorded as an open item for the phase's script owner.
 #
+# 2026-10-02 (Phase 432 plan 44): LEGS 3 AND 4 ARE RE-AUTHORED FOR THE PROMPT-FREE BUILD, STATICALLY
+# (this lane was not driven: it needs a real model and is unobserved for 433). The scaffold now
+# WRITES in its own call (432-11): LEG 3's scaffold arm grades the config file CHANGING by one merged
+# target with ZERO commits and no proposal store, the scaffold receipt `applied` in the session, and
+# the summary line on the transcript as the receipt shown where a surface exists. `config.proposal.
+# apply`, the v48 gate's `Denied …` sentence and a filed proposal are now REDs: each would be the
+# deleted proposal road coming back. LEG 4 no longer expects a fail-closed gate (432-13/19 deleted it):
+# it grades that the configured project is NOT scaffolded (no scaffold receipt, config bytes kept),
+# commits nothing and refuses with neither from-zero sentence; whatever the authoring turn then does
+# against the live model is recorded, not graded. LEG 2 needed no change: it never reached a gate.
+#
 # ================================================================================================
 # SO WHAT THIS SCRIPT IS
 # ================================================================================================
@@ -89,13 +100,18 @@
 #   types into stdin contains either. NO OTHER LEG GAINS A TRANSCRIPT READ, and this one reads the
 #   transcript for ONE claim while every other verdict it records still comes out of the jsonl.
 #
+#   2026-10-02 (432-44): there is no ask any more. The summary line is the scaffold's own RECEIPT,
+#   shown where a surface exists the moment the change lands (432-11), and `config.proposal.apply`
+#   is now read only as a regression: a deleted verb named on the screen.
+#
 # LOCAL ONLY, AND THE ONE NON-LOCAL-LOOKING NAME IS A NON-RESOLVING RESERVED ONE. P-08 forbids
 # driving automation against a third-party production site. The local demo app at
 # 127.0.0.1:8931 is this lane's only network subject. Legs 3 and 4 need a token the hostname gate
 # ACCEPTS in order to reach the scaffold arm at all, and they use `agent-qa.test`: RFC 6761 reserves
 # `.test` and guarantees it does not resolve, so the derived `https://agent-qa.test` addresses
-# nothing at all. Both legs refuse before any navigation regardless — that is what they measure —
-# but the choice of token is not left to luck.
+# nothing at all. Before 432 both legs refused before any navigation; since 432-11/13 LEG 3's
+# scaffold arm goes on to author against that target in the same turn, so the token's non-resolution
+# is now load-bearing rather than a precaution — any gate run it starts addresses nothing.
 #
 # Usage:
 #   bash scripts/395-live-from-zero.sh
@@ -251,10 +267,9 @@ seal_project() { # $1 = project dir — one commit, so a later commit count is a
 # One chat session, driven with piped stdin, and the SESSION FILE is the answer.
 #
 # PIPED STDIN IS DELIBERATE FOR LEGS 2-4 AND NAMED AS A BOUND. Under pipes the execution context
-# resolves `local-headless`, which is exactly right for these legs: none of them reaches a confirm
-# (every one refuses first, which is what they measure) and `config.field.set`-class propose ops are
-# `mutating-local`, allowed in every context. LEG 5 — the only leg that reaches an approval — spawns
-# through `expect(1)` for a real pty, on 394's measured precedent.
+# resolves `local-headless`. 2026-10-02 (432-44): no context gates anything any more and nothing asks
+# (432-13/19), so the bound no longer stops a turn; it only means no person is at the terminal. LEG 5
+# spawns through `expect(1)` for a real pty, on 394's measured precedent.
 drive_chat() { # $1 = project dir, $2 = utterance, $3 = transcript label -> prints the session id
   local dir="$1" utterance="$2" label="$3"
   ( cd "$dir" && printf '%s\n/quit\n' "$utterance" \
@@ -472,48 +487,38 @@ fi
 # LEG 3 — ARM B: the smallest project in which the route can reach the scaffold at all
 # ------------------------------------------------------------------------------------------------
 #
-# THIS RUNG OPENED IN 395-12, AND THIS LEG NOW MEASURES THE ROAD RATHER THAN THE WALL. Until then a
-# config file's mere existence earned `already-configured`; the predicate is now a DECLARED TARGET
-# REGISTRY, and this project — the demo config with `registry.targets` emptied — declares none. So
-# the turn scaffolds for real: the route resolves `scaffold`, `config.project.scaffold` MERGES one
-# target entry into the person's own config and answers `proposed`, and `routeWriteTest` invokes
-# `config.proposal.apply` in-turn. THAT is SC-5's serving class, live.
+# THIS RUNG OPENED IN 395-12, AND THIS LEG MEASURES THE ROAD RATHER THAN THE WALL. A config file's
+# mere existence no longer earns `already-configured`; the predicate is a DECLARED TARGET REGISTRY,
+# and this project — the demo config with `registry.targets` emptied — declares none.
 #
-# THIS LANE'S HARNESS STOPS AT THE ASK, AND THAT BOUND IS STATED RATHER THAN HIDDEN. Legs 2-4 drive
-# chat with PIPED STDIN, which resolves `local-headless`, and `config.proposal.apply` is
-# `mutating-shared` — so there is nobody to ask and the v48 gate denies by name. Reaching that
-# denial IS the measurement: it says the turn got all the way to the gated apply with a real
-# proposal in hand. What it cannot show is a person answering yes. That half is measured over the
-# PRODUCTION composition with a confirm spy in
-# `cli/src/composition/__tests__/config-scaffold.test.ts` cells (14)/(14b) — applied on YES with the
-# ask observed, refused with zero commits on NO. Building a from-zero pty rung here would cost a
-# real config commit plus a real authoring run for a claim two hermetic cells already carry.
+# RE-AUTHORED 2026-10-02 (432-44) FOR THE PROMPT-FREE BUILD. Until 432 the scaffold PROPOSED, the turn
+# invoked `config.proposal.apply` in-turn, and under this lane's piped stdin (`local-headless`) the
+# v48 gate denied it by name — that denial WAS the measurement. 432-11 made the scaffold WRITE in its
+# own call and 432-13/19 deleted the gate: the route resolves `scaffold`, `config.project.scaffold`
+# MERGES one target entry into the person's own config and answers `applied`, the scaffold receipt is
+# logged and shown, and the SAME turn goes on to author against the target that now exists. So the
+# scaffold arm now CHANGES the config file (one merged target), still commits NOTHING, and files no
+# proposal. What the authoring step then does against the live model and the non-resolving
+# `agent-qa.test` is recorded, not graded: this leg is about the route and the scaffold.
 #
 # THE OTHER ARM SURVIVES, AND IT IS STILL WINDOWS 131 (observed live). `resolveWriteTestRoute` reads
 # the tokens of the intent THE MODEL EMITTED, not the utterance a person typed, so the identical
 # request can reach the scaffold on one run and D-15's refusal on the next when the model
-# paraphrases the site away. This leg records WHICH ARM it took rather than demanding one; a leg
-# written to demand one would report that nondeterminism as a lane failure and hide the finding.
+# paraphrases the site away. This leg records WHICH ARM it took rather than demanding one.
 #
-# WHAT MAKES THIS LEG RED — and every direction below is named, because a leg that can only pass
-# proves nothing:
+# WHAT MAKES THIS LEG RED — every direction named, because a leg that can only pass proves nothing:
 #
-#   * A COMMIT, or the config file's bytes moving. 395-06's property is that every config refusal
-#     lives ABOVE every mutation, and this turn ends in a refusal — the gate's. Read across the turn
-#     from outside, on a real repository. A proposal FILED is expected now and is not a mutation:
-#     it is a record under the gitignored runtime root, not a change to the person's repository.
-#   * `Config file not found` in the turn's own sentence. That is SC-5's THIRD ARM reopening — the
-#     verb the route invokes in-turn throwing out of `coveringGrantInForce`'s ledger read on a
-#     project whose config the scaffold has not applied yet (395-12, config-proposal-apply.ts).
-#   * `already has agent-qa.config.yaml`. That is the narrowing regressing to the file-existence
-#     predicate, and SC-5's entry point closing again.
+#   * A COMMIT on either arm. agent-qa makes no Git commits (D-07).
+#   * THE PROPOSAL ROAD COMING BACK: `config.proposal.apply` or the gate's `Denied …` sentence in the
+#     turn, or anything filed under `.agent-qa/proposals/`. Each is a deleted surface returning.
+#   * The scaffold arm leaving the config file byte-identical (the write did not land), or the refuse
+#     arm changing it (a refusal moved a byte).
+#   * `already has agent-qa.config.yaml` — the narrowing regressing to the file-existence predicate.
+#   * `Config file not found` in the turn's own sentence — SC-5's third arm's symptom, by any road.
 #   * The planner not binding, which would leave this leg unable to tell arm B from arm A.
-#   * The scaffold arm reaching the apply with NO proposal filed, or the refuse arm filing one.
-#   * THE RENDER MISSING FROM THE TRANSCRIPT, or arriving after the gate's own sentence (395-13).
-#     That is D-14's first half — the proposal a person reads AT the moment they are asked — and it
-#     is this lane's one transcript reading, bounded in the posture header above. The reading can
-#     only be taken on the scaffold arm; on the `d15-refuse` arm no proposal exists to render, and
-#     the leg's PASS sentence SAYS the reading was not taken rather than passing it silently.
+#   * THE RECEIPT MISSING FROM THE TRANSCRIPT on the scaffold arm (D-14's surviving half: a person sees
+#     the change the moment it lands). The reading can only be taken on the scaffold arm; on the
+#     `d15-refuse` arm nothing was written, and the PASS sentence SAYS the reading was not taken.
 
 banner 'LEG 3 — SC-5s serving class: config present so the planner binds, ZERO targets'
 
@@ -530,83 +535,65 @@ else
   L3_MODEL="$(session_query "$S3" model)"
   L3_PLANNER="$(session_query "$S3" planner)"
   L3_REASON="$(session_query "$S3" reason)"
+  L3_RECEIPTS="$(session_query "$S3" receipts)"
+  L3_STATUS="$(session_query "$S3" status)"
   P3_AFTER="$(commit_count "$P3")"
   P3_DIGEST_AFTER="$(shasum -a 256 "$P3/agent-qa.config.yaml" | awk '{print $1}')"
   L3_PROPOSALS="$(ls "$P3/.agent-qa/proposals/" 2>/dev/null | wc -l | tr -d ' ')"
-  printf '  session   %s\n  model     %s\n  planner   %s\n  reason    %s\n  commits   %s -> %s\n  config    %s -> %s\n  proposals %s filed\n' \
-    "$S3" "$L3_MODEL" "$L3_PLANNER" "$L3_REASON" "$P3_BEFORE" "$P3_AFTER" "${P3_DIGEST_BEFORE:0:12}" "${P3_DIGEST_AFTER:0:12}" "${L3_PROPOSALS:-0}"
+  printf '  session   %s\n  model     %s\n  planner   %s\n  status    %s\n  receipts  %s\n  reason    %s\n  commits   %s -> %s\n  config    %s -> %s\n  proposals %s filed\n' \
+    "$S3" "$L3_MODEL" "$L3_PLANNER" "$L3_STATUS" "$L3_RECEIPTS" "$L3_REASON" "$P3_BEFORE" "$P3_AFTER" \
+    "${P3_DIGEST_BEFORE:0:12}" "${P3_DIGEST_AFTER:0:12}" "${L3_PROPOSALS:-0}"
 
-  # THE REPOSITORY IS UNTOUCHED, WHICH IS UNCHANGED BY THE RUNG OPENING. This turn still ends in a
-  # refusal — the gate's, not the scaffold's — and 395-06's property is that every config refusal
-  # lives ABOVE every mutation. Read across the turn, from outside. A FILED PROPOSAL IS NOT A
-  # MUTATION and is no longer counted as one: it is a record under the gitignored runtime root.
-  L3_MUTATED=0
-  [ "$P3_AFTER" = "$P3_BEFORE" ] || L3_MUTATED=1
-  [ "$P3_DIGEST_AFTER" = "$P3_DIGEST_BEFORE" ] || L3_MUTATED=1
+  L3_CONFIG_MOVED=0
+  [ "$P3_DIGEST_AFTER" = "$P3_DIGEST_BEFORE" ] || L3_CONFIG_MOVED=1
+
+  L3_TRANSCRIPT="$TRANSCRIPTS/leg3-no-targets.txt"
+  L3_PROPOSAL_ROAD=0
+  case "$L3_REASON" in *'config.proposal.apply'*|*'Denied '*) L3_PROPOSAL_ROAD=1 ;; esac
+  [ "${L3_PROPOSALS:-0}" = '0' ] || L3_PROPOSAL_ROAD=1
+  if [ -f "$L3_TRANSCRIPT" ] && grep -q -F 'config.proposal.apply' "$L3_TRANSCRIPT"; then L3_PROPOSAL_ROAD=1; fi
 
   L3_ARM='unrecognised'
-  case "$L3_REASON" in
-    # 395-12's road: the scaffold PROPOSED and the turn reached the gated in-turn apply, which under
-    # this lane's piped stdio has nobody to ask. The denial names the verb and the tier.
-    *'Denied config.proposal.apply'*) L3_ARM='scaffold-proposed-then-gate-asked' ;;
-    *'I will not guess which site you meant'*) L3_ARM='d15-refuse (no hostname token in the emitted intent)' ;;
-    # The two regressions this leg exists to name, each read out of the turn's own sentence.
-    *'Config file not found'*) L3_ARM='THIRD-ARM-REOPENED' ;;
-    *'already has agent-qa.config.yaml'*) L3_ARM='NARROWING-REGRESSED' ;;
+  case ",$L3_RECEIPTS," in
+    *',config.project.scaffold:executed,'*) L3_ARM='scaffold-applied' ;;
   esac
+  if [ "$L3_ARM" = 'unrecognised' ]; then
+    case "$L3_REASON" in
+      *'I will not guess which site you meant'*) L3_ARM='d15-refuse (no hostname token in the emitted intent)' ;;
+      *'already has agent-qa.config.yaml'*) L3_ARM='NARROWING-REGRESSED' ;;
+      # The sentence `cli/src/config.ts` composes for a missing config; SC-5's third arm met it
+      # through the (now deleted) grant read, and any road that reaches it from this turn is a RED.
+      *'Config file not found'*) L3_ARM='CONFIG-NOT-FOUND' ;;
+    esac
+  fi
 
-  # The two arms disagree about whether a proposal should exist, and each is checked against its own
-  # expectation rather than against a shared "at least zero".
-  L3_PROPOSAL_OK=1
-  case "$L3_ARM" in
-    'scaffold-proposed-then-gate-asked') [ "${L3_PROPOSALS:-0}" -ge 1 ] || L3_PROPOSAL_OK=0 ;;
-    'd15-refuse'*) [ "${L3_PROPOSALS:-0}" = '0' ] || L3_PROPOSAL_OK=0 ;;
-  esac
-
-  # ----------------------------------------------------------------------------------------------
-  # THE D-14 RENDER READING — this lane's ONE transcript verdict (395-13, the SC-5 closure)
-  # ----------------------------------------------------------------------------------------------
-  #
-  # THE PROPOSAL'S OWN SUMMARY LINE, NOT A SUBSTITUTE FOR IT. `construct.ts` composes
-  # `configure this project for ${baseUrl} as target ${targetName}` and D-13 pins the derivation
-  # from this leg's fixed utterance token `agent-qa.test`, so the string below is the product's own
-  # sentence about THIS proposal — reproduced here rather than read out of the jsonl because the
-  # jsonl carries only `proposed <id>` (D-18's map rule) and the whole claim is what a person SEES.
-  #
-  # AND THE ORDER IS THE CLAIM. The render is written synchronously before the in-turn
-  # `config.proposal.apply` invoke, so there is no timing sensitivity here at all: on the scaffold
-  # arm the summary line MUST appear at a line strictly above the first line naming the verb. A
-  # render that arrived afterwards would be a receipt for a decision already made.
+  # THE RECEIPT A PERSON SEES (D-14's surviving half). The scaffold's own summary line, composed by
+  # `construct.ts` from D-13's derivation of this leg's fixed token, shown by the route's `present`
+  # step the moment the write lands.
   L3_SUMMARY_LINE='configure this project for https://agent-qa.test as target agent-qa-test'
-  L3_TRANSCRIPT="$TRANSCRIPTS/leg3-no-targets.txt"
   L3_RENDER_READING='not-taken'
   L3_RENDER_LINE=0
-  L3_GATE_LINE=0
-  if [ "$L3_ARM" = 'scaffold-proposed-then-gate-asked' ] && [ -f "$L3_TRANSCRIPT" ]; then
+  if [ "$L3_ARM" = 'scaffold-applied' ] && [ -f "$L3_TRANSCRIPT" ]; then
     L3_RENDER_READING='taken'
     L3_RENDER_LINE="$(grep -n -m1 -F "$L3_SUMMARY_LINE" "$L3_TRANSCRIPT" | cut -d: -f1)"
-    L3_GATE_LINE="$(grep -n -m1 -F 'config.proposal.apply' "$L3_TRANSCRIPT" | cut -d: -f1)"
     L3_RENDER_LINE="${L3_RENDER_LINE:-0}"
-    L3_GATE_LINE="${L3_GATE_LINE:-0}"
-    printf '  render    summary line at transcript line %s, `config.proposal.apply` at line %s\n' \
-      "$L3_RENDER_LINE" "$L3_GATE_LINE"
+    printf '  render    summary line at transcript line %s\n' "$L3_RENDER_LINE"
   fi
-
-  # WHAT THE PASS SENTENCE SAYS ABOUT THIS READING, on either arm. A leg that took no reading and
-  # said nothing would report a green lane for a clause nobody measured — which is the failure mode
-  # this whole ladder is written against.
   if [ "$L3_RENDER_READING" = 'taken' ]; then
-    L3_RENDER_SENTENCE="D-14's RENDER READING WAS TAKEN THIS RUN (395-13): the proposal's own summary line stands at transcript line $L3_RENDER_LINE, strictly above the first mention of \`config.proposal.apply\` at line $L3_GATE_LINE — so the person at the ask is reading THIS proposal's summary line, file list and true unified diff BEFORE the verb that commits it is invoked. That is SC-5's first clause, measured on the surface it is about."
+    L3_RENDER_SENTENCE="D-14's RENDER READING WAS TAKEN THIS RUN: the scaffold's own summary line stands at transcript line $L3_RENDER_LINE, so the person reads WHAT WAS WRITTEN the moment it lands — the receipt, now that nothing waits for an answer."
   else
-    L3_RENDER_SENTENCE="D-14's RENDER READING WAS NOT TAKEN THIS RUN, and this leg says so rather than passing it silently: arm '$L3_ARM' produces no proposal at all, so there is nothing to render and the transcript cannot carry the clause. The reading is available only on the scaffold arm; re-drive to take it (WINDOWS 131 model nondeterminism)."
+    L3_RENDER_SENTENCE="D-14's RENDER READING WAS NOT TAKEN THIS RUN, and this leg says so rather than passing it silently: arm '$L3_ARM' wrote nothing, so there is no receipt to render. The reading is available only on the scaffold arm; re-drive to take it (WINDOWS 131 model nondeterminism)."
   fi
 
-  if [ "$L3_MUTATED" -eq 1 ]; then
+  if [ "$P3_AFTER" != "$P3_BEFORE" ]; then
     record_leg 'L3 SC-5 serving class' 'RED' \
-      "A REFUSED FROM-ZERO TURN CHANGED THE REPOSITORY. commits $P3_BEFORE->$P3_AFTER, config ${P3_DIGEST_BEFORE:0:12}->${P3_DIGEST_AFTER:0:12}. Arm: $L3_ARM. 395-06's 'every config refusal lives above every mutation' has broken, which is a worse finding than any routing change."
-  elif [ "$L3_ARM" = 'THIRD-ARM-REOPENED' ]; then
+      "THE TURN COMMITTED: commits $P3_BEFORE->$P3_AFTER on arm '$L3_ARM'. agent-qa makes no Git commits (D-07); a commit here is the retired one-commit apply returning."
+  elif [ "$L3_PROPOSAL_ROAD" -eq 1 ]; then
     record_leg 'L3 SC-5 serving class' 'RED' \
-      "SC-5's THIRD ARM HAS REOPENED: the in-turn \`config.proposal.apply\` threw \`Config file not found\` again — '$L3_REASON'. 395-12 folded that in \`coveringGrantInForce\`; the fold is gone or the road moved."
+      "THE PROPOSAL ROAD CAME BACK: the turn named \`config.proposal.apply\` or a gate denial ('$L3_REASON'), or filed ${L3_PROPOSALS:-0} proposal(s). 432 deleted the apply verb, the proposal store and the gate (D-05, D-15); the scaffold writes in its own call."
+  elif [ "$L3_ARM" = 'CONFIG-NOT-FOUND' ]; then
+    record_leg 'L3 SC-5 serving class' 'RED' \
+      "THE TURN THREW \`Config file not found\` — '$L3_REASON'. SC-5's third arm met this sentence through the in-turn apply's grant read (395-12); both are deleted, so whatever reached it now is a new road to the config loader's fault surface (cli/src/config.ts)."
   elif [ "$L3_ARM" = 'NARROWING-REGRESSED' ]; then
     record_leg 'L3 SC-5 serving class' 'RED' \
       "THE NARROWING REGRESSED TO THE FILE-EXISTENCE PREDICATE: a project declaring ZERO targets earned \`already-configured\` — '$L3_REASON'. SC-5's entry point has closed again (WINDOWS 132 jaw 2)."
@@ -615,22 +602,19 @@ else
       "the planner did not bind (planner='$L3_PLANNER') in a project that carries the LLM entry — this leg cannot tell this rung from LEG 2's, so it took no reading at all"
   elif [ "$L3_ARM" = 'unrecognised' ]; then
     record_leg 'L3 SC-5 serving class' 'RED' \
-      "the turn ended with a sentence this leg does not recognise: '$L3_REASON'. No known arm was taken; the route's behaviour has moved and this leg must be re-authored against it."
-  elif [ "$L3_PROPOSAL_OK" -eq 0 ]; then
+      "the turn took no arm this leg recognises: receipts '$L3_RECEIPTS', reason '$L3_REASON'. The route's behaviour has moved and this leg must be re-authored against it."
+  elif [ "$L3_ARM" = 'scaffold-applied' ] && [ "$L3_CONFIG_MOVED" -eq 0 ]; then
     record_leg 'L3 SC-5 serving class' 'RED' \
-      "arm '$L3_ARM' filed ${L3_PROPOSALS:-0} proposal(s), which that arm does not permit. The scaffold arm must file exactly the proposal it reached the apply with; the D-15 refuse arm must file none, because it refuses above every effect."
+      "THE SCAFFOLD ANSWERED applied AND THE CONFIG FILE DID NOT MOVE (${P3_DIGEST_BEFORE:0:12}). A receipt for a write that did not land is the one claim a receipt must never make."
+  elif [ "$L3_ARM" != 'scaffold-applied' ] && [ "$L3_CONFIG_MOVED" -eq 1 ]; then
+    record_leg 'L3 SC-5 serving class' 'RED' \
+      "A REFUSED FROM-ZERO TURN CHANGED THE CONFIG FILE: ${P3_DIGEST_BEFORE:0:12}->${P3_DIGEST_AFTER:0:12} on arm '$L3_ARM'. Every refusal lives above every mutation (395-06)."
   elif [ "$L3_RENDER_READING" = 'taken' ] && [ "${L3_RENDER_LINE:-0}" = '0' ]; then
     record_leg 'L3 SC-5 serving class' 'RED' \
-      "THE RENDER REGRESSED — D-14's INLINE RENDER IS GONE FROM THE TURN. The scaffold proposed and the turn reached the gated apply, but the proposal's own summary line ('$L3_SUMMARY_LINE') appears NOWHERE in the transcript a person reads. That is 395-VERIFICATION's SC-5 gap reopening verbatim: a person is asked to approve a configuration change on the strength of a function name. Transcript: $L3_TRANSCRIPT"
-  elif [ "$L3_RENDER_READING" = 'taken' ] && [ "${L3_GATE_LINE:-0}" = '0' ]; then
-    record_leg 'L3 SC-5 serving class' 'RED' \
-      "the turn's own sentence names \`config.proposal.apply\` in the session jsonl but the transcript does not, so this leg cannot ORDER the render against the gate and took no reading. The surface's wording has moved; re-author this assertion against it. Transcript: $L3_TRANSCRIPT"
-  elif [ "$L3_RENDER_READING" = 'taken' ] && [ "$L3_RENDER_LINE" -ge "$L3_GATE_LINE" ]; then
-    record_leg 'L3 SC-5 serving class' 'RED' \
-      "THE RENDER ARRIVES AFTER THE APPLY — approval-time review is broken even though the bytes eventually show. The summary line is at transcript line $L3_RENDER_LINE and \`config.proposal.apply\` is already named at line $L3_GATE_LINE. The owner's 2026-08-14 ruling is that 'reviewable' binds AT APPROVAL TIME; a proposal rendered after the verb that commits it is a receipt, not a review."
+      "THE RECEIPT IS GONE FROM THE TURN: the scaffold wrote the config, and its own summary line ('$L3_SUMMARY_LINE') appears NOWHERE in the transcript a person reads. A change made with no question asked must at least be SHOWN. Transcript: $L3_TRANSCRIPT"
   else
     record_leg 'L3 SC-5 serving class' 'PASS' \
-      "RUNG 3 IS OPEN, MEASURED LIVE — 395-12. The planner bound, and in a project that HAS a configuration and declares NO targets the turn reached the scaffold for real. ARM TAKEN THIS RUN: $L3_ARM (proposals filed: ${L3_PROPOSALS:-0}). On the scaffold arm the op MERGED one target entry into the person's own config, answered \`proposed\`, and \`routeWriteTest\` invoked \`config.proposal.apply\` in-turn — reaching the ask, which under this lane's piped stdio has nobody to answer it, so the v48 gate denies by name. That denial is the measurement, and its bound is stated: a person answering YES is measured over the production composition in \`config-scaffold.test.ts\` cells (14)/(14b). Either arm leaves the repository untouched: ZERO commits, a byte-identical config file. The arm split is WINDOWS 131 live — the route reads the tokens of the intent the MODEL emitted. $L3_RENDER_SENTENCE"
+      "RUNG 3 IS OPEN AND WRITES IN THE CALL, MEASURED LIVE (395-12, 432-11). The planner bound, and in a project that HAS a configuration and declares NO targets the turn took arm '$L3_ARM' (receipts: $L3_RECEIPTS; status '$L3_STATUS'). On the scaffold arm the op MERGED one target entry into the person's own config (${P3_DIGEST_BEFORE:0:12}->${P3_DIGEST_AFTER:0:12}) and the turn went on to author with nothing asked; on either arm ZERO commits and no proposal filed. The arm split is WINDOWS 131 live — the route reads the tokens of the intent the MODEL emitted. $L3_RENDER_SENTENCE"
   fi
 fi
 
@@ -645,14 +629,18 @@ fi
 # legs 3 and 4 differ in NOTHING but whether the project declares a target, and they must produce
 # DIFFERENT durable outcomes.
 #
-# WHAT MAKES THIS LEG RED: a route that refused here too (it would mean the precondition had become
-# the wording, and 394's shipped authoring path would be broken for the majority of real requests),
-# or one that scaffolded over a project that already declares the target.
+# RE-AUTHORED 2026-10-02 (432-44). This leg used to expect the v48 gate to fail `authoring.draft.write`
+# closed under piped stdin, by its `mutating-shared` tier. 432-13/19 deleted that gate, so nothing
+# stops the authoring step any more and its outcome against the live model is recorded, not graded.
+# The discrimination that survives is the route's: a configured project is NOT scaffolded (no
+# scaffold receipt, the config file byte-identical), is refused with neither from-zero sentence, and
+# — as everywhere — nothing is committed. An authored test file may now be WRITTEN (D-06); that is an
+# uncommitted edit under `tests/`, not a change to the config or the history this leg reads.
 #
-# THE OUTCOME HERE IS NOT A SUCCESS AND IS NOT SUPPOSED TO BE. `authoring.draft.write` is
-# `mutating-shared`, and piped stdio resolves `local-headless`, so the v48 gate fails it closed —
-# BY THE TIER, not by the route. That is precisely the discrimination this leg is for: the refusal
-# must come from the GATE and must not mention the scaffold or the hostname gate at all.
+# WHAT MAKES THIS LEG RED: a route that refused here with a from-zero sentence (the precondition would
+# have become the wording, and 394's shipped authoring path would be broken for the majority of real
+# requests), a scaffold that ran over a project that already declares the target, a gate denial or the
+# deleted apply verb coming back, or a commit.
 
 banner 'LEG 4 — the directional control: a project that HAS the local-form target'
 
@@ -660,6 +648,7 @@ P4="$(new_project local-form)"
 write_config "$P4" local-form
 seal_project "$P4"
 P4_BEFORE="$(commit_count "$P4")"
+P4_DIGEST_BEFORE="$(shasum -a 256 "$P4/agent-qa.config.yaml" | awk '{print $1}')"
 S4="$(drive_chat "$P4" 'write a test for the login flow on local-form' leg4-local-form)"
 
 if [ -z "${S4:-}" ]; then
@@ -669,21 +658,27 @@ else
   L4_RECEIPTS="$(session_query "$S4" receipts)"
   L4_STATUS="$(session_query "$S4" status)"
   P4_AFTER="$(commit_count "$P4")"
-  printf '  session   %s\n  status    %s\n  receipts  %s\n  reason    %s\n  commits   %s -> %s\n' \
-    "$S4" "$L4_STATUS" "$L4_RECEIPTS" "$L4_REASON" "$P4_BEFORE" "$P4_AFTER"
+  P4_DIGEST_AFTER="$(shasum -a 256 "$P4/agent-qa.config.yaml" | awk '{print $1}')"
+  printf '  session   %s\n  status    %s\n  receipts  %s\n  reason    %s\n  commits   %s -> %s\n  config    %s -> %s\n' \
+    "$S4" "$L4_STATUS" "$L4_RECEIPTS" "$L4_REASON" "$P4_BEFORE" "$P4_AFTER" "${P4_DIGEST_BEFORE:0:12}" "${P4_DIGEST_AFTER:0:12}"
   L4_OK=1
   # The refusal, if any, must NOT be either of the two the from-zero arms produce. That is the whole
   # discrimination: same words, different project, different answer.
   case "$L4_REASON" in *'already has agent-qa.config.yaml'*) L4_OK=0 ;; esac
   case "$L4_REASON" in *'no agent-qa configuration'*) L4_OK=0 ;; esac
   case "$L4_REASON" in *'I will not guess which site you meant'*) L4_OK=0 ;; esac
+  # Nothing is gated and the apply verb is deleted, so neither may appear.
+  case "$L4_REASON" in *'Denied '*|*'config.proposal.apply'*) L4_OK=0 ;; esac
+  # The configured project is not scaffolded: no scaffold receipt, and its config keeps its bytes.
+  case ",$L4_RECEIPTS," in *',config.project.scaffold:'*) L4_OK=0 ;; esac
+  [ "$P4_DIGEST_AFTER" = "$P4_DIGEST_BEFORE" ] || L4_OK=0
   [ "$P4_AFTER" = "$P4_BEFORE" ] || L4_OK=0
   if [ "$L4_OK" -eq 1 ]; then
     record_leg 'L4 directional control' 'PASS' \
-      "THE ROUTE DISCRIMINATES ON THE PROJECT, MEASURED LIVE. The same build and the same shape of request, in a project that declares \`local-form\`, produced NEITHER of the two from-zero refusals — so legs 2 and 3 are not a lane that refuses everything, and 395-08's decision that the refusal's precondition is the PROJECT rather than the wording holds outside the hermetic cells. Outcome: status='$L4_STATUS' receipts='$L4_RECEIPTS' reason='$L4_REASON' — a fail-closed here is the v48 gate answering about \`authoring.draft.write\`'s \`mutating-shared\` tier under piped stdio, which is a statement about THIS HARNESS and not about the route (LEG 5 removes it with a real pty)."
+      "THE ROUTE DISCRIMINATES ON THE PROJECT, MEASURED LIVE. The same build and the same shape of request, in a project that declares \`local-form\`, produced NEITHER of the two from-zero refusals, ran no scaffold over the configured project (config ${P4_DIGEST_BEFORE:0:12} kept) and committed nothing — so legs 2 and 3 are not a lane that refuses everything, and 395-08's decision that the refusal's precondition is the PROJECT rather than the wording holds outside the hermetic cells. Authoring outcome, recorded and not graded (no gate since 432): status='$L4_STATUS' receipts='$L4_RECEIPTS' reason='$L4_REASON'."
   else
     record_leg 'L4 directional control' 'RED' \
-      "THE CONTROL COLLAPSED ONTO THE FROM-ZERO ARMS: a project that declares its target produced '$L4_REASON'. Either the route's precondition has become the WORDING — which breaks 394's shipped authoring path for every request that names no hostname — or a scaffold ran against a configured project (commits $P4_BEFORE->$P4_AFTER)."
+      "THE CONTROL COLLAPSED: a project that declares its target produced reason '$L4_REASON', receipts '$L4_RECEIPTS', config ${P4_DIGEST_BEFORE:0:12}->${P4_DIGEST_AFTER:0:12}, commits $P4_BEFORE->$P4_AFTER. Either the route's precondition has become the WORDING, a scaffold ran against a configured project, the deleted gate or apply verb came back, or the turn committed."
   fi
 fi
 
@@ -873,8 +868,8 @@ printf '\n'
 if [ "$LANE_RC" -eq 0 ]; then
   printf 'LANE GREEN — every leg measured what it was written to measure.\n'
   printf 'THE LADDER AFTER 395-12: rung 3 is OPEN — in a project that HAS a configuration and\n'
-  printf 'declares no targets, the utterance reaches the real scaffold, merges one target entry,\n'
-  printf 'and the turn reaches the gated in-turn apply. Rung 2 is UNCHANGED and is not this phase\n'
+  printf 'declares no targets, the utterance reaches the real scaffold, which merges one target\n'
+  printf 'entry in its own call with no commit (432-11). Rung 2 is UNCHANGED and is not this phase\n'
   printf 'to close: a project with no model anywhere still cannot chat (WINDOWS 130/133). Rung 1 is\n'
   printf 'CLOSED (432-05 #134): the local demo app is expressible through the D-15 hostname gate.\n'
   printf 'Green here means the LADDER is exactly where legs 1-3 say it is, and nothing more.\n'

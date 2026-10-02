@@ -59,12 +59,19 @@
 #   U39  Discard deletes a created credential whose name is a saved model            -> DISCARD-NEVER-DELETES-SAVED-CREDENTIAL (429-48, WR-03)
 #   U40  every Connect refusal code falls back to the network sentence               -> CONNECT-REFUSAL-COPY (429-48, WR-02)
 #   U41  field_changed leaves CONNECT_REFUSAL_COPY                                   -> CONNECT-REFUSAL-COPY-TOTAL (429-48, WR-02)
-#   U42  a scope checkbox settles the add-token row on its own                        -> ADD-MCP-TOKEN-KEEPS-EVERY-SCOPE (429-39, WR-04)
+#   U42  the MCP section grows an add-token row again                                -> C432-NO-TOKEN-CONTROLS (was ADD-MCP-TOKEN-KEEPS-EVERY-SCOPE)
 #   U43  U32's edit, on the rebuilt bundle                                           -> OUTSIDE-EDIT-INTERLEAVED-SHIPPED (429-37, shipped)
 #   U44  write-failed keeps the marker of a failed keyless write                     -> EMPTY-RETRY-NEVER-SAVING (429-53, WR-06)
 #   U45  write-failed drops the in-flight marker whatever write failed               -> FOREIGN-FAILURE-KEEPS-WRITE (429 review, WR-10)
 #
 # ALLOWED CO-REDS are listed on each leg with a one-line reason; nothing else may red.
+#
+# 2026-10-02 (432-44, D-12): TWO LEGS RE-SPELLED AFTER THE TOKENLESS CONFIG. 432-22 deleted the
+# token lists (`token-list.tsx`), their section and the `run-service-tokens` section id. U01's third
+# hunk now anchors on the advanced tab's three sections. U42 planted a scope checkbox that settled
+# the add-token row on its own (429-39, WR-04); the row and its module are gone, and the suite that
+# held ADD-MCP-TOKEN-KEEPS-EVERY-SCOPE now pins C432-NO-TOKEN-CONTROLS, so the leg plants the
+# add-token row back into the MCP section and that cell must red.
 #
 # ONE INSTRUMENT PER LEG, SO 31 LEGS AND NOT 27. The plan names two cells for four regressions:
 # a failed write's drafts (FAILED-WRITE-KEEPS-DRAFT in ui-lib, FORCED-FAILURE-KEEPS-DRAFT through the
@@ -157,7 +164,7 @@ const PAGE_SRC = 'packages/dashboard-ui/src/pages/config.tsx'
 const FIELDS_SRC = 'packages/dashboard-ui/src/lib/config-fields.ts'
 const EVAL_SRC = 'packages/dashboard-ui/src/components/config-manager/eval-section.tsx'
 const WORKSPACE_SRC = 'packages/dashboard-ui/src/lib/model-workspace.ts'
-const TOKEN_SRC = 'packages/dashboard-ui/src/components/config-manager/token-list.tsx'
+const MCP_SECTION_SRC = 'packages/dashboard-ui/src/components/config-manager/mcp-section.tsx'
 
 const TABS_T = 'src/lib/__tests__/config-tabs.test.ts'
 const TABS_D = 'src/lib/__tests__/config-tabs.test-d.ts'
@@ -249,7 +256,7 @@ const legs = [
     edits: [
       { from: "export type ConfigTab = 'models' | 'targets' | 'execution' | 'project' | 'advanced'\n", to: "export type ConfigTab = 'models' | 'targets' | 'execution' | 'project' | 'advanced' | 'labs'\n" },
       { from: "  'advanced',\n] as const satisfies readonly ConfigTab[]", to: "  'advanced',\n  'labs',\n] as const satisfies readonly ConfigTab[]" },
-      { from: "  advanced: ['mcp', 'run-service-tokens', 'eval', 'config-file'],\n", to: "  advanced: ['mcp', 'run-service-tokens', 'eval', 'config-file'],\n  labs: [],\n" },
+      { from: "  advanced: ['mcp', 'eval', 'config-file'],\n", to: "  advanced: ['mcp', 'eval', 'config-file'],\n  labs: [],\n" },
     ],
     reds: [tabsD('C429-CONFIG-TABS-EXACT')],
     // The runtime twin pins the array by value, the sections cell pins CONFIG_SECTIONS by value (it now
@@ -746,16 +753,17 @@ const legs = [
     greens: [copy('CONNECT-REFUSAL-COPY-TOTAL: the network sentence only without a code the map knows; issues follow two codes'), copy('FIELD-CHANGED-COPY'), copy('COPY-429: every exported string is non-empty')],
   },
   {
-    subject: TOKEN_SRC, instrument: 'ui-components', claim: 'ADD-MCP-TOKEN-KEEPS-EVERY-SCOPE',
-    operation: 'let a scope checkbox settle the add-token row on its own',
+    subject: MCP_SECTION_SRC, instrument: 'ui-components', claim: 'C432-NO-TOKEN-CONTROLS',
+    operation: 'grow the add-token row back in the MCP section',
     edits: [{
-      from: '    change({ ...draft, scopes: SCOPES.filter((item) => next.has(item)).join(",") })\n',
-      to: '    const updated = { ...draft, scopes: SCOPES.filter((item) => next.has(item)).join(",") }\n    change(updated)\n    void settle(updated, false)\n',
+      from: '      <ConfigField field={mcpField("path")} label={MCP_FIELD_LABELS.path} kind="text" parse={parsePath} />\n',
+      to: '      <ConfigField field={mcpField("path")} label={MCP_FIELD_LABELS.path} kind="text" parse={parsePath} />\n      <div data-token-draft=""><button type="button">Add token</button></div>\n',
     }],
-    reds: [tokens('ADD-MCP-TOKEN-KEEPS-EVERY-SCOPE')],
-    // Each checks a scope and asserts no write before the row settles (429-39).
-    allowed: [tokens('ADD-MCP-TOKEN-NEEDS-SCOPE'), tokens('ADD-TOKEN-SCOPES-LOCKED-WHILE-SAVING')],
-    greens: [tokens('ADD-RUN-SERVICE-TOKEN'), tokens('TOKEN-DELETE-UNDO'), tokens('TOKEN-ENV-NAME-IN-CLEAR')],
+    reds: [tokens('C432-NO-TOKEN-CONTROLS: the MCP and dashboard sections render their fields and no token list, row, add row or stdio switch')],
+    // The page shell renders the same MCP section under the Advanced tab.
+    allowed: [page('C432-NO-TOKEN-CONTROLS: no tab renders a token section, token list, token row or the stdio switch')],
+    greens: [tokens('C432-NO-TOKEN-CONTROLS: the token list module, its copy, its section and its delete actions are gone'),
+      tokens('C432-NO-TOKEN-CONTROLS: a retained MCP control still saves through the autosave transaction')],
   },
   {
     subject: HOOK_SRC, instrument: 'dom', claim: 'OUTSIDE-EDIT-INTERLEAVED-SHIPPED',

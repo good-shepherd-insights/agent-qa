@@ -21,7 +21,7 @@
 # THE LEGS
 #   C01  a seventh op joins ConfigWriteOp and CONFIG_WRITE_OPS                    -> C429-CONFIG-WRITE-OPS-EXACT
 #   C02  a ninth refusal joins ConfigWriteRefusal and its array                   -> C429-CONFIG-WRITE-REFUSALS-EXACT
-#   C03  a fourth named array joins ConfigNamedArray and CONFIG_NAMED_ARRAYS       -> C429-CONFIG-NAMED-ARRAYS-EXACT
+#   C03  a second named array joins ConfigNamedArray and CONFIG_NAMED_ARRAYS      -> C429-CONFIG-NAMED-ARRAYS-EXACT
 #   C04  a fourth class joins MaskingClass and MASKING_CLASSES                    -> C429-MASKING-CLASSES-EXACT
 #   C05  a seventh class joins ProviderErrorClass and PROVIDER_ERROR_CLASSES      -> C429-PROVIDER-ERROR-CLASSES-EXACT
 #   C06  a ninth refusal joins LlmSetupRefusal and LLM_SETUP_REFUSALS             -> C429-LLM-SETUP-REFUSALS-EXACT
@@ -37,14 +37,14 @@
 #   C16  the map classes registry.llms[].providerHeaders.* plain                  -> GET-CARRIES-NO-SECRET (D-08)
 #   C17  the reveal route skips refuseCrossSiteRequest                            -> REVEAL-SAME-SITE-ONLY (D-09)
 #   C18  the reveal route skips its secret-class check                            -> REVEAL-SECRET-PATHS-ONLY (D-09)
-#   C19  the map classes services.mcp.tokens[].tokenEnvVar secret                 -> ENV-VAR-NAME-IN-CLEAR (D-08)
+#   C19  the map classes the plain services.mcp.port leaf secret                  -> ENV-VAR-NAME-IN-CLEAR (D-08)
 #   C20  connect writes the typed credential before its test                      -> CONNECT-NOTHING-WRITTEN-ON-FAIL (D-17)
 #   C21  applyChanges no longer calls the mask guard                              -> MASK-NEVER-WRITTEN-BACK
 #   C22  the undo store's take keeps the entry it hands out                       -> UNDO-TOKEN-SINGLE-USE (D-24)
 #   C23  applyChanges skips the whole-config safeParse                            -> INVALID-MERGE-KEEPS-BYTES
 #   C24  the credential guard drops its provider-conflict check                   -> CREDENTIAL-PROVIDER-CONFLICT-REFUSED
 #   C25  one leaf line leaves CONFIG_MASKING_MAP                                  -> CONFIG-SCHEMA-LEAVES-PINNED (D-06)
-#   C26  the map classes services.mcp.tokens[].tokenEnvVar secret, in config show -> CONFIG-SHOW-ENV-VAR-NAME-IN-CLEAR (D-08)
+#   C26  the map classes services.mcp.port secret, in config show                -> CONFIG-SHOW-ENV-VAR-NAME-IN-CLEAR (D-08)
 #   C27  a retired per-section write route answers again                          -> LEGACY-WRITE-ROUTES-GONE (429-32)
 #   C28  a write answers its post-merge revision as its base                      -> BASE-REVISION-ANSWERED (429-37)
 #   C29  set-if-absent writes over a field the file already holds                 -> SET-IF-ABSENT-KEEPS-OUTSIDE-VALUE (429-42)
@@ -55,10 +55,17 @@
 #   C34  readMasked keeps the comments                                            -> COMMENTED-SECRET-NEVER-SERVED (429-41)
 #   C35  GET /api/config answers through json() with no same-site check           -> GET-CONFIG-SAME-SITE-NO-GRANT (429-41)
 #   C36  the write door drops its page-writable check                             -> WRITE-DOOR-REFUSES-DENIED-ROOTS (429-44)
-#   C37  a third root joins ConfigWriteDeniedRoot and CONFIG_WRITE_DENIED_ROOTS    -> C429-CONFIG-WRITE-DENIED-ROOTS-EXACT (429-44)
+#   C37  a second root joins ConfigWriteDeniedRoot and CONFIG_WRITE_DENIED_ROOTS   -> C429-CONFIG-WRITE-DENIED-ROOTS-EXACT (429-44)
 #   C38  the test route stops redacting saved header values                       -> SAVED-HEADER-NEVER-ECHOED (429-43)
 #   C39  the auth store renames onto the symlink path                             -> AUTH-SYMLINK-KEPT (429-38)
 #   C40  a completion's Undo loses the root use.headless it moved                 -> UNDO-LEGACY-HEADLESS-RESTORED (429-49)
+#
+# 2026-10-02 (432-44, D-12): FOUR LEGS RE-SPELLED AFTER THE TOKENLESS CONFIG. 432-22 deleted
+# `services.mcp.tokens`, `services.dashboard.runServiceTokens` and the `safety` root, so the named
+# arrays are `registry.llms` alone, the denied roots are `plugins` alone and no leaf is classed
+# env-var-name. C03 and C37 add a SECOND member to the one left; C19 and C26 hide the plain MCP leaf
+# their cells now read in clear (`services.mcp.port`). Each plants the same regression class as before
+# and reds the same named cell.
 #
 # THE GAP CLOSURE (2026-09-27, 429-49). Plans 429-37, -38 and -41..-44 and -52 closed review
 # findings CR-01, CR-02, WR-01 and WR-05 and deferred items 429-23 and 429-24 on the contract side,
@@ -142,14 +149,16 @@ const LINT_T = 'src/__tests__/429-classifier-lint.test.ts'
 const SHOW_T = 'src/composition/__tests__/masked-config.test.ts'
 const PARITY_T = 'src/composition/__tests__/429-masking-parity.test.ts'
 
+// 2026-10-02 (432-44): re-measured; the selected totals had drifted with later plans' cells
+// (schema 27 -> 28, core 116 -> 132, server 170 -> 182), so the gate refused before any leg.
 const instruments = {
-  schema: { pkg: 'packages/schema', files: [SCHEMA_T, SCHEMA_D], typecheck: true, count: 27 },
-  core: { pkg: 'packages/core', files: [CORE_SCHEMA_T, LEAVES_T, AUTH_STORE_T], typecheck: false, count: 116 },
+  schema: { pkg: 'packages/schema', files: [SCHEMA_T, SCHEMA_D], typecheck: true, count: 28 },
+  core: { pkg: 'packages/core', files: [CORE_SCHEMA_T, LEAVES_T, AUTH_STORE_T], typecheck: false, count: 132 },
   server: {
     pkg: 'packages/dashboard-server',
     files: [WRITE_T, MASKING_T, REVEAL_T, UNDO_T, CONNECT_T, DRAFT_T, MANAGER_T, SAVED_HEADERS_T],
     typecheck: false,
-    count: 170,
+    count: 182,
   },
   cli: {
     pkg: 'packages/cli',
@@ -210,13 +219,12 @@ const legs = [
   },
   {
     subject: WRITE_SRC, instrument: 'schema', claim: 'C429-CONFIG-NAMED-ARRAYS-EXACT',
-    operation: 'add a fourth named array to ConfigNamedArray and CONFIG_NAMED_ARRAYS',
+    // 2026-10-02 (432-44): the two token lists left the named arrays with their config (432-22), so
+    // the one named array left gains a second.
+    operation: 'add a second named array to ConfigNamedArray and CONFIG_NAMED_ARRAYS',
     edits: [
-      {
-        from: "export type ConfigNamedArray = 'registry.llms' | 'services.mcp.tokens' | 'services.dashboard.runServiceTokens'\n",
-        to: "export type ConfigNamedArray = 'registry.llms' | 'services.mcp.tokens' | 'services.dashboard.runServiceTokens' | 'plugins.auth'\n",
-      },
-      { from: "  'services.dashboard.runServiceTokens',\n] as const satisfies readonly ConfigNamedArray[]", to: "  'services.dashboard.runServiceTokens',\n  'plugins.auth',\n] as const satisfies readonly ConfigNamedArray[]" },
+      { from: "export type ConfigNamedArray = 'registry.llms'\n", to: "export type ConfigNamedArray = 'registry.llms' | 'plugins.auth'\n" },
+      { from: "  'registry.llms',\n] as const satisfies readonly ConfigNamedArray[]", to: "  'registry.llms',\n  'plugins.auth',\n] as const satisfies readonly ConfigNamedArray[]" },
     ],
     reds: [schemaD('C429-CONFIG-NAMED-ARRAYS-EXACT')],
     // The runtime twin pins the array by value, so the extra member moves it too.
@@ -426,11 +434,13 @@ const legs = [
   },
   {
     subject: MASKING_SRC, instrument: 'server', claim: 'ENV-VAR-NAME-IN-CLEAR',
-    operation: 'class services.mcp.tokens[].tokenEnvVar secret in the masking map',
-    crossing: schema('"services.mcp.tokens[].tokenEnvVar": "secret"'),
+    // 2026-10-02 (432-44): the env-var-name leaf was the MCP token variable, deleted with its list
+    // (432-22); the cell's surviving claim is a plain MCP leaf in clear, so that leaf is hidden.
+    operation: 'class the plain services.mcp.port leaf secret in the masking map',
+    crossing: schema('"services.mcp.port": "secret"'),
     edits: [{
-      from: "  'services.mcp.tokens[].tokenEnvVar': 'env-var-name',\n",
-      to: '  "services.mcp.tokens[].tokenEnvVar": "secret",\n',
+      from: "  'services.mcp.port': 'plain',\n",
+      to: '  "services.mcp.port": "secret",\n',
     }],
     reds: [masking('ENV-VAR-NAME-IN-CLEAR')],
     // The reveal door's env-var-name probe now names a secret-class path, so it is admitted.
@@ -516,16 +526,16 @@ const legs = [
   },
   {
     subject: MASKING_SRC, instrument: 'cli', claim: 'CONFIG-SHOW-ENV-VAR-NAME-IN-CLEAR',
-    operation: 'class services.mcp.tokens[].tokenEnvVar secret in the masking map, read by config show',
-    crossing: schema('"services.mcp.tokens[].tokenEnvVar": "secret"'),
+    // 2026-10-02 (432-44): re-aimed with C19 at the plain MCP leaf (432-22 deleted the token leaf).
+    operation: 'class the plain services.mcp.port leaf secret in the masking map, read by config show',
+    crossing: schema('"services.mcp.port": "secret"'),
     edits: [{
-      from: "  'services.mcp.tokens[].tokenEnvVar': 'env-var-name',\n",
-      to: '  "services.mcp.tokens[].tokenEnvVar": "secret",\n',
+      from: "  'services.mcp.port': 'plain',\n",
+      to: '  "services.mcp.port": "secret",\n',
     }],
     reds: [show('CONFIG-SHOW-ENV-VAR-NAME-IN-CLEAR')],
-    // Both parity cells and the D-06 token cell pin the same leaf's env-var-name class.
-    allowed: [parity('MASKED-BEFORE-429-SNAPSHOT'), parity('MASKING-PARITY-NOTHING-NEWLY-VISIBLE'),
-      show('registers the D-06 token entry as inert, and holds no field a token VALUE could occupy')],
+    // 432-44, measured: the one-map census pins the same leaf plain by name.
+    allowed: [show('guesses nothing from a name: plain stays plain, undeclared stays secret')],
     greens: [parity('ORACLE-OPAQUE-IMPLIES-SECRET'), show('leaves ordinary configuration keys visible'), lint('CLASSIFIER-ONE-MODULE')],
   },
   {
@@ -659,14 +669,17 @@ const legs = [
   },
   {
     subject: WRITE_SRC, instrument: 'schema', claim: 'C429-CONFIG-WRITE-DENIED-ROOTS-EXACT',
-    operation: 'add a third root to ConfigWriteDeniedRoot and CONFIG_WRITE_DENIED_ROOTS',
+    // 2026-10-02 (432-44): `safety` left the denied roots with the trust mode it held (432-22), so the
+    // one denied root left gains a second.
+    operation: 'add a second root to ConfigWriteDeniedRoot and CONFIG_WRITE_DENIED_ROOTS',
     edits: [
-      { from: "export type ConfigWriteDeniedRoot = 'plugins' | 'safety'\n", to: "export type ConfigWriteDeniedRoot = 'plugins' | 'safety' | 'analytics'\n" },
-      { from: "  'safety',\n] as const satisfies readonly ConfigWriteDeniedRoot[]", to: "  'safety',\n  'analytics',\n] as const satisfies readonly ConfigWriteDeniedRoot[]" },
+      { from: "export type ConfigWriteDeniedRoot = 'plugins'\n", to: "export type ConfigWriteDeniedRoot = 'plugins' | 'analytics'\n" },
+      { from: "  'plugins',\n] as const satisfies readonly ConfigWriteDeniedRoot[]", to: "  'plugins',\n  'analytics',\n] as const satisfies readonly ConfigWriteDeniedRoot[]" },
     ],
     reds: [schemaD('C429-CONFIG-WRITE-DENIED-ROOTS-EXACT')],
-    // The runtime twin pins the array by value, so the extra member moves it too.
-    allowed: [schemaT('C429-CONFIG-WRITE-DENIED-ROOTS-EXACT')],
+    // The runtime twin pins the array by value, so the extra member moves it too; the 432 write
+    // policy cell counts the page-writable leaves, which a denied `analytics` root removes.
+    allowed: [schemaT('C429-CONFIG-WRITE-DENIED-ROOTS-EXACT'), schemaT('C432-CONFIG-WRITE-POLICY')],
     greens: [schemaT('PAGE-WRITABLE-EVERY-RENDERED-LEAF'), schemaD('C429-CONFIG-WRITE-OPS-EXACT'), schemaT('C429-CONFIG-CHANGE-STRICT')],
   },
   {

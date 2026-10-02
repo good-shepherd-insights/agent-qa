@@ -1,302 +1,217 @@
 #!/usr/bin/env bash
 #
-# 396-06-credential-mutation.sh — the acceptance bar for the credential surface (396-06, Pitfall 9).
+# 396-06-credential-mutation.sh — the acceptance bar for the credential surface (396-06, Pitfall 9;
+# re-spelled 2026-10-02 by 432-44 for D-05 and D-12).
 #
 # WHAT THIS PROVES, AND WHY A GREEN SUITE DOES NOT PROVE IT. Every claim in
 # `mcp-credential-surface.test.ts` is an ABSENCE, and an absence is the easiest kind of claim to
 # fake: it passes over a channel that returns nothing, over a fixture that lost its plant, and over
 # a value the pipeline never saw. The suite carries its own controls for the first two (an integrity
 # half on every cell, a hostile control that requires a value to be FOUND). This script carries the
-# third: each leg removes one masking mechanism and requires the cells aimed at it to go red.
+# third: each masking leg removes one masking mechanism and requires the cells aimed at it to go red.
 #
 # THE LEGS
 #
 #   C1  the SUCCESS path stops masking at all (`masked-result.ts`). Every tool's serialized output
 #       is then raw on both channels — the ordinary path a model reads.
-#   C2  THE SHIPPED DEFECT, restored: `structuredContent` is parsed from the UNMASKED serialization
-#       while `content` stays masked. This is the exact shape 396-06 found on the wire, and the leg
-#       exists because the whole-masking leg above cannot tell a corpus that reads only `content`
-#       from one that reads both. It must red the cell that reads the machine channel.
+#   C2  THE SHIPPED DEFECT, restored: `structuredContent` is answered from the UNMASKED op output
+#       while `content` stays masked. The only leg that tells a corpus reading `structuredContent`
+#       from one reading `content` alone.
 #   C3  the ERROR path stops masking. T-395-R5-10's own channel: the 395 defect travelled out
 #       through an error serialization, not through a success payload, and the two are separate
-#       call sites — so they get separate legs.
-#   C4  the apply refusal's teach stops masking (`apply-refusal.ts`). That handler is registered
-#       DIRECTLY and does not pass through `catalog.ts`'s generic handler, which is exactly why
-#       plan 02 made `maskText` a required dep of it — and why it needs its own leg here.
-#   C5  the declared credentials stop reaching the masker (`composeMcpMasking`). The environment arm
-#       is untouched, so this leg must red the DECLARED-token cells while the environment-seeded
-#       cells stay green — the two arms measured separately, which is what makes A2's pairing a
-#       claim about two mechanisms rather than one.
+#       call sites — so they get separate legs. (Re-anchored 2026-10-02: the message is now bound to
+#       a local before it is masked.)
+#   C4  CARRIED (432-44). This leg unmasked the apply refusal's teach (`apply-refusal.ts`), the one
+#       handler registered beside the generic one. D-05 deleted the apply confirmation round with the
+#       apply tools, so every tool now answers through the generic handler C1-C3 sever. The claim it
+#       guarded — no second, directly registered result site — is now the apply tool's absence: C4
+#       projects `agent_qa_apply_proposal` again and must red C432-RETURN-A36.
+#   C5  RE-SPELLED (432-44). This leg cut the DECLARED credentials (`services.mcp.tokens`) off the
+#       masker while the environment arm kept seeding it. D-12 deleted the declared tokens, so the
+#       environment is the one seed left (A2 now reads both plants off it); C5 cuts THAT arm and the
+#       pattern arm of the config-write channel (E1), a different mechanism, must stay green.
+#   C6  CARRIED (432-44): the declared tokens return — `services.mcp.tokens` on the public config
+#       parser, its entry DTO, barrels and core's import (C432-RETURN-A59; schema then core rebuilt).
+#   C7  CARRIED (432-44): a request bearer-denial branch returns on the MCP listener (C432-RETURN-A60).
+#   C8  CARRIED (432-44): the credential caller key returns on FunctionCaller (C432-RETURN-A56).
 #
-# A GREEN SUITE UNDER ANY LEG IS A FAILURE OF THIS SCRIPT, NOT A PASS.
+# C6-C8 are the "credential-required calls" claim owners in 432-MUTATION-MAP.md (caller, key and check
+# absence rows); tokenless discovery itself is pinned by 432-21's cells.
 #
-# DIST REBUILDS ARE MANDATORY FOR C1-C3 AND ARE PERFORMED HERE: `packages/cli`'s vitest config
-# declares no aliases, so its import of `@vostride/agent-qa-mcp` resolves through that package's
-# BUILT `dist`. C4 mutates `packages/cli` itself, which vitest resolves from source; the asymmetry
-# is stated per leg rather than left implicit.
+# A GREEN SUITE UNDER ANY LEG IS A FAILURE OF THIS SCRIPT, NOT A PASS; so is a runner error, a load
+# failure, a different selected count or a red without its named cell.
 #
-# EXIT CODES ARE READ FROM THE PROCESS, NEVER THROUGH A PIPE. Subjects are restored from byte
-# snapshots and every restore is proven by sha256.
+# DIST REBUILDS: `packages/cli`'s vitest config declares no aliases, so its import of
+# `@vostride/agent-qa-mcp` resolves through that package's BUILT `dist`. C1-C3 rebuild the mcp package
+# and find their own marker in it (the marker is a code identifier the bundler keeps, never a comment).
+# C5 and C7 mutate `packages/cli`, which vitest resolves from source.
 #
-# THE LEG BODIES LIVE IN THE PYTHON BLOCK, NEVER IN A SHELL STRING (396-03's lesson: shell quoting
-# mangled `?? ''` into `?? ` and the leg measured an implementation nobody wrote).
+# THE WIRING GREPS of the old script (one maskedToolResult site, one maskJsonDocument call, both
+# channels from one masked value, no masker handed a serialization) are measured by C1 and C2 as
+# behaviour and by `masked-serialization.test.ts`; the apply handler's site counts left with it.
+#
+# Engine, arrival proof, counted selection, byte-exact restoration, rebuilds and positive controls:
+# scripts/423-mutation-engine.cjs.
 #
 # USAGE
 #   bash agent-qa/scripts/396-06-credential-mutation.sh
 #
-# KNOBS
-#   CREDENTIAL_MUTATION_SELFTEST=neutered   apply a NO-OP in place of every leg; must FATAL.
-#   SHOW_REDS=1                             print every cell that red under each leg.
-
+# KNOBS — CREDENTIAL_MUTATION_SELFTEST (the knob this script always had)
+#   neutered  apply NO mutation; the run must FATAL with "<leg>: suite stayed green"
+#   fatal | SIGINT | SIGTERM | SIGHUP   own every subject, then interrupt; every byte is handed back
+# CREDENTIAL_MUTATION_LEG=C1..C8 runs one leg; CREDENTIAL_MUTATION_LIST=1 prints the inventory.
 set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+exec node --input-type=commonjs - <<'NODE'
+const path = require('node:path')
+const { runGate, cell } = require(path.join(process.cwd(), 'scripts/423-mutation-engine.cjs'))
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SUITE="src/__tests__/mcp-credential-surface.test.ts"
-SELFTEST="${CREDENTIAL_MUTATION_SELFTEST:-}"
+const SURFACE_T = 'src/__tests__/mcp-credential-surface.test.ts'
+const CENSUS_T = 'src/__tests__/432-approval-permission-deleted.test.ts'
+const MASKED_SRC = 'packages/mcp/src/masked-result.ts'
+const MCP_CMD_SRC = 'packages/cli/src/commands/mcp.ts'
 
-subject_of() {
-  case "$1" in
-    C1|C2|C3) echo "$ROOT/packages/mcp/src/masked-result.ts" ;;
-    C4) echo "$ROOT/packages/mcp/src/apply-refusal.ts" ;;
-    C5) echo "$ROOT/packages/cli/src/commands/mcp.ts" ;;
-    *) return 1 ;;
-  esac
+// Counts measured from a fresh Vitest JSON report of exactly these files (2026-10-02, 432-44).
+const instruments = {
+  surface: { pkg: 'packages/cli', files: [SURFACE_T], typecheck: false, count: 15, env: { VITEST_MAX_WORKERS: '1' } },
+  census: { pkg: 'packages/arch', files: [CENSUS_T], typecheck: false, count: 100, dist: true },
 }
 
-rebuild_of() {
-  case "$1" in
-    C1|C2|C3|C4) echo "@vostride/agent-qa-mcp" ;;
-    *) echo "" ;;
-  esac
-}
+const edit = (from, to) => ({ from, to })
+const surface = name => cell('surface', SURFACE_T, name)
+const census = (name, message) => cell('census', CENSUS_T, name, 1, message)
+const DELETED_FILES = census('C432-DELETED-SYMBOLS: every deleted module file is absent')
+const DELETED_BARREL = census('C432-DELETED-SYMBOLS: no package barrel names a deleted export in code')
+const DELETED_DECLARED = census('C432-DELETED-SYMBOLS: no production source in any package declares a deleted export in code')
+const CENSUS_CONTROLS = [census('UNIVERSE-FLOORS'), census('LEXER-CONTROL'), census('PLANTED-POSITIVE'), census('SELF-MATCH')]
+const mcpCrossing = marker => ({ pkg: '@vostride/agent-qa-mcp', dir: 'packages/mcp', marker })
 
-reds_of() {
-  case "$1" in
-    C1) echo "${C1_REDS:-1}" ;;
-    C2) echo "${C2_REDS:-1}" ;;
-    C3) echo "${C3_REDS:-2}" ;;
-    C4) echo "${C4_REDS:-1}" ;;
-    C5) echo "${C5_REDS:-3}" ;;
-    *) return 1 ;;
-  esac
-}
+const A1 = surface('(A1) every plant is really where the fixture put it, and the bytes are the pinned bytes')
+const A2 = surface('(A2) the masker recognises exactly the two SEEDED plants, and nothing else')
+const B1 = surface('(B1) the echoing read path masks both seeded plants, in the result AND in the frames')
+const B1B = surface("(B1b) the SUCCESS payload of a read tool that echoes the caller's own string is masked on BOTH channels — text and structuredContent")
+const B2 = surface('(B2) the other read doors carry no window of either seeded plant either')
+const C1_CELL = surface("(C1) an op-side refusal composed from the caller's own string is masked")
+const D1 = surface('(D1) neither the prose nor the structured answer carries a window of a seeded plant')
+const E1 = surface('(E1) a credential-SHAPED value is blocked by the pattern arm, and the wire carries a fingerprint instead of the value')
+const E2 = surface('(E2) a value the environment SEEDED is blocked by the seed arm — a different mechanism')
+const F1 = surface('(F1) HOSTILE CONTROL: an UNSEEDED value travels the same channel verbatim, and the helper finds it')
 
-# The cells that must stay GREEN in the same run — the arm-independence claim (C4 only: the
-# environment seed is a different mechanism from the declared-token seed).
-cross_of() {
-  case "$1" in
-    C5) echo "the config-write channel refuses" ;;
-    *) echo "" ;;
-  esac
-}
+// The A59 return, spelled as 432-43 restores it: the key on core's McpConfigSchema with its import,
+// the entry DTO created at its old path, and the config and root barrel exports.
+const SERVICES_SRC = 'packages/core/src/schema/services-schema.ts'
+const SERVICES_IMPORT = "import { DurationString, SizeString } from './primitives.js'"
+const MCP_LAST_KEY = "  path: z.string().trim().min(1).regex(/^\\//, 'MCP path must start with /').optional(),\n}).strict()"
+const CONFIG_BARREL_ANCHOR = "export { deviceConfigSchema } from './device'\n"
+const MCP_TOKEN_DTO = `import { z } from 'zod'
 
-fatal() { echo "FATAL: $*" >&2; exit 1; }
+// 432-44 C6: the retired MCP token entry, its scope enum spelled here (no deleted FunctionScope).
+export const McpTokenEntrySchema = z.object({
+  name: z.string().trim().min(1),
+  tokenEnvVar: z.string().trim().min(1),
+  scopes: z.array(z.enum(['read', 'run', 'config-write', 'knowledge-write', 'approval-write', 'test-write'])).min(1),
+}).strict()
 
-SNAP_DIR="$(mktemp -d)"
-# THE LEGS SCRIPT LIVES INSIDE THE SNAPSHOT DIRECTORY (2026-08-16, UAT item 3 · CR-04). This was
-# `LEGS_PY="$(mktemp -t 396credlegs).py"` at the top of the file, which has two defects in one
-# expression. `mktemp -t <prefix>` is a BSD idiom that GNU coreutils REFUSES ("too few X's in
-# template"), and under `set -euo pipefail` the assignment aborts the script — so this harness
-# could not run on the ubuntu CI runner at all. And appending `.py` names a path `mktemp` never
-# created: the exclusively-created file leaked, and the `.py` path was a predictable name in a
-# world-writable directory that a local attacker could pre-place as a symlink, through which this
-# script then writes executable Python and runs it. The directory above is made by ONE atomic
-# `mktemp -d`, is already removed by the cleanup below, and holds the snapshots — so putting the
-# generated script in it fixes both defects and adds no second thing to clean up.
-LEGS_PY="$SNAP_DIR/legs.py"
+export type McpTokenEntry = z.infer<typeof McpTokenEntrySchema>
+`
 
+const legs = [
+  {
+    id: 'C1', claim: 'SUCCESS-PATH-MASKED', instrument: 'surface', subject: MASKED_SRC,
+    operation: 'the success path stops masking: the masker becomes a pass-through',
+    edits: [edit('  const masked = maskJsonDocument(output, maskText)\n',
+      '  const unmaskedLeg396C1 = (text: string): string => text\n  const masked = maskJsonDocument(output, unmaskedLeg396C1)\n')],
+    crossing: mcpCrossing('unmaskedLeg396C1'),
+    reds: [B1B],
+    allowed: [D1],
+    greens: [A2, C1_CELL, E1, F1],
+  },
+  {
+    id: 'C2', claim: 'STRUCTURED-CHANNEL-MASKED', instrument: 'surface', subject: MASKED_SRC,
+    operation: 'the shipped defect: structuredContent answered from the unmasked op output',
+    edits: [edit("  return {\n    content: [{ type: 'text' as const, text: masked.text }],\n    structuredContent: masked.value as CallToolResult['structuredContent'],\n  }\n",
+      "  const rawChannelLeg396C2 = output\n  return {\n    content: [{ type: 'text' as const, text: masked.text }],\n    structuredContent: rawChannelLeg396C2 as CallToolResult['structuredContent'],\n  }\n")],
+    crossing: mcpCrossing('rawChannelLeg396C2'),
+    reds: [B1B],
+    allowed: [D1],
+    greens: [A2, B1, C1_CELL, E1, F1],
+  },
+  {
+    id: 'C3', claim: 'ERROR-PATH-MASKED', instrument: 'surface', subject: MASKED_SRC,
+    operation: 'the error path stops masking: the refusal message is answered raw',
+    edits: [edit('        text: maskText(message),\n', '        text: unmaskedLeg396C3(message),\n'),
+      edit('  const message = err instanceof Error ? err.message : String(err)\n',
+        '  const message = err instanceof Error ? err.message : String(err)\n  const unmaskedLeg396C3 = (text: string): string => maskText === undefined ? text : text\n')],
+    crossing: mcpCrossing('unmaskedLeg396C3'),
+    reds: [C1_CELL],
+    allowed: [B1],
+    greens: [A2, B1B, D1, E1, F1],
+  },
+  {
+    id: 'C4', claim: 'C432-RETURN-A36', instrument: 'census', subject: 'packages/mcp/src/mapping.ts',
+    operation: 'the directly registered apply site: project agent_qa_apply_proposal again over knowledge.accept',
+    edits: [edit('export const AGENT_QA_TOOL_PROJECTIONS: readonly ToolProjection[] = Object.freeze([\n',
+      "export const AGENT_QA_TOOL_PROJECTIONS: readonly ToolProjection[] = Object.freeze([\n  Object.freeze({\n    name: 'agent_qa_apply_proposal',\n    ops: Object.freeze(['knowledge.accept']),\n    kind: 'workflow',\n  }),\n")],
+    reds: [census('C432-RETURN-A36', 'A36: the apply-proposal tool returned (agent_qa_apply_proposal)')],
+    allowed: [],
+    greens: [...CENSUS_CONTROLS, census('C432-RETURN-A38')],
+  },
+  {
+    id: 'C5', claim: 'ENVIRONMENT-SEED-REACHES-MASKER', instrument: 'surface', subject: MCP_CMD_SRC,
+    operation: 'the environment stops seeding the masker (the one seed arm left)',
+    edits: [edit('  return buildRunMaskingContext({ env: input.env })\n',
+      '  return buildRunMaskingContext({ env: {} })\n')],
+    reds: [A2],
+    // Every cell that needs a seeded plant masked on the wire sees it raw (measured).
+    allowed: [B1, B1B, C1_CELL, D1],
+    // The pattern arm refuses a credential-shaped value by its shape, not by the seed; E2's seed-arm
+    // refusal and B2's read doors stay green (measured 2026-10-02).
+    greens: [A1, B2, E1, E2, F1],
+  },
+  {
+    id: 'C6', claim: 'C432-RETURN-A59', instrument: 'census', subject: SERVICES_SRC,
+    operation: 'the declared tokens return: services.mcp.tokens, its entry DTO, the barrels and core’s import',
+    edits: [edit(SERVICES_IMPORT, `import { McpTokenEntrySchema } from '@vostride/agent-qa-schema'\n${SERVICES_IMPORT}`),
+      edit(MCP_LAST_KEY, MCP_LAST_KEY.replace('\n}).strict()', '\n  tokens: z.array(McpTokenEntrySchema).default([]),\n}).strict()'))],
+    also: [
+      { subject: 'packages/schema/src/config/mcp.ts', create: MCP_TOKEN_DTO },
+      { subject: 'packages/schema/src/config/index.ts', edits: [edit(CONFIG_BARREL_ANCHOR,
+        `${CONFIG_BARREL_ANCHOR}export type { McpTokenEntry } from './mcp'\nexport { McpTokenEntrySchema } from './mcp'\n`)] },
+      { subject: 'packages/schema/src/index.ts', edits: [edit('  MaskingClass,\n', '  MaskingClass,\n  McpTokenEntry,\n'),
+        edit('  MASKING_CLASSES,\n', '  MASKING_CLASSES,\n  McpTokenEntrySchema,\n')] },
+    ],
+    crossing: { pkg: '@vostride/agent-qa-core', dir: 'packages/core', marker: 'McpTokenEntrySchema',
+      reference: "'core/dist/index.js'", byPath: true, before: [{ pkg: '@vostride/agent-qa-schema', dir: 'packages/schema' }] },
+    reds: [census('C432-RETURN-A59', 'the public parser accepts the removed member (services.mcp.tokens)')],
+    allowed: [DELETED_FILES, DELETED_BARREL, DELETED_DECLARED],
+    greens: [...CENSUS_CONTROLS, census('C432-RETURN-A60')],
+  },
+  {
+    id: 'C7', claim: 'C432-RETURN-A60', instrument: 'census', subject: MCP_CMD_SRC,
+    operation: 'a request bearer-denial branch returns on the MCP listener',
+    edits: [edit("      return refuse(res, 403, 'forbidden_origin')\n    }\n",
+      "      return refuse(res, 403, 'forbidden_origin')\n    }\n"
+      + '    const bearer = (input as { readonly bearerToken?: string }).bearerToken\n'
+      + '    if (bearer !== undefined && req.headers.authorization !== `Bearer ${bearer}`) {\n'
+      + "      res.setHeader('WWW-Authenticate', 'Bearer')\n"
+      + "      return refuse(res, 401, 'unauthorized')\n"
+      + '    }\n')],
+    reds: [census('C432-RETURN-A60', 'A60: the MCP bearer check returned (Bearer)')],
+    allowed: [],
+    greens: [...CENSUS_CONTROLS, census('C432-RETURN-A59'), census('C432-RETURN-A56')],
+  },
+  {
+    id: 'C8', claim: 'C432-RETURN-A56', instrument: 'census', subject: 'packages/schema/src/functions/function-caller.ts',
+    operation: 'the credential caller key returns on FunctionCaller',
+    edits: [edit('  origin: FunctionCallerOrigin\n}', '  origin: FunctionCallerOrigin\n  credential?: string\n}')],
+    reds: [census('C432-RETURN-A56', 'A56: the credential caller key returned (credential)')],
+    allowed: [],
+    greens: [...CENSUS_CONTROLS, census('C432-RETURN-A60')],
+  },
+]
 
-snapshot() {
-  local key="$1" file
-  file="$(subject_of "$key")"
-  [[ -f "$file" ]] || fatal "subject not found: $file"
-  cp "$file" "$SNAP_DIR/$key"
-  shasum -a 256 "$SNAP_DIR/$key" | cut -d' ' -f1 > "$SNAP_DIR/$key.sha"
-}
-
-restore() {
-  local key="$1" file rebuild now
-  file="$(subject_of "$key")"
-  cp "$SNAP_DIR/$key" "$file"
-  now="$(shasum -a 256 "$file" | cut -d' ' -f1)"
-  [[ "$now" == "$(cat "$SNAP_DIR/$key.sha")" ]] \
-    || fatal "$key: restore did not reproduce the subject byte-identically"
-  rebuild="$(rebuild_of "$key")"
-  if [[ -n "$rebuild" ]]; then
-    (cd "$ROOT" && pnpm --filter "$rebuild" build >/dev/null 2>&1) \
-      || fatal "$key: rebuild after restore failed"
-  fi
-}
-
-restore_all() {
-  local key
-  for key in C1 C2 C3 C4 C5; do
-    [[ -f "$SNAP_DIR/$key" ]] && cp "$SNAP_DIR/$key" "$(subject_of "$key")"
-  done
-  rm -rf "$SNAP_DIR"
-}
-trap restore_all EXIT
-
-cat > "$LEGS_PY" <<'PYLEGS'
-import sys
-
-LEGS = {
-    # BOTH RE-ANCHORED 2026-08-16 (UAT item 1). `masked-result.ts` used to serialize first and mask
-    # the SERIALIZED DOCUMENT, and both legs quoted lines from that shape. The escape-blindness of
-    # masking an escaped document with a literal-substring masker was CR-01; the module now masks the
-    # VALUE, so these legs sever the same two mechanisms where they now live.
-    #
-    # The success path stops masking entirely: both channels carry the raw value.
-    "C1": (
-        "  const masked = maskJsonDocument(output, maskText)\n",
-        "  const masked = maskJsonDocument(output, (text) => text)\n",
-    ),
-    # THE SHIPPED DEFECT RESTORED: the object channel is answered from the UNMASKED op output while
-    # the text channel stays masked. This is what 396-06 measured on the wire, and the only leg that
-    # tells a corpus reading `structuredContent` from one reading `content` alone.
-    "C2": (
-        "    structuredContent: masked.value as CallToolResult['structuredContent'],\n",
-        "    structuredContent: output as CallToolResult['structuredContent'],\n",
-    ),
-    # The error path stops masking — T-395-R5-10's own channel.
-    "C3": (
-        "        text: maskText(err instanceof Error ? err.message : String(err)),\n",
-        "        text: err instanceof Error ? err.message : String(err),\n",
-    ),
-    # The apply refusal's teach stops masking. Registered directly; crosses no generic handler.
-    "C4": (
-        "    const text = maskText(parts.text)\n",
-        "    const text = parts.text\n",
-    ),
-    # The declared credentials stop reaching the masker. The environment arm is untouched.
-    "C5": (
-        "    secretStore: mcpTokenSecretStore(input.tokens),\n",
-        "",
-    ),
-}
-
-leg, snapshot, subject, neutered = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4] == "neutered"
-anchor, replacement = LEGS[leg]
-if neutered:
-    replacement = anchor
-src = open(snapshot).read()
-n = src.count(anchor)
-if n != 1:
-    sys.exit("anchor for %s occurs %d times in the subject, expected exactly 1" % (leg, n))
-open(subject, "w").write(src.replace(anchor, replacement))
-PYLEGS
-
-run_suite() {
-  local filter="$1" out status
-  if [[ -n "$filter" ]]; then
-    out="$(cd "$ROOT/packages/cli" && npx vitest run "$SUITE" -t "$filter" --typecheck.enabled=false 2>&1)" && status=0 || status=$?
-  else
-    out="$(cd "$ROOT/packages/cli" && npx vitest run "$SUITE" --typecheck.enabled=false 2>&1)" && status=0 || status=$?
-  fi
-  SUITE_OUT="$out"
-  SUITE_STATUS="$status"
-}
-
-run_leg() {
-  local leg="$1" want reds rebuild cross
-  want="$(reds_of "$leg")"
-  snapshot "$leg"
-  python3 "$LEGS_PY" "$leg" "$SNAP_DIR/$leg" "$(subject_of "$leg")" "$SELFTEST" \
-    || fatal "$leg: anchor drift"
-  rebuild="$(rebuild_of "$leg")"
-  if [[ -n "$rebuild" ]]; then
-    (cd "$ROOT" && pnpm --filter "$rebuild" build >/dev/null 2>&1) \
-      || { restore "$leg"; fatal "$leg: rebuild under the mutation failed"; }
-  fi
-
-  run_suite ""
-  if [[ $SUITE_STATUS -eq 0 ]]; then
-    restore "$leg"
-    fatal "$leg: the suite stayed green under the mutation — the cells aimed at it are decoration"
-  fi
-  reds="$(printf '%s\n' "$SUITE_OUT" | grep -c '^ FAIL ' || true)"
-  [[ "$reds" == "$want" ]] \
-    || { restore "$leg"; fatal "$leg: expected $want failing cell(s), saw $reds"; }
-  if [[ -n "${SHOW_REDS:-}" ]]; then
-    printf '%s\n' "$SUITE_OUT" | grep -E '^ FAIL |^AssertionError' | sed "s/^/    $leg| /"
-  fi
-
-  cross="$(cross_of "$leg")"
-  if [[ -n "$cross" ]]; then
-    run_suite "$cross"
-    if [[ $SUITE_STATUS -ne 0 ]]; then
-      restore "$leg"
-      fatal "$leg: the OTHER arm's cells also red — the two seeding arms are not independent"
-    fi
-    echo "  $leg RED ($reds cell(s)) · other-arm GREEN"
-  else
-    echo "  $leg RED ($reds cell(s))"
-  fi
-
-  restore "$leg"
-}
-
-echo "396-06 credential-surface mutation legs"
-
-run_leg C1
-run_leg C2
-run_leg C3
-run_leg C4
-run_leg C5
-
-# THE WIRING GREPS. Call sites, never import lines — 396-04 measured that an import left behind by
-# a deleted call answers identically on both sides of its own line.
-echo "wiring greps:"
-CATALOG="$ROOT/packages/mcp/src/catalog.ts"
-APPLY="$ROOT/packages/mcp/src/apply-refusal.ts"
-MASKED="$ROOT/packages/mcp/src/masked-result.ts"
-MCP_CMD="$ROOT/packages/cli/src/commands/mcp.ts"
-
-# The raw shape this plan deleted must not come back anywhere: a handler that sets
-# `structuredContent` from the op output rather than from the masked document IS the defect.
-raw_structured="$({ grep -rc 'structuredContent: output' "$CATALOG" "$APPLY" || true; } | awk -F: '{ n += $2 } END { print n + 0 }')"
-one_result_site="$(grep -c 'maskedToolResult(' "$CATALOG" || true)"
-apply_result_site="$(grep -c 'maskedToolResult(' "$APPLY" || true)"
-apply_masks="$(grep -c 'maskText(' "$APPLY" || true)"
-seed_calls="$(grep -c 'mcpTokenSecretStore(' "$MCP_CMD" || true)"
-env_seed="$(grep -c 'env: process.env' "$MCP_CMD" || true)"
-# RE-STATED 2026-08-16 (UAT item 1). This used to be `grep -c 'JSON.parse(text)'`, pinning the shape
-# where the object channel was parsed back out of the MASKED DOCUMENT. That shape was CR-01: masking
-# an ESCAPED serialisation with a literal-substring masker cannot see a credential containing `"`,
-# `\` or a control character, and four such shapes reached callers verbatim on BOTH channels. The
-# property the grep defends is unchanged — ONE masking, two channels — so it now pins the two lines
-# that carry it, and a third grep forbids the defective shape itself anywhere in the package.
-one_masking="$(grep -c 'maskJsonDocument(output, maskText)' "$MASKED" || true)"
-structured_from_masked="$(grep -c 'structuredContent: masked.value' "$MASKED" || true)"
-text_from_masked="$(grep -c 'text: masked.text' "$MASKED" || true)"
-# CODE LINES ONLY. Both surviving mentions of the defective spelling are in comments that document
-# it — and a grep that cannot tell a defect from its own post-mortem is the "check that measured
-# nothing" class this family exists to catch, in the direction that cries wolf. The leading-`//`
-# and leading-`*` forms are excluded; `396-conformance.sh` keeps the same discipline at its own
-# `mktemp -t` mention. The doctored-subject proof for this grep is in the UAT note.
-# `|| true` inside the braces because ZERO MATCHES IS THE PASSING ANSWER here and `set -o pipefail`
-# takes the pipeline's status from the first failing member — a grep that finds nothing exits 1 and
-# would abort the script one line before it says so.
-escaped_mask="$({ grep -rE '^[[:space:]]*([^/*[:space:]].*)?maskText\(JSON\.stringify' "$ROOT/packages/mcp/src" || true; } | wc -l | tr -d ' ')"
-
-[[ "$raw_structured" == "0" ]] \
-  || fatal "a handler sets structuredContent from the raw op output again ($raw_structured sites) — 396-06's defect"
-[[ "$one_result_site" == "1" ]] || fatal "the generic handler no longer routes through maskedToolResult ($one_result_site)"
-[[ "$apply_result_site" == "1" ]] || fatal "the apply handler no longer routes through maskedToolResult ($apply_result_site)"
-# apply-refusal.ts still masks the teach and the four structured refusal fields itself.
-[[ "$apply_masks" -ge "4" ]] \
-  || fatal "the apply handler masks fewer channels than it composes ($apply_masks call sites)"
-[[ "$seed_calls" == "1" ]] || fatal "expected one declared-credential seeding site, saw $seed_calls"
-[[ "$env_seed" -ge "1" ]] || fatal "the masker is no longer seeded from the process environment"
-[[ "$one_masking" == "1" ]] \
-  || fatal "the tool result is no longer masked through one maskJsonDocument call ($one_masking)"
-[[ "$structured_from_masked" == "1" ]] \
-  || fatal "the object channel no longer comes from the masked value ($structured_from_masked)"
-[[ "$text_from_masked" == "1" ]] \
-  || fatal "the text channel no longer comes from the same masked value ($text_from_masked)"
-[[ "$escaped_mask" == "0" ]] \
-  || fatal "a masker is handed a JSON serialisation again ($escaped_mask sites) — CR-01's defect"
-
-echo "  raw-structured 0 · maskedToolResult 1+1 · apply-mask $apply_masks · declared-seed 1 · env-seed $env_seed · one-masking 1 · escaped-mask 0"
-
-echo "OK — every masking channel torn separately, and each one's cells red."
+runGate({
+  slug: '396-06-credential-mutation', envPrefix: 'CREDENTIAL_MUTATION',
+  instruments, legs, expectedLegs: 8, explicitIds: true, parseCheck: true, banner: 'CREDENTIAL_SURFACE_MUTATION_OK',
+})
+NODE

@@ -18,16 +18,16 @@
 #   R03  app.tsx declares the session provider's name again                    -> census: the session provider
 #   R04  app-sidebar.tsx navItems gains { title: "Chat", url: "/chat" }        -> SIDEBAR-NAV-EXACT
 #   R05  command-palette.tsx pages gains the same entry                        -> PALETTE-PAGES-EXACT
-#   R06  CHAT_ROUTE_TABLE gains a POST row for the deleted turn path           -> C430-CHAT-ROUTE-TABLE-EXACT (runtime)
-#   R07  routes.ts dispatches the deleted chat prefix to the confirm router    -> C430-DELETED-CHAT-ROUTES-SHARED-404
-#   R08  ChatRouteHandlerName widens with 'turn'                               -> C430-CHAT-ROUTE-TABLE-EXACT (type)
+#   R06  a route-table module is created beside the host seam                  -> C430-CHAT-ROUTE-TABLE-EXACT (runtime)
+#   R07  routes.ts answers the deleted chat prefix from its own arm            -> C430-DELETED-CHAT-ROUTES-SHARED-404
+#   R08  AgentHost regains the router-fed confirm member                       -> C430-CHAT-ROUTE-TABLE-EXACT (type)
 #   R09  roster.ts gains a `dashboard` row                                     -> pins the roster at the four surfaces
-#   R10  MODULE_FOR_DOOR gains dashboard: 'dashboard.ts'                       -> (5) every rostered door supplies a minting surface
+#   R10  MODULE_FOR_DOOR gains dashboard: 'dashboard.ts'                       -> (5) no rostered door supplies a minting surface
 #   R11  AgentHost gains the ask-function id member                            -> C430-AGENT-HOST-MEMBERS-EXACT (type)
-#   R12  the answer-confirm membership regains 'dashboard'                     -> C430-REMEDY-MEMBERSHIPS-EXACT, C430-DASHBOARD-PROJECTION-EMPTY
-#   R13  the session-pin-final membership regains 'dashboard'                  -> C430-REMEDY-MEMBERSHIPS-EXACT, C430-DASHBOARD-PROJECTION-EMPTY
-#   R14  DenialBlock renders a remedy line inside its box                      -> DENIAL-REASON-ONLY
-#   R15  denial-block.tsx declares the dashboard remedy text table again       -> census: the dashboard remedy text table
+#   R12  the remedy module returns with only the answer-confirm membership    -> C432-430-R12-ANSWER-CONFIRM-ABSENT
+#   R13  the remedy module returns with only the session-pin-final membership -> C432-430-R13-SESSION-PIN-ABSENT
+#   R14  DenialBlock renders a remedy line inside its box                      -> C432-430-R14-REASON-ONLY
+#   R15  denial-block.tsx declares the dashboard remedy text table again       -> C432-430-R15-REMEDY-TABLE-ABSENT
 #   R16  app.tsx imports the markdown parser                                   -> census: the parser import, double-quoted
 #   R17  the ownership contract lists the markdown parser again                -> census: the parser in the ownership contract
 #   R18  app.tsx imports from the deleted chat directory                       -> census: the UI chat module import alias
@@ -39,9 +39,24 @@
 #
 # ALLOWED CO-REDS are listed on each leg with a one-line reason; nothing else may red.
 #
-# A FILE UNDER dashboard-ui/src/chat/ RETURNING is proven three ways, because the engine cannot
-# create a file: R18 plants an import from that directory, the census's directory rule carries its
-# own synthetic control, and entity-card.test.ts's NO-CARD-MODULE refuses the card module by path.
+# 2026-10-02 (432-44, D-14/D-15): THE LEGS WHOSE SUBJECTS PHASE 432 DELETED ARE CARRIED, NOT DROPPED.
+#   R06-R08: 432-14 deleted the run-confirm router, its route table and its handler-name union, and
+#   re-spelled C430-CHAT-ROUTE-TABLE-EXACT as an absence (runtime: the server's chat directory holds
+#   the host seam only; type: no router-fed member on AgentHost). R06 now CREATES a route-table module
+#   beside the host seam, R07 answers the deleted prefix from a dedicated arm (no shared wildcard
+#   grant), and R08 gives AgentHost the router-fed `confirms` member back.
+#   R12-R15: 432-19 deleted the remedy vocabulary with the gate. Each remedy leg now reds its own
+#   current absence cell (432-MUTATION-MAP.md): R12 and R13 each CREATE the remedy module holding one
+#   dashboard membership (C432-430-R12-ANSWER-CONFIRM-ABSENT / C432-430-R13-SESSION-PIN-ABSENT, each
+#   green under the other), R14 renders a remedy line (C432-430-R14-REASON-ONLY, the DOM owner) and
+#   R15 declares the remedy text table (C432-430-R15-REMEDY-TABLE-ABSENT, the source census). The
+#   original witnesses' names are recorded beside each leg.
+#   R22: 432-17 deleted `mintingSurface`, the member R22 anchored after; it now anchors on `config`.
+#
+# A FILE UNDER dashboard-ui/src/chat/ RETURNING is proven three ways: R18 plants an import from that
+# directory, the census's directory rule carries its own synthetic control, and
+# entity-card.test.ts's NO-CARD-MODULE refuses the card module by path. (Since 432-43 the engine can
+# create a file; R06, R12 and R13 use that to return deleted modules.)
 #
 # TEST-TREE SUBJECTS follow the 399.1 ROSTER precedent. roster.ts lies in the parity instrument's
 # import closure; MODULE_FOR_DOOR and SURFACE_ROLLCALL live in the cli instrument's own files.
@@ -104,17 +119,18 @@ const ATTRIBUTION_SRC = `packages/cli/${ATTRIBUTION_T}`
 
 // Every count is measured from a fresh Vitest JSON report of exactly these files, run the way the
 // engine runs them (2026-09-28). The census count is 430-12's measurement, re-measured here.
+// 2026-10-02 (432-44): re-measured on the 432 tree; see the leg notes for each re-spelled subject.
 const instruments = {
   schema: { pkg: 'packages/schema', files: [REMEDY_T, REMEDY_D], typecheck: true, count: 6 },
-  server: { pkg: 'packages/dashboard-server', files: [SETS_T, SETS_D, DELETED_T], typecheck: true, count: 11 },
-  ui: { pkg: 'packages/dashboard-ui', files: [SHELL_T, SIDEBAR_T, PALETTE_T, DENIAL_T], typecheck: false, count: 54 },
-  parity: { pkg: 'packages/cli', files: [PARITY_T], typecheck: false, count: 60, env: { VITEST_MAX_WORKERS: '1' } },
-  cli: { pkg: 'packages/cli', files: [ROLLCALL_T, ATTRIBUTION_T], typecheck: false, count: 34, env: { VITEST_MAX_WORKERS: '1' } },
+  server: { pkg: 'packages/dashboard-server', files: [SETS_T, SETS_D, DELETED_T], typecheck: true, count: 13 },
+  ui: { pkg: 'packages/dashboard-ui', files: [SHELL_T, SIDEBAR_T, PALETTE_T, DENIAL_T], typecheck: false, count: 57 },
+  parity: { pkg: 'packages/cli', files: [PARITY_T], typecheck: false, count: 64, env: { VITEST_MAX_WORKERS: '1' } },
+  cli: { pkg: 'packages/cli', files: [ROLLCALL_T, ATTRIBUTION_T], typecheck: false, count: 43, env: { VITEST_MAX_WORKERS: '1' } },
   'agent-local': { pkg: 'packages/agent-local', files: [SESSION_D], typecheck: true, count: 2 },
-  census: { pkg: 'packages/arch', files: [CENSUS_T], typecheck: false, count: 77 },
+  census: { pkg: 'packages/arch', files: [CENSUS_T], typecheck: false, count: 87 },
 }
 
-const remedyT = name => cell('schema', REMEDY_T, name)
+const remedyT = (name, count, message) => cell('schema', REMEDY_T, name, count, message)
 const remedyD = name => cell('schema', REMEDY_D, name)
 const setsT = name => cell('server', SETS_T, name)
 const setsD = name => cell('server', SETS_D, name)
@@ -122,14 +138,13 @@ const deleted = (name, count) => cell('server', DELETED_T, name, count)
 const shell = name => cell('ui', SHELL_T, name)
 const sidebar = name => cell('ui', SIDEBAR_T, name)
 const palette = name => cell('ui', PALETTE_T, name)
-const denial = name => cell('ui', DENIAL_T, name)
+const denial = (name, count, message) => cell('ui', DENIAL_T, name, count, message)
 const parity = name => cell('parity', PARITY_T, name)
 const rollcall = name => cell('cli', ROLLCALL_T, name)
 const attribution = name => cell('cli', ATTRIBUTION_T, name)
 const session = name => cell('agent-local', SESSION_D, name)
-const census = name => cell('census', CENSUS_T, name)
+const census = (name, count, message) => cell('census', CENSUS_T, name, count, message)
 const spells = label => census(`no source or test spells ${label}`)
-const exact = (instrument, runtime, types, name) => [cell(instrument, runtime, name), cell(instrument, types, name)]
 const edit = (from, to) => ({ from, to })
 
 const SHARED_404 = 'C430-DELETED-CHAT-ROUTES-SHARED-404'
@@ -181,33 +196,38 @@ const legs = [
     greens: [palette('includes Hooks in the Pages group'), sidebar('SIDEBAR-NAV-EXACT')],
   },
   {
+    // 432-44: the table's module is deleted (432-14), so the row returns with the module that held it.
     subject: CHAT_ROUTES_SRC, instrument: 'server', claim: 'C430-CHAT-ROUTE-TABLE-EXACT',
-    operation: 'add a POST row for the deleted turn path to CHAT_ROUTE_TABLE',
-    edits: [edit("  { method: 'GET', path: RUN_CONFIRM_CHANNEL_ROUTE, handler: 'runConfirmChannel' },\n] as const)",
-      "  { method: 'GET', path: RUN_CONFIRM_CHANNEL_ROUTE, handler: 'runConfirmChannel' },\n  { method: 'POST', path: '/api/chat/turn', handler: 'runConfirm' },\n] as const)")],
+    operation: 'create a route-table module holding the deleted turn row beside the host seam',
+    create: "// 432-44 R06: a conversation route table returns beside the host seam.\nexport const CHAT_ROUTE_TABLE = Object.freeze([\n  { method: 'POST', path: '/api/' + 'chat/turn', handler: 'turn' },\n] as const)\n",
     reds: [setsT('C430-CHAT-ROUTE-TABLE-EXACT')],
     allowed: [],
-    // The row is unreachable while routes.ts dispatches only the run-confirm prefix.
+    // The module is unreachable: nothing imports it and routes.ts dispatches no chat prefix.
     greens: [deleted(SHARED_404, 5), setsD('C430-CHAT-ROUTE-TABLE-EXACT'), setsT('C430-AGENT-HOST-MEMBERS-EXACT')],
   },
   {
     subject: ROUTES_SRC, instrument: 'server', claim: SHARED_404,
-    operation: 'dispatch the deleted chat prefix to the confirm router again',
-    edits: [edit('    if (path.startsWith(RUN_CONFIRM_ROUTE_PREFIX)) {\n      chatRouter(req, res)\n',
-      "    if (path.startsWith(RUN_CONFIRM_ROUTE_PREFIX) || path.startsWith('/api/chat/')) {\n      chatRouter(req, res)\n")],
-    // The confirm router's own 404 carries no wildcard grant, so every deleted path loses it.
+    // 432-44: the confirm router is deleted (432-14), so the prefix returns as its own dispatch arm.
+    operation: 'answer the deleted chat prefix from a dedicated arm ahead of the shared ones',
+    edits: [edit('    // 2026-10-01 (432-14, D-14): the run-confirm prefix is no longer dispatched. It was mounted\n',
+      "    if (path.startsWith('/api/' + 'chat/')) {\n      jsonNoCors(res, { error: 'Not found' }, 404)\n      return\n    }\n\n    // 2026-10-01 (432-14, D-14): the run-confirm prefix is no longer dispatched. It was mounted\n")],
+    // A dedicated arm's answer carries no wildcard grant, so every deleted path loses it.
     reds: [deleted(SHARED_404, 5)],
     allowed: [],
-    greens: [deleted('C430-RUN-CONFIRM-PREFIX-STILL-ROUTED', 2), setsT('C430-CHAT-ROUTE-TABLE-EXACT')],
+    // The retired run-confirm pair still answers what a never-served path answers.
+    greens: [deleted('C432-CONFIRM-ROUTES-404', 4), setsT('C430-CHAT-ROUTE-TABLE-EXACT')],
   },
   {
-    subject: CHAT_ROUTES_SRC, instrument: 'server', claim: 'C430-CHAT-ROUTE-HANDLERS-EXACT',
-    operation: "widen ChatRouteHandlerName with 'turn'",
-    edits: [edit("export type ChatRouteHandlerName = 'runConfirm' | 'runConfirmChannel'\n",
-      "export type ChatRouteHandlerName = 'runConfirm' | 'runConfirmChannel' | 'turn'\n")],
+    // 432-44: the handler-name union is deleted (432-14); the type half that survives is the host
+    // seam's, so the router-fed member returns on AgentHost.
+    subject: HOST_SRC, instrument: 'server', claim: 'C430-CHAT-ROUTE-HANDLERS-EXACT',
+    operation: 'give AgentHost the router-fed confirms member back',
+    edits: [edit('  unmaskForDisplay(text: string, scope?: { runId: string }): string\n}\n',
+      '  unmaskForDisplay(text: string, scope?: { runId: string }): string\n  readonly confirms?: unknown\n}\n')],
     reds: [setsD('C430-CHAT-ROUTE-TABLE-EXACT')],
-    allowed: [],
-    greens: [setsT('C430-CHAT-ROUTE-TABLE-EXACT'), setsD('C430-AGENT-HOST-MEMBERS-EXACT'), deleted(SHARED_404, 5)],
+    // A member AGENT_HOST_MEMBERS does not list is outside the listed set as well.
+    allowed: [setsD('C430-AGENT-HOST-MEMBERS-EXACT')],
+    greens: [setsT('C430-CHAT-ROUTE-TABLE-EXACT'), setsT('C430-AGENT-HOST-MEMBERS-EXACT'), deleted(SHARED_404, 5)],
   },
   {
     subject: ROSTER_SRC, instrument: 'parity', claim: 'ROSTER-FOUR-SURFACES',
@@ -223,9 +243,9 @@ const legs = [
     subject: ATTRIBUTION_SRC, instrument: 'cli', claim: 'MODULE-FOR-DOOR-EXACT',
     operation: 'name a dashboard command module in MODULE_FOR_DOOR',
     edits: [edit("      fn: 'fn.ts',\n    }\n", "      fn: 'fn.ts',\n      dashboard: 'dashboard.ts',\n    }\n")],
-    reds: [attribution('(5) every rostered door supplies a minting surface — the census, over the roster itself')],
+    reds: [attribution('(5) no rostered door supplies a minting surface — the census, over the roster itself')],
     allowed: [],
-    greens: [attribution('(4) a surface this build does not recognise is named as such, never interpolated'),
+    greens: [attribution('C432-NO-GIT-COMMIT: the CLI host exports no commit, preserve-commit, trailer or author machinery'),
       rollcall('every walked surface is enrolled in the SURFACE_ROLLCALL union exactly once')],
   },
   {
@@ -239,39 +259,44 @@ const legs = [
     greens: [setsT('C430-AGENT-HOST-MEMBERS-EXACT'), setsD('C430-CHAT-ROUTE-TABLE-EXACT')],
   },
   {
+    // 432-44: was C430-REMEDY-MEMBERSHIPS-EXACT + C430-DASHBOARD-PROJECTION-EMPTY (runtime and type).
+    // The vocabulary is deleted (432-19), so the membership returns as a remedy module holding it.
     subject: REMEDIES_SRC, instrument: 'schema', claim: 'C430-ANSWER-CONFIRM-MEMBERSHIP',
-    operation: "put 'dashboard' back in the answer-confirm membership",
-    edits: [edit("  'answer-confirm': ['cli', 'chat'],\n", "  'answer-confirm': ['cli', 'chat', 'dashboard'],\n")],
-    reds: [...exact('schema', REMEDY_T, REMEDY_D, 'C430-REMEDY-MEMBERSHIPS-EXACT'),
-      ...exact('schema', REMEDY_T, REMEDY_D, 'C430-DASHBOARD-PROJECTION-EMPTY')],
-    allowed: [],
-    greens: exact('schema', REMEDY_T, REMEDY_D, 'C430-REMEDY-SURFACES-EXACT'),
+    operation: 'create the remedy module holding only the answer-confirm membership, the dashboard in it',
+    create: "// 432-44 R12: the answer-confirm dashboard membership returns.\nexport const GATE_REMEDY_SURFACES_BY_KIND = {\n  'answer-confirm': ['cli', 'chat', 'dashboard'],\n} as const\n",
+    reds: [remedyT('C432-430-R12-ANSWER-CONFIRM-ABSENT', 1, 'the confirm-answering remedy returned')],
+    // The module-absence cell reads the remedy module's path, which this leg creates.
+    allowed: [remedyT('C432-REMEDY-TYPES-ABSENT: the remedy module and the policy-result DTO are deleted; the risk tier stays')],
+    greens: [remedyT('C432-430-R13-SESSION-PIN-ABSENT'), remedyD('C432-REMEDY-TYPES-ABSENT')],
   },
   {
+    // 432-44: was C430-REMEDY-MEMBERSHIPS-EXACT + C430-DASHBOARD-PROJECTION-EMPTY (runtime and type).
     subject: REMEDIES_SRC, instrument: 'schema', claim: 'C430-SESSION-PIN-FINAL-MEMBERSHIP',
-    operation: "put 'dashboard' back in the session-pin-final membership",
-    edits: [edit("  'session-pin-final': ['chat'],\n", "  'session-pin-final': ['chat', 'dashboard'],\n")],
-    reds: [...exact('schema', REMEDY_T, REMEDY_D, 'C430-REMEDY-MEMBERSHIPS-EXACT'),
-      ...exact('schema', REMEDY_T, REMEDY_D, 'C430-DASHBOARD-PROJECTION-EMPTY')],
-    allowed: [],
-    greens: exact('schema', REMEDY_T, REMEDY_D, 'C430-REMEDY-SURFACES-EXACT'),
+    operation: 'create the remedy module holding only the session-pin-final membership, the dashboard in it',
+    create: "// 432-44 R13: the session-pin-final dashboard membership returns.\nexport const GATE_REMEDY_SURFACES_BY_KIND = {\n  'session-pin-final': ['chat', 'dashboard'],\n} as const\n",
+    reds: [remedyT('C432-430-R13-SESSION-PIN-ABSENT', 1, 'the session-pin finality remedy returned')],
+    allowed: [remedyT('C432-REMEDY-TYPES-ABSENT: the remedy module and the policy-result DTO are deleted; the risk tier stays')],
+    greens: [remedyT('C432-430-R12-ANSWER-CONFIRM-ABSENT'), remedyD('C432-REMEDY-TYPES-ABSENT')],
   },
   {
     subject: DENIAL_SRC, instrument: 'ui', claim: 'DENIAL-REASON-ONLY',
     operation: 'render an answer-confirm remedy line inside the denial box',
     edits: [edit('      <p className="text-foreground">{neutralReason}</p>\n',
       '      <p className="text-foreground">{neutralReason}</p>\n      <p data-remedy-kind="answer-confirm">Answer the confirm prompt to run it.</p>\n')],
-    reds: [denial('DENIAL-REASON-ONLY')],
-    // The empty-reason cell also counts remedy lines and reads the box text, so the line reds it too.
-    allowed: [denial('DENIAL-NOTHING-INVENTED')],
+    // 432-44: was DENIAL-REASON-ONLY, which still reds beside it (allowed below).
+    reds: [denial('C432-430-R14-REASON-ONLY', 1, 'a remedy line rendered beside the reason')],
+    // Every cell that counts the box's lines or remedy markers sees the same returned line.
+    allowed: [denial('DENIAL-REASON-ONLY'), denial('DENIAL-NOTHING-INVENTED'), denial('C432-PLAIN-REFUSAL'),
+      denial('C432-HISTORICAL-READER')],
     greens: [denial('DENIAL-CANONICAL-PROSE-NEVER-IN-DOM')],
   },
   {
     subject: DENIAL_SRC, instrument: 'census', claim: 'CENSUS-DASHBOARD-REMEDY-TEXT',
     operation: 'declare the dashboard remedy text table again',
     edits: [edit('export function DenialBlock(', 'const DASHBOARD_REMEDY_TEXT = {}\n\nexport function DenialBlock(')],
-    reds: [spells('the dashboard remedy text table')],
-    allowed: [],
+    // 432-44: was the census needle cell, which still reds beside it (allowed below).
+    reds: [census('C432-430-R15-REMEDY-TABLE-ABSENT', 1, 'the dashboard remedy text table returned')],
+    allowed: [spells('the dashboard remedy text table')],
     greens: censusControls,
   },
   {
@@ -329,7 +354,8 @@ const legs = [
   {
     subject: COMPOSE_SRC, instrument: 'agent-local', claim: 'C430-NO-SESSION-SURFACE-OPTION',
     operation: 'give ComposeLocalAgentInput the session-surface option back',
-    edits: [edit('  readonly mintingSurface?: string\n', '  readonly mintingSurface?: string\n  readonly sessionSurface?: string\n')],
+    // 432-44: re-anchored; `mintingSurface` is deleted (432-17).
+    edits: [edit('  readonly config: ConfigReaderPort\n', '  readonly config: ConfigReaderPort\n  readonly sessionSurface?: string\n')],
     reds: [session('C430-NO-SESSION-SURFACE-OPTION: ComposeLocalAgentInput takes no session-surface tag')],
     allowed: [],
     greens: [session('C430-NO-SESSION-SURFACE-OPTION: ComposeLocalAgentInput keeps the CLI chat and ask options')],
@@ -341,12 +367,12 @@ const legs = [
     reds: [rollcall('every walked surface is enrolled in the SURFACE_ROLLCALL union exactly once')],
     // The fixture cell compares the walked total with the roll-call length, which the sink moves.
     allowed: [rollcall('both sides derive from ONE fixture (single MaskingContext, single envelope stream)')],
-    greens: [attribution('(5) every rostered door supplies a minting surface — the census, over the roster itself')],
+    greens: [attribution('(5) no rostered door supplies a minting surface — the census, over the roster itself')],
   },
 ]
 
 runGate({
   slug: '430-chat-removal-mutation', envPrefix: 'AGENT_QA_430_CHAT_REMOVAL_MUTATION', idPrefix: 'R',
-  instruments, legs, expectedLegs: 23, banner: 'CHAT_REMOVAL_MUTATION_OK',
+  instruments, legs, expectedLegs: 23, banner: 'CHAT_REMOVAL_MUTATION_OK', parseCheck: true,
 })
 NODE

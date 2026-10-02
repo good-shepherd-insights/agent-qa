@@ -158,6 +158,22 @@ describe('DenialBlock renders its reason only (D-06)', () => {
     expect(dom.querySelectorAll('button, a, [data-remedy-kind]')).toHaveLength(0)
   })
 
+  // 2026-10-02 (432-44): the current owner of the 430 mutation leg R14 (was DENIAL-REASON-ONLY,
+  // which stays). The box is one line, the reason, whatever it says; any line rendered after it, a
+  // suggested command or a remedy chip, is the returned remedy render.
+  it('C432-430-R14-REASON-ONLY: the denial box holds one line, the reason, and no remedy line follows it', () => {
+    for (const reason of [buildProductionRefusal(['prod-eu']), 'refused: plain reason', '']) {
+      const dom = mount(<DenialBlock neutralReason={reason} />)
+      const box = dom.querySelector('[data-entry="denial"]')
+      expect(box).not.toBeNull()
+      const lines = Array.from(box?.children ?? [], (line) => line.textContent)
+      expect(lines, 'a remedy line rendered beside the reason').toEqual([reason])
+      expect(dom.querySelectorAll('[data-remedy-kind]'), 'a remedy line rendered beside the reason')
+        .toHaveLength(0)
+      unmount()
+    }
+  })
+
   // 432-19, task 2: a denial reason STORED by a pre-432 build (a run row settled while the gate
   // existed) still reads back. The block renders the stored sentence verbatim — the masked
   // placeholder the server stored stays a placeholder — and adds nothing to it.

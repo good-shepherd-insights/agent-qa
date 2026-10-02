@@ -16,7 +16,7 @@
 #   F01  a third outcome class joins the union, the array and its keyed records -> C426-OUTCOME-CLASSES-EXACT
 #   F02  the failed choice order swaps its first and third kinds                 -> CHOICE-ORDER-FAILED
 #   F03  a third entry scope joins the union, the array and its keyed records    -> C426-ENTRY-SCOPES-EXACT
-#   F04  a sixth composer state joins the union and the array                    -> C426-COMPOSER-STATES-EXACT
+#   F04  a fifth composer state joins the union and the array                    -> C426-COMPOSER-STATES-EXACT
 #   F05  an eighth preview state joins the union and the array                   -> C426-PREVIEW-STATES-EXACT
 #   F06  an eighth history state joins the union and the array                   -> C426-HISTORY-STATES-EXACT
 #   F07  a third layout joins the union and the array                            -> C426-LAYOUTS-EXACT
@@ -24,13 +24,20 @@
 #   F09  a pill naming the internal mark kind returns to the step row            -> NO-PILL-ANYWHERE
 #   F10  the should-have-passed choice is labelled with its internal kind        -> NO-INTERNAL-NAME-IN-COPY
 #   F11  submitBlockedReason loses its preview-currency row                      -> SUBMIT-NEEDS-CURRENT-PREVIEW
-#   F12  the inline mark approval sits inside a modal dialog (shipped bundle)    -> NO-DIALOG-ON-MARK-PATH
+#   F12  a modal dialog returns on the mark path (shipped bundle)                -> NO-DIALOG-ON-MARK-PATH
 #   F13  the history stops rendering the replacement explanation                 -> HISTORY-REPLACED-EXPLAINED
 #   F14  the preview stops rendering the replaces line                           -> PREVIEW-REPLACES-LINE
 #   F15  a note edit schedules the preview again                                 -> NOTE-DOES-NOT-REFETCH (D-16)
 #   F16  an effect moves a step target to the viewed step                        -> TARGET-PINNED (D-08)
 #
 # ALLOWED CO-REDS are listed on each leg with a one-line reason; nothing else may red.
+#
+# 2026-10-02 (432-44, D-14): TWO LEGS RE-SPELLED FOR THE PROMPT-FREE MARK. 432-13/14 deleted the
+# inline mark approval (`feedback-approval.tsx`) and the composer's `awaiting-approval` state. F04 now
+# adds a FIFTH state to the four the composer has (composing, submitting, recorded, retained). F12
+# planted a modal around the approval component; with that component gone, it plants the modal the
+# approval used to be — a dialog the composer shows once a mark is submitted — and the same cell
+# (no dialog, no host dialog and no approval group on the mark path) must red on the shipped bundle.
 #
 # F12 CROSSES THE DIST BOUNDARY. Its cell reads the shipped bundle a spawned dashboard serves, so the
 # leg rebuilds `@vostride/agent-qa-dashboard-ui`, whose Vite bundle has no importable entry; it names
@@ -63,7 +70,7 @@ const HOOK_SRC = 'packages/dashboard-ui/src/hooks/use-run-feedback.ts'
 const ROW_SRC = 'packages/dashboard-ui/src/components/run-detail/step-tree-item.tsx'
 const HISTORY_SRC = 'packages/dashboard-ui/src/components/run-detail/feedback-history.tsx'
 const PREVIEW_SRC = 'packages/dashboard-ui/src/components/run-detail/feedback-preview.tsx'
-const APPROVAL_SRC = 'packages/dashboard-ui/src/components/run-detail/feedback-approval.tsx'
+const COMPOSER_SRC = 'packages/dashboard-ui/src/components/run-detail/feedback-composer.tsx'
 
 const VIEW = 'src/lib/__tests__/feedback-view.test.ts'
 const VIEW_D = 'src/lib/__tests__/feedback-view.test-d.ts'
@@ -76,7 +83,8 @@ const DOM = 'src/__tests__/conformance/426-feedback-dom.test.ts'
 const instruments = {
   'ui-view': { pkg: 'packages/dashboard-ui', files: [VIEW, VIEW_D], typecheck: true, count: 59 },
   'ui-page': { pkg: 'packages/dashboard-ui', files: [PAGE], typecheck: false, count: 65 },
-  'ui-parts': { pkg: 'packages/dashboard-ui', files: [COMPOSER, PREVIEW, HISTORY], typecheck: false, count: 60 },
+  // 2026-10-02 (432-44): 60 -> 53, re-measured; the composer's approval cells left with the approval (432-13/14).
+  'ui-parts': { pkg: 'packages/dashboard-ui', files: [COMPOSER, PREVIEW, HISTORY], typecheck: false, count: 53 },
   'feedback-dom': { pkg: 'packages/cli', files: [DOM], typecheck: false, count: 12, env: { VITEST_MAX_WORKERS: '1' } },
 }
 
@@ -146,13 +154,13 @@ const legs = [
   },
   {
     subject: VIEW_SRC, instrument: 'ui-view', claim: 'C426-COMPOSER-STATES-EXACT',
-    operation: 'add a sixth composer state to the union and the runtime array',
+    operation: 'add a fifth composer state to the union and the runtime array',
     edits: [{
-      from: "  | 'recorded'\n  | 'retained'\n\n// prettier-ignore\nexport const FEEDBACK_COMPOSER_STATES = [\n  'composing',\n  'submitting',\n  'awaiting-approval',\n  'recorded',\n  'retained',\n]",
-      to: "  | 'recorded'\n  | 'retained'\n  | 'dismissed'\n\n// prettier-ignore\nexport const FEEDBACK_COMPOSER_STATES = [\n  'composing',\n  'submitting',\n  'awaiting-approval',\n  'recorded',\n  'retained',\n  'dismissed',\n]",
+      from: "  | 'recorded'\n  | 'retained'\n\n// prettier-ignore\nexport const FEEDBACK_COMPOSER_STATES = [\n  'composing',\n  'submitting',\n  'recorded',\n  'retained',\n]",
+      to: "  | 'recorded'\n  | 'retained'\n  | 'dismissed'\n\n// prettier-ignore\nexport const FEEDBACK_COMPOSER_STATES = [\n  'composing',\n  'submitting',\n  'recorded',\n  'retained',\n  'dismissed',\n]",
     }],
     reds: [viewD('C426-COMPOSER-STATES-EXACT')],
-    // The runtime twin pins the same array by value, so a sixth member moves it too.
+    // The runtime twin pins the same array by value, so a fifth member moves it too.
     allowed: [view('CLOSED-SETS-RUNTIME')],
     greens: [viewD('C426-ENTRY-SCOPES-EXACT'), view('CHOICE-ORDER-FAILED'), view('PREVIEW-STATES-RUNTIME')],
   },
@@ -250,19 +258,17 @@ const legs = [
     greens: [page('TRIGGER-COUNT'), page('NO-PILL-ANYWHERE'), page('TARGET-PINNED')],
   },
   {
-    subject: APPROVAL_SRC, instrument: 'feedback-dom', claim: 'NO-DIALOG-ON-MARK-PATH',
-    operation: 'make the inline mark approval a modal dialog',
+    subject: COMPOSER_SRC, instrument: 'feedback-dom', claim: 'NO-DIALOG-ON-MARK-PATH',
+    operation: 'show a modal dialog in the composer once a mark is submitted',
     crossing: ui('feedback426modal'),
-    // The question stays a named group INSIDE the modal: re-roling the group itself would time out the
-    // drive's own locator before the cell measures anything, and a red from a missing observation is
-    // not the modal count this cell exists to take.
-    edits: [
-      {
-        from: '  return (\n    <div\n      role="group"\n      aria-labelledby={titleId}\n',
-        to: '  return (\n    <div role="dialog" aria-modal="true" data-modal426="feedback426modal">\n    <div\n      role="group"\n      aria-labelledby={titleId}\n',
-      },
-      { from: '      )}\n    </div>\n  )\n}\n', to: '      )}\n    </div>\n    </div>\n  )\n}\n' },
-    ],
+    // Rendered beside the composer's own content, never around it: wrapping the composer would time
+    // out the drive's own locators before the cell measures anything, and a red from a missing
+    // observation is not the modal count this cell exists to take. Shown only after a submit, so the
+    // compose-while-inspecting modal counts stay green.
+    edits: [{
+      from: '      <div className="shrink-0 space-y-1 border-b px-3 py-2">\n        <div className="flex items-start gap-2">\n',
+      to: '      {state === \'composing\' ? null : <div role="dialog" aria-modal="true" data-modal426="feedback426modal" />}\n      <div className="shrink-0 space-y-1 border-b px-3 py-2">\n        <div className="flex items-start gap-2">\n',
+    }],
     reds: [dom('NO-DIALOG-ON-MARK-PATH')],
     allowed: [],
     greens: [dom('FEEDBACK-FIXTURE-SETTLED'), dom('TRIGGER-COUNT-ON-BINARY'), dom('NO-PILL-ON-BINARY'),
