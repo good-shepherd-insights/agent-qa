@@ -340,8 +340,13 @@ describe('432 direct explicit knowledge writer (D-04, D-05, D-08, D-09, D-11)', 
     const forgetFirst = await explicit({ ...base('ci'), request: forgetRequest })
     const forgetTree = canonicalFiles(knowledgeRoot)
     const forgetAgain = await explicit({ ...base('ci'), request: forgetRequest })
+    // RE-SPELLED 2026-10-02 (quick 261002-lse, 432-16 #3): the retry answers the FIRST receipt byte
+    // for byte, as the mark and the accept above do. It used to re-mint `forgottenAt` and claim an
+    // empty scrub list, which this leg pinned.
     expect(forgetAgain).toMatchObject({ outcome: 'applied', recordIds: [forgotten],
-      forgetReceipt: { tombstonedRecords: [{ recordId: forgotten }], projectionsScrubbed: [] } })
+      forgetReceipt: { tombstonedRecords: [{ recordId: forgotten }],
+        projectionsScrubbed: ['fts', 'vec', 'graph'] } })
+    expect(JSON.stringify(forgetAgain)).toBe(JSON.stringify(forgetFirst))
     expect(forgetFirst.outcome === 'applied' && forgetFirst.recordIds).toEqual([forgotten])
     expect(canonicalFiles(knowledgeRoot), 'an already-forgotten target is not destroyed twice').toEqual(forgetTree)
     expect(bundle(forgotten).bundle.events.filter(event => event.type === 'deprecated')).toHaveLength(1)
