@@ -39,7 +39,15 @@ import {
 } from '../../__tests__/fixtures/curation-candidate-fixture.js'
 
 const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
-const TEST_TIMEOUT_MS = 30_000
+// 2026-10-02 (quick 261002-tmo): the SIGKILL cells' 30 s bound is measured from the kill to the
+// recovered, consistent store, which is the recovery it states. It used to start before the child
+// was spawned, so it also timed a whole child vitest process booting to the boundary, and the
+// marker wait gave that boot 10 s: at load 120-180 the child was still printing vitest's banner
+// at 10 s ('timed out waiting for authored-intent marker', quick 261002-tmo forced gate 1). The
+// boot now has its own ceiling, and the cell budget covers both.
+const RECOVERY_BOUND_MS = 30_000
+const CHILD_BOOT_CEILING_MS = 60_000
+const SIGKILL_CELL_TIMEOUT_MS = CHILD_BOOT_CEILING_MS + RECOVERY_BOUND_MS + 30_000
 
 type FaultPoint =
   | 'after-emit-before-claim'
@@ -348,7 +356,7 @@ async function waitForBoundaryMarker(
   child: ChildProcess,
   output: () => string,
 ): Promise<SigkillBoundaryMarker> {
-  const markerDeadline = Date.now() + 10_000
+  const markerDeadline = Date.now() + CHILD_BOOT_CEILING_MS
   while (!existsSync(markerPath) && Date.now() < markerDeadline) {
     if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error(`SIGKILL fixture exited before ${expectedPoint} marker:\n${output()}`)
@@ -549,7 +557,6 @@ async function proveRealSigkillBoundary(point: RealSigkillPoint): Promise<void> 
 }
 
 async function provePublishStagingSigkill(): Promise<void> {
-  const startedAt = Date.now()
   const root = mkdtempSync(join(tmpdir(), 'knowledge-sigkill-publish-'))
   const knowledgeRoot = join(root, 'agent-qa-knowledge')
   const auditBaseDir = join(root, '.agent-qa')
@@ -593,6 +600,7 @@ async function provePublishStagingSigkill(): Promise<void> {
       state: { lifecycle: 'committing' },
     })
 
+    const killedAt = Date.now()
     await sendRealSigkill(running.child)
     expireKilledLease(knowledgeRoot, marker.leaseId)
     expect(listClaimedLeases(knowledgeRoot)).toContain(marker.leaseId)
@@ -620,7 +628,7 @@ async function provePublishStagingSigkill(): Promise<void> {
     await drainQueue(options(knowledgeRoot, auditBaseDir, recoveryAuthor))
     expect(canonicalStoreSnapshot(knowledgeRoot)).toEqual(beforeSecondRecovery)
     expect(recoveryAuthor).not.toHaveBeenCalled()
-    expect(Date.now() - startedAt).toBeLessThan(TEST_TIMEOUT_MS)
+    expect(Date.now() - killedAt).toBeLessThan(RECOVERY_BOUND_MS)
   } finally {
     if (running !== undefined) await killIfRunning(running.child)
     rmSync(root, { recursive: true, force: true })
@@ -628,7 +636,6 @@ async function provePublishStagingSigkill(): Promise<void> {
 }
 
 async function proveMutableEnrichmentSigkill(): Promise<void> {
-  const startedAt = Date.now()
   const root = mkdtempSync(join(tmpdir(), 'knowledge-sigkill-mutable-'))
   const knowledgeRoot = join(root, 'agent-qa-knowledge')
   const auditBaseDir = join(root, '.agent-qa')
@@ -708,6 +715,7 @@ async function proveMutableEnrichmentSigkill(): Promise<void> {
     })
     expect(verifyBundleIntegrity(fallbackDirs[0]!.dir).ok).toBe(false)
 
+    const killedAt = Date.now()
     await sendRealSigkill(running.child)
     expireKilledLease(knowledgeRoot, marker.leaseId)
     expect(listClaimedLeases(knowledgeRoot)).toContain(marker.leaseId)
@@ -757,7 +765,7 @@ async function proveMutableEnrichmentSigkill(): Promise<void> {
     await drainQueue(options(knowledgeRoot, auditBaseDir, recoveryAuthor))
     expect(canonicalStoreSnapshot(knowledgeRoot)).toEqual(beforeSecondRecovery)
     expect(recoveryAuthor).not.toHaveBeenCalled()
-    expect(Date.now() - startedAt).toBeLessThan(TEST_TIMEOUT_MS)
+    expect(Date.now() - killedAt).toBeLessThan(RECOVERY_BOUND_MS)
   } finally {
     if (running !== undefined) await killIfRunning(running.child)
     rmSync(root, { recursive: true, force: true })
@@ -838,7 +846,6 @@ describe('kill-anywhere recovery across memory.md §8.7 lifecycle boundaries (CU
   })
 
   it('recovers a real SIGKILL after authored intent in under 30 seconds', async () => {
-    const startedAt = Date.now()
     const root = mkdtempSync(join(tmpdir(), 'knowledge-sigkill-'))
     const knowledgeRoot = join(root, 'agent-qa-knowledge')
     const auditBaseDir = join(root, '.agent-qa')
@@ -859,6 +866,7 @@ describe('kill-anywhere recovery across memory.md §8.7 lifecycle boundaries (CU
         running.output,
       )
       expect(marker.candidateId).toBe(candidate.candidateId)
+      const killedAt = Date.now()
       await sendRealSigkill(running.child)
       expireKilledLease(knowledgeRoot, marker.leaseId)
 
@@ -866,18 +874,18 @@ describe('kill-anywhere recovery across memory.md §8.7 lifecycle boundaries (CU
       await drainQueue(options(knowledgeRoot, auditBaseDir, recoveryAuthor))
       assertConsistent(knowledgeRoot, candidate.candidateId)
       expect(recoveryAuthor).not.toHaveBeenCalled()
-      expect(Date.now() - startedAt).toBeLessThan(TEST_TIMEOUT_MS)
+      expect(Date.now() - killedAt).toBeLessThan(RECOVERY_BOUND_MS)
     } finally {
       await killIfRunning(running.child)
       rmSync(root, { recursive: true, force: true })
     }
-  }, TEST_TIMEOUT_MS)
+  }, SIGKILL_CELL_TIMEOUT_MS)
 
   it('recovers a real SIGKILL from durable publish staging without re-authoring', async () => {
     await proveRealSigkillBoundary('publish-staged')
-  }, TEST_TIMEOUT_MS)
+  }, SIGKILL_CELL_TIMEOUT_MS)
 
   it('recovers a real SIGKILL from partial mutable enrichment without re-authoring', async () => {
     await proveRealSigkillBoundary('mutable-enrichment')
-  }, TEST_TIMEOUT_MS)
+  }, SIGKILL_CELL_TIMEOUT_MS)
 })
