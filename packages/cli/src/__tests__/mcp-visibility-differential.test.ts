@@ -239,10 +239,43 @@ async function toolNamesFor(token: string | undefined): Promise<string[]> {
 }
 
 /**
+ * Whether `bytes` holds one complete HTTP/1.1 response: its head, then a chunked body through the
+ * zero-size chunk, or a body of exactly `content-length` bytes. Undefined when the length is
+ * delimited only by the server closing the connection.
+ */
+function httpResponseComplete(bytes: Buffer): boolean | undefined {
+  const headEnd = bytes.indexOf('\r\n\r\n')
+  if (headEnd < 0) return false
+  const head = bytes.subarray(0, headEnd).toString('latin1').toLowerCase()
+  let at = headEnd + 4
+  if (/^transfer-encoding:\s*chunked\s*$/mu.test(head)) {
+    for (;;) {
+      const lineEnd = bytes.indexOf('\r\n', at)
+      if (lineEnd < 0) return false
+      const size = Number.parseInt(bytes.subarray(at, lineEnd).toString('latin1'), 16)
+      if (Number.isNaN(size)) return false
+      if (size === 0) return bytes.indexOf('\r\n', lineEnd + 2) >= 0
+      at = lineEnd + 2 + size + 2
+      if (at > bytes.length) return false
+    }
+  }
+  const length = /^content-length:\s*(\d+)\s*$/mu.exec(head)
+  if (length !== null) return bytes.length - at >= Number(length[1])
+  return undefined
+}
+
+/**
  * A raw HTTP request over a socket, because `fetch` refuses to let a caller set `Host`.
  *
  * The DNS-rebinding guard is a claim ABOUT the `Host` header, and undici silently overwrites it —
  * a cell built on `fetch` would have asserted the guard while never once presenting a bad host.
+ *
+ * 2026-10-02 (quick 261002-tmo): it resolves on the COMPLETE response rather than on the server
+ * closing the socket. A served (200) request answers in about 80 ms, chunked and terminated, but
+ * with `connection: keep-alive` (the MCP SDK's streamable transport sets it, despite the request's
+ * `Connection: close`), so Node held the socket until its keep-alive timeout: 6.05-6.09 s per
+ * request, 12.2 s for the two-request cell, which failed at 15.9 s under the 432-04 forced gate.
+ * The recorded bytes are the same: nothing follows the terminating chunk on that socket.
  */
 async function rawRequest(headers: Record<string, string>): Promise<Frame> {
   return await new Promise((done, failed) => {
@@ -259,17 +292,28 @@ async function rawRequest(headers: Record<string, string>): Promise<Frame> {
         ].join('\r\n'),
       )
     })
-    let buffer = ''
-    socket.on('data', (chunk) => {
-      buffer += chunk.toString()
-    })
-    socket.on('error', failed)
-    socket.on('end', () => {
+    let bytes = Buffer.alloc(0)
+    let settled = false
+    const settle = (): void => {
+      if (settled) return
+      settled = true
+      const buffer = bytes.toString()
       done({
         status: Number.parseInt(buffer.split(' ')[1] ?? '0', 10),
         text: buffer,
       })
+    }
+    socket.on('data', (chunk: Buffer) => {
+      bytes = Buffer.concat([bytes, chunk])
+      if (httpResponseComplete(bytes) === true) {
+        settle()
+        socket.destroy()
+      }
     })
+    socket.on('error', (error) => {
+      if (!settled) failed(error)
+    })
+    socket.on('end', settle)
   })
 }
 

@@ -122,10 +122,14 @@ async function flushMicrotasks(turns = 24): Promise<void> {
   for (let turn = 0; turn < turns; turn += 1) await Promise.resolve()
 }
 
+// 2026-10-02 (quick 261002-tmo): every wait here is a positive condition (the daemon is ready, a
+// job was dispatched); the ceiling only bounds a hang, and every not-yet claim runs on the manual
+// scheduler. The old 1 s ceiling was reached by real composition and SQLite work under load:
+// 4 cells failed at about 1.1 s each at load 40-45 (432-41 #10; also 432-01 #2).
 async function waitUntil(
   predicate: () => boolean,
   message: string,
-  timeoutMs = 1_000,
+  timeoutMs = 30_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (!predicate()) {

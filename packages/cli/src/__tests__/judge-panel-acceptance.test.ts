@@ -87,6 +87,14 @@ async function invoke(configPath: string, args: string[], json = true) {
 import { createEvalCommand } from '../commands/eval.js'
 import { createKnowledgeChecks } from '../commands/doctor-knowledge-checks.js'
 
+// 2026-10-02 (quick 261002-tmo): the replay, calibrate and drift cells drive whole eval commands
+// in process (n=20 is 80 stubbed judge calls, then report and doctor reads). Nothing in them waits
+// on a condition, so the budget is a hang ceiling sized from measurement: the n=19/20 cells take
+// 2.1 s alone and 16.0 s with three copies of this file at load 27-73, and two cells outran the
+// 30 s package default in 432-04's first forced gate (45 s and 35 s). 120 s is the precedent
+// label-calibration-acceptance and C432-EXPLICIT-ALL-CONTEXTS set.
+const JUDGE_DRIVE_TIMEOUT_MS = 120_000
+
 async function doctor(configPath: string) {
   return createKnowledgeChecks({ configPath, config: JSON.parse(readFileSync(configPath, 'utf8')) })[3].check()
 }
@@ -119,7 +127,7 @@ it.each([false, true])('public explicit replay, score/report, floor, baseline an
   expect(saved.exit).toBe(0)
   expect(saved.result).toMatchObject({ kind: 'verdict', modelCalls: 0 })
   expect(planner.captured).toHaveLength(beforeCalls)
-})
+}, JUDGE_DRIVE_TIMEOUT_MS)
 it('public report refuses a mixed panel and singleton baseline without rewriting either score', async () => {
   const f = fixture([{}, {}]), row = f.rows[1]!, judge = core.createPanelIdentity(['claude-sonnet-4'])
   const record = { ...row.record, judge, scoringContext: core.createScoringContext({ cassette: row.cassette,
@@ -173,7 +181,7 @@ it.each([19, 20])('public calibrate/commit/read/report/doctor copies independent
   expect((await doctor(f.configPath)).message).toContain(`calibration: ${artifact.status} n=${n}`)
   expect(boundary).toMatchObject({ calls: 0, binds: 0, comparisons: 0 })
   for (const [path, content] of before) expect(readFileSync(path!).toString('hex')).toBe(content)
-})
+}, JUDGE_DRIVE_TIMEOUT_MS)
 it.each(['profile', 'gold', 'corpus'])('public saved calibration is unavailable after actual %s drift', async drift => {
   const f = fixture([{}, {}])
   const saved = await invoke(f.configPath, ['calibrate', '--judge-panel', '--commit', '--min-n', '2'])
@@ -196,7 +204,7 @@ it.each(['profile', 'gold', 'corpus'])('public saved calibration is unavailable 
   expect((await doctor(f.configPath)).message).toContain('calibration: uncalibrated n=0 (unavailable)')
   expect(readFileSync(artifactPath, 'utf8')).toBe(original)
   expect(boundary).toMatchObject({ calls: 0, binds: 0, comparisons: 0 })
-})
+}, JUDGE_DRIVE_TIMEOUT_MS)
 it.each(['panel-not-configured', 'no-credential', 'single-family-host'])('public preview and doctor disclose zero-call %s', async reason => {
   const f = fixture()
   const config = JSON.parse(readFileSync(f.configPath, 'utf8'))

@@ -47,6 +47,12 @@
 //    the hold: no `sleep`, no timing window, no "act within N ms and hope". The stand-in blocks
 //    until the cell says otherwise.
 //
+//    2026-10-02 (quick 261002-tmo): the argv is written to a pending file and RENAMED into
+//    `arrived-N`. A direct write created the file before its bytes landed, and a caller counting
+//    arrivals could read it in that gap: under forced gates at load 22-86 the cancel-isolation
+//    cell read the argv as '' (`expected '' to contain '--remote-debugging-pipe'`, 432-03 #1,
+//    432-37 #5). A rename is atomic on one filesystem, so an arrival is never seen half-written.
+//
 // 6. `releasesIssued()` / `releasedOrdinals()` MAKE LIVENESS AN ASSERTION. They are facts about
 //    what the CELL has done, not guesses about what the run did — which is the difference between
 //    "held mid-flight" and "already finished before we asked". `releasesIssued()` is the count
@@ -149,7 +155,9 @@ export function plantHoldableBrowser(host: HoldableBrowserHost): HoldableBrowser
         "  try { fs.mkdirSync(`${control}/slot-${ordinal}`); break } catch { /* taken */ }",
         '}',
         '// Property 4 — the argv is recorded so the cell can prove PLAYWRIGHT launched this.',
-        'fs.writeFileSync(`${control}/arrived-${ordinal}`, process.argv.slice(2).join(" "))',
+        '// Written aside and renamed into place: the arrival file appears whole or not at all.',
+        'fs.writeFileSync(`${control}/pending-arrival-${ordinal}`, process.argv.slice(2).join(" "))',
+        'fs.renameSync(`${control}/pending-arrival-${ordinal}`, `${control}/arrived-${ordinal}`)',
         '// Property 5 — no clock: park until the cell alone says otherwise.',
         'const parked = () => {',
         '  if (fs.existsSync(`${control}/release-${ordinal}`)) process.exit(1)',

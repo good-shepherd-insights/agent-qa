@@ -35,6 +35,7 @@ const FIXTURE_ROOT = process.env.AGENT_QA_HEARTBEAT_FIXTURE_ROOT;
 const FIXTURE_MARKER = process.env.AGENT_QA_HEARTBEAT_FIXTURE_MARKER;
 const FIXTURE_REPORT = process.env.AGENT_QA_HEARTBEAT_FIXTURE_REPORT;
 const FIXTURE_TAKEOVER_MS = process.env.AGENT_QA_HEARTBEAT_FIXTURE_TAKEOVER_MS;
+const FIXTURE_RELEASE = process.env.AGENT_QA_HEARTBEAT_FIXTURE_RELEASE;
 const PACKAGE_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const VITEST_BIN = join(PACKAGE_ROOT, 'node_modules', 'vitest', 'vitest.mjs');
 const THIS_TEST_FILE = fileURLToPath(import.meta.url);
@@ -44,6 +45,34 @@ const RECLAIM_MARGIN_MS = 1_000;
 const MUTATION_HOLD_MS = LEASE_HEARTBEAT_TTL_MS + 10_000;
 const MUTATION_CONTENDER_DELAY_MS = LEASE_HEARTBEAT_TTL_MS + 2_000;
 const MUTATION_RECORD_FILE = 'mutation-record.log';
+/**
+ * 2026-10-02 (quick 261002-tmo): the blocked/mutating daemon fixtures hold their main thread
+ * until the parent writes a release file, after its contender has reported, and never less
+ * than their stated minimum. A fixed hold raced the contender's own process start: at load
+ * 74-88 the contender attempted 41.6-42.2 s after the mutation began, past the 40 s hold,
+ * found the daemon exited and its lease released, and read `acquired` epoch 2 (3 of 3 runs;
+ * 432-03 #1). The cap only bounds a parent that never releases.
+ */
+const RELEASE_CAP_MS = 120_000;
+/** 2026-10-02 (quick 261002-tmo): ceiling for one child vitest process to boot and report. */
+const CHILD_BOOT_CEILING_MS = 60_000;
+
+/** Synchronously occupy the calling thread for at least minHoldMs and until released. */
+function holdUntilReleased(minHoldMs: number, release: string): { heldMs: number; released: boolean } {
+  const startedAtMonotonicMs = performance.now();
+  let released = false;
+  let lastCheckMs = -Infinity;
+  for (;;) {
+    const elapsedMs = performance.now() - startedAtMonotonicMs;
+    if (elapsedMs - lastCheckMs >= 50) {
+      released = existsSync(release);
+      lastCheckMs = elapsedMs;
+    }
+    if (elapsedMs >= minHoldMs && (released || elapsedMs >= minHoldMs + RELEASE_CAP_MS)) {
+      return { heldMs: elapsedMs, released };
+    }
+  }
+}
 
 const daemonConfig: ConfigReaderPort = {
   getMasked: () => Promise.resolve({
@@ -107,6 +136,7 @@ function startFixture(
     report?: string;
     cwd?: string;
     takeoverMs?: number;
+    release?: string;
   },
 ): FixtureChild {
   const child = spawn(
@@ -131,6 +161,7 @@ function startFixture(
         AGENT_QA_HEARTBEAT_FIXTURE_TAKEOVER_MS: values.takeoverMs === undefined
           ? undefined
           : String(values.takeoverMs),
+        AGENT_QA_HEARTBEAT_FIXTURE_RELEASE: values.release,
         NODE_PATH: role === 'cwd-supervisor' ? '' : process.env.NODE_PATH,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -181,8 +212,11 @@ if (FIXTURE_ROLE === 'contender') {
         const root = requiredFixtureValue(FIXTURE_ROOT, 'fixture root');
         const marker = requiredFixtureValue(FIXTURE_MARKER, 'fixture marker');
         const report = requiredFixtureValue(FIXTURE_REPORT, 'fixture report');
+        const release = requiredFixtureValue(FIXTURE_RELEASE, 'fixture release');
         const mutationRecord = join(root, MUTATION_RECORD_FILE);
         const expectedError = 'mutating-daemon-fixture-complete';
+        let released = false;
+        let endedAtWallMs: number | undefined;
 
         await expect(
           runDaemonHost({
@@ -202,10 +236,10 @@ if (FIXTURE_ROLE === 'contender') {
                   { leaseId: published.lease.leaseId, epoch: published.lease.epoch },
                   () => {
                     writeFileSync(marker, JSON.stringify({ startedAtWallMs }), 'utf8');
-                    const startedAtMonotonicMs = performance.now();
-                    while (performance.now() - startedAtMonotonicMs < MUTATION_HOLD_MS) {
-                      // Keep one governed authority transaction open past the lease TTL.
-                    }
+                    // Keep one governed authority transaction open past the lease TTL, until
+                    // the parent's contender has reported.
+                    released = holdUntilReleased(MUTATION_HOLD_MS, release).released;
+                    endedAtWallMs = Date.now();
                     appendFileSync(mutationRecord, 'mutated\n');
                   },
                 );
@@ -229,7 +263,7 @@ if (FIXTURE_ROLE === 'contender') {
               }
               writeFileSync(
                 report,
-                JSON.stringify({ startedAtWallMs, authorityError, leaseHeartbeatAtMs }),
+                JSON.stringify({ startedAtWallMs, endedAtWallMs, released, authorityError, leaseHeartbeatAtMs }),
                 'utf8',
               );
               throw new Error(expectedError);
@@ -237,7 +271,7 @@ if (FIXTURE_ROLE === 'contender') {
           }),
         ).rejects.toThrow(expectedError);
       },
-      MUTATION_HOLD_MS + LEASE_HEARTBEAT_TTL_MS + 30_000,
+      MUTATION_HOLD_MS + RELEASE_CAP_MS + LEASE_HEARTBEAT_TTL_MS + 30_000,
     );
   });
 } else if (FIXTURE_ROLE === 'cwd-supervisor') {
@@ -262,6 +296,7 @@ if (FIXTURE_ROLE === 'contender') {
       await waitForCondition(
         () => messages.some((message) => message.kind === 'heartbeated'),
         'an unrelated-cwd heartbeat',
+        CHILD_BOOT_CEILING_MS,
       );
       await supervisor.stop();
       writeFileSync(
@@ -279,6 +314,7 @@ if (FIXTURE_ROLE === 'contender') {
         const root = requiredFixtureValue(FIXTURE_ROOT, 'fixture root');
         const marker = requiredFixtureValue(FIXTURE_MARKER, 'fixture marker');
         const report = requiredFixtureValue(FIXTURE_REPORT, 'fixture report');
+        const release = requiredFixtureValue(FIXTURE_RELEASE, 'fixture release');
         const expectedError = 'busy-loop-fixture-complete';
 
         await expect(
@@ -294,20 +330,16 @@ if (FIXTURE_ROLE === 'contender') {
                 JSON.stringify({ startedAtMonotonicMs, startedAtWallMs }),
                 'utf8',
               );
-              while (
-                performance.now() - startedAtMonotonicMs <
-                LEASE_HEARTBEAT_TTL_MS + BLOCK_MARGIN_MS
-              ) {
-                // Intentionally keep the daemon's main event loop synchronously occupied.
-              }
+              // Intentionally keep the daemon's main event loop synchronously occupied.
+              const { released } = holdUntilReleased(LEASE_HEARTBEAT_TTL_MS + BLOCK_MARGIN_MS, release);
               const durationMs = performance.now() - startedAtMonotonicMs;
-              writeFileSync(report, JSON.stringify({ durationMs }), 'utf8');
+              writeFileSync(report, JSON.stringify({ durationMs, released }), 'utf8');
               throw new Error(expectedError);
             },
           }),
         ).rejects.toThrow(expectedError);
       },
-      LEASE_HEARTBEAT_TTL_MS + BLOCK_MARGIN_MS + 30_000,
+      LEASE_HEARTBEAT_TTL_MS + BLOCK_MARGIN_MS + RELEASE_CAP_MS + 30_000,
     );
   });
 } else if (FIXTURE_ROLE === 'stopped-daemon') {
@@ -343,7 +375,10 @@ if (FIXTURE_ROLE === 'contender') {
         cwd: realpathSync(root),
         heartbeatCount: expect.any(Number),
       });
-    }, 15_000);
+      // 2026-10-02 (quick 261002-tmo): the cell boots a whole child vitest process; it waits on
+      // that child's exit, so its budget is a hang ceiling. 2.1 s alone at load 23, 9.8-10.1 s at
+      // load 74-88, and over the old 15 s under a forced gate (432-03 #1).
+    }, 2 * CHILD_BOOT_CEILING_MS);
 
     it('stops a live worker idempotently without emitting later heartbeats', async () => {
       const root = mkdtempSync(join(tmpdir(), 'agent-qa-heartbeat-stop-'));
@@ -430,11 +465,13 @@ if (FIXTURE_ROLE === 'contender') {
         const marker = join(root, 'mutation-started.json');
         const daemonReport = join(root, 'mutation-complete.json');
         const contenderReport = join(root, 'contender.json');
+        const release = join(root, 'release-mutation');
         const mutationRecord = join(root, MUTATION_RECORD_FILE);
         const daemon = startFixture('mutating-daemon', {
           root,
           marker,
           report: daemonReport,
+          release,
         });
 
         try {
@@ -464,15 +501,24 @@ if (FIXTURE_ROLE === 'contender') {
               epoch: initialLease.lease.epoch,
             }),
           });
+          writeFileSync(release, 'contender reported\n', 'utf8');
 
           const daemonExit = await daemon.exit;
           expect(daemonExit, daemonExit.output).toMatchObject({ code: 0, signal: null });
           expect(readFileSync(mutationRecord, 'utf8')).toBe('mutated\n');
           const mutationPayload = JSON.parse(readFileSync(daemonReport, 'utf8')) as {
             startedAtWallMs: number;
+            endedAtWallMs: number;
+            released: boolean;
             authorityError?: string;
             leaseHeartbeatAtMs?: number;
           };
+          // The contender arrived past the TTL and inside the still-open mutation.
+          expect(mutationPayload.released).toBe(true);
+          expect(contenderPayload.attemptedAtMs - mutationPayload.startedAtWallMs).toBeGreaterThan(
+            LEASE_HEARTBEAT_TTL_MS,
+          );
+          expect(contenderPayload.attemptedAtMs).toBeLessThan(mutationPayload.endedAtWallMs);
           expect(mutationPayload.authorityError).toBeUndefined();
           expect(mutationPayload.leaseHeartbeatAtMs).toBeGreaterThan(
             mutationPayload.startedAtWallMs,
@@ -481,7 +527,7 @@ if (FIXTURE_ROLE === 'contender') {
           await stopFixture(daemon);
         }
       },
-      MUTATION_HOLD_MS + LEASE_HEARTBEAT_TTL_MS + 60_000,
+      MUTATION_HOLD_MS + RELEASE_CAP_MS + LEASE_HEARTBEAT_TTL_MS + 60_000,
     );
 
     it('resolves a graceful stop well inside the stop timeout', async () => {
@@ -608,10 +654,12 @@ if (FIXTURE_ROLE === 'contender') {
         const marker = join(root, 'busy-started.json');
         const daemonReport = join(root, 'busy-complete.json');
         const contenderReport = join(root, 'contender.json');
+        const release = join(root, 'release-busy');
         const daemon = startFixture('busy-daemon', {
           root,
           marker,
           report: daemonReport,
+          release,
         });
 
         try {
@@ -645,12 +693,15 @@ if (FIXTURE_ROLE === 'contender') {
               epoch: initialLease.lease.epoch,
             }),
           });
+          writeFileSync(release, 'contender reported\n', 'utf8');
 
           const daemonExit = await daemon.exit;
           expect(daemonExit, daemonExit.output).toMatchObject({ code: 0, signal: null });
           const busyReport = JSON.parse(readFileSync(daemonReport, 'utf8')) as {
             durationMs: number;
+            released: boolean;
           };
+          expect(busyReport.released).toBe(true);
           expect(busyReport.durationMs).toBeGreaterThanOrEqual(
             LEASE_HEARTBEAT_TTL_MS + BLOCK_MARGIN_MS,
           );
@@ -658,7 +709,7 @@ if (FIXTURE_ROLE === 'contender') {
           await stopFixture(daemon);
         }
       },
-      LEASE_HEARTBEAT_TTL_MS + BLOCK_MARGIN_MS + 45_000,
+      LEASE_HEARTBEAT_TTL_MS + BLOCK_MARGIN_MS + RELEASE_CAP_MS + 45_000,
     );
 
     it.runIf(process.platform !== 'win32')(
