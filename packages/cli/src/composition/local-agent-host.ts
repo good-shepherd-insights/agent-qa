@@ -1,9 +1,18 @@
 import type { CurationSnapshot } from '@vostride/agent-qa-schema'
 import { createCanaryAblationForHost } from '../gates/canary-ablation-host.js'
 import { randomUUID } from 'node:crypto'
-import { AUTHORING_DRAFT_EDIT_FUNCTION_ID, invokeFunction } from '@vostride/agent-qa-agent'
+import {
+  AUTHORING_DRAFT_EDIT_FUNCTION_ID,
+  invokeFunction,
+  RUNS_MARK_FUNCTION_ID,
+} from '@vostride/agent-qa-agent'
+import type { FunctionRegistry } from '@vostride/agent-qa-agent'
 import { AuthoringDraftEditOutputSchema } from '@vostride/agent-qa-schema'
-import { createFeedbackPortForHost } from '../gates/feedback-host.js'
+import {
+  createFeedbackPortForHost,
+  type MarkWriterAuthority,
+  type WholeMarkDelegate,
+} from '../gates/feedback-host.js'
 import { createFeedbackReadsPortForHost } from '../gates/feedback-read-host.js'
 import { bindTrustPriorsToConfig, trustPriorsForHost, type ResolveTrustPriors, type TrustPriorDisclosure } from '../curation/trust-priors.js'
 // The CLI's half of the local host (Phase 384 plan 01, superseded in place by 385 plan 09, D-15).
@@ -74,6 +83,7 @@ import {
   createKnowledgeReader,
   LOCAL_CURATION_CAPABILITIES,
   latestBuildOrdinal,
+  LOCAL_DAEMON_CAPABILITIES,
   resolveRunExecutionContext,
   sensitiveEnvSlice,
 } from '@vostride/agent-qa-agent-local'
@@ -145,10 +155,12 @@ import {
   CONFIG_REVISION_ABSENT,
   CONFIG_SET_DEFAULT_HOOKS_FILE,
   KnowledgeChangeOutputSchema,
+  RunsMarkOutcomeSchema,
   enumerateConfigFileSet,
   sha256hexBytes,
 } from '@vostride/agent-qa-schema'
 import type {
+  FeedbackPort,
   FunctionCaller,
   RunEventEnvelope,
   RunId,
@@ -707,6 +719,11 @@ export interface ComposeCliLocalAgentInput {
    * test substitutes it to exercise the routing without a socket.
    */
   knowledgeChangeDelegate?: ExplicitReviewDelegate
+  /**
+   * 2026-10-02 (quick 261002-mrk): how a mark reaches a live writer-lease holder. Defaults to
+   * {@link delegateMarkViaDaemon} (the 386 `/invoke` transport, the registered `runs.mark` op).
+   */
+  wholeMarkDelegate?: WholeMarkDelegate
   /**
    * The queue's model capability. Defaults to the project's configured job model.
    *
@@ -2040,6 +2057,12 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
       invokeAuthoringDraftEdit: async draftInput => AuthoringDraftEditOutputSchema.parse(
         await invokeFunction(host.registry, AUTHORING_DRAFT_EDIT_FUNCTION_ID, draftInput, CLI_FUNCTION_CALLER),
       ),
+      // 2026-10-02 (quick 261002-mrk, 432-13 #1): a mark made while a live daemon holds the
+      // writer lease goes to that daemon whole. The daemon's mark host binds no delegate.
+      wholeMarkDelegate: input.wholeMarkDelegate ?? delegateMarkViaDaemon({
+        agentQaRoot: input.agentQaRoot,
+        resolveKnowledgeRoot: knowledgeRoot,
+      }),
     }),
     // 423 D-19: a dedicated read host, so history never reaches the writer's lock, lease or draft path.
     // 423 D-16: its preview plans against this project's knowledge root with read capabilities only. The
@@ -2247,6 +2270,69 @@ export function delegateKnowledgeChangeViaDaemon(input: {
     }))
     return explicitResultOf(answer, operationId)
   }
+}
+
+/**
+ * 2026-10-02 (quick 261002-mrk, 432-13 #1): the CLI's delegate for a whole mark.
+ *
+ * When the writer lease is fresh, the same `runs.mark` call goes to the daemon over `/invoke` and
+ * its answer is returned unchanged. The retry identity is the mark intent in the run's mark ledger,
+ * which both processes share. A fresh lease no live daemon answers for refuses with the client's
+ * `DaemonNotRunningError`, as a delegated knowledge change does. No fresh lease: `undefined`, and
+ * the mark runs locally.
+ */
+export function delegateMarkViaDaemon(input: {
+  readonly agentQaRoot: string
+  readonly resolveKnowledgeRoot: () => string | Promise<string>
+}): WholeMarkDelegate {
+  return async (mark) => {
+    const knowledgeRoot = await input.resolveKnowledgeRoot()
+    const lease = LOCAL_DAEMON_CAPABILITIES.readWriterLease(knowledgeRoot)
+    if (lease.kind !== 'parsed') return undefined
+    const freshness = LOCAL_DAEMON_CAPABILITIES.deriveWriterLeaseFreshness(
+      knowledgeRoot,
+      lease.lease,
+      Date.now(),
+    )
+    if (freshness.kind !== 'fresh') return undefined
+    return RunsMarkOutcomeSchema.parse(await invokeViaDaemon({
+      agentQaRoot: input.agentQaRoot,
+      knowledgeRoot,
+      functionId: RUNS_MARK_FUNCTION_ID,
+      input: mark,
+    }))
+  }
+}
+
+/**
+ * 2026-10-02 (quick 261002-mrk): the mark host the writer-lease holder (the daemon) composes. Its
+ * evidence and its fix commit with the held authority, and it binds no delegate.
+ */
+export function createLeaseHolderFeedbackPort(input: {
+  readonly configPath: string
+  readonly agentQaRoot: string
+  readonly resolveTrustPriors?: ResolveTrustPriors
+  readonly writerAuthority: MarkWriterAuthority
+  readonly registry: () => FunctionRegistry
+  readonly caller: FunctionCaller
+}): FeedbackPort {
+  return createFeedbackPortForHost({
+    configPath: input.configPath,
+    agentQaRoot: input.agentQaRoot,
+    randomUuid: randomUUID,
+    ...(input.resolveTrustPriors === undefined
+      ? {}
+      : { resolveTrustPriors: input.resolveTrustPriors }),
+    writerAuthority: input.writerAuthority,
+    invokeAuthoringDraftEdit: async draftInput => AuthoringDraftEditOutputSchema.parse(
+      await invokeFunction(
+        input.registry(),
+        AUTHORING_DRAFT_EDIT_FUNCTION_ID,
+        draftInput,
+        input.caller,
+      ),
+    ),
+  })
 }
 
 /** The daemon's public answer to a delegated knowledge change, read back as the writer's result. */

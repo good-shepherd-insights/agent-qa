@@ -9,7 +9,11 @@ import type { ResolvePromotionPosture, ScopeKey } from '@vostride/agent-qa-schem
 import { buildPromotionPostureResolver, promotionPostureResolverForHost, renderPromotionLine } from '../curation/promotion-posture.js'
 import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
 import type { ReplayGatePort } from '@vostride/agent-qa-agent'
-import { bindTrustPriorsToConfig, trustPriorsForHost } from '../curation/trust-priors.js'
+import {
+  bindTrustPriorsToConfig,
+  trustPriorsForHost,
+  type ResolveTrustPriors,
+} from '../curation/trust-priors.js'
 
 import type {
   ConfigReaderPort,
@@ -84,6 +88,7 @@ import {
 import { appendDaemonEvent } from './events.js'
 import type { DaemonEvent } from './events.js'
 import {
+  DAEMON_FUNCTION_CALLER,
   DAEMON_IDENTITY_SCHEMA_VERSION,
   daemonSocketOwnershipFor,
   daemonSocketPath,
@@ -575,6 +580,34 @@ async function resolveDraftAuthoring(
   if (configPath === undefined) return undefined
   const { createDraftAuthoringPort } = await import('../composition/local-agent-host.js')
   return createDraftAuthoringPort(configPath)
+}
+
+/**
+ * 2026-10-02 (quick 261002-mrk, 432-13 #1): this daemon's mark host, which a CLI, dashboard or MCP
+ * mark is handed to whole while this daemon holds the writer lease. It commits with the lease this
+ * process owns and binds no delegate. Deferred import for the same reasons as the resolvers above;
+ * absent without a config path, where `runs.mark` stays `unbound` by name.
+ */
+async function resolveHolderFeedback(input: {
+  readonly configPath: string | undefined
+  readonly agentQaRoot: string
+  readonly knowledgeRoot: string
+  readonly resolveTrustPriors: ResolveTrustPriors | undefined
+  readonly authority: () => { readonly leaseId: string; readonly epoch: number }
+  readonly registry: () => LocalAgentHost['registry']
+}): Promise<ComposeLocalAgentInput['feedback']> {
+  if (input.configPath === undefined) return undefined
+  const { createLeaseHolderFeedbackPort } = await import('../composition/local-agent-host.js')
+  return createLeaseHolderFeedbackPort({
+    configPath: input.configPath,
+    agentQaRoot: input.agentQaRoot,
+    ...(input.resolveTrustPriors === undefined
+      ? {}
+      : { resolveTrustPriors: input.resolveTrustPriors }),
+    writerAuthority: { knowledgeRoot: input.knowledgeRoot, authority: input.authority },
+    registry: input.registry,
+    caller: DAEMON_FUNCTION_CALLER,
+  })
 }
 
 /**
@@ -2206,7 +2239,21 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     }
 
     const draftAuthoring = await resolveDraftAuthoring(input.configPath)
+    const feedback = await resolveHolderFeedback({
+      configPath: input.configPath,
+      agentQaRoot: input.agentQaRoot,
+      knowledgeRoot: input.knowledgeRoot,
+      resolveTrustPriors,
+      authority: () => ({ leaseId: acquired.leaseId, epoch: acquired.epoch }),
+      registry: () => {
+        if (localAgent === undefined) {
+          throw new Error('a daemon mark ran before its registry finished composing')
+        }
+        return localAgent.registry
+      },
+    })
     localAgent = operations.composeLocalAgent({
+      ...(feedback === undefined ? {} : { feedback }),
       ...(input.configPath === undefined ? {} : {
         readMaskingSources: (await import('../composition/local-agent-host.js'))
           .createColdReadMaskingSources(input.configPath),

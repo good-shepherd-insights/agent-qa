@@ -4,7 +4,7 @@ import type { KnowledgeReaderPort } from '@vostride/agent-qa-agent'
 import type { FeedbackPort } from '@vostride/agent-qa-schema'
 import { RUNS_MARK_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import { applyKnowledgeChange, createKnowledgeReader, LOCAL_CURATION_CAPABILITIES, type ExplicitReviewDelegate, type LocalCurationCapabilities } from '@vostride/agent-qa-agent-local'
-import { RunsMarkInputSchema, type AuthoringDraftEditInput, type AuthoringDraftEditOutput, type MarkReceipt, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
+import { RunsMarkInputSchema, type AuthoringDraftEditInput, type AuthoringDraftEditOutput, type MarkReceipt, type RunsMarkInput, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
 import { resolveConfiguredKnowledgeRoot } from '../config.js'
 import { wordImprovementPlan } from './feedback-wording.js'
 import { decideMarkDraft, loadMarkTarget, markEvidenceCurationJobIds, markFeedbackInput, planMarkFeedback, readMarkDraftFacts } from './feedback-plan.js'
@@ -25,6 +25,13 @@ export interface FeedbackHostDeps {
    * that binds none refuses by name when the lease is held, and a retry resumes from the intent.
    */
   knowledgeChangeDelegate?: ExplicitReviewDelegate
+  /**
+   * 2026-10-02 (quick 261002-mrk, 432-13 #1): hands the whole mark to a live writer-lease holder
+   * before any lock, lease or write; `undefined` means no live holder, so the mark runs here.
+   */
+  wholeMarkDelegate?: WholeMarkDelegate
+  /** The lease this host already holds (the daemon): evidence and fix commit with it, never delegating. */
+  writerAuthority?: MarkWriterAuthority
   curation?: Pick<LocalCurationCapabilities, 'appendMarkEvidence' | 'triageMark' | 'servedIdsOn' | 'procedureReadOn' | 'applyFeedback' | 'readFeedbackRecord'> & {
     maintenance: Pick<LocalCurationCapabilities['maintenance'], 'acquireWriterLease' | 'releaseLease'>
   }
@@ -32,6 +39,15 @@ export interface FeedbackHostDeps {
   now?: () => number
   randomUuid: () => string
   word?: typeof wordImprovementPlan
+}
+
+/** The whole-mark hand-off: the holder's answer, or `undefined` when there is no live holder. */
+export type WholeMarkDelegate = (input: RunsMarkInput) => Promise<RunsMarkOutcome | undefined>
+
+export interface MarkWriterAuthority {
+  /** The knowledge root the held lease covers. A mark resolving another root refuses. */
+  readonly knowledgeRoot: string
+  readonly authority: () => { readonly leaseId: string; readonly epoch: number }
 }
 
 /** The fix's target left the store between planning and publication; gold and evidence stand, no receipt. */
@@ -51,6 +67,18 @@ export class FeedbackFreezeRefusedError extends Error {
 
 /** One lazy host, shared by every function surface. Freeze/evidence stay under the run lock. */
 export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort {
+  if (deps.writerAuthority !== undefined
+    && (deps.wholeMarkDelegate !== undefined || deps.knowledgeChangeDelegate !== undefined)) {
+    throw new TypeError('A mark host holding the writer lease never delegates; pass the authority or a delegate, not both')
+  }
+  const heldAuthority = (knowledgeRoot: string) => {
+    const held = deps.writerAuthority
+    if (held === undefined) return undefined
+    if (resolve(held.knowledgeRoot) !== resolve(knowledgeRoot)) {
+      throw new Error('This host holds the writer lease for a different knowledge root than the mark resolves; no mark receipt appended')
+    }
+    return held.authority()
+  }
   const resolveTrustPriors = deps.resolveTrustPriors ?? trustPriorsForHost(deps).resolve
   const curation = deps.curation ?? LOCAL_CURATION_CAPABILITIES
   const ledgerFor = (runId: string) => new FsMarkLedger({ root: deps.agentQaRoot, runId })
@@ -60,6 +88,11 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
       const input = RunsMarkInputSchema.parse(raw)
       const target = loadMarkTarget(deps.agentQaRoot, input)
       if (target.kind !== 'target') return target
+      // Decided before the run lock, the gold freeze or any lease, so a delegated mark writes nothing here.
+      if (deps.wholeMarkDelegate !== undefined) {
+        const delegated = await deps.wholeMarkDelegate(input)
+        if (delegated !== undefined) return delegated
+      }
       const { handoff, member, address } = target
       const ledger = ledgerFor(input.runId)
       let refusal: RunsMarkOutcome | undefined
@@ -98,15 +131,16 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
         if (intent.stage !== 'applied') {
         const session = await resolveEvalSession({ configPath: deps.configPath, keyOnly: true })
         const configDir = dirname(resolve(deps.configPath))
+        const knowledgeRoot = resolveConfiguredKnowledgeRoot(session.config, configDir)
+        const held = heldAuthority(knowledgeRoot)
         const frozen = freezeGoldenTrajectory({ agentQaRoot: deps.agentQaRoot,
           committedRoot: resolve(configDir, 'agent-qa-eval'), product: resolveProductPartition(handoff.scope),
           mark, handoff, ...(prior === undefined ? {} : { priorGold: prior.gold }) })
         if (frozen.kind !== 'frozen' || frozen.census === 'write-conflict') throw new FeedbackFreezeRefusedError(frozen)
         mark.gold = frozen.cases
-        const knowledgeRoot = resolveConfiguredKnowledgeRoot(session.config, configDir)
         const { servedRecordIds } = planned.knowledge
         if (intent.stage === 'prepared' && planned.knowledge.appendsEvidence) {
-          const lease = curation.maintenance.acquireWriterLease(knowledgeRoot)
+          const lease = held === undefined ? curation.maintenance.acquireWriterLease(knowledgeRoot) : { kind: 'acquired' as const, ...held }
           if (lease.kind !== 'acquired') throw new Error(`Mark evidence writer lease ${lease.kind}; gold landed, no mark receipt appended`)
           try {
             const evidence = await curation.appendMarkEvidence({ knowledgeRoot, auditBaseDir: deps.agentQaRoot,
@@ -116,7 +150,7 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
               curationJobIds: markEvidenceCurationJobIds(input.runId) })
             if (evidence.correlationIncomplete) throw new Error('Mark evidence correlation incomplete; gold/evidence may have landed, no receipt appended')
             mark.evidence = { confirmed: evidence.confirmed, overturned: evidence.overturned }
-          } finally { curation.maintenance.releaseLease({ knowledgeRoot, leaseId: lease.leaseId }) }
+          } finally { if (held === undefined) curation.maintenance.releaseLease({ knowledgeRoot, leaseId: lease.leaseId }) }
         }
         intent = ledger.checkpointIntent({ ...intent, mark, stage: 'evidence' })
         if (input.kind === 'confirmed-bug') {
@@ -145,6 +179,7 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
                 mark: { runId: mark.runId, testIndex: mark.testIndex,
                   ...(mark.stepIndex === undefined ? {} : { stepIndex: mark.stepIndex }),
                   markId: mark.markId, kind: mark.kind, fix: knowledgePlan.fix }, plan: knowledgePlan } },
+              ...(held === undefined ? {} : { writerAuthority: held }),
               ...(deps.knowledgeChangeDelegate === undefined ? {} : { delegate: deps.knowledgeChangeDelegate }),
             })
             if (applied.outcome !== 'applied') throw new MarkFixNotAppliedError(applied.outcome)
