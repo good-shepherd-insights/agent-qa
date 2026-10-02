@@ -1603,3 +1603,42 @@ and #217 closed by deletion), `.planning/PROJECT.md` retires the v43 approvals c
 corrects the v56 PXH-SAFE bullets, and
 `.planning/phases/432-approval-gate-removal-provenance-and-undo/432-ACCEPTANCE.md` records the
 final-tree gate. The spec files stay read-only.
+
+### Gate at the time of writing (2026-10-02)
+
+Run on 2026-10-02 from `agent-qa/` on `b24502885` (this section's first commit: `0721f61f0` plus
+`DELETION-INVENTORY.md` alone, which no test reads), by 432-46. `git status --porcelain` was empty
+before the first command and after the last. Exit codes are the process's own, read from `$?`.
+The commit that adds this subsection changes only this file.
+
+| # | Command | Observed | Exit |
+|---|---|---|---|
+| 1 | `pnpm build` | 22 successful, 22 total (cached) | **0** |
+| 2 | `pnpm --filter @vostride/agent-qa-arch exec vitest run src/__tests__/432-approval-permission-deleted.test.ts --maxWorkers=1` (task 1 verify, after row 1) | Test Files 1 passed (1) · Tests 100 passed (100) | **0** · 2 s |
+| 3 | `pnpm build && pnpm test --force --concurrency=4 && pnpm typecheck --force && pnpm run validate:arch && pnpm run validate:safety`, run 1 (10:18:26Z, 1-minute load 2.9 at launch, 42.6 at the end) | build 22/22 cached; tests 45/46 tasks, 0 cached: the CLI package failed 6 cells, all with the zoom probe's own `The isolated extension found no fixture tab` (`425-header-layout-dom` ×3, `evidence-layout-dom` ×3), 4564 passed, 18 skipped; every other package as in 432-45 | **1** · 479 s |
+| 4 | `pnpm --filter agent-qa exec vitest run src/__tests__/conformance/425-header-layout-dom.test.ts src/__tests__/conformance/evidence-layout-dom.test.ts --maxWorkers=1` | Test Files 2 passed (2) · Tests 9 passed (9) | **0** · 18 s |
+| 5 | row 3's command, run 2 (10:28:07Z to 10:36:44Z, load 9.3 at launch) | build 22/22 cached; tests **46/46 tasks, 0 cached, 7m43.0s**; typecheck **44/44, 0 cached, 43.3 s**; `validate:arch` 12 files, 412 passed (the 432 census's 100 among them); `validate:safety` 1 file, 9 passed, no type errors | **0** · 517 s |
+| 6 | `pnpm build && pnpm typecheck` (task 2 verify) | 22/22 and 44/44, both cached on the tree row 5 built and type-checked uncached | **0** |
+| 7 | `pnpm build && pnpm --filter @vostride/agent-qa-mcp exec vitest run src/__tests__/431-output-contract-wire.test.ts src/__tests__/projection-fidelity.test.ts --maxWorkers=1 && pnpm typecheck` (the surviving 431 anchor) | Test Files 2 passed (2) · Tests 27 passed (27) | **0** · 5 s |
+| 8 | `pnpm run validate:skills` | `agent-qa skills pack validation passed` | **0** |
+| 9 | `pnpm run validate:publish` | `publish surface validation passed (full)` | **0** · 15 s |
+
+Per package in row 5: ids 9; schema 2005; safety 281; safety-local 31; model 237; runner 1406 (+1
+skipped); runner-local 168; eval 1427; eval-local 1011; core 705; agent 2093; agent-local 636 (+2
+skipped); knowledge-local 1898 (+3 skipped); mcp 418; analytics 93; embedding-bench 112; android
+104; ios 97; web 268; dashboard 1474 (+1 skipped); dashboard-ui 2734; arch 547; cli 4570 (+18
+skipped), 310 files. Every count equals 432-45's on `0721f61f0`.
+
+**Row 3 is recorded, not explained away.** The six cells are the Chromium layout cells already on
+the load-sensitive list (deferred 432-08 #5, 432-21 #7): the isolated extension's service worker
+does not yet see the tab the test opened. They passed alone (row 4) and in row 5, on the same tree.
+No cell was loosened and no timeout raised.
+
+**Cited, not re-run here.** The mutation gates ran green in the plans that own them, on earlier
+trees, and are not claimed on `b24502885`: `validate:432-approval-permission-mutation` and its
+selftest (432-43, `bc3260240`), the 394/395/396-06/399/426/429/430 drivers (432-44, `c9991fbd0` and
+`0f709400c`), the 396/397/398/423/427 drivers, `validate:agents`, `validate:tools` and
+`validate:431-discovery-imports` (432-45, `0721f61f0`). The only commit after `0721f61f0` before
+row 5 is this section's first commit, which changes this file alone.
+
+**Toolchain:** node 24.15.0 · pnpm 10.6.1 · vitest 4.1.5 · turbo 2.9.7.
