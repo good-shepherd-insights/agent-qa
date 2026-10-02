@@ -1,15 +1,23 @@
 import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { threadId, Worker } from 'node:worker_threads'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   LEASE_FILE,
-  LEASE_GUARD_FILE,
+  LEASE_GUARD_DIR,
   LEASE_GUARD_STALE_MS,
   MUTATION_LOCK_BUSY_TIMEOUT_MS,
   acquireWriterLease,
@@ -208,21 +216,26 @@ describe('the lease-file guard itself (261002-lse)', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
-  function guardFile(): string {
-    return join(knowledgeRoot, LEASE_GUARD_FILE)
+  function guardDir(): string {
+    return join(knowledgeRoot, LEASE_GUARD_DIR)
   }
 
   function plantGuard(owner: { pid: number; threadId: number; claimedAtNs: bigint }): void {
-    writeFileSync(guardFile(), `${JSON.stringify({
+    const token = randomUUID()
+    mkdirSync(guardDir(), { recursive: true })
+    writeFileSync(join(guardDir(), `owner-${token}`), `${JSON.stringify({
       pid: owner.pid,
       threadId: owner.threadId,
-      token: randomUUID(),
+      token,
       claimedAtNs: String(owner.claimedAtNs),
     })}\n`, 'utf8')
   }
 
+  /** The guard and its staging siblings, wherever the parent directory stands. */
   function guardEntries(): string[] {
-    return readdirSync(knowledgeRoot).filter((entry) => entry.startsWith(LEASE_GUARD_FILE))
+    const parent = dirname(guardDir())
+    if (!existsSync(parent)) return []
+    return readdirSync(parent).filter((entry) => entry.startsWith(basename(guardDir())))
   }
 
   function deadPid(): number {
@@ -243,6 +256,8 @@ describe('the lease-file guard itself (261002-lse)', () => {
       kind: 'released',
     })
     expect(guardEntries()).toEqual([])
+    // The guard's parent directories were created for it and removed with it.
+    expect(existsSync(join(knowledgeRoot, 'memory'))).toBe(false)
   })
 
   it('answers an absent lease before staging any guard', () => {
@@ -284,10 +299,23 @@ describe('the lease-file guard itself (261002-lse)', () => {
     expect(guardEntries()).toEqual([])
   })
 
-  it('reclaims unattributable guard bytes and releases', () => {
+  it.each([
+    ['owner bytes nobody can attribute', () => {
+      mkdirSync(guardDir(), { recursive: true })
+      writeFileSync(join(guardDir(), `owner-${randomUUID()}`), 'not a guard\n', 'utf8')
+    }],
+    ['a plain file where the guard directory belongs', () => {
+      mkdirSync(dirname(guardDir()), { recursive: true })
+      writeFileSync(guardDir(), 'not a guard\n', 'utf8')
+    }],
+    ['a guard directory with no owner in it', () => {
+      mkdirSync(guardDir(), { recursive: true })
+      writeFileSync(join(guardDir(), 'stray'), 'not a guard\n', 'utf8')
+    }],
+  ])('reclaims %s and releases', (_label, plant) => {
     const acquired = acquireWriterLease(knowledgeRoot)
     if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
-    writeFileSync(guardFile(), 'not a guard\n', 'utf8')
+    plant()
 
     expect(releaseLease({ knowledgeRoot, leaseId: acquired.leaseId })).toEqual({
       kind: 'released',
@@ -325,6 +353,192 @@ describe('the lease-file guard itself (261002-lse)', () => {
     expect(waitedMs).toBeLessThan(LEASE_GUARD_STALE_MS)
     expect(readFileSync(join(knowledgeRoot, LEASE_FILE))).toEqual(leaseBefore)
     // The foreign section's guard is not the beat's to remove.
-    expect(guardEntries()).toEqual([LEASE_GUARD_FILE])
+    expect(guardEntries()).toEqual([basename(guardDir())])
   }, 15_000)
+})
+
+/**
+ * 2026-10-02 (quick 261002-lse follow-up): reclaiming a stale guard is a compare-and-swap.
+ *
+ * Two reclaimers can judge the SAME stale guard residue. The first reclaims it and holds a fresh,
+ * live guard; the second must then reclaim nothing. It used to move whatever sat at the guard path
+ * aside and put it back, so for that window the live holder's guard was gone: a third claimant got
+ * in beside the live holder, and the holder's own release, missing its guard, left it orphaned.
+ *
+ * The stale guard is left by a real process SIGKILLed inside its section, so the cell does not
+ * depend on how a guard is laid out on disk.
+ */
+const HOLDER_GO = 0
+const HOLDER_IN_SECTION = 1
+const HOLDER_PROCEED = 2
+
+const HOLDER_WORKER_SOURCE = String.raw`
+'use strict'
+const { parentPort, workerData } = require('node:worker_threads')
+const { url, knowledgeRoot, leaseId, signals } = workerData
+const flags = new Int32Array(signals)
+import(url).then((lease) => {
+  parentPort.postMessage({ kind: 'ready' })
+  Atomics.wait(flags, ${HOLDER_GO}, 0)
+  const realNow = Date.now
+  let first = true
+  Date.now = () => {
+    if (first) {
+      first = false
+      Atomics.store(flags, ${HOLDER_IN_SECTION}, 1)
+      Atomics.notify(flags, ${HOLDER_IN_SECTION})
+      Atomics.wait(flags, ${HOLDER_PROCEED}, 0, 15000)
+    }
+    return realNow()
+  }
+  let outcome
+  try {
+    outcome = lease.heartbeatLease({ knowledgeRoot, leaseId })
+  } catch (error) {
+    outcome = { kind: 'threw', name: error && error.name }
+  }
+  Date.now = realNow
+  parentPort.postMessage({ kind: 'done', outcome })
+}, (error) => {
+  parentPort.postMessage({ kind: 'load-failed', message: String(error && error.message) })
+})
+`
+
+describe('two reclaimers of one stale guard (261002-lse follow-up)', () => {
+  let root: string
+  let knowledgeRoot: string
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'knowledge-writer-guard-reclaim-'))
+    knowledgeRoot = join(root, 'agent-qa-knowledge')
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  /** Every path under the knowledge root that names a guard, whatever its layout. */
+  function guardLeftovers(): string[] {
+    const found: string[] = []
+    const walk = (dir: string, prefix: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const relativePath = `${prefix}${entry.name}`
+        if (/guard/.test(entry.name)) found.push(relativePath)
+        if (entry.isDirectory()) walk(join(dir, entry.name), `${relativePath}/`)
+      }
+    }
+    walk(knowledgeRoot, '')
+    return found.sort()
+  }
+
+  /** A real process that dies by SIGKILL inside its beat's guarded section. */
+  function leaveDeadGuard(leaseId: string): void {
+    const died = spawnSync(process.execPath, ['--input-type=module', '-e', [
+      'const lease = await import(process.env.LEASE_SOURCE_URL)',
+      "Date.now = () => { process.kill(process.pid, 'SIGKILL'); return 0 }",
+      'const { LEASE_ROOT: knowledgeRoot, LEASE_ID: leaseId } = process.env',
+      'lease.heartbeatLease({ knowledgeRoot, leaseId })',
+    ].join('\n')], {
+      env: {
+        ...process.env,
+        LEASE_SOURCE_URL: SOURCE_URL,
+        LEASE_ROOT: knowledgeRoot,
+        LEASE_ID: leaseId,
+      },
+      encoding: 'utf8',
+    })
+    if (died.signal !== 'SIGKILL') {
+      throw new Error(`fixture process did not die in its section: ${died.stderr}`)
+    }
+  }
+
+  async function startHolder(leaseId: string) {
+    const signals = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 3)
+    const worker = new Worker(HOLDER_WORKER_SOURCE, {
+      eval: true,
+      execArgv: [],
+      workerData: { url: SOURCE_URL, knowledgeRoot, leaseId, signals },
+    })
+    let resolveDone: (value: unknown) => void = () => undefined
+    const done = new Promise<unknown>((resolve) => {
+      resolveDone = resolve
+    })
+    await new Promise<void>((resolve, reject) => {
+      worker.on('message', (message: { kind: string; outcome?: unknown; message?: string }) => {
+        if (message.kind === 'ready') resolve()
+        else if (message.kind === 'done') resolveDone(message.outcome)
+        else reject(new Error(`holder worker failed to load the lease module: ${message.message}`))
+      })
+      worker.on('error', reject)
+    })
+    return { flags: new Int32Array(signals), done, terminate: () => worker.terminate() }
+  }
+
+  it('admits no second holder and orphans nothing when the same stale guard is reclaimed twice', async () => {
+    const acquired = acquireWriterLease(knowledgeRoot)
+    if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
+    leaveDeadGuard(acquired.leaseId)
+    expect(guardLeftovers(), 'the killed process left its guard behind').not.toEqual([])
+    const holder = await startHolder(acquired.leaseId)
+    const proceed = (): void => {
+      Atomics.store(holder.flags, HOLDER_PROCEED, 1)
+      Atomics.notify(holder.flags, HOLDER_PROCEED)
+    }
+
+    try {
+      let reclaims = 0
+      let third: unknown
+      let thirdMetLiveHolder = false
+      const attempt = (run: () => unknown): unknown => {
+        try {
+          return run()
+        } catch (error) {
+          return { kind: 'threw', name: (error as Error).name }
+        }
+      }
+      const second = attempt(() => heartbeatLease({ knowledgeRoot, leaseId: acquired.leaseId }, {
+        // This reclaimer has judged the dead guard residue. Before it acts, the holder judges
+        // the same guard, reclaims it and stops inside its own live section.
+        beforeLeaseGuardReclaim: () => {
+          reclaims += 1
+          if (reclaims !== 1) return
+          Atomics.store(holder.flags, HOLDER_GO, 1)
+          Atomics.notify(holder.flags, HOLDER_GO)
+          const deadline = process.hrtime.bigint() + 15_000_000_000n
+          while (Atomics.load(holder.flags, HOLDER_IN_SECTION) === 0) {
+            if (process.hrtime.bigint() >= deadline) break
+            Atomics.wait(holder.flags, HOLDER_IN_SECTION, 0, 5)
+          }
+        },
+        // Mid-reclaim, a third claimant arrives while the holder is still inside its section. It
+        // must meet the holder's guard; only then is the holder let go, and the third waits it out.
+        duringLeaseGuardReclaim: () => {
+          if (third !== undefined) return
+          third = attempt(() => heartbeatLease({ knowledgeRoot, leaseId: acquired.leaseId }, {
+            onLeaseGuardContended: () => {
+              thirdMetLiveHolder = Atomics.load(holder.flags, HOLDER_PROCEED) === 0
+              proceed()
+            },
+          }))
+          proceed()
+        },
+        onLeaseGuardContended: proceed,
+      }))
+      const held = await holder.done
+
+      expect(Atomics.load(holder.flags, HOLDER_IN_SECTION)).toBe(1)
+      expect({ held, thirdMetLiveHolder, third, second }).toMatchObject({
+        held: { kind: 'heartbeated' },
+        // The holder's live guard was never moved, so the third claimant met it and waited.
+        thirdMetLiveHolder: true,
+        third: { kind: 'heartbeated' },
+        // And the second reclaimer got the guard after both, normally.
+        second: { kind: 'heartbeated' },
+      })
+      expect(guardLeftovers()).toEqual([])
+    } finally {
+      proceed()
+      await holder.terminate()
+    }
+  }, 30_000)
 })
