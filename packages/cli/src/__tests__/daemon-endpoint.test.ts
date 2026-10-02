@@ -173,10 +173,11 @@ function semanticModules(): Promise<SemanticEndpointModules> {
 }
 
 /**
- * Endpoint conformance needs ask-tier and deliberately interrupted stream declarations that do
- * not belong in the production catalog. The spec constructor stays absent from the public agent
- * barrel; this test-only dynamic load exercises the real registry and gate without widening the
- * surface firewall or admitting a second production dispatch path.
+ * Endpoint conformance needs a high-tier op and deliberately interrupted stream declarations that
+ * do not belong in the production catalog. The spec constructor stays absent from the public agent
+ * barrel; this test-only dynamic load exercises the real registry and dispatch (no gate runs since
+ * 432-19; re-spelled 2026-10-02, 432-42) without widening the surface firewall or admitting a
+ * second production dispatch path.
  */
 async function registryFixture(
   specs: readonly Record<string, unknown>[],
@@ -941,7 +942,7 @@ describe('daemon /invoke endpoint semantic parity', () => {
     const { registry, auditRows } = await registryFixture([
       {
         id: 'synthetic.ask',
-        summary: 'Ask-tier fixture for the daemon local-headless posture.',
+        summary: 'A mutating-shared fixture the daemon local-headless posture dispatches directly.',
         resultKind: 'unary',
         input: z.object({}).strict(),
         output: z.object({ ok: z.literal(true) }).strict(),

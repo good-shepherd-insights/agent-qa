@@ -49,6 +49,10 @@ type MarkPath = {
   rows: Array<{ markId: string; kind: string; origin: string; testIndex: number; stepIndex?: number; disposition: string; gold: string[] }>
   newEntryMarkId: string | null
   newEntryFirst: boolean
+  /** 432-42 (D-25): the new history entry, as text, its controls and its applied line. */
+  newEntryText: string
+  newEntryControls: number
+  newEntryApplied: number
   dialogsAfter: number
 }
 
@@ -795,6 +799,10 @@ describe('contextual feedback on the shipped bundle (426-16, 426-17)', () => {
       await markComposer.locator('[data-feedback-history="target"] [data-history-entry][data-history-new]').waitFor({ timeout: 15_000 })
       const newEntryMarkId = await markComposer.locator('[data-feedback-history="target"] [data-history-entry][data-history-new]').getAttribute('data-mark-id')
       const newEntryFirst = await entries.first().getAttribute('data-history-new') === 'true'
+      const newEntry = markComposer.locator('[data-feedback-history="target"] [data-history-entry][data-history-new]')
+      const newEntryText = (await newEntry.textContent()) ?? ''
+      const newEntryControls = await newEntry.locator('button, a, [role="button"], [role="link"]').count()
+      const newEntryApplied = await newEntry.locator('[data-history-applied]').count()
       const confirmChannels = (await markPage.evaluate(() =>
         (window as unknown as { markChannels: string[] }).markChannels)).length
       markPath = { gate, frames: await recordedFrames(), confirmChannels, dialogs, hostDialogs, approvalInComposer, rowsAtApproval,
@@ -802,7 +810,8 @@ describe('contextual feedback on the shipped bundle (426-16, 426-17)', () => {
         outcome: { kind: parsed.kind, ...('receipt' in parsed ? { markId: parsed.receipt.markId } : {}) },
         rows: rows().map(({ markId, kind, origin, testIndex, stepIndex, disposition, gold }) =>
           ({ markId, kind, origin, testIndex, stepIndex, disposition: disposition.kind, gold: gold.map(entry => entry.channel) })),
-        newEntryMarkId, newEntryFirst, dialogsAfter: await modalCount(markPage) }
+        newEntryMarkId, newEntryFirst, newEntryText, newEntryControls, newEntryApplied,
+        dialogsAfter: await modalCount(markPage) }
       await markContext.close()
 
       if (process.env.AGENT_QA_426_CAPTURE_DIR) {
@@ -881,6 +890,12 @@ describe('contextual feedback on the shipped bundle (426-16, 426-17)', () => {
     expect(markPath!.newEntryMarkId, where).toBe(markPath!.outcome!.markId)
     expect(markPath!.newEntryFirst, where).toBe(true)
     expect(markPath!.dialogsAfter, where).toBe(0)
+    // 2026-10-02 (432-42, D-25): the history the shipped bundle shows is APPLIED history — the new
+    // entry says what changed in one line when a fix was applied, carries no control, and names no
+    // proposal, review, approval or wait.
+    expect(markPath!.newEntryControls, where).toBe(0)
+    expect(markPath!.newEntryText, where).not.toMatch(/propos|review|approv|pending|waiting|accept/iu)
+    expect(markPath!.newEntryApplied, where).toBe(markPath!.rows[0]!.disposition === 'applied' ? 1 : 0)
   })
 
   it('HEADER-ENTRY-GEOMETRY', () => {

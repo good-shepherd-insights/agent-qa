@@ -460,6 +460,10 @@ interface MarkHarvest {
   freezeAudit?: unknown[]
   confirmFrames: Array<{ event: string; data: string }>
   markedAtWithinDrive: boolean
+  /** 432-42 (D-25): the new history entry's text, its controls and its applied line. */
+  historyText?: string
+  historyControls?: number
+  historyApplied?: number
   failure?: string
 }
 
@@ -530,6 +534,9 @@ async function observeMark(context_: BrowserContext, origin: string, runId: stri
     await entry.waitFor({ timeout: 15_000 })
     harvest.historyChoice = await entry.locator(':scope > div:first-child .font-medium').textContent()
     harvest.historyDisposition = await entry.locator('[data-history-disposition]').textContent()
+    harvest.historyText = (await entry.textContent()) ?? ''
+    harvest.historyControls = await entry.locator('button, a, [role="button"], [role="link"]').count()
+    harvest.historyApplied = await entry.locator('[data-history-applied]').count()
     harvest.hostileElements = await page.locator('[data-agent-qa-hostile-mark]').count()
   } catch (error) {
     harvest.failure = error instanceof Error ? error.message : String(error)
@@ -1421,5 +1428,10 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
     // RESEARCH A5: markedAt is epoch milliseconds, taken during this drive.
     expect(mark!.markedAtWithinDrive, context()).toBe(true)
     expect(mark!.hostileElements, context()).toBe(0)
+    // 2026-10-02 (432-42, D-25): applied history on the shipped bundle — no control on the entry,
+    // no proposal/review/approval wording, and (no fix was drafted here) no applied line.
+    expect(mark!.historyControls, context()).toBe(0)
+    expect(mark!.historyText ?? '', context()).not.toMatch(/propos|review|approv|pending|waiting|accept/iu)
+    expect(mark!.historyApplied, context()).toBe(0)
   })
 })

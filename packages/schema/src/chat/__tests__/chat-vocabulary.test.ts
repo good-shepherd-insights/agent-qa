@@ -14,6 +14,10 @@
 //   3. THE ENUMS ARE CLOSED. Receipt statuses and scenario expectations are compared as exact
 //      sets, so a fourth member cannot arrive without the corpus that gives it meaning.
 
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -247,6 +251,32 @@ describe('C432-HISTORICAL-READER — pre-432 approval rows still read (432-13)',
     expect(reread).toEqual(historical)
     // The kind stays declared, so a reader that folds it keeps compiling (D-22).
     expect(CHAT_SESSION_EVENT_KINDS).toContain('approval_decision')
+  })
+
+  // 432-42 (D-22): the reader stays and the WRITER does not. Every production source of the packages
+  // that compose or run a chat turn is read, and no code line builds an event of the kind; a line
+  // that only mentions it in a comment is not a writer.
+  it('C432-HISTORICAL-READER: no production source of a turn-writing package builds an approval event', () => {
+    const packagesDir = fileURLToPath(new URL('../../../../', import.meta.url))
+    const sources: string[] = []
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name)
+        if (entry.isDirectory()) {
+          if (entry.name !== '__tests__') walk(path)
+        } else if (/\.tsx?$/u.test(entry.name) && !/\.test(-d)?\.tsx?$/u.test(entry.name)) sources.push(path)
+      }
+    }
+    for (const name of ['agent', 'agent-local', 'cli', 'dashboard-server', 'mcp', 'schema']) walk(join(packagesDir, name, 'src'))
+    expect(sources.length, 'the writer census read nothing').toBeGreaterThan(500)
+    const writer = /kind:\s*['"]approval_decision['"]/u
+    const writers = sources.flatMap((path) => readFileSync(path, 'utf8').split('\n').flatMap((line, index) => {
+      const code = line.replace(/\/\/.*$/u, '').replace(/^\s*\*.*$/u, '')
+      return writer.test(code) ? [`${path}:${index + 1}: ${line.trim()}`] : []
+    }))
+    expect(writers, `an approval event writer returned:\n${writers.join('\n')}`).toEqual([])
+    // Positive control: the census finds a writer when one is planted.
+    expect(writer.test("append({ kind: 'approval_decision', turnId })")).toBe(true)
   })
 })
 

@@ -181,16 +181,11 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
   }
 
   /**
-   * Record the standing approval the ask-tier apply requires (391, D-02/D-04).
+   * A no-op kept so the three binding cases keep their call shape (re-spelled 2026-10-02, 432-42).
    *
-   * The covered class is read off the op's OWN declaration rather than spelled here, because that
-   * is the exact string the gate compares — a literal would keep covering a name the op had stopped
-   * carrying. The event goes through the real append API for the same reason: a hand-written JSONL
-   * line pins a contract no producer necessarily emits.
-   *
-   * This restores what these three cases were always about. Before the tier raise the apply was
-   * allowed unconditionally, so the only thing that could refuse it was the binding — which is the
-   * claim under test. The approval puts that back, without stubbing the gate out.
+   * It recorded a standing approval for the pre-432 ask-tier apply (391, D-02/D-04). The apply is
+   * deleted (432-17) and nothing reads an approval (432-13/19), so the binding is again the only
+   * thing that can refuse these calls — the claim the three cases are about.
    */
   function approveApply(host: FunctionRegistry): void {
     // RE-SPELLED 2026-10-01 (432-17): the ask-tier apply this approval was for is deleted, and since
@@ -536,9 +531,9 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
   })
 
   it('C432-KNOWLEDGE-CHANGE-OPS: a caller holding only the local default grant changes knowledge with no standing approval', async () => {
-    // No `standingApprovalReader`, no grant in the ledger and no credential: the direct change is at
-    // the local mutating floor, so the gate allows it in every context (D-01) — unlike the pre-432
-    // apply, which this file still has to approve before it commits.
+    // No approval reader, no ledger entry and no credential: the direct change runs in every context
+    // because nothing gates it (D-01/D-15). Re-spelled 2026-10-02 (432-42): the title keeps the
+    // pre-432 vocabulary as the record of what this cell replaced; the caller holds nothing.
     // 2026-10-01 (432-30, D-12): the caller no longer carries the retired `grantedScopes` and
     // `safeMode`; no gate or grant is left, so it holds nothing at all and the change still applies.
     const recordId = publish()

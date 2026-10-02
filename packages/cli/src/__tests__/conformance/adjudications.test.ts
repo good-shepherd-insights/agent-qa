@@ -259,7 +259,8 @@ describe('Phase 397 — the inherited adjudications, discharged at their artifac
     // RE-SPELLED 2026-10-02 (432-39, D-10/D-12): the union is DELETED, so the six members it held
     // until now are held nowhere. Title kept; the claim it guarded — a retired vocabulary cannot
     // quietly grow a member nothing reads — now holds because there is no vocabulary to grow.
-    it('holds exactly the six members the closure note ratifies', () => {
+    // RE-TITLED 2026-10-02 (432-42, 432-39 #5) from 'holds exactly the six members the closure note ratifies': the body asserts the absence, so the title does.
+    it('exports the retired six-member scope union from no barrel', () => {
       expect(Object.keys(schema), 'the scope union is still exported').not.toContain('FunctionScopeSchema')
       expect(Object.keys(schema).filter((name) => /FunctionScope/.test(name))).toEqual([])
       // Non-vacuity: this is the real barrel.
@@ -271,7 +272,8 @@ describe('Phase 397 — the inherited adjudications, discharged at their artifac
     // 2026-10-02 (432-39, D-10/D-12): the module that carried the retirement note is deleted with
     // the union, and no schema source states the growth rule or declares the union again. The
     // lineage notes live in the repository history with the file.
-    it('carries the dated retirement note, and no longer states the growth rule', () => {
+    // RE-TITLED 2026-10-02 (432-42, 432-39 #5) from 'carries the dated retirement note, and no longer states the growth rule': the body asserts the absence, so the title does.
+    it('keeps the union module deleted, and no schema source states the growth rule or declares the union', () => {
       expect(existsSync(SCOPE_SOURCE_PATH), 'function-scope.ts is still present').toBe(false)
       const sources = schemaSources()
       expect(sources.length, 'the schema source census read nothing').toBeGreaterThan(50)

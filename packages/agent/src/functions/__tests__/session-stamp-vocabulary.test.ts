@@ -11,7 +11,8 @@
 // a check rather than a sentence.
 //
 // THE COMPARISON IS PRODUCED ON ONE SIDE AND PINNED ON THE OTHER, which is the shape
-// `apply-action-classes.test.ts` and `caller-scopes.test.ts` both use. The derived side is read off
+// `caller-scopes.test.ts` uses (and the deleted proposals-accept action-class suite used, until
+// 432-17; re-spelled 2026-10-02, 432-42). The derived side is read off
 // the LIVE registry — every declaration's inert input projection, asked whether it carries the key
 // at the TOP LEVEL — and never off a hand-written list of the ids anyone believes carry it. The
 // pinned side is the constant the turn engine actually consults. Equality between them is the rule
@@ -51,7 +52,8 @@ function noOpSink(): AuditSink {
 }
 
 /**
- * The four REQUIRED ports, answering emptily — `apply-action-classes.test.ts`'s own fixture.
+ * The four REQUIRED ports, answering emptily (the fixture shape the deleted proposals-accept
+ * action-class suite used; re-spelled 2026-10-02, 432-42).
  *
  * Nothing here dispatches: the cells read DECLARATIONS. What matters is that every registered op
  * is LISTED, including the ones a real host leaves `unbound`, because an input contract is a fact
@@ -156,7 +158,10 @@ describe('the session facts the chat surface stamps are pinned to the ops that c
     // derivation that answers "every id" or by one whose projection read never finds anything —
     // and a comparison that cannot reject is the state the guard's own doc block was already in.
     expect(idsCarryingTopLevelKey('sessionReff').size).toBe(0)
-    expect(idsCarryingTopLevelKey('sessionRef').has('proposals.list')).toBe(false)
+    // 2026-10-02 (432-42): re-pointed from `proposals.list`, deleted by 432-17, at a REGISTERED op
+    // whose input carries no `sessionRef`, so the negative half discriminates over the live catalogue.
+    expect(declarations().map((declaration) => declaration.id), 'the negative example is no longer registered').toContain('runs.list')
+    expect(idsCarryingTopLevelKey('sessionRef').has('runs.list')).toBe(false)
   })
 
   it('the derivation SEES the whole catalogue — an opaque input reds by id (WR-05)', () => {

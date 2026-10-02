@@ -544,7 +544,8 @@ describe('RULING-ADDENDA (D-10)', () => {
   })
 })
 
-// ---- Task 3: narrow read authority and the search census (D-03 / D-09 · T-431-08) --------------
+// ---- Task 3: every caller reads the same tools, and the search census (D-03 / D-09 · T-431-08) ---
+// (re-spelled 2026-10-02, 432-42: the narrow read authority this section was named for is deleted)
 
 const NEW_TOOL_NAMES = Object.keys(CANONICAL_CONTRACTS)
 // 2026-10-02 (432-39, D-10/D-12): the scope union is deleted; the retired names are spelled by hand.

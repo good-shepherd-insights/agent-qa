@@ -32,8 +32,8 @@ describe('differential 4: a covering standing approval never overrides a restric
     for (const retired of ['evaluate', 'resolveAsk', 'NO_STANDING_APPROVALS', 'DENY_CONFIRM']) {
       expect(Object.keys(safety), retired).not.toContain(retired)
     }
-    // The grant contract was type-only; its runtime footprint (the scope constant) belongs to the MCP
-    // credential until 432-21, so the census reads the barrel for anything grant-shaped instead.
+    // The grant contract was type-only, and its runtime footprint (the scope constant) left with the
+    // MCP credential in 432-21, so the census reads the barrel for anything grant-shaped instead.
     expect(Object.keys(schema).filter((key) => /StandingApproval(Grant|Reader)/.test(key))).toEqual([])
   })
 

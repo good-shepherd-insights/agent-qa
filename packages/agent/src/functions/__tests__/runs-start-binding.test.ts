@@ -11,13 +11,15 @@
 //      already proves the descriptor resolves to allow in every context, but until this phase
 //      that allow led nowhere: the binding check refused immediately afterwards, so no test
 //      could tell an allow that dispatches from an allow that does not. These cases run the
-//      whole pipeline in all four contexts and assert the op RAN, with the counterfactual
-//      showing dispatch is lost the moment the tier changes.
+//      whole pipeline and assert the op RAN. 2026-10-02 (432-42): no gate reads the tier or a
+//      context any more, so the four-context loop and the tier counterfactual below now hold by
+//      construction; they are kept as the dispatch witness.
 //   3. The acknowledgment describes the RUN, not the request and not the port's report. The
 //      port says only which run it started; every field a caller reads comes off that run's
 //      own record. A host that returns an id without running anything is refused by name.
 //
-// The gate is not stubbed anywhere here: `invokeFunction` calls the real `evaluate`.
+// Nothing is stubbed between the caller and the op: `invokeFunction` runs the real dispatch, and
+// since 432-19 there is no gate or `evaluate` on that path (re-spelled 2026-10-02, 432-42).
 
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
@@ -42,7 +44,7 @@ import { RUNS_START_FUNCTION_ID, RunNotRecordedError, runsStartSpec } from '../o
 import { createFunctionRegistry, createRegistryFromSpecs, resolveBindingStatus } from '../registry.js'
 import type { FunctionDeps, FunctionSpec, RunInvocationPort } from '../spec.js'
 
-/** Every context a capability call can be made in; `ci` and `cloud` are fail-closed. */
+/** Every context a capability call can be made in; none refuses a call since 432-13/19 (D-15). */
 const EVERY_CONTEXT: readonly ExecutionContext[] = [
   'local-interactive',
   'local-headless',

@@ -538,7 +538,8 @@ describe('who may obtain a live-view credential (408-12; the 2026-09-01 ruling, 
     // during THIS read, and its bytes are in the document this declaring caller received.
     expect(
       minted,
-      'road `demote` (2026-09-01): a `read`-scoped caller reaching the mint is the recorded posture '
+      'road `demote` (2026-09-01): any caller reaching the mint is the recorded posture (no caller '
+      + 'holds a scope since 432-20) '
       + '— if this is now zero, the declaration has been silently re-read as an authorization '
       + 'control and the ruling in app-resource.ts has been reversed without being argued',
     ).toHaveLength(1)
@@ -578,7 +579,7 @@ describe('who may obtain a live-view credential (408-12; the 2026-09-01 ruling, 
     const declarer = await connect(url, { apps: true })
     const result = await declarer.readResource({ uri: APP_URI })
     expect((result.contents as readonly { text?: string }[])[0]?.text ?? '').toContain('<')
-    expect(wireMinted, 'one credential per handle, as for a read-scoped caller').toHaveLength(1)
+    expect(wireMinted, 'one credential per handle, as for any other caller').toHaveLength(1)
   })
 })
 

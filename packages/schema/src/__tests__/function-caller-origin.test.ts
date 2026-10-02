@@ -84,7 +84,8 @@ const grantsOf = (caller: FunctionCaller): readonly string[] =>
 describe('the capability-scope union', () => {
   // RE-SPELLED 2026-10-02 (432-39, D-10/D-12, C432-NO-PERMISSION-TYPES). The union and its six
   // members are deleted, test-write with them; no barrel exports a scope schema.
-  it('carries test-write as a sixth, distinct member (394 WTST-01)', () => {
+  // RE-TITLED 2026-10-02 (432-42, 432-39 #5) from 'carries test-write as a sixth, distinct member (394 WTST-01)': the body asserts the absence, so the title does.
+  it('exports no capability-scope schema or type from the root barrel (C432-NO-PERMISSION-TYPES)', () => {
     expect(Object.keys(schema)).not.toContain('FunctionScopeSchema')
     expect(Object.keys(schema).filter((name) => /FunctionScope/.test(name))).toEqual([])
     // Non-vacuity: the barrel is the real one, and the caller vocabulary that survives is in it.
@@ -93,7 +94,8 @@ describe('the capability-scope union', () => {
 
   // RE-SPELLED 2026-10-02 (432-39, D-10/D-12, C432-NO-PERMISSION-TYPES). With no union there is no
   // parser for a scope name to pass or fail: no exported enum carries the old members.
-  it('refuses anything off the union', () => {
+  // RE-TITLED 2026-10-02 (432-42, 432-39 #5) from 'refuses anything off the union': the body asserts the absence, so the title does.
+  it('exports no enum parser that carries the six retired scope names', () => {
     const enums = Object.entries(schema).filter(([, value]) =>
       typeof (value as { safeParse?: unknown } | undefined)?.safeParse === 'function'
       && Array.isArray((value as { options?: unknown }).options))
