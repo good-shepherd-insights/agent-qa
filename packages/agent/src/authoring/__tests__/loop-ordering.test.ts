@@ -24,6 +24,7 @@
 import {
   DRAFT_STABILITY_RUNS_N,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+  computeDraftDisposition,
   WrittenTestReceiptSchema,
   authoredSuiteTargetPath,
 } from '@vostride/agent-qa-schema'
@@ -45,6 +46,7 @@ import {
   expectedElement,
   fakeFingerprintIndex,
   fakeRunPort,
+  runDocument,
 } from './evidence-fixtures.js'
 import {
   AUTHORING_LOOP_STAGES,
@@ -612,13 +614,16 @@ function scriptedReceipt(
   }
 }
 
-function writerShelf(answer?: (targetPath: string) => TestFileWrite) {
+function writerShelf(
+  answer?: (targetPath: string) => TestFileWrite,
+  runs: DraftShelfPortLike['runs'] = fakeRunPort({ runs: [] }),
+) {
   const requests: { draftPath: string; targetPath: string; sourceDigest?: string }[] = []
   const shelf: DraftShelfPortLike = {
     model: () => Promise.reject(new Error('stage 5 calls no model')),
     write: () => Promise.reject(new Error('stage 5 stages nothing')),
     applyPatches: () => Promise.reject(new Error('these receipts never reach repair')),
-    runs: fakeRunPort({ runs: [] }),
+    runs,
     verifyDraft: () => Promise.reject(new Error('stage 5 is handed its receipt')),
     publish(request) {
       requests.push({ ...request })
@@ -647,8 +652,13 @@ describe('EDGE-09: exactly the non-rejected final dispositions are written (432 
   }[] = [
     { disposition: 'keep-eligible', gates: ALL_PASS, runs: { requested: 3, completed: 3 } },
     { disposition: 'proposal-only', gates: ALL_PASS, runs: { requested: 3, completed: 2 } },
-    // Draft mode writes whatever the booleans said, and the receipt carries them unchanged.
-    { disposition: 'unverified', gates: MIXED, runs: { requested: 1, completed: 1 } },
+    // RE-SPELLED 2026-10-03 (quick 261003-cpv, WR-09): draft mode writes a draft whose gates 1, 3
+    // and 4 passed, and the receipt carries the booleans unchanged; a false one rejects it.
+    {
+      disposition: 'unverified',
+      gates: { ...ALL_PASS, stableVerdict: false },
+      runs: { requested: 1, completed: 1 },
+    },
   ]
 
   for (const row of written) {
@@ -715,4 +725,67 @@ describe('EDGE-09: exactly the non-rejected final dispositions are written (432 
     expect(result.outcome.kind === 'drafted' ? result.outcome.written.file.kind : undefined)
       .toBe('written')
   })
+})
+
+// 2026-10-03 (quick 261003-cpv, 432 review WR-09): a draft-mode evaluation whose gate 1, 3 or 4 said
+// no is rejected by the disposition table (D-06: "writes the test file unless a keep-gate rejected
+// it"), so stage 5 never hands it to the writer. The disposition is COMPUTED here rather than
+// scripted, so the cell reds on the table, not on a fixture.
+describe('C261003-CPV-DRAFT-KEEP-GATES: a draft-mode draft a keep-gate rejected is not written', () => {
+  const ONE_RUN = { requested: 1, completed: 1 } as const
+
+  function draftModeReceipt(gates: DraftGateBooleans, runId?: string): DraftReceipt {
+    const receipt = scriptedReceipt(computeDraftDisposition({
+      gates,
+      stabilityRunsRequested: ONE_RUN.requested,
+      stabilityRunsCompleted: ONE_RUN.completed,
+    }), gates, ONE_RUN)
+    return runId === undefined
+      ? receipt
+      : {
+        ...receipt,
+        gateRuns: [{ runId, memberOutcome: 'passed', definitive: true, healed: false }],
+      }
+  }
+
+  it('a draft-mode draft whose run reached no verdict is never written', async () => {
+    const host = writerShelf()
+    const receipt = draftModeReceipt({ ...ALL_PASS, executesDefinitive: false })
+
+    const outcome = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps)
+      .then((routed) => routed, (error: unknown) => error)
+
+    expect(receipt.disposition).toBe('rejected')
+    expect(host.requests).toEqual([])
+    expect(outcome).toBeInstanceOf(AuthoringLoopUnroutableEvidenceError)
+  })
+
+  it('a draft-mode draft that passed but asserts nothing falsifiable answers not written: rejected',
+    async () => {
+      const runId = 'r_draft-mode-passed'
+      const document = runDocument(runId, [{
+        filePath: STAGED_DRAFT.filePath,
+        testName: STAGED_DRAFT.testName,
+        outcome: 'passed',
+        steps: ACCEPT_CONTROL_SUBACTIONS,
+      }])
+      const host = writerShelf(undefined, {
+        start: () => Promise.reject(new Error('stage 5 starts no run')),
+        get: (id: string) => Promise.resolve(id === runId ? document : undefined),
+      })
+      const gates = { ...ALL_PASS, falsifiableAssertion: false }
+      const receipt = draftModeReceipt(gates, runId)
+
+      const routed = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps)
+
+      expect(host.requests).toEqual([])
+      expect(routed.outcome.kind).toBe('drafted')
+      const answer = routed.outcome.kind === 'drafted' ? routed.outcome.written : undefined
+      expect(answer).toEqual({
+        file: { kind: 'not-written', targetPath: FINAL_TARGET, reason: 'rejected' },
+        disposition: 'rejected',
+        gates,
+      })
+      expect(WrittenTestReceiptSchema.safeParse(answer).success).toBe(true)
+    })
 })

@@ -15,7 +15,7 @@
 
 import { z } from 'zod'
 
-import { DRAFT_DISPOSITIONS, draftDispositionWritesTarget } from './disposition'
+import { DRAFT_DISPOSITIONS, draftDispositionWritesTarget, singleRunGatesPass } from './disposition'
 import type { DraftGateBooleans } from './disposition'
 
 /**
@@ -304,6 +304,16 @@ export const WrittenTestReceiptSchema = z.object({
       code: 'custom',
       path: ['file'],
       message: `a ${receipt.disposition} draft is never written`,
+    })
+  }
+  // 2026-10-03 (quick 261003-cpv, WR-09): an unverified draft is a draft-mode draft whose gates 1,
+  // 3 and 4 passed; one of them false is a rejection. Producer-parsed only: nothing persists this
+  // receipt, so the refinement reads no stored record.
+  if (receipt.disposition === 'unverified' && !singleRunGatesPass(receipt.gates)) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['disposition'],
+      message: 'an unverified draft passed every gate one run decides; one that did not is rejected',
     })
   }
   const rejectedReason = receipt.file.kind === 'not-written' && receipt.file.reason === 'rejected'

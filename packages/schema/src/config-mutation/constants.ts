@@ -19,12 +19,20 @@
  * from ops to answers. A static per-op map could not see the origin change at all, which is why
  * D-02 put the flag on the proposal.
  *
- * The four members, and what each one is a fact about:
+ * The members, and what each one is a fact about:
  *
  *   secret-adjacent-field — the edited path is at or under {@link SECRET_ADJACENT_CONFIG_FIELDS}.
  *   new-origin            — a URL value whose scheme/host/port differ from the one it replaces.
  *   hook-added            — a hook is code this project will EXECUTE; adding one is not a setting.
  *   out-of-set-path       — the change writes a file outside the enumerated config file set.
+ *   production-opt-in     — top-level `allowProduction` is turned on, so production targets run.
+ *   production-declassified — a target declared `environment: production` moves to another class,
+ *                           so the production refusal no longer reads it as production.
+ *
+ * 2026-10-03 (quick 261003-cpv, 432 review WR-01/WR-10): the two production members are added. D-18
+ * makes production a config declaration that any door may write (D-01/D-12), so they are
+ * provenance on the applied receipt, never a gate; before them the one change that turns off the
+ * production refusal answered `crossBoundary: false`.
  *
  * RETUNE: adding a fifth member is a decision about what a person is asked to look at, and it is
  * owned by whoever owns D-02 — the phase that discovers a boundary these four cannot name, with the
@@ -37,6 +45,8 @@ export const CROSS_BOUNDARY_REASONS = [
   'new-origin',
   'hook-added',
   'out-of-set-path',
+  'production-opt-in',
+  'production-declassified',
 ] as const
 
 export type CrossBoundaryReason = (typeof CROSS_BOUNDARY_REASONS)[number]

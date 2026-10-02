@@ -307,9 +307,17 @@ describe('(S1) the proposed arm cannot carry an EMPTY rendered diff (395-22 · C
 })
 
 describe('the cross-boundary reason vocabulary is closed (D-02)', () => {
-  it('bounds exactly the four classes D-02 names', () => {
-    expect([...CROSS_BOUNDARY_REASONS])
-      .toEqual(['secret-adjacent-field', 'new-origin', 'hook-added', 'out-of-set-path'])
+  // RE-SPELLED 2026-10-03 (quick 261003-cpv, 432 review WR-01/WR-10): the two production members are
+  // added as provenance on the applied receipt (D-18 makes production a declaration any door writes).
+  it('bounds exactly the four classes D-02 names plus the two production members', () => {
+    expect([...CROSS_BOUNDARY_REASONS]).toEqual([
+      'secret-adjacent-field',
+      'new-origin',
+      'hook-added',
+      'out-of-set-path',
+      'production-opt-in',
+      'production-declassified',
+    ])
   })
 
   it('the payload accepts every member of it', () => {

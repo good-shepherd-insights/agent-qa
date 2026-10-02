@@ -67,9 +67,9 @@ export interface EvaluateDraftInput {
   /**
    * Draft mode: take ONE stability run instead of the pinned N.
    *
-   * Consequential rather than a speed knob — `computeDraftDisposition` forces `unverified`
-   * unconditionally for a one-run evaluation, so nothing evaluated this way can be auto-kept
-   * however its four booleans read (D-18, SC3).
+   * Consequential rather than a speed knob — `computeDraftDisposition` answers a one-run
+   * evaluation `unverified` at best, so nothing evaluated this way is keep-eligible however its
+   * four booleans read (D-18, SC3); a false gate 1, 3 or 4 still rejects it (261003-cpv, WR-09).
    */
   readonly draftMode?: boolean
   /**

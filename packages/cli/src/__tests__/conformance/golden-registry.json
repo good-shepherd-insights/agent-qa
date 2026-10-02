@@ -135,7 +135,7 @@
       "classifies": true,
       "id": "config.auth.set",
       "inputSchemaDigest": "22688bc1bc1e0b88762e2bb31d8e3dcd4fbc38b14b5b071a61fdb2147055b3d9",
-      "outputSchemaDigest": "c640c09958203dd4ee4aa3da05d5a9eff3e58107657d554b055705859009d826",
+      "outputSchemaDigest": "e014f14a7ffeb36eaa7df3abfd33fcd53ea487038abff4e1235ef395452d887e",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_change_config"
@@ -152,7 +152,7 @@
       "classifies": true,
       "id": "config.field.set",
       "inputSchemaDigest": "809dd2d6ebbd81f0f1d58f9713c7a58e46b0574fda84721556e31c323edff953",
-      "outputSchemaDigest": "c640c09958203dd4ee4aa3da05d5a9eff3e58107657d554b055705859009d826",
+      "outputSchemaDigest": "e014f14a7ffeb36eaa7df3abfd33fcd53ea487038abff4e1235ef395452d887e",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_change_config"
@@ -186,7 +186,7 @@
       "classifies": true,
       "id": "config.hook.add",
       "inputSchemaDigest": "779411d4f0c10d810988139bc61dbeb86eb61bfa87c0f755083ed6f4e779ab20",
-      "outputSchemaDigest": "c640c09958203dd4ee4aa3da05d5a9eff3e58107657d554b055705859009d826",
+      "outputSchemaDigest": "e014f14a7ffeb36eaa7df3abfd33fcd53ea487038abff4e1235ef395452d887e",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_change_config"
@@ -203,7 +203,7 @@
       "classifies": true,
       "id": "config.project.scaffold",
       "inputSchemaDigest": "8ec9d2f71f8ef9484af79da67891ce91c528a83bba56332812ae2a98de368890",
-      "outputSchemaDigest": "c640c09958203dd4ee4aa3da05d5a9eff3e58107657d554b055705859009d826",
+      "outputSchemaDigest": "e014f14a7ffeb36eaa7df3abfd33fcd53ea487038abff4e1235ef395452d887e",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_change_config"
@@ -220,7 +220,7 @@
       "classifies": true,
       "id": "config.target.create",
       "inputSchemaDigest": "f9c5267c9d204e262849352eef61957e89177eb9bdb6f2bc7c54e4ce890278d0",
-      "outputSchemaDigest": "c640c09958203dd4ee4aa3da05d5a9eff3e58107657d554b055705859009d826",
+      "outputSchemaDigest": "e014f14a7ffeb36eaa7df3abfd33fcd53ea487038abff4e1235ef395452d887e",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_change_config"
@@ -237,7 +237,7 @@
       "classifies": true,
       "id": "config.target.edit",
       "inputSchemaDigest": "0a578596cc17aaf8d76b0db8ec313cc885b5400b7f075b733f307f6f95a35090",
-      "outputSchemaDigest": "c640c09958203dd4ee4aa3da05d5a9eff3e58107657d554b055705859009d826",
+      "outputSchemaDigest": "e014f14a7ffeb36eaa7df3abfd33fcd53ea487038abff4e1235ef395452d887e",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_change_config"

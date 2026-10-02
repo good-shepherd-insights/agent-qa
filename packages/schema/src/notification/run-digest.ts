@@ -152,7 +152,18 @@ export const RunDigestMarkChangeSchema = z.object({
   ordinal: z.number().int().positive(),
   fix: z.enum(MARK_FIX_KINDS),
   change: MarkAppliedChangeSchema,
-}).strict() satisfies z.ZodType<RunDigestMarkChange>
+}).strict().superRefine((value, ctx) => {
+  // 2026-10-03 (quick 261003-cpv, 432 review IN-21): the same pairing `MarkDispositionSchema`'s
+  // applied arm enforces on the ledger these rows are projected from. The digest is computed per
+  // call and not stored, so no stored row is read through this.
+  if ((value.fix === 'test-edit') !== (value.change.kind === 'test-file')) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['change', 'kind'],
+      message: 'a test edit writes a test file and every other fix changes knowledge',
+    })
+  }
+}) satisfies z.ZodType<RunDigestMarkChange>
 
 /**
  * The chip enums are CONSTRUCTED from the exported vocabulary rather than respelled (C13), so a

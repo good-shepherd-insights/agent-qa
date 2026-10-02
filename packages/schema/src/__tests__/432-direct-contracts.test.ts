@@ -182,7 +182,9 @@ describe('C432-DIRECT-CONTRACTS: the direct change contracts live in knowledge/c
 
   it('C432-DIRECT-CONTRACTS: a change answers applied, target-not-found or refused, and nothing else', () => {
     const output = schema.KnowledgeChangeOutputSchema
-    expect(output.safeParse({ outcome: 'applied', verb: 'forget', operationId: OPERATION, recordIds: ['rec-1'] }).success)
+    // RE-SPELLED 2026-10-03 (quick 261003-cpv, IN-21): a forget now carries its receipt by rule, so
+    // the bare applied answer is a reject's.
+    expect(output.safeParse({ outcome: 'applied', verb: 'reject', operationId: OPERATION, recordIds: ['rec-1'] }).success)
       .toBe(true)
     expect(output.safeParse({ outcome: 'target-not-found', verb: 'accept', operationId: OPERATION, target: record }).success)
       .toBe(true)
@@ -195,7 +197,8 @@ describe('C432-DIRECT-CONTRACTS: the direct change contracts live in knowledge/c
 
   it('C432-KNOWLEDGE-CHANGE-OPS: an applied change receipt carries no proposal fields and no envelope parses as one', () => {
     // Carried from proposal-envelope.test.ts (432-12), re-spelled without the deleted payload schema.
-    const receipt = { outcome: 'applied', verb: 'forget', operationId: OPERATION, recordIds: ['rec-1'] }
+    // RE-SPELLED 2026-10-03 (quick 261003-cpv, IN-21): `reject`, since a forget carries its receipt.
+    const receipt = { outcome: 'applied', verb: 'reject', operationId: OPERATION, recordIds: ['rec-1'] }
     const output = schema.KnowledgeChangeOutputSchema
     expect(output.safeParse(receipt).success).toBe(true)
     for (const extra of [{ proposalId: 'prop_aaaaaaaa-bbbb' }, { status: 'pending' }, { deltas: [] }, { proposal: {} }]) {

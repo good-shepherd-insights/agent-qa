@@ -475,11 +475,13 @@ export class AuthoringLoopUnroutableEvidenceError extends Error {
  * THE FINAL-WRITE BRANCH (432 D-06, EDGE-09): whether a final draft is written to its target.
  *
  * It is also the set stage 5 answers `drafted` for, because the two are one fact: the gates did
- * not say no. `unverified` is what a DRAFT-MODE evaluation is forced to (rule 1 of the disposition
- * table), and such a draft is neither a stop — no run said the application is wrong — nor
- * repairable — no mechanics evidence exists to repair against — so it is written, and its receipt
- * says it is unverified. `rejected` is the only disposition that routes and the only one never
- * written, because it is the only one a gate actually refused.
+ * not say no. `unverified` is a DRAFT-MODE evaluation whose gates 1, 3 and 4 passed (rule 1 of the
+ * disposition table; 261003-cpv, WR-09), and such a draft is neither a stop — no run said the
+ * application is wrong — nor repairable — no mechanics evidence exists to repair against — so it
+ * is written, and its receipt says it is unverified. `rejected` is the only disposition that
+ * routes and the only one never written, because it is the only one a gate actually refused. A
+ * rejected draft whose run passed has nothing to route either; `routeAfterVerify` answers it
+ * `drafted`, not written, with the rejecting gates on its receipt.
  */
 function writesFinalDraft(disposition: DraftDisposition): boolean {
   return draftDispositionWritesTarget(disposition)
@@ -799,6 +801,22 @@ export async function routeAfterVerify(
     route = routeRepairOrStop(draftRef, handoff)
   } catch (error) {
     if (!(error instanceof AuthoringRouterUnroutableError)) throw error
+    // 2026-10-03 (quick 261003-cpv, 432 review WR-09): THE RUN PASSED AND A GATE STILL SAID NO —
+    // the draft adds nothing to the suite, asserts nothing falsifiable, or flipped and then passed.
+    // Nothing failed, so there is nothing to repair and no application bug to stop on; the honest
+    // answer is the draft, not written, with the gates that rejected it. Draft mode reaches this
+    // since rule 1 rejects on gates 1, 3 and 4, and a missing run record still refuses by name.
+    if (error.signalClass === 'no-failure') {
+      return {
+        outcome: {
+          kind: 'drafted',
+          draftRef,
+          receipt,
+          written: await writeFinalDraft(draft, receipt, deps.shelf),
+        },
+        fanOut: buildFanOutReport({ previewed, runs: gateRuns }),
+      }
+    }
     throw new AuthoringLoopUnroutableEvidenceError(receipt.disposition, error)
   }
 

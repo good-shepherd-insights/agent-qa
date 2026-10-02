@@ -281,7 +281,7 @@ function refusalSentenceOf(error: unknown): string | undefined {
  * and no grant machinery any more; the change is written in the call, and these lines disclose the
  * crossing on the applied answer the person reads.
  *
- * VERBATIM, NEVER A PARAPHRASE. Each reason is one of `CROSS_BOUNDARY_REASONS`' four closed words
+ * VERBATIM, NEVER A PARAPHRASE. Each reason is one of `CROSS_BOUNDARY_REASONS`' closed words
  * and it is printed as filed. A hand-written sentence per reason would be a SECOND answer to "why
  * is this crossing", free to disagree with the record the change answers with — which is the
  * drop-site lesson (D-04) applied to the field a person reads to see what crossed.

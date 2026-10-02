@@ -27,6 +27,10 @@
 // distribution's human `accepted` column are against a different measurement from here on. The
 // acceptance-failure flag keeps its name and is decided on `writeEligible`, so it can fire again.
 //
+// 2026-10-03 (quick 261003-cpv, 432 review WR-09): a draft-mode receipt whose gate 1, 3 or 4 said
+// no is now stored `rejected`, so it is no longer write-eligible and no longer raises the flag.
+// Receipts stored before this keep the disposition they were given and are counted as given.
+//
 // GATE 4 IS NOT A STAGE. There are four gates and four stages and they are not the same four:
 // `falsifiableAssertion` (gate 4) decides whether a draft asserts anything falsifiable, which is
 // a property of the draft rather than a step on the way from intent to suite. A draft rejected on

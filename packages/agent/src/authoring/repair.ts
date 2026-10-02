@@ -521,7 +521,7 @@ function probeStartInput(draft: ParsedDraftLike): Parameters<DraftRunPortLike['s
  * because a full pinned-N stability gate per iteration would multiply the fan-out by N for
  * candidates that mostly do not survive. The pinned-N gate then runs ONCE, on the final candidate,
  * before any disposition exists — which is what makes a repaired draft keep-eligible at all: a
- * single-run evaluation is forced to `unverified` by rule 1 of the disposition table, so a loop
+ * single-run evaluation is `unverified` at best by rule 1 of the disposition table, so a loop
  * that stopped at the probe could never produce a draft anyone is allowed to keep.
  *
  * PROBES MINT NO RECEIPT (T-394-24). A probe goes through the run port directly; only the final

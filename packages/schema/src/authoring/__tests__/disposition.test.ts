@@ -1,7 +1,8 @@
 // The draft-disposition contract, written BEFORE the vocabulary exists (Phase 393, D-08).
 //
 // D-18 in one sentence: `keep-eligible` requires all four gate booleans true AND the full
-// pinned N stability runs, and N=1 draft mode forces `unverified` UNCONDITIONALLY. That rule
+// pinned N stability runs, and N=1 draft mode answers `unverified` unless a gate one run decides
+// said no (2026-10-03, 261003-cpv, WR-09: it was UNCONDITIONAL until then). That rule
 // lives structurally in the vocabulary — 394's accept flow consumes `computeDraftDisposition`
 // and is meant to be unable to re-derive its own answer — so the table below is the contract
 // this module is judged against, not a description of whatever it happens to compute.
@@ -139,14 +140,13 @@ describe('computeDraftDisposition (393 D-18) — the behavior table', () => {
     ).toBe('unverified')
   })
 
-  it('forces unverified in draft mode regardless of every other input', () => {
-    // The unconditional half of D-18: a failing gate, a zero run count and an over-full run
-    // count all still read `unverified`, because one requested run can never observe stability.
+  // RE-SPELLED 2026-10-03 (quick 261003-cpv, 432 review WR-09): draft mode is no longer
+  // unconditional. A failing gate one run decides (1, 3 or 4) rejects; see the C261003-CPV cells.
+  it('reads unverified in draft mode whatever the run counts, while gates 1, 3 and 4 pass', () => {
     for (const overrides of [
-      { gates: { ...ALL_TRUE, addsValue: false } },
       { stabilityRunsCompleted: 0 },
       { stabilityRunsCompleted: 9 },
-      { gates: { ...ALL_TRUE, executesDefinitive: false }, stabilityRunsCompleted: 0 },
+      { gates: { ...ALL_TRUE, stableVerdict: false }, stabilityRunsCompleted: 0 },
     ] satisfies readonly Partial<DraftDispositionInput>[]) {
       expect(
         computeDraftDisposition(input({ ...overrides, stabilityRunsRequested: 1 })),
@@ -315,7 +315,10 @@ describe('EDGE-09: exactly keep-eligible, proposal-only and unverified final dra
                   stabilityRunsRequested: requested,
                   stabilityRunsCompleted: completed,
                 })
-                expect(predicate(disposition)).toBe(requested === 1 || allPass)
+                // RE-SPELLED 2026-10-03 (261003-cpv, WR-09): draft mode writes only when gates
+                // 1, 3 and 4 passed; gate 2 is the one a single run cannot decide.
+                const singleRunPass = executesDefinitive && addsValue && falsifiableAssertion
+                expect(predicate(disposition)).toBe(allPass || (requested === 1 && singleRunPass))
                 cases += 1
               }
             }
@@ -332,9 +335,15 @@ describe('EDGE-09: exactly keep-eligible, proposal-only and unverified final dra
       expect(schema.safeParse({ file: WRITTEN_FILE, disposition, gates: ALL_TRUE }).success)
         .toBe(true)
     }
-    // Draft mode writes an unverified draft whatever its booleans said, and the receipt says so.
+    // RE-SPELLED 2026-10-03 (261003-cpv, WR-09): draft mode writes an unverified draft whose gate 2
+    // could not be decided, and the receipt says so; a failing gate 1, 3 or 4 is a rejection.
+    expect(schema.safeParse({
+      file: WRITTEN_FILE,
+      disposition: 'unverified',
+      gates: { ...ALL_TRUE, stableVerdict: false },
+    }).success).toBe(true)
     expect(schema.safeParse({ file: WRITTEN_FILE, disposition: 'unverified', gates: MIXED_GATES })
-      .success).toBe(true)
+      .success).toBe(false)
     const { falsifiableAssertion: _dropped, ...threeGates } = ALL_TRUE
     expect(schema.safeParse({ file: WRITTEN_FILE, disposition: 'keep-eligible', gates: threeGates })
       .success).toBe(false)
@@ -415,5 +424,52 @@ describe('AuthoringVerifyDraftInputSchema (393 D-01, 392 D-07)', () => {
     expect(() =>
       AuthoringVerifyDraftInputSchema.parse({ draftPath: 'x.yaml', stabilityRuns: 1 }),
     ).toThrow()
+  })
+})
+
+// 2026-10-03 (quick 261003-cpv, 432 review WR-09): D-06 reads "writes the test file unless a
+// keep-gate rejected it". One draft-mode run decides gates 1, 3 and 4 (the run's own verdict, its
+// own fingerprint against the suite, the static assertion check); only gate 2, stability, needs
+// more than one run. So a draft-mode evaluation whose gate 1, 3 or 4 said no is `rejected` and not
+// written, and only gate 2 leaves a passing draft-mode draft `unverified`.
+describe('C261003-CPV-DRAFT-KEEP-GATES: a draft-mode keep-gate that said no rejects the draft', () => {
+  it('rejects a draft-mode evaluation whose gate 1, 3 or 4 is false', () => {
+    for (const gate of ['executesDefinitive', 'addsValue', 'falsifiableAssertion'] as const) {
+      for (const completed of [0, 1]) {
+        expect(computeDraftDisposition(input({
+          gates: { ...ALL_TRUE, [gate]: false },
+          stabilityRunsRequested: 1,
+          stabilityRunsCompleted: completed,
+        })), `${gate} completed=${completed}`).toBe('rejected')
+      }
+    }
+  })
+
+  it('leaves a draft-mode evaluation unverified when only stability could not be decided', () => {
+    expect(computeDraftDisposition(input({
+      stabilityRunsRequested: 1,
+      stabilityRunsCompleted: 1,
+    }))).toBe('unverified')
+    expect(computeDraftDisposition(input({
+      gates: { ...ALL_TRUE, stableVerdict: false },
+      stabilityRunsRequested: 1,
+      stabilityRunsCompleted: 1,
+    }))).toBe('unverified')
+  })
+
+  it('the written-test receipt refuses an unverified draft whose single-run gates said no', () => {
+    const schema = writtenReceiptSchema()
+    for (const gate of ['executesDefinitive', 'addsValue', 'falsifiableAssertion'] as const) {
+      expect(schema.safeParse({
+        file: WRITTEN_FILE,
+        disposition: 'unverified',
+        gates: { ...ALL_TRUE, [gate]: false },
+      }).success, gate).toBe(false)
+    }
+    expect(schema.safeParse({
+      file: WRITTEN_FILE,
+      disposition: 'unverified',
+      gates: { ...ALL_TRUE, stableVerdict: false },
+    }).success).toBe(true)
   })
 })

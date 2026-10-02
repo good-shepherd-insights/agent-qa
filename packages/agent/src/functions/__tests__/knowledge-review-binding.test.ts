@@ -188,6 +188,15 @@ describe('the knowledgeReview optional dep', () => {
         return Promise.resolve({
           outcome: 'applied', verb: request.verb,
           operationId: '1e2d3c4b-5a69-4786-9504-a3b2c1d0e9f8', recordIds: ['rec-1'],
+          // 2026-10-03 (quick 261003-cpv, IN-21): an applied forget carries its receipt by rule.
+          ...(request.verb === 'forget'
+            ? {
+              forgetReceipt: {
+                schemaVersion: 1, proposalId: 'prop_alpha-bravo', tombstonedRecords: [],
+                projectionsScrubbed: ['fts'], resultingBundleStatus: 'forgotten', forgottenAt: 1,
+              },
+            }
+            : {}),
         })
       },
     } as unknown as KnowledgeReviewPort

@@ -131,6 +131,8 @@ const authoringRefused: AuthoringDraftWriteOutput = AuthoringDraftWriteOutputSch
   }),
 })
 
+// RE-SPELLED 2026-10-03 (quick 261003-cpv, IN-21): a drafted invocation carries its written-test
+// receipt by rule, so the fixture says which file it wrote.
 const authoringDrafted: AuthoringDraftWriteOutput = AuthoringDraftWriteOutputSchema.parse({
   outcome: 'drafted',
   draftRef: {
@@ -140,6 +142,11 @@ const authoringDrafted: AuthoringDraftWriteOutput = AuthoringDraftWriteOutputSch
     contentDigest: 'sha256:2f0c',
   },
   fanOut: happyFanOut,
+  written: {
+    file: { kind: 'written', filePath: 'tests/authored/two-factor-auth.yaml', contentDigest: 'sha256:2f0c' },
+    disposition: 'keep-eligible',
+    gates: { executesDefinitive: true, stableVerdict: true, addsValue: true, falsifiableAssertion: true },
+  },
 })
 
 // ---- the config-mutation family: six ops, one union ---------------------------------------------
@@ -235,8 +242,17 @@ describe('C432-KNOWLEDGE-CHANGE-OPS: the three knowledge changes fold their own 
   it('C432-KNOWLEDGE-CHANGE-OPS: an applied change is executed, a typed absence is executed, and a writer refusal is refused', () => {
     for (const spec of KNOWLEDGE_CHANGE_OPS) {
       const verb = spec.id.split('.')[1] as 'accept' | 'reject' | 'forget'
+      // RE-SPELLED 2026-10-03 (quick 261003-cpv, IN-21): a forget carries its receipt by rule.
       const applied = KnowledgeChangeOutputSchema.parse({
         outcome: 'applied', verb, operationId: OPERATION_ID, recordIds: ['rec-1', 'rec-2'],
+        ...(verb === 'forget'
+          ? {
+            forgetReceipt: {
+              schemaVersion: 1, proposalId: 'prop_alpha-bravo', tombstonedRecords: [],
+              projectionsScrubbed: ['fts'], resultingBundleStatus: 'forgotten', forgottenAt: 1,
+            },
+          }
+          : {}),
       })
       const absent = KnowledgeChangeOutputSchema.parse({
         outcome: 'target-not-found', verb, operationId: OPERATION_ID,

@@ -9,11 +9,22 @@
 // path: `keep-eligible`, `proposal-only` and `unverified` are written, `rejected` is not. That
 // decision is `draftDispositionWritesTarget` below, beside the table it reads.
 //
+// 2026-10-03 (quick 261003-cpv, 432 review WR-09): rule 1 now follows D-06 literally, "writes the
+// test file unless a keep-gate rejected it". One draft-mode run DECIDES gates 1, 3 and 4: gate 1
+// reads that run's own verdict, gate 3 that run's fingerprint against the suite plus the step text,
+// gate 4 the static assertion check (`verify-draft.ts` evaluates all four on every evaluation and
+// holds none at a constant). Only gate 2 needs more than one run: with one run it is true exactly
+// when a verdict was observed, so it can never report instability and never rejects in draft mode.
+// Before this, rule 1 answered 'unverified' unconditionally, so a draft-mode draft whose run
+// reached no verdict, or that added nothing or asserted nothing falsifiable, was written into the
+// suite. Stored receipts keep the disposition they were given (D-22).
+//
 // THE TABLE (contract, not implementation detail), evaluated in this order:
-//   1. `stabilityRunsRequested === 1` (draft mode) → 'unverified', UNCONDITIONALLY — including
-//      when all four gates passed. One run cannot observe stability, so a one-run evaluation
-//      never earns a keep-shaped answer. 'unverified' rather than 'rejected' because the gates
-//      did not say no; they were not given enough runs to say anything about gate 2 at all.
+//   1. `stabilityRunsRequested === 1` (draft mode): any of `executesDefinitive`, `addsValue` or
+//      `falsifiableAssertion` false → 'rejected'; otherwise 'unverified', including when all four
+//      gates passed. One run cannot observe stability, so a one-run evaluation never earns a
+//      keep-shaped answer; 'unverified' rather than 'rejected' because no gate one run decides
+//      said no.
 //   2. any gate boolean false → 'rejected'. Early-stopped stability runs (D-17 stops on the
 //      first verdict flip) arrive here with `stabilityRunsCompleted` below N and must still
 //      read 'rejected': the flip already proved instability, and the unrun runs would only
@@ -80,11 +91,26 @@ export interface DraftGateBooleans {
   readonly falsifiableAssertion: boolean
 }
 
+/**
+ * The gates one stability run decides (261003-cpv, WR-09): every gate except `stableVerdict`.
+ * Draft mode rejects on these and only these.
+ */
+export const SINGLE_RUN_DRAFT_GATES = [
+  'executesDefinitive',
+  'addsValue',
+  'falsifiableAssertion',
+] as const satisfies readonly (keyof DraftGateBooleans)[]
+
+/** Whether every gate one run decides passed. */
+export function singleRunGatesPass(gates: DraftGateBooleans): boolean {
+  return SINGLE_RUN_DRAFT_GATES.every((gate) => gates[gate])
+}
+
 export interface DraftDispositionInput {
   readonly gates: DraftGateBooleans
   /**
    * Stability runs the evaluation ASKED for. `1` is draft mode and is the only value with a
-   * special meaning — it forces 'unverified' by rule 1 above.
+   * special meaning — rule 1 above, where only gates 1, 3 and 4 can reject.
    */
   readonly stabilityRunsRequested: number
   /**
@@ -99,7 +125,9 @@ export interface DraftDispositionInput {
  * table above states; every branch is pinned by `__tests__/disposition.test.ts`.
  */
 export function computeDraftDisposition(input: DraftDispositionInput): DraftDisposition {
-  if (input.stabilityRunsRequested === 1) return 'unverified'
+  if (input.stabilityRunsRequested === 1) {
+    return singleRunGatesPass(input.gates) ? 'unverified' : 'rejected'
+  }
 
   const { executesDefinitive, stableVerdict, addsValue, falsifiableAssertion } = input.gates
   if (!(executesDefinitive && stableVerdict && addsValue && falsifiableAssertion)) {
@@ -113,8 +141,9 @@ export function computeDraftDisposition(input: DraftDispositionInput): DraftDisp
  * The dispositions whose final draft is written to its target (432 D-06, EDGE-09).
  *
  * Every disposition except `rejected`: the gates either said yes (`keep-eligible`), said yes over
- * too few runs (`proposal-only`), or were not given enough runs to say anything (`unverified`).
- * Only `rejected` is a gate saying no, and a rejected draft stays on the private shelf.
+ * too few runs (`proposal-only`), or said yes on every gate one run decides while stability was
+ * not given enough runs (`unverified`; 261003-cpv, WR-09). Only `rejected` is a gate saying no,
+ * and a rejected draft stays on the private shelf.
  */
 export const DRAFT_WRITTEN_DISPOSITIONS = [
   'keep-eligible',

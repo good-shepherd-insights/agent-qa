@@ -410,10 +410,29 @@ export const AuthoringDraftWriteOutputSchema = z.object({
   /**
    * The final draft's written-test receipt (432 D-06): which file was written, or why none was,
    * with the disposition and the four gate booleans. Present exactly on `drafted` and `repaired`;
-   * a `rejected` final draft is reported here as not written.
+   * a `rejected` final draft is reported here as not written. Its disposition is the receipt's.
    */
   written: WrittenTestReceiptSchema.optional(),
-}).strict()
+}).strict().superRefine((output, ctx) => {
+  // 2026-10-03 (quick 261003-cpv, 432 review IN-21): the two rules above, enforced. Producer-parsed
+  // only (the op's output validation and the MCP projection); no stored record is read through it.
+  const writes = output.outcome === 'drafted' || output.outcome === 'repaired'
+  if (writes !== (output.written !== undefined)) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['written'],
+      message: 'the written-test receipt is present exactly on a drafted or repaired invocation',
+    })
+  }
+  if (output.written !== undefined && output.receipt !== undefined
+    && output.written.disposition !== output.receipt.disposition) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['written', 'disposition'],
+      message: 'the written-test receipt carries the disposition of the receipt beside it',
+    })
+  }
+})
 
 export type AuthoringDraftWriteOutput = z.infer<typeof AuthoringDraftWriteOutputSchema>
 

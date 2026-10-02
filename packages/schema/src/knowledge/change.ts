@@ -288,6 +288,17 @@ export const KnowledgeChangeOutputSchema = z.discriminatedUnion('outcome', [
     operationId: KnowledgeChangeOperationIdSchema,
     reason: z.enum(KNOWLEDGE_CHANGE_REFUSAL_REASONS),
   }).strict(),
-])
+]).superRefine((output, ctx) => {
+  // 2026-10-03 (quick 261003-cpv, 432 review IN-21): "present exactly when the change was a forget",
+  // enforced. Producer-parsed only (the op, the daemon answer the host re-parses, MCP).
+  if (output.outcome !== 'applied') return
+  if ((output.verb === 'forget') !== (output.forgetReceipt !== undefined)) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['forgetReceipt'],
+      message: 'an applied forget carries its forget receipt, and no other change carries one',
+    })
+  }
+})
 
 export type KnowledgeChangeOutput = z.infer<typeof KnowledgeChangeOutputSchema>

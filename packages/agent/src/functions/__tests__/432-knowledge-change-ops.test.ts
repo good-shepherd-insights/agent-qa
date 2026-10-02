@@ -29,6 +29,16 @@ const CONTEXTS: readonly ExecutionContext[] = ['local-interactive', 'local-headl
 
 const RECORD = { grain: 'record', recordId: 'rec-direct-1' } as const
 
+// 2026-10-03 (quick 261003-cpv, IN-21): an applied forget carries its forget receipt by rule.
+const FORGET_RECEIPT = {
+  schemaVersion: 1,
+  proposalId: 'prop_alpha-bravo',
+  tombstonedRecords: [],
+  projectionsScrubbed: ['fts'],
+  resultingBundleStatus: 'forgotten',
+  forgottenAt: 1,
+} as const
+
 const CHANGE_IDS = ['knowledge.accept', 'knowledge.reject', 'knowledge.forget'] as const
 
 const RETIRED_IDS = [
@@ -75,6 +85,7 @@ function recordingPort(answer?: (request: ChangeRequest) => unknown): RecordingP
         verb: request.verb,
         operationId: request.operationId ?? '4f1c2a8e-0000-4000-8000-00000000c0de',
         recordIds: [(request.input['target'] as { recordId: string }).recordId],
+        ...(request.verb === 'forget' ? { forgetReceipt: FORGET_RECEIPT } : {}),
       })
     },
   } as unknown as KnowledgeReviewPort

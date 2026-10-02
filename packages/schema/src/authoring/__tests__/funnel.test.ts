@@ -390,3 +390,30 @@ describe('the no-success-framing prohibition', () => {
     expect(new FunnelSuccessFramingError(['success']).name).toBe('FunnelSuccessFramingError')
   })
 })
+
+// 2026-10-03 (quick 261003-cpv, 432 review WR-09): the write-eligible count follows the disposition
+// table, so a draft-mode draft whose assertion was not falsifiable is not counted as written.
+describe('C261003-CPV-DRAFT-KEEP-GATES: the funnel does not count a rejected draft-mode draft', () => {
+  it('counts a draft-mode draft whose gate 4 said no as not write-eligible', async () => {
+    const { computeAuthoringFunnel } = await loadFunnel()
+    const { computeDraftDisposition } = await import('../disposition')
+    const disposition = computeDraftDisposition({
+      gates: {
+        executesDefinitive: true,
+        stableVerdict: true,
+        addsValue: true,
+        falsifiableAssertion: false,
+      },
+      stabilityRunsRequested: 1,
+      stabilityRunsCompleted: 1,
+    })
+    const funnel = computeAuthoringFunnel({
+      receipts: [
+        receipt({ digest: 'draft-mode-weak', falsifiableAssertion: false, disposition }),
+        receipt({ digest: 'draft-mode-good', disposition: 'unverified' }),
+      ],
+      sideCounters: NO_SIDE_COUNTERS,
+    })
+    expect(funnel.stages.writeEligible).toBe(1)
+  })
+})

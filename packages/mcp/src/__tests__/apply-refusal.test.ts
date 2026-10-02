@@ -247,9 +247,14 @@ describe('C432-MCP-DIRECT-RECEIPT: a knowledge change answers its receipt on the
 
 describe('C432-MCP-NO-ELICITATION: no confirmation input, no elicitation, no apply round', () => {
   it('C432-MCP-NO-ELICITATION: a client that can answer a form is never asked, and the change lands on its one call', async () => {
+    // 2026-10-03 (quick 261003-cpv, IN-21): an applied forget carries its forget receipt by rule.
     const port = directDeps((request) => ({
       outcome: 'applied', verb: request.verb, operationId: '5a4b3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d',
       recordIds: ['rec-alpha'],
+      forgetReceipt: {
+        schemaVersion: 1, proposalId: 'prop_alpha-bravo', tombstonedRecords: [],
+        projectionsScrubbed: ['fts'], resultingBundleStatus: 'forgotten', forgottenAt: 1,
+      },
     }))
     const session = await wire(port.deps, true)
     const outcome = await callSettled(session, 'agent_qa_change_knowledge', {

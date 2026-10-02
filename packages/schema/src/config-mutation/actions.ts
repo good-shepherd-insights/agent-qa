@@ -282,7 +282,10 @@ export const ConfigChangeOutputSchema = z.discriminatedUnion('outcome', [
     summaryLine: z.string().min(1),
     files: z.array(z.string().min(1)).min(1),
     fields: z.array(z.string().min(1)).min(1),
-    /** Whether the change adds a hook, a new origin, a secret-adjacent field or an out-of-set file. */
+    /**
+     * Whether the change adds a hook, a new origin, a secret-adjacent field or an out-of-set file,
+     * turns `allowProduction` on, or moves a production target to another class (261003-cpv).
+     */
     crossBoundary: z.boolean(),
     crossBoundaryReasons: z.array(z.enum(CROSS_BOUNDARY_REASONS)),
     shownDiff: z.string().min(1),

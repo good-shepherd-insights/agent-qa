@@ -134,9 +134,14 @@ describe('the review vocabulary and the change id (D-17)', () => {
   })
 
   it('admits every change verb and refuses one outside the union', () => {
+    // RE-SPELLED 2026-10-03 (quick 261003-cpv, IN-21): a forget carries its forget receipt by rule.
+    const forgetReceipt = {
+      schemaVersion: 1, proposalId: 'prop_alpha-bravo', tombstonedRecords: [], projectionsScrubbed: ['fts'],
+      resultingBundleStatus: 'forgotten', forgottenAt: 1,
+    }
     for (const verb of ['accept', 'reject', 'forget'] as const) {
       expect(KnowledgeChangeOutputSchema.parse({ outcome: 'applied', verb, operationId: 'op-1x',
-        recordIds: [] }).verb).toBe(verb)
+        recordIds: [], ...(verb === 'forget' ? { forgetReceipt } : {}) }).verb).toBe(verb)
     }
     // `purge` is a real verb elsewhere in this store, which is exactly why it must be refused HERE;
     // a mark is applied through `runs.mark`, never as a direct change.
