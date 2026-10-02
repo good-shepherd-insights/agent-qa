@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   FsMarkLedger, MARKS_LEDGER_FILE, MARKS_LEDGER_LOCK_FILE,
-  MarkLedgerBusyError, MarkLedgerCorruptError, MarkLedgerNoRunError,
+  MarkIntentUnusableError, MarkLedgerBusyError, MarkLedgerCorruptError, MarkLedgerNoRunError,
 } from '../mark-ledger.js'
 import { makeLocalV2Handoff } from './fixtures/local-handoff-fixture.js'
 
@@ -126,14 +126,25 @@ describe('FsMarkLedger', () => {
   })
   // 2026-09-30, 432-09 (D-04/D-22): the intent names a stable operation identity and an `applied`
   // stage; a pre-432 intent that names a proposal or a drafted stage is refused before any effect.
+  // 2026-10-03 (quick 261003-lgd, Phase 432 review IN-23): refused by the intent file's own name.
+  // It used to say "Mark ledger is corrupt at line N", a line marks.jsonl does not have, so the
+  // person was sent to the wrong file. D-02: still no migration; the message says what to remove.
+  // OBSERVED RED on agent-qa 481f0a153: "Mark ledger is corrupt at line 1" (MarkLedgerCorruptError).
   it.each([
     ['a proposalUuid', { proposalUuid: '01234567-89ab-4def-8123-456789abcdef', stage: 'evidence' }],
     ['the drafted stage', { operationId: '01234567-89ab-4def-8123-456789abcdef', stage: 'drafted' }],
     ['a stored test draft', { operationId: '01234567-89ab-4def-8123-456789abcdef', stage: 'evidence', testDraft: {} }],
-  ])('refuses a pre-432 intent carrying %s before invoking any side effect', async (_name, legacy) => {
-    writeFileSync(join(dir, 'mark-intent.json'), JSON.stringify({ schemaVersion: 1, mark: { ...record, ordinal: 1 }, ...legacy }))
+  ])('refuses a pre-432 intent carrying %s before invoking any side effect, naming the intent file', async (_name, legacy) => {
+    const intentPath = join(dir, 'mark-intent.json')
+    writeFileSync(intentPath, JSON.stringify({ schemaVersion: 1, mark: { ...record, ordinal: 1 }, ...legacy }))
     const fn = vi.fn(async () => record)
-    await expect(ledger.transact(fn)).rejects.toThrow(MarkLedgerCorruptError)
+    const refusal = await ledger.transact(fn).then(() => undefined, (error: unknown) => error as Error)
+    expect(refusal).toBeInstanceOf(MarkIntentUnusableError)
+    expect(refusal).toMatchObject({ intentPath, reason: 'earlier-version' })
+    expect(refusal?.message).toBe(`The unfinished-mark record ${intentPath} was written by an earlier `
+      + 'agent-qa version, which this version does not read; nothing was marked. Remove that file, '
+      + 'then mark again.')
+    expect(refusal?.message).not.toMatch(/line \d/)
     expect(fn).not.toHaveBeenCalled()
     expect(ledger.read()).toEqual([])
   })
@@ -165,10 +176,16 @@ describe('FsMarkLedger', () => {
     expect(ledger.read()).toHaveLength(1)
   })
 
-  it('refuses malformed intent bytes before invoking any side effect', async () => {
-    writeFileSync(join(dir, 'mark-intent.json'), JSON.stringify({ schemaVersion: 1, mark: record, extra: true }))
+  it('refuses malformed intent bytes before invoking any side effect, naming the intent file', async () => {
+    const intentPath = join(dir, 'mark-intent.json')
+    writeFileSync(intentPath, JSON.stringify({ schemaVersion: 1, mark: record, extra: true }))
     const fn = vi.fn(async () => record)
-    await expect(ledger.transact(fn)).rejects.toThrow(MarkLedgerCorruptError)
+    const refusal = await ledger.transact(fn).then(() => undefined, (error: unknown) => error as Error)
+    expect(refusal).toBeInstanceOf(MarkIntentUnusableError)
+    expect(refusal).toMatchObject({ intentPath, reason: 'unreadable' })
+    expect(refusal?.message).toContain(intentPath)
+    expect(refusal?.message).toContain('Remove that file, then mark again.')
+    expect(refusal?.message).not.toMatch(/line \d/)
     expect(fn).not.toHaveBeenCalled()
     expect(ledger.read()).toEqual([])
   })

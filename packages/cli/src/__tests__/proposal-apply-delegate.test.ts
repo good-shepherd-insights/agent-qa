@@ -420,7 +420,10 @@ describe('a knowledge change under a holder that is not a live daemon (quick 261
     }, CALLER).then(() => undefined, (error: unknown) => error as Error & { holderPid?: number })
 
     expect(refusal).toMatchObject({ name: 'KnowledgeWriterLeaseBusyError', holderPid: process.pid })
-    expect(refusal?.message).toContain(`Another agent-qa process (pid ${process.pid})`)
+    // 2026-10-03 (261003-lgd, IN-11): the fixture holds the lease in this very process, so the
+    // refusal must say so instead of naming it "another" process.
+    expect(refusal?.message).toContain(`This agent-qa process (pid ${process.pid}) is already writing`)
+    expect(refusal?.message).not.toContain('Another agent-qa process')
     expect(refusal?.message).toContain('nothing was changed')
     expect(refusal?.message).toContain('Retry the change when it finishes')
     expect(refusal?.message).not.toContain('agent-qa daemon')

@@ -21,6 +21,8 @@ export {
   FsMarkLedger,
   MARKS_LEDGER_FILE,
   MARKS_LEDGER_LOCK_FILE,
+  MARK_INTENT_FILE,
+  MarkIntentUnusableError,
   MarkLedgerBusyError,
   MarkLedgerCorruptError,
   MarkLedgerNoRunError,

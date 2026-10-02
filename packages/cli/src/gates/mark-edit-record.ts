@@ -89,7 +89,17 @@ function digestOf(path: string): string | undefined {
 /**
  * The recorded write's answer for this operation, or `undefined` when the edit must run: no record
  * for this operation, or the target still holds the bytes the edit read (the write never landed).
- * A target holding neither is someone else's change and is refused, never edited again.
+ *
+ * 2026-10-03 (quick 261003-lgd, Phase 432 review WR-04): a target holding neither the bytes the
+ * edit read nor the bytes it wrote (a person edited or deleted the test after the crash) is
+ * answered from the record too: the mark completes with the write it recorded, and the person's
+ * later change stays theirs. It is never edited again and the model is never asked again (D-15). It used to be
+ * refused as `target-changed`, and since neither the record nor the intent was ever cleared on that
+ * path, every retry, and every other mark on the run, failed the same way for good.
+ *
+ * What this cannot tell apart: the record is written just before the write, so a crash in the
+ * moment between the two, followed by a person's change, also reads as "neither". The receipt then
+ * names a write that did not land. Both windows are a few milliseconds of one synchronous call.
  */
 export function answerRecordedMarkEdit(
   input: MarkEditScope & { readonly configDir: string },
@@ -109,11 +119,8 @@ export function answerRecordedMarkEdit(
   }
   if (record.operationId !== input.operationId) return undefined
   const found = digestOf(resolve(input.configDir, record.filePath))
-  if (found === record.contentDigest) {
-    return { kind: 'written', filePath: record.filePath, contentDigest: record.contentDigest }
-  }
-  if (found === record.sourceDigest) return undefined
-  return { kind: 'not-written', targetPath: record.filePath, reason: 'target-changed' }
+  if (found !== record.contentDigest && found === record.sourceDigest) return undefined
+  return { kind: 'written', filePath: record.filePath, contentDigest: record.contentDigest }
 }
 
 export function clearMarkEditRecord(recordPath: string): void {

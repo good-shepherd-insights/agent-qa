@@ -8,7 +8,7 @@ import { RunsMarkInputSchema, type AuthoringDraftEditInput, type AuthoringDraftE
 import { resolveConfiguredKnowledgeRoot } from '../config.js'
 import { wordImprovementPlan } from './feedback-wording.js'
 import { decideMarkDraft, loadMarkTarget, markEvidenceCurationJobIds, markFeedbackInput, planMarkFeedback, readMarkDraftFacts } from './feedback-plan.js'
-import { resolveEvalSession, resolveProductPartition, FsMarkLedger, freezeGoldenTrajectory, RUNS_SUBDIR, slugBranch } from '../eval-session-composition.js'
+import { resolveEvalSession, resolveProductPartition, FsMarkLedger, freezeGoldenTrajectory, MARK_INTENT_FILE, RUNS_SUBDIR, slugBranch } from '../eval-session-composition.js'
 import { answerRecordedMarkEdit, clearMarkEditRecord, MARK_EDIT_RECORD_FILE, withMarkEditScope } from './mark-edit-record.js'
 
 export { resolveMarkMember } from './feedback-plan.js'
@@ -52,13 +52,25 @@ export interface MarkWriterAuthority {
 }
 
 /**
- * 2026-10-02 (261002-mrk follow-up): another agent-qa process that is not a daemon held the knowledge
+ * Who holds the writer lease, as a refusal names it. 2026-10-03 (quick 261003-lgd, Phase 432 review
+ * IN-11): a dashboard or MCP host that runs a run in process holds the lease for that run's own
+ * post-run curation, so the holder can be this very process; it is then not "another" one.
+ */
+function leaseHolderPhrase(holderPid: number): string {
+  return holderPid === process.pid
+    ? `This agent-qa process (pid ${holderPid}) is already writing to this knowledge store, for `
+      + 'example finishing a run\'s post-run curation'
+    : `Another agent-qa process (pid ${holderPid}) is writing to this knowledge store`
+}
+
+/**
+ * 2026-10-02 (261002-mrk follow-up): an agent-qa process that is not a daemon held the knowledge
  * writer lease for the whole wait budget, so the mark was not started and nothing was written.
  */
 export class MarkWriterLeaseBusyError extends Error {
   constructor(readonly holderPid: number, readonly waitedMs: number) {
-    super(`Another agent-qa process (pid ${holderPid}) is writing to this knowledge store; waited ${waitedMs}ms `
-      + 'and nothing was marked. Retry the mark when it finishes.')
+    super(`${leaseHolderPhrase(holderPid)}; waited ${waitedMs}ms and nothing was marked. Retry the `
+      + 'mark when it finishes.')
     this.name = 'MarkWriterLeaseBusyError'
   }
 }
@@ -74,18 +86,43 @@ export class KnowledgeWriterLeaseBusyError extends Error {
     super(holderPid === undefined
       ? 'Another agent-qa process was writing to this knowledge store and has just finished; nothing was '
         + 'changed. Retry the change.'
-      : `Another agent-qa process (pid ${holderPid}) is writing to this knowledge store; nothing was `
-        + 'changed. Retry the change when it finishes.')
+      : `${leaseHolderPhrase(holderPid)}; nothing was changed. Retry the change when it finishes.`)
     this.name = 'KnowledgeWriterLeaseBusyError'
   }
 }
 
-/** The fix's target left the store between planning and publication; gold and evidence stand, no receipt. */
+/**
+ * The mark's fix was not applied; gold and evidence stand, no receipt.
+ *
+ * 2026-10-03 (quick 261003-lgd, Phase 432 review WR-04): "Retry the mark" only where a retry can
+ * succeed. A retry reuses the fix this mark already planned (its intent keeps the plan), so a
+ * refusal that comes from the plan itself (its knowledge target is gone, its policy text is
+ * refused, its test file is outside the workspace) recurs on every retry, and the unfinished mark
+ * holds the run. Those name the intent file to remove; marking again then starts a new mark.
+ */
 export class MarkFixNotAppliedError extends Error {
-  constructor(readonly reason: string) {
-    super(`Mark fix was not applied (${reason}); gold and evidence landed, no mark receipt appended. Retry the mark.`)
+  constructor(readonly reason: string, readonly intentPath?: string) {
+    super(markFixNotAppliedMessage(reason, intentPath))
     this.name = 'MarkFixNotAppliedError'
   }
+}
+
+const PLANNED_FIX_REFUSALS: Readonly<Record<string, string>> = {
+  'target-not-found':
+    'the knowledge record this mark\'s fix replaces is no longer in the knowledge store',
+  'policy-materialize-refused': 'the policy text this mark\'s fix writes was refused',
+  'outside-workspace': 'the test file this mark\'s fix edits is outside the workspace',
+}
+
+function markFixNotAppliedMessage(reason: string, intentPath: string | undefined): string {
+  const planned = PLANNED_FIX_REFUSALS[reason]
+  if (planned === undefined || intentPath === undefined) {
+    return `Mark fix was not applied (${reason}); gold and evidence landed, no mark receipt `
+      + 'appended. Retry the mark.'
+  }
+  return `Mark fix was not applied (${reason}): ${planned}, and a retry reuses the same planned `
+    + 'fix. Gold and evidence landed and no mark receipt was appended. To give this mark up, '
+    + `remove ${intentPath}, then mark again.`
 }
 
 export class FeedbackFreezeRefusedError extends Error {
@@ -161,7 +198,9 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
         if (intent.stage !== 'applied') {
         const session = await resolveEvalSession({ configPath: deps.configPath, keyOnly: true })
         const configDir = dirname(resolve(deps.configPath))
-        const editRecordPath = join(deps.agentQaRoot, RUNS_SUBDIR, slugBranch(input.runId), MARK_EDIT_RECORD_FILE)
+        const runDir = join(deps.agentQaRoot, RUNS_SUBDIR, slugBranch(input.runId))
+        const editRecordPath = join(runDir, MARK_EDIT_RECORD_FILE)
+        const intentPath = join(runDir, MARK_INTENT_FILE)
         const knowledgeRoot = resolveConfiguredKnowledgeRoot(session.config, configDir)
         const held = heldAuthority(knowledgeRoot)
         const frozen = freezeGoldenTrajectory({ agentQaRoot: deps.agentQaRoot,
@@ -213,7 +252,7 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
               ...(held === undefined ? {} : { writerAuthority: held }),
               ...(deps.knowledgeChangeDelegate === undefined ? {} : { delegate: deps.knowledgeChangeDelegate }),
             })
-            if (applied.outcome !== 'applied') throw new MarkFixNotAppliedError(applied.outcome)
+            if (applied.outcome !== 'applied') throw new MarkFixNotAppliedError(applied.outcome, intentPath)
             mark.disposition = { kind: 'applied', fix: knowledgePlan.fix,
               change: { kind: 'knowledge', changeId: applied.changeId, recordIds: [...applied.recordIds] } }
           } else if (draft.kind === 'test-edit') {
@@ -225,7 +264,7 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
             const written = answerRecordedMarkEdit({ ...editScope, configDir })
               ?? (await withMarkEditScope(editScope, () => deps.invokeAuthoringDraftEdit!({
                 testRef: draft.plan.testRef, intent: draft.plan.intent }))).written
-            if (written.kind !== 'written') throw new MarkFixNotAppliedError(written.reason)
+            if (written.kind !== 'written') throw new MarkFixNotAppliedError(written.reason, intentPath)
             mark.disposition = { kind: 'applied', fix: 'test-edit',
               change: { kind: 'test-file', filePath: written.filePath, contentDigest: written.contentDigest } }
           } else {

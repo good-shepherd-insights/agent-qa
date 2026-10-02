@@ -309,7 +309,9 @@ describe('a mark under a lease-holding daemon is delegated whole (432-13 #1)', (
       const refusal = await markThroughCli(f, { runId: f.handoff.runId, kind: 'false-fail' }, shortBudget(f, 200))
         .then(() => undefined, (error: unknown) => error as Error & { holderPid?: number })
       expect(refusal).toMatchObject({ name: 'MarkWriterLeaseBusyError', holderPid: process.pid })
-      expect(refusal?.message).toContain(`Another agent-qa process (pid ${process.pid})`)
+      // 2026-10-03 (261003-lgd, IN-11): the holder is this very process, and the refusal says so.
+      expect(refusal?.message).toContain(`This agent-qa process (pid ${process.pid}) is already writing`)
+      expect(refusal?.message).not.toContain('Another agent-qa process')
       expect(refusal?.message).toContain('Retry the mark when it finishes')
       expect(hashes(f.root), 'nothing was written: no gold, no intent, no evidence').toEqual(before)
       const lease = readWriterLease(f.knowledgeRoot)

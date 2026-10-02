@@ -16,6 +16,14 @@
 //   C-MRK-EDIT-ONCE      the model was asked once: expected 2 to be 1
 //   C-MRK-EDIT-CHANGED   promise resolved "{ kind: 'marked', ... }" instead of rejecting
 //                        (the retry edited again over a person's change)
+//
+// 2026-10-03 (quick 261003-lgd, Phase 432 review WR-04): C-MRK-EDIT-CHANGED re-spelled. It pinned a
+// refusal ("target-changed ... Retry the mark") that no retry could ever clear: the edit record and
+// the intent both survived it, so every later mark on the run failed the same way. A record whose
+// target holds neither the bytes the edit read nor the bytes it wrote now completes the mark from
+// the record: the receipt names what the mark wrote, the person's later change is left as theirs,
+// and the model is not asked again and nothing is edited again (D-15). OBSERVED RED on agent-qa
+// 481f0a153: both legs rejected with "Mark fix was not applied (target-changed)".
 
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -159,20 +167,32 @@ describe('a mark retried after a crash inside its authoring edit (432-09 #4)', (
     expect(host.counts.generations).toBe(1)
   })
 
-  it('C-MRK-EDIT-CHANGED: refuses rather than edits again when the recorded file changed after the crash', async () => {
+  it.each([
+    ['edited by hand', (path: string) => writeFileSync(path, `${readFileSync(path, 'utf8')}  - A step a person added by hand\n`)],
+    ['deleted', (path: string) => rmSync(path)],
+  ])('C-MRK-EDIT-CHANGED: completes from its record, editing nothing again, when the file was %s after the crash', async (_label, change) => {
     const f = testEditFixture()
     const target = join(f.root, TEST_PATH)
     const host = editHost(f.configPath, { crashAfterWrite: true })
     const port = () => createFeedbackPortForHost({ ...f.deps, invokeAuthoringDraftEdit: host.invokeAuthoringDraftEdit })
     await expect(port().mark({ runId: f.handoff.runId, kind: 'false-fail' })).rejects.toThrow('injected crash')
-    const changed = `${readFileSync(target, 'utf8')}  - A step a person added by hand\n`
-    writeFileSync(target, changed)
+    const written = readFileSync(target, 'utf8')
+    change(target)
+    const after = existsSync(target) ? readFileSync(target, 'utf8') : undefined
 
-    await expect(port().mark({ runId: f.handoff.runId, kind: 'false-fail' })).rejects.toThrow('target-changed')
+    const result = await port().mark({ runId: f.handoff.runId, kind: 'false-fail' })
 
+    expect(result).toMatchObject({ kind: 'marked', receipt: { ordinal: 1, disposition: { kind: 'applied',
+      fix: 'test-edit', change: { kind: 'test-file', filePath: TEST_PATH, contentDigest: sha256(written) } } } })
     expect(host.counts.generations, 'no second model call').toBe(1)
-    expect(readFileSync(target, 'utf8'), 'the person\'s bytes are left as they are').toBe(changed)
-    expect(existsSync(join(f.runDir, 'marks.jsonl'))).toBe(false)
+    expect(host.counts.writes, 'no second edit').toBe(1)
+    expect(existsSync(target) ? readFileSync(target, 'utf8') : undefined, 'the person\'s change is left as it is')
+      .toBe(after)
+    expect(files(f.runDir).filter(path => path.includes('mark-edit') || path.includes('mark-intent')),
+      'the edit record and the intent are closed with the receipt').toEqual([])
+    // The run is not wedged: the next mark on it answers from the ledger.
+    expect(await port().mark({ runId: f.handoff.runId, kind: 'false-fail' }))
+      .toMatchObject({ kind: 'already-marked' })
   })
 
   it('C-MRK-EDIT-UNSCOPED: an edit outside a mark records nothing', async () => {

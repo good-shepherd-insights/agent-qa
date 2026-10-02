@@ -9,6 +9,8 @@ import { acquireMarkLock } from './mark-lock.js'
 
 export const MARKS_LEDGER_FILE = 'marks.jsonl'
 export const MARKS_LEDGER_LOCK_FILE = 'marks.jsonl.lock'
+/** A run's one unfinished mark, beside its ledger. */
+export const MARK_INTENT_FILE = 'mark-intent.json'
 /**
  * 2026-09-30, 432-09 (D-04/D-11): the resumable mark. `operationId` is the stable identity every
  * effect of this mark carries (the knowledge change id derives from it), so a retry at any stage
@@ -49,6 +51,34 @@ export class MarkLedgerCorruptError extends Error {
     super(`Mark ledger is corrupt at line ${line}`)
     this.name = 'MarkLedgerCorruptError'
   }
+}
+
+/**
+ * 2026-10-03 (quick 261003-lgd, Phase 432 review IN-23): the run's unfinished-mark record cannot be
+ * resumed, refused by the record's own name. It used to surface as `MarkLedgerCorruptError` at the
+ * NEXT ordinal, a line `marks.jsonl` does not have. D-02: nothing is migrated or read further; the
+ * message names the file to remove, after which the run can be marked again.
+ */
+export class MarkIntentUnusableError extends Error {
+  constructor(
+    readonly intentPath: string,
+    readonly reason: 'earlier-version' | 'unreadable' | 'mismatched',
+  ) {
+    const what = reason === 'earlier-version'
+      ? 'was written by an earlier agent-qa version, which this version does not read'
+      : reason === 'unreadable' ? 'is unreadable' : 'does not match this run\'s mark ledger'
+    // Never echo the record's bytes or parser diagnostics into a host surface.
+    super(`The unfinished-mark record ${intentPath} ${what}; nothing was marked. Remove that file, `
+      + 'then mark again.')
+    this.name = 'MarkIntentUnusableError'
+  }
+}
+
+/** Keys only a pre-432 intent carried: a filed proposal, the drafted stage, a stored test draft. */
+function isEarlierVersionIntent(value: unknown): boolean {
+  if (value === null || typeof value !== 'object') return false
+  const intent = value as Record<string, unknown>
+  return 'proposalUuid' in intent || 'testDraft' in intent || intent['stage'] === 'drafted'
 }
 
 /** The one latest-per-address rule, over receipts a caller has already read once. */
@@ -154,7 +184,7 @@ export class FsMarkLedger {
     const intent = intentSchema.parse(value)
     if (intent.mark.runId !== this.runId || intent.mark.runSlug !== this.runSlug
       || intent.mark.ordinal !== this.read().length + 1) throw new MarkLedgerCorruptError(intent.mark.ordinal)
-    atomicPublish(join(this.dir, 'mark-intent.json'), `${canonicalJson(intent)}\n`)
+    atomicPublish(join(this.dir, MARK_INTENT_FILE), `${canonicalJson(intent)}\n`)
     this.intentValue = intent
     return intent
   }
@@ -168,16 +198,25 @@ export class FsMarkLedger {
       // Freeze and draft inside this callback: the next host sees the entire prior receipt.
       const receipts = this.read()
       const nextOrdinal = receipts.length + 1
-      const intentPath = join(this.dir, 'mark-intent.json')
+      const intentPath = join(this.dir, MARK_INTENT_FILE)
       this.intentValue = undefined
       if (existsSync(intentPath)) {
+        let raw: unknown
         try {
-          const intent = intentSchema.parse(JSON.parse(readFileSync(intentPath, 'utf8')))
-          if (intent.mark.runId !== this.runId || intent.mark.runSlug !== this.runSlug) throw new Error('foreign intent')
-          if (intent.mark.ordinal === nextOrdinal) this.intentValue = intent
-          else if (canonicalJson(receipts[intent.mark.ordinal - 1]) === canonicalJson(intent.mark)) unlinkSync(intentPath)
-          else throw new Error('intent does not match receipt order')
-        } catch { throw new MarkLedgerCorruptError(nextOrdinal) }
+          raw = JSON.parse(readFileSync(intentPath, 'utf8'))
+        } catch { throw new MarkIntentUnusableError(intentPath, 'unreadable') }
+        const parsed = intentSchema.safeParse(raw)
+        if (!parsed.success) {
+          throw new MarkIntentUnusableError(intentPath,
+            isEarlierVersionIntent(raw) ? 'earlier-version' : 'unreadable')
+        }
+        const intent = parsed.data
+        if (intent.mark.runId !== this.runId || intent.mark.runSlug !== this.runSlug) {
+          throw new MarkIntentUnusableError(intentPath, 'mismatched')
+        }
+        if (intent.mark.ordinal === nextOrdinal) this.intentValue = intent
+        else if (canonicalJson(receipts[intent.mark.ordinal - 1]) === canonicalJson(intent.mark)) unlinkSync(intentPath)
+        else throw new MarkIntentUnusableError(intentPath, 'mismatched')
       }
       this.inTransaction = true
       const record = await fn(nextOrdinal)
