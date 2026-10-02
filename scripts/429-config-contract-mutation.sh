@@ -384,7 +384,8 @@ const legs = [
     // cell keeps browser.name; the empty-document cell builds use.timeout one field at a time. 429-49:
     // the base-revision cell drives the same autosave, and set-if-absent's outside-value cell sets
     // maxSubActions, which now drops the outside previousStepCount its completion must keep.
-    allowed: [write('PATCH-ONE-ATOMIC-WRITE'), write('PATCH-CROSS-SITE-REFUSED'), write('PATCH-RETURNS-REVISION'),
+    // 432-44, measured: the 432-07 path-queue cells write a field inside a block too, and need its siblings kept.
+    allowed: [manager('two managers, one through a directory alias, merge every overlapping disjoint write'), manager('the PATCH autosave route and a co-hosted writer overlap on one path and every change lands'), write('PATCH-ONE-ATOMIC-WRITE'), write('PATCH-CROSS-SITE-REFUSED'), write('PATCH-RETURNS-REVISION'),
       write('TWO-SETTLES-BOTH-LAND'), write('APPLY-TWICE-IDEMPOTENT'), write('MODE-PRESERVED'), write('SYMLINK-KEPT'),
       write('LEGACY-WRITE-ROUTES-GONE'), manager('LEGACY-HEADLESS-MIGRATED'), manager('ENOENT-STARTS-EMPTY-DOCUMENT'),
       write('BASE-REVISION-ANSWERED'), write('SET-IF-ABSENT-KEEPS-OUTSIDE-VALUE')],
@@ -493,7 +494,8 @@ const legs = [
     reds: [write('INVALID-MERGE-KEEPS-BYTES')],
     // Each also requires an invalid merge to answer 422: the recording cells close on an invalid
     // videoDir, the cross-site cell on an invalid step, and connect's rollback cells on an invalid file.
-    allowed: [manager('keeps authored recording omissions through GET, no-op and unrelated saves', 6),
+    // 432-44, measured: the 432-22 write-policy cell refuses retired key paths, whose refusal this leg's merge breaks too.
+    allowed: [write('C432-CONFIG-WRITE-POLICY: allowProduction is an ordinary write with Undo, and every retired key path is refused before a write'), manager('keeps authored recording omissions through GET, no-op and unrelated saves', 6),
       write('PATCH-CROSS-SITE-REFUSED'), connect('CONNECT-WRITE-FAILURE-ROLLS-BACK-CREDENTIAL', 2)],
     greens: [write('SC3-FIELD-MERGE'), manager('MASK-NEVER-WRITTEN-BACK'), manager('FILE-INVALID-REFUSED')],
   },
@@ -520,7 +522,8 @@ const legs = [
       to: '  "use.timeout.test": "plain",\n  "workspace.envFile": "plain",\n',
     }],
     reds: [leaves('CONFIG-SCHEMA-LEAVES-PINNED')],
-    allowed: [],
+    // 432-44, measured: the 432-22 leaf-count cell classifies the same leaf the leg deletes from the map.
+    allowed: [leaves('C432-CONFIG-LEAVES-92: exactly 92 strict leaves, each classified, none of them retired')],
     greens: [coreSchema('DOTTED-NAMES-ACCEPTED'), coreSchema('parses a full 4-bucket config successfully'),
       coreSchema('rejects root use.headless and accepts browser-scoped headless')],
   },
@@ -558,7 +561,8 @@ const legs = [
     }],
     reds: [write('BASE-REVISION-ANSWERED')],
     // It pins the base to the bytes before the write too, which the planted base now misstates.
-    allowed: [write('PATCH-RETURNS-REVISION')],
+    // 432-44, measured: the 432-07 queued-write cell reads the same base revision inside its turn.
+    allowed: [manager('a queued write reads the file inside its turn, so an outside edit made while it waited survives'), write('PATCH-RETURNS-REVISION')],
     greens: [write('APPLY-TWICE-IDEMPOTENT'), write('SC3-FIELD-MERGE'), manager('MASK-NEVER-WRITTEN-BACK')],
   },
   {
@@ -589,7 +593,8 @@ const legs = [
       to: '',
     }],
     reds: [write('EXPECT-MISMATCH-REFUSED')],
-    allowed: [],
+    // 432-44, measured: the 432-07 and 432-22 stale-expectation cells drive the same expect check.
+    allowed: [manager('a stale same-field expectation from the second writer refuses once the first has changed it'), write('C432-CONFIG-WRITE-POLICY: a stale expect on allowProduction is refused field_changed, and a fresh one lands')],
     greens: [write('EXPECT-MATCH-WRITES'), write('EXPECT-ON-SECRET-REFUSED'), write('SC3-FIELD-MERGE')],
   },
   {
@@ -663,7 +668,8 @@ const legs = [
     reds: [write('WRITE-DOOR-REFUSES-DENIED-ROOTS')],
     // Each sends a path the schema does not describe (an unknown leaf, the retired
     // services.recording.videoDir), which now reaches validation and answers validation_failed.
-    allowed: [write('WRITE-DOOR-REFUSES-UNKNOWN-PATH'),
+    // 432-44, measured: the 432-22 write-policy cell refuses retired key paths through the same denied-root door.
+    allowed: [write('C432-CONFIG-WRITE-POLICY: allowProduction is an ordinary write with Undo, and every retired key path is refused before a write'), write('WRITE-DOOR-REFUSES-UNKNOWN-PATH'),
       manager('keeps authored recording omissions through GET, no-op and unrelated saves', 6)],
     greens: [write('WRITE-DOOR-ADMITS-PAGE-WRITES'), write('SC3-FIELD-MERGE'), write('PATCH-CROSS-SITE-REFUSED')],
   },

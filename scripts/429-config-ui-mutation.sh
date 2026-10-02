@@ -491,7 +491,11 @@ const legs = [
     }],
     reds: [coverage('SCHEMA-COVERAGE-EVERY-LEAF')],
     // It pins a field for every Execution leaf that had none at HEAD, use.workers among them.
-    allowed: [page('EXECUTION-LEAVES-HAVE-FIELDS')],
+    // 432-44, measured: the 432-22 page-writable count and the Runs section's allowProduction cell
+    // both read the same Runs section's fields.
+    allowed: [page('EXECUTION-LEAVES-HAVE-FIELDS'),
+      coverage('C432-CONFIG-WRITABLE-88: exactly 88 page-writable leaves, each owned on the page, and only the four plugin leaves excluded'),
+      tokens('ALLOW-PRODUCTION-SWITCH: allowProduction is an ordinary Runs switch, off by default, saved by the autosave transaction')],
     greens: [coverage('SCHEMA-COVERAGE-EXACTLY-ONCE'), page('TABS-FIVE-IN-ORDER'), a11y('NO-DIALOG-IN-CONFIG')],
   },
   {
