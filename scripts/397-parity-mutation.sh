@@ -808,7 +808,10 @@ esac
 
 run_leg A1 "uncatalogued capability, MCP: a live tool registered outside mapping.ts" "$MARKER_A1"
 run_leg A2 "uncatalogued capability, chat: a resolver row repointed at a literal non-registry id" "$MARKER_A2"
-run_leg B  "ungated capability: one op answered inside packages/agent, around invokeFunction" "config.get"
+# 2026-10-02 (432-45): B's needle is its own planted marker, as A1's is. The render cell that reds
+# quotes the payload the binary printed (the planted answer, marker and all) and names the clause by
+# what it read ("the configuration"), not by its op id (measured).
+run_leg B  "ungated capability: one op answered inside packages/agent, around invokeFunction" "$MARKER_B"
 run_leg C  "SC-4's own rule: a registered capability that no scenario row carries" "runs.list"
 
 # ── The close ───────────────────────────────────────────────────────────────────────────────────
