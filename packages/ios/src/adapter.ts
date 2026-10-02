@@ -2,6 +2,8 @@ import type {
   ActionsFor,
   ActionResult,
   AppRegistryEntry,
+  FillRefusalMeta,
+  FillSubmitMeta,
   ConsoleLogEntry,
   Direction,
   InterimNode,
@@ -66,6 +68,10 @@ type IOSTextElement = {
 }
 type IOSTextTarget = { el: IOSTextElement; rect: Rect }
 type FocusOutcome = 'focused' | 'elsewhere' | 'none'
+type TextBox = { coordinates: { x: number; y: number }; boundingBox: Rect }
+
+const MULTI_LINE_SUBMIT_NOTICE =
+  'submit not sent: Return would add a new line in this multi-line field; tap its send or submit control'
 
 // pressButton: schema button → XCUITest hardware name. Volume buttons are real-devices-only.
 const IOS_BUTTON_NAME: Record<'home' | 'volumeUp' | 'action', string> = {
@@ -624,6 +630,66 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
     return outcome
   }
 
+  private textInputRefusal(
+    verb: FillRefusalMeta['verb'],
+    ref: string,
+    evidence: FillRefusalMeta['evidence'],
+    box?: TextBox,
+  ): ActionResult {
+    const nothing = verb === 'fill' ? 'Nothing was typed.' : 'Nothing was cleared.'
+    let error: string
+    switch (evidence) {
+      case 'no-editable-signal': {
+        const picker = isIOSNativeSelectTarget(this.lastRefs[ref]) ? ' Use nativeSelect for native pickers.' : ''
+        error = `Element ${ref} is not editable: the observation carries no editable signal for it.${picker} ${nothing}`
+        break
+      }
+      case 'no-keyboard-focus':
+        error = `Element ${ref} is not editable: it did not take keyboard focus when tapped. ${nothing}`
+        break
+      case 'focus-elsewhere':
+        error = `Element ${ref} is not editable here: after tapping it, keyboard focus stayed on another element. Input is never sent to an element other than the target. ${nothing}`
+        break
+      case 'stale-target':
+        error = `Element ${ref} was not found at its observed position; the screen changed. Re-observe before typing. ${nothing}`
+        break
+      default:
+        return assertNever(evidence)
+    }
+    const cause: FillRefusalMeta['cause'] = evidence === 'stale-target' ? 'target-not-found' : 'not-editable'
+    const fillRefusal: FillRefusalMeta = { verb, cause, evidence }
+    return { success: false, error, ...(box ?? {}), metadata: { fillRefusal } }
+  }
+
+  /** Gate → own-element lookup → tap → keyboard-focus check shared by fill and clearText. */
+  private async focusIOSTextTarget(
+    verb: FillRefusalMeta['verb'],
+    ref: string,
+    box: TextBox,
+  ): Promise<{ target: IOSTextTarget } | { refusal: ActionResult }> {
+    if (this.lastRefs[ref]?.editable !== true) {
+      return { refusal: this.textInputRefusal(verb, ref, 'no-editable-signal') }
+    }
+    const target = await this.locateIOSTextTarget(ref)
+    if (!target) return { refusal: this.textInputRefusal(verb, ref, 'stale-target') }
+    await this.tapAt(box.coordinates)
+    const focus = await this.confirmIOSKeyboardFocus(target)
+    if (focus === 'focused') return { target }
+    return {
+      refusal: this.textInputRefusal(verb, ref, focus === 'elsewhere' ? 'focus-elsewhere' : 'no-keyboard-focus', box),
+    }
+  }
+
+  /** A non-empty empty-field hint (XCUITest placeholderValue); undefined when absent. */
+  private async readIOSPlaceholder(el: { getAttribute: (name: string) => Promise<string | null> }): Promise<string | undefined> {
+    try {
+      const hint = await el.getAttribute('placeholderValue')
+      return typeof hint === 'string' && hint !== '' ? hint : undefined
+    } catch {
+      return undefined
+    }
+  }
+
   /** Read a focused element's `value` attribute; undefined when nothing is readable. */
   private async readIOSValue(el: { getAttribute: (name: string) => Promise<string | null> }): Promise<string | undefined> {
     try {
@@ -646,6 +712,10 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
    * A3 reconciliation (append): the XCUITest `value` attribute frequently returns the pre-edit value
    * right after addValue (masked/lagged), so when the re-read is exactly the prior the performed
    * append is trusted rather than fabricated into a mismatch. Replace stays strict (mismatch pin).
+   * An empty field reads as its placeholder, so an append prior equal to it counts as empty.
+   *
+   * Return in a multi-line field adds a new line instead of submitting, so a multi-line submit is
+   * never sent and is recorded as such.
    */
   private async fillIOSCompound(
     el: {
@@ -654,13 +724,15 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
       addValue: (value: string) => Promise<void>
     },
     action: { text: string; clearMode: 'replace' | 'append'; submit: boolean },
-    box: { coordinates: { x: number; y: number }; boundingBox: { x: number; y: number; width: number; height: number } },
+    box: TextBox,
     secure: boolean,
+    multiline: boolean,
   ): Promise<ActionResult> {
     const driver = this.driver!
     const isAppend = action.clearMode === 'append'
     // Prior value FIRST for append (expected = prior + typed, D-07) — before any typing.
-    const prior = isAppend ? (await this.readIOSValue(el)) ?? '' : ''
+    let prior = isAppend ? (await this.readIOSValue(el)) ?? '' : ''
+    if (prior !== '' && prior === await this.readIOSPlaceholder(el)) prior = ''
 
     if (isAppend) {
       await el.addValue(action.text)
@@ -670,22 +742,27 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
 
     const expected = isAppend ? prior + action.text : action.text
     const raw = await this.readIOSValue(el)
+    const unsent: FillSubmitMeta = multiline ? { sent: false, reason: 'multi-line-field' } : { sent: false }
+    const notice = action.submit && multiline ? { data: MULTI_LINE_SUBMIT_NOTICE } : {}
     // Unreadable re-read ⇒ honest success with NO fillReread block (never fabricate).
     if (raw === undefined) {
-      return { success: true, ...box }
+      return { success: true, ...box, ...notice, ...(action.submit ? { metadata: { fillSubmit: unsent } } : {}) }
     }
     // A3 append reconciliation: an unchanged value attribute (== prior) means the append did not
     // surface in the re-read; trust the performed append. Replace always compares the raw re-read.
     const actual = isAppend && raw === prior ? expected : raw
 
     const verdict = compareFillReread({ expected, actual, secure })
-    // Return/newline AFTER the re-read, only when the text landed (D-07).
-    if (verdict.ok && action.submit) {
+    // Return/newline AFTER the re-read, only when the text landed in a single-line field (D-07).
+    let fillSubmit: FillSubmitMeta = unsent
+    if (verdict.ok && action.submit && !multiline) {
       await driver.keys(['\n'])
+      fillSubmit = { sent: true }
     }
+    const metadata = { fillReread: verdict.meta, ...(action.submit ? { fillSubmit } : {}) }
     return verdict.ok
-      ? { success: true, ...box, metadata: { fillReread: verdict.meta } }
-      : { success: false, error: verdict.selfCorrectingError, ...box, metadata: { fillReread: verdict.meta } }
+      ? { success: true, ...box, ...notice, metadata }
+      : { success: false, error: verdict.selfCorrectingError, ...box, ...notice, metadata }
   }
 
   /**
@@ -950,32 +1027,17 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
         // clear/append → type → RE-READ the same handle. A mismatch is an honest single-shot
         // failure (the 358 ladder mediates). Secure is detected from the refMap's nativeType.
         const { center, bounds } = resolver.resolve(action.ref)
-        const refData = this.lastRefs[action.ref]
-        if (refData?.editable !== true) {
-          return {
-            success: false,
-            error: `Element ${action.ref} is not editable: the observation carries no editable signal for it.`,
-          }
-        }
-        const target = await this.locateIOSTextTarget(action.ref)
-        if (!target) {
-          return {
-            success: false,
-            error: `Element ${action.ref} was not found at its observed position; the screen changed. Re-observe before typing.`,
-          }
-        }
-        const secure = refData.nativeType === 'XCUIElementTypeSecureTextField'
         const box = { coordinates: center, boundingBox: bounds }
-        await this.tapAt(center)
-        const focus = await this.confirmIOSKeyboardFocus(target)
-        if (focus !== 'focused') {
-          return {
-            success: false,
-            error: `Element ${action.ref} is not editable: it did not take keyboard focus when tapped.`,
-            ...box,
-          }
-        }
-        return await this.fillIOSCompound(target.el, action, box, secure)
+        const focused = await this.focusIOSTextTarget('fill', action.ref, box)
+        if ('refusal' in focused) return focused.refusal
+        const nativeType = this.lastRefs[action.ref]?.nativeType
+        return await this.fillIOSCompound(
+          focused.target.el,
+          action,
+          box,
+          nativeType === 'XCUIElementTypeSecureTextField',
+          nativeType === 'XCUIElementTypeTextView',
+        )
       }
 
       case 'nativeSelect': {
@@ -1256,24 +1318,22 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
 
       case 'clearText': {
         const { center, bounds } = resolver.resolve(action.ref)
-        const clearRefData = this.lastRefs[action.ref]
-        if (clearRefData?.editable !== true) {
-          return {
-            success: false,
-            error: `Element ${action.ref} is not editable: the observation carries no editable signal for it.`,
-          }
+        const box = { coordinates: center, boundingBox: bounds }
+        const focused = await this.focusIOSTextTarget('clearText', action.ref, box)
+        if ('refusal' in focused) return focused.refusal
+        const { el } = focused.target
+        await el.clearValue()
+        const remaining = (await this.readIOSValue(el)) ?? ''
+        if (remaining === '' || remaining === await this.readIOSPlaceholder(el)) {
+          return { success: true, ...box }
         }
-        await this.tapAt(center)
-        for (const type of IOS_EDITABLE_TYPES) {
-          try {
-            const el = await driver.$(`-ios class chain:**/${type}[\`hasFocus == 1\`]`)
-            if (await el.isExisting()) {
-              await el.clearValue()
-              break
-            }
-          } catch { /* try next */ }
+        const secure = this.lastRefs[action.ref]?.nativeType === 'XCUIElementTypeSecureTextField'
+        const residue = secure ? ` (${remaining.length} characters remain)` : ''
+        return {
+          success: false,
+          error: `Element ${action.ref}: the field still has text after clearing${residue} — re-observe and retry.`,
+          ...box,
         }
-        return { success: true, coordinates: center, boundingBox: bounds }
       }
 
       case 'openUniversalLink': {

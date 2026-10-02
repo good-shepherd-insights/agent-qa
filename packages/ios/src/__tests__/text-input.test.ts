@@ -15,6 +15,7 @@ const RECTS: Record<string, Rect> = {
   terms: { x: 20, y: 300, width: 350, height: 80 },
   send: { x: 20, y: 400, width: 350, height: 50 },
   notes: { x: 20, y: 470, width: 350, height: 120 },
+  pin: { x: 20, y: 600, width: 350, height: 44 },
 }
 
 function attrs(r: Rect): string {
@@ -39,6 +40,22 @@ const TWO_VIEWS_XML = `<?xml version="1.0" encoding="UTF-8"?>
   <XCUIElementTypeApplication name="Probe" label="Probe" x="0" y="0" width="390" height="844">
     <XCUIElementTypeTextView label="Body" ${attrs(RECTS.body)} enabled="true" />
     <XCUIElementTypeTextView label="Notes" ${attrs(RECTS.notes)} enabled="true" />
+  </XCUIElementTypeApplication>
+</AppiumAUT>`
+
+const PICKER_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<AppiumAUT>
+  <XCUIElementTypeApplication name="Probe" label="Probe" x="0" y="0" width="390" height="844">
+    <XCUIElementTypePicker label="Month" x="20" y="450" width="350" height="180" enabled="true" />
+    <XCUIElementTypeTextView label="Locked" ${attrs(RECTS.body)} enabled="false" />
+  </XCUIElementTypeApplication>
+</AppiumAUT>`
+
+const SECURE_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<AppiumAUT>
+  <XCUIElementTypeApplication name="Probe" label="Probe" x="0" y="0" width="390" height="844">
+    <XCUIElementTypeTextField label="Title" placeholderValue="Title" ${attrs(RECTS.title)} enabled="true" />
+    <XCUIElementTypeSecureTextField label="Pin" ${attrs(RECTS.pin)} enabled="true" />
   </XCUIElementTypeApplication>
 </AppiumAUT>`
 
@@ -148,6 +165,9 @@ type ExecAction = Parameters<IOSPlatformAdapter['execute']>[0]
 
 const TEXT_VIEW = '-ios class chain:**/XCUIElementTypeTextView'
 const TEXT_FIELD = '-ios class chain:**/XCUIElementTypeTextField'
+const SECURE_FIELD = '-ios class chain:**/XCUIElementTypeSecureTextField'
+const FOCUSED_TEXT_VIEW = '-ios class chain:**/XCUIElementTypeTextView[`hasFocus == 1`]'
+const SUBMIT_NOTICE = 'submit not sent: Return would add a new line in this multi-line field; tap its send or submit control'
 
 describe('IOSPlatformAdapter text input (AUTO-18)', () => {
   let adapter: IOSPlatformAdapter
@@ -167,6 +187,19 @@ describe('IOSPlatformAdapter text input (AUTO-18)', () => {
     if (!el) throw new Error(`test fixture: element "${name}" not observed`)
     calls.length = 0
     return el.ref
+  }
+
+  function clearText(ref: string) {
+    return adapter.execute({ type: 'clearText', ref } as unknown as ExecAction)
+  }
+
+  function nothingTyped(): void {
+    for (const field of Object.values(fields)) {
+      expect(field.setValue).not.toHaveBeenCalled()
+      expect(field.addValue).not.toHaveBeenCalled()
+      expect(field.clearValue).not.toHaveBeenCalled()
+    }
+    expect(mockDriver.keys).not.toHaveBeenCalled()
   }
 
   function fill(ref: string, text: string, opts: { clearMode?: 'replace' | 'append'; submit?: boolean } = {}) {
@@ -246,6 +279,252 @@ describe('IOSPlatformAdapter text input (AUTO-18)', () => {
       expect(result.success).toBe(true)
       expect(fields.body.addValue).toHaveBeenCalledWith('\nsecond')
       expect(result.metadata?.fillReread).toEqual({ expected: 'first\nsecond', actual: 'first\nsecond' })
+    })
+  })
+
+  describe('typed refusals', () => {
+    it('refuses fill and clearText on a static text without an editable signal, before any tap or lookup', async () => {
+      await start()
+      const ref = await refFor('Heading')
+
+      for (const [verb, run] of [['fill', () => fill(ref, 'typed words')], ['clearText', () => clearText(ref)]] as const) {
+        const result = await run()
+        expect(result.success).toBe(false)
+        expect(result.error).toContain('not editable')
+        expect(result.error).not.toContain('typed words')
+        expect(result.metadata?.fillRefusal).toEqual({ verb, cause: 'not-editable', evidence: 'no-editable-signal' })
+      }
+      expect(mockDriver.action).not.toHaveBeenCalled()
+      expect(mockDriver.$$).not.toHaveBeenCalled()
+      nothingTyped()
+    })
+
+    it('refuses a picker (pointing at nativeSelect) and a disabled text view the same way', async () => {
+      await start(PICKER_XML)
+      const state = await adapter.observe()
+      const month = state.elements.find(e => e.name === 'Month')!
+      const locked = state.elements.find(e => e.name === 'Locked')!
+      expect(month.role).toBe('combobox')
+
+      const picker = await fill(month.ref, 'March')
+      expect(picker.success).toBe(false)
+      expect(picker.error).toContain('not editable')
+      expect(picker.error).toContain('nativeSelect')
+      expect(picker.metadata?.fillRefusal).toEqual({ verb: 'fill', cause: 'not-editable', evidence: 'no-editable-signal' })
+
+      const disabled = await fill(locked.ref, 'text')
+      expect(disabled.success).toBe(false)
+      expect(disabled.error).toContain('not editable')
+      expect(disabled.metadata?.fillRefusal).toEqual({ verb: 'fill', cause: 'not-editable', evidence: 'no-editable-signal' })
+      expect(mockDriver.action).not.toHaveBeenCalled()
+      nothingTyped()
+    })
+
+    it('refuses with focus-elsewhere and types nowhere when focus stays on another field', async () => {
+      activeElement = () => Promise.resolve({ [W3C_ELEMENT_KEY]: 'title' })
+      await start()
+      const ref = await refFor('Terms')
+
+      const result = await fill(ref, 'redirected text')
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('not editable')
+      expect(result.error).toContain('Input is never sent to an element other than the target')
+      expect(result.metadata?.fillRefusal).toEqual({ verb: 'fill', cause: 'not-editable', evidence: 'focus-elsewhere' })
+      expect(JSON.stringify(result)).not.toContain('redirected text')
+      expect(calls.filter(c => c.startsWith('tap:'))).toEqual(['tap:195,340'])
+      nothingTyped()
+      expect(fields.title.value).toBe('')
+      expect(fields.terms.value).toBe('Static terms text')
+    })
+
+    it('refuses with no-keyboard-focus after at most three polls when nothing reports focus', async () => {
+      activeElement = () => Promise.reject(new Error('no such element'))
+      await start()
+      const ref = await refFor('Body')
+
+      const result = await fill(ref, 'lost text')
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('did not take keyboard focus')
+      expect(result.metadata?.fillRefusal).toEqual({ verb: 'fill', cause: 'not-editable', evidence: 'no-keyboard-focus' })
+      expect(mockDriver.getActiveElement.mock.calls.length).toBeLessThanOrEqual(3)
+      expect(mockDriver.pause.mock.calls.length).toBeLessThanOrEqual(2)
+      expect(calls).toContain(`$$:${FOCUSED_TEXT_VIEW}`)
+      nothingTyped()
+    })
+
+    it('accepts focus from the hasFocus class chain over text views when no active element is reported', async () => {
+      activeElement = () => Promise.reject(new Error('no such element'))
+      selectorResults[FOCUSED_TEXT_VIEW] = [fields.body]
+      await start()
+      const ref = await refFor('Body')
+
+      const result = await fill(ref, 'via hasFocus')
+
+      expect(result.success).toBe(true)
+      expect(fields.body.setValue).toHaveBeenCalledWith('via hasFocus')
+      expect(fields.title.setValue).not.toHaveBeenCalled()
+    })
+
+    it('refuses a stale target whose observed bounds no longer match, without tapping', async () => {
+      await start()
+      const ref = await refFor('Body')
+      rects.body = { ...RECTS.body, y: RECTS.body.y + 40 }
+
+      const result = await fill(ref, 'late text')
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('not found at its observed position')
+      expect(result.metadata?.fillRefusal).toEqual({ verb: 'fill', cause: 'target-not-found', evidence: 'stale-target' })
+      expect(mockDriver.action).not.toHaveBeenCalled()
+      nothingTyped()
+    })
+
+    it('keeps the typed secret out of a refused secure-field result', async () => {
+      fields = { title: createField('title', '', 'Title'), pin: createField('pin') }
+      selectorResults = { [TEXT_FIELD]: [fields.title], [SECURE_FIELD]: [fields.pin] }
+      activeElement = () => Promise.resolve({ [W3C_ELEMENT_KEY]: 'title' })
+      await start(SECURE_XML)
+      const ref = await refFor('Pin')
+
+      const result = await fill(ref, 'S3cretPw!')
+
+      expect(result.success).toBe(false)
+      expect(result.metadata?.fillRefusal).toEqual({ verb: 'fill', cause: 'not-editable', evidence: 'focus-elsewhere' })
+      expect(JSON.stringify(result)).not.toContain('S3cretPw!')
+      nothingTyped()
+    })
+  })
+
+  describe('clearText', () => {
+    it('clears only the target and verifies it is empty', async () => {
+      fields.body.value = 'old body'
+      fields.title.value = 'kept title'
+      await start()
+      const ref = await refFor('Body')
+
+      const result = await clearText(ref)
+
+      expect(result.success).toBe(true)
+      expect(result.coordinates).toEqual({ x: 195, y: 220 })
+      expect(fields.body.clearValue).toHaveBeenCalledTimes(1)
+      expect(fields.title.clearValue).not.toHaveBeenCalled()
+      expect(fields.terms.clearValue).not.toHaveBeenCalled()
+      expect(fields.title.value).toBe('kept title')
+      expect(calls.lastIndexOf('getAttr:body:value')).toBeGreaterThan(calls.indexOf('clearValue:body'))
+    })
+
+    it('treats a re-read equal to the empty-field hint text as empty', async () => {
+      fields.title.value = 'draft'
+      await start()
+      const ref = await refFor('Title')
+
+      const result = await clearText(ref)
+
+      expect(result.success).toBe(true)
+      expect(fields.title.clearValue).toHaveBeenCalledTimes(1)
+    })
+
+    it('fails when text remains after clearing', async () => {
+      fields.body.value = 'stubborn'
+      fields.body.clearValue.mockImplementation(() => Promise.resolve())
+      await start()
+      const ref = await refFor('Body')
+
+      const result = await clearText(ref)
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('still has text after clearing')
+      expect(result.error).not.toContain('stubborn')
+    })
+
+    it('reports only the remaining length for a secure field', async () => {
+      fields = { title: createField('title', '', 'Title'), pin: createField('pin', 'hunter22') }
+      fields.pin.clearValue.mockImplementation(() => Promise.resolve())
+      selectorResults = { [TEXT_FIELD]: [fields.title], [SECURE_FIELD]: [fields.pin] }
+      await start(SECURE_XML)
+      const ref = await refFor('Pin')
+
+      const result = await clearText(ref)
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('8 characters')
+      expect(JSON.stringify(result)).not.toContain('hunter22')
+    })
+
+    it('refuses with focus-elsewhere and clears nothing', async () => {
+      fields.title.value = 'kept title'
+      activeElement = () => Promise.resolve({ [W3C_ELEMENT_KEY]: 'title' })
+      await start()
+      const ref = await refFor('Terms')
+
+      const result = await clearText(ref)
+
+      expect(result.success).toBe(false)
+      expect(result.metadata?.fillRefusal).toEqual({ verb: 'clearText', cause: 'not-editable', evidence: 'focus-elsewhere' })
+      nothingTyped()
+      expect(fields.title.value).toBe('kept title')
+    })
+  })
+
+  describe('submit and append', () => {
+    it('never presses Return in a text view and records the multi-line outcome', async () => {
+      await start()
+      const ref = await refFor('Body')
+
+      const result = await fill(ref, 'message', { submit: true })
+
+      expect(result.success).toBe(true)
+      expect(mockDriver.keys).not.toHaveBeenCalled()
+      expect(result.metadata?.fillSubmit).toEqual({ sent: false, reason: 'multi-line-field' })
+      expect(result.data).toBe(SUBMIT_NOTICE)
+      expect(fields.body.value).toBe('message')
+    })
+
+    it('presses Return in a single-line field after a passing re-read', async () => {
+      await start()
+      const ref = await refFor('Title')
+
+      const result = await fill(ref, 'Hello', { submit: true })
+
+      expect(result.success).toBe(true)
+      expect(result.metadata?.fillSubmit).toEqual({ sent: true })
+      const keysIdx = calls.findIndex(c => c.startsWith('keys:'))
+      expect(keysIdx).toBeGreaterThan(calls.lastIndexOf('getAttr:title:value'))
+    })
+
+    it('sends no Return when the re-read fails', async () => {
+      fields.title.setValue.mockImplementation(() => Promise.resolve())
+      fields.title.value = 'other'
+      await start()
+      const ref = await refFor('Title')
+
+      const result = await fill(ref, 'Hello', { submit: true })
+
+      expect(result.success).toBe(false)
+      expect(mockDriver.keys).not.toHaveBeenCalled()
+      expect(result.metadata?.fillSubmit).toEqual({ sent: false })
+    })
+
+    it('records no submit outcome when submit was not requested', async () => {
+      await start()
+      const ref = await refFor('Title')
+
+      const result = await fill(ref, 'Hello')
+
+      expect(result.success).toBe(true)
+      expect(result.metadata).not.toHaveProperty('fillSubmit')
+    })
+
+    it('treats a prior value equal to the empty-field hint text as empty when appending', async () => {
+      await start()
+      const ref = await refFor('Title')
+
+      const result = await fill(ref, 'abc', { clearMode: 'append' })
+
+      expect(result.success).toBe(true)
+      expect(result.metadata?.fillReread).toEqual({ expected: 'abc', actual: 'abc' })
     })
   })
 })

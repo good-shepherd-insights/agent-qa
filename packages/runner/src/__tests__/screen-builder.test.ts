@@ -191,6 +191,30 @@ describe('renderScreenTree — pinned grammar (D-02)', () => {
     )
   })
 
+  it('appends [editable] after [selected] only when state.editable is true', () => {
+    const { state } = buildScreenState(
+      makeInput(
+        [
+          { role: 'text', name: 'Body', bounds: { x: 0, y: 0, width: 100, height: 50 }, state: { editable: true } },
+          { role: 'textbox', name: 'Pick', state: { selected: true, editable: true } },
+          { role: 'text', name: 'Terms', state: { editable: false } },
+          { role: 'text', name: 'Heading' },
+        ],
+        { viewport: { width: 200, height: 100 } },
+      ),
+    )
+
+    expect(state.tree).toBe(
+      [
+        '[Viewport: 200x100] [4 elements]',
+        '- text "Body" [ref=e1] @(0,0 100x50) [editable]',
+        '- textbox "Pick" [ref=e2] [selected] [editable]',
+        '- text "Terms" [ref=e3]',
+        '- text "Heading" [ref=e4]',
+      ].join('\n'),
+    )
+  })
+
   it('is invoked directly on structured elements + metadata (renderer-only swap point)', () => {
     const { state } = buildScreenState(makeInput([{ role: 'button', name: 'Save' }]))
     expect(renderScreenTree(state.elements, state.metadata)).toBe(state.tree)

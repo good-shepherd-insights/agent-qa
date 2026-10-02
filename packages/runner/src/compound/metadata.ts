@@ -173,3 +173,61 @@ export function readAssertValueOutcomeMeta(
   }
   return undefined
 }
+
+// ---------------------------------------------------------------------------
+// AUTO-18 text-input blocks. Same law: one block per key, defensive readers that narrow by
+// presence, typeof and closed-set membership. Neither block ever carries typed text or a
+// field value.
+// ---------------------------------------------------------------------------
+
+/** Typed refusal of a fill/clearText before any text was typed. Keyed `fillRefusal`. */
+export interface FillRefusalMeta {
+  verb: 'fill' | 'clearText'
+  cause: 'not-editable' | 'target-not-found'
+  evidence: 'no-editable-signal' | 'no-keyboard-focus' | 'focus-elsewhere' | 'stale-target'
+}
+
+/** Whether a requested submit key was sent after a fill. Keyed `fillSubmit`. */
+export interface FillSubmitMeta {
+  sent: boolean
+  reason?: 'multi-line-field'
+}
+
+const FILL_REFUSAL_VERBS = new Set<FillRefusalMeta['verb']>(['fill', 'clearText'])
+const FILL_REFUSAL_CAUSES = new Set<FillRefusalMeta['cause']>(['not-editable', 'target-not-found'])
+const FILL_REFUSAL_EVIDENCE = new Set<FillRefusalMeta['evidence']>([
+  'no-editable-signal',
+  'no-keyboard-focus',
+  'focus-elsewhere',
+  'stale-target',
+])
+
+function isMember<T extends string>(set: ReadonlySet<T>, value: unknown): value is T {
+  return typeof value === 'string' && set.has(value as T)
+}
+
+export function readFillRefusalMeta(actionResult?: MetadataCarrier): FillRefusalMeta | undefined {
+  const raw = actionResult?.metadata?.['fillRefusal']
+  if (raw && typeof raw === 'object' && 'verb' in raw && 'cause' in raw && 'evidence' in raw) {
+    const { verb, cause, evidence } = raw as Record<string, unknown>
+    if (
+      isMember(FILL_REFUSAL_VERBS, verb) &&
+      isMember(FILL_REFUSAL_CAUSES, cause) &&
+      isMember(FILL_REFUSAL_EVIDENCE, evidence)
+    ) {
+      return { verb, cause, evidence }
+    }
+  }
+  return undefined
+}
+
+export function readFillSubmitMeta(actionResult?: MetadataCarrier): FillSubmitMeta | undefined {
+  const raw = actionResult?.metadata?.['fillSubmit']
+  if (raw && typeof raw === 'object' && 'sent' in raw) {
+    const { sent, reason } = raw as Record<string, unknown>
+    if (typeof sent !== 'boolean') return undefined
+    if (reason === undefined) return { sent }
+    if (reason === 'multi-line-field') return { sent, reason }
+  }
+  return undefined
+}

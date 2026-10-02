@@ -264,7 +264,7 @@ function depthOf(element: ElementInfo, byRef: Map<Ref, ElementInfo>): number {
  *
  * Grammar (pinned; RESEARCH Pitfall #10):
  *   [Viewport: {viewportWidth}x{viewportHeight}] [{elements.length} elements]
- *   {2 spaces × depth}- {role}{ "name"?} [ref={ref}]{ @(x,y wxh)?}{ [disabled]?}{ [offscreen]?}{ [checked]?}{ [selected]?}
+ *   {2 spaces × depth}- {role}{ "name"?} [ref={ref}]{ @(x,y wxh)?}{ [disabled]?}{ [offscreen]?}{ [checked]?}{ [selected]?}{ [editable]?}
  * depth = length of the parentRef chain (root elements depth 0).
  */
 export function renderScreenTree(
@@ -291,6 +291,7 @@ export function renderScreenTree(
     if (element.state.visible === false) line += ' [offscreen]'
     if (element.state.checked === true) line += ' [checked]'
     if (element.state.selected === true) line += ' [selected]'
+    if (element.state.editable === true) line += ' [editable]'
     return line
   })
 
