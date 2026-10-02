@@ -1199,6 +1199,9 @@ describe('validate:arch roster completeness (422-21 / D-18)', () => {
       'the manifest/on-disk equality it asserts is already CALLED by the aggregate above',
     'parity-reverse-completeness.test.ts':
       'conformance LEG 5 over the agent function registry, not an architecture gate',
+    'turbo-arch-test-order.test.ts':
+      'a build-graph pin over turbo.json (quick 261002-hyg), not an architecture gate; the arch '
+      + 'package test task runs it',
   }
 
   const rostered = (): string[] =>
