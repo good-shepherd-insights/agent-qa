@@ -2301,8 +2301,8 @@ const MARK_LEASE_HOLDER_POLL_MS = 100
  *  - the holder is a live daemon: the same `runs.mark` call goes over `/invoke` and its answer is
  *    returned unchanged (the retry identity is the mark intent in the shared run ledger);
  *  - the lease names a registered daemon nobody answers for: `DaemonNotRunningError`;
- *  - any other holder is another agent-qa process: waited out for a bounded time, then the mark runs
- *    locally, or refuses with `MarkWriterLeaseBusyError` if the holder outlasts the budget.
+ *  - any other holder is another agent-qa process: waited out for a bounded time, then the mark
+ *    runs locally, or refuses with `MarkWriterLeaseBusyError` if the holder outlasts the budget.
  */
 export function delegateMarkViaDaemon(input: {
   readonly agentQaRoot: string
@@ -2324,7 +2324,10 @@ export function delegateMarkViaDaemon(input: {
         Date.now(),
       )
       if (freshness.kind !== 'fresh') return undefined
-      const daemon = await classifyDaemonRegistration({ agentQaRoot: input.agentQaRoot, knowledgeRoot })
+      const daemon = await classifyDaemonRegistration({
+        agentQaRoot: input.agentQaRoot,
+        knowledgeRoot,
+      })
       if (daemon.kind === 'live-confirmed') {
         return RunsMarkOutcomeSchema.parse(await invokeViaDaemon({
           agentQaRoot: input.agentQaRoot,
@@ -2339,7 +2342,8 @@ export function delegateMarkViaDaemon(input: {
       }
       const waitedMs = Date.now() - startedAt
       if (waitedMs >= budgetMs) throw new MarkWriterLeaseBusyError(lease.lease.pid, waitedMs)
-      await new Promise(resolveWait => setTimeout(resolveWait, Math.min(pollMs, budgetMs - waitedMs)))
+      const pauseMs = Math.min(pollMs, budgetMs - waitedMs)
+      await new Promise(resolveWait => setTimeout(resolveWait, pauseMs))
     }
   }
 }
