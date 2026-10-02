@@ -6,8 +6,12 @@
 // (exit 86 / `prompt=<offset>`) rather than answer one if it ever renders again. Every drive runs
 // against stub or fake children in temp directories; nothing launches a browser, a model or a lane.
 //
-// These files live in the super-repository and in the owner's miniwob checkout, so this test needs
-// that layout, `bash`, `python3` and `expect` — the same layout promotion-posture already reads.
+// These files live in the super-repository and in the owner's miniwob checkout, so most cells need
+// that layout, `bash`, `python3` and `expect`. agent-qa's own CI checks out agent-qa alone: there,
+// the cells that drive a caller under `demo/` or the miniwob checkout are skipped with a reason the
+// file prints (the D-16 mutation proof's pattern), and the cells over agent-qa's own scripts and
+// the shipped CLI still run (quick 261002-hyg, 432-41 #8). A missing caller inside a present
+// layout is a failure, never a skip.
 
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -33,6 +37,27 @@ const CALLERS = {
   askDriver: join(AGENT_QA_ROOT, 'scripts/395-ask-road-pty.py'),
   runbookGate: join(SUPER_ROOT, 'demo/acceptance/399/399-runbook-gate.sh'),
 } as const
+
+const DEMO_CALLERS = [
+  'laneExampleWeb', 'laneAutomationExercise', 'laneWaiBad', 'campaign', 'fnDriver', 'chatDriver', 'runbookGate',
+] as const satisfies readonly (keyof typeof CALLERS)[]
+
+const DEMO_INIT = join(SUPER_ROOT, 'demo/init')
+const LAYOUT_SKIP_REASON =
+  existsSync(DEMO_INIT) && existsSync(join(SUPER_ROOT, 'demo/acceptance'))
+    ? undefined
+    : `agent-qa is not checked out inside the super-repository (no ${DEMO_INIT} or `
+      + "demo/acceptance, as in agent-qa's own CI): the seven demo callers (three lanes, the 413 "
+      + 'campaign, the two 394 pty drivers, the 399 runbook gate) were NOT driven. Run this file '
+      + 'from the super-repository checkout to measure them.'
+
+const MINIWOB_ROOT = join(SUPER_ROOT, 'agent-qa-miniwob-bench')
+const MINIWOB_SKIP_REASON = existsSync(MINIWOB_ROOT)
+  ? undefined
+  : `the owner's miniwob bench checkout (${MINIWOB_ROOT}) is absent: its product driver was NOT read.`
+
+const inLayout = it.skipIf(LAYOUT_SKIP_REASON !== undefined)
+const withMiniwob = it.skipIf(MINIWOB_SKIP_REASON !== undefined)
 
 const LIVE_FROM_ZERO = join(AGENT_QA_ROOT, 'scripts/395-live-from-zero.sh')
 const LEG6_CHECK = join(AGENT_QA_ROOT, 'scripts/395-leg6-instrument-check.sh')
@@ -194,6 +219,21 @@ function verdictField(line: string, name: string): number | undefined {
   return match === null ? undefined : Number(match[1])
 }
 
+describe('C432-LIVE-CALLERS-LAYOUT — the file says which callers it could drive (quick 261002-hyg)', () => {
+  it('C432-LIVE-CALLERS-LAYOUT: names every skipped caller group and why, so a skip is never a pass', () => {
+    const layout = LAYOUT_SKIP_REASON ?? 'super-repository layout present: every demo caller is driven'
+    const miniwob = MINIWOB_SKIP_REASON ?? 'miniwob checkout present: its product driver is read'
+    process.stderr.write(`\n[432 external callers] ${layout}\n[432 external callers] ${miniwob}\n`)
+    for (const path of [CALLERS.askDriver, LIVE_FROM_ZERO, LEG6_CHECK]) {
+      expect(existsSync(path), path).toBe(true)
+    }
+    if (LAYOUT_SKIP_REASON === undefined) {
+      for (const name of DEMO_CALLERS) expect(existsSync(CALLERS[name]), name).toBe(true)
+    }
+    if (MINIWOB_SKIP_REASON === undefined) expect(existsSync(CALLERS.miniwob), 'miniwob').toBe(true)
+  })
+})
+
 describe('C432-LIVE-CALLERS-LANES — no live run caller passes the retired trust flag (432-41)', () => {
   it('C432-LIVE-CALLERS-LANES: the shipped run refuses the retired flag and declares every flag the callers pass', () => {
     const { run: runHelp, global } = shippedHelp()
@@ -208,7 +248,7 @@ describe('C432-LIVE-CALLERS-LANES — no live run caller passes the retired trus
     expect(readdirSync(cwd)).toEqual([])
   })
 
-  it.each(LANES)(
+  inLayout.each(LANES)(
     'C432-LIVE-CALLERS-LANES: %s parses and execs the CLI with its test and the passed-through args only',
     (_name, path, testFile) => {
       expect(run('bash', ['-n', path]).status).toBe(0)
@@ -228,7 +268,7 @@ describe('C432-LIVE-CALLERS-LANES — no live run caller passes the retired trus
     },
   )
 
-  it('C432-LIVE-CALLERS-LANES: the 413 campaign parses and runs every leg with no retired flag', () => {
+  inLayout('C432-LIVE-CALLERS-LANES: the 413 campaign parses and runs every leg with no retired flag', () => {
     expect(run('bash', ['-n', CALLERS.campaign]).status).toBe(0)
     const code = codeLines(CALLERS.campaign)
     const runLines = code.filter((line) => /^\s*cli run /.test(line))
@@ -242,7 +282,7 @@ describe('C432-LIVE-CALLERS-LANES — no live run caller passes the retired trus
     expect(code.join('\n')).not.toMatch(/trustSource=|session\.trustMode/)
   })
 
-  it('C432-LIVE-CALLERS-LANES: the miniwob product builds its run argv with no retired flag, every flag declared', () => {
+  withMiniwob('C432-LIVE-CALLERS-LANES: the miniwob product builds its run argv with no retired flag, every flag declared', () => {
     const python = binary('python3')
     const extract = run(python, ['-c', `
 import ast, json, sys
@@ -285,8 +325,9 @@ print(json.dumps(out))
 })
 
 describe('C432-LIVE-CALLERS — the nine named live callers carry no retired flag and answer no prompt (432-41)', () => {
-  it('C432-LIVE-CALLERS: no live caller passes the retired flag; the 399 gate names it only to watch the parser refuse it', () => {
+  inLayout('C432-LIVE-CALLERS: no live caller passes the retired flag; the 399 gate names it only to watch the parser refuse it', () => {
     for (const [name, path] of Object.entries(CALLERS)) {
+      if (name === 'miniwob' && MINIWOB_SKIP_REASON !== undefined) continue
       expect(existsSync(path), name).toBe(true)
       if (name === 'runbookGate') continue
       expect(codeLines(path).join('\n'), name).not.toContain(RETIRED_FLAG)
@@ -299,7 +340,7 @@ describe('C432-LIVE-CALLERS — the nine named live callers carry no retired fla
     expect(gate.join('\n')).toContain("unknown option '--trust-session'")
   })
 
-  it('C432-LIVE-CALLERS: the prompt drivers send nothing but the typed lines', () => {
+  inLayout('C432-LIVE-CALLERS: the prompt drivers send nothing but the typed lines', () => {
     const sends = (path: string): string[] =>
       codeLines(path).map((line) => line.trim()).filter((line) => /^send\s/.test(line))
 
@@ -319,7 +360,7 @@ describe('C432-LIVE-CALLERS — the nine named live callers carry no retired fla
     expect(ask).not.toContain('declined')
   })
 
-  it('C432-LIVE-CALLERS: the fn driver exits with its child status and refuses a retired prompt unanswered', () => {
+  inLayout('C432-LIVE-CALLERS: the fn driver exits with its child status and refuses a retired prompt unanswered', () => {
     const expectBin = binary('expect')
     const dir = scratch('fn')
     const exits = join(dir, 'exits.js')
@@ -344,7 +385,7 @@ describe('C432-LIVE-CALLERS — the nine named live callers carry no retired fla
     expect(existsSync(received)).toBe(false)
   })
 
-  it('C432-LIVE-CALLERS: the chat driver drives a prompt-free session to exit 0 and refuses a retired prompt unanswered', () => {
+  inLayout('C432-LIVE-CALLERS: the chat driver drives a prompt-free session to exit 0 and refuses a retired prompt unanswered', () => {
     const drive = chatFixture()
 
     const clean = drive('clean')
@@ -399,14 +440,14 @@ describe('C432-LIVE-CALLERS — the nine named live callers carry no retired fla
     expect(existsSync(received)).toBe(false)
   })
 
-  it('C432-LIVE-CALLERS: the chat driver keeps its CR-03 refusal of a boundary that crossed nothing', () => {
+  inLayout('C432-LIVE-CALLERS: the chat driver keeps its CR-03 refusal of a boundary that crossed nothing', () => {
     const redraw = chatFixture()('redraw')
     expect(redraw.result.status, redraw.result.stdout).toBe(89)
     expect(redraw.result.stdout).toContain("REFUSING turn 1's boundary")
     expect(redraw.lines).toEqual(['write a test'])
   })
 
-  it('C432-LIVE-CALLERS: the fn driver keeps its no-command and timeout exits', () => {
+  inLayout('C432-LIVE-CALLERS: the fn driver keeps its no-command and timeout exits', () => {
     const expectBin = binary('expect')
     const dir = scratch('fn-retained')
     const hangs = join(dir, 'hangs.js')
@@ -418,7 +459,7 @@ describe('C432-LIVE-CALLERS — the nine named live callers carry no retired fla
     expect(timedOut.stdout).toContain('TIMEOUT after 2 second(s)')
   })
 
-  it('C432-LIVE-CALLERS: the 399 runbook gate asks the live CLI instead of reading the deleted gate source', () => {
+  inLayout('C432-LIVE-CALLERS: the 399 runbook gate asks the live CLI instead of reading the deleted gate source', () => {
     expect(run('bash', ['-n', CALLERS.runbookGate]).status).toBe(0)
     const code = codeLines(CALLERS.runbookGate).join('\n')
 

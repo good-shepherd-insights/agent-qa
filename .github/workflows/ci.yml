@@ -55,6 +55,13 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # `432-external-callers.test.ts` drives the 394 pty drivers through `expect`, which a stock
+      # ubuntu runner lacks. This job checks out agent-qa alone, so that file's cells over callers in
+      # the super-repository (`demo/`) and the owner's miniwob checkout skip with a reason it prints;
+      # its cells over agent-qa's own scripts and the built CLI run.
+      - name: Install expect
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends expect
+
       # `embedding-bench` is excluded deliberately and the exclusion is disclosed, not silent.
       # Its tau-lex calibration case passes locally and fails only on CI, returning
       # 2.76131419079 against an expected 1.888959749101 — both sides computed at runtime over a
