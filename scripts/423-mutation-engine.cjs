@@ -33,6 +33,22 @@
 // declares `reads: { root, reference }` in place of an import. An instrument that consumes built
 // output declares `dist: true`, and the workspace is built before its preflight. `<PREFIX>_EVIDENCE`
 // names the evidence directory, which this run must create itself.
+//
+// 432-43 ADDITIONS, all opt-in; a driver that uses none of them runs and lists exactly as before.
+//   - A leg may carry its own `id` (`spec.explicitIds: true`): the leg is then its mutation-map row,
+//     not its position, so reordering the registration cannot re-aim a leg at another member.
+//   - A leg may touch several files: `also: [{ subject, edits } | { subject, create }]`, and its own
+//     subject may be a file it CREATES (`create: '<text>'`, no edits) — a deleted module returning.
+//     A created file must not exist and must not be tracked or ignored before the run; restoring it
+//     is deleting it (and any directory the run made for it), verified absent.
+//   - A cell may name the assertion its RED must carry (`cell(..., count, message)`): the failed
+//     cell's own failure messages must contain that text, so a cell that reds on a neighbour's
+//     assertion, a crash or a load error is not this leg's RED.
+//   - A crossing may build packages first (`crossing.before: [{ pkg, dir }]`), and an instrument that
+//     reads a built output BY PATH declares `crossing.byPath: true` with its `reference` literal in
+//     place of a package dependency.
+//   - `spec.parseCheck: true` parses every planted text with TypeScript before a byte is owned; a
+//     mutant with a syntax error is refused, never measured.
 
 const fs = require('node:fs')
 const path = require('node:path')
@@ -48,8 +64,8 @@ const MODES = ['', 'neutered', 'fatal', 'SIGINT', 'SIGTERM', 'SIGHUP']
  * containing ' > ' is matched against the describe path instead (`Describe > title`), so a cell
  * whose ID lives on its describe block is still named exactly.
  */
-function cell(instrument, file, name, count = 1) {
-  return { instrument, file, name, count }
+function cell(instrument, file, name, count = 1, message) {
+  return message === undefined ? { instrument, file, name, count } : { instrument, file, name, count, message }
 }
 
 function titleMatches(spec, title) {
@@ -66,7 +82,17 @@ function cellMatches(spec, title, ancestors = []) {
 }
 
 function describeCell(spec) {
-  return `${spec.file} > ${spec.name}${spec.count === 1 ? '' : ` (x${spec.count})`}`
+  return `${spec.file} > ${spec.name}${spec.count === 1 ? '' : ` (x${spec.count})`}${spec.message === undefined ? '' : ` [${spec.message}]`}`
+}
+
+/** Every file one leg touches, in order: its own subject first, then its `also` parts. */
+function partsOf(leg) {
+  const own = leg.create === undefined ? { subject: leg.subject, edits: leg.edits } : { subject: leg.subject, create: leg.create }
+  return [own, ...(leg.also ?? [])]
+}
+
+function plantedTexts(leg) {
+  return partsOf(leg).flatMap(part => part.create === undefined ? part.edits.map(edit => edit.to) : [part.create])
 }
 
 /** Every hunk's anchor must occur exactly once, and the result must differ from the input. */
@@ -89,19 +115,32 @@ function runGate(spec) {
   const legKey = `${spec.envPrefix}_LEG`
   const listKey = `${spec.envPrefix}_LIST`
 
-  const legs = spec.legs.map((leg, index) => ({ ...leg, id: `${spec.idPrefix}${String(index + 1).padStart(2, '0')}` }))
+  const legs = spec.explicitIds === true
+    ? spec.legs.map(leg => ({ ...leg }))
+    : spec.legs.map((leg, index) => ({ ...leg, id: `${spec.idPrefix}${String(index + 1).padStart(2, '0')}` }))
   if (legs.length !== spec.expectedLegs) {
     console.error(`FATAL: Expected exactly ${spec.expectedLegs} mutation legs, declared ${legs.length}`)
     process.exit(1)
   }
+  if (spec.explicitIds === true) {
+    const ids = legs.map(leg => leg.id)
+    if (ids.some(id => typeof id !== 'string' || !/^[A-Z]\d+$/.test(id)) || new Set(ids).size !== ids.length) {
+      console.error('FATAL: Explicit leg ids must be unique [A-Z]<digits> ids')
+      process.exit(1)
+    }
+  }
+  const multiPart = leg => leg.create !== undefined || leg.also !== undefined
 
   if (process.env[listKey] === '1') {
+    // Exit once the write has flushed: on a pipe `process.stdout.write` is asynchronous, and an
+    // immediate exit cut an inventory longer than one pipe buffer (64 KiB) mid-string.
     process.stdout.write(JSON.stringify(legs.map(leg => ({
       id: leg.id, subject: leg.subject, operation: leg.operation, claim: leg.claim,
       reds: leg.reds.map(describeCell), greens: (leg.greens ?? []).map(describeCell),
       crossing: leg.crossing?.pkg ?? null, group: leg.group ?? null,
-    })), null, 2) + '\n')
-    process.exit(0)
+      ...(multiPart(leg) ? { paths: partsOf(leg).map(part => part.subject) } : {}),
+    })), null, 2) + '\n', () => process.exit(0))
+    return
   }
 
   const mode = process.env[modeKey] ?? ''
@@ -149,24 +188,50 @@ function runGate(spec) {
   }
   console.log(`Evidence: ${work}`)
 
-  const subjects = [...new Set(legs.map(leg => leg.subject))]
+  // Every touched path in first-touch order; edited files are snapshotted, created files are owned
+  // as "absent" and handed back by deletion.
+  const allPaths = [...new Set(legs.flatMap(leg => partsOf(leg).map(part => part.subject)))]
+  const createdPaths = new Set(legs.flatMap(leg => partsOf(leg).filter(part => part.create !== undefined).map(part => part.subject)))
+  const subjects = allPaths.filter(file => !createdPaths.has(file))
+  for (const file of createdPaths) {
+    if (subjects.includes(file) || legs.some(leg => partsOf(leg).some(part => part.subject === file && part.create === undefined))) {
+      console.error(`FATAL: ${file} is both created and edited`)
+      process.exit(1)
+    }
+  }
   const owned = new Map()
-  const crossedBuilt = new Set()
+  const ownedAbsent = new Map()
+  const crossedBuilt = new Map()
   let child
   let cleanupActive = false
   let ownedAny = false
 
   function restore() {
-    for (const [file, snapshot] of owned) {
-      const target = path.join(root, file)
-      const bytes = fs.readFileSync(snapshot.path)
-      if (sha(bytes) !== snapshot.hash) throw new Error(`snapshot corrupted: ${file}`)
-      if (sha(fs.readFileSync(target)) !== snapshot.hash) {
-        fs.writeFileSync(target, bytes)
-        fs.utimesSync(target, snapshot.atimeMs / 1000, snapshot.mtimeMs / 1000)
+    for (const file of allPaths) {
+      if (owned.has(file)) {
+        const snapshot = owned.get(file)
+        const target = path.join(root, file)
+        const bytes = fs.readFileSync(snapshot.path)
+        if (sha(bytes) !== snapshot.hash) throw new Error(`snapshot corrupted: ${file}`)
+        if (sha(fs.readFileSync(target)) !== snapshot.hash) {
+          fs.writeFileSync(target, bytes)
+          fs.utimesSync(target, snapshot.atimeMs / 1000, snapshot.mtimeMs / 1000)
+        }
+        if (sha(fs.readFileSync(target)) !== snapshot.hash) throw new Error(`restore hash mismatch: ${file}`)
+        console.log(`RESTORED ${file} sha256=${snapshot.hash}`)
+      } else if (ownedAbsent.has(file)) {
+        const target = path.join(root, file)
+        fs.rmSync(target, { force: true })
+        // Deepest first: only the directories this run had to make, and only once they are empty.
+        for (const dir of [...ownedAbsent.get(file).dirs].reverse()) {
+          if (fs.existsSync(dir) && fs.readdirSync(dir).length === 0) fs.rmdirSync(dir)
+        }
+        if (fs.existsSync(target)) throw new Error(`restore left a created file behind: ${file}`)
+        for (const dir of ownedAbsent.get(file).dirs) {
+          if (fs.existsSync(dir)) throw new Error(`restore left a created directory behind: ${path.relative(root, dir)}`)
+        }
+        console.log(`RESTORED ${file} absent`)
       }
-      if (sha(fs.readFileSync(target)) !== snapshot.hash) throw new Error(`restore hash mismatch: ${file}`)
-      console.log(`RESTORED ${file} sha256=${snapshot.hash}`)
     }
   }
 
@@ -188,7 +253,9 @@ function runGate(spec) {
 
   function cleanup() {
     restore()
-    for (const pkg of crossedBuilt) buildPackage(pkg, `restore-build-${pkg.replace(/[^a-z0-9]+/gi, '-')}`)
+    for (const chain of crossedBuilt.values()) {
+      for (const pkg of chain) buildPackage(pkg, `restore-build-${pkg.replace(/[^a-z0-9]+/gi, '-')}`)
+    }
     crossedBuilt.clear()
     if (ownedAny) finalBuild()
     ownedAny = false
@@ -225,6 +292,7 @@ function runGate(spec) {
   function relativeClosure(pkg, files) {
     const seen = new Set()
     const scanned = new Set()
+    const walkedDirs = new Set()
     const stack = files.map(file => path.join(root, pkg, file))
     while (stack.length > 0) {
       const file = stack.pop()
@@ -277,12 +345,28 @@ function runGate(spec) {
         for (const literal of text.matchAll(/(['"])([\w@-][\w@./-]*(?:\/|\.tsx?))\1/g)) {
           const resolved = path.resolve(base, literal[2])
           if (!resolved.startsWith(`${base}${path.sep}`) || !fs.existsSync(resolved)) continue
-          if (literal[2].endsWith('/') && fs.lstatSync(resolved).isDirectory()) walk(resolved)
-          else if (fs.lstatSync(resolved).isFile()) scanned.add(resolved)
+          if (literal[2].endsWith('/') && fs.lstatSync(resolved).isDirectory()) {
+            walkedDirs.add(resolved)
+            walk(resolved)
+          } else if (fs.lstatSync(resolved).isFile()) scanned.add(resolved)
         }
       }
     }
-    return new Set([...seen, ...scanned])
+    const closure = new Set([...seen, ...scanned])
+    closure.walkedDirs = walkedDirs
+    return closure
+  }
+
+  /**
+   * A CREATED file reaches a source-walking instrument when it lands under a directory that
+   * instrument walks, or when the instrument names its exact path as a literal (an absent-module
+   * cell). It cannot be in an import closure: nothing imports a deleted module.
+   */
+  function createdArrives(closure, file) {
+    const target = path.join(root, file)
+    const name = file.split('/').slice(1).join('/')
+    if ([...closure.walkedDirs].some(dir => target.startsWith(`${dir}${path.sep}`))) return true
+    return [...closure].some(source => fs.readFileSync(source, 'utf8').includes(`'${name}'`))
   }
 
   function proveArrival() {
@@ -305,13 +389,22 @@ function runGate(spec) {
         continue
       }
       if (leg.crossing !== undefined) {
-        const manifest = JSON.parse(fs.readFileSync(path.join(root, instrument.pkg, 'package.json'), 'utf8'))
-        const declared = { ...manifest.dependencies, ...manifest.devDependencies }
-        if (declared[leg.crossing.pkg] === undefined) {
-          throw new Error(`${leg.id}: ${instrument.pkg} does not depend on ${leg.crossing.pkg}`)
+        // `byPath`: the instrument reads the built file by its path (a spawned parser, a binary's
+        // help), so no package dependency carries it — the `reference` literal below does.
+        if (leg.crossing.byPath === true) {
+          if (leg.crossing.reference === undefined) throw new Error(`${leg.id}: a by-path crossing must name its reference`)
+        } else {
+          const manifest = JSON.parse(fs.readFileSync(path.join(root, instrument.pkg, 'package.json'), 'utf8'))
+          const declared = { ...manifest.dependencies, ...manifest.devDependencies }
+          if (declared[leg.crossing.pkg] === undefined) {
+            throw new Error(`${leg.id}: ${instrument.pkg} does not depend on ${leg.crossing.pkg}`)
+          }
         }
-        if (!leg.subject.startsWith(`${leg.crossing.dir}/src/`)) {
-          throw new Error(`${leg.id}: ${leg.subject} is not source of ${leg.crossing.pkg}`)
+        const built = [leg.crossing, ...(leg.crossing.before ?? [])]
+        for (const part of partsOf(leg)) {
+          if (!built.some(crossed => part.subject.startsWith(`${crossed.dir}/src/`))) {
+            throw new Error(`${leg.id}: ${part.subject} is not source of ${built.map(crossed => crossed.pkg).join(' or ')}`)
+          }
         }
         // A package import reaches the dist through module resolution. A built app bundle has no
         // importable entry, so its leg names the literal by which the instrument serves that dist,
@@ -325,23 +418,32 @@ function runGate(spec) {
           const served = [...closures.get(leg.instrument)].some(file => fs.readFileSync(file, 'utf8').includes(leg.crossing.reference))
           if (!served) throw new Error(`${leg.id}: no ${leg.instrument} closure file serves ${leg.crossing.pkg} by ${leg.crossing.reference}`)
         }
-        if (!leg.edits.some(edit => edit.to.includes(leg.crossing.marker))) {
+        if (!plantedTexts(leg).some(text => text.includes(leg.crossing.marker))) {
           throw new Error(`${leg.id}: the arrival marker is not planted by any hunk`)
         }
         console.log(`ARRIVAL ${leg.id}: ${leg.subject} crosses into ${leg.instrument} through the rebuilt ${leg.crossing.pkg} dist`)
         continue
       }
       if (!closures.has(leg.instrument)) closures.set(leg.instrument, relativeClosure(instrument.pkg, instrument.files))
-      const inClosure = closures.get(leg.instrument).has(path.join(root, leg.subject))
-      // Another package's SOURCE counts only when the closure reaches it directly; otherwise the
-      // instrument would read that package's dist, which the leg does not rebuild.
-      if (!leg.subject.startsWith(`${instrument.pkg}/`) && !inClosure) {
-        throw new Error(`${leg.id}: ${leg.subject} is outside ${instrument.pkg} and declares no dist crossing`)
+      for (const part of partsOf(leg)) {
+        if (part.create !== undefined) {
+          if (!createdArrives(closures.get(leg.instrument), part.subject)) {
+            throw new Error(`${leg.id}: the created ${part.subject} lies under no directory ${leg.instrument} walks and is named by none of its files — a green would measure nothing`)
+          }
+          console.log(`ARRIVAL ${leg.id}: the created ${part.subject} is read by ${leg.instrument}`)
+          continue
+        }
+        const inClosure = closures.get(leg.instrument).has(path.join(root, part.subject))
+        // Another package's SOURCE counts only when the closure reaches it directly; otherwise the
+        // instrument would read that package's dist, which the leg does not rebuild.
+        if (!part.subject.startsWith(`${instrument.pkg}/`) && !inClosure) {
+          throw new Error(`${leg.id}: ${part.subject} is outside ${instrument.pkg} and declares no dist crossing`)
+        }
+        if (!inClosure) {
+          throw new Error(`${leg.id}: ${part.subject} is not in the relative-import closure of ${leg.instrument} — a green would measure nothing`)
+        }
+        console.log(`ARRIVAL ${leg.id}: ${part.subject} is in the ${leg.instrument} import closure`)
       }
-      if (!inClosure) {
-        throw new Error(`${leg.id}: ${leg.subject} is not in the relative-import closure of ${leg.instrument} — a green would measure nothing`)
-      }
-      console.log(`ARRIVAL ${leg.id}: ${leg.subject} is in the ${leg.instrument} import closure`)
     }
   }
 
@@ -377,7 +479,8 @@ function runGate(spec) {
       for (const assertion of file.assertionResults ?? []) {
         if (!['passed', 'failed'].includes(assertion.status)) continue
         cells.push({ file: relative, title: assertion.title, ancestors: assertion.ancestorTitles ?? [],
-          id: [relative, ...assertion.ancestorTitles, assertion.title].join(' > '), status: assertion.status })
+          id: [relative, ...assertion.ancestorTitles, assertion.title].join(' > '), status: assertion.status,
+          messages: (assertion.failureMessages ?? []).join('\n').replace(/\x1b\[[0-9;]*m/g, '') })
       }
     }
     if (cells.length === 0 || /No test files found/.test(clean)) throw new Error(`${result.label}: No selected named tests`)
@@ -420,6 +523,13 @@ function runGate(spec) {
     for (const ref of leg.reds) {
       const standing = matched(parsed, ref).filter(item => item.status !== 'failed')
       if (standing.length > 0) throw new Error(`${leg.id}: did not red its named cell: ${standing.map(item => item.id).join(' | ')}`)
+      // A named assertion: the cell is red, and red by THIS failure, not a neighbour's or a crash's.
+      if (ref.message !== undefined) {
+        const elsewhere = matched(parsed, ref).filter(item => !item.messages.includes(ref.message))
+        if (elsewhere.length > 0) {
+          throw new Error(`${leg.id}: red its named cell without its named assertion (${ref.message}): ${elsewhere.map(item => `${item.id}: ${item.messages.split('\n')[0]}`).join(' | ')}`)
+        }
+      }
     }
     for (const ref of leg.greens ?? []) {
       const moved = matched(parsed, ref).filter(item => item.status !== 'passed')
@@ -480,9 +590,51 @@ function runGate(spec) {
     return { ...record, report, log: fs.readFileSync(logPath, 'utf8') }
   }
 
-  function writeSubject(leg, text) {
-    fs.writeFileSync(path.join(root, leg.subject), text)
+  /** The planted text of one part: its hunks over the snapshot, or the module it creates. */
+  function plantedText(leg, part) {
+    if (part.create !== undefined) return part.create
+    return applyEdits(fs.readFileSync(owned.get(part.subject).path, 'utf8'), { id: leg.id, edits: part.edits })
+  }
+
+  function writePart(leg, part) {
+    const target = path.join(root, part.subject)
     ownedAny = true
+    if (part.create !== undefined) {
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      fs.writeFileSync(target, part.create, { flag: 'wx' })
+      return
+    }
+    fs.writeFileSync(target, plantedText(leg, part))
+  }
+
+  function writeSubject(leg) {
+    for (const part of partsOf(leg)) writePart(leg, part)
+  }
+
+  /** Each part's digest now: a created part is `absent` until it exists. */
+  function digestOf(file) {
+    const target = path.join(root, file)
+    return fs.existsSync(target) ? sha(fs.readFileSync(target)) : 'absent'
+  }
+
+  /** Every TypeScript-family planted text must parse; a syntax error is never a measurement. */
+  function parseCheck() {
+    const ts = require('typescript')
+    let parsed = 0
+    for (const leg of legs) {
+      for (const part of partsOf(leg)) {
+        if (!/\.(?:c|m)?tsx?$/.test(part.subject)) continue
+        const text = part.create ?? applyEdits(fs.readFileSync(path.join(root, part.subject), 'utf8'), { id: leg.id, edits: part.edits })
+        const output = ts.transpileModule(text, { fileName: part.subject, reportDiagnostics: true,
+          compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } })
+        const errors = (output.diagnostics ?? []).filter(diagnostic => diagnostic.category === ts.DiagnosticCategory.Error)
+        if (errors.length > 0) {
+          throw new Error(`${leg.id}: the planted ${part.subject} does not parse: ${ts.flattenDiagnosticMessageText(errors[0].messageText, ' ')}`)
+        }
+        parsed++
+      }
+    }
+    console.log(`PARSED planted texts=${parsed}`)
   }
 
   async function main() {
@@ -494,7 +646,25 @@ function runGate(spec) {
       }
       if (!fs.lstatSync(path.join(root, file)).isFile()) throw new Error(`Non-regular subject: ${file}`)
     }
-    for (const leg of legs) applyEdits(fs.readFileSync(path.join(root, leg.subject), 'utf8'), leg)
+    // A created file is owned as ABSENT: not on disk, not tracked, not ignored (an ignored path
+    // would hide a leftover from every later status check).
+    for (const file of createdPaths) {
+      const tracked = spawnSync('git', ['ls-files', '--error-unmatch', '--', file], { cwd: root, encoding: 'utf8' })
+      const ignored = spawnSync('git', ['check-ignore', '-q', '--no-index', '--', file], { cwd: root, encoding: 'utf8' })
+      let present = true
+      try { fs.lstatSync(path.join(root, file)) } catch (error) { if (error.code === 'ENOENT') present = false; else throw error }
+      if (ignored.status !== 0 && ignored.status !== 1) throw new Error(`git check-ignore failed for ${file}`)
+      if (present || tracked.status === 0 || ignored.status === 0) {
+        throw new Error(`${file} is present, tracked or ignored — refusing to own it as absent`)
+      }
+    }
+    for (const leg of legs) {
+      for (const part of partsOf(leg)) {
+        if (part.create === undefined) applyEdits(fs.readFileSync(path.join(root, part.subject), 'utf8'), { id: leg.id, edits: part.edits })
+        else if (typeof part.create !== 'string' || part.create.length === 0) throw new Error(`${leg.id}: an empty created module`)
+      }
+    }
+    if (spec.parseCheck === true) parseCheck()
     proveArrival()
     for (const file of subjects) {
       const target = path.join(root, file)
@@ -504,16 +674,22 @@ function runGate(spec) {
       fs.writeFileSync(snapshot, bytes, { flag: 'wx' })
       owned.set(file, { path: snapshot, hash: sha(bytes), atimeMs: stat.atimeMs, mtimeMs: stat.mtimeMs })
     }
-    fs.writeFileSync(path.join(work, 'subjects.json'), JSON.stringify(Object.fromEntries(owned), null, 2) + '\n')
+    for (const file of createdPaths) {
+      const dirs = []
+      for (let dir = path.dirname(path.join(root, file)); !fs.existsSync(dir); dir = path.dirname(dir)) dirs.unshift(dir)
+      ownedAbsent.set(file, { dirs })
+    }
+    fs.writeFileSync(path.join(work, 'subjects.json'), JSON.stringify({ ...Object.fromEntries(owned),
+      ...Object.fromEntries([...ownedAbsent].map(([file, entry]) => [file, { absent: true, dirs: entry.dirs.map(dir => path.relative(root, dir)) }])) }, null, 2) + '\n')
 
     // Interruption controls own EVERY subject before the interruption, so the restoration claim is
     // measured over the whole owned set rather than over one file.
     if (mode === 'fatal' || mode.startsWith('SIG')) {
-      for (const file of subjects) {
-        const leg = legs.find(candidate => candidate.subject === file)
-        writeSubject(leg, applyEdits(fs.readFileSync(owned.get(file).path, 'utf8'), leg))
-        const digest = sha(fs.readFileSync(path.join(root, file)))
-        if (digest === owned.get(file).hash) throw new Error(`Interruption control changed no bytes: ${file}`)
+      for (const file of allPaths) {
+        const leg = legs.find(candidate => partsOf(candidate).some(part => part.subject === file))
+        writePart(leg, partsOf(leg).find(part => part.subject === file))
+        const digest = digestOf(file)
+        if (digest === 'absent' || digest === owned.get(file)?.hash) throw new Error(`Interruption control changed no bytes: ${file}`)
         console.log(`MUTATED ${file} sha256=${digest}`)
       }
       if (mode === 'fatal') throw new Error(`intentional fatal after ${legs[0].id} mutation`)
@@ -533,15 +709,20 @@ function runGate(spec) {
     for (const name of used) checkGreen(await runInstrument(name, `preflight-${name}`))
 
     const ledger = []
+    const originalOf = file => owned.get(file)?.hash ?? 'absent'
     for (const leg of activeLegs) {
       console.log(`LEG ${leg.id} ${leg.claim} — ${leg.operation}`)
-      const snapshot = owned.get(leg.subject)
       if (mode !== 'neutered') {
-        writeSubject(leg, applyEdits(fs.readFileSync(snapshot.path, 'utf8'), leg))
-        if (sha(fs.readFileSync(path.join(root, leg.subject))) === snapshot.hash) throw new Error('Mutation changed no bytes')
+        writeSubject(leg)
+        for (const part of partsOf(leg)) {
+          if (digestOf(part.subject) === originalOf(part.subject)) throw new Error('Mutation changed no bytes')
+        }
         if (leg.crossing !== undefined) {
-          crossedBuilt.add(leg.crossing.pkg)
-          buildPackage(leg.crossing.pkg, `${leg.id}-mutated-build`)
+          // Every package the leg planted into is rebuilt, in order, before the one the instrument
+          // reads; the same chain is rebuilt again from the restored tree.
+          const chain = [...(leg.crossing.before ?? []).map(crossed => crossed.pkg), leg.crossing.pkg]
+          crossedBuilt.set(leg.crossing.pkg, chain)
+          for (const pkg of chain) buildPackage(pkg, `${leg.id}-mutated-build${chain.length === 1 ? '' : `-${pkg.replace(/[^a-z0-9]+/gi, '-')}`}`)
           proveDistArrival(leg)
         }
       }
@@ -558,10 +739,20 @@ function runGate(spec) {
         mustReject('a missing type assertion', () => checkRed({ ...result,
           log: result.log.replace(/TypeCheckError:/g, 'TypeCheck:') }, leg))
       }
+      if (leg.reds.some(ref => ref.message !== undefined)) {
+        const named = leg.reds.filter(ref => ref.message !== undefined)
+        mustReject('a red without its named assertion', () => checkRed({ ...result, report: { ...result.report,
+          testResults: result.report.testResults.map(file => ({ ...file,
+            assertionResults: file.assertionResults.map(item => ({ ...item,
+              failureMessages: (item.failureMessages ?? []).map(text =>
+                named.reduce((stripped, ref) => stripped.split(ref.message).join('<another assertion>'), text)) })) })) } }, leg))
+      }
+      const parts = partsOf(leg).map(part => ({ path: part.subject, originalDigest: originalOf(part.subject), mutatedDigest: digestOf(part.subject) }))
       const entry = {
         id: leg.id, subject: leg.subject, instrument: leg.instrument, claim: leg.claim, operation: leg.operation,
         exit: result.exit, failures: parsed.failures, diagnostics: parsed.diagnostics,
-        originalDigest: snapshot.hash, mutatedDigest: sha(fs.readFileSync(path.join(root, leg.subject))),
+        originalDigest: originalOf(leg.subject), mutatedDigest: digestOf(leg.subject),
+        ...(multiPart(leg) ? { parts } : {}),
       }
       ledger.push(entry)
       fs.writeFileSync(path.join(work, 'ledger.json'), JSON.stringify(ledger, null, 2) + '\n')
@@ -571,23 +762,29 @@ function runGate(spec) {
 
       restore()
       if (leg.crossing !== undefined && crossedBuilt.has(leg.crossing.pkg)) {
-        buildPackage(leg.crossing.pkg, `${leg.id}-restored-build`)
+        const chain = crossedBuilt.get(leg.crossing.pkg)
+        for (const pkg of chain) buildPackage(pkg, `${leg.id}-restored-build${chain.length === 1 ? '' : `-${pkg.replace(/[^a-z0-9]+/gi, '-')}`}`)
         crossedBuilt.delete(leg.crossing.pkg)
       }
       const green = checkGreen(await runInstrument(leg.instrument, `${leg.id}-restored-green`))
-      entry.restoredDigest = sha(fs.readFileSync(path.join(root, leg.subject)))
+      entry.restoredDigest = digestOf(leg.subject)
       entry.restoredSelected = green.cells.length
       if (entry.restoredDigest !== entry.originalDigest) throw new Error(`${leg.id}: restored digest differs`)
+      for (const part of parts) {
+        part.restoredDigest = digestOf(part.path)
+        if (part.restoredDigest !== part.originalDigest) throw new Error(`${leg.id}: restored digest differs for ${part.path}`)
+      }
       fs.writeFileSync(path.join(work, 'ledger.json'), JSON.stringify(ledger, null, 2) + '\n')
     }
     restore()
     if (ownedAny) finalBuild()
     ownedAny = false
     owned.clear()
+    ownedAbsent.clear()
     fs.writeFileSync(path.join(work, 'summary.json'), JSON.stringify({ group: group ?? null, legs: ledger.length,
       namedRed: ledger.length, namedRedCells: activeLegs.reduce((total, leg) => total + leg.reds.reduce((sum, ref) => sum + ref.count, 0), 0),
-      restoredSubjects: subjects.length, restored: Object.fromEntries(ledger.map(entry => [entry.id, entry.restoredDigest])) }, null, 2) + '\n')
-    console.log(`${spec.banner} legs=${ledger.length} named-red=${ledger.length} byte-identical-restoration=${subjects.length}${group === undefined ? '' : ` group=${group}`}`)
+      restoredSubjects: allPaths.length, restored: Object.fromEntries(ledger.map(entry => [entry.id, entry.restoredDigest])) }, null, 2) + '\n')
+    console.log(`${spec.banner} legs=${ledger.length} named-red=${ledger.length} byte-identical-restoration=${allPaths.length}${group === undefined ? '' : ` group=${group}`}`)
   }
 
   main().catch(error => fatal(error.message))
@@ -612,11 +809,13 @@ function runSelftest(spec) {
   const work = fs.mkdtempSync(path.join(os.tmpdir(), `agent-qa-${spec.slug}-selftest-`))
   console.log(`Selftest evidence: ${work}`)
 
-  const subjects = [...new Set(spec.expected.map(leg => leg.subject))]
+  // `paths` (432-43) spells every file a multi-part leg touches, its own subject first.
+  const subjects = [...new Set(spec.expected.flatMap(leg => leg.paths ?? [leg.subject]))]
   // Millisecond mtime: a restored timestamp round-trips through a float, so sub-millisecond digits
-  // are not a claim this instrument makes.
+  // are not a claim this instrument makes. A file a leg CREATES is, before and after, absent.
   const stateOf = () => subjects.map(file => {
     const target = path.join(root, file)
+    if (!fs.existsSync(target)) return { file, absent: true }
     return { file, hash: sha(fs.readFileSync(target)), mtimeMs: Math.round(fs.statSync(target).mtimeMs) }
   })
   const gitClean = () => {
@@ -656,7 +855,8 @@ function runSelftest(spec) {
     const inventory = JSON.parse(listed.stdout)
     assert.equal(inventory.length, spec.expected.length, 'declared leg total')
     assert.deepEqual(inventory.map(leg => ({ id: leg.id, claim: leg.claim, subject: leg.subject, reds: leg.reds,
-      crossing: leg.crossing })), spec.expected.map(leg => ({ crossing: null, ...leg })))
+      crossing: leg.crossing, ...(leg.paths === undefined ? {} : { paths: leg.paths }) })),
+    spec.expected.map(leg => ({ crossing: null, ...leg })))
     console.log(`SELFTEST inventory legs=${inventory.length}`)
   })
 
@@ -735,7 +935,8 @@ function runSelftest(spec) {
       assert.deepEqual(mutated.map(row => row[1]), subjects, `${mode}: every subject must change before the interruption`)
       for (const [index, row] of mutated.entries()) assert.notEqual(row[2], before[index].hash)
       for (const entry of before) {
-        assert.ok(run.output.includes(`RESTORED ${entry.file} sha256=${entry.hash}`), `${mode}: ${entry.file} restoration line`)
+        const line = entry.absent === true ? `RESTORED ${entry.file} absent` : `RESTORED ${entry.file} sha256=${entry.hash}`
+        assert.ok(run.output.includes(line), `${mode}: ${entry.file} restoration line`)
       }
       assert.match(run.output, /^REBUILT workspace \(pnpm turbo run build --force\) exit=0$/m)
       assert.ok(!run.output.includes(spec.banner), run.output)
