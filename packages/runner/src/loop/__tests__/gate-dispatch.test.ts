@@ -83,25 +83,37 @@ describe('executeStep — async policy gate dispatch (SEAM-03)', () => {
   })
 
   it('Test 4: a slow gate extends the step deadline — no fake timeout (D-10)', async () => {
-    // stepTimeout is small; the gate sleeps longer than the remaining margin on each call. Without
+    // stepTimeout is small; the gate takes longer than the remaining margin on each call. Without
     // the D-10 extension the second iteration's top-of-loop deadline check would fire a fake
     // timeout. Two plans force a second iteration so that check is actually reached.
+    // 2026-10-02 (quick 261002-tmo): the step reads a controlled performance.now clock that only
+    // the gate advances, by 60 ms against the 40 ms budget. With a real 60 ms sleep the cell also
+    // needed everything outside the gate to fit in 40 ms of wall time, which failed at load 52
+    // (432-10 #3: 'failed' where 'passed' was expected) and was then a real, not a fake, timeout.
+    // Removing the D-10 line still reds this cell ('Step timed out after 40ms').
+    let clock = 1_000
+    const now = vi.spyOn(performance, 'now').mockImplementation(() => clock)
     const planner = makePlanner([
       makeActionPlan({ stepComplete: false }),
       makeActionPlan({ stepComplete: true }),
     ])
+    let gateCalls = 0
     const safetyHooks = makeSafetyHooks({
-      runToolCallAsync: async (call) => { await sleep(60); return { action: 'allow', call } },
+      runToolCallAsync: async (call) => { gateCalls += 1; await sleep(0); clock += 60; return { action: 'allow', call } },
     })
 
-    const result = await executeStep(
-      'Two-step gated action',
-      ports({ adapter: makeAdapter(), planner, safetyHooks, stepTimeout: 40 }),
-      makeStepContext(),
-    )
+    try {
+      const result = await executeStep(
+        'Two-step gated action',
+        ports({ adapter: makeAdapter(), planner, safetyHooks, stepTimeout: 40 }),
+        makeStepContext(),
+      )
 
-    expect(result.status).toBe('passed')
-    expect(result.error).toBeUndefined()
+      expect(result.status).toBe('passed')
+      expect(result.error).toBeUndefined()
+      expect(gateCalls).toBe(2)
+      expect(clock - 1_000).toBeGreaterThan(40)
+    } finally { now.mockRestore() }
   })
 
   it('Test 5: a setVariable action also flows through the gate before the callback runs', async () => {
