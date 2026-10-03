@@ -1805,16 +1805,17 @@ export async function executeStep(
     // 5. VERIFY — only when the planner signals stepComplete (three-outcome strategy).
     let verifierReasoning: string | undefined
     if (rawPlan.stepComplete && ports.verifier) {
-      // D-11 deterministic short-circuit BEFORE any verifier model call. A step concluded by an
-      // assertValue outcome takes a deterministic verdict from the comparator (zero model call,
-      // verdictSource 'assert-value'); a step concluded by an assertAI judgment adopts the judge
-      // verdict (no second judgment, verdictSource 'assert-ai'). Every other step falls through to
-      // the verifier's own model call (verdictSource 'verifier-model'). The source is recorded so
-      // adopted verdicts are auditable (T-360-09). A FAILING assertValue never reaches here — it
-      // set execError above and routed into the execution-failure branch.
+      // D-11 deterministic short-circuit BEFORE any verifier model call: an assertValue outcome
+      // takes the comparator's verdict ('assert-value'), and an extractAI conclusion or the
+      // defensive false-assertAI arm keeps 'assert-ai'. The source is recorded (T-360-09).
+      // A passing assertAI does not close a step by itself (quick 261004-0hc): the planner wrote
+      // the claim, so the step verifier, with the author's context, judges the step goal and
+      // records 'verifier-model', while the judge's verdict stays on aiJudgment. A FAILING
+      // assertValue or a false assertAI never reaches here — each set execError above.
       const assertOutcome = readAssertValueOutcomeMeta(execResult)
       const aiJudgment = readAiJudgmentMeta(execResult)
-      if (assertOutcome || aiJudgment) {
+      const assertAiPass = !assertOutcome && aiJudgment?.verb === 'assertAI' && aiJudgment.verdict !== false
+      if ((assertOutcome || aiJudgment) && !assertAiPass) {
         const verdictSource: VerdictSource = assertOutcome ? 'assert-value' : 'assert-ai'
         const pass = assertOutcome ? assertOutcome.passed : (aiJudgment?.verdict ?? true)
         recorder.recordVerdictSource(verdictSource)

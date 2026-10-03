@@ -245,7 +245,7 @@ describe('EXEC-06 — every v45 registered tool executes on its legal platforms 
 // cache-bypassed, assertValue judges without a vision round-trip.
 // -----------------------------------------------------------------------------
 describe('EXEC-07 — assertAI executes single-model cache-bypassed; assertValue is deterministic by construction and feeds the verifier without a vision round-trip', () => {
-  it('a scripted-judge assertAI step calls judgeClaim exactly once, adopts the verdict (verdictSource assert-ai), finalizes cacheStatus bypass, and never writes the cache', async () => {
+  it('a scripted-judge assertAI step calls judgeClaim exactly once, the step verifier then decides once (verdictSource verifier-model, quick 261004-0hc), finalizes cacheStatus bypass, and never writes the cache', async () => {
     const cache = makeCountingCache()
     const verifier = makeJudgeVerifier({ verdict: true, rationale: 'the welcome banner reads Welcome' })
     const calls: Action[] = []
@@ -260,11 +260,12 @@ describe('EXEC-07 — assertAI executes single-model cache-bypassed; assertValue
       makeStepContext(),
     )
 
-    // Single-model law: exactly one judgment, never the adapter, never the verifier.verify lane.
+    // Single-model law: exactly one judgment, never the adapter. The claim is the planner's, so
+    // the step verifier judges the step goal once more and its verdict is the recorded source.
     expect(verifier.judgeClaimCalls).toBe(1)
-    expect(verifier.verifyCalls).toBe(0)
+    expect(verifier.verifyCalls).toBe(1)
     expect(calls.length).toBe(0)
-    expect((result.evidence as { verdictSource?: string }).verdictSource).toBe('assert-ai')
+    expect((result.evidence as { verdictSource?: string }).verdictSource).toBe('verifier-model')
     // Cache bypass at the write side.
     expect((result.evidence as { cacheStatus?: string }).cacheStatus).toBe('bypass')
     expect(cache.setCalls).toBe(0)

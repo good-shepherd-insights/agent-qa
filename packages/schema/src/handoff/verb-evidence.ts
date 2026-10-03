@@ -101,8 +101,11 @@ export interface AssertValueEvidence {
 
 /**
  * Which path produced a step's verification verdict (D-11; spec §12.2). A step concluded by an
- * `assertValue` result gets a deterministic `'assert-value'` verdict (zero model call); a step
- * concluded by `assertAI` adopts the judge's verdict (`'assert-ai'`, no second judgment); every
- * other step runs the verifier's own model call (`'verifier-model'`).
+ * `assertValue` result gets a deterministic `'assert-value'` verdict (zero model call).
+ * A passing assertAI does not close a step by itself: the planner wrote the claim, so the step
+ * verifier, with the test author's context, judges the step goal (`'verifier-model'`) and the
+ * judge's verdict stays on `aiJudgment`. A step concluded by `extractAI` (or the defensive
+ * false-assertAI arm) records `'assert-ai'`; every other step runs the verifier's own model call
+ * (`'verifier-model'`).
  */
 export type VerdictSource = 'assert-value' | 'assert-ai' | 'verifier-model'

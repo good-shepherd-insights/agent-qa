@@ -658,8 +658,10 @@ export class EvidenceRecorder {
 
   /**
    * Record which path produced this step's verification verdict (D-11): the deterministic
-   * assertValue comparator (`'assert-value'`), the assertAI judge (`'assert-ai'`), or the
-   * verifier's own model call (`'verifier-model'`). Set by the Plan 10 seam at the verdict fork.
+   * assertValue comparator (`'assert-value'`), an extractAI conclusion or the defensive
+   * false-assertAI arm (`'assert-ai'`), or the verifier's own model call (`'verifier-model'`),
+   * which also decides a step concluded by a passing assertAI because the planner wrote the claim
+   * (quick 261004-0hc; the judgment stays on aiJudgment). Set at the verdict fork.
    */
   recordVerdictSource(source: VerdictSource): void {
     this.verdictSource = source
