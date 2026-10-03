@@ -90,6 +90,7 @@ const VOLUME_BUTTONS = new Set<string>(['volumeUp'])
 // pickerSelect index lane: bounded relative-stepping cap (OQ2). An index beyond this is a §7.1
 // range error; reaching a valid index resets to the top with this many `previous` steps first.
 const MAX_PICKER_INDEX = 20
+const IOS_SAFARI_BUNDLE_ID = 'com.apple.mobilesafari'
 
 // WebDriverIO's action().perform() calls DELETE /session/{id}/actions (releaseActions)
 // after performing. BrowserStack iOS doesn't support this endpoint and throws
@@ -506,6 +507,11 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
   private invalidateWebContext(): void {
     this.webContextChecked = false
     this.activeWebContext = null
+  }
+
+  private isBrowserSession(): boolean {
+    const browserName = this.config?.device?.match?.browserName
+    return typeof browserName === 'string' && browserName.trim().length > 0
   }
 
   private async ensureContext(target: string): Promise<void> {
@@ -1374,22 +1380,58 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
       }
 
       case 'openUniversalLink': {
-        // Re-key of the proven openLink body (D-19): mobile: deepLink with url + bundleId, with a
-        // driver.url() fallback for a plain web URL when no bundle id is available. Working logic,
-        // new schema key; the legacy openLink verb is retired.
+        // Re-key of the proven openLink body (D-19): mobile: deepLink with url + bundleId. A plain
+        // web URL with no bundle id is scoped to the foreground app, and uses driver.url() only in
+        // a browser session or with Safari in front. The openLink verb is retired.
         const bundleId = firstNonEmpty(action.bundleId, this.bundleId)
         const isWebUrl = /^https?:\/\//i.test(action.url)
         if (!bundleId && !isWebUrl) {
           return { success: false, error: `Missing iOS bundle id for native deep link: ${action.url}` }
         }
+        const openInApp = async (appId: string): Promise<void> => {
+          const deepLink = (driver as { deepLink?: (url: string, appId: string, waitForLaunch?: boolean) => Promise<void> }).deepLink
+          if (typeof deepLink === 'function') {
+            await deepLink.call(driver, action.url, appId, true)
+          } else {
+            await driver.execute('mobile: deepLink', { url: action.url, bundleId: appId })
+          }
+        }
+        if (!bundleId && !this.isBrowserSession()) {
+          const firstLine = (err: unknown) =>
+            (err instanceof Error ? err.message : String(err)).split('\n')[0]
+          // In a native session driver.url goes to the system handler, so an http(s) link no app
+          // claims would hand the device to Safari. Scope it to the foreground app instead.
+          let foreground: string | undefined
+          try {
+            const info = await driver.execute('mobile: activeAppInfo')
+            foreground = info && typeof info === 'object'
+              ? firstNonEmpty((info as { bundleId?: unknown }).bundleId as string | undefined)
+              : undefined
+            if (!foreground) throw new Error('activeAppInfo returned no bundle id')
+          } catch (err) {
+            return {
+              success: false,
+              error: `Cannot open universal link ${action.url}: no bundle id was given or configured and the foreground app could not be identified (${firstLine(err)}). Pass bundleId to choose the app.`,
+            }
+          }
+          try {
+            if (foreground === IOS_SAFARI_BUNDLE_ID) {
+              await driver.url(action.url)
+            } else {
+              await openInApp(foreground)
+            }
+            this.invalidateWebContext()
+            return { success: true }
+          } catch (err) {
+            return {
+              success: false,
+              error: `Failed to open universal link ${action.url} in the foreground iOS app ${foreground} (no bundle id was given): ${firstLine(err)}`,
+            }
+          }
+        }
         try {
           if (bundleId) {
-            const deepLink = (driver as { deepLink?: (url: string, appId: string, waitForLaunch?: boolean) => Promise<void> }).deepLink
-            if (typeof deepLink === 'function') {
-              await deepLink.call(driver, action.url, bundleId, true)
-            } else {
-              await driver.execute('mobile: deepLink', { url: action.url, bundleId })
-            }
+            await openInApp(bundleId)
           } else {
             await driver.url(action.url)
           }

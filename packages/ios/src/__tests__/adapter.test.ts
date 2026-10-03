@@ -619,6 +619,109 @@ describe('IOSPlatformAdapter', () => {
 
       expect(result.success).toBe(false)
       expect(result.error).toContain('Missing iOS bundle id')
+      expect(mockDriver.execute).not.toHaveBeenCalledWith('mobile: activeAppInfo')
+    })
+
+    const LINK = 'https://bsky.app/hashtag/caturday'
+
+    function answerActiveApp(value: unknown) {
+      mockDriver.execute.mockImplementation(async (cmd: string) => {
+        if (cmd !== 'mobile: activeAppInfo') return undefined
+        if (value instanceof Error) throw value
+        return value
+      })
+    }
+
+    it.each([
+      ['no bundleId', {}],
+      ['an empty bundleId', { bundleId: '' }],
+    ])('scopes an unscoped https link to the foreground app with %s', async (_label, extra) => {
+      await adapter.setup({ platform: 'ios' })
+      answerActiveApp({ bundleId: 'xyz.blueskyweb.app', name: 'Bluesky', pid: 1, processArguments: {} })
+
+      const result = await adapter.execute({ type: 'openUniversalLink', url: LINK, ...extra })
+
+      expect(result.success).toBe(true)
+      expect(mockDriver.deepLink).toHaveBeenCalledWith(LINK, 'xyz.blueskyweb.app', true)
+      expect(mockDriver.url).not.toHaveBeenCalled()
+    })
+
+    it('returns the scoped-open failure instead of handing the link to Safari', async () => {
+      await adapter.setup({ platform: 'ios' })
+      answerActiveApp({ bundleId: 'xyz.blueskyweb.app', name: 'Bluesky', pid: 1, processArguments: {} })
+      mockDriver.deepLink.mockRejectedValueOnce(new Error(
+        'The provided link is not a valid deep link URL. If your url is a `universal deep link` then use the `url` command instead.',
+      ))
+
+      const result = await adapter.execute({ type: 'openUniversalLink', url: LINK })
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain(LINK)
+      expect(result.error).toContain('xyz.blueskyweb.app')
+      expect(result.error).toContain('not a valid deep link URL')
+      expect(mockDriver.url).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      ['activeAppInfo rejects', new Error('unknown command')],
+      ['activeAppInfo has no bundle id', {}],
+    ])('fails without opening anything when the foreground app is unknown (%s)', async (_label, info) => {
+      await adapter.setup({ platform: 'ios' })
+      answerActiveApp(info)
+
+      const result = await adapter.execute({ type: 'openUniversalLink', url: LINK })
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain(LINK)
+      expect(result.error).toContain('bundleId')
+      expect(mockDriver.deepLink).not.toHaveBeenCalled()
+      expect(mockDriver.url).not.toHaveBeenCalled()
+    })
+
+    it('uses driver.url when Safari is the foreground app', async () => {
+      await adapter.setup({ platform: 'ios' })
+      answerActiveApp({ bundleId: 'com.apple.mobilesafari' })
+      mockDriver.url.mockResolvedValue(undefined)
+
+      const result = await adapter.execute({ type: 'openUniversalLink', url: LINK })
+
+      expect(result.success).toBe(true)
+      expect(mockDriver.execute).toHaveBeenCalledWith('mobile: activeAppInfo')
+      expect(mockDriver.url).toHaveBeenCalledWith(LINK)
+      expect(mockDriver.deepLink).not.toHaveBeenCalled()
+    })
+
+    it('uses driver.url in a browser session without querying the foreground app', async () => {
+      await adapter.setup({
+        platform: 'ios',
+        device: { name: 'iPhone', platform: 'ios', transport: 'local', match: { browserName: 'Safari' } },
+      })
+      mockDriver.url.mockResolvedValue(undefined)
+
+      const result = await adapter.execute({ type: 'openUniversalLink', url: LINK })
+
+      expect(result.success).toBe(true)
+      expect(mockDriver.url).toHaveBeenCalledWith(LINK)
+      expect(mockDriver.execute).not.toHaveBeenCalledWith('mobile: activeAppInfo')
+    })
+
+    it('scopes to the foreground app after a WEBVIEW read, because every action runs from NATIVE_APP', async () => {
+      Object.assign(mockDriver, {
+        getContexts: vi.fn().mockResolvedValue(['NATIVE_APP', 'WEBVIEW_1']),
+        switchContext: vi.fn().mockResolvedValue(undefined),
+      })
+      await adapter.setup({ platform: 'ios' })
+      answerActiveApp({ bundleId: 'xyz.blueskyweb.app' })
+      await adapter.execute({ type: 'assertValue', expr: '1', op: 'isDefined' })
+      const switchContext = (mockDriver as unknown as { switchContext: ReturnType<typeof vi.fn> }).switchContext
+      expect(switchContext).toHaveBeenLastCalledWith('WEBVIEW_1')
+
+      const result = await adapter.execute({ type: 'openUniversalLink', url: LINK })
+
+      expect(switchContext).toHaveBeenLastCalledWith('NATIVE_APP')
+      expect(result.success).toBe(true)
+      expect(mockDriver.deepLink).toHaveBeenCalledWith(LINK, 'xyz.blueskyweb.app', true)
+      expect(mockDriver.url).not.toHaveBeenCalled()
     })
   })
 
