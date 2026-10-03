@@ -13,10 +13,15 @@
 # `declined` argument is replaced by the child's real exit `status`. What this grades now:
 #
 #   RED   no verdict line; a Git commit appeared (the product makes none); the drive wedged; a RETIRED
-#         approval prompt rendered at all (the D-14 regression); a partial render; a full render
-#         with a non-zero exit.
+#         approval prompt rendered at all (the D-14 regression); nothing rendered and a non-zero exit
+#         that is not the known headless refusal (a crash, or a launch failure 126/127); a partial
+#         render; a full render with a non-zero exit.
 #   SKIP  no render at all — the known headless refusal, or the live planner not routing this one
-#         utterance (its k=1 nondeterminism). Each SKIP names the hermetic cells that hold the road.
+#         utterance (its k=1 nondeterminism) with exit 0. Each SKIP names the hermetic cells that
+#         hold the road.
+#
+# 2026-10-03 (quick-261003-tsr, WR-13): a nothing-rendered, non-zero exit used to grade SKIP and
+# blame the planner, so a crashed or unlaunchable `ask` left the lane green.
 #   PASS  no prompt, the summary line, the config file and a unified-diff hunk on the terminal, exit
 #         0, and no Git commit.
 #
@@ -65,6 +70,16 @@ leg6_grade() {
   elif [ "$rendered" -eq 0 ] && [ "$known_cause" = '1' ]; then
     L6_GRADE_VERDICT='SKIP'
     L6_GRADE_WHY="THE ASK ROAD DID NOT PLAN ON THIS DRIVE, FOR THE KNOWN REASON: \`agent-qa ask\` answered *'No capability in this build handles: …'* — the D-08 headless refusal, which is what \`ask\` says when its composition binds no chat model. Nothing was written and nothing asked. THE RESIDUAL BOUND: $hermetic. Transcript: $transcript"
+
+  # A FAILED COMMAND IS NOT A PLANNER THAT DID NOT ROUTE (WR-13). Only the recognised headless
+  # refusal above may exit non-zero with nothing rendered.
+  elif [ "$rendered" -eq 0 ] && [ "$status" != '0' ]; then
+    L6_GRADE_VERDICT='RED'
+    if [ "$status" = '126' ] || [ "$status" = '127' ]; then
+      L6_GRADE_WHY="\`agent-qa ask\` COULD NOT BE LAUNCHED (status $status) AND NOTHING RENDERED — a failed command, not a planner that did not route. Transcript: $transcript"
+    else
+      L6_GRADE_WHY="NOTHING RENDERED AND \`agent-qa ask\` EXITED $status — a failed command, not a planner that did not route. Transcript: $transcript"
+    fi
 
   elif [ "$rendered" -eq 0 ]; then
     L6_GRADE_VERDICT='SKIP'

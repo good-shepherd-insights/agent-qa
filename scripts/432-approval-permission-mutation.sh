@@ -59,7 +59,9 @@
 # forced workspace build whenever a byte was mutated.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-exec node --input-type=commonjs - <<'NODE'
+# 2026-10-03 (quick-261003-tsr, IN-42): the arguments reach the engine, which refuses any it does not
+# know; `--group` used to be dropped here.
+exec node --input-type=commonjs - "$@" <<'NODE'
 const path = require('node:path')
 const { runGate, cell } = require(path.join(process.cwd(), 'scripts/423-mutation-engine.cjs'))
 

@@ -14,7 +14,10 @@
 # driver does not answer a retired prompt), G3 now plants a retired prompt instead of declined=0,
 # and G5 is new (a full render with a non-zero exit).
 #
-# WHAT IT PROVES, IN SECONDS AND WITHOUT A PLANNER. Nine probes, in two halves:
+# 2026-10-03 (quick-261003-tsr, WR-13): G6-G9 are new. A nothing-rendered, non-zero exit (a crash, or
+# the launch failure D3 proves the driver reports) is RED, and the two SKIPs keep their meaning.
+#
+# WHAT IT PROVES, IN SECONDS AND WITHOUT A PLANNER. Thirteen probes, in two halves:
 #
 #   DRIVER HALF (4) — the real `395-ask-road-pty.py`, against tiny fake CLI entries:
 #     D1  a child that never exits, and that IGNORES SIGHUP so the pty master's close cannot take it
@@ -24,7 +27,7 @@
 #     D4  a child that renders the retired approval prompt and waits for an answer
 #                                                  -> prompt>=0, and the child receives NOTHING
 #
-#   GRADING HALF (5) — the real `leg6_grade`, sourced from `395-leg6-grade.sh`, driven with
+#   GRADING HALF (9) — the real `leg6_grade`, sourced from `395-leg6-grade.sh`, driven with
 #   INJECTED measurements. The lane sources the same file, so what is proven falsifiable here is
 #   what the lane grades with, never a re-typed sibling:
 #     G1  a healthy set                            -> PASS
@@ -32,6 +35,10 @@
 #     G3  the same set with a retired prompt at byte 500 -> RED
 #     G4  the same set with timedout=1             -> RED
 #     G5  the same set with status=2               -> RED
+#     G6  nothing rendered, status=1               -> RED (a crashed command)
+#     G7  nothing rendered, status=126             -> RED (a launch failure)
+#     G8  nothing rendered, status=0               -> SKIP (the planner did not route)
+#     G9  nothing rendered, status=1, known cause  -> SKIP (the headless refusal)
 #
 # EVERY EXPECTATION IS ASSERTED, NOT PRINTED. The script exits non-zero if any probe's reading is
 # not the expected one, and the failure names the probe.
@@ -202,6 +209,19 @@ grade_probe G2 RED  "$HEALTHY_LINE" -1  10 20 30 0 0 7 8 "$T" 0
 grade_probe G3 RED  "$HEALTHY_LINE" 500 10 20 30 0 0 7 7 "$T" 0
 grade_probe G4 RED  "$HEALTHY_LINE" -1  10 20 30 0 1 7 7 "$T" 0
 grade_probe G5 RED  "$HEALTHY_LINE" -1  10 20 30 2 0 7 7 "$T" 0
+
+# NOTHING RENDERED (WR-13). The verdict line is present; only the offsets and the status differ.
+EMPTY_LINE='L6-VERDICT prompt=-1 timedout=0 status=1 pid=1 bytes=0 summary=-1 files=-1 diff=-1'
+grade_probe G6 RED  "$EMPTY_LINE"   -1  -1 -1 -1 1   0 7 7 "$T" 0
+grade_probe G7 RED  "$EMPTY_LINE"   -1  -1 -1 -1 126 0 7 7 "$T" 0
+grade_probe G8 SKIP "$EMPTY_LINE"   -1  -1 -1 -1 0   0 7 7 "$T" 0
+grade_probe G9 SKIP "$EMPTY_LINE"   -1  -1 -1 -1 1   0 7 7 "$T" 1
+
+leg6_grade "$EMPTY_LINE" -1 -1 -1 -1 126 0 7 7 "$T" 0
+case "$L6_GRADE_WHY" in
+  *'COULD NOT BE LAUNCHED (status 126)'*) pass G7 'the refusal names the launch failure and its status' ;;
+  *) fail G7 "the launch-failure refusal does not name it: $L6_GRADE_WHY" ;;
+esac
 
 # THE SENTENCE MUST NAME WHAT IT REFUSED, or a RED verdict is an unactionable one.
 leg6_grade "$HEALTHY_LINE" -1 10 20 30 0 0 7 8 "$T" 0

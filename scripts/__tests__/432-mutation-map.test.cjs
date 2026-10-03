@@ -14,6 +14,9 @@
 //
 // No byte is owned here: the driver lists its inventory and the selftest writes its expected table to a
 // temporary file, and neither runs a leg.
+//
+// 2026-10-03 (quick-261003-tsr, IN-41): `pnpm run validate:arch` runs this file (and the engine's
+// restore cells beside it), so the forced gate and every pre-commit check hold the map.
 
 const assert = require('node:assert/strict')
 const { spawnSync } = require('node:child_process')

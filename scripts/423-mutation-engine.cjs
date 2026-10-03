@@ -108,6 +108,56 @@ function applyEdits(text, leg) {
   return output
 }
 
+/**
+ * Hand back every owned subject: edited files from their snapshots, in first-touch order, then
+ * created files deepest first, then the directories this run had to make, deepest first and only
+ * once empty. EVERY STEP IS ATTEMPTED whatever an earlier one threw, and the failures are thrown
+ * together at the end (2026-10-03, quick-261003-tsr WR-14: two created files under one new
+ * directory used to abort the loop at the first file, leaving later subjects mutated).
+ */
+function restoreSubjects({ root, allPaths, owned, ownedAbsent, log = console.log }) {
+  const failures = []
+  const attempt = (label, step) => {
+    try { step() } catch (error) { failures.push(`${label}: ${error instanceof Error ? error.message : String(error)}`) }
+  }
+  const depth = target => target.split(path.sep).length
+  for (const file of allPaths) {
+    if (!owned.has(file)) continue
+    attempt(file, () => {
+      const snapshot = owned.get(file)
+      const target = path.join(root, file)
+      const bytes = fs.readFileSync(snapshot.path)
+      if (sha(bytes) !== snapshot.hash) throw new Error(`snapshot corrupted: ${file}`)
+      if (sha(fs.readFileSync(target)) !== snapshot.hash) {
+        fs.writeFileSync(target, bytes)
+        fs.utimesSync(target, snapshot.atimeMs / 1000, snapshot.mtimeMs / 1000)
+      }
+      if (sha(fs.readFileSync(target)) !== snapshot.hash) throw new Error(`restore hash mismatch: ${file}`)
+      log(`RESTORED ${file} sha256=${snapshot.hash}`)
+    })
+  }
+  const created = allPaths.filter(file => ownedAbsent.has(file))
+  for (const file of [...created].sort((a, b) => depth(b) - depth(a))) {
+    attempt(file, () => fs.rmSync(path.join(root, file), { force: true }))
+  }
+  const dirs = [...new Set(created.flatMap(file => ownedAbsent.get(file).dirs))]
+  for (const dir of dirs.sort((a, b) => depth(b) - depth(a))) {
+    attempt(path.relative(root, dir), () => {
+      if (fs.existsSync(dir) && fs.readdirSync(dir).length === 0) fs.rmdirSync(dir)
+    })
+  }
+  for (const file of created) {
+    const before = failures.length
+    if (fs.existsSync(path.join(root, file))) failures.push(`restore left a created file behind: ${file}`)
+    for (const dir of ownedAbsent.get(file).dirs) {
+      const message = `restore left a created directory behind: ${path.relative(root, dir)}`
+      if (fs.existsSync(dir) && !failures.includes(message)) failures.push(message)
+    }
+    if (failures.length === before) log(`RESTORED ${file} absent`)
+  }
+  if (failures.length > 0) throw new Error(`restore failed (${failures.length}): ${failures.join('; ')}`)
+}
+
 function runGate(spec) {
   const root = path.resolve(__dirname, '..')
   process.chdir(root)
@@ -207,32 +257,7 @@ function runGate(spec) {
   let ownedAny = false
 
   function restore() {
-    for (const file of allPaths) {
-      if (owned.has(file)) {
-        const snapshot = owned.get(file)
-        const target = path.join(root, file)
-        const bytes = fs.readFileSync(snapshot.path)
-        if (sha(bytes) !== snapshot.hash) throw new Error(`snapshot corrupted: ${file}`)
-        if (sha(fs.readFileSync(target)) !== snapshot.hash) {
-          fs.writeFileSync(target, bytes)
-          fs.utimesSync(target, snapshot.atimeMs / 1000, snapshot.mtimeMs / 1000)
-        }
-        if (sha(fs.readFileSync(target)) !== snapshot.hash) throw new Error(`restore hash mismatch: ${file}`)
-        console.log(`RESTORED ${file} sha256=${snapshot.hash}`)
-      } else if (ownedAbsent.has(file)) {
-        const target = path.join(root, file)
-        fs.rmSync(target, { force: true })
-        // Deepest first: only the directories this run had to make, and only once they are empty.
-        for (const dir of [...ownedAbsent.get(file).dirs].reverse()) {
-          if (fs.existsSync(dir) && fs.readdirSync(dir).length === 0) fs.rmdirSync(dir)
-        }
-        if (fs.existsSync(target)) throw new Error(`restore left a created file behind: ${file}`)
-        for (const dir of ownedAbsent.get(file).dirs) {
-          if (fs.existsSync(dir)) throw new Error(`restore left a created directory behind: ${path.relative(root, dir)}`)
-        }
-        console.log(`RESTORED ${file} absent`)
-      }
-    }
+    restoreSubjects({ root, allPaths, owned, ownedAbsent })
   }
 
   function buildPackage(pkg, label) {
@@ -251,14 +276,22 @@ function runGate(spec) {
     if (result.status !== 0) throw new Error(`the restored workspace build failed — see ${log}`)
   }
 
+  // A restore that failed for one subject still rebuilds what it handed back; every failure is
+  // reported together once the builds have run (WR-14).
   function cleanup() {
-    restore()
-    for (const chain of crossedBuilt.values()) {
-      for (const pkg of chain) buildPackage(pkg, `restore-build-${pkg.replace(/[^a-z0-9]+/gi, '-')}`)
+    const failures = []
+    try { restore() } catch (error) { failures.push(error.message) }
+    try {
+      for (const chain of crossedBuilt.values()) {
+        for (const pkg of chain) buildPackage(pkg, `restore-build-${pkg.replace(/[^a-z0-9]+/gi, '-')}`)
+      }
+      crossedBuilt.clear()
+      if (ownedAny) finalBuild()
+      ownedAny = false
+    } catch (error) {
+      failures.push(error.message)
     }
-    crossedBuilt.clear()
-    if (ownedAny) finalBuild()
-    ownedAny = false
+    if (failures.length > 0) throw new Error(failures.join(' | '))
   }
 
   function stopChild(signal = 'SIGTERM') {
@@ -904,7 +937,9 @@ function runSelftest(spec) {
   }
 
   test(`${spec.slug}: a dirty subject is refused and left exactly as found`, () => {
-    const file = subjects[0]
+    // An EDITED subject: a created one is absent, so it has no bytes to dirty (IN-40, 2026-10-03).
+    const file = subjects.find(candidate => fs.existsSync(path.join(root, candidate)))
+    assert.ok(file !== undefined, 'the inventory has no existing subject to dirty')
     const target = path.join(root, file)
     const original = fs.readFileSync(target)
     const stat = fs.statSync(target)
@@ -951,4 +986,4 @@ function runSelftest(spec) {
   })
 }
 
-module.exports = { runGate, runSelftest, cell, applyEdits, titleMatches, cellMatches }
+module.exports = { runGate, runSelftest, cell, applyEdits, titleMatches, cellMatches, restoreSubjects }
