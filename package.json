@@ -97,7 +97,8 @@
     "validate:431-discovery-mutation": "bash scripts/431-discovery-mutation.sh",
     "validate:431-discovery-mutation-selftest": "bash scripts/431-discovery-mutation-selftest.sh",
     "validate:432-approval-permission-mutation": "bash scripts/432-approval-permission-mutation.sh",
-    "validate:432-approval-permission-mutation-selftest": "bash scripts/432-approval-permission-mutation-selftest.sh"
+    "validate:432-approval-permission-mutation-selftest": "bash scripts/432-approval-permission-mutation-selftest.sh",
+    "validate:433-closing-cells-mutation": "bash scripts/433-closing-cells-mutation.sh"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
