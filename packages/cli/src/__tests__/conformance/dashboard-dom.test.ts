@@ -204,6 +204,50 @@ describe('the shipped dashboard has no conversation (430 D-04/D-07, over 400-09\
       }
     }, 120_000)
 
+  // 433 D-22 (UI-011): no standalone Memory or Knowledge explorer. Each explorer-shaped path must
+  // reach the runs page's own ready selector and the /runs URL, so the catch-all is what served it.
+  // The palette's Pages group is read too; config sections named Knowledge stay allowed (note 6).
+  it('NO-EXPLORER-IN-SHIPPED-BUNDLE: memory and knowledge explorer paths land on Runs and nothing links to one',
+    async () => {
+      const paths = [
+        '/memory',
+        '/memories',
+        '/Memory',
+        '/knowledge',
+        '/knowledge/',
+        '/knowledges',
+        '/knowledge-base',
+        '/memory/MEM-1',
+        '/knowledge/explorer',
+      ]
+      const explorerLinks = 'a[href*="/memor" i], a[href^="/knowledge" i]'
+      for (const path of paths) {
+        const page = await openApp(path, RUNS_READY)
+        try {
+          expect(new URL(page.url()).pathname, `the served ${path} did not land on Runs`).toBe('/runs')
+          expect(await page.locator(explorerLinks).count(), `${path}: a link names an explorer`).toBe(0)
+        } finally {
+          await page.close()
+        }
+      }
+
+      const page = await openApp('/runs', RUNS_READY)
+      try {
+        await page.keyboard.press('Control+k')
+        const pageItems = page.locator('[cmdk-item][data-value^="page-"]')
+        await pageItems.first().waitFor({ timeout: 30_000 })
+        const entries = await pageItems.evaluateAll((items) =>
+          items.map((item) => `${item.getAttribute('data-value') ?? ''} ${item.textContent ?? ''}`))
+        expect(
+          entries.some((entry) => entry.startsWith('page-Runs')),
+          `the palette read found no Runs page entry, so an absence below would measure nothing: ${entries.join(' | ')}`,
+        ).toBe(true)
+        expect(entries.filter((entry) => /memor|knowledge/i.test(entry))).toEqual([])
+      } finally {
+        await page.close()
+      }
+    }, 120_000)
+
   it('NO-CHAT-MOUNT-ON-ANY-PAGE: /runs, /tests and /config offer no panel, opener or launcher',
     async () => {
       for (const [path, ready] of PAGES) {
