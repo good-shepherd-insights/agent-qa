@@ -251,7 +251,9 @@ function startedContext(scene: Scene, runId: string): unknown {
 // without a question — and the production refusal is the one thing that still stops a click.
 // RE-SPELLED 2026-10-01 (432-14, D-14): no cell opens a channel any more, because there is none to
 // open; each keeps its name and its claim about what the click does.
-describe('an ask-tier run-button run asks the browser that triggered it (D-11)', () => {
+// RE-TITLED 2026-10-03 (quick-261003-tsr, IN-12): the describe was 'an ask-tier run-button run asks
+// the browser that triggered it (D-11)'; its cells assert that nothing is asked.
+describe('the run button never asks: a click starts the run, or meets the production refusal', () => {
   it('DENY ON SILENCE — nothing is asked, so nothing is reaped: the run starts with the channel open', async () => {
     const target = new CountingTarget()
     await target.listen()
@@ -275,7 +277,9 @@ describe('an ask-tier run-button run asks the browser that triggered it (D-11)',
     }
   }, 240_000)
 
-  it('THE ALLOW CONTROL — one thing different (a production declaration), and the click is refused unasked', async () => {
+  // RE-TITLED 2026-10-03 (quick-261003-tsr, IN-12): was 'THE ALLOW CONTROL — one thing different
+  // (a production declaration), and the click is refused unasked'.
+  it('A PRODUCTION DECLARATION — the one thing different, and the click is refused unasked before any effect', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
@@ -684,8 +688,12 @@ describe('G-401-18-CR01 — the confirm scope leaves on no door and can be plant
 // above (`local-headless`, whatever the page does); what these pin is that the door no longer
 // publishes a per-scope answer to disagree with it.
 
-describe('the trigger claims interactivity only while a browser is holding its channel', () => {
-  it('THE TRIGGER RULE — no channel is headless, a live channel is interactive, and back again', async () => {
+// RE-TITLED 2026-10-03 (quick-261003-tsr, IN-12): the describe was 'the trigger claims
+// interactivity only while a browser is holding its channel', and its two cells were 'THE TRIGGER
+// RULE — no channel is headless, a live channel is interactive, and back again' and 'THE
+// CONVERSATION RULE IS UNTOUCHED — a watched, idle conversation is still headless'.
+describe('the door publishes no per-scope posture', () => {
+  it('THE TRIGGER RULE IS RETIRED — neither the door nor its host publishes a context resolver or a trigger scope', async () => {
     const fixture = createInProcessFixture({ origin: 'http://127.0.0.1:1' })
     const door = composeDashboardDoor({
       agentQaRoot: fixture.agentQaRoot,
@@ -702,7 +710,7 @@ describe('the trigger claims interactivity only while a browser is holding its c
     }
   })
 
-  it('THE CONVERSATION RULE IS UNTOUCHED — a watched, idle conversation is still headless', async () => {
+  it('THE CONVERSATION RULE IS RETIRED — the host carries no confirms member a conversation could watch', async () => {
     // The conversation arm of the rule went with the trigger's: the door holds no registry a
     // conversation could open a channel on, so there is nothing to watch.
     const fixture = createInProcessFixture({ origin: 'http://127.0.0.1:1' })

@@ -1383,7 +1383,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
   it('drives a capability through the chat surface\'s own composed dispatch, model-free', async () => {
     // The plan-04 tracer. `quarantine.list` is the safe subject: read-only, bound in this host, and
     // its declared input is the empty object, so nothing about the drive depends on a store having
-    // anything in it. (2026-10-01, 432-17: `quarantine.list`, the subject until now, is deleted with
+    // anything in it. (2026-10-01, 432-17: `proposals.list`, the subject until now, is deleted with
     // the inbox; `quarantine.list` has the same three properties.)
     //
     // WHAT PRODUCES THIS ANSWER is the shipped REPL: a typed clause, split by the shipped splitter,
@@ -1733,15 +1733,21 @@ describe('the parity suite ranges the registry census over every rostered surfac
     // The context control, re-spelled: `ci` used to fail an ask closed before the confirm. Nothing
     // reads the context on this road now, so both contexts must answer alike.
     // 2026-10-01 (432-31, D-12): the `ci` resolver rode the retired, unread registry option, which
-    // is dropped. No context reaches dispatch, so the claim holds by construction; the two calls
-    // are still compared.
+    // is dropped.
+    // 2026-10-03 (quick-261003-tsr, WR-06): the two calls used to run in the same ambient context,
+    // so the cell compared one call with itself. Each now runs inside its own safety scope, the
+    // seam every ambient reader of the execution context resolves through.
     for (const opId of ASK_CAPABLE_OP_IDS) {
       const declaration = registryDeclarations().find((candidate) => candidate.id === opId)
       const row = scenarioRowFor(opId as ScenarioOpId)
       expect(declaration, `${opId} is not declared`).toBeDefined()
       const callers = surfaceInertCallers()
-      const interactive = await gateAnswerFor(opId, row!.input, callers.chat)
-      const failClosed = await gateAnswerFor(opId, row!.input, callers.chat)
+      const interactive = await runSafetyScope({ executionContext: 'local-interactive' }, () =>
+        gateAnswerFor(opId, row!.input, callers.chat))
+      const failClosed = await runSafetyScope({ executionContext: 'ci' }, () =>
+        gateAnswerFor(opId, row!.input, callers.chat))
+      const direct = declaration!.bindingStatus === 'unbound' ? 'allowed-unbound' : 'allowed-dispatched'
+      expect(interactive.kind, `${opId}: the interactive call did not reach its direct step`).toBe(direct)
       expect(failClosed.kind, `${opId}: the execution context changed where the call landed`)
         .toBe(interactive.kind)
     }

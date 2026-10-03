@@ -121,7 +121,9 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
-describe('applyTestDraftAsOneCommit', () => {
+// RE-TITLED 2026-10-03 (quick-261003-tsr, IN-14): the describe was 'applyTestDraftAsOneCommit',
+// a function 432-16 deleted; its cells drive the direct writer.
+describe('publishAuthoredTest (the direct writer)', () => {
   // RE-SPELLED 2026-10-01 (432-16): was 'rethrows a non-ENOENT spawn failure', 'puts the --
   // operand separator before every caller-controlled path', 'issues no --amend, no -a and no
   // ref-moving subcommand' and 'bounds every git invocation with a finite timeout'. There is no git
@@ -223,8 +225,14 @@ describe('applyTestDraftAsOneCommit', () => {
 // restored, a failed capture refused byte-unchanged, an absent entry restored as absent, and a
 // conflicted entry refused. The direct writer never touches the index, so the one claim left is
 // that a failed WRITE leaves the target and the index as they were.
+/** Whether a read-only directory refuses this process a write: not as root, and not on Windows. */
+const canDenyWrites = process.platform !== 'win32' && process.getuid?.() !== 0
+
 describe('a FAILED apply leaves the repository exactly as it found it (394-18, CR-05)', () => {
-  it('a write that fails leaves the target\'s bytes, the index and the history untouched, and no temp behind', () => {
+  // 2026-10-03 (quick-261003-tsr, IN-17): a read-only directory does not stop root, nor Windows,
+  // from writing, so the failure cannot be caused there; the cell runs where it can be, and checks
+  // that the directory really refuses a write before it measures the publish.
+  it.runIf(canDenyWrites)('a write that fails leaves the target\'s bytes, the index and the history untouched, and no temp behind', () => {
     commitTarget('name: the version the draft was built over\n', 'a person committed this test')
     const read = createHash('sha256').update(readFileSync(join(root, TARGET_PATH))).digest('hex')
     git('add', '--', TARGET_PATH)
@@ -234,6 +242,8 @@ describe('a FAILED apply leaves the repository exactly as it found it (394-18, C
     chmodSync(join(root, 'tests'), 0o555)
     let outcome: ReturnType<typeof publish>
     try {
+      expect(() => writeFileSync(join(root, 'tests', '.seal-probe'), ''), 'the directory still accepts writes')
+        .toThrow()
       outcome = publish({ sourceDigest: read })
     } finally {
       chmodSync(join(root, 'tests'), 0o755)

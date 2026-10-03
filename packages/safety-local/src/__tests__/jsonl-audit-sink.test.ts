@@ -3,12 +3,13 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import * as surface from '../index'
 import { JsonlAuditSink, fingerprint } from '../index'
@@ -22,8 +23,16 @@ import { JsonlAuditSink, fingerprint } from '../index'
 const LEGACY_EXECUTION_AUDIT = 'execution_audit.jsonl'
 const GUARDRAIL_AUDIT = 'guardrail_audit.jsonl'
 
+// 2026-10-03 (quick-261003-tsr, IN-39): every directory a cell makes is removed after it.
+const madeDirs: string[] = []
+afterEach(() => {
+  for (const dir of madeDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+})
+
 function tmpAuditDir(): string {
-  return mkdtempSync(join(tmpdir(), 'agentqa-audit-'))
+  const dir = mkdtempSync(join(tmpdir(), 'agentqa-audit-'))
+  madeDirs.push(dir)
+  return dir
 }
 
 function readAuditFile(baseDir: string, file: string): string {

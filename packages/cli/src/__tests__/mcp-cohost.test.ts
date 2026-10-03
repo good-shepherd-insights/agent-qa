@@ -589,8 +589,10 @@ const DASHBOARD_SOURCE = readFileSync(
 const REPO_ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), '../../../..')
 
 /**
- * One legacy caller-credential declaration, in the refs-only shape `McpTokenEntrySchema` accepts.
- * 432-21 (D-12): still parsed until 432-22 deletes the key, and read by nothing.
+ * One legacy caller-credential declaration, in the refs-only shape `McpTokenEntrySchema` accepted.
+ * 432-22 (D-22) deleted the key, so a config file holding it fails strict validation. The rows below
+ * that carry it are DELIBERATELY UNPARSED input: `mcpMountPlanFor` reads `unknown`, and these rows
+ * pin that a leftover key cannot change the decision (2026-10-03, quick-261003-tsr IN-13).
  */
 const DECLARED_TOKEN = { name: 'cohost', tokenEnvVar: TOKEN_ENV_VAR, scopes: ['read'] } as const
 
@@ -683,9 +685,9 @@ describe('the co-host mount decision is a FUNCTION of the parsed config (WR-01, 
 
   // RE-SPELLED 2026-10-01 (432-21, D-12) from 'counts the DECLARED token entries, never the resolved
   // ones'. The plan counts no token entries at all: one declaration, two or an unset one decide the
-  // same thing, and the plan carries no count.
-  it('counts the DECLARED token entries, never the resolved ones — resolution reads process.env and'
-    + ' is a different fact that stays at the mount site', () => {
+  // same thing, and the plan carries no count. RE-TITLED 2026-10-03 (quick-261003-tsr, IN-13).
+  it('counts no token entries — one, two or an unset declaration decide the same plan, and the plan'
+    + ' carries no count', () => {
     const two = mcpMountPlanFor({
       services: { mcp: { tokens: [DECLARED_TOKEN, { ...DECLARED_TOKEN, name: 'second' }] } },
     })
@@ -837,9 +839,12 @@ const UNSET_ENTRY_CONFIG = { services: { mcp: { tokens: [UNSET_ENTRY] } } }
 // RE-SPELLED 2026-10-01 (432-21, D-12). The three cells below measured `coHostedMcpCredentialsFor`,
 // the decide-then-dereference path 408-17 (CR-01) built so an unset `tokenEnvVar` could not take a
 // serving dashboard down. The function and the dereference are deleted with the tokens; each cell
-// now pins what replaced its claim.
-describe('the co-host resolves credentials without betting the dashboard on them (CR-01)', () => {
-  it('a declared-but-unset tokenEnvVar costs a warning, not the dashboard', () => {
+// now pins what replaced its claim. RE-TITLED 2026-10-03 (quick-261003-tsr, IN-13): the describe was
+// 'the co-host resolves credentials without betting the dashboard on them (CR-01)', and the first two
+// cells were 'a declared-but-unset tokenEnvVar costs a warning, not the dashboard' and 'a refused
+// resolution leaves nothing to mount — the endpoint is never served without a credential'.
+describe('the co-host resolves no credentials (CR-01 retired)', () => {
+  it('a declared-but-unset tokenEnvVar costs nothing — the plan reads no token and no environment', () => {
     // It costs NOTHING now: the decision reads no token entry and no environment, so there is no
     // refusal to warn about and nothing to escape. The source half: no dashboard code dereferences
     // an MCP token any more.
@@ -849,8 +854,8 @@ describe('the co-host resolves credentials without betting the dashboard on them
     expect(DASHBOARD_SOURCE).not.toContain('coHostedMcpCredentialsFor(')
   })
 
-  it('a refused resolution leaves nothing to mount — the endpoint is never served without'
-    + ' a credential', async () => {
+  it('the co-hosted endpoint is served without a credential, and the Host/Origin guards refuse'
+    + ' another origin', async () => {
     // The endpoint IS served without a credential now (D-12), and what bounds it is the loopback
     // bind and the Host/Origin guards (D-13): a tokenless client lists the catalogue, and a page on
     // another origin is refused.
@@ -883,8 +888,10 @@ const MCP_COMMAND_SOURCE = readFileSync(
 // RE-SPELLED 2026-10-01 (432-21, D-12) from 'the standalone agent-qa mcp face still refuses hard on
 // the same entry'. Neither face resolves a token now, so neither refuses on an unset one; the
 // standalone face reads no token declaration and is not routed through any co-host wrapper.
-describe('one error class, two call sites, two correct answers (CR-01)', () => {
-  it('the standalone agent-qa mcp face still refuses hard on the same entry', () => {
+// RE-TITLED 2026-10-03 (quick-261003-tsr, IN-13): the describe was 'one error class, two call sites,
+// two correct answers (CR-01)'.
+describe('neither MCP face resolves a token (CR-01 retired)', () => {
+  it('the standalone agent-qa mcp face reads no token declaration and resolves none', () => {
     expect(MCP_COMMAND_SOURCE).not.toContain('resolveMcpTokens(')
     expect(MCP_COMMAND_SOURCE).not.toContain('services?.mcp?.tokens')
     expect(MCP_COMMAND_SOURCE, 'and is not routed through a co-host wrapper')

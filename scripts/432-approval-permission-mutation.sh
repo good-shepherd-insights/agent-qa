@@ -888,11 +888,12 @@ const bLegs = [
       "      const crossSite432boundary = 'machine' as const\n      registerRunMarkRoute(req, res, { host: deps.agentHost, runId, boundary: crossSite432boundary })\n")],
     reds: [door('C432-RETAINED-CROSS-SITE')],
     // Gap 6 drives the same mark arm cross-site; 7b-ii's throwing responder now runs behind it.
+    // 2026-10-03 (quick-261003-tsr, WR-07): 6g is re-titled; it probes each arm at its own seam.
     allowed: [
       '6a — refuses the CORS simple request, before the mark reaches the host',
       '6b — refuses a cross-origin drive that declares application/json (the Origin leg alone)',
       '6f — refuses a cross-origin mark, and the identical request from the page itself dispatches',
-      '6g — refuses EVERY retained same-site mutating arm, and reaches the mark arm same-origin',
+      '6g — refuses EVERY retained same-site mutating arm before its own side effect, and each arm acts for its own page',
       '6i — refuses the literal `null` Origin, which is not the same fact as no Origin at all',
       '6h — refuses a same-origin-looking drive whose Sec-Fetch-Site says cross-site',
       "7b-ii — a throwing responder is caught by the handler's own backstop",

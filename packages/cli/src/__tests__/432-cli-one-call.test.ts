@@ -191,6 +191,9 @@ describe('C432-CLI-ONE-CALL — fn completes a direct call in one call (432-13)'
     async (mode) => {
       const target = new CountingTarget()
       await target.listen()
+      // 2026-10-03 (quick-261003-tsr, IN-15): the pin is put back when the cell ends, so later
+      // cells in this worker do not inherit a path afterEach has deleted.
+      const savedBrowsers = process.env.PLAYWRIGHT_BROWSERS_PATH
       try {
         const fixture = createInProcessFixture({ origin: target.origin })
         roots.push(fixture.project)
@@ -211,6 +214,8 @@ describe('C432-CLI-ONE-CALL — fn completes a direct call in one call (432-13)'
         expect(target.hits).toEqual(['/in-process-thing'])
         expect(printed.stderr).not.toMatch(/Denied|fail-closed|RunDeniedError/)
       } finally {
+        if (savedBrowsers === undefined) delete process.env.PLAYWRIGHT_BROWSERS_PATH
+        else process.env.PLAYWRIGHT_BROWSERS_PATH = savedBrowsers
         await target.close()
       }
     },
@@ -278,10 +283,11 @@ describe('C432-CLI-ONE-CALL — ask and chat carry a mark out in the turn (432-1
       input.write('/quit\n')
       input.end()
       // A REPL that waited on a decision would never settle; that is an answer, not a timeout.
+      let waiting: ReturnType<typeof setTimeout> | undefined
       const settled = await Promise.race([
         parsed.then(() => 'settled' as const),
-        new Promise<'waiting'>((resolve) => { setTimeout(() => resolve('waiting'), 15_000) }),
-      ])
+        new Promise<'waiting'>((resolve) => { waiting = setTimeout(() => resolve('waiting'), 15_000) }),
+      ]).finally(() => { clearTimeout(waiting) })
       return { settled, stdout: stdout.join('\n') }
     })
 

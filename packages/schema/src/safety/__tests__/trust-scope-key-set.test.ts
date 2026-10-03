@@ -26,9 +26,10 @@ const SAFETY_DIR = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SRC = join(SAFETY_DIR, '..')
 
 describe('the ONE scope key set', () => {
-  // RE-SPELLED 2026-10-02 (432-42, D-12) under the same title: the key set's module is deleted and
-  // no source declares the hand-spelled pair as a published constant again.
-  it('CONTROL B (fixed, fixture validity): the key set is exactly the hand-spelled {project, org}', () => {
+  // RE-SPELLED 2026-10-02 (432-42, D-12): the key set's module is deleted and no source declares the
+  // hand-spelled pair as a published constant again. RE-TITLED 2026-10-03 (quick-261003-tsr, IN-22):
+  // was 'CONTROL B (fixed, fixture validity): the key set is exactly the hand-spelled {project, org}'.
+  it('CONTROL B: the key set\'s module is deleted and no schema source declares the key set again', () => {
     expect(existsSync(join(SAFETY_DIR, 'trust-credential.ts')), 'trust-credential.ts is back').toBe(false)
     const offenders: string[] = []
     const walk = (dir: string): void => {
@@ -45,8 +46,10 @@ describe('the ONE scope key set', () => {
     expect(offenders, 'a schema source declares the scope key set again').toEqual([])
   })
 
-  // RE-SPELLED 2026-10-02 (432-42, D-12) under the same title: neither barrel publishes the key set.
-  it('the safety barrel publishes the key set and nothing that parses a scope', () => {
+  // RE-SPELLED 2026-10-02 (432-42, D-12): neither barrel publishes the key set. RE-TITLED 2026-10-03
+  // (quick-261003-tsr, IN-22): was 'the safety barrel publishes the key set and nothing that parses a
+  // scope'.
+  it('neither barrel publishes the key set, and the safety barrel exports nothing that parses a scope', () => {
     expect(Object.keys(safety)).not.toContain('TRUST_SCOPE_KEYS')
     expect(Object.keys(root)).not.toContain('TRUST_SCOPE_KEYS')
     expect(Object.keys(safety).filter((name) => /scope/iu.test(name))).toEqual([])

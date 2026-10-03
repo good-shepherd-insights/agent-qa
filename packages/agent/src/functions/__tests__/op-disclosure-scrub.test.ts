@@ -31,9 +31,6 @@ import { executableSource } from './op-source-scan.js'
 // `grantedScopes` and `safeMode` caller fields and the synthetic spec's `requiredScopes` are
 // dropped; nothing read them.
 
-/** C0 and C1 together — the whole control range a terminal or a browser acts on. */
-const CONTROL_BYTES = /[\u0000-\u001f\u007f-\u009f]/
-
 function noOpSink(): AuditSink {
   return { appendGuardrailAudit() {} }
 }
@@ -85,7 +82,6 @@ describe('C432-INVOKE-DIRECT: dispatch composes no per-op disclosure (432-13)', 
     await expect(invokeFunction(registry, 'test.echo.disclose', { label }, caller()))
       .resolves.toEqual({ ok: true })
     expect(disclosed).toEqual([])
-    expect(CONTROL_BYTES.test(label) || label === 'the-checkout-suite').toBe(true)
   })
 
   it('the source agrees: invokeFunction reads no disclose member and names no scrub', () => {
@@ -102,9 +98,10 @@ describe('C432-INVOKE-DIRECT: dispatch composes no per-op disclosure (432-13)', 
 const OPS_DIR = join(__dirname, '..', 'ops')
 
 describe('the complete set of disclose implementors, from two independently shaped predicates', () => {
-  // RE-SPELLED 2026-10-02 (432-42, D-14) under the same title: the one built-in implementor's
-  // method is deleted, so the registry lists no op carrying the flag.
-  it('the REGISTRY says exactly one built-in op discloses', () => {
+  // RE-SPELLED 2026-10-02 (432-42, D-14): the one built-in implementor's method is deleted, so the
+  // registry lists no op carrying the flag. RE-TITLED 2026-10-03 (quick-261003-tsr, IN-06): was
+  // 'the REGISTRY says exactly one built-in op discloses'.
+  it('the REGISTRY lists no op carrying a disclose flag', () => {
     const registry = createFunctionRegistry({
       deps: {} as unknown as FunctionDeps,
       auditSink: noOpSink(),

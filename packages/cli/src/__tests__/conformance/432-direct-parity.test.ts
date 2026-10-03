@@ -21,6 +21,12 @@
 // `composeRunServicePorts`, `runDaemonHost`, the built `dist/cli.js`); the model points at an
 // unbindable port, so a started run probes the target, fails to plan and finishes.
 //
+// 2026-10-03 (quick-261003-tsr, WR-08): every door, in-process ones included, runs under the
+// project's empty `no-browsers` pin, and every target hit records the pin in force when it arrived.
+// A door returns only once each run it started has written `runFinished`, so no run outlives the
+// cell that started it. `fn` and `ask` compose a host the command does not close (a CLI process
+// exits with it); the settlement wait is what bounds their runs here.
+//
 // The last describe drives the operations every door reaches through the one function layer —
 // the three knowledge changes and the six config changes — each in one call, with stdin spied.
 //
@@ -150,9 +156,24 @@ function matrixProject(origin: string, optIn: boolean): MatrixProject {
   }
 }
 
-function runDirectories(project: MatrixProject): string[] {
+/** The two places a door's run lands: the project root (for the pin) and its `.agent-qa`. */
+type DoorScope = Pick<MatrixProject, 'root' | 'agentQaRoot'>
+
+function runDirectories(project: DoorScope): string[] {
   const runs = join(project.agentQaRoot, 'runs')
   return existsSync(runs) ? readdirSync(runs) : []
+}
+
+function noBrowsers(project: DoorScope): string {
+  return join(project.root, 'no-browsers')
+}
+
+/** The runs this project started that have not written `runFinished` yet. */
+function unsettledRuns(project: DoorScope): string[] {
+  return runDirectories(project).filter((runId) => {
+    const events = join(project.agentQaRoot, 'runs', runId, 'events.jsonl')
+    return !existsSync(events) || !readFileSync(events, 'utf8').includes('"type":"runFinished"')
+  })
 }
 
 async function waitFor(check: () => boolean, timeoutMs = 60_000): Promise<boolean> {
@@ -166,8 +187,14 @@ async function waitFor(check: () => boolean, timeoutMs = 60_000): Promise<boolea
 
 // ---- the stdin instrument ---------------------------------------------------------------------
 
-/** Run `body` in CI posture with `process.stdin` replaced by a stream that records and refuses reads. */
-async function atDoor<T>(body: () => Promise<T>): Promise<{ value: T; stdinReads: string[] }> {
+/**
+ * Run `body` in CI posture with `process.stdin` replaced by a stream that records and refuses
+ * reads, under the project's no-browser pin, and wait for every run it started to settle.
+ */
+async function atDoor<T>(
+  project: DoorScope,
+  body: () => Promise<T>,
+): Promise<{ value: T; stdinReads: string[]; unsettled: string[] }> {
   const stdinReads: string[] = []
   const forbidden = new Readable({ read() {} }) as Readable & { isTTY?: boolean }
   forbidden.isTTY = false
@@ -183,10 +210,13 @@ async function atDoor<T>(body: () => Promise<T>): Promise<{ value: T; stdinReads
   const savedCi = process.env.CI
   const savedBrowsers = process.env.PLAYWRIGHT_BROWSERS_PATH
   process.env.CI = 'true'
+  process.env.PLAYWRIGHT_BROWSERS_PATH = noBrowsers(project)
   const realStdin = process.stdin
   Object.defineProperty(process, 'stdin', { value: forbidden, configurable: true })
   try {
-    return { value: await body(), stdinReads }
+    const value = await body()
+    await waitFor(() => unsettledRuns(project).length === 0, 90_000)
+    return { value, stdinReads, unsettled: unsettledRuns(project) }
   } finally {
     Object.defineProperty(process, 'stdin', { value: realStdin, configurable: true })
     if (savedCi === undefined) delete process.env.CI
@@ -232,10 +262,8 @@ async function commander(project: MatrixProject, args: readonly string[]): Promi
 
 async function spawnCli(project: MatrixProject, args: readonly string[]): Promise<{ status: number | null; text: string }> {
   expect(existsSync(CLI_DIST), `the built CLI is missing at ${CLI_DIST}; run pnpm build first`).toBe(true)
-  const env: NodeJS.ProcessEnv = {
-    ...process.env, CI: 'true', NO_COLOR: '1', DO_NOT_TRACK: '1',
-    PLAYWRIGHT_BROWSERS_PATH: join(project.root, 'no-browsers'),
-  }
+  // The browser pin is inherited from `atDoor`, the one place every door's pin is set.
+  const env: NodeJS.ProcessEnv = { ...process.env, CI: 'true', NO_COLOR: '1', DO_NOT_TRACK: '1' }
   delete env.AGENT_QA_RUN_ID
   const child = spawn(process.execPath, [CLI_DIST, ...args], { cwd: project.root, env, stdio: ['ignore', 'pipe', 'pipe'] })
   const chunks: Buffer[] = []
@@ -338,9 +366,7 @@ const DOORS: ReadonlyArray<readonly [string, Door]> = [
   }],
   ['MCP over stdio (spawned)', async (project, pattern) => {
     expect(existsSync(CLI_DIST), `the built CLI is missing at ${CLI_DIST}`).toBe(true)
-    const env = Object.fromEntries(Object.entries({
-      ...process.env, CI: 'true', PLAYWRIGHT_BROWSERS_PATH: join(project.root, 'no-browsers'),
-    }).filter((entry): entry is [string, string] => entry[1] !== undefined && !/TOKEN/u.test(entry[0])))
+    const env = Object.fromEntries(Object.entries({ ...process.env, CI: 'true' }).filter((entry): entry is [string, string] => entry[1] !== undefined && !/TOKEN/u.test(entry[0])))
     const transport = new StdioClientTransport({ command: process.execPath, args: [CLI_DIST, 'mcp'], cwd: project.root, stderr: 'pipe', env })
     const client = new Client({ name: 'agent-qa-432-42-doors-stdio', version: '0.0.0' })
     try {
@@ -352,7 +378,6 @@ const DOORS: ReadonlyArray<readonly [string, Door]> = [
     }
   }],
   ['the dashboard Run control', async (project, pattern) => {
-    process.env.PLAYWRIGHT_BROWSERS_PATH = join(project.root, 'no-browsers')
     const scene = await openDashboard(project)
     const response = await fetch(`${scene.origin}/api/runs/trigger`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ file: pattern }),
@@ -365,7 +390,6 @@ const DOORS: ReadonlyArray<readonly [string, Door]> = [
     return { refused: settled.details['refusedBeforeStart'] === true, text: `${reason}\n${JSON.stringify(settled.details)}` }
   }],
   ['the run service', async (project, pattern) => {
-    process.env.PLAYWRIGHT_BROWSERS_PATH = join(project.root, 'no-browsers')
     const scene = await openDashboard(project)
     const response = await fetch(`${scene.origin}/run`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ patterns: [pattern] }),
@@ -376,7 +400,6 @@ const DOORS: ReadonlyArray<readonly [string, Door]> = [
     return { refused: response.status >= 400 && body['error'] === 'run_denied', text }
   }],
   ['the background worker (daemon)', async (project, pattern) => {
-    process.env.PLAYWRIGHT_BROWSERS_PATH = join(project.root, 'no-browsers')
     const listeners = new Map<NodeJS.Signals, () => void>()
     const operations: Partial<DaemonHostOperations> = {
       setInterval: (_callback, intervalMs) => intervalMs as unknown as ReturnType<typeof setInterval>,
@@ -412,14 +435,25 @@ const DOORS: ReadonlyArray<readonly [string, Door]> = [
   }],
 ]
 
-async function withTarget<T>(body: (target: CountingTarget) => Promise<T>): Promise<T> {
-  const target = new CountingTarget()
+/** The browser pin this process held at each target hit, in arrival order. */
+type PinsAtHit = Array<string | undefined>
+
+async function withTarget<T>(body: (target: CountingTarget, pinsAtHit: PinsAtHit) => Promise<T>): Promise<T> {
+  const pinsAtHit: PinsAtHit = []
+  const target = new CountingTarget(() => { pinsAtHit.push(process.env.PLAYWRIGHT_BROWSERS_PATH) })
   await target.listen()
   try {
-    return await body(target)
+    return await body(target, pinsAtHit)
   } finally {
     await target.close()
   }
+}
+
+/** Every hit arrived while this process held the project's no-browser pin. */
+function expectPinnedHits(project: MatrixProject, pinsAtHit: PinsAtHit): void {
+  expect(pinsAtHit.length, 'the target was never hit').toBeGreaterThan(0)
+  expect(new Set(pinsAtHit), 'the run reached the target without the no-browser pin')
+    .toEqual(new Set([noBrowsers(project)]))
 }
 
 describe('C432-DOOR-NONPRODUCTION: every door runs, refuses production, and honours only the config opt-in', () => {
@@ -428,13 +462,15 @@ describe('C432-DOOR-NONPRODUCTION: every door runs, refuses production, and hono
   })
 
   it.each(DOORS)('C432-DOOR-NONPRODUCTION: %s starts a non-production run in its one call, reading no stdin and asking nothing', async (_name, door) => {
-    await withTarget(async (target) => {
+    await withTarget(async (target, pinsAtHit) => {
       const project = matrixProject(target.origin, false)
-      const { value: answer, stdinReads } = await atDoor(() => door(project, project.localTest, target))
+      const { value: answer, stdinReads, unsettled } = await atDoor(project, () => door(project, project.localTest, target))
       expect(stdinReads, 'an approval read reached stdin').toEqual([])
       expect(answer.refused, answer.text).toBe(false)
+      expect(unsettled, 'a started run outlived its door').toEqual([])
       expect(await waitFor(() => target.hits.includes(`/${LOCAL_TARGET}`)), `the run never reached the target: ${answer.text}`).toBe(true)
       expect(target.hits).not.toContain(`/${PRODUCTION_TARGET}`)
+      expectPinnedHits(project, pinsAtHit)
       expect(await waitFor(() => runDirectories(project).length > 0), 'no run directory was written').toBe(true)
       expect(answer.text).not.toMatch(APPROVAL)
       expect(answer.text).not.toContain(OPT_IN_LINE)
@@ -444,8 +480,9 @@ describe('C432-DOOR-NONPRODUCTION: every door runs, refuses production, and hono
   it.each(DOORS)('C432-DOOR-NONPRODUCTION: %s refuses a declared production run before any effect, naming the target and the one config line', async (_name, door) => {
     await withTarget(async (target) => {
       const project = matrixProject(target.origin, false)
-      const { value: answer, stdinReads } = await atDoor(() => door(project, project.productionTest, target))
+      const { value: answer, stdinReads, unsettled } = await atDoor(project, () => door(project, project.productionTest, target))
       expect(stdinReads).toEqual([])
+      expect(unsettled, 'a refused run left a run behind').toEqual([])
       expect(answer.refused, answer.text).toBe(true)
       expect(answer.text, 'the refusal does not name the target').toContain(`"${PRODUCTION_TARGET}"`)
       expect(answer.text, 'the refusal does not name the one line to add').toContain(OPT_IN_LINE)
@@ -456,12 +493,14 @@ describe('C432-DOOR-NONPRODUCTION: every door runs, refuses production, and hono
   }, 180_000)
 
   it.each(DOORS)('C432-DOOR-NONPRODUCTION: %s runs the same production test once the config, and only the config, opts in', async (_name, door) => {
-    await withTarget(async (target) => {
+    await withTarget(async (target, pinsAtHit) => {
       const project = matrixProject(target.origin, true)
-      const { value: answer, stdinReads } = await atDoor(() => door(project, project.productionTest, target))
+      const { value: answer, stdinReads, unsettled } = await atDoor(project, () => door(project, project.productionTest, target))
       expect(stdinReads).toEqual([])
       expect(answer.refused, answer.text).toBe(false)
+      expect(unsettled, 'a started run outlived its door').toEqual([])
       expect(await waitFor(() => target.hits.includes(`/${PRODUCTION_TARGET}`)), `the opted-in run never reached the target: ${answer.text}`).toBe(true)
+      expectPinnedHits(project, pinsAtHit)
       expect(answer.text).not.toContain(OPT_IN_LINE)
       expect(answer.text).not.toMatch(APPROVAL)
     })
@@ -534,7 +573,7 @@ describe('C432-DOOR-NONPRODUCTION: the knowledge and config changes every door r
     const forgotten = publishCandidate(knowledgeRoot, agentQaRoot, 'Forget')
     const host = composeCliLocalAgent({ agentQaRoot, configPath: join(root, 'agent-qa.config.yaml') })
     try {
-      const { value: answers, stdinReads } = await atDoor(async () => ({
+      const { value: answers, stdinReads } = await atDoor({ root, agentQaRoot }, async () => ({
         accept: await invokeFunction(host.registry, 'knowledge.accept', { target: { grain: 'record', recordId: accepted } }, CLI_FUNCTION_CALLER),
         reject: await invokeFunction(host.registry, 'knowledge.reject', { target: { grain: 'record', recordId: rejected }, reason: 'moved' }, CLI_FUNCTION_CALLER),
         forget: await invokeFunction(host.registry, 'knowledge.forget', { target: { grain: 'record', recordId: forgotten } }, CLI_FUNCTION_CALLER),
@@ -573,7 +612,7 @@ describe('C432-DOOR-NONPRODUCTION: the knowledge and config changes every door r
     try {
       const call = (registry: typeof host.registry, id: string, input: unknown) =>
         invokeFunction(registry, id, input, CLI_FUNCTION_CALLER) as Promise<{ outcome: string; files?: readonly string[] }>
-      const { value: answers, stdinReads } = await atDoor(async () => ({
+      const { value: answers, stdinReads } = await atDoor({ root, agentQaRoot: join(root, '.agent-qa') }, async () => ({
         field: await call(host.registry, 'config.field.set', { path: 'use.parallel', value: true }),
         create: await call(host.registry, 'config.target.create', { name: 'basket', platform: 'web', url: 'https://basket.example.com' }),
         edit: await call(host.registry, 'config.target.edit', { name: 'shop', changes: { url: 'https://shop.example.com/basket' } }),

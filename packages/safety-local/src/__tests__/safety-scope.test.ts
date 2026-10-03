@@ -1,8 +1,8 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   createMaskingContext,
@@ -16,6 +16,18 @@ import * as surface from '../index'
 import { detectExecutionContext } from '../execution-context-detector'
 import { JsonlAuditSink } from '../jsonl-audit-sink'
 import { runSafetyScope } from '../safety-scope'
+
+// 2026-10-03 (quick-261003-tsr, IN-39): every directory a cell makes is removed after it.
+const madeDirs: string[] = []
+afterEach(() => {
+  for (const dir of madeDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+})
+
+function tempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix))
+  madeDirs.push(dir)
+  return dir
+}
 
 function fakeSink(): AuditSink {
   return { appendGuardrailAudit() {} }
@@ -155,7 +167,7 @@ describe('runSafetyScope', () => {
   // execution trail an older build left. Each run's guardrail rows land in its own directory, nothing
   // crosses, and neither legacy trail is read, rewritten or joined by a new one.
   it('C432-AUDIT-UNREAD: interleaved runs append their own guardrail rows and leave each legacy execution trail untouched', async () => {
-    const runDirs = [mkdtempSync(join(tmpdir(), 'scope-run-a-')), mkdtempSync(join(tmpdir(), 'scope-run-b-'))]
+    const runDirs = [tempDir('scope-run-a-'), tempDir('scope-run-b-')]
     const legacy = runDirs.map((dir, index) => {
       const bytes = `{"ts":"2026-09-01T10:00:0${String(index)}.000Z","verdict":"deny","outcome":"blocked"}\n`
       writeFileSync(join(dir, 'execution_audit.jsonl'), bytes)
@@ -180,7 +192,7 @@ describe('runSafetyScope', () => {
       expect(rows.every((row) => row.runId === `run-${String(index)}`)).toBe(true)
     })
     // And a run directory that had no legacy trail never gets one.
-    const fresh = mkdtempSync(join(tmpdir(), 'scope-run-c-'))
+    const fresh = tempDir('scope-run-c-')
     runSafetyScope({ auditSink: new JsonlAuditSink(fresh) }, () => {
       getActiveAuditSink()?.appendGuardrailAudit({ action: 'pass' })
     })

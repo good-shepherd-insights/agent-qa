@@ -94,7 +94,8 @@ async function markThroughCli(f: Fixture, input: RunsMarkInput, wholeMarkDelegat
 }
 
 interface LiveDaemon {
-  readonly stop: () => Promise<void>
+  /** Signals the daemon and answers its exit (the code, or what it rejected with). */
+  readonly stop: () => Promise<unknown>
 }
 
 /** The shipped daemon over the fixture project, resolved once its registration is on disk. */
@@ -148,12 +149,14 @@ async function startDaemon(f: Fixture): Promise<LiveDaemon> {
     if (Date.now() >= deadline) throw new Error('daemon never wrote its registration')
     await new Promise(resolve => setTimeout(resolve, 10))
   }
+  // 2026-10-03 (quick-261003-tsr, IN-18): `stop()` answers the exit instead of asserting it, so a
+  // cell that calls it from `finally` reports its own failure first and asserts the exit after.
   return {
-    stop: async () => {
+    stop: async (): Promise<unknown> => {
       const listener = signals.get('SIGTERM')
       if (listener === undefined) throw new Error('SIGTERM listener was not installed')
       listener()
-      await expect(running).resolves.toBe(0)
+      return await running.then((code) => code, (error: unknown) => error)
     },
   }
 }
@@ -199,6 +202,7 @@ describe('a mark under a lease-holding daemon is delegated whole (432-13 #1)', (
   it('C-MRK-DELEGATED-ONCE: a CLI mark under a live daemon lands once through the daemon, and the CLI never takes the lease', async () => {
     const f = fixture()
     const daemon = await startDaemon(f)
+    let exit: unknown
     try {
       const before = daemonLease(f)
       expect(before.pid).toBe(process.pid)
@@ -221,13 +225,15 @@ describe('a mark under a lease-holding daemon is delegated whole (432-13 #1)', (
       expect({ leaseId: after.leaseId, epoch: after.epoch, pid: after.pid })
         .toEqual({ leaseId: before.leaseId, epoch: before.epoch, pid: before.pid })
     } finally {
-      await daemon.stop()
+      exit = await daemon.stop()
     }
+    expect(exit, 'the daemon did not exit cleanly').toBe(0)
   }, 90_000)
 
   it('C-MRK-DELEGATED-RETRY: an interrupted delegated mark, retried, resumes its intent and lands every effect once', async () => {
     const f = fixture()
     const daemon = await startDaemon(f)
+    let exit: unknown
     try {
       const input: RunsMarkInput = { runId: f.handoff.runId, kind: 'false-fail' }
       const unblock = blockReceipt(f.runDir)
@@ -261,8 +267,9 @@ describe('a mark under a lease-holding daemon is delegated whole (432-13 #1)', (
       expect(await markThroughCli(f, input)).toEqual({ kind: 'already-marked', receipt: retried.receipt })
       expect(receiptLines(f)).toBe(1)
     } finally {
-      await daemon.stop()
+      exit = await daemon.stop()
     }
+    expect(exit, 'the daemon did not exit cleanly').toBe(0)
   }, 120_000)
 
   it('C-MRK-NO-HOLDER-LOCAL: with no live holder the delegate answers nothing and the CLI mark runs locally', async () => {

@@ -205,7 +205,9 @@ describe('C432-PRODUCTION-OPTIN — only the config snapshot’s literal true op
     productionTargetNames: ['prod-eu'],
   }
 
-  it('C432-PRODUCTION-OPTIN: allowProduction true lets the run reach the gate and start', async () => {
+  // RE-TITLED 2026-10-03 (quick-261003-tsr, IN-27): was '…lets the run reach the gate and start';
+  // the run gate was deleted in 432-13.
+  it('C432-PRODUCTION-OPTIN: allowProduction true lets the run reach assembly and start', async () => {
     const record = recorder()
     const started = await core({ ...production, allowProduction: true }, record).execute({})
 

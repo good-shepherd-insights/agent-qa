@@ -61,9 +61,10 @@ describe('C432-DECLARATION-KEYS: the caller record after the permission wave (43
 
 // 2026-10-02 (432-39, D-10/D-12): the capability-scope union is DELETED, with every field that
 // named it. The two cells that pinned its members and its parser keep their titles and are
-// re-spelled as its absence (C432-NO-PERMISSION-TYPES); the two distinctness cells keep their claim
-// on a smuggled record, the way an old caller record would still carry the retired field, and
-// nothing reads it.
+// re-spelled as its absence (C432-NO-PERMISSION-TYPES).
+// 2026-10-03 (quick-261003-tsr, IN-22): the two distinctness cells asserted that a list they built
+// lacked a value they never put in it, so they could not fail. Each now ranges every list and enum
+// the barrel exports for the retired grant names it is about.
 type ExactKeys<T, K extends PropertyKey> = [keyof T] extends [K]
   ? ([K] extends [keyof T] ? true : false)
   : false
@@ -71,15 +72,21 @@ const RETIRED_SCOPE_NAMES = [
   'read', 'run', 'config-write', 'knowledge-write', 'approval-write', 'test-write',
 ]
 
-/** An old caller record that still carries the retired scope set, smuggled past the deleted type. */
-function legacyRecord(
-  origin: FunctionCaller['origin'],
-  grantedScopes: readonly string[],
-): FunctionCaller {
-  return { surface: 'synthetic', grantedScopes, safeMode: false, origin } as FunctionCaller
+/** Every list and enum the root barrel exports, with its members. */
+function exportedLists(): Array<readonly [string, readonly unknown[]]> {
+  return Object.entries(schema).flatMap(([name, value]) => {
+    if (Array.isArray(value)) return [[name, value] as const]
+    const options = (value as { options?: unknown } | undefined)?.options
+    return Array.isArray(options) ? [[name, options] as const] : []
+  })
 }
-const grantsOf = (caller: FunctionCaller): readonly string[] =>
-  (caller as unknown as { grantedScopes: readonly string[] }).grantedScopes
+
+/** The exported lists that name any of `grants`. */
+function listsNaming(grants: readonly string[]): string[] {
+  return exportedLists()
+    .filter(([, members]) => members.some((member) => grants.includes(member as string)))
+    .map(([name]) => name)
+}
 
 describe('the capability-scope union', () => {
   // RE-SPELLED 2026-10-02 (432-39, D-10/D-12, C432-NO-PERMISSION-TYPES). The union and its six
@@ -108,20 +115,19 @@ describe('the capability-scope union', () => {
     expect(carrying).toEqual([])
   })
 
-  it('keeps approval-write distinct from knowledge-write', () => {
-    // The privilege-conflation counter-note, made checkable: changing what the system LEARNED
-    // and changing what it may do WITHOUT ASKING are two grants, so a caller can hold either
-    // without the other. 432-39: on a legacy record, smuggled; nothing reads either.
-    const knowledgeOnly = legacyRecord('human', ['knowledge-write'])
-    expect(grantsOf(knowledgeOnly)).not.toContain('approval-write')
+  // RE-SPELLED 2026-10-03 (quick-261003-tsr, IN-22): was 'keeps approval-write distinct from
+  // knowledge-write'. With no grants there is nothing to conflate; what can still regress is a list
+  // that names either grant coming back.
+  it('exports no list or enum naming approval-write or knowledge-write', () => {
+    // Non-vacuity: the barrel exports lists, and the census reads a real one.
+    expect(exportedLists().length).toBeGreaterThan(5)
+    expect(listsNaming(['human'])).toContain('FUNCTION_CALLER_ORIGINS')
+    expect(listsNaming(['approval-write', 'knowledge-write'])).toEqual([])
   })
 
-  it('keeps test-write distinct from run', () => {
-    // 394's counter-note, made checkable on the same pattern: executing this project's tests and
-    // authoring new ones into the repository are two grants, so a caller can hold either without
-    // the other. 432-39: on a legacy record, smuggled; nothing reads either.
-    const runOnly = legacyRecord('agent', ['run', 'read'])
-    expect(grantsOf(runOnly)).not.toContain('test-write')
+  // RE-SPELLED 2026-10-03 (quick-261003-tsr, IN-22): was 'keeps test-write distinct from run'.
+  it('exports no list or enum naming test-write', () => {
+    expect(listsNaming(['test-write'])).toEqual([])
   })
 })
 

@@ -22,8 +22,10 @@ describe('419 mark API scope and outcomes', () => {
   // the denial is a plain reason, and the typed error carries nothing a reader must act on.
   // RE-SPELLED 2026-10-02 (432-42, D-15) under the same title: no server produces the gate-era
   // `mark_denied` 403, so the helper keeps no typed denial at all. A legacy body of that shape is an
-  // ordinary request failure, carrying neither a typed reason nor remedies.
-  it('retains the typed denial as a plain reason on the real helper, and carries no remedies', async () => {
+  // ordinary request failure, carrying neither a typed reason nor remedies. RE-TITLED 2026-10-03
+  // (quick-261003-tsr, IN-30): was 'retains the typed denial as a plain reason on the real helper,
+  // and carries no remedies'.
+  it('carries no typed denial on the real helper: a legacy mark_denied 403 is a plain ApiError with no reason or remedies', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'mark_denied',
       reason: 'The mark could not be recorded here.' }), { status: 403 })))
     const denied = await markRun('run', { kind: 'false-fail' }).catch((error: unknown) => error)

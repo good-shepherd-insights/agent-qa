@@ -274,7 +274,8 @@ describe('GET /ok is a service route like every other one', () => {
     expect(fetchSiteBody).toEqual({ error: 'cross_site_refused' })
   })
 
-  it('reports MEASURED facts and the contract version to a valid token', async () => {
+  // RE-TITLED 2026-10-03 (quick-261003-tsr, IN-30): was '…to a valid token'; no credential exists.
+  it('reports MEASURED facts and the contract version to an admitted caller', async () => {
     const origin = await mount()
     const response = await fetch(`${origin}/ok`)
     expect(response.status).toBe(200)
@@ -403,7 +404,8 @@ describe('the READ rows dispatch through the injected host (405-05, D-12)', () =
     } as unknown as NonNullable<RunServicePorts['agentHost']>
   }
 
-  it('reaches the run-detail adapter — a valid token, an unknown run, the op\'s own word', async () => {
+  // RE-TITLED 2026-10-03 (quick-261003-tsr, IN-30): was '… — a valid token, an unknown run, …'.
+  it('reaches the run-detail adapter — an admitted caller, an unknown run, the op\'s own word', async () => {
     const origin = await mount(fakePorts({ agentHost: hostRefusing('RunNotFoundError') }))
     const response = await fetch(`${origin}/run/r_planted/detail`)
     // 404 `unknown_run` PROVES THE WHOLE CHAIN: the guard passed (a refused one is 403), the

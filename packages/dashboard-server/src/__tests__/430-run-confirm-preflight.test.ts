@@ -87,7 +87,9 @@ async function preflight(path: string): Promise<Answer> {
   })
 }
 
-describe('430 run-confirm preflight is answered ahead of the shared OPTIONS arm', () => {
+// RE-TITLED 2026-10-03 (quick-261003-tsr, IN-30): was '430 run-confirm preflight is answered ahead
+// of the shared OPTIONS arm'.
+describe('the retired 430 run-confirm paths take the shared OPTIONS arm', () => {
   // RE-SPELLED 2026-10-01 (432-14): was RUN-CONFIRM-PREFLIGHT-NO-GRANT, the pair's own grant-less
   // preflight. The pair and its preflight arm are deleted, so both paths now get the shared arm's
   // answer, byte for byte the answer every other path gets.

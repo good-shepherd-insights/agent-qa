@@ -214,6 +214,9 @@ function plantLegacy(fixture: Fixture): { readonly files: readonly string[]; rea
   return { files: [grants, rootAudit, runAudit], dirs: [proposals] }
 }
 
+/** Whether a chmod seal binds this process: not as root, and not on Windows. */
+const canSealFiles = process.platform !== 'win32' && process.getuid?.() !== 0
+
 describe('C432-LEFTOVERS-UNREAD: legacy approval state is neither created, needed nor opened (D-22, EDGE-14)', () => {
   it('C432-LEFTOVERS-UNREAD: a fresh project publishes all three without creating a grant ledger, a proposal store or an execution audit', async () => {
     const fixture = project()
@@ -224,7 +227,10 @@ describe('C432-LEFTOVERS-UNREAD: legacy approval state is neither created, neede
     expect(audits, 'an execution audit was written').toEqual([])
   }, 120_000)
 
-  it('C432-LEFTOVERS-UNREAD: present malformed legacy files, sealed against any open, change no answer and are left byte- and mode-identical', async () => {
+  // 2026-10-03 (quick-261003-tsr, IN-17): a mode-0 seal binds no reader running as root, nor on
+  // Windows, so there the cell could not measure "never opened"; it runs only where the seal holds,
+  // and checks that it does.
+  it.runIf(canSealFiles)('C432-LEFTOVERS-UNREAD: present malformed legacy files, sealed against any open, change no answer and are left byte- and mode-identical', async () => {
     const clean = project()
     const expected = await publishAll(clean)
     expectPublished(clean, expected)
@@ -236,6 +242,7 @@ describe('C432-LEFTOVERS-UNREAD: legacy approval state is neither created, neede
     // Sealed: a reader that opened, listed or stat'ed under any of them could not answer.
     for (const file of legacy.files) { chmodSync(file, 0o000); sealed.push(file) }
     for (const dir of legacy.dirs) { chmodSync(dir, 0o000); sealed.push(dir) }
+    expect(() => readFileSync(legacy.files[0]!), 'the seal did not take effect').toThrow()
 
     let published: Publications
     try {

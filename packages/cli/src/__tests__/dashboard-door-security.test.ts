@@ -31,8 +31,9 @@
 // with the routes they drove. The generic 404 those paths now answer is carried by
 // C430-DELETED-CHAT-ROUTES-SHARED-404 and process survival's s5.
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { connect } from 'node:net'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:http'
+import { connect, type AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
@@ -40,6 +41,7 @@ import { RUNS_MARK_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import { DashboardDatabase, startServer, type AgentHost } from '@vostride/agent-qa-dashboard'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import { afterEach, describe, expect, it } from 'vitest'
+import { parse as parseYaml } from 'yaml'
 
 import { composeDashboardDoor } from '../commands/dashboard.js'
 
@@ -53,6 +55,9 @@ const MARK_BODY = JSON.stringify({ kind: 'false-fail', note: 'door security' })
 
 /** A run row the dashboard's own run read serves, so gap 7's synchronous read arm has a subject. */
 const READ_RUN = 'run-432-14-read'
+
+/** A declared production target: the live-editor arm refuses it by name, before any session. */
+const PRODUCTION_TARGET = 'door-production'
 
 // ---- the fixture project -------------------------------------------------------------------
 
@@ -74,6 +79,11 @@ function fixtureWorkspace(): string {
       registry: {
         targets: {
           conformance: { platform: 'web', url: 'https://conformance.invalid' },
+          // 2026-10-03 (quick-261003-tsr, WR-07): the live-editor arm's same-origin control names
+          // this target, so the admitted create stops at the production refusal, before a browser.
+          [PRODUCTION_TARGET]: {
+            platform: 'web', url: 'https://door-production.invalid', environment: 'production',
+          },
         },
       },
     })}\n`,
@@ -86,6 +96,7 @@ interface DoorFixture {
   readonly origin: string
   readonly port: number
   readonly configRoot: string
+  readonly configPath: string
   readonly host: LocalAgentHost
   /** Every op id the composed host was asked to dispatch, in order — the side-effect surface. */
   readonly invocations: string[]
@@ -130,6 +141,9 @@ async function openDoor(options: {
   const started = await startServer({
     db,
     port: 0,
+    // 2026-10-03 (quick-261003-tsr, WR-07): the fixture's own config, so the config and undo arms
+    // write a temporary file rather than one resolved from the test's working directory.
+    configPath,
     agentHost: options.wrapHost === undefined ? counted : options.wrapHost(counted),
   })
   const owned = signals.map((signal, index) =>
@@ -141,6 +155,7 @@ async function openDoor(options: {
     origin: boundOrigin,
     port: address.port,
     configRoot,
+    configPath,
     host,
     invocations,
     close: async () => {
@@ -279,24 +294,39 @@ const sameOrigin = (door: DoorFixture): string => `http://127.0.0.1:${String(doo
 
 // ---- the side-effect surface ---------------------------------------------------------------
 
+/** One arm's own side-effect surface, read before and after a refused drive. */
+interface SeamReading {
+  readonly seam: string
+  readonly before: string
+  readonly after: string
+}
+
 /**
  * The whole REJECTS assertion, in one place so no cell can quietly assert less than its siblings.
  *
  * STATUS IS THE WEAKEST OF THESE and it is deliberately not alone: a door that answered 403 and
  * acted anyway would pass a status-only cell. The side effect a mark has is its dispatch, so the
- * surface measured is whether the composed host was asked to do anything at all.
+ * surface measured is whether the composed host was asked to do anything at all. An arm that
+ * writes past the host (a file, a credential, a provider request) passes its own seam reading too
+ * (2026-10-03, quick-261003-tsr WR-07).
  */
 function expectNoSideEffect(
   label: string,
   door: DoorFixture,
   response: RawResponse,
   expectedStatus: number,
+  reading?: { readonly invocationsBefore: number; readonly seam: SeamReading },
 ): void {
   expect(response.status, `${label}: the door answered ${String(response.status)} ${response.note ?? ''}`)
     .toBe(expectedStatus)
   expect(response.body, `${label}: a refusal carries no receipt`).not.toContain('receipt')
   expect(response.body, `${label}: a refusal carries the op's answer`).not.toContain('run-not-found')
-  expect(door.invocations, `${label}: the refused drive reached the composed host`).toEqual([])
+  expect(door.invocations.slice(reading?.invocationsBefore ?? 0), `${label}: the refused drive reached the composed host`)
+    .toEqual([])
+  if (reading !== undefined) {
+    expect(reading.seam.after, `${label}: the refused drive changed ${reading.seam.seam}`)
+      .toBe(reading.seam.before)
+  }
 }
 
 /** The ACCEPTS half: the mark was dispatched exactly once and the op's own answer came back. */
@@ -306,17 +336,183 @@ function expectDispatchedOnce(label: string, door: DoorFixture, response: RawRes
   expect(door.invocations).toEqual([RUNS_MARK_FUNCTION_ID])
 }
 
-// The retained same-site mutating arms of the shipped router. Each refuses a page on another
-// origin before it reads a body, so the credential and editor doors are safe to drive here.
-const RETAINED_SAME_SITE_MUTATIONS: ReadonlyArray<readonly [string, string]> = [
-  ['POST', MARK_PATH],
-  ['POST', '/api/config/undo'],
-  ['POST', '/api/live-editor/sessions'],
-  ['POST', '/api/auth/credential'],
-  ['POST', '/api/auth/credential/move'],
-  ['POST', '/api/llm/test'],
-  ['DELETE', '/api/auth/cross-site-probe-432-14'],
+// ---- the retained same-site arms, each with its own side-effect seam -----------------------
+//
+// 2026-10-03 (quick-261003-tsr, WR-07): 6g used to measure only `door.invocations`, which six of
+// these seven arms never cross, and drove them with a mark body none of them could act on. Each arm
+// now names the seam it writes through, is driven with a body it WOULD act on, and has a same-origin
+// control showing that body acts. The live-editor arm is the one that cannot be driven to its write
+// here (an admitted create starts a browser), so its control stops at the production refusal, past
+// the cross-site check, and its seam is the session list.
+
+/** The machine-wide credential name the credential, move and delete arms act on. */
+const PROBE_CREDENTIAL = 'door-probe'
+const MOVED_CREDENTIAL = 'door-probe-moved'
+
+/** Everything the arm probes need beyond the door: a private auth store and a provider sink. */
+interface ArmScene {
+  readonly door: DoorFixture
+  readonly authFile: string
+  readonly providerHits: () => number
+  readonly providerBaseUrl: string
+}
+
+interface SameSiteArm {
+  readonly method: 'POST' | 'DELETE'
+  readonly path: string
+  readonly seam: string
+  /** Puts the state the arm acts on in place; returns the body to drive with. */
+  readonly arrange: (scene: ArmScene) => Promise<string | undefined>
+  readonly read: (scene: ArmScene) => Promise<string>
+  /** The same-origin control: the identical request acts, and the seam shows it. */
+  readonly admitted: (scene: ArmScene, response: RawResponse, before: string) => Promise<void>
+}
+
+function authStoreText(scene: ArmScene): Promise<string> {
+  return Promise.resolve(existsSync(scene.authFile) ? readFileSync(scene.authFile, 'utf8') : '<absent>')
+}
+
+function authNames(scene: ArmScene): string[] {
+  return existsSync(scene.authFile)
+    ? Object.keys(JSON.parse(readFileSync(scene.authFile, 'utf8')) as Record<string, unknown>).sort()
+    : []
+}
+
+const sameSiteJson = (door: DoorFixture): Record<string, string> => ({
+  'content-type': 'application/json',
+  origin: sameOrigin(door),
+})
+
+const RETAINED_SAME_SITE_ARMS: readonly SameSiteArm[] = [
+  {
+    method: 'POST',
+    path: MARK_PATH,
+    seam: 'the composed host\'s dispatch log',
+    arrange: () => Promise.resolve(MARK_BODY),
+    read: ({ door }) => Promise.resolve(JSON.stringify(door.invocations)),
+    admitted: async ({ door }, response) => { expectDispatchedOnce('6g', door, response) },
+  },
+  {
+    method: 'POST',
+    path: '/api/config/undo',
+    seam: 'the config file',
+    arrange: async ({ door }) => {
+      const changed = await rawRequest(door.port, {
+        method: 'PATCH',
+        path: '/api/config',
+        headers: sameSiteJson(door),
+        body: JSON.stringify({
+          undoable: true,
+          changes: [{ op: 'set', path: ['use', 'mobile', 'appState'], value: 'preserve' }],
+        }),
+      })
+      expect(changed.status, `6g arrange: the undoable config write failed: ${changed.body}`).toBe(200)
+      const { undo } = JSON.parse(changed.body) as { undo: { token: string } }
+      return JSON.stringify({ token: undo.token })
+    },
+    read: ({ door }) => Promise.resolve(readFileSync(door.configPath, 'utf8')),
+    admitted: async ({ door }, response) => {
+      expect(response.status, `6g /api/config/undo: the same-origin Undo was refused: ${response.body}`).toBe(200)
+      expect(JSON.parse(response.body)).toMatchObject({ restored: true })
+      const restored = parseYaml(readFileSync(door.configPath, 'utf8')) as { use: { mobile: { appState: string } } }
+      expect(restored.use.mobile.appState, 'the token the refused drives carried was spent').toBe('reset')
+    },
+  },
+  {
+    method: 'POST',
+    path: '/api/live-editor/sessions',
+    seam: 'the live-editor session list',
+    arrange: () => Promise.resolve(JSON.stringify({ platform: 'web', targetName: PRODUCTION_TARGET })),
+    read: async ({ door }) => {
+      const listed = await rawRequest(door.port, {
+        method: 'GET', path: '/api/live-editor/sessions', headers: { origin: sameOrigin(door) },
+      })
+      expect(listed.status, `the session list did not answer: ${listed.body}`).toBe(200)
+      return listed.body
+    },
+    admitted: async (scene, response, before) => {
+      // Past the cross-site check, the create answers its own production refusal by name.
+      expect(response.status, `6g /api/live-editor/sessions: ${response.body}`).toBe(403)
+      const { error } = JSON.parse(response.body) as { error: string }
+      expect(error).not.toBe('cross_site_refused')
+      expect(error).toContain(PRODUCTION_TARGET)
+      expect(await RETAINED_SAME_SITE_ARMS[2]!.read(scene)).toBe(before)
+    },
+  },
+  {
+    method: 'POST',
+    path: '/api/auth/credential',
+    seam: 'auth.json',
+    arrange: () => Promise.resolve(JSON.stringify({
+      configName: PROBE_CREDENTIAL, provider: 'openai-compatible', type: 'api-key', secret: 'sk-door-probe',
+    })),
+    read: authStoreText,
+    admitted: async (scene, response) => {
+      expect(response.status, `6g /api/auth/credential: ${response.body}`).toBe(200)
+      expect(JSON.parse(response.body)).toEqual({ saved: true, created: true })
+      expect(authNames(scene)).toEqual([PROBE_CREDENTIAL])
+    },
+  },
+  {
+    method: 'POST',
+    path: '/api/auth/credential/move',
+    seam: 'auth.json',
+    arrange: () => Promise.resolve(JSON.stringify({
+      from: PROBE_CREDENTIAL, to: MOVED_CREDENTIAL, provider: 'openai-compatible',
+    })),
+    read: authStoreText,
+    admitted: async (scene, response) => {
+      expect(response.status, `6g /api/auth/credential/move: ${response.body}`).toBe(200)
+      expect(JSON.parse(response.body)).toEqual({ moved: true })
+      expect(authNames(scene)).toEqual([MOVED_CREDENTIAL])
+    },
+  },
+  {
+    method: 'POST',
+    path: '/api/llm/test',
+    seam: 'the provider endpoint',
+    arrange: (scene) => Promise.resolve(JSON.stringify({
+      configName: 'door-llm-probe', provider: 'openai-compatible', model: 'door-probe', baseURL: scene.providerBaseUrl,
+    })),
+    read: (scene) => Promise.resolve(`${String(scene.providerHits())} provider request(s)`),
+    admitted: async (scene, response) => {
+      expect(response.status, `6g /api/llm/test: ${response.body}`).toBe(200)
+      expect(scene.providerHits(), 'the admitted connection test never reached the provider').toBeGreaterThan(0)
+    },
+  },
+  {
+    method: 'DELETE',
+    path: `/api/auth/${MOVED_CREDENTIAL}`,
+    seam: 'auth.json',
+    arrange: () => Promise.resolve(undefined),
+    read: authStoreText,
+    admitted: async (scene, response) => {
+      expect(response.status, `6g DELETE /api/auth: ${response.body}`).toBe(200)
+      expect(JSON.parse(response.body)).toMatchObject({ deleted: true })
+      expect(authNames(scene)).toEqual([])
+    },
+  },
 ]
+
+/** A loopback provider that counts what reaches it and answers every request 401. */
+async function openProviderSink(): Promise<{ readonly baseUrl: string; hits(): number; close(): Promise<void> }> {
+  let hits = 0
+  const server = createServer((_request, response) => {
+    hits += 1
+    response.writeHead(401, { 'content-type': 'application/json' })
+    response.end(JSON.stringify({ error: { message: 'door probe', type: 'invalid_request_error' } }))
+  })
+  await new Promise<void>((ready) => server.listen(0, '127.0.0.1', ready))
+  const { port } = server.address() as AddressInfo
+  return {
+    baseUrl: `http://127.0.0.1:${String(port)}/v1`,
+    hits: () => hits,
+    close: () => new Promise<void>((closed) => {
+      server.closeAllConnections()
+      server.close(() => closed())
+    }),
+  }
+}
 
 // ---- gap 6: the cross-origin drive ---------------------------------------------------------
 
@@ -395,28 +591,58 @@ describe('the fourth door refuses a cross-origin drive before anything happens (
   // declares'. The table was the run-confirm router's and is deleted. The shipped router has no
   // table of its mutating arms, so the retained same-site arms are listed here by path; a new
   // same-site arm must be added to this list to be ranged.
-  it('6g — refuses EVERY retained same-site mutating arm, and reaches the mark arm same-origin', async () => {
+  // RE-SPELLED 2026-10-03 (quick-261003-tsr, WR-07): was '6g — refuses EVERY retained same-site
+  // mutating arm, and reaches the mark arm same-origin'. Each arm is now driven with a body it
+  // would act on, its own seam is read around the refusal, and every arm has its accepts control.
+  it('6g — refuses EVERY retained same-site mutating arm before its own side effect, and each arm acts for its own page', async () => {
     const door = await openDoor()
-    for (const [method, path] of RETAINED_SAME_SITE_MUTATIONS) {
-      for (const contentType of ['application/json', 'text/plain;charset=UTF-8']) {
-        const crossOrigin = await rawRequest(door.port, {
-          method,
-          path,
-          headers: { 'content-type': contentType, origin: HOSTILE_ORIGIN },
-          ...(method === 'DELETE' ? {} : { body: MARK_BODY }),
-        })
-        expectNoSideEffect(`6g ${contentType} ${method} ${path}`, door, crossOrigin, 403)
-        expect(JSON.parse(crossOrigin.body)).toEqual({ error: 'cross_site_refused' })
-      }
+    const savedDataHome = process.env.XDG_DATA_HOME
+    const dataHome = mkdtempSync(join(tmpdir(), 'agent-qa-432-14-auth-'))
+    process.env.XDG_DATA_HOME = dataHome
+    const sink = await openProviderSink()
+    const scene: ArmScene = {
+      door,
+      authFile: join(dataHome, 'agent-qa', 'auth.json'),
+      providerHits: () => sink.hits(),
+      providerBaseUrl: sink.baseUrl,
     }
+    try {
+      for (const arm of RETAINED_SAME_SITE_ARMS) {
+        const body = await arm.arrange(scene)
+        const before = await arm.read(scene)
+        for (const contentType of ['application/json', 'text/plain;charset=UTF-8']) {
+          const invocationsBefore = door.invocations.length
+          const crossOrigin = await rawRequest(door.port, {
+            method: arm.method,
+            path: arm.path,
+            headers: { 'content-type': contentType, origin: HOSTILE_ORIGIN },
+            ...(body === undefined ? {} : { body }),
+          })
+          const label = `6g ${contentType} ${arm.method} ${arm.path}`
+          expectNoSideEffect(label, door, crossOrigin, 403, {
+            invocationsBefore,
+            seam: { seam: arm.seam, before, after: await arm.read(scene) },
+          })
+          expect(JSON.parse(crossOrigin.body)).toEqual({ error: 'cross_site_refused' })
+        }
 
-    // THE ACCEPTS CONTROL, which is what stops this cell passing on a door that refuses everything.
-    const answered = await driveMark(door.port, {
-      'content-type': 'application/json',
-      origin: sameOrigin(door),
-    })
-    expectDispatchedOnce('6g', door, answered)
-  })
+        // THE ACCEPTS CONTROL, per arm: a door that refused everything, or an arm whose body could
+        // not act, would pass the refusals above and fail here.
+        const admitted = await rawRequest(door.port, {
+          method: arm.method,
+          path: arm.path,
+          headers: sameSiteJson(door),
+          ...(body === undefined ? {} : { body }),
+        })
+        await arm.admitted(scene, admitted, before)
+      }
+    } finally {
+      await sink.close()
+      if (savedDataHome === undefined) delete process.env.XDG_DATA_HOME
+      else process.env.XDG_DATA_HOME = savedDataHome
+      rmSync(dataHome, { recursive: true, force: true })
+    }
+  }, 60_000)
 
   it('6i — refuses the literal `null` Origin, which is not the same fact as no Origin at all', async () => {
     const door = await openDoor()

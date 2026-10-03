@@ -940,7 +940,11 @@ describe('validate:arch run pins after the gate (432-19, D-03/D-15)', () => {
     expect(barrelValues).toContain('registerFirstPartySafetyHooks')
   })
 
-  it('C432-NO-EVALUATE: the census fires on every form a returning gate acquisition could take', () => {
+  // RE-TITLED 2026-10-03 (quick-261003-tsr, IN-38): was '…the census fires on every form a returning
+  // gate acquisition could take'. The census does not count a whole-module barrel import or a
+  // dynamic `import()` of a retired module; the barrel-values check and the retired modules'
+  // absence in the cell above are what catch those.
+  it('C432-NO-EVALUATE: the census fires on a named gate value from the barrel, aliased or multi-line, and on any static import or re-export of a retired gate module', () => {
     // Held-out fixtures, so the absence above is a measurement and not a scanner that sees nothing.
     expect(gateAcquisitions('import { evaluate } from "@vostride/agent-qa-safety"', 'packages/runner/src/x.ts'))
       .toEqual(['packages/runner/src/x.ts:1 ⇏ @vostride/agent-qa-safety'])

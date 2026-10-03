@@ -86,8 +86,12 @@ export class CountingTarget {
   private originValue = ''
   hits: string[] = []
 
+  /** `onHit` runs as each request arrives, before it is answered (2026-10-03, quick-261003-tsr). */
+  constructor(private readonly onHit?: (url: string) => void) {}
+
   async listen(): Promise<void> {
     this.server = createServer((request, response) => {
+      this.onHit?.(request.url ?? '')
       this.hits.push(request.url ?? '')
       response.writeHead(200, { 'content-type': 'text/html' })
       response.end('<!doctype html><title>Example</title><p>Example</p>')

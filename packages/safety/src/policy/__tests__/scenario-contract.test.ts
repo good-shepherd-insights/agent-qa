@@ -74,9 +74,9 @@ async function runScenario(testCase: ScenarioCase): Promise<void> {
   const answer = await registry.runToolCallAsync(testCase.action)
 
   expect(answer).toEqual({ action: 'allow', call: testCase.action })
+  // 2026-10-03 (quick-261003-tsr, IN-37): two checks that the answer named neither project are
+  // deleted; the exact answer above already implies them. No row is the leak claim that remains.
   expect(sink.rows).toEqual([])
-  expect(JSON.stringify(answer)).not.toContain(PROJECT_A)
-  expect(JSON.stringify(answer)).not.toContain(PROJECT_B)
 }
 
 describe('POLICY-05 scenario contract', () => {

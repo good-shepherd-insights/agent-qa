@@ -12,6 +12,7 @@
 import * as schema from '@vostride/agent-qa-schema'
 import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { ExecutionContext, FunctionCaller } from '@vostride/agent-qa-schema'
+import { getActiveExecutionContext, setActiveExecutionContextResolver } from '@vostride/agent-qa-safety'
 import type { AuditSink } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
@@ -125,9 +126,10 @@ function deps(knowledgeReview: KnowledgeReviewPort): FunctionDeps {
 
 const SINK = { appendGuardrailAudit() {} } as unknown as AuditSink
 
-// 2026-10-02 (432-39, D-12): the registry takes no context, so `_context` names the posture a cell
-// describes and reaches nothing; the cells varying it prove the outcome does not depend on it.
-function registry(port: KnowledgeReviewPort, _context: ExecutionContext = 'local-interactive') {
+// 2026-10-02 (432-39, D-12): the registry takes no context.
+// 2026-10-03 (quick-261003-tsr, IN-06): the unread `_context` parameter is dropped; the cell that
+// varies the context sets it through the ambient resolver every reader of it uses.
+function registry(port: KnowledgeReviewPort) {
   return createFunctionRegistry({
     deps: deps(port),
     auditSink: SINK,
@@ -191,17 +193,25 @@ describe('C432-KNOWLEDGE-CHANGE-OPS: the three knowledge changes apply in the ca
   })
 
   it('C432-KNOWLEDGE-CHANGE-OPS: a tokenless caller changes knowledge in every execution context', async () => {
-    for (const context of CONTEXTS) {
-      const recording = recordingPort()
-      const outcome = await settled(invokeFunction(
-        registry(recording.port, context),
-        'knowledge.forget',
-        { target: RECORD },
-        TOKENLESS_CALLER,
-      ))
-      expect(outcome.error, `forget in ${context}`).toBeUndefined()
-      expect(outcome.value, context).toMatchObject({ outcome: 'applied', verb: 'forget' })
-      expect(recording.changes, context).toHaveLength(1)
+    // This process installs no ambient resolver, so the value read before is what is put back.
+    const ambient = getActiveExecutionContext()
+    try {
+      for (const context of CONTEXTS) {
+        setActiveExecutionContextResolver(() => context)
+        expect(getActiveExecutionContext()).toBe(context)
+        const recording = recordingPort()
+        const outcome = await settled(invokeFunction(
+          registry(recording.port),
+          'knowledge.forget',
+          { target: RECORD },
+          TOKENLESS_CALLER,
+        ))
+        expect(outcome.error, `forget in ${context}`).toBeUndefined()
+        expect(outcome.value, context).toMatchObject({ outcome: 'applied', verb: 'forget' })
+        expect(recording.changes, context).toHaveLength(1)
+      }
+    } finally {
+      setActiveExecutionContextResolver(() => ambient)
     }
   })
 
@@ -290,7 +300,9 @@ describe('C432-KNOWLEDGE-CHANGE-OPS: the three knowledge changes apply in the ca
     expect(contract?.safeParse({ kind: 'proposed', proposal: {} }).success).toBe(false)
   })
 
-  it('C432-KNOWLEDGE-CHANGE-OPS: each op declares the direct contract, a knowledge-write scope and a local mutation', () => {
+  // RE-TITLED 2026-10-03 (quick-261003-tsr, IN-06): was '…declares the direct contract, a
+  // knowledge-write scope and a local mutation'. Scopes are deleted; the title says what is read.
+  it('C432-KNOWLEDGE-CHANGE-OPS: each op is bound and declares a recognized, unraised local mutation with no origin requirement', () => {
     const declarations = new Map(
       registry(recordingPort().port).list(TOKENLESS_CALLER).map((row) => [row.id, row]),
     )

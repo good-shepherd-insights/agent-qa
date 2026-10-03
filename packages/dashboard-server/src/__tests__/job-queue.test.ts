@@ -420,7 +420,9 @@ describe('JobQueue', () => {
 // before 432-14 (`routes.runs.test.ts`). What is pinned here is that the queue no longer interprets
 // it: the row is written once, whole, with no throw.
 
-describe('JobQueue refuses a confirm scope this server did not mint', () => {
+// RE-TITLED 2026-10-03 (quick-261003-tsr, IN-30): was 'JobQueue refuses a confirm scope this
+// server did not mint'.
+describe('JobQueue no longer interprets a retired confirm-scope key', () => {
   it('a retired confirm-scope key no longer throws: the row and its artifact are written once', () => {
     const before = db.getRuns({ limit: 100 }).length
     for (const value of ['chat-1730000000-abc', { toString: () => 'run-trigger:x' }, 'run-trigger:2f1d0f2a-6f1e-4a2b-9c3d-5e6f70819200']) {

@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { existsSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs'
+import { afterAll, afterEach, describe, it, expect } from 'vitest'
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { FsEventLog, RUN_EVIDENCE_BLOBS_SUBDIR, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
@@ -25,6 +25,18 @@ import {
 // decorator over the relocated registrar.
 import { buildRunSafetyHooks } from '../run-session-composition.js'
 import { assembleCliRun } from '../composition/run-assembly.js'
+
+// 2026-10-03 (quick-261003-tsr, IN-16): every temporary root a cell makes is removed after it.
+const roots: string[] = []
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
+
+function tempDir(prefix: string): string {
+  const root = mkdtempSync(join(tmpdir(), prefix))
+  roots.push(root)
+  return root
+}
 
 // D-20: computeRunConfigDigests is the ONE digest mint. Both the cache path (per-member) and
 // the handoff header (run-level) draw from a single call, so run identity and handoff identity
@@ -87,7 +99,7 @@ describe('computeRunConfigDigests (D-20 — one mint)', () => {
 // runtime dir (the FsActionCache rooting idiom).
 describe('buildRunPorts (roots under .agent-qa)', () => {
   it('roots the event log + handoff store under <configDir>/.agent-qa', () => {
-    const configDir = mkdtempSync(join(tmpdir(), 'run-ports-'))
+    const configDir = tempDir('run-ports-')
     const runId = 'r_ports-root-check'
     const ports = buildRunPorts({ configDir, runId })
     expect(typeof ports.eventLog.append).toBe('function')
@@ -111,7 +123,7 @@ describe('buildRunPorts (roots under .agent-qa)', () => {
 // runner-local's public layout constants rather than duplicating slug/directory policy.
 describe('buildRunPorts — run-scoped evidence artifact store (CASS-02, Plan 13)', () => {
   it('persists sentinel bytes through the neutral port and reads them back by returned sha under the run/blob namespace', () => {
-    const configDir = mkdtempSync(join(tmpdir(), 'run-evidence-'))
+    const configDir = tempDir('run-evidence-')
     const runId = 'r_evidence-roundtrip'
     const store = buildRunPorts({ configDir, runId }).evidenceArtifacts
 
@@ -137,7 +149,7 @@ describe('buildRunPorts — run-scoped evidence artifact store (CASS-02, Plan 13
   })
 
   it('scopes blobs per run — a second runId cannot resolve the first run blob (cross-run isolation)', () => {
-    const configDir = mkdtempSync(join(tmpdir(), 'run-evidence-iso-'))
+    const configDir = tempDir('run-evidence-iso-')
     const first = buildRunPorts({ configDir, runId: 'r_first' }).evidenceArtifacts
     const second = buildRunPorts({ configDir, runId: 'r_second' }).evidenceArtifacts
 
@@ -152,7 +164,7 @@ describe('buildRunPorts — run-scoped evidence artifact store (CASS-02, Plan 13
 // sees the exact run store.
 describe('buildMemberRunConfig — evidence store identity (CASS-02, Plan 13)', () => {
   it('copies the exact supplied evidenceArtifacts store into MemberRunConfig', () => {
-    const configDir = mkdtempSync(join(tmpdir(), 'run-evidence-mc-'))
+    const configDir = tempDir('run-evidence-mc-')
     const store = buildRunPorts({ configDir, runId: 'r_member-config' }).evidenceArtifacts
 
     const config = buildMemberRunConfig({
@@ -389,7 +401,7 @@ describe('buildRunAuditSink (D-12 — path identity with FsEventLog)', () => {
   // FsEventLog writes events.jsonl'. The execution trail has no writer; the guardrail trail is the
   // run's audit file and lands in the same directory.
   it('writes guardrail_audit.jsonl in the exact dir FsEventLog writes events.jsonl, and no execution trail', async () => {
-    const configDir = mkdtempSync(join(tmpdir(), 'run-audit-'))
+    const configDir = tempDir('run-audit-')
     const runId = 'r_audit-path-check'
     const sink = buildRunAuditSink({ configDir, runId })
 
@@ -420,7 +432,7 @@ describe('buildRunSafetyHooks (D-01/D-15/D-10 — per-run registrar invocation)'
   // ci context AND appends a stamped execution row (D-01)'. The in-run gate hook and the execution
   // row are deleted: the descriptor passes, and the run directory gets no execution trail.
   it('C432-RETAINED-SAFETY: allows a destructive descriptor in ci and writes no execution row (D-01)', async () => {
-    const configDir = mkdtempSync(join(tmpdir(), 'run-hooks-'))
+    const configDir = tempDir('run-hooks-')
     const runId = 'r_hooks-deny'
     const auditSink = buildRunAuditSink({ configDir, runId })
     const { safetyHooks } = buildRunSafetyHooks({ auditSink })
@@ -440,7 +452,7 @@ describe('buildRunSafetyHooks (D-01/D-15/D-10 — per-run registrar invocation)'
   // 2026-10-01 (432-19): with no gate the answer is `allow` either way and neither writes a row.
   it('ignores session trustMode: the same dispatch answers as it does without it (432-13)', async () => {
     const answer = async (trustMode: boolean) => {
-      const configDir = mkdtempSync(join(tmpdir(), 'run-hooks-'))
+      const configDir = tempDir('run-hooks-')
       const runId = `r_hooks-trust-${String(trustMode)}`
       const auditSink = buildRunAuditSink({ configDir, runId })
       const smuggled = { trustMode, executionContext: 'ci' }
@@ -459,10 +471,11 @@ describe('buildRunSafetyHooks (D-01/D-15/D-10 — per-run registrar invocation)'
   // 2026-10-01 (432-14, D-03): the CLI producer no longer declares a confirm either; a port can only
   // be smuggled in as an excess field, and it is still never asked.
   // 2026-10-02 (432-42, D-14): the always-zero `confirmPausedMs` supplier is deleted, so the second
-  // half of the title is now its absence from the hooks' return (old title kept: the claim that no
-  // handed confirm is asked survives unchanged).
-  it('never asks the confirm it is handed; confirmPausedMs() stays 0 (432-13)', async () => {
-    const configDir = mkdtempSync(join(tmpdir(), 'run-hooks-'))
+  // half of the claim is now its absence from the hooks' return. RE-TITLED 2026-10-03
+  // (quick-261003-tsr, IN-14): was 'never asks the confirm it is handed; confirmPausedMs() stays 0
+  // (432-13)'.
+  it('never asks the confirm it is handed, and returns no pause supplier (432-13)', async () => {
+    const configDir = tempDir('run-hooks-')
     const runId = 'r_hooks-pause'
     const auditSink = buildRunAuditSink({ configDir, runId })
     let asked = 0
@@ -495,6 +508,7 @@ describe('buildRunSafetyHooks (D-01/D-15/D-10 — per-run registrar invocation)'
 // egress sees no masking. This pins the pattern the run.ts wiring reproduces at both sites.
 describe('runSafetyScope run-body wrap (SEAM-01 / Pitfall 8, 362-06)', () => {
   const tmpAuditDir = mkdtempSync(join(tmpdir(), 'run-scope-wrap-'))
+  afterAll(() => { rmSync(tmpAuditDir, { recursive: true, force: true }) })
 
   it('resolves the seeded run MaskingContext inside the scope and disposes last', async () => {
     const maskingContext = buildRunMaskingContext({
@@ -532,7 +546,7 @@ describe('runSafetyScope run-body wrap (SEAM-01 / Pitfall 8, 362-06)', () => {
 // read off the RunConfig the ASSEMBLER returns, not off buildRunPorts's own return value.
 describe('buildRunPorts — onSubscriberFault destination (403-13)', () => {
   it('supplies a callable onSubscriberFault whose invocation is an observable process warning carrying the code', async () => {
-    const configDir = mkdtempSync(join(tmpdir(), 'run-ports-fault-'))
+    const configDir = tempDir('run-ports-fault-')
     const ports = buildRunPorts({ configDir, runId: 'r_fault-destination' })
     expect(typeof ports.onSubscriberFault, 'buildRunPorts supplies the port').toBe('function')
 
@@ -548,7 +562,7 @@ describe('buildRunPorts — onSubscriberFault destination (403-13)', () => {
   })
 
   it('THE CROSSING CELL: assembleCliRun carries the port onto the RunConfig the shell reads', async () => {
-    const configDir = realpathSync(mkdtempSync(join(tmpdir(), 'run-assembly-fault-')))
+    const configDir = realpathSync(tempDir('run-assembly-fault-'))
     const runId = 'r_assembly-fault'
     const assembly = await assembleCliRun({
       runId,

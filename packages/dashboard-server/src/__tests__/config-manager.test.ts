@@ -73,6 +73,20 @@ vi.mock('@vostride/agent-qa-model', async () => {
   }
 })
 
+// 2026-10-03 (quick-261003-tsr, WR-12): a write failure is injected at the atomic writer's
+// rename rather than with directory permissions, which root (and Windows) ignore. Pass-through
+// unless a cell sets the flag.
+const fsFault = vi.hoisted(() => ({ failRename: false }))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    rename: (...args: Parameters<typeof actual.rename>) => (fsFault.failRename
+      ? Promise.reject(Object.assign(new Error('EACCES: permission denied, rename (injected)'), { code: 'EACCES' }))
+      : actual.rename(...args)),
+  }
+})
+
 vi.mock('ai', () => ({
   addToolInputExamplesMiddleware: vi.fn(() => ({})),
   createProviderRegistry: vi.fn(),
@@ -1101,18 +1115,20 @@ describe('C432-CONFIG-PATH-QUEUE: co-hosted writers of one config path share one
   })
 
   it('a write that fails inside its turn rejects, writes nothing, and the next writer still gets the path', async () => {
-    await chmod(dir, 0o555)
-    let failed: Promise<unknown>
+    // The temp file is written and only its rename fails, so the cleanup that keeps "writes
+    // nothing" true is on the measured road (WR-12).
+    fsFault.failRename = true
     try {
-      failed = new ConfigManager(configPath).applyChanges([targetChange(6)])
+      const failed = new ConfigManager(configPath).applyChanges([targetChange(6)])
       await expect(failed).rejects.toMatchObject({ code: 'EACCES' })
     } finally {
-      await chmod(dir, 0o755)
+      fsFault.failRename = false
     }
     expect(await readFile(configPath, 'utf-8')).toBe(QUEUE_CONFIG)
     expect((await manager.applyChanges([targetChange(7)])).kind).toBe('ok')
     expect(Object.keys(targetsOf(await readFile(configPath, 'utf-8')))).toEqual(['t7'])
-    expect((await readdir(dir)).filter((name) => name.endsWith('.tmp'))).toEqual([])
+    expect((await readdir(dir)).filter((name) => name.endsWith('.tmp')), 'the failed write left its temp file')
+      .toEqual([])
   })
 
   it('a whole-document replacement publishes only over the revision it was built from', async () => {

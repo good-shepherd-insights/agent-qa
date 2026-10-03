@@ -29,7 +29,7 @@
 // inspecting the port object: an assertion on `port.surface` would pass on a decorator that
 // forwards the field and then delegates to something else entirely.
 
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -37,13 +37,25 @@ import { invokeFunction } from '@vostride/agent-qa-agent'
 import { buildRunAuditSink } from '@vostride/agent-qa-agent-local'
 import { RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   CLI_FUNCTION_CALLER,
   composeCliLocalAgent,
 } from '../composition/local-agent-host.js'
 import { buildRunSafetyHooks } from '../run-session-composition.js'
+
+// 2026-10-03 (quick-261003-tsr, IN-16): every temporary root a cell makes is removed after it.
+const roots: string[] = []
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
+
+function tempDir(prefix: string): string {
+  const root = mkdtempSync(join(tmpdir(), prefix))
+  roots.push(root)
+  return root
+}
 
 const ASK_TIER_ACTION = { name: 'delete_record', recognized: true } as const
 
@@ -90,7 +102,7 @@ describe('a decorator forwards the surface of the port it wraps', () => {
   it.each(['tty-prompt', 'browser-click'] as const)(
     'a %s port handed to the run hooks is never asked, and no prompted row lands',
     async (surface) => {
-      const configDir = mkdtempSync(join(tmpdir(), 'confirm-surface-'))
+      const configDir = tempDir('confirm-surface-')
       const runId = `r_decorated-${surface}`
       const auditSink = buildRunAuditSink({
         configDir,
@@ -125,7 +137,7 @@ describe('the two-port seam names the port that actually answered', () => {
   // thing that can tell them apart, and a surface resolved beside the `??` rather than on the port
   // would answer the same way in both.
   function workspace(): { configPath: string; agentQaRoot: string } {
-    const root = mkdtempSync(join(tmpdir(), 'confirm-seam-'))
+    const root = tempDir('confirm-seam-')
     const configPath = join(root, 'agent-qa.config.yaml')
     const agentQaRoot = join(root, '.agent-qa')
     writeFileSync(configPath, 'workspace:\n  testMatch:\n    - tests/**/*.yaml\n')
