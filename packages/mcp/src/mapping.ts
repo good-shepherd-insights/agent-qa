@@ -36,6 +36,10 @@
 // `proposals.accept` and `proposals.reject` leave the scoping note, and '432' leaves the adjudicator
 // vocabulary with no member left to rule on.
 //
+// 2026-10-01 (432-18 D-14/D-15), written 2026-10-03 (quick-261003-tsr IN-28): TWENTY tools over
+// THIRTY registry ops; the other FOURTEEN stay in `UNPROJECTED_OPS`, and the registry is forty-four.
+// `grants.list` and `grants.revoke` are deleted with the grant ledger.
+//
 // 2026-08-17 (398 D-09): the unprojected side moved from nineteen to twenty when `agent.explain`
 // was registered. This sentence is prose and the guard is the mechanism — but the prose is updated
 // in the same change-set anyway, because a header that goes on stating a partition the code stopped

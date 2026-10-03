@@ -17,8 +17,8 @@
 //      already carrying `_` because such a name has two pre-images under the inverse. Since 392
 //      D-07 binds every registry op into the planner's toolset, an underscore id would not merely
 //      look unconventional — it would raise `ChatToolNameError` for the whole projection.
-// Three segments rather than two, on the `knowledge.records.inspect` / `knowledge.proposal.apply`
-// precedent: `draft` is the subject and `verify` is the verb, which keeps the ratified word in the
+// Three segments rather than two, on the `knowledge.records.inspect` precedent (and the deleted
+// `knowledge.proposal.apply`'s, 432-17): `draft` is the subject and `verify` is the verb, which keeps the ratified word in the
 // id and leaves 394 room for `authoring.draft.write` beside it.
 //
 // THE OP IS COMPOSITION, NOT MECHANISM. Every gate lives in `../../authoring/`; what is added here

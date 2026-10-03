@@ -45,8 +45,9 @@
 // orders satisfy CFGM-01 — validation still runs before any applyable proposal exists — and this one
 // closes a disclosure channel the other leaves open. A whole-config validator reports issues IN THE
 // VALIDATOR'S OWN WORDS, and those words are derived from the candidate bytes; a refusal that
-// quoted the offending value would put a secret into `validationIssues`, and the blocked record is
-// PERSISTED, so it would outlive the proposal it refused.
+// quoted the offending value would put a secret into `validationIssues`, and the refusal is handed to
+// the caller's receipt and transcript. (2026-10-03: until 432-11 the blocked record was also persisted;
+// nothing is kept now.)
 //
 // AND WHY ORDER ALONE WAS NOT ENOUGH (395-10 · GAP 1 / CR-01). The ordering above was correct and
 // bought nothing on the schema-fail road for a year of this phase's life, because the two steps
@@ -67,9 +68,9 @@
 //
 // ONE POSTURE, TWO REASONS (CFGM-01 · D-10). A validation failure and a guardrail hit arrive by
 // different roads and mean different things to a person, but they produce the same artifact — a
-// record naming what was found and carrying no payload to apply. Both are filed, both are listable,
-// and `blockedReason` is what tells them apart. A refusal that returned a message and filed nothing
-// would leave the inbox with no trace that the agent had tried.
+// record naming what was found and carrying no payload to apply. Both are answered as one refusal,
+// with nothing written or kept, and `blockedReason` is what tells them apart. (2026-10-03: until
+// 432-11 both were filed in the proposal inbox, which is deleted.)
 //
 // NOTHING HERE COMMITS. The direct writer publishes files and runs no git; a person reviews and
 // reverts the change with their own tools (D-07).
@@ -196,11 +197,11 @@ export interface ConfigMutationPlan {
 }
 
 /**
- * The one-line summary a person reads in an inbox and git records as the commit subject.
+ * The one-line summary an applied change's receipt carries.
  *
  * REFS AND VALUES, NEVER THE DIFF. The whole envelope vocabulary is map-not-territory about summary
  * lines (391 D-18), and this one keeps to it: what changed and to what, in one clause. The bytes are
- * one `proposals.show` away.
+ * in the change's own rendered diff.
  */
 export function configFieldSetSummaryLine(path: string, value: ConfigFieldValue): string {
   return `set ${path} to ${typeof value === 'string' ? value : String(value)}`
@@ -212,11 +213,11 @@ export function configFieldSetSummaryLine(path: string, value: ConfigFieldValue)
  * THE APPLYABLE LINE ABOVE CANNOT BE REUSED HERE, and this is the sharpest edge in the file. That
  * one prints the value — which is correct for a change that passed the scan, and a disclosure for
  * one that did not: a `guardrail-hit` is reached precisely when the artifact carries a secret, and
- * the most likely place for that secret is the value somebody just tried to set. A blocked record is
- * PERSISTED, listed and rendered, so a summary line built from the value would put the secret in the
- * inbox on the way to refusing it — the leak the block exists to prevent, one field to the left.
+ * the most likely place for that secret is the value somebody just tried to set. A blocked refusal is
+ * returned and rendered, so a summary line built from the value would put the secret on the caller's
+ * screen on the way to refusing it — the leak the block exists to prevent, one field to the left.
  *
- * IT TAKES A SUBJECT RATHER THAN A PATH (395-05), because five ops file blocked records now and only
+ * IT TAKES A SUBJECT RATHER THAN A PATH (395-05), because five ops answer blocked refusals and only
  * one of them addresses a config path. What every subject has in common is that it is a REFERENCE —
  * a path, a target name, a hook name — which is the same class of fact `paths` already carries.
  */
@@ -519,8 +520,8 @@ export async function setConfigAuth(
  *
  * A HOOK IS CODE THIS PROJECT WILL RUN, which is why `addsHook` is STATED here rather than inferred
  * from a path (D-02) and why every hook addition is cross-boundary regardless of what it contains.
- * A standing approval covering configuration edits may not silently cover "and also run this
- * script"; the flag is what the grant machinery refuses on.
+ * The flag raises the `hook-added` cross-boundary reason on the applied receipt. (2026-10-03: the
+ * grant machinery that refused on it is deleted.)
  *
  * THE ID IS MINTED BY THE HOST, NEVER FORMATTED HERE. `core`'s `HookDefinitionSchema` refuses any id
  * `isCanonicalHookId` does not accept, and that mint lives in a package this layer may not import
@@ -582,9 +583,9 @@ export async function addConfigHook(
 /**
  * Everything `config.project.scaffold` needs beyond what every other action needs (395-08, D-04).
  *
- * A SEPARATE TYPE, on `ConstructConfigUndoDeps`' reasoning one paragraph down: the scaffold is the
- * only action that renders content it did not compute from the committed file, so widening the
- * shared bundle would make six ops bind a port none of them can reach.
+ * A SEPARATE TYPE: the scaffold is the only action that renders content it did not compute from
+ * the committed file, so widening the shared bundle would make six ops bind a port none of them can
+ * reach.
  */
 export interface ConstructConfigScaffoldDeps extends ConstructConfigChangeDeps {
   readonly scaffoldContent: ConfigScaffoldContentPortLike
@@ -833,7 +834,7 @@ const REFS_ONLY_LAW =
   + 'configuration safe to read. Put the secret in the environment file the configuration names at '
   + 'workspace.envFile (or the secrets file at workspace.secretsFile) and pass its NAME here.'
 
-/** What the blocked report says, before it is answered (direct) or filed (the undo). */
+/** What the blocked report says, before it is answered as a refusal. */
 interface BlockedReport {
   readonly blockedReason: ConfigBlockedReason
   readonly detail: string
@@ -861,7 +862,7 @@ type CandidateCheck =
  * WHAT ARRIVES IS A CANDIDATE SET, NOT A FILE. `renderConfigDiff` is handed exactly the members
  * whose bytes differ, so a change's `files` list is a statement about what changed rather than
  * about which files were considered — and the digests recorded per file are the ones publication
- * re-checks. Step 7 is the caller's: the six config operations publish (432-11), the undo files.
+ * re-checks. Step 7 is the caller's: the six config operations publish (432-11).
  */
 async function checkConfigCandidate(
   plan: ConfigMutationPlan,

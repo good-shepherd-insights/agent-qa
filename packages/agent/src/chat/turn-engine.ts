@@ -911,10 +911,10 @@ async function runTurnThrough(
       && deps.configuredTargets !== undefined
       && (await routeWriteTest(deps, step, caller, append, turnId)) === 'stop'
     ) {
-      // THE ROUTE REFUSED, OR THE SCAFFOLD IT OFFERED WAS NOT ACCEPTED. Nothing is authored, and
-      // the turn says why through the same `refuse()` every other refusal takes — so a person who
-      // declined a configuration change is not left with a draft written against a project that
-      // still has none.
+      // THE ROUTE REFUSED: the project has no configuration and the scaffold did not write one.
+      // Nothing is authored, and the turn says why through the same `refuse()` every other refusal
+      // takes, so no draft is written against a project that still has none. (2026-10-03: nothing
+      // is offered or declined since 432-13.)
       return refuse(step.clause.text, writeTestRefusal ?? WRITE_TEST_UNCONFIGURED_DETAIL)
     } else {
       try {

@@ -193,7 +193,7 @@ async function driveChatInProcess(configPath: string): Promise<{ stdout: string;
   try {
     const program = new Command()
       .option('--config <path>', 'config file path')
-      .addCommand(createChatCommand({ input, output, isTty: false }))
+      .addCommand(createChatCommand({ input, output }))
     program.exitOverride()
     const parsed = program.parseAsync(['node', 'agent-qa', '--config', configPath, 'chat'])
     // A tick, so a scripted line is never delivered to a readline that does not exist yet — the

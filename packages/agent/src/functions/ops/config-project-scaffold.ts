@@ -68,8 +68,8 @@ export const configProjectScaffoldSpec: FunctionSpec<
    */
   classify: classifyConfigChangeOutput,
   async invoke(input, deps): Promise<ConfigChangeOutput> {
-    // FIVE DEPS, ONE `boundThrough`, on `config.undo.propose`'s arrangement — with the declared
-    // name being this op's OWN one. `scaffoldContent` is what a host that cannot render the shared
+    // FIVE DEPS, ONE `boundThrough`, on the arrangement the deleted `config.undo.propose` used
+    // (432-17) — with the declared name being this op's OWN one. `scaffoldContent` is what a host that cannot render the shared
     // scaffold substance lacks, and it is the fact that makes this op specifically unavailable.
     //
     // `configScan`'s ABSENCE REFUSES, as it does for every propose op (395-04, CFGM-02) — and this

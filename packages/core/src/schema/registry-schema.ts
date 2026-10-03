@@ -27,9 +27,10 @@ export const TargetSchema = z.object({
   app: AppInstallSchema.optional(),
   url: z.string().optional(),
   // D-06 (phase 401): which environment a run against this target actually touches. Deliberately
-  // `.optional()` with NO default — an undeclared target must stay visibly undeclared so the run
-  // gate's descriptor builder is the single place that decides undeclared means shared. A default
-  // here would make silence and an honest `shared` indistinguishable at every later reader, and
+  // `.optional()` with NO default — an undeclared target must stay visibly undeclared; since 432
+  // (D-18) undeclared means non-production, decided where the production refusal reads it (the
+  // run gate that decided "shared" is deleted). A default here would make silence and an honest
+  // declaration indistinguishable at every later reader, and
   // `.strict()` above is what turns a typoed key into a refusal rather than a silent undeclared.
   // 432 D-18: `production` is the third declared class; only top-level `allowProduction: true`
   // opts a run into it.

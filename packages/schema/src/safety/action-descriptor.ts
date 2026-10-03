@@ -89,8 +89,9 @@ export const DISCLOSURE_TEXT_MAX_LENGTH = 512
  * The same hygiene for a WHOLE composed disclosure, where the composition owns the prose.
  *
  * SEPARATE FROM THE FRAGMENT FORM BECAUSE THE INPUT IS A DIFFERENT SHAPE. A fragment is a noun the
- * sentence interpolates and quoting it is exactly right; a `FunctionSpec.disclose` return is the
- * whole sentence, and wrapping it in quotes would render every sentence as a quotation. What
+ * sentence interpolates and quoting it is exactly right; a whole composed sentence (since 432-42
+ * only the production refusal's, `buildProductionRefusal`; the per-op `FunctionSpec.disclose` is
+ * deleted) would render as a quotation if wrapped. What
  * both share is the rule that actually matters — no byte on this channel may act on the channel.
  *
  * THE CAP IS GENEROUS AND STILL A CAP. An op composes its own prose, so the realistic risk is an

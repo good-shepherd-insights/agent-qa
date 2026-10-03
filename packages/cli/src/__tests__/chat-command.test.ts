@@ -89,7 +89,7 @@ async function runChat(
   try {
     const program = new Command()
       .option('--config <path>', 'config file path')
-      .addCommand(createChatCommand({ input, output, isTty: false, ...extraDeps }))
+      .addCommand(createChatCommand({ input, output, ...extraDeps }))
     program.exitOverride()
     const parsed = program.parseAsync([
       'node',
@@ -406,7 +406,6 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
           createChatCommand({
             input,
             output,
-            isTty: false,
             onInterruptHandler: (handler) => interrupts.push(handler),
           }),
         )

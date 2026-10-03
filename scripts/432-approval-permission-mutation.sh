@@ -138,7 +138,8 @@ const HOST_ANCHOR = 'export const CLI_FUNCTION_CALLER: FunctionCaller = {'
 const CHAT_ANCHOR = 'function globalOptions(command: Command): { config?: string } {'
 const REGISTRY_ANCHOR = 'const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [\n'
 const MAPPING_ANCHOR = 'export const AGENT_QA_TOOL_PROJECTIONS: readonly ToolProjection[] = Object.freeze([\n'
-const SPEC_ANCHOR = '  /** The descriptor this op projects into for the policy gate. */\n  risk: RiskActionDescriptor\n}'
+// 2026-10-03 (quick-261003-tsr, IN-02): the anchor follows the re-worded risk doc in spec.ts.
+const SPEC_ANCHOR = '  /** The risk descriptor of this op: listings, MCP tool annotations and the read scope read it (no gate since 432-13). */\n  risk: RiskActionDescriptor\n}'
 const CALLER_ANCHOR = '  origin: FunctionCallerOrigin\n}'
 
 /** A retired op id registered again over a live op's spec, so the registry holds a valid member. */
@@ -484,7 +485,7 @@ export function createProposalsCommand(): Command {
     needle('A44', 'the proposals CLI', 'createProposalsCommand'), [DELETED_FILES, DELETED_DECLARED]),
   aLeg('A45', 'C432-RETURN-A45', 'declare requiresHumanOrigin on the function metadata contract again',
     [editing(SPEC, edit(SPEC_ANCHOR,
-      '  /** The descriptor this op projects into for the policy gate. */\n  risk: RiskActionDescriptor\n  requiresHumanOrigin?: boolean\n}'))],
+      '  /** The risk descriptor of this op: listings, MCP tool annotations and the read scope read it (no gate since 432-13). */\n  risk: RiskActionDescriptor\n  requiresHumanOrigin?: boolean\n}'))],
     needle('A45', 'requiresHumanOrigin', 'requiresHumanOrigin')),
   aLeg('A46', 'C432-RETURN-A46', 'restore the capability scope export',
     [creating(SCOPE_MODULE, "import { z } from 'zod'\n\nexport const FunctionScopeSchema = z.string().min(1)\n\nexport type FunctionScope = z.infer<typeof FunctionScopeSchema>\n")],
@@ -498,7 +499,7 @@ export function createProposalsCommand(): Command {
   scopeMember('A52', 'test-write'),
   aLeg('A53', 'C432-RETURN-A53', 'declare requiredScopes on the function metadata contract again',
     [editing(SPEC, edit(SPEC_ANCHOR,
-      '  /** The descriptor this op projects into for the policy gate. */\n  risk: RiskActionDescriptor\n  requiredScopes?: readonly string[]\n}'))],
+      '  /** The risk descriptor of this op: listings, MCP tool annotations and the read scope read it (no gate since 432-13). */\n  risk: RiskActionDescriptor\n  requiredScopes?: readonly string[]\n}'))],
     needle('A53', 'requiredScopes metadata', 'requiredScopes')),
   callerKey('A54', 'the grantedScopes caller key', 'grantedScopes', 'readonly string[]'),
   callerKey('A55', 'the safeMode caller key', 'safeMode', 'boolean'),

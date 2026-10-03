@@ -75,13 +75,13 @@ export const STARTRUN_SYMBOL = 'startRun'
  * reason a reader needs: why this file may begin a run.
  *
  * TWO ENTRIES, and the DEFINITION SITE is not one of them — `packages/runner/src/run/shell.ts`
- * declares the function and acquires nothing, exactly as `policy/gate.ts` is absent from the gate
- * pin. Test files are out of scope by construction: the scan is fed through `sourceFilesFor`,
+ * declares the function and acquires nothing, exactly as `policy/gate.ts` was absent from the
+ * deleted evaluate() pin (432-19). Test files are out of scope by construction: the scan is fed through `sourceFilesFor`,
  * which drops `__tests__`.
  */
 export const STARTRUN_PIN: Readonly<Record<string, string>> = {
   'packages/runner/src/index.ts':
-    'The export seam (2026-08-23): re-export only. Nothing in this file starts a run; it republishes the shell entry point so the invocation core can acquire it across a package boundary at all. Present for the same reason safety\'s barrel is in the gate pin — a detector keyed on the import keyword alone would report this file as a stale entry and fail the build for the wrong reason.',
+    'The export seam (2026-08-23): re-export only. Nothing in this file starts a run; it republishes the shell entry point so the invocation core can acquire it across a package boundary at all. Present for the same reason safety\'s barrel was in the deleted evaluate() pin (432-19) — a detector keyed on the import keyword alone would report this file as a stale entry and fail the build for the wrong reason.',
   'packages/agent-local/src/composition/run-invocation-core.ts':
     'The ONE call site (2026-08-23, Phase 401 D-02 / INVK-02 criterion 2; re-worded 2026-10-01, 432-19): the in-process invocation core, below its one production refusal (432-03 D-18). The run gate that once sat above the call was deleted in 432-13/432-19. Every trigger — `agent-qa run`, the fn/chat/MCP `runs.start` op, the daemon, the dashboard — reaches a run through here, so a second entry in this map would be a second way to begin a run without passing the production refusal. Cross-checked against the measured dispatch chain (`401-UAT-item09-D08-chain.md`): the gate-run road runs `createDraftEvaluation.startGateRun` → `invokeFunction(\'runs.start\')` → the bound invocation → the drive → this file, and acquires the starter at no point above it.',
 }

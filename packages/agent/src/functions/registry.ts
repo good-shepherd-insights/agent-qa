@@ -183,7 +183,7 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // it `unbound` BY NAME instead of mapping a run it cannot see.
   runsOverviewSpec as FunctionSpec,
   // 387 KREV-01 D-17: the MUTATING half. Registered here and bound only where a composition
-  // supplies `knowledgeReview`, so a read-only host lists all four as `unbound` BY NAME rather
+  // supplies `knowledgeReview`, so a read-only host lists all three as `unbound` BY NAME rather
   // than omitting them: a capability that is absent from a catalogue is indistinguishable from one
   // that never existed, and D-09 requires the two to look different.
   // 2026-09-30, 432-12 (D-05): the three changes apply in the call; the `.propose` ids are gone

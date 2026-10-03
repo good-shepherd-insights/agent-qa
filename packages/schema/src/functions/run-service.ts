@@ -73,7 +73,8 @@ export const RUN_SERVICE_ERROR_CODES = [
   // words to itself exactly as `run_start_failed` does and for the same reason.
   'live_view_unavailable',
   'live_url_mint_failed',
-  // 402-06 (D-01 discretion, T-402-22): the policy gate refused this run. A member of the SAME
+  // 402-06 (D-01 discretion, T-402-22): the run was refused before it started — since 432 (D-18)
+  // only the production refusal answers it, the policy gate being deleted. A member of the SAME
   // closed set so the code vocabulary stays one vocabulary, but the only code this door answers
   // with a body wider than one key — see `RunServiceDenialBodySchema` for why that widening is
   // sound exactly here and nowhere else.

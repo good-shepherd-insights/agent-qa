@@ -1648,7 +1648,8 @@ export { BriefLineSchema } from './brief/guard-lossless-served-brief'
 // 2026-09-08, 419 D-06: the Gate-3 feedback contracts
 export {
   MARK_QUARANTINE_CLASSES, MARK_FIX_KINDS, MARK_DISPOSITIONS, MARK_FIX_REFUSALS,
-  // 2026-09-30, 432-09: the applied fix, the historical drafted receipt and the plain mark refusal
+  // 2026-09-30, 432-09: the applied fix and the historical drafted receipt (the plain mark refusal,
+  // MarkRefusalSchema, was deleted by 432-42)
   MARK_HISTORICAL_DISPOSITIONS, MARK_APPLIED_CHANGE_KINDS, MarkAppliedChangeSchema,
   MARK_RECEIPT_SCHEMA_VERSION, IMPROVEMENT_PLAN_SCHEMA_VERSION, COMMIT_RECEIPT_SCHEMA_VERSION,
   NoDraftableFixCheckedSchema, MarkDispositionSchema, MarkAddressSchema, MarkReceiptSchema,

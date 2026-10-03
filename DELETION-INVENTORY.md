@@ -1436,7 +1436,7 @@ top-level `allowProduction` (432-02, `03c7c6bc4`), with its masking-map leaf.
 | the scope check in `invokeFunction`, MCP's per-tool hiding | `invoke.ts`, the MCP server factory | `visibleToCaller` 41/15 → 16/11 | 20/8 → 6/4 | `50045b34c` (432-20) | `C432-ALL-OPS-AVAILABLE`, `C432-TOKENLESS-CATALOG`; 396 visibility V1/V2/V5 |
 | the MCP bearer check, the run-service `verifyBearer` and the caller credential | `cli/src/commands/mcp.ts`, `dashboard-server/src/run-service/run-service-routes.ts` | — | — | `4e3c9760b` (432-21) | `A60`, `A62`, `C432-TOKENLESS-MCP-MARK` |
 | `requiresFailClosed` | `safety/src/policy/execution-context.ts` (the detector stays) | 20/15 → 14/9 | 7/6 → 1/1 | `39c0316cc` (432-19) | `A66` |
-| `HARD_DESTRUCTIVE_PATTERNS` and the soft verb list | `safety/src/policy/lexicon.ts` | 2/1 → 0/0 | 2/1 → 0/0 | `39c0316cc` (432-19) | `A75` |
+| `HARD_DESTRUCTIVE_PATTERNS` and the command-token soft match | `safety/src/policy/lexicon.ts` | 2/1 → 0/0 | 2/1 → 0/0 | `39c0316cc` (432-19) | `A75` |
 | `appendExecutionAudit` and the `execution_audit.jsonl` path | `JsonlAuditSink` (`safety-local/src/jsonl-audit-sink.ts`), now the guardrail append only | 139/113 → 6/5 | 9/6 → 0/0 | `39c0316cc` (432-19) | `A76`, `C432-AUDIT-UNREAD` |
 | `ExecutionAuditRow` | `AuditSink` (`safety/src/ports/audit-sink.ts`) | 94/27 → 14/7 | 11/4 → 0/0 | `39c0316cc` (432-19) | `A77` |
 | the remedy output branches | `cli/src/commands/receipt-line.ts`; `DenialBlock` (`dashboard-ui/.../denial-block.tsx`, emptied by 430-04) | `GATE_REMEDY_SURFACES` 25/7 → 3/2 | 9/4 → 0/0 | `39c0316cc` (432-19) | `A73`, `A74`, `C432-REMEDY-TYPES-ABSENT` |
@@ -1448,7 +1448,10 @@ top-level `allowProduction` (432-02, `03c7c6bc4`), with its masking-map leaf.
 The remaining closing hits are dated comments, absence assertions and the smuggled witnesses the
 census counts as retained (a legacy caller field cast past the type to prove nothing reads it).
 `HARD_NAME_VERBS` (2/1 prod at both ends) is not a deleted member: it is the risk classifier's name
-signal, kept because eval scoring reads the tiers it feeds (D-15/D-16).
+signal, kept because eval scoring reads the tiers it feeds (D-15/D-16). `SOFT_DESTRUCTIVE_VERBS` is
+retained on the same footing: `matchLexicon` still reads it as a name signal and it still drives the
+`destructive` tier. Only its match over command tokens was deleted (2026-10-03, quick-261003-tsr
+IN-34).
 
 #### Claim transfers in the mutation scripts (old label → current cell)
 

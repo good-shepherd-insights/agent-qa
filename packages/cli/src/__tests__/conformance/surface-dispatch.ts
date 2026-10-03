@@ -305,9 +305,6 @@ export async function driveChatLines(
         createChatCommand({
           input: stdin,
           output: stdoutStream,
-          // No terminal, which is the honest posture for a suite. Since 432-13 nothing on the chat
-          // road reads it: no confirm port is built and no capability asks.
-          isTty: false,
           chatCapabilities: async () => undefined,
           // COLLECTED, NEVER REGISTERED. The default registration puts a SIGINT listener on the
           // process for the life of the session, and a leg that drives 41 capabilities would leave

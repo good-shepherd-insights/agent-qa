@@ -87,15 +87,16 @@ interface ChatOptions {
  *
  * The streams, because a suite that needed a real terminal would be a suite that never runs; and
  * the interrupt registration, because raising a real SIGINT in a test measures the runner's signal
- * disposition rather than what this file does with one. Everything else — the registry, the gate,
- * the session adapter, the banner's reads — is the real composition in every invocation including
- * the tested ones.
+ * disposition rather than what this file does with one. Everything else — the registry, the
+ * session adapter, the banner's reads — is the real composition in every invocation including the
+ * tested ones.
+ *
+ * 2026-10-03 (quick-261003-tsr, IN-10): `isTty` is deleted. It decided whether an inline confirm
+ * was built, and none has been since 432-13.
  */
 export interface ChatCommandDeps {
   input?: NodeJS.ReadableStream
   output?: NodeJS.WritableStream
-  /** Unread since 432-13: it decided whether an inline confirm was built, and none is. */
-  isTty?: boolean
   onInterruptHandler?: (handler: () => Promise<void>) => void
   /**
    * How this invocation resolves what a chat session plans with (392 plan 09).

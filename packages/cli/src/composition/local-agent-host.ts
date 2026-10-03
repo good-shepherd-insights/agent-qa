@@ -342,7 +342,7 @@ export function createColdReadMaskingSources(
  * NOTHING ASKS (432-13, D-01/D-14/D-15). No confirm port, session trust or standing-approval reader
  * reaches the drive: a non-production run starts in one call from every context, and production
  * is refused by the core before any effect unless the config opts in. The `gate` argument the
- * composition still hands this port (the dispatch-grant overlay) is not read; 432-18 deletes it.
+ * composition used to hand this port (the dispatch-grant overlay) was deleted in 432-18.
  *
  * THE DOOR READS ITS OWN PREFLIGHT so the config, the env file and the secrets file are read once
  * rather than twice: the resolved inputs are handed to the drive through `inputs`.
@@ -1720,8 +1720,9 @@ export function createConfigValidatePort(): ConfigValidatePortLike {
           // WHERE, NEVER WHAT (395-10 · GAP 1). This line used to interpolate the thrown error's
           // own text, and the vendored `yaml` package pretty-prints a parse error with an excerpt of
           // the offending source line and a caret under the column. That excerpt is the person's own
-          // file content, it is persisted in the blocked record and printed by `proposals show`, and
-          // it was measured carrying a planted credential onto all three surfaces. The error's
+          // file content, it reaches the blocked refusal every surface prints (and, before 432-11,
+          // the persisted blocked record), and it was measured carrying a planted credential onto
+          // all three surfaces. The error's
           // POSITION is the one fact this product chose to publish, so the position is the only
           // thing read off the error — not its message, not its code, not its stringification.
           issues.push({ path: member.path, message: yamlParseFailureMessage(error) })
@@ -2111,8 +2112,8 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     draftAuthoring: createDraftAuthoringPort(input.configPath),
     // 432-16 (D-07): NO APPLY, UNDO-SOURCE OR TEST-DRAFT COMMIT PORT IS BOUND. agent-qa makes no git
     // commits: `draftApply`, `configApply` and `configUndoSource` were the one-commit writes and the
-    // git-history read behind the pre-432 accept, apply and undo verbs, which now answer unbound by
-    // name until 432-17 deletes them. Changes are written by the direct writers bound here.
+    // git-history read behind the pre-432 accept, apply and undo verbs, which 432-17 deleted.
+    // Changes are written by the direct writers bound here.
     //
     // 395-01 D-01/D-03/D-17 · CFGM-01/03/04: the config editor's host ports, bound unconditionally
     // — a CLI always has a config path. They answer different questions: what bytes are on disk and

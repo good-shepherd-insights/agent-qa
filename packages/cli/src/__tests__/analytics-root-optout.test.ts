@@ -199,7 +199,7 @@ async function runChat(
   try {
     const program = new Command()
       .option('--config <path>', 'config file path')
-      .addCommand(createChatCommand({ input, output, isTty: false, ...extraDeps }))
+      .addCommand(createChatCommand({ input, output, ...extraDeps }))
     program.exitOverride()
     const parsed = program.parseAsync(['node', 'agent-qa', '--config', configPath, 'chat'])
     await Promise.resolve()

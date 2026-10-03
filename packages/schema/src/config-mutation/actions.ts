@@ -40,8 +40,8 @@ export type ConfigHookRuntime = (typeof CONFIG_HOOK_RUNTIMES)[number]
  * The classes a target may declare at creation (432 D-19).
  *
  * Spelled here for the reason {@link CONFIG_HOOK_RUNTIMES} is: the words match `core`'s
- * `TargetSchema.environment`, and whole-config validation refuses any drift before a proposal
- * exists. Absent means undeclared, which is non-production (D-18).
+ * `TargetSchema.environment`, and whole-config validation refuses any drift before the change is
+ * written. Absent means undeclared, which is non-production (D-18).
  */
 export const CONFIG_TARGET_ENVIRONMENTS = ['local', 'shared', 'production'] as const
 

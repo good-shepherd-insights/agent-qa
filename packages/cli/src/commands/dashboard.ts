@@ -1029,8 +1029,9 @@ export interface McpCoHostMountPlan {
  * That condition read `services.mcp.tokens`, which is no longer read: the endpoint asks no caller for
  * a bearer, and the request a block declares is the request to serve the surface. What keeps the
  * endpoint off other machines and other websites is the loopback bind and the Host/Origin guards in
- * `createMcpHttpRequestListener` (D-13), not a credential count. A project that declared tokens and
- * no `enabled` key keeps its co-hosted endpoint; a project with no block still gets none.
+ * `createMcpHttpRequestListener` (D-13), not a credential count. A config that still declares
+ * `services.mcp.tokens` fails strict validation (D-22), so it never reaches this decision; a project
+ * with no block still gets none.
  *
  * Until 408-09 the `enabled` condition did not exist: it was declared in `McpConfigSchema` and read
  * NOWHERE (WR-01, T-408-18). A knob that reads as a control and controls nothing is the defect class

@@ -274,7 +274,6 @@ describe('C432-CLI-ONE-CALL — ask and chat carry a mark out in the turn (432-1
         .addCommand(createChatCommand({
           input,
           output,
-          isTty: true,
           chatCapabilities: async () => undefined,
         }))
       const parsed = program.parseAsync(['node', 'agent-qa', '--config', fixture.configPath, 'chat'])

@@ -232,7 +232,7 @@ export interface FunctionMetadata {
   // retired and unread since 432-20 and every op spec stopped spelling them by 432-27; the members
   // are deleted with the capability-scope union, so no metadata, spec or declaration can carry either.
   resultKind: FunctionResultKind
-  /** The descriptor this op projects into for the policy gate. */
+  /** The risk descriptor of this op: listings, MCP tool annotations and the read scope read it (no gate since 432-13). */
   risk: RiskActionDescriptor
 }
 

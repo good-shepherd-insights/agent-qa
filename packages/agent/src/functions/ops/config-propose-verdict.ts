@@ -16,8 +16,8 @@
 // door-enumeration failure moved one file over. `refusal-classifiers.test.ts` scans this file's
 // executable text for every value-inspecting operator and requires none.
 //
-// IT DECIDES NOTHING. The gate has run, the op has run, the audit row is written. This is the
-// REPORT, and its only job is to stop the report saying `executed` over a refusal.
+// IT DECIDES NOTHING. The op has run (no gate and no execution-audit row since 432-13/432-19). This
+// is the REPORT, and its only job is to stop the report saying `executed` over a refusal.
 
 import type { ConfigChangeOutput } from '@vostride/agent-qa-schema'
 

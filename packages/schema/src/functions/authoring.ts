@@ -138,9 +138,9 @@ export type AuthoringDedupContinuation = (typeof AUTHORING_DEDUP_CONTINUATIONS)[
  * What a stage-2 refusal NAMES (394 D-04).
  *
  * THE OUTPUT'S ONE PAYLOAD ARM, AND THE EXCEPTION IS PRINCIPLED. The output contract below states
- * that it carries no payload per outcome, because a finding's evidence and a proposal's diff ride
- * 391's envelope into the inbox and a second copy here would be a second place to read one
- * artifact. A dedup refusal has NO such home: nothing was authored, so there is no draft, no
+ * that it carries no payload per outcome, because a draft's bytes are written to its test file and
+ * named by `written`, and a second copy here would be a second place to read one artifact. A dedup
+ * refusal has NO such home: nothing was authored, so there is no draft, no
  * receipt, no gate-run and no envelope, and D-04 makes the refusal a typed op RESULT that ends the
  * invocation and is rendered by chat. Omitting the payload would not avoid a second read path, it
  * would remove the only one — leaving a caller told `refused` with no way to learn what it
@@ -351,30 +351,20 @@ export type AuthoringDraftWriteInput = z.infer<typeof AuthoringDraftWriteInputSc
  * is the answer to a different question: which draft this call produced, addressable without
  * knowing that a receipt is a thing that has a ref inside it.
  *
- * There is no payload arm per outcome. A proposal's diff rides 391's envelope into the inbox
- * (D-05), so widening this contract with it would mint a second place the same artifact could be
- * read from; a stop's verdict rides THIS result, because nothing is minted for it (411 D-05) —
- * see `stop` below.
+ * There is no payload arm per outcome. Since 432 (D-06) the final draft is written to its test file
+ * in the call, and `written` is that write's file record (which file, or why none), not its bytes;
+ * a stop's verdict rides THIS result, because nothing is written for it (411 D-05) — see `stop`
+ * below.
  *
- * `fanOut` IS THE ONE RECORDED EXCEPTION, AND IT IS AN EXCEPTION TO THAT PARAGRAPH ON PURPOSE
- * (394-14 · WTST-08). WTST-08's owner decision was preview plus honest reporting with NO enforced
- * budget, which moves the entire mitigation for an unbounded fan-out onto DISCLOSURE: the number a
- * person is shown at the dispatch confirm is the control, and the number they are shown afterwards
- * is what makes that control falsifiable. A number nobody can read after the fact is a disclosure
- * with no second half — the person approved nine runs and has no way to learn that eleven were
- * taken. Until this field existed the loop computed the report correctly and `invoke()` discarded
- * it, so `renderFanOutReport` had zero production callers and `exceedsPreview` was a flag nothing
- * could surface (394-VERIFICATION, SC-5).
+ * `fanOut` IS THE ONE RECORDED EXCEPTION (394-14 · WTST-08): the preview-versus-spent disclosure.
+ * WTST-08's owner decision was preview plus honest reporting with NO enforced budget, so the number
+ * previewed and the number actually spent are both reported, and `exceedsPreview` says when the
+ * second outran the first. It is counts, run REFERENCES and one boolean — no draft body, no receipt
+ * payload and no step evidence. (2026-10-03: the dispatch confirm that showed the preview and the
+ * proposal inbox this paragraph used to contrast it with are deleted in 432.)
  *
- * IT IS A MAP AND NEVER A TERRITORY, which is exactly what keeps it inside the prohibition's
- * reasoning rather than beside it. The prohibition exists so one artifact is not readable from two
- * places; `FanOutReport` is not an artifact at all. It is counts, run REFERENCES and one boolean
- * about the disclosure — no draft body, no receipt payload, no step evidence, nothing a person
- * would read instead of the inbox copy. A field carrying `outcome.proposal` would be the defect
- * the paragraph above rules out and stays ruled out; this one is the disclosure's other half.
- *
- * BOTH ARE OPTIONAL, AND `outcome` SAYS WHICH TO EXPECT — the `KnowledgeApplyOutcome.forgetReceipt`
- * idiom. A `drafted`, `repaired` or `stopped` invocation carries both; a `refused` one ends at
+ * BOTH ARE OPTIONAL, AND `outcome` SAYS WHICH TO EXPECT. A `drafted`, `repaired` or `stopped`
+ * invocation carries both; a `refused` one ends at
  * stage 2 with no draft compiled and therefore no receipt to mint (D-04, plan 04). Requiring them
  * would have made plan 04's arrival a WIDENING of this op's output contract — the shape change the
  * whole-vocabulary-now discipline exists to avoid — and padding a refusal with an empty receipt
@@ -397,7 +387,7 @@ export const AuthoringDraftWriteOutputSchema = z.object({
    */
   stop: AuthoringStopSchema.optional(),
   /**
-   * What was previewed at the confirm, beside what this invocation actually spent.
+   * What this invocation previewed, beside what it actually spent.
    *
    * REQUIRED ON EVERY ARM, unlike `draftRef` and `receipt`. Those two are absent because a stage-2
    * refusal genuinely has neither. Cost is different in kind: "this invocation ran nothing" is a

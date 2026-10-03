@@ -13,8 +13,8 @@ export {
   scrubDisclosureFragment,
   scrubDisclosureText,
 } from './action-descriptor'
-// 391-11 (REVIEW WR-05): the scope key set, spelled ONCE and PUBLISHED, so an out-of-package
-// differential can range it.
+// 391-11 (REVIEW WR-05) published the scope key set here, spelled ONCE, so an out-of-package
+// differential could range it. Nothing is exported under this note any more (2026-10-03).
 // 432-18 moved `STANDING_APPROVAL_SCOPE` beside it; 432-21 (D-12) deleted it with the MCP bearer
 // credential that carried it. 2026-10-02 (432-39, D-12): the `TrustCredential` and `TrustScope`
 // caller types are deleted with the caller's `credential` member. 2026-10-02 (432-42, D-12): the key
