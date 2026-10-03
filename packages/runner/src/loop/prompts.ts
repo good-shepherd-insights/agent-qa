@@ -738,7 +738,8 @@ export function formatAction(action: Action): string {
  * VERIFIER stable tier (CTXB-01 / D-11): the byte-stable verdict-identity block — the
  * verifier's own cached prefix. This is the fixed prose that is identical on every
  * verification call (identity, the negative-evidence verification approach, the
- * action-vs-assertion guidance, the screenshot-analysis framing, and the response
+ * action-vs-assertion guidance, the step-goal rule (quick-261004-0hc P6), the
+ * screenshot-analysis framing, and the response
  * schema). It does NOT share the planner's cache entry (different system content ⇒
  * different cache key, D-11). Arg-less: no per-call inputs. Plan 06 wires this as the
  * verifier call's `system` while `buildVerificationPrompt` supplies the per-call turn.
@@ -756,6 +757,7 @@ IMPORTANT: Absence of visible screen change is NOT evidence of failure. Many int
 
 For verification/assertion steps (step says "verify", "check", "confirm"): require POSITIVE evidence — the claimed condition must be visible on screen or in the ARIA tree.
 For action steps (step uses the surface-correct interaction verb, such as "click" on web or "tap"/"press" on mobile, or says "fill" or "select"): if the target element existed and no error appeared, return success unless there is clear evidence of failure.
+For every step, the verdict is about the step goal on the AFTER screen, not about the last action alone: when the AFTER screen shows that an outcome the step goal requires has not happened (text typed but not sent when the step asks to send, reply or post; a form filled but not submitted when the step asks to submit; the wrong app or screen in front), return success false even if the last action succeeded and its target existed. That is clear evidence of failure, unlike the mere absence of a visible change. An outcome the step does not ask for, such as sending text the step only asks to type, is not required.
 
 Analyze the attached screenshot for visual cues the ARIA tree cannot capture: colors, layout, images, visual indicators, error states. When the screenshot and ARIA tree conflict, visual evidence takes precedence. For quantity claims, only confirm what you can count in the screenshot.
 
