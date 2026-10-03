@@ -86,7 +86,7 @@ import { groundActionPlan } from '../grounding/gate.js'
 import type { CachedPlanValue, GroundedLocator } from '../cache/port.js'
 import type { LoopPorts, SecretRedactorPort } from './ports.js'
 import { guardActionData } from './blob-guard.js'
-import type { ActionPlan, PlanResult, StepContext } from './types.js'
+import type { ActionPlan, PlanResult, StepContext, VerifierAuthorContext } from './types.js'
 import { PlanningTurnError } from './planner.js'
 import { withAbort, getTimeoutAbortReason } from './abort.js'
 import {
@@ -194,6 +194,13 @@ export async function executeStep(
   const maxSubActions = ports.plannerConfig?.maxSubActions ?? 50
   const promptDate = context.promptDate ?? new Date().toISOString().slice(0, 10)
   context.promptDate = promptDate
+  const verifierAuthorContext: VerifierAuthorContext | undefined =
+    context.suiteContext || context.testContext
+      ? {
+          ...(context.suiteContext ? { suiteContext: context.suiteContext } : {}),
+          ...(context.testContext ? { testContext: context.testContext } : {}),
+        }
+      : undefined
   const recordCap = ports.knowledgeBudgets?.recordCap ?? PROVISIONAL_DISTINCT_RECORD_CAP
   const combinedBudget = (ports.knowledgeBudgets?.brief ?? PROVISIONAL_BRIEF_TOKEN_BUDGET)
     + (ports.knowledgeBudgets?.caution ?? PROVISIONAL_CAUTION_TOKEN_BUDGET)
@@ -1859,7 +1866,7 @@ export async function executeStep(
           ports.verifier.verify(
             stepInstruction, screenState, afterState, action,
             gate.attachImage ? verifyScreenshot : undefined,
-            ports.abortSignal, gate.promptNote, activePredicate,
+            ports.abortSignal, gate.promptNote, activePredicate, verifierAuthorContext,
           ),
           ports.abortSignal,
         )

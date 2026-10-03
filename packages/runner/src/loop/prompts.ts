@@ -13,7 +13,7 @@ import {
 } from '@vostride/agent-qa-schema'
 import type { ModelMessage, SystemModelMessage } from 'ai'
 import type { Action } from '../platform.js'
-import type { StepContext, AssertionInput, ExtractorInput } from './types.js'
+import type { StepContext, AssertionInput, ExtractorInput, VerifierAuthorContext } from './types.js'
 import { defaultRegistry } from '../tools/index.js'
 
 type PromptPlatform = 'web' | 'android' | 'ios'
@@ -213,14 +213,16 @@ function buildRules(platform?: PromptPlatform): string {
 // Step prompt section helpers
 // ---------------------------------------------------------------------------
 
+export function formatAuthorContext(suiteContext?: string, testContext?: string): string | undefined {
+  if (suiteContext && testContext) return `Suite context: ${suiteContext}\nTest context: ${testContext}`
+  if (suiteContext) return `Suite context: ${suiteContext}`
+  if (testContext) return `Test context: ${testContext}`
+  return undefined
+}
+
 function appendContextSection(parts: string[], context: StepContext): void {
-  if (context.suiteContext && context.testContext) {
-    parts.push(`Suite context: ${context.suiteContext}\nTest context: ${context.testContext}`)
-  } else if (context.suiteContext) {
-    parts.push(`Suite context: ${context.suiteContext}`)
-  } else if (context.testContext) {
-    parts.push(`Test context: ${context.testContext}`)
-  }
+  const formatted = formatAuthorContext(context.suiteContext, context.testContext)
+  if (formatted !== undefined) parts.push(formatted)
 }
 
 // BRIF-01/D-05: L0 is authored/sovereign policy material, not learned memory. It alone may
@@ -778,8 +780,19 @@ export function buildVerificationPrompt(
   hasScreenshot = false,
   promptNote?: string,
   bulkCompletionPredicate?: string,
+  authorContext?: VerifierAuthorContext,
 ): string {
   const parts: string[] = []
+
+  // Author context rides the per-call turn so buildVerifierStableTier stays byte-stable.
+  const author = formatAuthorContext(authorContext?.suiteContext, authorContext?.testContext)
+  if (author !== undefined) {
+    parts.push(
+      "Test author's instructions (from the test definition; they also govern this verification):",
+    )
+    parts.push(author)
+    parts.push('')
+  }
 
   let actionDesc = formatAction(action)
   if ('ref' in action && action.ref && beforeState.elements.length > 0) {
