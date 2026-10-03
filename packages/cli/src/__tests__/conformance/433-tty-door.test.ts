@@ -328,4 +328,35 @@ describe('the terminal door: agent-qa run at a real pseudo-terminal (D-22)', () 
       expectPinnedHits(project, pinsAtHit)
     })
   }, 180_000)
+
+  it('C433-DOOR-TTY-PRODUCTION-REFUSED: a declared production run is refused before any effect, naming the target and the one config line', async () => {
+    await withTarget(async (target) => {
+      const project = matrixProject(target.origin, false)
+      const answer = await runAtTerminal(project, project.productionTest)
+      // Exit 2 alone also means "no verdict" (a run skipped for want of a browser); the refusal is
+      // exit 2 WITH the run core's production sentence, as the matrix's spawned `run` door reads it.
+      expect(answer.status, answer.text).toBe(2)
+      expect(answer.text, 'the refusal is not the production sentence').toContain(PRODUCTION_SENTENCE)
+      expect(answer.text, 'the refusal does not name the target').toContain(`"${PRODUCTION_TARGET}"`)
+      expect(answer.text, 'the refusal does not name the one line to add').toContain(OPT_IN_LINE)
+      expect(answer.text).not.toMatch(APPROVAL)
+      expect(runDirectories(project), 'a refused run left a run directory').toEqual([])
+      expect(target.hits, 'a refused run reached the target').toEqual([])
+    })
+  }, 180_000)
+
+  it('C433-DOOR-TTY-OPT-IN-RUNS: the same production test runs once the config, and only the config, opts in', async () => {
+    await withTarget(async (target, pinsAtHit) => {
+      const project = matrixProject(target.origin, true)
+      const answer = await runAtTerminal(project, project.productionTest)
+      expect(answer.text, 'an opted-in production run was refused').not.toContain(PRODUCTION_SENTENCE)
+      expect(answer.text).not.toMatch(APPROVAL)
+      expect(answer.text).not.toContain(OPT_IN_LINE)
+      expect(runDirectories(project), `expected exactly one run directory:\n${answer.text}`).toHaveLength(1)
+      expect(await waitFor(() => unsettledRuns(project).length === 0, 30_000), 'the run never wrote runFinished').toBe(true)
+      expect(recordedExecutionContexts(project), 'the run core did not see a person at a terminal').toEqual(['local-interactive'])
+      expect(target.hits, `the opted-in run never reached the target:\n${answer.text}`).toContain(`/${PRODUCTION_TARGET}`)
+      expectPinnedHits(project, pinsAtHit)
+    })
+  }, 180_000)
 })
