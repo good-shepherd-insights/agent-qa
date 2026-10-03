@@ -2,7 +2,7 @@ import { XMLParser } from 'fast-xml-parser'
 import type { InterimNode, RefBinding } from '@vostride/agent-qa-runner'
 import type { ElementLabels, ElementState } from '@vostride/agent-qa-schema'
 import type { ParsedMobileSource, RefEntry } from './types.js'
-import { IOS_EDITABLE_TYPES, normalizeRole } from './role-map.js'
+import { IOS_EDITABLE_TYPES, iosAccessibleOtherRole, normalizeRole } from './role-map.js'
 
 const INTERACTIVE_ROLES = new Set([
   'button', 'link', 'textbox', 'checkbox', 'radio', 'combobox',
@@ -157,6 +157,62 @@ interface WalkContext {
   platform: 'android' | 'ios'
   nodes: InterimNode[]
   viewport?: { width: number; height: number }
+  screenReference?: { width: number; height: number }
+}
+
+const IOS_FULL_SCREEN_AREA_RATIO = 0.9
+
+function collectAttrs(node: any): Record<string, any> {
+  const attrs: Record<string, any> = {}
+  for (const key of Object.keys(node)) {
+    if (key.startsWith('@_')) attrs[key] = node[key]
+  }
+  return attrs
+}
+
+// UIKit merges an accessible element's subviews into it and exposes no child text, so its
+// label is the only handle; React Native pressables without an accessibilityRole surface
+// this way as XCUIElementTypeOther.
+function isIosAccessibleLabelledOther(
+  tagName: string,
+  attrs: Record<string, any>,
+  ctx: WalkContext,
+): boolean {
+  if (ctx.platform !== 'ios' || tagName !== 'XCUIElementTypeOther') return false
+  if (!boolAttr(attrs['@_accessible'])) return false
+  const label = attrs['@_label']
+  if (label === undefined || label === null || String(label).trim() === '') return false
+  const bounds = parseIosBounds(attrs)
+  if (!bounds) return false
+  const ref = ctx.screenReference
+  if (ref && ref.width > 0 && ref.height > 0) {
+    const area = bounds.width * bounds.height
+    if (area >= IOS_FULL_SCREEN_AREA_RATIO * ref.width * ref.height) return false
+  }
+  return true
+}
+
+function descendantCarriesLabel(node: any, label: string, ctx: WalkContext): boolean {
+  for (const childKey of Object.keys(node)) {
+    if (childKey.startsWith('@_') || childKey === '#text') continue
+    const childVal = node[childKey]
+    const children = Array.isArray(childVal) ? childVal : [childVal]
+    for (const child of children) {
+      if (!child || typeof child !== 'object') continue
+      const attrs = collectAttrs(child)
+      const childLabel = extractLabel(attrs, ctx.platform)
+      if (
+        childLabel !== undefined &&
+        String(childLabel).trim() === label &&
+        (shouldEmit(normalizeRole(childKey, ctx.platform)) ||
+          isIosAccessibleLabelledOther(childKey, attrs, ctx))
+      ) {
+        return true
+      }
+      if (descendantCarriesLabel(child, label, ctx)) return true
+    }
+  }
+  return false
 }
 
 function walkNode(node: any, tagName: string, parentIndex: number | undefined, ctx: WalkContext): void {
@@ -168,8 +224,29 @@ function walkNode(node: any, tagName: string, parentIndex: number | undefined, c
     }
   }
 
-  const role = normalizeRole(tagName, ctx.platform)
-  const emit = shouldEmit(role)
+  let role = normalizeRole(tagName, ctx.platform)
+  let emit = shouldEmit(role)
+
+  if (ctx.platform === 'ios') {
+    if (
+      ctx.screenReference === undefined &&
+      (tagName === 'XCUIElementTypeApplication' || tagName === 'XCUIElementTypeWindow')
+    ) {
+      const reference = parseIosBounds(attrs)
+      if (reference && reference.width > 0 && reference.height > 0) {
+        ctx.screenReference = { width: reference.width, height: reference.height }
+      }
+    }
+    if (
+      !emit &&
+      isIosAccessibleLabelledOther(tagName, attrs, ctx) &&
+      !descendantCarriesLabel(node, String(attrs['@_label']).trim(), ctx)
+    ) {
+      const traits = attrs['@_traits']
+      role = iosAccessibleOtherRole(typeof traits === 'string' ? traits : undefined)
+      emit = true
+    }
+  }
 
   // The index children reparent to: this node's own index if it is emitted, else the
   // nearest surviving ancestor passed down.
@@ -245,6 +322,7 @@ export function parseMobileSource(
     platform,
     nodes: [],
     viewport,
+    ...(platform === 'ios' && viewport ? { screenReference: viewport } : {}),
   }
 
   // Find root element(s) to walk

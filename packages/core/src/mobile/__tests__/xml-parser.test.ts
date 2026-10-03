@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { buildScreenState } from '@vostride/agent-qa-runner'
 import { parseMobileSource, buildRefEntries, deriveMobileScroll } from '../xml-parser.js'
 import { normalizeRole, ANDROID_ROLE_MAP, IOS_ROLE_MAP } from '../role-map.js'
+import { MobileElementResolver } from '../element-resolver.js'
 
 const ANDROID_LOGIN_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <hierarchy rotation="0">
@@ -32,6 +33,32 @@ const IOS_LOGIN_XML = `<?xml version="1.0" encoding="UTF-8"?>
     </XCUIElementTypeWindow>
   </XCUIElementTypeApplication>
 </AppiumAUT>`
+
+const IOS_SHEET_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<AppiumAUT>
+  <XCUIElementTypeApplication type="XCUIElementTypeApplication" name="Bluesky" label="Bluesky" enabled="true" visible="true" accessible="false" x="0" y="0" width="402" height="874" index="0">
+    <XCUIElementTypeWindow type="XCUIElementTypeWindow" enabled="true" visible="true" accessible="false" x="0" y="0" width="402" height="874" index="0">
+      <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="474" width="402" height="400" index="0">
+        <XCUIElementTypeOther type="XCUIElementTypeOther" name="profileHeaderDropdownMuteBtn" label="Mute account" enabled="true" visible="true" accessible="true" x="31" y="715" width="340" height="43" index="4" traits=""/>
+        <XCUIElementTypeOther type="XCUIElementTypeOther" name="profileHeaderDropdownBlockBtn" label="Block account" enabled="true" visible="true" accessible="true" x="31" y="758" width="340" height="43" index="5" traits=""/>
+        <XCUIElementTypeOther type="XCUIElementTypeOther" name="profileHeaderDropdownReportBtn" label="Report account" enabled="true" visible="true" accessible="true" x="31" y="801" width="340" height="43" index="6" traits=""/>
+      </XCUIElementTypeOther>
+    </XCUIElementTypeWindow>
+  </XCUIElementTypeApplication>
+</AppiumAUT>`
+
+const IOS_VIEWPORT = { width: 402, height: 874 }
+
+function iosScreen(body: string, windowAttrs = 'x="0" y="0" width="402" height="874"'): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<AppiumAUT>
+  <XCUIElementTypeApplication name="App" label="App">
+    <XCUIElementTypeWindow ${windowAttrs}>
+      ${body}
+    </XCUIElementTypeWindow>
+  </XCUIElementTypeApplication>
+</AppiumAUT>`
+}
 
 describe('parseMobileSource → InterimNode[]', () => {
   describe('Android walk', () => {
@@ -235,6 +262,173 @@ describe('parseMobileSource → InterimNode[]', () => {
       for (const node of nodes) {
         expect('editable' in (node.state ?? {})).toBe(false)
       }
+    })
+  })
+
+  describe('iOS accessible labelled Other (P4)', () => {
+    const other = (attrs: string, children = '') =>
+      children
+        ? `<XCUIElementTypeOther ${attrs}>${children}</XCUIElementTypeOther>`
+        : `<XCUIElementTypeOther ${attrs} />`
+
+    it('emits the live Bluesky sheet rows as button nodes', () => {
+      const { nodes } = parseMobileSource(IOS_SHEET_XML, 'ios', IOS_VIEWPORT)
+      expect(nodes.map(n => n.name)).toEqual(['Mute account', 'Block account', 'Report account'])
+      expect(nodes.map(n => n.role)).toEqual(['button', 'button', 'button'])
+      const mute = nodes[0]
+      expect(mute.bounds).toEqual({ x: 31, y: 715, width: 340, height: 43 })
+      expect(mute.nativeType).toBe('XCUIElementTypeOther')
+      expect(mute.attributes?.name).toBe('profileHeaderDropdownMuteBtn')
+      expect(mute.attributes?.traits).toBe('')
+    })
+
+    it.each([
+      ['Button', 'button'],
+      ['Link', 'link'],
+      ['Header', 'heading'],
+      ['Image', 'image'],
+      ['StaticText', 'text'],
+      ['Selected, Button', 'button'],
+      ['Button, Selected', 'button'],
+      ['ToggleButton', 'button'],
+      ['', 'button'],
+      ['Adjustable', 'button'],
+    ])('maps traits "%s" to role %s', (traits, role) => {
+      const xml = iosScreen(
+        other(`label="Row" accessible="true" traits="${traits}" x="0" y="100" width="402" height="44"`),
+      )
+      const { nodes } = parseMobileSource(xml, 'ios', IOS_VIEWPORT)
+      expect(nodes).toHaveLength(1)
+      expect(nodes[0].role).toBe(role)
+    })
+
+    it('still lifts selected state on an emitted accessible Other', () => {
+      const xml = iosScreen(
+        other('label="Tab" accessible="true" selected="true" traits="Button, Selected" x="0" y="800" width="100" height="44"'),
+      )
+      const { nodes } = parseMobileSource(xml, 'ios', IOS_VIEWPORT)
+      expect(nodes[0].state?.selected).toBe(true)
+    })
+
+    it('keeps unlabelled, non-accessible and boundless Others filtered', () => {
+      const xml = iosScreen(
+        [
+          other('label="Not accessible" accessible="false" x="0" y="100" width="402" height="44"'),
+          other('label="" name="someTestId" accessible="true" x="0" y="150" width="402" height="44"'),
+          other('name="noLabel" accessible="true" x="0" y="200" width="402" height="44"'),
+          other('label="No bounds" accessible="true"'),
+        ].join('\n'),
+      )
+      expect(parseMobileSource(xml, 'ios', IOS_VIEWPORT).nodes).toEqual([])
+      expect(parseMobileSource(xml, 'ios').nodes).toEqual([])
+    })
+
+    it('excludes a full-screen labelled Other with or without a viewport, but not a sheet', () => {
+      const backdrop = iosScreen(
+        other('label="Close" accessible="true" x="0" y="0" width="402" height="874"'),
+      )
+      expect(parseMobileSource(backdrop, 'ios', IOS_VIEWPORT).nodes).toEqual([])
+      expect(parseMobileSource(backdrop, 'ios').nodes).toEqual([])
+
+      const sheet = iosScreen(
+        other('label="Sheet" accessible="true" x="0" y="474" width="402" height="400"'),
+      )
+      expect(parseMobileSource(sheet, 'ios', IOS_VIEWPORT).nodes.map(n => n.name)).toEqual(['Sheet'])
+      expect(parseMobileSource(sheet, 'ios').nodes.map(n => n.name)).toEqual(['Sheet'])
+    })
+
+    it('keeps the descendant when it already carries the same label', () => {
+      const wrapsText = iosScreen(
+        other(
+          'label="Settings" accessible="true" x="0" y="100" width="402" height="44"',
+          '<XCUIElementTypeStaticText label="Settings" x="16" y="110" width="100" height="24" />',
+        ),
+      )
+      const textNodes = parseMobileSource(wrapsText, 'ios', IOS_VIEWPORT).nodes
+      expect(textNodes.map(n => [n.role, n.name])).toEqual([['text', 'Settings']])
+
+      const wrapsOther = iosScreen(
+        other(
+          'label="Row" accessible="true" x="0" y="100" width="402" height="60"',
+          other('label="Row" accessible="true" x="8" y="104" width="380" height="52"'),
+        ),
+      )
+      const rowNodes = parseMobileSource(wrapsOther, 'ios', IOS_VIEWPORT).nodes
+      expect(rowNodes).toHaveLength(1)
+      expect(rowNodes[0].name).toBe('Row')
+      expect(rowNodes[0].bounds).toEqual({ x: 8, y: 104, width: 380, height: 52 })
+    })
+
+    it('emits both when the descendant label differs, parenting the descendant to the Other', () => {
+      const xml = iosScreen(
+        other(
+          'label="Alice, 2h" accessible="true" x="0" y="100" width="402" height="60"',
+          '<XCUIElementTypeStaticText label="Alice" x="16" y="110" width="100" height="24" />',
+        ),
+      )
+      const { nodes } = parseMobileSource(xml, 'ios', IOS_VIEWPORT)
+      expect(nodes.map(n => n.name)).toEqual(['Alice, 2h', 'Alice'])
+      expect(nodes[1].parentIndex).toBe(0)
+    })
+
+    it('mints a ref whose entry resolves to the observed centre', () => {
+      const { nodes } = parseMobileSource(IOS_SHEET_XML, 'ios', IOS_VIEWPORT)
+      const { state, binding } = buildScreenState({
+        platform: 'ios',
+        nodes,
+        viewport: IOS_VIEWPORT,
+        scroll: deriveMobileScroll(nodes, IOS_VIEWPORT),
+        coordSpace: 'viewport',
+        timestamp: 0,
+      })
+      const entries = buildRefEntries(nodes, binding)
+      const muteRef = state.elements.find(e => e.name === 'Mute account')!.ref
+      expect(entries[muteRef].role).toBe('button')
+      expect(entries[muteRef].nativeType).toBe('XCUIElementTypeOther')
+      expect(entries[muteRef].bounds).toEqual({ x: 31, y: 715, width: 340, height: 43 })
+      expect(new MobileElementResolver(entries).resolve(muteRef).center).toEqual({ x: 201, y: 736.5 })
+    })
+
+    it('leaves IOS_LOGIN_XML (a full-screen Other with no accessible attribute) at six nodes', () => {
+      expect(parseMobileSource(IOS_LOGIN_XML, 'ios', { width: 390, height: 844 }).nodes).toHaveLength(6)
+      expect(parseMobileSource(IOS_LOGIN_XML, 'ios').nodes).toHaveLength(6)
+    })
+  })
+
+  describe('Android unchanged (P4)', () => {
+    it('parses an accessible clickable ViewGroup row exactly as the base commit did', () => {
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<hierarchy rotation="0">
+  <android.widget.FrameLayout bounds="[0,0][1080,2400]" resource-id="" content-desc="" text="" enabled="true">
+    <android.view.ViewGroup bounds="[84,1920][996,2036]" resource-id="profileHeaderDropdownMuteBtn" content-desc="Mute account" text="" clickable="true" accessible="true" focusable="true" enabled="true" displayed="true">
+      <android.widget.TextView bounds="[132,1950][460,2006]" resource-id="" content-desc="" text="Mute account" clickable="false" enabled="true" displayed="true" />
+    </android.view.ViewGroup>
+  </android.widget.FrameLayout>
+</hierarchy>`
+      const { nodes } = parseMobileSource(xml, 'android', { width: 1080, height: 2400 })
+      // Captured from the unmodified parser at agent-qa 1eb37908f: the ViewGroup stays filtered.
+      expect(nodes).toEqual([
+        {
+          role: 'text',
+          name: 'Mute account',
+          value: 'Mute account',
+          bounds: { x: 132, y: 1950, width: 328, height: 56 },
+          state: { enabled: true },
+          attributes: {
+            bounds: '[132,1950][460,2006]',
+            'resource-id': '',
+            'content-desc': '',
+            text: 'Mute account',
+            clickable: 'false',
+            enabled: 'true',
+            displayed: 'true',
+          },
+          nativeType: 'android.widget.TextView',
+        },
+      ])
+      expect(JSON.stringify(nodes)).toBe(
+        '[{"role":"text","name":"Mute account","value":"Mute account","bounds":{"x":132,"y":1950,"width":328,"height":56},"state":{"enabled":true},"attributes":{"bounds":"[132,1950][460,2006]","resource-id":"","content-desc":"","text":"Mute account","clickable":"false","enabled":"true","displayed":"true"},"nativeType":"android.widget.TextView"}]',
+      )
     })
   })
 

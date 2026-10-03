@@ -38,6 +38,19 @@ const IOS_TWO_PICKER_WHEELS_XML = `<?xml version="1.0" encoding="UTF-8"?>
   </XCUIElementTypeApplication>
 </AppiumAUT>`
 
+const IOS_SHEET_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<AppiumAUT>
+  <XCUIElementTypeApplication type="XCUIElementTypeApplication" name="Bluesky" label="Bluesky" enabled="true" visible="true" accessible="false" x="0" y="0" width="402" height="874" index="0">
+    <XCUIElementTypeWindow type="XCUIElementTypeWindow" enabled="true" visible="true" accessible="false" x="0" y="0" width="402" height="874" index="0">
+      <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="474" width="402" height="400" index="0">
+        <XCUIElementTypeOther type="XCUIElementTypeOther" name="profileHeaderDropdownMuteBtn" label="Mute account" enabled="true" visible="true" accessible="true" x="31" y="715" width="340" height="43" index="4" traits=""/>
+        <XCUIElementTypeOther type="XCUIElementTypeOther" name="profileHeaderDropdownBlockBtn" label="Block account" enabled="true" visible="true" accessible="true" x="31" y="758" width="340" height="43" index="5" traits=""/>
+        <XCUIElementTypeOther type="XCUIElementTypeOther" name="profileHeaderDropdownReportBtn" label="Report account" enabled="true" visible="true" accessible="true" x="31" y="801" width="340" height="43" index="6" traits=""/>
+      </XCUIElementTypeOther>
+    </XCUIElementTypeWindow>
+  </XCUIElementTypeApplication>
+</AppiumAUT>`
+
 const SCREENSHOT_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
 
 function createMockPointerAction() {
@@ -325,6 +338,38 @@ describe('IOSPlatformAdapter', () => {
 
     it('throws if adapter not initialized', async () => {
       await expect(adapter.observe()).rejects.toThrow('not initialized')
+    })
+  })
+
+  describe('observe — accessible labelled Others (P4)', () => {
+    it('observes the Bluesky sheet row as a button and taps its centre', async () => {
+      mockDriver.getPageSource.mockResolvedValue(IOS_SHEET_XML)
+      mockDriver.getWindowSize.mockResolvedValue({ width: 402, height: 874 })
+      await adapter.setup({ platform: 'ios' })
+      const state = await adapter.observe()
+
+      expect(state.tree).toContain('button "Mute account" [ref=')
+      expect(state.tree).toContain('button "Block account" [ref=')
+      expect(state.tree).toContain('button "Report account" [ref=')
+
+      const mute = state.elements.find(e => e.name === 'Mute account')!
+      const result = await adapter.execute({ type: 'tap', ref: mute.ref })
+      expect(result.success).toBe(true)
+      // 31 + 340/2 = 201, 715 + 43/2 = 736.5 → 737
+      expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 201, y: 737 })
+    })
+
+    it('leaves the login fixture (unflagged full-screen Other) unchanged', async () => {
+      await adapter.setup({ platform: 'ios' })
+      const state = await adapter.observe()
+      expect(state.elements.map(e => e.name)).toEqual([
+        'Welcome',
+        'Email',
+        'Password',
+        'Log In',
+        'Stay signed in',
+        'Logo',
+      ])
     })
   })
 

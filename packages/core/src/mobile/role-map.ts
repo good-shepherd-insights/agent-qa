@@ -95,6 +95,28 @@ export const IOS_EDITABLE_TYPES: ReadonlySet<string> = new Set([
   'XCUIElementTypeTextView',
 ])
 
+const IOS_TRAIT_ROLE_PRECEDENCE: ReadonlyArray<[ReadonlyArray<string>, string]> = [
+  [['Button', 'ToggleButton'], 'button'],
+  [['Link'], 'link'],
+  [['Header'], 'heading'],
+  [['Image'], 'image'],
+  [['StaticText'], 'text'],
+]
+
+// WDA joins trait names in dictionary order, so the string is split rather than matched whole.
+export function iosAccessibleOtherRole(traits: string | undefined): string {
+  const names = new Set(
+    (traits ?? '')
+      .split(',')
+      .map(t => t.trim())
+      .filter(t => t.length > 0),
+  )
+  for (const [traitNames, role] of IOS_TRAIT_ROLE_PRECEDENCE) {
+    if (traitNames.some(t => names.has(t))) return role
+  }
+  return 'button'
+}
+
 export function normalizeRole(type: string, platform: 'android' | 'ios'): string {
   const map = platform === 'android' ? ANDROID_ROLE_MAP : IOS_ROLE_MAP
   const mapped = map[type]
