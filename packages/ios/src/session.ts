@@ -1,6 +1,10 @@
 import { remote } from 'webdriverio'
 import type { IOSAdapterConfig } from './types.js'
 
+// WDA's default 50 cuts React Native trees, and 65 and above fails inside XCTest (bench H17).
+export const IOS_SNAPSHOT_MAX_DEPTH = 62
+export const IOS_SNAPSHOT_FALLBACK_DEPTH = 50
+
 export async function createIOSSession(
   config: IOSAdapterConfig,
   farmSession?: { hostname: string; port: number; path: string; capabilities: Record<string, unknown> },
@@ -22,6 +26,7 @@ export async function createIOSSession(
     'appium:deviceName': config.device?.name ?? 'iPhone Simulator',
     'appium:showIOSLog': true,
     'appium:newCommandTimeout': config.timeouts?.test ? Math.ceil(config.timeouts.test / 1000) : 300,
+    'appium:settings[snapshotMaxDepth]': IOS_SNAPSHOT_MAX_DEPTH,
   }
 
   if (!browserName && appStateNoReset !== undefined) capabilities['appium:noReset'] = appStateNoReset

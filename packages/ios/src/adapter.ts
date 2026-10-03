@@ -41,7 +41,7 @@ import {
 import type { MobileRefMap } from '@vostride/agent-qa-core'
 // 363 D-08/Q10: sharp image utilities moved to runner-local (sharp left core, its host-adapter home).
 import { alignToWindow } from '@vostride/agent-qa-runner-local'
-import { createIOSSession } from './session.js'
+import { IOS_SNAPSHOT_FALLBACK_DEPTH, IOS_SNAPSHOT_MAX_DEPTH, createIOSSession } from './session.js'
 import type { IOSAdapterConfig } from './types.js'
 
 const IOS_NATIVE_SELECT_TYPES = new Set([
@@ -54,6 +54,12 @@ const IOS_NATIVE_SELECT_TYPES = new Set([
 const IOS_NATIVE_SELECT_ROLES = new Set(['pickerwheel', 'spinbutton', 'combobox'])
 
 const W3C_ELEMENT_KEY = 'element-6066-11e4-a52e-4f735a1b0f2d'
+
+// getPageSource takes no element, so a stale-element error there is about the Application snapshot.
+function isIOSSnapshotDepthError(err: unknown): boolean {
+  const text = err instanceof Error ? `${err.name} ${err.message}` : String(err)
+  return /kAXErrorIllegalArgument|getting snapshot|stale element/i.test(text)
+}
 const FOCUS_POLLS = 3
 const FOCUS_POLL_PAUSE_MS = 300
 const RECT_TOLERANCE = 1
@@ -358,7 +364,7 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
     await this.ensureContext('NATIVE_APP')
 
     const [xml, viewport] = await Promise.all([
-      this.driver.getPageSource(),
+      this.readIOSPageSource(),
       this.driver.getWindowSize(),
     ])
 
@@ -531,6 +537,37 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
   // ---------------------------------------------------------------------------
   // Compound behaviors (EXEC-01/02/03)
   // ---------------------------------------------------------------------------
+
+  private async readIOSPageSource(): Promise<string> {
+    const driver = this.driver!
+    try {
+      return await driver.getPageSource()
+    } catch (readErr) {
+      if (!isIOSSnapshotDepthError(readErr)) throw readErr
+      try {
+        await driver.updateSettings({ snapshotMaxDepth: IOS_SNAPSHOT_FALLBACK_DEPTH })
+      } catch {
+        throw readErr
+      }
+      let xml: string
+      try {
+        xml = await driver.getPageSource()
+      } finally {
+        try {
+          await driver.updateSettings({ snapshotMaxDepth: IOS_SNAPSHOT_MAX_DEPTH })
+        } catch {
+          // best-effort: the next read still works, only shallower
+        }
+      }
+      const detail = (readErr instanceof Error ? readErr.message : String(readErr))
+        .split('\n')[0]
+        .slice(0, 160)
+      console.warn(
+        `[ios-adapter] page source failed at snapshotMaxDepth ${IOS_SNAPSHOT_MAX_DEPTH}; re-read at ${IOS_SNAPSHOT_FALLBACK_DEPTH} (${detail})`,
+      )
+      return xml
+    }
+  }
 
   private async tapAt(point: { x: number; y: number }): Promise<void> {
     await safePerform(this.driver!.action('pointer', { parameters: { pointerType: 'touch' } })
@@ -810,7 +847,7 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
         }
       },
       readInterimTree: async (): Promise<InterimNode[]> => {
-        const xml = await driver.getPageSource()
+        const xml = await this.readIOSPageSource()
         const { nodes } = parseMobileSource(xml, 'ios', viewport)
         return nodes
       },
@@ -1267,7 +1304,7 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
         for (;;) {
           let source = ''
           try {
-            source = await driver.getPageSource()
+            source = await this.readIOSPageSource()
           } catch {
             source = ''
           }
