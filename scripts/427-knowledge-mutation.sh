@@ -405,7 +405,9 @@ const legs = [
     reds: [changes('ROWS-EQUAL-COUNTS')],
     // Every other snapshot-run row cell reads the rows the snapshot recorded; drawn from
     // learned.changes they re-split (a supersession is two rows) and lose Proposed and since-then order.
-    allowed: [changes('SUPERSESSION-ONE-ROW'), changes('LEARNED-ROW-CONTENT-JOIN'), changes('PROPOSED-HELD-FOR-REVIEW'),
+    // 2026-10-03 (quick 261003-cpv): PROPOSED-HELD-FOR-REVIEW is re-titled PROPOSED-NOT-APPLIED; nothing
+    // reviews a proposed record (432-UI-REVIEW fix 1). Same cell, same claim about the rows.
+    allowed: [changes('SUPERSESSION-ONE-ROW'), changes('LEARNED-ROW-CONTENT-JOIN'), changes('PROPOSED-NOT-APPLIED'),
       changes('SINCE-THEN-ROWS'), changes('CHANGE-LEDGER-ENTRIES')],
     greens: [changes('NO-SNAPSHOT-MAPPING'), changes('BUCKET-LABEL-MEANINGS'), used('GROUPED-ONE-ROW')],
   },

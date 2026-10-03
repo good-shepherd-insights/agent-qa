@@ -1865,8 +1865,10 @@ describe('432-09 no review command, and nothing reaches the clipboard', () => {
       await flushRender()
       expect(q('[data-feedback-history="target"] [data-history-review]')).toBeNull()
       expect(q('[data-review-command]')).toBeNull()
+      // RE-SPELLED 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW fix 2): one line names the fix and
+      // what it changed.
       expect(q('[data-feedback-history="target"] [data-history-applied="knowledge"]')?.textContent)
-        .toBe('Changed knowledge: mem_page_1 (content unavailable)')
+        .toBe('Recorded — a knowledge fact was added: mem_page_1 (content unavailable)')
       expect(writeText).not.toHaveBeenCalled()
       expect(document.title).toBe(title)
     } finally {

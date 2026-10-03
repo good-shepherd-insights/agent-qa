@@ -193,7 +193,9 @@ async function settled(composer: Locator, text: string) {
 async function recordedSentence(composer: Locator) {
   const entry = composer.locator('[data-feedback-history="target"] [data-history-entry][data-history-new]')
   await entry.waitFor()
-  const disposition = await entry.locator('[data-history-disposition]').textContent() ?? ''
+  // 2026-10-03 (quick 261003-cpv): the history line now carries what the fix changed after the
+  // disposition, so the recorded sentence is composed from the line's disposition lead alone.
+  const disposition = await entry.locator('[data-history-disposition-lead]').textContent() ?? ''
   return `Feedback recorded — ${disposition.replace(/^Recorded — /, '')}.`
 }
 function targetEntries(composer: Locator) {

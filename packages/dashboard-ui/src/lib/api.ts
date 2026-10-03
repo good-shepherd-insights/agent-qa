@@ -446,8 +446,8 @@ export async function fetchMarkPreview(
 }
 
 /**
- * `GET /api/runs/:id/marks` — this run's mark ledger with each drafted proposal's current state
- * (423 D-19). `run-not-found`, `ledger-corrupt` and `ledger-unavailable` arrive as 200 arms and stay
+ * `GET /api/runs/:id/marks` — this run's mark ledger, each entry with what its fix applied (432-09;
+ * 423 D-19). `run-not-found`, `ledger-corrupt` and `ledger-unavailable` arrive as 200 arms and stay
  * reads; only a wire or shape failure is a failed read.
  */
 export async function fetchMarksHistory(runId: string): Promise<MarksHistoryRead> {

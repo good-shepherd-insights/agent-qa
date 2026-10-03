@@ -797,8 +797,9 @@ describe('426-09 the history copy', () => {
     expect(APPLIED_TEST_FILE_PREFIX).toBe('Edited the test file ')
     expect(APPLIED_UNAVAILABLE_TEXT).toBe('What this mark changed was not recorded.')
     expect(appliedRecordUnavailableText('mem_1')).toBe('mem_1 (content unavailable)')
+    // RE-SPELLED 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW pillar 1).
     expect(dispositionText({ kind: 'drafted', fix: 'fact', proposalId: 'prop_x', proposalKind: 'knowledge' }))
-      .toBe('Recorded — a fix was drafted before fixes applied directly')
+      .toBe('Recorded — a fix was drafted (older mark)')
     expect(DISPOSITION_TEXT.applied).toEqual({
       fact: 'Recorded — a knowledge fact was added',
       caution: 'Recorded — a caution was added',

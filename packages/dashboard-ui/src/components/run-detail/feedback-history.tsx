@@ -9,10 +9,10 @@ import { MaskedText } from '@/components/run-detail/masked-text'
 import type { MarksHistoryRead } from '@/lib/api'
 import {
   ACTIVE_TEXT,
-  APPLIED_KNOWLEDGE_PREFIX,
-  APPLIED_TEST_FILE_PREFIX,
-  APPLIED_UNAVAILABLE_TEXT,
+  APPLIED_CONTENT_NOT_RECORDED_TEXT,
+  APPLIED_CORRECTION_TEXT,
   CHOICE_LABELS,
+  DRAFTED_CHANGE_NOT_RECORDED_TEXT,
   HISTORY_EMPTY_TEXT,
   HISTORY_READ_FAILED_TEXT,
   HISTORY_RETRY_ACCESSIBLE_NAME,
@@ -73,12 +73,20 @@ export function FeedbackHistory({ scope, address, read, detail, newMarkId, onRet
   const targetState = state === 'history' && targetEntries.length === 0 ? 'empty' : state
   const timeOf = (markId: string | undefined) => formatMarkTime(entries.find((entry) => entry.markId === markId)?.markedAt)
   const replaced = entries.some((entry) => !entry.active)
+  // 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW pillar 6): how a change is corrected, with the first
+  // applied change rather than only after a replacement.
+  const appliedAny = entries.some((entry) => entry.disposition.kind === 'applied')
 
   return (
     <div className="space-y-3">
       {replaced ? (
         <p data-feedback-replaced-note className="text-xs text-muted-foreground">
           {REPLACEMENT_EXPLANATION}
+        </p>
+      ) : null}
+      {appliedAny ? (
+        <p data-feedback-correction-note className="text-xs text-muted-foreground">
+          {APPLIED_CORRECTION_TEXT}
         </p>
       ) : null}
       <section data-feedback-history="target" data-history-state={targetState} aria-labelledby={titleId} className="space-y-2">
@@ -217,22 +225,26 @@ function HistoryEntry({
         </p>
       )}
       {corrected === undefined ? null : <p>{corrected}</p>}
-      <p data-history-disposition>{dispositionText(entry.disposition)}</p>
-      {applied === undefined ? null : <AppliedLine applied={applied} />}
+      <p data-history-disposition data-history-applied={applied?.kind} className="break-words">
+        <span data-history-disposition-lead>{dispositionText(entry.disposition)}</span>
+        {applied === undefined ? null : <AppliedTail applied={applied} drafted={entry.disposition.kind === 'drafted'} />}
+      </p>
     </li>
   )
 }
 
 /**
- * What an applied fix changed, in one line (432-09 · D-25): the changed record content, or the
- * written test file. Record content and paths are producer text and render as text nodes.
+ * What an applied fix changed, as the tail of the entry's ONE line (432-09 · D-25; 2026-10-03, quick
+ * 261003-cpv: one line, not a second one). The changed record content or the written test file;
+ * record content and paths are producer text and render as text nodes. The text equals
+ * `historyChangeText`.
  */
-function AppliedLine({ applied }: { applied: NonNullable<ReturnType<typeof appliedChangeView>> }) {
+function AppliedTail({ applied, drafted }: { applied: NonNullable<ReturnType<typeof appliedChangeView>>; drafted: boolean }) {
   switch (applied.kind) {
     case 'knowledge':
       return (
-        <p data-history-applied="knowledge" className="break-words">
-          {APPLIED_KNOWLEDGE_PREFIX}
+        <>
+          {': '}
           {applied.records.map((record, index) => (
             <span key={record.recordId} data-history-applied-record={record.recordId}>
               {index === 0 ? null : '; '}
@@ -247,17 +259,17 @@ function AppliedLine({ applied }: { applied: NonNullable<ReturnType<typeof appli
               )}
             </span>
           ))}
-        </p>
+        </>
       )
     case 'test-file':
       return (
-        <p data-history-applied="test-file" className="break-words">
-          {APPLIED_TEST_FILE_PREFIX}
+        <>
+          {': '}
           <code className="font-mono">{applied.filePath}</code>
-        </p>
+        </>
       )
     case 'unavailable':
-      return <p data-history-applied="unavailable">{APPLIED_UNAVAILABLE_TEXT}</p>
+      return <>{`; ${drafted ? DRAFTED_CHANGE_NOT_RECORDED_TEXT : APPLIED_CONTENT_NOT_RECORDED_TEXT}`}</>
     default:
       return applied satisfies never
   }

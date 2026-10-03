@@ -714,7 +714,8 @@ export const TARGET_ENVIRONMENT_LABELS = {
   production: 'Production',
 } as const satisfies Record<'local' | 'shared' | 'production', string>
 
-export const TARGET_ENVIRONMENT_PLACEHOLDER = 'Not declared'
+// 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW pillar 1): one name for no class, the add row's.
+export const TARGET_ENVIRONMENT_PLACEHOLDER = 'Undeclared'
 
 /** The add-target row's environment choices: undeclared first, then the declared classes. */
 export const TARGET_ENVIRONMENT_CHOICE_LABELS = {
@@ -727,7 +728,8 @@ export const TARGET_ENVIRONMENT_HINTS = {
   undeclared: 'Treated as non-production.',
   local: 'Runs against this machine.',
   shared: 'A shared non-production target.',
-  production: 'Runs need allowProduction: true in the config.',
+  // 2026-10-03 (quick 261003-cpv): the switch's own label and tab, not the raw config key.
+  production: `Runs need "${RUNS_FIELD_LABELS.allowProduction}" turned on (${CONFIG_TAB_LABELS.execution} tab).`,
 } as const satisfies Record<'undeclared' | 'local' | 'shared' | 'production', string>
 
 export const TARGET_FIELD_LABELS = {

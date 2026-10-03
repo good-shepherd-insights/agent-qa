@@ -221,7 +221,7 @@ export function KnowledgeLearned({ view }: { view: LearnedView }) {
 
 /**
  * One affected record (427 D-15): its bucket word, then what it says. A supersession leads with
- * the new version and reads the old one on a Was: line; a Proposed row says it was held for review;
+ * the new version and reads the old one on a Was: line; a Proposed row says it was recorded and not applied;
  * a later change says what happened later. Where it applies and the full record are the same
  * components a used row shows.
  */

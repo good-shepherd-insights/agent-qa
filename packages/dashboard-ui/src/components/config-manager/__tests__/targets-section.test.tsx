@@ -417,7 +417,9 @@ describe('TargetsSection and DevicesSection (429-22 Task 1)', () => {
       const hint = document.getElementById(radio.getAttribute('aria-describedby') ?? '')
       expect(hint?.textContent).toBe(TARGET_ENVIRONMENT_HINTS[choice])
     }
-    expect(TARGET_ENVIRONMENT_HINTS.production).toContain('allowProduction: true')
+    // RE-SPELLED 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW pillar 1): the hint names the switch's
+    // own label, not the raw config key.
+    expect(TARGET_ENVIRONMENT_HINTS.production).toBe('Runs need "Allow production runs" turned on (Execution tab).')
     const radioFor = (choice: (typeof choices)[number]) =>
       group!.querySelector(`[data-environment-choice="${choice}"] [role="radio"]`) as HTMLElement
     expect(radioFor('undeclared').getAttribute('aria-checked')).toBe('true')
@@ -531,5 +533,18 @@ describe('TargetsSection and DevicesSection (429-22 Task 1)', () => {
       name: 'phone',
       environment: 'shared',
     })
+  })
+})
+
+// 2026-10-03 (quick 261003-cpv, 432 review IN-33): the guard that decides whether a draft writes
+// `registry.targets.<name>.environment` admits the three classes and nothing a prototype carries.
+describe('C261003-CPV-ENVIRONMENT-GUARD', () => {
+  it('C261003-CPV-ENVIRONMENT-GUARD: admits local, shared and production, and no inherited key', async () => {
+    const { isTargetEnvironment } = await import('@/components/config-manager/targets-section')
+    expect(typeof isTargetEnvironment).toBe('function')
+    for (const value of ['local', 'shared', 'production']) expect(isTargetEnvironment(value), value).toBe(true)
+    for (const value of ['toString', 'constructor', '__proto__', 'hasOwnProperty', '', 'undeclared']) {
+      expect(isTargetEnvironment(value), value).toBe(false)
+    }
   })
 })

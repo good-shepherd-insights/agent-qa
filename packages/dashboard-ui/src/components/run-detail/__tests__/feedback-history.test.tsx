@@ -28,6 +28,7 @@ import {
   feedbackPartsText,
   feedbackReadFailureReason,
   formatMarkTime,
+  historyChangeText,
   historyStateText,
   historyTargetLabel,
   historyTitle,
@@ -184,7 +185,11 @@ describe('426-09 the target list and the run list', () => {
     expect(newer.textContent).toContain(ACTIVE_TEXT)
     expect(newer.textContent).toContain('“The coupon should have been refused”')
     expect(newer.textContent).toContain(correctedPresenceText({ expectation: true, action: false }))
-    expect(newer.querySelector('[data-history-disposition]')?.textContent).toBe(dispositionText(applied()))
+    // RE-SPELLED 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW fix 2): the disposition and what the fix
+    // changed are one line.
+    expect(newer.querySelector('[data-history-disposition]')?.textContent)
+      .toBe(historyChangeText({ disposition: applied(), changedRecords: changed() }))
+    expect(newer.querySelector('[data-history-disposition]')?.textContent?.startsWith(dispositionText(applied()))).toBe(true)
 
     const older = entryOf(target, markId(1))!
     expect(older.getAttribute('data-history-active')).toBe('false')
@@ -248,16 +253,20 @@ describe('432-09 an applied fix says in one line what it changed', () => {
     const line = (n: number) => entryOf(target, markId(n))!.querySelector('[data-history-applied]')
     const knowledge = line(1)!
     expect(knowledge.getAttribute('data-history-applied')).toBe('knowledge')
-    expect(knowledge.textContent).toBe(appliedChangeText(appliedChangeView({ disposition: applied(['mem_caution_1', 'mem_gone']),
-      changedRecords: [...changed(), { recordId: 'mem_gone', contentAbsence: { reason: 'not-found' } }] })!))
+    // RE-SPELLED 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW fix 2): the applied line IS the entry's
+    // one line, so it reads the disposition and then what the fix changed.
+    expect(knowledge.textContent).toBe(historyChangeText({ disposition: applied(['mem_caution_1', 'mem_gone']),
+      changedRecords: [...changed(), { recordId: 'mem_gone', contentAbsence: { reason: 'not-found' } }] }))
+    expect(knowledge.textContent).toContain(appliedChangeText(appliedChangeView({ disposition: applied(['mem_caution_1', 'mem_gone']),
+      changedRecords: [...changed(), { recordId: 'mem_gone', contentAbsence: { reason: 'not-found' } }] })!).slice('Changed knowledge: '.length))
     expect(knowledge.textContent).toContain(CAUTION.content)
     const written = line(2)!
     expect(written.getAttribute('data-history-applied')).toBe('test-file')
-    expect(written.textContent).toBe('Edited the test file tests/checkout.yaml')
+    expect(written.textContent).toBe('Recorded — the test file was edited: tests/checkout.yaml')
     expect(written.querySelector('code')?.textContent).toBe('tests/checkout.yaml')
     // A pre-432 drafted receipt never recorded its change: the line says so rather than inventing one.
     expect(line(3)!.getAttribute('data-history-applied')).toBe('unavailable')
-    expect(line(3)!.textContent).toBe('What this mark changed was not recorded.')
+    expect(line(3)!.textContent).toBe('Recorded — a fix was drafted (older mark); what it changed was not recorded.')
     expect([1, 2, 3].map(n => entryOf(target, markId(n))!.querySelectorAll('[data-history-applied]').length)).toEqual([1, 1, 1])
   })
 
@@ -374,5 +383,49 @@ describe('426-09 producer text stays text, and the internal words stay out', () 
     expect(container.querySelectorAll('[data-history-entry]').length).toBeGreaterThan(0)
     const leaked = texts.filter((text) => MARKS.some((mark) => text.includes(mark)))
     expect(leaked, `internal mark names in the history: ${leaked.join(' | ')}`).toEqual([])
+  })
+})
+
+// 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW priority fix 2 and the D-09 pointer; 432 review IN-32):
+// ONE line per entry says what the mark did, never a disposition line plus a second line that can
+// contradict it, and the correction pointer appears with the first applied change.
+describe('C261003-CPV-HISTORY-ONE-LINE: one entry, one line about what it changed', () => {
+  const lineOf = (entry: HTMLElement) => [...entry.querySelectorAll('[data-history-disposition], [data-history-applied]')]
+
+  it('C261003-CPV-HISTORY-ONE-LINE: an applied knowledge fix is one line naming the fix and its content', () => {
+    mount({ read: ledger([{ n: 1, stepIndex: 1, disposition: applied(), changedRecords: changed() }]) })
+    const lines = lineOf(entryOf(q('[data-feedback-history="target"]'), markId(1))!)
+    expect(lines).toHaveLength(1)
+    expect(lines[0]!.textContent).toBe(`Recorded — a caution was added: “${CAUTION.content}”`)
+    expect(lines[0]!.getAttribute('data-history-applied')).toBe('knowledge')
+  })
+
+  it('C261003-CPV-HISTORY-ONE-LINE: a historical drafted mark is one line that claims no change', () => {
+    mount({ read: ledger([{ n: 1, stepIndex: 1, disposition: { kind: 'drafted', fix: 'fact', proposalId: 'prop_0123456789ab', proposalKind: 'knowledge' } }]) })
+    const lines = lineOf(entryOf(q('[data-feedback-history="target"]'), markId(1))!)
+    expect(lines).toHaveLength(1)
+    expect(lines[0]!.textContent).toBe('Recorded — a fix was drafted (older mark); what it changed was not recorded.')
+  })
+
+  it('C261003-CPV-HISTORY-ONE-LINE (IN-32): an applied receipt with no records leaves no dangling prefix', () => {
+    mount({ read: ledger([{ n: 1, stepIndex: 1, disposition: applied([]), changedRecords: [] }]) })
+    const entry = entryOf(q('[data-feedback-history="target"]'), markId(1))!
+    const lines = lineOf(entry)
+    expect(lines).toHaveLength(1)
+    expect(lines[0]!.textContent).toBe('Recorded — a caution was added; its content was not recorded.')
+    expect(entry.textContent).not.toContain('Changed knowledge:')
+  })
+
+  it('C261003-CPV-HISTORY-ONE-LINE: the correction pointer shows with the first applied change, and not without one', () => {
+    mount({ read: ledger([{ n: 1, stepIndex: 1, disposition: applied(), changedRecords: changed() }]) })
+    const notes = container.querySelectorAll('[data-feedback-correction-note]')
+    expect(notes).toHaveLength(1)
+    expect(notes[0]!.textContent).toMatch(/mark again/)
+    expect(notes[0]!.textContent).toMatch(/stays/)
+    act(() => root.unmount())
+    container.remove()
+
+    mount({ read: ledger([{ n: 1, stepIndex: 1 }, { n: 2 }]) })
+    expect(container.querySelector('[data-feedback-correction-note]')).toBeNull()
   })
 })

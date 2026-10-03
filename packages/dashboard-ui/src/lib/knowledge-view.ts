@@ -1287,7 +1287,9 @@ export const BUCKET_MEANINGS = {
   confirmed: 'Existing knowledge this run backed up, including knowledge promoted to trusted.',
   superseded: 'Replaced by a newer version; agents are given the new one.',
   deprecated: 'Retired; agents are no longer given it.',
-  proposed: 'Recorded, but held for review instead of changing what agents are given.',
+  // 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW fix 1): nothing reviews a proposed record. Learning
+  // stays proposed in CI (D-08) and where delta validation refused it; it is recorded, not applied.
+  proposed: 'Recorded, but not applied: agents are not given it.',
 } as const satisfies Record<CurationBucket, string>
 
 // A change seen without a snapshot maps onto the same words; Proposed is never synthesized (425 D-18).
@@ -1299,9 +1301,9 @@ const CHANGE_BUCKETS = {
   deprecated: 'deprecated',
 } as const satisfies Record<LearnedChangeKind, CurationBucket>
 
-export const PROPOSED_NOTE = 'held for review, not applied'
+export const PROPOSED_NOTE = 'recorded, not applied'
 
-export const OPEN_QUESTION_NOTE = 'open question raised for review'
+export const OPEN_QUESTION_NOTE = 'open question recorded'
 
 export const WAS_PREFIX = 'Was:'
 

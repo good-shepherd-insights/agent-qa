@@ -166,7 +166,11 @@ describe('DenialBlock renders its reason only (D-06)', () => {
       const dom = mount(<DenialBlock neutralReason={reason} />)
       const box = dom.querySelector('[data-entry="denial"]')
       expect(box).not.toBeNull()
-      const lines = Array.from(box?.children ?? [], (line) => line.textContent)
+      // RE-SPELLED 2026-10-03 (quick 261003-cpv): the refusal icon is an aria-hidden child with no
+      // text; every other child is a line, and the reason must be the only one.
+      const lines = Array.from(box?.children ?? [], (line) => line)
+        .filter((line) => line.getAttribute('aria-hidden') !== 'true')
+        .map((line) => line.textContent)
       expect(lines, 'a remedy line rendered beside the reason').toEqual([reason])
       expect(dom.querySelectorAll('[data-remedy-kind]'), 'a remedy line rendered beside the reason')
         .toHaveLength(0)
@@ -183,6 +187,25 @@ describe('DenialBlock renders its reason only (D-06)', () => {
     const dom = mount(<DenialBlock neutralReason={stored} />)
     expect(dom.querySelector('[data-entry="denial"]')?.textContent).toBe(stored)
     expect(dom.textContent).toContain('<SECRET_0>')
-    expect(dom.querySelectorAll('[data-entry="denial"] *')).toHaveLength(1)
+    // RE-SPELLED 2026-10-03 (quick 261003-cpv): one line beside the aria-hidden refusal icon, and
+    // the line holds the stored text alone.
+    expect(dom.querySelectorAll('[data-entry="denial"] > :not([aria-hidden="true"])')).toHaveLength(1)
+    expect(dom.querySelectorAll('[data-entry="denial"] > p *')).toHaveLength(0)
+  })
+})
+
+// 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW pillars 2 and 3): a refusal reads as one, in the
+// project's destructive token rather than a raw warning amber, with an icon that adds no text.
+describe('C261003-CPV-DENIAL-READS-AS-REFUSAL', () => {
+  it('C261003-CPV-DENIAL-READS-AS-REFUSAL: semantic destructive token, an aria-hidden icon, and the reason alone as text', () => {
+    const reason = 'this target is production and the config does not allow production runs'
+    const dom = mount(<DenialBlock neutralReason={reason} />)
+    const block = dom.querySelector<HTMLElement>('[data-entry="denial"]')!
+    expect(block.className).not.toMatch(/amber/)
+    expect(block.className).toMatch(/destructive/)
+    const icon = block.querySelector('svg')
+    expect(icon).not.toBeNull()
+    expect(icon?.getAttribute('aria-hidden')).toBe('true')
+    expect(block.textContent).toBe(reason)
   })
 })

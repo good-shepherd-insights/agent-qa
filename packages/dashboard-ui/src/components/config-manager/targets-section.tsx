@@ -85,8 +85,10 @@ const ENVIRONMENT_OPTIONS = (Object.keys(TARGET_ENVIRONMENT_LABELS) as TargetEnv
 // The add row's choices: undeclared first, stored as the draft's empty string.
 const ENVIRONMENT_CHOICES = Object.keys(TARGET_ENVIRONMENT_CHOICE_LABELS) as (keyof typeof TARGET_ENVIRONMENT_CHOICE_LABELS)[]
 
-function isEnvironment(value: string): value is TargetEnvironment {
-  return value in TARGET_ENVIRONMENT_LABELS
+// 2026-10-03 (quick 261003-cpv, 432 review IN-33): own keys only. `in` walked the prototype chain,
+// and this guard decides whether a draft writes the field the production refusal reads.
+export function isTargetEnvironment(value: string): value is TargetEnvironment {
+  return Object.hasOwn(TARGET_ENVIRONMENT_LABELS, value)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -349,7 +351,7 @@ function draftErrors(draft: TargetDraft, takenNames: ReadonlySet<string>): Parti
 function draftValue(draft: TargetDraft): TargetEntry {
   const platform: TargetPlatform = isPlatform(draft.platform) ? draft.platform : "web"
   const set = (key: DraftKey) => (draft[key].trim() === "" ? {} : { [key]: draft[key].trim() })
-  const environment = isEnvironment(draft.environment) ? { environment: draft.environment } : {}
+  const environment = isTargetEnvironment(draft.environment) ? { environment: draft.environment } : {}
   if (platform === "web") return { platform, ...set("url"), ...environment }
   if (platform === "ios") return { platform, ...set("bundleId"), ...environment }
   return { platform, ...set("appPackage"), ...set("appActivity"), ...environment }
@@ -455,9 +457,9 @@ function AddTargetRow({ initial, takenNames, onHold, onDiscard, onAdded }: AddTa
         <legend className="text-sm font-medium">{TARGET_FIELD_LABELS.environment}</legend>
         <RadioGroup
           className="flex flex-wrap gap-x-6 gap-y-2"
-          value={isEnvironment(draft.environment) ? draft.environment : "undeclared"}
+          value={isTargetEnvironment(draft.environment) ? draft.environment : "undeclared"}
           onValueChange={(value) => {
-            const next = { ...draft, environment: isEnvironment(value) ? value : "" }
+            const next = { ...draft, environment: isTargetEnvironment(value) ? value : "" }
             change(next)
             void settle(next, false)
           }}

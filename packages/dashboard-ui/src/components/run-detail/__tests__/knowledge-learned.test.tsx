@@ -595,7 +595,9 @@ describe("the record list is one row per affected record, in 425's words (D-10, 
 
 describe("a curated NEW fact is painted, not denied (CR-04, R-407-15-01)", () => {
   // RE-SPELLED 427-08 from 'renders one li per kind for all FIVE Learned kinds, in the view's order'.
-  it("PROPOSED-HELD-FOR-REVIEW: a proposed row says it is held for review, and an open question says so", () => {
+  // RE-SPELLED 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW fix 1): was "PROPOSED-HELD-FOR-REVIEW: a
+  // proposed row says it is held for review". Nothing reviews it; it is recorded and not applied.
+  it("PROPOSED-NOT-APPLIED: a proposed row says it is recorded and not applied, and an open question says so", () => {
     const host = render({
       state: "done",
       countLine: curationBreakdownLine({ added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 2 }),
@@ -669,7 +671,8 @@ describe("a curated NEW fact is painted, not denied (CR-04, R-407-15-01)", () =>
       expect(label?.getAttribute("aria-describedby")).toBe(ids[0])
       await act(async () => { label?.blur() })
     }
-    expect(BUCKET_MEANINGS.proposed).toBe("Recorded, but held for review instead of changing what agents are given.")
+    // RE-SPELLED 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW fix 1): nothing reviews a proposed record.
+    expect(BUCKET_MEANINGS.proposed).toBe("Recorded, but not applied: agents are not given it.")
   })
 
   /**

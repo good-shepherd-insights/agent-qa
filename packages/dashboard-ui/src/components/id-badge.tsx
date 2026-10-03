@@ -1,22 +1,46 @@
-import { useState } from "react"
+// 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW fix 3, pillars 3-5): the badge reports a copy only
+// after the clipboard write resolved, names its action, announces the result in a status region, and
+// shares `RecordIdCopy`'s status hook, check token and icon size. The text stays on `text-xs`.
+
 import { Check, Copy } from "lucide-react"
 
+import { Button } from "@/components/ui/button"
+import { useClipboardCopy } from "@/hooks/use-clipboard-copy"
+
+export function copyIdBadgeLabel(label: string, value: string): string {
+  return `Copy ${label}: ${value}`
+}
+
+export const ID_BADGE_COPIED_TEXT = "Copied to the clipboard"
+
+export function idBadgeCopyFailedText(value: string): string {
+  return `Could not copy — select the id to copy it: ${value}`
+}
+
 export function IdBadge({ label, value }: { label: string; value: string }) {
-  const [copied, setCopied] = useState(false)
-  const truncated = value.length > 16 ? value.slice(0, 16) + '\u2026' : value
-  const handleCopy = () => {
-    navigator.clipboard.writeText(value).catch(() => {})
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
+  const { status, copy } = useClipboardCopy()
+  const truncated = value.length > 16 ? value.slice(0, 16) + '…' : value
   return (
-    <button
-      onClick={handleCopy}
-      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono bg-muted/50 text-muted-foreground hover:text-foreground border border-border/50 transition-colors cursor-pointer"
-    >
-      <span className="opacity-60">{label}:</span>
-      <span>{truncated}</span>
-      {copied ? <Check className="h-2.5 w-2.5 text-emerald-400" /> : <Copy className="h-2.5 w-2.5 opacity-40" />}
-    </button>
+    <>
+      <Button
+        type="button"
+        variant="ghost"
+        size="xs"
+        data-id-badge
+        data-copy-status={status}
+        aria-label={copyIdBadgeLabel(label, value)}
+        onClick={() => copy(value)}
+        className="border border-border/50 bg-muted/50 font-mono font-normal text-muted-foreground hover:text-foreground"
+      >
+        <span className="opacity-60">{label}:</span>
+        <span>{truncated}</span>
+        {status === "copied"
+          ? <Check className="size-3.5 text-success" aria-hidden="true" />
+          : <Copy className="size-3.5 opacity-40" aria-hidden="true" />}
+      </Button>
+      <span data-id-badge-status role="status" aria-live="polite" className="sr-only">
+        {status === "copied" ? ID_BADGE_COPIED_TEXT : status === "failed" ? idBadgeCopyFailedText(value) : ""}
+      </span>
+    </>
   )
 }

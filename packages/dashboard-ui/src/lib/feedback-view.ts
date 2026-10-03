@@ -611,7 +611,8 @@ export const DISPOSITION_TEXT = {
     'procedure-hint': 'Recorded — a procedure hint was added',
     'test-edit': 'Recorded — the test file was edited',
   } satisfies Record<MarkFixKind, string>,
-  drafted: 'Recorded — a fix was drafted before fixes applied directly',
+  // 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW pillar 1): a historical reader's wording.
+  drafted: 'Recorded — a fix was drafted (older mark)',
   'no-draftable-fix': 'Recorded — no fix could be drafted',
   'confirmed-bug': 'Recorded — kept as a real product bug; nothing changed',
   // 2026-10-03 (quick 261003-mqc): the mark stands; its planned fix was refused, nothing changed.
@@ -1024,6 +1025,10 @@ export function appliedChangeView(
   if (disposition.kind === 'drafted') return { kind: 'unavailable' }
   if (disposition.kind !== 'applied') return undefined
   if (disposition.change.kind === 'test-file') return { kind: 'test-file', filePath: disposition.change.filePath }
+  // 2026-10-03 (quick 261003-cpv, 432 review IN-32): a knowledge receipt that read back no record
+  // (the records were tombstoned since, or none was read) names no content, so it says the content
+  // was not recorded rather than printing a bare prefix.
+  if (disposition.change.recordIds.length === 0) return { kind: 'unavailable' }
   const joined = new Map((entry.changedRecords ?? []).map((record) => [record.recordId, record.recordContent?.content]))
   return {
     kind: 'knowledge',
@@ -1049,6 +1054,41 @@ export function appliedChangeText(view: AppliedChangeView): string {
       return view satisfies never
   }
 }
+
+/** How an applied or drafted entry's one line ends when its change was not recorded (261003-cpv). */
+export const APPLIED_CONTENT_NOT_RECORDED_TEXT = 'its content was not recorded.'
+export const DRAFTED_CHANGE_NOT_RECORDED_TEXT = 'what it changed was not recorded.'
+
+/**
+ * The ONE history line for an entry (2026-10-03, quick 261003-cpv, 432-UI-REVIEW fix 2, D-25): what
+ * the mark did, with what an applied fix changed after a colon. It replaces a disposition line plus
+ * a second applied line, which said the same change twice and could contradict itself. The history
+ * component renders exactly this text, with record content and paths as text nodes.
+ */
+export function historyChangeText(entry: Pick<MarkHistoryEntry, 'disposition' | 'changedRecords'>): string {
+  const lead = dispositionText(entry.disposition)
+  const view = appliedChangeView(entry)
+  if (view === undefined) return lead
+  switch (view.kind) {
+    case 'knowledge':
+      return `${lead}: ${view.records
+        .map((record) => (record.content === undefined ? appliedRecordUnavailableText(record.recordId) : `“${record.content}”`))
+        .join('; ')}`
+    case 'test-file':
+      return `${lead}: ${view.filePath}`
+    case 'unavailable':
+      return `${lead}; ${entry.disposition.kind === 'drafted' ? DRAFTED_CHANGE_NOT_RECORDED_TEXT : APPLIED_CONTENT_NOT_RECORDED_TEXT}`
+    default:
+      return view satisfies never
+  }
+}
+
+/**
+ * How an applied change is corrected (D-09/D-11), shown once above the history when an entry applied
+ * a fix. Marking again replaces the mark, not the fix, so the pointer says so.
+ */
+export const APPLIED_CORRECTION_TEXT
+  = 'A fix stays when you mark again: correct knowledge with new feedback or by forgetting it, and revert a test edit with git.'
 
 export const HISTORY_EMPTY_TEXT = {
   step: 'No feedback on this step yet.',

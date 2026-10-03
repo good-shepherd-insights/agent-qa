@@ -201,7 +201,9 @@ describe('Memory changes are one row per affected record, in 425 words (D-15)', 
     expect(RECORD_CONTENT_NOT_RECORDED_LEAD).toBe("A record whose content isn't part of this run's record")
   })
 
-  it('PROPOSED-HELD-FOR-REVIEW: a proposed row is held for review, and an open question says so', () => {
+  // RE-SPELLED 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW fix 1): was "PROPOSED-HELD-FOR-REVIEW: a
+  // proposed row is held for review". Nothing reviews it; it is recorded and not applied.
+  it('PROPOSED-NOT-APPLIED: a proposed row is recorded and not applied, and an open question says so', () => {
     const snapshot = CurationSnapshotSchema.parse({
       schemaVersion: 1,
       rows: [
@@ -222,8 +224,8 @@ describe('Memory changes are one row per affected record, in 425 words (D-15)', 
 
     expect(view.rows.map(row => row.note)).toEqual([PROPOSED_NOTE, OPEN_QUESTION_NOTE, undefined])
     expect(view.rows[2]).not.toHaveProperty('note')
-    expect(PROPOSED_NOTE).toBe('held for review, not applied')
-    expect(OPEN_QUESTION_NOTE).toBe('open question raised for review')
+    expect(PROPOSED_NOTE).toBe('recorded, not applied')
+    expect(OPEN_QUESTION_NOTE).toBe('open question recorded')
   })
 
   it('SINCE-THEN-ROWS: a later change is its own row with what happened later, and never moves the counts', () => {
@@ -260,7 +262,8 @@ describe('every bucket word explains itself, and the section speaks of memory ch
       confirmed: 'Existing knowledge this run backed up, including knowledge promoted to trusted.',
       superseded: 'Replaced by a newer version; agents are given the new one.',
       deprecated: 'Retired; agents are no longer given it.',
-      proposed: 'Recorded, but held for review instead of changing what agents are given.',
+      // RE-SPELLED 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW fix 1).
+      proposed: 'Recorded, but not applied: agents are not given it.',
     })
     expect(Object.keys(BUCKET_MEANINGS)).toEqual(Object.keys(BUCKET_LABELS))
     expect(new Set(Object.values(BUCKET_MEANINGS)).size).toBe(CURATION_BREAKDOWN_BUCKETS.length)

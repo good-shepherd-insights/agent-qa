@@ -28,7 +28,6 @@ import {
   hasUniqueAddress,
   isDraftEmpty,
   pinnedTargetText,
-  placeText,
   previewInputFor,
   previewRequestKey,
   resolveHeaderFeedbackTarget,

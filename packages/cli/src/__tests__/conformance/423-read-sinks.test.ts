@@ -420,7 +420,10 @@ describe('423 run-detail review pointers', () => {
       await page.keyboard.press('Enter')
       const applied = `[data-feedback-composer][data-feedback-target="${open.address}"] [data-feedback-history="target"] [data-history-applied="knowledge"]`
       await page.waitForSelector(applied)
-      expect(await page.locator(applied).textContent()).toBe(`Changed knowledge: ${open.record} (content unavailable)`)
+      // RE-SPELLED 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW fix 2): one line names the fix and
+      // what it changed.
+      expect(await page.locator(applied).textContent())
+        .toBe(`Recorded — a knowledge fact was added: ${open.record} (content unavailable)`)
       expect(await page.locator('[data-history-review], [data-review-command]').count()).toBe(0)
       expect((await regionTargets(page)).map(pathOf)).not.toContain(chatPath)
     }

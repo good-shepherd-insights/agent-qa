@@ -154,7 +154,7 @@ describe("every record id copies, and the result is announced (E8)", () => {
       expect(status?.getAttribute("aria-live")).toBe("polite")
       expect(status?.className).toContain("sr-only")
       expect(status?.textContent).toBe(recordIdCopyFailedText(id))
-      expect(button.querySelector("svg")?.getAttribute("class")).not.toContain("text-emerald-500")
+      expect(button.querySelector("svg")?.getAttribute("class")).not.toContain("text-success")
     }
     expect(recordIdCopyFailedText(CHANGED)).toBe(`Could not copy — select the id to copy it: ${CHANGED}`)
     expect(copyRecordIdLabel(CHANGED)).toBe(`Copy record id ${CHANGED}`)
@@ -171,7 +171,7 @@ describe("every record id copies, and the result is announced (E8)", () => {
     expect(writeText).toHaveBeenCalledExactlyOnceWith(CHANGED)
     expect(button.getAttribute("data-copy-status")).toBe("failed")
     expect(statusOf(button)?.textContent).toBe(recordIdCopyFailedText(CHANGED))
-    expect(button.querySelector("svg")?.getAttribute("class")).not.toContain("text-emerald-500")
+    expect(button.querySelector("svg")?.getAttribute("class")).not.toContain("text-success")
   })
 
   it("a resolved write copies exactly the id, shows the check and announces it", async () => {
@@ -186,7 +186,8 @@ describe("every record id copies, and the result is announced (E8)", () => {
     expect(button.getAttribute("data-copy-status")).toBe("copied")
     expect(statusOf(button)?.textContent).toBe(RECORD_ID_COPIED_TEXT)
     expect(RECORD_ID_COPIED_TEXT).toBe("Record id copied to the clipboard")
-    expect(button.querySelector("svg")?.getAttribute("class")).toContain("text-emerald-500")
+    // RE-SPELLED 2026-10-03 (quick 261003-cpv): both copy controls wear the success token.
+    expect(button.querySelector("svg")?.getAttribute("class")).toContain("text-success")
   })
 
   it("gives both ids of a supersession their own copy button, and keeps each id line's text the id alone", () => {

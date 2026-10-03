@@ -142,13 +142,15 @@ const legs = [
   // legs used to turn into Chat routes; the three places now show what changed and offer no review
   // command, and NO-CHAT-TARGET was re-spelled to pin exactly that. Each leg now puts a Chat target or
   // a review control back into the same component, and the same named cell must red.
+  // 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW fix 2): RE-AIMED. The history entry is one line now,
+  // the disposition lead plus what the fix changed, so both legs plant into that one line.
   chatLeg(HISTORY, 'applied-change line in the mark history', 'chat423history',
-    '        <p data-history-applied="knowledge" className="break-words">\n          {APPLIED_KNOWLEDGE_PREFIX}\n',
-    '        <p data-history-applied="knowledge" className="break-words">\n          <a href="/chat" data-chat423="chat423history">{APPLIED_KNOWLEDGE_PREFIX}</a>\n'),
+    '        <span data-history-disposition-lead>{dispositionText(entry.disposition)}</span>\n',
+    '        <a href="/chat" data-chat423="chat423history"><span data-history-disposition-lead>{dispositionText(entry.disposition)}</span></a>\n'),
   {
     ...chatLeg(HISTORY, 'applied-change line in the mark history', 'chat423route',
-      '        <p data-history-applied="knowledge" className="break-words">\n',
-      '        <p data-history-applied="knowledge" data-history-review="/chat?chat423=chat423route" className="break-words">\n'),
+      '      <p data-history-disposition data-history-applied={applied?.kind} className="break-words">\n',
+      '      <p data-history-disposition data-history-applied={applied?.kind} data-history-review="/chat?chat423=chat423route" className="break-words">\n'),
     operation: 'make the mark history offer a review control with a Chat route again',
   },
   chatLeg(LEARNED, 'Memory changes heading row', 'chat423proposals',
