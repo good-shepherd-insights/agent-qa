@@ -84,7 +84,8 @@ const instruments = {
   'ui-view': { pkg: 'packages/dashboard-ui', files: [VIEW, VIEW_D], typecheck: true, count: 59 },
   'ui-page': { pkg: 'packages/dashboard-ui', files: [PAGE], typecheck: false, count: 65 },
   // 2026-10-02 (432-44): 60 -> 53, re-measured; the composer's approval cells left with the approval (432-13/14).
-  'ui-parts': { pkg: 'packages/dashboard-ui', files: [COMPOSER, PREVIEW, HISTORY], typecheck: false, count: 53 },
+  // 2026-10-03 (quick 261003-cpv): ui-parts 53 -> 57, feedback-history gains the four C261003-CPV-HISTORY-ONE-LINE cells.
+  'ui-parts': { pkg: 'packages/dashboard-ui', files: [COMPOSER, PREVIEW, HISTORY], typecheck: false, count: 57 },
   'feedback-dom': { pkg: 'packages/cli', files: [DOM], typecheck: false, count: 12, env: { VITEST_MAX_WORKERS: '1' } },
 }
 

@@ -56,7 +56,8 @@ const MASKING_T = 'src/__tests__/masked-serialization.test.ts'
 
 // Counts measured from a fresh Vitest JSON report of exactly these files (2026-10-02, 432-44).
 const instruments = {
-  classifiers: { pkg: 'packages/agent', files: [CLASSIFIERS_T], typecheck: false, count: 24 },
+  // 2026-10-03 (quick 261003-cpv): classifiers 24 -> 26, the two C261003-CPV-ONE-KNOWLEDGE-FOLD cells.
+  classifiers: { pkg: 'packages/agent', files: [CLASSIFIERS_T], typecheck: false, count: 26 },
   census: { pkg: 'packages/arch', files: [CENSUS_T], typecheck: false, count: 100, dist: true },
   masking: { pkg: 'packages/mcp', files: [MASKING_T], typecheck: false, count: 11 },
 }

@@ -123,7 +123,8 @@ const ATTRIBUTION_SRC = `packages/cli/${ATTRIBUTION_T}`
 const instruments = {
   schema: { pkg: 'packages/schema', files: [REMEDY_T, REMEDY_D], typecheck: true, count: 6 },
   server: { pkg: 'packages/dashboard-server', files: [SETS_T, SETS_D, DELETED_T], typecheck: true, count: 13 },
-  ui: { pkg: 'packages/dashboard-ui', files: [SHELL_T, SIDEBAR_T, PALETTE_T, DENIAL_T], typecheck: false, count: 57 },
+  // 2026-10-03 (quick 261003-cpv): ui 57 -> 58, denial-block gains C261003-CPV-DENIAL-READS-AS-REFUSAL.
+  ui: { pkg: 'packages/dashboard-ui', files: [SHELL_T, SIDEBAR_T, PALETTE_T, DENIAL_T], typecheck: false, count: 58 },
   parity: { pkg: 'packages/cli', files: [PARITY_T], typecheck: false, count: 64, env: { VITEST_MAX_WORKERS: '1' } },
   cli: { pkg: 'packages/cli', files: [ROLLCALL_T, ATTRIBUTION_T], typecheck: false, count: 43, env: { VITEST_MAX_WORKERS: '1' } },
   'agent-local': { pkg: 'packages/agent-local', files: [SESSION_D], typecheck: true, count: 2 },
@@ -286,8 +287,10 @@ const legs = [
     // 432-44: was DENIAL-REASON-ONLY, which still reds beside it (allowed below).
     reds: [denial('C432-430-R14-REASON-ONLY', 1, 'a remedy line rendered beside the reason')],
     // Every cell that counts the box's lines or remedy markers sees the same returned line.
+    // 2026-10-03 (quick 261003-cpv): C261003-CPV-DENIAL-READS-AS-REFUSAL also pins the box's text to
+    // the reason alone, so the returned line reds it too.
     allowed: [denial('DENIAL-REASON-ONLY'), denial('DENIAL-NOTHING-INVENTED'), denial('C432-PLAIN-REFUSAL'),
-      denial('C432-HISTORICAL-READER')],
+      denial('C432-HISTORICAL-READER'), denial('C261003-CPV-DENIAL-READS-AS-REFUSAL')],
     greens: [denial('DENIAL-CANONICAL-PROSE-NEVER-IN-DOM')],
   },
   {
