@@ -120,8 +120,51 @@ export function resolveWriteTestRoute(input: {
   return configured.size > 0 ? { kind: 'passthrough' } : { kind: 'refuse' }
 }
 
-/** The refusal a write_test request against an unconfigurable project earns (D-15, 387's posture). */
+/**
+ * The refusal a write_test request against an unconfigurable project earns (D-15, 387's posture).
+ *
+ * 2026-10-03 (quick 261003-cpv, 432 review WR-02): it no longer promises a review. The scaffold
+ * writes the configuration in its own call and the test is authored after it (D-05/D-14/D-24).
+ */
 export const WRITE_TEST_UNCONFIGURED_DETAIL
   = 'this project has no agent-qa configuration, so there is no target to write a test against. '
-    + 'Name the site\'s address (for example "write a test for example.com") and I will scaffold '
-    + 'the configuration for review first — I will not guess which site you meant.'
+    + 'Name the site\'s address (for example "write a test for example.com") and I will write the '
+    + 'configuration for it, then author the test. I will not guess which site you meant.'
+
+/**
+ * Why a scaffold the write_test route asked for left nothing to author against, in its own words
+ * (261003-cpv, 432 review WR-03). A refused or interrupted answer carries its own `detail`; a
+ * blocked one carries its summary line and reason; a no-change one wrote nothing because the
+ * configuration already held it. The no-configuration sentence is never the answer here: the
+ * person named the site, and the scaffold said why it wrote nothing.
+ */
+export function writeTestScaffoldStopDetail(answer: {
+  readonly outcome?: string
+  readonly detail?: string
+  readonly summaryLine?: string
+  readonly blockedReason?: string
+  readonly validationIssues?: readonly string[]
+  readonly path?: string
+}): string {
+  if (answer.detail !== undefined && answer.detail !== '') return answer.detail
+  const attempted = answer.summaryLine === undefined ? '' : ` (${answer.summaryLine})`
+  if (answer.outcome === 'blocked' && answer.blockedReason === 'guardrail-hit') {
+    return 'the configuration was not written because the guardrail found a secret'
+      + `${attempted}, so there is no target to write a test against. Nothing was written; move the `
+      + 'secret out of the configuration files and ask again.'
+  }
+  if (answer.outcome === 'blocked') {
+    const issues = answer.validationIssues === undefined || answer.validationIssues.length === 0
+      ? ''
+      : ` Validation said: ${answer.validationIssues.join('; ')}.`
+    return 'the configuration was not written because the result would not be valid'
+      + `${attempted}, so there is no target to write a test against.${issues}`
+  }
+  if (answer.outcome === 'no-change') {
+    return 'the configuration already holds what scaffolding would write'
+      + `${answer.path === undefined ? '' : ` (${answer.path})`}, so nothing was written, and it `
+      + 'declares no target to write a test against.'
+  }
+  return 'the configuration change answered without naming a file it wrote'
+    + `${attempted}, so there is no target to write a test against.`
+}

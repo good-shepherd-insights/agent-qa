@@ -359,6 +359,12 @@ export interface ScaffoldContentInput {
    * The model registry entries the from-zero config carries, already resolved (432 D-20, #130).
    * Absent or empty, the config has no model half at all. Merge mode ignores it: the person's own
    * `registry.llms` and `use.llm` are kept byte-for-byte by the one-entry insert.
+   *
+   * 2026-10-03 (quick 261003-cpv, 432 review IN-09): NO PRODUCTION CALLER PASSES IT. The scaffold
+   * port's request carries a domain only, and from zero there is no configuration to read a model
+   * from; inventing one is what D-13 forbids. `init` builds its config through `buildScaffoldConfig`
+   * and does not reach this producer. So #130 is fixed for the merge half only, and a from-zero
+   * scaffold stays bare. The seam is kept for a caller that has resolved entries to hand over.
    */
   readonly llmEntries?: readonly Record<string, unknown>[]
   /** `use.llm` for the from-zero config; defaults to the first entry's name. */
@@ -433,7 +439,8 @@ export interface ScaffoldContentFile {
  * model half — `registry.llms` is optional and `use.llm` is only checked when present, so the
  * config validates. Entries a caller does hand over are written with a coherent `use.llm`, never
  * removed, and an inconsistent selection is left for schema validation to refuse. `init` is the
- * path that ASKS, and it still passes its answers in.
+ * path that ASKS, and it passes its answers to `buildScaffoldConfig` directly; the scaffold port
+ * hands this producer none (2026-10-03, 261003-cpv, IN-09).
  *
  * PLATFORM IS `web`, STATED. A hostname is a web origin; there is no mobile fact in a domain token.
  *

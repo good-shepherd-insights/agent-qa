@@ -23,7 +23,8 @@ import type {
   KnowledgeChangeOutput,
 } from '@vostride/agent-qa-schema'
 
-import type { ClauseVerdict, FunctionSpec } from '../spec.js'
+import type { FunctionSpec } from '../spec.js'
+import { classifyKnowledgeChangeOutput } from './knowledge-change-verdict.js'
 import { KNOWLEDGE_REJECT_FUNCTION_ID } from './knowledge-review-ids.js'
 
 export { KNOWLEDGE_REJECT_FUNCTION_ID } from './knowledge-review-ids.js'
@@ -36,23 +37,8 @@ export const knowledgeRejectSpec: FunctionSpec<KnowledgeRejectChangeInput, Knowl
   output: KnowledgeChangeOutputSchema,
   boundThrough: 'knowledgeReview',
   risk: { name: `fn:${KNOWLEDGE_REJECT_FUNCTION_ID}`, recognized: true, readOnly: false },
-  /**
-   * `target-not-found` IS ABSENCE, WHICH IS AN ANSWER (399.1 D-01, plan 03's razor): a ref that
-   * names nothing is an ordinary mistake and the store is intact. A policy text the writer refused
-   * to materialize is a refusal: nothing was changed.
-   */
-  classify(output): ClauseVerdict {
-    switch (output.outcome) {
-      case 'applied':
-        return { status: 'executed', outcome: `${output.verb} applied: ${output.recordIds.length} record(s) changed` }
-      case 'target-not-found':
-        return { status: 'executed', outcome: 'target-not-found: nothing was changed' }
-      case 'refused':
-        return { status: 'refused', outcome: `${output.reason}: nothing was changed` }
-      default:
-        return output satisfies never
-    }
-  },
+  // The fold the three knowledge changes share (2026-10-03, quick 261003-cpv, 432 review IN-04).
+  classify: classifyKnowledgeChangeOutput,
   invoke({ operationId, ...input }, deps) {
     // Non-null: `boundThrough` makes an absent review port an `unbound` listing and a binding
     // refusal in `invokeFunction`, so dispatch is only reached in a composition that supplied one. The identity is

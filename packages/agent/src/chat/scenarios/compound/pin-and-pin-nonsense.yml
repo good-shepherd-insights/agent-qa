@@ -20,8 +20,9 @@
 # turn.
 #
 # HERMETIC, DELIBERATELY, and the exception is NAMED in `scenario-manifest.test.ts` rather than
-# derived from the class (the `pin-and-write-test` precedent). Both clauses are directives, so
-# stage 1 resolves the whole utterance, the planner is skipped entirely, and no live model can
+# derived from the class (the `pin-and-write-test` precedent). RE-SPELLED 2026-10-03 (quick
+# 261003-cpv, 432 review IN-05): neither clause is a directive any more; the first is a retired
+# verb, so stage 1 refuses the turn by name, the planner is skipped entirely, and no live model can
 # make this outcome different. `fail_closed`, so the ceiling's `should_execute` denominators do
 # not move (D-15, the treadmill law).
 id: pin-and-pin-nonsense

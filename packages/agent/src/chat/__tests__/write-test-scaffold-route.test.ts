@@ -676,6 +676,77 @@ describe('one turn: detect, scaffold, author (D-14 · CFGM-05; 432-11 D-05)', ()
     expect(result.unhandled?.reason).toBe('.gitignore holds bytes that are not valid UTF-8')
   })
 
+  // 2026-10-03 (quick 261003-cpv, 432 review WR-03): every blocked or no-change scaffold answers
+  // with its own reason. The fallback "this project has no configuration … name the site" was wrong
+  // here: the person named the site, and the scaffold said why it wrote nothing.
+  it('C261003-CPV-SCAFFOLD-REASONS: a guardrail-blocked scaffold says the guardrail found a secret, and where',
+    async () => {
+      const summaryLine = 'configure this project for https://booking.com as target booking-com — blocked: '
+        + 'your configuration already carries a secret at hooks.yaml'
+      const test = harness({
+        targets: [],
+        scaffoldAnswer: {
+          outcome: 'blocked',
+          summaryLine,
+          blockedReason: 'guardrail-hit',
+          paths: ['hooks.yaml'],
+        },
+      })
+      const result = await test.runTurn({ message: 'write a test for booking.com checkout' })
+
+      expect(result.status).toBe('fail_closed')
+      expect(test.ordering).toEqual([CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID])
+      const reason = result.unhandled?.reason ?? ''
+      expect(reason).toContain(summaryLine)
+      expect(reason).toContain('secret')
+      expect(reason).not.toBe(WRITE_TEST_UNCONFIGURED_DETAIL)
+      expect(reason).not.toContain('Name the site')
+      expect(reason).not.toContain('no agent-qa configuration')
+    })
+
+  it('C261003-CPV-SCAFFOLD-REASONS: a schema-blocked scaffold says the result would not be valid, with the issue',
+    async () => {
+      const test = harness({
+        targets: [],
+        scaffoldAnswer: {
+          outcome: 'blocked',
+          summaryLine: 'configure this project for https://booking.com as target booking-com — blocked: '
+            + 'the resulting configuration is not valid',
+          blockedReason: 'schema-fail',
+          paths: ['agent-qa.config.yaml'],
+          validationIssues: ['agent-qa.config.yaml: use.timeout: Expected string'],
+        },
+      })
+      const result = await test.runTurn({ message: 'write a test for booking.com checkout' })
+
+      expect(result.status).toBe('fail_closed')
+      const reason = result.unhandled?.reason ?? ''
+      expect(reason).toContain('not valid')
+      expect(reason).toContain('agent-qa.config.yaml: use.timeout: Expected string')
+      expect(reason).not.toContain('Name the site')
+    })
+
+  it('C261003-CPV-SCAFFOLD-REASONS: a no-change scaffold says the configuration already holds it', async () => {
+    const test = harness({
+      targets: [],
+      scaffoldAnswer: { outcome: 'no-change', path: 'configure this project for https://booking.com' },
+    })
+    const result = await test.runTurn({ message: 'write a test for booking.com checkout' })
+
+    expect(result.status).toBe('fail_closed')
+    const reason = result.unhandled?.reason ?? ''
+    expect(reason).toContain('already holds')
+    expect(reason).toContain('nothing was written')
+    expect(reason).not.toContain('Name the site')
+  })
+
+  // 2026-10-03 (quick 261003-cpv, 432 review WR-02): the refusal describes the no-review model.
+  it('C261003-CPV-UNCONFIGURED-WORDING: the unconfigured refusal promises no review step', () => {
+    expect(WRITE_TEST_UNCONFIGURED_DETAIL).not.toMatch(/review/i)
+    expect(WRITE_TEST_UNCONFIGURED_DETAIL).toContain('write the configuration')
+    expect(WRITE_TEST_UNCONFIGURED_DETAIL).toContain('write a test for example.com')
+  })
+
   it('(R10 · WR-05) passes a hostname-shaped NON-SITE token through in a configured project',
     async () => {
       // RED, MEASURED BY MUTATION rather than quoted from history: with WR-05's precondition
@@ -862,7 +933,9 @@ describe('one turn: detect, scaffold, author (D-14 · CFGM-05; 432-11 D-05)', ()
     expect(result.status).toBe('fail_closed')
     expect(test.ordering).toEqual([CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID])
     expect(test.presented).toEqual([])
-    expect(result.unhandled?.reason).toBe(WRITE_TEST_UNCONFIGURED_DETAIL)
+    // RE-SPELLED 2026-10-03 (quick 261003-cpv, WR-03): its own sentence, not "name the site".
+    expect(result.unhandled?.reason).toContain('without naming a file it wrote')
+    expect(result.unhandled?.reason).not.toBe(WRITE_TEST_UNCONFIGURED_DETAIL)
   })
 
   it('(R18) a receipt with NO rendered diff renders the rest, and the turn authors', async () => {

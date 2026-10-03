@@ -518,7 +518,10 @@ describe('399.1 D-01 — no classifier pattern-matches a value', () => {
     // `classify` for the seven ops that point at it.
     const unaccounted = specFiles().filter((name) => {
       const text = readFileSync(join(OPS_DIR, name), 'utf8')
+      // 2026-10-03 (quick 261003-cpv, IN-04): the knowledge changes' shared fold is the second
+      // shared module, and the cell below scans its whole file on the config fold's terms.
       return classifyBodies(text).length === 0 && !text.includes('config-propose-verdict.js')
+        && !text.includes('knowledge-change-verdict.js')
     })
 
     expect(
@@ -609,7 +612,10 @@ describe('399.1 D-01 — no classifier pattern-matches a value', () => {
     // delegated to the shared fold and had no body of its own).
     // 2026-10-01 (432-18 D-14/D-15): 38. `grants.list` and `grants.revoke` leave with the grant
     // ledger, and each carried one classify body.
-    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(38)
+    // 2026-10-03 (quick 261003-cpv, 432 review IN-04): 35. `knowledge.accept`, `.reject` and
+    // `.forget` carried three byte-identical bodies and now point at `knowledge-change-verdict.ts`,
+    // whose named function this extractor does not see and the whole-file scan below does.
+    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(35)
   })
 
   it('control: the body extractor and the scan both FIRE on a fold that sniffs', () => {
@@ -656,5 +662,24 @@ describe('399.1 D-01 — no classifier pattern-matches a value', () => {
     )
 
     expect(source).toContain('switch (output.outcome)')
+  })
+})
+
+// 2026-10-03 (quick 261003-cpv, 432 review IN-04): the three knowledge changes share ONE fold, the
+// `classifyConfigChangeOutput` precedent, so a later edit cannot teach one door a different report.
+describe('C261003-CPV-ONE-KNOWLEDGE-FOLD: the three knowledge changes fold through one function', () => {
+  it('C261003-CPV-ONE-KNOWLEDGE-FOLD: the shared fold inspects no value content and switches on the outcome', () => {
+    const path = new URL('../../../src/functions/ops/knowledge-change-verdict.ts', import.meta.url).pathname
+    const scan = scanFile(path, ['.includes(', '.startsWith(', '.endsWith(', '.indexOf(', '.match(',
+      '.search(', '.toLowerCase(', '.toUpperCase(', 'RegExp'])
+    expect(scan.statements.length).toBeGreaterThan(3)
+    expect(scan.hits).toEqual([])
+    expect(executableSource(readFileSync(path, 'utf8'))).toContain('switch (output.outcome)')
+  })
+
+  it('C261003-CPV-ONE-KNOWLEDGE-FOLD: every knowledge change spec declares the shared fold itself', async () => {
+    const shared = (await import('../ops/knowledge-change-verdict.js')).classifyKnowledgeChangeOutput
+    expect(shared).toBeTypeOf('function')
+    for (const spec of KNOWLEDGE_CHANGE_OPS) expect(spec.classify, spec.id).toBe(shared)
   })
 })

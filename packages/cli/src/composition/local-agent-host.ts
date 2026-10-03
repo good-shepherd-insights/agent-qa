@@ -1923,6 +1923,10 @@ export function createConfigWritePort(configPath: string): ConfigWritePort {
 export function createScaffoldContentPort(): ConfigScaffoldContentPortLike {
   return {
     render({ targetName, baseUrl, existingGitignore, existingConfig }) {
+      // NO MODEL ENTRIES (2026-10-03, quick 261003-cpv, 432 review IN-09). The request carries a
+      // domain only and a from-zero project has no model anywhere to read; D-13 forbids inventing
+      // one. A from-zero scaffold is bare of `registry.llms`/`use.llm`; merge mode keeps the
+      // person's own.
       const files = buildScaffoldFileSet({
         targetName,
         baseUrl,

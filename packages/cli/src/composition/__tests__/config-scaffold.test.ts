@@ -1005,6 +1005,23 @@ describe('C432-SCAFFOLD-LLMS: the scaffold keeps the model registry and its sele
       expect(AgentQaConfigSchema.safeParse(refused).success).toBe(false)
     })
 
+  // 2026-10-03 (quick 261003-cpv, 432 review IN-09): THE PRODUCTION PORT, measured. Its request
+  // carries a domain and nothing else, and from zero there is no configuration to read a model
+  // from, so it passes no model entries (D-13: none is invented). #130's from-zero half therefore
+  // stays bare; only the merge half (a zero-target config keeps its own `registry.llms`) is fixed.
+  it('C261003-CPV-SCAFFOLD-PORT-NO-MODEL: the production port renders no model half from zero', async () => {
+    const rendered = await createScaffoldContentPort().render({
+      targetName: 'booking-com',
+      baseUrl: 'https://booking.com',
+    })
+    const text = Buffer.from(rendered.find((file) => file.path === CONFIG_FILE)?.bytes ?? []).toString('utf8')
+    const config = parseYaml(text) as ParsedConfig
+    expect(config.registry?.targets).toEqual({ 'booking-com': { platform: 'web', url: 'https://booking.com' } })
+    expect(Object.hasOwn(config.registry ?? {}, 'llms')).toBe(false)
+    expect(Object.hasOwn(config.use ?? {}, 'llm')).toBe(false)
+    expect(AgentQaConfigSchema.safeParse(config).success).toBe(true)
+  })
+
   it('C432-SCAFFOLD-LLMS: with no model given, the from-zero config carries no model half and still validates',
     () => {
       const files = buildScaffoldFileSet({

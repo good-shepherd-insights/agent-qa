@@ -1,3 +1,7 @@
+# 2026-10-03 (quick 261003-cpv, 432 review IN-05): the retired `proposals` alias is now answered
+# BY NAME at stage 1 ("the proposals inbox was retired in this version"), so the planner is never
+# consulted. Before, the hermetic tripwire refused it at stage 2, while a live model could plan an
+# op from the word. The hermetic runner pins zero planner calls and the retired-verb reason here.
 # 432-13 (D-05/D-14): THE `proposals` INBOX ALIAS IS GONE, and this cell now measures its absence.
 #
 # Changes apply in the call, so there is no pending-decision inbox for a bare word to route to. The

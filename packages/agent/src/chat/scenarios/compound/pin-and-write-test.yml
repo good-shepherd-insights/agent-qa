@@ -18,11 +18,10 @@
 # cell is what makes that assertion bite: it is the one cell in the corpus that names a directive
 # on a turn that fails.
 #
-# HERMETIC, DELIBERATELY. Both halves are deterministic: `/pin` resolves at stage 1 by the table,
-# and the second clause is unroutable in a lane whose bound model is a tripwire that throws — which
-# is itself a fail-closed path (392-09's scoping decision keeps the zero-calls assertion on the
-# `should_execute` arm, so a fail_closed cell may legitimately reach stage 2). No live model can
-# make this cell's outcome different, so nothing is bought by spending one.
+# HERMETIC, DELIBERATELY. RE-SPELLED 2026-10-03 (quick 261003-cpv, 432 review IN-05): the retired
+# `/pin` clause is refused by name at stage 1, before the planner, so the write-test half is never
+# planned at all. No live model can make this cell's outcome different, so nothing is bought by
+# spending one.
 id: pin-and-write-test
 class: compound
 lane: hermetic

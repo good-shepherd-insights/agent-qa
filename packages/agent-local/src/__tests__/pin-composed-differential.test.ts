@@ -10,9 +10,9 @@
 // after a typed `/pin`, the scope control is unchanged, no row is written at the file the
 // composition writes, and no `approval_decision` lands in the session.
 //
-// THE PLANNER IS BOUND AND COUNTS. Every canonical utterance still goes untouched by it; the `/pin`
-// clause is now unrouted text, so it is the ONE utterance that reaches the planner, which throws —
-// and the turn fails closed by name.
+// THE PLANNER IS BOUND AND COUNTS. Every canonical utterance still goes untouched by it, and since
+// 2026-10-03 (quick 261003-cpv, IN-05) so does the retired `/pin`: the turn refuses it by name at
+// stage 1, before any model could plan the op its text names.
 
 import { mkdirSync, mkdtempSync, existsSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -180,8 +180,11 @@ describe('D-21 retired: a typed /pin reaches nothing through the composed stack 
 
     // No decision row of any kind at the file the composition writes.
     expect(auditRows()).toEqual([])
-    // Only the unroutable `/pin` clause reached the planner.
-    expect(tripwire.calls()).toBe(1)
+    // RE-SPELLED 2026-10-03 (quick 261003-cpv, 432 review IN-05): the retired `/pin` is answered by
+    // name at stage 1, so NOTHING reached the planner, the clause a live model could have planned
+    // from included.
+    expect(tripwire.calls()).toBe(0)
+    expect(pinned.unhandled?.reason ?? '').toContain('/pin was retired in this version')
   })
 
   // RE-SPELLED 2026-09-30 (432-13) from 'the pin is a LIVE view: a second class pinned mid-session

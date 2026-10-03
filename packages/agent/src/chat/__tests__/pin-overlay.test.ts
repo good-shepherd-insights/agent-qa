@@ -10,7 +10,9 @@
 //   - neither module exists and no barrel publishes a pin member at runtime,
 //   - a session's chat state carries no pin set,
 //   - `/pin <class>` follows the ordinary unknown-directive behaviour: the resolver answers it
-//     exactly as it answers a directive nobody ever declared, and it binds no op,
+//     exactly as it answers a directive nobody ever declared, and it binds no op (2026-10-03,
+//     261003-cpv, IN-05: the turn engine then refuses it by name as a retired verb, before the
+//     planner; `turn-engine-compound.test.ts` C261003-CPV-RETIRED-VERBS measures that),
 //   - the resolver keys that remain are the ones a session still has.
 //
 // Independent chat session concurrency and clause receipt ordering are measured where sessions run

@@ -51,6 +51,7 @@ import { AUTHORING_DRAFT_WRITE_FUNCTION_ID } from '../functions/ops/authoring-dr
 import { CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID } from '../functions/ops/config-project-scaffold.js'
 import {
   WRITE_TEST_UNCONFIGURED_DETAIL,
+  writeTestScaffoldStopDetail,
   resolveWriteTestRoute,
 } from '../config-mutation/write-test-route.js'
 
@@ -71,6 +72,7 @@ import { diffChatConfig, foldChatConfigState } from './config-drift.js'
 import type { ChatConfigState } from './config-drift.js'
 import { replayToModelMessages } from './compaction.js'
 import { directiveNotBoundReason, resolveClause } from './resolver-table.js'
+import { retiredChatVerbReason } from './retired-chat-verbs.js'
 import { replaySession } from './session-repair.js'
 import { SESSION_STAMPED_FUNCTION_IDS, WINDOW_STAMPED_FUNCTION_IDS } from './session-stamps.js'
 import type { ChatDirectiveName, ChatResolverTable } from './resolver-table.js'
@@ -590,6 +592,18 @@ async function runTurnThrough(
       mapped.length + directives.length === clauses.length ? 'resolved' : 'unresolved',
   })
 
+  // ---- Retired verbs, answered by name before any model sees them (261003-cpv, 432 IN-05).
+  //
+  // A clause stage 1 left unresolved goes to the planner, and in a live session a model may plan
+  // the op named in a retired `/pin fn:runs.start`. The retired spellings are refused here, through
+  // the same `refuse()` every refusal takes, so the planner is never consulted and nothing runs.
+  for (const clause of clauses) {
+    if (mapped.some((resolved) => resolved.clause.index === clause.index)) continue
+    if (directives.some((entry) => entry.clause.index === clause.index)) continue
+    const retired = retiredChatVerbReason(clause.text)
+    if (retired !== undefined) return refuse(clause.text, retired)
+  }
+
   // ---- Directives, ASKED ABOUT here and carried out below the verdict (D-10, CR-04).
   //
   // A directive names no capability — it changes what this SESSION is, and that is why it does
@@ -795,11 +809,16 @@ async function runTurnThrough(
       shownDiff?: string
       crossBoundary?: boolean
       crossBoundaryReasons?: readonly string[]
+      blockedReason?: string
+      validationIssues?: readonly string[]
+      path?: string
     }
     if (answer.outcome !== 'applied' || answer.files === undefined || answer.files.length === 0) {
-      // A refusal, a blocked change or an interrupted write. Each carries its own sentence where it
-      // has one, and none is a configuration to author a test against.
-      writeTestRefusal = answer.detail ?? WRITE_TEST_UNCONFIGURED_DETAIL
+      // A refusal, a blocked change, a no-change or an interrupted write: none is a configuration to
+      // author a test against. 2026-10-03 (quick 261003-cpv, WR-03): each answers its own reason;
+      // the no-configuration sentence was the fallback for the blocked and no-change arms, which
+      // carry no `detail`.
+      writeTestRefusal = writeTestScaffoldStopDetail(answer)
       return 'stop'
     }
 
