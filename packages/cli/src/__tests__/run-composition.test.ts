@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import ts from 'typescript'
 import { describe, it, expect, vi } from 'vitest'
 import { createMaskingContext } from '@vostride/agent-qa-safety'
 import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
@@ -151,13 +152,42 @@ describe('attachRunSubscribers threads the quarantine snapshot to both reporters
       fileURLToPath(new URL('../commands/run.ts', import.meta.url)),
       'utf8',
     )
-    const calls = runSource.split('attachRunSubscribers({').slice(1)
-    expect(calls).toHaveLength(2)
-    for (const call of calls) {
-      // the argument object ends at the first line that closes it at the call's indentation
-      // shorthand (`quarantined,`) or explicit (`quarantined: singleQuarantined`)
-      expect(call.slice(0, call.indexOf('})'))).toMatch(/\bquarantined[,:]/)
+    const sourceFile = ts.createSourceFile(
+      'run.ts',
+      runSource,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    )
+    const calls: ts.CallExpression[] = []
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === 'attachRunSubscribers'
+      ) {
+        calls.push(node)
+      }
+      ts.forEachChild(node, visit)
     }
+    visit(sourceFile)
+    expect(calls).toHaveLength(2)
+    // Bound: the AST argument object; only its own top-level properties count.
+    const sites = calls.map((call) => {
+      const arg = call.arguments[0]
+      const passesQuarantined =
+        arg !== undefined &&
+        ts.isObjectLiteralExpression(arg) &&
+        arg.properties.some(
+          (prop) =>
+            (ts.isShorthandPropertyAssignment(prop) || ts.isPropertyAssignment(prop)) &&
+            (ts.isIdentifier(prop.name) || ts.isStringLiteral(prop.name)) &&
+            prop.name.text === 'quarantined',
+        )
+      const line = sourceFile.getLineAndCharacterOfPosition(call.getStart()).line + 1
+      return { line, passesQuarantined }
+    })
+    expect(sites).toEqual(sites.map(({ line }) => ({ line, passesQuarantined: true })))
   })
 })
 
