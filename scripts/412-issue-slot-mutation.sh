@@ -117,11 +117,11 @@
 #   E-05  410 Row 5 / the retired no-match reason  same suite  none
 #   E-06  410 Row 6 / the retired corpus category  knowledge-local corpus.test.ts  none
 #   W-02  411 Row 2 / the loop outcome vocabulary  schema authoring-loop-outcomes.test.ts  none
-#   W-01  411 Row 1 / WTST-09, the runtime exact-list pin  schema proposal-envelope.test.ts  none
-#   W-01t  411 Row 1 / WTST-09, the ALLOWED second instrument (D-06)  schema typecheck  none
+#   W-01  RETIRED 2026-10-04 (quick-261004-lvn) — 411 Row 1's subject and instrument were deleted by 432-17
+#   W-01t  RETIRED 2026-10-04 (quick-261004-lvn) — with W-01; its parity pin (inbox-ops.ts) went in 432-17
 #   W-04  411 Row 4 / the StopRoute keyof pin  agent router.test-d.ts (testd)  none
 #   W-05  411 Row 5 / the stopped-arm keyof pin  agent loop.test-d.ts (testd)  none
-#   W-03  411 Row 3 / WTST-11, a put re-added on the stopped arm  agent authoring-draft-write.stop.test.ts  schema, before the mutated run AND before the restored run
+#   W-03  411 Row 3 / WTST-11, a suite write re-added on the stopped arm  agent authoring-draft-write.stop.test.ts  schema, before the mutated run AND before the restored run
 #
 # THE ROWS THIS SCRIPT DOES NOT ENCODE, AND WHAT STANDS IN THEIR PLACE. A bar that silently drops a
 # row is a bar that measures less than it claims, so each omission is named with its reason and its
@@ -137,6 +137,15 @@
 #   411 Rows 6-7   legs A and B of the 394 script — `pnpm validate:router-mutation` REMAINS their
 #                  instrument (23 s, PASS at the 411 gate). Re-encoding them here would give one
 #                  property two owners.
+#   411 Row 1      legs W-01 and W-01t, RETIRED 2026-10-04 (quick-261004-lvn). 432-17 (54edac799)
+#                  deleted packages/schema/src/proposal/envelope.ts with PROPOSAL_KINDS, inbox-ops.ts
+#                  (W-01t's ExactlyEqual parity pin) and src/__tests__/proposal-envelope.test.ts
+#                  (W-01's instrument). No proposal-kind list is left to readmit a kind to. The
+#                  vocabulary's return is refused instead by RETIRED_RUNTIME_EXPORTS in
+#                  packages/schema/src/__tests__/432-direct-contracts.test.ts (PROPOSAL_KINDS,
+#                  ProposalEnvelopeSchema) and by leg A41 (C432-RETURN-A41) of
+#                  scripts/432-approval-permission-mutation.sh, which re-creates
+#                  schema/src/proposal/envelope.ts.
 #
 # D-05'S TWO-INSTRUMENT READING OF VOCB-01, AS MEASURED. The requirement is carried by V-03, the
 # whole-vocabulary readmission: under it the schema still compiles (the coherence gate proves exit
@@ -492,13 +501,6 @@ apply_mutation () {
       # also catch a category silently EMPTIED, not only one silently added.
       perl -0pi -e "s/\Q  'miss',\E\n\Q] as const\E\n/  'miss',\n  'reserved',\n] as const\n/" \
         "$REPO_ROOT/packages/knowledge-local/src/resolver/__tests__/fixtures/entity-corpus.ts" ;;
-    W-01|W-01t)
-      # 411 Row 1's diff, verbatim: the fourth kind back at the index Phase 411 removed it from.
-      # ONE edit, TWO instruments — the runtime exact-list pin (W-01) and the schema typecheck
-      # (W-01t), which the row recorded as OBSERVED (exit 2, exactly one diagnostic) rather than
-      # predicted. Two legs rather than one because this script's ALLOWED sets are per-instrument.
-      perl -0pi -e "s/\Qexport const PROPOSAL_KINDS = ['knowledge', 'test-draft', 'config'] as const\E/export const PROPOSAL_KINDS = ['knowledge', 'test-draft', 'finding', 'config'] as const/" \
-        "$REPO_ROOT/packages/schema/src/proposal/envelope.ts" ;;
     W-02)
       # 411 Row 2's diff, verbatim. The added word is `'halted'` — a word this phase never shipped —
       # ON PURPOSE: D-04's pin is an ORDERED EXACT LIST, so any fifth member reds it, and a word
@@ -507,16 +509,16 @@ apply_mutation () {
       perl -0pi -e "s/\Q  'stopped',\E\n\Q] as const\E\n/  'stopped',\n  'halted',\n] as const\n/" \
         "$REPO_ROOT/packages/schema/src/functions/authoring.ts" ;;
     W-03)
-      # 411 Row 3's fenced diff, transcribed byte for byte — the thirteen-line block inserted
-      # directly after the narrowed `drafted`/`repaired` put block. The attribution is RE-DERIVED
-      # inside the new guard because the shipped one is block-scoped to the narrowed `if`; the
-      # payload is cast `as never` so the mutation stays a one-block edit vitest transpiles without
-      # argument (a type-correct payload would need a whole fixture and would measure the fixture).
-      # The guard's `if (outcome.kind === 'stopped') {` shape is load-bearing: the ledger says a
-      # transcription matches on it. THE ONLY dist-CROSSING ROW OF THE FIVE — the cell reads schema
-      # through `packages/schema/dist`, so the schema build runs before the mutated run AND again
-      # before the restored one (unchanged content, rebuilt to prove the read is current).
-      perl -0pi -e "s/\Q      await proposals.put({ kind: 'test-draft', ...attribution, payload: outcome.proposal })\E\n\Q    }\E\n/      await proposals.put({ kind: 'test-draft', ...attribution, payload: outcome.proposal })\n    }\n\n    if (outcome.kind === 'stopped') {\n      const stopRunId = outcome.receipt.gateRuns.at(-1)?.runId\n      const stopAttribution = {\n        emittedBy: AUTHORING_DRAFT_WRITE_FUNCTION_ID,\n        ...(stopRunId === undefined ? {} : { runId: stopRunId }),\n      }\n      await proposals.put({\n        kind: 'test-draft',\n        ...stopAttribution,\n        payload: { draftRef: outcome.draftRef } as never,\n      })\n    }\n/" \
+      # 411 Row 3 (WTST-11): a stopped invocation writes nothing. 2026-10-04 (quick-261004-lvn):
+      # 432 D-06 deleted the proposals port this leg used to smuggle an envelope through, and the
+      # op now writes a test only through the shelf's `publish` (loop.ts's call takes
+      # `{ draftPath, targetPath }`). So the leg smuggles a suite write onto the stopped arm,
+      # directly after the op reads `outcome` and `dedup`, and the same cell reds through its
+      # `published` list. The `if (outcome.kind === 'stopped') {` guard is load-bearing, and the
+      # request is cast `as never` so the edit stays one block vitest transpiles without argument.
+      # The cell reads schema through `packages/schema/dist`, so the schema build runs before the
+      # mutated run AND again before the restored one.
+      perl -0pi -e "s/\Q    const outcome = result.outcome\E\n\Q    const dedup = result.dedup\E\n/    const outcome = result.outcome\n    const dedup = result.dedup\n\n    if (outcome.kind === 'stopped') {\n      await shelf.publish({ draftPath: outcome.draftRef.filePath, targetPath: outcome.draftRef.filePath } as never)\n    }\n/" \
         "$REPO_ROOT/packages/agent/src/functions/ops/authoring-draft-write.ts" ;;
     W-04)
       # 411 Row 4's diff, verbatim. THE KEY IS OPTIONAL ON PURPOSE (411 note (a)): a required
@@ -1011,7 +1013,6 @@ preflight_suite "$LOCAL_FILTER" "src/__tests__/chain-terminal-notify.test.ts"
 preflight_suite "$CLI_FILTER" "src/__tests__/post-run-enqueue-idempotency.test.ts"
 
 preflight_suite "$SCHEMA_FILTER" "src/__tests__/delta-kinds.test.ts"
-preflight_suite "$SCHEMA_FILTER" "src/__tests__/proposal-envelope.test.ts"
 preflight_suite "$SCHEMA_FILTER" "src/entity/__tests__/410-five-entity-kinds.test.ts"
 preflight_suite "$SCHEMA_FILTER" "src/functions/__tests__/authoring-loop-outcomes.test.ts"
 preflight_suite "$SCHEMA_FILTER" "src/authoring/__tests__/funnel.test-d.ts"
@@ -1090,9 +1091,11 @@ run_leg W-06 "a side-counter key re-added beside the funnel's surviving counter"
 # `delta.ts` is byte-identical across the whole deletion, so what the retained `never` bars guard
 # is the SURVIVING six-arm union against a future widening. VOCB-01 is carried by leg V-03, the
 # whole-vocabulary readmission.
+# 2026-10-04 (quick-261004-lvn): 432-17 (54edac799) added three lines above review-dtos.test-d.ts's
+# `Exclude<Delta['kind'], …>` never bar, so the same assertion now reports at line 34, not 31.
 V01_REQUIRED="src/__tests__/delta.test-d.ts(76,55): error TS2554"
 V01_ALLOWED="src/__tests__/delta.test-d.ts(76,55): error TS2554
-src/__tests__/review-dtos.test-d.ts(31,70): error TS2554
+src/__tests__/review-dtos.test-d.ts(34,70): error TS2554
 src/__tests__/seam-root.test-d.ts(93,55): error TS2554"
 run_leg V-01 "a seventh arm widened onto the surviving Delta union" typecheck \
   "$V01_REQUIRED" "$V01_ALLOWED" "$SCHEMA_FILTER" "" "" \
@@ -1325,27 +1328,13 @@ run_leg W-02 "a fifth outcome word added to AUTHORING_LOOP_OUTCOMES" runtime \
   "src/functions/__tests__/authoring-loop-outcomes.test.ts" "" \
   "packages/schema/src/functions/authoring.ts" ""
 
-# 411 Row 1 / WTST-09 — the runtime exact-list pin. vitest TRANSPILES WITHOUT TYPECHECKING, so the
-# `Record<ProposalKind, …>` sites in the agent never enter this leg: the runtime pin is the whole
-# wall here, which is exactly why WTST-09 needed one.
-W01_REQUIRED='has exactly three kinds, and the predicate matches them exactly'
-W01_ALLOWED="$W01_REQUIRED"
-run_leg W-01 "a fourth proposal kind re-added to PROPOSAL_KINDS" runtime \
-  "$W01_REQUIRED" "$W01_ALLOWED" "$SCHEMA_FILTER" "src/__tests__/proposal-envelope.test.ts" "" \
-  "packages/schema/src/proposal/envelope.ts" ""
-
-# 411 Row 1 / WTST-09 — the ALLOWED SECOND INSTRUMENT (D-06), and the row's own correction: the
-# prediction was exit 0 and the measurement was exit 2 with EXACTLY ONE diagnostic — the
-# `ExactlyEqual<z.infer<typeof ProposalEnvelopeSchema>, ProposalEnvelope>` parity pin at
-# `inbox-ops.ts:81-84` reddening because the DTO gained a kind the union's three arms do not carry.
-# The prediction was wrong in the SAFE direction (an extra instrument, not a missing one), so 412
-# carries it as its own leg rather than asserting a green. pnpm surfaces tsc's exit as 2; the leg
-# asserts NON-ZERO and prints the number it observed.
-W01T_REQUIRED='src/proposal/inbox-ops.ts(82,7): error TS2322'
-W01T_ALLOWED="$W01T_REQUIRED"
-run_leg W-01t "the same fourth kind, read by the schema typecheck's parity pin" typecheck \
-  "$W01T_REQUIRED" "$W01T_ALLOWED" "$SCHEMA_FILTER" "" "" \
-  "packages/schema/src/proposal/envelope.ts" ""
+# 411 Row 1 / WTST-09 — legs W-01 and W-01t, RETIRED 2026-10-04 (quick-261004-lvn). 432-17
+# (54edac799) deleted their subject, packages/schema/src/proposal/envelope.ts with PROPOSAL_KINDS,
+# along with inbox-ops.ts (W-01t's parity pin) and src/__tests__/proposal-envelope.test.ts (W-01's
+# instrument). No proposal-kind list is left to readmit a kind to, so neither leg can be pointed at
+# anything without measuring unrelated code. The vocabulary's return is refused by
+# RETIRED_RUNTIME_EXPORTS in packages/schema/src/__tests__/432-direct-contracts.test.ts and by leg
+# A41 of scripts/432-approval-permission-mutation.sh, which re-creates the envelope file.
 
 # 411 Row 4 / the StopRoute keyof pin. A `.test-d.ts` reds as ONE FAILED SUITE with one
 # TypeCheckError block — there is no test title to match, so the suite line and the
@@ -1368,23 +1357,23 @@ run_leg W-05 "an optional proposal key re-added to the loop's stopped arm" testd
   "$W05_REQUIRED" "$W05_ALLOWED" "$AGENT_FILTER" "$W05_SUITE" "" \
   "packages/agent/src/authoring/loop.ts" ""
 
-# 411 Row 3 / WTST-11 — a put re-added on the stopped arm. The smuggled envelope wears
-# `kind: 'test-draft'` because after the narrowing that is the only kind left to smuggle, and the
-# cell counts ANY envelope rather than a kind — the property that lets it survive a later widening
-# of the vocabulary. THE ONE REBUILD IN THIS SECTION: the cell reads schema through `dist`, so
+# 411 Row 3 / WTST-11 — a suite write re-added on the stopped arm. Since 432 D-06 the op files
+# nothing and writes a test only through the shelf's `publish`, so the smuggled write goes there
+# and the cell reads every published target after the invocation, whatever its path. THE ONE REBUILD IN THIS SECTION: the cell reads schema through `dist`, so
 # `run_leg` builds the schema before the mutated run and again after the restore.
 W03_REQUIRED='a stop writes NO envelope of any kind — the proposals store is read after the invocation, never the loop'"'"'s return'
 W03_ALLOWED="$W03_REQUIRED"
-run_leg W-03 "an envelope smuggled onto the stopped arm of the draft-write op" runtime \
+run_leg W-03 "a suite write smuggled onto the stopped arm of the draft-write op" runtime \
   "$W03_REQUIRED" "$W03_ALLOWED" "$AGENT_FILTER" \
   "src/functions/__tests__/authoring-draft-write.stop.test.ts" "$SCHEMA_FILTER" \
   "packages/agent/src/functions/ops/authoring-draft-write.ts" ""
 
 # D-09's last gate: a leg that silently did not run is a green script that measured LESS than it
 # claims, and nothing above would notice. The expected count is RECOMPUTED from the roots
-# discovered on disk plus the 23 named legs of the LEG INDEX above — never a pinned number, which
-# would drift the day a package is added and read the drift as a pass.
-EXPECTED_LEGS=$((ROOTS + 23))
+# discovered on disk plus the 21 named legs of the LEG INDEX above (23, less W-01 and W-01t, retired
+# 2026-10-04) — never a pinned number, which would drift the day a package is added and read the
+# drift as a pass.
+EXPECTED_LEGS=$((ROOTS + 21))
 if [ "$LEGS_RUN" -ne "$EXPECTED_LEGS" ]; then
   echo "FATAL: leg count drifted — expected $EXPECTED_LEGS, ran $LEGS_RUN" >&2
   exit 1
@@ -1412,10 +1401,9 @@ echo "       And of the 410 ledger: a sixth entity kind REDs the array cell by n
 echo "       kind cast-smuggled onto all five satisfies-total tables REDs their key-set cells while"
 echo "       the compiler stays at exit 0 under every cast — the asymmetry 410 measured, proven on"
 echo "       this run rather than remembered; the retired no-match reason and the retired corpus"
-echo "       category RED their own cells and nothing beside them. And of the 411 ledger: a fourth"
-echo "       proposal kind REDs both the runtime exact-list pin and the ExactlyEqual parity wall the"
-echo "       schema typecheck carries; a fifth loop outcome REDs the ordered-list pin; a put"
-echo "       re-added on the stopped arm REDs the zero-envelope store read with the schema rebuilt"
+echo "       category RED their own cells and nothing beside them. And of the 411 ledger: a fifth"
+echo "       loop outcome REDs the ordered-list pin; a suite write re-added on the stopped arm REDs"
+echo "       the zero-write read of every published target with the schema rebuilt"
 echo "       before the mutated run and before the restored one; and each optional key added to a"
 echo "       keyof-pinned shape REDs as ONE failed suite with exactly one type error. Every subject"
 echo "       was restored byte-identically after every leg, the leg count was asserted against the"

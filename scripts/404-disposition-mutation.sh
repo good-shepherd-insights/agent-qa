@@ -13,7 +13,8 @@
 # lease reports a posture that reads perfectly reasonable). So the bar is measured by mutation:
 #
 #   M1  the `'detached'` LITERAL restored in the shell's `runFinished` publish
-#   M2  the D-08 gate-run skip deleted from the post-verdict step
+#   M2  the D-08 gate-run exclusion deleted from the post-verdict path (the step's skip and the
+#       continuation's refusal)
 #   M3  the tail IGNORES the lease the step handed it and consults for itself (Pitfall 3)
 #
 # EACH MUTATION MUST RED THE CELLS THIS SCRIPT NAMES IN ADVANCE, AND ONLY THOSE. A red somewhere is
@@ -76,8 +77,9 @@ CLI_FILTER="agent-qa"
 SHELL_SUBJECT="packages/runner/src/run/shell.ts"
 STEP_SUBJECT="packages/cli/src/curation/post-verdict-step.ts"
 TAIL_SUBJECT="packages/cli/src/curation/post-run-tail.ts"
+CONTINUATION_SUBJECT="packages/cli/src/curation/post-verdict-continuation.ts"
 
-SUBJECT_PATHS=("$SHELL_SUBJECT" "$STEP_SUBJECT" "$TAIL_SUBJECT")
+SUBJECT_PATHS=("$SHELL_SUBJECT" "$STEP_SUBJECT" "$TAIL_SUBJECT" "$CONTINUATION_SUBJECT")
 
 POSTURE_SUITE="src/__tests__/post-run-disposition.test.ts"
 TAIL_SUITE="src/__tests__/post-run-tail.test.ts"
@@ -150,8 +152,18 @@ apply_mutation () {
       # D-08's skip deleted. The step then loads the handoff, composes a host and queues a row for
       # a `write_test` keep-filter probe — the analysis cost per gate iteration this arm exists to
       # avoid, and the draft evidence it exists to keep out of curation.
-      perl -0pi -e "s/      if \(input\.gateRun === true \|\| input\.excludedFromOutcomes === true\) \{\n        return settle\(dispositionOf\(\{ enqueue: 'skipped', leaseSkipped: true \}\)\)\n      \}\n//" \
-        "$REPO_ROOT/$STEP_SUBJECT" ;;
+      #
+      # 2026-10-04 (quick-261004-lvn): 422-31 (47431880e) opened the guarded block with
+      # `enqueue = 'skipped'`, so the first anchor spans it and the whole block is deleted again.
+      # The same commit added a second guard on the same path: the continuation's `identity`
+      # refuses a gate-run or outcomes-excluded handoff ('identity-conflict'), so no row is queued
+      # even with the skip gone. Measured on that day: with only the skip deleted the cell stays
+      # GREEN; with both deleted it reds on `drained` against `detached`, and nothing else reds.
+      # So the exclusion is deleted at both sites.
+      perl -0pi -e "s/      if \(input\.gateRun === true \|\| input\.excludedFromOutcomes === true\) \{\n        enqueue = 'skipped'\n        return settle\(dispositionOf\(\{ enqueue: 'skipped', leaseSkipped: true \}\)\)\n      \}\n//" \
+        "$REPO_ROOT/$STEP_SUBJECT"
+      perl -0pi -e "s/  if \(String\(handoff\.runId\) !== input\.runId \|\| handoff\.gateRun \|\| handoff\.excludedFromOutcomes\) \{/  if (String(handoff.runId) !== input.runId) {/" \
+        "$REPO_ROOT/$CONTINUATION_SUBJECT" ;;
     M3)
       # The tail ignores what the step handed it. RESEARCH Pitfall 3: a process that holds the
       # writer lease and calls `acquireWriterLease` again is answered `held` — by ITSELF.
@@ -297,11 +309,11 @@ echo
 
 run_leg M1 "the 'detached' literal restored in the shell's runFinished publish" \
   "$REQUIRED_M1" "$ALLOWED_M1" "$GREEN_M1" "$CLI_FILTER" "$POSTURE_SUITE" "$RUNNER_FILTER $CLI_FILTER"
-run_leg M2 "the D-08 gate-run skip deleted from the post-verdict step" \
+run_leg M2 "the D-08 gate-run exclusion deleted from the post-verdict step and continuation" \
   "$REQUIRED_M2" "$ALLOWED_M2" "$GREEN_M2" "$CLI_FILTER" "$POSTURE_SUITE" "$CLI_FILTER"
 run_leg M3 "the tail ignores the handed lease and consults for itself (Pitfall 3)" \
   "$REQUIRED_M3" "$ALLOWED_M3" "$GREEN_M3" "$CLI_FILTER" "$TAIL_SUITE" "$CLI_FILTER"
 
 echo "PASS — the M1 literal reds both DECIDED postures while the two detached postures stay green,"
-echo "       deleting the D-08 skip reds the gate-run cell and nothing else, and a tail that"
+echo "       deleting the D-08 gate-run exclusion reds the gate-run cell and nothing else, and a tail that"
 echo "       re-consults a lease its own process holds reds the one-lease cell."

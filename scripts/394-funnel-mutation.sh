@@ -78,6 +78,8 @@ ALLOWED_H="$ALLOWED_E
 checks the SHIPPED wording table
 never frames a high keep rate as an achievement"
 
+# 2026-10-04 (quick-261004-lvn): F and G anchor on `writeEligible`, the stage the ceiling now
+# compares; 261002-ctr (284f73df0) put it in place of the `accepted` stage.
 apply_mutation () {
   case "${FUNNEL_MUTATION_SELFTEST:-}" in
     neutered)
@@ -87,8 +89,8 @@ apply_mutation () {
   esac
   case "$1" in
     E) perl -0pi -e 's/const acceptanceFailure = aboveCeiling \&\& built >= FUNNEL_MIN_DRAFTS_FLOOR/const acceptanceFailure = false \&\& aboveCeiling \&\& built >= FUNNEL_MIN_DRAFTS_FLOOR/' "$SUBJECT" ;;
-    F) perl -0pi -e 's/accepted \* KEEP_RATE_CEILING\.den > KEEP_RATE_CEILING\.num \* built/accepted * KEEP_RATE_CEILING.den >= KEEP_RATE_CEILING.num * built/' "$SUBJECT" ;;
-    G) perl -0pi -e 's{const aboveCeiling = accepted \* KEEP_RATE_CEILING\.den > KEEP_RATE_CEILING\.num \* built}{const aboveCeiling = built === 0 ? false : Math.round((accepted / built) * 100) > 90}' "$SUBJECT" ;;
+    F) perl -0pi -e 's/writeEligible \* KEEP_RATE_CEILING\.den > KEEP_RATE_CEILING\.num \* built/writeEligible * KEEP_RATE_CEILING.den >= KEEP_RATE_CEILING.num * built/' "$SUBJECT" ;;
+    G) perl -0pi -e 's{const aboveCeiling = writeEligible \* KEEP_RATE_CEILING\.den > KEEP_RATE_CEILING\.num \* built}{const aboveCeiling = built === 0 ? false : Math.round((writeEligible / built) * 100) > 90}' "$SUBJECT" ;;
     H) perl -0pi -e "s/notFiltering: 'the loop is not filtering'/notFiltering: 'the loop is not filtering — a great score'/" "$SUBJECT" ;;
     *) echo "FATAL: unknown mutation $1" >&2; exit 1 ;;
   esac

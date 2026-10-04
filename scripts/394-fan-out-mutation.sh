@@ -10,7 +10,7 @@
 # into four implementations WTST-08 forbids and requires named cells to red on each.
 #
 #   H  the two N terms collapsed        — one doubled term; the total is still right.
-#   I  the preview recomputed INLINE    — a second arithmetic in the op, then K moved under it.
+#   I  the preview recomputed INLINE    — a second arithmetic at the loop's preview, then K moved.
 #   J  probe runs dropped from the count — the actual figure omits what repair spent.
 #   K  the bound SHAVED                 — the final N term dropped from the preview.
 #
@@ -22,8 +22,13 @@
 # I IS TWO EDITS, AND IT HAS TO BE. Recomputing the preview inline is not observable while both
 # arithmetics agree — that is exactly why a second copy is dangerous rather than merely redundant.
 # So the mutation inlines the sum AND moves `REPAIR_ITERATION_CAP`, and the cells that compare the
-# rendered figure against `authoringFanOutBound` are what red. A cell comparing against a LITERAL
+# previewed figure against `authoringFanOutBound` are what red. A cell comparing against a LITERAL
 # would have stayed green through both edits.
+#
+# 2026-10-04 (quick-261004-lvn): 432-42 (c916d4c2e) deleted the op's per-invocation preview
+# render, so I now inlines its second arithmetic where the one preview is taken —
+# `const previewed = authoringFanOutBound(input)` in runAuthoringLoop, carried out as
+# `fanOut.previewed` — and reds the op cell that compares that figure with the function.
 #
 # A GREEN SUITE UNDER ANY MUTATION IS A FAILURE OF THIS SCRIPT, NOT A PASS. So is a red naming a
 # cell outside the allowed list: a differential that reds on collateral has shown the corpus is
@@ -36,8 +41,8 @@
 # cannot restore an uncommitted edit, so the snapshots are `cp` copies taken before the first
 # mutation and the sha256 is compared after each restore.
 #
-# DEPENDENCY DISTS ARE REBUILT BEFORE EVERY LEG. `agent` and `agent-local` resolve `schema` through
-# its built `dist`, so a mutation to a `schema` source that is not rebuilt measures the PREVIOUS
+# DEPENDENCY DISTS ARE REBUILT BEFORE EVERY LEG. `agent` resolves `schema` through its built
+# `dist`, so a mutation to a `schema` source that is not rebuilt measures the PREVIOUS
 # implementation — a differential that would report green for the best possible reason and the
 # worst possible one identically.
 #
@@ -60,16 +65,14 @@ cd "$REPO_ROOT"
 SUBJECT_PATHS=(
   "packages/schema/src/authoring/fan-out.ts"
   "packages/agent/src/authoring/loop.ts"
-  "packages/agent/src/functions/ops/authoring-draft-write.ts"
 )
 
 SCHEMA_FILTER="@vostride/agent-qa-schema"
 AGENT_FILTER="@vostride/agent-qa-agent"
-AGENT_LOCAL_FILTER="@vostride/agent-qa-agent-local"
 
 SCHEMA_SUITE="src/authoring/__tests__/fan-out.test.ts"
 AGENT_SUITE="src/authoring/__tests__/fan-out-accounting.test.ts"
-E2E_SUITE="src/__tests__/authoring-loop.e2e.test.ts"
+OP_SUITE="src/functions/__tests__/authoring-draft-write.fanout.test.ts"
 
 WORK="$(mktemp -d)"
 LOG="$WORK/leg.log"
@@ -104,10 +107,9 @@ ALLOWED_H="keeps initialN and finalN separately readable in DRAFT MODE
 keeps both terms present even when they are NUMERICALLY EQUAL
 reports the nominal bound as initial N + K probes + final N
 states the total as an UPPER BOUND in runs, and names all three terms"
-# I puts a SECOND arithmetic in the op and then moves K under it, so every cell comparing the
-# rendered figure against the function reds — and only those.
-ALLOWED_I="asks EXACTLY ONCE at dispatch
-previews the DRAFT-MODE bound"
+# I puts a SECOND arithmetic at the loop's preview and then moves K under it, so the op cell
+# comparing the carried-out figure against the function reds — and only it.
+ALLOWED_I="the reported ceiling IS the disclosed one — one function of one input"
 # J stops counting probes, so every cell that asserts what an invocation actually spent reds.
 ALLOWED_J="WORST CASE: every term spent
 counts PROBE runs toward the actual figure
@@ -126,10 +128,10 @@ apply_mutation () {
       perl -0pi -e 's/    initialN: input\.initialN,\n    probeK: input\.probeK,\n    finalN: input\.finalN,/    initialN: input.initialN + input.finalN,\n    probeK: input.probeK,\n    finalN: 0,/' \
         "$REPO_ROOT/packages/schema/src/authoring/fan-out.ts" ;;
     I)
-      perl -0pi -e 's/    return renderFanOutPreview\(authoringFanOutBound\(input\)\)/    return renderFanOutPreview(computeFanOutBound({\n      initialN: input.draftMode === true ? 1 : DRAFT_STABILITY_RUNS_N,\n      probeK: 3,\n      finalN: DRAFT_STABILITY_RUNS_N,\n    }))/' \
-        "$REPO_ROOT/packages/agent/src/functions/ops/authoring-draft-write.ts"
-      perl -0pi -e 's/  AuthoringDraftWriteOutputSchema,\n  renderFanOutPreview,/  AuthoringDraftWriteOutputSchema,\n  DRAFT_STABILITY_RUNS_N,\n  computeFanOutBound,\n  renderFanOutPreview,/' \
-        "$REPO_ROOT/packages/agent/src/functions/ops/authoring-draft-write.ts"
+      # loop.ts already imports DRAFT_STABILITY_RUNS_N and computeFanOutBound. The literal 3 is
+      # REPAIR_ITERATION_CAP's value, so both arithmetics agree until K moves.
+      perl -0pi -e 's/  const previewed = authoringFanOutBound\(input\)\n/  const previewed = computeFanOutBound({\n    initialN: input.draftMode === true ? 1 : DRAFT_STABILITY_RUNS_N,\n    probeK: 3,\n    finalN: DRAFT_STABILITY_RUNS_N,\n  })\n/' \
+        "$REPO_ROOT/packages/agent/src/authoring/loop.ts"
       # …and K moves. With one arithmetic this is invisible; with two it is a divergence.
       perl -0pi -e 's/    probeK: REPAIR_ITERATION_CAP,/    probeK: REPAIR_ITERATION_CAP + 1,/' \
         "$REPO_ROOT/packages/agent/src/authoring/loop.ts" ;;
@@ -223,7 +225,7 @@ run_leg () {
 
 echo "=== PREFLIGHT — the pre-mutation suites must be green"
 rebuild_dists
-for leg in "$SCHEMA_FILTER $SCHEMA_SUITE" "$AGENT_FILTER $AGENT_SUITE" "$AGENT_LOCAL_FILTER $E2E_SUITE"; do
+for leg in "$SCHEMA_FILTER $SCHEMA_SUITE" "$AGENT_FILTER $AGENT_SUITE" "$AGENT_FILTER $OP_SUITE"; do
   set -- $leg
   set +e
   pnpm --filter "$1" exec vitest run "$2" > "$LOG" 2>&1
@@ -239,9 +241,9 @@ done
 echo
 
 run_leg H "the two N terms collapsed into a doubled term" "$ALLOWED_H" "$SCHEMA_FILTER" "$SCHEMA_SUITE"
-run_leg I "the preview recomputed inline, then K moved" "$ALLOWED_I" "$AGENT_LOCAL_FILTER" "$E2E_SUITE"
+run_leg I "the preview recomputed inline, then K moved" "$ALLOWED_I" "$AGENT_FILTER" "$OP_SUITE"
 run_leg J "probe runs dropped from the actual count" "$ALLOWED_J" "$AGENT_FILTER" "$AGENT_SUITE"
 run_leg K "the final N term shaved off the bound" "$ALLOWED_K" "$AGENT_FILTER" "$AGENT_SUITE"
 
-echo "PASS — the bound keeps its two N terms apart, the preview has ONE arithmetic, the actual"
+echo "PASS — the bound keeps its two N terms apart, the loop's preview has ONE arithmetic, the actual"
 echo "       figure counts probes, and a shaved bound is caught by the loop's own worst case."
