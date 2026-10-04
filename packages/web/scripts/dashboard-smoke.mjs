@@ -3,8 +3,8 @@
 import process from 'node:process'
 import { chromium } from 'playwright-core'
 
-const TEST_ID = 't_phase-188-smoke'
-const SUITE_ID = 's_phase-188-smoke'
+const TEST_ID = 't_off-rang-gold-flu-sweet-common-plan-lung-folder-kent'
+const SUITE_ID = 's_studio-quire-rough-trust-egger-may-grow-verify-menu-tong'
 const TEST_FILE = 'phase-188-smoke.yaml'
 const SUITE_FILE = 'phase-188-smoke.suite.yaml'
 const TEST_CONTENT = `test-id: ${TEST_ID}
