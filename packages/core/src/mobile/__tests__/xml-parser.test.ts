@@ -292,7 +292,15 @@ describe('parseMobileSource → InterimNode[]', () => {
       ['Button, Selected', 'button'],
       ['ToggleButton', 'button'],
       ['', 'button'],
-      ['Adjustable', 'button'],
+      ['Adjustable', 'slider'],
+      ['SearchField', 'searchbox'],
+      ['TabBar', 'tablist'],
+      ['UpdatesFrequently', 'text'],
+      ['SummaryElement', 'text'],
+      ['Button, Adjustable', 'slider'],
+      ['Button, SearchField', 'searchbox'],
+      ['Button, TabBar', 'tablist'],
+      ['Unknown', 'button'],
     ])('maps traits "%s" to role %s', (traits, role) => {
       const xml = iosScreen(
         other(`label="Row" accessible="true" traits="${traits}" x="0" y="100" width="402" height="44"`),
@@ -347,16 +355,102 @@ describe('parseMobileSource → InterimNode[]', () => {
       const textNodes = parseMobileSource(wrapsText, 'ios', IOS_VIEWPORT).nodes
       expect(textNodes.map(n => [n.role, n.name])).toEqual([['text', 'Settings']])
 
+      // WDA reports a descendant of an accessible Other as not accessible.
       const wrapsOther = iosScreen(
         other(
           'label="Row" accessible="true" x="0" y="100" width="402" height="60"',
-          other('label="Row" accessible="true" x="8" y="104" width="380" height="52"'),
+          other('label="Row" accessible="false" x="8" y="104" width="380" height="52"'),
         ),
       )
       const rowNodes = parseMobileSource(wrapsOther, 'ios', IOS_VIEWPORT).nodes
       expect(rowNodes).toHaveLength(1)
       expect(rowNodes[0].name).toBe('Row')
-      expect(rowNodes[0].bounds).toEqual({ x: 8, y: 104, width: 380, height: 52 })
+      expect(rowNodes[0].bounds).toEqual({ x: 0, y: 100, width: 402, height: 60 })
+    })
+
+    it('does not promote tabs hidden behind a sheet, and still emits the sheet button', () => {
+      const tab = (label: string, x: number, width: number) =>
+        other(
+          `visible="false" accessible="false" x="${x}" y="291" width="${width}" height="44"`,
+          other(
+            `label="${label}" enabled="true" visible="false" accessible="true" x="${x}" y="291" width="${width}" height="44" traits=""`,
+          ),
+        )
+      const xml = iosScreen(
+        [
+          other(
+            'visible="false" accessible="false" x="0" y="291" width="402" height="44"',
+            [
+              tab('Posts', 6, 91),
+              tab('Replies', 97, 104),
+              tab('Media', 200, 96),
+              tab('Videos', 295, 101),
+            ].join(''),
+          ),
+          other(
+            'visible="true" accessible="false" x="0" y="474" width="402" height="400"',
+            other(
+              'label="Mute account" enabled="true" visible="true" accessible="true" x="31" y="715" width="340" height="43" traits=""',
+            ),
+          ),
+        ].join('\n'),
+      )
+      const { nodes } = parseMobileSource(xml, 'ios', IOS_VIEWPORT)
+      expect(nodes.map(n => [n.role, n.name])).toEqual([['button', 'Mute account']])
+    })
+
+    it.each([
+      ['WDA broken frame', 'x="-1" y="-1" width="0" height="0"'],
+      ['zero width', 'x="10" y="100" width="0" height="44"'],
+      ['zero height', 'x="10" y="100" width="100" height="0"'],
+    ])('does not promote an Other with a %s', (_name, frame) => {
+      const xml = iosScreen(other(`label="Ghost" visible="true" accessible="true" ${frame}`))
+      expect(parseMobileSource(xml, 'ios', IOS_VIEWPORT).nodes).toEqual([])
+      expect(parseMobileSource(xml, 'ios').nodes).toEqual([])
+    })
+
+    it.each([
+      ['below', 'x="0" y="900" width="402" height="44"'],
+      ['above', 'x="0" y="-60" width="402" height="44"'],
+      ['right of', 'x="410" y="100" width="100" height="44"'],
+      ['left of', 'x="-120" y="100" width="100" height="44"'],
+    ])('does not promote an Other with no visible attribute fully %s the screen', (_side, frame) => {
+      const xml = iosScreen(other(`label="Away" accessible="true" ${frame}`))
+      expect(parseMobileSource(xml, 'ios', IOS_VIEWPORT).nodes).toEqual([])
+    })
+
+    it('still promotes a visible Other that overlaps the screen edge', () => {
+      const xml = iosScreen(
+        [
+          other('label="Partly below" accessible="true" x="0" y="850" width="402" height="44"'),
+          other(
+            'label="Visible" visible="true" accessible="true" x="0" y="100" width="402" height="44"',
+          ),
+        ].join('\n'),
+      )
+      expect(parseMobileSource(xml, 'ios', IOS_VIEWPORT).nodes.map(n => n.name)).toEqual([
+        'Partly below',
+        'Visible',
+      ])
+    })
+
+    it('caps a promoted name at 120 characters', () => {
+      const long = 'a'.repeat(300)
+      const exact = 'b'.repeat(120)
+      const xml = iosScreen(
+        [
+          other(`label="${long}" accessible="true" x="0" y="100" width="402" height="44"`),
+          other(`label="${exact}" accessible="true" x="0" y="200" width="402" height="44"`),
+          `<XCUIElementTypeStaticText label="${long}" x="0" y="300" width="402" height="44" />`,
+        ].join('\n'),
+      )
+      const { nodes } = parseMobileSource(xml, 'ios', IOS_VIEWPORT)
+      expect(nodes).toHaveLength(3)
+      expect(nodes[0].name).toBe('a'.repeat(119) + '…')
+      expect(nodes[0].name).toHaveLength(120)
+      expect(nodes[1].name).toBe(exact)
+      expect(nodes[2].role).toBe('text')
+      expect(nodes[2].name).toBe(long)
     })
 
     it('emits both when the descendant label differs, parenting the descendant to the Other', () => {

@@ -245,6 +245,8 @@ export function buildScreenState(input: BuildScreenStateInput): BuildScreenState
   return { state, binding }
 }
 
+const LINE_BREAKS = /\s*[\r\n\u2028\u2029]+\s*/g
+
 function depthOf(element: ElementInfo, byRef: Map<Ref, ElementInfo>): number {
   let depth = 0
   const seen = new Set<Ref>()
@@ -266,6 +268,8 @@ function depthOf(element: ElementInfo, byRef: Map<Ref, ElementInfo>): number {
  *   [Viewport: {viewportWidth}x{viewportHeight}] [{elements.length} elements]
  *   {2 spaces × depth}- {role}{ "name"?} [ref={ref}]{ @(x,y wxh)?}{ [disabled]?}{ [offscreen]?}{ [checked]?}{ [selected]?}{ [editable]?}
  * depth = length of the parentRef chain (root elements depth 0).
+ * A rendered name collapses each line break, with the whitespace around it, to one space, so
+ * every element stays on one line; element.name and value keep the raw text.
  */
 export function renderScreenTree(
   elements: ElementInfo[],
@@ -281,7 +285,7 @@ export function renderScreenTree(
   const lines = elements.map(element => {
     const indent = '  '.repeat(depthOf(element, byRef))
     let line = `${indent}- ${element.role}`
-    if (element.name) line += ` "${element.name}"`
+    if (element.name) line += ` "${element.name.replace(LINE_BREAKS, ' ')}"`
     line += ` [ref=${element.ref}]`
     if (element.bounds) {
       const b = element.bounds

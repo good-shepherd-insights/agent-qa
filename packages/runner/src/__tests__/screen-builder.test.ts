@@ -215,6 +215,46 @@ describe('renderScreenTree — pinned grammar (D-02)', () => {
     )
   })
 
+  it.each([
+    ['\\n', 'Line one\nLine two'],
+    ['\\r\\n', 'Line one\r\nLine two'],
+    ['a doubled newline', 'Line one\n\nLine two'],
+    ['U+2028', 'Line one\u2028Line two'],
+    ['U+2029 with spaces around it', 'Line one  \u2029 Line two'],
+  ])('renders a name containing %s on one line', (_kind, name) => {
+    const { state } = buildScreenState(
+      makeInput(
+        [
+          { role: 'text', name, value: name, bounds: { x: 0, y: 0, width: 100, height: 50 } },
+          { role: 'button', name: 'Send' },
+        ],
+        { viewport: { width: 200, height: 100 } },
+      ),
+    )
+
+    expect(state.tree).toBe(
+      [
+        '[Viewport: 200x100] [2 elements]',
+        '- text "Line one Line two" [ref=e1] @(0,0 100x50)',
+        '- button "Send" [ref=e2]',
+      ].join('\n'),
+    )
+    expect(state.tree.split('\n')).toHaveLength(state.elements.length + 1)
+    expect(state.elements[0].name).toBe(name)
+    expect(state.elements[0].value).toBe(name)
+  })
+
+  it('renders a name without line breaks byte-identically, inner spacing included', () => {
+    const { state } = buildScreenState(
+      makeInput([{ role: 'button', name: 'Save  draft\tnow' }], {
+        viewport: { width: 200, height: 100 },
+      }),
+    )
+    expect(state.tree).toBe(
+      ['[Viewport: 200x100] [1 elements]', '- button "Save  draft\tnow" [ref=e1]'].join('\n'),
+    )
+  })
+
   it('is invoked directly on structured elements + metadata (renderer-only swap point)', () => {
     const { state } = buildScreenState(makeInput([{ role: 'button', name: 'Save' }]))
     expect(renderScreenTree(state.elements, state.metadata)).toBe(state.tree)

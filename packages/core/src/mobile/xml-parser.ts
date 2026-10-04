@@ -161,6 +161,7 @@ interface WalkContext {
 }
 
 const IOS_FULL_SCREEN_AREA_RATIO = 0.9
+const IOS_PROMOTED_NAME_MAX = 120
 
 function collectAttrs(node: any): Record<string, any> {
   const attrs: Record<string, any> = {}
@@ -184,12 +185,28 @@ function isIosAccessibleLabelledOther(
   if (label === undefined || label === null || String(label).trim() === '') return false
   const bounds = parseIosBounds(attrs)
   if (!bounds) return false
+  if (attrs['@_visible'] !== undefined && !boolAttr(attrs['@_visible'])) return false
+  // WDA reports a frame it cannot compute as (-1,-1,0,0).
+  if (!(bounds.width > 0 && bounds.height > 0)) return false
   const ref = ctx.screenReference
   if (ref && ref.width > 0 && ref.height > 0) {
+    const onScreen =
+      bounds.x < ref.width &&
+      bounds.y < ref.height &&
+      bounds.x + bounds.width > 0 &&
+      bounds.y + bounds.height > 0
+    if (!onScreen) return false
     const area = bounds.width * bounds.height
     if (area >= IOS_FULL_SCREEN_AREA_RATIO * ref.width * ref.height) return false
   }
   return true
+}
+
+// React Native joins a pressable's subtree text into its label, which can run to paragraphs.
+function capPromotedName(label: string): string {
+  const chars = Array.from(label)
+  if (chars.length <= IOS_PROMOTED_NAME_MAX) return label
+  return chars.slice(0, IOS_PROMOTED_NAME_MAX - 1).join('') + '…'
 }
 
 function descendantCarriesLabel(node: any, label: string, ctx: WalkContext): boolean {
@@ -204,8 +221,7 @@ function descendantCarriesLabel(node: any, label: string, ctx: WalkContext): boo
       if (
         childLabel !== undefined &&
         String(childLabel).trim() === label &&
-        (shouldEmit(normalizeRole(childKey, ctx.platform)) ||
-          isIosAccessibleLabelledOther(childKey, attrs, ctx))
+        shouldEmit(normalizeRole(childKey, ctx.platform))
       ) {
         return true
       }
@@ -226,6 +242,7 @@ function walkNode(node: any, tagName: string, parentIndex: number | undefined, c
 
   let role = normalizeRole(tagName, ctx.platform)
   let emit = shouldEmit(role)
+  let promoted = false
 
   if (ctx.platform === 'ios') {
     if (
@@ -245,6 +262,7 @@ function walkNode(node: any, tagName: string, parentIndex: number | undefined, c
       const traits = attrs['@_traits']
       role = iosAccessibleOtherRole(typeof traits === 'string' ? traits : undefined)
       emit = true
+      promoted = true
     }
   }
 
@@ -253,7 +271,8 @@ function walkNode(node: any, tagName: string, parentIndex: number | undefined, c
   let childParentIndex = parentIndex
 
   if (emit) {
-    const label = extractLabel(attrs, ctx.platform)
+    const rawLabel = extractLabel(attrs, ctx.platform)
+    const label = promoted && rawLabel !== undefined ? capPromotedName(String(rawLabel)) : rawLabel
     const value = extractValue(attrs, ctx.platform)
 
     let bounds: { x: number; y: number; width: number; height: number } | undefined
