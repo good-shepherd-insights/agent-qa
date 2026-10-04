@@ -106,7 +106,7 @@ const VOLUME_BUTTONS = new Set<string>(['volumeUp'])
 const MAX_PICKER_INDEX = 20
 const IOS_SAFARI_BUNDLE_ID = 'com.apple.mobilesafari'
 const IOS_SPRINGBOARD_BUNDLE_ID = 'com.apple.springboard'
-const IOS_LINK_HANDOFF_POLLS = 4
+const IOS_LINK_HANDOFF_POLLS = 12
 const IOS_LINK_HANDOFF_PAUSE_MS = 500
 
 function firstErrorLine(err: unknown): string {
@@ -1483,7 +1483,8 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
           }
         }
         // The system handler hands an http(s) link no installed app claims to Safari; the
-        // before/after foreground check turns that hand-off into a failure.
+        // before/after foreground check turns that hand-off into a failure. The window (~6 s)
+        // covers a cold Safari or app launch, which can take 3-4 s to reach the front.
         const before = await this.readForegroundBundleId()
         try {
           await driver.url(action.url)

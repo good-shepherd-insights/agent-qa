@@ -747,7 +747,7 @@ describe('IOSPlatformAdapter', () => {
         expect(result).toEqual({ success: true })
         expect(mockDriver.url).toHaveBeenCalledTimes(1)
         expect(mockDriver.url).toHaveBeenCalledWith(LINK)
-        expect(mockDriver.pause.mock.calls.length).toBeLessThanOrEqual(4)
+        expect(mockDriver.pause.mock.calls.length).toBeLessThanOrEqual(12)
         expect(deepLinkExecutes()).toEqual([])
         expect(mockDriver.activateApp).not.toHaveBeenCalled()
       })
@@ -822,13 +822,26 @@ describe('IOSPlatformAdapter', () => {
 
       it('polls to the bound when no read is decisive, and the last read decides', async () => {
         await adapter.setup({ platform: 'ios' })
-        scriptForeground([APP, APP, APP, APP, APP])
+        scriptForeground([APP])
 
         const result = await adapter.execute({ type: 'openUniversalLink', url: LINK })
 
         expect(result.success).toBe(true)
-        expect(mockDriver.pause).toHaveBeenCalledTimes(4)
-        expect(foregroundReads()).toBe(5)
+        expect(mockDriver.pause).toHaveBeenCalledTimes(12)
+        expect(foregroundReads()).toBe(13)
+      })
+
+      it('catches a cold Safari launch that comes to the front after about 3.5 s', async () => {
+        await adapter.setup({ platform: 'ios' })
+        scriptForeground([APP, APP, APP, APP, APP, APP, APP, SAFARI])
+
+        const result = await adapter.execute({ type: 'openUniversalLink', url: LINK })
+
+        expect(result.success).toBe(false)
+        expect(result.error).toContain(`iOS opened ${LINK} in Safari`)
+        expect(mockDriver.pause).toHaveBeenCalledTimes(7)
+        expect(foregroundReads()).toBe(8)
+        expect(mockDriver.activateApp).toHaveBeenCalledWith(APP)
       })
 
       it('never scopes to SpringBoard: from the home screen to Safari fails without re-activating', async () => {
