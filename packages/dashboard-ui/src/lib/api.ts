@@ -1108,11 +1108,40 @@ export interface TokenEventStats {
   byModel: { date: string; model: string; promptTokens: number; completionTokens: number }[]
   bySource: Record<string, { promptTokens: number; completionTokens: number }>
   totals: { promptTokens: number; completionTokens: number }
+  /** Window run steps that recorded no token counts (433-30); absent from an older server. */
+  testRunUnmeasuredSteps?: number
 }
 
 export async function fetchTokenEventStats(opts?: { from?: string; to?: string }): Promise<TokenEventStats> {
   const query = buildQuery({ from: opts?.from, to: opts?.to })
   return request(`/api/token-events/stats${query}`)
+}
+
+export type InsightsKnowledgeChanges =
+  | {
+      status: 'read'
+      runsInWindow: number
+      runsRead: number
+      runsUnreadable: number
+      truncated?: { read: number; total: number }
+      byKind: Partial<Record<string, number>>
+    }
+  | { status: 'unavailable'; reason: string }
+
+/** What curation changed across the window's runs, read per run from each run's knowledge (433-30). */
+export async function fetchInsightsKnowledgeChanges(
+  opts?: { from?: string; to?: string },
+): Promise<InsightsKnowledgeChanges> {
+  const query = buildQuery({ from: opts?.from, to: opts?.to })
+  try {
+    return await request(`/api/insights/knowledge-changes${query}`)
+  } catch (error) {
+    if (error instanceof ApiError && error.payload?.status === 'unavailable') {
+      const reason = error.payload.reason
+      return { status: 'unavailable', reason: typeof reason === 'string' ? reason : 'read_failed' }
+    }
+    throw error
+  }
 }
 
 // Log API

@@ -14,6 +14,7 @@ import {
 import {
   RUN_ARTIFACT_SCHEMA_VERSION,
   ModelUsageSchema,
+  type ModelUsage,
   RunStepTokenUsageSchema,
   type RunDetailMember,
   type RunDetailRows,
@@ -245,6 +246,15 @@ function mapRunMemberRow(row: Record<string, unknown>): RunDetailMember {
     attempts: (optionalInt(row.attempts) ?? 1),
     ...(recording === undefined ? {} : { recording: recording as RunDetailMember['recording'] }),
   }
+}
+
+// One step's spend carries no per-role split, so a step answered by two models is named by both.
+function stepModelName(usage: ModelUsage): string | undefined {
+  const roles = [usage.roles.planner, usage.roles.verifier]
+  const responding = roles.flatMap((role) => role?.respondingModelIds ?? [])
+  const declared = roles.flatMap((role) => (role?.declared === undefined ? [] : [role.declared.modelId]))
+  const names = [...new Set(responding.length > 0 ? responding : declared)].sort()
+  return names.length > 0 ? names.join(' + ') : undefined
 }
 
 function mapRunStepRow(row: Record<string, unknown>): RunDetailStep {
@@ -1280,10 +1290,11 @@ export class DashboardDatabase {
      * The `memoryLog` setter on `updateRun` is retained for the same reason — historical-row tests
      * need a way to plant such a row. Neither is a live path.
      *
-     * RETIREMENT TRAVELS WITH THE INSIGHTS V1 SWEEP, not with this gap. The "Memory Curator"
-     * section of the insights page is still a live surface reading this value; deleting the column,
-     * its setter and this aggregate means deleting that section too, which is the pending todo
-     * STATE.md already carries for `memory_log` and `RunArtifactConfigSnapshot.memory`.
+     * RETIREMENT TRAVELS WITH THE INSIGHTS V1 SWEEP, not with this gap. Since 433-30 (F-433-26) the
+     * insights page's "Memory Curator" section no longer reads this value: it reads each window
+     * run's knowledge changes through `GET /api/insights/knowledge-changes`. Deleting the column,
+     * its setter and this aggregate is the pending todo STATE.md already carries for `memory_log`
+     * and `RunArtifactConfigSnapshot.memory`.
      */
     const memorySummary = {
       runs: 0,
@@ -1395,14 +1406,19 @@ export class DashboardDatabase {
     byModel: { date: string; model: string; promptTokens: number; completionTokens: number }[]
     bySource: Record<string, { promptTokens: number; completionTokens: number }>
     totals: { promptTokens: number; completionTokens: number }
+    testRunUnmeasuredSteps: number
   } {
+    // 433-30 (F-433-26): test-run usage is the window's run-step tokens plus any legacy `test-run`
+    // token event. The two never describe the same step: the last writer of a `test-run` event (the
+    // v1 reporter) was deleted in 363-11, before `run_steps` existed (405-01), and v1 step rows were
+    // never migrated into it. Adding both counts each recorded token once.
     const conditions: string[] = []
     const params: unknown[] = []
     if (opts.from) { conditions.push('created_at >= ?'); params.push(opts.from) }
     if (opts.to) { conditions.push('created_at <= ?'); params.push(opts.to) }
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
-    const byModel = this.db.prepare(`
+    const eventByModel = this.db.prepare(`
       SELECT
         DATE(created_at) as date,
         model_name as model,
@@ -1437,11 +1453,99 @@ export class DashboardDatabase {
       ${where}
     `).get(...params) as { promptTokens: number; completionTokens: number }
 
-    return {
-      byModel,
-      bySource,
-      totals: { promptTokens: totalsRow.promptTokens, completionTokens: totalsRow.completionTokens },
+    // The window selects runs by `started_at`, as `getStats` and the breakdowns do.
+    const stepConditions: string[] = []
+    const stepParams: unknown[] = []
+    if (opts.from) { stepConditions.push('r.started_at >= ?'); stepParams.push(opts.from) }
+    if (opts.to) { stepConditions.push('r.started_at <= ?'); stepParams.push(opts.to) }
+    const stepWhere = stepConditions.length > 0 ? `WHERE ${stepConditions.join(' AND ')}` : ''
+    const stepRows = this.db.prepare(`
+      SELECT
+        DATE(COALESCE(r.started_at, r.created_at)) as date,
+        r.model_name as runModel,
+        s.prompt_tokens as promptTokens,
+        s.completion_tokens as completionTokens,
+        s.total_tokens as totalTokens,
+        s.model_usage_json as usageJson
+      FROM run_steps s
+      JOIN runs r ON r.id = s.run_id
+      ${stepWhere}
+    `).all(...stepParams) as {
+      date: string | null
+      runModel: string | null
+      promptTokens: number | null
+      completionTokens: number | null
+      totalTokens: number | null
+      usageJson: string | null
+    }[]
+
+    const byModelKey = new Map<string, { date: string; model: string; promptTokens: number; completionTokens: number }>()
+    for (const row of eventByModel) byModelKey.set(`${row.date}\u0000${row.model}`, { ...row })
+    let stepPrompt = 0
+    let stepCompletion = 0
+    let measuredSteps = 0
+    let unmeasuredSteps = 0
+    for (const row of stepRows) {
+      const envelope = parseJsonColumn(row.usageJson)
+      const modelUsage = isPlainObject(envelope) ? ModelUsageSchema.safeParse(envelope.modelUsage) : undefined
+      if (row.totalTokens === null || row.totalTokens === undefined) {
+        // A step whose model usage records no call made none: that zero was measured.
+        if (modelUsage?.success && modelUsage.data.calls.started === 0) {
+          measuredSteps += 1
+        } else {
+          unmeasuredSteps += 1
+        }
+        continue
+      }
+      measuredSteps += 1
+      const promptTokens = row.promptTokens ?? 0
+      const completionTokens = row.completionTokens ?? 0
+      stepPrompt += promptTokens
+      stepCompletion += completionTokens
+      const model = (modelUsage?.success ? stepModelName(modelUsage.data) : undefined)
+        ?? (row.runModel || undefined)
+        ?? 'unattributed'
+      const date = row.date ?? 'unknown'
+      const key = `${date}\u0000${model}`
+      const current = byModelKey.get(key) ?? { date, model, promptTokens: 0, completionTokens: 0 }
+      current.promptTokens += promptTokens
+      current.completionTokens += completionTokens
+      byModelKey.set(key, current)
     }
+    if (measuredSteps > 0) {
+      const legacy = bySource['test-run'] ?? { promptTokens: 0, completionTokens: 0 }
+      bySource['test-run'] = {
+        promptTokens: legacy.promptTokens + stepPrompt,
+        completionTokens: legacy.completionTokens + stepCompletion,
+      }
+    }
+
+    return {
+      byModel: [...byModelKey.values()].sort((left, right) => left.date.localeCompare(right.date)),
+      bySource,
+      totals: {
+        promptTokens: totalsRow.promptTokens + stepPrompt,
+        completionTokens: totalsRow.completionTokens + stepCompletion,
+      },
+      testRunUnmeasuredSteps: unmeasuredSteps,
+    }
+  }
+
+  /**
+   * The window's run ids, newest first, capped at `limit`, with the window's full count (433-30).
+   * Ids only: the Insights knowledge-change read dispatches each through the agent host.
+   */
+  listInsightsWindowRunIds(opts: { from?: string; to?: string; limit: number }): { runIds: string[]; total: number } {
+    const conditions: string[] = []
+    const params: unknown[] = []
+    if (opts.from) { conditions.push('started_at >= ?'); params.push(opts.from) }
+    if (opts.to) { conditions.push('started_at <= ?'); params.push(opts.to) }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+    const total = (this.db.prepare(`SELECT COUNT(*) as cnt FROM runs ${where}`).get(...params) as { cnt: number }).cnt
+    const rows = this.db.prepare(`
+      SELECT id FROM runs ${where} ORDER BY started_at DESC, id DESC LIMIT ?
+    `).all(...params, opts.limit) as { id: string }[]
+    return { runIds: rows.map((row) => row.id), total }
   }
 
   getRunsByTestName(name: string, opts?: { limit?: number; offset?: number; attributePredicates?: AttributePredicate[] }): RunRow[] {

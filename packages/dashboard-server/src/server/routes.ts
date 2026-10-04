@@ -27,6 +27,7 @@ import {
   LlmCredentialMoveRequestSchema,
   parseHandleParam,
   providerErrorSentence,
+  RecordChangeSchema,
 } from '@vostride/agent-qa-schema'
 import type {
   EditorLiveUrlResult,
@@ -64,7 +65,7 @@ import { serveRunAnalysisRead } from '../run-service/run-analysis-routes.js'
 // 407-01 (D-05): the Knowledge panel's read — what a run used and learned. One arm below, beside
 // the analysis arm and above the `/api/runs/:id` catch-all, formatting nothing and opening no
 // database.
-import { serveRunKnowledgeRead } from '../run-service/run-knowledge-routes.js'
+import { readRunKnowledge, serveRunKnowledgeRead } from '../run-service/run-knowledge-routes.js'
 import { registerRunMarkRoute } from '../run-service/run-mark-routes.js'
 import {
   registerConfigRevealRoute,
@@ -615,6 +616,65 @@ function refuseCrossSiteDisplayRead(req: IncomingMessage, res: ServerResponse): 
   if (refuseCrossSiteRequest(req) === undefined) return false
   jsonNoCors(res, { error: 'cross_site_refused' }, 403)
   return true
+}
+
+const INSIGHTS_KNOWLEDGE_RUN_CAP = 200
+const INSIGHTS_KNOWLEDGE_CONCURRENCY = 4
+
+type KnowledgeChangeKind = (typeof RecordChangeSchema.shape.change.options)[number]
+
+interface InsightsKnowledgeChanges {
+  status: 'read'
+  runsInWindow: number
+  runsRead: number
+  runsUnreadable: number
+  truncated?: { read: number; total: number }
+  byKind: Record<KnowledgeChangeKind, number>
+}
+
+/**
+ * Tally the window's knowledge changes by kind, one `runs.knowledge` read per run (433-30).
+ *
+ * A run is unreadable when the read is refused or throws, when its handoff is gone
+ * (`evidence-incomplete`), or when the store scan behind its changes was incomplete. Its changes
+ * are not counted, and it is reported as unreadable rather than as a run that changed nothing.
+ * The latest {@link INSIGHTS_KNOWLEDGE_RUN_CAP} runs are read; a larger window says so.
+ */
+async function readInsightsKnowledgeChanges(
+  host: AgentHost,
+  db: DashboardDatabase,
+  window: { from?: string; to?: string },
+): Promise<InsightsKnowledgeChanges> {
+  const { runIds, total } = db.listInsightsWindowRunIds({ ...window, limit: INSIGHTS_KNOWLEDGE_RUN_CAP })
+  const byKind = Object.fromEntries(
+    RecordChangeSchema.shape.change.options.map((kind) => [kind, 0]),
+  ) as Record<KnowledgeChangeKind, number>
+  let runsRead = 0
+  let runsUnreadable = 0
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (next < runIds.length) {
+      const runId = runIds[next++]
+      const outcome = await readRunKnowledge(host, runId).catch(() => undefined)
+      if (outcome?.kind !== 'ok' || outcome.body.kind !== 'ready' || outcome.body.learned.scanIncomplete) {
+        runsUnreadable += 1
+        continue
+      }
+      runsRead += 1
+      for (const change of outcome.body.learned.changes) {
+        if (Object.hasOwn(byKind, change.change)) byKind[change.change] += 1
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(INSIGHTS_KNOWLEDGE_CONCURRENCY, runIds.length) }, worker))
+  return {
+    status: 'read',
+    runsInWindow: total,
+    runsRead,
+    runsUnreadable,
+    ...(total > runIds.length ? { truncated: { read: runIds.length, total } } : {}),
+    byKind,
+  }
 }
 
 function notFound(res: ServerResponse, message = 'Not found'): void {
@@ -1471,6 +1531,8 @@ const RUN_READS_WITHOUT_ROWS: ReadonlySet<string> = new Set([
   'finalizeRunArtifact',
   'getRunsBySuiteIdCount',
   'getRunsByTestNameCount',
+  // 433-30: run ids and a count, no row; each id is dispatched through the agent host.
+  'listInsightsWindowRunIds',
   'insertPendingRun',
   'insertRun',
   'insertRunArtifact',
@@ -2660,6 +2722,24 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
       const to = url.searchParams.get('to') ?? undefined
       const costStats = db.getCostStats({ from, to })
       json(res, costStats)
+      return
+    }
+
+    // GET /api/insights/knowledge-changes — what curation changed across the window's runs (433-30,
+    // F-433-26). Each run is read through `runs.knowledge`, the op the Knowledge tab reads, on the
+    // machine boundary: only counts leave this arm, so nothing is restored.
+    if (path === '/api/insights/knowledge-changes' && req.method === 'GET') {
+      if (refuseCrossSiteDisplayRead(req, res)) return
+      if (!deps.agentHost) {
+        jsonNoCors(res, { status: 'unavailable', reason: 'agent_host_unavailable' }, 503)
+        return
+      }
+      const from = url.searchParams.get('from') ?? undefined
+      const to = url.searchParams.get('to') ?? undefined
+      void readInsightsKnowledgeChanges(deps.agentHost, db, { from, to }).then(
+        (body) => { jsonNoCors(res, body) },
+        () => { jsonNoCors(res, { status: 'unavailable', reason: 'read_failed' }, 500) },
+      )
       return
     }
 

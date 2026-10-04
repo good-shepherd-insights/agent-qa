@@ -7,10 +7,12 @@ import {
 
 import {
   fetchInsightsBreakdown,
+  fetchInsightsKnowledgeChanges,
   fetchStats,
   fetchTokenEventStats,
   type InsightsBreakdownDimension,
   type InsightsBreakdownRow,
+  type InsightsKnowledgeChanges,
   type Stats,
   type TokenEventStats,
 } from "@/lib/api"
@@ -72,6 +74,7 @@ export default function InsightsPage() {
 
   const [stats, setStats] = useState<Stats | null>(null)
   const [tokenStats, setTokenStats] = useState<TokenEventStats | null>(null)
+  const [knowledgeChanges, setKnowledgeChanges] = useState<InsightsKnowledgeChanges | null>(null)
   const [breakdownRows, setBreakdownRows] = useState<InsightsBreakdownRow[]>([])
   const [hasLoadedOverview, setHasLoadedOverview] = useState(false)
   const [hasLoadedBreakdown, setHasLoadedBreakdown] = useState(false)
@@ -121,6 +124,28 @@ export default function InsightsPage() {
       cancelled = true
     }
   }, [timeWindow, scopeMode])
+
+  useEffect(() => {
+    let cancelled = false
+
+    // Separate from the overview: a failed curation read is named in the Memory section and never
+    // takes the rest of the page down with it.
+    async function loadKnowledgeChanges() {
+      let next: InsightsKnowledgeChanges
+      try {
+        next = await fetchInsightsKnowledgeChanges({ from: getWindowFrom(timeWindow) })
+      } catch {
+        next = { status: "unavailable", reason: "request_failed" }
+      }
+      if (!cancelled) setKnowledgeChanges(next)
+    }
+
+    void loadKnowledgeChanges()
+
+    return () => {
+      cancelled = true
+    }
+  }, [timeWindow])
 
   useEffect(() => {
     let cancelled = false
@@ -314,7 +339,7 @@ export default function InsightsPage() {
             </InsightsLineGrid>
 
             <div className={cn("transition-opacity", isWindowRefreshing && "opacity-70")}>
-              <InsightsSecondarySections stats={stats} tokenStats={tokenStats} />
+              <InsightsSecondarySections tokenStats={tokenStats} knowledgeChanges={knowledgeChanges} />
             </div>
           </section>
 
