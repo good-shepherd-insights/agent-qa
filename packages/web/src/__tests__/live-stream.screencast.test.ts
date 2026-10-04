@@ -26,6 +26,7 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
+import { firefox, webkit } from 'playwright-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { createLiveStreamHub } from '@vostride/agent-qa-runner'
@@ -66,6 +67,15 @@ const STATIC_MAX_FRAMES = 4
 const KEEPALIVE_MIN_GAP_MS = 1_800
 /** TIMESTAMP-EPOCH-MS: a capture time in epoch ms is within this of the receiver's clock. */
 const EPOCH_MS_TOLERANCE_MS = 5_000
+/**
+ * The bound on each non-chromium launch in the getter-gates cell (quick 261004-lvn). Playwright's
+ * default launch timeout (3 min in playwright-core 1.61.0) equals the cell's 180 s budget, so an
+ * unbounded launch that hangs used up the cell before its own catch could run. Firefox 1532 never
+ * launches on this macOS host (433-01: launch timeout x3 at 60 s; a 15 s probe on 2026-10-04 timed
+ * out too), while WebKit 2311 launched in 703 ms and chromium in 254 ms. Two bounded probes plus
+ * the adapter setups stay well under the 180_000 budget, which is unchanged.
+ */
+const NON_CHROMIUM_LAUNCH_BOUND_MS = 30_000
 
 let page: LiveStreamFixturePage | undefined
 let tall: LiveStreamFixturePage | undefined
@@ -545,7 +555,7 @@ describe('WebPlatformAdapter.liveStream is CHANGE-DRIVEN, not polled (LIVE-01)',
     }
   }, 180_000)
 
-  it('the capability getter\'s TWO gates are both measured: no page, and a non-chromium browser', async () => {
+  it('the capability getter\'s TWO gates: no page, and each non-chromium browser that launches within the stated bound', async ({ annotate }) => {
     // Gate 1: an adapter that has not been `setup()` has no page, so there is nothing to stream.
     const fresh = new WebPlatformAdapter()
     expect(
@@ -553,36 +563,47 @@ describe('WebPlatformAdapter.liveStream is CHANGE-DRIVEN, not polled (LIVE-01)',
       'a screencast needs a page; an adapter before setup() has none, and says so by absence',
     ).toBeUndefined()
 
-    // Gate 2: the browser-name gate. Requested honestly: if a Firefox binary is present the gate is
-    // measured on a REAL non-chromium adapter; if it is not, the cell still measures the other gate
-    // rather than skipping — and NEVER pretends the browser was there.
-    let firefox: WebPlatformAdapter | undefined
-    try {
-      const candidate = new WebPlatformAdapter()
-      await candidate.setup({ platform: 'web', browser: { name: 'firefox', headless: true } })
-      firefox = candidate
-    } catch {
-      firefox = undefined
-    }
-    if (firefox !== undefined) {
-      try {
-        expect(
-          firefox.liveStream,
-          'Page.startScreencast is a CDP call; a non-chromium target declares no stream rather '
-          + 'than falling back to screenshots (D-08\'s honest absence)',
-        ).toBeUndefined()
-      } finally {
-        await firefox.cleanup().catch(() => undefined)
-      }
-    }
-
-    // And the positive half of gate 1: after a chromium setup, the capability is there.
+    // And the positive half of gate 1: after a chromium setup, the capability is there. Measured
+    // before any non-chromium launch is tried, so a browser that cannot launch never costs it.
     const chromium = await adapterOn(fixture().url)
     try {
       expect(chromium.liveStream, 'a set-up chromium adapter declares the screencast').toBeDefined()
       expect(chromium.liveStream?.kind).toBe('cdp-screencast')
     } finally {
       await chromium.cleanup().catch(() => undefined)
+    }
+
+    // Gate 2: the browser-name gate, measured on a REAL set-up adapter for each non-chromium
+    // browser that launches within NON_CHROMIUM_LAUNCH_BOUND_MS. One that does not is reported as
+    // unmeasured, with its error's first line, and is NEVER reported as measured.
+    for (const [name, launcher] of [['firefox', firefox], ['webkit', webkit]] as const) {
+      let unmeasured: string | undefined
+      try {
+        const probe = await launcher.launch({ headless: true, timeout: NON_CHROMIUM_LAUNCH_BOUND_MS })
+        await probe.close()
+      } catch (error) {
+        unmeasured = (error instanceof Error ? error.message : String(error)).split('\n')[0]
+      }
+      if (unmeasured !== undefined) {
+        const note = `NON-CHROMIUM-GATE ${name} unmeasured: ${unmeasured}`
+        console.log(note)
+        await annotate(note)
+        continue
+      }
+      const adapter = new WebPlatformAdapter()
+      try {
+        await adapter.setup({ platform: 'web', browser: { name, headless: true } })
+        expect(
+          adapter.liveStream,
+          'Page.startScreencast is a CDP call; a non-chromium target declares no stream rather '
+          + 'than falling back to screenshots (D-08\'s honest absence)',
+        ).toBeUndefined()
+      } finally {
+        await adapter.cleanup().catch(() => undefined)
+      }
+      const note = `NON-CHROMIUM-GATE ${name} measured`
+      console.log(note)
+      await annotate(note)
     }
   }, 180_000)
 
