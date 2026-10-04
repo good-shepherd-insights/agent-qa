@@ -90,7 +90,12 @@ import {
   produceMembersFromPatterns,
   resolveRunInvocationInputs,
 } from '../commands/run.js'
-import type { ProducedCliRunMembers, RunInvocationInputs, RunOptions } from '../commands/run.js'
+import type {
+  ProducedCliRunMembers,
+  RunArtifactSnapshotListener,
+  RunInvocationInputs,
+  RunOptions,
+} from '../commands/run.js'
 import type { ResolveTrustPriors } from '../curation/trust-priors.js'
 
 /**
@@ -132,6 +137,12 @@ export interface RunSubscriberAttachInput {
   readonly session: RunSession
   readonly quarantined: readonly QuarantineAppliedEntry[]
   readonly maskingContext: RunMaskingContext
+  /**
+   * The producer's snapshot channel (433-29, G-433-5): a door's dashboard ingest registers here to
+   * stage each member's masked test and config onto the run's artifact. Absent when the producer
+   * has none.
+   */
+  readonly onMemberSnapshot?: (listener: RunArtifactSnapshotListener) => () => void
 }
 
 /** What a door's post-verdict tail is handed, INSIDE the run's own safety scope. */
@@ -634,7 +645,12 @@ export async function runInProcessCliRun(
       persistMaskingDigests()
       produced.bindSession(session)
       options.onSession?.(session)
-      startedSubscribers = options.subscribers?.({ session, quarantined, maskingContext })
+      startedSubscribers = options.subscribers?.({
+        session,
+        quarantined,
+        maskingContext,
+        ...(produced.onMemberSnapshot === undefined ? {} : { onMemberSnapshot: produced.onMemberSnapshot }),
+      })
     },
     // 404 D-05/D-10: the post-verdict step, composed HERE and threaded by the core so no door can
     // forget it. It speaks writer-lease vocabulary `agent-local`'s runner seam may not name, which

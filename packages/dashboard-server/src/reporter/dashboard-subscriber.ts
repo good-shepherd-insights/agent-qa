@@ -68,6 +68,15 @@ type SourceSnapshot =
 type ConfigSnapshot = RunArtifactConfigSnapshot | ArtifactRecord
 
 /**
+ * A run's loaded test/suite and config snapshot, handed over by the producer that resolved them
+ * (433-29, G-433-5). It arrives out-of-band, like `finalize()`'s runtime: the bus carries no snapshots.
+ */
+export interface DashboardRunIngestSnapshots {
+  config?: ConfigSnapshot
+  source?: SourceSnapshot
+}
+
+/**
  * The spawn correlation env the runner process is launched with (test-runner.ts
  * `execute()` — the three exclusive modes). Read from `process.env` at the CLI
  * composition root and passed in; the bus never carries these.
@@ -119,6 +128,12 @@ export interface DashboardRunIngestFinalizeExtra {
 
 export interface DashboardRunIngest {
   handler(envelope: RunEventEnvelope): void
+  /**
+   * Stage a loaded snapshot onto this run's own artifact (433-29, F-433-15). A section is written
+   * only where it is absent or still the queue's `loadStatus: 'queued'` placeholder, so the first
+   * snapshot wins and a finalized artifact is never touched. A call before `runStarted` is held.
+   */
+  stageSnapshots(input: DashboardRunIngestSnapshots): void
   finalize(extra?: DashboardRunIngestFinalizeExtra): Promise<void>
 }
 
@@ -201,6 +216,7 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
   const memberDurations = new Map<number, number | undefined>()
   let startedAtMs = 0
   let finalized = false
+  const heldSnapshots: DashboardRunIngestSnapshots[] = []
 
   function baseArtifactPayload(): RunArtifactStageInput {
     return {
@@ -283,10 +299,33 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
     }
   }
 
+  function sourceReplaceable(stored: unknown): boolean {
+    return stored === undefined || (isRecord(stored) && stored.loadStatus === 'queued')
+  }
+
+  function applySnapshots(id: string, input: DashboardRunIngestSnapshots): void {
+    try {
+      const artifact = db.getRunArtifact(id)
+      if (!artifact || artifact.finalizedAt) return
+      const stored = artifact.payload as unknown as Record<string, unknown>
+      const patch: RunArtifactStageInput = {}
+      if (isRecord(input.config) && stored.config === undefined) {
+        patch.config = input.config as RunArtifactStageInput['config']
+      }
+      if (isRecord(input.source) && sourceReplaceable(stored.source)) {
+        patch.source = input.source as RunArtifactStageInput['source']
+      }
+      if (patch.config !== undefined || patch.source !== undefined) db.stageRunArtifact(id, patch)
+    } catch {
+      // Non-darkening: a snapshot that will not write leaves the run row and its verdict alone.
+    }
+  }
+
   function handleRunStarted(): void {
     const id = adoptOrInsertPrimary()
     runId = id
     insertArtifact(id, 'test')
+    for (const held of heldSnapshots.splice(0)) applySnapshots(id, held)
     onRunCreated?.(id)
   }
 
@@ -577,6 +616,15 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
           // Unknown/unhandled envelope types (hookStarted, heartbeats, chips) are ignored.
           break
       }
+    },
+
+    stageSnapshots(input: DashboardRunIngestSnapshots): void {
+      if (finalized) return
+      if (runId === undefined) {
+        heldSnapshots.push(input)
+        return
+      }
+      applySnapshots(runId, input)
     },
 
     async finalize(extra?: DashboardRunIngestFinalizeExtra): Promise<void> {

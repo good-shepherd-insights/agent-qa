@@ -575,6 +575,7 @@ interface DashboardRunEntry {
   readonly flags: DashboardRunFlags
   readonly ingest: {
     handler: (envelope: RunEventEnvelope) => void
+    stageSnapshots: (snapshots: { config?: Record<string, unknown>; source?: Record<string, unknown> }) => void
     finalize: () => Promise<void>
   }
 }
@@ -702,13 +703,19 @@ export async function createDashboardRunDoor(input: {
     subscribers: (attach) => {
       const entry = entries.get(attach.session.id as unknown as string)
       if (entry === undefined) return undefined
+      // 433-29 (G-433-5, F-433-15): the producer's masked test/config snapshot replaces the queue's
+      // `loadStatus: 'queued'` placeholder on this run's artifact.
+      const unsubscribe = attach.onMemberSnapshot?.((snapshot) => { entry.ingest.stageSnapshots(snapshot) })
       return cliRunSubscribers({
         // NO CONSOLE REPORTER. This process's stdout is a server's log, not a run's transcript, and
         // a run's transcript is the typed bus event log (D-04).
         console: false,
         extraSubscribers: [{
           handler: entry.ingest.handler,
-          flush: () => entry.ingest.finalize(),
+          flush: async () => {
+            unsubscribe?.()
+            await entry.ingest.finalize()
+          },
         }],
       })(attach)
     },

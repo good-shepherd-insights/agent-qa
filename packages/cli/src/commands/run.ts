@@ -14,7 +14,7 @@ import { resolveDevice, loadLocalBindings, resolveProviderCredentials, type Reso
 import { resolveLLMModels, resolveModelAuth, toModelProfileAndAuth } from '../llm-utils.js'
 import { formatInstallBrowsersRetryCommand, type BrowserInstallSelection } from './install-browsers.js'
 import type { ParsedTestBinding, TestDefinition, ParseError, SuiteDefinition, SuiteResult, RunSuiteConfig } from '@vostride/agent-qa-core'
-import { asRunId } from '@vostride/agent-qa-schema'
+import { asRunId, maskPayloadStrings } from '@vostride/agent-qa-schema'
 import type {
   DeclaredModelProfile,
   ModelCapabilities,
@@ -821,6 +821,11 @@ function readDashboardCorrelationEnv(env: NodeJS.ProcessEnv = process.env): {
 // DashboardReporter attach). Config/source snapshots + correlation env ride construction; envelopes
 // drive lifecycle. Returns a subscriber handle whose `flush` lands the finalize sweep (the memory
 // section arrives out-of-band). Dashboard is optional — a load failure degrades to no subscriber.
+//
+// 433-29 (G-433-5, F-433-15): the ingest is built at ATTACH, where the run's masking context exists.
+// Construction snapshots cross that mask before they reach the database (the suite path stored its
+// env file in clear before), and the producer's snapshot channel stages each member's loaded
+// test/config onto the run's artifact.
 async function buildDashboardIngestSubscriber(input: {
   db: any
   configSnapshot?: unknown
@@ -832,27 +837,96 @@ async function buildDashboardIngestSubscriber(input: {
    * the environment carries no correlation id, so an ingest never files the run under a new one.
    */
   runCorrelation: { runId: string } | { suiteQueueId: string }
-}): Promise<RunSubscriberHandle | undefined> {
+}): Promise<((attach: DashboardIngestAttach) => RunSubscriberHandle) | undefined> {
   try {
     const { createDashboardRunIngest } = await import('@vostride/agent-qa-dashboard')
     const fromEnv = readDashboardCorrelationEnv()
     const correlationEnv = fromEnv.runId === undefined && fromEnv.suiteQueueId === undefined
       ? input.runCorrelation
       : fromEnv
-    const ingest = createDashboardRunIngest({
-      db: input.db,
-      configSnapshot: input.configSnapshot as any,
-      sourceSnapshot: input.sourceSnapshot as any,
-      attributes: input.attributes,
-      correlationEnv,
-      onRunCreated: input.onRunCreated,
-    })
-    return {
-      handler: ingest.handler,
-      flush: () => ingest.finalize(),
+    return (attach) => {
+      const mask = (value: unknown): any => (isSnapshotRecord(value)
+        ? maskPayloadStrings(value, (text) => attach.maskingContext.mask(text))
+        : undefined)
+      const ingest = createDashboardRunIngest({
+        db: input.db,
+        configSnapshot: mask(input.configSnapshot),
+        sourceSnapshot: mask(input.sourceSnapshot),
+        attributes: input.attributes,
+        correlationEnv,
+        onRunCreated: input.onRunCreated,
+      })
+      const unsubscribe = attach.onMemberSnapshot?.((snapshot) => { ingest.stageSnapshots(snapshot) })
+      return {
+        handler: ingest.handler,
+        flush: async () => {
+          unsubscribe?.()
+          await ingest.finalize()
+        },
+      }
     }
   } catch {
     return undefined
+  }
+}
+
+interface DashboardIngestAttach {
+  readonly maskingContext: { mask(text: string): string }
+  readonly onMemberSnapshot?: RunArtifactSnapshotChannel['subscribe']
+}
+
+function isSnapshotRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * A run's loaded test/suite and config snapshot, masked with the run's own context (433-29,
+ * G-433-5). The bus carries no snapshots; this channel is how a door's dashboard ingest gets them.
+ */
+export interface RunArtifactSnapshot {
+  readonly config?: Record<string, unknown>
+  readonly source?: Record<string, unknown>
+}
+
+export type RunArtifactSnapshotListener = (snapshot: RunArtifactSnapshot) => void
+
+interface RunArtifactSnapshotChannel {
+  emit(snapshot: RunArtifactSnapshot): void
+  /** Every snapshot emitted so far is replayed, so a listener registered late still gets each once. */
+  subscribe(listener: RunArtifactSnapshotListener): () => void
+}
+
+function createRunArtifactSnapshotChannel(): RunArtifactSnapshotChannel {
+  const emitted: RunArtifactSnapshot[] = []
+  const listeners = new Set<RunArtifactSnapshotListener>()
+  const deliver = (listener: RunArtifactSnapshotListener, snapshot: RunArtifactSnapshot): void => {
+    try {
+      listener(snapshot)
+    } catch {
+      // A listener's failure is never the run's (the dashboard ingest is best-effort).
+    }
+  }
+  return {
+    emit(snapshot) {
+      emitted.push(snapshot)
+      for (const listener of [...listeners]) deliver(listener, snapshot)
+    },
+    subscribe(listener) {
+      listeners.add(listener)
+      for (const snapshot of emitted) deliver(listener, snapshot)
+      return () => { listeners.delete(listener) }
+    },
+  }
+}
+
+function maskRunArtifactSnapshot(
+  artifact: Record<string, unknown>,
+  masking: { mask(text: string): string },
+): RunArtifactSnapshot {
+  const mask = (text: string): string => masking.mask(text)
+  return {
+    ...(isSnapshotRecord(artifact.config) ? { config: maskPayloadStrings(artifact.config, mask) } : {}),
+    ...(isSnapshotRecord(artifact.source) ? { source: maskPayloadStrings(artifact.source, mask) } : {}),
   }
 }
 
@@ -1839,16 +1913,15 @@ async function executeSuites(
   // omits rides here.
   const runLevelDashboardDb = produced.subscriberSeed?.dashboardDb
   const extraSubscribers: RunSubscriberHandle[] = []
-  if (runLevelDashboardDb) {
-    const dashboardSubscriber = await buildDashboardIngestSubscriber({
-      db: runLevelDashboardDb,
-      configSnapshot: produced.subscriberSeed?.configSnapshot,
-      sourceSnapshot: produced.subscriberSeed?.sourceSnapshot,
-      attributes: produced.subscriberSeed?.attributes,
-      runCorrelation: { suiteQueueId: runId },
-    })
-    if (dashboardSubscriber) extraSubscribers.push(dashboardSubscriber)
-  }
+  const suiteDashboardIngest = runLevelDashboardDb
+    ? await buildDashboardIngestSubscriber({
+        db: runLevelDashboardDb,
+        configSnapshot: produced.subscriberSeed?.configSnapshot,
+        sourceSnapshot: produced.subscriberSeed?.sourceSnapshot,
+        attributes: produced.subscriberSeed?.attributes,
+        runCorrelation: { suiteQueueId: runId },
+      })
+    : undefined
   // 398-10 (D-17/D-20): the re-homed subscriber over the port this command composed at its root.
   // `config` is NOT passed — the opt-out posture is already expressed by which transport that port
   // holds, and a subscriber that re-read it would be the second decision site D-19 abolished.
@@ -1891,7 +1964,7 @@ async function executeSuites(
         onSession: (session) => {
           activeRunSession = session
         },
-        subscribers: ({ session, quarantined, maskingContext }) => {
+        subscribers: ({ session, quarantined, maskingContext, onMemberSnapshot }) => {
           // The run's masking context now exists; point the analytics send seam at it.
           analyticsHost?.bindMaskingContext(maskingContext)
           return attachRunSubscribers({
@@ -1899,7 +1972,12 @@ async function executeSuites(
             maskingContext,
             console: reporterSelection.console ? { verbose: false, logLevel: effectiveLogLevel } : false,
             junitOutputPath: reporterSelection.junit ? opts.junitOutput : undefined,
-            extraSubscribers,
+            extraSubscribers: [
+              ...(suiteDashboardIngest === undefined
+                ? []
+                : [suiteDashboardIngest({ maskingContext, ...(onMemberSnapshot === undefined ? {} : { onMemberSnapshot }) })]),
+              ...extraSubscribers,
+            ],
             // 390 D-15: the SAME resolved set the run was assembled with, so the reporters and the
             // aggregate verdict rule describe one disposition rather than two.
             quarantined,
@@ -2347,6 +2425,7 @@ export async function produceSuiteRunMembers(
   let runSafetyHooks: SafetyHookRunner | undefined
   let activeRunSession: { cancel(): void } | undefined
   void activeRunSession
+  const suiteSnapshots = createRunArtifactSnapshotChannel()
 
   const dashboardCfg = config.services?.dashboard as Record<string, unknown> | undefined
   const reporterSelection = requireReporterSelection(opts, Boolean(dashboardCfg))
@@ -3477,7 +3556,14 @@ export async function produceSuiteRunMembers(
       runSafetyHooks = safetyHooks
       // Point every suite's loop masking port at the ONE run context (ungated from cache — D-09/356).
       for (const prepared of preparedSuites) prepared.suiteConfig.masking = maskingContext
+      // 433-29 (G-433-5): the suite's own source and config, once the run's mask exists.
+      for (const prepared of preparedSuites) {
+        if (isSnapshotRecord(prepared.suiteArtifact)) {
+          suiteSnapshots.emit(maskRunArtifactSnapshot(prepared.suiteArtifact, maskingContext))
+        }
+      }
     },
+    onMemberSnapshot: suiteSnapshots.subscribe,
     applyAssembly: ({ buildOrdinal, quarantined }) => {
       suiteBuildOrdinal = buildOrdinal
       suiteQuarantined = quarantined
@@ -3670,6 +3756,11 @@ export interface ProducedCliRunMembers {
     readonly attributes?: RunAttributes
   }
   /**
+   * The producer's snapshot channel (433-29, G-433-5): each member's loaded test and config, and a
+   * suite's own source and config, masked with the run's context. Late listeners get a replay.
+   */
+  readonly onMemberSnapshot?: (listener: RunArtifactSnapshotListener) => () => void
+  /**
    * The D-23 live knowledge bind, which needs the ordinal the assembler just advanced. Suite-only:
    * it opens one memoised reader/ledger/tool composition per prepared planner before any member can
    * execute, and it cannot precede the verdict because the ordinal is a durable write.
@@ -3720,6 +3811,7 @@ export async function produceDirectRunMembers(
   const onMemberRunId = input.onMemberRunId
   const producedRunId = input.runId
   const filtered = [...input.bindings]
+  const memberSnapshots = createRunArtifactSnapshotChannel()
   const directRunProduct = input.product
 
   // The late-bound slots the run's own lifecycle fills. `singleMaskingContext`,
@@ -4132,6 +4224,11 @@ export async function produceDirectRunMembers(
           loadStatus: 'loaded',
         },
       })
+      // 433-29 (G-433-5, F-433-15): this member's test as written and effective config, masked
+      // with the run's own context, for every door's dashboard ingest. No mask, no snapshot.
+      if (singleMaskingContext !== undefined) {
+        memberSnapshots.emit(maskRunArtifactSnapshot(artifactContext.artifact, singleMaskingContext))
+      }
 
       const getAuthAwareSandboxOptions = () => sandboxOptions && activeTestAuthState
         ? { ...sandboxOptions, authState: activeTestAuthState }
@@ -4481,6 +4578,7 @@ export async function produceDirectRunMembers(
     bindSession: (session) => { activeRunSession = session },
     takeFrameworkError: () => frameworkError,
     getCurationModelDeps: () => singleCurationModelDeps,
+    onMemberSnapshot: memberSnapshots.subscribe,
   }
 }
 
@@ -4935,19 +5033,18 @@ export function createRunCommand(): Command {
         // the dashboard db, the curation tail, the `--all` exit-code fold and the three terminal
         // exits. A drive that reached for any of those would be a library that owns its host.
         const singleExtraSubscribers: RunSubscriberHandle[] = []
-        if (dashboardDb) {
-          // The primary run row is adopted from AGENT_QA_RUN_ID and refreshed from the bus envelope
-          // stream (testStarted identity, testFinished status/duration, stepFinalized steps). The
-          // resolved per-test config/source snapshot lives inside the member closure (D-04), so the
-          // ingest seeds identity from the wire; the run row + steps (dashboard history) stay populated.
-          const dashboardSubscriber = await buildDashboardIngestSubscriber({
-            db: dashboardDb,
-            attributes: resolveCliRunAttributes(userRunAttributes, 'local', inheritedRunAttributes),
-            runCorrelation: { runId: singleRunId },
-            onRunCreated: (createdRunId: string) => { currentRunId = createdRunId; logger?.setRunId(createdRunId) },
-          })
-          if (dashboardSubscriber) singleExtraSubscribers.push(dashboardSubscriber)
-        }
+        // The primary run row is adopted from AGENT_QA_RUN_ID and refreshed from the bus envelope
+        // stream (testStarted identity, testFinished status/duration, stepFinalized steps). The
+        // resolved per-test config/source snapshot lives inside the member closure (D-04) and reaches
+        // the ingest through the producer's snapshot channel (433-29).
+        const singleDashboardIngest = dashboardDb
+          ? await buildDashboardIngestSubscriber({
+              db: dashboardDb,
+              attributes: resolveCliRunAttributes(userRunAttributes, 'local', inheritedRunAttributes),
+              runCorrelation: { runId: singleRunId },
+              onRunCreated: (createdRunId: string) => { currentRunId = createdRunId; logger?.setRunId(createdRunId) },
+            })
+          : undefined
         // 398-10: same factory, same composed port — Pitfall 8's rule applied to analytics.
         const singleAnalytics = await analytics()
         singleExtraSubscribers.push(buildAnalyticsRunSubscriber({
@@ -4980,7 +5077,7 @@ export function createRunCommand(): Command {
               onSession: (session) => {
                 activeRunSession = session
               },
-              subscribers: ({ session, quarantined, maskingContext }) => {
+              subscribers: ({ session, quarantined, maskingContext, onMemberSnapshot }) => {
                 singleAnalytics.bindMaskingContext(maskingContext)
                 // Attach the bus subscribers (console unmasks; junit + wire masked; dashboard
                 // ingest; analytics) — replay-then-live gives D-04 for free. `quarantined` is the
@@ -4990,7 +5087,12 @@ export function createRunCommand(): Command {
                   maskingContext,
                   console: reporterSelection.console ? { verbose: false, logLevel: effectiveLogLevel } : false,
                   junitOutputPath: reporterSelection.junit ? opts.junitOutput : undefined,
-                  extraSubscribers: singleExtraSubscribers,
+                  extraSubscribers: [
+                    ...(singleDashboardIngest === undefined
+                      ? []
+                      : [singleDashboardIngest({ maskingContext, ...(onMemberSnapshot === undefined ? {} : { onMemberSnapshot }) })]),
+                    ...singleExtraSubscribers,
+                  ],
                   quarantined,
                 })
               },
