@@ -928,7 +928,8 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     const spy = makeReader({ match: makeMatch(), payload: loginPayload() })
     const login = makeScreenState()
     const dashboard = makeScreenState({ url: 'https://example.test/dashboard' })
-    const { adapter, executed } = capturingAdapter([login, login, login, login, login, dashboard])
+    // quick 261004-lsa: each verify-path settle reads one more frame, so step 0 consumes four.
+    const { adapter, executed } = capturingAdapter([login, login, login, login, login, login, dashboard])
     const planner = capturingPlanner([makeActionPlan()])
     const verifier = makeVerifier()
     const sharedPorts = () => ports({

@@ -185,6 +185,16 @@ describe('runMemberTest — inline-DSL pipeline order', () => {
     expect(rec.instructions).toHaveLength(1)
   })
 
+  it('passes each step its position in the member (P2, quick 261004-lsa)', async () => {
+    const rec = recordingExecuteStep([stepResult()])
+    const result = await runMemberTest(
+      member({ steps: ['Type the message', 'Send the message'] }),
+      baseConfig({ executeStep: rec.fn }),
+    )
+    expect(result.status).toBe('passed')
+    expect(rec.contexts.map(c => [c.stepNumber, c.stepCount])).toEqual([[1, 2], [2, 2]])
+  })
+
   it('fails a step with an unresolved {{env:X}} after runJS resolution', async () => {
     const rec = recordingExecuteStep([stepResult()])
     const result = await runMemberTest(

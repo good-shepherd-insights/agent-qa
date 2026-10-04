@@ -93,7 +93,7 @@ import {
   redactSecretValue,
   resolveSecretTemplatesInValue,
 } from './secrets.js'
-import { captureServedPromptTurn, estimateTokens } from './prompts.js'
+import { captureServedPromptTurn, estimateTokens, hasValidStepPosition } from './prompts.js'
 import { EvidenceRecorder, collapseAnnotation, persistAriaEvidence, projectLegacyTrace } from './evidence.js'
 import type { RecordSubActionInput } from './evidence.js'
 import { maskToolExchanges } from './mask-exchanges.js'
@@ -162,6 +162,7 @@ const CAUTION_TRUNCATION_ID = 'caution:truncated'
 // animation-settling interval; the step deadline is the hard proceed-on-latest backstop.
 const DEFAULT_SETTLE_MAX_POLLS = 3
 const DEFAULT_SETTLE_INTERVAL_MS = 0
+const VERIFY_SETTLE_INTERVAL_MS = 500
 
 type LiveDecisionEvidence = Pick<RecordSubActionInput, 'exchanges' | 'callRecord' | 'decisionScreenshotRef'>
 
@@ -199,6 +200,9 @@ export async function executeStep(
       ? {
           ...(context.suiteContext ? { suiteContext: context.suiteContext } : {}),
           ...(context.testContext ? { testContext: context.testContext } : {}),
+          ...(hasValidStepPosition(context)
+            ? { stepNumber: context.stepNumber, stepCount: context.stepCount }
+            : {}),
         }
       : undefined
   const recordCap = ports.knowledgeBudgets?.recordCap ?? PROVISIONAL_DISTINCT_RECORD_CAP
@@ -1847,7 +1851,18 @@ export async function executeStep(
       // afterState reuse special-case was deleted with the verb — D-19, Phase 360.)
       let afterState: ScreenState
       try {
-        afterState = await withAbort(ports.adapter.observe(), ports.abortSignal)
+        // The verifier must not judge a screen that is still changing, such as a composer that
+        // has not cleared yet, so the frames settle compares are VERIFY_SETTLE_INTERVAL_MS apart.
+        const settledAfter = await settle(
+          () => withAbort(ports.adapter.observe(), ports.abortSignal),
+          {
+            maxPolls: DEFAULT_SETTLE_MAX_POLLS,
+            intervalMs: VERIFY_SETTLE_INTERVAL_MS,
+            deadline,
+            signal: ports.abortSignal,
+          },
+        )
+        afterState = settledAfter.state
       } catch (err) {
         const abortResult = checkAbort()
         if (abortResult) return abortResult

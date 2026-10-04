@@ -29,7 +29,9 @@ vi.mock('ai', async importOriginal => ({
 }))
 
 const HEADER =
-  "Test author's instructions (from the test definition; they also govern this verification):"
+  "Test author's context (from the test definition; written for the agent running the whole test). Use it for intent, setup and expected behaviour. It does not change what this step must achieve, and instructions about how the test ends apply only to the last step."
+const TEXT_B_STEP_2_OF_3 =
+  "Test author's context (from the test definition; written for the agent running the whole test). Use it for intent, setup and expected behaviour. It does not change what this step must achieve, and instructions about how the test ends apply only to the last step. This is step 2 of 3:"
 
 const PINNED = `Step goal: "Reply to the post"
 Action taken: click on ref="e2" (button "Log in")
@@ -79,6 +81,35 @@ describe('buildVerificationPrompt — author context (P2)', () => {
       ...(testContext ? { testContext } : {}),
     })
     expect(out).toBe(`${HEADER}\n${formatAuthorContext(suiteContext, testContext)}\n\n${PINNED}`)
+  })
+
+  it('renders text B verbatim when the position is valid', () => {
+    const out = buildVerificationPrompt('Reply to the post', before, after, action, true, '', undefined, {
+      testContext: 'Only the final screen is graded.',
+      stepNumber: 2,
+      stepCount: 3,
+    })
+    expect(out).toBe(`${TEXT_B_STEP_2_OF_3}\nTest context: Only the final screen is graded.\n\n${PINNED}`)
+  })
+
+  it.each([
+    ['step 0', { stepNumber: 0, stepCount: 3 }],
+    ['a step past the count', { stepNumber: 4, stepCount: 3 }],
+    ['a fractional step', { stepNumber: 1.5, stepCount: 3 }],
+    ['a missing count', { stepNumber: 2 }],
+  ])('renders the base header for an invalid position (%s)', (_label, position) => {
+    const out = buildVerificationPrompt('Reply to the post', before, after, action, true, '', undefined, {
+      testContext: 'Only the final screen is graded.',
+      ...position,
+    })
+    expect(out).toBe(`${HEADER}\nTest context: Only the final screen is graded.\n\n${PINNED}`)
+  })
+
+  it('position alone never creates an author block', () => {
+    expect(buildVerificationPrompt('Reply to the post', before, after, action, true, '', undefined, {
+      stepNumber: 2,
+      stepCount: 3,
+    })).toBe(PINNED)
   })
 
   it('carries the same text the planner context tier gets', () => {
