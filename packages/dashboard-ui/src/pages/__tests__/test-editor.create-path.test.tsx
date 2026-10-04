@@ -127,7 +127,7 @@ vi.mock('@/lib/api', async () => {
     createTestFile: createTestFileMock,
     createLiveEditorSession: vi.fn(),
     updateTestFile: vi.fn(),
-    validateTestContent: vi.fn(),
+    validateTestContent: vi.fn().mockResolvedValue({ valid: true, errors: [] }),
     triggerRun: vi.fn(),
   }
 })

@@ -38,6 +38,7 @@ import { usePageTitle } from "@/hooks/use-page-title"
 import { useRunConfig } from "@/hooks/use-run-config"
 import { useTargetDetails, type TargetDetail } from "@/hooks/use-target-details"
 import {
+  ApiError,
   fetchTestFile,
   createTestFile,
   createLiveEditorSession,
@@ -48,6 +49,7 @@ import {
   validateTestContent,
   triggerRun,
   type AuthStateMetadata,
+  type TestValidationResult,
 } from "@/lib/api"
 import { buildLiveSessionConfig, readDraftAuthStateName } from "@/lib/live-session-config"
 import { logLiveDebug } from "@/lib/live-debug"
@@ -77,6 +79,19 @@ function InfoTip({ text }: { text: string }) {
       </TooltipContent>
     </Tooltip>
   )
+}
+
+function formatValidationErrors(errors: TestValidationResult["errors"]): string {
+  return errors
+    .map((e) => (e.line ? `Line ${e.line}: ${e.message}` : e.message))
+    .join("\n")
+}
+
+// The save routes answer 400 `invalid_test_file` with the validator's own errors (G-433-2).
+function readRefusedSaveErrors(error: unknown): TestValidationResult["errors"] | null {
+  if (!(error instanceof ApiError) || error.payload?.error !== "invalid_test_file") return null
+  const errors = error.payload.errors
+  return Array.isArray(errors) ? errors as TestValidationResult["errors"] : null
 }
 
 function isAbortError(error: unknown): boolean {
@@ -383,6 +398,19 @@ export default function TestEditorPage() {
     || isLoadingTargets
   )
 
+  // Save asks the same validator Validate does and shows its verdict the same way (G-433-2).
+  const refuseInvalidContent = useCallback(async (): Promise<boolean> => {
+    const result = await validateTestContent(content, filePath || filename.trim())
+    if (result.valid) return false
+    toast.error(formatValidationErrors(result.errors))
+    return true
+  }, [content, filePath, filename])
+
+  const openCreatedTest = useCallback(() => {
+    const createdTestId = formState?.testId?.trim()
+    if (createdTestId) navigate(routes.testView(createdTestId))
+  }, [formState, navigate])
+
   const handleSave = useCallback(async () => {
     setIsSaving(true)
     try {
@@ -392,22 +420,27 @@ export default function TestEditorPage() {
           toast.error(fnameError)
           return
         }
+        if (await refuseInvalidContent()) return
         await createTestFile(filename.trim(), content)
         toast.success("Test file created")
-        navigate(routes.testView(formState?.testId ?? ''))
+        openCreatedTest()
       } else {
+        if (await refuseInvalidContent()) return
         await updateTestFile(testId, content)
         setSavedContent(content)
         toast.success("Saved")
       }
     } catch (err) {
+      const refused = readRefusedSaveErrors(err)
       toast.error(
-        `Failed to save: ${err instanceof Error ? err.message : String(err)}`
+        refused
+          ? formatValidationErrors(refused)
+          : `Failed to save: ${err instanceof Error ? err.message : String(err)}`
       )
     } finally {
       setIsSaving(false)
     }
-  }, [isCreateMode, filename, testMatchPatterns, content, testId, navigate, formState])
+  }, [isCreateMode, filename, testMatchPatterns, content, testId, refuseInvalidContent, openCreatedTest])
 
   const closeLiveMode = useCallback(() => {
     logLiveDebug("page", "closing live mode", {
@@ -599,10 +632,7 @@ export default function TestEditorPage() {
       if (result.valid) {
         toast.success("Valid YAML")
       } else {
-        const msgs = result.errors
-          .map((e) => (e.line ? `Line ${e.line}: ${e.message}` : e.message))
-          .join("\n")
-        toast.error(msgs)
+        toast.error(formatValidationErrors(result.errors))
       }
     } catch (err) {
       toast.error(
@@ -624,17 +654,22 @@ export default function TestEditorPage() {
           toast.error(fnameError)
           return
         }
+        if (await refuseInvalidContent()) return
         await createTestFile(filename.trim(), content)
-        navigate(routes.testView(formState?.testId ?? ''))
+        openCreatedTest()
         return
       }
       if (unsaved) {
+        if (await refuseInvalidContent()) return
         await updateTestFile(testId, content)
         setSavedContent(content)
       }
     } catch (err) {
+      const refused = readRefusedSaveErrors(err)
       toast.error(
-        `Failed to save before run: ${err instanceof Error ? err.message : String(err)}`
+        refused
+          ? formatValidationErrors(refused)
+          : `Failed to save before run: ${err instanceof Error ? err.message : String(err)}`
       )
       return
     }
@@ -650,7 +685,7 @@ export default function TestEditorPage() {
       )
       setIsRunning(false)
     }
-  }, [isRunning, isCreateMode, filename, testMatchPatterns, content, unsaved, testId, filePath, navigate, formState])
+  }, [isRunning, isCreateMode, filename, testMatchPatterns, content, unsaved, testId, filePath, refuseInvalidContent, openCreatedTest])
 
   const handleRunClose = useCallback(() => {
     setRunId(null)

@@ -3214,6 +3214,11 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             json(res, { error: 'Both path and content are required' }, 400)
             return
           }
+          const validation = await testFileManager.validate(body.content)
+          if (!validation.valid) {
+            json(res, { error: 'invalid_test_file', errors: validation.errors }, 400)
+            return
+          }
           try {
             await testFileManager.write(body.path, body.content)
             json(res, { path: body.path, created: true }, 201)
@@ -3268,6 +3273,11 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
           const found = await testFileManager.findByTestId(tId)
           if (!found) {
             notFound(res, 'Test not found')
+            return
+          }
+          const validation = await testFileManager.validate(body.content)
+          if (!validation.valid) {
+            json(res, { error: 'invalid_test_file', errors: validation.errors }, 400)
             return
           }
           try {
