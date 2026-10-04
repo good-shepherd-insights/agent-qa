@@ -256,12 +256,14 @@ it('USAGE-ASSERTION-ROLE: actual AI assertion and late extraction share the sele
   boundary.assertion = true
   await executePath('COMPOSED')
   const snapshot = boundary.scopes[0]!.snapshot()
-  expect(snapshot).toMatchObject({ started: 3, succeeded: 3, failed: 0, inputTokens: 300, cachedInputTokens: 90 })
-  expect(snapshot.attempts.map(attempt => attempt.role)).toEqual(['planner', 'verifier', 'verifier'])
+  expect(snapshot).toMatchObject({ started: 4, succeeded: 4, failed: 0, inputTokens: 400, cachedInputTokens: 120 })
+  expect(snapshot.attempts.map(attempt => attempt.role)).toEqual(['planner', 'verifier', 'verifier', 'verifier'])
   const requests = boundary.transport.mock.calls.map(([, init]) => JSON.parse(String(init.body)))
   expect(requests[1].response_format.json_schema.name).toBe('ai_judgment')
-  expect(requests[2].response_format.json_schema.name).toBe('extraction_result')
-  expect(boundary.safety).toHaveBeenCalledTimes(3)
+  // The step verifier confirms a passing assertAI (quick 261004-0hc) before the late extraction.
+  expect(requests[2].response_format.json_schema.name).toBe('verification_result')
+  expect(requests[3].response_format.json_schema.name).toBe('extraction_result')
+  expect(boundary.safety).toHaveBeenCalledTimes(4)
 })
 
 it('USAGE-TRANSPORT-RETRY: raw failure and retry count once without double safety middleware', async () => {

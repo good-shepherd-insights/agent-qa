@@ -71,6 +71,7 @@ async function usageRun(options: { retry?: boolean; omitCache?: boolean; unscope
   const ingest = createDashboardRunIngest({ db, correlationEnv: { runId } })
   bus.subscribe(1, event => { events.push(event); ingest.handler(event) })
   let planningCalls = 0
+  let verifierCalls = 0
   let retry = options.retry
   let extractionStarted = false
   let terminalCountAtExtraction = -1
@@ -90,6 +91,7 @@ async function usageRun(options: { retry?: boolean; omitCache?: boolean; unscope
     const judging = request.response_format?.json_schema?.name === 'ai_judgment'
     requests.push(planning ? 'planner' : extracting ? 'extraction' : judging ? 'assertion' : 'verifier')
     if (planning) planningCalls++
+    if (!planning && !extracting && !judging) verifierCalls++
     if (extracting) {
       extractionStarted = true
       terminalCountAtExtraction = events.filter(event => event.type === 'stepFinalized').length
@@ -108,7 +110,10 @@ async function usageRun(options: { retry?: boolean; omitCache?: boolean; unscope
         : { role: 'assistant', content: JSON.stringify(extracting
             ? { value: 'captured', reasoning: 'Read from screen' }
             : judging ? { verdict: true, rationale: 'Visible' }
-            : { success: false, reasoning: 'Confirm with an assertion', isAppError: false }) } }],
+            // A passing assertAI is confirmed by the step verifier (quick 261004-0hc), so only the
+            // first verifier call, after the click, rejects.
+            : verifierCalls === 1 ? { success: false, reasoning: 'Confirm with an assertion', isAppError: false }
+            : { success: true, reasoning: 'Log in is visible', isAppError: false }) } }],
       usage: { prompt_tokens: 100, completion_tokens: 7,
         ...(options.omitCache ? {} : { prompt_tokens_details: { cached_tokens: 30 } }) },
     }), { status: 200, headers: { 'content-type': 'application/json' } })
@@ -153,7 +158,7 @@ async function usageRun(options: { retry?: boolean; omitCache?: boolean; unscope
     expect(result.status).toBe('passed')
     expect(result.steps[0]?.capturedVariables).toEqual({ ['__proto__']: 'captured' })
     expect(requests.filter(value => value !== 'failed-attempt')).toEqual([
-      'planner', 'verifier', 'planner', 'assertion', 'extraction',
+      'planner', 'verifier', 'planner', 'assertion', 'verifier', 'extraction',
     ])
     bus.publish('testFinished', { testIndex: 0, outcome: 'passed' })
     bus.publish('runFinished', { aggregateVerdict: 'passed' })
@@ -174,8 +179,8 @@ async function usageRun(options: { retry?: boolean; omitCache?: boolean; unscope
 
 it('USAGE-COLD-ROUNDTRIP: real model attempts survive final event, subscriber and cold read', async () => {
   const run = await usageRun()
-  expect(run.event.modelUsage).toMatchObject({ calls: { started: 5, succeeded: 5, failed: 0 },
-    inputTokens: 500, outputTokens: 35, cachedInputTokens: 150 })
+  expect(run.event.modelUsage).toMatchObject({ calls: { started: 6, succeeded: 6, failed: 0 },
+    inputTokens: 600, outputTokens: 42, cachedInputTokens: 180 })
   expect(run.rows.steps[0]?.modelUsage).toEqual(run.event.modelUsage)
   expect(run.rows.steps[0]?.tokenUsage).toEqual(run.event.tokenUsage)
   expect(run.projection.steps[0]?.modelUsage).toEqual(run.event.modelUsage)
@@ -220,15 +225,15 @@ it('USAGE-EXTRACTION-FINAL: final publication includes late extraction and own v
   const run = await usageRun()
   expect(run.extractionStarted).toBe(true)
   expect(run.terminalCountAtExtraction).toBe(0)
-  expect(run.event.tokenUsage).toEqual({ promptTokens: 500, completionTokens: 35, totalTokens: 535, cachedInputTokens: 150 })
+  expect(run.event.tokenUsage).toEqual({ promptTokens: 600, completionTokens: 42, totalTokens: 642, cachedInputTokens: 180 })
   expect(run.event.variableSnapshot).toEqual({ ['__proto__']: { value: 'captured', source: 'capture' } })
   expect(run.rows.steps[0]?.variableSnapshot).toEqual(run.event.variableSnapshot)
 })
 
 it('USAGE-NO-DOUBLE-COUNT: failed retry remains in the complete population after later success', async () => {
   const run = await usageRun({ retry: true })
-  expect(run.requests).toHaveLength(6)
-  expect(run.event.modelUsage).toMatchObject({ calls: { started: 6, succeeded: 5, failed: 1 } })
+  expect(run.requests).toHaveLength(7)
+  expect(run.event.modelUsage).toMatchObject({ calls: { started: 7, succeeded: 6, failed: 1 } })
   for (const row of [run.event, run.rows.steps[0]!, run.projection.steps[0]!]) {
     expect(row).not.toHaveProperty('tokenUsage')
     expect(row.modelUsage).not.toHaveProperty('cachedInputTokens')
@@ -240,7 +245,7 @@ it('USAGE-NO-DOUBLE-COUNT: failed retry remains in the complete population after
 
 it('USAGE-RAW-ABSENT: SDK normalized cache zero never reaches the cold read', async () => {
   const run = await usageRun({ omitCache: true })
-  expect(run.event.tokenUsage).toEqual({ promptTokens: 500, completionTokens: 35, totalTokens: 535 })
+  expect(run.event.tokenUsage).toEqual({ promptTokens: 600, completionTokens: 42, totalTokens: 642 })
   expect(run.rows.steps[0]?.tokenUsage).toEqual(run.event.tokenUsage)
   expect(run.rows.steps[0]?.modelUsage).not.toHaveProperty('cachedInputTokens')
 })
