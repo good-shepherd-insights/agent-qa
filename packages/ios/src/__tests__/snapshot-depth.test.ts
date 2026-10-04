@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-// P3: iOS sessions request WDA snapshotMaxDepth 62, and a page-source read that XCTest cannot
-// snapshot at that depth is re-read once at 50 before the depth goes back to 62.
+// P3: iOS sessions request a WDA snapshotMaxDepth of their own (farm capability, then
+// AGENT_QA_IOS_SNAPSHOT_MAX_DEPTH, then 62). A kAXErrorIllegalArgument read lowers it to 50 for
+// the rest of the session, and the session's own depth is retried every 20 lowered reads.
 
 const XML = `<?xml version="1.0" encoding="UTF-8"?>
 <AppiumAUT>
@@ -10,6 +11,9 @@ const XML = `<?xml version="1.0" encoding="UTF-8"?>
     <XCUIElementTypeButton label="Done" x="20" y="200" width="350" height="44" enabled="true" />
   </XCUIElementTypeApplication>
 </AppiumAUT>`
+
+const ENV = 'AGENT_QA_IOS_SNAPSHOT_MAX_DEPTH'
+const DEPTH_CAP = 'appium:settings[snapshotMaxDepth]'
 
 function snapshotError(message = 'Original error: kAXErrorIllegalArgument getting snapshot for element', name = 'stale element reference'): Error {
   const err = new Error(message)
@@ -49,14 +53,20 @@ vi.mock('webdriverio', () => ({
 }))
 
 import { IOSPlatformAdapter } from '../adapter.js'
+import { resolveIOSSnapshotDepth } from '../session.js'
+
+const FARM = { hostname: 'farm.test', port: 443, path: '/wd/hub' }
 
 describe('iOS snapshot depth (P3)', () => {
   let adapter: IOSPlatformAdapter
   let driver: ReturnType<typeof createMockDriver>
   let warn: ReturnType<typeof vi.spyOn>
+  let savedEnv: string | undefined
 
   beforeEach(async () => {
     vi.clearAllMocks()
+    savedEnv = process.env[ENV]
+    delete process.env[ENV]
     driver = createMockDriver()
     const { remote } = await import('webdriverio')
     vi.mocked(remote).mockResolvedValue(driver as any)
@@ -65,48 +75,83 @@ describe('iOS snapshot depth (P3)', () => {
   })
 
   afterEach(() => {
+    if (savedEnv === undefined) delete process.env[ENV]
+    else process.env[ENV] = savedEnv
     warn.mockRestore()
     vi.restoreAllMocks()
   })
 
+  async function requestedDepth(call = 0): Promise<unknown> {
+    const { remote } = await import('webdriverio')
+    return (vi.mocked(remote).mock.calls[call][0] as any).capabilities[DEPTH_CAP]
+  }
+
+  async function observeTimes(n: number): Promise<void> {
+    for (let i = 0; i < n; i++) await adapter.observe()
+  }
+
   describe('capability', () => {
     it('requests snapshotMaxDepth 62 on a local session', async () => {
       await adapter.setup({ platform: 'ios' })
-      const { remote } = await import('webdriverio')
-      const call = vi.mocked(remote).mock.calls[0][0] as any
-      expect(call.capabilities['appium:settings[snapshotMaxDepth]']).toBe(62)
+      expect(await requestedDepth()).toBe(62)
       expect(driver.updateSettings).not.toHaveBeenCalled()
     })
 
-    it('requests it on a farm session, where the farm capabilities still win', async () => {
-      const farmSession = { hostname: 'farm.test', port: 443, path: '/wd/hub', capabilities: { 'farm:token': 'x' } }
-      await adapter.setup({ platform: 'ios', farmSession })
-      const { remote } = await import('webdriverio')
-      expect((vi.mocked(remote).mock.calls[0][0] as any).capabilities['appium:settings[snapshotMaxDepth]']).toBe(62)
+    it('takes the depth from AGENT_QA_IOS_SNAPSHOT_MAX_DEPTH', async () => {
+      process.env[ENV] = '70'
+      await adapter.setup({ platform: 'ios' })
+      expect(await requestedDepth()).toBe(70)
+      expect(resolveIOSSnapshotDepth()).toBe(70)
+    })
 
-      await adapter.setup({
-        platform: 'ios',
-        farmSession: { ...farmSession, capabilities: { 'appium:settings[snapshotMaxDepth]': 40 } },
-      })
-      expect((vi.mocked(remote).mock.calls[1][0] as any).capabilities['appium:settings[snapshotMaxDepth]']).toBe(40)
+    it.each(['abc', '0', '-5', '12.5', ''])('ignores AGENT_QA_IOS_SNAPSHOT_MAX_DEPTH=%j and keeps 62', async (value) => {
+      process.env[ENV] = value
+      await adapter.setup({ platform: 'ios' })
+      expect(await requestedDepth()).toBe(62)
+      expect(resolveIOSSnapshotDepth()).toBe(62)
+    })
+
+    it('requests it on a farm session, where the farm capabilities still win', async () => {
+      const farmSession = { ...FARM, capabilities: { 'farm:token': 'x' } }
+      await adapter.setup({ platform: 'ios', farmSession })
+      expect(await requestedDepth(0)).toBe(62)
+
+      await adapter.setup({ platform: 'ios', farmSession: { ...FARM, capabilities: { [DEPTH_CAP]: 40 } } })
+      expect(await requestedDepth(1)).toBe(40)
+    })
+
+    it('ranks the farm capability over the env var, and the env var over 62', async () => {
+      process.env[ENV] = '70'
+      const farmCapabilities = { [DEPTH_CAP]: 40 }
+      await adapter.setup({ platform: 'ios', farmSession: { ...FARM, capabilities: farmCapabilities } })
+      expect(await requestedDepth()).toBe(40)
+      expect(resolveIOSSnapshotDepth(farmCapabilities)).toBe(40)
+      expect(resolveIOSSnapshotDepth({ 'farm:token': 'x' })).toBe(70)
+      expect(resolveIOSSnapshotDepth({ [DEPTH_CAP]: '45' })).toBe(45)
+      expect(resolveIOSSnapshotDepth({ [DEPTH_CAP]: 0 })).toBe(70)
+      delete process.env[ENV]
+      expect(resolveIOSSnapshotDepth({ [DEPTH_CAP]: 'deep' })).toBe(62)
     })
   })
 
-  describe('fallback', () => {
-    it('re-reads once at 50 on the XCTest snapshot error, then restores 62 and logs it', async () => {
-      driver.getPageSource.mockRejectedValueOnce(snapshotError()).mockResolvedValueOnce(XML)
+  describe('sticky fallback', () => {
+    it('lowers to 50 once on kAXErrorIllegalArgument, keeps it, and warns once without page source', async () => {
+      driver.getPageSource.mockRejectedValueOnce(snapshotError()).mockResolvedValue(XML)
       await adapter.setup({ platform: 'ios' })
       const state = await adapter.observe()
 
       expect(state.tree).toContain('text "Deep row"')
       expect(state.tree).toContain('button "Done"')
       expect(driver.getPageSource).toHaveBeenCalledTimes(2)
-      expect(driver.updateSettings.mock.calls).toEqual([[{ snapshotMaxDepth: 50 }], [{ snapshotMaxDepth: 62 }]])
-      const [lower, restore] = driver.updateSettings.mock.invocationCallOrder
+      expect(driver.updateSettings.mock.calls).toEqual([[{ snapshotMaxDepth: 50 }]])
+      const [lower] = driver.updateSettings.mock.invocationCallOrder
       const [firstRead, secondRead] = driver.getPageSource.mock.invocationCallOrder
       expect(firstRead).toBeLessThan(lower)
       expect(lower).toBeLessThan(secondRead)
-      expect(secondRead).toBeLessThan(restore)
+
+      await observeTimes(3)
+      expect(driver.getPageSource).toHaveBeenCalledTimes(5)
+      expect(driver.updateSettings.mock.calls).toEqual([[{ snapshotMaxDepth: 50 }]])
 
       expect(warn).toHaveBeenCalledTimes(1)
       const message = String(warn.mock.calls[0][0])
@@ -116,17 +161,103 @@ describe('iOS snapshot depth (P3)', () => {
       expect(message).not.toContain('<AppiumAUT>')
     })
 
-    it.each([
-      ['kAXErrorIllegalArgument only', snapshotError('Original error: kAXErrorIllegalArgument', 'Error')],
-      ['getting snapshot only', snapshotError('Error getting snapshot for the application', 'Error')],
-      ['stale element reference name only', snapshotError('An unknown server-side error occurred', 'stale element reference')],
-    ])('detects the %s variant', async (_label, err) => {
-      driver.getPageSource.mockRejectedValueOnce(err).mockResolvedValueOnce(XML)
+    it('retries the session depth after 20 lowered reads, before reading', async () => {
+      driver.getPageSource.mockRejectedValueOnce(snapshotError()).mockResolvedValue(XML)
+      await adapter.setup({ platform: 'ios' })
+      await observeTimes(20)
+      expect(driver.updateSettings.mock.calls).toEqual([[{ snapshotMaxDepth: 50 }]])
+
+      await adapter.observe()
+      expect(driver.updateSettings.mock.calls).toEqual([[{ snapshotMaxDepth: 50 }], [{ snapshotMaxDepth: 62 }]])
+      const probe = driver.updateSettings.mock.invocationCallOrder[1]
+      const lastRead = driver.getPageSource.mock.invocationCallOrder.at(-1)!
+      expect(probe).toBeLessThan(lastRead)
+
+      await observeTimes(25)
+      expect(driver.updateSettings).toHaveBeenCalledTimes(2)
+    })
+
+    it('goes back to 50 in the same read when the probe read fails, with no second warning', async () => {
+      driver.getPageSource.mockRejectedValueOnce(snapshotError()).mockResolvedValue(XML)
+      await adapter.setup({ platform: 'ios' })
+      await observeTimes(20)
+      driver.getPageSource.mockRejectedValueOnce(snapshotError())
+
+      const state = await adapter.observe()
+
+      expect(state.tree).toContain('button "Done"')
+      expect(driver.updateSettings.mock.calls).toEqual([
+        [{ snapshotMaxDepth: 50 }],
+        [{ snapshotMaxDepth: 62 }],
+        [{ snapshotMaxDepth: 50 }],
+      ])
+      expect(warn).toHaveBeenCalledTimes(1)
+    })
+
+    it('reads at 50 when the probe cannot raise the depth', async () => {
+      driver.getPageSource.mockRejectedValueOnce(snapshotError()).mockResolvedValue(XML)
+      await adapter.setup({ platform: 'ios' })
+      await observeTimes(20)
+      driver.updateSettings.mockRejectedValueOnce(new Error('settings gone'))
+      const readsBefore = driver.getPageSource.mock.calls.length
+
+      const state = await adapter.observe()
+
+      expect(state.tree).toContain('button "Done"')
+      expect(driver.getPageSource.mock.calls.length).toBe(readsBefore + 1)
+      expect(driver.updateSettings.mock.calls).toEqual([[{ snapshotMaxDepth: 50 }], [{ snapshotMaxDepth: 62 }]])
+
+      await observeTimes(19)
+      expect(driver.updateSettings).toHaveBeenCalledTimes(2)
+      await adapter.observe()
+      expect(driver.updateSettings.mock.calls.at(-1)).toEqual([{ snapshotMaxDepth: 62 }])
+      expect(driver.updateSettings).toHaveBeenCalledTimes(3)
+    })
+  })
+
+  describe("the session's own depth", () => {
+    it('probes back to a farm depth of 70, never 62', async () => {
+      driver.getPageSource.mockRejectedValueOnce(snapshotError()).mockResolvedValue(XML)
+      await adapter.setup({ platform: 'ios', farmSession: { ...FARM, capabilities: { [DEPTH_CAP]: 70 } } })
+      await observeTimes(21)
+
+      expect(driver.updateSettings.mock.calls).toEqual([[{ snapshotMaxDepth: 50 }], [{ snapshotMaxDepth: 70 }]])
+      expect(String(warn.mock.calls[0][0])).toContain('70')
+    })
+
+    it('does not lower a farm depth of 40: the read is retried once at the same depth', async () => {
+      const second = snapshotError('Original error: kAXErrorIllegalArgument (second read)')
+      driver.getPageSource.mockRejectedValueOnce(snapshotError()).mockRejectedValueOnce(second)
+      await adapter.setup({ platform: 'ios', farmSession: { ...FARM, capabilities: { [DEPTH_CAP]: 40 } } })
+
+      await expect(adapter.observe()).rejects.toBe(second)
+      expect(driver.getPageSource).toHaveBeenCalledTimes(2)
+      expect(driver.updateSettings).not.toHaveBeenCalled()
+      expect(warn).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('detection', () => {
+    it('lowers on a kAXErrorIllegalArgument message alone', async () => {
+      driver.getPageSource.mockRejectedValueOnce(snapshotError('Original error: kAXErrorIllegalArgument', 'Error')).mockResolvedValue(XML)
       await adapter.setup({ platform: 'ios' })
       const state = await adapter.observe()
       expect(state.tree).toContain('button "Done"')
       expect(driver.getPageSource).toHaveBeenCalledTimes(2)
-      expect(driver.updateSettings).toHaveBeenCalledWith({ snapshotMaxDepth: 50 })
+      expect(driver.updateSettings.mock.calls).toEqual([[{ snapshotMaxDepth: 50 }]])
+    })
+
+    it.each([
+      ['getting snapshot without kAX', snapshotError('Error getting snapshot for the application', 'Error')],
+      ['a stale element reference name without kAX', snapshotError('An unknown server-side error occurred', 'stale element reference')],
+    ])('retries %s once at the same depth', async (_label, err) => {
+      driver.getPageSource.mockRejectedValueOnce(err).mockResolvedValue(XML)
+      await adapter.setup({ platform: 'ios' })
+      const state = await adapter.observe()
+      expect(state.tree).toContain('button "Done"')
+      expect(driver.getPageSource).toHaveBeenCalledTimes(2)
+      expect(driver.updateSettings).not.toHaveBeenCalled()
+      expect(warn).not.toHaveBeenCalled()
     })
 
     it('propagates any other error with no retry', async () => {
@@ -137,14 +268,21 @@ describe('iOS snapshot depth (P3)', () => {
       expect(driver.getPageSource).toHaveBeenCalledTimes(1)
       expect(driver.updateSettings).not.toHaveBeenCalled()
     })
+  })
 
-    it('retries only once when the fallback read also fails', async () => {
-      driver.getPageSource.mockRejectedValue(snapshotError())
+  describe('failures', () => {
+    it('surfaces the second error when the read at 50 also fails, and stays at 50', async () => {
+      const second = new Error('Original error: kAXErrorIllegalArgument at depth 50')
+      driver.getPageSource.mockRejectedValueOnce(snapshotError()).mockRejectedValueOnce(second).mockResolvedValue(XML)
       await adapter.setup({ platform: 'ios' })
-      await expect(adapter.observe()).rejects.toThrow(/kAXErrorIllegalArgument/)
+
+      await expect(adapter.observe()).rejects.toBe(second)
       expect(driver.getPageSource).toHaveBeenCalledTimes(2)
-      expect(driver.updateSettings.mock.calls).toEqual([[{ snapshotMaxDepth: 50 }], [{ snapshotMaxDepth: 62 }]])
-      expect(warn).not.toHaveBeenCalled()
+      expect(driver.updateSettings.mock.calls).toEqual([[{ snapshotMaxDepth: 50 }]])
+
+      await adapter.observe()
+      expect(driver.getPageSource).toHaveBeenCalledTimes(3)
+      expect(driver.updateSettings.mock.calls).toEqual([[{ snapshotMaxDepth: 50 }]])
     })
 
     it('rethrows the original read error when the depth cannot be lowered', async () => {
@@ -154,14 +292,6 @@ describe('iOS snapshot depth (P3)', () => {
       await adapter.setup({ platform: 'ios' })
       await expect(adapter.observe()).rejects.toBe(err)
       expect(driver.getPageSource).toHaveBeenCalledTimes(1)
-    })
-
-    it('still answers the fallback read when restoring 62 fails', async () => {
-      driver.getPageSource.mockRejectedValueOnce(snapshotError()).mockResolvedValueOnce(XML)
-      driver.updateSettings.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('gone'))
-      await adapter.setup({ platform: 'ios' })
-      const state = await adapter.observe()
-      expect(state.tree).toContain('button "Done"')
     })
   })
 

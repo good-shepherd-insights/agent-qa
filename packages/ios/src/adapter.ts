@@ -41,7 +41,12 @@ import {
 import type { MobileRefMap } from '@vostride/agent-qa-core'
 // 363 D-08/Q10: sharp image utilities moved to runner-local (sharp left core, its host-adapter home).
 import { alignToWindow } from '@vostride/agent-qa-runner-local'
-import { IOS_SNAPSHOT_FALLBACK_DEPTH, IOS_SNAPSHOT_MAX_DEPTH, createIOSSession } from './session.js'
+import {
+  IOS_SNAPSHOT_FALLBACK_DEPTH,
+  IOS_SNAPSHOT_MAX_DEPTH,
+  createIOSSession,
+  resolveIOSSnapshotDepth,
+} from './session.js'
 import type { IOSAdapterConfig } from './types.js'
 
 const IOS_NATIVE_SELECT_TYPES = new Set([
@@ -55,10 +60,19 @@ const IOS_NATIVE_SELECT_ROLES = new Set(['pickerwheel', 'spinbutton', 'combobox'
 
 const W3C_ELEMENT_KEY = 'element-6066-11e4-a52e-4f735a1b0f2d'
 
-// getPageSource takes no element, so a stale-element error there is about the Application snapshot.
+const IOS_SNAPSHOT_PROBE_INTERVAL = 20
+
+function errorNameAndMessage(err: unknown): string {
+  return err instanceof Error ? `${err.name} ${err.message}` : String(err)
+}
+
 function isIOSSnapshotDepthError(err: unknown): boolean {
-  const text = err instanceof Error ? `${err.name} ${err.message}` : String(err)
-  return /kAXErrorIllegalArgument|getting snapshot|stale element/i.test(text)
+  return /kAXErrorIllegalArgument/i.test(errorNameAndMessage(err))
+}
+
+// getPageSource takes no element, so a stale-element error there is about the Application snapshot.
+function isIOSSnapshotReadError(err: unknown): boolean {
+  return /getting snapshot|stale element/i.test(errorNameAndMessage(err))
 }
 const FOCUS_POLLS = 3
 const FOCUS_POLL_PAUSE_MS = 300
@@ -304,11 +318,19 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
   // EXEC-03 session-cached app registry (D-10/D-12): enumerated once per session. null = not yet
   // enumerated OR enumeration unavailable (iOS simulator — mobile: listApps throws). Reset in cleanup().
   private appRegistry: AppRegistryEntry[] | null = null
+  private sessionSnapshotDepth = IOS_SNAPSHOT_MAX_DEPTH
+  private snapshotDepth = IOS_SNAPSHOT_MAX_DEPTH
+  private readsAtLoweredDepth = 0
+  private snapshotDepthWarned = false
 
   async setup(config: PlatformConfig): Promise<void> {
     this.config = config as IOSAdapterConfig
     this.captureConsole = config.logCapture?.console !== false
     this.bundleId = this.config.bundleId ?? (config.device?.match?.bundleId as string | undefined) ?? null
+    this.sessionSnapshotDepth = resolveIOSSnapshotDepth(config.farmSession?.capabilities)
+    this.snapshotDepth = this.sessionSnapshotDepth
+    this.readsAtLoweredDepth = 0
+    this.snapshotDepthWarned = false
 
     this.driver = await createIOSSession(this.config, config.farmSession)
 
@@ -349,6 +371,10 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
     this.activeWebContext = null
     this.webContextChecked = false
     this.currentContext = null
+    this.sessionSnapshotDepth = IOS_SNAPSHOT_MAX_DEPTH
+    this.snapshotDepth = IOS_SNAPSHOT_MAX_DEPTH
+    this.readsAtLoweredDepth = 0
+    this.snapshotDepthWarned = false
   }
 
   /**
@@ -564,33 +590,49 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
 
   private async readIOSPageSource(): Promise<string> {
     const driver = this.driver!
-    try {
-      return await driver.getPageSource()
-    } catch (readErr) {
-      if (!isIOSSnapshotDepthError(readErr)) throw readErr
+    if (
+      this.snapshotDepth < this.sessionSnapshotDepth
+      && this.readsAtLoweredDepth >= IOS_SNAPSHOT_PROBE_INTERVAL
+    ) {
+      this.readsAtLoweredDepth = 0
       try {
-        await driver.updateSettings({ snapshotMaxDepth: IOS_SNAPSHOT_FALLBACK_DEPTH })
+        await driver.updateSettings({ snapshotMaxDepth: this.sessionSnapshotDepth })
+        this.snapshotDepth = this.sessionSnapshotDepth
       } catch {
-        throw readErr
+        // the read proceeds at the lowered depth
       }
-      let xml: string
-      try {
-        xml = await driver.getPageSource()
-      } finally {
+    }
+    try {
+      return this.countLoweredRead(await driver.getPageSource())
+    } catch (readErr) {
+      const depthError = isIOSSnapshotDepthError(readErr)
+      if (!depthError && !isIOSSnapshotReadError(readErr)) throw readErr
+      if (depthError && this.snapshotDepth > IOS_SNAPSHOT_FALLBACK_DEPTH) {
         try {
-          await driver.updateSettings({ snapshotMaxDepth: IOS_SNAPSHOT_MAX_DEPTH })
+          await driver.updateSettings({ snapshotMaxDepth: IOS_SNAPSHOT_FALLBACK_DEPTH })
         } catch {
-          // best-effort: the next read still works, only shallower
+          throw readErr
+        }
+        const failedDepth = this.snapshotDepth
+        this.snapshotDepth = IOS_SNAPSHOT_FALLBACK_DEPTH
+        this.readsAtLoweredDepth = 0
+        if (!this.snapshotDepthWarned) {
+          this.snapshotDepthWarned = true
+          const detail = (readErr instanceof Error ? readErr.message : String(readErr))
+            .split('\n')[0]
+            .slice(0, 160)
+          console.warn(
+            `[ios-adapter] page source failed at snapshotMaxDepth ${failedDepth}; later reads stay at ${IOS_SNAPSHOT_FALLBACK_DEPTH} and retry ${this.sessionSnapshotDepth} every ${IOS_SNAPSHOT_PROBE_INTERVAL} reads (${detail})`,
+          )
         }
       }
-      const detail = (readErr instanceof Error ? readErr.message : String(readErr))
-        .split('\n')[0]
-        .slice(0, 160)
-      console.warn(
-        `[ios-adapter] page source failed at snapshotMaxDepth ${IOS_SNAPSHOT_MAX_DEPTH}; re-read at ${IOS_SNAPSHOT_FALLBACK_DEPTH} (${detail})`,
-      )
-      return xml
+      return this.countLoweredRead(await driver.getPageSource())
     }
+  }
+
+  private countLoweredRead(xml: string): string {
+    if (this.snapshotDepth < this.sessionSnapshotDepth) this.readsAtLoweredDepth++
+    return xml
   }
 
   private async tapAt(point: { x: number; y: number }): Promise<void> {
@@ -709,7 +751,7 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
         error = `Element ${ref} is not editable: it did not take keyboard focus when tapped. ${nothing}`
         break
       case 'focus-elsewhere':
-        error = `Element ${ref} is not editable here: after tapping it, keyboard focus stayed on another element. Input is never sent to an element other than the target. ${nothing}`
+        error = `Element ${ref} is not editable here: after tapping it, keyboard focus is on another element. Input is never sent to an element other than the target. ${nothing}`
         break
       case 'stale-target':
         error = `Element ${ref} was not found at its observed position; the screen changed. Re-observe before typing. ${nothing}`
