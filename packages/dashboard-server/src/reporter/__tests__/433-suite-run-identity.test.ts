@@ -1,0 +1,149 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { RunEventEnvelope, RunEventType } from '@vostride/agent-qa-schema'
+import { DashboardDatabase } from '../../db/database.js'
+import { createDashboardRunIngest, type DashboardRunIngest } from '../dashboard-subscriber.js'
+
+// G-433-3 / F-433-12 (433-27). A suite is ONE run row with member handles (402-09 D-11). The walk
+// found that row stored under the last member's name and test id with suite_id null, so the suite's
+// history read "No runs yet" and the cart test's history claimed the whole suite run.
+
+let db: DashboardDatabase
+let seq = 0
+
+beforeEach(() => {
+  db = new DashboardDatabase({ dbPath: ':memory:' })
+  seq = 0
+})
+
+afterEach(() => {
+  db.close()
+})
+
+function ev(type: RunEventType, payload: Record<string, unknown> = {}): RunEventEnvelope {
+  return { seq: ++seq, ts: seq, runId: 'run-bus', type, payload } as RunEventEnvelope
+}
+
+const SUITE_ID = 's_lice-flat-otus-mult-mask-lack-messe-degree-ref-quite'
+const SUITE_NAME = 'Automation Exercise'
+const MEMBERS = [
+  { testId: 't_home-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel', name: 'Automation Exercise home smoke', filePath: 'tests/ae-home.yaml' },
+  { testId: 't_products-alpha-bravo-charlie-delta-echo-foxtrot-golf', name: 'Automation Exercise products smoke', filePath: 'tests/ae-products.yaml' },
+  { testId: 't_cart-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel', name: 'Automation Exercise cart smoke', filePath: 'tests/ae-cart.yaml' },
+] as const
+const LAST = MEMBERS[2]
+
+function feedSuiteRun(ingest: DashboardRunIngest): void {
+  ingest.handler(ev('runStarted', { memberTestCount: MEMBERS.length }))
+  MEMBERS.forEach((member, testIndex) => {
+    ingest.handler(ev('testStarted', {
+      ...member,
+      testIndex,
+      suiteId: SUITE_ID,
+      suiteName: SUITE_NAME,
+      suiteIndex: 0,
+      suiteTotal: 1,
+      totalSteps: 2,
+    }))
+  })
+  MEMBERS.forEach((member, testIndex) => {
+    ingest.handler(ev('testFinished', { testId: member.testId, testIndex, outcome: 'passed', durationMs: 30000 + testIndex }))
+  })
+  ingest.handler(ev('runFinished', { aggregateVerdict: 'passed', disposition: 'detached', finalSeq: seq }))
+}
+
+interface Door {
+  label: string
+  start: () => Promise<string>
+}
+
+const DOORS: Door[] = [
+  {
+    label: 'dashboard door (suiteQueueId)',
+    async start() {
+      // What JobQueue.enqueue writes for a dashboard suite run: a pending row named after the suite.
+      const runId = db.insertPendingRun({ name: SUITE_NAME, filePath: 'suites/automation-exercise.suite.yaml' })
+      const ingest = createDashboardRunIngest({
+        db,
+        correlationEnv: { suiteQueueId: runId },
+        now: () => '2026-10-04T00:00:00.000Z',
+      })
+      feedSuiteRun(ingest)
+      await ingest.finalize()
+      return runId
+    },
+  },
+  {
+    label: 'CLI suite path (no correlation id)',
+    async start() {
+      const ingest = createDashboardRunIngest({
+        db,
+        sourceSnapshot: {
+          kind: 'suite',
+          suiteId: SUITE_ID,
+          name: SUITE_NAME,
+          filePath: 'suites/automation-exercise.suite.yaml',
+          loadStatus: 'loaded',
+        },
+        configSnapshot: { runtime: { platform: 'web' } },
+        now: () => '2026-10-04T00:00:00.000Z',
+      })
+      feedSuiteRun(ingest)
+      await ingest.finalize()
+      const rows = db.getRuns()
+      expect(rows).toHaveLength(1)
+      return rows[0]!.id
+    },
+  },
+]
+
+describe('C433-SUITE-RUN-IDENTITY', () => {
+  for (const door of DOORS) {
+    it(`C433-SUITE-RUN-IDENTITY: the run row carries the suite's name and id, not the last member's — ${door.label}`, async () => {
+      const runId = await door.start()
+      expect(db.getRuns().map((row) => row.id)).toEqual([runId])
+      const row = db.getRun(runId)
+      expect({ name: row?.name, suiteId: row?.suiteId, testId: row?.testId, status: row?.status })
+        .toEqual({ name: SUITE_NAME, suiteId: SUITE_ID, testId: null, status: 'passed' })
+    })
+
+    it(`C433-SUITE-RUN-IDENTITY: each member keeps its own identity — ${door.label}`, async () => {
+      const runId = await door.start()
+      const members = db.readRunDetailRows(runId)?.members ?? []
+      expect(members.map((member) => [member.testIndex, member.testId, member.name, member.outcome])).toEqual(
+        MEMBERS.map((member, testIndex) => [testIndex, member.testId, member.name, 'passed']),
+      )
+    })
+
+    it(`C433-SUITE-RUN-IDENTITY: the suite history lists the run and the last member's test history does not — ${door.label}`, async () => {
+      const runId = await door.start()
+      // `/api/analytics/suites/:suiteId` (suite viewer, /suites) reads these two.
+      expect(db.getRunsBySuiteId(SUITE_ID).map((row) => row.id)).toEqual([runId])
+      expect(db.getRunsBySuiteIdCount(SUITE_ID)).toBe(1)
+      // `/api/analytics/tests/:name` (the test viewer's history) reads by the test's name.
+      expect(db.getRunsByTestName(LAST.name)).toEqual([])
+      expect(db.getRunsByTestNameCount(LAST.name)).toBe(0)
+      // And no run row is filed under the last member's test id.
+      expect(db.getRuns().filter((row) => row.testId === LAST.testId)).toEqual([])
+    })
+  }
+
+  it('C433-SUITE-RUN-IDENTITY: a single-test run is unchanged', async () => {
+    const runId = db.insertPendingRun({ name: 'tests/login.yaml', filePath: 'tests/login.yaml' })
+    const ingest = createDashboardRunIngest({
+      db,
+      correlationEnv: { runId },
+      now: () => '2026-10-04T00:00:00.000Z',
+    })
+    const testId = 't_login-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel'
+    ingest.handler(ev('runStarted', { memberTestCount: 1 }))
+    ingest.handler(ev('testStarted', { testId, testIndex: 0, name: 'Login Test', filePath: 'tests/login.yaml', totalSteps: 1 }))
+    ingest.handler(ev('testFinished', { testId, testIndex: 0, outcome: 'passed', durationMs: 1200 }))
+    ingest.handler(ev('runFinished', { aggregateVerdict: 'passed', disposition: 'detached', finalSeq: seq }))
+    await ingest.finalize()
+
+    const row = db.getRun(runId)
+    expect({ name: row?.name, suiteId: row?.suiteId, testId: row?.testId })
+      .toEqual({ name: 'Login Test', suiteId: null, testId })
+    expect(db.getRunsByTestName('Login Test').map((r) => r.id)).toEqual([runId])
+  })
+})

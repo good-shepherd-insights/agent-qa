@@ -190,6 +190,8 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
   const sourceTestId = readString(sourceRecord?.testId)
   const sourceSuiteId = readString(sourceRecord?.suiteId)
   const platform = readString(configRuntime?.platform) ?? 'web'
+  const suiteRun = sourceRecord?.kind === 'suite' || sourceSuiteId !== undefined
+  let suiteIdentityWritten = false
 
   /** The primary DB row id lifecycle status/finalize writes target. */
   let runId: string | undefined
@@ -289,14 +291,27 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
   }
 
   function handleTestStarted(payload: TestStartedPayload): void {
-    // Every member refreshes the ONE adopted row with the resolved test identity. Under the
-    // one-run model there is nothing else to write it to.
+    // 433-27 (G-433-3, F-433-12): a suite run's row is titled and filed as the suite, once. Member
+    // identity lives on `run_members` only; writing it here let the last member to start rename
+    // the run and claim it for its own test history while the suite's history read empty.
     if (runId) {
-      const name = readString(payload.name)
-      db.updateRun(runId, {
-        ...(name ? { name } : {}),
-        ...(readString(payload.testId) ? { testId: readString(payload.testId) } : {}),
-      })
+      const memberSuiteId = readString(payload.suiteId)
+      if (memberSuiteId !== undefined || suiteRun) {
+        if (!suiteIdentityWritten && memberSuiteId !== undefined) {
+          suiteIdentityWritten = true
+          const suiteName = readString(payload.suiteName)
+          db.updateRun(runId, {
+            suiteId: memberSuiteId,
+            ...(suiteName ? { name: suiteName } : {}),
+          })
+        }
+      } else {
+        const name = readString(payload.name)
+        db.updateRun(runId, {
+          ...(name ? { name } : {}),
+          ...(readString(payload.testId) ? { testId: readString(payload.testId) } : {}),
+        })
+      }
     }
     // 405 D-01: AND the member row, keyed by the handle. This is the per-member split 402-09
     // deleted with the child run rows, restored from 402-04's handles rather than from a second
