@@ -117,6 +117,7 @@ vi.mock('@/components/ui/sidebar', () => ({
     </section>
   ),
 }))
+vi.mock('@/components/mobile-navigation-trigger', () => ({ MobileNavigationTrigger: () => null }))
 vi.mock('@/components/app-sidebar', () => ({
   AppSidebar: () => (
     <aside data-testid="app-sidebar">

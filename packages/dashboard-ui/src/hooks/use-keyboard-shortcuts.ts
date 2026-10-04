@@ -2,6 +2,9 @@ import { useEffect, useLayoutEffect, useRef } from "react"
 
 type ShortcutMap = Record<string, (e: KeyboardEvent) => unknown>
 
+const ACTIVATABLE =
+  'button, a[href], summary, [role="button"], [role="link"], [role="menuitem"], [role="tab"], [role="checkbox"], [role="switch"]'
+
 export function useKeyboardShortcuts(shortcuts: ShortcutMap): void {
   const shortcutsRef = useRef(shortcuts)
 
@@ -26,6 +29,16 @@ export function useKeyboardShortcuts(shortcuts: ShortcutMap): void {
           }
           return
         }
+      }
+
+      // A focused control owns its activation key. Runs and Tests bind a bare Enter, which used to
+      // swallow Enter on every button and link on those pages (G-433-7).
+      if (
+        (e.key === "Enter" || e.key === " ") &&
+        !e.ctrlKey && !e.metaKey && !e.altKey &&
+        target.closest?.(ACTIVATABLE)
+      ) {
+        return
       }
 
       const key = e.key.toLowerCase()

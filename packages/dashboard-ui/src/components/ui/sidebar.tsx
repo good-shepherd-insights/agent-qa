@@ -204,7 +204,9 @@ function Sidebar({
             <SheetTitle>Sidebar</SheetTitle>
             <SheetDescription>Displays the mobile sidebar.</SheetDescription>
           </SheetHeader>
-          <div className="flex h-full w-full flex-col">{children}</div>
+          {/* One scroll for the whole sheet: at a 400 CSS px tall viewport (200% zoom) a pinned footer
+              covered the nav list, which only scrolled on its own (G-433-7). */}
+          <div className="flex h-full w-full flex-col overflow-y-auto [&>[data-slot=sidebar-content]]:flex-[1_0_auto] [&>[data-slot=sidebar-content]]:overflow-visible">{children}</div>
         </SheetContent>
       </Sheet>
     )

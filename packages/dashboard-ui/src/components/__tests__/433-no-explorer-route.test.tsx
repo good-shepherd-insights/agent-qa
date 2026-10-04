@@ -72,6 +72,9 @@ vi.mock('@/components/ui/sidebar', () => ({
 vi.mock('@/components/app-sidebar', () => ({
   AppSidebar: () => <div data-testid="app-sidebar" />,
 }))
+vi.mock('@/components/mobile-navigation-trigger', () => ({
+  MobileNavigationTrigger: () => null,
+}))
 vi.mock('@/components/ui/sonner', () => ({
   Toaster: () => <div data-testid="toaster" />,
 }))

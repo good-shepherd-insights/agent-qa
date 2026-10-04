@@ -68,6 +68,7 @@ vi.mock("@/components/ui/sidebar", () => ({
   SidebarInset: ({ children }: { children: ReactNode }) => <section>{children}</section>,
 }))
 vi.mock("@/components/app-sidebar", () => ({ AppSidebar: () => <aside data-testid="app-sidebar" /> }))
+vi.mock("@/components/mobile-navigation-trigger", () => ({ MobileNavigationTrigger: () => null }))
 vi.mock("@/components/command-palette", () => ({ CommandPalette: () => null }))
 vi.mock("@/components/ui/sonner", () => ({ Toaster: () => null }))
 vi.mock("@/components/error-boundary", () => ({ RouteErrorBoundary: () => null }))

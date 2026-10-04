@@ -411,7 +411,14 @@ export function LivePreview({ subject, chrome }: LivePreviewProps) {
       */}
       <PreviewChrome status={status}>{chrome}</PreviewChrome>
 
-      <div className="relative flex min-h-0 flex-1 items-center justify-center [container-type:size]">
+      {/*
+        The dot's corner is reserved above the picture: the dot's box ends 28px below the area's top,
+        and pt-8 keeps 4px clear, so a short area cannot centre the picture under it (G-433-7: at
+        400x800 the narrow navigation row left the preview area 301px tall and the picture met the dot).
+      */}
+      <div
+        className={`relative flex min-h-0 flex-1 items-center justify-center [container-type:size]${dot !== null ? ' pt-8' : ''}`}
+      >
         {dot !== null && (
           <div data-preview-dot-corner className="absolute right-1 top-1 z-10">
             {dot}

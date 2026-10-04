@@ -12,6 +12,7 @@ import { fetchAppMetadata, type AppMetadataResponse } from "@/lib/api"
 import { ThemeProvider } from "@/components/theme-provider"
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/app-sidebar"
+import { MobileNavigationTrigger } from "@/components/mobile-navigation-trigger"
 import { Toaster } from "@/components/ui/sonner"
 import { CommandPalette } from "@/components/command-palette"
 import { RouteErrorBoundary } from "@/components/error-boundary"
@@ -116,6 +117,7 @@ function AppLayout() {
       <ProductTourProvider pathname={location.pathname} hideHeader={hideHeader}>
         <AppSidebar />
         <SidebarInset className={cn(hideHeader && "h-svh overflow-hidden", mainScrolls && "h-svh")}>
+          <MobileNavigationTrigger />
           {showUpdateBanner ? (
             <UpdateBanner
               installedVersion={installedVersion}

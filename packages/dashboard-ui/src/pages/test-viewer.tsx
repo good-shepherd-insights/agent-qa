@@ -522,7 +522,7 @@ export default function TestViewerPage() {
 
   return (
     <TooltipProvider>
-      <div className="flex flex-col h-screen">
+      <div className="flex h-full min-h-0 flex-col">
         <TestNavbar
           testName={testName || "Test"}
           testId={testId}

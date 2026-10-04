@@ -501,7 +501,7 @@ export default function SuiteViewerPage() {
 
   return (
     <TooltipProvider>
-      <div className="flex flex-col h-screen">
+      <div className="flex h-full min-h-0 flex-col">
         <SuiteNavbar
           suiteName={suiteName || "Suite"}
           suiteId={suiteId}

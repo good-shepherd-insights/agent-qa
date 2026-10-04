@@ -810,7 +810,7 @@ export default function SuiteEditorPage() {
   )
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <SuiteNavbar
         suiteName={suiteName}
         suiteId={suiteId}

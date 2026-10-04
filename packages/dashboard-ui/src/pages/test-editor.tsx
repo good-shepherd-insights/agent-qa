@@ -978,7 +978,7 @@ export default function TestEditorPage() {
   )
 
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex h-full min-h-0 flex-col">
       <TestNavbar
         testName={isCreateMode ? "New Test" : displayFormState?.name ?? testId}
         testId={displayFormState?.testId ?? ''}

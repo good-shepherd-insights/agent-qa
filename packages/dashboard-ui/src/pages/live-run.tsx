@@ -357,7 +357,7 @@ export default function LiveRunPage() {
   const handle = <ResizableHandle key="handle" withHandle />
 
   return (
-    <div ref={setPageRoot} className="flex h-screen min-w-0 flex-col overflow-hidden">
+    <div ref={setPageRoot} className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
       <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b px-3">
         {/*
           THE HEADER IS FOUR THINGS (428 D-04): the title and the file path here, Cancel while the
