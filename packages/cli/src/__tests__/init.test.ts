@@ -775,16 +775,16 @@ describe('init command', () => {
     expect(passContent).toContain('target: example-web')
     expect(passContent).not.toContain('url: https://example.com')
     expect(passContent).toContain('steps:')
-    expect(passContent).toContain('Verify the page says "Example Domain"')
-    expect(passContent).toContain('Click on "Learn More"')
+    expect(passContent).toContain('Verify the page says "This domain is for use in documentation examples"')
+    expect(passContent).toContain('Click on "Learn more"')
     expect(passContent).toContain('Verify the page url is "https://www.iana.org/help/example-domains"')
 
     const failContent = failCall![1] as string
     expect(failContent).toContain('name: Example failing test')
     expect(failContent).toContain('target: example-web')
     expect(failContent).toContain('use:\n  browser:\n    headless: false')
-    expect(failContent).toContain('Verify the page says "Example Domain"')
-    expect(failContent).toContain('Click on "Learn More"')
+    expect(failContent).toContain('Verify the page says "This domain is for use in documentation examples"')
+    expect(failContent).toContain('Click on "Learn more"')
     expect(failContent).toContain('Verify the page url is "https://www.iana.org/example-domains"')
   })
 

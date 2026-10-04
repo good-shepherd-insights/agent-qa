@@ -197,8 +197,8 @@ function buildExampleTest(platform: InitPlatformInput, variant: 'pass' | 'fail')
 name: ${name}
 target: ${defaultExampleTargetName(platform)}
 ${browserOverride}steps:
-  - Verify the page says "Example Domain"
-  - Click on "Learn More"
+  - Verify the page says "This domain is for use in documentation examples"
+  - Click on "Learn more"
   - Verify the page url is "${expectedUrl}"
 `
 }
