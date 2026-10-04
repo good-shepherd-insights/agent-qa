@@ -39,6 +39,7 @@ import {
   handleParamOf,
   lastEventIdParamOf,
   resumePointOf,
+  runDenialOf,
   serveRunEventStream,
 } from '../run-service/run-service-routes.js'
 // 404-05 (D-16/D-18): the post-processing pair — the read a page polls and the dedicated live
@@ -3020,6 +3021,23 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             args.push('--disable-cache')
           }
           const isSuite = Boolean(isSuiteFile)
+
+          // 2026-10-04 (433-34, G-433-10): the run core's own refusal, asked BEFORE anything is
+          // recorded. A production target the config has not opted into used to be enqueued here,
+          // minting a row the core then refused, so the click read "Run started" and the refusal was
+          // recorded as a failed run. The composing host answers with the core's rule; this route
+          // only renders the denial in the run service door's shape.
+          try {
+            await executionBackend?.preflight?.({ args, source: isSuite ? 'suite' : 'dashboard' })
+          } catch (error) {
+            const denial = runDenialOf(error)
+            if (denial !== undefined) {
+              json(res, denial, 403)
+              return
+            }
+            json(res, { error: error instanceof Error ? error.message : String(error) }, 400)
+            return
+          }
 
           let testName = body.file
             ? basename(normalizedFileTarget?.storagePath ?? body.file, '.yaml')

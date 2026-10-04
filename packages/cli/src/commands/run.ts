@@ -2240,6 +2240,71 @@ export async function produceMembersFromPatterns(
 }
 
 /**
+ * What a request's members declare about production, read the way the producers read it and
+ * nothing more (433-34, G-433-10).
+ *
+ * A door that must refuse BEFORE it records anything (the dashboard's trigger mints a row the
+ * moment it enqueues) asks this, then hands the answer to `refuseProductionWithoutOptIn`, so the
+ * rule keeps its one decision site. It resolves the same inputs and walks the same split, parse
+ * and target facts as `produceMembersFromPatterns`, and builds no logger, cache, session, run
+ * directory, probe or adapter. Config is read as `--dry-run` reads it, without auth plugins.
+ *
+ * A request this cannot resolve throws the producer's own input error; the run then reports it
+ * exactly as it does without this read.
+ */
+export async function resolveRunTargetDeclaration(input: {
+  readonly configPath?: string
+  readonly patterns?: readonly string[]
+}): Promise<{
+  readonly targetClass?: RunTargetClass
+  readonly productionTargetNames: readonly string[]
+  readonly allowProduction: boolean
+}> {
+  const inputs = await resolveRunInvocationInputs({
+    ...(input.configPath === undefined ? {} : { configPath: input.configPath }),
+    ...(input.patterns === undefined ? {} : { patterns: input.patterns }),
+    loadAuthPlugins: false,
+    warn: () => {},
+  })
+  const allowProduction = inputs.config.allowProduction === true
+  const { tests, suites } = inputs.discovered
+
+  if (tests.length > 0) {
+    const { parseAllTestBindings } = await import('@vostride/agent-qa-core')
+    const parseResult = await parseAllTestBindings([...tests])
+    if (parseResult.errors.length > 0) {
+      throw new CliRunParseError(
+        [pc.red(`Found ${parseResult.errors.length} parse error(s):`), '', ...formatParseErrorLines(parseResult.errors)],
+        parseResult.errors,
+        [...tests],
+      )
+    }
+    refuseZeroRunnableTests(tests, parseResult.bindings)
+    const facts = resolveMemberTargetFacts(
+      inputs.config,
+      parseResult.bindings.map((binding) => binding.test.target),
+    )
+    return {
+      targetClass: foldMostRestrictiveTargetClass(facts.declaredClasses),
+      productionTargetNames: facts.productionTargetNames,
+      allowProduction,
+    }
+  }
+
+  if (suites.length > 0) {
+    const preflight = await resolveSuitePreflight({
+      suiteFiles: suites,
+      config: inputs.config,
+      configDir: inputs.configDir,
+    })
+    // The suite producer refuses on the parsed names alone, before preparation; so does this.
+    return { productionTargetNames: preflight.productionTargetNames, allowProduction }
+  }
+
+  throw new CliRunInputError([pc.red('Error: No test or suite files resolved for this run.')], 2)
+}
+
+/**
  * The read-only suite preflight: parse every suite and its members, and decide the invocation's
  * single product. Nothing here touches a target, a device, a database or a counter.
  *

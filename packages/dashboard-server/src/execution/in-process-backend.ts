@@ -52,6 +52,7 @@ import type { RunEventEnvelope, RunSession } from '@vostride/agent-qa-schema'
 import type {
   ExecuteOptions,
   ExecutionBackend,
+  PreflightOptions,
   RunSettledDetails,
 } from './execution-backend.js'
 
@@ -152,6 +153,11 @@ export interface InProcessExecutionBackendOptions {
    * to refuse. `invokeRun` also says what this one does: it invokes the `runs.start` OP (D-10).
    */
   readonly invokeRun: InProcessRunStarter
+  /**
+   * The host's pre-enqueue check, forwarded as `preflight` (433-34, G-433-10). It runs the run
+   * core's production rule over the request; a rejection carrying `neutralReason` is a denial.
+   */
+  readonly preflightRun?: (opts: PreflightOptions) => Promise<void>
   /** Applied when an `ExecuteOptions` carries no `timeout` of its own. */
   readonly defaultTimeout?: number
   /** How long a settled run's handle survives before it is dropped. */
@@ -199,6 +205,10 @@ export class InProcessExecutionBackend extends EventEmitter implements Execution
     super()
     this.options = options
     this.retentionMs = options.retentionMs ?? DEFAULT_HANDLE_RETENTION_MS
+  }
+
+  async preflight(opts: PreflightOptions): Promise<void> {
+    await this.options.preflightRun?.(opts)
   }
 
   execute(opts: ExecuteOptions): void {

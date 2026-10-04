@@ -281,10 +281,11 @@ function toolText(result: unknown): DoorAnswer {
 /** A scene: the dashboard as `agent-qa dashboard` composes it, with the run service mounted. */
 async function openDashboard(project: MatrixProject): Promise<{
   origin: string
+  db: DashboardDatabase
   settled: Array<{ runId: string; status: string; details: Record<string, unknown> }>
 }> {
   const db = new DashboardDatabase({ dbPath: ':memory:' })
-  const runDoor = await createDashboardRunDoor({ db })
+  const runDoor = await createDashboardRunDoor({ db, configPath: project.configPath })
   let boundOrigin: string | undefined
   const door = composeDashboardDoor({
     agentQaRoot: project.agentQaRoot,
@@ -320,7 +321,7 @@ async function openDashboard(project: MatrixProject): Promise<{
     await door.host.close()
     db.close()
   })
-  return { origin: boundOrigin, settled }
+  return { origin: boundOrigin, db, settled }
 }
 
 const DOORS: ReadonlyArray<readonly [string, Door]> = [
@@ -382,7 +383,12 @@ const DOORS: ReadonlyArray<readonly [string, Door]> = [
     const response = await fetch(`${scene.origin}/api/runs/trigger`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ file: pattern }),
     })
-    const body = await response.json() as { runId?: string; error?: string }
+    const body = await response.json() as { runId?: string; error?: string; neutralReason?: string }
+    // 433-34 (G-433-10): the trigger refuses at the door, so the refusal is its answer and no row exists.
+    if (response.status >= 400 && body.error === 'run_denied') {
+      expect(scene.db.getRuns({}), 'a refused click minted a run row').toEqual([])
+      return { refused: true, text: `${body.neutralReason ?? ''}\n${JSON.stringify(body)}` }
+    }
     expect(body.error, JSON.stringify(body)).toBeUndefined()
     expect(await waitFor(() => scene.settled.length > 0, 90_000), 'the dashboard run never settled').toBe(true)
     const settled = scene.settled[0]!

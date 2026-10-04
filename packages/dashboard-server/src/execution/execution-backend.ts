@@ -84,8 +84,23 @@ export interface RunSettledDetails {
 
 export type RunSettledStatus = 'completed' | 'failed' | 'cancelled' | 'timeout'
 
+/** A trigger's request as the queue would carry it, before anything is recorded (433-34). */
+export interface PreflightOptions {
+  readonly args: string[]
+  readonly source: 'dashboard' | 'suite'
+}
+
 export interface ExecutionBackend extends EventEmitter {
   execute(opts: ExecuteOptions): void
+  /**
+   * Ask the run core whether this request may start, before a row is minted or anything enqueued
+   * (433-34, G-433-10).
+   *
+   * The composing host answers with the core's own production rule over the members' declared
+   * targets; this package decides nothing about production. A refusal rejects with the core's
+   * denial, which carries `neutralReason`. Absent on a backend whose host composes no preflight.
+   */
+  preflight?(opts: PreflightOptions): Promise<void>
   kill(runId: string): boolean
   killAll(): void
   /**
