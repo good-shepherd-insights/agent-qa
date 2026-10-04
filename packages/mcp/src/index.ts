@@ -22,6 +22,10 @@
 export { buildAgentQaMcpServer, AGENT_QA_MCP_SERVER_VERSION } from './catalog.js'
 export type { AgentQaMcpServerDeps } from './catalog.js'
 
+// 433-33 (G-433-9): the server's initialize instructions, so the CLI's parity cell compares the
+// shipped stdio answer against this one source.
+export { AGENT_QA_MCP_INSTRUCTIONS } from './instructions.js'
+
 export { createAgentQaMcpNodeHandler } from './http.js'
 export type { AgentQaMcpDepsResolver } from './http.js'
 

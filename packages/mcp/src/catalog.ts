@@ -48,6 +48,7 @@ import type { FunctionRegistry } from '@vostride/agent-qa-agent'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 
 import { MCP_APPS_EXTENSION_ID, appResourceUriFor, registerAppResources } from './app-resource.js'
+import { AGENT_QA_MCP_INSTRUCTIONS } from './instructions.js'
 import { liveLinkLineFor } from './live-link.js'
 import type { LiveLinkSupplier } from './live-link.js'
 import {
@@ -591,6 +592,8 @@ export function buildAgentQaMcpServer(deps: AgentQaMcpServerDeps): McpServer {
         // carries no server-side options; what it says is that this endpoint speaks it at all.
         extensions: { [MCP_APPS_EXTENSION_ID]: {} },
       },
+      // 433-33 (G-433-9): init's pointer, on the one channel every MCP host receives.
+      instructions: AGENT_QA_MCP_INSTRUCTIONS,
     },
   )
 

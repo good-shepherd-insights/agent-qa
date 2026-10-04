@@ -1,0 +1,120 @@
+// C433-MCP-INSTRUCTIONS (433-33, G-433-9 · F-433-36 · D-18/D-19, 431 D-20).
+//
+// A fresh coding agent never saw init's pointer: Claude Code loads the user's CLAUDE.md, not the
+// AGENTS.md block init writes, and agent-qa never writes CLAUDE.md. The server's own initialize
+// result is the one channel every MCP host receives, so it carries the pointer.
+
+import { readFileSync } from 'node:fs'
+import { createServer } from 'node:http'
+import type { Server as NodeHttpServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
+
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
+import { createMcpHandler } from '@modelcontextprotocol/server'
+import {
+  createFunctionRegistry,
+  type CreateFunctionRegistryOptions,
+  type FunctionDeps,
+  type FunctionRegistry,
+} from '@vostride/agent-qa-agent'
+import type { FunctionCaller } from '@vostride/agent-qa-schema'
+import { afterEach, describe, expect, it } from 'vitest'
+
+import * as barrel from '../index.js'
+
+const auditSink = {
+  appendGuardrailAudit() {},
+} as unknown as CreateFunctionRegistryOptions['auditSink']
+
+const CALLER: FunctionCaller = { surface: 'mcp', origin: 'agent' }
+
+function registry(): FunctionRegistry {
+  return createFunctionRegistry({ deps: {} as unknown as FunctionDeps, auditSink })
+}
+
+const deps = () => ({ registry: registry(), caller: CALLER, maskText: (text: string) => text })
+
+const openClients: Client[] = []
+const openServers: NodeHttpServer[] = []
+afterEach(async () => {
+  for (const client of openClients.splice(0)) await client.close().catch(() => {})
+  for (const server of openServers.splice(0)) await new Promise<void>((resolve) => server.close(() => resolve()))
+})
+
+async function connect(): Promise<Client> {
+  const handler = createMcpHandler(() => barrel.buildAgentQaMcpServer(deps()))
+  const client = new Client({ name: 'agent-qa-433-33', version: '0.0.0' })
+  openClients.push(client)
+  await client.connect(new StreamableHTTPClientTransport(new URL('http://instructions.local/mcp'), {
+    fetch: ((url: URL | string, init?: RequestInit) => handler.fetch(new Request(url, init))) as typeof fetch,
+  }))
+  return client
+}
+
+async function connectLoopback(): Promise<Client> {
+  const server = createServer(barrel.createAgentQaMcpNodeHandler(() => deps()) as never)
+  openServers.push(server)
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`
+  const client = new Client({ name: 'agent-qa-433-33-http', version: '0.0.0' })
+  openClients.push(client)
+  await client.connect(new StreamableHTTPClientTransport(new URL(url)))
+  return client
+}
+
+/** The bump guard's pin, read from its file so it is never retyped here. */
+function pinnedToolNames(): readonly string[] {
+  const source = readFileSync(new URL('./mapping-bump-guard.test.ts', import.meta.url), 'utf8')
+  const block = /const PINNED_TOOL_NAMES: readonly string\[\] = \[([\s\S]*?)\]/.exec(source)
+  if (block === null) throw new Error('PINNED_TOOL_NAMES not found in mapping-bump-guard.test.ts')
+  return [...block[1]!.matchAll(/'([a-z_]+)'/g)].map((match) => match[1]!)
+}
+
+const FORBIDDEN = ['.agent-qa/', 'SQLite', 'memory/index/', 'memory/queue/', '.lease', '.epoch'] as const
+
+describe('C433-MCP-INSTRUCTIONS', () => {
+  it('C433-MCP-INSTRUCTIONS: the initialize result carries instructions', async () => {
+    const instructions = (await connect()).getInstructions()
+    expect(typeof instructions).toBe('string')
+    expect(instructions!.trim().length).toBeGreaterThan(0)
+    expect(instructions).toBe(barrel.AGENT_QA_MCP_INSTRUCTIONS)
+    expect(barrel.AGENT_QA_MCP_INSTRUCTIONS.length).toBeLessThanOrEqual(1200)
+  })
+
+  it('C433-MCP-INSTRUCTIONS: the loopback HTTP face answers the same instructions', async () => {
+    const instructions = (await connectLoopback()).getInstructions()
+    expect(typeof instructions).toBe('string')
+    expect(instructions).toBe(barrel.AGENT_QA_MCP_INSTRUCTIONS)
+  })
+
+  it('C433-MCP-INSTRUCTIONS: they name every path a coding agent must never open', async () => {
+    const instructions = (await connect()).getInstructions() ?? ''
+    for (const path of FORBIDDEN) expect(instructions, path).toContain(path)
+  })
+
+  it('C433-MCP-INSTRUCTIONS: they name the first reads', async () => {
+    const instructions = (await connect()).getInstructions() ?? ''
+    const list = instructions.indexOf('agent_qa_list_runs')
+    const overview = instructions.indexOf('agent_qa_get_run_overview')
+    expect(list).toBeGreaterThanOrEqual(0)
+    expect(overview).toBeGreaterThan(list)
+    expect(instructions).toContain('--json')
+    expect(instructions).toContain('agent-qa-knowledge/AGENTS.md')
+  })
+
+  it('C433-MCP-INSTRUCTIONS: every tool they name is registered', async () => {
+    const client = await connect()
+    const instructions = client.getInstructions() ?? ''
+    const named = [...new Set([...instructions.matchAll(/agent_qa_[a-z_]+/g)].map((match) => match[0]))]
+    expect(named.length).toBeGreaterThan(0)
+    const listed = new Set((await client.listTools()).tools.map((tool) => tool.name))
+    for (const name of named) expect(listed.has(name), name).toBe(true)
+  })
+
+  it('C433-MCP-INSTRUCTIONS: the tool list is unchanged', async () => {
+    const pinned = pinnedToolNames()
+    expect(pinned).toHaveLength(20)
+    const listed = (await (await connect()).listTools()).tools.map((tool) => tool.name).sort()
+    expect(listed).toEqual([...pinned].sort())
+  })
+})
