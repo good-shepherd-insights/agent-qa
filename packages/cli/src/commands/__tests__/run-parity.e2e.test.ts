@@ -46,6 +46,11 @@
 // inventory's `execution_audit.jsonl` is not written by these runs any more. It is a declared
 // REMOVAL, subtracted from the golden side only and asserted absent on the actual side, so the file
 // coming back undeclared still reds. The historical capture was not regenerated.
+// Phase 433-35 (G-433-11, F-433-44): a browser that never launches fails its member with the cause
+// instead of cancelling the run, so the direct run prints `FAIL`, the cause and its run id, and the
+// `--all` direct run's second member is skipped with events rather than dropped. Only the
+// single-test stdout and the `--all` stdout and eventTypes fields changed, by hand; the historical
+// capture was not regenerated, and stderr and exit codes are unchanged.
 // 418 CR-02 additionally requires one strict originating-run canary-policy.json per
 // produced handoff. The capture helper checks its exact contents and run identity;
 // the inventory below adds its explicit cardinality, without filtering the file.

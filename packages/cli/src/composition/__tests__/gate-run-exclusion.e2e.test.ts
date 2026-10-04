@@ -16,10 +16,12 @@
 //   the durable tables        `run_test_outcomes` after a real production fold
 //
 // THE FIXTURE'S HONEST LIMIT, STATED RATHER THAN SMOOTHED OVER. A run driven here has no browser
-// and no reachable model, so its member settles `cancelled` with no steps — and `countedOutcome`
-// counts neither `cancelled` nor `skipped`. On THAT record the marked and the unmarked arms both
-// project an empty member list, so "the marked arm counted nothing" would be true of a projection
-// that counts nothing at all: green at rest, proving nothing (401-05's Truth 3, met again).
+// and no reachable model. Until 433-35 its member settled `cancelled` with no steps, which
+// `countedOutcome` does not count, so both arms projected an empty member list and "the marked arm
+// counted nothing" was true of a projection that counts nothing at all (401-05's Truth 3, met
+// again). Since 433-35 (G-433-11) a browser that never launches FAILS its member with the cause, so
+// the unmarked arm now counts that one failed member and half 1 asserts it. The member still has no
+// steps, so half 2 keeps the countable member list every consumer assertion needs.
 //
 // So the differential is in two halves and each is measured where it can actually discriminate:
 //
@@ -154,7 +156,7 @@ function handoffFor(fixture: Fixture, runId: string): CompletedRunHandoff {
  */
 async function driveRun(fixture: Fixture, request: RunsStartInput): Promise<CompletedRunHandoff> {
   // An empty browsers root, so the run's shape is a property of the fixture and not of the machine
-  // (401-05's idiom). It is also why half 2 exists: this makes the member `cancelled`.
+  // (401-05's idiom). It makes the member `failed` with no steps (433-35; it was `cancelled`).
   process.env.PLAYWRIGHT_BROWSERS_PATH = join(fixture.project, 'no-browsers')
   const { registry } = composeCliLocalAgent({
     agentQaRoot: fixture.agentQaRoot,
@@ -232,25 +234,24 @@ describe('a gate run reaches no counter and no candidacy input (INVK-06, D-15)',
       expect(project(marked).excluded).toBe(true)
       expect(project(unmarked).excluded).toBe(false)
 
-      // And the honest note about what these two records cannot say, asserted so it stays true:
-      // neither arm's own members are countable here, which is why half 2 exists.
-      expect(project(unmarked).tests).toEqual([])
+      // Since 433-35 the unmarked arm's member is countable: the launch failure is a failed member,
+      // so the gate excludes something real here. It has no steps, which is why half 2 exists.
+      expect(project(unmarked).tests.map((test) => test.passed)).toEqual([false])
 
       // ---- THE INTERRUPTED GATE RUN (INVK-06's concurrency edge) ------------------------------
       //
-      // This plan filed that edge as a BACKSTOP truth, and half of it turns out to be measured
-      // here for free rather than needing a contrived abort: these runs DID NOT COMPLETE. No
-      // browser is reachable, so the member settles `cancelled` and the run's aggregate verdict
-      // is `cancelled` — an interrupted run in every sense the projection can observe. The claim
-      // the edge makes about that case is that the marker survives the interruption on the durable
-      // record and the run still contributes nothing, and both are asserted right here.
+      // This plan filed that edge as a BACKSTOP truth. Until 433-35 half of it was measured here
+      // for free, because a browser that never launched cancelled the run. Nobody cancelled it, so
+      // since 433-35 (G-433-11) the run's aggregate verdict is `failed` and the interrupted case is
+      // a backstop again. What is still asserted here is that the marker survives on a run that did
+      // not pass, and that the run contributes nothing.
       //
       // WHAT IT STILL DOES NOT RANGE, stated rather than implied: a run aborted by `runBudgetMs`
       // mid-step (a different interruption, with partial step evidence on the record), and the
       // ABSENT-handoff arm — a run that left no handoff at all cannot be handed to
       // `projectRunOutcomes`, so "it contributes nothing" is a statement about the fold's input
       // being absent rather than about a decision the fold makes. That half stays a backstop.
-      expect(marked.aggregateVerdict).toBe('cancelled')
+      expect(marked.aggregateVerdict).toBe('failed')
       expect(marked.excludedFromOutcomes).toBe(true)
       expect(project(marked).tests).toEqual([])
       expect(project(marked).fingerprints).toEqual([])

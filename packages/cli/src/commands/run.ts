@@ -3835,7 +3835,7 @@ export interface ProducedCliRunMembers {
   bindRunContext(input: { maskingContext: RunMaskingContext; safetyHooks: SafetyHookRunner }): void
   /** The assembler's results, bound after the gate allowed the run and before `startRun`. */
   applyAssembly(input: { buildOrdinal: number; quarantined: readonly QuarantineAppliedEntry[] }): void
-  /** The started session, so a member's framework error can cancel the run it is a member of. */
+  /** The started session. Since 433-35 a member's framework error fails the run rather than cancelling it. */
   bindSession(session: { cancel(): void }): void
   /** The first framework/setup error a member closure threw — the drive re-surfaces it. */
   takeFrameworkError(): unknown | undefined
@@ -3884,7 +3884,10 @@ export async function produceDirectRunMembers(
   // below, exactly where the command declared them; these two are new only in the sense that the
   // command held them in its own scope.
   let frameworkError: unknown | undefined
+  let frameworkSkipReason: string | undefined
+  // Kept for the producer interface; a framework error no longer cancels the run (433-35).
   let activeRunSession: { cancel(): void } | undefined
+  void activeRunSession
   const dashboardEnabled = reporterSelection.dashboard
 
   // 401-04: `startRun` is NOT among these. BOTH of this door's paths reach it through
@@ -4602,21 +4605,36 @@ export async function produceDirectRunMembers(
     if (!binding) {
       throw new Error(`No test-member binding for testIndex ${ctx.testIndex} (testId ${member.testId})`)
     }
+    // 433-35 (G-433-11, F-433-44): a member that could not start (its browser never launched, a
+    // setup error) fails the run with its cause. It is not a cancel: nobody cancelled the run. The
+    // members after it are skipped without launching, and each says which earlier member failed.
+    if (frameworkSkipReason !== undefined) {
+      return {
+        runId: member.testId,
+        name: member.name,
+        filePath: member.filePath,
+        status: 'skipped',
+        steps: [],
+        duration: 0,
+        failureSummary: frameworkSkipReason,
+      }
+    }
     try {
       return await binding(ctx)
     } catch (err) {
+      const { failureSummary } = formatFrameworkError(err instanceof Error ? err.message : String(err))
       if (frameworkError === undefined) {
         frameworkError = err
-        try { activeRunSession?.cancel() } catch { /* best-effort */ }
+        frameworkSkipReason = `Not run: "${member.name}" could not start. ${failureSummary}`
       }
       return {
         runId: member.testId,
         name: member.name,
-        filePath: 'unknown',
+        filePath: member.filePath,
         status: 'failed',
         steps: [],
         duration: 0,
-        failureSummary: err instanceof Error ? err.message : String(err),
+        failureSummary,
       }
     }
   }
@@ -4710,6 +4728,8 @@ export function createRunCommand(): Command {
     )
     .action(async (patterns: string[], opts: RunOptions, command: Command) => {
       let _crashDb: any
+      // 433-35 (G-433-11): the run this invocation started, so a framework error names the id it recorded.
+      let _startedRunId: string | undefined
 
       // 398-15 (WR-06, paired with CR-01): DRAIN THE MEMOISED ANALYTICS HOST BEFORE THIS ACTION
       // EXITS. Declared out here, beside `_crashDb`, because the third terminal exit is in the
@@ -5026,8 +5046,9 @@ export function createRunCommand(): Command {
         let activeRunSession: { cancel(): void } | undefined
         const curationAbortController = new AbortController()
         // A throw out of a member closure is a framework/setup error (not a test failure): the shell
-        // absorbs executor throws into failed members (D-13, never crashes the run), so we capture the
-        // first one, cancel the run, and re-surface it after `done` to preserve the exit-2 contract.
+        // absorbs executor throws into failed members (D-13, never crashes the run), so the producer
+        // captures the first one, fails that member with its cause, skips the members after it
+        // (433-35: never a cancel), and re-surfaces it after `done` to preserve the exit-2 contract.
         let frameworkError: unknown | undefined
         // SESSION-04 force-exit backstop (Plan 361-13 Task 3): armed on cancel, cleared after
         // `await session.done` (and BEFORE any frameworkError re-throw so the exit-2 contract holds).
@@ -5151,6 +5172,7 @@ export function createRunCommand(): Command {
                 ...(opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }) },
               onSession: (session) => {
                 activeRunSession = session
+                _startedRunId = singleRunId
               },
               subscribers: ({ session, quarantined, maskingContext, onMemberSnapshot }) => {
                 singleAnalytics.bindMaskingContext(maskingContext)
@@ -5303,6 +5325,7 @@ export function createRunCommand(): Command {
         const errStack = err instanceof Error ? err.stack ?? '' : ''
         const formattedError = formatFrameworkError(errMsg)
         console.error(pc.red(formattedError.displayMessage))
+        const crashRunIdsPrinted = new Set<string>()
 
         if (_crashDb) {
           const fullError = `${errMsg}\n${errStack}`
@@ -5314,6 +5337,7 @@ export function createRunCommand(): Command {
             for (const run of runs) {
               const finalStatus = isBrowserClose ? 'cancelled' : 'failed'
               printRunId(run.id)
+              crashRunIdsPrinted.add(run.id)
               printRunAttributes(run.attributes)
               _crashDb.updateRun(run.id, {
                 status: finalStatus,
@@ -5340,6 +5364,9 @@ export function createRunCommand(): Command {
             }
           } catch { /* best-effort cleanup */ }
         }
+
+        // The run already recorded its verdict and the cause (433-35), so the id is how to read it.
+        if (_startedRunId !== undefined && !crashRunIdsPrinted.has(_startedRunId)) printRunId(_startedRunId)
 
         if (_crashDb) {
           try { _crashDb.close() } catch {}
