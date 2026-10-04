@@ -91,6 +91,13 @@ const VOLUME_BUTTONS = new Set<string>(['volumeUp'])
 // range error; reaching a valid index resets to the top with this many `previous` steps first.
 const MAX_PICKER_INDEX = 20
 const IOS_SAFARI_BUNDLE_ID = 'com.apple.mobilesafari'
+const IOS_SPRINGBOARD_BUNDLE_ID = 'com.apple.springboard'
+const IOS_LINK_HANDOFF_POLLS = 4
+const IOS_LINK_HANDOFF_PAUSE_MS = 500
+
+function firstErrorLine(err: unknown): string {
+  return (err instanceof Error ? err.message : String(err)).split('\n')[0]
+}
 
 // WebDriverIO's action().perform() calls DELETE /session/{id}/actions (releaseActions)
 // after performing. BrowserStack iOS doesn't support this endpoint and throws
@@ -507,6 +514,17 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
   private invalidateWebContext(): void {
     this.webContextChecked = false
     this.activeWebContext = null
+  }
+
+  private async readForegroundBundleId(): Promise<string | undefined> {
+    try {
+      const info = await this.driver!.execute('mobile: activeAppInfo')
+      if (!info || typeof info !== 'object') return undefined
+      const bundleId = (info as { bundleId?: unknown }).bundleId
+      return firstNonEmpty(typeof bundleId === 'string' ? bundleId : undefined)
+    } catch {
+      return undefined
+    }
   }
 
   private isBrowserSession(): boolean {
@@ -1380,66 +1398,78 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
       }
 
       case 'openUniversalLink': {
-        // Re-key of the proven openLink body (D-19): mobile: deepLink with url + bundleId. A plain
-        // web URL with no bundle id is scoped to the foreground app, and uses driver.url() only in
-        // a browser session or with Safari in front. The openLink verb is retired.
-        const bundleId = firstNonEmpty(action.bundleId, this.bundleId)
-        const isWebUrl = /^https?:\/\//i.test(action.url)
-        if (!bundleId && !isWebUrl) {
-          return { success: false, error: `Missing iOS bundle id for native deep link: ${action.url}` }
-        }
+        // Re-key of the proven openLink body (D-19). The openLink verb is retired.
+        const explicit = firstNonEmpty(action.bundleId)
+        const configured = firstNonEmpty(this.bundleId)
         const openInApp = async (appId: string): Promise<void> => {
-          const deepLink = (driver as { deepLink?: (url: string, appId: string, waitForLaunch?: boolean) => Promise<void> }).deepLink
-          if (typeof deepLink === 'function') {
-            await deepLink.call(driver, action.url, appId, true)
-          } else {
-            await driver.execute('mobile: deepLink', { url: action.url, bundleId: appId })
-          }
+          await driver.execute('mobile: deepLink', { url: action.url, bundleId: appId })
         }
-        if (!bundleId && !this.isBrowserSession()) {
-          const firstLine = (err: unknown) =>
-            (err instanceof Error ? err.message : String(err)).split('\n')[0]
-          // In a native session driver.url goes to the system handler, so an http(s) link no app
-          // claims would hand the device to Safari. Scope it to the foreground app instead.
-          let foreground: string | undefined
+        const openScoped = async (appId: string): Promise<ActionResult> => {
           try {
-            const info = await driver.execute('mobile: activeAppInfo')
-            foreground = info && typeof info === 'object'
-              ? firstNonEmpty((info as { bundleId?: unknown }).bundleId as string | undefined)
-              : undefined
-            if (!foreground) throw new Error('activeAppInfo returned no bundle id')
-          } catch (err) {
-            return {
-              success: false,
-              error: `Cannot open universal link ${action.url}: no bundle id was given or configured and the foreground app could not be identified (${firstLine(err)}). Pass bundleId to choose the app.`,
-            }
-          }
-          try {
-            if (foreground === IOS_SAFARI_BUNDLE_ID) {
-              await driver.url(action.url)
-            } else {
-              await openInApp(foreground)
-            }
+            await openInApp(appId)
             this.invalidateWebContext()
             return { success: true }
           } catch (err) {
-            return {
-              success: false,
-              error: `Failed to open universal link ${action.url} in the foreground iOS app ${foreground} (no bundle id was given): ${firstLine(err)}`,
-            }
+            return { success: false, error: `Failed to open universal link ${action.url} in iOS app ${appId}: ${err instanceof Error ? err.message : String(err)}` }
           }
         }
-        try {
-          if (bundleId) {
-            await openInApp(bundleId)
-          } else {
+        if (!/^https?:\/\//i.test(action.url)) {
+          const bundleId = explicit ?? configured
+          if (!bundleId) {
+            return { success: false, error: `Missing iOS bundle id for native deep link: ${action.url}` }
+          }
+          return openScoped(bundleId)
+        }
+        if (explicit) return openScoped(explicit)
+        if (this.isBrowserSession()) {
+          try {
             await driver.url(action.url)
+            this.invalidateWebContext()
+            return { success: true }
+          } catch (err) {
+            return { success: false, error: `Failed to open universal link ${action.url}: ${err instanceof Error ? err.message : String(err)}` }
           }
-          this.invalidateWebContext()
-          return { success: true }
-        } catch (err) {
-          return { success: false, error: `Failed to open universal link ${action.url}${bundleId ? ` in iOS app ${bundleId}` : ''}: ${err instanceof Error ? err.message : String(err)}` }
         }
+        let configuredFailure: string | undefined
+        if (configured) {
+          try {
+            await openInApp(configured)
+            this.invalidateWebContext()
+            return { success: true }
+          } catch (err) {
+            configuredFailure = `opening it in the configured iOS app ${configured} failed first: ${firstErrorLine(err)}`
+          }
+        }
+        // The system handler hands an http(s) link no installed app claims to Safari; the
+        // before/after foreground check turns that hand-off into a failure.
+        const before = await this.readForegroundBundleId()
+        try {
+          await driver.url(action.url)
+        } catch (err) {
+          return {
+            success: false,
+            error: `Failed to open universal link ${action.url} through the iOS system handler: ${firstErrorLine(err)}${configuredFailure ? ` (${configuredFailure})` : ''}`,
+          }
+        }
+        this.invalidateWebContext()
+        if (!before || before === IOS_SAFARI_BUNDLE_ID) return { success: true }
+        let after: string | undefined
+        for (let poll = 0; poll < IOS_LINK_HANDOFF_POLLS; poll++) {
+          await driver.pause(IOS_LINK_HANDOFF_PAUSE_MS)
+          after = await this.readForegroundBundleId()
+          if (after && after !== before && after !== IOS_SPRINGBOARD_BUNDLE_ID) break
+        }
+        if (after !== IOS_SAFARI_BUNDLE_ID) return { success: true }
+        let error = `iOS opened ${action.url} in Safari: no installed app claimed the link (the foreground app was ${before}). Pass bundleId to open it in a specific app, or com.apple.mobilesafari to open it in Safari.`
+        if (before !== IOS_SPRINGBOARD_BUNDLE_ID) {
+          try {
+            await driver.activateApp(before)
+            error += ` Returned to ${before}.`
+          } catch (err) {
+            error += ` Could not return to ${before}: ${firstErrorLine(err)}.`
+          }
+        }
+        return { success: false, error }
       }
 
       case 'assertValue': {

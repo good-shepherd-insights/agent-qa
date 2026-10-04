@@ -666,6 +666,7 @@ describe('surface + id integrity', () => {
     expect(openUniversalLinkSchema.safeParse({ url: 'https://x', bundleId: 'com.app' }).success).toBe(true)
     expect(openUniversalLinkSchema.safeParse({}).success).toBe(false)
     expect(openUniversalLinkSchema.shape.bundleId.description).toMatch(/omit/i)
+    expect(openUniversalLinkSchema.shape.bundleId.description).toContain('com.apple.mobilesafari')
   })
 
   it('click schema has ref field', () => {

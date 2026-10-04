@@ -373,7 +373,7 @@ export const swipeFromEdgeSchema = z.object({
 export const openUniversalLinkSchema = z.object({
   url: z.string().describe('Universal link URL to open on iOS'),
   bundleId: z.string().optional()
-    .describe('Target iOS bundle id. Omit to scope the link to the app in the foreground (in Safari or a web view, the link opens there).'),
+    .describe('Target iOS bundle id: the link opens in that app (com.apple.mobilesafari opens it in Safari). Omit it to use the configured app; with none configured, iOS routes an http(s) link to the app that claims it, and the action fails if iOS hands it to Safari from another app. A custom-scheme link needs a bundle id.'),
 }).strict()
 
 export const pinchSchema = z.union([
