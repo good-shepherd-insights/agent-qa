@@ -4257,7 +4257,12 @@ export async function produceDirectRunMembers(
           if (cliVars) Object.assign(allVars, cliVars)
 
           for (const hookDef of hookDefs) {
-            const hookResult = await runHooks([hookDef], { ...authAwareSandboxOptions, envVars: { ...authAwareSandboxOptions.envVars, ...allVars, ...perTestSetupVars } })
+            const hookResult = await runHooks([hookDef], {
+              ...authAwareSandboxOptions,
+              envVars: { ...authAwareSandboxOptions.envVars, ...allVars, ...perTestSetupVars },
+              emit: ctx.events,
+              identity: { phase: 'setup', scope: 'test', testIndex: ctx.testIndex },
+            })
             const hr = hookResult.results.get(hookDef.name)
             if (!hr?.success) {
               hookSetupError = `Setup hook "${hookDef.name}" failed: ${hr?.error ?? 'unknown'}`
@@ -4392,7 +4397,12 @@ export async function produceDirectRunMembers(
           try {
             const allVars: Record<string, string> = { ...envFileVars, ...perTestSetupVars }
             if (cliVars) Object.assign(allVars, cliVars)
-            await runHooks([hook], { ...teardownSandboxOptions, envVars: { ...teardownSandboxOptions.envVars, ...allVars } })
+            await runHooks([hook], {
+              ...teardownSandboxOptions,
+              envVars: { ...teardownSandboxOptions.envVars, ...allVars },
+              emit: ctx.events,
+              identity: { phase: 'teardown', scope: 'test', testIndex: ctx.testIndex },
+            })
           } catch {}
         }
       }
