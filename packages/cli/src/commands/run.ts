@@ -827,15 +827,24 @@ async function buildDashboardIngestSubscriber(input: {
   sourceSnapshot?: unknown
   attributes?: RunAttributes
   onRunCreated?: (runId: string) => void
+  /**
+   * 433-28 (G-433-4, F-433-20): the run's own id, as the dashboard door passes it. Used only when
+   * the environment carries no correlation id, so an ingest never files the run under a new one.
+   */
+  runCorrelation: { runId: string } | { suiteQueueId: string }
 }): Promise<RunSubscriberHandle | undefined> {
   try {
     const { createDashboardRunIngest } = await import('@vostride/agent-qa-dashboard')
+    const fromEnv = readDashboardCorrelationEnv()
+    const correlationEnv = fromEnv.runId === undefined && fromEnv.suiteQueueId === undefined
+      ? input.runCorrelation
+      : fromEnv
     const ingest = createDashboardRunIngest({
       db: input.db,
       configSnapshot: input.configSnapshot as any,
       sourceSnapshot: input.sourceSnapshot as any,
       attributes: input.attributes,
-      correlationEnv: readDashboardCorrelationEnv(),
+      correlationEnv,
       onRunCreated: input.onRunCreated,
     })
     return {
@@ -1836,6 +1845,7 @@ async function executeSuites(
       configSnapshot: produced.subscriberSeed?.configSnapshot,
       sourceSnapshot: produced.subscriberSeed?.sourceSnapshot,
       attributes: produced.subscriberSeed?.attributes,
+      runCorrelation: { suiteQueueId: runId },
     })
     if (dashboardSubscriber) extraSubscribers.push(dashboardSubscriber)
   }
@@ -2095,6 +2105,7 @@ export async function produceMembersFromPatterns(
       ...(context.resolveTrustPriors === undefined ? {} : { resolveTrustPriors: context.resolveTrustPriors }),
       inputs: context.inputs,
       bindings: parseResult.bindings,
+      runId: context.runId,
       ...(product === undefined ? {} : { product }),
       ...(context.opts === undefined ? {} : { opts: context.opts }),
       ...(context.reporterSelection === undefined ? {} : { reporterSelection: context.reporterSelection }),
@@ -2960,7 +2971,7 @@ export async function produceSuiteRunMembers(
     // composition root and composed per-member at the CLI (Phase 363). The suite-level orchestration
     // (setup hooks + adapter.setup + nav / teardown + auth capture) runs from the lazy lifecycle
     // hooks the shell drives (suiteSetup/suiteTeardown below).
-    const preparedSuiteRunId = process.env.AGENT_QA_SUITE_QUEUE_ID ?? generateRunId()
+    const preparedSuiteRunId = process.env.AGENT_QA_SUITE_QUEUE_ID ?? runId
     const preparedSuiteArtifact = (suiteConfig.artifactContext as { artifact?: Record<string, unknown> } | undefined)?.artifact
       ?? (suiteConfig.artifactContext as Record<string, unknown> | undefined)
     const initialSuiteSandboxOptions = suiteConfig.sandboxOptions && suiteConfig.platformConfig.authState
@@ -3553,6 +3564,11 @@ export interface DirectRunMemberProductionInput {
   readonly logStorage?: unknown
   /** The invocation's memoised analytics host. Absent ⇒ no analytics, the daemon's posture. */
   readonly analytics?: () => Promise<CliAnalyticsHost>
+  /**
+   * The id the drive decided for this run (433-28, G-433-4). A member takes the shell's
+   * `ctx.runId` first and this second; it never decides an id of its own.
+   */
+  readonly runId?: string
   /** Reports each member's own run id. The command uses it to keep its crash-finalizer honest. */
   readonly onMemberRunId?: (runId: string) => void
   /**
@@ -3702,6 +3718,7 @@ export async function produceDirectRunMembers(
   const logStorage: any = input.logStorage
   const analytics = input.analytics
   const onMemberRunId = input.onMemberRunId
+  const producedRunId = input.runId
   const filtered = [...input.bindings]
   const directRunProduct = input.product
 
@@ -3819,7 +3836,11 @@ export async function produceDirectRunMembers(
     }
     analyticsTestId = testDef['test-id']
 
-    const runId = process.env.AGENT_QA_RUN_ID ?? generateRunId()
+    // 433-28 (G-433-4, F-433-20): the run core decided this run's id; the member adopts it.
+    const runId = ctx.runId ?? producedRunId
+    if (runId === undefined) {
+      throw new Error('A member needs the run id its run decided; neither the run shell nor the producer supplied one.')
+    }
     analyticsRunId = runId
     analyticsStartedAt = Date.now()
     onMemberRunId?.(runId)
@@ -4870,10 +4891,15 @@ export function createRunCommand(): Command {
         // `produceDirectRunMembers` now — the SAME producer a door holding nothing but a
         // `RunsStartInput` reaches through `produceMembersFromPatterns`. Two copies of this chain
         // would be two answers to what a member of this run is.
+        // 433-28 (G-433-4): decided once, before the members exist, and handed to the producer,
+        // the dashboard ingest and the drive alike.
+        const singleRunId = process.env.AGENT_QA_RUN_ID ?? generateRunId()
+
         const produced = await produceDirectRunMembers({
           resolveTrustPriors: trustPriors?.resolve,
           inputs,
           bindings: filtered,
+          runId: singleRunId,
           ...(directRunProduct === undefined ? {} : { product: directRunProduct }),
           opts,
           reporterSelection,
@@ -4892,8 +4918,6 @@ export function createRunCommand(): Command {
 
         // The verdict map stays a door concern until task 3 hands the whole drive over.
         const { mapVerdictToExitCode } = await import('@vostride/agent-qa-runner')
-
-        const singleRunId = process.env.AGENT_QA_RUN_ID ?? generateRunId()
 
         const singleExecutionContext = resolveRunExecutionContext()
 
@@ -4919,6 +4943,7 @@ export function createRunCommand(): Command {
           const dashboardSubscriber = await buildDashboardIngestSubscriber({
             db: dashboardDb,
             attributes: resolveCliRunAttributes(userRunAttributes, 'local', inheritedRunAttributes),
+            runCorrelation: { runId: singleRunId },
             onRunCreated: (createdRunId: string) => { currentRunId = createdRunId; logger?.setRunId(createdRunId) },
           })
           if (dashboardSubscriber) singleExtraSubscribers.push(dashboardSubscriber)
