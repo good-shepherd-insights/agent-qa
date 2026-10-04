@@ -96,6 +96,25 @@ describe('buildVerifierStableTier — step-goal rule, expected errors and the er
   })
 })
 
+describe('buildVerificationPrompt — AI-judged actions are unverified planner claims (P5a)', () => {
+  it('renders an assertAI action as observation only with the unverified claim', () => {
+    const assertAi = { type: 'assertAI', claim: 'The header is shown', mode: 'multimodal' } as unknown as Action
+    const out = buildVerificationPrompt('Verify the header', before, after, assertAi, true, '', undefined)
+    expect(out).toContain('Action taken: observation only; planner\'s unverified claim: "The header is shown"')
+  })
+
+  it('renders an extractAI action as observation only with the extraction query', () => {
+    const extractAi = { type: 'extractAI', query: 'the page title', scope: 'run' } as unknown as Action
+    const out = buildVerificationPrompt('Read the page title', before, after, extractAi, true, '', undefined)
+    expect(out).toContain('Action taken: observation only; planner\'s extraction query: "the page title"')
+  })
+
+  it('leaves a tap action line unchanged', () => {
+    const out = buildVerificationPrompt('Reply to the post', before, after, action, true, '', undefined)
+    expect(out).toContain('Action taken: click on ref="e2" (button "Log in")')
+  })
+})
+
 describe('VerificationResultSchema — isAppError excludes expected errors (P6)', () => {
   it('says an expected error is not an application error', () => {
     const description = VerificationResultSchema.shape.isAppError.description

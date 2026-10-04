@@ -5,14 +5,13 @@
 //     (isNull/isDefined/equals/notEquals/gt/lt/contains); a mismatch carries both values; the
 //     outcome shape matches AssertValueEvidence with sorted keys.
 //   Block B — orchestration + the D-11 verifier short-circuit: the adapter reads the source and
-//     the runner comparator mints (D-10 division); a passing assertValue on a completing step
-//     yields a deterministic verdict with ZERO verifier.verify calls and verdictSource
-//     'assert-value'; a passing assertAI does not close a step by itself — the step verifier,
-//     with the author's context, decides (one verify, verdictSource 'verifier-model'; quick
-//     261004-0hc); a false assertAI and an extractAI conclusion never call verify; a completing
-//     step with no assertion outcome still verifies once
-//     (verdictSource 'verifier-model'); a failing assertValue and a platform-unavailable source
-//     are honest §7.1 failures the planner mediates; registered secrets arrive masked in evidence.
+//     the runner comparator mints (D-10 division); only a passing assertValue on a completing
+//     step yields a deterministic verdict with ZERO verifier.verify calls and verdictSource
+//     'assert-value'. Every AI-judged conclusion (assertAI or extractAI) goes through the step
+//     verifier with the author's context (quick 261004-lsa), and verdictSource 'verifier-model'
+//     is recorded only with the final verdict, so a rejection leaves it undefined. A false
+//     assertAI never calls verify; a failing assertValue and a platform-unavailable source are
+//     honest §7.1 failures the planner mediates; registered secrets arrive masked in evidence.
 //
 // RED BY DESIGN: Block A imports the not-yet-existing compound/assert-value.js
 // (compareAssertValue) — the whole file fails at collection until Plan 10 lands the module, then
@@ -23,7 +22,7 @@ import { describe, it, expect } from 'vitest'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { PlatformAdapter, Action, ActionResult } from '../../platform.js'
 import type { LoopPorts } from '../ports.js'
-import type { Verifier } from '../types.js'
+import type { ActionPlan, PlanResult, Planner, StepContext, Verifier } from '../types.js'
 import { executeStep } from '../index.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import { makeStepContext, makePlanner, makeActionPlan } from './loop-harness.js'
@@ -84,31 +83,56 @@ function makeShortCircuitVerifier(judgment: { verdict: boolean; rationale: strin
 interface ScriptedVerifier extends Verifier {
   verifyArgs: unknown[][]
   judgeClaimCalls: number
+  extractCalls: number
   judgeClaim(claim: string, screen: ScreenState, opts?: Record<string, unknown>): Promise<{ verdict: boolean; rationale: string }>
   extractData(query: string, screen: ScreenState, opts?: Record<string, unknown>): Promise<Record<string, unknown>>
 }
 
+type Verification = { success: boolean; reasoning: string; isAppError: boolean }
+
 function makeScriptedVerifier(script: {
   judgment?: { verdict: boolean; rationale: string }
-  verification?: { success: boolean; reasoning: string; isAppError: boolean }
+  verification?: Verification
+  verifications?: Verification[]
   extracted?: Record<string, unknown>
 }): ScriptedVerifier {
   const v: ScriptedVerifier = {
     verifyArgs: [],
     judgeClaimCalls: 0,
+    extractCalls: 0,
     async verify(...args: unknown[]) {
       v.verifyArgs.push(args)
-      return { verification: script.verification ?? { success: true, reasoning: 'ok', isAppError: false } }
+      const scripted = script.verifications?.[Math.min(v.verifyArgs.length - 1, script.verifications.length - 1)]
+      return { verification: scripted ?? script.verification ?? { success: true, reasoning: 'ok', isAppError: false } }
     },
     async judgeClaim() {
       v.judgeClaimCalls++
       return script.judgment ?? { verdict: true, rationale: 'ok' }
     },
     async extractData() {
+      v.extractCalls++
       return script.extracted ?? {}
     },
   }
   return v
+}
+
+function verifyCall(args: unknown[]): { step: string; action: { type?: string }; authorContext: unknown } {
+  return { step: args[0] as string, action: args[3] as { type?: string }, authorContext: args[8] }
+}
+
+function capturingPlanner(plans: ActionPlan[]): Planner & { failureContexts: (string | undefined)[] } {
+  let call = 0
+  const p = {
+    failureContexts: [] as (string | undefined)[],
+    async plan(_step: string, _state: ScreenState, context: StepContext): Promise<PlanResult> {
+      p.failureContexts.push(context.failureContext)
+      const plan = plans[Math.min(call, plans.length - 1)]
+      call++
+      return { plan }
+    },
+  }
+  return p
 }
 
 interface EvidenceView {
@@ -207,19 +231,23 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
     })
     const bail = makeActionPlan({ action: { type: 'reportValue', value: 'n/a' }, stepComplete: false, stepFailed: true })
 
+    const planner = capturingPlanner([assertTurn, bail])
+
     const result = await executeStep(
       'Open the #caturday hashtag page',
-      ports({ adapter, planner: makePlanner([assertTurn, bail]), verifier, plannerConfig: cfg }),
+      ports({ adapter, planner, verifier, plannerConfig: cfg }),
       makeStepContext({ testContext: 'Only the final screen is graded.' }),
     )
 
     expect(result.status).toBe('failed')
     expect(verifier.verifyArgs).toHaveLength(1)
-    expect((verifier.verifyArgs[0][3] as { type?: string }).type).toBe('assertAI')
-    expect(verifier.verifyArgs[0][8]).toEqual({ testContext: 'Only the final screen is graded.' })
+    expect(verifyCall(verifier.verifyArgs[0]).action.type).toBe('assertAI')
+    expect(verifyCall(verifier.verifyArgs[0]).authorContext).toEqual({ testContext: 'Only the final screen is graded.' })
     expect(verifier.judgeClaimCalls).toBe(1)
+    expect(planner.failureContexts).toHaveLength(2)
+    expect(planner.failureContexts[1]).toContain('The final screen is Safari, not Bluesky')
     const evidence = result.evidence as EvidenceView
-    expect(evidence.verdictSource).toBe('verifier-model')
+    expect(evidence.verdictSource).toBeUndefined()
     expect(evidence.aiJudgment?.verdict).toBe(true)
     expect(evidence.verifierVerdict?.reasoning).not.toBe('Step verified deterministically from the assertion outcome')
   })
@@ -270,9 +298,12 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
     expect(subs(result)[0]?.result?.error).toContain('judged false')
   })
 
-  it('unchanged: an extractAI-concluded step never calls verify and keeps verdictSource assert-ai', async () => {
+  it('an extractAI-concluded step goes through the step verifier with the author context (quick 261004-lsa)', async () => {
     const adapter = readingAdapter(makeScreenState(), { success: true })
-    const verifier = makeScriptedVerifier({ extracted: { title: 'Home' } })
+    const verifier = makeScriptedVerifier({
+      extracted: { title: 'Home' },
+      verification: { success: true, reasoning: 'The page title is visible', isAppError: false },
+    })
     const plan = makeActionPlan({
       action: { type: 'extractAI', query: 'the page title' },
       stepComplete: true,
@@ -281,12 +312,132 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
     const result = await executeStep(
       'Read the page title',
       ports({ adapter, planner: makePlanner([plan]), verifier, plannerConfig: cfg }),
+      makeStepContext({ testContext: 'The home page is open.' }),
+    )
+
+    expect(verifier.extractCalls).toBe(1)
+    expect(verifier.verifyArgs).toHaveLength(1)
+    expect(verifyCall(verifier.verifyArgs[0]).action.type).toBe('extractAI')
+    expect(verifyCall(verifier.verifyArgs[0]).authorContext).toEqual({ testContext: 'The home page is open.' })
+    expect(result.status).toBe('passed')
+    expect((result.evidence as EvidenceView).verdictSource).toBe('verifier-model')
+  })
+
+  it('an extractAI-concluded step that the verifier rejects does not pass', async () => {
+    const adapter = readingAdapter(makeScreenState(), { success: true })
+    const verifier = makeScriptedVerifier({
+      extracted: {},
+      verification: { success: false, reasoning: 'No title is visible', isAppError: false },
+    })
+    const extractTurn = makeActionPlan({ action: { type: 'extractAI', query: 'the page title' }, stepComplete: true })
+    const bail = makeActionPlan({ action: { type: 'reportValue', value: 'n/a' }, stepComplete: false, stepFailed: true })
+
+    const result = await executeStep(
+      'Read the page title',
+      ports({ adapter, planner: makePlanner([extractTurn, bail]), verifier, plannerConfig: cfg }),
       makeStepContext(),
     )
 
-    expect(verifier.verifyArgs).toHaveLength(0)
+    expect(verifier.verifyArgs).toHaveLength(1)
+    expect(result.status).not.toBe('passed')
+    expect((result.evidence as EvidenceView).verdictSource).toBeUndefined()
+  })
+
+  it('an always-rejecting verifier is bounded by maxSubActions and records no verdict source', async () => {
+    const adapter = readingAdapter(makeScreenState(), { success: true })
+    const verifier = makeScriptedVerifier({
+      judgment: { verdict: true, rationale: 'the header is present' },
+      verification: { success: false, reasoning: 'The header is not visible', isAppError: false },
+    })
+    const plan = makeActionPlan({
+      action: { type: 'assertAI', claim: 'the header is present', mode: 'multimodal', effort: 'medium', consensus: 1 },
+      stepComplete: true,
+    })
+
+    const result = await executeStep(
+      'Verify the header is shown',
+      ports({ adapter, planner: makePlanner([plan]), verifier, plannerConfig: cfg }),
+      makeStepContext(),
+    )
+
+    expect(result.status).toBe('failed')
+    expect(result.error).toContain('Sub-action limit reached')
+    expect(verifier.verifyArgs.length).toBeLessThanOrEqual(cfg.maxSubActions)
+    expect(verifier.judgeClaimCalls).toBeLessThanOrEqual(cfg.maxSubActions)
+    expect((result.evidence as EvidenceView).verdictSource).toBeUndefined()
+  })
+
+  it('reject, then re-assert, then accept: two verify calls, and the second turn carries the rejection', async () => {
+    const adapter = readingAdapter(makeScreenState(), { success: true })
+    const verifier = makeScriptedVerifier({
+      judgment: { verdict: true, rationale: 'the header is present' },
+      verifications: [
+        { success: false, reasoning: 'The header is hidden behind a dialog', isAppError: false },
+        { success: true, reasoning: 'The header is shown', isAppError: false },
+      ],
+    })
+    const plan = makeActionPlan({
+      action: { type: 'assertAI', claim: 'the header is present', mode: 'multimodal', effort: 'medium', consensus: 1 },
+      stepComplete: true,
+    })
+    const planner = capturingPlanner([plan])
+
+    const result = await executeStep(
+      'Verify the header is shown',
+      ports({ adapter, planner, verifier, plannerConfig: cfg }),
+      makeStepContext(),
+    )
+
+    expect(verifier.verifyArgs).toHaveLength(2)
+    expect(verifier.judgeClaimCalls).toBe(2)
     expect(result.status).toBe('passed')
-    expect((result.evidence as EvidenceView).verdictSource).toBe('assert-ai')
+    expect((result.evidence as EvidenceView).verdictSource).toBe('verifier-model')
+    expect(planner.failureContexts[1]).toContain('The header is hidden behind a dialog')
+  })
+
+  it('an expected error passes: the verifier reads the refusal as success with isAppError false', async () => {
+    const adapter = readingAdapter(makeScreenState(), { success: true })
+    const verifier = makeScriptedVerifier({
+      judgment: { verdict: true, rationale: 'the error is shown' },
+      verification: { success: true, reasoning: 'The login was refused as the test expects', isAppError: false },
+    })
+    const plan = makeActionPlan({
+      action: { type: 'assertAI', claim: "An 'Incorrect password' error is shown", mode: 'multimodal', effort: 'medium', consensus: 1 },
+      stepComplete: true,
+    })
+
+    const result = await executeStep(
+      'Log in with a wrong password and confirm the login is refused',
+      ports({ adapter, planner: makePlanner([plan]), verifier, plannerConfig: cfg }),
+      makeStepContext({ testContext: 'The login must be refused.' }),
+    )
+
+    expect(result.status).toBe('passed')
+    expect(verifier.verifyArgs).toHaveLength(1)
+  })
+
+  it('companion: an unexpected application error fails the step with no replan and records the verdict source', async () => {
+    const adapter = readingAdapter(makeScreenState(), { success: true })
+    const verifier = makeScriptedVerifier({
+      judgment: { verdict: true, rationale: 'the error is shown' },
+      verification: { success: false, reasoning: 'The server returned HTTP 500', isAppError: true },
+    })
+    const plan = makeActionPlan({
+      action: { type: 'assertAI', claim: "An 'Incorrect password' error is shown", mode: 'multimodal', effort: 'medium', consensus: 1 },
+      stepComplete: true,
+    })
+    const planner = capturingPlanner([plan])
+
+    const result = await executeStep(
+      'Log in with a wrong password and confirm the login is refused',
+      ports({ adapter, planner, verifier, plannerConfig: cfg }),
+      makeStepContext({ testContext: 'The login must be refused.' }),
+    )
+
+    expect(result.status).toBe('failed')
+    expect(result.error?.startsWith('Application error:')).toBe(true)
+    expect(planner.failureContexts).toHaveLength(1)
+    expect((result.evidence as EvidenceView).verdictSource).toBe('verifier-model')
   })
 
   it('control: a completing step without any assertion outcome verifies exactly once with verdictSource verifier-model', async () => {

@@ -65,7 +65,6 @@ import type {
   StagnationEvidence,
   StepPlanSource,
   TargetDescriptor,
-  VerdictSource,
   VerifierVerdict,
   Viewport,
   WorkingMemoryEntry,
@@ -174,7 +173,7 @@ function recordingOffsetFrom(zeroMs: number | undefined): number | undefined {
 // The 8 surviving return paths (v1 had 9; the exec-fail-limit path is deleted, D-10):
 //   1. planner stepFailed          → failed  (no execution)
 //   2. setVariable + stepComplete  → passed  (short-circuit, no verify)
-//   3. non-visual assert + complete→ passed  (short-circuit, no verify)
+//   3. assertValue + complete      → passed | failed  (comparator short-circuit, no verify)
 //   4. verify success              → passed  (stateAfter = verifier re-observation, D-15b)
 //   5. verify app-error            → failed  (no further replan)
 //   6. no-verifier + stepComplete  → passed  (trust the planner)
@@ -1498,7 +1497,8 @@ export async function executeStep(
       }
     } else if (dispatchVerb === 'assertAI' && ports.verifier?.judgeClaim) {
       // D-05/D-06/D-09: route the claim through the verifier's injected model lane exactly once —
-      // never adapter.execute, never a second judgment. A true verdict is a success result carrying
+      // never adapter.execute; the claim is judged once per attempt, and at stepComplete the step
+      // verifier still decides the step. A true verdict is a success result carrying
       // metadata.aiJudgment; a false verdict is an honest §7.1 self-correcting error the planner
       // mediates (no internal retry). Requested-but-deferred M3/M4 knobs ride the judgment evidence.
       cacheBypass = true
@@ -1731,7 +1731,7 @@ export async function executeStep(
 
     // D-19 (Phase 360): the legacy non-visual-`assert` short-circuit was deleted here. The
     // retired `assert` verb is gone; its deterministic-verdict replacement is D-11's
-    // assertValue/assertAI outcome short-circuit (Plan 10), already pinned by the Wave-0 suites.
+    // assertValue outcome short-circuit (quick 261004-lsa: assertValue only).
 
     const annotation = buildAnnotation(action, execResult, viewport, !!execError)
 
@@ -1809,20 +1809,16 @@ export async function executeStep(
     // 5. VERIFY — only when the planner signals stepComplete (three-outcome strategy).
     let verifierReasoning: string | undefined
     if (rawPlan.stepComplete && ports.verifier) {
-      // D-11 deterministic short-circuit BEFORE any verifier model call: an assertValue outcome
-      // takes the comparator's verdict ('assert-value'), and an extractAI conclusion or the
-      // defensive false-assertAI arm keeps 'assert-ai'. The source is recorded (T-360-09).
-      // A passing assertAI does not close a step by itself (quick 261004-0hc): the planner wrote
-      // the claim, so the step verifier, with the author's context, judges the step goal and
-      // records 'verifier-model', while the judge's verdict stays on aiJudgment. A FAILING
-      // assertValue or a false assertAI never reaches here — each set execError above.
+      // D-11 deterministic short-circuit BEFORE any verifier model call: only assertValue's
+      // deterministic comparator short-circuits ('assert-value', T-360-09). Every AI-judged
+      // conclusion (assertAI or extractAI) was written by the planner, so the step verifier, with
+      // the author's context, decides it (quick 261004-lsa); the judgment stays on aiJudgment.
+      // 'verifier-model' is recorded only with the final verdict. A FAILING assertValue or a
+      // false assertAI never reaches here — each set execError above.
       const assertOutcome = readAssertValueOutcomeMeta(execResult)
-      const aiJudgment = readAiJudgmentMeta(execResult)
-      const assertAiPass = !assertOutcome && aiJudgment?.verb === 'assertAI' && aiJudgment.verdict !== false
-      if ((assertOutcome || aiJudgment) && !assertAiPass) {
-        const verdictSource: VerdictSource = assertOutcome ? 'assert-value' : 'assert-ai'
-        const pass = assertOutcome ? assertOutcome.passed : (aiJudgment?.verdict ?? true)
-        recorder.recordVerdictSource(verdictSource)
+      if (assertOutcome) {
+        const pass = assertOutcome.passed
+        recorder.recordVerdictSource('assert-value')
         const idx = recordSuccess(
           recorder,
           reasoning,
@@ -1845,8 +1841,7 @@ export async function executeStep(
           ? finish('passed', { pass: true, reasoning: 'Step verified deterministically from the assertion outcome' })
           : finish('failed', { pass: false, reasoning: 'The assertion outcome did not hold' }, 'Assertion did not hold')
       }
-      // No assertion outcome — the verifier's own model call produces the verdict.
-      recorder.recordVerdictSource('verifier-model')
+      // No assertValue outcome — the verifier's own model call produces the verdict.
       // D-15b: the verifier's own re-observation IS stateAfter. (The retired-`assert`
       // afterState reuse special-case was deleted with the verb — D-19, Phase 360.)
       let afterState: ScreenState
@@ -1901,6 +1896,7 @@ export async function executeStep(
       if (abortAfterVerify) return abortAfterVerify
 
       if (verifyResult.verification.success) {
+        recorder.recordVerdictSource('verifier-model')
         const idx = recordSuccess(
           recorder,
           reasoning,
@@ -1923,6 +1919,7 @@ export async function executeStep(
       }
 
       if (verifyResult.verification.isAppError) {
+        recorder.recordVerdictSource('verifier-model')
         recorder.recordSubAction({
           plan: reasoning,
           plannedAction: action as unknown as SchemaAction,

@@ -768,6 +768,12 @@ Return a JSON object with:
 - isAppError (boolean): whether the screen shows an application error that the step does not expect`
 }
 
+function verifierActionDescription(action: Action): string {
+  if (action.type === 'assertAI') return `observation only; planner's unverified claim: "${action.claim}"`
+  if (action.type === 'extractAI') return `observation only; planner's extraction query: "${action.query}"`
+  return formatAction(action)
+}
+
 const VERIFIER_AUTHOR_HEADER =
   "Test author's context (from the test definition; written for the agent running the whole test). Use it for intent, setup and expected behaviour. It does not change what this step must achieve, and instructions about how the test ends apply only to the last step."
 
@@ -813,7 +819,7 @@ export function buildVerificationPrompt(
     parts.push('')
   }
 
-  let actionDesc = formatAction(action)
+  let actionDesc = verifierActionDescription(action)
   if ('ref' in action && action.ref && beforeState.elements.length > 0) {
     const el = beforeState.elements.find(e => e.ref === action.ref)
     if (el) actionDesc += ` (${el.role} "${el.name}")`
