@@ -769,6 +769,8 @@ async function runMemberAttempt(
       testName: member.name,
       testContext: member.context,
       suiteContext: config.suiteContext,
+      stepNumber: stepIndex + 1,
+      stepCount: member.steps.length,
       previousSteps: previousSteps.slice(-(config.plannerConfig?.previousStepCount ?? 5)),
       plannerModel: modelScope?.plannerModel ?? config.plannerModel,
       verifierModel: modelScope?.verifierModel ?? config.verifierModel,

@@ -1,9 +1,25 @@
 import { remote } from 'webdriverio'
 import type { IOSAdapterConfig } from './types.js'
 
-// WDA's default 50 cuts React Native trees, and 65 and above fails inside XCTest (bench H17).
+// WDA's default 50 cuts React Native trees, and deeper snapshots can fail inside XCTest on some hosts.
 export const IOS_SNAPSHOT_MAX_DEPTH = 62
 export const IOS_SNAPSHOT_FALLBACK_DEPTH = 50
+export const IOS_SNAPSHOT_DEPTH_ENV = 'AGENT_QA_IOS_SNAPSHOT_MAX_DEPTH'
+const IOS_SNAPSHOT_DEPTH_CAPABILITY = 'appium:settings[snapshotMaxDepth]'
+
+function positiveInteger(value: unknown): number | undefined {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value > 0 ? value : undefined
+  if (typeof value !== 'string' || !/^\d+$/.test(value.trim())) return undefined
+  const parsed = Number(value.trim())
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined
+}
+
+// Farm capabilities are merged over the local ones, so a farm depth is the depth the session starts with.
+export function resolveIOSSnapshotDepth(farmCapabilities?: Record<string, unknown>): number {
+  return positiveInteger(farmCapabilities?.[IOS_SNAPSHOT_DEPTH_CAPABILITY])
+    ?? positiveInteger(process.env[IOS_SNAPSHOT_DEPTH_ENV])
+    ?? IOS_SNAPSHOT_MAX_DEPTH
+}
 
 export async function createIOSSession(
   config: IOSAdapterConfig,
@@ -26,7 +42,7 @@ export async function createIOSSession(
     'appium:deviceName': config.device?.name ?? 'iPhone Simulator',
     'appium:showIOSLog': true,
     'appium:newCommandTimeout': config.timeouts?.test ? Math.ceil(config.timeouts.test / 1000) : 300,
-    'appium:settings[snapshotMaxDepth]': IOS_SNAPSHOT_MAX_DEPTH,
+    [IOS_SNAPSHOT_DEPTH_CAPABILITY]: resolveIOSSnapshotDepth(),
   }
 
   if (!browserName && appStateNoReset !== undefined) capabilities['appium:noReset'] = appStateNoReset

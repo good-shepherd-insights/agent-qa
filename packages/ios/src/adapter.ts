@@ -41,7 +41,12 @@ import {
 import type { MobileRefMap } from '@vostride/agent-qa-core'
 // 363 D-08/Q10: sharp image utilities moved to runner-local (sharp left core, its host-adapter home).
 import { alignToWindow } from '@vostride/agent-qa-runner-local'
-import { IOS_SNAPSHOT_FALLBACK_DEPTH, IOS_SNAPSHOT_MAX_DEPTH, createIOSSession } from './session.js'
+import {
+  IOS_SNAPSHOT_FALLBACK_DEPTH,
+  IOS_SNAPSHOT_MAX_DEPTH,
+  createIOSSession,
+  resolveIOSSnapshotDepth,
+} from './session.js'
 import type { IOSAdapterConfig } from './types.js'
 
 const IOS_NATIVE_SELECT_TYPES = new Set([
@@ -55,10 +60,19 @@ const IOS_NATIVE_SELECT_ROLES = new Set(['pickerwheel', 'spinbutton', 'combobox'
 
 const W3C_ELEMENT_KEY = 'element-6066-11e4-a52e-4f735a1b0f2d'
 
-// getPageSource takes no element, so a stale-element error there is about the Application snapshot.
+const IOS_SNAPSHOT_PROBE_INTERVAL = 20
+
+function errorNameAndMessage(err: unknown): string {
+  return err instanceof Error ? `${err.name} ${err.message}` : String(err)
+}
+
 function isIOSSnapshotDepthError(err: unknown): boolean {
-  const text = err instanceof Error ? `${err.name} ${err.message}` : String(err)
-  return /kAXErrorIllegalArgument|getting snapshot|stale element/i.test(text)
+  return /kAXErrorIllegalArgument/i.test(errorNameAndMessage(err))
+}
+
+// getPageSource takes no element, so a stale-element error there is about the Application snapshot.
+function isIOSSnapshotReadError(err: unknown): boolean {
+  return /getting snapshot|stale element/i.test(errorNameAndMessage(err))
 }
 const FOCUS_POLLS = 3
 const FOCUS_POLL_PAUSE_MS = 300
@@ -91,6 +105,13 @@ const VOLUME_BUTTONS = new Set<string>(['volumeUp'])
 // range error; reaching a valid index resets to the top with this many `previous` steps first.
 const MAX_PICKER_INDEX = 20
 const IOS_SAFARI_BUNDLE_ID = 'com.apple.mobilesafari'
+const IOS_SPRINGBOARD_BUNDLE_ID = 'com.apple.springboard'
+const IOS_LINK_HANDOFF_POLLS = 12
+const IOS_LINK_HANDOFF_PAUSE_MS = 500
+
+function firstErrorLine(err: unknown): string {
+  return (err instanceof Error ? err.message : String(err)).split('\n')[0]
+}
 
 // WebDriverIO's action().perform() calls DELETE /session/{id}/actions (releaseActions)
 // after performing. BrowserStack iOS doesn't support this endpoint and throws
@@ -297,11 +318,19 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
   // EXEC-03 session-cached app registry (D-10/D-12): enumerated once per session. null = not yet
   // enumerated OR enumeration unavailable (iOS simulator — mobile: listApps throws). Reset in cleanup().
   private appRegistry: AppRegistryEntry[] | null = null
+  private sessionSnapshotDepth = IOS_SNAPSHOT_MAX_DEPTH
+  private snapshotDepth = IOS_SNAPSHOT_MAX_DEPTH
+  private readsAtLoweredDepth = 0
+  private snapshotDepthWarned = false
 
   async setup(config: PlatformConfig): Promise<void> {
     this.config = config as IOSAdapterConfig
     this.captureConsole = config.logCapture?.console !== false
     this.bundleId = this.config.bundleId ?? (config.device?.match?.bundleId as string | undefined) ?? null
+    this.sessionSnapshotDepth = resolveIOSSnapshotDepth(config.farmSession?.capabilities)
+    this.snapshotDepth = this.sessionSnapshotDepth
+    this.readsAtLoweredDepth = 0
+    this.snapshotDepthWarned = false
 
     this.driver = await createIOSSession(this.config, config.farmSession)
 
@@ -342,6 +371,10 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
     this.activeWebContext = null
     this.webContextChecked = false
     this.currentContext = null
+    this.sessionSnapshotDepth = IOS_SNAPSHOT_MAX_DEPTH
+    this.snapshotDepth = IOS_SNAPSHOT_MAX_DEPTH
+    this.readsAtLoweredDepth = 0
+    this.snapshotDepthWarned = false
   }
 
   /**
@@ -509,6 +542,17 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
     this.activeWebContext = null
   }
 
+  private async readForegroundBundleId(): Promise<string | undefined> {
+    try {
+      const info = await this.driver!.execute('mobile: activeAppInfo')
+      if (!info || typeof info !== 'object') return undefined
+      const bundleId = (info as { bundleId?: unknown }).bundleId
+      return firstNonEmpty(typeof bundleId === 'string' ? bundleId : undefined)
+    } catch {
+      return undefined
+    }
+  }
+
   private isBrowserSession(): boolean {
     const browserName = this.config?.device?.match?.browserName
     return typeof browserName === 'string' && browserName.trim().length > 0
@@ -546,33 +590,49 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
 
   private async readIOSPageSource(): Promise<string> {
     const driver = this.driver!
-    try {
-      return await driver.getPageSource()
-    } catch (readErr) {
-      if (!isIOSSnapshotDepthError(readErr)) throw readErr
+    if (
+      this.snapshotDepth < this.sessionSnapshotDepth
+      && this.readsAtLoweredDepth >= IOS_SNAPSHOT_PROBE_INTERVAL
+    ) {
+      this.readsAtLoweredDepth = 0
       try {
-        await driver.updateSettings({ snapshotMaxDepth: IOS_SNAPSHOT_FALLBACK_DEPTH })
+        await driver.updateSettings({ snapshotMaxDepth: this.sessionSnapshotDepth })
+        this.snapshotDepth = this.sessionSnapshotDepth
       } catch {
-        throw readErr
+        // the read proceeds at the lowered depth
       }
-      let xml: string
-      try {
-        xml = await driver.getPageSource()
-      } finally {
+    }
+    try {
+      return this.countLoweredRead(await driver.getPageSource())
+    } catch (readErr) {
+      const depthError = isIOSSnapshotDepthError(readErr)
+      if (!depthError && !isIOSSnapshotReadError(readErr)) throw readErr
+      if (depthError && this.snapshotDepth > IOS_SNAPSHOT_FALLBACK_DEPTH) {
         try {
-          await driver.updateSettings({ snapshotMaxDepth: IOS_SNAPSHOT_MAX_DEPTH })
+          await driver.updateSettings({ snapshotMaxDepth: IOS_SNAPSHOT_FALLBACK_DEPTH })
         } catch {
-          // best-effort: the next read still works, only shallower
+          throw readErr
+        }
+        const failedDepth = this.snapshotDepth
+        this.snapshotDepth = IOS_SNAPSHOT_FALLBACK_DEPTH
+        this.readsAtLoweredDepth = 0
+        if (!this.snapshotDepthWarned) {
+          this.snapshotDepthWarned = true
+          const detail = (readErr instanceof Error ? readErr.message : String(readErr))
+            .split('\n')[0]
+            .slice(0, 160)
+          console.warn(
+            `[ios-adapter] page source failed at snapshotMaxDepth ${failedDepth}; later reads stay at ${IOS_SNAPSHOT_FALLBACK_DEPTH} and retry ${this.sessionSnapshotDepth} every ${IOS_SNAPSHOT_PROBE_INTERVAL} reads (${detail})`,
+          )
         }
       }
-      const detail = (readErr instanceof Error ? readErr.message : String(readErr))
-        .split('\n')[0]
-        .slice(0, 160)
-      console.warn(
-        `[ios-adapter] page source failed at snapshotMaxDepth ${IOS_SNAPSHOT_MAX_DEPTH}; re-read at ${IOS_SNAPSHOT_FALLBACK_DEPTH} (${detail})`,
-      )
-      return xml
+      return this.countLoweredRead(await driver.getPageSource())
     }
+  }
+
+  private countLoweredRead(xml: string): string {
+    if (this.snapshotDepth < this.sessionSnapshotDepth) this.readsAtLoweredDepth++
+    return xml
   }
 
   private async tapAt(point: { x: number; y: number }): Promise<void> {
@@ -691,7 +751,7 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
         error = `Element ${ref} is not editable: it did not take keyboard focus when tapped. ${nothing}`
         break
       case 'focus-elsewhere':
-        error = `Element ${ref} is not editable here: after tapping it, keyboard focus stayed on another element. Input is never sent to an element other than the target. ${nothing}`
+        error = `Element ${ref} is not editable here: after tapping it, keyboard focus is on another element. Input is never sent to an element other than the target. ${nothing}`
         break
       case 'stale-target':
         error = `Element ${ref} was not found at its observed position; the screen changed. Re-observe before typing. ${nothing}`
@@ -1380,66 +1440,79 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
       }
 
       case 'openUniversalLink': {
-        // Re-key of the proven openLink body (D-19): mobile: deepLink with url + bundleId. A plain
-        // web URL with no bundle id is scoped to the foreground app, and uses driver.url() only in
-        // a browser session or with Safari in front. The openLink verb is retired.
-        const bundleId = firstNonEmpty(action.bundleId, this.bundleId)
-        const isWebUrl = /^https?:\/\//i.test(action.url)
-        if (!bundleId && !isWebUrl) {
-          return { success: false, error: `Missing iOS bundle id for native deep link: ${action.url}` }
-        }
+        // Re-key of the proven openLink body (D-19). The openLink verb is retired.
+        const explicit = firstNonEmpty(action.bundleId)
+        const configured = firstNonEmpty(this.bundleId)
         const openInApp = async (appId: string): Promise<void> => {
-          const deepLink = (driver as { deepLink?: (url: string, appId: string, waitForLaunch?: boolean) => Promise<void> }).deepLink
-          if (typeof deepLink === 'function') {
-            await deepLink.call(driver, action.url, appId, true)
-          } else {
-            await driver.execute('mobile: deepLink', { url: action.url, bundleId: appId })
-          }
+          await driver.execute('mobile: deepLink', { url: action.url, bundleId: appId })
         }
-        if (!bundleId && !this.isBrowserSession()) {
-          const firstLine = (err: unknown) =>
-            (err instanceof Error ? err.message : String(err)).split('\n')[0]
-          // In a native session driver.url goes to the system handler, so an http(s) link no app
-          // claims would hand the device to Safari. Scope it to the foreground app instead.
-          let foreground: string | undefined
+        const openScoped = async (appId: string): Promise<ActionResult> => {
           try {
-            const info = await driver.execute('mobile: activeAppInfo')
-            foreground = info && typeof info === 'object'
-              ? firstNonEmpty((info as { bundleId?: unknown }).bundleId as string | undefined)
-              : undefined
-            if (!foreground) throw new Error('activeAppInfo returned no bundle id')
-          } catch (err) {
-            return {
-              success: false,
-              error: `Cannot open universal link ${action.url}: no bundle id was given or configured and the foreground app could not be identified (${firstLine(err)}). Pass bundleId to choose the app.`,
-            }
-          }
-          try {
-            if (foreground === IOS_SAFARI_BUNDLE_ID) {
-              await driver.url(action.url)
-            } else {
-              await openInApp(foreground)
-            }
+            await openInApp(appId)
             this.invalidateWebContext()
             return { success: true }
           } catch (err) {
-            return {
-              success: false,
-              error: `Failed to open universal link ${action.url} in the foreground iOS app ${foreground} (no bundle id was given): ${firstLine(err)}`,
-            }
+            return { success: false, error: `Failed to open universal link ${action.url} in iOS app ${appId}: ${err instanceof Error ? err.message : String(err)}` }
           }
         }
-        try {
-          if (bundleId) {
-            await openInApp(bundleId)
-          } else {
+        if (!/^https?:\/\//i.test(action.url)) {
+          const bundleId = explicit ?? configured
+          if (!bundleId) {
+            return { success: false, error: `Missing iOS bundle id for native deep link: ${action.url}` }
+          }
+          return openScoped(bundleId)
+        }
+        if (explicit) return openScoped(explicit)
+        if (this.isBrowserSession()) {
+          try {
             await driver.url(action.url)
+            this.invalidateWebContext()
+            return { success: true }
+          } catch (err) {
+            return { success: false, error: `Failed to open universal link ${action.url}: ${err instanceof Error ? err.message : String(err)}` }
           }
-          this.invalidateWebContext()
-          return { success: true }
-        } catch (err) {
-          return { success: false, error: `Failed to open universal link ${action.url}${bundleId ? ` in iOS app ${bundleId}` : ''}: ${err instanceof Error ? err.message : String(err)}` }
         }
+        let configuredFailure: string | undefined
+        if (configured) {
+          try {
+            await openInApp(configured)
+            this.invalidateWebContext()
+            return { success: true }
+          } catch (err) {
+            configuredFailure = `opening it in the configured iOS app ${configured} failed first: ${firstErrorLine(err)}`
+          }
+        }
+        // The system handler hands an http(s) link no installed app claims to Safari; the
+        // before/after foreground check turns that hand-off into a failure. The window (~6 s)
+        // covers a cold Safari or app launch, which can take 3-4 s to reach the front.
+        const before = await this.readForegroundBundleId()
+        try {
+          await driver.url(action.url)
+        } catch (err) {
+          return {
+            success: false,
+            error: `Failed to open universal link ${action.url} through the iOS system handler: ${firstErrorLine(err)}${configuredFailure ? ` (${configuredFailure})` : ''}`,
+          }
+        }
+        this.invalidateWebContext()
+        if (!before || before === IOS_SAFARI_BUNDLE_ID) return { success: true }
+        let after: string | undefined
+        for (let poll = 0; poll < IOS_LINK_HANDOFF_POLLS; poll++) {
+          await driver.pause(IOS_LINK_HANDOFF_PAUSE_MS)
+          after = await this.readForegroundBundleId()
+          if (after && after !== before && after !== IOS_SPRINGBOARD_BUNDLE_ID) break
+        }
+        if (after !== IOS_SAFARI_BUNDLE_ID) return { success: true }
+        let error = `iOS opened ${action.url} in Safari: no installed app claimed the link (the foreground app was ${before}). Pass bundleId to open it in a specific app, or com.apple.mobilesafari to open it in Safari.`
+        if (before !== IOS_SPRINGBOARD_BUNDLE_ID) {
+          try {
+            await driver.activateApp(before)
+            error += ` Returned to ${before}.`
+          } catch (err) {
+            error += ` Could not return to ${before}: ${firstErrorLine(err)}.`
+          }
+        }
+        return { success: false, error }
       }
 
       case 'assertValue': {

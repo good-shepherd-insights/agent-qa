@@ -25,7 +25,7 @@ export const VerificationResultSchema = z.object({
   success: z.boolean().describe('Whether the step goal was accomplished'),
   reasoning: z.string().describe('Explanation of why the step succeeded or failed'),
   isAppError: z.boolean().describe(
-    'Whether the page shows an application error (HTTP error, error toast, crash) vs the agent simply not accomplishing the goal',
+    'Whether the screen shows an application error (HTTP error, error toast, crash) that the step and the test author do not expect, vs the agent simply not accomplishing the goal. An error or refusal the step expects is not an application error.',
   ),
 })
 

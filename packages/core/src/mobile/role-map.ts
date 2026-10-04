@@ -96,11 +96,14 @@ export const IOS_EDITABLE_TYPES: ReadonlySet<string> = new Set([
 ])
 
 const IOS_TRAIT_ROLE_PRECEDENCE: ReadonlyArray<[ReadonlyArray<string>, string]> = [
+  [['SearchField'], 'searchbox'],
+  [['Adjustable'], 'slider'],
+  [['TabBar'], 'tablist'],
   [['Button', 'ToggleButton'], 'button'],
   [['Link'], 'link'],
   [['Header'], 'heading'],
   [['Image'], 'image'],
-  [['StaticText'], 'text'],
+  [['StaticText', 'UpdatesFrequently', 'SummaryElement'], 'text'],
 ]
 
 // WDA joins trait names in dictionary order, so the string is split rather than matched whole.

@@ -101,6 +101,8 @@ export interface StepContext {
   testName: string
   testContext?: string
   suiteContext?: string
+  stepNumber?: number
+  stepCount?: number
   previousSteps: { instruction: string; outcome: string; reasoning?: string; plannedAction?: string; verifierResponse?: string }[]
   contextWindow?: number
   plannerModel: LanguageModel
@@ -218,6 +220,8 @@ export interface Planner {
 export interface VerifierAuthorContext {
   suiteContext?: string
   testContext?: string
+  stepNumber?: number
+  stepCount?: number
 }
 
 export interface Verifier {

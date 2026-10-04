@@ -59,7 +59,8 @@ it('ARIA-LIVE-MASK: the live run mask persists only before tree and leaves raw h
   expect(JSON.stringify([f.before, f.after])).toBe(raw)
   expect(result.evidence?.subActions[0]?.stateBefore?.tree).toBe(f.before.tree)
   expect(result.evidence?.subActions[0]?.stateAfter).toBe(f.after)
-  expect(f.observe).toHaveBeenCalledTimes(3)
+  // Two loop-top reads, then the verify-path settle's two (quick 261004-lsa; was 3).
+  expect(f.observe).toHaveBeenCalledTimes(4)
 })
 
 it('ARIA-REF-APPEND: real sink appends one valid ARIA SHA beside the exact decision screenshot before publication', async () => {
@@ -131,6 +132,6 @@ for (const platform of ['android', 'ios'] as const) {
     await executeStep('Wait', f.ports, makeStepContext())
     expect(f.documents).toEqual([{ schemaVersion: 1, kind: 'aria', tree: f.masking.mask(f.before.tree) }])
     expect(f.children()[0]?.ariaEvidence?.state).toBe('present')
-    expect(f.observe).toHaveBeenCalledTimes(3)
+    expect(f.observe).toHaveBeenCalledTimes(4)
   })
 }

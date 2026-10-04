@@ -155,7 +155,7 @@ describe('QA mindset prompt rules', () => {
       const stable = stableText(buildVerifierStableTier())
       expect(stable).toContain('NEGATIVE evidence')
       expect(stable).toContain('Absence of visible screen change is NOT evidence of failure')
-      expect(stable).toContain('action steps')
+      expect(stable).toContain('For every other step')
       expect(stable).toContain('verification/assertion steps')
     })
 

@@ -329,6 +329,7 @@ describe('IOSPlatformAdapter text input (AUTO-18)', () => {
 
       expect(result.success).toBe(false)
       expect(result.error).toContain('not editable')
+      expect(result.error).toContain('after tapping it, keyboard focus is on another element.')
       expect(result.error).toContain('Input is never sent to an element other than the target')
       expect(result.metadata?.fillRefusal).toEqual({ verb: 'fill', cause: 'not-editable', evidence: 'focus-elsewhere' })
       expect(JSON.stringify(result)).not.toContain('redirected text')
