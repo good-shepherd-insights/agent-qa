@@ -598,26 +598,14 @@ afterAll(() => {
   if (helpRoot !== '') rmSync(helpRoot, { recursive: true, force: true })
 })
 
-// The named assertions a C432-RETURN cell reports, spelled once for the cells below and for
-// C432-MUTATION-ALL-MEMBERS, which holds every mutation leg to an assertion this census makes.
+// The named assertions a C432-RETURN cell reports, spelled once for the cells below (the phase's
+// mutation driver also held each leg to one of them; driver removed 2026-10-05, quick 261005-j31).
 const backMessage = (leg: ReturnLeg, file: string): string => `${leg.leg}: ${file} is back`
 const returnedMessage = (leg: ReturnLeg, spelled: string): string => `${leg.leg}: ${leg.subject} returned (${spelled})`
 const reshapedMessage = (leg: ReturnLeg): string => `${leg.leg}: ${leg.subject} returned:`
 const acceptedMessage = (kind: keyof ConfigObservations['members']): string =>
   `the public parser accepts the removed member (${REFUSED_AT[kind]})`
 const FLAG_BACK_MESSAGE = 'the run command registers the trust flag again'
-
-/**
- * The assertions that name THIS member: its own spellings, its declaration shape, its public return.
- * A returning module's file (`… is back`) is shared by every member of that module, so it is never one.
- */
-function memberAssertions(leg: ReturnLeg): string[] {
-  return [
-    ...(leg.needles ?? []).map((needle) => returnedMessage(leg, joined(needle))),
-    ...(leg.pattern === undefined ? [] : [reshapedMessage(leg)]),
-    ...(leg.runtime === undefined ? [] : [leg.runtime === 'trust-flag' ? FLAG_BACK_MESSAGE : acceptedMessage(leg.runtime)]),
-  ]
-}
 
 function assertRuntime(kind: NonNullable<ReturnLeg['runtime']>): void {
   if (kind === 'trust-flag') {
@@ -632,7 +620,7 @@ function assertRuntime(kind: NonNullable<ReturnLeg['runtime']>): void {
   expect(config!.ordinaryInvalid.success, 'an ordinary invalid value is accepted').toBe(false)
   const member = config!.members[kind]
   // Soft, so a returned member reports both facts: the parse accepted it AND kept it (432-43's driver
-  // requires the acceptance line by name for A59/A61/A63/A65).
+  // required the acceptance line by name for A59/A61/A63/A65; driver removed 2026-10-05, quick 261005-j31).
   expect.soft(member.success, acceptedMessage(kind)).toBe(false)
   expect.soft(member.retained, `the public parser keeps the removed member (${REFUSED_AT[kind]})`).toBe(false)
   expect(member.unrecognized, 'the removed member is not refused as an unrecognized key').toContain(REFUSED_AT[kind])
@@ -663,7 +651,8 @@ describe('C432-RETURN: every removed approval and permission member reds by name
 
   // 2026-10-02 (432-43): every sub-assertion is SOFT, so a red cell reports every returned spelling at
   // once. A returning module also reds by existing, and a sibling member of the same module reds by the
-  // file; the mutation driver requires each leg's OWN assertion among the failures, never just the cell.
+  // file; the phase's mutation driver required each leg's OWN assertion among the failures, never
+  // just the cell (driver removed 2026-10-05, quick 261005-j31).
   for (const leg of RETURN_LEGS) {
     it(`C432-RETURN-${leg.leg}: ${leg.subject} stays deleted`, () => {
       for (const file of leg.absentFiles ?? []) {
@@ -681,113 +670,6 @@ describe('C432-RETURN: every removed approval and permission member reds by name
       if (leg.runtime !== undefined) assertRuntime(leg.runtime)
     })
   }
-})
-
-// ---------------------------------------------------------------------------------------------
-// C432-MUTATION-ALL-MEMBERS: the mutation driver owns exactly one leg per removed member (432-43)
-// ---------------------------------------------------------------------------------------------
-
-const MUTATION_DRIVER = join(PACKAGES_DIR, '..', 'scripts', '432-approval-permission-mutation.sh')
-const CENSUS_CELL_FILE = 'src/__tests__/432-approval-permission-deleted.test.ts'
-
-interface MutationLeg {
-  readonly id: string
-  readonly claim: string
-  readonly subject: string
-  readonly reds: readonly string[]
-  readonly crossing: string | null
-  readonly paths?: readonly string[]
-}
-
-/** The driver's own inventory, as it lists it (no byte is owned in list mode). */
-function listMutationLegs(): MutationLeg[] {
-  const listed = spawnSync('bash', [MUTATION_DRIVER], {
-    encoding: 'utf8',
-    timeout: 60_000,
-    env: { ...process.env, AGENT_QA_432_APPROVAL_PERMISSION_MUTATION_LIST: '1' },
-  })
-  expect(listed.status, `the mutation driver could not list its legs:\n${listed.stderr}`).toBe(0)
-  return JSON.parse(listed.stdout) as MutationLeg[]
-}
-
-interface MemberJoin {
-  readonly missing: readonly string[]
-  readonly duplicated: readonly string[]
-  readonly misaimed: readonly string[]
-  readonly foreign: readonly string[]
-}
-
-/**
- * Join the census members to the driver's legs BY MEMBER ID — position plays no part, so a reordered
- * registration produces the same join and a missing, doubled or re-aimed member is named whatever the
- * order. A leg is aimed when its one RED is this file's `C432-RETURN-<id>` with a named assertion.
- */
-function joinMembers(members: readonly string[], legs: readonly MutationLeg[]): MemberJoin {
-  const byId = new Map<string, MutationLeg[]>()
-  for (const leg of legs) byId.set(leg.id, [...(byId.get(leg.id) ?? []), leg])
-  const aimed = (leg: MutationLeg, id: string): boolean =>
-    leg.reds.length === 1 && leg.reds[0]!.startsWith(`${CENSUS_CELL_FILE} > C432-RETURN-${id} [`)
-  return {
-    missing: members.filter((id) => (byId.get(id) ?? []).length === 0),
-    duplicated: members.filter((id) => (byId.get(id) ?? []).length > 1),
-    misaimed: members.filter((id) => (byId.get(id) ?? []).length === 1 && !aimed(byId.get(id)![0]!, id)),
-    foreign: legs.filter((leg) => /^A\d+$/.test(leg.id) && !members.includes(leg.id)).map((leg) => leg.id),
-  }
-}
-
-describe('C432-MUTATION-ALL-MEMBERS: every removed member has exactly one mutation leg, keyed by its id', () => {
-  const members = RETURN_LEGS.map((leg) => leg.leg)
-
-  it('C432-MUTATION-ALL-MEMBERS: the driver registers one leg per removed member, each reding its own cell by a named assertion, plus the sixteen retained-behaviour legs', () => {
-    const legs = listMutationLegs()
-    expect(joinMembers(members, legs)).toEqual({ missing: [], duplicated: [], misaimed: [], foreign: [] })
-    const ids = legs.map((leg) => leg.id)
-    expect(new Set(ids).size, 'a leg id is registered twice').toBe(ids.length)
-    expect(ids.filter((id) => id.startsWith('B')).sort()).toEqual(
-      Array.from({ length: 16 }, (_, index) => `B${String(index + 1).padStart(2, '0')}`))
-    expect(legs).toHaveLength(94)
-    const census = new Map(RETURN_LEGS.map((leg) => [leg.leg, leg]))
-    for (const leg of legs.filter((entry) => entry.id.startsWith('A'))) {
-      // The named assertion is one THIS census makes for THIS member: its returned spelling, its
-      // declaration shape, its public-parser acceptance or the rebuilt binary's trust flag — never the
-      // cell alone, and never the module file a sibling member reds by too.
-      const message = /\[(.+)\]$/.exec(leg.reds[0]!)?.[1] ?? ''
-      expect(memberAssertions(census.get(leg.id)!), `${leg.id} names an assertion this census does not make for it: ${message}`)
-        .toContain(message)
-    }
-    // The five public returns cross a rebuilt dist; nothing else in the A table does.
-    expect(legs.filter((leg) => leg.crossing !== null && leg.id.startsWith('A')).map((leg) => `${leg.id}:${leg.crossing}`)).toEqual([
-      'A59:@vostride/agent-qa-core', 'A61:@vostride/agent-qa-core', 'A63:@vostride/agent-qa-core', 'A64:agent-qa',
-      'A65:@vostride/agent-qa-core',
-    ])
-  })
-
-  it('C432-MUTATION-ALL-MEMBERS: registration order cannot hide a missing, doubled or re-aimed member (EDGE-16)', () => {
-    const legs = listMutationLegs()
-    const rotate = (list: readonly MutationLeg[], by: number): MutationLeg[] => [...list.slice(by), ...list.slice(0, by)]
-    const orders: readonly (readonly MutationLeg[])[] = [
-      legs,
-      [...legs].reverse(),
-      rotate(legs, 37),
-      [...legs.filter((_, index) => index % 2 === 1), ...legs.filter((_, index) => index % 2 === 0)],
-      [...legs].sort((a, b) => a.subject.localeCompare(b.subject) || b.id.localeCompare(a.id)),
-    ]
-    const clean = { missing: [], duplicated: [], misaimed: [], foreign: [] }
-    for (const order of orders) {
-      expect(joinMembers(members, order), 'a reordered registration changed the join').toEqual(clean)
-      for (const [index, leg] of order.entries()) {
-        if (!leg.id.startsWith('A')) continue
-        const without = [...order.slice(0, index), ...order.slice(index + 1)]
-        expect(joinMembers(members, without).missing, `dropping ${leg.id} was not seen`).toEqual([leg.id])
-        expect(joinMembers(members, [...order, leg]).duplicated, `doubling ${leg.id} was not seen`).toEqual([leg.id])
-        const other = members.find((id) => id !== leg.id)!
-        const reaimed = order.map((entry) => entry === leg
-          ? { ...entry, reds: [`${CENSUS_CELL_FILE} > C432-RETURN-${other} [${other}: re-aimed]`] }
-          : entry)
-        expect(joinMembers(members, reaimed).misaimed, `re-aiming ${leg.id} was not seen`).toEqual([leg.id])
-      }
-    }
-  })
 })
 
 // ---------------------------------------------------------------------------------------------

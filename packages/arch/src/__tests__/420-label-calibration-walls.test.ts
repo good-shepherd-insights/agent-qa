@@ -84,12 +84,11 @@ describe('420 label calibration walls', () => {
       expect(calibrationPureHits([source])).toEqual([])
     },
   )
-  it('registers the calibration wall in validate:arch and its mutation entrypoint', () => {
+  it('registers the calibration wall in validate:arch', () => {
     const { scripts } = JSON.parse(readFileSync(`${repoRoot}/package.json`, 'utf8'))
     expect(scripts['validate:arch'].split(/\s+/)).toContain(
       'src/__tests__/420-label-calibration-walls.test.ts',
     )
-    expect(scripts['validate:label-mutation']).toBe('bash scripts/420-label-mutation.sh')
   })
 
   it('walks every real learner entry without reaching eval calibration or its main entry', () => {
