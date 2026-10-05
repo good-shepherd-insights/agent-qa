@@ -1,4 +1,4 @@
-import { spawn as defaultSpawn, spawnSync as defaultSpawnSync } from 'node:child_process'
+import { spawn as defaultSpawn } from 'node:child_process'
 import {
   createWriteStream,
   existsSync,
@@ -18,10 +18,17 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
 import { REQUIRED_LEGS, evaluateGate, nodeTestFindings } from './evaluate.mjs'
+import {
+  GATE_ENV,
+  chromiumCheck,
+  defaultExec,
+  describeEnvironment,
+  machineSnapshot,
+  preflight,
+} from './host.mjs'
 
 const GATE_DIR = dirname(fileURLToPath(import.meta.url))
 const DEFAULT_SOURCE = resolve(GATE_DIR, '..', '..')
-const GATE_ENV = { CI: 'true', DO_NOT_TRACK: '1' }
 const TURBO_LEGS = new Set(['turbo-build-typecheck', 'turbo-test'])
 const NODE_TEST_DIR = 'scripts/__tests__'
 const NODE_TEST_PIN = 'scripts/gate/inputs/node-tests.json'
@@ -92,21 +99,6 @@ export function buildGateLegs({ root, runDir, nodeTestFiles = [] } = {}) {
       raw: join(runDir, 'raw', 'node-test.json'),
     },
   ]
-}
-
-function defaultExec(command, args, { cwd } = {}) {
-  const result = defaultSpawnSync(command, args, {
-    cwd,
-    env: gateEnv(),
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    maxBuffer: 64 * 1024 * 1024,
-  })
-  return {
-    status: result.error ? 127 : result.status ?? 1,
-    stdout: result.stdout ?? '',
-    stderr: result.error ? result.error.message : result.stderr ?? '',
-  }
 }
 
 function defaultRun(command, args, { cwd, logPath }) {
@@ -201,20 +193,29 @@ export async function runGate(options, deps = {}) {
   const output = deps.output ?? process.stdout
   const tmpdir = deps.tmpdir ?? defaultTmpdir
   const buildLegs = deps.buildGateLegs ?? buildGateLegs
+  const host = { preflight, chromiumCheck, describeEnvironment, machineSnapshot, ...deps.host }
   const say = line => output.write?.(`${line}\n`)
 
   const started = now()
+  const machineStart = host.machineSnapshot({ exec, selfPid: pid })
   const partial = Array.isArray(options.only)
   const selected = partial ? options.only : REQUIRED_LEGS
   const inPlace = options.inPlace === true
   const mode = inPlace ? 'in-place' : 'clone'
   const source = options.source
 
+  const checks = host.preflight({ exec, cwd: source })
+  const preflightRecord = { required: [...checks.required], optional: [...checks.optional] }
+  if (!checks.ok) for (const line of checks.message.split('\n')) say(`[gate] preflight: ${line}`)
+
   const wanted = options.sha ?? 'HEAD'
   const revParse = exec('git', ['-C', source, 'rev-parse', '--verify', `${wanted}^{commit}`])
-  const sha = revParse.stdout.trim()
+  let sha = revParse.stdout.trim()
   if (revParse.status !== 0 || !/^[0-9a-f]{40}$/.test(sha)) {
-    throw new Error(`cannot resolve ${wanted} in ${source}: ${revParse.stderr.trim()}`)
+    if (checks.ok) {
+      throw new Error(`cannot resolve ${wanted} in ${source}: ${revParse.stderr.trim()}`)
+    }
+    sha = null
   }
 
   const warnings = []
@@ -228,7 +229,7 @@ export async function runGate(options, deps = {}) {
     )
   }
 
-  const runDir = join(options.out, sha, runDirName({ mode, now: started, pid }))
+  const runDir = join(options.out, sha ?? 'unresolved', runDirName({ mode, now: started, pid }))
   mkdirSync(join(runDir, 'logs'), { recursive: true })
   mkdirSync(join(runDir, 'raw'), { recursive: true })
   const logPath = id => join(runDir, 'logs', `${id.replace(/[^A-Za-z0-9._-]/g, '_')}.log`)
@@ -244,8 +245,9 @@ export async function runGate(options, deps = {}) {
 
   let root = source
   let parent = null
-  let ready = true
-  if (!inPlace) {
+  let ready = checks.ok
+  let environment = null
+  if (ready && !inPlace) {
     parent = realpathSync(mkdtempSync(join(tmpdir(), 'agent-qa-gate-')))
     root = join(parent, 'agent-qa')
     const clone = await runStep(
@@ -271,14 +273,34 @@ export async function runGate(options, deps = {}) {
 
   const legs = []
   if (ready) {
+    let installed = true
     if (inPlace) {
       steps.push({ id: 'install', skipped: 'in-place', findings: [] })
     } else {
       const install = await runStep('install', ['pnpm', 'install', '--frozen-lockfile'], root)
       if (install.exitCode !== 0) failure(install, 'install-failed')
+      installed = install.exitCode === 0
       steps.push(install)
     }
 
+    let chromium = null
+    if (installed) {
+      const browser = host.chromiumCheck({ root })
+      preflightRecord.required.push(browser.required)
+      preflightRecord.optional.push(...browser.optional)
+      chromium = browser.chromium
+      if (!browser.required.ok) {
+        say(`[gate] preflight: Playwright Chromium is missing: ${browser.required.hint}`)
+        ready = false
+      }
+    } else {
+      warnings.push('the Playwright Chromium check was skipped because the install failed')
+    }
+    const clonePath = inPlace ? null : root
+    environment = host.describeEnvironment({ root, exec, sha, clonePath, chromium })
+  }
+
+  if (ready) {
     const onDisk = listNodeTestFiles(root)
     const plan = buildLegs({ root, runDir, nodeTestFiles: onDisk }).filter(leg =>
       selected.includes(leg.id),
@@ -306,7 +328,8 @@ export async function runGate(options, deps = {}) {
     }
   }
 
-  const verdict = evaluateGate({ legs, steps, partial, selected, preflight: null })
+  const machineEnd = host.machineSnapshot({ exec, selfPid: pid })
+  const verdict = evaluateGate({ legs, steps, partial, selected, preflight: preflightRecord })
   const legMissing = verdict.findings.some(f => f.rule === 'leg-missing')
   const removable = shouldRemoveClone({ exitCode: verdict.exitCode, keepClone: options.keepClone })
   const cloneRemoved = parent !== null && removable
@@ -328,9 +351,15 @@ export async function runGate(options, deps = {}) {
     startedAt: started.toISOString(),
     finishedAt: finished.toISOString(),
     durationMs: finished.getTime() - started.getTime(),
-    environment: null,
-    machine: null,
-    preflight: null,
+    environment,
+    machine: {
+      cpus: machineStart.cpus,
+      loadStart: machineStart.load,
+      loadEnd: machineEnd.load,
+      processesStart: machineStart.processes,
+      processesEnd: machineEnd.processes,
+    },
+    preflight: preflightRecord,
     steps: steps.map(({ findings, ...step }) => step),
     legs,
     packages: [],
