@@ -11,6 +11,7 @@ import {
   packageSetFindings,
   turboFindings,
 } from '../gate/evaluate.mjs'
+import * as gateRules from '../gate/evaluate.mjs'
 
 const PACKAGE_PIN = JSON.parse(
   readFileSync(new URL('../gate/inputs/packages.json', import.meta.url), 'utf8'),
@@ -357,4 +358,141 @@ test('orderRootCause lists failed #build tasks first and as the root cause', () 
   )
   assert.deepEqual(rootCause.map(f => f.taskId), ['b#build'])
   assert.deepEqual(orderRootCause([input[0]]).rootCause, [])
+})
+
+const ROOT = '/private/var/clone/agent-qa'
+
+function vitestJson(files, success = true) {
+  return {
+    numTotalTests: 0,
+    numPassedTests: 0,
+    numPendingTests: 0,
+    success,
+    testResults: files.map(([name, status, assertions, message = '']) => ({
+      name: `${ROOT}/${name}`,
+      status,
+      message,
+      assertionResults: assertions.map(([title, state]) => ({
+        ancestorTitles: ['suite'],
+        title,
+        fullName: `suite ${title}`,
+        status: state,
+      })),
+    })),
+  }
+}
+
+test('classifyVitest counts by status and keeps relative file, fullName and status', () => {
+  assert.equal(typeof gateRules.classifyVitest, 'function')
+  const json = vitestJson([
+    [
+      'packages/x/src/a.test.ts',
+      'failed',
+      [
+        ['p1', 'passed'],
+        ['p2', 'passed'],
+        ['f1', 'failed'],
+      ],
+    ],
+    [
+      'packages/x/src/b.test.ts',
+      'passed',
+      [
+        ['s1', 'skipped'],
+        ['t1', 'todo'],
+        ['q1', 'pending'],
+      ],
+    ],
+  ])
+  json.numPassedTests = 99
+  json.numPendingTests = 99
+  const counts = gateRules.classifyVitest(json, ROOT)
+  assert.equal(counts.executed, 3)
+  assert.equal(counts.passed, 2)
+  assert.equal(counts.failed, 1)
+  assert.equal(counts.skipped, 1)
+  assert.equal(counts.todo, 1)
+  assert.equal(counts.notRun, 1)
+  assert.deepEqual(counts.cells[0], {
+    file: 'packages/x/src/a.test.ts',
+    fullName: 'suite p1',
+    status: 'passed',
+  })
+})
+
+test('a vitest JSON with clean counts but success false is success-false', () => {
+  assert.equal(typeof gateRules.vitestFindings, 'function')
+  const json = vitestJson([['packages/x/src/a.test.ts', 'passed', [['p1', 'passed']]]], false)
+  const findings = gateRules.vitestFindings('x', gateRules.classifyVitest(json, ROOT))
+  assert.deepEqual(rules(findings), ['success-false'])
+  assert.match(findings[0].detail, /^x:/)
+})
+
+test('a failed file with no assertions is file-failed naming the file and its message', () => {
+  assert.equal(typeof gateRules.vitestFindings, 'function')
+  const json = vitestJson(
+    [
+      ['packages/x/src/a.test.ts', 'passed', [['p1', 'passed']]],
+      ['packages/x/src/posture.test.ts', 'failed', [], 'ENOENT: no such file, open demo/init'],
+    ],
+    false,
+  )
+  const findings = gateRules.vitestFindings('x', gateRules.classifyVitest(json, ROOT))
+  assert.deepEqual(rules(findings), ['file-failed'])
+  assert.match(findings[0].detail, /packages\/x\/src\/posture\.test\.ts/)
+  assert.match(findings[0].detail, /ENOENT/)
+})
+
+test('an all-skipped member is zero-executed and skips never count as passed', () => {
+  assert.equal(typeof gateRules.vitestFindings, 'function')
+  const json = vitestJson([
+    [
+      'packages/x/src/a.test.ts',
+      'passed',
+      [
+        ['s1', 'skipped'],
+        ['s2', 'skipped'],
+      ],
+    ],
+  ])
+  const counts = gateRules.classifyVitest(json, ROOT)
+  assert.equal(counts.passed, 0)
+  assert.equal(counts.executed, 0)
+  const findings = gateRules.vitestFindings('x', counts)
+  assert.deepEqual(rules(findings), ['zero-executed', 'unlisted-skip', 'unlisted-skip'])
+})
+
+test('no JSON is results-missing and a JSON older than the leg is stale-results', () => {
+  assert.equal(typeof gateRules.vitestFindings, 'function')
+  assert.equal(typeof gateRules.staleResultFindings, 'function')
+  assert.deepEqual(rules(gateRules.vitestFindings('x', null)), ['results-missing'])
+  const stale = gateRules.staleResultFindings(
+    [
+      { member: 'x', file: 'packages/x/test-results/gate-vitest.json', mtimeMs: 900 },
+      { member: 'y', file: 'packages/y/test-results/gate-vitest.json', mtimeMs: 1100 },
+      { member: 'z', file: null, mtimeMs: null },
+    ],
+    1000,
+  )
+  assert.deepEqual(rules(stale), ['stale-results'])
+  assert.match(stale[0].detail, /^x:/)
+})
+
+test('under strict env mode CI passes as a turbo built-in and DO_NOT_TRACK is stripped', () => {
+  assert.equal(typeof gateRules.turboEnvDisposition, 'function')
+  const disposition = gateRules.turboEnvDisposition({
+    turboJson: { tasks: { build: { dependsOn: ['^build'] }, test: {} } },
+    envMode: 'strict',
+    gateEnv: { CI: 'true', DO_NOT_TRACK: '1' },
+  })
+  assert.deepEqual(disposition, {
+    CI: 'passed (turbo built-in)',
+    DO_NOT_TRACK: 'stripped (strict env mode; not declared in turbo.json)',
+  })
+  const declared = gateRules.turboEnvDisposition({
+    turboJson: { globalPassThroughEnv: ['DO_NOT_TRACK'], tasks: {} },
+    envMode: 'strict',
+    gateEnv: { DO_NOT_TRACK: '1' },
+  })
+  assert.match(declared.DO_NOT_TRACK, /^passed/)
 })

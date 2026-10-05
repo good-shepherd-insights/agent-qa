@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 import test from 'node:test'
 import { REQUIRED_LEGS } from '../gate/evaluate.mjs'
@@ -325,12 +325,19 @@ function turboDeps({ temp, source }) {
     { name: 'agent-qa-monorepo', path: source },
     ...MEMBERS.map((name, index) => ({ name, path: join(source, 'packages', `p${index}`) })),
   ]
-  const dry = {
-    packages: MEMBERS,
-    tasks: MEMBERS.flatMap(name => [
-      { taskId: `${name}#build`, command: name === 'embedding-bench' ? '<NONEXISTENT>' : 'tsup' },
-      { taskId: `${name}#typecheck`, command: 'tsc --noEmit' },
-    ]),
+  const dryFor = args => {
+    const names = args.slice(args.indexOf('run') + 1)
+    const tasks = names.slice(0, names.findIndex(arg => arg.startsWith('-')))
+    const wanted = tasks.includes('test') ? ['build', ...tasks] : tasks
+    return {
+      packages: MEMBERS,
+      tasks: MEMBERS.flatMap(name =>
+        wanted.map(task => ({
+          taskId: `${name}#${task}`,
+          command: name === 'embedding-bench' && task === 'build' ? '<NONEXISTENT>' : task,
+        })),
+      ),
+    }
   }
   const exec = base.deps.exec
   base.deps.exec = (command, args, opts) => {
@@ -339,7 +346,7 @@ function turboDeps({ temp, source }) {
     }
     if (command === 'pnpm' && args.includes('--dry-run=json')) {
       turboCalls.push(args)
-      return { status: 0, stdout: JSON.stringify(dry), stderr: '' }
+      return { status: 0, stdout: JSON.stringify(dryFor(args)), stderr: '' }
     }
     return exec(command, args, opts)
   }
@@ -348,8 +355,8 @@ function turboDeps({ temp, source }) {
     if (command === 'pnpm' && args.includes('turbo')) {
       turboCalls.push(args)
       writeFileSync(opts.logPath, 'ok\n')
-      const tasks = dry.tasks
-        .filter(task => task.command !== '<NONEXISTENT>')
+      const tasks = dryFor(args)
+        .tasks.filter(task => task.command !== '<NONEXISTENT>')
         .map(({ taskId }) => ({ taskId, execution: { exitCode: 0 }, cache: { status: 'MISS' } }))
       const n = tasks.length
       const execution = { attempted: n, success: n, failed: 0, cached: 0, exitCode: 0 }
@@ -426,4 +433,122 @@ test('a leg with no new turbo run summary, or a pnpm listing off the pin, is red
   assert.match(byRule('results-missing')[0].detail, /one new run summary.*found 2/)
   assert.match(byRule('package-set-mismatch')[0].detail, /^pnpm workspace listing: missing/)
   assert.equal(summary.exitCode, 1)
+})
+
+function memberJson(root, dir, assertions) {
+  return JSON.stringify({
+    success: true,
+    numPassedTests: 999,
+    testResults: [
+      {
+        name: join(root, dir, 'src/a.test.ts'),
+        status: 'passed',
+        message: '',
+        assertionResults: assertions.map(([title, status]) => ({
+          ancestorTitles: [],
+          title,
+          fullName: title,
+          status,
+        })),
+      },
+    ],
+  })
+}
+
+test('the test leg clears old results, reads every member JSON, records counts', async t => {
+  const { source, out, temp } = await fixture(t)
+  populatePin(source)
+  writeFileSync(join(source, 'turbo.json'), JSON.stringify({ tasks: { test: {} } }))
+  for (const index of MEMBERS.keys()) {
+    mkdirSync(join(source, 'packages', `p${index}`), { recursive: true })
+  }
+  writeFileSync(join(source, 'packages/p5/vitest.config.ts'), 'test: { maxWorkers: 1, }\n')
+  writeFileSync(join(source, 'packages/p12/vitest.config.ts'), 'test: {\n    maxWorkers: 4,\n}\n')
+  const stalePath = join(source, 'packages/p0/test-results/gate-vitest.json')
+  mkdirSync(dirname(stalePath), { recursive: true })
+  writeFileSync(stalePath, '{"stale":true}')
+  const { deps, turboCalls } = turboDeps({ temp, source })
+  const run = deps.run
+  let staleSeen = null
+  deps.run = async (command, args, opts) => {
+    if (args.includes('test') && args.includes('turbo')) {
+      staleSeen = existsSync(stalePath)
+      MEMBERS.forEach((name, index) => {
+        if (name === 'embedding-bench') return
+        const dir = `packages/p${index}`
+        const file = join(source, dir, 'test-results/gate-vitest.json')
+        mkdirSync(dirname(file), { recursive: true })
+        const assertions = [['ok', 'passed']]
+        if (name === 'agent-qa') assertions.push(['later', 'skipped'])
+        writeFileSync(file, memberJson(source, dir, assertions))
+      })
+    }
+    return run(command, args, opts)
+  }
+  const summary = await gate.runGate({ out, source, inPlace: true, only: ['turbo-test'] }, deps)
+  assert.equal(staleSeen, false)
+  const testCall = turboCalls.find(call => call.includes('test') && call.includes('--force'))
+  const sep = testCall.indexOf('--')
+  assert.ok(sep > 0)
+  assert.deepEqual(testCall.slice(sep + 1), [
+    '--reporter=default',
+    '--reporter=json',
+    '--outputFile.json=test-results/gate-vitest.json',
+  ])
+  assert.equal(summary.packages.length, 24)
+  const cli = summary.packages.find(entry => entry.name === 'agent-qa')
+  assert.equal(cli.executed, 1)
+  assert.equal(cli.passed, 1)
+  assert.equal(cli.skipped, 1)
+  assert.match(cli.resultsSha256, /^[0-9a-f]{64}$/)
+  const bench = summary.packages.find(entry => entry.name === 'embedding-bench')
+  assert.equal(bench.executed, 0)
+  assert.equal(bench.resultsFile, null)
+  const missing = summary.findings.filter(f => f.rule === 'results-missing')
+  assert.deepEqual(
+    missing.map(f => f.detail.split(':')[0]),
+    ['embedding-bench'],
+  )
+  assert.ok(summary.findings.some(f => f.rule === 'unlisted-skip' && /^agent-qa:/.test(f.detail)))
+  const leg = summary.legs.find(entry => entry.id === 'turbo-test')
+  assert.equal(leg.executed, 23)
+  assert.equal(leg.skipped, 1)
+  assert.deepEqual(summary.concurrency, {
+    turbo: 'default',
+    workerLimits: { '@vostride/agent-qa-core': 1, '@vostride/agent-qa-knowledge-local': 4 },
+  })
+  assert.equal(
+    summary.turbo.envDisposition.DO_NOT_TRACK,
+    'stripped (strict env mode; not declared in turbo.json)',
+  )
+  const cliRaw = join(summary.runDir, 'raw', 'vitest-agent-qa.json.gz')
+  assert.equal(JSON.parse(gunzipSync(readFileSync(cliRaw))).numPassedTests, 999)
+})
+
+test('a member JSON older than the test leg start is stale-results', async t => {
+  const { source, out, temp } = await fixture(t)
+  populatePin(source)
+  for (const index of MEMBERS.keys()) {
+    mkdirSync(join(source, 'packages', `p${index}`), { recursive: true })
+  }
+  const { deps } = turboDeps({ temp, source })
+  const run = deps.run
+  deps.run = async (command, args, opts) => {
+    if (args.includes('test') && args.includes('turbo')) {
+      MEMBERS.forEach((name, index) => {
+        const dir = `packages/p${index}`
+        const file = join(source, dir, 'test-results/gate-vitest.json')
+        mkdirSync(dirname(file), { recursive: true })
+        writeFileSync(file, memberJson(source, dir, [['ok', 'passed']]))
+        if (name === 'agent-qa') utimesSync(file, new Date(0), new Date(0))
+      })
+    }
+    return run(command, args, opts)
+  }
+  const summary = await gate.runGate({ out, source, inPlace: true, only: ['turbo-test'] }, deps)
+  const stale = summary.findings.filter(f => f.rule === 'stale-results')
+  assert.deepEqual(
+    stale.map(f => f.detail.split(':')[0]),
+    ['agent-qa'],
+  )
 })
