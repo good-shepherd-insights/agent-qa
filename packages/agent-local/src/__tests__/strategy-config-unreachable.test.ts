@@ -292,14 +292,12 @@ describe('the seam exists, and exists only as a composition option', () => {
       'utf8',
     )
     expect(composition).toContain('readonly chatReconcile?: ReconcileStrategy')
-    // And a project configuration cannot name it: the repository's own shipped config template is
-    // the document a person edits, and it says nothing about reconciliation.
-    const template = join(
-      fileURLToPath(new URL('../../../../', import.meta.url)),
-      'demo/init/agent-qa.config.yaml',
-    )
-    if (existsSync(template)) {
-      expect(readFileSync(template, 'utf8').toLowerCase()).not.toContain('reconcil')
+    // And a project configuration cannot name it: the configs a person edits say nothing about reconciliation.
+    const root = fileURLToPath(new URL('../../../../', import.meta.url))
+    for (const config of ['demo-project/agent-qa.config.yaml', 'test-fixtures/demo-init/agent-qa.config.yaml']) {
+      const path = join(root, config)
+      expect(existsSync(path), path).toBe(true)
+      expect(readFileSync(path, 'utf8').toLowerCase()).not.toContain('reconcil')
     }
   })
 })
