@@ -171,6 +171,107 @@ export function packageSetFindings({
   ]
 }
 
+const VITEST_COLUMNS = { passed: 'passed', failed: 'failed', skipped: 'skipped', todo: 'todo' }
+const MAX_MESSAGE = 500
+
+function relativeTo(rootDir, file) {
+  const name = String(file ?? '')
+  const prefix = `${String(rootDir ?? '').replace(/[\\/]+$/, '')}/`
+  return name.startsWith(prefix) ? name.slice(prefix.length) : name
+}
+
+export function classifyVitest(json, rootDir) {
+  const cells = []
+  const fileFailures = []
+  for (const file of json?.testResults ?? []) {
+    const rel = relativeTo(rootDir, file.name)
+    const assertions = file.assertionResults ?? []
+    if (file.status !== 'passed') {
+      const hasFailedAssertion = assertions.some(a => a.status === 'failed')
+      const message = String(file.message ?? '').slice(0, MAX_MESSAGE)
+      fileFailures.push({ file: rel, status: file.status, message, hasFailedAssertion })
+    }
+    for (const a of assertions) {
+      const fullName = a.fullName ?? [...(a.ancestorTitles ?? []), a.title].join(' ')
+      cells.push({ file: rel, fullName, status: VITEST_COLUMNS[a.status] ?? 'notRun' })
+    }
+  }
+  const count = status => cells.filter(cell => cell.status === status).length
+  const passed = count('passed')
+  const failed = count('failed')
+  return {
+    success: json?.success === true,
+    executed: passed + failed,
+    passed,
+    failed,
+    skipped: count('skipped'),
+    todo: count('todo'),
+    notRun: count('notRun'),
+    fileFailures,
+    cells,
+  }
+}
+
+export function vitestFindings(member, classified, leg = 'turbo-test') {
+  const name = typeof member === 'string' ? member : member?.name
+  if (!classified) return [finding('results-missing', leg, `${name}: no vitest JSON`)]
+  const findings = []
+  if (classified.executed === 0) {
+    findings.push(finding('zero-executed', leg, `${name}: 0 tests executed`))
+  }
+  for (const file of classified.fileFailures) {
+    if (!file.hasFailedAssertion) {
+      const detail = `${name}: ${file.file} (${file.status}): ${file.message || '<no message>'}`
+      findings.push(finding('file-failed', leg, detail))
+    }
+  }
+  for (const cell of classified.cells) {
+    if (cell.status === 'failed') {
+      findings.push(finding('test-failed', leg, `${name}: ${cell.file} > ${cell.fullName}`))
+    } else if (cell.status !== 'passed') {
+      const detail = `${name}: ${cell.file} > ${cell.fullName} (${cell.status})`
+      findings.push(finding('unlisted-skip', leg, detail))
+    }
+  }
+  const explained = findings.some(f => f.rule === 'test-failed' || f.rule === 'file-failed')
+  if (!classified.success && !explained) {
+    findings.push(finding('success-false', leg, `${name}: vitest reported success: false`))
+  }
+  return findings
+}
+
+export function staleResultFindings(results = [], legStartMs, leg = 'turbo-test') {
+  return results
+    .filter(entry => Number.isFinite(entry.mtimeMs) && entry.mtimeMs < legStartMs)
+    .map(entry => {
+      const detail = `${entry.member}: ${entry.file} was written before the leg started`
+      return finding('stale-results', leg, detail)
+    })
+}
+
+const TURBO_BUILT_IN_ENV = new Set(['CI'])
+
+function declaredEnv(turboJson) {
+  const names = new Set(turboJson?.globalEnv ?? [])
+  for (const name of turboJson?.globalPassThroughEnv ?? []) names.add(name)
+  for (const task of Object.values(turboJson?.tasks ?? {})) {
+    for (const name of [...(task.env ?? []), ...(task.passThroughEnv ?? [])]) names.add(name)
+  }
+  return names
+}
+
+export function turboEnvDisposition({ turboJson, envMode, gateEnv = {} } = {}) {
+  const declared = declaredEnv(turboJson)
+  const disposition = {}
+  for (const name of Object.keys(gateEnv)) {
+    if (envMode !== 'strict') disposition[name] = `passed (${envMode ?? 'unknown'} env mode)`
+    else if (declared.has(name)) disposition[name] = 'passed (declared in turbo.json)'
+    else if (TURBO_BUILT_IN_ENV.has(name)) disposition[name] = 'passed (turbo built-in)'
+    else disposition[name] = 'stripped (strict env mode; not declared in turbo.json)'
+  }
+  return disposition
+}
+
 export function orderRootCause(findings = []) {
   const isBuildFailure = f => f.rule === 'task-failed' && String(f.taskId ?? '').endsWith('#build')
   const rootCause = findings.filter(isBuildFailure)

@@ -1,4 +1,5 @@
 import { spawn as defaultSpawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   createWriteStream,
   existsSync,
@@ -19,12 +20,16 @@ import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
 import {
   REQUIRED_LEGS,
+  classifyVitest,
   evaluateGate,
   nodeTestFindings,
   orderRootCause,
   packageSetFindings,
+  staleResultFindings,
+  turboEnvDisposition,
   turboFindings,
   turboTaskCounts,
+  vitestFindings,
 } from './evaluate.mjs'
 import {
   GATE_ENV,
@@ -43,6 +48,10 @@ const NODE_TEST_PIN = 'scripts/gate/inputs/node-tests.json'
 const PACKAGE_PIN = 'scripts/gate/inputs/packages.json'
 const TURBO_RUNS_DIR = '.turbo/runs'
 const TURBO_RUN_FLAGS = ['--force', '--continue', '--summarize', '--log-order=grouped']
+const VITEST_RESULTS = 'test-results/gate-vitest.json'
+const VITEST_ARGS = ['--reporter=default', '--reporter=json', `--outputFile.json=${VITEST_RESULTS}`]
+const VITEST_CONFIGS = ['ts', 'mts', 'cts', 'js', 'mjs', 'cjs'].map(ext => `vitest.config.${ext}`)
+const COUNT_COLUMNS = ['executed', 'passed', 'failed', 'skipped', 'todo', 'notRun']
 const MAX_PLAIN_LOG_BYTES = 2 * 1024 * 1024
 
 function gateEnv() {
@@ -110,6 +119,15 @@ export function buildGateLegs({ root, runDir, nodeTestFiles = [], turboConcurren
       cwd: root,
       dryRunArgv: turboArgv(['build', 'typecheck'], ['--dry-run=json']),
       argv: turboArgv(['build', 'typecheck'], [...TURBO_RUN_FLAGS, ...concurrency]),
+    },
+    {
+      id: 'turbo-test',
+      kind: 'turbo',
+      vitest: true,
+      needsBuild: false,
+      cwd: root,
+      dryRunArgv: turboArgv(['test'], ['--dry-run=json', '--', ...VITEST_ARGS]),
+      argv: turboArgv(['test'], [...TURBO_RUN_FLAGS, ...concurrency, '--', ...VITEST_ARGS]),
     },
     {
       id: 'node-test',
@@ -212,6 +230,101 @@ function listRuns(dir) {
   return existsSync(dir) ? readdirSync(dir).filter(file => file.endsWith('.json')) : []
 }
 
+function safeName(name) {
+  return name.replace(/[^A-Za-z0-9._-]/g, '_')
+}
+
+function workerLimits(root, members) {
+  const limits = {}
+  for (const member of members ?? []) {
+    for (const config of VITEST_CONFIGS) {
+      const path = join(root, member.dir, config)
+      if (!existsSync(path)) continue
+      const match = readFileSync(path, 'utf8').match(/maxWorkers:\s*(\d+)/)
+      if (match) limits[member.name] = Number(match[1])
+      break
+    }
+  }
+  return limits
+}
+
+function collectVitestResults(root, members, runDir) {
+  const realRoot = realOrResolved(root)
+  return members.map(member => {
+    const resultsFile = join(member.dir, VITEST_RESULTS)
+    const path = join(root, resultsFile)
+    if (!existsSync(path)) return { member, resultsFile: null, mtimeMs: null, json: null }
+    const bytes = readFileSync(path)
+    writeGz(join(runDir, 'raw', `vitest-${safeName(member.name)}.json.gz`), bytes)
+    return {
+      member,
+      resultsFile,
+      mtimeMs: statSync(path).mtimeMs,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      json: parseJson(bytes.toString('utf8')),
+      realRoot,
+    }
+  })
+}
+
+function vitestLeg(record, runSummary, { root, runDir, members, pinned, legStartMs }) {
+  const results = collectVitestResults(root, members, runDir)
+  const findings = []
+  const packages = []
+  for (const result of results) {
+    const { member } = result
+    const classified = result.json ? classifyVitest(result.json, result.realRoot) : null
+    if (result.resultsFile && !result.json) {
+      const detail = `${member.name}: ${result.resultsFile} is not valid JSON`
+      findings.push({ rule: 'results-missing', leg: record.id, detail })
+    } else {
+      findings.push(...vitestFindings(member.name, classified, record.id))
+    }
+    const counts = Object.fromEntries(COUNT_COLUMNS.map(key => [key, classified?.[key] ?? 0]))
+    packages.push({
+      name: member.name,
+      dir: member.dir,
+      ...counts,
+      success: classified?.success ?? false,
+      fileFailures: (classified?.fileFailures ?? []).map(({ file, status, message }) => ({
+        file,
+        status,
+        message,
+      })),
+      resultsFile: result.resultsFile,
+      resultsSha256: result.sha256 ?? null,
+    })
+  }
+  const stale = results.map(({ member, resultsFile, mtimeMs }) => ({
+    member: member.name,
+    file: resultsFile,
+    mtimeMs,
+  }))
+  findings.push(...staleResultFindings(stale, legStartMs, record.id))
+  const testTaskPackages = runSummary
+    ? (runSummary.tasks ?? [])
+        .filter(task => String(task.taskId).endsWith('#test'))
+        .map(task => task.taskId.slice(0, -'#test'.length))
+    : undefined
+  const vitestPackages = results.filter(result => result.json).map(result => result.member.name)
+  findings.push(
+    ...packageSetFindings({ leg: record.id, pinned, testTaskPackages, vitestPackages }),
+  )
+  const totals = Object.fromEntries(
+    COUNT_COLUMNS.map(key => [key, packages.reduce((sum, entry) => sum + entry[key], 0)]),
+  )
+  return {
+    leg: {
+      ...record,
+      tasksExecuted: record.executed,
+      tasksFailed: record.failed,
+      ...totals,
+      findings: [...record.findings, ...findings],
+    },
+    packages,
+  }
+}
+
 function listNodeTestFiles(root) {
   return readdirSync(join(root, NODE_TEST_DIR))
     .filter(file => file.endsWith('.test.mjs'))
@@ -251,13 +364,19 @@ function evaluateLeg(leg, step, { root, onDisk }) {
   }
 }
 
-async function runTurboLeg(leg, { exec, runStep, runDir, pinned }) {
+async function runTurboLeg(leg, { exec, runStep, runDir, pinned, members }) {
   const dry = exec(leg.dryRunArgv[0], leg.dryRunArgv.slice(1), { cwd: leg.cwd })
   const dryRun = dry.status === 0 ? parseJson(dry.stdout) : null
   if (dryRun) writeGz(join(runDir, 'raw', `${leg.id}-dry-run.json.gz`), dry.stdout)
 
   const runsDir = join(leg.cwd, TURBO_RUNS_DIR)
   const before = new Set(listRuns(runsDir))
+  if (leg.vitest) {
+    for (const member of members ?? []) {
+      rmSync(join(leg.cwd, member.dir, VITEST_RESULTS), { force: true })
+    }
+  }
+  const legStartMs = Date.now()
   const step = await runStep(leg.id, leg.argv, leg.cwd)
   const fresh = listRuns(runsDir).filter(file => !before.has(file))
   const summaryFile = fresh.length === 1 ? join(runsDir, fresh[0]) : null
@@ -281,7 +400,7 @@ async function runTurboLeg(leg, { exec, runStep, runDir, pinned }) {
     findings.push(...packageSetFindings({ leg: leg.id, pinned, dryRunPackages }))
   }
   const counts = turboTaskCounts({ dryRun, runSummary })
-  return {
+  const result = {
     leg: {
       id: leg.id,
       argv: leg.argv,
@@ -302,7 +421,12 @@ async function runTurboLeg(leg, { exec, runStep, runDir, pinned }) {
       envMode: runSummary?.envMode ?? null,
       execution: runSummary?.execution ?? null,
     },
+    packages: null,
   }
+  if (!leg.vitest) return result
+  const ctx = { root: leg.cwd, runDir, members: members ?? [], pinned, legStartMs }
+  const tested = vitestLeg(result.leg, runSummary, ctx)
+  return { ...result, leg: tested.leg, packages: tested.packages }
 }
 
 export async function runGate(options, deps = {}) {
@@ -394,6 +518,7 @@ export async function runGate(options, deps = {}) {
   const legs = []
   const runSummaries = []
   let members = null
+  let packages = []
   if (ready) {
     let installed = true
     if (inPlace) {
@@ -453,9 +578,10 @@ export async function runGate(options, deps = {}) {
 
     for (const leg of plan) {
       if (leg.kind === 'turbo') {
-        const result = await runTurboLeg(leg, { exec, runStep, runDir, pinned })
+        const result = await runTurboLeg(leg, { exec, runStep, runDir, pinned, members })
         legs.push(result.leg)
         runSummaries.push(result.runSummary)
+        if (result.packages) packages = result.packages
         continue
       }
       const step = await runStep(leg.id, leg.argv, leg.cwd)
@@ -480,6 +606,8 @@ export async function runGate(options, deps = {}) {
   const removable = shouldRemoveClone({ exitCode: verdict.exitCode, keepClone: options.keepClone })
   const cloneRemoved = parent !== null && removable
   const finished = now()
+  const envMode = runSummaries.find(entry => entry.envMode)?.envMode ?? null
+  const turboConcurrency = options.turboConcurrency ?? 'default'
   const summary = {
     schemaVersion: 1,
     gate: 'agent-qa-local-gate',
@@ -509,12 +637,23 @@ export async function runGate(options, deps = {}) {
     steps: steps.map(({ findings, ...step }) => step),
     members,
     turbo: {
-      envMode: runSummaries.find(entry => entry.envMode)?.envMode ?? null,
-      concurrency: options.turboConcurrency ?? 'default',
+      envMode,
+      envDisposition: envMode
+        ? turboEnvDisposition({
+            turboJson: readJson(join(root, 'turbo.json')),
+            envMode,
+            gateEnv: { CI: GATE_ENV.CI, DO_NOT_TRACK: GATE_ENV.DO_NOT_TRACK },
+          })
+        : null,
+      concurrency: turboConcurrency,
       runSummaries,
     },
+    concurrency: {
+      turbo: turboConcurrency,
+      workerLimits: members ? workerLimits(root, members) : null,
+    },
     legs,
-    packages: [],
+    packages,
     rootCause,
     findings,
     exitCode: verdict.exitCode,
