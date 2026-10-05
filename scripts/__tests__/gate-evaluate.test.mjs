@@ -766,3 +766,60 @@ test('a listed vitest regression cell is not judged when the turbo-test leg did 
   assert.deepEqual(regressions.missing, [])
   assert.equal(regressions.passed, 0)
 })
+
+function runSummaryOf({ sha = 'a'.repeat(40), exitCode = 0, cli = 4699, nodeTest = 137 } = {}) {
+  return {
+    sha,
+    exitCode,
+    record: true,
+    packages: [
+      { name: '@vostride/agent-qa-core', executed: 746 },
+      { name: 'agent-qa', executed: cli },
+    ],
+    legs: [
+      { id: 'turbo-build-typecheck', executed: 46 },
+      { id: 'turbo-test', executed: 746 + cli },
+      { id: 'node-test', executed: nodeTest },
+    ],
+  }
+}
+
+test('three green runs with identical executed counts compare identical with no finding', () => {
+  assert.equal(typeof gateRules.compareRuns, 'function')
+  const result = gateRules.compareRuns([runSummaryOf(), runSummaryOf(), runSummaryOf()])
+  assert.deepEqual(result.findings, [])
+  assert.equal(result.identical, true)
+  assert.equal(result.exitCode, 0)
+  assert.deepEqual(result.perPackageExecuted, {
+    '@vostride/agent-qa-core': [746, 746, 746],
+    'agent-qa': [4699, 4699, 4699],
+  })
+  assert.deepEqual(result.perLegExecuted['node-test'], [137, 137, 137])
+})
+
+test('a member whose executed count differs in run 2 is repeat-count-mismatch with all values', () => {
+  assert.equal(typeof gateRules.compareRuns, 'function')
+  const result = gateRules.compareRuns([
+    runSummaryOf(),
+    runSummaryOf({ cli: 4698 }),
+    runSummaryOf(),
+  ])
+  const mismatches = result.findings.filter(f => f.rule === 'repeat-count-mismatch')
+  assert.match(mismatches[0].detail, /^member agent-qa executed 4699, 4698, 4699$/)
+  assert.match(mismatches[1].detail, /^leg turbo-test executed 5445, 5444, 5445$/)
+  assert.equal(mismatches.length, 2)
+  assert.equal(result.identical, false)
+  assert.equal(result.exitCode, 1)
+})
+
+test('a red run is repeat-run-red and runs on different SHAs are repeat-sha-mismatch', () => {
+  assert.equal(typeof gateRules.compareRuns, 'function')
+  const red = gateRules.compareRuns([runSummaryOf(), runSummaryOf({ exitCode: 1 })])
+  assert.deepEqual(rules(red.findings), ['repeat-run-red'])
+  assert.match(red.findings[0].detail, /^run 2 exited 1$/)
+  assert.equal(red.identical, true)
+  assert.equal(red.exitCode, 1)
+  const shas = gateRules.compareRuns([runSummaryOf(), runSummaryOf({ sha: 'b'.repeat(40) })])
+  assert.deepEqual(rules(shas.findings), ['repeat-sha-mismatch'])
+  assert.match(shas.findings[0].detail, /a{40}, b{40}/)
+})

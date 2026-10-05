@@ -631,3 +631,52 @@ test('the node:test JSON reporter gives every test its ancestors as fullName', a
     ],
   )
 })
+
+test('parseGateArgs rejects --repeat 1, --repeat x and --repeat with --in-place', () => {
+  const messageOf = argv => {
+    try {
+      gate.parseGateArgs(argv)
+    } catch (error) {
+      return error.message
+    }
+    return '<no error>'
+  }
+  assert.match(messageOf(['--out', 'x', '--repeat', '1']), /invalid --repeat: 1/)
+  assert.match(messageOf(['--out', 'x', '--repeat', 'x']), /invalid --repeat: x/)
+  assert.match(
+    messageOf(['--out', 'x', '--repeat', '3', '--in-place']),
+    /--repeat cannot be combined with --in-place/,
+  )
+  assert.equal(gate.parseGateArgs(['--out', 'x', '--repeat', '3']).repeat, 3)
+})
+
+test('--repeat runs back to back on one SHA into one repeat directory with a summary', async t => {
+  const { source, out, temp } = await fixture(t)
+  const { deps, calls } = fakeDeps({ temp })
+  const summary = await gate.runGate({ out, source, only: ['node-test'], repeat: 2 }, deps)
+  const repeatDir = join(out, SHA, 'repeat-20261006T070809Z-42')
+  for (const file of ['run-1/summary.json', 'run-2/summary.json', 'repeat-summary.json']) {
+    assert.ok(existsSync(join(repeatDir, file)), file)
+  }
+  const written = JSON.parse(readFileSync(join(repeatDir, 'repeat-summary.json'), 'utf8'))
+  assert.deepEqual(written, summary)
+  assert.equal(summary.sha, SHA)
+  assert.equal(summary.n, 2)
+  assert.equal(summary.record, false)
+  assert.equal(summary.identical, true)
+  assert.equal(summary.exitCode, 0)
+  assert.deepEqual(
+    summary.runs.map(entry => [entry.runDir, entry.exitCode]),
+    [
+      [join(repeatDir, 'run-1'), 0],
+      [join(repeatDir, 'run-2'), 0],
+    ],
+  )
+  assert.deepEqual(summary.perLegExecuted, { 'node-test': [1, 1] })
+  const revParses = calls.filter(call => call.includes('rev-parse') && call.includes('--verify'))
+  assert.deepEqual(
+    revParses.map(call => call.at(-1)),
+    ['HEAD^{commit}', `${SHA}^{commit}`, `${SHA}^{commit}`],
+  )
+  assert.equal(calls.filter(call => call[1] === 'clone').length, 2)
+})
