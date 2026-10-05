@@ -13,7 +13,7 @@
     "bench": "node src/report.ts",
     "bench:list": "node src/report.ts --list",
     "bench:validate": "node src/report.ts --validate",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
