@@ -1163,6 +1163,10 @@ export type InsightsKnowledgeChanges =
       runsInWindow: number
       runsRead: number
       runsUnreadable: number
+      runsCurationFailed: number
+      runsCurationUnfinished: number
+      /** Runs still queued or running; runsInWindow counts only settled runs (433-42). */
+      runsInFlight: number
       truncated?: { read: number; total: number }
       byKind: Partial<Record<string, number>>
     }

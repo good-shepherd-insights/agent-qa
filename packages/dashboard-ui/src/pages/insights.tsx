@@ -131,6 +131,8 @@ export default function InsightsPage() {
     // Separate from the overview: a failed curation read is named in the Memory section and never
     // takes the rest of the page down with it.
     async function loadKnowledgeChanges() {
+      // The previous window's counts must not stay on screen under the new window's label.
+      setKnowledgeChanges(null)
       let next: InsightsKnowledgeChanges
       try {
         next = await fetchInsightsKnowledgeChanges({ from: getWindowFrom(timeWindow) })

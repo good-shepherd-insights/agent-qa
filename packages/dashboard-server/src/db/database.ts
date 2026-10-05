@@ -1536,20 +1536,26 @@ export class DashboardDatabase {
   }
 
   /**
-   * The window's run ids, newest first, capped at `limit`, with the window's full count (433-30).
-   * Ids only: the Insights knowledge-change read dispatches each through the agent host.
+   * The window's settled run ids, newest first, capped at `limit`, with their full count, and the
+   * count of the window's runs still in flight (433-30, 433-42). A settled run has started and is
+   * neither `pending` nor `running`; every other row in the window is in flight. Ids only: the
+   * Insights knowledge-change read dispatches each through the agent host.
    */
-  listInsightsWindowRunIds(opts: { from?: string; to?: string; limit: number }): { runIds: string[]; total: number } {
+  listInsightsWindowRunIds(opts: { from?: string; to?: string; limit: number }): { runIds: string[]; total: number; inFlight: number } {
     const conditions: string[] = []
     const params: unknown[] = []
     if (opts.from) { conditions.push('started_at >= ?'); params.push(opts.from) }
     if (opts.to) { conditions.push('started_at <= ?'); params.push(opts.to) }
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
-    const total = (this.db.prepare(`SELECT COUNT(*) as cnt FROM runs ${where}`).get(...params) as { cnt: number }).cnt
+    const settled = "status NOT IN ('pending', 'running') AND started_at IS NOT NULL"
+    const settledWhere = `WHERE ${[...conditions, settled].join(' AND ')}`
+    const counts = this.db.prepare(`
+      SELECT COUNT(*) as cnt, COALESCE(SUM(CASE WHEN ${settled} THEN 1 ELSE 0 END), 0) as settled FROM runs ${where}
+    `).get(...params) as { cnt: number; settled: number }
     const rows = this.db.prepare(`
-      SELECT id FROM runs ${where} ORDER BY started_at DESC, id DESC LIMIT ?
+      SELECT id FROM runs ${settledWhere} ORDER BY started_at DESC, id DESC LIMIT ?
     `).all(...params, opts.limit) as { id: string }[]
-    return { runIds: rows.map((row) => row.id), total }
+    return { runIds: rows.map((row) => row.id), total: counts.settled, inFlight: counts.cnt - counts.settled }
   }
 
   getRunsByTestName(name: string, opts?: { limit?: number; offset?: number; attributePredicates?: AttributePredicate[] }): RunRow[] {
