@@ -21,6 +21,7 @@ import { gzipSync } from 'node:zlib'
 import {
   REQUIRED_LEGS,
   classifyVitest,
+  compareRuns,
   evaluateGate,
   nodeTestFindings,
   orderRootCause,
@@ -102,6 +103,13 @@ export function parseGateArgs(argv = []) {
       if (!/^[1-9]\d*$/.test(value)) throw new Error(`invalid --turbo-concurrency: ${value}`)
       parsed.turboConcurrency = Number(value)
       index += 1
+    } else if (arg === '--repeat') {
+      const value = readValue(argv, index, '--repeat')
+      if (!/^\d+$/.test(value) || Number(value) < 2) {
+        throw new Error(`invalid --repeat: ${value} (an integer >= 2)`)
+      }
+      parsed.repeat = Number(value)
+      index += 1
     } else if (arg === '--in-place') {
       parsed.inPlace = true
     } else if (arg === '--keep-clone') {
@@ -112,6 +120,9 @@ export function parseGateArgs(argv = []) {
   }
   if (!parsed.out) throw new Error('missing --out')
   if (parsed.inPlace && parsed.sha) throw new Error('--in-place cannot be combined with --sha')
+  if (parsed.inPlace && parsed.repeat) {
+    throw new Error('--repeat cannot be combined with --in-place')
+  }
   return parsed
 }
 
@@ -454,7 +465,55 @@ async function runTurboLeg(leg, { exec, runStep, runDir, pinned, members }) {
   return { ...result, leg: tested.leg, packages: tested.packages, cells: tested.cells }
 }
 
+async function runRepeat(options, deps) {
+  const exec = deps.exec ?? defaultExec
+  const now = deps.now ?? (() => new Date())
+  const pid = deps.pid ?? process.pid
+  const output = deps.output ?? process.stdout
+  const say = line => output.write?.(`${line}\n`)
+
+  const wanted = options.sha ?? 'HEAD'
+  const { source } = options
+  const revParse = exec('git', ['-C', source, 'rev-parse', '--verify', `${wanted}^{commit}`])
+  const sha = revParse.stdout.trim()
+  if (revParse.status !== 0 || !/^[0-9a-f]{40}$/.test(sha)) {
+    throw new Error(`cannot resolve ${wanted} in ${source}: ${revParse.stderr.trim()}`)
+  }
+  const repeatDir = join(options.out, sha, runDirName({ mode: 'repeat', now: now(), pid }))
+  const summaries = []
+  for (let index = 1; index <= options.repeat; index += 1) {
+    say(`[gate] repeat run ${index} of ${options.repeat} at ${sha}`)
+    const runDir = join(repeatDir, `run-${index}`)
+    summaries.push(await runGate({ ...options, repeat: undefined, sha, runDir }, deps))
+  }
+  const repeatSummary = {
+    schemaVersion: 1,
+    sha,
+    n: options.repeat,
+    record: summaries.every(summary => summary.record === true),
+    runs: summaries.map(({ runDir, exitCode, startedAt, finishedAt, durationMs }) => ({
+      runDir,
+      exitCode,
+      startedAt,
+      finishedAt,
+      durationMs,
+    })),
+    ...compareRuns(summaries),
+  }
+  const summaryPath = join(repeatDir, 'repeat-summary.json')
+  mkdirSync(repeatDir, { recursive: true })
+  writeAtomic(summaryPath, `${JSON.stringify(repeatSummary, null, 2)}\n`)
+
+  for (const f of repeatSummary.findings) say(`[gate] ${f.rule} (${f.leg}): ${f.detail}`)
+  const verdict = repeatSummary.exitCode === 0 ? 'green' : 'red'
+  say(`repeat ${verdict}: ${options.repeat} run(s), ${repeatSummary.findings.length} finding(s)`)
+  if (!repeatSummary.record) say('repeat: NOT A RECORD')
+  say(`repeat summary: ${summaryPath}`)
+  return repeatSummary
+}
+
 export async function runGate(options, deps = {}) {
+  if (options.repeat) return runRepeat(options, deps)
   const exec = deps.exec ?? defaultExec
   const run = deps.run ?? defaultRun
   const now = deps.now ?? (() => new Date())
@@ -498,7 +557,8 @@ export async function runGate(options, deps = {}) {
     )
   }
 
-  const runDir = join(options.out, sha ?? 'unresolved', runDirName({ mode, now: started, pid }))
+  const runName = runDirName({ mode, now: started, pid })
+  const runDir = options.runDir ?? join(options.out, sha ?? 'unresolved', runName)
   mkdirSync(join(runDir, 'logs'), { recursive: true })
   mkdirSync(join(runDir, 'raw'), { recursive: true })
   const logPath = id => join(runDir, 'logs', `${id.replace(/[^A-Za-z0-9._-]/g, '_')}.log`)

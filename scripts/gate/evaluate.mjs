@@ -439,6 +439,58 @@ export function regressionFindings({ cells = [], list, legsRan = [] } = {}) {
   }
 }
 
+function executedBy(summaries, rows) {
+  const table = {}
+  summaries.forEach((summary, index) => {
+    for (const [name, executed] of rows(summary)) {
+      table[name] ??= summaries.map(() => null)
+      table[name][index] = executed ?? null
+    }
+  })
+  return table
+}
+
+export function compareRuns(summaries = []) {
+  const leg = 'repeat'
+  const findings = []
+  summaries.forEach((summary, index) => {
+    if (summary?.exitCode !== 0) {
+      const code = summary?.exitCode ?? '<none>'
+      findings.push(finding('repeat-run-red', leg, `run ${index + 1} exited ${code}`))
+    }
+  })
+  const shas = summaries.map(summary => summary?.sha ?? null)
+  if (new Set(shas).size > 1 || shas.includes(null)) {
+    const listed = shas.map(sha => sha ?? '<unresolved>').join(', ')
+    findings.push(finding('repeat-sha-mismatch', leg, `the runs measured ${listed}`))
+  }
+  const perPackageExecuted = executedBy(summaries, summary =>
+    (summary?.packages ?? []).map(entry => [entry.name, entry.executed]),
+  )
+  const perLegExecuted = executedBy(summaries, summary =>
+    (summary?.legs ?? []).map(entry => [entry.id, entry.executed]),
+  )
+  let identical = true
+  for (const [label, table] of [
+    ['member', perPackageExecuted],
+    ['leg', perLegExecuted],
+  ]) {
+    for (const [name, values] of Object.entries(table)) {
+      if (new Set(values).size <= 1) continue
+      identical = false
+      const listed = values.map(value => value ?? '<absent>').join(', ')
+      findings.push(finding('repeat-count-mismatch', leg, `${label} ${name} executed ${listed}`))
+    }
+  }
+  return {
+    perPackageExecuted,
+    perLegExecuted,
+    identical,
+    findings,
+    exitCode: findings.length > 0 ? 1 : 0,
+  }
+}
+
 const TURBO_BUILT_IN_ENV = new Set(['CI'])
 
 function declaredEnv(turboJson) {
