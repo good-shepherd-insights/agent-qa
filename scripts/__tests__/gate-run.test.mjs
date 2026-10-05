@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { gunzipSync } from 'node:zlib'
 import test from 'node:test'
 import { REQUIRED_LEGS } from '../gate/evaluate.mjs'
 import * as gate from '../gate/run.mjs'
@@ -311,4 +312,118 @@ test('machineSnapshot records pid, executable basename and keyword only, never a
   ])
   assert.equal(JSON.stringify(snapshot).includes('SECRET'), false)
   assert.equal(JSON.stringify(snapshot).includes('TOKEN'), false)
+})
+
+const MEMBERS = JSON.parse(
+  readFileSync(new URL('../gate/inputs/packages.json', import.meta.url), 'utf8'),
+).members
+
+function turboDeps({ temp, source }) {
+  const base = fakeDeps({ temp })
+  const turboCalls = []
+  const listing = [
+    { name: 'agent-qa-monorepo', path: source },
+    ...MEMBERS.map((name, index) => ({ name, path: join(source, 'packages', `p${index}`) })),
+  ]
+  const dry = {
+    packages: MEMBERS,
+    tasks: MEMBERS.flatMap(name => [
+      { taskId: `${name}#build`, command: name === 'embedding-bench' ? '<NONEXISTENT>' : 'tsup' },
+      { taskId: `${name}#typecheck`, command: 'tsc --noEmit' },
+    ]),
+  }
+  const exec = base.deps.exec
+  base.deps.exec = (command, args, opts) => {
+    if (command === 'pnpm' && args[0] === 'ls') {
+      return { status: 0, stdout: JSON.stringify(listing), stderr: '' }
+    }
+    if (command === 'pnpm' && args.includes('--dry-run=json')) {
+      turboCalls.push(args)
+      return { status: 0, stdout: JSON.stringify(dry), stderr: '' }
+    }
+    return exec(command, args, opts)
+  }
+  const run = base.deps.run
+  base.deps.run = async (command, args, opts) => {
+    if (command === 'pnpm' && args.includes('turbo')) {
+      turboCalls.push(args)
+      writeFileSync(opts.logPath, 'ok\n')
+      const tasks = dry.tasks
+        .filter(task => task.command !== '<NONEXISTENT>')
+        .map(({ taskId }) => ({ taskId, execution: { exitCode: 0 }, cache: { status: 'MISS' } }))
+      const n = tasks.length
+      const execution = { attempted: n, success: n, failed: 0, cached: 0, exitCode: 0 }
+      mkdirSync(join(source, '.turbo/runs'), { recursive: true })
+      writeFileSync(
+        join(source, '.turbo/runs/run1.json'),
+        JSON.stringify({ envMode: 'strict', execution, tasks }),
+      )
+      return { exitCode: 0, durationMs: 1 }
+    }
+    return run(command, args, opts)
+  }
+  return { ...base, turboCalls }
+}
+
+function populatePin(root) {
+  writeFileSync(
+    join(root, 'scripts/gate/inputs/packages.json'),
+    JSON.stringify({ schemaVersion: 1, members: MEMBERS }),
+  )
+}
+
+test('the build/typecheck leg is forced, continued, summarized and set-checked', async t => {
+  const { source, out, temp } = await fixture(t)
+  populatePin(source)
+  const { deps, turboCalls } = turboDeps({ temp, source })
+  const summary = await gate.runGate(
+    { out, source, inPlace: true, only: ['turbo-build-typecheck'], turboConcurrency: 4 },
+    deps,
+  )
+  assert.deepEqual(summary.findings, [])
+  assert.equal(summary.exitCode, 0)
+  assert.equal(summary.members.length, 24)
+  assert.equal(summary.members.find(member => member.name === 'agent-qa').dir, 'packages/p22')
+  const leg = summary.legs.find(entry => entry.id === 'turbo-build-typecheck')
+  assert.equal(leg.executed, 47)
+  assert.equal(leg.expectedTasks, 47)
+  assert.deepEqual(turboCalls[0], ['exec', 'turbo', 'run', 'build', 'typecheck', '--dry-run=json'])
+  for (const flag of ['--force', '--continue', '--summarize', '--concurrency=4']) {
+    assert.ok(turboCalls[1].includes(flag), flag)
+  }
+  assert.equal(turboCalls.flat().some(arg => arg.includes('--filter')), false)
+  assert.equal(summary.turbo.envMode, 'strict')
+  assert.equal(summary.turbo.concurrency, 4)
+  const raw = join(summary.runDir, 'raw', 'turbo-build-typecheck-summary.json.gz')
+  assert.equal(JSON.parse(gunzipSync(readFileSync(raw))).execution.attempted, 47)
+  assert.ok(existsSync(join(summary.runDir, 'raw', 'turbo-build-typecheck-dry-run.json.gz')))
+  assert.equal(gate.parseGateArgs(['--out', 'x', '--turbo-concurrency', '4']).turboConcurrency, 4)
+  assert.throws(() => gate.parseGateArgs(['--out', 'x', '--turbo-concurrency', '0']), /invalid/)
+})
+
+test('a leg with no new turbo run summary, or a pnpm listing off the pin, is red', async t => {
+  const { source, out, temp } = await fixture(t)
+  populatePin(source)
+  const { deps } = turboDeps({ temp, source })
+  const run = deps.run
+  deps.run = async (command, args, opts) => {
+    const result = await run(command, args, opts)
+    writeFileSync(join(source, '.turbo/runs/run2.json'), '{}')
+    return result
+  }
+  const exec = deps.exec
+  deps.exec = (command, args, opts) => {
+    if (command === 'pnpm' && args[0] === 'ls') {
+      return { status: 0, stdout: JSON.stringify([{ name: 'agent-qa', path: '/x' }]), stderr: '' }
+    }
+    return exec(command, args, opts)
+  }
+  const summary = await gate.runGate(
+    { out, source, inPlace: true, only: ['turbo-build-typecheck'] },
+    deps,
+  )
+  const byRule = rule => summary.findings.filter(f => f.rule === rule)
+  assert.match(byRule('results-missing')[0].detail, /one new run summary.*found 2/)
+  assert.match(byRule('package-set-mismatch')[0].detail, /^pnpm workspace listing: missing/)
+  assert.equal(summary.exitCode, 1)
 })

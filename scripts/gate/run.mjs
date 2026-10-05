@@ -14,10 +14,18 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir as defaultTmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
-import { REQUIRED_LEGS, evaluateGate, nodeTestFindings } from './evaluate.mjs'
+import {
+  REQUIRED_LEGS,
+  evaluateGate,
+  nodeTestFindings,
+  orderRootCause,
+  packageSetFindings,
+  turboFindings,
+  turboTaskCounts,
+} from './evaluate.mjs'
 import {
   GATE_ENV,
   chromiumCheck,
@@ -32,6 +40,9 @@ const DEFAULT_SOURCE = resolve(GATE_DIR, '..', '..')
 const TURBO_LEGS = new Set(['turbo-build-typecheck', 'turbo-test'])
 const NODE_TEST_DIR = 'scripts/__tests__'
 const NODE_TEST_PIN = 'scripts/gate/inputs/node-tests.json'
+const PACKAGE_PIN = 'scripts/gate/inputs/packages.json'
+const TURBO_RUNS_DIR = '.turbo/runs'
+const TURBO_RUN_FLAGS = ['--force', '--continue', '--summarize', '--log-order=grouped']
 const MAX_PLAIN_LOG_BYTES = 2 * 1024 * 1024
 
 function gateEnv() {
@@ -67,6 +78,11 @@ export function parseGateArgs(argv = []) {
       for (const id of ids) if (!REQUIRED_LEGS.includes(id)) throw new Error(`unknown leg: ${id}`)
       parsed.only = ids
       index += 1
+    } else if (arg === '--turbo-concurrency') {
+      const value = readValue(argv, index, '--turbo-concurrency')
+      if (!/^[1-9]\d*$/.test(value)) throw new Error(`invalid --turbo-concurrency: ${value}`)
+      parsed.turboConcurrency = Number(value)
+      index += 1
     } else if (arg === '--in-place') {
       parsed.inPlace = true
     } else if (arg === '--keep-clone') {
@@ -80,8 +96,21 @@ export function parseGateArgs(argv = []) {
   return parsed
 }
 
-export function buildGateLegs({ root, runDir, nodeTestFiles = [] } = {}) {
+function turboArgv(tasks, flags) {
+  return ['pnpm', 'exec', 'turbo', 'run', ...tasks, ...flags]
+}
+
+export function buildGateLegs({ root, runDir, nodeTestFiles = [], turboConcurrency } = {}) {
+  const concurrency = turboConcurrency ? [`--concurrency=${turboConcurrency}`] : []
   return [
+    {
+      id: 'turbo-build-typecheck',
+      kind: 'turbo',
+      needsBuild: false,
+      cwd: root,
+      dryRunArgv: turboArgv(['build', 'typecheck'], ['--dry-run=json']),
+      argv: turboArgv(['build', 'typecheck'], [...TURBO_RUN_FLAGS, ...concurrency]),
+    },
     {
       id: 'node-test',
       kind: 'node-test',
@@ -146,6 +175,43 @@ function readJson(path) {
   }
 }
 
+function parseJson(text) {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
+
+function realOrResolved(path) {
+  const absolute = resolve(path)
+  try {
+    return realpathSync(absolute)
+  } catch {
+    const parent = dirname(absolute)
+    return parent === absolute ? absolute : join(realOrResolved(parent), basename(absolute))
+  }
+}
+
+export function workspaceMembers(root, exec = defaultExec) {
+  const listing = exec('pnpm', ['ls', '-r', '--depth', '-1', '--json'], { cwd: root })
+  const entries = listing.status === 0 ? parseJson(listing.stdout) : null
+  if (!Array.isArray(entries)) return null
+  const realRoot = realOrResolved(root)
+  return entries
+    .filter(entry => realOrResolved(entry.path) !== realRoot)
+    .map(entry => ({ name: entry.name, dir: relative(realRoot, realOrResolved(entry.path)) }))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+}
+
+function writeGz(path, content) {
+  writeFileSync(path, gzipSync(content))
+}
+
+function listRuns(dir) {
+  return existsSync(dir) ? readdirSync(dir).filter(file => file.endsWith('.json')) : []
+}
+
 function listNodeTestFiles(root) {
   return readdirSync(join(root, NODE_TEST_DIR))
     .filter(file => file.endsWith('.test.mjs'))
@@ -182,6 +248,60 @@ function evaluateLeg(leg, step, { root, onDisk }) {
   return {
     counts: {},
     findings: [{ rule: 'results-missing', leg: leg.id, detail: `no evaluator for ${leg.kind}` }],
+  }
+}
+
+async function runTurboLeg(leg, { exec, runStep, runDir, pinned }) {
+  const dry = exec(leg.dryRunArgv[0], leg.dryRunArgv.slice(1), { cwd: leg.cwd })
+  const dryRun = dry.status === 0 ? parseJson(dry.stdout) : null
+  if (dryRun) writeGz(join(runDir, 'raw', `${leg.id}-dry-run.json.gz`), dry.stdout)
+
+  const runsDir = join(leg.cwd, TURBO_RUNS_DIR)
+  const before = new Set(listRuns(runsDir))
+  const step = await runStep(leg.id, leg.argv, leg.cwd)
+  const fresh = listRuns(runsDir).filter(file => !before.has(file))
+  const summaryFile = fresh.length === 1 ? join(runsDir, fresh[0]) : null
+  const runSummary = summaryFile ? readJson(summaryFile) : null
+  if (runSummary) {
+    writeGz(join(runDir, 'raw', `${leg.id}-summary.json.gz`), readFileSync(summaryFile))
+  }
+
+  const findings = []
+  if (!dryRun) {
+    const detail = `turbo dry run exited ${dry.status} or printed no JSON`
+    findings.push({ rule: 'results-missing', leg: leg.id, detail })
+  } else if (!runSummary) {
+    const detail = `expected one new run summary in ${TURBO_RUNS_DIR}, found ${fresh.length}`
+    findings.push({ rule: 'results-missing', leg: leg.id, detail })
+  } else {
+    findings.push(...turboFindings({ legId: leg.id, dryRun, runSummary, exitCode: step.exitCode }))
+  }
+  if (dryRun) {
+    const dryRunPackages = dryRun.packages ?? []
+    findings.push(...packageSetFindings({ leg: leg.id, pinned, dryRunPackages }))
+  }
+  const counts = turboTaskCounts({ dryRun, runSummary })
+  return {
+    leg: {
+      id: leg.id,
+      argv: leg.argv,
+      dryRunArgv: leg.dryRunArgv,
+      cwd: leg.cwd,
+      exitCode: step.exitCode,
+      durationMs: step.durationMs,
+      log: step.log,
+      expectedTasks: counts.expected,
+      executed: counts.executed,
+      passed: counts.passed,
+      failed: counts.failed,
+      findings,
+    },
+    runSummary: {
+      leg: leg.id,
+      file: summaryFile,
+      envMode: runSummary?.envMode ?? null,
+      execution: runSummary?.execution ?? null,
+    },
   }
 }
 
@@ -272,6 +392,8 @@ export async function runGate(options, deps = {}) {
   }
 
   const legs = []
+  const runSummaries = []
+  let members = null
   if (ready) {
     let installed = true
     if (inPlace) {
@@ -302,9 +424,12 @@ export async function runGate(options, deps = {}) {
 
   if (ready) {
     const onDisk = listNodeTestFiles(root)
-    const plan = buildLegs({ root, runDir, nodeTestFiles: onDisk }).filter(leg =>
-      selected.includes(leg.id),
-    )
+    const plan = buildLegs({
+      root,
+      runDir,
+      nodeTestFiles: onDisk,
+      turboConcurrency: options.turboConcurrency,
+    }).filter(leg => selected.includes(leg.id))
     const turboSelected = plan.some(leg => TURBO_LEGS.has(leg.id))
     if (!turboSelected && plan.some(leg => leg.needsBuild)) {
       const build = await runStep('prepare-build', ['pnpm', 'build'], root)
@@ -312,7 +437,27 @@ export async function runGate(options, deps = {}) {
       steps.push(build)
     }
 
+    const pinned = readJson(join(root, PACKAGE_PIN))?.members
+    if (plan.some(leg => leg.kind === 'turbo')) {
+      members = workspaceMembers(root, exec)
+      const workspace = { id: 'workspace', members: members?.length ?? null, findings: [] }
+      if (members === null) {
+        const detail = 'pnpm ls -r --depth -1 --json failed or printed no JSON'
+        workspace.findings.push({ rule: 'package-set-mismatch', leg: 'workspace', detail })
+      } else {
+        const pnpmMembers = members.map(member => member.name)
+        workspace.findings.push(...packageSetFindings({ pinned, pnpmMembers }))
+      }
+      steps.push(workspace)
+    }
+
     for (const leg of plan) {
+      if (leg.kind === 'turbo') {
+        const result = await runTurboLeg(leg, { exec, runStep, runDir, pinned })
+        legs.push(result.leg)
+        runSummaries.push(result.runSummary)
+        continue
+      }
       const step = await runStep(leg.id, leg.argv, leg.cwd)
       const { counts, findings } = evaluateLeg(leg, step, { root, onDisk })
       legs.push({
@@ -330,7 +475,8 @@ export async function runGate(options, deps = {}) {
 
   const machineEnd = host.machineSnapshot({ exec, selfPid: pid })
   const verdict = evaluateGate({ legs, steps, partial, selected, preflight: preflightRecord })
-  const legMissing = verdict.findings.some(f => f.rule === 'leg-missing')
+  const { findings, rootCause } = orderRootCause(verdict.findings)
+  const legMissing = findings.some(f => f.rule === 'leg-missing')
   const removable = shouldRemoveClone({ exitCode: verdict.exitCode, keepClone: options.keepClone })
   const cloneRemoved = parent !== null && removable
   const finished = now()
@@ -361,9 +507,16 @@ export async function runGate(options, deps = {}) {
     },
     preflight: preflightRecord,
     steps: steps.map(({ findings, ...step }) => step),
+    members,
+    turbo: {
+      envMode: runSummaries.find(entry => entry.envMode)?.envMode ?? null,
+      concurrency: options.turboConcurrency ?? 'default',
+      runSummaries,
+    },
     legs,
     packages: [],
-    findings: verdict.findings,
+    rootCause,
+    findings,
     exitCode: verdict.exitCode,
   }
   const summaryPath = join(runDir, 'summary.json')
@@ -371,8 +524,8 @@ export async function runGate(options, deps = {}) {
   if (cloneRemoved) rmSync(parent, { recursive: true, force: true })
 
   for (const warning of warnings) say(`[gate] warning: ${warning}`)
-  for (const f of verdict.findings) say(`[gate] ${f.rule} (${f.leg}): ${f.detail}`)
-  say(`gate ${verdict.exitCode === 0 ? 'green' : 'red'}: ${verdict.findings.length} finding(s)`)
+  for (const f of findings) say(`[gate] ${f.rule} (${f.leg}): ${f.detail}`)
+  say(`gate ${verdict.exitCode === 0 ? 'green' : 'red'}: ${findings.length} finding(s)`)
   if (inPlace) say('in-place run: NOT A RECORD')
   if (partial) say(`partial run (${options.only.join(',')}): NOT A RECORD`)
   say(`summary: ${summaryPath}`)
