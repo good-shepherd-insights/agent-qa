@@ -49,7 +49,11 @@ const PACKAGE_PIN = 'scripts/gate/inputs/packages.json'
 const TURBO_RUNS_DIR = '.turbo/runs'
 const TURBO_RUN_FLAGS = ['--force', '--continue', '--summarize', '--log-order=grouped']
 const VITEST_RESULTS = 'test-results/gate-vitest.json'
-const VITEST_ARGS = ['--reporter=default', '--reporter=json', `--outputFile.json=${VITEST_RESULTS}`]
+const VITEST_ARGS = [
+  '--reporter=default',
+  '--reporter=json',
+  '--outputFile.json=test-results/gate-vitest.json',
+]
 const VITEST_CONFIGS = ['ts', 'mts', 'cts', 'js', 'mjs', 'cjs'].map(ext => `vitest.config.${ext}`)
 const COUNT_COLUMNS = ['executed', 'passed', 'failed', 'skipped', 'todo', 'notRun']
 const MAX_PLAIN_LOG_BYTES = 2 * 1024 * 1024
