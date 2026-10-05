@@ -10,7 +10,7 @@ import { buildPromotionPostureResolver } from '../curation/promotion-posture.js'
 const realBuild = buildPromotionPostureResolver
 
 export function promotionHostProof(configPath: string) {
-  const demo = fileURLToPath(new URL('../../../../../demo/init/agent-qa-eval/', import.meta.url))
+  const demo = fileURLToPath(new URL('../../../../test-fixtures/demo-init/agent-qa-eval/', import.meta.url))
   const root = join(dirname(configPath), 'agent-qa-eval')
   mkdirSync(join(root, 'reports/noise-floor'), { recursive: true })
   cpSync(join(demo, 'corpus'), join(root, 'corpus'), { recursive: true })
