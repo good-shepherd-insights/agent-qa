@@ -3,6 +3,7 @@
   "files": [
     "431-discovery-import-lint.test.mjs",
     "gate-evaluate.test.mjs",
+    "gate-run.test.mjs",
     "release-docker.test.mjs",
     "release-dry-run.test.mjs",
     "release-git.test.mjs",
