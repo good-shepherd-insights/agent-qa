@@ -82,15 +82,32 @@ function MemorySection({ knowledgeChanges }: { knowledgeChanges: InsightsKnowled
     )
   }
 
-  const { runsInWindow, runsRead, runsUnreadable, truncated, byKind } = knowledgeChanges
+  const {
+    runsInWindow,
+    runsRead,
+    runsUnreadable,
+    runsCurationFailed,
+    runsCurationUnfinished,
+    runsInFlight,
+    truncated,
+    byKind,
+  } = knowledgeChanges
   const rows = LEARNED_CHANGE_KINDS
     .map((kind) => ({ kind, ...CHANGE_KINDS[kind], value: byKind[kind] ?? 0 }))
     .filter((row) => row.value > 0)
   const totalChanges = rows.reduce((sum, row) => sum + row.value, 0)
   const runsAttempted = truncated?.read ?? runsInWindow
 
-  // The empty claim is made only when every run in the window was read and none changed anything.
-  if (totalChanges === 0 && runsUnreadable === 0 && truncated === undefined) {
+  // The empty claim is made only when every run in the window settled, was read with its curation
+  // finished, and none changed anything. A missing count never yields the claim.
+  if (
+    totalChanges === 0
+    && runsUnreadable === 0
+    && runsCurationFailed === 0
+    && runsCurationUnfinished === 0
+    && runsInFlight === 0
+    && truncated === undefined
+  ) {
     return (
       <QuietSectionEmpty
         title="No memory-curator activity in this window"
@@ -105,6 +122,17 @@ function MemorySection({ knowledgeChanges }: { knowledgeChanges: InsightsKnowled
       : undefined,
     runsUnreadable > 0
       ? `Could not read curation for ${runsUnreadable} of ${plural(runsAttempted, "run")}; their changes are not counted.`
+      : undefined,
+    runsCurationFailed > 0
+      ? `Curation failed for ${runsCurationFailed} of ${plural(runsAttempted, "run")}; their changes are not counted.`
+      : undefined,
+    runsCurationUnfinished > 0
+      ? `Curation has not finished for ${runsCurationUnfinished} of ${plural(runsAttempted, "run")}; their changes are not counted yet.`
+      : undefined,
+    runsInFlight > 0
+      ? runsInFlight === 1
+        ? "1 run in this window has not finished yet and is not counted."
+        : `${runsInFlight} runs in this window have not finished yet and are not counted.`
       : undefined,
   ].filter((note): note is string => note !== undefined)
 
@@ -145,8 +173,8 @@ function MemorySection({ knowledgeChanges }: { knowledgeChanges: InsightsKnowled
       ) : (
         <p className="px-5 pt-4 text-sm text-muted-foreground">
           {runsRead > 0
-            ? `No changes found in the ${plural(runsRead, "run")} that could be read.`
-            : "No run in this window could be read."}
+            ? `No changes found in the ${plural(runsRead, "run")} whose curation finished.`
+            : "No run in this window has a finished curation to count."}
         </p>
       )}
       {notes.length > 0 ? (

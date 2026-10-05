@@ -214,6 +214,7 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
   const stepNames = new Map<string, string>()
   // A terminal replay/replacement updates one handle, never adds another attempt's work.
   const memberDurations = new Map<number, number | undefined>()
+  let idlessHookRows = 0
   let startedAtMs = 0
   let finalized = false
   const heldSnapshots: DashboardRunIngestSnapshots[] = []
@@ -518,9 +519,12 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
     const id = targetForTest(payload) ?? runId
     if (!id) return
     const kind = payload.kind
+    const hookExecutionId = readString(payload.hookExecutionId) ?? `hook-${now()}-${String(idlessHookRows++)}`
     try {
+      // The run is part of the key because `execution_logs.id` is unique across every run in the
+      // database, and producers mint the same hook id in every run (433-41, CR-01).
       db.insertExecutionLog({
-        id: readString(payload.hookExecutionId) ?? `${id}-hook-${now()}`,
+        id: `${id}:${hookExecutionId}`,
         runId: id,
         type: kind === 'appium-script' || kind === 'runjs' ? kind : 'hook',
         name: readString(payload.hookName) ?? 'hook',

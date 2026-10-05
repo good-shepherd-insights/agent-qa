@@ -28,9 +28,11 @@ import {
   parseHandleParam,
   providerErrorSentence,
   RecordChangeSchema,
+  RunsPostProcessingInputSchema,
 } from '@vostride/agent-qa-schema'
 import type {
   EditorLiveUrlResult,
+  PostProcessingStatus,
   RunServiceReadiness,
   RunSession,
   RunsLiveUrlResult,
@@ -626,53 +628,99 @@ type KnowledgeChangeKind = (typeof RecordChangeSchema.shape.change.options)[numb
 
 interface InsightsKnowledgeChanges {
   status: 'read'
+  /** The window's settled runs: started, and neither queued nor running. */
   runsInWindow: number
   runsRead: number
   runsUnreadable: number
+  runsCurationFailed: number
+  runsCurationUnfinished: number
+  /** The window's runs still queued or running; they are not read. */
+  runsInFlight: number
   truncated?: { read: number; total: number }
   byKind: Record<KnowledgeChangeKind, number>
 }
 
+type InsightsRunCuration = 'read' | 'unreadable' | 'failed' | 'unfinished'
+
 /**
- * Tally the window's knowledge changes by kind, one `runs.knowledge` read per run (433-30).
+ * `pending` is ambiguous: the chain may be queued, or it was never enqueued because the run was
+ * excluded by design (a gate run, an excluded outcome). Only the post-processing read can tell,
+ * and only its `exclusion` is used.
+ */
+async function isExcludedFromPostProcessing(host: AgentHost, runId: string): Promise<boolean> {
+  const parsed = RunsPostProcessingInputSchema.safeParse({ runId })
+  if (!parsed.success) return false
+  try {
+    const status = await host.invokeFunction(
+      host.registry,
+      host.runsPostProcessingFunctionId,
+      parsed.data,
+      host.caller,
+    ) as PostProcessingStatus
+    return status?.exclusion !== undefined
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Tally the window's knowledge changes by kind, one `runs.knowledge` read per settled run
+ * (433-30, 433-42).
  *
- * A run is unreadable when the read is refused or throws, when its handoff is gone
- * (`evidence-incomplete`), or when the store scan behind its changes was incomplete. Its changes
- * are not counted, and it is reported as unreadable rather than as a run that changed nothing.
- * The latest {@link INSIGHTS_KNOWLEDGE_RUN_CAP} runs are read; a larger window says so.
+ * A run is read only when its curation finished (`done`), or when its curation reads `pending`
+ * because the run was excluded from post-processing by design, so there was nothing to curate.
+ * Only read runs' changes are counted. Every other run is counted apart and never as a run that
+ * changed nothing:
+ * - unreadable: the read was refused or threw, the handoff is gone (`evidence-incomplete`), or the
+ *   store scan behind its changes was incomplete;
+ * - curation failed: `failed`;
+ * - curation unfinished: `running`, or `pending` with no exclusion (or an unreadable exclusion).
+ * Runs still queued or running are not read at all; they are counted as in flight. The latest
+ * {@link INSIGHTS_KNOWLEDGE_RUN_CAP} settled runs are read; a larger window says so.
  */
 async function readInsightsKnowledgeChanges(
   host: AgentHost,
   db: DashboardDatabase,
   window: { from?: string; to?: string },
 ): Promise<InsightsKnowledgeChanges> {
-  const { runIds, total } = db.listInsightsWindowRunIds({ ...window, limit: INSIGHTS_KNOWLEDGE_RUN_CAP })
+  const { runIds, total, inFlight } = db.listInsightsWindowRunIds({ ...window, limit: INSIGHTS_KNOWLEDGE_RUN_CAP })
   const byKind = Object.fromEntries(
     RecordChangeSchema.shape.change.options.map((kind) => [kind, 0]),
   ) as Record<KnowledgeChangeKind, number>
-  let runsRead = 0
-  let runsUnreadable = 0
-  let next = 0
-  const worker = async (): Promise<void> => {
-    while (next < runIds.length) {
-      const runId = runIds[next++]
-      const outcome = await readRunKnowledge(host, runId).catch(() => undefined)
-      if (outcome?.kind !== 'ok' || outcome.body.kind !== 'ready' || outcome.body.learned.scanIncomplete) {
-        runsUnreadable += 1
-        continue
-      }
-      runsRead += 1
+  const tally: Record<InsightsRunCuration, number> = { read: 0, unreadable: 0, failed: 0, unfinished: 0 }
+  const classify = async (runId: string): Promise<InsightsRunCuration> => {
+    const outcome = await readRunKnowledge(host, runId).catch(() => undefined)
+    if (outcome?.kind !== 'ok' || outcome.body.kind !== 'ready' || outcome.body.learned.scanIncomplete) {
+      return 'unreadable'
+    }
+    const curation = outcome.body.curation.status
+    let state: InsightsRunCuration
+    if (curation === 'done') state = 'read'
+    else if (curation === 'failed') state = 'failed'
+    else if (curation === 'pending' && await isExcludedFromPostProcessing(host, runId)) state = 'read'
+    else state = 'unfinished'
+    if (state === 'read') {
       for (const change of outcome.body.learned.changes) {
         if (Object.hasOwn(byKind, change.change)) byKind[change.change] += 1
       }
+    }
+    return state
+  }
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (next < runIds.length) {
+      tally[await classify(runIds[next++])] += 1
     }
   }
   await Promise.all(Array.from({ length: Math.min(INSIGHTS_KNOWLEDGE_CONCURRENCY, runIds.length) }, worker))
   return {
     status: 'read',
     runsInWindow: total,
-    runsRead,
-    runsUnreadable,
+    runsRead: tally.read,
+    runsUnreadable: tally.unreadable,
+    runsCurationFailed: tally.failed,
+    runsCurationUnfinished: tally.unfinished,
+    runsInFlight: inFlight,
     ...(total > runIds.length ? { truncated: { read: runIds.length, total } } : {}),
     byKind,
   }

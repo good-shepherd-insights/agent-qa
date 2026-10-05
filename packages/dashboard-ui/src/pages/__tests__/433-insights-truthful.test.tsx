@@ -82,6 +82,9 @@ function knowledgeRead(overrides: Record<string, unknown> = {}) {
     runsInWindow: 6,
     runsRead: 6,
     runsUnreadable: 0,
+    runsCurationFailed: 0,
+    runsCurationUnfinished: 0,
+    runsInFlight: 0,
     byKind: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, promoted: 0, purged: 0 },
     ...overrides,
   }
