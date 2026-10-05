@@ -10,14 +10,25 @@ import { loadCassetteBundle } from '../cassette-loader.js'
 import { listCassetteBundleDirs } from '../replay-read.js'
 
 const demoRoot = fileURLToPath(new URL('../../../../../demo/', import.meta.url))
+const CASSETTES_ROOT = join(demoRoot, 'init', 'agent-qa-eval', 'cassettes')
+
+// Keyed on the super-repository layout, not on the cassette root, so a present layout that lost
+// its cassettes fails the layout cell instead of skipping.
+const CASSETTE_SWEEP_SKIP_REASON = existsSync(join(demoRoot, 'init'))
+  ? undefined
+  : `agent-qa is not checked out inside the super-repository (no ${join(demoRoot, 'init')}): `
+    + "the committed 63-cassette proof sweep (the super-repository's eval cassettes, part of the "
+    + 'model gate removed by V2-REL-02) was NOT run. Run this file from the super-repository '
+    + 'checkout to measure it.'
 
 describe('415 D-07 — committed populated-brief reconstruction', () => {
-  if (!existsSync(demoRoot)) {
-    it.skip('demo root absent: committed 63-cassette proof sweep requires the super-repo demo', () => {})
-    return
-  }
+  it('415 D-07 — layout: names why the committed cassette sweep did or did not run', () => {
+    const layout = CASSETTE_SWEEP_SKIP_REASON ?? 'super-repository cassettes present: the sweep runs'
+    process.stderr.write(`\n[415 committed briefs] ${layout}\n`)
+    if (CASSETTE_SWEEP_SKIP_REASON === undefined) expect(existsSync(CASSETTES_ROOT), CASSETTES_ROOT).toBe(true)
+  })
 
-  it('reconstructs all 79 populated briefs as proof/exact with matching policyDigest', () => {
+  it.skipIf(CASSETTE_SWEEP_SKIP_REASON !== undefined)('reconstructs all 79 populated briefs as proof/exact with matching policyDigest', () => {
     const cassettesRoot = join(demoRoot, 'init', 'agent-qa-eval', 'cassettes')
     expect(existsSync(cassettesRoot)).toBe(true)
     const totals = { populated: 0, L0: 0, L1: 0, L2: 0 }
