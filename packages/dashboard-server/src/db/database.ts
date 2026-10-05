@@ -662,11 +662,15 @@ export class DashboardDatabase {
    * replaced (deleted outright by 405-07's census): that member wiped every step of the RUN on any
    * member's retry, so in a suite the abandoned attempt of test 3 deleted the completed history of
    * tests 0-2. The member row itself survives — its outcome and its attempt count are facts about
-   * the member, not about the attempt.
+   * the member, not about the attempt. So do its setup and teardown hook rows, which run once per
+   * member outside the retry loop; only the attempt's `inline` hook rows go (433-41, CR-01).
    */
   deleteMemberProjection(runId: string, testIndex: number): void {
     this.db.prepare('DELETE FROM run_steps WHERE run_id = ? AND test_index = ?').run(runId, testIndex)
     this.db.prepare('DELETE FROM run_sub_actions WHERE run_id = ? AND test_index = ?').run(runId, testIndex)
+    this.db.prepare(
+      "DELETE FROM execution_logs WHERE run_id = ? AND test_index = ? AND phase = 'inline'",
+    ).run(runId, testIndex)
   }
 
   /**
