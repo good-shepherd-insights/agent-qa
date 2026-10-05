@@ -60,6 +60,10 @@ function populateRoot(root) {
     join(root, 'scripts/gate/inputs/register.json'),
     JSON.stringify({ schemaVersion: 1, entries: [] }),
   )
+  writeFileSync(
+    join(root, 'scripts/gate/inputs/regressions.json'),
+    JSON.stringify({ schemaVersion: 1, cells: [] }),
+  )
 }
 
 function greenReport() {
@@ -581,6 +585,7 @@ test('the register is read from the measured clone and a stale entry there is re
     return result
   }
   const summary = await gate.runGate({ out, source, only: ['node-test'] }, deps)
+  assert.deepEqual(summary.regressions, { cells: 0, passed: 0, missing: [], notPassed: [] })
   assert.equal(summary.register.entries, 1)
   assert.deepEqual(
     summary.register.stale.map(s => s.fullName),

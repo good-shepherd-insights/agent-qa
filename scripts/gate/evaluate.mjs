@@ -393,6 +393,52 @@ export function registerFindings({ cells = [], register, legsRan = [] } = {}) {
   }
 }
 
+function regressionEntryProblems(entry) {
+  const problems = identityProblems(entry)
+  if (!nonEmpty(entry.origin)) problems.push('missing origin')
+  return problems
+}
+
+export function validateRegressions(list) {
+  const screened = screenList(list, 'cells', regressionEntryProblems)
+  const rule = 'regression-entry-invalid'
+  return screenFindings(screened, { rule, leg: 'regressions', field: 'cells' })
+}
+
+export function regressionFindings({ cells = [], list, legsRan = [] } = {}) {
+  const { judged, byKey } = judgedCells(cells, legsRan)
+  const screened = screenList(list, 'cells', regressionEntryProblems)
+  const findings = []
+  const missing = []
+  const notPassed = []
+  let passed = 0
+  for (const entry of screened.valid.filter(cell => judged(cell.runner))) {
+    const leg = RUNNER_LEGS[entry.runner]
+    const found = byKey.get(cellKey(entry)) ?? []
+    const unpassed = found.find(cell => cell.status !== 'passed')
+    const label = `${cellLabel(entry)} [${entry.origin}]`
+    if (found.length === 0) {
+      missing.push({ ...identity(entry), origin: entry.origin })
+      findings.push(finding('named-cell-missing', leg, `${label} is not in the ${leg} results`))
+    } else if (unpassed) {
+      const status = kindOf(unpassed.status)
+      notPassed.push({ ...identity(entry), origin: entry.origin, status })
+      findings.push(finding('named-cell-not-passed', leg, `${label} did not pass (${status})`))
+    } else {
+      passed += 1
+    }
+  }
+  return {
+    findings,
+    regressions: {
+      cells: Array.isArray(list?.cells) ? list.cells.length : 0,
+      passed,
+      missing,
+      notPassed,
+    },
+  }
+}
+
 const TURBO_BUILT_IN_ENV = new Set(['CI'])
 
 function declaredEnv(turboJson) {

@@ -26,11 +26,13 @@ import {
   orderRootCause,
   packageSetFindings,
   registerFindings,
+  regressionFindings,
   staleResultFindings,
   turboEnvDisposition,
   turboFindings,
   turboTaskCounts,
   validateRegister,
+  validateRegressions,
   vitestFindings,
 } from './evaluate.mjs'
 import {
@@ -49,6 +51,7 @@ const NODE_TEST_DIR = 'scripts/__tests__'
 const NODE_TEST_PIN = 'scripts/gate/inputs/node-tests.json'
 const PACKAGE_PIN = 'scripts/gate/inputs/packages.json'
 const REGISTER = 'scripts/gate/inputs/register.json'
+const REGRESSIONS = 'scripts/gate/inputs/regressions.json'
 const TURBO_RUNS_DIR = '.turbo/runs'
 const TURBO_RUN_FLAGS = ['--force', '--continue', '--summarize', '--log-order=grouped']
 const VITEST_RESULTS = 'test-results/gate-vitest.json'
@@ -542,6 +545,7 @@ export async function runGate(options, deps = {}) {
   let members = null
   let packages = []
   let registerRecord = null
+  let regressionsRecord = null
   if (ready) {
     let installed = true
     if (inPlace) {
@@ -634,6 +638,15 @@ export async function runGate(options, deps = {}) {
       entries: judged.register.entries,
       findings: [...validateRegister(register), ...judged.findings],
     })
+
+    const list = readJson(join(root, REGRESSIONS))
+    const named = regressionFindings({ cells, list, legsRan })
+    regressionsRecord = named.regressions
+    steps.push({
+      id: 'regressions',
+      cells: named.regressions.cells,
+      findings: [...validateRegressions(list), ...named.findings],
+    })
   }
 
   const machineEnd = host.machineSnapshot({ exec, selfPid: pid })
@@ -692,6 +705,7 @@ export async function runGate(options, deps = {}) {
     legs,
     packages,
     register: registerRecord,
+    regressions: regressionsRecord,
     rootCause,
     findings,
     exitCode: verdict.exitCode,
