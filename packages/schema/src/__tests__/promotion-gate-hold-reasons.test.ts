@@ -8,7 +8,7 @@ import { PROMOTION_GATE_HOLD_REASONS, PROMOTION_PATHS } from '../knowledge/promo
  * (`Exclude<PromotionGateHoldReason, (typeof PROMOTION_GATE_HOLD_REASONS)[number]>` is `never`)
  * lives in `promotion-gate.test-d.ts`; a member widened into this projection through a cast
  * satisfies the compiler, walks past that bar and REDs only here, by name. Both halves are
- * measured by hand-mutation — Plan 08's `scripts/414-split-mutation.sh`, legs S-06 (remove the
+ * measured by hand-mutation — Plan 08's mutation driver (since removed), legs S-06 (remove the
  * last member from the array) and S-07 (remove it from the union).
  *
  * WHY THIS EXISTS NOW rather than in Phase 416. `promotionHoldReason` is a persisted value in

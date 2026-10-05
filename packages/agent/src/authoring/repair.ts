@@ -34,7 +34,7 @@
 // required field the other does not have). So wiring the app-broken branch into repair is a
 // COMPILE error rather than a behaviour a corpus has to notice afterwards — T-394-22's mitigation
 // expressed as a type, pinned by the `@ts-expect-error` cell in `router.test-d.ts` and by the
-// second cell of `scripts/394-router-mutation.sh`.
+// second cell of the phase's mutation driver until that driver was removed.
 //
 // WHY THE PATCH APPLIER ARRIVES AS A PORT VERB RATHER THAN AS AN IMPORT. The RFC-6902 applier is
 // `applyPatchSetToTestDoc` in `core`, and this package's declared dependencies are `runner`,

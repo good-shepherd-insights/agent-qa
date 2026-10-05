@@ -47,7 +47,7 @@
 // context carried — whatever the registry answers IS the denominator, and this suite reds if the
 // two sets ever stop covering it exactly.
 //
-// MUTATION LEGS — the acceptance bar, re-runnable as `bash scripts/396-mapping-mutation.sh`.
+// MUTATION LEGS — the acceptance bar, measured by the phase's mutation driver (since removed).
 // Every leg was applied to `packages/mcp/src/mapping.ts`, the suite re-run, and the subject
 // restored from a byte snapshot with sha-256 compared. Observed on 2026-08-16:
 //

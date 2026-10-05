@@ -120,7 +120,7 @@
 // beside it read `<SECRET_0>`. Both handlers now answer both channels from ONE masked serialization
 // (`packages/mcp/src/masked-result.ts`), which is also why they can no longer disagree.
 //
-// OBSERVED REDS — 2026-08-16, `SHOW_REDS=1 bash scripts/396-06-credential-mutation.sh`:
+// OBSERVED REDS — 2026-08-16, from the phase's credential mutation driver (since removed):
 //
 //   C1 (1) the success path stops masking       → (B1b) `the text channel carried the plant`
 //   C2 (1) THE SHIPPED DEFECT restored — the    → (B1b) `structuredContent carried the plant — the
@@ -136,8 +136,8 @@
 // declared-token seeding reds only the declared-token cells, and the config-write group — which the
 // ENVIRONMENT seed carries — stays green beside it.
 //
-// `CREDENTIAL_MUTATION_SELFTEST=neutered bash scripts/396-06-credential-mutation.sh` exits 1 with
-// `C1: the suite stayed green under the mutation`, which is what proves the harness can fail.
+// That driver's neutered self-test (since removed) exited 1 with
+// `C1: the suite stayed green under the mutation`, which is what proved the harness could fail.
 
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'

@@ -770,7 +770,7 @@ describe('the repair prompt carries the run evidence at the failure point', () =
 // ---- SC-2 at the CALL SITE: the stop branch never enters repair -------------------------------
 //
 // The type-level half lives in `router.test-d.ts` and says the call does not compile. This is the
-// BEHAVIOURAL half, and it is what `scripts/394-router-mutation.sh` cell 2 reds: a differential
+// BEHAVIOURAL half, the one cell 2 of the phase's mutation driver (since removed) redded: a differential
 // that could only red a typecheck would say nothing about a build in which somebody reached for a
 // cast, and vitest does not typecheck `.test.ts` at all.
 

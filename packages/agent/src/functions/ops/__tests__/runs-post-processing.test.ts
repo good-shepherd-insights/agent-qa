@@ -178,8 +178,8 @@ const CHIP_BY_STATUS: Record<
 
 // ------------------------------------------------------------------------------------------
 // The CLOSED-UNION cells (Phase 404, D-04). Mutation-measured by
-// `scripts/404-chip-teardown-mutation.sh`, which re-adds a third chip arm (M1) and a fifth
-// status (M2) and requires each to red a cell named below.
+// the phase's mutation driver (since removed), which re-added a third chip arm (M1) and a fifth
+// status (M2) and required each to red a cell named below.
 //
 // SET-EQUALITY, NEVER MEMBERSHIP. A cell that asserts the chips CONTAIN `analysis` and
 // `curation`, or that the vocabulary CONTAINS four words, cannot fail on an ADDITION — and an

@@ -2579,8 +2579,8 @@ function chatToolsetHash(registry: FunctionRegistry | undefined): string {
 // reasoning and the joined record content readable with declared-secret spans chipped, rather than
 // replacing all three with the display marker. ROADMAP SC4 asks the history read for each mark's
 // note, and one mechanism now answers for all five reads. Membership is pinned by
-// HTTP-FEEDBACK-HUMAN-POSTURE (423-feedback-reads.test.ts) through leg F10 of
-// scripts/423-feedback-read-mutation.sh. 431 D-06 adds runs.overview, whose test names, step
+// HTTP-FEEDBACK-HUMAN-POSTURE (423-feedback-reads.test.ts), once measured by leg F10 of the
+// phase's mutation driver (since removed). 431 D-06 adds runs.overview, whose test names, step
 // labels and record summaries are stored text, and runs.list, whose test names are the same stored
 // text; OVERVIEW-COLD-SCOPE pins all seven members exactly.
 // Frozen at runtime: `as const` alone would let any importer splice masking off for every host.

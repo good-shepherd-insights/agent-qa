@@ -67,9 +67,9 @@
 // THE DRIVING HAPPENS ONCE, IN `beforeAll`, AND THE CELLS ASSERT ON WHAT IT RECORDED —
 // `post-processing-anchors.test.ts`'s idiom. Two reasons, and the second is the load-bearing one:
 // the postures are sequential by nature (a daemon must not hold the lease while the in-process
-// cells run, and must hold it while the hand-off cell does), and `scripts/404-push-vs-poll-
-// mutation.sh` needs the PUSH claim to be the only red under its mutation. A cell that drove its
-// own run would take the whole file down with it and the mutation script would be measuring blast
+// cells run, and must hold it while the hand-off cell does), and the phase's mutation driver (since
+// removed) needed the PUSH claim to be the only red under its mutation. A cell that drove its
+// own run would take the whole file down with it and a mutation run would be measuring blast
 // radius instead of a property. So the drive RECORDS and never asserts, exactly as the instrument
 // module does.
 

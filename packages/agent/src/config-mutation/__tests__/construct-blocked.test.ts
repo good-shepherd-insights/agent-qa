@@ -24,7 +24,7 @@
 //   (1) schema-fail       — a refusal that carried no report. The cell asserts the validator's
 //                           issues reach the answer, and that nothing is filed or written.
 //   (2) guardrail-hit     — the scan call site removed, or its findings ignored. This is the cell
-//                           `scripts/395-scan-mutation.sh` reds on purpose.
+//                           the phase's scan mutation driver (since removed) redded on purpose.
 //   (3) non-disclosure    — a blocked record built from the applyable one (diff bytes retained), a
 //                           finding carrying a prefix of its value, or a scan that never ran. The
 //                           three halves fail independently: the WINDOWED absence, the externally

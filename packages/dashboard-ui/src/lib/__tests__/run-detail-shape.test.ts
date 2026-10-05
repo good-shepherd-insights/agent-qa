@@ -5,8 +5,8 @@
  * screenshot list and the run-detail-only sub-action DTO — and rebuilt the page on the durable
  * projection. Each of those is a set that got SMALLER, and every existing cell on this page asks
  * whether a shape CONTAINS what it should, which a bigger shape satisfies too. So the deletions are
- * pinned by EQUALITY here, and `scripts/405-debris-mutation.sh` leg U proves the pin reds by
- * re-adding a recording-path field to `DisplayStep`.
+ * pinned by EQUALITY here, and leg U of the phase's mutation driver (since removed) proved the pin
+ * reds by re-adding a recording-path field to `DisplayStep`.
  *
  * TWO WALLS, BOTH READ. `DisplayStep` and `RunDetailSubAction` are TypeScript, so a returning field
  * is a compile question first — the `satisfies` pins below make `pnpm --filter

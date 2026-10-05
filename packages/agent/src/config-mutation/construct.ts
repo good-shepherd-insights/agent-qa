@@ -1169,7 +1169,7 @@ function interruptedAnswer(
  * including its unchanged context, so a secret a human committed months ago and which sits three
  * lines above this change is INSIDE this text. A parts list built from the added lines alone would
  * pass an artifact that displays a secret — the most natural implementation there is, and the one
- * `scripts/395-scan-mutation.sh` applies to prove these cells discriminate.
+ * the phase's scan mutation driver (since removed) applied to prove these cells discriminate.
  *
  * A CREATED FILE GETS ITS WHOLE CONTENT AS WELL. The scaffold case (395-08) surfaces whole new files
  * rather than diffs, and a proposal that creates the config — or the hooks file, which

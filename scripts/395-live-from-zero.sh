@@ -833,7 +833,7 @@ fi
 #
 # Neuters LEG 1's control half by asking the gate about a token it must accept and grading the answer
 # as though a refusal were expected. The lane must exit 1. Run it whenever this file is edited: it is
-# the same discipline `395-scan-mutation.sh` applies to itself, for the same reason.
+# the same discipline the phase's scan mutation driver (since removed) applied to itself, for the same reason.
 
 if [ "$SELFTEST" = 'neutered' ]; then
   banner 'SELF-TEST — the lane is asked to grade a control it must refuse'

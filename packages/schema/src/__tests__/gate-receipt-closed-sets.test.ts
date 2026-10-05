@@ -11,8 +11,8 @@ import {
 } from '../knowledge/gate-receipt'
 import { GATE_INCONSISTENCY_SHAPES } from '../knowledge/promotion-gate'
 
-// 2026-09-06, 416 D-02: the v54 runtime bar. Plan 06 measures these named cells with
-// scripts/416-gate-mutation.sh legs G-05..G-11; relative imports measure edited source bytes.
+// 2026-09-06, 416 D-02: the v54 runtime bar. Plan 06 measured these named cells with the
+// phase's mutation driver (since removed), legs G-05..G-11; relative imports measure edited source bytes.
 describe('416 receipt closed vocabularies', () => {
   it('declares exactly the three gate numbers, in declaration order', () => {
     expect([...GATE_NUMBERS]).toEqual([1, 2, 3])

@@ -16,7 +16,7 @@
 // failure that can actually happen here: the mapping table naming the WRONG contract for an op, at
 // which point the tool advertises one capability's shape and validates with another's.
 //
-// MUTATION LEGS — the acceptance bar, re-runnable as `bash scripts/396-fidelity-mutation.sh`.
+// MUTATION LEGS — the acceptance bar, measured by the phase's mutation driver (since removed).
 // Applied to `packages/mcp/src/mapping.ts`, suite re-run, subject restored from a sha-256-proven
 // byte snapshot. Observed 2026-08-16:
 //

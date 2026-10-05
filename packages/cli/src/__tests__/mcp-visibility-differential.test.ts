@@ -27,12 +27,12 @@
 //      other way. No cell says only "absent".
 //   2. The absent NAME is always drawn from the shipped mapping rather than typed as a literal, so
 //      a rename cannot silently turn the assertion into a tautology about a tool nobody ships.
-//   3. `scripts/396-visibility-mutation.sh` tears each wall SEPARATELY and requires that the cells
+//   3. The phase's mutation driver (since removed) tore each wall SEPARATELY and required that the cells
 //      aimed at THAT wall go red while the cells aimed at the other stay green. A conjunction of
 //      two whole-input checks is weaker than the spec it implements; two legs is what tells the two
-//      walls apart. Measured results are recorded in that script's header and in the SUMMARY.
+//      walls apart. Measured results are recorded below and in the SUMMARY.
 //
-// OBSERVED RED (2026-08-16), from `SHOW_REDS=1 bash scripts/396-visibility-mutation.sh`:
+// OBSERVED RED (2026-08-16), from the phase's mutation driver (since removed):
 //   W1  `visibleToCaller` severed to always-true       -> RED, 10 cells across groups 1, 2, 4, 5,
 //                                                         7 and 8 · the wall-2 group GREEN
 //   W2  `invokeFunction`'s scope refusal defeated      -> RED, 2 cells, BOTH in group 3

@@ -198,7 +198,7 @@ export interface AuthoringLoopInput {
  * against it, so the number a person consents on and the number they are shown afterwards are the
  * same function of the same input rather than two agreeing arithmetics. A surface recomputing
  * `N + K + N` for itself would be free to drift the moment either constant moved — which is what
- * mutation I in `scripts/394-fan-out-mutation.sh` demonstrates rather than asserts.
+ * mutation I of the phase's mutation driver (since removed) demonstrated rather than asserted.
  *
  * DRAFT MODE IS THE CASE WHERE THE TWO N TERMS DIFFER. A draft-mode caller asks for ONE cheap gate
  * run (rule 1 of the disposition table), but the FINAL stability gate still runs the pinned N on

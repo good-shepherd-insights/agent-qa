@@ -8,7 +8,7 @@
  * back. Nothing in a green run fails when a retired column, route or field is re-added — an
  * assertion that a shape CONTAINS what it should contain is satisfied by a shape that contains
  * more. So the deletions are pinned by cells that RED on their return, and
- * `scripts/405-debris-mutation.sh` proves each of those cells actually reds by re-adding the thing.
+ * the phase's mutation driver (since removed) proved each of those cells actually reds by re-adding the thing.
  *
  * TWO CLAIMS, TWO INSTRUMENTS.
  *

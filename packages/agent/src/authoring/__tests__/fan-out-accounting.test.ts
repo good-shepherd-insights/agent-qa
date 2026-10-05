@@ -5,8 +5,8 @@
 // exist would measure nothing. So the load-bearing cell here drives the loop to its GENUINE worst
 // case — the full initial stability gate, every one of K's repair iterations spent on a probe, and
 // the final stability gate on the repaired candidate — and asserts the runs it consumed against the
-// bound the dispatch confirm rendered. `scripts/394-fan-out-mutation.sh` shaves a term off that
-// bound and requires this cell to red by name.
+// bound the dispatch confirm rendered. The phase's mutation driver (since removed) shaved a term
+// off that bound and required this cell to red by name.
 //
 // A WORST CASE HAS TO BE REACHED, NOT DESCRIBED. `runsConsumed <= runsPreviewed` is unfalsifiable
 // against a happy path that spends three runs of a nine-run bound: every wrong bound passes it. The

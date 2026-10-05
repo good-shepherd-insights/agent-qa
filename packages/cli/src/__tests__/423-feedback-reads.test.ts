@@ -1088,7 +1088,7 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
   // for the read and returns the free text readable with the declared span shown as a display chip.
   // That is the posture warm hosts already had and what ROADMAP SC4 asks of the history read. Drop
   // either id from `COLD_READ_SCOPE_FUNCTION_IDS` and this cell reds back to the full redaction it
-  // pinned from 423-21 until today (scripts/423-feedback-read-mutation.sh leg F10).
+  // pinned from 423-21 until today (leg F10 of the phase's mutation driver, since removed).
   //
   // 2026-09-28 (431 D-06): runs.overview joined the same allowlist, so the membership this cell
   // closes on was six reads, pinned exactly AFTER the behaviour so leg F10 still reds on the doors'

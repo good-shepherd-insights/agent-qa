@@ -66,8 +66,8 @@ export type FanOutBoundInput = z.infer<typeof FanOutBoundInputSchema>
  * `total` IS NOT RE-DERIVED BY A REFINEMENT HERE, and the omission is deliberate. A
  * `.refine(b => b.total === b.initialN + b.probeK + b.finalN)` would be a SECOND assembly of the
  * three terms living one file away from `computeFanOutBound`, which is precisely the second
- * arithmetic this file's header forbids and `scripts/394-fan-out-mutation.sh` mutation I exists to
- * catch. The schema's job is the shape; the sum has exactly one site.
+ * arithmetic this file's header forbids and mutation I of the phase's mutation driver (since
+ * removed) existed to catch. The schema's job is the shape; the sum has exactly one site.
  */
 export const FanOutBoundSchema = z.object({
   ...fanOutBoundTerms,

@@ -110,9 +110,9 @@ export function FailureBanner({ summary }: { summary: string }) {
 
   // THE SAME EXPRESSION AS THE RENDER, SPELLED OUT RATHER THAN HOISTED. `copyTextOf` is handed the
   // exact string `MaskedText` below is handed, so the clipboard cannot carry a word the page did
-  // not. It is written out at both sites on purpose: `scripts/405-failure-banner-mutation.sh` M4
-  // matches the render call literally and M7 matches this one, and a hoisted `const rendered` would
-  // leave M4's pattern matching nothing — a leg that reds nothing is a FATAL by that script's law.
+  // not. It is written out at both sites on purpose: both sites spell the same expression, so the
+  // clipboard provably carries what the page renders, and a change to one that the other does not
+  // mirror shows in review instead of hiding behind a hoisted `const rendered`.
   //
   // THE CHECK MARK MEANS THE WRITE RESOLVED, AND NOTHING ELSE. `writeText` returns a promise that
   // rejects with `NotAllowedError` whenever the document is not focused or the permission was

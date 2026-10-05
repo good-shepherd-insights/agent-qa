@@ -24,7 +24,7 @@
 // defect made of it.
 //
 // EVERY CELL NAMES ITS FAMILY IN ITS OWN TITLE (`repair-screen`, `context-screen`,
-// `iteration-2-evidence`) because `scripts/394-repair-screen-mutation.sh` greps vitest's printed
+// `iteration-2-evidence`) because the phase's mutation driver (since removed) grepped vitest's printed
 // cell names, and a differential that has to match on a substring of prose is a differential that
 // reds on the next reword.
 

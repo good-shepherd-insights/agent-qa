@@ -196,8 +196,8 @@ export class AuthoringRouterUnroutableError extends Error {
  * Which arm each class produces. THE ONE MAPPING SITE.
  *
  * A table rather than a chain of returns so that the routing decision has a single line per class
- * that a differential can edit and a reader can audit. `scripts/394-router-mutation.sh` mutates
- * exactly the clean-fail line here and requires the corpus to red on the signature row by name.
+ * that a differential can edit and a reader can audit. The phase's mutation driver (since removed)
+ * mutated exactly the clean-fail line here and required the corpus to red on the signature row by name.
  */
 const ROUTE_ARM_BY_SIGNAL_CLASS = {
   'execution-mechanics': 'repair',

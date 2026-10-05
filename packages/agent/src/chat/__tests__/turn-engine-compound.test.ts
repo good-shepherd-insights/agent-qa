@@ -198,9 +198,9 @@ interface HarnessOptions {
  * and routing it through the SAME `foldFunctionResult` is what lets the blast-radius cell below see
  * a shared runner that started folding everybody's result with one op's rule. While the exception
  * was an id comparison inside `turn-engine.ts` that widening was one deleted line away and
- * `394-fan-out-report-mutation.sh` mutation S made it; the fold is a member of one spec now, so the
+ * mutation S of the phase's mutation driver (since removed) made it; the fold is a member of one spec now, so the
  * only place the same widening can still be written is the runner's post-classify seat — which is
- * exactly where mutation S now goes.
+ * exactly where mutation S went.
  *
  * 2026-08-20 (399.1-04): `proposals.list` USED TO DECLARE NOTHING, and mutation S attacked the
  * runner's absent-classifier branch. `classify` is a REQUIRED member now — there is no undeclared
@@ -975,8 +975,8 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
 // THE LINE IS RENDERED, NEVER RECOMPUTED. Every fixture below is PRODUCED by `buildFanOutReport`
 // and every expectation is composed by `renderFanOutReport`, so a surface that copied the sentence
 // instead of calling the renderer is invisible here while both agree — which is exactly why
-// `scripts/394-fan-out-report-mutation.sh` mutation R makes them disagree and requires these cells
-// to red. A cell pinning a restated string literal would stay green through that mutation and
+// mutation R of the phase's mutation driver (since removed) made them disagree and required these
+// cells to red. A cell pinning a restated string literal would stay green through that mutation and
 // would be measuring its own copy of the wording.
 
 /** The report a nine-run preview and a three-run happy path produce. Built, never typed. */

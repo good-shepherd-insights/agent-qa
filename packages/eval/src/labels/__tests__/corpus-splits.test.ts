@@ -9,7 +9,7 @@
 // makes removing `held-out` or `adversarial` RED a named cell rather than
 // only failing a separate `tsc` run somebody might not have executed. The
 // companion never-bars live in `corpus-entry.test-d.ts`, and the mutation
-// measurement is `scripts/414-split-mutation.sh`.
+// measurement was the phase's mutation driver (since removed).
 //
 // The lists are HAND-SPELLED and compared in DECLARATION order — never
 // `toContain`, never `.length`. Declaration order is part of what an authored

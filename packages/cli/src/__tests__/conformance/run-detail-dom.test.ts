@@ -20,9 +20,9 @@
 // measured nothing, and the thing it measured nothing about is the phase's entire acceptance.
 //
 // THE DRIVING HAPPENS ONCE, IN `beforeAll`, AND THE CELLS ASSERT ON WHAT IT RECORDED —
-// `post-processing-dom.test.ts`'s idiom, for its load-bearing reason: `scripts/405-run-detail-
-// mutation.sh` needs each named claim to be the only red under its own mutation. A cell that drove
-// its own run would take the whole file down with it and the mutation script would be measuring
+// `post-processing-dom.test.ts`'s idiom, for its load-bearing reason: the phase's mutation driver
+// (since removed) needed each named claim to be the only red under its own mutation. A cell that drove
+// its own run would take the whole file down with it and a mutation run would be measuring
 // blast radius instead of a property. The drive RECORDS and never asserts.
 //
 // ── THE TWO SECRET LANES, AND WHY CRITERION 2 IS SPLIT ACROSS TWO CELLS (WINDOWS #286).
@@ -105,8 +105,8 @@ const WINDOWS_REFUSAL =
 const REBUILD_INSTRUCTION =
   'these cells drive the BUILT dashboard UI served by the BUILT `agent-qa dashboard` and the built '
   + 'packages it resolves as external workspace dependencies: run `pnpm turbo run build --force` '
-  + 'from the agent-qa root first. `--force` is required — `scripts/405-run-detail-mutation.sh` '
-  + 'restores its subjects byte-identically, which turbo treats as a cache hit, so a plain build '
+  + 'from the agent-qa root first. `--force` is required — a mutation script restores its subjects '
+  + 'byte-identically, which turbo treats as a cache hit, so a plain build '
   + 'reports FULL TURBO and refreshes no dist mtime.'
 
 const BROWSER_INSTALL_INSTRUCTION =
@@ -796,7 +796,7 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
       'the page reports this step as unmeasured. The stub answers non-zero `usage` on every arm, '
       + 'so an unmeasured reading means the step scope observed no model call, the member\'s final '
       + 'publication (`step-read-finalization.ts`) dropped its usage, or the projection lost it. '
-      + '`405-run-detail-mutation.sh` M2 removes exactly that publication\'s usage and must red '
+      + 'Removing exactly that publication\'s usage must red '
       + `this cell alone.${context()}`,
     ).toBeGreaterThan(0)
     expect(observed.tokenSummary).toBeUndefined()
@@ -806,7 +806,7 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
    * THE HEADER PAIR, ON THE SHIPPED BUNDLE (425 D-21, as corrected by 425 RESEARCH pitfall 2).
    *
    * `[data-run-token-summary]` has been captured into this observation since 405 and asserted by
-   * NOBODY, which is why the `405-run-detail-mutation.sh` M2/M2L legs stayed green straight through
+   * NOBODY, which is why the phase's mutation driver's M2/M2L legs (since removed) stayed green straight through
    * the header's rewrite — M2's required cell is `(1d)`, over `[data-token-summary]`, a different
    * root carrying a different number. This cell is additive and leaves both legs exactly as they
    * were; it is the first thing in the repository to hold the header's own sentence to account.

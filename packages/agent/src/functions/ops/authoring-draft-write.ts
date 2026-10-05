@@ -207,8 +207,8 @@ export const authoringDraftWriteSpec: FunctionSpec<
    *
    * THE SENTENCE IS `renderFanOutReport`'S AND NOTHING ELSE. A line composed here would be a second
    * prose form of one report, free to drift from the confirm's own wording the moment a phrase
-   * moves — and `scripts/394-fan-out-report-mutation.sh` mutation R is the differential that
-   * catches it.
+   * moves — and mutation R of the phase's mutation driver (since removed) was the differential
+   * that caught it.
    */
   classify(output): ClauseVerdict {
     const report = FanOutReportSchema.safeParse(output.fanOut)
