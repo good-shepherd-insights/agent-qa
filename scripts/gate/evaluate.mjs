@@ -25,10 +25,11 @@ function finding(rule, leg, detail) {
   return { rule, leg, detail }
 }
 
-export function classifyNodeTest(report) {
+export function classifyNodeTest(report, rootDir) {
   const cells = (report?.tests ?? []).map(test => ({
-    file: baseName(test.file),
+    file: rootDir ? relativeTo(rootDir, test.file) : baseName(test.file),
     name: test.name,
+    fullName: test.fullName ?? test.name,
     nesting: test.nesting,
     status: NODE_TEST_STATUSES.has(test.status) ? test.status : 'cancelled',
   }))
@@ -46,11 +47,11 @@ export function classifyNodeTest(report) {
   }
 }
 
-export function nodeTestFindings(report, { pinnedFiles, onDiskFiles, exitCode } = {}) {
+export function nodeTestFindings(report, { pinnedFiles, onDiskFiles, exitCode, rootDir } = {}) {
   const leg = 'node-test'
   const mismatch = 'node-test-files-mismatch'
   const findings = []
-  const counts = classifyNodeTest(report)
+  const counts = classifyNodeTest(report, rootDir)
   if (exitCode !== 0) findings.push(finding('leg-exit-nonzero', leg, `exit code ${exitCode}`))
   if (!report) findings.push(finding('results-missing', leg, 'no node:test structured report'))
   if (!Array.isArray(pinnedFiles)) {
@@ -74,13 +75,11 @@ export function nodeTestFindings(report, { pinnedFiles, onDiskFiles, exitCode } 
   }
   for (const cell of counts.cells) {
     if (cell.status === 'failed') {
-      findings.push(finding('test-failed', leg, `${cell.file} > ${cell.name}`))
-    } else if (cell.status !== 'passed') {
-      findings.push(finding('unlisted-skip', leg, `${cell.file} > ${cell.name} (${cell.status})`))
+      findings.push(finding('test-failed', leg, `${cell.file} > ${cell.fullName}`))
     }
   }
   const { cells, ...totals } = counts
-  return { counts: totals, findings }
+  return { counts: totals, cells, findings }
 }
 
 export function expectedTurboTasks(dryRun) {
@@ -228,9 +227,6 @@ export function vitestFindings(member, classified, leg = 'turbo-test') {
   for (const cell of classified.cells) {
     if (cell.status === 'failed') {
       findings.push(finding('test-failed', leg, `${name}: ${cell.file} > ${cell.fullName}`))
-    } else if (cell.status !== 'passed') {
-      const detail = `${name}: ${cell.file} > ${cell.fullName} (${cell.status})`
-      findings.push(finding('unlisted-skip', leg, detail))
     }
   }
   const explained = findings.some(f => f.rule === 'test-failed' || f.rule === 'file-failed')
@@ -247,6 +243,154 @@ export function staleResultFindings(results = [], legStartMs, leg = 'turbo-test'
       const detail = `${entry.member}: ${entry.file} was written before the leg started`
       return finding('stale-results', leg, detail)
     })
+}
+
+const RUNNER_LEGS = { vitest: 'turbo-test', 'node-test': 'node-test' }
+const REGISTER_KINDS = new Set(['skipped', 'todo', 'notRun'])
+const EXECUTED = new Set(['passed', 'failed'])
+
+function nonEmpty(value) {
+  return typeof value === 'string' && value.trim() !== ''
+}
+
+function cellKey({ runner, file, fullName }) {
+  return `${runner}\u0000${file}\u0000${fullName}`
+}
+
+function identity({ runner, file, fullName }) {
+  return { runner, file, fullName }
+}
+
+function cellLabel({ runner, file, fullName }) {
+  return `${runner} ${file} > ${fullName}`
+}
+
+function kindOf(status) {
+  return status === 'cancelled' ? 'notRun' : status
+}
+
+function identityProblems(entry) {
+  const problems = []
+  if (!Object.hasOwn(RUNNER_LEGS, entry.runner)) problems.push(`unknown runner ${entry.runner}`)
+  if (!nonEmpty(entry.file)) problems.push('missing file')
+  if (!nonEmpty(entry.fullName)) problems.push('missing fullName')
+  return problems
+}
+
+function registerEntryProblems(entry) {
+  const problems = identityProblems(entry)
+  if (!REGISTER_KINDS.has(entry.kind)) problems.push(`unknown kind ${entry.kind}`)
+  if (!nonEmpty(entry.reason)) problems.push('missing reason')
+  if (!nonEmpty(entry.condition)) problems.push('missing condition')
+  if (typeof entry.conditional !== 'boolean') problems.push('conditional is not a boolean')
+  return problems
+}
+
+function screenList(list, field, problemsOf) {
+  if (list?.schemaVersion !== 1 || !Array.isArray(list?.[field])) {
+    return { readable: false, valid: [], invalid: [] }
+  }
+  const seen = new Set()
+  const valid = []
+  const invalid = []
+  list[field].forEach((entry, index) => {
+    const problems = entry && typeof entry === 'object' ? problemsOf(entry) : ['not an object']
+    if (problems.length === 0 && seen.has(cellKey(entry))) problems.push('duplicate entry')
+    if (problems.length > 0) {
+      invalid.push({ index, entry, problems })
+    } else {
+      seen.add(cellKey(entry))
+      valid.push(entry)
+    }
+  })
+  return { readable: true, valid, invalid }
+}
+
+function screenFindings(screened, { rule, leg, field }) {
+  if (!screened.readable) {
+    const detail = `the ${leg} input is unreadable or not schemaVersion 1 with a ${field} array`
+    return [finding(rule, leg, detail)]
+  }
+  return screened.invalid.map(({ index, entry, problems }) => {
+    const label = entry && typeof entry === 'object' ? ` (${cellLabel(entry)})` : ''
+    return finding(rule, leg, `${field}[${index}]${label}: ${problems.join(', ')}`)
+  })
+}
+
+function judgedCells(cells, legsRan) {
+  const ran = new Set(legsRan ?? [])
+  const judged = runner => ran.has(RUNNER_LEGS[runner])
+  const byKey = new Map()
+  for (const cell of cells ?? []) {
+    if (!judged(cell.runner)) continue
+    const key = cellKey(cell)
+    byKey.set(key, [...(byKey.get(key) ?? []), cell])
+  }
+  return { judged, byKey }
+}
+
+export function validateRegister(register) {
+  const screened = screenList(register, 'entries', registerEntryProblems)
+  const rule = 'register-entry-invalid'
+  return screenFindings(screened, { rule, leg: 'register', field: 'entries' })
+}
+
+export function registerFindings({ cells = [], register, legsRan = [] } = {}) {
+  const { judged, byKey } = judgedCells(cells, legsRan)
+  const screened = screenList(register, 'entries', registerEntryProblems)
+  const entries = screened.valid.filter(entry => judged(entry.runner))
+  const listed = new Map(entries.map(entry => [cellKey(entry), entry]))
+  const findings = []
+  const stale = []
+  const unlisted = []
+  let matched = 0
+  let conditionalRan = 0
+  const markStale = (entry, why) => {
+    stale.push({ ...identity(entry), why })
+    const detail = `${cellLabel(entry)} is listed as ${entry.kind} but ${why}`
+    findings.push(finding('stale-register-entry', RUNNER_LEGS[entry.runner], detail))
+  }
+
+  for (const group of byKey.values()) {
+    for (const cell of group) {
+      const kind = kindOf(cell.status)
+      if (EXECUTED.has(kind)) continue
+      const entry = listed.get(cellKey(cell))
+      if (entry && entry.kind === kind) {
+        matched += 1
+      } else if (entry) {
+        markStale(entry, `was reported ${kind}`)
+      } else {
+        unlisted.push({ ...identity(cell), kind, ...(cell.member ? { member: cell.member } : {}) })
+        const owner = cell.member ? `${cell.member}: ` : ''
+        const detail = `${owner}${cell.file} > ${cell.fullName} (${kind})`
+        findings.push(finding('unlisted-skip', RUNNER_LEGS[cell.runner], detail))
+      }
+    }
+  }
+
+  for (const entry of entries) {
+    const found = byKey.get(cellKey(entry)) ?? []
+    const executed = found.filter(cell => EXECUTED.has(cell.status))
+    if (found.length === 0) {
+      markStale(entry, `is no longer in the ${RUNNER_LEGS[entry.runner]} results`)
+    } else if (executed.length > 0 && !entry.conditional) {
+      markStale(entry, `ran (${executed.map(cell => cell.status).join(', ')})`)
+    } else if (executed.length > 0 && executed.every(cell => cell.status === 'passed')) {
+      conditionalRan += 1
+    }
+  }
+
+  return {
+    findings,
+    register: {
+      entries: Array.isArray(register?.entries) ? register.entries.length : 0,
+      matched,
+      conditionalRan,
+      stale,
+      unlisted,
+    },
+  }
 }
 
 const TURBO_BUILT_IN_ENV = new Set(['CI'])

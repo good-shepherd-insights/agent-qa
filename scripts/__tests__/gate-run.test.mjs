@@ -56,6 +56,10 @@ function populateRoot(root) {
     join(root, 'scripts/gate/inputs/node-tests.json'),
     JSON.stringify({ schemaVersion: 1, files: FILES }),
   )
+  writeFileSync(
+    join(root, 'scripts/gate/inputs/register.json'),
+    JSON.stringify({ schemaVersion: 1, entries: [] }),
+  )
 }
 
 function greenReport() {
@@ -550,5 +554,75 @@ test('a member JSON older than the test leg start is stale-results', async t => 
   assert.deepEqual(
     stale.map(f => f.detail.split(':')[0]),
     ['agent-qa'],
+  )
+})
+
+test('the register is read from the measured clone and a stale entry there is red', async t => {
+  const { source, out, temp } = await fixture(t)
+  const { deps } = fakeDeps({ temp })
+  const run = deps.run
+  deps.run = async (command, args, opts) => {
+    const result = await run(command, args, opts)
+    if (command === 'git' && args[0] === 'clone') {
+      const entry = {
+        runner: 'node-test',
+        file: 'scripts/__tests__/b.test.mjs',
+        fullName: 'gone',
+        kind: 'skipped',
+        reason: 'r',
+        condition: 'c',
+        conditional: false,
+      }
+      writeFileSync(
+        join(args.at(-1), 'scripts/gate/inputs/register.json'),
+        JSON.stringify({ schemaVersion: 1, entries: [entry] }),
+      )
+    }
+    return result
+  }
+  const summary = await gate.runGate({ out, source, only: ['node-test'] }, deps)
+  assert.equal(summary.register.entries, 1)
+  assert.deepEqual(
+    summary.register.stale.map(s => s.fullName),
+    ['gone'],
+  )
+  assert.deepEqual(
+    summary.findings.map(f => f.rule),
+    ['stale-register-entry'],
+  )
+  assert.equal(summary.exitCode, 1)
+})
+
+test('the node:test JSON reporter gives every test its ancestors as fullName', async t => {
+  const base = await mkdtemp(join(tmpdir(), 'agent-qa-gate-reporter-'))
+  t.after(() => rm(base, { recursive: true, force: true }))
+  const file = join(base, 'x.test.mjs')
+  writeFileSync(
+    file,
+    [
+      "import test, { describe, it } from 'node:test'",
+      "describe('outer', () => { it('a', () => {}); describe('inner', () => { it.skip('b') }) })",
+      "test('top', async t => { await t.test('child', () => {}) })",
+    ].join('\n'),
+  )
+  const reporter = new URL('../gate/node-test-json.mjs', import.meta.url).pathname
+  const destination = join(base, 'out.json')
+  const { spawnSync } = await import('node:child_process')
+  const { NODE_TEST_CONTEXT, NODE_TEST_WORKER_ID, ...env } = process.env
+  const result = spawnSync(
+    process.execPath,
+    ['--test', `--test-reporter=${reporter}`, `--test-reporter-destination=${destination}`, file],
+    { cwd: base, encoding: 'utf8', env },
+  )
+  assert.equal(result.status, 0, result.stderr)
+  const tests = JSON.parse(readFileSync(destination, 'utf8')).tests
+  assert.deepEqual(
+    tests.map(entry => [entry.fullName, entry.status]),
+    [
+      ['outer > a', 'passed'],
+      ['outer > inner > b', 'skipped'],
+      ['top > child', 'passed'],
+      ['top', 'passed'],
+    ],
   )
 })

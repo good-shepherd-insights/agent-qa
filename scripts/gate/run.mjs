@@ -25,10 +25,12 @@ import {
   nodeTestFindings,
   orderRootCause,
   packageSetFindings,
+  registerFindings,
   staleResultFindings,
   turboEnvDisposition,
   turboFindings,
   turboTaskCounts,
+  validateRegister,
   vitestFindings,
 } from './evaluate.mjs'
 import {
@@ -46,6 +48,7 @@ const TURBO_LEGS = new Set(['turbo-build-typecheck', 'turbo-test'])
 const NODE_TEST_DIR = 'scripts/__tests__'
 const NODE_TEST_PIN = 'scripts/gate/inputs/node-tests.json'
 const PACKAGE_PIN = 'scripts/gate/inputs/packages.json'
+const REGISTER = 'scripts/gate/inputs/register.json'
 const TURBO_RUNS_DIR = '.turbo/runs'
 const TURBO_RUN_FLAGS = ['--force', '--continue', '--summarize', '--log-order=grouped']
 const VITEST_RESULTS = 'test-results/gate-vitest.json'
@@ -275,9 +278,13 @@ function vitestLeg(record, runSummary, { root, runDir, members, pinned, legStart
   const results = collectVitestResults(root, members, runDir)
   const findings = []
   const packages = []
+  const cells = []
   for (const result of results) {
     const { member } = result
     const classified = result.json ? classifyVitest(result.json, result.realRoot) : null
+    for (const cell of classified?.cells ?? []) {
+      cells.push({ runner: 'vitest', member: member.name, ...cell })
+    }
     if (result.resultsFile && !result.json) {
       const detail = `${member.name}: ${result.resultsFile} is not valid JSON`
       findings.push({ rule: 'results-missing', leg: record.id, detail })
@@ -326,6 +333,7 @@ function vitestLeg(record, runSummary, { root, runDir, members, pinned, legStart
       findings: [...record.findings, ...findings],
     },
     packages,
+    cells,
   }
 }
 
@@ -356,14 +364,23 @@ function failure(step, rule) {
 function evaluateLeg(leg, step, { root, onDisk }) {
   if (leg.kind === 'node-test') {
     const pin = readJson(join(root, NODE_TEST_PIN))
-    return nodeTestFindings(existsSync(leg.raw) ? readJson(leg.raw) : null, {
+    const result = nodeTestFindings(existsSync(leg.raw) ? readJson(leg.raw) : null, {
       pinnedFiles: pin?.files,
       onDiskFiles: onDisk,
       exitCode: step.exitCode,
+      rootDir: realOrResolved(root),
     })
+    const cells = result.cells.map(({ file, fullName, status }) => ({
+      runner: 'node-test',
+      file,
+      fullName,
+      status,
+    }))
+    return { ...result, cells }
   }
   return {
     counts: {},
+    cells: [],
     findings: [{ rule: 'results-missing', leg: leg.id, detail: `no evaluator for ${leg.kind}` }],
   }
 }
@@ -426,11 +443,12 @@ async function runTurboLeg(leg, { exec, runStep, runDir, pinned, members }) {
       execution: runSummary?.execution ?? null,
     },
     packages: null,
+    cells: [],
   }
   if (!leg.vitest) return result
   const ctx = { root: leg.cwd, runDir, members: members ?? [], pinned, legStartMs }
   const tested = vitestLeg(result.leg, runSummary, ctx)
-  return { ...result, leg: tested.leg, packages: tested.packages }
+  return { ...result, leg: tested.leg, packages: tested.packages, cells: tested.cells }
 }
 
 export async function runGate(options, deps = {}) {
@@ -523,6 +541,7 @@ export async function runGate(options, deps = {}) {
   const runSummaries = []
   let members = null
   let packages = []
+  let registerRecord = null
   if (ready) {
     let installed = true
     if (inPlace) {
@@ -580,16 +599,20 @@ export async function runGate(options, deps = {}) {
       steps.push(workspace)
     }
 
+    const cells = []
     for (const leg of plan) {
       if (leg.kind === 'turbo') {
         const result = await runTurboLeg(leg, { exec, runStep, runDir, pinned, members })
         legs.push(result.leg)
         runSummaries.push(result.runSummary)
+        cells.push(...result.cells)
         if (result.packages) packages = result.packages
         continue
       }
       const step = await runStep(leg.id, leg.argv, leg.cwd)
-      const { counts, findings } = evaluateLeg(leg, step, { root, onDisk })
+      const evaluated = evaluateLeg(leg, step, { root, onDisk })
+      const { counts, findings } = evaluated
+      cells.push(...evaluated.cells)
       legs.push({
         id: leg.id,
         argv: leg.argv,
@@ -601,6 +624,16 @@ export async function runGate(options, deps = {}) {
         findings,
       })
     }
+
+    const legsRan = legs.map(leg => leg.id)
+    const register = readJson(join(root, REGISTER))
+    const judged = registerFindings({ cells, register, legsRan })
+    registerRecord = judged.register
+    steps.push({
+      id: 'register',
+      entries: judged.register.entries,
+      findings: [...validateRegister(register), ...judged.findings],
+    })
   }
 
   const machineEnd = host.machineSnapshot({ exec, selfPid: pid })
@@ -658,6 +691,7 @@ export async function runGate(options, deps = {}) {
     },
     legs,
     packages,
+    register: registerRecord,
     rootCause,
     findings,
     exitCode: verdict.exitCode,

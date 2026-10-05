@@ -9,7 +9,9 @@ import {
   nodeTestFindings,
   orderRootCause,
   packageSetFindings,
+  registerFindings,
   turboFindings,
+  validateRegister,
 } from '../gate/evaluate.mjs'
 import * as gateRules from '../gate/evaluate.mjs'
 
@@ -79,7 +81,7 @@ test('an on-disk file absent from the pin is a node-test-files-mismatch naming i
   assert.match(findings[0].detail, /new\.test\.mjs/)
 })
 
-test('skipped, todo and cancelled tests keep their own columns and are unlisted skips', () => {
+test('skipped, todo and cancelled tests keep their own columns and never count as passed', () => {
   const input = report([
     cell('a.test.mjs', 'ran', 'passed'),
     cell('a.test.mjs', 'skipped one', 'skipped'),
@@ -93,15 +95,20 @@ test('skipped, todo and cancelled tests keep their own columns and are unlisted 
   assert.equal(counts.todo, 1)
   assert.equal(counts.notRun, 1)
 
-  const { findings } = nodeTestFindings(input, {
+  const { findings, cells } = nodeTestFindings(input, {
     pinnedFiles: PINNED,
     onDiskFiles: PINNED,
     exitCode: 0,
+    rootDir: '/clone/agent-qa',
   })
-  assert.deepEqual(rules(findings), ['unlisted-skip', 'unlisted-skip', 'unlisted-skip'])
-  assert.match(findings[0].detail, /a\.test\.mjs > skipped one/)
-  assert.match(findings[1].detail, /b\.test\.mjs > todo one/)
-  assert.match(findings[2].detail, /b\.test\.mjs > cancelled one/)
+  assert.deepEqual(findings, [])
+  assert.deepEqual(cells[1], {
+    file: 'scripts/__tests__/a.test.mjs',
+    name: 'skipped one',
+    fullName: 'skipped one',
+    nesting: 0,
+    status: 'skipped',
+  })
 })
 
 test('a missing report is results-missing', () => {
@@ -459,7 +466,10 @@ test('an all-skipped member is zero-executed and skips never count as passed', (
   assert.equal(counts.passed, 0)
   assert.equal(counts.executed, 0)
   const findings = gateRules.vitestFindings('x', counts)
-  assert.deepEqual(rules(findings), ['zero-executed', 'unlisted-skip', 'unlisted-skip'])
+  assert.deepEqual(rules(findings), ['zero-executed'])
+  const cells = counts.cells.map(c => ({ runner: 'vitest', member: 'x', ...c }))
+  const judged = registerFindings({ cells, register: emptyRegister(), legsRan: ['turbo-test'] })
+  assert.deepEqual(rules(judged.findings), ['unlisted-skip', 'unlisted-skip'])
 })
 
 test('no JSON is results-missing and a JSON older than the leg is stale-results', () => {
@@ -495,4 +505,169 @@ test('under strict env mode CI passes as a turbo built-in and DO_NOT_TRACK is st
     gateEnv: { DO_NOT_TRACK: '1' },
   })
   assert.match(declared.DO_NOT_TRACK, /^passed/)
+})
+
+function emptyRegister(entries = []) {
+  return { schemaVersion: 1, entries }
+}
+
+function vcell(fullName, status, file = 'packages/cli/src/a.test.ts') {
+  return { runner: 'vitest', member: 'agent-qa', file, fullName, status }
+}
+
+function ncell(fullName, status, file = 'scripts/__tests__/a.test.mjs') {
+  return { runner: 'node-test', file, fullName, status }
+}
+
+function entry(cellLike, overrides = {}) {
+  return {
+    runner: cellLike.runner,
+    file: cellLike.file,
+    fullName: cellLike.fullName,
+    kind: 'skipped',
+    reason: 'needs a live model',
+    condition: 'AGENT_QA_LIVE unset',
+    conditional: false,
+    ...overrides,
+  }
+}
+
+const BOTH_LEGS = ['turbo-test', 'node-test']
+
+test('an unregistered skipped, todo, pending or cancelled cell is unlisted-skip by kind', () => {
+  const cells = [
+    vcell('suite ran', 'passed'),
+    vcell('suite skipped', 'skipped'),
+    vcell('suite todo', 'todo'),
+    vcell('suite pending', 'notRun'),
+    ncell('outer > cancelled', 'cancelled'),
+  ]
+  const { findings, register } = registerFindings({
+    cells,
+    register: emptyRegister(),
+    legsRan: BOTH_LEGS,
+  })
+  assert.deepEqual(rules(findings), Array(4).fill('unlisted-skip'))
+  assert.deepEqual(
+    findings.map(f => [f.leg, f.detail]),
+    [
+      ['turbo-test', 'agent-qa: packages/cli/src/a.test.ts > suite skipped (skipped)'],
+      ['turbo-test', 'agent-qa: packages/cli/src/a.test.ts > suite todo (todo)'],
+      ['turbo-test', 'agent-qa: packages/cli/src/a.test.ts > suite pending (notRun)'],
+      ['node-test', 'scripts/__tests__/a.test.mjs > outer > cancelled (notRun)'],
+    ],
+  )
+  assert.deepEqual(
+    register.unlisted.map(u => u.kind),
+    ['skipped', 'todo', 'notRun', 'notRun'],
+  )
+})
+
+test('a skipped cell listed with matching runner, file and fullName is matched, not red', () => {
+  const skipped = vcell('suite live call', 'skipped')
+  const { findings, register } = registerFindings({
+    cells: [vcell('suite ran', 'passed'), skipped],
+    register: emptyRegister([entry(skipped)]),
+    legsRan: BOTH_LEGS,
+  })
+  assert.deepEqual(findings, [])
+  assert.equal(register.entries, 1)
+  assert.equal(register.matched, 1)
+  assert.deepEqual(register.stale, [])
+  assert.deepEqual(register.unlisted, [])
+  const otherFile = registerFindings({
+    cells: [skipped],
+    register: emptyRegister([entry({ ...skipped, file: 'packages/cli/src/b.test.ts' })]),
+    legsRan: BOTH_LEGS,
+  })
+  assert.deepEqual(rules(otherFile.findings), ['unlisted-skip', 'stale-register-entry'])
+})
+
+test('a listed non-conditional cell that ran, or that is gone, is stale-register-entry', () => {
+  const passed = vcell('suite now runs', 'passed')
+  const failed = ncell('now fails', 'failed')
+  const gone = vcell('suite renamed away', 'skipped')
+  const { findings, register } = registerFindings({
+    cells: [passed, failed],
+    register: emptyRegister([entry(passed), entry(failed), entry(gone)]),
+    legsRan: BOTH_LEGS,
+  })
+  assert.deepEqual(rules(findings), [
+    'stale-register-entry',
+    'stale-register-entry',
+    'stale-register-entry',
+  ])
+  assert.match(findings[0].detail, /suite now runs is listed as skipped but ran \(passed\)$/)
+  assert.match(findings[1].detail, /now fails is listed as skipped but ran \(failed\)$/)
+  assert.match(findings[2].detail, /suite renamed away .* is no longer in the turbo-test results$/)
+  assert.deepEqual(
+    register.stale.map(s => s.fullName),
+    ['suite now runs', 'now fails', 'suite renamed away'],
+  )
+})
+
+test('a conditional entry may run and pass; when it fails only the leg failure stands', () => {
+  const firefox = vcell('suite firefox smoke', 'passed')
+  const webkit = vcell('suite webkit smoke', 'failed')
+  const { findings, register } = registerFindings({
+    cells: [firefox, webkit],
+    register: emptyRegister([
+      entry(firefox, { conditional: true, reason: 'optional browser', condition: 'no Firefox' }),
+      entry(webkit, { conditional: true, reason: 'optional browser', condition: 'no WebKit' }),
+    ]),
+    legsRan: BOTH_LEGS,
+  })
+  assert.deepEqual(findings, [])
+  assert.equal(register.conditionalRan, 1)
+  assert.deepEqual(register.stale, [])
+  const leg = gateRules.vitestFindings('agent-qa', {
+    success: false,
+    executed: 2,
+    fileFailures: [],
+    cells: [firefox, webkit],
+  })
+  assert.deepEqual(rules(leg), ['test-failed'])
+})
+
+test('an entry with no reason or condition, or an unknown kind or runner, is invalid', () => {
+  const base = vcell('suite x', 'skipped')
+  const findings = validateRegister(
+    emptyRegister([
+      entry(base, { reason: '' }),
+      entry(base, { fullName: 'suite y', condition: '  ' }),
+      entry(base, { fullName: 'suite z', kind: 'flaky' }),
+      entry(base, { fullName: 'suite w', runner: 'jest' }),
+      entry(base, { fullName: 'suite ok' }),
+      entry(base, { fullName: 'suite ok' }),
+    ]),
+  )
+  assert.deepEqual(rules(findings), Array(5).fill('register-entry-invalid'))
+  assert.deepEqual(
+    findings.map(f => f.detail.replace(/^entries\[(\d)\].*: /, '$1 ')),
+    [
+      '0 missing reason',
+      '1 missing condition',
+      '2 unknown kind flaky',
+      '3 unknown runner jest',
+      '5 duplicate entry',
+    ],
+  )
+  assert.deepEqual(validateRegister(emptyRegister([entry(base)])), [])
+  assert.deepEqual(rules(validateRegister(null)), ['register-entry-invalid'])
+  assert.deepEqual(rules(validateRegister({ schemaVersion: 2, entries: [] })), [
+    'register-entry-invalid',
+  ])
+})
+
+test('a vitest entry is not judged when the turbo-test leg did not run', () => {
+  const skipped = vcell('suite live call', 'skipped')
+  const listedGone = vcell('suite listed only', 'skipped')
+  const { findings, register } = registerFindings({
+    cells: [skipped, ncell('one', 'passed')],
+    register: emptyRegister([entry(listedGone)]),
+    legsRan: ['node-test'],
+  })
+  assert.deepEqual(findings, [])
+  assert.deepEqual(register.stale, [])
+  assert.deepEqual(register.unlisted, [])
 })

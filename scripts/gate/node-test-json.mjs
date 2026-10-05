@@ -9,13 +9,21 @@ function statusOf(event) {
 
 export default async function* nodeTestJson(source) {
   const tests = []
+  const ancestry = new Map()
   let summary = null
   for await (const event of source) {
-    if (event.type === 'test:pass' || event.type === 'test:fail') {
+    if (event.type === 'test:start') {
+      const stack = ancestry.get(event.data.file) ?? []
+      stack.length = event.data.nesting
+      stack.push(event.data.name)
+      ancestry.set(event.data.file, stack)
+    } else if (event.type === 'test:pass' || event.type === 'test:fail') {
       if (event.data.details?.type !== 'test') continue
+      const ancestors = (ancestry.get(event.data.file) ?? []).slice(0, event.data.nesting)
       tests.push({
         file: event.data.file,
         name: event.data.name,
+        fullName: [...ancestors, event.data.name].join(' > '),
         nesting: event.data.nesting,
         status: statusOf(event),
       })
