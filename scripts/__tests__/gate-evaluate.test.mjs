@@ -671,3 +671,98 @@ test('a vitest entry is not judged when the turbo-test leg did not run', () => {
   assert.deepEqual(register.stale, [])
   assert.deepEqual(register.unlisted, [])
 })
+
+function regressionList(cells) {
+  return { schemaVersion: 1, cells }
+}
+
+function named(cellLike, origin = '434 D-14 census') {
+  return { runner: cellLike.runner, file: cellLike.file, fullName: cellLike.fullName, origin }
+}
+
+test('a listed regression cell that passed has no finding and is counted', () => {
+  assert.equal(typeof gateRules.regressionFindings, 'function')
+  const cell = vcell('suite aria labels', 'passed')
+  const { findings, regressions } = gateRules.regressionFindings({
+    cells: [cell, ncell('other', 'passed')],
+    list: regressionList([named(cell)]),
+    legsRan: BOTH_LEGS,
+  })
+  assert.deepEqual(findings, [])
+  assert.equal(regressions.cells, 1)
+  assert.equal(regressions.passed, 1)
+  assert.deepEqual(regressions.missing, [])
+  assert.deepEqual(regressions.notPassed, [])
+})
+
+test('a listed regression cell absent from its leg results is named-cell-missing', () => {
+  assert.equal(typeof gateRules.regressionFindings, 'function')
+  const renamed = vcell('suite aria labels', 'passed')
+  const { findings, regressions } = gateRules.regressionFindings({
+    cells: [{ ...renamed, fullName: 'suite aria labels (renamed)' }],
+    list: regressionList([named(renamed), named(ncell('deleted', 'passed'))]),
+    legsRan: BOTH_LEGS,
+  })
+  assert.deepEqual(rules(findings), ['named-cell-missing', 'named-cell-missing'])
+  assert.deepEqual(
+    findings.map(f => f.leg),
+    ['turbo-test', 'node-test'],
+  )
+  assert.match(findings[0].detail, /packages\/cli\/src\/a\.test\.ts > suite aria labels/)
+  assert.equal(regressions.missing.length, 2)
+})
+
+test('a listed regression cell skipped, todo, pending or failed is named-cell-not-passed', () => {
+  assert.equal(typeof gateRules.regressionFindings, 'function')
+  const cells = [
+    vcell('suite skipped one', 'skipped'),
+    vcell('suite todo one', 'todo'),
+    vcell('suite pending one', 'notRun'),
+    ncell('failed one', 'failed'),
+  ]
+  const { findings, regressions } = gateRules.regressionFindings({
+    cells,
+    list: regressionList(cells.map(cell => named(cell))),
+    legsRan: BOTH_LEGS,
+  })
+  assert.deepEqual(rules(findings), Array(4).fill('named-cell-not-passed'))
+  assert.deepEqual(
+    regressions.notPassed.map(entry => entry.status),
+    ['skipped', 'todo', 'notRun', 'failed'],
+  )
+  assert.match(findings[0].detail, /suite skipped one .*\(skipped\)$/)
+  assert.equal(regressions.passed, 0)
+})
+
+test('a duplicate regression entry, or one missing file, fullName or origin, is invalid', () => {
+  assert.equal(typeof gateRules.validateRegressions, 'function')
+  const cell = vcell('suite x', 'passed')
+  const findings = gateRules.validateRegressions(
+    regressionList([
+      named(cell),
+      named(cell),
+      { ...named(cell), fullName: 'suite y', file: '' },
+      { ...named(cell), fullName: '' },
+      { ...named(cell), fullName: 'suite z', origin: ' ' },
+    ]),
+  )
+  assert.deepEqual(rules(findings), Array(4).fill('regression-entry-invalid'))
+  assert.deepEqual(
+    findings.map(f => f.detail.replace(/^cells\[(\d)\].*: /, '$1 ')),
+    ['1 duplicate entry', '2 missing file', '3 missing fullName', '4 missing origin'],
+  )
+  assert.deepEqual(gateRules.validateRegressions(regressionList([named(cell)])), [])
+  assert.deepEqual(rules(gateRules.validateRegressions(null)), ['regression-entry-invalid'])
+})
+
+test('a listed vitest regression cell is not judged when the turbo-test leg did not run', () => {
+  assert.equal(typeof gateRules.regressionFindings, 'function')
+  const { findings, regressions } = gateRules.regressionFindings({
+    cells: [ncell('one', 'passed')],
+    list: regressionList([named(vcell('suite not measured', 'passed'))]),
+    legsRan: ['node-test'],
+  })
+  assert.deepEqual(findings, [])
+  assert.deepEqual(regressions.missing, [])
+  assert.equal(regressions.passed, 0)
+})
