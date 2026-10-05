@@ -236,7 +236,7 @@ async function ariaReadback(mode: 'two' | 'empty' | 'missing' | 'mobile' | 'chil
     tree: mode === 'empty' ? '' : `before child ${index} ${secret}`,
   }))
   const after = [0, 1].map(index => makeScreenState({ tree: `after child ${index} ${secret}` }))
-  const screens = [before[0]!, before[0]!, after[0]!, before[1]!, before[1]!, after[1]!]
+  const screens = [before[0]!, before[0]!, after[0]!, after[0]!, before[1]!, before[1]!, after[1]!, after[1]!]
   let observeIndex = 0
   let current: ScreenState = before[0]!
   let verification = 0
