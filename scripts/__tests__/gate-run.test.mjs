@@ -7,8 +7,45 @@ import test from 'node:test'
 import { REQUIRED_LEGS } from '../gate/evaluate.mjs'
 import * as gate from '../gate/run.mjs'
 
+const host = await import('../gate/host.mjs').catch(() => ({}))
+
 const SHA = 'a'.repeat(40)
 const FILES = ['a.test.mjs', 'b.test.mjs']
+const TOOLS = {
+  git: 'git version 2.50.1',
+  pnpm: '10.6.1',
+  expect: 'expect version 5.45',
+  python3: 'Python 3.14.5',
+  adb: 'List of devices attached\n',
+  xcrun: '== Devices ==\n-- iOS 18.2 --\n',
+}
+const CHROMIUM = { revision: '1228', browserVersion: '149.0.7827.55' }
+
+function toolExec(overrides = {}) {
+  const tools = { ...TOOLS, ...overrides }
+  return (command, args = []) => {
+    if (command === 'pnpm' && args[0] === 'exec') {
+      return { status: 0, stdout: '2.9.7\n', stderr: '' }
+    }
+    if (command === 'ps') return { status: 0, stdout: '', stderr: '' }
+    const stdout = tools[command]
+    if (stdout === null || stdout === undefined) {
+      return { status: 127, stdout: '', stderr: `${command}: not found` }
+    }
+    return { status: 0, stdout: `${stdout}\n`, stderr: '' }
+  }
+}
+
+const fakeHost = {
+  chromiumCheck: () => ({
+    required: { tool: 'playwright-chromium', version: '1228', ok: true, hint: 'install it' },
+    optional: [
+      { platform: 'firefox', present: false },
+      { platform: 'webkit', present: false },
+    ],
+    chromium: CHROMIUM,
+  }),
+}
 
 function populateRoot(root) {
   mkdirSync(join(root, 'scripts/__tests__'), { recursive: true })
@@ -36,10 +73,12 @@ async function fixture(t) {
   return { source, out: join(base, 'out'), temp }
 }
 
-function fakeDeps({ temp, porcelain = '', logBytes = 0, legs } = {}) {
+function fakeDeps({ temp, porcelain = '', logBytes = 0, legs, tools } = {}) {
   const lines = []
   const calls = []
+  const tool = toolExec(tools)
   const deps = {
+    host: fakeHost,
     tmpdir: () => temp,
     now: () => new Date('2026-10-06T07:08:09Z'),
     pid: 42,
@@ -48,7 +87,7 @@ function fakeDeps({ temp, porcelain = '', logBytes = 0, legs } = {}) {
       calls.push([command, ...args])
       if (args.includes('rev-parse')) return { status: 0, stdout: `${SHA}\n`, stderr: '' }
       if (args.includes('status')) return { status: 0, stdout: porcelain, stderr: '' }
-      return { status: 0, stdout: '', stderr: '' }
+      return tool(command, args)
     },
     async run(command, args, { logPath }) {
       calls.push([command, ...args])
@@ -170,4 +209,106 @@ test('a leg log over 2 MiB is gzipped and the leg names the .gz path', async t =
   assert.match(leg.log, /node-test\.log\.gz$/)
   assert.equal(existsSync(leg.log), true)
   assert.equal(existsSync(leg.log.replace(/\.gz$/, '')), false)
+})
+
+test('a missing expect stops preflight with an install hint and the gate runs no leg', async t => {
+  assert.equal(typeof host.preflight, 'function')
+  const result = host.preflight({ exec: toolExec({ expect: null }), nodeVersion: '24.15.0' })
+  assert.equal(result.ok, false)
+  assert.match(result.message, /expect/)
+  assert.match(result.message, /brew install expect/)
+
+  const { source, out, temp } = await fixture(t)
+  const { deps, calls, lines } = fakeDeps({ temp, tools: { expect: null } })
+  const summary = await gate.runGate({ out, source, only: ['node-test'] }, deps)
+  const missingTool = summary.findings.filter(f => f.rule === 'preflight-missing-tool')
+  assert.ok(missingTool.some(f => /expect/.test(f.detail)))
+  assert.deepEqual(summary.legs, [])
+  assert.equal(summary.exitCode, 1)
+  assert.equal(calls.some(call => call[0] === 'node' || call[1] === 'clone'), false)
+  assert.ok(lines.some(line => line.includes('brew install expect')))
+})
+
+test('pnpm 11 or a Node major of 22 does not pass preflight', () => {
+  assert.equal(typeof host.preflight, 'function')
+  const pnpm11 = host.preflight({ exec: toolExec({ pnpm: '11.0.0' }), nodeVersion: '24.15.0' })
+  assert.equal(pnpm11.ok, false)
+  assert.equal(pnpm11.required.find(entry => entry.tool === 'pnpm').ok, false)
+  const node22 = host.preflight({ exec: toolExec(), nodeVersion: '22.11.0' })
+  assert.equal(node22.ok, false)
+  assert.equal(node22.required.find(entry => entry.tool === 'node').ok, false)
+  assert.equal(host.preflight({ exec: toolExec(), nodeVersion: '24.15.0' }).ok, true)
+})
+
+test('absent Firefox, WebKit, adb device or booted simulator is recorded and never fails', () => {
+  assert.equal(typeof host.preflight, 'function')
+  assert.equal(typeof host.chromiumCheck, 'function')
+  const result = host.preflight({ exec: toolExec(), nodeVersion: '24.15.0', platform: 'darwin' })
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.optional, [
+    { platform: 'android', present: false },
+    { platform: 'ios', present: false },
+  ])
+  const withDevice = host.preflight({
+    exec: toolExec({ adb: 'List of devices attached\nemulator-5554\tdevice' }),
+    nodeVersion: '24.15.0',
+    platform: 'darwin',
+  })
+  assert.equal(withDevice.optional.find(entry => entry.platform === 'android').present, true)
+
+  const browsers = [
+    { name: 'chromium', ...CHROMIUM },
+    { name: 'firefox', revision: '1532', browserVersion: '151.0' },
+    { name: 'webkit', revision: '2311', browserVersion: '26.5' },
+  ]
+  const executables = { chromium: '/pw/chromium', firefox: '/pw/firefox', webkit: '/pw/webkit' }
+  const check = host.chromiumCheck({
+    root: '/clone/agent-qa',
+    load: () => ({ browsers, executables }),
+    exists: path => path === '/pw/chromium',
+  })
+  assert.equal(check.required.ok, true)
+  assert.deepEqual(check.chromium, CHROMIUM)
+  assert.deepEqual(check.optional, [
+    { platform: 'firefox', present: false },
+    { platform: 'webkit', present: false },
+  ])
+  const missing = host.chromiumCheck({
+    root: '/clone/agent-qa',
+    load: () => ({ browsers, executables }),
+    exists: () => false,
+  })
+  assert.equal(missing.required.ok, false)
+  assert.match(missing.required.hint, /playwright install chromium/)
+})
+
+test('machineSnapshot records pid, executable basename and keyword only, never arguments', () => {
+  assert.equal(typeof host.machineSnapshot, 'function')
+  const comm = [
+    '  1     0 /sbin/launchd',
+    '101     1 /Applications/Chromium.app/Contents/MacOS/Chromium',
+    '102   199 /usr/local/bin/node',
+    '199     1 /usr/local/bin/node',
+    '200   199 /usr/local/bin/node',
+  ].join('\n')
+  const args = [
+    '  1 /sbin/launchd',
+    '101 /Applications/Chromium.app/Contents/MacOS/Chromium --user-data-dir=/secret/TOKEN',
+    '102 node /x/node_modules/vitest/vitest.mjs run --api-key=SECRET',
+    '199 node /x/agent-qa/node_modules/.bin/pnpm run gate:local',
+    '200 node /x/agent-qa/scripts/gate/run.mjs --out /tmp/o',
+  ].join('\n')
+  const exec = (command, argv) => {
+    assert.equal(command, 'ps')
+    return { status: 0, stdout: argv[1].includes('comm') ? comm : args, stderr: '' }
+  }
+  const snapshot = host.machineSnapshot({ exec, selfPid: 200 })
+  assert.ok(snapshot.cpus > 0)
+  assert.equal(snapshot.load.length, 3)
+  assert.deepEqual(snapshot.processes, [
+    { pid: 101, exe: 'Chromium', keyword: 'chrom' },
+    { pid: 102, exe: 'node', keyword: 'vitest' },
+  ])
+  assert.equal(JSON.stringify(snapshot).includes('SECRET'), false)
+  assert.equal(JSON.stringify(snapshot).includes('TOKEN'), false)
 })
