@@ -823,3 +823,88 @@ test('a red run is repeat-run-red and runs on different SHAs are repeat-sha-mism
   assert.deepEqual(rules(shas.findings), ['repeat-sha-mismatch'])
   assert.match(shas.findings[0].detail, /a{40}, b{40}/)
 })
+
+const ARCH_FILES = ['src/__tests__/validate-arch.test.ts', 'src/__tests__/412-x.test.ts']
+
+function validatorJson(files, success = true) {
+  return vitestJson(
+    files.map(([file, assertions]) => [`packages/arch/${file}`, 'passed', assertions]),
+    success,
+  )
+}
+
+function validatorInput(json, overrides = {}) {
+  return {
+    legId: 'validate:arch',
+    json,
+    expectedFiles: ARCH_FILES.map(file => `${ROOT}/packages/arch/${file}`),
+    rootDir: ROOT,
+    exitCode: 0,
+    register: emptyRegister(),
+    ...overrides,
+  }
+}
+
+test('a validator that wrote no vitest JSON is empty-filter', () => {
+  assert.equal(typeof gateRules.vitestValidatorFindings, 'function')
+  const { findings, counts } = gateRules.vitestValidatorFindings(validatorInput(null))
+  assert.deepEqual(rules(findings), ['empty-filter'])
+  assert.equal(findings[0].leg, 'validate:arch')
+  assert.equal(counts.executed, 0)
+})
+
+test('a validator JSON naming exactly the script files, executed and successful, is green', () => {
+  assert.equal(typeof gateRules.vitestValidatorFindings, 'function')
+  const json = validatorJson(ARCH_FILES.map(file => [file, [['p1', 'passed']]]))
+  const { findings, counts } = gateRules.vitestValidatorFindings(validatorInput(json))
+  assert.deepEqual(findings, [])
+  assert.equal(counts.executed, 2)
+  assert.equal(counts.testFiles, 2)
+  assert.equal(counts.expected, 2)
+})
+
+test('a script file missing from the validator JSON, or an extra file, is files-mismatch', () => {
+  assert.equal(typeof gateRules.vitestValidatorFindings, 'function')
+  const dropped = validatorJson([[ARCH_FILES[0], [['p1', 'passed']]]])
+  const missing = gateRules.vitestValidatorFindings(validatorInput(dropped)).findings
+  assert.deepEqual(rules(missing), ['validator-files-mismatch'])
+  assert.match(missing[0].detail, /packages\/arch\/src\/__tests__\/412-x\.test\.ts is named/)
+  const extraFile = 'src/__tests__/stray.test.ts'
+  const grown = validatorJson([...ARCH_FILES, extraFile].map(file => [file, [['p', 'passed']]]))
+  const extra = gateRules.vitestValidatorFindings(validatorInput(grown)).findings
+  assert.deepEqual(rules(extra), ['validator-files-mismatch'])
+  assert.match(extra[0].detail, /stray\.test\.ts ran but is not named by the script/)
+})
+
+test('a validator JSON that executed 0 tests, or reports success false, is red', () => {
+  assert.equal(typeof gateRules.vitestValidatorFindings, 'function')
+  const empty = validatorJson(ARCH_FILES.map(file => [file, []]))
+  const zero = gateRules.vitestValidatorFindings(validatorInput(empty)).findings
+  assert.deepEqual(rules(zero), ['zero-executed'])
+  const unsuccessful = validatorJson(ARCH_FILES.map(file => [file, [['p1', 'passed']]]), false)
+  const red = gateRules.vitestValidatorFindings(validatorInput(unsuccessful)).findings
+  assert.deepEqual(rules(red), ['success-false'])
+})
+
+test('a skipped validator cell goes through the register with the stale check off', () => {
+  assert.equal(typeof gateRules.vitestValidatorFindings, 'function')
+  const json = validatorJson([
+    [ARCH_FILES[0], [['p1', 'passed'], ['s1', 'skipped']]],
+    [ARCH_FILES[1], [['p2', 'passed']]],
+  ])
+  const elsewhere = entry(vcell('suite elsewhere', 'skipped', 'packages/cli/src/a.test.ts'))
+  const result = gateRules.vitestValidatorFindings(
+    validatorInput(json, { register: emptyRegister([elsewhere]) }),
+  )
+  assert.deepEqual(rules(result.findings), ['unlisted-skip'])
+  assert.equal(result.findings[0].leg, 'validate:arch')
+  assert.match(result.findings[0].detail, /validate-arch\.test\.ts > suite s1 \(skipped\)$/)
+  assert.deepEqual(result.register.stale, [])
+
+  const skipped = { runner: 'vitest', file: `packages/arch/${ARCH_FILES[0]}`, fullName: 'suite s1' }
+  const listed = gateRules.vitestValidatorFindings(
+    validatorInput(json, { register: emptyRegister([entry(skipped), elsewhere]) }),
+  )
+  assert.deepEqual(listed.findings, [])
+  assert.equal(listed.register.matched, 1)
+})

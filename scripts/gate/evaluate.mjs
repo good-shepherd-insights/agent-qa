@@ -317,9 +317,9 @@ function screenFindings(screened, { rule, leg, field }) {
   })
 }
 
-function judgedCells(cells, legsRan) {
+function judgedCells(cells, legsRan, leg) {
   const ran = new Set(legsRan ?? [])
-  const judged = runner => ran.has(RUNNER_LEGS[runner])
+  const judged = runner => (leg ? Object.hasOwn(RUNNER_LEGS, runner) : ran.has(RUNNER_LEGS[runner]))
   const byKey = new Map()
   for (const cell of cells ?? []) {
     if (!judged(cell.runner)) continue
@@ -335,8 +335,15 @@ export function validateRegister(register) {
   return screenFindings(screened, { rule, leg: 'register', field: 'entries' })
 }
 
-export function registerFindings({ cells = [], register, legsRan = [] } = {}) {
-  const { judged, byKey } = judgedCells(cells, legsRan)
+export function registerFindings({
+  cells = [],
+  register,
+  legsRan = [],
+  leg,
+  staleCheck = true,
+} = {}) {
+  const { judged, byKey } = judgedCells(cells, legsRan, leg)
+  const legOf = runner => leg ?? RUNNER_LEGS[runner]
   const screened = screenList(register, 'entries', registerEntryProblems)
   const entries = screened.valid.filter(entry => judged(entry.runner))
   const listed = new Map(entries.map(entry => [cellKey(entry), entry]))
@@ -348,7 +355,7 @@ export function registerFindings({ cells = [], register, legsRan = [] } = {}) {
   const markStale = (entry, why) => {
     stale.push({ ...identity(entry), why })
     const detail = `${cellLabel(entry)} is listed as ${entry.kind} but ${why}`
-    findings.push(finding('stale-register-entry', RUNNER_LEGS[entry.runner], detail))
+    findings.push(finding('stale-register-entry', legOf(entry.runner), detail))
   }
 
   for (const group of byKey.values()) {
@@ -364,12 +371,12 @@ export function registerFindings({ cells = [], register, legsRan = [] } = {}) {
         unlisted.push({ ...identity(cell), kind, ...(cell.member ? { member: cell.member } : {}) })
         const owner = cell.member ? `${cell.member}: ` : ''
         const detail = `${owner}${cell.file} > ${cell.fullName} (${kind})`
-        findings.push(finding('unlisted-skip', RUNNER_LEGS[cell.runner], detail))
+        findings.push(finding('unlisted-skip', legOf(cell.runner), detail))
       }
     }
   }
 
-  for (const entry of entries) {
+  for (const entry of staleCheck ? entries : []) {
     const found = byKey.get(cellKey(entry)) ?? []
     const executed = found.filter(cell => EXECUTED.has(cell.status))
     if (found.length === 0) {
@@ -437,6 +444,74 @@ export function regressionFindings({ cells = [], list, legsRan = [] } = {}) {
       notPassed,
     },
   }
+}
+
+const COUNT_KEYS = ['executed', 'passed', 'failed', 'skipped', 'todo', 'notRun']
+
+function exitFindings(legId, exitCode) {
+  if (exitCode === undefined || exitCode === 0) return []
+  return [finding('leg-exit-nonzero', legId, `exit code ${exitCode}`)]
+}
+
+export function vitestValidatorFindings({
+  legId,
+  json,
+  expectedFiles,
+  rootDir,
+  exitCode,
+  register,
+} = {}) {
+  const findings = exitFindings(legId, exitCode)
+  if (!json) {
+    const detail = 'no vitest JSON was written: the filter matched nothing or vitest never ran'
+    findings.push(finding('empty-filter', legId, detail))
+    return { counts: { executed: 0, testFiles: 0 }, findings, register: null }
+  }
+  const classified = classifyVitest(json, rootDir)
+  const reported = (json.testResults ?? []).map(file => relativeTo(rootDir, file.name))
+  const mismatch = 'validator-files-mismatch'
+  if (!Array.isArray(expectedFiles)) {
+    findings.push(finding(mismatch, legId, 'the file list in the validator script is unreadable'))
+  } else {
+    const want = new Set(expectedFiles.map(file => relativeTo(rootDir, file)))
+    const have = new Set(reported)
+    for (const file of [...want].filter(name => !have.has(name)).sort()) {
+      findings.push(finding(mismatch, legId, `${file} is named by the script but did not run`))
+    }
+    for (const file of [...have].filter(name => !want.has(name)).sort()) {
+      findings.push(finding(mismatch, legId, `${file} ran but is not named by the script`))
+    }
+  }
+  findings.push(...vitestFindings(legId, classified, legId))
+  const cells = classified.cells.map(cell => ({ runner: 'vitest', ...cell }))
+  const judged = registerFindings({ cells, register, leg: legId, staleCheck: false })
+  findings.push(...judged.findings)
+  const counts = Object.fromEntries(COUNT_KEYS.map(key => [key, classified[key]]))
+  const expected = Array.isArray(expectedFiles) ? expectedFiles.length : null
+  return {
+    counts: { ...counts, success: classified.success, testFiles: reported.length, expected },
+    findings,
+    register: judged.register,
+  }
+}
+
+const NAMESPACE_SCOPE = /\.(ts|json|js)$/
+
+export function namespaceLintFindings({ legId = 'lint:namespace', exitCode, trackedFiles } = {}) {
+  const findings = exitFindings(legId, exitCode)
+  if (!Array.isArray(trackedFiles)) {
+    findings.push(finding('results-missing', legId, 'git ls-files -- packages failed'))
+    return { counts: { executed: 0 }, findings }
+  }
+  const inScope = trackedFiles.filter(
+    path =>
+      NAMESPACE_SCOPE.test(path) &&
+      !path.split('/').some(part => part === 'dist' || part === 'node_modules'),
+  )
+  if (inScope.length === 0) {
+    findings.push(finding('zero-executed', legId, 'no tracked .ts, .json or .js file in scope'))
+  }
+  return { counts: { executed: inScope.length, unit: 'tracked files' }, findings }
 }
 
 function executedBy(summaries, rows) {

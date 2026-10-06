@@ -23,6 +23,7 @@ import {
   classifyVitest,
   compareRuns,
   evaluateGate,
+  namespaceLintFindings,
   nodeTestFindings,
   orderRootCause,
   packageSetFindings,
@@ -35,6 +36,7 @@ import {
   validateRegister,
   validateRegressions,
   vitestFindings,
+  vitestValidatorFindings,
 } from './evaluate.mjs'
 import {
   GATE_ENV,
@@ -130,8 +132,27 @@ function turboArgv(tasks, flags) {
   return ['pnpm', 'exec', 'turbo', 'run', ...tasks, ...flags]
 }
 
-export function buildGateLegs({ root, runDir, nodeTestFiles = [], turboConcurrency } = {}) {
+function vitestValidatorLeg(script, { root, runDir }) {
+  const raw = join(runDir, 'raw', `${script.replace(/:/g, '-')}.json`)
+  return {
+    id: script,
+    kind: 'vitest-validator',
+    script,
+    needsBuild: true,
+    cwd: root,
+    argv: ['pnpm', 'run', script, ...VITEST_ARGS.slice(0, 2), `--outputFile.json=${raw}`],
+    raw,
+  }
+}
+
+export function buildGateLegs({
+  root = '.',
+  runDir = '.',
+  nodeTestFiles = [],
+  turboConcurrency,
+} = {}) {
   const concurrency = turboConcurrency ? [`--concurrency=${turboConcurrency}`] : []
+  const paths = { root, runDir }
   return [
     {
       id: 'turbo-build-typecheck',
@@ -149,6 +170,16 @@ export function buildGateLegs({ root, runDir, nodeTestFiles = [], turboConcurren
       cwd: root,
       dryRunArgv: turboArgv(['test'], ['--dry-run=json', '--', ...VITEST_ARGS]),
       argv: turboArgv(['test'], [...TURBO_RUN_FLAGS, ...concurrency, '--', ...VITEST_ARGS]),
+    },
+    vitestValidatorLeg('validate:tools', paths),
+    vitestValidatorLeg('validate:arch', paths),
+    vitestValidatorLeg('validate:safety', paths),
+    {
+      id: 'lint:namespace',
+      kind: 'namespace-lint',
+      needsBuild: true,
+      cwd: root,
+      argv: ['pnpm', 'run', 'lint:namespace'],
     },
     {
       id: 'node-test',
@@ -375,7 +406,50 @@ function failure(step, rule) {
   step.findings.push({ rule, leg: step.id, detail: `exit ${step.exitCode}` })
 }
 
-function evaluateLeg(leg, step, { root, onDisk }) {
+export function validatorScriptFiles(root, script, members) {
+  const text = readJson(join(root, 'package.json'))?.scripts?.[script]
+  if (typeof text !== 'string') return null
+  const tokens = text.split(/\s+/)
+  const at = tokens.indexOf('--filter')
+  const member = at >= 0 ? members?.find(entry => entry.name === tokens[at + 1]) : null
+  if (!member) return null
+  return tokens
+    .filter(token => /^src\/.*\.test\.ts$/.test(token))
+    .map(token => realOrResolved(join(root, member.dir, token)))
+}
+
+function vitestValidatorResult(leg, step, { root, members, register }) {
+  const written = existsSync(leg.raw) ? readJson(leg.raw) : null
+  const json = written && {
+    ...written,
+    testResults: (written.testResults ?? []).map(file => ({
+      ...file,
+      name: realOrResolved(file.name),
+    })),
+  }
+  const result = vitestValidatorFindings({
+    legId: leg.id,
+    json,
+    expectedFiles: validatorScriptFiles(root, leg.script, members),
+    rootDir: realOrResolved(root),
+    exitCode: step.exitCode,
+    register,
+  })
+  const counts = { ...result.counts, register: result.register }
+  return { counts, cells: [], findings: result.findings }
+}
+
+function namespaceLintResult(leg, step, { root, exec }) {
+  const listing = exec('git', ['-C', root, 'ls-files', '-z', '--', 'packages'])
+  const trackedFiles = listing.status === 0 ? listing.stdout.split('\0').filter(Boolean) : null
+  const result = namespaceLintFindings({ legId: leg.id, exitCode: step.exitCode, trackedFiles })
+  return { ...result, cells: [] }
+}
+
+function evaluateLeg(leg, step, context) {
+  const { root, onDisk } = context
+  if (leg.kind === 'vitest-validator') return vitestValidatorResult(leg, step, context)
+  if (leg.kind === 'namespace-lint') return namespaceLintResult(leg, step, context)
   if (leg.kind === 'node-test') {
     const pin = readJson(join(root, NODE_TEST_PIN))
     const result = nodeTestFindings(existsSync(leg.raw) ? readJson(leg.raw) : null, {
@@ -650,7 +724,7 @@ export async function runGate(options, deps = {}) {
     }
 
     const pinned = readJson(join(root, PACKAGE_PIN))?.members
-    if (plan.some(leg => leg.kind === 'turbo')) {
+    if (plan.some(leg => leg.kind === 'turbo' || leg.kind === 'vitest-validator')) {
       members = workspaceMembers(root, exec)
       const workspace = { id: 'workspace', members: members?.length ?? null, findings: [] }
       if (members === null) {
@@ -663,6 +737,7 @@ export async function runGate(options, deps = {}) {
       steps.push(workspace)
     }
 
+    const register = readJson(join(root, REGISTER))
     const cells = []
     for (const leg of plan) {
       if (leg.kind === 'turbo') {
@@ -674,7 +749,7 @@ export async function runGate(options, deps = {}) {
         continue
       }
       const step = await runStep(leg.id, leg.argv, leg.cwd)
-      const evaluated = evaluateLeg(leg, step, { root, onDisk })
+      const evaluated = evaluateLeg(leg, step, { root, onDisk, members, exec, register })
       const { counts, findings } = evaluated
       cells.push(...evaluated.cells)
       legs.push({
@@ -690,7 +765,6 @@ export async function runGate(options, deps = {}) {
     }
 
     const legsRan = legs.map(leg => leg.id)
-    const register = readJson(join(root, REGISTER))
     const judged = registerFindings({ cells, register, legsRan })
     registerRecord = judged.register
     steps.push({
