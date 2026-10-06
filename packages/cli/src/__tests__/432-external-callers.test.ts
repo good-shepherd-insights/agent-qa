@@ -140,16 +140,27 @@ function declares(help: string, flag: string): boolean {
   return new RegExp(`(^|\\s)${flag.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}(\\s|,|$)`, 'm').test(help)
 }
 
+/** Runs the shipped CLI and names how the child ended, so a kill or a spawn timeout reports its cause. */
+function shippedRun(args: readonly string[], cwd: string): { result: SpawnSyncReturns<string>; seen: string } {
+  const started = performance.now()
+  const result = run(process.execPath, [CLI_DIST, ...args], { cwd })
+  const elapsed = Math.round(performance.now() - started)
+  const code = (result.error as NodeJS.ErrnoException | undefined)?.code ?? 'none'
+  const seen = `agent-qa ${args.join(' ')} ended with status ${result.status}, signal ${result.signal}, `
+    + `error ${code}, after ${elapsed} ms; stderr: ${JSON.stringify(result.stderr ?? '')}`
+  return { result, seen }
+}
+
 let helpCache: { run: string; global: string } | undefined
 function shippedHelp(): { run: string; global: string } {
   if (helpCache !== undefined) return helpCache
   expect(existsSync(CLI_DIST), `build the CLI first: ${CLI_DIST}`).toBe(true)
   const cwd = scratch('help')
-  const runHelp = run(process.execPath, [CLI_DIST, 'run', '--help'], { cwd })
-  const globalHelp = run(process.execPath, [CLI_DIST, '--help'], { cwd })
-  expect(runHelp.status).toBe(0)
-  expect(globalHelp.status).toBe(0)
-  helpCache = { run: runHelp.stdout, global: globalHelp.stdout }
+  const runHelp = shippedRun(['run', '--help'], cwd)
+  const globalHelp = shippedRun(['--help'], cwd)
+  expect(runHelp.result.status, runHelp.seen).toBe(0)
+  expect(globalHelp.result.status, globalHelp.seen).toBe(0)
+  helpCache = { run: runHelp.result.stdout, global: globalHelp.result.stdout }
   return helpCache
 }
 
@@ -242,9 +253,9 @@ describe('C432-LIVE-CALLERS-LANES — no live run caller passes the retired trus
     expect(declares(global, '--config')).toBe(true)
 
     const cwd = scratch('refusal')
-    const refused = run(process.execPath, [CLI_DIST, 'run', 'tests/none.yaml', RETIRED_FLAG], { cwd })
-    expect(refused.status).not.toBe(0)
-    expect(refused.stderr).toContain(`unknown option '${RETIRED_FLAG}'`)
+    const refused = shippedRun(['run', 'tests/none.yaml', RETIRED_FLAG], cwd)
+    expect(refused.result.status, refused.seen).not.toBe(0)
+    expect(refused.result.stderr, refused.seen).toContain(`unknown option '${RETIRED_FLAG}'`)
     expect(readdirSync(cwd)).toEqual([])
   })
 
