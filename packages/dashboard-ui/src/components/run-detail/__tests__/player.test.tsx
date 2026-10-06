@@ -145,7 +145,8 @@ function video(extra: Partial<Props> = {}) {
   render({ source: 'video', recording: recording(), media, ...extra })
   return media
 }
-function metadata(media: ReturnType<typeof createFakeMedia>) { act(() => media.fire('loadedmetadata')) }
+// A preload='metadata' load as Chromium delivers it: the first frame's data arrives with the metadata.
+function metadata(media: ReturnType<typeof createFakeMedia>) { act(() => { media.fire('loadedmetadata'); media.fire('loadeddata') }) }
 function button(name: string) { return query(`button[aria-label="${name}"]`) as HTMLButtonElement }
 
 test('PLAYER-SHARED-FRAME-CONTROLS: visible toolbar retains annotated image through magnifier, fullscreen, Escape and toggle', () => {
@@ -377,6 +378,39 @@ test('PLAYER-SEEK-IDENTITY reapplies on source changes and retry only after meta
   expect(next.seeks).toEqual([])
   metadata(next)
   expect(next.currentTime).toBe(5)
+})
+
+test('PLAYER-SEEK-AWAITS-DATA: a seek requested between loadedmetadata and loadeddata is applied once, after loadeddata', () => {
+  const media = video({ seekFraction: 0.25, seekRevision: 1 })
+  act(() => media.fire('loadedmetadata'))
+  expect(button(PLAYER_COPY.play).disabled).toBe(false)
+  render({ source: 'video', recording: recording(), media, seekFraction: 0.5, seekRevision: 2 })
+  expect(media.writes).toEqual([])
+  act(() => media.fire('loadeddata'))
+  expect(media.writes).toEqual([{ at: 10, readyState: 2, seeking: false }])
+  expect(media.currentTime).toBe(10)
+  act(() => media.fire('loadeddata'))
+  render({ source: 'video', recording: recording(), media, seekFraction: 0.5, seekRevision: 2 })
+  expect(media.writes).toHaveLength(1)
+})
+
+test('PLAYER-SEEK-ONE-IN-FLIGHT: a seek requested while the media is seeking waits for seeked and applies only the latest target', () => {
+  group.member.recording = recording()
+  model = buildTimelineModel(group)
+  const media = createFakeMedia(Infinity, { holdSeeks: true })
+  const props = { source: 'video' as const, recording: recording(), media, playhead: model.markers[1]! }
+  render({ ...props, seekFraction: 0.25, seekRevision: 1 })
+  metadata(media)
+  expect(media.writes.map(write => write.at)).toEqual([10])
+  render({ ...props, seekFraction: 0.5, seekRevision: 2 })
+  render({ ...props, seekFraction: 0.75, seekRevision: 3 })
+  expect(media.writes.map(write => write.at)).toEqual([10])
+  act(() => media.fire('seeked'))
+  expect(media.writes.map(write => write.at)).toEqual([10, 15])
+  act(() => media.fire('seeked'))
+  expect(media.writes.map(write => write.at)).toEqual([10, 15])
+  expect(media.writes.every(write => !write.seeking && write.readyState >= 2)).toBe(true)
+  expect(media.currentTime).toBe(15)
 })
 
 test('PLAYER-REPEATED-SEEK and member continuation preserve explicit offsets and speed', async () => {

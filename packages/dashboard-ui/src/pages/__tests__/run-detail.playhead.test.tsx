@@ -398,7 +398,7 @@ it('OVERVIEW-SEEK-REACHES-PLAYER', async () => {
   await render()
   const video = host.querySelector('video')
   expect(video).not.toBeNull()
-  act(() => video!.dispatchEvent(new Event('loadedmetadata')))
+  act(() => { video!.dispatchEvent(new Event('loadedmetadata')); video!.dispatchEvent(new Event('loadeddata')) })
   expect(video!.currentTime).toBe(4)
   const track = host.querySelector<HTMLElement>('[data-timeline-track]')!
   vi.spyOn(track, 'getBoundingClientRect').mockReturnValue({ left: 0, width: 1000 } as DOMRect)
@@ -638,7 +638,7 @@ it('SUITE-PAGE-SEEK maps global positions to the correct local recording and act
   track.setPointerCapture = vi.fn()
   act(() => track.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 600 })))
   const video = host.querySelector('video')!
-  act(() => video.dispatchEvent(new Event('loadedmetadata')))
+  act(() => { video.dispatchEvent(new Event('loadedmetadata')); video.dispatchEvent(new Event('loadeddata')) })
   expect(video.src).toContain('f'.repeat(64))
   expect(video.currentTime).toBeCloseTo(8)
   expect(current()).toBe('3:0-1')

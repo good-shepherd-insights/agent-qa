@@ -97,6 +97,10 @@ function PlayerFooter({ timeline, caption, controls, note, readout }: {
   </div>
 }
 
+// A seek written before the media has data, or while another seek is still pending, can leave
+// Chromium resuming a suspended preload='metadata' pipeline on a non-key frame (MEDIA_ERR_DECODE).
+const HAVE_CURRENT_DATA = 2
+
 function addressKey(playhead: Playhead | null | undefined) {
   return playhead ? `${playhead.testIndex}:${playhead.stepIndex}:${playhead.subActionIndex}` : ''
 }
@@ -117,6 +121,8 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
   const followed = useRef('')
   const mediaReady = useRef(false)
   const consumedSeek = useRef<{ fraction: number; revision: number | undefined } | null>(null)
+  const hasData = useRef(false)
+  const pendingSeek = useRef<number | undefined>(undefined)
   const [ready, setReady] = useState(false)
   const [playing, setPlaying] = useState(false)
   const [time, setTime] = useState(0)
@@ -135,6 +141,8 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
     active.current = facade
     mediaReady.current = false
     consumedSeek.current = null
+    hasData.current = false
+    pendingSeek.current = undefined
     setReady(false)
     const controller = new AbortController()
     let animation: number | undefined
@@ -149,6 +157,15 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
       setTime(facade.currentTime)
       setDimensions({ width: element.current?.videoWidth ?? 0, height: element.current?.videoHeight ?? 0 })
     }
+    const settle = () => {
+      const target = pendingSeek.current
+      if (target === undefined || !canSeek(facade)) return
+      pendingSeek.current = undefined
+      facade.currentTime = target
+      setTime(facade.currentTime)
+    }
+    const dataLoaded = () => { hasData.current = true; settle() }
+    const seeked = () => { update(); settle() }
     const update = () => {
       setTime(facade.currentTime)
       latest.current.onProgress?.(latest.current.model.testIndex, facade.currentTime)
@@ -179,7 +196,7 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
     }
     const onPlay = () => { setPlaying(true); stopAnimation(); animation = requestAnimationFrame(tick) }
     const onPause = () => { setPlaying(false); stopAnimation() }
-    const events: Record<string, EventListener> = { loadedmetadata: loaded, resize: loaded, timeupdate: update, seeked: update, ended, error: failed, play: onPlay, pause: onPause }
+    const events: Record<string, EventListener> = { loadedmetadata: loaded, resize: loaded, loadeddata: dataLoaded, timeupdate: update, seeked, ended, error: failed, play: onPlay, pause: onPause }
     for (const [name, listener] of Object.entries(events)) facade.addEventListener(name, listener)
     if (!facade.paused) facade.pause()
     if (!media && element.current && element.current.readyState >= 1) loaded()
@@ -195,8 +212,7 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
   useEffect(() => {
     if (!ready || !mediaReady.current || model.axis !== 'time' || offset === undefined || !active.current) return
     if (followed.current === key) { followed.current = ''; return }
-    active.current.currentTime = offset / 1000
-    setTime(active.current.currentTime)
+    seekTo(active.current, offset / 1000)
   }, [ready, model.axis, key, offset])
 
   useEffect(() => {
@@ -210,10 +226,20 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
     // unconsumed command pending until metadata/timing is usable for this media.
     if (consumedSeek.current?.fraction === seekFraction && consumedSeek.current.revision === seekRevision) return
     followed.current = ''
-    active.current.currentTime = Math.max(0, Math.min(1, seekFraction)) * recording.durationMs / 1000
+    seekTo(active.current, Math.max(0, Math.min(1, seekFraction)) * recording.durationMs / 1000)
     consumedSeek.current = { fraction: seekFraction, revision: seekRevision }
-    setTime(active.current.currentTime)
   }, [ready, model.axis, seekFraction, seekRevision, recording.durationMs, media, url, attempt])
+
+  function canSeek(facade: MediaFacade) {
+    return (hasData.current || facade.readyState >= HAVE_CURRENT_DATA) && !facade.seeking
+  }
+
+  function seekTo(facade: MediaFacade, seconds: number) {
+    if (!canSeek(facade)) { pendingSeek.current = seconds; return }
+    pendingSeek.current = undefined
+    facade.currentTime = seconds
+    setTime(facade.currentTime)
+  }
 
   useEffect(() => {
     if (active.current) active.current.playbackRate = speed

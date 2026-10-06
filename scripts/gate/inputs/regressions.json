@@ -228,6 +228,18 @@
       "file": "packages/cli/src/__tests__/doctor.test.ts",
       "fullName": "doctor command prints four rows between Legacy v1 memory data and Config validation, store then embedder then rung then learning",
       "origin": "434 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/run-detail/__tests__/player.test.tsx",
+      "fullName": "PLAYER-SEEK-AWAITS-DATA: a seek requested between loadedmetadata and loadeddata is applied once, after loadeddata",
+      "origin": "434 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/run-detail/__tests__/player.test.tsx",
+      "fullName": "PLAYER-SEEK-ONE-IN-FLIGHT: a seek requested while the media is seeking waits for seeked and applies only the latest target",
+      "origin": "434 D-20"
     }
   ]
 }
