@@ -514,6 +514,116 @@ export function namespaceLintFindings({ legId = 'lint:namespace', exitCode, trac
   return { counts: { executed: inScope.length, unit: 'tracked files' }, findings }
 }
 
+function parseJsonText(text) {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
+
+const COUNT_PREFIX = 'AGENT_QA_GATE_COUNT '
+
+export function parseGateCountLine(stdout, validatorId, legId = `validate:${validatorId}`) {
+  const lines = String(stdout ?? '')
+    .split(/\r?\n/)
+    .filter(line => line.startsWith(COUNT_PREFIX))
+  const missing = detail => ({
+    executed: 0,
+    unit: null,
+    findings: [finding('validator-count-missing', legId, detail)],
+  })
+  if (lines.length !== 1) {
+    return missing(`expected one ${COUNT_PREFIX.trim()} line, found ${lines.length}`)
+  }
+  const record = parseJsonText(lines[0].slice(COUNT_PREFIX.length))
+  if (record?.validator !== validatorId) {
+    const named = record?.validator ?? 'no readable validator'
+    return missing(`the count line names ${named}, not ${validatorId}`)
+  }
+  if (!Number.isInteger(record.executed) || record.executed < 0) {
+    return missing(`the ${validatorId} count line has no executed count`)
+  }
+  const findings = []
+  if (record.executed === 0) {
+    findings.push(finding('zero-executed', legId, `${validatorId} executed 0 ${record.unit}`))
+  }
+  return { executed: record.executed, unit: record.unit ?? null, findings }
+}
+
+export function nodeValidatorFindings({ legId, validatorId, exitCode, output } = {}) {
+  const parsed = parseGateCountLine(output, validatorId, legId)
+  return {
+    counts: { executed: parsed.executed, unit: parsed.unit },
+    findings: [...exitFindings(legId, exitCode), ...parsed.findings],
+  }
+}
+
+const CONFORMANCE_HEADLINE = /^MCP conformance: (\d+)\/(\d+) required server scenarios passed/m
+const CONFORMANCE_EXECUTED = /^\s*scenarios executed\s+(\d+)/m
+const CONFORMANCE_BASELINE = /^\s*baseline entries\s+(\d+)/m
+const SELFTEST_PROOF = /^\[396-conformance\] S\d+ .*✓\s*$/gm
+const SELFTEST_DONE = 'selftest: all four proofs failed as required'
+
+function matchedNumber(text, pattern, group = 1) {
+  const match = text.match(pattern)
+  return match ? Number(match[group]) : null
+}
+
+export function conformanceFindings({ legId, exitCode, output } = {}) {
+  const text = String(output ?? '')
+  const findings = exitFindings(legId, exitCode)
+  const missing = detail => findings.push(finding('conformance-count-missing', legId, detail))
+  if (legId === 'conformance-selftest') {
+    const proofs = text.match(SELFTEST_PROOF)?.length ?? 0
+    if (!text.includes(SELFTEST_DONE)) missing(`no "${SELFTEST_DONE}" line`)
+    else if (proofs === 0) findings.push(finding('zero-executed', legId, 'no selftest proof line'))
+    return { counts: { executed: proofs, unit: 'proofs' }, findings }
+  }
+  const passed = matchedNumber(text, CONFORMANCE_HEADLINE)
+  const executed = matchedNumber(text, CONFORMANCE_EXECUTED)
+  if (passed === null) missing('no "MCP conformance: <passed>/<total>" headline')
+  if (executed === null) missing('no "scenarios executed <n>" line')
+  else if (executed === 0) findings.push(finding('zero-executed', legId, '0 scenarios executed'))
+  return {
+    counts: {
+      executed: executed ?? 0,
+      unit: 'scenarios',
+      passed,
+      total: matchedNumber(text, CONFORMANCE_HEADLINE, 2),
+      baselineEntries: matchedNumber(text, CONFORMANCE_BASELINE),
+    },
+    findings,
+  }
+}
+
+const SEVERITIES = ['info', 'low', 'moderate', 'high', 'critical']
+
+export function auditFindings({ exitCode, stdout } = {}) {
+  const leg = 'audit'
+  const metadata = parseJsonText(String(stdout ?? ''))?.metadata
+  const vulnerabilities = metadata?.vulnerabilities
+  const dependencies = metadata?.dependencies
+  const readable =
+    vulnerabilities &&
+    ['high', 'critical'].every(level => Number.isInteger(vulnerabilities[level])) &&
+    Number.isInteger(dependencies)
+  if (!readable) {
+    const detail = `pnpm audit printed no readable report (exit ${exitCode})`
+    return { counts: { executed: 0 }, findings: [finding('audit-no-observation', leg, detail)] }
+  }
+  const levels = Object.fromEntries(SEVERITIES.map(level => [level, vulnerabilities[level] ?? 0]))
+  const findings = []
+  if (dependencies === 0) {
+    findings.push(finding('audit-no-observation', leg, 'the audit covered 0 dependencies'))
+  }
+  if (levels.high > 0 || levels.critical > 0) {
+    const detail = `${levels.high} high, ${levels.critical} critical over ${dependencies} prod deps`
+    findings.push(finding('audit-findings', leg, detail))
+  }
+  return { counts: { executed: dependencies, unit: 'prod dependencies', ...levels }, findings }
+}
+
 function executedBy(summaries, rows) {
   const table = {}
   summaries.forEach((summary, index) => {

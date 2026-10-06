@@ -17,14 +17,17 @@ import {
 import { tmpdir as defaultTmpdir } from 'node:os'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { gzipSync } from 'node:zlib'
+import { gunzipSync, gzipSync } from 'node:zlib'
 import {
   REQUIRED_LEGS,
+  auditFindings,
   classifyVitest,
   compareRuns,
+  conformanceFindings,
   evaluateGate,
   namespaceLintFindings,
   nodeTestFindings,
+  nodeValidatorFindings,
   orderRootCause,
   packageSetFindings,
   registerFindings,
@@ -132,6 +135,25 @@ function turboArgv(tasks, flags) {
   return ['pnpm', 'exec', 'turbo', 'run', ...tasks, ...flags]
 }
 
+const NODE_VALIDATORS = {
+  'validate:skills': 'skills',
+  'validate:agents': 'agents',
+  'validate:publish': 'publish',
+  'validate:431-discovery-imports': '431-discovery-imports',
+}
+const CONFORMANCE_SCRIPT = 'scripts/396-conformance.sh'
+
+function nodeValidatorLeg(script, { root }) {
+  return {
+    id: script,
+    kind: 'count-validator',
+    validator: NODE_VALIDATORS[script],
+    needsBuild: true,
+    cwd: root,
+    argv: ['pnpm', 'run', script],
+  }
+}
+
 function vitestValidatorLeg(script, { root, runDir }) {
   const raw = join(runDir, 'raw', `${script.replace(/:/g, '-')}.json`)
   return {
@@ -171,9 +193,13 @@ export function buildGateLegs({
       dryRunArgv: turboArgv(['test'], ['--dry-run=json', '--', ...VITEST_ARGS]),
       argv: turboArgv(['test'], [...TURBO_RUN_FLAGS, ...concurrency, '--', ...VITEST_ARGS]),
     },
+    nodeValidatorLeg('validate:skills', paths),
+    nodeValidatorLeg('validate:agents', paths),
+    nodeValidatorLeg('validate:publish', paths),
     vitestValidatorLeg('validate:tools', paths),
     vitestValidatorLeg('validate:arch', paths),
     vitestValidatorLeg('validate:safety', paths),
+    nodeValidatorLeg('validate:431-discovery-imports', paths),
     {
       id: 'lint:namespace',
       kind: 'namespace-lint',
@@ -197,17 +223,41 @@ export function buildGateLegs({
       ],
       raw: join(runDir, 'raw', 'node-test.json'),
     },
+    {
+      id: 'conformance-selftest',
+      kind: 'conformance',
+      needsBuild: false,
+      cwd: root,
+      argv: ['bash', CONFORMANCE_SCRIPT, '--selftest'],
+    },
+    {
+      id: 'conformance',
+      kind: 'conformance',
+      needsBuild: false,
+      cwd: root,
+      argv: ['bash', CONFORMANCE_SCRIPT],
+    },
+    {
+      id: 'audit',
+      kind: 'audit',
+      needsBuild: false,
+      cwd: root,
+      argv: ['pnpm', 'audit', '--prod', '--audit-level', 'high', '--json'],
+      stdoutPath: join(runDir, 'raw', 'audit.json'),
+    },
   ]
 }
 
-function defaultRun(command, args, { cwd, logPath }) {
+function defaultRun(command, args, { cwd, logPath, stdoutPath }) {
   return new Promise(settle => {
     const started = Date.now()
     const log = createWriteStream(logPath)
+    const stdout = stdoutPath ? [] : null
     let done = false
     const finish = exitCode => {
       if (done) return
       done = true
+      if (stdout) writeFileSync(stdoutPath, Buffer.concat(stdout))
       log.end(() => settle({ exitCode, durationMs: Date.now() - started }))
     }
     const child = defaultSpawn(command, args, {
@@ -217,6 +267,7 @@ function defaultRun(command, args, { cwd, logPath }) {
     })
     child.stdout.pipe(log, { end: false })
     child.stderr.pipe(log, { end: false })
+    if (stdout) child.stdout.on('data', chunk => stdout.push(chunk))
     child.on('error', error => {
       log.write(`${error.message}\n`)
       finish(127)
@@ -446,10 +497,36 @@ function namespaceLintResult(leg, step, { root, exec }) {
   return { ...result, cells: [] }
 }
 
+function readLog(path) {
+  if (!path || !existsSync(path)) return ''
+  const bytes = readFileSync(path)
+  return (path.endsWith('.gz') ? gunzipSync(bytes) : bytes).toString('utf8')
+}
+
+function auditResult(leg, step) {
+  const raw = leg.stdoutPath
+  const stdout = existsSync(raw) ? readFileSync(raw, 'utf8') : ''
+  if (existsSync(raw)) {
+    writeGz(`${raw}.gz`, stdout)
+    unlinkSync(raw)
+  }
+  return { ...auditFindings({ exitCode: step.exitCode, stdout }), cells: [] }
+}
+
 function evaluateLeg(leg, step, context) {
   const { root, onDisk } = context
   if (leg.kind === 'vitest-validator') return vitestValidatorResult(leg, step, context)
   if (leg.kind === 'namespace-lint') return namespaceLintResult(leg, step, context)
+  if (leg.kind === 'audit') return auditResult(leg, step)
+  if (leg.kind === 'count-validator') {
+    const output = readLog(step.log)
+    const input = { legId: leg.id, validatorId: leg.validator, exitCode: step.exitCode, output }
+    return { ...nodeValidatorFindings(input), cells: [] }
+  }
+  if (leg.kind === 'conformance') {
+    const output = readLog(step.log)
+    return { ...conformanceFindings({ legId: leg.id, exitCode: step.exitCode, output }), cells: [] }
+  }
   if (leg.kind === 'node-test') {
     const pin = readJson(join(root, NODE_TEST_PIN))
     const result = nodeTestFindings(existsSync(leg.raw) ? readJson(leg.raw) : null, {
@@ -638,8 +715,8 @@ export async function runGate(options, deps = {}) {
   const logPath = id => join(runDir, 'logs', `${id.replace(/[^A-Za-z0-9._-]/g, '_')}.log`)
 
   const steps = []
-  const runStep = async (id, argv, cwd) => {
-    const result = await run(argv[0], argv.slice(1), { cwd, logPath: logPath(id) })
+  const runStep = async (id, argv, cwd, extra = {}) => {
+    const result = await run(argv[0], argv.slice(1), { cwd, logPath: logPath(id), ...extra })
     const { exitCode, durationMs } = result
     const log = compressLargeLog(logPath(id))
     say(`[gate] ${id}: exit ${exitCode} (${durationMs} ms)`)
@@ -748,7 +825,8 @@ export async function runGate(options, deps = {}) {
         if (result.packages) packages = result.packages
         continue
       }
-      const step = await runStep(leg.id, leg.argv, leg.cwd)
+      const extra = leg.stdoutPath ? { stdoutPath: leg.stdoutPath } : {}
+      const step = await runStep(leg.id, leg.argv, leg.cwd, extra)
       const evaluated = evaluateLeg(leg, step, { root, onDisk, members, exec, register })
       const { counts, findings } = evaluated
       cells.push(...evaluated.cells)

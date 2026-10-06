@@ -748,7 +748,7 @@ test('validator, conformance and audit legs read structured counts from their ou
     },
   }
   deps.run = async (command, args, { logPath, stdoutPath }) => {
-    const key = args.find(arg => Object.hasOwn(outputs, arg))
+    const key = args.findLast(arg => Object.hasOwn(outputs, arg))
     writeFileSync(logPath, `${key ? outputs[key] : 'ok'}\n`)
     const json = args.find(arg => arg.startsWith('--outputFile.json='))
     if (json) {
