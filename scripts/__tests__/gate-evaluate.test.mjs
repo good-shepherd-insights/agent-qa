@@ -908,3 +908,105 @@ test('a skipped validator cell goes through the register with the stale check of
   assert.deepEqual(listed.findings, [])
   assert.equal(listed.register.matched, 1)
 })
+
+function countLine(record) {
+  return `AGENT_QA_GATE_COUNT ${JSON.stringify(record)}`
+}
+
+test('parseGateCountLine reads the count line for its id; none, two or another id is red', () => {
+  assert.equal(typeof gateRules.parseGateCountLine, 'function')
+  const skills = countLine({ validator: 'skills', executed: 4, unit: 'skills' })
+  const ok = gateRules.parseGateCountLine(`> pnpm header\nvalidation passed\n${skills}\n`, 'skills')
+  assert.deepEqual(ok.findings, [])
+  assert.equal(ok.executed, 4)
+  assert.equal(ok.unit, 'skills')
+  const other = countLine({ validator: 'agents', executed: 24, unit: 'AGENTS.md files' })
+  for (const stdout of ['validation passed\n', `${skills}\n${skills}\n`, `${other}\n`]) {
+    const { findings } = gateRules.parseGateCountLine(stdout, 'skills')
+    assert.deepEqual(rules(findings), ['validator-count-missing'], stdout)
+    assert.equal(findings[0].leg, 'validate:skills')
+  }
+  const garbled = gateRules.parseGateCountLine('AGENT_QA_GATE_COUNT {not json\n', 'skills')
+  assert.deepEqual(rules(garbled.findings), ['validator-count-missing'])
+  const zero = countLine({ validator: 'publish', executed: 0, unit: 'packages packed' })
+  assert.deepEqual(rules(gateRules.parseGateCountLine(zero, 'publish').findings), [
+    'zero-executed',
+  ])
+})
+
+const CONFORMANCE_RUN = [
+  '[396-conformance] running 50 scenarios at requirements 2026-07-28',
+  '',
+  'MCP conformance: 9/37 required server scenarios passed (24.3%)',
+  '  suite pin            @modelcontextprotocol/conformance@0.2.0-alpha.11',
+  '  requirement set      2026-07-28 (frozen)',
+  '  scenarios executed   50 (37 required + 13 not scored)',
+  '  baseline entries     41 (declared in packages/mcp/conformance-baseline.yaml, all matched)',
+  '  ratchet exit code    0 (0 = no NEW failure and no stale entry; the score never gates)',
+].join('\n')
+
+test('the conformance run leg needs exit 0, its published headline and scenarios executed', () => {
+  assert.equal(typeof gateRules.conformanceFindings, 'function')
+  const legId = 'conformance'
+  const green = gateRules.conformanceFindings({ legId, exitCode: 0, output: CONFORMANCE_RUN })
+  assert.deepEqual(green.findings, [])
+  assert.equal(green.counts.executed, 50)
+  assert.equal(green.counts.passed, 9)
+  assert.equal(green.counts.total, 37)
+  assert.equal(green.counts.baselineEntries, 41)
+  const headless = CONFORMANCE_RUN.replace(/^MCP conformance: .*$/m, '')
+  const missing = gateRules.conformanceFindings({ legId, exitCode: 0, output: headless })
+  assert.deepEqual(rules(missing.findings), ['conformance-count-missing'])
+  const red = gateRules.conformanceFindings({ legId, exitCode: 1, output: CONFORMANCE_RUN })
+  assert.deepEqual(rules(red.findings), ['leg-exit-nonzero'])
+})
+
+const SELFTEST = [
+  '[396-conformance] S1 dead port: exit 1 (required nonzero) ✓',
+  '[396-conformance] S2 truncated set (1 scenario, not 50): exit 1, G2 fired ✓',
+  '    G2: the run executed 1 scenarios, the frozen set is 50.',
+  '[396-conformance] S3 ratchet boundary: with the stale entry exit 1, without it exit 0 ✓',
+  '[396-conformance] S4 dead baseline entry: the suite exited 0 (silent), G5 fired ✓',
+  '[396-conformance] selftest: all four proofs failed as required',
+].join('\n')
+
+test('the conformance selftest leg counts its proof lines and needs its final line', () => {
+  assert.equal(typeof gateRules.conformanceFindings, 'function')
+  const legId = 'conformance-selftest'
+  const green = gateRules.conformanceFindings({ legId, exitCode: 0, output: SELFTEST })
+  assert.deepEqual(green.findings, [])
+  assert.equal(green.counts.executed, 4)
+  const unfinished = SELFTEST.split('\n').slice(0, -1).join('\n')
+  const missing = gateRules.conformanceFindings({ legId, exitCode: 0, output: unfinished })
+  assert.deepEqual(rules(missing.findings), ['conformance-count-missing'])
+})
+
+function auditReport(vulnerabilities = {}, dependencies = 493) {
+  const metadata = {
+    vulnerabilities: { info: 0, low: 1, moderate: 5, high: 0, critical: 0, ...vulnerabilities },
+    dependencies,
+  }
+  return JSON.stringify({ advisories: {}, metadata })
+}
+
+test('the audit leg is judged by its JSON metadata: high or critical red, no report red', () => {
+  assert.equal(typeof gateRules.auditFindings, 'function')
+  const clean = gateRules.auditFindings({ exitCode: 0, stdout: auditReport() })
+  assert.deepEqual(clean.findings, [])
+  assert.equal(clean.counts.executed, 493)
+  assert.equal(clean.counts.high, 0)
+  assert.equal(clean.counts.critical, 0)
+  const moderatesOnly = gateRules.auditFindings({ exitCode: 1, stdout: auditReport() })
+  assert.deepEqual(moderatesOnly.findings, [])
+  const high = gateRules.auditFindings({ exitCode: 1, stdout: auditReport({ high: 1 }) })
+  assert.deepEqual(rules(high.findings), ['audit-findings'])
+  assert.equal(high.findings[0].leg, 'audit')
+  const critical = gateRules.auditFindings({ exitCode: 1, stdout: auditReport({ critical: 2 }) })
+  assert.deepEqual(rules(critical.findings), ['audit-findings'])
+  for (const stdout of ['ERR_PNPM_AUDIT_BAD_RESPONSE', '{"error":{"code":"E500"}}', '']) {
+    const { findings } = gateRules.auditFindings({ exitCode: 1, stdout })
+    assert.deepEqual(rules(findings), ['audit-no-observation'], stdout)
+  }
+  const empty = gateRules.auditFindings({ exitCode: 0, stdout: auditReport({}, 0) })
+  assert.deepEqual(rules(empty.findings), ['audit-no-observation'])
+})

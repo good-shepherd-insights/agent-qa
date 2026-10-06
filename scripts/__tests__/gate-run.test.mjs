@@ -680,3 +680,111 @@ test('--repeat runs back to back on one SHA into one repeat directory with a sum
   )
   assert.equal(calls.filter(call => call[1] === 'clone').length, 2)
 })
+
+test('buildGateLegs lists every required leg in order and never a removed or mutation one', () => {
+  const legs = gate.buildGateLegs({ root: '/clone/agent-qa', runDir: '/out/run' })
+  assert.deepEqual(
+    legs.map(leg => leg.id),
+    REQUIRED_LEGS,
+  )
+  for (const leg of legs) {
+    const words = [leg.id, ...leg.argv, ...(leg.dryRunArgv ?? [])].join(' ')
+    assert.doesNotMatch(words, /mutation|eval-root-hygiene|release-gate/, leg.id)
+  }
+  const byId = Object.fromEntries(legs.map(leg => [leg.id, leg]))
+  for (const id of ['validate:skills', 'validate:agents', 'validate:431-discovery-imports']) {
+    assert.deepEqual(byId[id].argv, ['pnpm', 'run', id])
+    assert.equal(byId[id].needsBuild, true)
+  }
+  assert.deepEqual(byId.conformance.argv, ['bash', 'scripts/396-conformance.sh'])
+  assert.deepEqual(byId['conformance-selftest'].argv.slice(-1), ['--selftest'])
+  assert.deepEqual(byId.audit.argv, ['pnpm', 'audit', '--prod', '--audit-level', 'high', '--json'])
+  for (const id of ['conformance-selftest', 'conformance', 'audit']) {
+    assert.equal(byId[id].needsBuild, false, id)
+  }
+  assert.deepEqual(
+    gate.buildGateLegs({}).map(leg => leg.id),
+    REQUIRED_LEGS,
+  )
+})
+
+test('validator, conformance and audit legs read structured counts from their output', async t => {
+  const { source, out, temp } = await fixture(t)
+  populatePin(source)
+  const runner = MEMBERS.indexOf('@vostride/agent-qa-runner')
+  const toolsTest = 'src/tools/__tests__/validate-tools.test.ts'
+  const scripts = {
+    'validate:tools': `pnpm --filter @vostride/agent-qa-runner exec vitest run ${toolsTest}`,
+  }
+  writeFileSync(join(source, 'package.json'), JSON.stringify({ scripts }))
+  const { deps } = turboDeps({ temp, source })
+  const exec = deps.exec
+  deps.exec = (command, args, opts) => {
+    if (command === 'git' && args.includes('ls-files')) {
+      const files = ['packages/a/src/x.ts', 'packages/a/dist/x.js', 'packages/a/package.json']
+      return { status: 0, stdout: `${files.join('\0')}\0`, stderr: '' }
+    }
+    return exec(command, args, opts)
+  }
+  const skillsCount = { validator: 'skills', executed: 4, unit: 'skills' }
+  const outputs = {
+    'validate:skills': `AGENT_QA_GATE_COUNT ${JSON.stringify(skillsCount)}`,
+    '--selftest': [
+      '[396-conformance] S1 dead port: exit 1 (required nonzero) ✓',
+      '[396-conformance] S2 truncated set: exit 1, G2 fired ✓',
+      '[396-conformance] selftest: all four proofs failed as required',
+    ].join('\n'),
+    'scripts/396-conformance.sh': [
+      'MCP conformance: 9/37 required server scenarios passed (24.3%)',
+      '  scenarios executed   50 (37 required + 13 not scored)',
+      '  baseline entries     41 (declared in packages/mcp/conformance-baseline.yaml)',
+    ].join('\n'),
+  }
+  const audit = {
+    advisories: {},
+    metadata: {
+      vulnerabilities: { info: 0, low: 1, moderate: 5, high: 0, critical: 0 },
+      dependencies: 493,
+    },
+  }
+  deps.run = async (command, args, { logPath, stdoutPath }) => {
+    const key = args.find(arg => Object.hasOwn(outputs, arg))
+    writeFileSync(logPath, `${key ? outputs[key] : 'ok'}\n`)
+    const json = args.find(arg => arg.startsWith('--outputFile.json='))
+    if (json) {
+      const name = join(source, `packages/p${runner}`, toolsTest)
+      const results = [
+        { name, status: 'passed', assertionResults: [{ title: 't', status: 'passed' }] },
+      ]
+      const report = JSON.stringify({ success: true, testResults: results })
+      writeFileSync(json.slice(json.indexOf('=') + 1), report)
+    }
+    if (command === 'pnpm' && args[0] === 'audit') writeFileSync(stdoutPath, JSON.stringify(audit))
+    return { exitCode: command === 'pnpm' && args[0] === 'audit' ? 1 : 0, durationMs: 1 }
+  }
+  const only = [
+    'validate:skills',
+    'validate:tools',
+    'lint:namespace',
+    'conformance-selftest',
+    'conformance',
+    'audit',
+  ]
+  const summary = await gate.runGate({ out, source, inPlace: true, only }, deps)
+  assert.deepEqual(summary.findings, [])
+  const executed = Object.fromEntries(summary.legs.map(leg => [leg.id, leg.executed]))
+  assert.deepEqual(executed, {
+    'validate:skills': 4,
+    'validate:tools': 1,
+    'lint:namespace': 2,
+    'conformance-selftest': 2,
+    conformance: 50,
+    audit: 493,
+  })
+  const auditLeg = summary.legs.find(leg => leg.id === 'audit')
+  assert.equal(auditLeg.high, 0)
+  assert.equal(auditLeg.critical, 0)
+  const raw = join(summary.runDir, 'raw', 'audit.json.gz')
+  assert.equal(JSON.parse(gunzipSync(readFileSync(raw))).metadata.dependencies, 493)
+  assert.equal(summary.legs.find(leg => leg.id === 'conformance').baselineEntries, 41)
+})
