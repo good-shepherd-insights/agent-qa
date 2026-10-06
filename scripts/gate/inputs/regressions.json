@@ -1,4 +1,209 @@
 {
   "schemaVersion": 1,
-  "cells": []
+  "cells": [
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/423-evidence-run-paths.test.ts",
+      "fullName": "ARIA-COLD-READBACK / ARIA-SIDE-BEFORE: two children retain distinct before trees and decision screenshots across DB reopen",
+      "origin": "434 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/423-evidence-run-paths.test.ts",
+      "fullName": "ARIA-COLD-READBACK: empty before trees retain their own screenshots and empty state",
+      "origin": "434 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/423-evidence-run-paths.test.ts",
+      "fullName": "ARIA-COLD-READBACK: missing blob marks only its cited ref absent without selecting its sibling",
+      "origin": "434 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/423-evidence-run-paths.test.ts",
+      "fullName": "ARIA-COLD-READBACK / EVID-MOBILE-TREE: existing Android before trees survive cold readback",
+      "origin": "434 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/434-no-super-repo-reads.test.ts",
+      "fullName": "C434-NO-SUPER-REPO-READS — test code reads nothing outside the agent-qa root (434 D-14) C434-NO-SUPER-REPO-READS: the scan universe is the workspace's test and test-helper code",
+      "origin": "434 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/434-no-super-repo-reads.test.ts",
+      "fullName": "C434-NO-SUPER-REPO-READS — test code reads nothing outside the agent-qa root (434 D-14) C434-NO-SUPER-REPO-READS: every detection rule fires on its planted shape and ignores comments and data strings",
+      "origin": "434 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/434-no-super-repo-reads.test.ts",
+      "fullName": "C434-NO-SUPER-REPO-READS — test code reads nothing outside the agent-qa root (434 D-14) C434-NO-SUPER-REPO-READS: no test or test helper resolves a path outside the agent-qa root except the not-run register's files",
+      "origin": "434 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/434-no-super-repo-reads.test.ts",
+      "fullName": "C434-NO-SUPER-REPO-READS — test code reads nothing outside the agent-qa root (434 D-14) C434-NO-SUPER-REPO-READS: every allowed escape still escapes",
+      "origin": "434 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/434-no-super-repo-reads.test.ts",
+      "fullName": "C434-NO-SUPER-REPO-READS — test code reads nothing outside the agent-qa root (434 D-14) C434-NO-SUPER-REPO-READS: in-repo demo-project reads stay inside the root",
+      "origin": "434 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/434-no-super-repo-reads.test.ts",
+      "fullName": "C434-NO-SUPER-REPO-READS — test code reads nothing outside the agent-qa root (434 D-14) C434-NO-SUPER-REPO-READS: this file matches none of its own rules",
+      "origin": "434 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/tools-local/src/__tests__/ownership-contract.test.ts",
+      "fullName": "tools-local ownership contract exposes the package metadata",
+      "origin": "434 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/tools-local/src/__tests__/ownership-contract.test.ts",
+      "fullName": "tools-local ownership contract declares exactly the runtime dependencies package.json carries",
+      "origin": "434 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/tools-local/src/__tests__/ownership-contract.test.ts",
+      "fullName": "tools-local ownership contract keeps ownership responsibilities explicit",
+      "origin": "434 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/demo-init-fixture-manifest.test.ts",
+      "fullName": "DEMO-INIT-FIXTURE: the manifest lists every vendored file and nothing else",
+      "origin": "434 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/demo-init-fixture-manifest.test.ts",
+      "fullName": "DEMO-INIT-FIXTURE: every vendored file matches its manifest sha-256 and size",
+      "origin": "434 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/demo-init-fixture-manifest.test.ts",
+      "fullName": "DEMO-INIT-FIXTURE: the frozen judge contracts and config keep their pinned hashes",
+      "origin": "434 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/judge-panel-contract.test.ts",
+      "fullName": "reproduces complete frozen v2 bytes and preserves historical v1 and both material hashes",
+      "origin": "434 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/judge-panel-tracer.test.ts",
+      "fullName": "publishes the frozen v2 constitution and sanctioned public panel binding",
+      "origin": "434 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/judge-panel-acceptance.test.ts",
+      "fullName": "public explicit replay, score/report, floor, baseline and saved gate: singleton=false",
+      "origin": "434 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/promotion-posture.test.ts",
+      "fullName": "buildPromotionPostureResolver D-10 demo/init exposes measured host facts and synchronous per-candidate selection",
+      "origin": "434 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/promotion-posture.test.ts",
+      "fullName": "buildPromotionPostureResolver D-10 a binding flips availability without invoking the replay gate",
+      "origin": "434 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/eval-judge-calibrate.test.ts",
+      "fullName": "publishes through the public command and regenerates unchanged without changing labels",
+      "origin": "434 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/knowledge-maintain.test.ts",
+      "fullName": "knowledge maintenance commands binds lazy replay so inline maintenance enforces receipts and the quiet rare path",
+      "origin": "434 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/lower-trust-lifecycle.test.ts",
+      "fullName": "418 lower-trust active lifecycle through real store, resolver and serving keeps new candidates capped and requires a new quiet horizon after a changed Gate-1",
+      "origin": "434 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/post-run-tail.test.ts",
+      "fullName": "the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07) binds lazy replay so the actual tail resolver holds missing receipts and permits the quiet rare path",
+      "origin": "434 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/doctor-knowledge-checks.test.ts",
+      "fullName": "createKnowledgeChecks discloses actual on-disk shares through the production doctor facts binding without replay or writes",
+      "origin": "434 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent-local/src/__tests__/strategy-config-unreachable.test.ts",
+      "fullName": "the seam exists, and exists only as a composition option is named in the composition input and in no configuration document",
+      "origin": "434 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/committed-brief-rendering.test.ts",
+      "fullName": "415 D-07 — committed populated-brief reconstruction 415 D-07 — layout: names why the committed cassette sweep did or did not run",
+      "origin": "434 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/432-external-callers.test.ts",
+      "fullName": "C432-LIVE-CALLERS-LAYOUT — the file says which callers it could drive (quick 261002-hyg) C432-LIVE-CALLERS-LAYOUT: names every skipped caller group and why, so a skip is never a pass",
+      "origin": "434 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/knowledge-local/src/projection/__tests__/gate-run-exclusion.e2e.test.ts",
+      "fullName": "the INVK-06 consumer census is frozen and self-checking (D-15) THE MARKER SCAN EQUALS THE FROZEN CENSUS — n in, n classified, no silent drops",
+      "origin": "434 D-15 #485"
+    },
+    {
+      "runner": "vitest",
+      "file": "tools/embedding-bench/src/__tests__/tau-lex.test.ts",
+      "fullName": "tau lexical calibration uses linear-interpolated p05 followed by a floor to two decimals",
+      "origin": "434 D-23"
+    },
+    {
+      "runner": "vitest",
+      "file": "tools/embedding-bench/src/__tests__/tau-lex.test.ts",
+      "fullName": "tau lexical calibration writes deterministic JSON and markdown receipts from weighted positive BM25 scores",
+      "origin": "434 D-23"
+    },
+    {
+      "runner": "vitest",
+      "file": "tools/embedding-bench/src/__tests__/tau-lex.test.ts",
+      "fullName": "tau lexical calibration scores overlapping background golds independently without changing the indexed corpus",
+      "origin": "434 D-23"
+    },
+    {
+      "runner": "vitest",
+      "file": "tools/embedding-bench/src/__tests__/tau-lex.test.ts",
+      "fullName": "tau lexical calibration fails closed when a recorded gold member is absent from the corpus",
+      "origin": "434 D-23"
+    }
+  ]
 }
