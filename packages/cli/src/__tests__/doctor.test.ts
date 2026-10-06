@@ -1082,7 +1082,10 @@ targets:
   it('prints four rows between Legacy v1 memory data and Config validation, store then embedder then rung then learning', async () => {
     await runHealthyHost()
 
-    const indexOf = (name: string): number => consoleLogs.findIndex(line => line.includes(`    ${name}  `))
+    // Row heads only: a row whose message embeds the checkout path wraps beneath itself where the
+    // checkout path is long (a gate clone under /private/var/folders), which shifts raw line indexes.
+    const heads = consoleLogs.map(stripAnsi).filter(line => /^ {4}\S/.test(line))
+    const indexOf = (name: string): number => heads.findIndex(line => line.startsWith(`    ${name}  `))
     const legacy = indexOf('Legacy v1 memory data')
     const validation = indexOf('Config validation')
     const positions = KNOWLEDGE_ROW_NAMES.map(indexOf)
