@@ -43,6 +43,8 @@
 // built from; that is `render-anchors.test.ts`'s spawned anchors, one per door, and they assert the
 // same markers these cells assert.
 
+import { stripVTControlCharacters } from 'node:util'
+
 import { maskedToolResult } from '@vostride/agent-qa-mcp'
 import { describe, expect, it } from 'vitest'
 
@@ -415,11 +417,13 @@ describe('399.1 — the turn shape a person reads (E2E-02 empty/ordering edges)'
 
     // What a person SAW. Sliced after the session banner, because the starter prompts chat prints at
     // open are committed catalogue text that arrives before any turn runs (the 398-13 vacuity trap).
+    // picocolors colors whenever `CI` is set, and a CSI escape is not a `[` a person reads.
+    const read = stripVTControlCharacters(observed.stdout)
     const marker = 'session chat-'
-    const at = observed.stdout.indexOf(marker)
+    const at = read.indexOf(marker)
     expect(at, `the drive never printed a session banner; stdout was `
-      + `${JSON.stringify(observed.stdout.slice(0, 600))}`).toBeGreaterThanOrEqual(0)
-    const turnBytes = observed.stdout.slice(at + marker.length)
+      + `${JSON.stringify(read.slice(0, 600))}`).toBeGreaterThanOrEqual(0)
+    const turnBytes = read.slice(at + marker.length)
 
     for (const artifact of ['undefined', '(no result)', '{', '[']) {
       expect(

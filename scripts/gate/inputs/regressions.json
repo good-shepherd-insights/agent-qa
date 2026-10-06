@@ -216,6 +216,12 @@
       "file": "packages/cli/src/__tests__/ask-command.test.ts",
       "fullName": "agent-qa ask (the one-shot chat verb) a returned failure fails the shell (in-process)",
       "origin": "434 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/render-parity.test.ts",
+      "fullName": "399.1 — the turn shape a person reads (E2E-02 empty/ordering edges) prints no payload block, and no `undefined`, for a turn that executed nothing",
+      "origin": "434 D-20"
     }
   ]
 }
