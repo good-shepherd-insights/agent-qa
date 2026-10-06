@@ -210,6 +210,12 @@
       "file": "packages/arch/src/__tests__/turbo-arch-test-order.test.ts",
       "fullName": "C-HYG-ARCH-TEST-ORDER — the arch test runs after every build it reads C-HYG-ARCH-TEST-ORDER: the arch typecheck also runs after every build it reads (434 D-20, fresh clone)",
       "origin": "434 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/ask-command.test.ts",
+      "fullName": "agent-qa ask (the one-shot chat verb) a returned failure fails the shell (in-process)",
+      "origin": "434 D-20"
     }
   ]
 }

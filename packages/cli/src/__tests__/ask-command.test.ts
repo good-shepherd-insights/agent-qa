@@ -13,6 +13,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { stripVTControlCharacters } from 'node:util'
 
 import { Command } from 'commander'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -136,7 +137,8 @@ const REFUSED_CLAUSE = `/fn config.field.set ${JSON.stringify({
  * against a build that rendered no receipt at all.
  */
 function failedAgentAskReceiptLine(stdout: string): string | undefined {
-  return stdout.split('\n').find(
+  // picocolors colors when `CI` is set (the gate sets it), and an in-process drive keeps the escapes.
+  return stripVTControlCharacters(stdout).split('\n').find(
     (line) => line.trim().startsWith('failed') && line.includes('agent.ask'),
   )
 }
