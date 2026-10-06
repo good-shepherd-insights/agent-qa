@@ -345,6 +345,7 @@ function validatePackFiles(record, files, errors) {
 }
 
 function validatePackDryRuns(errors) {
+  let packed = 0
   runCopySkills(errors)
   const npmCache = mkdtempSync(join(tmpdir(), 'agent-qa-npm-pack-cache-'))
   const npmEnv = {
@@ -372,10 +373,12 @@ function validatePackDryRuns(errors) {
 
       const files = parsePackOutput(output, record, errors)
       validatePackFiles(record, files, errors)
+      packed += 1
     }
   } finally {
     rmSync(npmCache, { recursive: true, force: true })
   }
+  return packed
 }
 
 function expectFixtureFailure(name, fn, expectedText) {
@@ -476,9 +479,7 @@ function runValidation() {
   validateNoStaleMcpToolPrefix(errors)
   runSourceSkillsValidation(errors)
 
-  if (!quick) {
-    validatePackDryRuns(errors)
-  }
+  const packed = quick ? 0 : validatePackDryRuns(errors)
 
   if (errors.length > 0) {
     console.error('publish surface validation failed:')
@@ -490,6 +491,8 @@ function runValidation() {
   }
 
   console.log(`publish surface validation passed (${quick ? 'quick' : 'full'})`)
+  const count = { validator: 'publish', executed: packed, unit: 'packages packed' }
+  console.log(`AGENT_QA_GATE_COUNT ${JSON.stringify(count)}`)
 }
 
 if (fixtures) {
