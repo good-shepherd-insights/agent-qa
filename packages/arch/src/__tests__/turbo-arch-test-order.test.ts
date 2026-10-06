@@ -5,6 +5,8 @@
  * its own `^build` orders nothing. A forced `--concurrency=2` run once started the arch tests
  * while the schema build had cleared its `dist`. This pins the task graph that prevents it: the
  * arch test waits for every package build under `packages/`, named or reached through `^build`.
+ * The arch typecheck compiles the same source, so a fresh clone (no `dist` yet) needs the same
+ * order for it (434-13).
  */
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -15,6 +17,7 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const PACKAGES_DIR = join(HERE, '..', '..', '..')
 const REPO_ROOT = join(PACKAGES_DIR, '..')
 const ARCH_TEST = '@vostride/agent-qa-arch#test'
+const ARCH_TYPECHECK = '@vostride/agent-qa-arch#typecheck'
 
 interface Manifest {
   name: string
@@ -46,42 +49,52 @@ function workspaceDeps(manifest: Manifest, names: ReadonlySet<string>): string[]
   return Object.keys(all).filter((name) => names.has(name))
 }
 
+const NAMED_BUILDS = [
+  '^build',
+  '@vostride/agent-qa-schema#build',
+  '@vostride/agent-qa-agent#build',
+  '@vostride/agent-qa-tools-local#build',
+  '@vostride/agent-qa-core#build',
+  'agent-qa#build',
+]
+
+function expectCoversEveryBuild(task: string): void {
+  const turbo = JSON.parse(readFileSync(join(REPO_ROOT, 'turbo.json'), 'utf8')) as {
+    tasks: Record<string, { dependsOn?: string[] }>
+  }
+  const dependsOn = turbo.tasks[task]?.dependsOn ?? []
+  for (const named of NAMED_BUILDS) {
+    expect(dependsOn, named).toContain(named)
+  }
+
+  const byName = manifests()
+  const names = new Set(byName.keys())
+  const reached = new Set<string>()
+  const stack = dependsOn
+    .filter((entry) => entry.endsWith('#build'))
+    .map((entry) => entry.slice(0, -'#build'.length))
+  stack.push(...workspaceDeps(byName.get('@vostride/agent-qa-arch')!, names))
+  while (stack.length > 0) {
+    const name = stack.pop()!
+    if (reached.has(name)) continue
+    reached.add(name)
+    const manifest = byName.get(name)
+    if (manifest !== undefined) stack.push(...workspaceDeps(manifest, names))
+  }
+
+  const builds = [...byName.values()]
+    .filter((manifest) => manifest.scripts?.build !== undefined)
+    .map((manifest) => manifest.name)
+  const missing = builds.filter((name) => !reached.has(name)).sort()
+  expect(missing, `add each to ${task}.dependsOn in turbo.json`).toEqual([])
+}
+
 describe('C-HYG-ARCH-TEST-ORDER — the arch test runs after every build it reads', () => {
   it('C-HYG-ARCH-TEST-ORDER: names the packages it reads and covers every package build', () => {
-    const turbo = JSON.parse(readFileSync(join(REPO_ROOT, 'turbo.json'), 'utf8')) as {
-      tasks: Record<string, { dependsOn?: string[] }>
-    }
-    const dependsOn = turbo.tasks[ARCH_TEST]?.dependsOn ?? []
-    for (const named of [
-      '^build',
-      '@vostride/agent-qa-schema#build',
-      '@vostride/agent-qa-agent#build',
-      '@vostride/agent-qa-tools-local#build',
-      '@vostride/agent-qa-core#build',
-      'agent-qa#build',
-    ]) {
-      expect(dependsOn, named).toContain(named)
-    }
+    expectCoversEveryBuild(ARCH_TEST)
+  })
 
-    const byName = manifests()
-    const names = new Set(byName.keys())
-    const reached = new Set<string>()
-    const stack = dependsOn
-      .filter((entry) => entry.endsWith('#build'))
-      .map((entry) => entry.slice(0, -'#build'.length))
-    stack.push(...workspaceDeps(byName.get('@vostride/agent-qa-arch')!, names))
-    while (stack.length > 0) {
-      const name = stack.pop()!
-      if (reached.has(name)) continue
-      reached.add(name)
-      const manifest = byName.get(name)
-      if (manifest !== undefined) stack.push(...workspaceDeps(manifest, names))
-    }
-
-    const builds = [...byName.values()]
-      .filter((manifest) => manifest.scripts?.build !== undefined)
-      .map((manifest) => manifest.name)
-    const missing = builds.filter((name) => !reached.has(name)).sort()
-    expect(missing, `add each to ${ARCH_TEST}.dependsOn in turbo.json`).toEqual([])
+  it('C-HYG-ARCH-TEST-ORDER: the arch typecheck also runs after every build it reads (434 D-20, fresh clone)', () => {
+    expectCoversEveryBuild(ARCH_TYPECHECK)
   })
 })

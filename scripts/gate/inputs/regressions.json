@@ -204,6 +204,12 @@
       "file": "tools/embedding-bench/src/__tests__/tau-lex.test.ts",
       "fullName": "tau lexical calibration fails closed when a recorded gold member is absent from the corpus",
       "origin": "434 D-23"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/turbo-arch-test-order.test.ts",
+      "fullName": "C-HYG-ARCH-TEST-ORDER — the arch test runs after every build it reads C-HYG-ARCH-TEST-ORDER: the arch typecheck also runs after every build it reads (434 D-20, fresh clone)",
+      "origin": "434 D-20"
     }
   ]
 }
