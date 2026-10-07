@@ -33,6 +33,7 @@ import type {
   ModelIdentity,
   MaskingContext,
   ModelCallRecord,
+  OperationCaptureAvailability,
   PlanningFailureEvidence,
   Point,
   RecordedActionResult,
@@ -308,6 +309,7 @@ export class EvidenceRecorder {
   private termination?: TerminationEvidence
   private limitStop?: LimitStopEvidence
   private limitUsage?: StepLimitUsage
+  private operationCapture?: OperationCaptureAvailability
   private aiJudgment?: AiJudgmentEvidence
   private assertOutcome?: AssertValueEvidence
   private verdictSource?: VerdictSource
@@ -617,6 +619,11 @@ export class EvidenceRecorder {
     this.limitStop = evidence
   }
 
+  /** Record whether the step's platform could capture each operation (436 D-23). */
+  recordOperationCapture(availability: OperationCaptureAvailability): void {
+    this.operationCapture = availability
+  }
+
   /** Record the step's configured limits and usage (436 D-11); finish() calls it on every path. */
   recordLimitUsage(usage: StepLimitUsage): void {
     this.limitUsage = usage
@@ -754,6 +761,7 @@ export class EvidenceRecorder {
     if (this.termination) evidence.termination = this.termination
     if (this.limitStop) evidence.limitStop = this.limitStop
     if (this.limitUsage) evidence.limitUsage = this.limitUsage
+    if (this.operationCapture) evidence.operationCapture = this.operationCapture
     if (this.aiJudgment) evidence.aiJudgment = this.aiJudgment
     if (this.assertOutcome) evidence.assertOutcome = this.assertOutcome
     if (this.verdictSource) evidence.verdictSource = this.verdictSource

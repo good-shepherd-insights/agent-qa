@@ -13,6 +13,7 @@ import {
   type ScreenState,
   type ServedPromptTurn,
 } from '@vostride/agent-qa-schema'
+import { wrapAppObservedData } from '@vostride/agent-qa-safety'
 import type { ModelMessage, SystemModelMessage } from 'ai'
 import type { Action } from '../platform.js'
 import type { StepContext, AssertionInput, ExtractorInput, VerifierAuthorContext } from './types.js'
@@ -798,6 +799,7 @@ export function buildVerificationPrompt(
   promptNote?: string,
   bulkCompletionPredicate?: string,
   authorContext?: VerifierAuthorContext,
+  operationEvidence?: OperationEvidence,
 ): string {
   const parts: string[] = []
 
@@ -834,6 +836,14 @@ export function buildVerificationPrompt(
   }
 
   appendPromptNote(parts, promptNote)
+
+  // 436 D-22: appended only when present, so the prompt bytes without evidence are unchanged.
+  const evidence = operationEvidence ? renderOperationEvidence(operationEvidence) : ''
+  if (evidence.length > 0) {
+    parts.push('')
+    parts.push('Operation evidence from the actions taken in this step:')
+    parts.push(wrapAppObservedData(evidence))
+  }
 
   return parts.join('\n')
 }

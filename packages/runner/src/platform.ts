@@ -77,6 +77,13 @@ export interface RecordingCapability {
   beginAnnotation?(): (() => RecordingAnnotationWitness | undefined) | undefined
 }
 
+export interface OperationCaptureSupport {
+  download: boolean
+  clipboard: boolean
+  /** Why a capture is unsupported, e.g. the browser name. */
+  reason?: string
+}
+
 export interface PlatformAdapter<P extends Platform = Platform> {
   readonly platform: P
 
@@ -96,6 +103,11 @@ export interface PlatformAdapter<P extends Platform = Platform> {
    */
   readonly liveStream?: LiveStreamCapability
   readonly recording?: RecordingCapability
+  /**
+   * 436 D-23: which operation-specific captures this adapter runs. ABSENT means none; the loop
+   * then records both as unavailable, with `reason` or else 'platform'.
+   */
+  readonly operationCaptureSupport?: OperationCaptureSupport
   drainConsoleLogs?(level?: string): ConsoleLogEntry[]
   drainNetworkLogs?(urlPattern?: string): NetworkLogEntry[]
 }

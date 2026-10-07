@@ -248,7 +248,7 @@ describe('C436-OPERATION-EVIDENCE verifier input and availability', () => {
     expect(withNone).toBe(without)
     expect(without).not.toContain('Operation evidence')
     expect(withEvidence.startsWith(without)).toBe(true)
-    expect(withEvidence.slice(without.length)).toBe([
+    expect(withEvidence.slice(without.length)).toBe(['',
       '',
       'Operation evidence from the actions taken in this step:',
       APP_OBSERVED_DATA_OPEN,

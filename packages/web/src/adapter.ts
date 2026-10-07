@@ -6,6 +6,7 @@ import type {
   LiveStreamCapability,
   NetworkLogEntry,
   ObserveOptions,
+  OperationCaptureSupport,
   PlatformAdapter,
   PlatformConfig,
   RecordingCapability,
@@ -181,6 +182,8 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   private screencastRecoveryTimer: ReturnType<typeof setTimeout> | null = null
   // 436 D-19: download capture, Chromium only; armed around each execute().
   private operationCapture: OperationCapture | null = null
+  // 436 D-23: Firefox and WebKit run no capture and name themselves as the reason.
+  operationCaptureSupport: OperationCaptureSupport | undefined
 
   async setup(config: PlatformConfig): Promise<void> {
     this.recordingConfig = config.recording
@@ -236,6 +239,9 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     if (browserName === 'chromium') {
       this.operationCapture = new OperationCapture({ completionCapMs: config.timeouts?.step })
       this.operationCapture.attach(this.context)
+      this.operationCaptureSupport = { download: true, clipboard: true }
+    } else {
+      this.operationCaptureSupport = { download: false, clipboard: false, reason: browserName }
     }
   }
 
@@ -591,6 +597,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     this.context = null
     this.page = null
     this.operationCapture = null
+    this.operationCaptureSupport = undefined
     this.lastRefs = {}
     this.pageLogBuffers.clear()
     this.disconnected = false

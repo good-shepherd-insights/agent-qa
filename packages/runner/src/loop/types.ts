@@ -11,6 +11,7 @@ import type {
   GroundingAttempt,
   InterpolatedVariable,
   ModelCallRecord,
+  OperationEvidence,
   ScreenState,
   ToolExchangeEvidence,
   WorkingMemoryEntry,
@@ -205,7 +206,7 @@ export interface VerifierAuthorContext {
 }
 
 export interface Verifier {
-  verify(step: string, before: ScreenState, after: ScreenState, action: Action, screenshot?: Buffer, abortSignal?: AbortSignal, promptNote?: string, bulkCompletionPredicate?: string, authorContext?: VerifierAuthorContext): Promise<VerifyResult>
+  verify(step: string, before: ScreenState, after: ScreenState, action: Action, screenshot?: Buffer, abortSignal?: AbortSignal, promptNote?: string, bulkCompletionPredicate?: string, authorContext?: VerifierAuthorContext, operationEvidence?: OperationEvidence): Promise<VerifyResult>
   /**
    * D-05 AI judge lane (EXEC-07, spec §9.6/§12.2) — OPTIONAL so every existing Verifier
    * implementor keeps compiling (D-05: no new port). Plan 09 implements this on LLMVerifier

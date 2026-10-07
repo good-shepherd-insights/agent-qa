@@ -7,6 +7,7 @@ import type { WorkingMemoryEntry } from '../memory/working-memory-entry'
 import type { RecordedActionResult } from '../result/index'
 import type { LimitStopEvidence, StepLimitUsage } from './limit-evidence'
 import type { DeclaredModelProfile, ModelIdentity } from './model-call-profile'
+import type { OperationCaptureAvailability } from './operation-evidence'
 import type { CycleEvidence, StagnationEvidence } from './progress-evidence'
 import type { SubActionEvidence } from './sub-action-evidence'
 import type { PlanningFailureEvidence } from './tool-exchange'
@@ -224,6 +225,8 @@ export interface StepEvidence {
   limitStop?: LimitStopEvidence
   /** The configured per-step limits and what this step used against them (436 D-11). */
   limitUsage?: StepLimitUsage
+  /** Whether this step's platform could capture downloads and clipboard writes at all (436 D-23). */
+  operationCapture?: OperationCaptureAvailability
   /**
    * The `assertAI`/`extractAI` judge block (D-05/D-06/D-07/D-09). Present when the step ran an
    * AI verb through the verifier model lane; carries verdict, rationale, deferred knobs, and the

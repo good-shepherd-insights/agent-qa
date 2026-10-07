@@ -23,6 +23,7 @@ import type {
   ActionAnnotation,
   CompoundInputCount,
   LimitStopEvidence,
+  OperationCaptureAvailability,
   OperationEvidence,
   RecordingAnnotationWitness,
   ActionResult as SchemaActionResult,
@@ -51,7 +52,7 @@ import type {
   WorkingMemoryEntry,
 } from '@vostride/agent-qa-schema'
 import { wrapAppObservedData } from '@vostride/agent-qa-safety'
-import type { Action, ActionResult } from '../platform.js'
+import type { Action, ActionResult, OperationCaptureSupport } from '../platform.js'
 import type { StepResult, StepTrace, SubActionTrace, TokenUsage } from '../result.js'
 import { stampCaptureMode } from '../screen-builder.js'
 import { normalizePointerActionForStep } from '../tools/pointer-action-normalization.js'
@@ -229,6 +230,10 @@ export async function executeStep(
   })
   const maskValue = ports.masking?.mask ?? ((value: string) => value)
   context.subActionHistory = []
+  // 436 D-23: what this platform can capture, recorded once per step; unsupported never invents.
+  recorder.recordOperationCapture(operationCaptureAvailability(ports.adapter.operationCaptureSupport))
+  // 436 D-22: the step's operation evidence across its sub-actions, for the verifier.
+  const stepOperationEvidence: OperationEvidence = {}
   // D-17: one ledger object lives where turns live. A bound object is shared with Channel-2 tool
   // closures; otherwise this step-local instance still accounts for the frozen Channel-1 brief.
   const recordLedger = ports.recordLedger ?? createRecordLedger({
@@ -1593,6 +1598,12 @@ export async function executeStep(
     const historyEvidence = operationEvidence !== undefined
       ? { evidence: wrapAppObservedData(renderOperationEvidence(operationEvidence)) }
       : {}
+    if (operationEvidence?.downloads) {
+      stepOperationEvidence.downloads = [...(stepOperationEvidence.downloads ?? []), ...operationEvidence.downloads]
+    }
+    if (operationEvidence?.clipboard) {
+      stepOperationEvidence.clipboard = [...(stepOperationEvidence.clipboard ?? []), ...operationEvidence.clipboard]
+    }
 
     // D-09 policy-denied terminal failure. A gate deny at ANY of the five dispatch paths ends the
     // step immediately, carrying the gate's audited D-16 reason (classification + remediation come
@@ -1797,6 +1808,7 @@ export async function executeStep(
             stepInstruction, screenState, afterState, action,
             gate.attachImage ? verifyScreenshot : undefined,
             ports.abortSignal, gate.promptNote, activePredicate, verifierAuthorContext,
+            ...(stepOperationEvidence.downloads || stepOperationEvidence.clipboard ? [stepOperationEvidence] : []),
           ),
           ports.abortSignal,
         )
@@ -2732,6 +2744,15 @@ function regroundFailedRef(
     ],
   }
   return { field: entry.field, ref: match.ref, grounding }
+}
+
+function operationCaptureAvailability(
+  support: OperationCaptureSupport | undefined,
+): OperationCaptureAvailability {
+  const download = support?.download ? 'available' : 'unavailable'
+  const clipboard = support?.clipboard ? 'available' : 'unavailable'
+  if (download === 'available' && clipboard === 'available') return { download, clipboard }
+  return { download, clipboard, reason: support?.reason ?? 'platform' }
 }
 
 function takeOperationEvidence(
