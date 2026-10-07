@@ -272,13 +272,28 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
 
       expect(await p.swipeOnce('down')).toBe('moved')
       expect(gestureCalls()).toHaveLength(1)
-      expect(gestureCalls()[0][1]).toEqual({ left: 0, top: 0, width: 1080, height: 1920, direction: 'down', percent: 0.75 })
+      // 436-12 (live A1): the area keeps to the middle 60% of the swipe axis, clear of the system
+      // gesture zones.
+      expect(gestureCalls()[0][1]).toEqual({ left: 0, top: 384, width: 1080, height: 1152, direction: 'down', percent: 0.75 })
 
       expect(await p.swipeOnce('up', ref)).toBe('at-boundary')
       expect(gestureCalls()).toHaveLength(2)
       expect(gestureCalls()[1][1]).toEqual({ left: 100, top: 550, width: 880, height: 100, direction: 'up', percent: 0.75 })
       // The gesture is the driver's own scroll; no raw pointer swipe is sent beside it.
       expect(mockDriver._pointerAction.perform).not.toHaveBeenCalled()
+    })
+
+    it('a swipe never starts in a system gesture zone', async () => {
+      await adapter.setup({ platform: 'android' })
+      await adapter.observe()
+      const p = await primitivesOf(adapter)
+
+      await p.swipeOnce('left')
+      await p.swipeOnce('up')
+      expect(gestureCalls().map(c => c[1])).toEqual([
+        { left: 216, top: 0, width: 648, height: 1920, direction: 'left', percent: 0.75 },
+        { left: 0, top: 384, width: 1080, height: 1152, direction: 'up', percent: 0.75 },
+      ])
     })
 
     it('the WebView context reports movement from window.scrollY', async () => {

@@ -421,6 +421,30 @@ function coerceWebScroll(
   return { offsetX: 0, offsetY: 0, contentWidth: viewport.width, contentHeight: viewport.height }
 }
 
+/**
+ * 2026-10-08 (436-12, live A1): a gesture that starts in a system gesture zone (the home and
+ * recents bar at the bottom, the shade at the top, the back edges at the sides) is taken by
+ * Android, not the app: the list does not move and scrollGesture answers false, which would read
+ * as a boundary. The area is kept to the middle 60% of the screen on the swipe axis, where the
+ * swipe ran before 436-02; an area wholly outside that band is used as it is.
+ */
+function gestureArea(
+  bounds: { x: number; y: number; width: number; height: number },
+  direction: Direction,
+  viewport: { width: number; height: number },
+): { x: number; y: number; width: number; height: number } {
+  const vertical = direction === 'up' || direction === 'down'
+  const length = vertical ? viewport.height : viewport.width
+  const start = vertical ? bounds.y : bounds.x
+  const end = start + (vertical ? bounds.height : bounds.width)
+  const from = Math.max(start, Math.round(length * 0.2))
+  const to = Math.min(end, Math.round(length * 0.8))
+  if (to - from < 1) return bounds
+  return vertical
+    ? { ...bounds, y: from, height: to - from }
+    : { ...bounds, x: from, width: to - from }
+}
+
 export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
   readonly platform = 'android' as const
 
@@ -983,10 +1007,15 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     return {
       swipeOnce: async (direction: Direction, ref?: Ref): Promise<SwipeSignal> => {
         if (this.activeWebContext) return webViewSwipe(direction, ref)
-        const area = ref
-          ? new MobileElementResolver(this.lastRefs).resolve(ref).bounds
-          : { x: 0, y: 0, width: viewport.width, height: viewport.height }
-        // A1 (436-RESEARCH): true = "further scrolling is possible"; 436-12's live cell confirms the mapping.
+        const area = gestureArea(
+          ref
+            ? new MobileElementResolver(this.lastRefs).resolve(ref).bounds
+            : { x: 0, y: 0, width: viewport.width, height: viewport.height },
+          direction,
+          viewport,
+        )
+        // A1 (436-RESEARCH), confirmed live by 436-12 on an emulator: true = moved and more remains,
+        // false = the scrollable cannot go further.
         const canScrollMore = await driver.execute('mobile: scrollGesture', {
           left: Math.round(area.x),
           top: Math.round(area.y),

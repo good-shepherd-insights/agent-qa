@@ -557,7 +557,8 @@ describe('AndroidPlatformAdapter', () => {
       const gestures = mockDriver.execute.mock.calls.filter((c: unknown[]) => c[0] === 'mobile: scrollGesture')
       expect(gestures).toHaveLength(1)
       // viewport 1080x1920; content direction is passed as-is; halfPage halves the 0.75 page percent.
-      expect(gestures[0][1]).toEqual({ left: 0, top: 0, width: 1080, height: 1920, direction: 'down', percent: 0.375 })
+      // 436-12 (live A1): the area is the middle 60% of the swipe axis, clear of the gesture zones.
+      expect(gestures[0][1]).toEqual({ left: 0, top: 384, width: 1080, height: 1152, direction: 'down', percent: 0.375 })
       expect(mockDriver.action).not.toHaveBeenCalled()
     })
   })
