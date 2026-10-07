@@ -66,7 +66,8 @@ export interface ActionPlan {
 }
 
 export interface PlannerConfig {
-  maxSubActions: number
+  maxActions: number
+  maxPlanningTurns: number
   previousStepCount: number
 }
 

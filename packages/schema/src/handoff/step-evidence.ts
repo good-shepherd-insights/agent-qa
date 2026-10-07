@@ -5,6 +5,7 @@ import type { ServedBrief } from '../brief/served-brief'
 import type { RecordId } from '../ids/record-id'
 import type { WorkingMemoryEntry } from '../memory/working-memory-entry'
 import type { RecordedActionResult } from '../result/index'
+import type { LimitStopEvidence, StepLimitUsage } from './limit-evidence'
 import type { DeclaredModelProfile, ModelIdentity } from './model-call-profile'
 import type { CycleEvidence, StagnationEvidence } from './progress-evidence'
 import type { SubActionEvidence } from './sub-action-evidence'
@@ -219,6 +220,10 @@ export interface StepEvidence {
    * infeasible via `failureKind`/`failureReason` — distinct from a plain `stepFailed`.
    */
   termination?: TerminationEvidence
+  /** The typed limit stop (436 D-12); present only when a per-step limit refused a dispatch. */
+  limitStop?: LimitStopEvidence
+  /** The configured per-step limits and what this step used against them (436 D-11). */
+  limitUsage?: StepLimitUsage
   /**
    * The `assertAI`/`extractAI` judge block (D-05/D-06/D-07/D-09). Present when the step ran an
    * AI verb through the verifier model lane; carries verdict, rationale, deferred knobs, and the

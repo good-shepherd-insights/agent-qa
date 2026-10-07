@@ -1,6 +1,6 @@
-// LOOP-02 / D-11: the loop is bounded ONLY by the maxSubActions resource cap, the
-// user timeouts/abort, and the verdict — there is no attempt counter (Pitfall 5's
-// regression lock). An always-failing adapter must terminate cleanly at the cap.
+// LOOP-02 / 436 D-10: the loop is bounded ONLY by the per-step action limit, the user
+// timeouts/abort, and the verdict — there is no attempt counter (Pitfall 5's regression
+// lock). An always-failing adapter must terminate cleanly at the action limit.
 import { describe, it, expect } from 'vitest'
 import type { LoopPorts } from '../ports.js'
 import type { Planner } from '../types.js'
@@ -12,8 +12,8 @@ function ports(overrides: Partial<LoopPorts> & Pick<LoopPorts, 'adapter' | 'plan
   return overrides
 }
 
-describe('loop bounds (LOOP-02 / D-11)', () => {
-  it('an always-failing adapter terminates at the maxSubActions cap with a failed result and no counter', async () => {
+describe('loop bounds (LOOP-02 / 436 D-10)', () => {
+  it('an always-failing adapter terminates at the action limit with a failed result and no counter', async () => {
     let planCalls = 0
     const planner: Planner = {
       async plan() { planCalls++; return { plan: makeActionPlan({ stepComplete: false }) } },
@@ -23,29 +23,29 @@ describe('loop bounds (LOOP-02 / D-11)', () => {
       ports({
         adapter: makeAdapter({ executeResult: { success: false, error: 'Always fails' } }),
         planner,
-        plannerConfig: { maxSubActions: 5, previousStepCount: 0 },
+        plannerConfig: { maxActions: 5, maxPlanningTurns: 5, previousStepCount: 0 },
       }),
       makeStepContext(),
     )
     expect(result.status).toBe('failed')
-    expect(result.error).toContain('Sub-action limit reached (5')
-    // The loop replanned exactly maxSubActions times — bounded by the cap, not a
-    // consecutive-failure counter (which would have bailed at 3).
+    expect(result.error).toBe('Stopped: action limit reached — 5 of 5 actions used')
+    // Each failed dispatch is one action, so the loop replanned exactly maxActions times —
+    // bounded by the limit, not a consecutive-failure counter (which would have bailed at 3).
     expect(planCalls).toBe(5)
   })
 
-  it('a never-completing successful adapter also terminates at the cap', async () => {
+  it('a never-completing successful adapter also terminates at the action limit', async () => {
     let planCalls = 0
     const planner: Planner = {
       async plan() { planCalls++; return { plan: makeActionPlan({ stepComplete: false }) } },
     }
     const result = await executeStep(
       'Loop forever',
-      ports({ adapter: makeAdapter({ executeResult: { success: true } }), planner, plannerConfig: { maxSubActions: 4, previousStepCount: 0 } }),
+      ports({ adapter: makeAdapter({ executeResult: { success: true } }), planner, plannerConfig: { maxActions: 4, maxPlanningTurns: 4, previousStepCount: 0 } }),
       makeStepContext(),
     )
     expect(result.status).toBe('failed')
-    expect(result.error).toContain('Sub-action limit reached (4')
+    expect(result.error).toBe('Stopped: action limit reached — 4 of 4 actions used')
     expect(planCalls).toBe(4)
   })
 

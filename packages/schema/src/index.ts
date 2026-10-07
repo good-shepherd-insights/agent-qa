@@ -73,6 +73,10 @@ export type {
   MaskingClass,
   PlatformBase,
   PlatformConfig,
+  // 2026-10-07 (436-04, D-01..D-03)
+  PlannerLimits,
+  PlannerLimitsOverride,
+  PlannerLimitsRecord,
   RemoteDeviceConfig,
   TimeoutConfig,
   Use,
@@ -107,6 +111,8 @@ export {
   ConfigUndoRequestSchema,
   ConfigWriteRequestSchema,
   DEFAULT_PARALLEL_WORKERS,
+  // 2026-10-07 (436-04, D-01..D-03): the one default pair and resolver every door calls.
+  DEFAULT_PLANNER_LIMITS,
   deviceConfigSchema,
   distinctInFirstOccurrenceOrder,
   isConfigSchemaPath,
@@ -114,8 +120,10 @@ export {
   MASKING_CLASSES,
   platformBase,
   platformConfigSchema,
+  PLANNER_LIMIT_KEYS,
   remoteDeviceSchema,
   resolveEffectiveWorkers,
+  resolvePlannerLimits,
   timeoutConfigSchema,
   useSchema,
   viewportSchema,
@@ -568,6 +576,9 @@ export type {
   TerminationEvidence,
   VerdictSource,
 } from './handoff/index'
+// 2026-10-07 (436-04, D-11..D-13): the per-step limit stop and usage.
+export type { CompoundInputCount, LimitStopEvidence, StepLimitUsage } from './handoff/index'
+export { formatLimitStopReason, LIMIT_STOP_EVIDENCE_KEYS, STEP_LIMIT_USAGE_KEYS } from './handoff/index'
 
 // 358 working-memory vocabulary (WM-01)
 export type { WorkingMemoryEntry } from './memory/index'

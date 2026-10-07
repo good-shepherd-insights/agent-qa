@@ -1,12 +1,14 @@
 // The runner-owned step-execution loop (D-01/D-02): observe → cached-or-planned plan →
 // safety-gated execute → record §A8 evidence → conditional verify. Provider- and storage-neutral.
-// Bounded by the per-step resource cap, the user timeouts and abort. Screen equality or change
+// Bounded by the per-step action limit, the user timeouts and abort. Screen equality or change
 // decides nothing (HARN-01); retries come only from actual errors or operation-specific evidence.
 
 import {
   coerceProcedureBindingValue,
   computeCacheKey,
+  DEFAULT_PLANNER_LIMITS,
   elementOrdinal,
+  formatLimitStopReason,
   isReplayableActionShape,
   normalizeAnchor,
   parseProcedureBody,
@@ -19,6 +21,7 @@ import {
 import type {
   Action as SchemaAction,
   ActionAnnotation,
+  LimitStopEvidence,
   RecordingAnnotationWitness,
   ActionResult as SchemaActionResult,
   Anchor,
@@ -81,6 +84,7 @@ import {
 import { mintReportedValue, mintUniqueValue, defaultUniqueValueGenerator } from '../compound/dispatch-mint.js'
 import { compareAssertValue } from '../compound/assert-value.js'
 import { createRecordLedger } from './record-ledger.js'
+import { StepLimitMeter } from './step-limits.js'
 
 // v1's context-window overflow classification (loop.ts:277-286) — kept byte-equivalent
 // (D-04, Pitfall 10): a planning error matching one of these is surfaced with the
@@ -139,7 +143,7 @@ function recordingOffsetFrom(zeroMs: number | undefined): number | undefined {
 //   4. verify success              → passed  (stateAfter = verifier re-observation, D-15b)
 //   5. verify app-error            → failed  (no further replan)
 //   6. no-verifier + stepComplete  → passed  (trust the planner)
-//   7. cap exhausted (maxSubActions)→ failed (clean terminate, the resource backstop)
+//   7. action limit reached        → failed  (typed limitStop, requested outcome unverified)
 //   8. abort / timeout             → cancelled | failed  (all three getTimeoutAbortReason variants)
 // Execution failure and verifier "not done" are NOT return paths — they inject failure
 // context and continue the loop (self-heal = replan-with-failure-context, D-12).
@@ -152,8 +156,12 @@ export async function executeStep(
   // D-11: modality resolved once at composition; absent gate = full-capture (the
   // pre-gate default for non-CLI callers and tests). The loop owns the branching.
   const gate = ports.visionGate ?? { attachImage: true, captureMode: 'full' as const, promptNote: '' }
-  // D-11: the ONLY surviving resource backstop. Not a healing-attempts counter.
-  const maxSubActions = ports.plannerConfig?.maxSubActions ?? 50
+  // 436 D-07/D-10: one monotonic meter per step execution, never refilled and never derived
+  // from actionIndex (cache-key material).
+  const meter = new StepLimitMeter({
+    maxActions: ports.plannerConfig?.maxActions ?? DEFAULT_PLANNER_LIMITS.maxActions,
+    maxPlanningTurns: ports.plannerConfig?.maxPlanningTurns ?? DEFAULT_PLANNER_LIMITS.maxPlanningTurns,
+  })
   const promptDate = context.promptDate ?? new Date().toISOString().slice(0, 10)
   context.promptDate = promptDate
   const verifierAuthorContext: VerifierAuthorContext | undefined =
@@ -237,8 +245,9 @@ export async function executeStep(
   // activePredicate persists the declared D-09 bulk predicate for the run.
   let activePredicate: string | undefined
 
-  // 2026-10-07 (436-03): the progress refill is gone; the cap only counts down.
-  let remaining = maxSubActions
+  // 436 D-13: attached to a limit stop when they exist; masked when recorded.
+  let lastVerifierRejection: string | undefined
+  let lastPlannerReasoning: string | undefined
 
   let totalPromptTokens = 0
   let totalCompletionTokens = 0
@@ -454,7 +463,7 @@ export async function executeStep(
     recorder.recordServedAdmissionEvents(recordLedger.drainEvidenceEvents?.() ?? [])
     // WR-10′ (387-15): the staged failure-caution composite belongs to that same backstop set. It
     // is consumed by the NEXT planning turn and by nothing else, and this step may never reach one
-    // — the deadline check and the D-10 remaining-budget check both return above that pickup. The
+    // — the deadline check and the action-limit check both return above that pickup. The
     // step those exits end is exactly the terminal failure "why didn't it mention X" is asked
     // about, and without this drain its whole attribution ledger is lost (KREV-02, D-14).
     //
@@ -494,6 +503,7 @@ export async function executeStep(
         ports.workingMemory.entries().map((entry) => ({ ...entry, value: maskValue(entry.value) })),
       )
     }
+    recorder.recordLimitUsage(meter.snapshot())
     // 381-41 (G-381-3): the step's {{env:NAME}} provenance pairs ride to the recorder
     // VERBATIM — deliberately NOT through maskValue (bound at line ~209), unlike the
     // workingMemory snapshot above. Masking would transform email-valued and
@@ -539,6 +549,24 @@ export async function executeStep(
   const success = (): StepResult => finish('passed', { pass: true, reasoning: 'Step completed' })
   const failure = (error: string): StepResult => finish('failed', { pass: false, reasoning: error }, error)
   const cancelled = (): StepResult => finish('cancelled', { pass: false, reasoning: CANCELLED_MESSAGE }, CANCELLED_MESSAGE)
+
+  // 436 D-12/D-13: the limit stop ends the step through the ordinary failure funnel with its own
+  // typed block — never a planning failure, a termination or a verdict, and no model call.
+  const limitStop = (limit: LimitStopEvidence['limit']): StepResult => {
+    const configured = limit === 'actions' ? meter.maxActions : meter.maxPlanningTurns
+    const used = limit === 'actions' ? meter.actionsUsed : meter.planningCallsUsed
+    const reason = formatLimitStopReason(limit, configured, used)
+    recorder.recordLimitStop({
+      limit,
+      configured,
+      used,
+      reason,
+      requestedOutcome: 'unverified',
+      ...(lastVerifierRejection !== undefined ? { lastVerifierRejection: maskValue(lastVerifierRejection) } : {}),
+      ...(lastPlannerReasoning !== undefined ? { lastPlannerReasoning: maskValue(lastPlannerReasoning) } : {}),
+    })
+    return failure(reason)
+  }
 
   // Abort/timeout check — the three v1 timeout/cancel variants (getTimeoutAbortReason).
   const checkAbort = (): StepResult | undefined => {
@@ -634,11 +662,8 @@ export async function executeStep(
       return failure(`Step timed out after ${ports.stepTimeout}ms`)
     }
 
-    // The resource backstop (not an attempt counter): maxSubActions iterations per step.
-    if (remaining <= 0) {
-      return failure(`Sub-action limit reached (${maxSubActions} actions). Step did not complete.`)
-    }
-    remaining--
+    // 436 D-10: the next action would be refused, so stop before any planner call.
+    if (meter.actionsExhausted()) return limitStop('actions')
 
     // 1. SETTLE + OBSERVE — the bounded settle gate polls screenIdentityHash and proceeds
     // only on two consecutive matching hashes (or the maxPolls/deadline bound, D-16). The
@@ -1199,6 +1224,7 @@ export async function executeStep(
     let action = redactSecretValue(normalizedAction, ports.secretRedactor)
     const reasoning = redactSecretValue(rawPlan.reasoning, ports.secretRedactor)
     lastPlannedAction = action
+    if (!cached && !procedureReplayed && reasoning.trim() !== '') lastPlannerReasoning = reasoning
 
     // The grounding gate is the ONE chokepoint between plan and adapter.execute (D-08).
     // Live turn-produced plans arrive gate-resolved from the Plan-06 turn — their §A8 trail
@@ -1288,6 +1314,10 @@ export async function executeStep(
     // reaches the adapter and the failure routes into the heal / failure-context flow.
     let execResult: ActionResult
     let execError: string | undefined
+    // 436 D-07: the one pre-dispatch debit for every executed action on every decision path; a
+    // gate-forced cache error never executes and is not debited. The loop top already refused an
+    // exhausted meter, so this debit cannot be refused here.
+    if (gateForcedError === undefined) meter.tryDebitAction()
     // D-14: judged pre-dispatch on the settled `screenState` only (never a live probe, Pitfall 10).
     const idempotentNoop = gateForcedError === undefined
       ? desiredStateSatisfied(normalizedAction, screenState)
@@ -1485,7 +1515,7 @@ export async function executeStep(
     // re-ground the failed action's descriptor on nameNormalized + hierarchy (the prior
     // ElementInfo as disambiguator), then re-execute the patched ref — NO planning turn.
     // Exactly ONE heal per planned action (a per-iteration one-shot boolean, never a counter
-    // — LOOP-02), bounded by the loop's existing maxSubActions/stepTimeout. The heal trail is
+    // — LOOP-02), bounded by the action limit and stepTimeout. The heal trail is
     // recorded in the sub-action's grounding block only; StepEvidence.selfHeal stays reserved
     // for replan-based heals (D-11). On no-match/ambiguous it falls through to the replan path.
     if (execError !== undefined && (gateForcedRefMiss || isRefResolutionFailure(execError))) {
@@ -1725,6 +1755,7 @@ export async function executeStep(
         totalCompletionTokens += verifyResult.tokenUsage.completionTokens
       }
       verifierReasoning = verifyResult.verification.reasoning
+      if (!verifyResult.verification.success) lastVerifierRejection = verifierReasoning
 
       const abortAfterVerify = checkAbort()
       if (abortAfterVerify) return abortAfterVerify

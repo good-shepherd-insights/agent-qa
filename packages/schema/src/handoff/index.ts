@@ -27,3 +27,6 @@ export type {
   TerminationEvidence,
   VerdictSource,
 } from './verb-evidence'
+// 2026-10-07 (436-04, D-11..D-13): the per-step limit stop and usage.
+export type { CompoundInputCount, LimitStopEvidence, StepLimitUsage } from './limit-evidence'
+export { formatLimitStopReason, LIMIT_STOP_EVIDENCE_KEYS, STEP_LIMIT_USAGE_KEYS } from './limit-evidence'

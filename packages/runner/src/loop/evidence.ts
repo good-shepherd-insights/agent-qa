@@ -28,6 +28,7 @@ import type {
   Decision,
   DeclaredModelProfile,
   InterpolatedVariable,
+  LimitStopEvidence,
   LosslessServedBriefProofV1,
   ModelIdentity,
   MaskingContext,
@@ -45,6 +46,7 @@ import type {
   ServedPromptTurn,
   ServedRetrievalTraceV1,
   StepEvidence,
+  StepLimitUsage,
   StepPlanSource,
   SubActionEvidence,
   TerminationEvidence,
@@ -302,6 +304,8 @@ export class EvidenceRecorder {
   private planningFailure?: PlanningFailureEvidence
   private reportedValue?: ReportedValueEvidence
   private termination?: TerminationEvidence
+  private limitStop?: LimitStopEvidence
+  private limitUsage?: StepLimitUsage
   private aiJudgment?: AiJudgmentEvidence
   private assertOutcome?: AssertValueEvidence
   private verdictSource?: VerdictSource
@@ -598,6 +602,19 @@ export class EvidenceRecorder {
   }
 
   /**
+   * Record the typed limit stop (436 D-12/D-13). Its text fields arrive already masked; it is
+   * never a planning failure, a termination or a verdict source.
+   */
+  recordLimitStop(evidence: LimitStopEvidence): void {
+    this.limitStop = evidence
+  }
+
+  /** Record the step's configured limits and usage (436 D-11); finish() calls it on every path. */
+  recordLimitUsage(usage: StepLimitUsage): void {
+    this.limitUsage = usage
+  }
+
+  /**
    * Record the D-05/D-06/D-07/D-09 AI judge block (`assertAI`/`extractAI`): verdict, rationale
    * (masked), the requested-but-deferred M3/M4 knobs, and the extractAI global-scope degradation
    * marker. One judgment per attempt (single-model law).
@@ -727,6 +744,8 @@ export class EvidenceRecorder {
     if (this.planningFailure) evidence.planningFailure = this.planningFailure
     if (this.reportedValue) evidence.reportedValue = this.reportedValue
     if (this.termination) evidence.termination = this.termination
+    if (this.limitStop) evidence.limitStop = this.limitStop
+    if (this.limitUsage) evidence.limitUsage = this.limitUsage
     if (this.aiJudgment) evidence.aiJudgment = this.aiJudgment
     if (this.assertOutcome) evidence.assertOutcome = this.assertOutcome
     if (this.verdictSource) evidence.verdictSource = this.verdictSource

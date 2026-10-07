@@ -76,3 +76,6 @@ export type {
   UseWebAuthState,
 } from './use'
 export { DEFAULT_PARALLEL_WORKERS, resolveEffectiveWorkers, useSchema } from './use'
+// 2026-10-07 (436-04, D-01..D-03): the per-step planner limits' one default pair and resolver.
+export type { PlannerLimits, PlannerLimitsOverride, PlannerLimitsRecord } from './planner-limits'
+export { DEFAULT_PLANNER_LIMITS, PLANNER_LIMIT_KEYS, resolvePlannerLimits } from './planner-limits'
