@@ -148,7 +148,7 @@ const { sampleConfig, CONFIG_FILE_PATH } = vi.hoisted(() => ({
   use: {
     browser: { name: 'chromium', headless: true, viewport: { width: 1280, height: 720 } },
     timeout: { step: '30s', test: '10m', navigation: '10s' },
-    planner: { maxSubActions: 20, previousStepCount: 5 },
+    planner: { maxActions: 30, maxPlanningTurns: 30, previousStepCount: 5 },
     logCapture: { console: true, network: true },
     mobile: { appState: 'reset' },
     llm: 'primary',
@@ -1179,10 +1179,15 @@ describe('ConfigPage task tabs shell', () => {
     ]) {
       expect(section('screenshot-size')!.contains(fieldControl(segments)), segments.join('.')).toBe(true)
     }
-    for (const segments of [['use', 'planner', 'maxSubActions'], ['use', 'planner', 'previousStepCount']]) {
+    for (const segments of [
+      ['use', 'planner', 'maxActions'],
+      ['use', 'planner', 'maxPlanningTurns'],
+      ['use', 'planner', 'previousStepCount'],
+    ]) {
       expect(section('planner-limits')!.contains(fieldControl(segments)), segments.join('.')).toBe(true)
     }
-    expect(section('planner-limits')?.textContent).toContain(PLANNER_FIELD_LABELS.maxSubActions)
+    expect(section('planner-limits')?.textContent).toContain(PLANNER_FIELD_LABELS.maxActions)
+    expect(section('planner-limits')?.textContent).toContain(PLANNER_FIELD_LABELS.maxPlanningTurns)
 
     expect(document.body.querySelector('#use-default-llm')).toBeNull()
     expect(document.body.textContent).not.toContain('Default LLM')

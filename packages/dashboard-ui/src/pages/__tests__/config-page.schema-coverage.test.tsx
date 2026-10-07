@@ -143,7 +143,7 @@ const { sampleConfig, fullConfig, page } = vi.hoisted(() => ({
     use: {
       browser: { name: 'chromium', headless: true, viewport: { width: 1280, height: 720 } },
       timeout: { step: '30s', test: '10m', navigation: '10s' },
-      planner: { maxActions: 30, maxPlanningTurns: 30, maxSubActions: 20, previousStepCount: 5 },
+      planner: { maxActions: 30, maxPlanningTurns: 30, previousStepCount: 5 },
       logCapture: { console: true, network: true },
       mobile: { appState: 'reset' },
       llm: 'claude-proxy',
@@ -555,12 +555,13 @@ describe('ConfigPage schema coverage', () => {
   // the four plugin leaves; each has exactly one rendered owner and the write door admits it.
   // 2026-10-07 (436-07, D-05): the two planner limits add two leaves (94 strict, 90 page-writable);
   // the cell name no longer carries the count, so a later leaf change moves only the number.
+  // 2026-10-07 (436-08, D-05): the old refilling planner key's leaf is cut (93 strict, 89 page-writable).
   it('C432-CONFIG-WRITABLE: exactly the page-writable leaves, each owned on the page, and only the four plugin leaves excluded', async () => {
     page.config = fullConfig
     await renderAt('/config/models')
 
-    expect(CONFIG_SCHEMA_LEAVES).toHaveLength(94)
-    expect(PAGE_LEAVES).toHaveLength(90)
+    expect(CONFIG_SCHEMA_LEAVES).toHaveLength(93)
+    expect(PAGE_LEAVES).toHaveLength(89)
     expect(PAGE_LEAVES).toEqual(expect.arrayContaining(['use.planner.maxActions', 'use.planner.maxPlanningTurns']))
     expect(CONFIG_WRITE_DENIED_ROOTS).toEqual(['plugins'])
     expect(CONFIG_SCHEMA_LEAVES.filter((pattern) => !PAGE_LEAVES.includes(pattern))).toEqual([
@@ -571,7 +572,7 @@ describe('ConfigPage schema coverage', () => {
     ])
     const marks = await collectFieldMarks()
     const owned = PAGE_LEAVES.filter((pattern) => marks.some((mark) => coversLeaf(mark, pattern)))
-    expect(owned).toHaveLength(90)
+    expect(owned).toHaveLength(89)
     for (const leaf of ['use.planner.maxActions', 'use.planner.maxPlanningTurns']) {
       expect(
         [...new Set(marks.filter((mark) => mark.kind === 'path' && mark.value === leaf).map((mark) => mark.where))],

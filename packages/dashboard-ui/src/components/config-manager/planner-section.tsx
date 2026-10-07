@@ -13,8 +13,7 @@ function plannerField(leaf: PlannerLeaf): ConfigFieldTarget {
   return { segments: ["use", "planner", leaf], tab: "models", pattern: `use.planner.${leaf}` }
 }
 
-// 436-07: the old refilling planner key keeps its field until 436-08 removes the leaf, because
-// every schema leaf must have a field on the page.
+// 436-08 (D-05, D-06): the two per-step limits replace the old refilling planner key's field.
 export function PlannerSection() {
   return (
     <>
@@ -32,13 +31,6 @@ export function PlannerSection() {
         help={PLANNER_FIELD_HELP.maxPlanningTurns}
         kind="number"
         placeholder={String(DEFAULT_PLANNER_LIMITS.maxPlanningTurns)}
-        number={{ min: 1, integer: true }}
-      />
-      <ConfigField
-        field={plannerField("maxSubActions")}
-        label={PLANNER_FIELD_LABELS.maxSubActions}
-        help={PLANNER_FIELD_HELP.maxSubActions}
-        kind="number"
         number={{ min: 1, integer: true }}
       />
       <ConfigField

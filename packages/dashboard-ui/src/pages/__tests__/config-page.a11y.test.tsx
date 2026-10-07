@@ -90,7 +90,7 @@ const { fullConfig } = vi.hoisted(() => ({
     use: {
       browser: { name: 'chromium', headless: true, viewport: { width: 1280, height: 720 } },
       timeout: { step: '30s', test: '10m', navigation: '10s' },
-      planner: { maxSubActions: 20, previousStepCount: 5 },
+      planner: { maxActions: 30, maxPlanningTurns: 30, previousStepCount: 5 },
       logCapture: { console: true, network: true },
       mobile: { appState: 'reset' },
       llm: 'claude-proxy',

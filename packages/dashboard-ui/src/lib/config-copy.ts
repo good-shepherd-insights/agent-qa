@@ -584,14 +584,12 @@ export const VISION_FIELD_HELP = {
 export const PLANNER_FIELD_LABELS = {
   maxActions: 'Most actions per step',
   maxPlanningTurns: 'Most planner calls per step',
-  maxSubActions: 'Retired action limit',
   previousStepCount: 'Earlier steps the planner sees',
 } as const
 
 export const PLANNER_FIELD_HELP = {
   maxActions: 'Each step may run this many actions; the step stops with the limit reason when it needs one more. Default 30.',
   maxPlanningTurns: 'Each step may make this many planner model calls; the step stops with the limit reason when it needs one more. Default 30.',
-  maxSubActions: 'No longer read. Use Most actions per step and Most planner calls per step instead.',
   previousStepCount: 'How many earlier steps the planner reads before planning the next.',
 } as const
 

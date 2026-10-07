@@ -52,7 +52,7 @@ const step: ConfigFieldRef = { segments: ["use", "timeout", "step"], tab: "execu
 const envFile: ConfigFieldRef = { segments: ["workspace", "envFile"], tab: "project" }
 const testTimeout: ConfigFieldRef = { segments: ["use", "timeout", "test"], tab: "execution" }
 const farmKey: ConfigFieldRef = { segments: ["registry", "providers", "farm", "accessKey"], tab: "targets" }
-const maxSubActions: ConfigFieldRef = { segments: ["use", "planner", "maxSubActions"], tab: "models" }
+const maxActions: ConfigFieldRef = { segments: ["use", "planner", "maxActions"], tab: "models" }
 const previousStepCount: ConfigFieldRef = { segments: ["use", "planner", "previousStepCount"], tab: "models" }
 const modelHeader: ConfigFieldRef = {
   segments: ["registry", "llms", { name: "primary" }, "providerHeaders", "Authorization"],
@@ -441,7 +441,7 @@ describe("useConfigAutosave outside edits, explicit actions and Undo (429-16 Tas
     await mount()
     const merged = {
       ...baseConfig,
-      use: { ...baseConfig.use, browser: { headless: false }, planner: { maxSubActions: 99, previousStepCount: 77 } },
+      use: { ...baseConfig.use, browser: { headless: false }, planner: { maxActions: 99, previousStepCount: 77 } },
     }
     vi.mocked(applyConfigChanges).mockResolvedValue({ baseRevision: "rev-9", revision: "rev-10" })
     vi.mocked(fetchConfig).mockResolvedValue(answer(merged, "rev-10") as never)
@@ -463,7 +463,7 @@ describe("useConfigAutosave outside edits, explicit actions and Undo (429-16 Tas
     expect(fetchConfigRevision).not.toHaveBeenCalled()
     expect(fetchConfig).toHaveBeenCalledTimes(2)
     expect(hook!.valueOf(previousStepCount)).toBe(77)
-    expect(hook!.valueOf(maxSubActions)).toBe(99)
+    expect(hook!.valueOf(maxActions)).toBe(99)
     expect(hook!.valueOf(headless)).toBe(false)
     expect(statuses).not.toContain("failed")
     expect(hook!.status.state).not.toBe("failed")
@@ -475,11 +475,11 @@ describe("useConfigAutosave outside edits, explicit actions and Undo (429-16 Tas
     vi.mocked(applyConfigChanges).mockResolvedValue({ baseRevision: "rev-10", revision: "rev-11" })
 
     await run((h) => {
-      h.edit(maxSubActions, 50, { valid: true, value: 50 })
-      h.settle(maxSubActions)
+      h.edit(maxActions, 50, { valid: true, value: 50 })
+      h.settle(maxActions)
     })
 
-    expect(writeCalls()).toEqual([[{ op: "set", path: ["use", "planner", "maxSubActions"], value: 50 }]])
+    expect(writeCalls()).toEqual([[{ op: "set", path: ["use", "planner", "maxActions"], value: 50 }]])
     expect(JSON.stringify(writeCalls())).not.toContain("previousStepCount")
     expect(hook!.valueOf(previousStepCount)).toBe(77)
   })
