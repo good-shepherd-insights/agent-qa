@@ -360,5 +360,6 @@ export function assembleHandoff(
     ...(config.quarantined !== undefined && config.quarantined.length > 0
       ? { quarantineApplied: config.quarantined }
       : {}),
+    ...(config.plannerLimits === undefined ? {} : { plannerLimits: config.plannerLimits }),
   }
 }

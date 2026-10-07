@@ -2,6 +2,7 @@ import type { ScopeKey } from '../identity/scope-key'
 import type { RunId } from '../run/run-id'
 import type { ExecutionContext, RunStatus } from '../run/run-status'
 import type { QuarantineAppliedEntry } from '../quarantine/quarantine-ledger'
+import type { PlannerLimitsRecord } from '../config/planner-limits'
 import type { MisdirectionRecordResult } from '../verdict/misdirection-evidence'
 import type { PerTestOutcome } from './per-test-outcome'
 
@@ -52,6 +53,12 @@ export interface CompletedRunHandoff {
    * handoff written before version 6.
    */
   quarantineApplied?: readonly QuarantineAppliedEntry[]
+  /**
+   * 436 D-06: the planner limits this run's steps ran under, copied verbatim from the resolved
+   * RunConfig, with the members whose own limits differ. Absent on runs whose producer recorded
+   * none and on every handoff written before 436. Optional-additive: the version stays 7.
+   */
+  plannerLimits?: PlannerLimitsRecord
   /**
    * Phase 422 D-17/D-18: the circularity arbiter's per-record cross-check rows, recorded BESIDE
    * the verdicts rather than only inside them, so a reader that never resolves a verdict can

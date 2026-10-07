@@ -56,6 +56,7 @@ export {
   RunKnowledgeProjectionSchema,
   RUN_START_ACKNOWLEDGEMENT_SCHEMA_VERSION,
   RunStartAcknowledgementSchema,
+  PlannerLimitsRecordSchema,
   RUN_EVENT_ENVELOPE_SCHEMA_VERSION,
   RunEventEnvelopeSchema,
 } from './runs'

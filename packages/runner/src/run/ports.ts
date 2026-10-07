@@ -26,6 +26,7 @@ import type {
   DeclaredModelProfile,
   ModelIdentity,
   QuarantineAppliedEntry,
+  PlannerLimitsRecord,
   TestRetryScheduledPayload,
   RunArtifactStageInput,
   RunArtifactFinalizeInput,
@@ -522,6 +523,11 @@ export interface RunConfig {
    * byte-identical pre-390 behavior.
    */
   quarantined?: readonly QuarantineAppliedEntry[]
+  /**
+   * 436 D-06: the planner limits the producer resolved for this run and the members whose own
+   * limits differ, as plain data. Copied verbatim onto the handoff; absent stays absent.
+   */
+  plannerLimits?: PlannerLimitsRecord
   /**
    * 402-02 (D-09/D-12): how many members may execute CONCURRENTLY in this run's process. Defaults
    * to 1 — one worker is a plain sequential loop, byte-identical to the pre-402 shell, so nothing

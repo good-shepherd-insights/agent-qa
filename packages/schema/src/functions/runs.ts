@@ -10,6 +10,7 @@ import { BRIEF_WHY_NO_TRACE_REASONS } from '../knowledge/review-verbs'
 import { RecordChangeSchema } from '../knowledge/maintenance-views'
 import type { VerifierVerdict } from '../handoff/step-evidence'
 import type { ArtifactRef } from '../ids/artifact-ref'
+import type { PlannerLimitsRecord } from '../config/planner-limits'
 import type { ScopeKey, ScopeTier } from '../identity/scope-key'
 import { CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION } from '../notification/run-notification'
 import type { RunNotification } from '../notification/run-notification'
@@ -430,6 +431,23 @@ export type RunsStartInput = z.infer<typeof RunsStartInputSchema>
 
 export const RUN_START_ACKNOWLEDGEMENT_SCHEMA_VERSION = 1
 
+const plannerLimitSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
+
+/**
+ * 436 D-06: the effective planner limits a run recorded, as the acknowledgement carries them. The
+ * handoff loader spells the same domain by hand (`hasPlannerLimitsRecordShape`); the two agree.
+ */
+export const PlannerLimitsRecordSchema = z.object({
+  maxActions: plannerLimitSchema,
+  maxPlanningTurns: plannerLimitSchema,
+  overrides: z.array(z.object({
+    testName: z.string(),
+    filePath: z.string(),
+    maxActions: plannerLimitSchema,
+    maxPlanningTurns: plannerLimitSchema,
+  }).strict()).optional(),
+}).strict() satisfies z.ZodType<PlannerLimitsRecord>
+
 /**
  * The `runs.start` result (Phase 384, D-09).
  *
@@ -449,6 +467,8 @@ export interface RunStartAcknowledgement {
   testCount: number
   gateRun?: true
   excludedFromOutcomes?: true
+  /** 436 D-06: the limits each step ran under, copied from the run's own record. */
+  limits?: PlannerLimitsRecord
 }
 
 export const RunStartAcknowledgementSchema = z.object({
@@ -460,6 +480,7 @@ export const RunStartAcknowledgementSchema = z.object({
   testCount: z.number().int().nonnegative(),
   gateRun: z.literal(true).optional(),
   excludedFromOutcomes: z.literal(true).optional(),
+  limits: PlannerLimitsRecordSchema.optional(),
 }).strict() satisfies z.ZodType<RunStartAcknowledgement>
 
 /**

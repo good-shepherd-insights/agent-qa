@@ -538,6 +538,39 @@ function hasCompleteTestShape(value: unknown, runId: string): boolean {
  * plus the expiry that says how long the disposition was licensed for. Every field is a required
  * non-empty string; an entry missing its identity could never be joined back to a test.
  */
+function isPositiveSafeInteger(value: unknown): boolean {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+}
+
+const PLANNER_LIMITS_RECORD_KEYS = new Set(['maxActions', 'maxPlanningTurns', 'overrides'])
+const PLANNER_LIMITS_OVERRIDE_KEYS = new Set(['testName', 'filePath', 'maxActions', 'maxPlanningTurns'])
+
+function hasPlannerLimitsOverrideShape(value: unknown): boolean {
+  if (!isNonArrayObject(value)) return false
+  return (
+    Object.keys(value).every((key) => PLANNER_LIMITS_OVERRIDE_KEYS.has(key)) &&
+    typeof value.testName === 'string' &&
+    typeof value.filePath === 'string' &&
+    isPositiveSafeInteger(value.maxActions) &&
+    isPositiveSafeInteger(value.maxPlanningTurns)
+  )
+}
+
+/**
+ * 436 D-06: the loader's spelling of `PlannerLimitsRecordSchema` (`../functions/runs`). The
+ * acknowledgement copies an admitted record onto that strict wire, so the two must never disagree.
+ */
+function hasPlannerLimitsRecordShape(value: unknown): boolean {
+  if (!isNonArrayObject(value)) return false
+  return (
+    Object.keys(value).every((key) => PLANNER_LIMITS_RECORD_KEYS.has(key)) &&
+    isPositiveSafeInteger(value.maxActions) &&
+    isPositiveSafeInteger(value.maxPlanningTurns) &&
+    (!('overrides' in value) ||
+      (Array.isArray(value.overrides) && value.overrides.every(hasPlannerLimitsOverrideShape)))
+  )
+}
+
 function hasQuarantineAppliedShape(value: unknown): boolean {
   if (!isNonArrayObject(value)) return false
   return (
@@ -657,6 +690,7 @@ function hasCompleteHandoffShape(value: unknown): boolean {
     (!('quarantineApplied' in value) ||
       (Array.isArray(value.quarantineApplied) &&
         value.quarantineApplied.every(hasQuarantineAppliedShape))) &&
+    (!('plannerLimits' in value) || hasPlannerLimitsRecordShape(value.plannerLimits)) &&
     // 422 D-17/D-18. Last in the chain on purpose: the row-identity check digests this
     // document's `runId`/`scope`/`buildOrdinal`/`configDigests`, and every one of those has
     // been validated by the clauses above before control reaches here.

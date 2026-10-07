@@ -70,6 +70,7 @@ function toAcknowledgement(document: CompletedRunHandoff): RunStartAcknowledgeme
     ...(document.excludedFromOutcomes === undefined
       ? {}
       : { excludedFromOutcomes: document.excludedFromOutcomes }),
+    ...(document.plannerLimits === undefined ? {} : { limits: document.plannerLimits }),
   }
 }
 

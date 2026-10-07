@@ -626,6 +626,7 @@ export async function runInProcessCliRun(
         configDigests: produced.configDigests,
         product: produced.product,
         ...(produced.buildTag === undefined ? {} : { buildTag: produced.buildTag }),
+        ...(produced.plannerLimits === undefined ? {} : { plannerLimits: produced.plannerLimits }),
         memberProbeUrls: produced.memberProbeUrls,
         warn: options.warn ?? (() => { /* a door with no renderer drops the fold warning */ }),
       })
