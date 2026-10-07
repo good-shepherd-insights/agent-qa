@@ -465,20 +465,21 @@ describe('the loader and the wire admit the same replay shapes — member for me
 // 436-09 (D-06): the run's planner limits are copied from this record onto the strict
 // acknowledgement, so the loader admits exactly the records the wire accepts.
 describe('C436-EFFECTIVE-LIMITS the loader and the acknowledgement agree on plannerLimits', () => {
-  const override = { testName: 'Bulk archive', filePath: 'tests/bulk.yaml', maxActions: 60, maxPlanningTurns: 30 }
+  const entry = { testName: 'Bulk archive', filePath: 'tests/bulk.yaml', maxActions: 60, maxPlanningTurns: 30 }
   const corpus: readonly (readonly [string, unknown])[] = [
     ['run limits only', { maxActions: 30, maxPlanningTurns: 30 }],
-    ['with one override', { maxActions: 30, maxPlanningTurns: 30, overrides: [override] }],
-    ['empty overrides', { maxActions: 30, maxPlanningTurns: 30, overrides: [] }],
+    ['with one per-test entry', { maxActions: 30, maxPlanningTurns: 30, perTest: [entry] }],
+    ['empty perTest', { maxActions: 30, maxPlanningTurns: 30, perTest: [] }],
+    ['retired overrides key', { maxActions: 30, maxPlanningTurns: 30, overrides: [entry] }],
     ['zero actions', { maxActions: 0, maxPlanningTurns: 30 }],
     ['fractional turns', { maxActions: 30, maxPlanningTurns: 2.5 }],
     ['string limit', { maxActions: '30', maxPlanningTurns: 30 }],
     ['missing turns', { maxActions: 30 }],
     ['unknown key', { maxActions: 30, maxPlanningTurns: 30, extra: true }],
-    ['override with unknown key', { maxActions: 30, maxPlanningTurns: 30, overrides: [{ ...override, extra: 1 }] }],
-    ['override missing name', { maxActions: 30, maxPlanningTurns: 30, overrides: [{ ...override, testName: undefined }] }],
-    ['override negative limit', { maxActions: 30, maxPlanningTurns: 30, overrides: [{ ...override, maxActions: -1 }] }],
-    ['overrides not an array', { maxActions: 30, maxPlanningTurns: 30, overrides: override }],
+    ['per-test entry with unknown key', { maxActions: 30, maxPlanningTurns: 30, perTest: [{ ...entry, extra: 1 }] }],
+    ['per-test entry missing name', { maxActions: 30, maxPlanningTurns: 30, perTest: [{ ...entry, testName: undefined }] }],
+    ['per-test entry negative limit', { maxActions: 30, maxPlanningTurns: 30, perTest: [{ ...entry, maxActions: -1 }] }],
+    ['perTest not an array', { maxActions: 30, maxPlanningTurns: 30, perTest: entry }],
     ['not an object', 30],
   ]
 
@@ -496,7 +497,8 @@ describe('C436-EFFECTIVE-LIMITS the loader and the acknowledgement agree on plan
   })
 
   it('is not vacuous and leaves an absent record absent', () => {
-    expect(loads({ maxActions: 30, maxPlanningTurns: 30, overrides: [override] })).toBe(true)
+    expect(loads({ maxActions: 30, maxPlanningTurns: 30, perTest: [entry] })).toBe(true)
+    expect(loads({ maxActions: 30, maxPlanningTurns: 30, overrides: [entry] })).toBe(false)
     expect(loads({ maxActions: 0, maxPlanningTurns: 30 })).toBe(false)
     expect(guardCompletedRunHandoff(makeValidHandoff())).not.toHaveProperty('plannerLimits')
   })

@@ -77,7 +77,7 @@ describe('C436-EFFECTIVE-LIMITS', () => {
     expect(record).toEqual({
       maxActions: 30,
       maxPlanningTurns: 30,
-      overrides: [
+      perTest: [
         { testName: 'Zeta bulk', filePath: 'tests/zeta.yaml', maxActions: 60, maxPlanningTurns: 30 },
         { testName: 'Alpha search', filePath: 'tests/alpha.yaml', maxActions: 30, maxPlanningTurns: 12 },
       ],
@@ -92,7 +92,7 @@ describe('C436-EFFECTIVE-LIMITS', () => {
       { testName: 'Checkout', filePath: 'tests/checkout.yaml', limits: run },
     ])
     expect(uniform).toEqual({ maxActions: 30, maxPlanningTurns: 30 })
-    expect('overrides' in uniform).toBe(false)
+    expect('perTest' in uniform).toBe(false)
   })
 
   it('both producers in run.ts build PlannerConfig through memberPlannerConfig', () => {

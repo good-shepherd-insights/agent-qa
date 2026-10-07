@@ -3,7 +3,7 @@
 import {
   resolvePlannerLimits,
   type PlannerLimits,
-  type PlannerLimitsOverride,
+  type PlannerLimitsPerTest,
   type PlannerLimitsRecord,
 } from '@vostride/agent-qa-schema'
 
@@ -64,7 +64,7 @@ export function plannerLimitsRecord(
   run: PlannerLimits,
   members: readonly MemberPlannerLimits[],
 ): PlannerLimitsRecord {
-  const overrides: PlannerLimitsOverride[] = members
+  const perTest: PlannerLimitsPerTest[] = members
     .filter((member) => !sameLimits(member.limits, run))
     .map((member) => ({
       testName: member.testName,
@@ -75,7 +75,7 @@ export function plannerLimitsRecord(
   return {
     maxActions: run.maxActions,
     maxPlanningTurns: run.maxPlanningTurns,
-    ...(overrides.length === 0 ? {} : { overrides }),
+    ...(perTest.length === 0 ? {} : { perTest }),
   }
 }
 
@@ -83,6 +83,6 @@ export function plannerLimitsRecord(
 export function plannerLimitsInfoLines(record: PlannerLimitsRecord): string[] {
   return [
     plannerLimitsInfoLine(record),
-    ...(record.overrides ?? []).map((override) => plannerLimitsInfoLine(override, override.testName)),
+    ...(record.perTest ?? []).map((entry) => plannerLimitsInfoLine(entry, entry.testName)),
   ]
 }

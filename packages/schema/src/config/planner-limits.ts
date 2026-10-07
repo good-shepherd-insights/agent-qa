@@ -14,16 +14,16 @@ export const DEFAULT_PLANNER_LIMITS: Readonly<PlannerLimits> = Object.freeze({
 export const PLANNER_LIMIT_KEYS = ['maxActions', 'maxPlanningTurns'] as const
 
 /** A test whose own `use.planner` limits differ from the project's. */
-export interface PlannerLimitsOverride {
+export interface PlannerLimitsPerTest {
   testName: string
   filePath: string
   maxActions: number
   maxPlanningTurns: number
 }
 
-/** The effective limits a run recorded, with the tests that override them. */
+/** The effective limits a run recorded, with the tests whose own limits differ. */
 export interface PlannerLimitsRecord extends PlannerLimits {
-  overrides?: PlannerLimitsOverride[]
+  perTest?: PlannerLimitsPerTest[]
 }
 
 function plannerLimitValue(useBlock: unknown, key: keyof PlannerLimits): number | undefined {

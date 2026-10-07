@@ -542,13 +542,13 @@ function isPositiveSafeInteger(value: unknown): boolean {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
 }
 
-const PLANNER_LIMITS_RECORD_KEYS = new Set(['maxActions', 'maxPlanningTurns', 'overrides'])
-const PLANNER_LIMITS_OVERRIDE_KEYS = new Set(['testName', 'filePath', 'maxActions', 'maxPlanningTurns'])
+const PLANNER_LIMITS_RECORD_KEYS = new Set(['maxActions', 'maxPlanningTurns', 'perTest'])
+const PLANNER_LIMITS_PER_TEST_KEYS = new Set(['testName', 'filePath', 'maxActions', 'maxPlanningTurns'])
 
-function hasPlannerLimitsOverrideShape(value: unknown): boolean {
+function hasPlannerLimitsPerTestShape(value: unknown): boolean {
   if (!isNonArrayObject(value)) return false
   return (
-    Object.keys(value).every((key) => PLANNER_LIMITS_OVERRIDE_KEYS.has(key)) &&
+    Object.keys(value).every((key) => PLANNER_LIMITS_PER_TEST_KEYS.has(key)) &&
     typeof value.testName === 'string' &&
     typeof value.filePath === 'string' &&
     isPositiveSafeInteger(value.maxActions) &&
@@ -566,8 +566,8 @@ function hasPlannerLimitsRecordShape(value: unknown): boolean {
     Object.keys(value).every((key) => PLANNER_LIMITS_RECORD_KEYS.has(key)) &&
     isPositiveSafeInteger(value.maxActions) &&
     isPositiveSafeInteger(value.maxPlanningTurns) &&
-    (!('overrides' in value) ||
-      (Array.isArray(value.overrides) && value.overrides.every(hasPlannerLimitsOverrideShape)))
+    (!('perTest' in value) ||
+      (Array.isArray(value.perTest) && value.perTest.every(hasPlannerLimitsPerTestShape)))
   )
 }
 

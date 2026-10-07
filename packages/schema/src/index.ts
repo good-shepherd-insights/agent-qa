@@ -75,7 +75,7 @@ export type {
   PlatformConfig,
   // 2026-10-07 (436-04, D-01..D-03)
   PlannerLimits,
-  PlannerLimitsOverride,
+  PlannerLimitsPerTest,
   PlannerLimitsRecord,
   RemoteDeviceConfig,
   TimeoutConfig,

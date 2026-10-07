@@ -3599,7 +3599,7 @@ export async function produceSuiteRunMembers(
   const executor = buildSuiteMemberExecutor({ lifecycle, bindings })
 
   // The run line reads the project, and the suite's block when the run is one suite; members whose
-  // own limits differ are listed as overrides.
+  // own limits differ are listed per test.
   const suitePlannerLimits = plannerLimitsRecord(
     resolvePlannerLimits(config.use, ...(preparedSuites.length === 1 ? [preparedSuites[0].suite.use] : [])),
     suitePlannerMembers,

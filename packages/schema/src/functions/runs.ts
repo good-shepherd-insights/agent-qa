@@ -440,7 +440,7 @@ const plannerLimitSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEG
 export const PlannerLimitsRecordSchema = z.object({
   maxActions: plannerLimitSchema,
   maxPlanningTurns: plannerLimitSchema,
-  overrides: z.array(z.object({
+  perTest: z.array(z.object({
     testName: z.string(),
     filePath: z.string(),
     maxActions: plannerLimitSchema,

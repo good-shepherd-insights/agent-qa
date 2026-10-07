@@ -186,7 +186,7 @@ describe('handoff assembly instrumentation parity', () => {
     const plannerLimits = {
       maxActions: 30,
       maxPlanningTurns: 30,
-      overrides: [{ testName: 'Bulk archive', filePath: 'tests/bulk.yaml', maxActions: 60, maxPlanningTurns: 30 }],
+      perTest: [{ testName: 'Bulk archive', filePath: 'tests/bulk.yaml', maxActions: 60, maxPlanningTurns: 30 }],
     }
     const limitedConfig = { ...ordinaryConfig, plannerLimits } satisfies RunConfig
 

@@ -149,7 +149,7 @@ describe('C436-EFFECTIVE-LIMITS runs.start acknowledgement', () => {
   const plannerLimits = {
     maxActions: 30,
     maxPlanningTurns: 30,
-    overrides: [{ testName: 'Bulk archive', filePath: 'tests/bulk.yaml', maxActions: 60, maxPlanningTurns: 30 }],
+    perTest: [{ testName: 'Bulk archive', filePath: 'tests/bulk.yaml', maxActions: 60, maxPlanningTurns: 30 }],
   }
 
   function recorded(withLimits: boolean): CompletedRunHandoff {
@@ -204,7 +204,7 @@ describe('C436-EFFECTIVE-LIMITS runs.start acknowledgement', () => {
       .toBe(false)
     expect(runsStartSpec.output.safeParse({
       ...acknowledgement,
-      limits: { maxActions: 30, maxPlanningTurns: 30, overrides: [{ ...plannerLimits.overrides[0], extra: 1 }] },
+      limits: { maxActions: 30, maxPlanningTurns: 30, perTest: [{ ...plannerLimits.perTest[0], extra: 1 }] },
     }).success).toBe(false)
     expect(runsStartSpec.output.safeParse({ ...acknowledgement, limits: { maxActions: 0, maxPlanningTurns: 30 } }).success)
       .toBe(false)
