@@ -1827,3 +1827,34 @@ divergences, including three fixes made outside the plans: the recorded action i
 the action (`d34233fd3`), the planner-limits record names its per-test entries `perTest`
 (`07203a747`, for agent-local's strategy-config census), and Android gestures start clear of the system
 gesture zones (`c14f755a9`, WINDOWS #562).
+
+### Gate at the time of writing (2026-10-08)
+
+Run by 436-13 from `agent-qa/` with `pnpm run gate:local -- --out <dir>`. The gate clones the
+committed SHA into a fresh temporary directory, installs with the frozen lockfile and runs every
+leg there. It ran on `fcb323f291e836b8ea170e660ac0ab9990bd1100`, this section's first commit: `a2ab1651f`
+plus this section without this subsection, and the 293 new regression entries. The source tree was
+clean (`sourceDirty: false`). The run lasted 10 min 28 s (21:44:53Z to 21:55:21Z on 2026-10-07 UTC),
+with a 1-minute load of 3.2 at the start and 6.7 at the end.
+
+| Leg | Observed | Exit |
+|---|---|---|
+| clone, install | fresh clone at the SHA; `pnpm install --frozen-lockfile` | 0, 0 |
+| turbo build and typecheck | 46/46 tasks | **0** |
+| turbo test | 23,136 passed, 0 failed, 44 skipped, every skip a registered entry | **0** |
+| `validate:skills`, `validate:agents`, `validate:publish` | 4, 24 and 22 checks | **0** |
+| `validate:tools` | 14 passed, the same 14 as 434's record, so no agent tool was added | **0** |
+| `validate:arch` | 506 passed (441 at 434, plus the 65 cells of the 436 census) | **0** |
+| `validate:safety`, `validate:431-discovery-imports`, `lint:namespace` | 9 passed; 870 imports; 3,018 files | **0** |
+| node-test, conformance selftest, conformance | 153 passed; 4; 50 | **0** |
+| audit (`pnpm audit --prod --json`) | 493 prod dependencies: critical 0, high 0, moderate 5, low 1. pnpm 10.6.1 exits 1 on any advisory, and the gate judges the JSON metadata (434's owner decision) | 1, judged pass |
+| regressions | **333 of 333 listed cells executed and passed**: 434's 40 and Phase 436's 293 | — |
+| register | 43 entries, 44 skips matched, 0 stale, 0 unlisted; the six live mobile cells were skipped as registered | — |
+
+Verdict: `gate green: 0 finding(s)`, `record: true`, exit **0**. The commit that adds this
+subsection changes only this file, which no test reads. 436-13 re-ran the gate on that commit, and
+`.planning/phases/436-harness-action-outcomes/436-RECORD.md` § Gate records that run, at the
+final SHA.
+
+**Toolchain:** node 24.15.0 · pnpm 10.6.1 · turbo 2.9.7 · Chromium 149.0.7827.55 (revision 1228) ·
+macOS (Darwin 27.0.0, arm64, 12 CPUs).
