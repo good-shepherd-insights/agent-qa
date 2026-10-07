@@ -61,6 +61,33 @@ export function swipeSignalFromOffsets(direction: Direction, offsets: ScrollOffs
   return atExtent ? 'at-boundary' : 'unknown'
 }
 
+/** A page's scrolling element, read before and after a gesture that is not bound to a container. */
+export interface DocumentScrollOffsets {
+  x: number
+  y: number
+  maxX: number
+  maxY: number
+}
+
+/**
+ * The offset rule for a gesture that lands on whatever is under the pointer (web wheel, WebView
+ * touch swipe): the document scroller is measured, and a document with no scroll range on the
+ * swiped axis proves nothing, because the gesture may have moved a nested scroller.
+ */
+export function documentSwipeSignal(
+  direction: Direction,
+  before: DocumentScrollOffsets | undefined,
+  after: DocumentScrollOffsets | undefined,
+): SwipeSignal {
+  if (!before || !after) return 'unknown'
+  const horizontal = direction === 'left' || direction === 'right'
+  const offsets: ScrollOffsets = horizontal
+    ? { before: before.x, after: after.x, max: after.maxX }
+    : { before: before.y, after: after.y, max: after.maxY }
+  if (!(offsets.max > 0)) return 'unknown'
+  return swipeSignalFromOffsets(direction, offsets)
+}
+
 function normalizeName(value: string): string {
   return value.toLowerCase().replace(/\s+/g, ' ').trim()
 }

@@ -91,7 +91,7 @@ export const scrollSchema = z.discriminatedUnion('mode', [
     amount: z.enum(['page', 'halfPage', 'toEnd']).default('page')
       .describe('How far to scroll in the selected direction. Omit when a normal page-sized scroll is appropriate.'),
     retryOpposite: z.boolean().default(true)
-      .describe('Retry in the opposite direction if the first scroll produces no movement. Omit when retrying opposite is acceptable.'),
+      .describe('No effect in direction mode (one gesture per scroll). In untilVisible mode, allows one bounded search in the opposite direction after maxSwipes without the target or at a boundary. Omit in direction mode.'),
   }).strict(),
   z.object({
     mode: z.literal('untilVisible'),

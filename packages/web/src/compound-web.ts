@@ -13,7 +13,8 @@ import {
   runDirectionScroll,
   runToEndScroll,
   swipeSignalFromOffsets,
-  type ScrollOffsets,
+  documentSwipeSignal,
+  type DocumentScrollOffsets,
   type ScrollPrimitives,
   type SwipeSignal,
   type Direction,
@@ -108,14 +109,7 @@ async function settle(page: Page): Promise<void> {
   })`)
 }
 
-interface DocumentOffsets {
-  x: number
-  y: number
-  maxX: number
-  maxY: number
-}
-
-async function readDocumentOffsets(page: Page): Promise<DocumentOffsets | undefined> {
+async function readDocumentOffsets(page: Page): Promise<DocumentScrollOffsets | undefined> {
   try {
     const raw = (await page.evaluate(() => {
       const doc = (globalThis as unknown as {
@@ -135,32 +129,17 @@ async function readDocumentOffsets(page: Page): Promise<DocumentOffsets | undefi
         maxX: el.scrollWidth - el.clientWidth,
         maxY: el.scrollHeight - el.clientHeight,
       }
-    })) as DocumentOffsets | undefined
+    })) as DocumentScrollOffsets | undefined
     return raw && typeof raw === 'object' ? raw : undefined
   } catch {
     return undefined
   }
 }
 
-// No-ref wheel: the document scroller is measured before and after. The wheel lands on whatever
-// is under the pointer, so a document with no scroll range on this axis proves nothing.
-export function wheelSignal(
-  direction: Direction,
-  before: DocumentOffsets | undefined,
-  after: DocumentOffsets | undefined,
-): SwipeSignal {
-  if (!before || !after) return 'unknown'
-  const horizontal = direction === 'left' || direction === 'right'
-  const offsets: ScrollOffsets = horizontal
-    ? { before: before.x, after: after.x, max: after.maxX }
-    : { before: before.y, after: after.y, max: after.maxY }
-  if (!(offsets.max > 0)) return 'unknown'
-  return swipeSignalFromOffsets(direction, offsets)
-}
-
 // Light probe + swipe/native primitives. readInterimTree re-runs ONLY the aria-snapshot harvest
 // → parseAriaSnapshot(text).nodes — NO buildScreenState, NO refMap mint, NO screenshot; lastRefs
-// stays bound to the pre-compound observation. swipeOnce reports what the offsets proved.
+// stays bound to the pre-compound observation. swipeOnce reports what the offsets proved; the
+// no-ref wheel measures the document scroller before and after.
 export function buildScrollPrimitives(page: Page, lastRefs: RefMap, magnitude: number): ScrollPrimitives {
   return {
     async swipeOnce(direction: Direction, ref?: Ref): Promise<SwipeSignal> {
@@ -175,7 +154,7 @@ export function buildScrollPrimitives(page: Page, lastRefs: RefMap, magnitude: n
       await page.mouse.wheel(dx, dy)
       await settle(page)
       const after = await readDocumentOffsets(page)
-      return wheelSignal(direction, before, after)
+      return documentSwipeSignal(direction, before, after)
     },
     async nativeSearchScroll(target: string): Promise<boolean> {
       try {

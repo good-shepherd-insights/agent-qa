@@ -869,8 +869,9 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
   }
 
   /**
-   * EXEC-02 platform primitives injected into the shared runner scroll loop (D-02/D-03). The swipe
-   * is a page-sized directional gesture (inverted to the finger direction); nativeSearchScroll drives
+   * EXEC-02 platform primitives injected into the shared runner scroll loops (D-02/D-03). The swipe
+   * is a page-sized directional gesture (inverted to the finger direction) that reports unknown
+   * movement; nativeSearchScroll drives
    * the XCUITest `mobile: scroll` predicateString rung over an injection-escaped target; readInterimTree
    * is a light page-source parse — NO refMap mint, NO screenshot, lastRefs untouched.
    */
@@ -900,6 +901,7 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
           .move({ x: pts.endX, y: pts.endY, duration: 300 })
           .up({ button: 0 })
           )
+        // XCUITest/WDA report no movement or boundary for a swipe or a direction scroll.
         return 'unknown'
       },
       nativeSearchScroll: async (target: string): Promise<boolean> => {
@@ -907,7 +909,8 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
         // control chars up front, so this is escaping only). Native-rung failure is a soft fallback.
         const predicateString = buildIOSPredicate(target)
         try {
-          await driver.execute('mobile: scroll', { predicateString, direction: scrollDirection })
+          // direction outranks predicateString in XCUITest's strategy order, so it is never sent here.
+          await driver.execute('mobile: scroll', { predicateString })
           return true
         } catch {
           return false
@@ -1184,11 +1187,11 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
       }
 
       case 'scroll': {
-        // EXEC-02 scroll (D-02/D-03): ONE ActionResult carrying scrollUntilVisible metadata.
-        // untilVisible prefers the native `mobile: scroll` predicateString rung (injection-escaped),
-        // then bounded swipes with light page-source probes; direction rides the shared self-heal
-        // loop. Progress is judged ONLY by interim-tree identity — never by mobile scroll offsets
-        // (documented zeros, Pitfall 3) — and lastRefs is untouched (D-03).
+        // EXEC-02 scroll (D-02/D-03; 436-02 D-24/D-25): ONE ActionResult carrying scrollUntilVisible
+        // metadata. untilVisible prefers the native `mobile: scroll` predicateString rung
+        // (injection-escaped), then bounded swipes with light page-source probes for target
+        // visibility; direction mode is one gesture. iOS swipes report unknown movement, so only
+        // the target becoming visible ends a search early; lastRefs is untouched (D-03).
         if (action.mode === 'untilVisible') {
           // Reject a hostile/control-char target up front — never interpolate it (Pitfall 9).
           try {

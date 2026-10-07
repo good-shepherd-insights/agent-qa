@@ -545,19 +545,20 @@ describe('AndroidPlatformAdapter', () => {
   })
 
   describe('execute — scroll', () => {
-    it('performs swipe gesture in the specified direction', async () => {
+    // 2026-10-07 (436-02): a native scroll is the driver's scrollGesture, not a raw touch swipe.
+    it('performs one scrollGesture over the screen area in the specified direction', async () => {
       await adapter.setup({ platform: 'android' })
       await adapter.observe()
 
-      const result = await adapter.execute({ type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: false })
+      const result = await adapter.execute({ type: 'scroll', mode: 'direction', direction: 'down', amount: 'halfPage', retryOpposite: true })
       expect(result.success).toBe(true)
-      expect(result.metadata?.scrollUntilVisible).toBeDefined()
+      expect(result.metadata?.scrollUntilVisible).toMatchObject({ swipes: 1, reversedOnce: false, outcome: 'unresolved' })
 
-      expect(mockDriver.action).toHaveBeenCalledWith('pointer', { parameters: { pointerType: 'touch' } })
-      // viewport: 1080x1920, center: 540,960; page swipe distance = round(1920*0.6) = 1152.
-      // scroll DOWN reveals content below => finger swipes UP (960+576=1536 -> 960-576=384).
-      expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 540, y: 1536 })
-      expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 540, y: 384, duration: 300 })
+      const gestures = mockDriver.execute.mock.calls.filter((c: unknown[]) => c[0] === 'mobile: scrollGesture')
+      expect(gestures).toHaveLength(1)
+      // viewport 1080x1920; content direction is passed as-is; halfPage halves the 0.75 page percent.
+      expect(gestures[0][1]).toEqual({ left: 0, top: 0, width: 1080, height: 1920, direction: 'down', percent: 0.375 })
+      expect(mockDriver.action).not.toHaveBeenCalled()
     })
   })
 

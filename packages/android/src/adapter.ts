@@ -13,6 +13,7 @@ import type {
   LiveStreamCapability,
   PlatformConfig,
   RecordingCapability,
+  DocumentScrollOffsets,
   ScrollPrimitives,
   SwipeSignal,
 } from '@vostride/agent-qa-runner'
@@ -21,6 +22,7 @@ import {
   buildScreenState,
   compareFillReread,
   createSnapshotLiveStream,
+  documentSwipeSignal,
   resolveAppName,
   runDirectionScroll,
   runToEndScroll,
@@ -941,10 +943,12 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
   }
 
   /**
-   * EXEC-02 platform primitives injected into the shared runner scroll loop (D-02/D-03). The
-   * swipe is a page-sized directional gesture (inverted to the finger direction); nativeSearchScroll
-   * drives the UiAutomator `UiScrollable.scrollIntoView` rung over an injection-escaped selector;
-   * readInterimTree is a light page-source parse — NO refMap mint, NO screenshot, lastRefs untouched.
+   * EXEC-02 platform primitives injected into the shared runner scroll loops (D-02/D-03; 436-02
+   * D-25). A native swipe is `mobile: scrollGesture` over the container (the ref's bounds, else the
+   * screen), whose boolean is the driver's own boundary signal; in a WebView the touch swipe is
+   * measured by window offsets before and after. nativeSearchScroll drives the UiAutomator
+   * `UiScrollable.scrollIntoView` rung over an injection-escaped selector; readInterimTree is a
+   * light page-source parse — NO refMap mint, NO screenshot, lastRefs untouched.
    */
   private async buildAndroidScrollPrimitives(
     scrollDirection: Direction,
@@ -956,22 +960,43 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     const axisLength = scrollDirection === 'left' || scrollDirection === 'right' ? viewport.width : viewport.height
     const distance = Math.max(1, Math.round(axisLength * 0.6 * factor))
 
+    const webViewSwipe = async (direction: Direction, ref?: Ref): Promise<SwipeSignal> => {
+      let sx = Math.round(viewport.width / 2)
+      let sy = Math.round(viewport.height / 2)
+      if (ref) {
+        const { center } = new MobileElementResolver(this.lastRefs).resolve(ref)
+        sx = Math.round(center.x)
+        sy = Math.round(center.y)
+      }
+      const before = await this.readWebViewOffsets()
+      const pts = computeSwipe(sx, sy, fingerDirectionFor(direction), distance)
+      await safePerform(driver.action('pointer', { parameters: { pointerType: 'touch' } })
+        .move({ x: pts.startX, y: pts.startY })
+        .down({ button: 0 })
+        .move({ x: pts.endX, y: pts.endY, duration: 300 })
+        .up({ button: 0 })
+        )
+      const after = await this.readWebViewOffsets()
+      return documentSwipeSignal(direction, before, after)
+    }
+
     return {
       swipeOnce: async (direction: Direction, ref?: Ref): Promise<SwipeSignal> => {
-        let sx = Math.round(viewport.width / 2)
-        let sy = Math.round(viewport.height / 2)
-        if (ref) {
-          const { center } = new MobileElementResolver(this.lastRefs).resolve(ref)
-          sx = Math.round(center.x)
-          sy = Math.round(center.y)
-        }
-        const pts = computeSwipe(sx, sy, fingerDirectionFor(direction), distance)
-        await safePerform(driver.action('pointer', { parameters: { pointerType: 'touch' } })
-          .move({ x: pts.startX, y: pts.startY })
-          .down({ button: 0 })
-          .move({ x: pts.endX, y: pts.endY, duration: 300 })
-          .up({ button: 0 })
-          )
+        if (this.activeWebContext) return webViewSwipe(direction, ref)
+        const area = ref
+          ? new MobileElementResolver(this.lastRefs).resolve(ref).bounds
+          : { x: 0, y: 0, width: viewport.width, height: viewport.height }
+        // A1 (436-RESEARCH): true = "further scrolling is possible"; 436-12's live cell confirms the mapping.
+        const canScrollMore = await driver.execute('mobile: scrollGesture', {
+          left: Math.round(area.x),
+          top: Math.round(area.y),
+          width: Math.max(1, Math.round(area.width)),
+          height: Math.max(1, Math.round(area.height)),
+          direction,
+          percent: 0.75 * factor,
+        }) as unknown
+        if (canScrollMore === true) return 'moved'
+        if (canScrollMore === false) return 'at-boundary'
         return 'unknown'
       },
       nativeSearchScroll: async (target: string): Promise<boolean> => {
@@ -993,6 +1018,24 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
         const { nodes } = parseMobileSource(xml, 'android', viewport)
         return nodes
       },
+    }
+  }
+
+  private async readWebViewOffsets(): Promise<DocumentScrollOffsets | undefined> {
+    try {
+      const raw = await this.driver!.execute(
+        'var s = document.scrollingElement || document.documentElement;'
+        + 'return { x: window.scrollX, y: window.scrollY,'
+        + ' maxX: s.scrollWidth - s.clientWidth, maxY: s.scrollHeight - s.clientHeight };',
+      ) as unknown
+      if (!raw || typeof raw !== 'object') return undefined
+      const { x, y, maxX, maxY } = raw as Record<string, unknown>
+      if ([x, y, maxX, maxY].every((n) => typeof n === 'number')) {
+        return { x, y, maxX, maxY } as DocumentScrollOffsets
+      }
+      return undefined
+    } catch {
+      return undefined
     }
   }
 
@@ -1263,11 +1306,11 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       }
 
       case 'scroll': {
-        // EXEC-02 scroll (D-02/D-03): ONE ActionResult carrying scrollUntilVisible metadata.
-        // untilVisible prefers the native UiScrollable rung (injection-escaped), then bounded
-        // swipes with light page-source probes; direction rides the shared self-heal loop.
-        // Progress is judged ONLY by interim-tree identity — never by mobile scroll offsets
-        // (documented zeros, Pitfall 3) — and lastRefs is untouched (D-03).
+        // EXEC-02 scroll (D-02/D-03; 436-02 D-24/D-25): ONE ActionResult carrying scrollUntilVisible
+        // metadata. untilVisible prefers the native UiScrollable rung (injection-escaped), then
+        // bounded swipes with light page-source probes for target visibility; direction mode is one
+        // gesture. Movement and boundaries come only from scrollGesture's result or WebView
+        // offsets, never from interim-tree comparisons, and lastRefs is untouched (D-03).
         if (action.mode === 'untilVisible') {
           // Reject a hostile/control-char target up front — never interpolate it (Pitfall 9).
           try {
