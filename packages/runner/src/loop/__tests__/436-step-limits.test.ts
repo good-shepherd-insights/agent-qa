@@ -14,6 +14,7 @@ import type { ActionPlanCache, CacheablePlannedAction, CachedPlanValue } from '.
 import type { KnowledgeHintReader } from '../../knowledge-hint-reader.js'
 import type { Action, ActionResult, PlatformAdapter } from '../../platform.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
+import { createTimeoutAbortReason } from '../abort.js'
 import { executeStep } from '../index.js'
 import type { LoopPorts } from '../ports.js'
 import type { StepLimitMeter } from '../step-limits.js'
@@ -522,5 +523,188 @@ describe('C436-ACTION-PATHS', () => {
         expect(snapshots[i][key]).toBeGreaterThanOrEqual(snapshots[i - 1][key])
       }
     }
+  })
+})
+
+const ROWS = 55
+
+function bulkScreen(marked: ReadonlySet<string>): ScreenState {
+  const base = makeScreenState()
+  const elements = Array.from({ length: ROWS }, (_, i) => ({
+    ...base.elements[1],
+    ref: `r${i + 1}` as ScreenState['elements'][number]['ref'],
+    role: 'checkbox',
+    name: `Row ${i + 1}`,
+    nameNormalized: `row ${i + 1}`,
+    labels: {},
+    state: { ...base.elements[1].state, checked: marked.has(`r${i + 1}`) },
+  }))
+  const refMap: ScreenState['refMap'] = {}
+  for (const el of elements) refMap[el.ref] = { bounds: el.bounds!, center: el.center! }
+  return {
+    ...base,
+    tree: [
+      `[Viewport: 390x844] [${ROWS} elements]`,
+      `- text "Marked: ${marked.size} of ${ROWS}"`,
+      ...elements.map((el) => `- checkbox "${el.name}" [ref=${el.ref}] ${el.state.checked ? '(checked)' : ''}`),
+    ].join('\n'),
+    elements,
+    refMap,
+  }
+}
+
+function bulkTask(): { adapter: PlatformAdapter & { executed: Action[] }; planner: Planner & { calls: number }; verifier: Verifier & { calls: number } } {
+  const marked = new Set<string>()
+  const executed: Action[] = []
+  const adapter: PlatformAdapter & { executed: Action[] } = {
+    executed,
+    platform: 'web',
+    async setup() {},
+    async cleanup() {},
+    async observe() { return bulkScreen(marked) },
+    async execute(action: Action) {
+      executed.push(action)
+      marked.add(String((action as { ref?: string }).ref))
+      return { success: true }
+    },
+  }
+  const planner = {
+    calls: 0,
+    async plan(_step: string, screen: ScreenState) {
+      planner.calls++
+      const open = screen.elements.filter((el) => el.state.checked !== true)
+      return { plan: makeActionPlan({ reasoning: '', action: { type: 'click', ref: open[0].ref }, stepComplete: open.length === 1 }) }
+    },
+  }
+  const verifier = {
+    calls: 0,
+    async verify(_step: string, _before: ScreenState, after: ScreenState) {
+      verifier.calls++
+      const done = after.elements.every((el) => el.state.checked === true)
+      return { verification: { success: done, reasoning: done ? 'Every row is marked' : 'Rows remain', isAppError: false } }
+    },
+  }
+  return { adapter, planner, verifier }
+}
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+function slowAdapter(ms: number): PlatformAdapter & { executed: Action[] } {
+  const executed: Action[] = []
+  return {
+    executed,
+    platform: 'web',
+    async setup() {},
+    async cleanup() {},
+    async observe() { return makeScreenState() },
+    async execute(action: Action) {
+      executed.push(action)
+      await delay(ms)
+      return { success: true }
+    },
+  }
+}
+
+const LARGE = { maxActions: 1000, maxPlanningTurns: 1000, previousStepCount: 0 }
+
+describe('C436-BULK-AND-BOUNDS', () => {
+  it('a 55-action bulk task completes at maxActions 60', async () => {
+    const { adapter, planner, verifier } = bulkTask()
+    const result = await executeStep(
+      'Mark every row in the list',
+      ports({ adapter, planner, verifier, plannerConfig: { maxActions: 60, maxPlanningTurns: 60, previousStepCount: 0 } }),
+      makeStepContext(),
+    )
+    expect(result.status).toBe('passed')
+    expect(adapter.executed).toHaveLength(55)
+    expect(verifier.calls).toBe(1)
+    expect(result.evidence?.limitStop).toBeUndefined()
+    expect(result.evidence?.limitUsage).toMatchObject({
+      limits: { maxActions: 60, maxPlanningTurns: 60 },
+      actionsUsed: 55,
+      planningCallsUsed: 55,
+      verifierCalls: 1,
+    })
+  })
+
+  it('the same task stops honestly at maxActions 30', async () => {
+    const { adapter, planner, verifier } = bulkTask()
+    const result = await executeStep(
+      'Mark every row in the list',
+      ports({ adapter, planner, verifier, plannerConfig: { maxActions: 30, maxPlanningTurns: 60, previousStepCount: 0 } }),
+      makeStepContext(),
+    )
+    const reason = 'Stopped: action limit reached — 30 of 30 actions used'
+    expect(result.status).toBe('failed')
+    expect(adapter.executed).toHaveLength(30)
+    expect(planner.calls).toBe(30)
+    expect(verifier.calls).toBe(0)
+    expect(result.evidence?.limitStop).toEqual({ limit: 'actions', configured: 30, used: 30, reason, requestedOutcome: 'unverified' })
+    expect(result.evidence?.planningFailure).toBeUndefined()
+    expect(result.evidence?.termination).toBeUndefined()
+    expect(result.evidence?.verdictSource).toBeUndefined()
+    expect(result.error).toBe(reason)
+    expect(result.error).not.toMatch(/Application error|Step failed|infeasible/)
+  })
+
+  it('when both limits are spent together the actions limit is reported', async () => {
+    const adapter = scriptedAdapter([{ success: true }])
+    const planner = scriptedPlanner([makeActionPlan({ stepComplete: false })])
+    const result = await executeStep('Keep going', ports({ adapter, planner, plannerConfig: limits(2) }), makeStepContext())
+    expect(result.evidence?.limitUsage).toMatchObject({ actionsUsed: 2, planningCallsUsed: 2 })
+    expect(result.evidence?.limitStop).toMatchObject({ limit: 'actions', configured: 2, used: 2 })
+    expect(result.error).toBe('Stopped: action limit reached — 2 of 2 actions used')
+  })
+
+  it('a step timeout still stops a step with a large limit', async () => {
+    const planner = scriptedPlanner([makeActionPlan({ stepComplete: false })])
+    const result = await executeStep(
+      'Keep going',
+      ports({ adapter: slowAdapter(5), planner, stepTimeout: 40, plannerConfig: LARGE }),
+      makeStepContext(),
+    )
+    expect(result.status).toBe('failed')
+    expect(result.error).toBe('Step timed out after 40ms')
+    expect(result.evidence?.limitStop).toBeUndefined()
+    expect(result.evidence?.limitUsage?.actionsUsed).toBeLessThan(1000)
+  })
+
+  it('a test-timeout abort and a user cancel still stop it', async () => {
+    const testTimeout = new AbortController()
+    setTimeout(() => testTimeout.abort(createTimeoutAbortReason('test', 30)), 30)
+    const timedOut = await executeStep(
+      'Keep going',
+      ports({ adapter: slowAdapter(2), planner: scriptedPlanner([makeActionPlan({ stepComplete: false })]), abortSignal: testTimeout.signal, plannerConfig: LARGE }),
+      makeStepContext(),
+    )
+    expect(timedOut.status).toBe('failed')
+    expect(timedOut.error).toBe(createTimeoutAbortReason('test', 30).message)
+    expect(timedOut.evidence?.limitStop).toBeUndefined()
+
+    const cancel = new AbortController()
+    setTimeout(() => cancel.abort(new Error('User cancelled')), 30)
+    const cancelled = await executeStep(
+      'Keep going',
+      ports({ adapter: slowAdapter(2), planner: scriptedPlanner([makeActionPlan({ stepComplete: false })]), abortSignal: cancel.signal, plannerConfig: LARGE }),
+      makeStepContext(),
+    )
+    expect(cancelled.status).toBe('cancelled')
+    expect(cancelled.error).toBe('Step cancelled by user')
+    expect(cancelled.evidence?.limitStop).toBeUndefined()
+  })
+
+  it('two concurrent executeStep calls keep separate meters', async () => {
+    const first = slowAdapter(1)
+    const second = slowAdapter(1)
+    const [a, b] = await Promise.all([
+      executeStep('Keep going', ports({ adapter: first, planner: scriptedPlanner([makeActionPlan({ stepComplete: false })]), plannerConfig: limits(3) }), makeStepContext()),
+      executeStep('Keep going', ports({ adapter: second, planner: scriptedPlanner([makeActionPlan({ stepComplete: false })]), plannerConfig: limits(5) }), makeStepContext()),
+    ])
+    expect(first.executed).toHaveLength(3)
+    expect(second.executed).toHaveLength(5)
+    expect(a.evidence?.limitUsage).toMatchObject({ limits: { maxActions: 3 }, actionsUsed: 3, planningCallsUsed: 3 })
+    expect(b.evidence?.limitUsage).toMatchObject({ limits: { maxActions: 5 }, actionsUsed: 5, planningCallsUsed: 5 })
+    expect(a.evidence?.limitStop).toMatchObject({ configured: 3, used: 3 })
+    expect(b.evidence?.limitStop).toMatchObject({ configured: 5, used: 5 })
   })
 })
