@@ -14,6 +14,7 @@ import { ORDERS_CSV_BYTES, startOutcomePages } from './fixtures/436-outcome-page
 import type { OutcomePages } from './fixtures/436-outcome-pages.js'
 import {
   act,
+  giveUp,
   memoryCache,
   refFor,
   runScriptedStep,
@@ -185,6 +186,348 @@ describe('C436-OUTCOME-EVIDENCE', () => {
     expect(verifier.inputs[0].operationEvidence?.downloads).toEqual([ORDERS_DOWNLOAD, ORDERS_DOWNLOAD])
     const digests = run.result.evidence!.subActions.map((s) => s.operationEvidence?.downloads?.[0]?.sha256)
     expect(digests).toEqual([ORDERS_SHA256, ORDERS_SHA256])
+    expectOutcomeOnly(run, liveActions(planner))
+  }, 60_000)
+
+  describe('an app clipboard copy passes on the read-back value', () => {
+    const COPY_STEP = 'Copy the order number'
+    const copyOrder = (screen: Parameters<typeof refFor>[0]) =>
+      act({ type: 'click', ref: refFor(screen, 'button', 'Copy order number') }, true, 'Copy the order number')
+    const clipboardCheck = (input: VerifierInput): VerifierVerdict => {
+      const writes = input.operationEvidence?.clipboard ?? []
+      return writes.some((w) => w.text === 'ORDER-4471' && w.readBack === 'matched')
+        ? { pass: true, reason: 'ORDER-4471 was copied and read back' }
+        : { pass: false, reason: 'the order number was not copied' }
+    }
+    const COPIED = [{ source: 'writeText', text: 'ORDER-4471', truncated: false, readBack: 'matched' }]
+
+    it('live', async () => {
+      const { web } = await open('/clipboard')
+      const planner = scriptedPlanner([copyOrder])
+      const verifier = scriptedVerifier(clipboardCheck)
+
+      const run = await runScriptedStep({ adapter: web, instruction: COPY_STEP, planner, verifier, plannerConfig: LIMITS })
+
+      expect(run.result.status).toBe('passed')
+      expect(verifier.inputs[0].operationEvidence?.clipboard).toEqual(COPIED)
+      expect(run.result.evidence!.subActions[0].operationEvidence?.clipboard).toEqual(COPIED)
+      sameIdentity(run.result, 0)
+      expectOutcomeOnly(run, liveActions(planner))
+    }, 60_000)
+
+    it('cached', async () => {
+      const { web } = await open('/clipboard')
+      const cache = memoryCache()
+      const first = await runScriptedStep({
+        adapter: web,
+        instruction: COPY_STEP,
+        planner: scriptedPlanner([copyOrder]),
+        verifier: scriptedVerifier(clipboardCheck),
+        cache,
+        plannerConfig: LIMITS,
+      })
+      expect(first.result.status).toBe('passed')
+
+      const planner = scriptedPlanner([copyOrder])
+      const verifier = scriptedVerifier(clipboardCheck)
+      const run = await runScriptedStep({ adapter: web, instruction: COPY_STEP, planner, verifier, cache, plannerConfig: LIMITS })
+
+      expect(run.result.status).toBe('passed')
+      expect(planner.calls).toBe(0)
+      expect(cache.gets.at(-1)?.hit).toBe(true)
+      expect(run.result.evidence!.subActions[0].operationEvidence?.clipboard).toEqual(COPIED)
+      sameIdentity(run.result, 0)
+      expectOutcomeOnly(run, 1)
+    }, 60_000)
+  })
+
+  const SAVE_STEP = 'Save the draft'
+  const saveCheck = (site: OutcomePages) => (): VerifierVerdict =>
+    site.state.saved.length === 1 && site.state.saved[0] === 'Quarterly report draft'
+      ? { pass: true, reason: 'the draft was saved on the server' }
+      : { pass: false, reason: 'The draft was not saved' }
+
+  it('a background save on an unchanged page passes on the persisted state', async () => {
+    const { web, site } = await open('/save')
+    const planner = scriptedPlanner([
+      (screen) => act({ type: 'click', ref: refFor(screen, 'button', 'Save draft') }, true, 'Save the draft'),
+    ])
+    const verifier = scriptedVerifier(saveCheck(site))
+
+    const run = await runScriptedStep({ adapter: web, instruction: SAVE_STEP, planner, verifier, plannerConfig: LIMITS })
+
+    expect(run.result.status).toBe('passed')
+    expect(site.state.saved).toEqual(['Quarterly report draft'])
+    expect(run.result.evidence!.subActions[0].operationEvidence).toBeUndefined()
+    sameIdentity(run.result, 0)
+    expectOutcomeOnly(run, liveActions(planner))
+  }, 60_000)
+
+  it('a dead Save beside a ticking clock never passes', async () => {
+    const { web, site } = await open('/dead-save')
+    const planner = scriptedPlanner([
+      (screen) => act({ type: 'click', ref: refFor(screen, 'button', 'Save') }, true, 'Save the draft'),
+      () => act({ type: 'keypress', keys: ['Enter'] }, true, 'Save did not save; press Enter in the form'),
+      () => giveUp('The draft was not saved: Save and Enter in the form both left no saved draft'),
+    ])
+    const verifier = scriptedVerifier(saveCheck(site))
+
+    const run = await runScriptedStep({ adapter: web, instruction: SAVE_STEP, planner, verifier, plannerConfig: LIMITS })
+
+    expect(run.result.status).toBe('failed')
+    expect(run.result.error).toContain('The draft was not saved')
+    expect(run.result.evidence!.limitStop).toBeUndefined()
+    expect(site.state.saved).toEqual([])
+    expect(planner.calls).toBe(3)
+    expect(verifier.calls).toBe(2)
+    const clocks = run.result.evidence!.subActions
+      .map((s) => s.stateBefore.elements.find((e) => e.role === 'heading' && e.name.startsWith('Local time'))?.name)
+    expect(new Set(clocks).size, 'the clock ticked between observations').toBeGreaterThan(1)
+    expectOutcomeOnly(run, liveActions(planner))
+  }, 60_000)
+
+  it('the same dead Save under a planner that keeps trying stops at the limit, unverified', async () => {
+    const { web, site } = await open('/dead-save')
+    const planner = scriptedPlanner([
+      (screen) => act({ type: 'click', ref: refFor(screen, 'button', 'Save') }, true, 'Save the draft'),
+    ])
+    const verifier = scriptedVerifier(saveCheck(site))
+
+    const run = await runScriptedStep({
+      adapter: web,
+      instruction: SAVE_STEP,
+      planner,
+      verifier,
+      plannerConfig: { maxActions: 4, maxPlanningTurns: 30, previousStepCount: 0 },
+    })
+
+    expect(run.result.status).toBe('failed')
+    expect(run.result.evidence!.limitStop).toMatchObject({
+      limit: 'actions',
+      configured: 4,
+      used: 4,
+      requestedOutcome: 'unverified',
+      lastVerifierRejection: 'The draft was not saved',
+    })
+    expect(site.state.saved).toEqual([])
+    expect(planner.calls).toBe(4)
+    expect(verifier.calls).toBe(4)
+    expectOutcomeOnly(run, liveActions(planner))
+  }, 60_000)
+
+  const DIALOG_STEP = 'Open the invite dialog'
+  const dialogCheck = (input: VerifierInput): VerifierVerdict => {
+    const open = input.after.elements.some((e) => e.role === 'heading' && e.name === 'Invite a teammate')
+      && input.after.elements.some((e) => e.role === 'button' && e.name === 'Send invite')
+    return open
+      ? { pass: true, reason: 'the invite dialog is open' }
+      : { pass: false, reason: 'The invite dialog did not open' }
+  }
+  const inviteTurns = [
+    (screen: Parameters<typeof refFor>[0]) =>
+      act({ type: 'click', ref: refFor(screen, 'button', 'Invite teammate') }, true, 'Open the invite dialog'),
+    () => act({ type: 'keypress', keys: ['Enter'] }, true, 'The click opened nothing; press Enter on the button'),
+    () => giveUp('The invite dialog did not open after a click and Enter on Invite teammate'),
+  ]
+
+  it('a button that never opens the requested dialog never passes', async () => {
+    await open('/dead-dialog')
+    const planner = scriptedPlanner(inviteTurns)
+    const verifier = scriptedVerifier(dialogCheck)
+
+    const run = await runScriptedStep({ adapter: adapter!, instruction: DIALOG_STEP, planner, verifier, plannerConfig: LIMITS })
+
+    expect(run.result.status).toBe('failed')
+    expect(run.result.error).toContain('The invite dialog did not open')
+    expect(verifier.calls).toBe(2)
+    expect(verifier.inputs.every((input) => !dialogCheck(input).pass)).toBe(true)
+    expectOutcomeOnly(run, liveActions(planner))
+  }, 60_000)
+
+  it('the same button passes when it opens the dialog (the dead dialog\'s twin)', async () => {
+    await open('/dialog')
+    const planner = scriptedPlanner(inviteTurns)
+    const verifier = scriptedVerifier(dialogCheck)
+
+    const run = await runScriptedStep({ adapter: adapter!, instruction: DIALOG_STEP, planner, verifier, plannerConfig: LIMITS })
+
+    expect(run.result.status).toBe('passed')
+    expect(planner.calls).toBe(1)
+    expectOutcomeOnly(run, liveActions(planner))
+  }, 60_000)
+
+  it('five counter presses complete when the count is 5', async () => {
+    const { web, site } = await open('/counter')
+    const press = (last: boolean) => (screen: Parameters<typeof refFor>[0]) =>
+      act({ type: 'click', ref: refFor(screen, 'button', 'Add one') }, last, 'Press Add one')
+    const planner = scriptedPlanner([press(false), press(false), press(false), press(false), press(true)])
+    const verifier = scriptedVerifier(() => site.state.counter === 5
+      ? { pass: true, reason: 'the count is 5' }
+      : { pass: false, reason: `the count is ${String(site.state.counter)}` })
+
+    const run = await runScriptedStep({
+      adapter: web,
+      instruction: 'Press Add one five times',
+      planner,
+      verifier,
+      plannerConfig: LIMITS,
+    })
+
+    expect(run.result.status).toBe('passed')
+    expect(site.state.counter).toBe(5)
+    expect(verifier.calls).toBe(1)
+    const identities = run.result.evidence!.subActions.map((s) => screenIdentityHash(s.stateBefore))
+    expect(identities).toHaveLength(5)
+    expect(new Set(identities).size, 'every press started from the same screen').toBe(1)
+    expectOutcomeOnly(run, liveActions(planner))
+  }, 60_000)
+
+  it('five same-label rows are each archived once', async () => {
+    const { web, site } = await open('/rows')
+    const archive = (nth: number) => (screen: Parameters<typeof refFor>[0]) =>
+      act({ type: 'click', ref: refFor(screen, 'button', 'Archive', nth) }, nth === 4, `Archive row ${String(nth + 1)}`)
+    const planner = scriptedPlanner([0, 1, 2, 3, 4].map(archive))
+    const expected = ['order-1001', 'order-1002', 'order-1003', 'order-1004', 'order-1005']
+    const verifier = scriptedVerifier(() =>
+      JSON.stringify(site.state.archived) === JSON.stringify(expected)
+        ? { pass: true, reason: 'every row was archived once' }
+        : { pass: false, reason: `archived ${site.state.archived.join(', ')}` })
+
+    const run = await runScriptedStep({
+      adapter: web,
+      instruction: 'Archive every order',
+      planner,
+      verifier,
+      plannerConfig: LIMITS,
+    })
+
+    expect(run.result.status).toBe('passed')
+    expect(site.state.archived).toEqual(expected)
+    expectOutcomeOnly(run, liveActions(planner))
+  }, 60_000)
+
+  it('the overflow menu is used three times on three rows', async () => {
+    const { web, site } = await open('/overflow')
+    const turns = [0, 1, 2].flatMap((nth) => [
+      (screen: Parameters<typeof refFor>[0]) =>
+        act({ type: 'click', ref: refFor(screen, 'button', 'More actions', nth) }, false, `Open the menu of row ${String(nth + 1)}`),
+      (screen: Parameters<typeof refFor>[0]) =>
+        act({ type: 'click', ref: refFor(screen, 'menuitem', 'Archive') }, nth === 2, `Archive row ${String(nth + 1)}`),
+    ])
+    const planner = scriptedPlanner(turns)
+    const expected = ['order-2001', 'order-2002', 'order-2003']
+    const verifier = scriptedVerifier(() =>
+      JSON.stringify(site.state.archived) === JSON.stringify(expected)
+        ? { pass: true, reason: 'the three rows were archived from their menus' }
+        : { pass: false, reason: `archived ${site.state.archived.join(', ')}` })
+
+    const run = await runScriptedStep({
+      adapter: web,
+      instruction: 'Archive the three orders from their More actions menus',
+      planner,
+      verifier,
+      plannerConfig: LIMITS,
+    })
+
+    expect(run.result.status).toBe('passed')
+    expect(site.state.archived).toEqual(expected)
+    expect(run.executed).toHaveLength(6)
+    expectOutcomeOnly(run, liveActions(planner))
+  }, 60_000)
+
+  // The web native search waits Playwright's default action timeout (30 s) for a target that is
+  // not in the DOM yet; a short page default keeps these cells quick and changes no result.
+  const NATIVE_SEARCH_TIMEOUT_MS = 2_000
+
+  it('a same-hash scroll does not reverse or retry', async () => {
+    const { web } = await open('/long-list')
+    const page = web.getPage()!
+    page.setDefaultTimeout(NATIVE_SEARCH_TIMEOUT_MS)
+
+    // The fixture's premise: moving the list by a page leaves the screen identity unchanged.
+    const unmoved = screenIdentityHash(await web.observe())
+    await page.evaluate(() => {
+      const list = (globalThis as unknown as { document: { getElementById(id: string): { scrollTop: number } } })
+        .document.getElementById('list')
+      list.scrollTop = 720
+    })
+    expect(screenIdentityHash(await web.observe())).toBe(unmoved)
+    await page.evaluate(() => {
+      const list = (globalThis as unknown as { document: { getElementById(id: string): { scrollTop: number } } })
+        .document.getElementById('list')
+      list.scrollTop = 0
+    })
+
+    const planner = scriptedPlanner([
+      (screen) => act({
+        type: 'scroll',
+        mode: 'untilVisible',
+        text: 'Item 80',
+        ref: refFor(screen, 'region', 'Order history list'),
+        direction: 'down',
+        maxSwipes: 12,
+        retryOpposite: true,
+      }, true, 'Scroll the order history to Item 80'),
+    ])
+    const verifier = scriptedVerifier((input) => {
+      const viewportHeight = (input.after.metadata.viewportHeight as number | undefined) ?? 0
+      const item = input.after.elements.find((e) => e.role === 'button' && e.name === 'Item 80')
+      const inView = item?.bounds !== undefined && item.bounds.y >= 0 && item.bounds.y + item.bounds.height <= viewportHeight
+      return inView ? { pass: true, reason: 'Item 80 is in view' } : { pass: false, reason: 'Item 80 is not in view' }
+    })
+
+    const run = await runScriptedStep({
+      adapter: web,
+      instruction: 'Scroll the order history until Item 80 is visible',
+      planner,
+      verifier,
+      plannerConfig: LIMITS,
+    })
+
+    expect(run.result.status).toBe('passed')
+    const meta = run.result.evidence!.subActions[0].result.metadata?.['scrollUntilVisible']
+    expect(meta).toMatchObject({ reversedOnce: false, outcome: 'found', endedBy: 'target-visible' })
+    expect((meta as { swipes: number }).swipes, 'the list moved by several swipes before the item appeared').toBeGreaterThan(1)
+    expect(planner.calls).toBe(1)
+    expectOutcomeOnly(run, liveActions(planner))
+  }, 60_000)
+
+  it('an unrelated update is not movement', async () => {
+    const { web } = await open('/unrelated-update')
+    web.getPage()!.setDefaultTimeout(NATIVE_SEARCH_TIMEOUT_MS)
+    const planner = scriptedPlanner([
+      () => act({
+        type: 'scroll',
+        mode: 'untilVisible',
+        text: 'Archived order 12',
+        direction: 'down',
+        maxSwipes: 4,
+        retryOpposite: false,
+      }, false, 'Look for Archived order 12 in the feed'),
+      () => giveUp('Archived order 12 is not in the activity feed'),
+    ])
+    const verifier = scriptedVerifier(() => ({ pass: false, reason: 'Archived order 12 is not visible' }))
+
+    const run = await runScriptedStep({
+      adapter: web,
+      instruction: 'Scroll the activity feed until Archived order 12 is visible',
+      planner,
+      verifier,
+      plannerConfig: LIMITS,
+    })
+
+    expect(run.result.status).toBe('failed')
+    expect(run.result.evidence!.subActions[0].result.metadata?.['scrollUntilVisible']).toEqual({
+      swipes: 4,
+      reversedOnce: false,
+      outcome: 'unresolved',
+      endedBy: 'max-swipes',
+    })
+    const tickers = run.result.evidence!.subActions
+      .map((s) => s.stateBefore.elements.find((e) => e.role === 'heading' && e.name.startsWith('Updated'))?.name)
+    expect(new Set(tickers).size, 'the ticker changed while the feed did not move').toBe(2)
+    expect(verifier.calls).toBe(0)
+    expect(planner.calls).toBe(2)
     expectOutcomeOnly(run, liveActions(planner))
   }, 60_000)
 })
