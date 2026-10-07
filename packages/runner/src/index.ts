@@ -74,6 +74,7 @@ export type { AgentAbortScope, AgentTimeoutAbortReason } from './loop/abort.js'
 export type {
   ActionPlan,
   PlannerConfig,
+  PlanningCallGate,
   PlanResult,
   VerificationResult,
   VerifyResult,
@@ -93,7 +94,7 @@ export type {
 // engine (plan 368-04) must instanceof-classify structured planner failures by identity,
 // never string-match the message (D-09). NonActionToolHandler/NonActionToolMap are already
 // re-exported from ./loop/planning-turn.js below (eval core's ports import them in 368-02).
-export { LLMPlanner, PlanningTurnError } from './loop/planner.js'
+export { LLMPlanner, PlanningLimitReachedError, PlanningTurnError } from './loop/planner.js'
 export {
   executePlanningTurn,
   DEFAULT_NON_ACTION_TOOL_BUDGET,

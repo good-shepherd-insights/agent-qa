@@ -32,7 +32,7 @@ import type {
   SamplingParams,
   ToolExchangeEvidence,
 } from '@vostride/agent-qa-schema'
-import type { ActionPlan } from './types.js'
+import type { ActionPlan, PlanningCallGate } from './types.js'
 import type { TokenUsage } from '../result.js'
 import type { LoopScopedLogger } from './ports.js'
 import { toolCallToActionPlan } from '../tools/builder.js'
@@ -75,6 +75,7 @@ export type PlanningTurnFailureReason =
   | 'no_action_tool_called'
   | 'non_action_tool_budget_exhausted'
   | 'ungroundable_action'
+  | 'planning_limit_reached'
 
 /**
  * The in-turn groundability verdict for a parsed action (D-09). Returned by the
@@ -155,6 +156,11 @@ export interface ExecutePlanningTurnOptions {
    * is deliberately excluded because the output ceiling remains clamp-owned.
    */
   sampling?: SamplingParams
+  /**
+   * 436 D-08: when bound, every model call of the turn is debited before it is made; a refused
+   * debit ends the turn with `planning_limit_reached` and no model call.
+   */
+  planningCallGate?: PlanningCallGate
   abortSignal?: AbortSignal
   logger?: LoopScopedLogger
 }
@@ -285,6 +291,16 @@ export async function executePlanningTurn(
   const maxIterations = budgetLimit + 5
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
+    if (options.planningCallGate && !options.planningCallGate.tryDebitPlanningCall()) {
+      return {
+        ok: false,
+        reason: 'planning_limit_reached',
+        message: 'planning-turn limit reached',
+        exchanges,
+        tokenUsage: tokenUsage(),
+        callRecord: callRecord(),
+      }
+    }
     // generateText errors (including abort) propagate to the caller untouched.
     const observed = await withStepModelCall(options.model, model => generateText({
       model,

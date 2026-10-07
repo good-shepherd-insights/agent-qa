@@ -66,6 +66,22 @@ export class PlanningTurnError extends Error {
   }
 }
 
+/**
+ * 436 D-08/D-12: the step's planning-turn limit refused a planner model call. Never a planning
+ * failure; the loop ends the step with its typed limit stop.
+ */
+export class PlanningLimitReachedError extends Error {
+  readonly exchanges: ToolExchangeEvidence[]
+  readonly callRecord?: ModelCallRecord
+
+  constructor(exchanges: ToolExchangeEvidence[], callRecord?: ModelCallRecord) {
+    super('Planning-turn limit reached')
+    this.name = 'PlanningLimitReachedError'
+    this.exchanges = exchanges
+    this.callRecord = callRecord
+  }
+}
+
 // RUNX-04 (planner half): duck-typed `@ai-sdk/provider` APICallError extraction — mirrors
 // `packages/cli/src/commands/auth.ts` `extractProviderError`. The runner stays provider-neutral
 // (no model/@ai-sdk import): it reads the structural `statusCode?: number` + `responseBody?:
@@ -272,6 +288,7 @@ export class LLMPlanner implements Planner {
             // behind all three plan() call paths (screenshot, fallback retry, no-screenshot),
             // so this one thread-through covers every path.
             nonActionTools: this.nonActionTools,
+            planningCallGate: context.planningCallGate,
           }),
         // recordUsage anchors on the observed input tokens (prompt only, per the clamp
         // contract); the turn result's accumulated TokenUsage supplies the triad. The `ai`
@@ -352,6 +369,10 @@ export class LLMPlanner implements Planner {
       this.logger?.warn('Planning turn degraded to the pinned floor (input exceeds budget)', {
         reason: clamped.degrade.reason,
       })
+    }
+
+    if (!turnResult.ok && turnResult.reason === 'planning_limit_reached') {
+      throw new PlanningLimitReachedError(turnResult.exchanges, turnResult.callRecord)
     }
 
     if (!turnResult.ok) {

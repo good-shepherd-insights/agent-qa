@@ -339,4 +339,24 @@ describe('executePlanningTurn', () => {
     const calls = await generateTextCalls()
     expect(JSON.stringify(calls[1][0].messages)).toContain('Tool budget exhausted')
   })
+
+  it('436 D-08: a bound gate debits each model call and a refused debit ends the turn with planning_limit_reached', async () => {
+    const note = fakeNonActionTool()
+    await scriptResponses([
+      { toolCalls: [nonActionCall('fake_note', { q: 'a' })], usage: USAGE },
+      { toolCalls: [actionCall('web_click', { ref: 'e1', ...ENVELOPE })], usage: USAGE },
+    ])
+    let allowed = 1
+    let debits = 0
+    const gate = { tryDebitPlanningCall: () => { debits++; return allowed-- > 0 } }
+
+    const res = await executePlanningTurn(turnOptions({ nonActionTools: { fake_note: note }, planningCallGate: gate }))
+
+    expect(res).toMatchObject({ ok: false, reason: 'planning_limit_reached', message: 'planning-turn limit reached' })
+    if (res.ok) throw new Error('expected failure')
+    expect(res.exchanges).toHaveLength(1)
+    expect(debits).toBe(2)
+    const calls = await generateTextCalls()
+    expect(calls).toHaveLength(1)
+  })
 })

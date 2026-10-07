@@ -65,6 +65,11 @@ export interface ActionPlan {
   failureReason?: string
 }
 
+/** 436 D-08: debits one planner model call before it is made; false refuses the call. */
+export interface PlanningCallGate {
+  tryDebitPlanningCall(): boolean
+}
+
 export interface PlannerConfig {
   maxActions: number
   maxPlanningTurns: number
@@ -170,6 +175,8 @@ export interface StepContext {
    */
   subActionHistory?: { action: string; reasoning?: string; result: 'success' | 'failure'; error?: string; verifierRejection?: string; data?: string }[]
   plannerConfig?: PlannerConfig
+  /** 436 D-08: the step's planning-call meter, bound by the loop before each plan() call. */
+  planningCallGate?: PlanningCallGate
   screenshot?: Buffer
   /**
    * Vision-gate prompt note for this run (D-11). Non-empty only for text-only

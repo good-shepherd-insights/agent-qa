@@ -65,7 +65,7 @@ import type { CachedPlanValue, GroundedLocator } from '../cache/port.js'
 import type { LoopPorts, SecretRedactorPort } from './ports.js'
 import { guardActionData } from './blob-guard.js'
 import type { ActionPlan, PlanResult, StepContext, VerifierAuthorContext } from './types.js'
-import { PlanningTurnError } from './planner.js'
+import { PlanningLimitReachedError, PlanningTurnError } from './planner.js'
 import { withAbort, getTimeoutAbortReason } from './abort.js'
 import {
   redactSecretValue,
@@ -982,6 +982,8 @@ export async function executeStep(
     }
 
     if (!procedureReplayed && !cached) {
+      // 436 D-08: a live decision needs a planner call; cache and procedure replay do not.
+      if (meter.planningExhausted()) return limitStop('planning-turns')
       const turnOrdinal = nextLiveTurnOrdinal
       // Safety context attachment point (loop.ts:265) — optional-chained (D-05).
       context = ports.safetyHooks?.runContext(context).context ?? context
@@ -1146,16 +1148,25 @@ export async function executeStep(
       )
       nextPromptOrdinal++
       nextLiveTurnOrdinal++
+      // 436 D-08: the planner debits each model call through the gate; a planner that reports
+      // none is debited once per plan().
+      const planningCallsBefore = meter.planningCallsUsed
+      context.planningCallGate = meter
       try {
         planResult = await withAbort(
           ports.planner.plan(stepInstruction, screenState, context, ports.abortSignal),
           ports.abortSignal,
         )
       } catch (planError: unknown) {
+        context.planningCallGate = undefined
+        if (meter.planningCallsUsed === planningCallsBefore) meter.tryDebitPlanningCall()
         recorder.recordServedReadTraces(ports.drainMemoryReadTraces?.() ?? [])
         recorder.recordServedAdmissionEvents(recordLedger.drainEvidenceEvents?.() ?? [])
         const abortDuringPlan = checkAbort()
         if (abortDuringPlan) return abortDuringPlan
+        // 436 D-12: the planning limit refused a planner call — its own typed stop, never a
+        // planning failure.
+        if (planError instanceof PlanningLimitReachedError) return limitStop('planning-turns')
         if (planError instanceof PlanningTurnError) {
           recorder.recordPlanningFailure({
             reason: planError.reason,
@@ -1171,6 +1182,8 @@ export async function executeStep(
           : `LLM planning failed: ${errorMsg}`
         return failure(displayMsg)
       }
+      context.planningCallGate = undefined
+      if (meter.planningCallsUsed === planningCallsBefore) meter.tryDebitPlanningCall()
       recorder.recordServedReadTraces(ports.drainMemoryReadTraces?.() ?? [])
       recorder.recordServedAdmissionEvents(recordLedger.drainEvidenceEvents?.() ?? [])
     }
