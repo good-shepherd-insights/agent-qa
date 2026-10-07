@@ -9,6 +9,7 @@ import type {
   SecretStore,
 } from '@vostride/agent-qa-runner'
 import type { DashboardLLMConfig } from '../llm-model-mapping.js'
+import type { PlannerLimits } from '@vostride/agent-qa-schema'
 
 export type LiveSessionLLMConfig = DashboardLLMConfig & {
   vision?: { screenshotSize?: number; effectiveResolution?: number }
@@ -206,6 +207,8 @@ export interface LiveSessionConfig {
   platform: 'web' | 'android' | 'ios'
   targetName?: string
   production?: LiveProductionFinding
+  /** 436 D-03: resolved at the create door from the project config and the edited entity. */
+  plannerLimits?: PlannerLimits
   llmConfig: LiveSessionLLMConfig
   authFetch?: typeof globalThis.fetch
   envVars?: Record<string, string>

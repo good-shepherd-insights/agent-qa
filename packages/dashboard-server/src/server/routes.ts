@@ -15,6 +15,7 @@ import { readJsonBody } from './body-parser.js'
 import {
   LiveProductionRefusedError,
   liveProductionRefusal,
+  resolveLivePlannerLimits,
   resolveLiveTargetProduction,
 } from '../live-editor/live-session.js'
 import { refuseCrossSiteRequest } from './cross-site.js'
@@ -4981,11 +4982,18 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
           const hookCatalog = await readWorkspaceHooks(configManager, deps.configPath)
           resolvedHooks = hookCatalog.resolvedHooks
           hookRegistryError = hookCatalog.hookRegistryError
+          // 436 D-03: the limits come from the project config and the edited entity's own `use`,
+          // read through the workspace managers by canonical id; never from the request.
+          const plannerLimits = await resolveLivePlannerLimits(configManager, entityRef, {
+            ...(testFileManager === undefined ? {} : { findTest: (id: string) => testFileManager.findByTestId(id) }),
+            ...(suiteFileManager === undefined ? {} : { findSuite: (id: string) => suiteFileManager.findBySuiteId(id) }),
+          })
           const { sessionId, sessionNumber } = await sessionManager.createSession(
             {
               platform: platform as 'web' | 'android' | 'ios',
               targetName,
               production: { productionTargetNames: production.productionTargetNames },
+              plannerLimits,
               llmConfig: runtimeLLM.llmConfig,
               authFetch: runtimeLLM.authFetch,
               envVars,

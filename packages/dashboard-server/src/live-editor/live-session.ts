@@ -31,7 +31,8 @@ import type {
   MobilePlatform,
 } from '@vostride/agent-qa-core'
 import { buildProductionRefusal, distinctInFirstOccurrenceOrder, resolvePlannerLimits } from '@vostride/agent-qa-schema'
-import type { DeclaredModelProfile } from '@vostride/agent-qa-schema'
+import type { DeclaredModelProfile, PlannerLimits } from '@vostride/agent-qa-schema'
+import { parse as parseYaml } from 'yaml'
 import type {
   PlatformAdapter,
   PlatformConfig,
@@ -52,6 +53,7 @@ import type { AppiumManager } from '../execution/appium-manager.js'
 import { readConfigValues, type ConfigManager } from '../config/index.js'
 import type { LiveEditorAttachment } from '../live-view/editor-subjects.js'
 import type {
+  EntityRef,
   SessionState,
   LiveDraftMetadata,
   LiveExecutionLog,
@@ -122,6 +124,43 @@ export async function resolveLiveTargetProduction(
     productionTargetNames: production ? [name] : [],
     allowProduction: config.allowProduction === true,
   }
+}
+
+/** The workspace readers the create door already holds, by canonical id. */
+export interface LiveEntityDefinitionReaders {
+  findTest?(testId: string): Promise<{ content: string } | null>
+  findSuite?(suiteId: string): Promise<{ content: string } | null>
+}
+
+async function readEntityUse(
+  entity: EntityRef | undefined,
+  readers: LiveEntityDefinitionReaders,
+): Promise<unknown> {
+  if (entity === undefined) return undefined
+  const find = entity.type === 'suite' ? readers.findSuite : readers.findTest
+  if (find === undefined) return undefined
+  try {
+    const found = await find(entity.id)
+    if (found === null) return undefined
+    const parsed: unknown = parseYaml(found.content)
+    return isConfigRecord(parsed) ? parsed.use : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * 436 D-03: the limits a live session runs under — the project config's `use` block, then the
+ * suite or test definition the session edits when the door can load it. An entity it cannot load
+ * leaves the project value.
+ */
+export async function resolveLivePlannerLimits(
+  configManager: ConfigManager | undefined,
+  entity: EntityRef | undefined,
+  readers: LiveEntityDefinitionReaders,
+): Promise<PlannerLimits> {
+  const config = configManager === undefined ? {} : await readConfigValues(configManager)
+  return resolvePlannerLimits(config.use, await readEntityUse(entity, readers))
 }
 
 /** The refusal a finding calls for, or nothing when the target is not production or is opted in. */
@@ -332,6 +371,7 @@ export class LiveSession {
   private idleTimer: ReturnType<typeof setTimeout> | null = null
   private _modelName = 'unknown'
   private vision: { screenshotSize?: number; effectiveResolution?: number } | undefined
+  private plannerLimits: PlannerLimits | undefined
   private readyForInteraction = false
   private terminalError: string | null = null
   private setupHooks: string[] = []
@@ -745,6 +785,7 @@ export class LiveSession {
     this.resolvedHooks = new Map(config.resolvedHooks ?? [])
     this.hookRegistryError = config.hookRegistryError ?? null
     this.vision = config.llmConfig.vision
+    this.plannerLimits = config.plannerLimits
     this.readyForInteraction = false
     this.terminalError = null
 
@@ -1080,7 +1121,7 @@ export class LiveSession {
         planner: this.planner!,
         verifier: this.verifier!,
         modelProfiles: this.modelProfiles ?? undefined,
-        plannerConfig: { ...resolvePlannerLimits(), previousStepCount: 5 },
+        plannerConfig: { ...(this.plannerLimits ?? resolvePlannerLimits()), previousStepCount: 5 },
         vision: this.vision,
         onSetVariable: (name, value) => this.variableStore!.set(name, value, 'step'),
         abortSignal: this.abortController.signal,
