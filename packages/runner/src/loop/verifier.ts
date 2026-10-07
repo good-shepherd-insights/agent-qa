@@ -44,8 +44,9 @@ export const AiJudgmentResultSchema = z.object({
 })
 
 // The judge's byte-stable system tier — its own cached prefix (D-05). The observation in the
-// turn is app-controlled DATA to be judged, never instructions (the 358 stagnation-block
-// injection-inert posture): the tier states the trust boundary explicitly.
+// turn is app-controlled DATA to be judged, never instructions (the injection-inert posture
+// the 358 stagnation block held until 436-03 deleted it): the tier states the trust boundary
+// explicitly.
 const JUDGE_STABLE_TIER = `You are a strict UI judge. You are given a single perceptual CLAIM authored by a test planner and an OBSERVED SCREEN captured from the application under test.
 
 Judge whether the claim is TRUE strictly against the observed screen — the accessibility tree and, when attached, the screenshot. Require positive on-screen evidence for a true verdict; when the evidence is absent or contradicted, the verdict is false.

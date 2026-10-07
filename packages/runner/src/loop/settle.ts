@@ -4,16 +4,15 @@
 // when two consecutive values match (the acting condition), bounded by maxPolls AND an
 // optional deadline so an animated/never-stable screen can never hang the loop (D-16):
 // it proceeds on the LATEST observation's hash rather than spinning. The returned hash
-// is the single value downstream consumes — settle-stability, the 8th cache-key
-// component, and the Phase-358 progress/no-change signal (one hash, three jobs, D-09).
+// is the single value downstream consumes — settle-stability and the 8th cache-key
+// component (D-09). 2026-10-08 (436-13): its third job, the Phase-358 progress/no-change
+// signal, was deleted with the progress subsystem (436 D-15); settle itself is kept (D-16).
 //
 // SettleResult additionally exposes `settled` (Phase 358, CYCLE-02): true when the gate
 // exited on two consecutive matching hashes (the acting condition), false when the
-// maxPolls/deadline bound forced a proceed-on-latest. A third consumer — the Phase-358
-// transient-load stagnation classifier — reads this instability signal (settled === false
-// ⇒ the screen never quiesced ⇒ transient-load), keeping the classification honest without
-// re-deriving poll state. Purely additive: existing call sites and settle.test.ts are
-// unaffected because they only read `state`/`hash`.
+// maxPolls/deadline bound forced a proceed-on-latest. 2026-10-08 (436-13): its one reader,
+// the Phase-358 transient-load stagnation classifier, was deleted by 436-03, so no production
+// code reads `settled` now; call sites read `state`/`hash`.
 
 import { screenIdentityHash } from '@vostride/agent-qa-schema'
 import type { ScreenState } from '@vostride/agent-qa-schema'

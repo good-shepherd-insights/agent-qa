@@ -48,8 +48,9 @@ export function collectProcedurePriorIdentities(
 }
 
 /**
- * D-07 detects identity repetition over recorded procedure history only. It deliberately does not
- * reproduce live stagnation machinery because single-decision replay has no observation sequence.
+ * D-07 detects identity repetition over recorded procedure history only. Single-decision replay
+ * has no observation sequence, so it never judged screen change; since 436-03 the live loop has
+ * no stagnation machinery either.
  */
 export function computeLoopVerdict(
   candidateIdentity: DecisionIdentity,
