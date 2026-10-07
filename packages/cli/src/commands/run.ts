@@ -14,7 +14,8 @@ import { resolveDevice, loadLocalBindings, resolveProviderCredentials, type Reso
 import { resolveLLMModels, resolveModelAuth, toModelProfileAndAuth } from '../llm-utils.js'
 import { formatInstallBrowsersRetryCommand, type BrowserInstallSelection } from './install-browsers.js'
 import type { ParsedTestBinding, TestDefinition, ParseError, SuiteDefinition, SuiteResult, RunSuiteConfig } from '@vostride/agent-qa-core'
-import { asRunId, maskPayloadStrings, resolvePlannerLimits } from '@vostride/agent-qa-schema'
+import { asRunId, maskPayloadStrings, resolvePlannerLimits, type PlannerLimitsRecord } from '@vostride/agent-qa-schema'
+import { memberPlannerConfig, plannerLimitsInfoLines, plannerLimitsRecord, type MemberPlannerConfig, type MemberPlannerLimits } from '../run-planner-limits.js'
 import type {
   DeclaredModelProfile,
   ModelCapabilities,
@@ -980,6 +981,13 @@ function printRunId(runId: string | null | undefined): void {
   if (runId) console.log(`Run ID: ${runId}`)
 }
 
+// 436 D-06: printed at the terminal door only, before the first test and at every log level. The
+// producers never print: the MCP host's stdout is its JSON-RPC connection.
+function printPlannerLimits(record: PlannerLimitsRecord | undefined): void {
+  if (record === undefined) return
+  for (const line of plannerLimitsInfoLines(record)) console.log(line)
+}
+
 function isGlobLikePattern(value: string): boolean {
   return /[*?[{]/.test(value)
 }
@@ -1898,6 +1906,7 @@ async function executeSuites(
     activeSuiteDbs,
   })
   const reporterSelection = requireReporterSelection(opts, Boolean(config.services?.dashboard))
+  printPlannerLimits(produced.plannerLimits)
   const members = produced.members
   const executor = produced.executor
   const runProduct = produced.product
@@ -3314,6 +3323,7 @@ export async function produceSuiteRunMembers(
   const suiteMemberUses: (Record<string, unknown> | undefined)[] = []
   const digestMembers: Array<{ testFileContent: string; suiteFileContent?: string }> = []
   let perMemberDigests: ConfigDigests[] = []
+  const suitePlannerMembers: MemberPlannerLimits[] = []
 
   for (let suiteIndex = 0; suiteIndex < preparedSuites.length; suiteIndex++) {
     const prepared = preparedSuites[suiteIndex]
@@ -3322,6 +3332,12 @@ export async function produceSuiteRunMembers(
       // carries `identityPath`, every byte read carries `absolutePath`.
       const { test, absolutePath, identityPath } = prepared.testEntries[i]
       suiteMemberUses.push(test.use as Record<string, unknown> | undefined)
+      // 436 D-03: suites stop ignoring use.planner.*; the same helper as the direct producer.
+      const plannerConfig = memberPlannerConfig(
+        { project: config.use, suite: prepared.suite.use, test: test.use },
+        5,
+      )
+      suitePlannerMembers.push({ testName: test.name, filePath: identityPath, limits: plannerConfig })
       const globalIndex = members.length
       const memberSuiteIndex = i
       members.push({
@@ -3474,6 +3490,7 @@ export async function produceSuiteRunMembers(
             vision: suiteConfig.vision,
             visionGate: suiteConfig.visionGate,
             contextWindow: prepared.knowledgeSeed.capabilities.contextWindow,
+            plannerConfig,
             suiteContext: (prepared.suite as any).context,
             filePath: absolutePath,
           }), {
@@ -3581,11 +3598,19 @@ export async function produceSuiteRunMembers(
   const lifecycle = createSuiteLifecycle()
   const executor = buildSuiteMemberExecutor({ lifecycle, bindings })
 
+  // The run line reads the project, and the suite's block when the run is one suite; members whose
+  // own limits differ are listed as overrides.
+  const suitePlannerLimits = plannerLimitsRecord(
+    resolvePlannerLimits(config.use, ...(preparedSuites.length === 1 ? [preparedSuites[0].suite.use] : [])),
+    suitePlannerMembers,
+  )
+
   return {
     members,
     executor,
     configDigests: runDigests.runLevel,
     product: runProduct,
+    plannerLimits: suitePlannerLimits,
     configDir,
     configFilePath,
     knowledgeRoot,
@@ -3745,6 +3770,11 @@ export interface ProducedCliRunMembers {
   readonly executor: MemberTestExecutor
   readonly configDigests: ConfigDigests
   readonly product: string
+  /**
+   * The run's effective planner limits and the members whose own limits differ (436 D-06), from
+   * the same per-member resolution the member closures run under.
+   */
+  readonly plannerLimits?: PlannerLimitsRecord
   readonly configDir: string
   readonly configFilePath: string
   readonly knowledgeRoot: string
@@ -3958,6 +3988,11 @@ export async function produceDirectRunMembers(
 
   const results: TestResult[] = []
 
+  // 436 D-03: each member's limits from its own merged blocks, through the helper the suite
+  // producer calls too. Flag overrides carry no planner keys.
+  const directPlannerConfigs = filtered.map(({ test }) =>
+    memberPlannerConfig({ project: config.use, test: test.use }, 3))
+
   // One discovered test file = one member closure of the ONE RunSession (SESSION-01/04).
   // Retry stays a single-test-path concern INSIDE this closure (runTestWithRetry); the shell
   // derives the member outcome from the returned final TestResult exactly as for suite members
@@ -3967,6 +4002,7 @@ export async function produceDirectRunMembers(
     binding: ParsedTestBinding,
     ctx: MemberTestRunContext,
     perMemberDigest: ConfigDigests | undefined,
+    plannerConfig: MemberPlannerConfig,
   ): Promise<TestResult> => {
     const { test, filePath, fileContent: testFileContent } = binding
     let currentPlatform: 'web' | 'android' | 'ios' | null = null
@@ -4204,10 +4240,6 @@ export async function produceDirectRunMembers(
       // D-04 lazy thunk + role-separated accounting instances (see suite-level site).
       const plannerAccounting = createTokenAccounting({ getCapabilities: () => resolveCapabilities(plannerProfile) })
       const verifierAccounting = createTokenAccounting({ getCapabilities: () => resolveCapabilities(verifierProfile) })
-      const plannerConfig = {
-        ...resolvePlannerLimits(testMergedConfig.use),
-        previousStepCount: testMergedConfig.use?.planner?.previousStepCount ?? 3,
-      }
 
       const testLogCapture = (testMergedConfig as any).use?.logCapture ?? config.use?.logCapture
       let testCapabilityNotes = ''
@@ -4547,7 +4579,7 @@ export async function produceDirectRunMembers(
   const memberBindings: Array<(ctx: MemberTestRunContext) => Promise<TestResult>> =
     filtered.map((binding, testIndex) =>
       (ctx) => logger.runInMemberScope(
-        () => runOneDirectTest(binding, ctx, perMemberDigests[testIndex]),
+        () => runOneDirectTest(binding, ctx, perMemberDigests[testIndex], directPlannerConfigs[testIndex]),
       ),
     )
 
@@ -4639,11 +4671,21 @@ export async function produceDirectRunMembers(
     }
   }
 
+  const directPlannerLimits = plannerLimitsRecord(
+    resolvePlannerLimits(config.use),
+    filtered.map(({ test }, index): MemberPlannerLimits => ({
+      testName: test.name,
+      filePath: members[index].filePath,
+      limits: directPlannerConfigs[index],
+    })),
+  )
+
   return {
     members,
     executor,
     configDigests: runDigests.runLevel,
     product: singleRunProduct,
+    plannerLimits: directPlannerLimits,
     configDir,
     configFilePath,
     knowledgeRoot: resolveKnowledgeRoot(config.knowledge, configDir),
@@ -5101,6 +5143,7 @@ export function createRunCommand(): Command {
           analytics,
           onMemberRunId: (memberRunId) => { currentRunId = memberRunId },
         })
+        printPlannerLimits(produced.plannerLimits)
         const members = produced.members
         const executor = produced.executor
         const logger = produced.logger
