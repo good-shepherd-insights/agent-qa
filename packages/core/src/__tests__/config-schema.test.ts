@@ -97,7 +97,7 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
         browser: { name: 'chromium' as const, headless: true },
         mobile: { appState: 'preserve' as const },
         timeout: { step: '30s', test: '10m', navigation: '10s' },
-        planner: { maxSubActions: 10, previousStepCount: 5 },
+        planner: { maxActions: 10, maxPlanningTurns: 10, previousStepCount: 5 },
         logCapture: { console: true, network: false },
         llm: 'claude-main',
         parallel: false,
@@ -859,7 +859,8 @@ describe('Sub-schemas — primitives', () => {
     expect(PlannerConfigSchema.safeParse({}).success).toBe(false)
     expect(
       PlannerConfigSchema.safeParse({
-        maxSubActions: 10,
+        maxActions: 10,
+        maxPlanningTurns: 10,
         previousStepCount: 5,
       }).success,
     ).toBe(true)

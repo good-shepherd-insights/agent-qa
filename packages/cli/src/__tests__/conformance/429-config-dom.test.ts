@@ -962,7 +962,7 @@ describe('the continuous add flow, keyboard recovery and outside edits on the sh
     await capture(page, `outside-interleaved-${labelOf(DESKTOP)}-1-before`)
 
     const doc = parseDocument(readFileSync(target.configPath, 'utf8'))
-    doc.setIn(['use', 'planner'], doc.createNode({ maxSubActions: 99, previousStepCount: 77 }))
+    doc.setIn(['use', 'planner'], doc.createNode({ maxActions: 99, maxPlanningTurns: 99, previousStepCount: 77 }))
     writeFileSync(target.configPath, String(doc), 'utf8')
     const patched = page.waitForResponse((response) =>
       response.request().method() === 'PATCH' && new URL(response.url()).pathname === '/api/config')
@@ -983,7 +983,7 @@ describe('the continuous add flow, keyboard recovery and outside edits on the sh
     await selectAllAndType(page, '50')
     await page.keyboard.press('Tab')
     const plannerOnDisk = () => (parse(readFileSync(target.configPath, 'utf8')) as { use?: { planner?: unknown } }).use?.planner
-    await expect.poll(plannerOnDisk, { timeout: 10_000 }).toEqual({ maxSubActions: 50, previousStepCount: 77 })
+    await expect.poll(plannerOnDisk, { timeout: 10_000 }).toEqual({ maxActions: 50, maxPlanningTurns: 99, previousStepCount: 77 })
     const config = parse(readFileSync(target.configPath, 'utf8')) as { services?: { vision?: { screenshotSize?: unknown } } }
     expect(config.services?.vision?.screenshotSize).toBe('512k')
     process.stderr.write(`429-37 OUTSIDE-EDIT-INTERLEAVED-SHIPPED: polls=${String(polls)} configReads=${String(configReads.length)} readsBeforePatch=${String(readsBeforePatch)} answer=${JSON.stringify(answer)}\n`)

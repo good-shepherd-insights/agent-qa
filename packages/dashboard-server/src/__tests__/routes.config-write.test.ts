@@ -401,19 +401,19 @@ const judgeWrite = {
 describe('PATCH /api/config set-if-absent and expect (429-42)', () => {
   it('SET-IF-ABSENT-KEEPS-OUTSIDE-VALUE: completion never replaces a sibling already in the file', async () => {
     const configPath = await useConfigWorkspace()
-    const outside = baseConfig.replace('  mobile:', '  planner:\n    maxSubActions: 99\n    previousStepCount: 77\n  mobile:')
+    const outside = baseConfig.replace('  mobile:', '  planner:\n    maxActions: 99\n    maxPlanningTurns: 99\n    previousStepCount: 77\n  mobile:')
     await writeFile(configPath, outside, 'utf-8')
 
     const response = await patchConfig({
       changes: [
-        { op: 'set', path: ['use', 'planner', 'maxSubActions'], value: 50 },
+        { op: 'set', path: ['use', 'planner', 'maxActions'], value: 50 },
         { op: 'set-if-absent', path: ['use', 'planner', 'previousStepCount'], value: 5 },
       ],
     })
 
     expect(response.status, response.body).toBe(200)
     const parsed = parseYaml(await readFile(configPath, 'utf-8')) as { use: { planner: unknown } }
-    expect(parsed.use.planner).toEqual({ maxSubActions: 50, previousStepCount: 77 })
+    expect(parsed.use.planner).toEqual({ maxActions: 50, maxPlanningTurns: 99, previousStepCount: 77 })
   })
 
   it('SET-IF-ABSENT-FILLS-ABSENT: into an absent block every set-if-absent sibling is written', async () => {

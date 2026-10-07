@@ -1016,7 +1016,7 @@ targets:
         browser: { name: 'chromium', headless: true },
         timeout: { step: '30s', test: '10m', navigation: '10s' },
         healing: { maxAttempts: 3 },
-        planner: { maxSubActions: 50, previousStepCount: 5 },
+        planner: { maxActions: 50, maxPlanningTurns: 50, previousStepCount: 5 },
         llm: 'default',
       },
     })
@@ -1072,7 +1072,7 @@ targets:
         browser: { name: 'chromium', headless: true },
         timeout: { step: '30s', test: '10m', navigation: '10s' },
         healing: { maxAttempts: 3 },
-        planner: { maxSubActions: 50, previousStepCount: 5 },
+        planner: { maxActions: 50, maxPlanningTurns: 50, previousStepCount: 5 },
         llm: 'default',
       },
     }) as never)

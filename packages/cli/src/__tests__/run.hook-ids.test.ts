@@ -410,7 +410,7 @@ function defaultConfig() {
       llm: 'default',
       timeout: { step: 30000, test: 300000, navigation: 10000 },
       healing: { maxAttempts: 0 },
-      planner: { maxSubActions: 50, previousStepCount: 3 },
+      planner: { maxActions: 50, maxPlanningTurns: 50, previousStepCount: 3 },
       logCapture: { console: true, network: true },
     },
   }
