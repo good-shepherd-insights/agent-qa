@@ -27,7 +27,8 @@ export const MASKING_CLASSES = [
  * 2026-10-01 (432-22, D-12/D-18/D-22): `safety.trustMode`, the MCP and run-service token lists and
  * the stdio config-write switch are deleted with their keys, so no schema leaf is classed
  * `env-var-name` today (the class stays in the shared vocabulary, which the dashboard and the CLI
- * masker still handle); 92 leaves remain.
+ * masker still handle). 2026-10-07 (436-07, D-02): the two per-step planner limits
+ * `use.planner.maxActions` and `use.planner.maxPlanningTurns` are added as plain leaves; 94 leaves remain.
  */
 export const CONFIG_MASKING_MAP = Object.freeze({
   'allowProduction': 'plain',
@@ -110,6 +111,8 @@ export const CONFIG_MASKING_MAP = Object.freeze({
   'use.logCapture.network': 'plain',
   'use.mobile.appState': 'plain',
   'use.parallel': 'plain',
+  'use.planner.maxActions': 'plain',
+  'use.planner.maxPlanningTurns': 'plain',
   'use.planner.maxSubActions': 'plain',
   'use.planner.previousStepCount': 'plain',
   'use.timeout.navigation': 'plain',

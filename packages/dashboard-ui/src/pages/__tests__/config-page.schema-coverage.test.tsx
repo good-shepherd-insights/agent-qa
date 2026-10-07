@@ -143,7 +143,7 @@ const { sampleConfig, fullConfig, page } = vi.hoisted(() => ({
     use: {
       browser: { name: 'chromium', headless: true, viewport: { width: 1280, height: 720 } },
       timeout: { step: '30s', test: '10m', navigation: '10s' },
-      planner: { maxSubActions: 20, previousStepCount: 5 },
+      planner: { maxActions: 30, maxPlanningTurns: 30, maxSubActions: 20, previousStepCount: 5 },
       logCapture: { console: true, network: true },
       mobile: { appState: 'reset' },
       llm: 'claude-proxy',
@@ -227,7 +227,7 @@ const { sampleConfig, fullConfig, page } = vi.hoisted(() => ({
   use: {
     browser: { name: 'chromium', headless: true, viewport: { width: 1280, height: 720 } },
     timeout: { step: '30s', test: '10m', navigation: '10s' },
-    planner: { maxSubActions: 20, previousStepCount: 5 },
+    planner: { maxActions: 30, maxPlanningTurns: 30, previousStepCount: 5 },
     logCapture: { console: true, network: true },
     llm: 'anthropic-compatible',
     device: 'iosLocal',
@@ -332,7 +332,7 @@ const SURFACE_MARKERS: Record<string, { title: string; marker: string }> = {
   'registry:providers': { title: 'Device farms', marker: 'Add device farm' },
   'use:browser': { title: 'Browser', marker: 'Viewport width' },
   'use:timeouts': { title: 'Timeouts', marker: 'Step timeout' },
-  'use:planner': { title: 'Planner limits', marker: PLANNER_FIELD_LABELS.maxSubActions },
+  'use:planner': { title: 'Planner limits', marker: PLANNER_FIELD_LABELS.maxActions },
   'use:log-capture': { title: 'Log capture', marker: 'Capture network logs' },
   'use:mobile': { title: 'Mobile', marker: 'App state' },
   'use:execution-defaults': { title: 'Models', marker: DEFAULT_BADGE },
@@ -551,14 +551,17 @@ describe('ConfigPage schema coverage', () => {
     }
   })
 
-  // 432-22 (D-12/D-18/D-22): the final page-writable count, spelled by hand. 92 strict leaves less
+  // 432-22 (D-12/D-18/D-22): the final page-writable count, spelled by hand. The strict leaves less
   // the four plugin leaves; each has exactly one rendered owner and the write door admits it.
-  it('C432-CONFIG-WRITABLE-88: exactly 88 page-writable leaves, each owned on the page, and only the four plugin leaves excluded', async () => {
+  // 2026-10-07 (436-07, D-05): the two planner limits add two leaves (94 strict, 90 page-writable);
+  // the cell name no longer carries the count, so a later leaf change moves only the number.
+  it('C432-CONFIG-WRITABLE: exactly the page-writable leaves, each owned on the page, and only the four plugin leaves excluded', async () => {
     page.config = fullConfig
     await renderAt('/config/models')
 
-    expect(CONFIG_SCHEMA_LEAVES).toHaveLength(92)
-    expect(PAGE_LEAVES).toHaveLength(88)
+    expect(CONFIG_SCHEMA_LEAVES).toHaveLength(94)
+    expect(PAGE_LEAVES).toHaveLength(90)
+    expect(PAGE_LEAVES).toEqual(expect.arrayContaining(['use.planner.maxActions', 'use.planner.maxPlanningTurns']))
     expect(CONFIG_WRITE_DENIED_ROOTS).toEqual(['plugins'])
     expect(CONFIG_SCHEMA_LEAVES.filter((pattern) => !PAGE_LEAVES.includes(pattern))).toEqual([
       'plugins.auth[].package',
@@ -568,7 +571,13 @@ describe('ConfigPage schema coverage', () => {
     ])
     const marks = await collectFieldMarks()
     const owned = PAGE_LEAVES.filter((pattern) => marks.some((mark) => coversLeaf(mark, pattern)))
-    expect(owned).toHaveLength(88)
+    expect(owned).toHaveLength(90)
+    for (const leaf of ['use.planner.maxActions', 'use.planner.maxPlanningTurns']) {
+      expect(
+        [...new Set(marks.filter((mark) => mark.kind === 'path' && mark.value === leaf).map((mark) => mark.where))],
+        leaf,
+      ).toEqual(['models/planner-limits'])
+    }
     expect(owned.filter((pattern) => !isPageWritableConfigPath(concretePath(pattern)))).toEqual([])
     const production = marks.filter((mark) => mark.kind === 'path' && mark.value === 'allowProduction')
     expect(production.map((mark) => mark.where)).toEqual(['execution/runs'])

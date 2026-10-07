@@ -141,19 +141,19 @@ describe('VisionSection and PlannerSection', () => {
     vi.mocked(fetchConfig).mockResolvedValue(answer({ use: {} }) as never)
     await mount()
 
-    const most = input(['use', 'planner', 'maxSubActions'])
+    const most = input(['use', 'planner', 'maxActions'])
     const earlier = input(['use', 'planner', 'previousStepCount'])
-    expect(labelFor(most)).toBe(PLANNER_FIELD_LABELS.maxSubActions)
+    expect(labelFor(most)).toBe(PLANNER_FIELD_LABELS.maxActions)
     expect(labelFor(earlier)).toBe(PLANNER_FIELD_LABELS.previousStepCount)
     expect(most?.value).toBe('')
-    expect(most?.placeholder).toBe('20')
+    expect(most?.placeholder).toBe('30')
     expect(earlier?.placeholder).toBe('5')
 
     await typeAndBlur(most, '12')
 
     expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
       [[
-        { op: 'set', path: ['use', 'planner', 'maxSubActions'], value: 12 },
+        { op: 'set', path: ['use', 'planner', 'maxActions'], value: 12 },
         { op: 'set-if-absent', path: ['use', 'planner', 'previousStepCount'], value: 5 },
       ]],
     ])

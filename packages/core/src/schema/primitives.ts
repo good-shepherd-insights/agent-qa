@@ -153,8 +153,12 @@ export const BrowserConfigSchema = z.object({
 
 export const TransportSchema = z.enum(['local', 'browserstack'])
 
+// 436 D-02: the per-step limits are positive integers with no unlimited value; resolvePlannerLimits
+// supplies the default. The old refilling planner key stays optional and unread until 436-08.
 export const PlannerConfigSchema = z.object({
-  maxSubActions: z.number(),
+  maxActions: z.number().int().positive().optional(),
+  maxPlanningTurns: z.number().int().positive().optional(),
+  maxSubActions: z.number().optional(),
   previousStepCount: z.number(),
 }).strict()
 

@@ -102,6 +102,8 @@ export const UseOverrideSchema = z.object({
     navigation: DurationString.optional(),
   }).strict().optional(),
   planner: z.object({
+    maxActions: z.number().int().positive().optional(),
+    maxPlanningTurns: z.number().int().positive().optional(),
     maxSubActions: z.number().optional(),
     previousStepCount: z.number().optional(),
   }).strict().optional(),

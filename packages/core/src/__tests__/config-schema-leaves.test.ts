@@ -101,10 +101,17 @@ describe('config schema leaves', () => {
 
   // 432-22 (D-12/D-18/D-22): the final strict leaf set. The count and the removed set are spelled
   // by hand; the map/schema equality above is what makes a leaf without a masking class red here.
-  it('C432-CONFIG-LEAVES-92: exactly 92 strict leaves, each classified, none of them retired', () => {
+  // 2026-10-07 (436-07, D-02): the two per-step planner limits add two leaves (92 to 94); the cell
+  // name no longer carries the count, so a later leaf change moves only the number.
+  it('C432-CONFIG-LEAVES: exactly the strict leaves, each classified, none of them retired', () => {
     const walked = schemaLeaves()
-    expect(walked).toHaveLength(92)
-    expect(CONFIG_SCHEMA_LEAVES).toHaveLength(92)
+    expect(walked).toHaveLength(94)
+    expect(CONFIG_SCHEMA_LEAVES).toHaveLength(94)
+    expect(walked.filter((leaf) => leaf.startsWith('use.planner.max'))).toEqual(
+      expect.arrayContaining(['use.planner.maxActions', 'use.planner.maxPlanningTurns']),
+    )
+    expect(CONFIG_MASKING_MAP['use.planner.maxActions']).toBe('plain')
+    expect(CONFIG_MASKING_MAP['use.planner.maxPlanningTurns']).toBe('plain')
     expect(Object.keys(CONFIG_MASKING_MAP).sort()).toEqual(walked)
     for (const leaf of walked) {
       expect(CONFIG_MASKING_MAP[leaf as keyof typeof CONFIG_MASKING_MAP], leaf).toBeDefined()

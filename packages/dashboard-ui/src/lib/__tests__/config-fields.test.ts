@@ -24,7 +24,7 @@ import {
 // keys are pinned here.
 const SCHEMA_REQUIRED_KEYS: Record<string, readonly string[]> = {
   'use.timeout': ['step', 'test', 'navigation'],
-  'use.planner': ['maxSubActions', 'previousStepCount'],
+  'use.planner': ['previousStepCount'],
   'use.logCapture': ['console', 'network'],
   'use.browser': ['name', 'headless'],
   'use.browser.viewport': ['width', 'height'],
@@ -36,6 +36,7 @@ const BLOCKS: Readonly<Record<string, Readonly<Record<string, unknown>>>> = REQU
 
 const SCHEMA_OPTIONAL_KEYS: Record<string, readonly string[]> = {
   'use.browser': ['viewport'],
+  'use.planner': ['maxActions', 'maxPlanningTurns'],
   'services.accessibility': ['standard', 'runAfter', 'failOnViolation', 'disableRules', 'exclude'],
 }
 
@@ -114,13 +115,13 @@ describe('completeRequiredSiblings', () => {
 
 describe('completeRequiredSiblings never overwrites (429-45 · CR-01)', () => {
   // The verifier's reproduction: the page's snapshot lacks use.planner while the file holds
-  // { maxSubActions: 99, previousStepCount: 77 }. Only the server sees the file at merge time.
+  // { maxActions: 99, previousStepCount: 77 }. Only the server sees the file at merge time.
   it('SIBLING-COMPLETION-NEVER-OVERWRITES: every added sibling is set-if-absent, so the server keeps a value the snapshot missed', () => {
-    const changes = [set(['use', 'planner', 'maxSubActions'], 50)]
+    const changes = [set(['use', 'planner', 'maxActions'], 50)]
     const result = completeRequiredSiblings(changes, { use: { browser: { name: 'chromium', headless: true } } })
 
     expect(result).toEqual([
-      set(['use', 'planner', 'maxSubActions'], 50),
+      set(['use', 'planner', 'maxActions'], 50),
       ifAbsent(['use', 'planner', 'previousStepCount'], 5),
     ])
     expect(
