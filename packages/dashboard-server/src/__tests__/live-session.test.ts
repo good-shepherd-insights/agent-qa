@@ -246,7 +246,8 @@ vi.mock('@vostride/agent-qa-model', async () => {
   }
 })
 
-import { LiveSession } from '../live-editor/live-session.js'
+import { LiveSession, resolveLivePlannerLimits } from '../live-editor/live-session.js'
+import type { ConfigManager } from '../config/index.js'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 
 const webConfig: LiveSessionConfig = {
@@ -1011,5 +1012,70 @@ describe('LiveSession', () => {
       }),
       expect.anything(),
     )
+  })
+})
+
+// 436-09 (D-03): the live editor is a door; its limits come from the project config and the entity.
+describe('C436-EFFECTIVE-LIMITS live editor', () => {
+  let session: LiveSession
+
+  beforeEach(() => {
+    session = new LiveSession('limits-session')
+    vi.clearAllMocks()
+    variableStoreEntries.clear()
+    mockExecuteStep.mockResolvedValue({ name: 'test-step', status: 'passed', duration: 100 })
+  })
+
+  function plannerConfigOfLastStep(): unknown {
+    const call = mockExecuteStep.mock.calls.at(-1) as unknown[] | undefined
+    return (call?.[1] as { plannerConfig?: unknown } | undefined)?.plannerConfig
+  }
+
+  it('a live session uses the project\'s configured limits', async () => {
+    await session.initialize({ ...webConfig, plannerLimits: { maxActions: 12, maxPlanningTurns: 8 } })
+    await session.executeStepCommand('Click the login button', 0)
+    expect(plannerConfigOfLastStep()).toEqual({ maxActions: 12, maxPlanningTurns: 8, previousStepCount: 5 })
+  })
+
+  it('without plannerLimits the session uses the defaults', async () => {
+    await session.initialize(webConfig)
+    await session.executeStepCommand('Click the login button', 0)
+    expect(plannerConfigOfLastStep()).toEqual({ maxActions: 30, maxPlanningTurns: 30, previousStepCount: 5 })
+  })
+
+  function configManagerWith(config: Record<string, unknown>): ConfigManager {
+    return { readWithRevision: async () => ({ kind: 'ok', config, raw: '', revision: 'r1' }) } as unknown as ConfigManager
+  }
+
+  const project = configManagerWith({ use: { planner: { maxActions: 20, maxPlanningTurns: 15 } } })
+  const testYaml = 'test-id: t_bulk\nname: Bulk archive\nuse:\n  planner:\n    maxActions: 60\nsteps:\n  - archive all\n'
+  const suiteYaml = 'suite-id: s_inbox\nname: Inbox\nuse:\n  planner:\n    maxPlanningTurns: 40\ntests: []\n'
+  const readers = {
+    findTest: async (id: string) => (id === 't_bulk' ? { content: testYaml } : null),
+    findSuite: async (id: string) => (id === 's_inbox' ? { content: suiteYaml } : null),
+  }
+
+  it('the create door resolves project use and the entity\'s use', async () => {
+    expect(await resolveLivePlannerLimits(project, undefined, readers))
+      .toEqual({ maxActions: 20, maxPlanningTurns: 15 })
+    expect(await resolveLivePlannerLimits(project, { type: 'test', id: 't_bulk' }, readers))
+      .toEqual({ maxActions: 60, maxPlanningTurns: 15 })
+    expect(await resolveLivePlannerLimits(project, { type: 'suite', id: 's_inbox' }, readers))
+      .toEqual({ maxActions: 20, maxPlanningTurns: 40 })
+  })
+
+  it('an entity the door cannot load leaves the project value', async () => {
+    expect(await resolveLivePlannerLimits(project, { type: 'test', id: 't_missing' }, readers))
+      .toEqual({ maxActions: 20, maxPlanningTurns: 15 })
+    expect(await resolveLivePlannerLimits(project, { type: 'suite', id: 's_inbox' }, {}))
+      .toEqual({ maxActions: 20, maxPlanningTurns: 15 })
+    const throwing = { findTest: async () => { throw new Error('unreadable') } }
+    expect(await resolveLivePlannerLimits(project, { type: 'test', id: 't_bulk' }, throwing))
+      .toEqual({ maxActions: 20, maxPlanningTurns: 15 })
+    const broken = { findTest: async () => ({ content: 'use: [unterminated' }) }
+    expect(await resolveLivePlannerLimits(project, { type: 'test', id: 't_bulk' }, broken))
+      .toEqual({ maxActions: 20, maxPlanningTurns: 15 })
+    expect(await resolveLivePlannerLimits(undefined, undefined, readers))
+      .toEqual({ maxActions: 30, maxPlanningTurns: 30 })
   })
 })
