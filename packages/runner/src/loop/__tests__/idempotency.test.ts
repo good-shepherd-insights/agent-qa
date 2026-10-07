@@ -5,8 +5,7 @@
 //     select/nativeSelect/pickerSelect vs the persisted value); undefined/missing state ⇒ act.
 //   Block B — the dispatch-seam short-circuit (D-14): at the ONE chokepoint before adapter.execute,
 //     a satisfied desiredState mints a success ActionResult with metadata.idempotentNoop
-//     { currentState } WITHOUT calling the adapter; the 358 tap oracle counts the flagged no-op as
-//     effect-achieved (D-16, no stagnation increment); an unsatisfied desiredState falls through
+//     { currentState } WITHOUT calling the adapter; an unsatisfied desiredState falls through
 //     to a plain tap. The desiredState param must survive toolCallToActionPlan to the seam (D-13).
 //
 // RED BY DESIGN:
@@ -125,7 +124,6 @@ function recordingAdapter(observation: ScreenState, calls: Action[]): PlatformAd
 
 interface LooseSub {
   result?: { metadata?: Record<string, unknown> }
-  localEffect?: { achieved?: boolean }
 }
 
 function firstSub(result: Awaited<ReturnType<typeof executeStep>>): LooseSub | undefined {
@@ -157,8 +155,6 @@ describe('Block B — the seam suppresses a satisfied desiredState (D-14/D-16)',
     const noop = sub?.result?.metadata?.['idempotentNoop'] as { currentState?: unknown } | undefined
     expect(noop).toBeDefined()
     expect(noop?.currentState).toBeDefined()
-    // ... and the tap oracle reads it as effect-achieved (no stagnation increment).
-    expect(sub?.localEffect?.achieved).toBe(true)
   })
 
   it('an UNsatisfied desiredState=checked (state.checked false) falls through to a plain tap', async () => {

@@ -25,11 +25,9 @@ import type {
   BoundingBox,
   BriefBlock,
   CautionLine,
-  CycleEvidence,
   Decision,
   DeclaredModelProfile,
   InterpolatedVariable,
-  LocalEffectEvidence,
   LosslessServedBriefProofV1,
   ModelIdentity,
   MaskingContext,
@@ -46,7 +44,6 @@ import type {
   ServedBrief,
   ServedPromptTurn,
   ServedRetrievalTraceV1,
-  StagnationEvidence,
   StepEvidence,
   StepPlanSource,
   SubActionEvidence,
@@ -280,14 +277,6 @@ export interface RecordSubActionInput {
    * conditionally; structural absence means no live call record was available.
    */
   callRecord?: ModelCallRecord
-  /**
-   * The §A8 differential-observation oracle outcome (CYCLE-01, D-07). Recorded by
-   * construction for every oracle-checked sub-action — usually attached one iteration late
-   * (the oracle evaluates action N at the settled top of iteration N+1) via
-   * {@link EvidenceRecorder.attachLocalEffect}, but accepted here for the step-final path
-   * where the oracle runs against the verifier's observation in the same iteration (D-05).
-   */
-  localEffect?: LocalEffectEvidence
 }
 
 export class EvidenceRecorder {
@@ -309,8 +298,6 @@ export class EvidenceRecorder {
   private readonly channel3TraceLines: TraceLine[] = []
   private readonly channel3Truncated: TraceLine[] = []
   private selfHeal?: StepEvidence['selfHeal']
-  private stagnation?: StagnationEvidence
-  private cycle?: CycleEvidence
   private workingMemory?: WorkingMemoryEntry[]
   private planningFailure?: PlanningFailureEvidence
   private reportedValue?: ReportedValueEvidence
@@ -463,7 +450,6 @@ export class EvidenceRecorder {
     if (input.exchanges !== undefined) evidence.exchanges = input.exchanges
     if (input.callRecord !== undefined) evidence.callRecord = input.callRecord
     if (input.grounding) evidence.grounding = input.grounding
-    if (input.localEffect) evidence.localEffect = input.localEffect
     if (input.decisionScreenshotRef) evidence.decisionScreenshotRef = input.decisionScreenshotRef
     if (input.artifactRefs) evidence.artifactRefs = [...input.artifactRefs]
     this.subActions.push(evidence)
@@ -474,33 +460,6 @@ export class EvidenceRecorder {
     // optional-chained — never throws when unbound.
     this.onSubActionRecorded?.(evidence, index)
     return index
-  }
-
-  /**
-   * Attach the CYCLE-01 differential-observation oracle outcome to an already-recorded
-   * sub-action (D-05/D-07). The oracle evaluates action N's local intended effect at the
-   * settled top of iteration N+1 — one iteration after the sub-action was recorded — so the
-   * loop reuses the recorded index to land the block on the right sub-action by construction.
-   */
-  attachLocalEffect(index: number, localEffect: LocalEffectEvidence): void {
-    const evidence = this.subActions[index]
-    if (evidence) evidence.localEffect = localEffect
-  }
-
-  /**
-   * Record the CYCLE-02 stagnation-tree state at a terminal `stepFailed` (D-07). Event-scoped
-   * — recorded ONCE at the anchor's bounded-ladder exhaustion, never per iteration.
-   */
-  recordStagnation(stagnation: StagnationEvidence): void {
-    this.stagnation = stagnation
-  }
-
-  /**
-   * Record the CYCLE-03 cycle-flag terminal block (D-07/D-08). Event-scoped — recorded ONCE
-   * at the terminal cycle fail (state revisitation AND no task progress across the window).
-   */
-  recordCycle(cycle: CycleEvidence): void {
-    this.cycle = cycle
   }
 
   /**
@@ -763,8 +722,7 @@ export class EvidenceRecorder {
     if (retrievalTrace !== undefined) evidence.retrievalTrace = retrievalTrace
     if (this.retrievalRung !== undefined) evidence.retrievalRung = this.retrievalRung
     if (this.selfHeal) evidence.selfHeal = this.selfHeal
-    if (this.stagnation) evidence.stagnation = this.stagnation
-    if (this.cycle) evidence.cycle = this.cycle
+    // 2026-10-07 (436-03): no producer writes stagnation or cycle any more (D-15, D-17).
     if (this.workingMemory) evidence.workingMemory = this.workingMemory
     if (this.planningFailure) evidence.planningFailure = this.planningFailure
     if (this.reportedValue) evidence.reportedValue = this.reportedValue

@@ -76,7 +76,6 @@ function readingAdapter(observation: ScreenState, read: ActionResult): PlatformA
 
 interface LooseSub {
   result?: { success?: boolean; error?: string; metadata?: Record<string, unknown> }
-  localEffect?: { achieved?: boolean }
 }
 
 function subs(result: Awaited<ReturnType<typeof executeStep>>): LooseSub[] {

@@ -4,8 +4,7 @@
 //     ActionResult at the ONE dispatch chokepoint (never adapter.execute), carrying a typed
 //     metadata.reportedValue block; the answer lands masked-before-record in
 //     StepEvidence.reportedValue; reportValue is NON-terminal (stepComplete stays the sole
-//     termination mechanism) and its screen-neutral mint gets the eager effect-achieved attach
-//     so it never feeds the 358 stagnation ladder (Pitfall 5).
+//     termination mechanism).
 //   Block B — uniqueValue mint (D-16): prefix + injectable generator (353 K=2), minted at the
 //     chokepoint with a typed metadata.uniqueValue block and a run-scoped working-memory
 //     auto-write (kind extracted-value / provenance toolResult), zero adapter.execute.
@@ -62,7 +61,6 @@ function recordingAdapter(observation: ScreenState, calls: Action[]): PlatformAd
 
 interface LooseSub {
   result?: { success?: boolean; error?: string; metadata?: Record<string, unknown> }
-  localEffect?: { achieved?: boolean }
 }
 
 function subs(result: Awaited<ReturnType<typeof executeStep>>): LooseSub[] {
@@ -142,7 +140,7 @@ describe('Block A — reportValue is a runner mint recorded as first-class evide
     expect(reportedValue?.value ?? '').not.toContain('supersecret')
   })
 
-  it('reportValue is non-terminal (D-02): stepComplete:false reports then continues, and the screen-neutral mint reads as effect-achieved — no stagnation (Pitfall 5)', async () => {
+  it('reportValue is non-terminal (D-02): stepComplete:false reports then continues', async () => {
     const calls: Action[] = []
     const adapter = recordingAdapter(makeScreenState(), calls)
     const reportThenContinue = makeActionPlan({ action: { type: 'reportValue', value: 'partial answer' }, stepComplete: false })
@@ -155,9 +153,6 @@ describe('Block A — reportValue is a runner mint recorded as first-class evide
     )
 
     expect(result.status).toBe('passed')
-    // The non-completing reportValue must be given the eager effect-achieved attach so the 358
-    // oracle never counts the screen-neutral mint as no-progress.
-    expect(subs(result)[0]?.localEffect?.achieved).toBe(true)
     // And neither mint touched the adapter.
     expect(calls.length).toBe(0)
   })

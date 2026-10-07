@@ -218,11 +218,10 @@ function recordingAdapter(observation: ScreenState, calls: Action[]): PlatformAd
 
 interface LooseSub {
   result?: { metadata?: Record<string, unknown> }
-  localEffect?: { achieved?: boolean }
 }
 
 describe('EXEC-04 — a satisfied desiredState no-ops at the dispatch seam without calling adapter.execute', () => {
-  it('a checked toggle with desiredState=checked mints success + idempotentNoop and the tap oracle reads it as effect-achieved', async () => {
+  it('a checked toggle with desiredState=checked mints success + idempotentNoop', async () => {
     const observation = buildAgentScreenState({
       url: 'https://x.test/settings',
       elements: [{ ref: 'e1', role: 'checkbox', name: 'Wi-Fi', state: { checked: true }, bounds: { x: 20, y: 80, width: 300, height: 44 } }],
@@ -246,8 +245,6 @@ describe('EXEC-04 — a satisfied desiredState no-ops at the dispatch seam witho
     const noop = sub?.result?.metadata?.['idempotentNoop'] as { currentState?: unknown } | undefined
     expect(noop).toBeDefined()
     expect(noop?.currentState).toBeDefined()
-    // ... and the tap oracle reads it as effect-achieved (no stagnation increment).
-    expect(sub?.localEffect?.achieved).toBe(true)
   })
 })
 
