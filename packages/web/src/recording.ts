@@ -22,17 +22,23 @@ function jpegSize(bytes: Buffer): { width: number; height: number } | undefined 
   return undefined
 }
 
+export interface ScreencastRecording extends RecordingCapability {
+  /** The bracketed action itself has ended; waits the adapter runs after it are not execution. */
+  endAction(): void
+}
+
 export function createScreencastRecording(
   getPage: () => Page | null,
   config: NonNullable<PlatformConfig['recording']>,
   getPageRevision?: () => number,
-): RecordingCapability {
+): ScreencastRecording {
   let active: { page: Page; stagingPath: string } | undefined
   let recovery: typeof active
   let busy = false
   let firstFrameEpoch: number | undefined
   let scene: { width: number; height: number } | undefined
   let sceneRevision = 0
+  let bracket: { end(): void } | undefined
   async function recover() {
     if (!recovery) return
     // Keep the failed session quarantined until the driver confirms it stopped.
@@ -93,14 +99,20 @@ export function createScreencastRecording(
       const viewport = recording.page.viewportSize()
       if (viewport?.width !== before.width || viewport.height !== before.height) return undefined
       const startMs = performance.timeOrigin + performance.now() - epoch
-      return () => {
+      const settle = () => {
         const after = recording.page.viewportSize()
         const endMs = performance.timeOrigin + performance.now() - epoch
         if (active !== recording || getPage() !== recording.page || revision !== sceneRevision
           || pageRevision !== getPageRevision() || after?.width !== before.width || after.height !== before.height
           || !Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs < 0 || endMs <= startMs) return undefined
-        return { startMs, endMs, scene: 'recorded-page', transform: 'identity', ...before }
+        return { startMs, endMs, scene: 'recorded-page' as const, transform: 'identity' as const, ...before }
       }
+      let ended: { witness: ReturnType<typeof settle> } | undefined
+      bracket = { end() { ended = { witness: settle() } } }
+      return () => ended ? ended.witness : settle()
+    },
+    endAction() {
+      bracket?.end()
     },
     async stop() {
       if (busy) throw new Error('Recording operation already in progress')

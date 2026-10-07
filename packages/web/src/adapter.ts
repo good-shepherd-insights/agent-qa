@@ -28,7 +28,7 @@ import { waitForPageReady } from './smart-wait.js'
 import { runWebFillCompound, runWebScrollCompound, webOpenAppError } from './compound-web.js'
 import type { RefMap } from './types.js'
 import { formatMissingBrowserError, isPlaywrightMissingBrowserError } from './browser-install-error.js'
-import { createScreencastRecording } from './recording.js'
+import { createScreencastRecording, type ScreencastRecording } from './recording.js'
 import { OperationCapture } from './operation-capture.js'
 import type { OperationEvidence } from '@vostride/agent-qa-schema'
 
@@ -164,7 +164,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   private browserName: 'chromium' | 'firefox' | 'webkit' = 'chromium'
   private screencast: CDPSession | null = null
   private screencastCapability: LiveStreamCapability | null = null
-  private recordingCapability: RecordingCapability | undefined
+  private recordingCapability: ScreencastRecording | undefined
   private recordingPageRevision = 0
   private recordingConfig: PlatformConfig['recording']
   // 403-02: the PRODUCT's frame identity, and the CDP ack token it maps to. See `liveStream`.
@@ -676,6 +676,8 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     const capture = this.operationCapture
     capture?.arm(action)
     const result = await this.executeWithErrorResult(action)
+    // The download-start grace follows the action (436-10); the recorded interval is the action's.
+    this.recordingCapability?.endAction()
     let evidence: OperationEvidence | undefined
     try {
       evidence = await capture?.collect()

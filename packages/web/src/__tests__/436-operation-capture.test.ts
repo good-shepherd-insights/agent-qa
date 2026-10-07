@@ -3,12 +3,15 @@
 
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import type { Download } from 'playwright-core'
-import type { ActionResult } from '@vostride/agent-qa-runner'
+import type { ActionResult, RecordingCapability } from '@vostride/agent-qa-runner'
 import { screenIdentityHash } from '@vostride/agent-qa-schema'
 import type { DownloadEvidence, Ref } from '@vostride/agent-qa-schema'
 import { WebPlatformAdapter } from '../adapter.js'
@@ -103,13 +106,14 @@ afterEach(async () => {
   for (const res of openSlowResponses) res.destroy()
 }, 60_000)
 
-async function open(stepTimeoutMs?: number): Promise<WebPlatformAdapter> {
+async function open(stepTimeoutMs?: number, videoDir?: string): Promise<WebPlatformAdapter> {
   const created = new WebPlatformAdapter()
   try {
     await created.setup({
       platform: 'web',
       browser: { name: 'chromium', headless: true },
       ...(stepTimeoutMs !== undefined ? { timeouts: { step: stepTimeoutMs } } : {}),
+      ...(videoDir !== undefined ? { recording: { enabled: true, videoDir } } : {}),
     })
   } catch (error) {
     throw new Error('Real Chromium required: run `pnpm exec playwright install chromium`', { cause: error })
@@ -247,5 +251,70 @@ describe('C436-DOWNLOAD-CAPTURE', () => {
     expect(result.success).toBe(true)
     expect(performance.now() - started).toBeLessThan(DOWNLOAD_START_GRACE_MS)
     expect(result.metadata?.['download']).toBeUndefined()
+  }, 60_000)
+})
+
+// The recording witness is the action's execution interval (424). The download-start grace
+// follows the action (436-10), so it must not stretch the interval the player paints and seeks.
+describe('C436-DOWNLOAD-CAPTURE recording witness', () => {
+  let videoDir: string | undefined
+
+  afterEach(async () => {
+    await adapter?.cleanup()
+    adapter = undefined
+    if (videoDir) await rm(videoDir, { recursive: true, force: true })
+    videoDir = undefined
+  }, 60_000)
+
+  async function recorded(): Promise<{ web: WebPlatformAdapter; recording: RecordingCapability }> {
+    videoDir = await mkdtemp(join(tmpdir(), 'agent-qa-436-witness-'))
+    const web = await open(undefined, videoDir)
+    const recording = web.recording
+    expect(recording, 'a recording-enabled Chromium adapter exposes recording').toBeDefined()
+    await recording!.start()
+    await web.getPage()!.waitForTimeout(350)
+    return { web, recording: recording! }
+  }
+
+  it('a click that starts no download is recorded for the click, not the grace after it', async () => {
+    const { web, recording } = await recorded()
+    const ref = await refFor(web, 'button', 'Do nothing')
+    const finish = recording.beginAnnotation?.()
+    expect(finish).toBeTypeOf('function')
+    const started = performance.now()
+    const result = await web.execute({ type: 'click', ref })
+    const elapsed = performance.now() - started
+    const witness = finish!()
+
+    expect(result.success).toBe(true)
+    expect(elapsed).toBeGreaterThanOrEqual(DOWNLOAD_START_GRACE_MS - 5)
+    expect(witness).toMatchObject({ scene: 'recorded-page', transform: 'identity' })
+    expect(witness!.endMs - witness!.startMs).toBeLessThan(elapsed - DOWNLOAD_START_GRACE_MS + 25)
+  }, 60_000)
+
+  it('an earlier action ending never ends a later interval', async () => {
+    const { web, recording } = await recorded()
+    const ref = await refFor(web, 'button', 'Do nothing')
+    const first = recording.beginAnnotation?.()
+    await web.execute({ type: 'click', ref })
+    expect(first?.()).toBeDefined()
+    const second = recording.beginAnnotation?.()
+    await web.getPage()!.waitForTimeout(120)
+    const witness = second?.()
+
+    expect(witness).toBeDefined()
+    expect(witness!.endMs - witness!.startMs).toBeGreaterThanOrEqual(100)
+  }, 60_000)
+
+  it('a click that starts a download keeps both its evidence and its recorded interval', async () => {
+    const { web, recording } = await recorded()
+    const ref = await refFor(web, 'button', 'Export CSV')
+    const finish = recording.beginAnnotation?.()
+    const result = await web.execute({ type: 'click', ref })
+    const witness = finish?.()
+
+    expect(downloadsOf(result)?.map((download) => download.state)).toEqual(['completed'])
+    expect(witness).toMatchObject({ scene: 'recorded-page', transform: 'identity' })
+    expect(witness!.endMs).toBeGreaterThan(witness!.startMs)
   }, 60_000)
 })
