@@ -333,6 +333,60 @@
       "reason": "fixture capture mode: regenerates the baseline when run by hand",
       "condition": "AGENT_QA_CAPTURE_BASELINE is not '1' (it.runIf)",
       "conditional": false
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/436-android-live.test.ts",
+      "fullName": "C436-ANDROID-LIVE untilVisible finds a far Settings row from scrollGesture signals",
+      "kind": "skipped",
+      "reason": "needs a booted Android emulator with Appium 3.7.0 / UiAutomator2 7.0.0 (docker/Dockerfile.android installs Appium and the uiautomator2 driver unpinned); run live by 436-12 on the Pixel_10_Pro AVD and passed, recorded in 436-RECORD.md",
+      "condition": "AGENT_QA_436_ANDROID_LIVE is not '1' (describe.skipIf(process.env.AGENT_QA_436_ANDROID_LIVE !== '1'))",
+      "conditional": true
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/436-android-live.test.ts",
+      "fullName": "C436-ANDROID-LIVE toEnd ends at the driver boundary",
+      "kind": "skipped",
+      "reason": "needs a booted Android emulator with Appium 3.7.0 / UiAutomator2 7.0.0 (docker/Dockerfile.android installs Appium and the uiautomator2 driver unpinned); run live by 436-12 on the Pixel_10_Pro AVD and passed, recorded in 436-RECORD.md",
+      "condition": "AGENT_QA_436_ANDROID_LIVE is not '1' (describe.skipIf(process.env.AGENT_QA_436_ANDROID_LIVE !== '1'))",
+      "conditional": true
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/436-android-live.test.ts",
+      "fullName": "C436-ANDROID-LIVE a step records download and clipboard capture unavailable",
+      "kind": "skipped",
+      "reason": "needs a booted Android emulator with Appium 3.7.0 / UiAutomator2 7.0.0 (docker/Dockerfile.android installs Appium and the uiautomator2 driver unpinned); run live by 436-12 on the Pixel_10_Pro AVD and passed, recorded in 436-RECORD.md",
+      "condition": "AGENT_QA_436_ANDROID_LIVE is not '1' (describe.skipIf(process.env.AGENT_QA_436_ANDROID_LIVE !== '1'))",
+      "conditional": true
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/436-android-live.test.ts",
+      "fullName": "C436-ANDROID-LIVE opening and leaving the same row three times is six dispatches with no strike or skip",
+      "kind": "skipped",
+      "reason": "needs a booted Android emulator with Appium 3.7.0 / UiAutomator2 7.0.0 (docker/Dockerfile.android installs Appium and the uiautomator2 driver unpinned); run live by 436-12 on the Pixel_10_Pro AVD and passed, recorded in 436-RECORD.md",
+      "condition": "AGENT_QA_436_ANDROID_LIVE is not '1' (describe.skipIf(process.env.AGENT_QA_436_ANDROID_LIVE !== '1'))",
+      "conditional": true
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/436-ios-live.test.ts",
+      "fullName": "C436-IOS-LIVE untilVisible finds a far row by the visibility probe while swipes report unknown",
+      "kind": "skipped",
+      "reason": "needs a booted iOS simulator with XCUITest 10.25.0; not run by 436-12, recorded in 436-RECORD.md",
+      "condition": "AGENT_QA_436_IOS_LIVE is not '1' (describe.skipIf(process.env.AGENT_QA_436_IOS_LIVE !== '1'))",
+      "conditional": true
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/436-ios-live.test.ts",
+      "fullName": "C436-IOS-LIVE the predicate search runs without a direction",
+      "kind": "skipped",
+      "reason": "needs a booted iOS simulator with XCUITest 10.25.0; not run by 436-12, recorded in 436-RECORD.md",
+      "condition": "AGENT_QA_436_IOS_LIVE is not '1' (describe.skipIf(process.env.AGENT_QA_436_IOS_LIVE !== '1'))",
+      "conditional": true
     }
   ]
 }
