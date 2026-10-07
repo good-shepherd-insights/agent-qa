@@ -93,6 +93,7 @@ const mockContext = {
   pages: vi.fn().mockReturnValue([mockPage, mockPage2]),
   addInitScript: vi.fn().mockResolvedValue(undefined),
   grantPermissions: vi.fn().mockResolvedValue(undefined),
+  exposeBinding: vi.fn().mockResolvedValue(undefined),
   on: vi.fn(),
 }
 

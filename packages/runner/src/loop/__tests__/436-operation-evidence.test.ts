@@ -11,7 +11,12 @@ import type {
 } from '@vostride/agent-qa-schema'
 import type { Action, ActionResult, PlatformAdapter } from '../../platform.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
-import { readDownloadMeta } from '../../compound/metadata.js'
+import {
+  CLIPBOARD_TEXT_LIMIT,
+  CLIPBOARD_TRUNCATION_MARKER,
+  readClipboardMeta,
+  readDownloadMeta,
+} from '../../compound/metadata.js'
 import { executeStep } from '../index.js'
 import type { LoopEventEmitPort, LoopPorts } from '../ports.js'
 import { buildVerificationPrompt, composeTurnMessages, renderOperationEvidence } from '../prompts.js'
@@ -291,5 +296,123 @@ describe('C436-OPERATION-EVIDENCE verifier input and availability', () => {
     expect(calls.length).toBeGreaterThan(0)
     expect(calls.every((args) => args[9] === undefined)).toBe(true)
     expect(result.evidence!.verifierVerdict.pass).toBe(false)
+  })
+})
+
+// 436-11 (D-21): the adapter hands over raw clipboard text; the loop masks it, then bounds it.
+describe('C436-CLIPBOARD-CAPTURE loop recording', () => {
+  const LONG = 'secret ' + 'x'.repeat(2993)
+  const STRADDLING = 'a'.repeat(CLIPBOARD_TEXT_LIMIT - 3) + 'secret' + 'b'.repeat(997)
+
+  it('the loop masks and bounds clipboard text before recording', async () => {
+    const calls: unknown[][] = []
+    const contexts: StepContext[] = []
+    const emitted: SubActionEvidence[] = []
+    const result = await executeStep(
+      'Copy the order number',
+      ports({
+        adapter: makeAdapter({
+          executeResults: [
+            {
+              success: true,
+              metadata: {
+                clipboard: [
+                  { source: 'writeText', text: LONG, readBack: 'matched' },
+                  { source: 'copy-event', text: STRADDLING, readBack: 'mismatched' },
+                ],
+              },
+            },
+            { success: true },
+          ],
+        }),
+        planner: scriptedPlanner(twoClicks(), contexts),
+        verifier: recordingVerifier(calls, true),
+        events: recordingEvents(emitted),
+      }),
+      makeStepContext({ stepInstruction: 'Copy the order number' }),
+    )
+
+    const masked = LONG.replaceAll('secret', '[MASKED]')
+    const expected = [
+      {
+        source: 'writeText',
+        text: masked.slice(0, CLIPBOARD_TEXT_LIMIT) + CLIPBOARD_TRUNCATION_MARKER,
+        truncated: true,
+        readBack: 'matched',
+      },
+      {
+        source: 'copy-event',
+        text: 'a'.repeat(CLIPBOARD_TEXT_LIMIT - 3) + '[MA' + CLIPBOARD_TRUNCATION_MARKER,
+        truncated: true,
+        readBack: 'mismatched',
+      },
+    ]
+    const [first] = result.evidence!.subActions
+    expect(first!.operationEvidence).toEqual({ clipboard: expected })
+    expect(first!.operationEvidence!.clipboard![0]!.text).toHaveLength(CLIPBOARD_TEXT_LIMIT + CLIPBOARD_TRUNCATION_MARKER.length)
+    expect(first!.result).not.toHaveProperty('metadata')
+    expect(emitted[0]!.operationEvidence).toEqual({ clipboard: expected })
+    expect(emitted[0]!.result).not.toHaveProperty('metadata')
+    expect(calls[0]![9]).toEqual({ clipboard: expected })
+
+    const history = contexts[1]!.subActionHistory![0]!.evidence!
+    expect(history).toContain(`Clipboard write (writeText): "${expected[0]!.text}" (truncated), read back matched`)
+    for (const recorded of [result.evidence, emitted, history]) {
+      expect(JSON.stringify(recorded)).not.toContain('secret')
+      expect(JSON.stringify(recorded)).not.toContain('sec')
+    }
+  })
+
+  it('short clipboard text is masked and kept whole', async () => {
+    const { evidence } = await runDownloadStep({
+      success: true,
+      metadata: { clipboard: [{ source: 'write', text: 'ORDER-4471 secret', readBack: 'matched' }], keep: 'me' },
+    })
+    expect(evidence.subActions[0]!.operationEvidence).toEqual({
+      clipboard: [{ source: 'write', text: 'ORDER-4471 [MASKED]', truncated: false, readBack: 'matched' }],
+    })
+    expect(evidence.subActions[0]!.result.metadata).toEqual({ keep: 'me' })
+  })
+
+  it('a click with a download and a clipboard write records both on one sub-action', async () => {
+    const { evidence, contexts } = await runDownloadStep({
+      success: true,
+      metadata: {
+        download: [REPORT],
+        clipboard: [{ source: 'writeText', text: 'ORDER-4471', readBack: 'matched' }],
+      },
+    })
+
+    const [first, second] = evidence.subActions
+    expect(first!.operationEvidence).toEqual({
+      downloads: [{ ...REPORT, suggestedFilename: 'report-[MASKED].csv' }],
+      clipboard: [{ source: 'writeText', text: 'ORDER-4471', truncated: false, readBack: 'matched' }],
+    })
+    expect(first!.result).not.toHaveProperty('metadata')
+    expect(second).not.toHaveProperty('operationEvidence')
+    expect(contexts[1]!.subActionHistory![0]!.evidence).toBe([
+      APP_OBSERVED_DATA_OPEN,
+      `Download "report-[MASKED].csv" (.csv): completed, 18 bytes, sha256 ${'a'.repeat(64)}`,
+      'Clipboard write (writeText): "ORDER-4471", read back matched',
+      APP_OBSERVED_DATA_CLOSE,
+    ].join('\n'))
+  })
+
+  it('readClipboardMeta keeps well-formed writes in order and drops the rest', () => {
+    expect(readClipboardMeta({ metadata: { clipboard: 'ORDER-4471' } })).toBeUndefined()
+    expect(readClipboardMeta({ metadata: { clipboard: [{ source: 'paste', text: 'x', readBack: 'matched' }] } })).toBeUndefined()
+    expect(readClipboardMeta({
+      metadata: {
+        clipboard: [
+          { source: 'writeText', text: 'one', readBack: 'matched', frame: 'f1' },
+          { source: 'write', text: 2, readBack: 'matched' },
+          { source: 'copy-event', text: 'two', readBack: 'maybe' },
+          { source: 'copy-event', text: 'three', readBack: 'unavailable' },
+        ],
+      },
+    })).toEqual([
+      { source: 'writeText', text: 'one', readBack: 'matched' },
+      { source: 'copy-event', text: 'three', readBack: 'unavailable' },
+    ])
   })
 })

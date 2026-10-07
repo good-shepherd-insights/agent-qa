@@ -21,6 +21,7 @@ import {
 import type {
   Action as SchemaAction,
   ActionAnnotation,
+  ClipboardEvidence,
   CompoundInputCount,
   LimitStopEvidence,
   OperationCaptureAvailability,
@@ -86,7 +87,11 @@ import {
   readFillRereadMeta,
   readScrollUntilVisibleMeta,
   readDownloadMeta,
+  readClipboardMeta,
+  CLIPBOARD_TEXT_LIMIT,
+  CLIPBOARD_TRUNCATION_MARKER,
 } from '../compound/metadata.js'
+import type { ClipboardWriteMeta } from '../compound/metadata.js'
 import { mintReportedValue, mintUniqueValue, defaultUniqueValueGenerator } from '../compound/dispatch-mint.js'
 import { compareAssertValue } from '../compound/assert-value.js'
 import { createRecordLedger } from './record-ledger.js'
@@ -1586,7 +1591,7 @@ export async function executeStep(
       compoundInputs.push({ subActionIndex: recorder.subActionCount, kind: 'fill', count: 1 })
     }
 
-    // 436 D-22: download evidence rides the action that started it. The adapter's metadata key is
+    // 436 D-21/D-22: download and clipboard evidence ride the action that produced them. The adapter's metadata key is
     // removed from the recorded and emitted result, so only the typed, masked evidence persists
     // (D-16), and the planner's history carries it as app-observed data.
     const taken = takeOperationEvidence(execResult, maskValue)
@@ -2759,23 +2764,37 @@ function takeOperationEvidence(
   execResult: ActionResult,
   mask: (value: string) => string,
 ): { result: ActionResult; evidence?: OperationEvidence } {
-  if (execResult.metadata === undefined || !('download' in execResult.metadata)) return { result: execResult }
+  const raw = execResult.metadata
+  if (raw === undefined || (!('download' in raw) && !('clipboard' in raw))) return { result: execResult }
   const downloads = readDownloadMeta(execResult)
-  const { download: _download, ...metadata } = execResult.metadata
+  const clipboard = readClipboardMeta(execResult)
+  const { download: _download, clipboard: _clipboard, ...metadata } = raw
   void _download
+  void _clipboard
   const result: ActionResult = { ...execResult }
   if (Object.keys(metadata).length > 0) result.metadata = metadata
   else delete result.metadata
-  if (downloads === undefined) return { result }
-  return {
-    result,
-    evidence: {
-      downloads: downloads.map((download) => ({
-        ...download,
-        suggestedFilename: mask(download.suggestedFilename),
-      })),
-    },
+  const evidence: OperationEvidence = {}
+  if (downloads !== undefined) {
+    evidence.downloads = downloads.map((download) => ({
+      ...download,
+      suggestedFilename: mask(download.suggestedFilename),
+    }))
   }
+  if (clipboard !== undefined) evidence.clipboard = clipboard.map((write) => boundClipboardWrite(write, mask))
+  return evidence.downloads || evidence.clipboard ? { result, evidence } : { result }
+}
+
+// 436 D-21: masked first, so a secret is never cut into an unmaskable fragment, then bounded.
+function boundClipboardWrite(write: ClipboardWriteMeta, mask: (value: string) => string): ClipboardEvidence {
+  const text = mask(write.text)
+  if (text.length <= CLIPBOARD_TEXT_LIMIT) return { ...write, text, truncated: false }
+  const end = isHighSurrogate(text.charCodeAt(CLIPBOARD_TEXT_LIMIT - 1)) ? CLIPBOARD_TEXT_LIMIT - 1 : CLIPBOARD_TEXT_LIMIT
+  return { ...write, text: text.slice(0, end) + CLIPBOARD_TRUNCATION_MARKER, truncated: true }
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff
 }
 
 function toSchemaResult(execResult: ActionResult, annotation?: ActionAnnotation): SchemaActionResult {

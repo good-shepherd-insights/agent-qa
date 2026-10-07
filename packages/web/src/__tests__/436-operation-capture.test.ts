@@ -1,5 +1,6 @@
-// C436-DOWNLOAD-CAPTURE (436 D-19, D-20): real headless Chromium downloads served from a local
-// fixture, captured on the action that started them.
+// C436-DOWNLOAD-CAPTURE (436 D-19, D-20) and C436-CLIPBOARD-CAPTURE (436 D-21): real headless
+// Chromium downloads and app clipboard writes served from a local fixture, captured on the action
+// that produced them.
 
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
@@ -9,13 +10,14 @@ import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { Download } from 'playwright-core'
 import type { ActionResult, RecordingCapability } from '@vostride/agent-qa-runner'
 import { screenIdentityHash } from '@vostride/agent-qa-schema'
 import type { DownloadEvidence, Ref } from '@vostride/agent-qa-schema'
 import { WebPlatformAdapter } from '../adapter.js'
 import { DOWNLOAD_START_GRACE_MS } from '../operation-capture.js'
+import type { CapturedClipboardWrite, OperationCapture } from '../operation-capture.js'
 
 const BLOB_BYTES = 'name,qty\nwidget,3\n'
 const DISPOSITION_BYTES = JSON.stringify({ order: 42, lines: ['a', 'b'] })
@@ -43,6 +45,17 @@ const PAGE = `<!DOCTYPE html>
       a.remove()
     }
   </script>
+</body>
+</html>
+`
+
+const CLIPBOARD_PAGE = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>clipboard fixture</title></head>
+<body>
+  <h1>Order ORDER-4471</h1>
+  <button id="write-text" onclick="navigator.clipboard.writeText('ORDER-4471')">Copy order number</button>
+  <button id="nothing">Do nothing</button>
 </body>
 </html>
 `
@@ -87,7 +100,7 @@ beforeAll(async () => {
       return
     }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
-    res.end(PAGE)
+    res.end(url === '/clipboard' ? CLIPBOARD_PAGE : PAGE)
   })
   await new Promise<void>((resolve) => { server.listen(0, '127.0.0.1', resolve) })
   baseUrl = `http://localhost:${String((server.address() as AddressInfo).port)}/`
@@ -106,7 +119,7 @@ afterEach(async () => {
   for (const res of openSlowResponses) res.destroy()
 }, 60_000)
 
-async function open(stepTimeoutMs?: number, videoDir?: string): Promise<WebPlatformAdapter> {
+async function open(stepTimeoutMs?: number, videoDir?: string, path = ''): Promise<WebPlatformAdapter> {
   const created = new WebPlatformAdapter()
   try {
     await created.setup({
@@ -119,7 +132,7 @@ async function open(stepTimeoutMs?: number, videoDir?: string): Promise<WebPlatf
     throw new Error('Real Chromium required: run `pnpm exec playwright install chromium`', { cause: error })
   }
   adapter = created
-  await created.getPage()!.goto(baseUrl)
+  await created.getPage()!.goto(baseUrl + path)
   return created
 }
 
@@ -316,5 +329,58 @@ describe('C436-DOWNLOAD-CAPTURE recording witness', () => {
     expect(downloadsOf(result)?.map((download) => download.state)).toEqual(['completed'])
     expect(witness).toMatchObject({ scene: 'recorded-page', transform: 'identity' })
     expect(witness!.endMs).toBeGreaterThan(witness!.startMs)
+  }, 60_000)
+})
+
+function clipboardOf(result: ActionResult): CapturedClipboardWrite[] | undefined {
+  return result.metadata?.['clipboard'] as CapturedClipboardWrite[] | undefined
+}
+
+function captureOf(web: WebPlatformAdapter): OperationCapture {
+  return (web as unknown as { operationCapture: OperationCapture }).operationCapture
+}
+
+async function permission(web: WebPlatformAdapter, name: string): Promise<string> {
+  return web.getPage()!.evaluate(`navigator.permissions.query({ name: ${JSON.stringify(name)} }).then((status) => status.state)`)
+}
+
+describe('C436-CLIPBOARD-CAPTURE', () => {
+  it('an app writeText during a click is captured and read back', async () => {
+    const web = await open(undefined, undefined, 'clipboard')
+    const ref = await refFor(web, 'button', 'Copy order number')
+    const before = screenIdentityHash(await web.observe())
+    const result = await web.execute({ type: 'click', ref })
+    const after = screenIdentityHash(await web.observe())
+
+    expect(result.success).toBe(true)
+    expect(clipboardOf(result)).toEqual([{ source: 'writeText', text: 'ORDER-4471', readBack: 'matched' }])
+    expect(result.metadata?.['download']).toBeUndefined()
+    expect(after).toBe(before)
+  }, 60_000)
+
+  it('a click that writes nothing reads nothing', async () => {
+    const web = await open(undefined, undefined, 'clipboard')
+    const ref = await refFor(web, 'button', 'Do nothing')
+    const readPath = vi.spyOn(captureOf(web) as unknown as { readClipboard: () => Promise<unknown> }, 'readClipboard')
+    const grants = vi.spyOn(web.getPage()!.context(), 'grantPermissions')
+    const result = await web.execute({ type: 'click', ref })
+
+    expect(result.success).toBe(true)
+    expect(result.metadata?.['clipboard']).toBeUndefined()
+    expect(readPath).not.toHaveBeenCalled()
+    expect(grants).not.toHaveBeenCalled()
+  }, 60_000)
+
+  it('clipboard-read is not granted after the read-back', async () => {
+    const web = await open(undefined, undefined, 'clipboard')
+    const ref = await refFor(web, 'button', 'Copy order number')
+    const readPath = vi.spyOn(captureOf(web) as unknown as { readClipboard: () => Promise<unknown> }, 'readClipboard')
+    expect(await permission(web, 'clipboard-read')).not.toBe('granted')
+    const result = await web.execute({ type: 'click', ref })
+
+    expect(readPath).toHaveBeenCalledTimes(1)
+    expect(clipboardOf(result)?.[0]?.readBack).toBe('matched')
+    expect(await permission(web, 'clipboard-read')).not.toBe('granted')
+    expect(await permission(web, 'clipboard-write')).toBe('granted')
   }, 60_000)
 })

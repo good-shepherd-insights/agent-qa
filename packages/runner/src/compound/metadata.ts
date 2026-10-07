@@ -10,7 +10,7 @@
 // presence + typeof checks, undefined otherwise. FillRereadMeta fields are pinned to the
 // 358 seam — `{ expected, actual }`, both string — and MUST NOT be renamed or nested.
 
-import type { DownloadEvidence } from '@vostride/agent-qa-schema'
+import type { ClipboardEvidence, DownloadEvidence } from '@vostride/agent-qa-schema'
 import type { ActionResult } from '../platform.js'
 
 /** EXEC-01 fill re-read verdict block. Byte-pinned to the 358 oracle/classifier readers. */
@@ -282,5 +282,35 @@ export function readDownloadMeta(actionResult?: MetadataCarrier): DownloadEviden
   const raw = actionResult?.metadata?.['download']
   if (!Array.isArray(raw)) return undefined
   const entries = raw.map(readDownloadEntry).filter((entry): entry is DownloadEvidence => entry !== undefined)
+  return entries.length > 0 ? entries : undefined
+}
+
+// ---------------------------------------------------------------------------
+// 436 D-21/D-22: the clipboard text the app wrote during the action, keyed `clipboard`, one entry
+// per write in order. The adapter has no masker, so the text is raw here: the loop masks it and
+// bounds it to CLIPBOARD_TEXT_LIMIT before anything records, emits or renders it.
+// ---------------------------------------------------------------------------
+
+/** The most masked clipboard text one write keeps; longer text is cut and marked. */
+export const CLIPBOARD_TEXT_LIMIT = 2000
+export const CLIPBOARD_TRUNCATION_MARKER = '…[truncated]'
+
+export type ClipboardWriteMeta = Pick<ClipboardEvidence, 'source' | 'text' | 'readBack'>
+
+const CLIPBOARD_SOURCES = new Set<ClipboardEvidence['source']>(['writeText', 'write', 'copy-event'])
+const CLIPBOARD_READ_BACKS = new Set<ClipboardEvidence['readBack']>(['matched', 'mismatched', 'unavailable'])
+
+function readClipboardEntry(raw: unknown): ClipboardWriteMeta | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const { source, text, readBack } = raw as Record<string, unknown>
+  if (typeof text !== 'string') return undefined
+  if (!isMember(CLIPBOARD_SOURCES, source) || !isMember(CLIPBOARD_READ_BACKS, readBack)) return undefined
+  return { source, text, readBack }
+}
+
+export function readClipboardMeta(actionResult?: MetadataCarrier): ClipboardWriteMeta[] | undefined {
+  const raw = actionResult?.metadata?.['clipboard']
+  if (!Array.isArray(raw)) return undefined
+  const entries = raw.map(readClipboardEntry).filter((entry): entry is ClipboardWriteMeta => entry !== undefined)
   return entries.length > 0 ? entries : undefined
 }

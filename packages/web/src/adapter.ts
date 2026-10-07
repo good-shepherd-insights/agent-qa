@@ -30,7 +30,7 @@ import type { RefMap } from './types.js'
 import { formatMissingBrowserError, isPlaywrightMissingBrowserError } from './browser-install-error.js'
 import { createScreencastRecording, type ScreencastRecording } from './recording.js'
 import { OperationCapture } from './operation-capture.js'
-import type { OperationEvidence } from '@vostride/agent-qa-schema'
+import type { CapturedOperations } from './operation-capture.js'
 
 // Browser-context hygiene: hide framework-injected [data-agent-qa-internal] overlays
 // from the ARIA snapshot (they would otherwise get ai-mode refs and pollute the state),
@@ -60,11 +60,17 @@ interface PageLogBuffers {
   pendingRequests: Map<string, { url: string; method: string; headers: Record<string, string>; startTime: number; postData?: string }>
 }
 
-// 436 D-22: the adapter carries the capture on metadata.download; the loop moves it onto the
-// sub-action's operationEvidence and removes the key from the recorded result (D-16).
-function withDownloadMetadata(result: ActionResult, evidence: OperationEvidence | undefined): ActionResult {
-  if (!evidence?.downloads || evidence.downloads.length === 0) return result
-  return { ...result, metadata: { ...result.metadata, download: evidence.downloads } }
+// 436 D-22: the adapter carries the capture on metadata.download and metadata.clipboard; the loop
+// masks it, moves it onto the sub-action's operationEvidence and removes both keys from the
+// recorded result (D-16).
+function withOperationMetadata(result: ActionResult, captured: CapturedOperations | undefined): ActionResult {
+  const download = captured?.downloads?.length ? captured.downloads : undefined
+  const clipboard = captured?.clipboard?.length ? captured.clipboard : undefined
+  if (!download && !clipboard) return result
+  return {
+    ...result,
+    metadata: { ...result.metadata, ...(download ? { download } : {}), ...(clipboard ? { clipboard } : {}) },
+  }
 }
 
 function clickDelayOption(clickDelay?: number): { delay?: number } {
@@ -238,7 +244,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
 
     if (browserName === 'chromium') {
       this.operationCapture = new OperationCapture({ completionCapMs: config.timeouts?.step })
-      this.operationCapture.attach(this.context)
+      await this.operationCapture.attach(this.context)
       this.operationCaptureSupport = { download: true, clipboard: true }
     } else {
       this.operationCaptureSupport = { download: false, clipboard: false, reason: browserName }
@@ -676,15 +682,16 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     const capture = this.operationCapture
     capture?.arm(action)
     const result = await this.executeWithErrorResult(action)
-    // The download-start grace follows the action (436-10); the recorded interval is the action's.
+    // The download-start grace and the clipboard read-back follow the action (436-10, 436-11); the
+    // recorded interval is the action's.
     this.recordingCapability?.endAction()
-    let evidence: OperationEvidence | undefined
+    let captured: CapturedOperations | undefined
     try {
-      evidence = await capture?.collect()
+      captured = await capture?.collect()
     } catch {
-      evidence = undefined
+      captured = undefined
     }
-    return withDownloadMetadata(result, evidence)
+    return withOperationMetadata(result, captured)
   }
 
   private async executeWithErrorResult(action: ActionsFor<'web'>): Promise<ActionResult> {
