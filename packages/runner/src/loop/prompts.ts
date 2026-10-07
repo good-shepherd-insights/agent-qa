@@ -72,7 +72,7 @@ function actionSelectionRules(platform?: PromptPlatform): string {
 }
 
 function scrollRules(): string {
-  return `3. If the target element is not visible in the screen state, use a "scroll" action. To reveal a known label, use mode "untilVisible" with its "text" and a "direction" — the executor re-observes between swipes and stops as soon as it appears. To move the view generally, use mode "direction" with a "direction" ("up"/"down"/"left"/"right") and an "amount" ("page", "halfPage", or "toEnd"). When scrolling within a specific container (a list, card, panel, or any element that has its own scrollbar), always include the "ref" field pointing to that container element — without ref, the scroll targets the page viewport and will miss the container. When no container ref is available, use any child element's ref — the adapter automatically walks up to the nearest scrollable container. Prefer a ref near the target content over scrolling the page viewport. If you have already scrolled and the screen did not change (you reached the boundary), the element is not on this page — set stepFailed with an explanation of what you searched. EXCEPTION: When the step goal IS to reach the scroll boundary (e.g., 'scroll to the end', 'scroll to the bottom', 'scroll all the way down', 'scroll to the top'), use mode "direction" with amount "toEnd" — reaching the boundary IS the goal, so set stepComplete: true.`
+  return `3. If the target element is not visible in the screen state, use a "scroll" action. To reveal a known label, use mode "untilVisible" with its "text" and a "direction" — the executor re-observes between swipes and stops as soon as it appears. To move the view generally, use mode "direction" with a "direction" ("up"/"down"/"left"/"right") and an "amount" ("page", "halfPage", or "toEnd"). When scrolling within a specific container (a list, card, panel, or any element that has its own scrollbar), always include the "ref" field pointing to that container element — without ref, the scroll targets the page viewport and will miss the container. When no container ref is available, use any child element's ref — the adapter automatically walks up to the nearest scrollable container. Prefer a ref near the target content over scrolling the page viewport. EXCEPTION: When the step goal IS to reach the scroll boundary (e.g., 'scroll to the end', 'scroll to the bottom', 'scroll all the way down', 'scroll to the top'), use mode "direction" with amount "toEnd" — reaching the boundary IS the goal, so set stepComplete: true.`
 }
 
 function generalRules(): string {
@@ -88,7 +88,7 @@ function stepLifecycleRules(): string {
    - stepComplete: true  — step goal is fully accomplished
    - stepFailed: true    — step goal cannot be achieved
    stepComplete and stepFailed are mutually exclusive. Never set both to true.
-   You will receive your previous actions and their outcomes in the sub-action history. Use this to avoid repeating failed approaches — if an action produced no screen change or was rejected, try a fundamentally different strategy (different element, different action type, different navigation path).
+   You will receive your previous actions and their outcomes in the sub-action history. Use this to avoid repeating approaches that failed — if an action returned an error or the step was rejected, try a different strategy (different element, different action type, different navigation path).
    Set stepFailed when you have evidence the goal is impossible, not merely difficult:
    - Verification contradicted: step says "verify the button is blue" but it is visibly red — fail immediately
    - Target confirmed absent: step says "click checkout" but you have scrolled the full page and it does not exist
@@ -134,7 +134,7 @@ function qaMindsetExample(platform?: PromptPlatform): string {
 }
 
 function qaMindsetRules(platform?: PromptPlatform): string {
-  return `13. QA MINDSET — ALWAYS MOVE FORWARD: Break the step instruction into sub-goals. Execute each sub-goal in order. After executing an action, MOVE to the next sub-goal — do not retry the same action, do not assert about what you just did, do not wait for visual confirmation of intermediate actions. An assert is NOT forward progress — if your reasoning identifies a next action, your output MUST be that action, not an assert about the current state. Review your previous actions in the sub-action history below — if you have already completed all parts of the step instruction, set stepComplete: true immediately instead of re-verifying or re-asserting. ${qaMindsetExample(platform)} After all sub-goals are done, set stepComplete: true.
+  return `13. QA MINDSET — ALWAYS MOVE FORWARD: Break the step instruction into sub-goals. Execute each sub-goal in order. After executing an action, MOVE to the next sub-goal — do not repeat an action unless the step asks for repetition, do not assert about what you just did, do not wait for visual confirmation of intermediate actions. An assert is NOT forward progress — if your reasoning identifies a next action, your output MUST be that action, not an assert about the current state. Review your previous actions in the sub-action history below — if you have already completed all parts of the step instruction, set stepComplete: true immediately instead of re-verifying or re-asserting. ${qaMindsetExample(platform)} After all sub-goals are done, set stepComplete: true.
 14. TRUST THE ARIA TREE, VERIFY WITH SCREENSHOTS: The ARIA tree is your trusted source for finding elements and understanding page structure. Use its refs as the primary element handles, including full-page off-screen refs that you reach by scrolling, not by coordinates. Coordinates are the fallback for visible targets that are genuinely absent from the ARIA tree/DOM handles. But for ASSERTIONS — any step that says "verify", "check", "confirm", or uses the assert action — you must confirm the claim is true by what is visible in the screenshot:
    - Before asserting, ensure the target content is visible in the current viewport. If the target is above or below the visible area, SCROLL to bring it into view first, then assert. This applies in both directions — scroll up for content at the top, scroll down for content at the bottom.
    - For quantity assertions ("verify there are 30 items"), you MUST scroll through the entire content to visually confirm. The ARIA tree shows the full page including off-screen elements — you cannot verify quantity from the ARIA tree alone.
@@ -170,7 +170,7 @@ function completionRules(platform?: PromptPlatform): string {
   return `19. ACTION STEP COMPLETION: When the step instruction is a pure action — a single verb like ${actionExamples} targeting a specific element — and you found the target element and executed the action successfully, set stepComplete: true immediately. Do NOT retry expecting a visible screen change. Many successful actions produce no visible change on the current page: file downloads save to disk silently, external links open in new tabs, buttons trigger background processes, PDF links open in the browser's PDF viewer. This rule applies to SINGLE-ACTION steps only. If the step has multiple sub-goals (${multiGoalExample}), complete the action sub-goal and move to the next per Rule 13 — do not set stepComplete until ALL sub-goals are done.
 20. TRUST LOG READ RESULTS: When web_inspect (console/network) returns data, that data is the complete set of logs captured since the last step. Do NOT re-trigger user interactions or navigation to "regenerate" logs — the logs from prior steps are already captured. If web_inspect (console) returns an empty array, it means no matching console output was captured during this step's execution. If the step requires verifying log content and web_inspect (console) returns empty, either the expected log was not emitted or it was captured in a prior step — check the step instruction and set stepFailed if the expected log output is absent after one read attempt.
 21. The setVariable action stores a runtime variable accessible via {{env:varName}} in later steps. ONLY use setVariable when the step instruction explicitly asks to set, store, save, or remember a variable (e.g., "Set env X to Y", "Store the value as env.token"). NEVER use setVariable as a substitute for page interactions, assertions, or any other action. If the step does not explicitly mention setting a variable, do not call setVariable.
-22. STAGNATION FOCUS — DO NOT WANDER: When a specific named control fails to make progress, you will be shown a stagnation block naming that exact control and how it stalled. Remediate THAT control as the classification directs — wait for a transient load, dismiss an obstruction, scroll it into view, or re-enter the input. Do NOT wander off to an alternate path or a different control to sidestep the named target, and never substitute a longpress for a required tap on it. Genuine loops across revisited screen states are caught separately and surfaced as a cycle-break block.`
+22. OUTCOME EVIDENCE: Judge an action by its requested outcome, not by whether the screen changed. No visible change is not failure, and a visible change is not success. After each action, check the requested effect in the current screen state and in the action's returned data (a field value, a toggle state, an opened dialog, a download, a copied value, a saved record). Repeat a state-changing action such as submit, save, pay or delete only when it returned an actual error or there is evidence that it did not happen; never reissue it just because the screen looks the same. Repetition is fine when the step asks for it (press a control five times, delete every row): perform each requested repetition once and count them in the sub-action history. If the requested outcome is still absent after the action and one reasonable alternative, set stepFailed and name the missing outcome in your reasoning.`
 }
 
 // G-381-5 (Phase 381): the secret-fill contract. Live runs showed the planner
@@ -281,34 +281,6 @@ function appendWorkingMemory(parts: string[], context: StepContext): void {
   }
 }
 
-// D-01/D-07 stagnation block (per-turn VOLATILE turn content — composeTurnMessages ONLY,
-// never a tier builder, Pitfall 3). Renders the classification, the stagnating control's
-// anchor (naming the control the planner MUST remediate — the wandering ban's positive half),
-// and the raw diff facts as opaque display text (injection-inert, renderDescriptor precedent —
-// app-observed text never steers control flow). For the `unresponsive` class no remediation is
-// suggested — facts only (D-02). Omitted entirely when the slot is unset (empty-slot omission).
-function appendStagnationBlock(parts: string[], context: StepContext): void {
-  const s = context.stagnation
-  // The classification/anchor/diff render triplet is independently optional from the D-04
-  // bannedSubstitutions list (a ban-only slot carries no render block). Render only when the
-  // full triplet is present; otherwise omit entirely (empty-slot omission).
-  if (!s || s.classification === undefined || s.anchor === undefined || s.diff === undefined) return
-  parts.push(`Stagnation detected (classification: ${s.classification}) on control ${s.anchor.role} "${s.anchor.nameNormalized}" (ordinal ${s.anchor.ordinal}).`)
-  parts.push(`Observed diff: ${s.diff}`)
-  if (s.classification !== 'unresponsive') {
-    parts.push('Remediate THAT control as this classification directs — do not wander to an alternate path or substitute a different gesture for the required interaction.')
-  }
-}
-
-// D-08 cycle-break block (per-turn VOLATILE turn content). Renders the revisited key, the
-// W-window summary, and the §7.1 self-correcting instruction. Omitted when the slot is unset.
-function appendCycleBreakBlock(parts: string[], context: StepContext): void {
-  const c = context.cycleBreak
-  if (!c) return
-  parts.push(`Cycle detected — you have revisited state ${c.revisitedKey}: ${c.windowSummary}.`)
-  parts.push('Change your approach or declare stepFailed — repeating the same path will not make progress.')
-}
-
 // D-09 active bulk-completion predicate (per-turn VOLATILE turn content). Re-states the
 // planner's declared positive predicate with the re-evaluate/cite-evidence instruction.
 // Omitted when the slot is unset.
@@ -335,12 +307,7 @@ function appendSubActionHistory(parts: string[], context: StepContext): void {
     if (sub.data) subHistoryParts.push(`    Returned data: ${sub.data}`)
   }
 
-  // §12.16 replacement: the v1 byte-identity anti-repetition warning is DELETED here.
-  // It is actively wrong when repetition IS the task (a bulk "do X to all" loop
-  // legitimately re-issues an identical action per unit). Progress vs. stagnation is now decided
-  // by the differential-observation oracle + identity-keyed stagnation tree (CYCLE-01/02); when a
-  // named control genuinely stagnates the planner is told via the structured stagnation block
-  // (appendStagnationBlock), not a blanket byte-identity warning here.
+  // 2026-10-07 (436-03): no repetition warning here; requested repetition is legitimate (HARN-01).
 
   parts.push('')
   parts.push(subHistoryParts.join('\n'))
@@ -576,11 +543,9 @@ export function composeTurnMessages(
   pushText((parts) => appendFailureContext(parts, context))
   pushText((parts) => appendWorkingMemory(parts, context))
 
-  // D-01/D-08/D-09 progress-remediation blocks — per-turn VOLATILE turn content (never the
-  // cached system tiers, Pitfall 3). Trim-eligible; sit before the pinned observation/instruction
-  // pair so the live screen/goal are never evicted for them.
-  pushText((parts) => appendStagnationBlock(parts, context))
-  pushText((parts) => appendCycleBreakBlock(parts, context))
+  // D-09 bulk-completion predicate — per-turn VOLATILE turn content (never the cached system
+  // tiers, Pitfall 3). Trim-eligible; sits before the pinned observation/instruction pair.
+  // 2026-10-07 (436-03): the stagnation and cycle-break blocks went with the progress subsystem.
   pushText((parts) => appendBulkCompletionPredicate(parts, context))
 
   // Pinned pair — latest observation (with the screenshot when vision-capable), then

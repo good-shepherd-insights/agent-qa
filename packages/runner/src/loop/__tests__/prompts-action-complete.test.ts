@@ -40,4 +40,10 @@ describe('ACTION-COMPLETE-01 — action step completion', () => {
   it('references Rule 13 for multi-sub-goal steps', () => {
     expect(actionCompletionRule).toContain('Rule 13')
   })
+
+  it('pairs Rule 19 with the outcome-evidence rule (Rule 22, 436-03)', () => {
+    expect(systemPrompt).toContain('22. OUTCOME EVIDENCE:')
+    expect(systemPrompt).toContain('check the requested effect')
+    expect(systemPrompt).toContain('do not repeat an action unless the step asks for repetition')
+  })
 })

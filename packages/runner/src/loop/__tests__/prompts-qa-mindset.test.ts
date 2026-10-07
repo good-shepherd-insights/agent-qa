@@ -59,6 +59,17 @@ describe('QA mindset prompt rules', () => {
       expect(systemPrompt).toContain('Break the step instruction into sub-goals')
       expect(systemPrompt).toContain('MOVE to the next sub-goal')
     })
+
+    it('buildSystemPrompt allows requested repetition (Rule 13, 436-03)', () => {
+      expect(systemPrompt).toContain('do not repeat an action unless the step asks for repetition')
+      expect(systemPrompt).not.toContain('do not retry the same action')
+    })
+
+    it('buildSystemPrompt judges outcomes, not screen changes (Rule 22, 436-03)', () => {
+      expect(systemPrompt).toContain('22. OUTCOME EVIDENCE:')
+      expect(systemPrompt).toContain('No visible change is not failure, and a visible change is not success.')
+      expect(systemPrompt).not.toContain('STAGNATION FOCUS')
+    })
   })
 
   // ASSERT-ROUTE-01 (Phase 360 §12.2 reconciliation): Rule 12 now teaches the assertValue /
@@ -239,9 +250,10 @@ describe('QA mindset prompt rules', () => {
       expect(systemPrompt).toContain('reaching the boundary IS the goal')
     })
 
-    it('Rule 3 preserves stepFailed for search-not-found case', () => {
+    it('Rule 3 no longer reads an unchanged scroll as absence; Rule 8 keeps target-confirmed-absent (436-03)', () => {
+      expect(systemPrompt).not.toContain('the element is not on this page')
+      expect(systemPrompt).toContain('Target confirmed absent')
       expect(systemPrompt).toContain('stepFailed')
-      expect(systemPrompt).toContain('the element is not on this page')
     })
 
     it('boundary-is-goal exception present in web platform prompt', () => {

@@ -157,33 +157,6 @@ export interface StepContext {
    */
   workingMemory?: WorkingMemoryEntry[]
   /**
-   * D-01/D-07 stagnation classification block (per-turn VOLATILE turn content — it rides
-   * `composeTurnMessages` ONLY, NEVER the cached system tiers, Pitfall 3). Populated by Plan 08
-   * when the deterministic classifier flags a stagnating anchor. The block hands the planner the
-   * classification, the stagnating control's anchor (`role + nameNormalized + ordinal` — the
-   * wandering ban's positive half: the exact control it MUST remediate), and the raw diff facts
-   * (rendered injection-inert as opaque display text, renderDescriptor precedent). For the
-   * `unresponsive` class the block renders facts only, no suggested remediation (D-02). The
-   * classification/anchor/diff render triplet and the D-04 `bannedSubstitutions` gate-ban list are
-   * INDEPENDENTLY optional: a turn may carry only the render block (a planner-routed rung with no
-   * ban), only the ban list (a banned anchor with nothing to render), or both. The ban list drives
-   * the deterministic longpress-for-tap gate rejection the planner's groundability closure enforces
-   * pre-gate. Absent entirely when no anchor is stagnating this turn (empty-slot omission).
-   */
-  stagnation?: {
-    classification?: string
-    anchor?: { role: string; nameNormalized: string; ordinal: number }
-    diff?: string
-    bannedSubstitutions?: Array<{ anchorKey: string; banned: string; required: string }>
-  }
-  /**
-   * D-08 cycle-break block (per-turn VOLATILE turn content). One-shot per step: the first
-   * confirmed cycle flag surfaces this block (the revisited key + the W-window summary + the
-   * §7.1 change-approach-or-stepFailed instruction) in the next planning turn; a following window
-   * with zero progress ends the step. Absent otherwise.
-   */
-  cycleBreak?: { revisitedKey: string; windowSummary: string }
-  /**
    * D-09 active bulk-completion predicate (per-turn VOLATILE turn content). While a bulk
    * "do X to all" loop is running, the planner's declared positive predicate is re-stated each
    * turn with the re-evaluate/cite-positive-evidence instruction. Absent for non-bulk steps.
@@ -191,9 +164,8 @@ export interface StepContext {
   bulkCompletionPredicate?: string
   failureContext?: string
   /**
-   * Sub-actions already attempted in this step (multi-action mode). Phase 358 retired the v1
-   * per-entry screen-change heuristic flag — the differential-observation oracle's `localEffect`
-   * block (SubActionEvidence) is the sanctioned progress signal now (§12.16 replacement).
+   * Sub-actions already attempted in this step (multi-action mode), with each outcome and any
+   * returned data. Screen change is not recorded here: outcomes decide (HARN-01).
    */
   subActionHistory?: { action: string; reasoning?: string; result: 'success' | 'failure'; error?: string; verifierRejection?: string; data?: string }[]
   plannerConfig?: PlannerConfig
