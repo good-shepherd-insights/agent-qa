@@ -17,8 +17,13 @@
 //              same bytes; exhausting rung 4 returns the rung-4 result with overBudget: true,
 //              never a silently dropped test or channel.
 
-import { canonicalJson } from '@vostride/agent-qa-schema'
-import type { ArtifactRef, ServedRetrievalTraceV1 } from '@vostride/agent-qa-schema'
+import { canonicalJson, formatLimitStopReason } from '@vostride/agent-qa-schema'
+import type {
+  ArtifactRef,
+  CompletedRunHandoff,
+  LimitStopEvidence,
+  ServedRetrievalTraceV1,
+} from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 import {
   buildEvidencePacks,
@@ -335,5 +340,59 @@ describe('compactEvidencePacks — the D-01 ladder', () => {
     const second = compactEvidencePacks(ladderPacks(), byLength, budget)
     expect(second.rung).toBe(first.rung)
     expect(canonicalJson(second.packs)).toBe(canonicalJson(first.packs))
+  })
+})
+
+// ---- 436 D-12: the limit block is quoted for any reader ----------------------------------
+
+function withLimitStopOnFailingStep(
+  handoff: CompletedRunHandoff,
+  limitStop: LimitStopEvidence,
+): CompletedRunHandoff {
+  return {
+    ...handoff,
+    tests: handoff.tests.map((test) => ({
+      ...test,
+      steps: test.steps.map((step) => (step.verifierVerdict.pass ? step : { ...step, limitStop })),
+    })),
+  }
+}
+
+describe('evidence-diet — the limit stop quote (436 D-12)', () => {
+  const limitStop: LimitStopEvidence = {
+    limit: 'actions',
+    configured: 30,
+    used: 30,
+    reason: formatLimitStopReason('actions', 30, 30),
+    requestedOutcome: 'unverified',
+    lastVerifierRejection: 'the confirmation banner never appeared',
+    lastPlannerReasoning: 'clicking Save again',
+  }
+
+  it('quoteStep carries limitStop with its reason truncated by the existing rule', () => {
+    const handoff = withLimitStopOnFailingStep(
+      buildSyntheticHandoff({ passingStepsBefore: 1 }),
+      limitStop,
+    )
+    const [pack] = buildEvidencePacks(handoff, [0], NO_HISTORY)
+    const failing = pack?.steps.find((quote) => quote.role === 'failing')
+    const neighbor = pack?.steps.find((quote) => quote.role === 'neighbor')
+    expect(failing?.limitStop?.reason).toBe(limitStop.reason)
+    expect(failing?.limitStop).toEqual(limitStop)
+    expect(neighbor !== undefined && 'limitStop' in neighbor).toBe(false)
+
+    const long = 'y'.repeat(QUOTE_FIELD_CAP + 50)
+    const longHandoff = withLimitStopOnFailingStep(buildSyntheticHandoff(), {
+      ...limitStop,
+      reason: long,
+    })
+    const compacted = compactEvidencePacks(
+      buildEvidencePacks(longHandoff, [0], NO_HISTORY),
+      byLength,
+      1,
+    )
+    expect(compacted.rung).toBe(4)
+    const quoted = compacted.packs[0]?.steps.find((quote) => quote.role === 'failing')?.limitStop
+    expect(quoted).toEqual({ ...limitStop, reason: long.slice(0, QUOTE_FIELD_CAP) })
   })
 })

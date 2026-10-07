@@ -20,7 +20,8 @@ import {
 } from '../root-cause.js'
 import { createTimeoutAbortReason } from '../../loop/abort.js'
 import type { StepResult, TestResult } from '../../result.js'
-import type { MemberTestOutcome } from '@vostride/agent-qa-schema'
+import { formatLimitStopReason, VERDICT_CLASSES } from '@vostride/agent-qa-schema'
+import type { LimitStopEvidence, MemberTestOutcome, StepEvidence } from '@vostride/agent-qa-schema'
 
 // ---- Fixtures ------------------------------------------------------------
 
@@ -250,5 +251,84 @@ describe('classifyRootCause — presence rule + unknown (branch 4)', () => {
     }))
     expect(verdict?.evidence.citedSteps).toEqual([1, 2])
     expect(verdict?.perTest).toBe(4)
+  })
+})
+
+// ---- classifyRootCause: a limit stop (436 D-12) ------------------------------
+
+function limitStoppedStep(limit: LimitStopEvidence['limit'], configured: number): StepResult {
+  const reason = formatLimitStopReason(limit, configured, configured)
+  const limitStop: LimitStopEvidence = {
+    limit,
+    configured,
+    used: configured,
+    reason,
+    requestedOutcome: 'unverified',
+  }
+  return step({
+    status: 'failed',
+    error: reason,
+    evidence: { limitStop } as unknown as StepEvidence,
+  })
+}
+
+describe('classifyRootCause — limit stop (436 D-12)', () => {
+  it('a limit-stopped failed member is unknown with the limit reason as rationale', () => {
+    const stopped = limitStoppedStep('actions', 30)
+    const verdict = classifyRootCause(input({
+      result: test({ status: 'failed', steps: [step(), stopped] }),
+      testIndex: 2,
+    }))
+    expect(verdict?.evidence.rationale).toBe('Stopped: action limit reached — 30 of 30 actions used')
+    expect(verdict).toEqual({
+      class: 'unknown',
+      producer: 'deterministic-classifier',
+      confidence: 0,
+      evidence: {
+        citedSteps: [1],
+        citedAnchors: [],
+        citedArtifacts: [],
+        rationale: 'Stopped: action limit reached — 30 of 30 actions used',
+      },
+      memoryMisdirectionRuledOut: true,
+      perTest: 2,
+    })
+    expect(VERDICT_CLASSES).toContain(verdict?.class)
+  })
+
+  it('a planning-turn limit stop cites its own reason', () => {
+    const verdict = classifyRootCause(input({
+      result: test({ status: 'failed', steps: [limitStoppedStep('planning-turns', 12)] }),
+    }))
+    expect(verdict?.class).toBe('unknown')
+    expect(verdict?.evidence.rationale)
+      .toBe('Stopped: planning-turn limit reached — 12 of 12 planner calls used')
+  })
+
+  it('a health-probe failure still wins over a limit stop', () => {
+    const result = test({ status: 'failed', steps: [limitStoppedStep('actions', 30)] })
+    expect(classifyRootCause(input({ result, baselineProbe: { status: 503, elapsedMs: 9 } }))?.class)
+      .toBe('environment')
+    expect(
+      classifyRootCause(input({ result, baselineProbe: { error: 'ECONNREFUSED x', elapsedMs: 1 } }))
+        ?.class,
+    ).toBe('environment')
+  })
+
+  it('a limit stop is never classed environment by error-token scans', () => {
+    for (const token of [...CONNECT_ERROR_TOKENS, ...SESSION_CREATE_ERROR_TOKENS]) {
+      const verdict = classifyRootCause(input({
+        result: test({
+          status: 'failed',
+          steps: [
+            step({ status: 'failed', error: `${token} on the way` }),
+            limitStoppedStep('actions', 5),
+          ],
+          failureSummary: `${token} in the summary`,
+        }),
+      }))
+      expect({ token, cls: verdict?.class }).toEqual({ token, cls: 'unknown' })
+      expect(verdict?.evidence.rationale).toBe(formatLimitStopReason('actions', 5, 5))
+    }
   })
 })
