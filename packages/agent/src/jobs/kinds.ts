@@ -1014,8 +1014,15 @@ function realAnalyzeRunHandler(capabilities: PostRunJobCapabilities): JobHandler
       // returned shape are final from plan 01.
       async (model) => {
         const floor = projectHandoffVerdicts(handoff)
+        // 436 D-12: a limit stop is the run running out of limit, never something a model may
+        // label; its floor verdict passes through byte-identical.
+        const limitStopped = new Set(
+          handoff.tests
+            .filter((test) => test.steps.some((step) => step.limitStop !== undefined))
+            .map((test) => test.testIndex),
+        )
         const unknownTests = floor
-          .filter((verdict) => verdict.class === 'unknown')
+          .filter((verdict) => verdict.class === 'unknown' && !limitStopped.has(verdict.perTest))
           .map((verdict) => verdict.perTest)
 
         let verdicts = floor

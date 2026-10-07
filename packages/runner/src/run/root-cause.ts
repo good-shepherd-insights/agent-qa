@@ -10,6 +10,10 @@
 //   1. timeout      — member outcome 'timeout' (isTestTimeoutMessage-matched step error)
 //   2. environment  — probe connect error → probe status ≥500 → connect/DNS token in a
 //                     failing step error / failureSummary → device-session-create token
+//      limit stop   — between the probe and the token scans (436 D-12): a failing step whose
+//                     evidence carries limitStop is 'unknown', confidence 0, with the limit
+//                     reason as rationale. Never environment, timeout or app_bug, and no class
+//                     is added; analyze-run excludes these members from model authorship.
 //   3. flake        — final status 'passed' with retryCount > 0 (member-runner retry loop)
 //   4. unknown      — any other failure; confidence 0, the safe Noop default M4's
 //                     analyze-run later supersedes via producer keying (D-03)
@@ -121,6 +125,18 @@ function failureErrorTexts(result: TestResult): string[] {
   return texts
 }
 
+/** Failing steps a per-step limit stopped (436 D-12), with their recorded reasons. */
+function limitStoppedSteps(result: TestResult): { index: number; reason: string }[] {
+  const stopped: { index: number; reason: string }[] = []
+  result.steps.forEach((s, i) => {
+    const limitStop = s.evidence?.limitStop
+    if (s.status === 'failed' && limitStop !== undefined) {
+      stopped.push({ index: i, reason: limitStop.reason })
+    }
+  })
+  return stopped
+}
+
 function matchToken(texts: readonly string[], tokens: readonly string[]): { token: string; text: string } | undefined {
   for (const text of texts) {
     for (const token of tokens) {
@@ -180,6 +196,23 @@ export function classifyRootCause(input: RootCauseInput): Verdict | undefined {
         citedSteps,
         testIndex,
       )
+    }
+  }
+
+  const limitStopped = limitStoppedSteps(result)
+  if (limitStopped.length > 0) {
+    return {
+      class: 'unknown',
+      producer: 'deterministic-classifier',
+      confidence: 0,
+      evidence: {
+        citedSteps: limitStopped.map(({ index }) => index),
+        citedAnchors: [],
+        citedArtifacts: [],
+        rationale: limitStopped[0]?.reason ?? UNKNOWN_SIGNAL_RATIONALE,
+      },
+      memoryMisdirectionRuledOut: true,
+      perTest: testIndex,
     }
   }
 

@@ -3,8 +3,8 @@
 // WHAT A PACK IS. One per unknown-verdict failed test: the failing step plus a bounded
 // neighbor window, QUOTING StepEvidence fields verbatim — `stepText`,
 // `verifierVerdict.reasoning`, each sub-action's `plan` and `result.error`, and the
-// reportedValue/aiJudgment/assertOutcome/termination blocks when present — so the authored
-// sentence can cite captured bytes rather than paraphrase them. Assembly (here) is kept
+// reportedValue/aiJudgment/assertOutcome/termination/limitStop blocks when present — so the
+// authored sentence can cite captured bytes rather than paraphrase them. Assembly (here) is kept
 // separate from rendering (plan 04's author feeds packs into the prompt's volatile tier),
 // which is what makes the ladder testable on bytes.
 //
@@ -31,6 +31,7 @@ import type {
   ArtifactRef,
   AssertValueEvidence,
   CompletedRunHandoff,
+  LimitStopEvidence,
   MemberTestOutcome,
   PerTestOutcome,
   ServedBrief,
@@ -124,6 +125,7 @@ export interface EvidenceStepQuote {
   readonly aiJudgment?: AiJudgmentEvidence
   readonly assertOutcome?: AssertValueEvidence
   readonly termination?: TerminationEvidence
+  readonly limitStop?: LimitStopEvidence
 }
 
 export interface EvidencePack {
@@ -168,6 +170,7 @@ function quoteStep(step: StepEvidence, role: 'failing' | 'neighbor'): EvidenceSt
     ...(step.aiJudgment === undefined ? {} : { aiJudgment: step.aiJudgment }),
     ...(step.assertOutcome === undefined ? {} : { assertOutcome: step.assertOutcome }),
     ...(step.termination === undefined ? {} : { termination: step.termination }),
+    ...(step.limitStop === undefined ? {} : { limitStop: step.limitStop }),
   }
 }
 
@@ -330,6 +333,20 @@ function truncateStepQuote(quote: EvidenceStepQuote): EvidenceStepQuote {
           termination: {
             ...quote.termination,
             reason: truncateQuote(quote.termination.reason),
+          },
+        }),
+    ...(quote.limitStop === undefined
+      ? {}
+      : {
+          limitStop: {
+            ...quote.limitStop,
+            reason: truncateQuote(quote.limitStop.reason),
+            ...(quote.limitStop.lastVerifierRejection === undefined
+              ? {}
+              : { lastVerifierRejection: truncateQuote(quote.limitStop.lastVerifierRejection) }),
+            ...(quote.limitStop.lastPlannerReasoning === undefined
+              ? {}
+              : { lastPlannerReasoning: truncateQuote(quote.limitStop.lastPlannerReasoning) }),
           },
         }),
   }
