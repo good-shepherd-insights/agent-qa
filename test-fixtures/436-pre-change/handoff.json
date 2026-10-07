@@ -1,0 +1,2134 @@
+{
+  "schemaVersion": 7,
+  "runId": "run_436_pre_change_fixture",
+  "scope": {
+    "tier": "test",
+    "key": "Pre-change progress evidence"
+  },
+  "buildOrdinal": 436,
+  "executionContext": "local-headless",
+  "aggregateVerdict": "failed",
+  "configDigests": {
+    "suiteConfigDigest": "",
+    "testConfigDigest": ""
+  },
+  "startedAt": 1791331200000,
+  "endedAt": 1791331260000,
+  "tests": [
+    {
+      "testId": "test_436_pre_change_fixture",
+      "testName": "Pre-change progress evidence",
+      "filePath": "tests/pre-change-progress.yaml",
+      "testIndex": 0,
+      "outcome": "failed",
+      "steps": [
+        {
+          "stepIndex": 0,
+          "stepText": "Open settings and save",
+          "cacheStatus": "miss",
+          "servedBrief": {
+            "scope": {
+              "tier": "test",
+              "key": "Pre-change progress evidence"
+            },
+            "asOfBuild": 0,
+            "budget": 0,
+            "truncation": "no brief served (no knowledge reader bound)",
+            "channel1": [],
+            "channel2": [],
+            "channel3": [],
+            "briefDigest": "5558ff4d330651c6e019903f754451f1d15df694c3a68aca201b4c3b5085d5ff",
+            "proof": {
+              "schemaVersion": 1,
+              "completeness": "lossless",
+              "recordCap": 8,
+              "combinedBudget": 576,
+              "admissionEvents": [],
+              "promptTurns": [
+                {
+                  "ordinal": 0,
+                  "turnOrdinal": 0,
+                  "runDate": "2026-10-07",
+                  "policyL0": "",
+                  "learnedL1": "",
+                  "learnedL2": "",
+                  "contextTier": "",
+                  "volatileTier": "Current date: 2026-10-07",
+                  "policyDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "contextTierDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "volatileTierDigest": "b889cad36967f80c70b3a5f867bd4dc58f175f97f413a325845053c84566d1e3"
+                },
+                {
+                  "ordinal": 1,
+                  "turnOrdinal": 1,
+                  "runDate": "2026-10-07",
+                  "policyL0": "",
+                  "learnedL1": "",
+                  "learnedL2": "",
+                  "contextTier": "",
+                  "volatileTier": "Current date: 2026-10-07",
+                  "policyDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "contextTierDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "volatileTierDigest": "b889cad36967f80c70b3a5f867bd4dc58f175f97f413a325845053c84566d1e3"
+                }
+              ]
+            }
+          },
+          "subActions": [
+            {
+              "plan": "Open the Settings link",
+              "plannedAction": {
+                "type": "click",
+                "ref": "e1"
+              },
+              "stateBefore": {
+                "platform": "web",
+                "tree": "[Viewport: 390x844] [2 elements]\n- link \"Settings\" [ref=e1] @(20,120 350x44)\n- button \"Sign out\" [ref=e2] @(20,200 350x44)",
+                "elements": [
+                  {
+                    "ref": "e1",
+                    "role": "link",
+                    "name": "Settings",
+                    "nameNormalized": "settings",
+                    "bounds": {
+                      "x": 20,
+                      "y": 120,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 142
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  },
+                  {
+                    "ref": "e2",
+                    "role": "button",
+                    "name": "Sign out",
+                    "nameNormalized": "sign out",
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  }
+                ],
+                "refMap": {
+                  "e1": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 120,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 142
+                    }
+                  },
+                  "e2": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    }
+                  }
+                },
+                "url": "https://shop.test/",
+                "timestamp": 1700000000000,
+                "metadata": {
+                  "coordSpace": "viewport",
+                  "viewportWidth": 390,
+                  "viewportHeight": 844,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "contentWidth": 390,
+                    "contentHeight": 844
+                  },
+                  "captureMode": "textOnly"
+                }
+              },
+              "result": {
+                "success": true,
+                "annotation": {
+                  "viewport": {
+                    "width": 390,
+                    "height": 844
+                  },
+                  "kind": "point",
+                  "point": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              },
+              "exchanges": [],
+              "grounding": {
+                "descriptor": {
+                  "role": "link",
+                  "name": "settings",
+                  "ordinal": 0
+                },
+                "attempts": [
+                  {
+                    "stage": "ref",
+                    "outcome": "resolved",
+                    "resolvedRef": "e1"
+                  }
+                ]
+              },
+              "localEffect": {
+                "verbClass": "tap",
+                "oracle": "checkable-state",
+                "achieved": true
+              }
+            },
+            {
+              "plan": "Press Save to finish the step",
+              "plannedAction": {
+                "type": "click",
+                "ref": "e2"
+              },
+              "stateBefore": {
+                "platform": "web",
+                "tree": "[Viewport: 390x844] [2 elements]\n- heading \"Settings\" [ref=e1] @(20,80 350x44)\n- button \"Save\" [ref=e2] @(20,200 350x44)",
+                "elements": [
+                  {
+                    "ref": "e1",
+                    "role": "heading",
+                    "name": "Settings",
+                    "nameNormalized": "settings",
+                    "bounds": {
+                      "x": 20,
+                      "y": 80,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 102
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  },
+                  {
+                    "ref": "e2",
+                    "role": "button",
+                    "name": "Save",
+                    "nameNormalized": "save",
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  }
+                ],
+                "refMap": {
+                  "e1": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 80,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 102
+                    }
+                  },
+                  "e2": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    }
+                  }
+                },
+                "url": "https://shop.test/settings",
+                "timestamp": 1700000000000,
+                "metadata": {
+                  "coordSpace": "viewport",
+                  "viewportWidth": 390,
+                  "viewportHeight": 844,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "contentWidth": 390,
+                    "contentHeight": 844
+                  },
+                  "captureMode": "textOnly"
+                }
+              },
+              "result": {
+                "success": true,
+                "annotation": {
+                  "viewport": {
+                    "width": 390,
+                    "height": 844
+                  },
+                  "kind": "point",
+                  "point": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              },
+              "exchanges": [],
+              "grounding": {
+                "descriptor": {
+                  "role": "button",
+                  "name": "save",
+                  "ordinal": 0
+                },
+                "attempts": [
+                  {
+                    "stage": "ref",
+                    "outcome": "resolved",
+                    "resolvedRef": "e2"
+                  }
+                ]
+              },
+              "stateAfter": {
+                "platform": "web",
+                "tree": "[Viewport: 390x844] [2 elements]\n- heading \"Settings\" [ref=e1] @(20,80 350x44)\n- button \"Save\" [ref=e2] @(20,200 350x44)",
+                "elements": [
+                  {
+                    "ref": "e1",
+                    "role": "heading",
+                    "name": "Settings",
+                    "nameNormalized": "settings",
+                    "bounds": {
+                      "x": 20,
+                      "y": 80,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 102
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  },
+                  {
+                    "ref": "e2",
+                    "role": "button",
+                    "name": "Save",
+                    "nameNormalized": "save",
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  }
+                ],
+                "refMap": {
+                  "e1": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 80,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 102
+                    }
+                  },
+                  "e2": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    }
+                  }
+                },
+                "url": "https://shop.test/settings",
+                "timestamp": 1700000000000,
+                "metadata": {
+                  "captureMode": "textOnly",
+                  "coordSpace": "viewport",
+                  "viewportWidth": 390,
+                  "viewportHeight": 844,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "contentWidth": 390,
+                    "contentHeight": 844
+                  }
+                }
+              }
+            }
+          ],
+          "verifierVerdict": {
+            "pass": true,
+            "reasoning": "The settings page shows the saved notice."
+          },
+          "verdictSource": "verifier-model"
+        },
+        {
+          "stepIndex": 1,
+          "stepText": "Accept the terms",
+          "cacheStatus": "miss",
+          "servedBrief": {
+            "scope": {
+              "tier": "test",
+              "key": "Pre-change progress evidence"
+            },
+            "asOfBuild": 0,
+            "budget": 0,
+            "truncation": "no brief served (no knowledge reader bound)",
+            "channel1": [],
+            "channel2": [],
+            "channel3": [],
+            "briefDigest": "895b1e524d20aeb5720c6843f148242eb44b04fe875783278ee9b32f332bddd7",
+            "proof": {
+              "schemaVersion": 1,
+              "completeness": "lossless",
+              "recordCap": 8,
+              "combinedBudget": 576,
+              "admissionEvents": [],
+              "promptTurns": [
+                {
+                  "ordinal": 0,
+                  "turnOrdinal": 0,
+                  "runDate": "2026-10-07",
+                  "policyL0": "",
+                  "learnedL1": "",
+                  "learnedL2": "",
+                  "contextTier": "",
+                  "volatileTier": "Current date: 2026-10-07",
+                  "policyDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "contextTierDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "volatileTierDigest": "b889cad36967f80c70b3a5f867bd4dc58f175f97f413a325845053c84566d1e3"
+                },
+                {
+                  "ordinal": 1,
+                  "turnOrdinal": 1,
+                  "runDate": "2026-10-07",
+                  "policyL0": "",
+                  "learnedL1": "",
+                  "learnedL2": "",
+                  "contextTier": "",
+                  "volatileTier": "Current date: 2026-10-07",
+                  "policyDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "contextTierDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "volatileTierDigest": "b889cad36967f80c70b3a5f867bd4dc58f175f97f413a325845053c84566d1e3"
+                },
+                {
+                  "ordinal": 2,
+                  "turnOrdinal": 2,
+                  "runDate": "2026-10-07",
+                  "policyL0": "",
+                  "learnedL1": "",
+                  "learnedL2": "",
+                  "contextTier": "",
+                  "volatileTier": "Current date: 2026-10-07",
+                  "policyDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "contextTierDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "volatileTierDigest": "b889cad36967f80c70b3a5f867bd4dc58f175f97f413a325845053c84566d1e3"
+                },
+                {
+                  "ordinal": 3,
+                  "turnOrdinal": 3,
+                  "runDate": "2026-10-07",
+                  "policyL0": "",
+                  "learnedL1": "",
+                  "learnedL2": "",
+                  "contextTier": "",
+                  "volatileTier": "Current date: 2026-10-07",
+                  "policyDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "contextTierDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "volatileTierDigest": "b889cad36967f80c70b3a5f867bd4dc58f175f97f413a325845053c84566d1e3"
+                }
+              ]
+            }
+          },
+          "subActions": [
+            {
+              "plan": "Tick the Accept terms checkbox",
+              "plannedAction": {
+                "type": "click",
+                "ref": "e1"
+              },
+              "stateBefore": {
+                "platform": "web",
+                "tree": "[Viewport: 390x844] [2 elements]\n- checkbox \"Accept terms\" [ref=e1] @(20,120 350x44)\n- button \"Continue\" [ref=e2] @(20,200 350x44)",
+                "elements": [
+                  {
+                    "ref": "e1",
+                    "role": "checkbox",
+                    "name": "Accept terms",
+                    "nameNormalized": "accept terms",
+                    "bounds": {
+                      "x": 20,
+                      "y": 120,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 142
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true,
+                      "checked": false
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  },
+                  {
+                    "ref": "e2",
+                    "role": "button",
+                    "name": "Continue",
+                    "nameNormalized": "continue",
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  }
+                ],
+                "refMap": {
+                  "e1": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 120,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 142
+                    }
+                  },
+                  "e2": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    }
+                  }
+                },
+                "url": "https://shop.test/settings/terms?attempt=0",
+                "timestamp": 1700000000000,
+                "metadata": {
+                  "coordSpace": "viewport",
+                  "viewportWidth": 390,
+                  "viewportHeight": 844,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "contentWidth": 390,
+                    "contentHeight": 844
+                  },
+                  "captureMode": "textOnly"
+                }
+              },
+              "result": {
+                "success": true,
+                "annotation": {
+                  "viewport": {
+                    "width": 390,
+                    "height": 844
+                  },
+                  "kind": "point",
+                  "point": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              },
+              "exchanges": [],
+              "grounding": {
+                "descriptor": {
+                  "role": "checkbox",
+                  "name": "accept terms",
+                  "ordinal": 0
+                },
+                "attempts": [
+                  {
+                    "stage": "ref",
+                    "outcome": "resolved",
+                    "resolvedRef": "e1"
+                  }
+                ]
+              },
+              "localEffect": {
+                "verbClass": "tap",
+                "oracle": "checkable-state",
+                "achieved": false
+              }
+            },
+            {
+              "plan": "Tick the Accept terms checkbox",
+              "plannedAction": {
+                "type": "click",
+                "ref": "e1"
+              },
+              "stateBefore": {
+                "platform": "web",
+                "tree": "[Viewport: 390x844] [2 elements]\n- checkbox \"Accept terms\" [ref=e1] @(20,120 350x44)\n- button \"Continue\" [ref=e2] @(20,200 350x44)",
+                "elements": [
+                  {
+                    "ref": "e1",
+                    "role": "checkbox",
+                    "name": "Accept terms",
+                    "nameNormalized": "accept terms",
+                    "bounds": {
+                      "x": 20,
+                      "y": 120,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 142
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true,
+                      "checked": false
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  },
+                  {
+                    "ref": "e2",
+                    "role": "button",
+                    "name": "Continue",
+                    "nameNormalized": "continue",
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  }
+                ],
+                "refMap": {
+                  "e1": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 120,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 142
+                    }
+                  },
+                  "e2": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    }
+                  }
+                },
+                "url": "https://shop.test/settings/terms?attempt=1",
+                "timestamp": 1700000000000,
+                "metadata": {
+                  "coordSpace": "viewport",
+                  "viewportWidth": 390,
+                  "viewportHeight": 844,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "contentWidth": 390,
+                    "contentHeight": 844
+                  },
+                  "captureMode": "textOnly"
+                }
+              },
+              "result": {
+                "success": true,
+                "annotation": {
+                  "viewport": {
+                    "width": 390,
+                    "height": 844
+                  },
+                  "kind": "point",
+                  "point": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              },
+              "exchanges": [],
+              "grounding": {
+                "descriptor": {
+                  "role": "checkbox",
+                  "name": "accept terms",
+                  "ordinal": 0
+                },
+                "attempts": [
+                  {
+                    "stage": "ref",
+                    "outcome": "resolved",
+                    "resolvedRef": "e1"
+                  }
+                ]
+              },
+              "localEffect": {
+                "verbClass": "tap",
+                "oracle": "checkable-state",
+                "achieved": false
+              }
+            },
+            {
+              "plan": "Tick the Accept terms checkbox",
+              "plannedAction": {
+                "type": "click",
+                "ref": "e1"
+              },
+              "stateBefore": {
+                "platform": "web",
+                "tree": "[Viewport: 390x844] [2 elements]\n- checkbox \"Accept terms\" [ref=e1] @(20,120 350x44)\n- button \"Continue\" [ref=e2] @(20,200 350x44)",
+                "elements": [
+                  {
+                    "ref": "e1",
+                    "role": "checkbox",
+                    "name": "Accept terms",
+                    "nameNormalized": "accept terms",
+                    "bounds": {
+                      "x": 20,
+                      "y": 120,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 142
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true,
+                      "checked": false
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  },
+                  {
+                    "ref": "e2",
+                    "role": "button",
+                    "name": "Continue",
+                    "nameNormalized": "continue",
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  }
+                ],
+                "refMap": {
+                  "e1": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 120,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 142
+                    }
+                  },
+                  "e2": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    }
+                  }
+                },
+                "url": "https://shop.test/settings/terms?attempt=2",
+                "timestamp": 1700000000000,
+                "metadata": {
+                  "coordSpace": "viewport",
+                  "viewportWidth": 390,
+                  "viewportHeight": 844,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "contentWidth": 390,
+                    "contentHeight": 844
+                  },
+                  "captureMode": "textOnly"
+                }
+              },
+              "result": {
+                "success": true,
+                "annotation": {
+                  "viewport": {
+                    "width": 390,
+                    "height": 844
+                  },
+                  "kind": "point",
+                  "point": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              },
+              "exchanges": [],
+              "grounding": {
+                "descriptor": {
+                  "role": "checkbox",
+                  "name": "accept terms",
+                  "ordinal": 0
+                },
+                "attempts": [
+                  {
+                    "stage": "ref",
+                    "outcome": "resolved",
+                    "resolvedRef": "e1"
+                  }
+                ]
+              },
+              "localEffect": {
+                "verbClass": "tap",
+                "oracle": "checkable-state",
+                "achieved": false
+              }
+            },
+            {
+              "plan": "Tick the Accept terms checkbox",
+              "plannedAction": {
+                "type": "click",
+                "ref": "e1"
+              },
+              "stateBefore": {
+                "platform": "web",
+                "tree": "[Viewport: 390x844] [2 elements]\n- checkbox \"Accept terms\" [ref=e1] @(20,120 350x44)\n- button \"Continue\" [ref=e2] @(20,200 350x44)",
+                "elements": [
+                  {
+                    "ref": "e1",
+                    "role": "checkbox",
+                    "name": "Accept terms",
+                    "nameNormalized": "accept terms",
+                    "bounds": {
+                      "x": 20,
+                      "y": 120,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 142
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true,
+                      "checked": false
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  },
+                  {
+                    "ref": "e2",
+                    "role": "button",
+                    "name": "Continue",
+                    "nameNormalized": "continue",
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  }
+                ],
+                "refMap": {
+                  "e1": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 120,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 142
+                    }
+                  },
+                  "e2": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    }
+                  }
+                },
+                "url": "https://shop.test/settings/terms?attempt=3",
+                "timestamp": 1700000000000,
+                "metadata": {
+                  "coordSpace": "viewport",
+                  "viewportWidth": 390,
+                  "viewportHeight": 844,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "contentWidth": 390,
+                    "contentHeight": 844
+                  },
+                  "captureMode": "textOnly"
+                }
+              },
+              "result": {
+                "success": true,
+                "annotation": {
+                  "viewport": {
+                    "width": 390,
+                    "height": 844
+                  },
+                  "kind": "point",
+                  "point": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              },
+              "exchanges": [],
+              "grounding": {
+                "descriptor": {
+                  "role": "checkbox",
+                  "name": "accept terms",
+                  "ordinal": 0
+                },
+                "attempts": [
+                  {
+                    "stage": "ref",
+                    "outcome": "resolved",
+                    "resolvedRef": "e1"
+                  }
+                ]
+              },
+              "localEffect": {
+                "verbClass": "tap",
+                "oracle": "checkable-state",
+                "achieved": false
+              }
+            }
+          ],
+          "verifierVerdict": {
+            "pass": false,
+            "reasoning": "Stagnation: no local effect on checkbox|accept terms|0 after the bounded remediation ladder (4 attempts)."
+          },
+          "stagnation": {
+            "anchorKey": "checkbox|accept terms|0",
+            "counts": [
+              {
+                "class": "unresponsive",
+                "count": 4
+              }
+            ],
+            "total": 4
+          }
+        },
+        {
+          "stepIndex": 2,
+          "stepText": "Open then close the menu",
+          "cacheStatus": "miss",
+          "servedBrief": {
+            "scope": {
+              "tier": "test",
+              "key": "Pre-change progress evidence"
+            },
+            "asOfBuild": 0,
+            "budget": 0,
+            "truncation": "no brief served (no knowledge reader bound)",
+            "channel1": [],
+            "channel2": [],
+            "channel3": [],
+            "briefDigest": "9e60728e71241f5efa270b9416f72ddd04212f490f3bec260cdc7840e81f227f",
+            "proof": {
+              "schemaVersion": 1,
+              "completeness": "lossless",
+              "recordCap": 8,
+              "combinedBudget": 576,
+              "admissionEvents": [],
+              "promptTurns": [
+                {
+                  "ordinal": 0,
+                  "turnOrdinal": 0,
+                  "runDate": "2026-10-07",
+                  "policyL0": "",
+                  "learnedL1": "",
+                  "learnedL2": "",
+                  "contextTier": "",
+                  "volatileTier": "Current date: 2026-10-07",
+                  "policyDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "contextTierDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "volatileTierDigest": "b889cad36967f80c70b3a5f867bd4dc58f175f97f413a325845053c84566d1e3"
+                },
+                {
+                  "ordinal": 1,
+                  "turnOrdinal": 1,
+                  "runDate": "2026-10-07",
+                  "policyL0": "",
+                  "learnedL1": "",
+                  "learnedL2": "",
+                  "contextTier": "",
+                  "volatileTier": "Current date: 2026-10-07",
+                  "policyDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "contextTierDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "volatileTierDigest": "b889cad36967f80c70b3a5f867bd4dc58f175f97f413a325845053c84566d1e3"
+                },
+                {
+                  "ordinal": 2,
+                  "turnOrdinal": 2,
+                  "runDate": "2026-10-07",
+                  "policyL0": "",
+                  "learnedL1": "",
+                  "learnedL2": "",
+                  "contextTier": "",
+                  "volatileTier": "Current date: 2026-10-07",
+                  "policyDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "contextTierDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "volatileTierDigest": "b889cad36967f80c70b3a5f867bd4dc58f175f97f413a325845053c84566d1e3"
+                },
+                {
+                  "ordinal": 3,
+                  "turnOrdinal": 3,
+                  "runDate": "2026-10-07",
+                  "policyL0": "",
+                  "learnedL1": "",
+                  "learnedL2": "",
+                  "contextTier": "",
+                  "volatileTier": "Current date: 2026-10-07",
+                  "policyDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "contextTierDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "volatileTierDigest": "b889cad36967f80c70b3a5f867bd4dc58f175f97f413a325845053c84566d1e3"
+                },
+                {
+                  "ordinal": 4,
+                  "turnOrdinal": 4,
+                  "runDate": "2026-10-07",
+                  "policyL0": "",
+                  "learnedL1": "",
+                  "learnedL2": "",
+                  "contextTier": "",
+                  "volatileTier": "Current date: 2026-10-07",
+                  "policyDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "contextTierDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "volatileTierDigest": "b889cad36967f80c70b3a5f867bd4dc58f175f97f413a325845053c84566d1e3"
+                },
+                {
+                  "ordinal": 5,
+                  "turnOrdinal": 5,
+                  "runDate": "2026-10-07",
+                  "policyL0": "",
+                  "learnedL1": "",
+                  "learnedL2": "",
+                  "contextTier": "",
+                  "volatileTier": "Current date: 2026-10-07",
+                  "policyDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "contextTierDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "volatileTierDigest": "b889cad36967f80c70b3a5f867bd4dc58f175f97f413a325845053c84566d1e3"
+                },
+                {
+                  "ordinal": 6,
+                  "turnOrdinal": 6,
+                  "runDate": "2026-10-07",
+                  "policyL0": "",
+                  "learnedL1": "",
+                  "learnedL2": "",
+                  "contextTier": "",
+                  "volatileTier": "Current date: 2026-10-07",
+                  "policyDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "contextTierDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "volatileTierDigest": "b889cad36967f80c70b3a5f867bd4dc58f175f97f413a325845053c84566d1e3"
+                }
+              ]
+            }
+          },
+          "subActions": [
+            {
+              "plan": "Open the menu",
+              "plannedAction": {
+                "type": "click",
+                "ref": "e1"
+              },
+              "stateBefore": {
+                "platform": "web",
+                "tree": "[Viewport: 390x844] [2 elements]\n- button \"Open menu\" [ref=e1] @(20,120 350x44)\n- button \"Close menu\" [ref=e2] @(20,200 350x44)",
+                "elements": [
+                  {
+                    "ref": "e1",
+                    "role": "button",
+                    "name": "Open menu",
+                    "nameNormalized": "open menu",
+                    "bounds": {
+                      "x": 20,
+                      "y": 120,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 142
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  },
+                  {
+                    "ref": "e2",
+                    "role": "button",
+                    "name": "Close menu",
+                    "nameNormalized": "close menu",
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  }
+                ],
+                "refMap": {
+                  "e1": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 120,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 142
+                    }
+                  },
+                  "e2": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    }
+                  }
+                },
+                "url": "https://shop.test/menu",
+                "timestamp": 1700000000000,
+                "metadata": {
+                  "coordSpace": "viewport",
+                  "viewportWidth": 390,
+                  "viewportHeight": 844,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "contentWidth": 390,
+                    "contentHeight": 844
+                  },
+                  "captureMode": "textOnly"
+                }
+              },
+              "result": {
+                "success": true,
+                "annotation": {
+                  "viewport": {
+                    "width": 390,
+                    "height": 844
+                  },
+                  "kind": "point",
+                  "point": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              },
+              "exchanges": [],
+              "grounding": {
+                "descriptor": {
+                  "role": "button",
+                  "name": "open menu",
+                  "ordinal": 0
+                },
+                "attempts": [
+                  {
+                    "stage": "ref",
+                    "outcome": "resolved",
+                    "resolvedRef": "e1"
+                  }
+                ]
+              },
+              "localEffect": {
+                "verbClass": "tap",
+                "oracle": "hash-fallback",
+                "achieved": false
+              }
+            },
+            {
+              "plan": "Close the menu",
+              "plannedAction": {
+                "type": "click",
+                "ref": "e2"
+              },
+              "stateBefore": {
+                "platform": "web",
+                "tree": "[Viewport: 390x844] [2 elements]\n- button \"Open menu\" [ref=e1] @(20,120 350x44)\n- button \"Close menu\" [ref=e2] @(20,200 350x44)",
+                "elements": [
+                  {
+                    "ref": "e1",
+                    "role": "button",
+                    "name": "Open menu",
+                    "nameNormalized": "open menu",
+                    "bounds": {
+                      "x": 20,
+                      "y": 120,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 142
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  },
+                  {
+                    "ref": "e2",
+                    "role": "button",
+                    "name": "Close menu",
+                    "nameNormalized": "close menu",
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  }
+                ],
+                "refMap": {
+                  "e1": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 120,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 142
+                    }
+                  },
+                  "e2": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    }
+                  }
+                },
+                "url": "https://shop.test/menu",
+                "timestamp": 1700000000000,
+                "metadata": {
+                  "coordSpace": "viewport",
+                  "viewportWidth": 390,
+                  "viewportHeight": 844,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "contentWidth": 390,
+                    "contentHeight": 844
+                  },
+                  "captureMode": "textOnly"
+                }
+              },
+              "result": {
+                "success": true,
+                "annotation": {
+                  "viewport": {
+                    "width": 390,
+                    "height": 844
+                  },
+                  "kind": "point",
+                  "point": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              },
+              "exchanges": [],
+              "grounding": {
+                "descriptor": {
+                  "role": "button",
+                  "name": "close menu",
+                  "ordinal": 0
+                },
+                "attempts": [
+                  {
+                    "stage": "ref",
+                    "outcome": "resolved",
+                    "resolvedRef": "e2"
+                  }
+                ]
+              },
+              "localEffect": {
+                "verbClass": "tap",
+                "oracle": "hash-fallback",
+                "achieved": false
+              }
+            },
+            {
+              "plan": "Open the menu",
+              "plannedAction": {
+                "type": "click",
+                "ref": "e1"
+              },
+              "stateBefore": {
+                "platform": "web",
+                "tree": "[Viewport: 390x844] [2 elements]\n- button \"Open menu\" [ref=e1] @(20,120 350x44)\n- button \"Close menu\" [ref=e2] @(20,200 350x44)",
+                "elements": [
+                  {
+                    "ref": "e1",
+                    "role": "button",
+                    "name": "Open menu",
+                    "nameNormalized": "open menu",
+                    "bounds": {
+                      "x": 20,
+                      "y": 120,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 142
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  },
+                  {
+                    "ref": "e2",
+                    "role": "button",
+                    "name": "Close menu",
+                    "nameNormalized": "close menu",
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  }
+                ],
+                "refMap": {
+                  "e1": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 120,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 142
+                    }
+                  },
+                  "e2": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    }
+                  }
+                },
+                "url": "https://shop.test/menu",
+                "timestamp": 1700000000000,
+                "metadata": {
+                  "coordSpace": "viewport",
+                  "viewportWidth": 390,
+                  "viewportHeight": 844,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "contentWidth": 390,
+                    "contentHeight": 844
+                  },
+                  "captureMode": "textOnly"
+                }
+              },
+              "result": {
+                "success": true,
+                "annotation": {
+                  "viewport": {
+                    "width": 390,
+                    "height": 844
+                  },
+                  "kind": "point",
+                  "point": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              },
+              "exchanges": [],
+              "grounding": {
+                "descriptor": {
+                  "role": "button",
+                  "name": "open menu",
+                  "ordinal": 0
+                },
+                "attempts": [
+                  {
+                    "stage": "ref",
+                    "outcome": "resolved",
+                    "resolvedRef": "e1"
+                  }
+                ]
+              },
+              "localEffect": {
+                "verbClass": "tap",
+                "oracle": "hash-fallback",
+                "achieved": false
+              }
+            },
+            {
+              "plan": "Close the menu",
+              "plannedAction": {
+                "type": "click",
+                "ref": "e2"
+              },
+              "stateBefore": {
+                "platform": "web",
+                "tree": "[Viewport: 390x844] [2 elements]\n- button \"Open menu\" [ref=e1] @(20,120 350x44)\n- button \"Close menu\" [ref=e2] @(20,200 350x44)",
+                "elements": [
+                  {
+                    "ref": "e1",
+                    "role": "button",
+                    "name": "Open menu",
+                    "nameNormalized": "open menu",
+                    "bounds": {
+                      "x": 20,
+                      "y": 120,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 142
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  },
+                  {
+                    "ref": "e2",
+                    "role": "button",
+                    "name": "Close menu",
+                    "nameNormalized": "close menu",
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  }
+                ],
+                "refMap": {
+                  "e1": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 120,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 142
+                    }
+                  },
+                  "e2": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    }
+                  }
+                },
+                "url": "https://shop.test/menu",
+                "timestamp": 1700000000000,
+                "metadata": {
+                  "coordSpace": "viewport",
+                  "viewportWidth": 390,
+                  "viewportHeight": 844,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "contentWidth": 390,
+                    "contentHeight": 844
+                  },
+                  "captureMode": "textOnly"
+                }
+              },
+              "result": {
+                "success": true,
+                "annotation": {
+                  "viewport": {
+                    "width": 390,
+                    "height": 844
+                  },
+                  "kind": "point",
+                  "point": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              },
+              "exchanges": [],
+              "grounding": {
+                "descriptor": {
+                  "role": "button",
+                  "name": "close menu",
+                  "ordinal": 0
+                },
+                "attempts": [
+                  {
+                    "stage": "ref",
+                    "outcome": "resolved",
+                    "resolvedRef": "e2"
+                  }
+                ]
+              },
+              "localEffect": {
+                "verbClass": "tap",
+                "oracle": "hash-fallback",
+                "achieved": false
+              }
+            },
+            {
+              "plan": "Open the menu",
+              "plannedAction": {
+                "type": "click",
+                "ref": "e1"
+              },
+              "stateBefore": {
+                "platform": "web",
+                "tree": "[Viewport: 390x844] [2 elements]\n- button \"Open menu\" [ref=e1] @(20,120 350x44)\n- button \"Close menu\" [ref=e2] @(20,200 350x44)",
+                "elements": [
+                  {
+                    "ref": "e1",
+                    "role": "button",
+                    "name": "Open menu",
+                    "nameNormalized": "open menu",
+                    "bounds": {
+                      "x": 20,
+                      "y": 120,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 142
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  },
+                  {
+                    "ref": "e2",
+                    "role": "button",
+                    "name": "Close menu",
+                    "nameNormalized": "close menu",
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  }
+                ],
+                "refMap": {
+                  "e1": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 120,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 142
+                    }
+                  },
+                  "e2": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    }
+                  }
+                },
+                "url": "https://shop.test/menu",
+                "timestamp": 1700000000000,
+                "metadata": {
+                  "coordSpace": "viewport",
+                  "viewportWidth": 390,
+                  "viewportHeight": 844,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "contentWidth": 390,
+                    "contentHeight": 844
+                  },
+                  "captureMode": "textOnly"
+                }
+              },
+              "result": {
+                "success": true,
+                "annotation": {
+                  "viewport": {
+                    "width": 390,
+                    "height": 844
+                  },
+                  "kind": "point",
+                  "point": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              },
+              "exchanges": [],
+              "grounding": {
+                "descriptor": {
+                  "role": "button",
+                  "name": "open menu",
+                  "ordinal": 0
+                },
+                "attempts": [
+                  {
+                    "stage": "ref",
+                    "outcome": "resolved",
+                    "resolvedRef": "e1"
+                  }
+                ]
+              },
+              "localEffect": {
+                "verbClass": "tap",
+                "oracle": "hash-fallback",
+                "achieved": false
+              }
+            },
+            {
+              "plan": "Close the menu",
+              "plannedAction": {
+                "type": "click",
+                "ref": "e2"
+              },
+              "stateBefore": {
+                "platform": "web",
+                "tree": "[Viewport: 390x844] [2 elements]\n- button \"Open menu\" [ref=e1] @(20,120 350x44)\n- button \"Close menu\" [ref=e2] @(20,200 350x44)",
+                "elements": [
+                  {
+                    "ref": "e1",
+                    "role": "button",
+                    "name": "Open menu",
+                    "nameNormalized": "open menu",
+                    "bounds": {
+                      "x": 20,
+                      "y": 120,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 142
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  },
+                  {
+                    "ref": "e2",
+                    "role": "button",
+                    "name": "Close menu",
+                    "nameNormalized": "close menu",
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  }
+                ],
+                "refMap": {
+                  "e1": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 120,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 142
+                    }
+                  },
+                  "e2": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    }
+                  }
+                },
+                "url": "https://shop.test/menu",
+                "timestamp": 1700000000000,
+                "metadata": {
+                  "coordSpace": "viewport",
+                  "viewportWidth": 390,
+                  "viewportHeight": 844,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "contentWidth": 390,
+                    "contentHeight": 844
+                  },
+                  "captureMode": "textOnly"
+                }
+              },
+              "result": {
+                "success": true,
+                "annotation": {
+                  "viewport": {
+                    "width": 390,
+                    "height": 844
+                  },
+                  "kind": "point",
+                  "point": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              },
+              "exchanges": [],
+              "grounding": {
+                "descriptor": {
+                  "role": "button",
+                  "name": "close menu",
+                  "ordinal": 0
+                },
+                "attempts": [
+                  {
+                    "stage": "ref",
+                    "outcome": "resolved",
+                    "resolvedRef": "e2"
+                  }
+                ]
+              },
+              "localEffect": {
+                "verbClass": "tap",
+                "oracle": "hash-fallback",
+                "achieved": false
+              }
+            },
+            {
+              "plan": "Open the menu",
+              "plannedAction": {
+                "type": "click",
+                "ref": "e1"
+              },
+              "stateBefore": {
+                "platform": "web",
+                "tree": "[Viewport: 390x844] [2 elements]\n- button \"Open menu\" [ref=e1] @(20,120 350x44)\n- button \"Close menu\" [ref=e2] @(20,200 350x44)",
+                "elements": [
+                  {
+                    "ref": "e1",
+                    "role": "button",
+                    "name": "Open menu",
+                    "nameNormalized": "open menu",
+                    "bounds": {
+                      "x": 20,
+                      "y": 120,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 142
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  },
+                  {
+                    "ref": "e2",
+                    "role": "button",
+                    "name": "Close menu",
+                    "nameNormalized": "close menu",
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    },
+                    "state": {
+                      "enabled": true,
+                      "focused": false,
+                      "visible": true
+                    },
+                    "labels": {},
+                    "attributes": {}
+                  }
+                ],
+                "refMap": {
+                  "e1": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 120,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 142
+                    }
+                  },
+                  "e2": {
+                    "bounds": {
+                      "x": 20,
+                      "y": 200,
+                      "width": 350,
+                      "height": 44
+                    },
+                    "center": {
+                      "x": 195,
+                      "y": 222
+                    }
+                  }
+                },
+                "url": "https://shop.test/menu",
+                "timestamp": 1700000000000,
+                "metadata": {
+                  "coordSpace": "viewport",
+                  "viewportWidth": 390,
+                  "viewportHeight": 844,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "contentWidth": 390,
+                    "contentHeight": 844
+                  },
+                  "captureMode": "textOnly"
+                }
+              },
+              "result": {
+                "success": true,
+                "annotation": {
+                  "viewport": {
+                    "width": 390,
+                    "height": 844
+                  },
+                  "kind": "point",
+                  "point": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              },
+              "exchanges": [],
+              "grounding": {
+                "descriptor": {
+                  "role": "button",
+                  "name": "open menu",
+                  "ordinal": 0
+                },
+                "attempts": [
+                  {
+                    "stage": "ref",
+                    "outcome": "resolved",
+                    "resolvedRef": "e1"
+                  }
+                ]
+              },
+              "localEffect": {
+                "verbClass": "tap",
+                "oracle": "hash-fallback",
+                "achieved": false
+              }
+            }
+          ],
+          "verifierVerdict": {
+            "pass": false,
+            "reasoning": "Cycle detected: c3a41e4e84e02e793d6cf00e537cbdc08990921507abee2908ee85080fd73212::https://shop.test/menu revisited with no task progress after a cycle-break turn."
+          },
+          "cycle": {
+            "revisitedKey": "c3a41e4e84e02e793d6cf00e537cbdc08990921507abee2908ee85080fd73212::https://shop.test/menu",
+            "windowSummary": [
+              "c3a41e4e84e02e793d6cf00e537cbdc08990921507abee2908ee85080fd73212::https://shop.test/menu"
+            ],
+            "reason": "State revisited with no confirmed task progress across the 5-step window after a cycle-break turn."
+          }
+        }
+      ]
+    }
+  ]
+}

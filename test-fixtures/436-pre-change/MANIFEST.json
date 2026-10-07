@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "frozen": true,
+  "source": {
+    "agentQaSha": "5e3e932a2d586f89c805a385483da1800b941fff",
+    "generator": ".planning/phases/436-harness-action-outcomes/capture/capture-pre-change-handoff.mjs",
+    "capturedOn": "2026-10-07"
+  },
+  "files": [
+    {
+      "path": "handoff.json",
+      "sha256": "9f027d40ba4f3815754aab7dbd5811217d8535d7e24fdf5ef087d4ca98461e85",
+      "bytes": 71522
+    }
+  ],
+  "pins": {
+    "decisions": [
+      {
+        "testIndex": 0,
+        "stepIndex": 0,
+        "decisionOrdinal": 0,
+        "screenStateHash": "0a34802d0bae804af2d08f5f5fcdf4057971317927639b960c5990aaac7c9c6d",
+        "evidenceDigest": "2e23edb120074b218c2fa268fe89c72c4abb7ef5e36d7c966c81a5f7b17c3e53"
+      },
+      {
+        "testIndex": 0,
+        "stepIndex": 0,
+        "decisionOrdinal": 1,
+        "screenStateHash": "59d9b25215937b059b91be47a2b14085a8ad91a55da85799fbb95a70ebb25028",
+        "evidenceDigest": "cc64dd37e9ffa38c38339456621856a08f8ee5d33d7fa1bd9de958a4e13f362b"
+      },
+      {
+        "testIndex": 0,
+        "stepIndex": 1,
+        "decisionOrdinal": 0,
+        "screenStateHash": "3be4fd45440e19afb4f68383b4c0cd062bbc630706bb3083c61b65689b2f0322",
+        "evidenceDigest": "31521e86164d059218cc92dfcc3c64a7e5bb01d86fb028bb932f671962e900c3"
+      },
+      {
+        "testIndex": 0,
+        "stepIndex": 1,
+        "decisionOrdinal": 1,
+        "screenStateHash": "b19dbe3bd980a4e7a5849706514e61a224dac15e95bf9f829b3330c6a8c1f6d2",
+        "evidenceDigest": "af5cd1721901a33420199b153b33318ee777110432dab57e4f4cf53fac1479ee"
+      },
+      {
+        "testIndex": 0,
+        "stepIndex": 1,
+        "decisionOrdinal": 2,
+        "screenStateHash": "17a640de2e5c0a460cd035ac66f10f4750469699076bb9981fea22d14ee7cdba",
+        "evidenceDigest": "982f72c8b2e38173492d15af91b2ed05e233e015af07f0a08afb991f28859a39"
+      },
+      {
+        "testIndex": 0,
+        "stepIndex": 1,
+        "decisionOrdinal": 3,
+        "screenStateHash": "7a396c4cd5d7bddcd890b5b3823bc1476b0538dfcc5f691bb7b9d03e7bbbf2a4",
+        "evidenceDigest": "936f150c91cc8449270e3a551db3e4bb10caa0c196e4bb7a4255ec1a4335a876"
+      },
+      {
+        "testIndex": 0,
+        "stepIndex": 2,
+        "decisionOrdinal": 0,
+        "screenStateHash": "211302947bc3fb0addc3b2560042683861c7d1599d7f0dbf5abeed8f7d747846",
+        "evidenceDigest": "fc8f1b3a8cd5360cbdf3c93c759d7296c35ac2b3b8429671b21fec1108d38dd9"
+      },
+      {
+        "testIndex": 0,
+        "stepIndex": 2,
+        "decisionOrdinal": 1,
+        "screenStateHash": "211302947bc3fb0addc3b2560042683861c7d1599d7f0dbf5abeed8f7d747846",
+        "evidenceDigest": "02cfc762b35087c473ec153bab4ec40b9d76f4919b14b7a56e11ce9c59184d7f"
+      },
+      {
+        "testIndex": 0,
+        "stepIndex": 2,
+        "decisionOrdinal": 2,
+        "screenStateHash": "211302947bc3fb0addc3b2560042683861c7d1599d7f0dbf5abeed8f7d747846",
+        "evidenceDigest": "48b04aef443acce18d2cecd6473369dbe9c670d2f22671f1596e018bb28f15fe"
+      },
+      {
+        "testIndex": 0,
+        "stepIndex": 2,
+        "decisionOrdinal": 3,
+        "screenStateHash": "211302947bc3fb0addc3b2560042683861c7d1599d7f0dbf5abeed8f7d747846",
+        "evidenceDigest": "7604f197a3d59873403172839840ef3bf1ed78fe5a9a3ba28cedaa6c7dc1140d"
+      },
+      {
+        "testIndex": 0,
+        "stepIndex": 2,
+        "decisionOrdinal": 4,
+        "screenStateHash": "211302947bc3fb0addc3b2560042683861c7d1599d7f0dbf5abeed8f7d747846",
+        "evidenceDigest": "ebd14031c79126d87268a22bf7cd1ea23be25dc08e02bff7d964714a4b3f483b"
+      },
+      {
+        "testIndex": 0,
+        "stepIndex": 2,
+        "decisionOrdinal": 5,
+        "screenStateHash": "211302947bc3fb0addc3b2560042683861c7d1599d7f0dbf5abeed8f7d747846",
+        "evidenceDigest": "318568fd68ba7d6963ca384a71171540ce09d8c5d28191ab9c5b97f631e8ea91"
+      },
+      {
+        "testIndex": 0,
+        "stepIndex": 2,
+        "decisionOrdinal": 6,
+        "screenStateHash": "211302947bc3fb0addc3b2560042683861c7d1599d7f0dbf5abeed8f7d747846",
+        "evidenceDigest": "6e02372ba59deffcba2f4aa0d4d905b76c2817ee59125ce2292c9fd0c457e147"
+      }
+    ]
+  }
+}
