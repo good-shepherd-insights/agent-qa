@@ -748,7 +748,7 @@
       "classifies": true,
       "id": "runs.start",
       "inputSchemaDigest": "a1d47c889b37bab978687bc7bf5cb67d840e3d64854ca0d5b488da191b5fd172",
-      "outputSchemaDigest": "f1a6d54bd40ea1746b6af8775764a18f0a369b9e9ac82a5dbb3f275f803db9fe",
+      "outputSchemaDigest": "54a482a2a742240e2954fcced934433544e94dad8bef9a9da70cefc475854f1c",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_start_run"
