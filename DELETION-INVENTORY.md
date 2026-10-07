@@ -1645,3 +1645,185 @@ selftest (432-43, `bc3260240`), the 394/395/396-06/399/426/429/430 drivers (432-
 row 5 is this section's first commit, which changes this file alone.
 
 **Toolchain:** node 24.15.0 · pnpm 10.6.1 · vitest 4.1.5 · turbo 2.9.7.
+
+## 2026-10-07 — Phase 436: harness action outcomes (HARN-01..04, D-15..D-18)
+
+This section appends to the register and rewrites no earlier section. Phase 436 removed the generic
+screen-change machinery: nothing in the runner decides success, failure, progress, a stagnation
+strike, a cycle or a retry from a screen hash or a visible-content comparison any more, and the
+step budget no longer refills. In their place are two monotonic per-step limits (`maxActions`,
+`maxPlanningTurns`, 30 each) with a typed limit stop, and operation-specific evidence (Chromium
+downloads, app clipboard writes, scroll movement signals). It kept the hashes' other jobs, settle,
+screenshots and every reader of persisted history. The section follows the 2026-10-02 shape.
+Dated 2026-10-07, the day the deletions landed; written by 436-13 on 2026-10-08.
+
+### The ruling
+
+> remove generic screen-hash/pixel-change success, failure, stagnation, cycle and retry decisions.
+
+The owner's 2026-10-01 action-outcomes decision, verbatim from `spec/v2/browser-and-mobile-automation.md`,
+specified as HARN-01..04 in `spec/v2/harness-action-outcomes.md` (moved from M6 to v2 readiness on
+2026-10-05). Reconciliation 4 in `.planning/REQUIREMENTS.md` makes the old refilling key a hard cut,
+consistent with V2-START-04: no alias, migration or fallback. The defaults, the router mapping and
+the remaining calls were delegated ("you decide", "please decide fast") and are recorded as D-01..D-30
+in `.planning/phases/436-harness-action-outcomes/436-CONTEXT.md`. D-18 sets this bar: runtime key
+sets beside every narrowed type, a census cell per removed member, a persisted-values statement and
+this section, with no mutation driver.
+
+### How this inventory is measured
+
+| Instrument | What it claims | Where |
+|---|---|---|
+| the census | `C436-RETURN-01`..`59`: one named cell per removed member, each scanning its member's own region (the runner loop's production source, the scroll compound and the three adapters, the agent router, the core schema objects, the masking map, the dashboard-ui source, the init scaffold) through the 432 census's lexer, which blanks comments and keeps strings, templates and regex literals. Files are read as bytes, because the scroll code once joined identities with control characters. Every needle is two halves joined at run time, and positive controls (the new keys, the new Rule 22, the meter's debits) keep each region from going stale. `C436-RETURN-CONFIG` parses a control config through the rebuilt public `AgentQaConfigSchema` (`packages/core/dist/index.js`) in an isolated Node process: the new pair parses, the old key is refused with the one plain message and nothing else. `C436-NO-IMAGE-DIFF`: no image-difference package in runner, web, android, ios or core, and no screenshot-buffer comparison in the loop. `C436-SELF-MATCH`, `C436-PLANTED-POSITIVE`, `C436-LEXER-CONTROL`, `C436-UNIVERSE-FLOORS`. 65 cells, in `validate:arch`. | `packages/arch/src/__tests__/436-harness-progress-deleted.test.ts` (436-13 `d833987b9`) |
+| the runtime key sets | `C436-KEY-SETS`: hand-spelled sorted sets for the limit stop, the per-step usage, the planner limits and their 30/30 default, the run limits record (`perTest`) and the acknowledgement's `limits`, the download, clipboard and capture-availability evidence, the handoff schema version (7, unchanged), the bus projection still dropping `localEffect`; `PlannerConfigSchema` and the project and override planner keys; the written and read-only scroll outcomes; and compile-checked exact members of `PlannerConfig`, `StepContext` (`@ts-expect-error` on both removed members), `StepEvidence` and `SubActionEvidence`. 16 cells. | `packages/schema/src/__tests__/436-runtime-key-sets.test.ts`, `packages/core/src/__tests__/436-runtime-key-sets.test.ts`, `packages/runner/src/loop/__tests__/436-runtime-key-sets.test.ts`, `436-narrowed-types.test-d.ts` (436-13 `601ac1f45`) |
+| the pre-change pins | `C436-PRE-CHANGE-HANDOFF` (a real handoff captured at `5e3e932a2` with `localEffect`, `stagnation` and `cycle` blocks still loads, and its 13 recomputed `screenStateHash` and decision digests are unchanged), `C436-CACHE-IDENTITY` (three cache keys byte-identical, no new hit for a different screen, screenshot refs and their sha), `C436-MODEL-CALLS` (planner and verifier calls per action do not increase). Values in `436-RECORD.md` § Before-values. | 436-01 `21de7fcc9`, `bf4cdec38` |
+| the behaviour cells | Every C436 cell from 436-01 to 436-13, and the `436 D-NN` cells in existing files, by name in the 434 gate's regression list (below). | `scripts/gate/inputs/regressions.json` |
+
+**This file names retired tokens literally**, as the 2026-09-02 section explains for the whole
+register. `DELETION-INVENTORY.md` sits outside every census region; inside them, removed names are
+spelled as two halves, so the census cannot satisfy its own inventory.
+
+### What was deleted
+
+Baseline `5e3e932a2d586f89c805a385483da1800b941fff` (434's certified tree, the parent of 436's first
+agent-qa commit `21de7fcc9`). Code-closing HEAD `a2ab1651f` (`version-0.2`), the last commit before
+this section. `git diff --shortstat 5e3e932a2..a2ab1651f`: 161 files changed, 11,038 insertions,
+2,841 deletions; 12 files deleted, all under `packages/runner/src/loop/`.
+
+- **The progress module** `runner/src/loop/progress/` (`index.ts`, `oracle.ts`, `classifier.ts`,
+  `revisitation.ts`, `stagnation-tree.ts`; 436-03 `6a439fbe8`) and every export:
+  `evaluateLocalEffect`, `toLocalEffectEvidence`, `EvaluateLocalEffectInput`, `LocalEffectResult`,
+  `LocalEffectOracle`, `EffectAnchor`; `classifyStagnation`, `OBSTRUCTION_ROLES`, `LOADING_ROLES`,
+  `ClassifyStagnationInput`, `StagnationAnchor`, `StagnationClass`; `StagnationTree`, `buildAnchorKey`,
+  `DEFAULT_STAGNATION_CLASS_BOUND`, `DEFAULT_STAGNATION_ANCHOR_BOUND`, `StagnationAnchorIdentity`,
+  `RecordNoEffectResult`, `StagnationSnapshotEntry`, `StagnationTreeOptions`; `RevisitationWindow`,
+  `buildRevisitationKey`, `DEFAULT_REVISITATION_WINDOW`, `RevisitationRecord`, `RevisitationResult`,
+  `RevisitationWindowOptions`. Census `C436-RETURN-01`..`27`.
+- **The loop's progress state and helpers** (`index.ts`): `revisitation`, `stagnationTree`,
+  `progressCarry`, `cycleBreakServed`, `cycleBreakAt`, `settledStable`; `deriveEffectAnchor`,
+  `TAP_CLASS_VERBS`, `toStagnationEvidence`, `carriesMintOrAssertionMeta`; the differential effect
+  check, the cycle-fail and stagnation-fail return paths, the transient-load settle re-arm and the
+  remaining-budget refill (`remaining = maxSubActions`). The per-step `StepLimitMeter` replaced the
+  cap (436-04 `bef4df76a`); it is built once per step and only counts up. `C436-RETURN-28`..`36`.
+- **The recorder's three evidence producers** (`evidence.ts`): `attachLocalEffect`,
+  `recordStagnation`, `recordCycle`, with their private fields and the finalize lines that copied
+  them. `C436-RETURN-37`..`39`.
+- **`StepContext.stagnation` and `StepContext.cycleBreak`** (`types.ts`). `C436-RETURN-40`, `41`.
+- **The long-press-for-tap substitution ban** (`planner.ts`): `resolveActionAnchorKey`,
+  `bannedSubstitutionMessage`, the pre-grounding check and the `buildAnchorKey` import.
+  `C436-RETURN-42`, `43`.
+- **The planner prompt's progress text** (`prompts.ts`, 436-03 `da84975cc`, the one byte re-pin
+  D-26 allows): `appendStagnationBlock` and `appendCycleBreakBlock` with their two pushes; Rule 3's
+  "If you have already scrolled and the screen did not change (you reached the boundary), the
+  element is not on this page" sentence; Rule 8's "if an action produced no screen change … try a
+  fundamentally different strategy"; the old Rule 22 heading `STAGNATION FOCUS — DO NOT WANDER`
+  (Rule 22 is now `OUTCOME EVIDENCE`); Rule 13's blanket "do not retry the same action".
+  `C436-RETURN-44`..`49`.
+- **The router's two progress signals** (`agent/src/authoring/router.ts`, 436-06 `97c4762e1`):
+  `'cycle'` and `'stagnation'` left `ROUTER_MECHANICS_SIGNALS`, and `stepMechanics` no longer pushes
+  them. `C436-RETURN-50`, `51`.
+- **The old planner key `use.planner.maxSubActions`** in every writer and schema object: core's
+  `PlannerConfigSchema`, `UseOverrideSchema.planner` and `agent/types.ts`; runner's `PlannerConfig`
+  and its `?? 50` fallback; the CLI's `?? 10` and the init scaffold's `10`; the live editor's `50`;
+  the masking map's leaf; the dashboard's `20`, its copy, the planner section and the per-test
+  panel (436-04, 436-07 `7d8dc413a`/`219db2c7a`/`cb389260c`, 436-08 `fcbb02f65`/`db66a67b0`). The only
+  remaining spelling is the refusal in `core/src/schema/retired-keys.ts`. `C436-RETURN-52`..`56`,
+  `C436-RETURN-CONFIG`.
+- **The scroll compound's tree-identity comparison** (436-02 `cbb27320d`, `c9bbb308b`):
+  `interimTreeIdentity`, the `current === prev` equality decisions and `anyProgress` in
+  `scroll-until-visible.ts` and the three adapters' `scrollToEnd` loops, the `'no-change'` writer,
+  and the retrying direction helper `runDirectionScrollWithRetry`. Movement is now proven only by
+  operation signals (web offsets, Android `scrollGesture`'s boolean, the target becoming visible).
+  `C436-RETURN-57`..`59`.
+- **Seven test files** that pinned the deleted subsystem: `progress-oracle`, `progress-coverage`,
+  `stagnation-classifier`, `stagnation-tree`, `stagnation-ban`, `revisitation`, `cycle-detection`.
+
+### What was RETAINED, and why
+
+| Item | Why kept (D-16, D-17) | What pins it |
+|---|---|---|
+| the fill re-read compound | operation-specific evidence: the field's own value (tools-and-actions §12.11) | `compound-coverage`, `C436-ACTION-PATHS` |
+| toggle `desiredState` idempotency | real toggles keep state-specific behaviour; Phase 437 fixes the Android classifier | `idempotency.test.ts`, `C436-ACTION-PATHS` (the idempotent no-op) |
+| the re-ground heal on ref-resolution errors | it follows an actual error, and now debits the action limit | `reground-heal.test.ts`, `C436-ACTION-PATHS` |
+| web scroll offsets | the scroll movement signal on web | `C436-SCROLL`, `EXEC-02 scroll movement signals` |
+| settle on two equal `screenIdentityHash` values | readiness, separate until TGT-06; it never proves success | `C436-CACHE-IDENTITY` (settle never passes a rejected step), `settle.test.ts` |
+| the cache key, including the settled hash as component 8 and `stepIndex: actionIndex` | cache partitioning must not broaden (HARN-04) | `C436-CACHE-IDENTITY` |
+| screenshots and visual checkpoints | required visual evidence stays available | `C436-CACHE-IDENTITY` (8 screenshot calls, decision refs and sha) |
+| `screenStateHash`, evidence digests and replay identities | integrity and attribution (HARN-04) | `C436-PRE-CHANGE-HANDOFF` |
+| the schema types `LocalEffectEvidence`, `StagnationEvidence`, `CycleEvidence` and their members on `SubActionEvidence` and `StepEvidence` | reader-only, so a pre-change handoff still loads (D-17); nothing writes them | `C436-PRE-CHANGE-HANDOFF`, `C436-KEY-SETS` |
+| the stability gates' historical `cycle` reader | only pre-change handoffs reach it; a limit-stopped step is also indefinitive | `stability-gates.test.ts`, router corpus rows `historical-cycle`/`historical-stagnation` |
+| `readScrollUntilVisibleMeta` reading `'no-change'` and `'cap'` | persisted sub-action metadata from earlier runs must still parse | `C436-KEY-SETS` (`SCROLL_OUTCOMES_READ_ONLY`) |
+| `SettleResult.settled` | settle's own result shape; its only reader went with the classifier, and nothing reads it now (comment corrected in 436-13 `a2ab1651f`) | `settle.test.ts` |
+
+### What degrades, stated plainly
+
+- **A dead control ends at `stepFailed` or at a limit, not in stagnation.** The planner prompt asks
+  for `stepFailed` naming the missing outcome after the action and one reasonable alternative; a
+  planner that keeps trying stops at `maxActions` with `limitStop.requestedOutcome: 'unverified'`.
+  No generic stagnation verdict is produced, and the router sends a limit stop to the stop arm
+  (`indefinitive-failure`), never to repair.
+- **A 50-plus-action bulk step needs configured capacity.** Nothing refills the budget; the default
+  is 30 actions and 30 planning turns per step.
+- **iOS scrolls report `unresolved` more often.** XCUITest returns no movement or boundary signal
+  (`mobile: scroll` discards its BOOL), so a search that did not see its target ends `unresolved`
+  after `maxSwipes`, and `toEnd` costs up to the cap.
+- **New handoffs are larger and their evidence digests differ.** Every step now records
+  `limitUsage`, so `rerunOrigin.evidenceDigest` over a new run's `StepEvidence` differs from a
+  pre-change run of the same test. The digest algorithm is unchanged, and digests recomputed over the
+  pre-change fixture are identical (436-01's pins).
+- **Old configs that spell the old key stop parsing**, with the plain message
+  `use.planner.maxSubActions was removed in v2 — it was a refilling iteration count; set
+  use.planner.maxActions (default 30) and use.planner.maxPlanningTurns (default 30)`. The same
+  message fires for test and suite `use` blocks.
+- **Firefox, WebKit, farm and mobile sessions record download and clipboard capture `unavailable`**,
+  so a requested download or copy there stays unverified (D-23).
+
+### Persisted values the narrowed contract governs
+
+| Persisted value | Disposition | Evidence |
+|---|---|---|
+| `SubActionEvidence.localEffect` in existing handoffs and run databases | **Reader-only.** The type stays; nothing writes it; the bus projection drops it; `hash-fallback` verdicts are never reinterpreted. | `C436-PRE-CHANGE-HANDOFF`, `C436-KEY-SETS` |
+| `StepEvidence.stagnation`, `StepEvidence.cycle` | **Reader-only.** Old handoffs load; the router reads them as no signal; the stability gates keep their historical `cycle` reader. | `C436-PRE-CHANGE-HANDOFF`, router `436 D-14` cells, `C436-RETURN-50`/`51` |
+| `metadata.scrollUntilVisible.outcome` `'no-change'` / `'cap'` | **Reader-only literals.** New runs write `found`, `not-found` or `unresolved` with `endedBy`. | `C436-KEY-SETS`, `C436-RETURN-58` |
+| `use.planner.maxSubActions` in configs, tests and suites | **Refused** with the plain message (D-05, reconciliation 4). | `C436-RETURN-CONFIG`, `C436-RETIRED-PLANNER-KEY`, `C436-PLANNER-LIMITS-CONFIG` |
+| `test-fixtures/demo-init/agent-qa.config.yaml` | **Re-pinned** to `maxActions: 30` and `maxPlanningTurns: 30` with its `MANIFEST.json` and pinned sha, by a dated note in `436-RECORD.md` (436-07 `219db2c7a`). | `DEMO-INIT-FIXTURE`, `promotion-posture.test.ts` |
+| new optional members `StepEvidence.limitStop`, `.limitUsage`, `.operationCapture`, `SubActionEvidence.operationEvidence`, `CompletedRunHandoff.plannerLimits` and the `runs.start` acknowledgement's `limits` | **Written by new runs, optional to readers.** `CURRENT_HANDOFF_SCHEMA_VERSION` stays 7; the loader validates `plannerLimits` the way the strict wire does. No downloaded byte, path or text preview is ever stored (D-20). | `C436-KEY-SETS`, `C436-EFFECTIVE-LIMITS`, `C436-OPERATION-EVIDENCE` |
+
+### The instruments that notice a return
+
+- **`pnpm run validate:arch`** runs the 436 census after the 434 file; it also runs in the
+  workspace's `turbo test`, so a returning export, helper, producer, prompt sentence, router signal,
+  config key or identity comparison reds by name on the commit that adds it.
+- **The runtime key sets** run in the schema, core and runner suites; the runner's `test-d` file runs
+  under vitest's typecheck mode, so a removed `StepContext` member that returns fails its
+  `@ts-expect-error` line.
+- **436-01's pins** (`C436-PRE-CHANGE-HANDOFF`, `C436-CACHE-IDENTITY`, `C436-MODEL-CALLS`) red if
+  cache keys, screen hashes, screenshots or model calls per action move.
+- **The 434 gate** (`pnpm run gate:local`) must execute and pass every listed 436 cell. No mutation
+  driver was added (D-18).
+
+### Not observed, stated as such
+
+- **Callers outside agent-qa that still spell the old key break on the hard cut, by design.** None is
+  changed by this phase:
+  - the super-repository's own `demo/init/agent-qa.config.yaml` (line 171, `maxSubActions: 10`);
+  - the bench repositories' config writers: `agent-qa-android-world-bench`,
+    `agent-qa-app-control-bench` and `agent-qa-miniwob-bench` (each `src/<package>/product.py`), and
+    the run workspaces under `agent-qa-online-mind2web-bench/runs/`.
+  QAval carries no `use.planner.*` key (435 D-08), so the Phase 439 re-measure is unaffected.
+- **Live iOS was not run.** The two `C436-IOS-LIVE` cells typecheck and have never executed (WINDOWS
+  #561, open); iOS scrolling is covered by mock-driver cells only. The four `C436-ANDROID-LIVE` cells
+  ran and passed once on an emulator at `4a788968f` (`436-RECORD.md` § Platforms not run). All six
+  are conditional entries in `scripts/gate/inputs/register.json` and count as registered skips.
+- **No live model ran.** Acceptance is model-free (D-28): a scripted planner drives the real loop.
+  Whether Rule 22 steers a real model to stop on a dead control is Phase 439's measurement.
+
+### Reconciliation
+
+Reconciliation 4 (2026-10-05) in `.planning/REQUIREMENTS.md` is this phase's: the old key is a hard
+cut. No 436 change diverges from `spec/v2`, so no new reconciliation was added. The divergences from
+the plans are disclosed in `.planning/phases/436-harness-action-outcomes/436-RECORD.md` § Disclosed
+divergences, including three fixes made outside the plans: the recorded action interval ends with
+the action (`d34233fd3`), the planner-limits record names its per-test entries `perTest`
+(`07203a747`, for agent-local's strategy-config census), and Android gestures start clear of the system
+gesture zones (`c14f755a9`, WINDOWS #562).

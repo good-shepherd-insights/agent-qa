@@ -240,6 +240,1764 @@
       "file": "packages/dashboard-ui/src/components/run-detail/__tests__/player.test.tsx",
       "fullName": "PLAYER-SEEK-ONE-IN-FLIGHT: a seek requested while the media is seeking waits for seeked and applies only the latest target",
       "origin": "434 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/__tests__/runs-start.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS runs.start acknowledgement toAcknowledgement carries limits from the record",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/__tests__/runs-start.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS runs.start acknowledgement RunStartAcknowledgementSchema accepts limits and still rejects unknown keys",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/router.test.ts",
+      "fullName": "436 D-14: a limit-stopped draft routes to stop, never repair ROUTER_MECHANICS_SIGNALS equals the four remaining members, in order",
+      "origin": "436 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/router.test.ts",
+      "fullName": "436 D-14: a limit-stopped draft routes to stop, never repair a failed member with a limit-stopped step is indefinitive-failure and routes to stop",
+      "origin": "436 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/router.test.ts",
+      "fullName": "436 D-14: a limit-stopped draft routes to stop, never repair a planning-turn limit stop routes the same way",
+      "origin": "436 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/router.test.ts",
+      "fullName": "436 D-14: a limit-stopped draft routes to stop, never repair a limit stop beats a recorded verdictSource on another step",
+      "origin": "436 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/router.test.ts",
+      "fullName": "436 D-14: a limit-stopped draft routes to stop, never repair a limit stop beats a mechanics signal on another step, so it never reaches repair",
+      "origin": "436 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/router.test.ts",
+      "fullName": "436 D-14: a limit-stopped draft routes to stop, never repair a step that only carries a historical stagnation or cycle block is not a mechanics signal",
+      "origin": "436 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/router.test.ts",
+      "fullName": "436 D-14: a limit-stopped draft routes to stop, never repair the 436-01 pre-change handoff classifies and routes without throwing",
+      "origin": "436 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/jobs/__tests__/436-limit-stop-analysis.test.ts",
+      "fullName": "C436-LIMIT-STOP-ANALYSIS analyze-run does not author a limit-stopped member",
+      "origin": "436 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/jobs/__tests__/436-limit-stop-analysis.test.ts",
+      "fullName": "C436-LIMIT-STOP-ANALYSIS a limit-stopped member with no persisted rootCause is not authored either",
+      "origin": "436 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/jobs/__tests__/436-limit-stop-analysis.test.ts",
+      "fullName": "C436-LIMIT-STOP-ANALYSIS a run whose only unknown member is limit-stopped reaches no model",
+      "origin": "436 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/jobs/__tests__/evidence-diet.test.ts",
+      "fullName": "evidence-diet — the limit stop quote (436 D-12) quoteStep carries limitStop with its reason truncated by the existing rule",
+      "origin": "436 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/compound.test.ts",
+      "fullName": "AndroidPlatformAdapter compound behaviors (RED — Wave-0) C436-SCROLL Android scroll signals (436-02 · D-25) swipeOnce maps mobile: scrollGesture true to moved and false to at-boundary",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/compound.test.ts",
+      "fullName": "AndroidPlatformAdapter compound behaviors (RED — Wave-0) C436-SCROLL Android scroll signals (436-02 · D-25) a swipe never starts in a system gesture zone",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/compound.test.ts",
+      "fullName": "AndroidPlatformAdapter compound behaviors (RED — Wave-0) C436-SCROLL Android scroll signals (436-02 · D-25) the WebView context reports movement from window.scrollY",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/compound.test.ts",
+      "fullName": "AndroidPlatformAdapter compound behaviors (RED — Wave-0) C436-SCROLL Android scroll signals (436-02 · D-25) toEnd stops on the first at-boundary signal",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/compound.test.ts",
+      "fullName": "AndroidPlatformAdapter compound behaviors (RED — Wave-0) C436-SCROLL Android scroll signals (436-02 · D-25) untilVisible keeps going through an unchanged tree while scrollGesture says it can scroll",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-UNIVERSE-FLOORS: every region reads real code, so no leg can pass over an empty scan",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-01: the progress module directory stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-02: the local-effect evaluator stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-03: the local-effect evidence mapper stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-04: the local-effect evaluator input type stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-05: the local-effect result type stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-06: the local-effect oracle type stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-07: the effect anchor type stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-08: the stagnation classifier stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-09: the obstruction role set stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-10: the loading role set stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-11: the stagnation classifier input type stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-12: the stagnation anchor type stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-13: the stagnation class type stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-14: the stagnation tree stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-15: the anchor-key builder stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-16: the stagnation class bound stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-17: the stagnation anchor bound stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-18: the stagnation anchor identity type stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-19: the no-effect record result type stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-20: the stagnation snapshot entry type stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-21: the stagnation tree options type stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-22: the revisitation window stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-23: the revisitation key builder stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-24: the revisitation window size stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-25: the revisitation record type stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-26: the revisitation result type stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-27: the revisitation window options type stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-28: the loop progress carry stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-29: the loop effect-anchor derivation stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-30: the loop tap-class verb set stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-31: the loop stagnation evidence mapper stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-32: the loop mint-or-assertion meta probe stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-33: the loop cycle-break served flag stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-34: the loop cycle-break position stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-35: the loop progress state (revisitation, stagnation tree, settle-stable re-arm) stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-36: the remaining-budget refill stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-37: the recorder local-effect producer stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-38: the recorder stagnation producer stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-39: the recorder cycle producer stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-40: the step context stagnation member stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-41: the step context cycle-break member stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-42: the long-press ban anchor-key resolver stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-43: the long-press ban substitution message stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-44: the prompt stagnation block builder stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-45: the prompt cycle-break block builder stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-46: Rule 3's scrolled-and-unchanged boundary sentence stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-47: Rule 8's no-screen-change sentence stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-48: the old Rule 22 heading stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-49: Rule 13's blanket do-not-retry clause stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-50: the router cycle signal stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-51: the router stagnation signal stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-52: the old planner key in the core schema objects stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-53: the old planner key in the masking map stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-54: the old planner key in the dashboard-ui source stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-55: the old planner key in the init scaffold stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-56: the old planner key in any other production writer or schema stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-57: the interim-tree identity helper stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-58: the interim-tree equality decisions stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-59: the retrying direction-scroll helper stays deleted",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-RETURN-CONFIG: the rebuilt public parser refuses the old planner key with the plain message and accepts the new pair",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN — the HARN deletion census (436 D-18) C436-NO-IMAGE-DIFF: no image-difference package and no screenshot-buffer comparison stands in for the deleted progress signal",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN census instruments C436-LEXER-CONTROL: comments are blanked, strings, templates and regex literals are kept",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN census instruments C436-PLANTED-POSITIVE: every needle and pattern is found when planted as code, and none when planted as a comment",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/436-harness-progress-deleted.test.ts",
+      "fullName": "C436-RETURN census instruments C436-SELF-MATCH: this file spells none of the needles it assembles, and lies outside every region it scans",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/436-effective-limits.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS direct and suite members resolve the same limits from the same blocks",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/436-effective-limits.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS a test override raises only that test",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/436-effective-limits.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS previousStepCount keeps each path's fallback when unset",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/436-effective-limits.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS the information line names both limits and never asks",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/436-effective-limits.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS plannerLimitsRecord lists only differing members, in member order",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/436-effective-limits.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS both producers in run.ts build PlannerConfig through memberPlannerConfig",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/436-retired-planner-key.test.ts",
+      "fullName": "C436-RETIRED-PLANNER-KEY the CLI config loader refuses the retired key with the plain message",
+      "origin": "436 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/436-retired-planner-key.test.ts",
+      "fullName": "C436-RETIRED-PLANNER-KEY the same config with the new pair loads",
+      "origin": "436 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/__tests__/436-planner-limits-config.test.ts",
+      "fullName": "C436-PLANNER-LIMITS-CONFIG the project config accepts maxActions and maxPlanningTurns as positive integers",
+      "origin": "436 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/__tests__/436-planner-limits-config.test.ts",
+      "fullName": "C436-PLANNER-LIMITS-CONFIG test and suite use overrides accept them",
+      "origin": "436 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/__tests__/436-planner-limits-config.test.ts",
+      "fullName": "C436-PLANNER-LIMITS-CONFIG 0, -1, 2.5 and '7' are refused for each key; 1 and 1000000 are accepted",
+      "origin": "436 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/__tests__/436-planner-limits-config.test.ts",
+      "fullName": "C436-PLANNER-LIMITS-CONFIG no planner block, or previousStepCount alone, resolves to 30/30",
+      "origin": "436 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/__tests__/436-planner-limits-config.test.ts",
+      "fullName": "C436-PLANNER-LIMITS-CONFIG a test override wins per key over suite and project",
+      "origin": "436 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/__tests__/436-planner-limits-config.test.ts",
+      "fullName": "C436-PLANNER-LIMITS-CONFIG a project config with the old key fails with the plain message",
+      "origin": "436 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/__tests__/436-planner-limits-config.test.ts",
+      "fullName": "C436-PLANNER-LIMITS-CONFIG a test file's use override with the old key fails with the same message",
+      "origin": "436 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/__tests__/436-planner-limits-config.test.ts",
+      "fullName": "C436-PLANNER-LIMITS-CONFIG a suite file's use override with the old key fails with the same message",
+      "origin": "436 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/__tests__/436-planner-limits-config.test.ts",
+      "fullName": "C436-PLANNER-LIMITS-CONFIG the old key with the new pair beside it still fails",
+      "origin": "436 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/__tests__/436-planner-limits-config.test.ts",
+      "fullName": "C436-PLANNER-LIMITS-CONFIG the new pair alone parses everywhere",
+      "origin": "436 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/__tests__/436-runtime-key-sets.test.ts",
+      "fullName": "C436-KEY-SETS PlannerConfigSchema carries exactly the limit pair and previousStepCount",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/__tests__/436-runtime-key-sets.test.ts",
+      "fullName": "C436-KEY-SETS the project use block plans with PlannerConfigSchema",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/__tests__/436-runtime-key-sets.test.ts",
+      "fullName": "C436-KEY-SETS the test and suite use-override planner keys are the same three",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/live-session.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS live editor a live session uses the project's configured limits",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/live-session.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS live editor without plannerLimits the session uses the defaults",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/live-session.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS live editor the create door resolves project use and the entity's use",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/live-session.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS live editor an entity the door cannot load leaves the project value",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/compound.test.ts",
+      "fullName": "IOSPlatformAdapter compound behaviors (RED — Wave-0) C436-SCROLL iOS scroll signals (436-02 · D-25) swipeOnce always reports unknown",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/compound.test.ts",
+      "fullName": "IOSPlatformAdapter compound behaviors (RED — Wave-0) C436-SCROLL iOS scroll signals (436-02 · D-25) toEnd ends unresolved at the cap",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/compound.test.ts",
+      "fullName": "IOSPlatformAdapter compound behaviors (RED — Wave-0) C436-SCROLL iOS scroll signals (436-02 · D-25) untilVisible finds the target only by the visibility probe",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/compound.test.ts",
+      "fullName": "IOSPlatformAdapter compound behaviors (RED — Wave-0) C436-SCROLL iOS scroll signals (436-02 · D-25) native search sends predicateString without direction",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/scroll-until-visible.test.ts",
+      "fullName": "C436-SCROLL — no identity-driven reversal, end or retry (D-24/D-25) a same-hash scroll keeps going forward",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/scroll-until-visible.test.ts",
+      "fullName": "C436-SCROLL — no identity-driven reversal, end or retry (D-24/D-25) an unrelated update is not movement",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/scroll-until-visible.test.ts",
+      "fullName": "C436-SCROLL — no identity-driven reversal, end or retry (D-24/D-25) retryOpposite reverses once after maxSwipes without the target",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/scroll-until-visible.test.ts",
+      "fullName": "C436-SCROLL — no identity-driven reversal, end or retry (D-24/D-25) retryOpposite reverses once on an at-boundary signal",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/scroll-until-visible.test.ts",
+      "fullName": "C436-SCROLL — no identity-driven reversal, end or retry (D-24/D-25) two boundaries without the target end not-found",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/scroll-until-visible.test.ts",
+      "fullName": "C436-SCROLL — no identity-driven reversal, end or retry (D-24/D-25) one boundary and one exhausted budget stay unresolved",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/scroll-until-visible.test.ts",
+      "fullName": "C436-SCROLL — no identity-driven reversal, end or retry (D-24/D-25) a boundary without retryOpposite ends not-found without reversing",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/scroll-until-visible.test.ts",
+      "fullName": "C436-SCROLL — no identity-driven reversal, end or retry (D-24/D-25) the target becoming visible ends the search found with endedBy target-visible",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/scroll-until-visible.test.ts",
+      "fullName": "C436-SCROLL — no identity-driven reversal, end or retry (D-24/D-25) direction mode is one gesture",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/scroll-until-visible.test.ts",
+      "fullName": "C436-SCROLL — no identity-driven reversal, end or retry (D-24/D-25) runToEndScroll stops on at-boundary, otherwise at the cap as unresolved",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/run/__tests__/root-cause.test.ts",
+      "fullName": "classifyRootCause — limit stop (436 D-12) a limit-stopped failed member is unknown with the limit reason as rationale",
+      "origin": "436 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/run/__tests__/root-cause.test.ts",
+      "fullName": "classifyRootCause — limit stop (436 D-12) a planning-turn limit stop cites its own reason",
+      "origin": "436 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/run/__tests__/root-cause.test.ts",
+      "fullName": "classifyRootCause — limit stop (436 D-12) a health-probe failure still wins over a limit stop",
+      "origin": "436 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/run/__tests__/root-cause.test.ts",
+      "fullName": "classifyRootCause — limit stop (436 D-12) a limit stop is never classed environment by error-token scans",
+      "origin": "436 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-cache-identity.test.ts",
+      "fullName": "C436-CACHE-IDENTITY cache keys for the fixed three-action fixture equal the 5e3e932a2 literals",
+      "origin": "436 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-cache-identity.test.ts",
+      "fullName": "C436-CACHE-IDENTITY a seeded cache replays every decision with zero planner calls",
+      "origin": "436 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-cache-identity.test.ts",
+      "fullName": "C436-CACHE-IDENTITY a screen with a different identity gains no hit",
+      "origin": "436 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-cache-identity.test.ts",
+      "fullName": "C436-CACHE-IDENTITY screenStateHash of the three fixture screens equals the pinned literals",
+      "origin": "436 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-cache-identity.test.ts",
+      "fullName": "C436-CACHE-IDENTITY a stable settle does not pass a step the verifier rejects",
+      "origin": "436 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-cache-identity.test.ts",
+      "fullName": "C436-CACHE-IDENTITY screenshots are recorded and the artifact sha is the sha-256 of the bytes",
+      "origin": "436 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-model-calls.test.ts",
+      "fullName": "C436-MODEL-CALLS model calls per action do not exceed the 5e3e932a2 pins",
+      "origin": "436 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-no-screen-change-decisions.test.ts",
+      "fullName": "C436-NO-SCREEN-CHANGE five presses on an unchanged screen dispatch five times and pass",
+      "origin": "436 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-no-screen-change-decisions.test.ts",
+      "fullName": "C436-NO-SCREEN-CHANGE the same step run twice dispatches five times each run",
+      "origin": "436 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-no-screen-change-decisions.test.ts",
+      "fullName": "C436-NO-SCREEN-CHANGE five same-label rows are each pressed once",
+      "origin": "436 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-no-screen-change-decisions.test.ts",
+      "fullName": "C436-NO-SCREEN-CHANGE an action that leaves the screen equal is never re-dispatched by the loop",
+      "origin": "436 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-no-screen-change-decisions.test.ts",
+      "fullName": "C436-NO-SCREEN-CHANGE no new step evidence carries localEffect, stagnation or cycle",
+      "origin": "436 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-no-screen-change-decisions.test.ts",
+      "fullName": "C436-NO-SCREEN-CHANGE a planner-chosen repeat after an actual execution error is the only retry",
+      "origin": "436 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-operation-evidence.test.ts",
+      "fullName": "C436-OPERATION-EVIDENCE the sub-action carries masked download evidence and the recorded result no longer carries the metadata key",
+      "origin": "436 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-operation-evidence.test.ts",
+      "fullName": "C436-OPERATION-EVIDENCE a download-only metadata block leaves no metadata on the recorded result",
+      "origin": "436 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-operation-evidence.test.ts",
+      "fullName": "C436-OPERATION-EVIDENCE the history renders one wrapped Operation evidence line",
+      "origin": "436 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-operation-evidence.test.ts",
+      "fullName": "C436-OPERATION-EVIDENCE no evidence means no line and no key",
+      "origin": "436 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-operation-evidence.test.ts",
+      "fullName": "C436-OPERATION-EVIDENCE a failed, canceled or unfinished download is rendered as such, never as completed",
+      "origin": "436 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-operation-evidence.test.ts",
+      "fullName": "C436-OPERATION-EVIDENCE readDownloadMeta keeps well-formed entries in order and drops the rest",
+      "origin": "436 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-operation-evidence.test.ts",
+      "fullName": "C436-OPERATION-EVIDENCE verifier input and availability the verifier receives the step's accumulated operation evidence",
+      "origin": "436 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-operation-evidence.test.ts",
+      "fullName": "C436-OPERATION-EVIDENCE verifier input and availability a step with no operation evidence passes no trailing verifier argument",
+      "origin": "436 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-operation-evidence.test.ts",
+      "fullName": "C436-OPERATION-EVIDENCE verifier input and availability buildVerificationPrompt renders an Operation evidence section only when evidence exists",
+      "origin": "436 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-operation-evidence.test.ts",
+      "fullName": "C436-OPERATION-EVIDENCE verifier input and availability an adapter without capture support records operationCapture unavailable with its reason",
+      "origin": "436 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-operation-evidence.test.ts",
+      "fullName": "C436-OPERATION-EVIDENCE verifier input and availability a Chromium web adapter records both captures available",
+      "origin": "436 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-operation-evidence.test.ts",
+      "fullName": "C436-OPERATION-EVIDENCE verifier input and availability unavailable evidence never makes a step pass",
+      "origin": "436 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-operation-evidence.test.ts",
+      "fullName": "C436-CLIPBOARD-CAPTURE loop recording the loop masks and bounds clipboard text before recording",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-operation-evidence.test.ts",
+      "fullName": "C436-CLIPBOARD-CAPTURE loop recording short clipboard text is masked and kept whole",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-operation-evidence.test.ts",
+      "fullName": "C436-CLIPBOARD-CAPTURE loop recording a click with a download and a clipboard write records both on one sub-action",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-operation-evidence.test.ts",
+      "fullName": "C436-CLIPBOARD-CAPTURE loop recording readClipboardMeta keeps well-formed writes in order and drops the rest",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-planning-limits.test.ts",
+      "fullName": "C436-PLANNING-LIMITS each read-only non-action round is one planner call",
+      "origin": "436 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-planning-limits.test.ts",
+      "fullName": "C436-PLANNING-LIMITS a refused call mid-turn stops at the planning limit",
+      "origin": "436 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-planning-limits.test.ts",
+      "fullName": "C436-PLANNING-LIMITS the text-only re-prompt, the grounding retry, the clamp overflow retry and the screenshot fallback each cost one call the text-only re-prompt",
+      "origin": "436 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-planning-limits.test.ts",
+      "fullName": "C436-PLANNING-LIMITS the text-only re-prompt, the grounding retry, the clamp overflow retry and the screenshot fallback each cost one call the grounding retry",
+      "origin": "436 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-planning-limits.test.ts",
+      "fullName": "C436-PLANNING-LIMITS the text-only re-prompt, the grounding retry, the clamp overflow retry and the screenshot fallback each cost one call the clamp overflow retry",
+      "origin": "436 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-planning-limits.test.ts",
+      "fullName": "C436-PLANNING-LIMITS the text-only re-prompt, the grounding retry, the clamp overflow retry and the screenshot fallback each cost one call the screenshot fallback",
+      "origin": "436 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-planning-limits.test.ts",
+      "fullName": "C436-PLANNING-LIMITS the text-only re-prompt, the grounding retry, the clamp overflow retry and the screenshot fallback each cost one call a refused fallback call is a planning-limit stop, not a planning failure",
+      "origin": "436 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-planning-limits.test.ts",
+      "fullName": "C436-PLANNING-LIMITS a heal-replan turn after an execution failure is debited",
+      "origin": "436 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-planning-limits.test.ts",
+      "fullName": "C436-PLANNING-LIMITS a scripted planner is debited once per plan()",
+      "origin": "436 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-planning-limits.test.ts",
+      "fullName": "C436-PLANNING-LIMITS a cache hit dispatches after the planning limit is spent",
+      "origin": "436 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-runtime-key-sets.test.ts",
+      "fullName": "C436-KEY-SETS the scroll outcomes new runs write",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-runtime-key-sets.test.ts",
+      "fullName": "C436-KEY-SETS the scroll outcomes only historical runs carry",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-STEP-LIMITS a live step stops at its action limit with a typed limit block",
+      "origin": "436 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-STEP-LIMITS the Nth action's completion claim is verified and can pass",
+      "origin": "436 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-STEP-LIMITS the N-1 case completes normally",
+      "origin": "436 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-STEP-LIMITS the limit block carries the last verifier rejection and the planner's last reasoning",
+      "origin": "436 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-STEP-LIMITS screen changes never refill the counter",
+      "origin": "436 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-STEP-LIMITS without plannerConfig the schema defaults apply",
+      "origin": "436 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-STEP-LIMITS resolvePlannerLimits takes the last positive integer per key no blocks, absent planner and empty planner resolve the defaults",
+      "origin": "436 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-STEP-LIMITS resolvePlannerLimits takes the last positive integer per key one key set leaves the other at its default",
+      "origin": "436 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-STEP-LIMITS resolvePlannerLimits takes the last positive integer per key a later block overrides an earlier one per key",
+      "origin": "436 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-STEP-LIMITS resolvePlannerLimits takes the last positive integer per key 0, -1, 2.5 and a string are ignored",
+      "origin": "436 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-STEP-LIMITS resolvePlannerLimits takes the last positive integer per key the reason formatter spells both limits",
+      "origin": "436 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-ACTION-PATHS live",
+      "origin": "436 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-ACTION-PATHS retry after an execution failure",
+      "origin": "436 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-ACTION-PATHS recovery after a verifier rejection",
+      "origin": "436 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-ACTION-PATHS cached hits (zero planner calls)",
+      "origin": "436 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-ACTION-PATHS procedure replay (zero planner calls)",
+      "origin": "436 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-ACTION-PATHS reportValue and uniqueValue mints",
+      "origin": "436 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-ACTION-PATHS assertAI and extractAI judges",
+      "origin": "436 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-ACTION-PATHS assertValue",
+      "origin": "436 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-ACTION-PATHS storageState",
+      "origin": "436 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-ACTION-PATHS setVariable",
+      "origin": "436 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-ACTION-PATHS the idempotent no-op",
+      "origin": "436 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-ACTION-PATHS heal re-execution is a second debit in the same iteration",
+      "origin": "436 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-ACTION-PATHS a heal the limit refuses is skipped and the step stops at the next loop top",
+      "origin": "436 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-ACTION-PATHS a gate-forced cache error is not debited",
+      "origin": "436 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-ACTION-PATHS verifier and judge calls are recorded and not debited",
+      "origin": "436 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-ACTION-PATHS compound inputs are recorded per sub-action",
+      "origin": "436 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-ACTION-PATHS usage is monotonic across heal, cache and recovery",
+      "origin": "436 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-BULK-AND-BOUNDS a 55-action bulk task completes at maxActions 60",
+      "origin": "436 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-BULK-AND-BOUNDS the same task stops honestly at maxActions 30",
+      "origin": "436 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-BULK-AND-BOUNDS when both limits are spent together the actions limit is reported",
+      "origin": "436 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-BULK-AND-BOUNDS a step timeout still stops a step with a large limit",
+      "origin": "436 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-BULK-AND-BOUNDS a test-timeout abort and a user cancel still stop it",
+      "origin": "436 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-step-limits.test.ts",
+      "fullName": "C436-BULK-AND-BOUNDS two concurrent executeStep calls keep separate meters",
+      "origin": "436 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/loop-bounds.test.ts",
+      "fullName": "loop bounds (LOOP-02 / 436 D-10) an always-failing adapter terminates at the action limit with a failed result and no counter",
+      "origin": "436 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/loop-bounds.test.ts",
+      "fullName": "loop bounds (LOOP-02 / 436 D-10) a never-completing successful adapter also terminates at the action limit",
+      "origin": "436 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/loop-bounds.test.ts",
+      "fullName": "loop bounds (LOOP-02 / 436 D-10) a pre-aborted (timeout) signal returns the v1 timeout-reason failure",
+      "origin": "436 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/loop-bounds.test.ts",
+      "fullName": "loop bounds (LOOP-02 / 436 D-10) a pre-aborted (cancel) signal returns cancelled without calling the planner",
+      "origin": "436 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/loop-bounds.test.ts",
+      "fullName": "loop bounds (LOOP-02 / 436 D-10) a timeout abort raised during the planner call cannot be converted to passed",
+      "origin": "436 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/planning-turn.test.ts",
+      "fullName": "executePlanningTurn 436 D-08: a bound gate debits each model call and a refused debit ends the turn with planning_limit_reached",
+      "origin": "436 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/progress-prompts.test.ts",
+      "fullName": "C436-PROMPT the stagnation and cycle-break blocks never render",
+      "origin": "436 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/progress-prompts.test.ts",
+      "fullName": "C436-PROMPT Rule 3 has no boundary-means-absent sentence and keeps the toEnd exception",
+      "origin": "436 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/progress-prompts.test.ts",
+      "fullName": "C436-PROMPT Rule 8 has no no-screen-change instruction",
+      "origin": "436 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/progress-prompts.test.ts",
+      "fullName": "C436-PROMPT the old Rule 22 is gone and Rule 22 is OUTCOME EVIDENCE",
+      "origin": "436 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/progress-prompts.test.ts",
+      "fullName": "C436-PROMPT Rule 13 allows requested repetition",
+      "origin": "436 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/progress-prompts.test.ts",
+      "fullName": "C436-PROMPT Rules 10, 17, 19 and 23 are byte-unchanged",
+      "origin": "436 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/progress-prompts.test.ts",
+      "fullName": "C436-PROMPT the bulk-completion predicate still renders only in the turn, never the system tiers",
+      "origin": "436 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/progress-prompts.test.ts",
+      "fullName": "C436-PROMPT two identical sub-actions on an unchanged screen draw no repetition warning",
+      "origin": "436 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-narrowed-types.test-d.ts",
+      "fullName": "src/loop/__tests__/436-narrowed-types.test-d.ts C436-KEY-SETS narrowed types PlannerConfig has exactly the limit pair and previousStepCount",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-narrowed-types.test-d.ts",
+      "fullName": "src/loop/__tests__/436-narrowed-types.test-d.ts C436-KEY-SETS narrowed types StepContext has no stagnation or cycle-break member",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-narrowed-types.test-d.ts",
+      "fullName": "src/loop/__tests__/436-narrowed-types.test-d.ts C436-KEY-SETS narrowed types StepEvidence has the limit and capture members and keeps stagnation and cycle reader-only",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-narrowed-types.test-d.ts",
+      "fullName": "src/loop/__tests__/436-narrowed-types.test-d.ts C436-KEY-SETS narrowed types SubActionEvidence has operationEvidence and keeps localEffect reader-only",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/436-pre-change-handoff.test.ts",
+      "fullName": "C436-PRE-CHANGE-HANDOFF the manifest names 5e3e932a2 and the fixture matches its sha-256",
+      "origin": "436 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/436-pre-change-handoff.test.ts",
+      "fullName": "C436-PRE-CHANGE-HANDOFF guardCompletedRunHandoff accepts the pre-change handoff",
+      "origin": "436 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/436-pre-change-handoff.test.ts",
+      "fullName": "C436-PRE-CHANGE-HANDOFF the fixture carries localEffect, stagnation and cycle blocks",
+      "origin": "436 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/436-pre-change-handoff.test.ts",
+      "fullName": "C436-PRE-CHANGE-HANDOFF projectSubActionRecorded drops localEffect from every sub-action",
+      "origin": "436 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/436-pre-change-handoff.test.ts",
+      "fullName": "C436-PRE-CHANGE-HANDOFF screenStateHash and the decision digests recompute to the pinned values",
+      "origin": "436 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/436-runtime-key-sets.test.ts",
+      "fullName": "C436-KEY-SETS the limit stop carries exactly its seven members",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/436-runtime-key-sets.test.ts",
+      "fullName": "C436-KEY-SETS the per-step usage carries exactly its six members",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/436-runtime-key-sets.test.ts",
+      "fullName": "C436-KEY-SETS the planner limits are the action and planning-turn pair, defaulting to 30 and 30",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/436-runtime-key-sets.test.ts",
+      "fullName": "C436-KEY-SETS the run limits record names its per-test entries and nothing else",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/436-runtime-key-sets.test.ts",
+      "fullName": "C436-KEY-SETS download, clipboard and capture-availability evidence carry exactly their members",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/436-runtime-key-sets.test.ts",
+      "fullName": "C436-KEY-SETS the handoff schema version did not move for the new optional members",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/436-runtime-key-sets.test.ts",
+      "fullName": "C436-KEY-SETS projectSubActionRecorded still drops localEffect, a reader-only member (D-17)",
+      "origin": "436 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/load-completed-run-handoff.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS the loader and the acknowledgement agree on plannerLimits agrees on run limits only",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/load-completed-run-handoff.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS the loader and the acknowledgement agree on plannerLimits agrees on with one per-test entry",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/load-completed-run-handoff.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS the loader and the acknowledgement agree on plannerLimits agrees on empty perTest",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/load-completed-run-handoff.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS the loader and the acknowledgement agree on plannerLimits agrees on retired overrides key",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/load-completed-run-handoff.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS the loader and the acknowledgement agree on plannerLimits agrees on zero actions",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/load-completed-run-handoff.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS the loader and the acknowledgement agree on plannerLimits agrees on fractional turns",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/load-completed-run-handoff.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS the loader and the acknowledgement agree on plannerLimits agrees on string limit",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/load-completed-run-handoff.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS the loader and the acknowledgement agree on plannerLimits agrees on missing turns",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/load-completed-run-handoff.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS the loader and the acknowledgement agree on plannerLimits agrees on unknown key",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/load-completed-run-handoff.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS the loader and the acknowledgement agree on plannerLimits agrees on per-test entry with unknown key",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/load-completed-run-handoff.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS the loader and the acknowledgement agree on plannerLimits agrees on per-test entry missing name",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/load-completed-run-handoff.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS the loader and the acknowledgement agree on plannerLimits agrees on per-test entry negative limit",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/load-completed-run-handoff.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS the loader and the acknowledgement agree on plannerLimits agrees on perTest not an array",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/load-completed-run-handoff.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS the loader and the acknowledgement agree on plannerLimits agrees on not an object",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/load-completed-run-handoff.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS the loader and the acknowledgement agree on plannerLimits is not vacuous and leaves an absent record absent",
+      "origin": "436 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-CAPTURE a blob download is recorded on the click that started it",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-CAPTURE a Content-Disposition download is recorded the same way",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-CAPTURE two downloads from one click are recorded in start order",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-CAPTURE a canceled download is recorded canceled and has no digest",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-CAPTURE a download that never finishes is recorded unfinished within the step timeout",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-CAPTURE the downloaded file no longer exists after capture",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-CAPTURE an action that starts no download carries no download metadata",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-CAPTURE a non-activation action does not wait for a download",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-CAPTURE recording witness a click that starts no download is recorded for the click, not the grace after it",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-CAPTURE recording witness an earlier action ending never ends a later interval",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-CAPTURE recording witness a click that starts a download keeps both its evidence and its recorded interval",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-CAPTURE an app writeText during a click is captured and read back",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-CAPTURE a click that writes nothing reads nothing",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-CAPTURE clipboard-read is not granted after the read-back",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-CAPTURE copy events and exclusions an execCommand copy is captured from the copy event",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-CAPTURE copy events and exclusions a copy handler that stops propagation is still captured",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-CAPTURE copy events and exclusions a select-and-execCommand copy is captured from the selection",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-CAPTURE copy events and exclusions agent-qa's own copy action records no app clipboard evidence",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-CAPTURE copy events and exclusions agent-qa's own paste action records none",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-CAPTURE copy events and exclusions a non-secure page records readBack unavailable",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-CAPTURE copy events and exclusions the localhost and 127.0.0.1 fixture origins are secure contexts",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-CAPTURE copy events and exclusions firefox sets up no clipboard hook",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-CAPTURE copy events and exclusions webkit sets up no clipboard hook",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-outcome-evidence.test.ts",
+      "fullName": "C436-OUTCOME-EVIDENCE a download on an unchanged page passes on its name, extension and digest",
+      "origin": "436 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-outcome-evidence.test.ts",
+      "fullName": "C436-OUTCOME-EVIDENCE the same download passes from the cache",
+      "origin": "436 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-outcome-evidence.test.ts",
+      "fullName": "C436-OUTCOME-EVIDENCE the same download passes after a verifier rejection",
+      "origin": "436 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-outcome-evidence.test.ts",
+      "fullName": "C436-OUTCOME-EVIDENCE downloading the same file twice records two identical digests",
+      "origin": "436 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-outcome-evidence.test.ts",
+      "fullName": "C436-OUTCOME-EVIDENCE an app clipboard copy passes on the read-back value live",
+      "origin": "436 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-outcome-evidence.test.ts",
+      "fullName": "C436-OUTCOME-EVIDENCE an app clipboard copy passes on the read-back value cached",
+      "origin": "436 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-outcome-evidence.test.ts",
+      "fullName": "C436-OUTCOME-EVIDENCE a background save on an unchanged page passes on the persisted state",
+      "origin": "436 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-outcome-evidence.test.ts",
+      "fullName": "C436-OUTCOME-EVIDENCE a dead Save beside a ticking clock never passes",
+      "origin": "436 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-outcome-evidence.test.ts",
+      "fullName": "C436-OUTCOME-EVIDENCE the same dead Save under a planner that keeps trying stops at the limit, unverified",
+      "origin": "436 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-outcome-evidence.test.ts",
+      "fullName": "C436-OUTCOME-EVIDENCE a button that never opens the requested dialog never passes",
+      "origin": "436 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-outcome-evidence.test.ts",
+      "fullName": "C436-OUTCOME-EVIDENCE the same button passes when it opens the dialog (the dead dialog's twin)",
+      "origin": "436 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-outcome-evidence.test.ts",
+      "fullName": "C436-OUTCOME-EVIDENCE five counter presses complete when the count is 5",
+      "origin": "436 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-outcome-evidence.test.ts",
+      "fullName": "C436-OUTCOME-EVIDENCE five same-label rows are each archived once",
+      "origin": "436 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-outcome-evidence.test.ts",
+      "fullName": "C436-OUTCOME-EVIDENCE the overflow menu is used three times on three rows",
+      "origin": "436 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-outcome-evidence.test.ts",
+      "fullName": "C436-OUTCOME-EVIDENCE a same-hash scroll does not reverse or retry",
+      "origin": "436 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-outcome-evidence.test.ts",
+      "fullName": "C436-OUTCOME-EVIDENCE an unrelated update is not movement",
+      "origin": "436 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/adapter.test.ts",
+      "fullName": "WebPlatformAdapter C436-OPERATION-EVIDENCE operation capture support a Chromium adapter declares download and clipboard capture",
+      "origin": "436 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/adapter.test.ts",
+      "fullName": "WebPlatformAdapter C436-OPERATION-EVIDENCE operation capture support a firefox adapter declares no capture and names its browser",
+      "origin": "436 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/adapter.test.ts",
+      "fullName": "WebPlatformAdapter C436-OPERATION-EVIDENCE operation capture support a webkit adapter declares no capture and names its browser",
+      "origin": "436 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/compound.test.ts",
+      "fullName": "WebPlatformAdapter compound behaviors (RED — Wave-0) EXEC-02 scroll movement signals (436-02 · D-25) swipeOnce reports moved when scrollTop changes, at-boundary at the scroll extent, unknown otherwise",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/compound.test.ts",
+      "fullName": "WebPlatformAdapter compound behaviors (RED — Wave-0) EXEC-02 scroll movement signals (436-02 · D-25) the no-ref wheel path reads document.scrollingElement before and after",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/compound.test.ts",
+      "fullName": "WebPlatformAdapter compound behaviors (RED — Wave-0) EXEC-02 scroll movement signals (436-02 · D-25) toEnd stops on the first at-boundary offset and reports found by boundary",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/compound.test.ts",
+      "fullName": "WebPlatformAdapter compound behaviors (RED — Wave-0) EXEC-02 scroll movement signals (436-02 · D-25) direction mode is one wheel gesture even with retryOpposite and an unknown signal",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/compound.test.ts",
+      "fullName": "WebPlatformAdapter compound behaviors (RED — Wave-0) EXEC-02 scroll movement signals (436-02 · D-25) a same-hash untilVisible scroll with moving offsets keeps going forward and stays unresolved",
+      "origin": "436 D-25"
     }
   ]
 }
