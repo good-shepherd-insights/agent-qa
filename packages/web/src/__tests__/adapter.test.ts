@@ -191,6 +191,18 @@ describe('WebPlatformAdapter', () => {
       .rejects.toThrow('agent-qa install-browsers --webkit')
   })
 
+  describe('C436-OPERATION-EVIDENCE operation capture support', () => {
+    it('a Chromium adapter declares download and clipboard capture', async () => {
+      await adapter.setup({ platform: 'web', browser: { name: 'chromium', headless: true } })
+      expect(adapter.operationCaptureSupport).toEqual({ download: true, clipboard: true })
+    })
+
+    it.each(['firefox', 'webkit'] as const)('a %s adapter declares no capture and names its browser', async (name) => {
+      await adapter.setup({ platform: 'web', browser: { name, headless: true } })
+      expect(adapter.operationCaptureSupport).toEqual({ download: false, clipboard: false, reason: name })
+    })
+  })
+
   describe('clipboard-write permission grant', () => {
     it('grants clipboard-write permission on chromium setup', async () => {
       await adapter.setup({ platform: 'web', browser: { name: 'chromium', headless: true } })

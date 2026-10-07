@@ -9,12 +9,12 @@ import type {
   StepEvidence,
   SubActionEvidence,
 } from '@vostride/agent-qa-schema'
-import type { ActionResult } from '../../platform.js'
+import type { Action, ActionResult, PlatformAdapter } from '../../platform.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import { readDownloadMeta } from '../../compound/metadata.js'
 import { executeStep } from '../index.js'
 import type { LoopEventEmitPort, LoopPorts } from '../ports.js'
-import { composeTurnMessages } from '../prompts.js'
+import { buildVerificationPrompt, composeTurnMessages, renderOperationEvidence } from '../prompts.js'
 import type { ActionPlan, Planner, StepContext, Verifier } from '../types.js'
 import { makeActionPlan, makeAdapter, makeStepContext } from './loop-harness.js'
 
@@ -172,5 +172,124 @@ describe('C436-OPERATION-EVIDENCE', () => {
         ],
       },
     })).toEqual([REPORT, { suggestedFilename: 'z.csv', extension: '.csv', state: 'unfinished' }])
+  })
+})
+
+const SECOND: DownloadEvidence = {
+  suggestedFilename: 'invoice.pdf',
+  extension: '.pdf',
+  size: 2048,
+  sha256: 'b'.repeat(64),
+  state: 'completed',
+}
+
+function recordingVerifier(calls: unknown[][], pass: boolean): Verifier {
+  return {
+    async verify(...args: unknown[]) {
+      calls.push(args)
+      return {
+        verification: pass
+          ? { success: true, reasoning: 'Requested outcome observed', isAppError: false }
+          : { success: false, reasoning: 'The requested download is not evidenced', isAppError: false },
+      }
+    },
+  } as Verifier
+}
+
+function withSupport(adapter: PlatformAdapter, support: PlatformAdapter['operationCaptureSupport']): PlatformAdapter {
+  return Object.assign(adapter, { operationCaptureSupport: support })
+}
+
+async function runWith(adapter: PlatformAdapter, verifier: Verifier, maxActions = 20) {
+  return executeStep(
+    'Export the report',
+    ports({
+      adapter,
+      planner: scriptedPlanner(twoClicks(), []),
+      verifier,
+      plannerConfig: { maxActions, maxPlanningTurns: 20, previousStepCount: 0 },
+    }),
+    makeStepContext({ stepInstruction: 'Export the report' }),
+  )
+}
+
+describe('C436-OPERATION-EVIDENCE verifier input and availability', () => {
+  it("the verifier receives the step's accumulated operation evidence", async () => {
+    const calls: unknown[][] = []
+    const adapter = makeAdapter({
+      executeResults: [
+        { success: true, metadata: { download: [REPORT] } },
+        { success: true, metadata: { download: [SECOND] } },
+      ],
+    })
+    const result = await runWith(adapter, recordingVerifier(calls, true))
+
+    expect(result.status).toBe('passed')
+    expect(calls).toHaveLength(1)
+    expect(calls[0]![9]).toEqual({
+      downloads: [{ ...REPORT, suggestedFilename: 'report-[MASKED].csv' }, SECOND],
+    })
+  })
+
+  it('a step with no operation evidence passes no trailing verifier argument', async () => {
+    const calls: unknown[][] = []
+    await runWith(makeAdapter(), recordingVerifier(calls, true))
+    expect(calls[0]![9]).toBeUndefined()
+  })
+
+  it('buildVerificationPrompt renders an Operation evidence section only when evidence exists', () => {
+    const screen = makeScreenState()
+    const action: Action = { type: 'click', ref: 'e1' } as Action
+    const evidence: OperationEvidence = { downloads: [SECOND] }
+    const without = buildVerificationPrompt('Export the report', screen, screen, action)
+    const withNone = buildVerificationPrompt('Export the report', screen, screen, action, false, undefined, undefined, undefined, undefined)
+    const withEvidence = buildVerificationPrompt('Export the report', screen, screen, action, false, undefined, undefined, undefined, evidence)
+
+    expect(withNone).toBe(without)
+    expect(without).not.toContain('Operation evidence')
+    expect(withEvidence.startsWith(without)).toBe(true)
+    expect(withEvidence.slice(without.length)).toBe([
+      '',
+      'Operation evidence from the actions taken in this step:',
+      APP_OBSERVED_DATA_OPEN,
+      renderOperationEvidence(evidence),
+      APP_OBSERVED_DATA_CLOSE,
+    ].join('\n'))
+  })
+
+  it('an adapter without capture support records operationCapture unavailable with its reason', async () => {
+    const plain = await runWith(makeAdapter(), recordingVerifier([], true))
+    expect(plain.evidence!.operationCapture).toEqual({
+      download: 'unavailable',
+      clipboard: 'unavailable',
+      reason: 'platform',
+    })
+
+    for (const browser of ['firefox', 'webkit']) {
+      const unsupported = withSupport(makeAdapter(), { download: false, clipboard: false, reason: browser })
+      const result = await runWith(unsupported, recordingVerifier([], true))
+      expect(result.evidence!.operationCapture).toEqual({
+        download: 'unavailable',
+        clipboard: 'unavailable',
+        reason: browser,
+      })
+    }
+  })
+
+  it('a Chromium web adapter records both captures available', async () => {
+    const chromium = withSupport(makeAdapter(), { download: true, clipboard: true })
+    const result = await runWith(chromium, recordingVerifier([], true))
+    expect(result.evidence!.operationCapture).toEqual({ download: 'available', clipboard: 'available' })
+  })
+
+  it('unavailable evidence never makes a step pass', async () => {
+    const calls: unknown[][] = []
+    const result = await runWith(makeAdapter(), recordingVerifier(calls, false), 4)
+
+    expect(result.status).not.toBe('passed')
+    expect(result.evidence!.operationCapture?.download).toBe('unavailable')
+    expect(calls.length).toBeGreaterThan(0)
+    expect(calls.every((args) => args[9] === undefined)).toBe(true)
+    expect(result.evidence!.verifierVerdict.pass).toBe(false)
   })
 })
