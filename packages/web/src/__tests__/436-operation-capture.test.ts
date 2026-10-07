@@ -11,6 +11,7 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { chromium, firefox, webkit } from 'playwright-core'
 import type { Download } from 'playwright-core'
 import type { ActionResult, RecordingCapability } from '@vostride/agent-qa-runner'
 import { screenIdentityHash } from '@vostride/agent-qa-schema'
@@ -56,9 +57,36 @@ const CLIPBOARD_PAGE = `<!DOCTYPE html>
   <h1>Order ORDER-4471</h1>
   <button id="write-text" onclick="navigator.clipboard.writeText('ORDER-4471')">Copy order number</button>
   <button id="nothing">Do nothing</button>
+  <button id="exec-copy" onclick="copyThroughHandler('INV-2026-0042', false)">Copy invoice number</button>
+  <button id="stopped-copy" onclick="copyThroughHandler('TRACK-77-ZZ', true)">Copy tracking code</button>
+  <button id="select-copy" onclick="copyBySelection('https://shop.test/orders/42')">Copy order link</button>
+  <label>Coupon <input id="coupon"></label>
+  <script>
+    function copyThroughHandler(text, stop) {
+      document.addEventListener('copy', (event) => {
+        event.clipboardData.setData('text/plain', text)
+        event.preventDefault()
+        if (stop) event.stopPropagation()
+      }, { once: true })
+      document.execCommand('copy')
+    }
+    function copyBySelection(text) {
+      const area = document.createElement('textarea')
+      area.value = text
+      area.setAttribute('readonly', '')
+      area.style.position = 'fixed'
+      area.style.left = '-9999px'
+      document.body.append(area)
+      area.select()
+      document.execCommand('copy')
+      area.remove()
+    }
+  </script>
 </body>
 </html>
 `
+
+const INSECURE_ORIGIN = 'http://fixture.test'
 
 let server: Server
 let baseUrl: string
@@ -382,5 +410,94 @@ describe('C436-CLIPBOARD-CAPTURE', () => {
     expect(clipboardOf(result)?.[0]?.readBack).toBe('matched')
     expect(await permission(web, 'clipboard-read')).not.toBe('granted')
     expect(await permission(web, 'clipboard-write')).toBe('granted')
+  }, 60_000)
+})
+
+describe('C436-CLIPBOARD-CAPTURE copy events and exclusions', () => {
+  afterEach(() => { vi.restoreAllMocks() })
+
+  it('an execCommand copy is captured from the copy event', async () => {
+    const web = await open(undefined, undefined, 'clipboard')
+    const result = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Copy invoice number') })
+
+    expect(clipboardOf(result)).toEqual([{ source: 'copy-event', text: 'INV-2026-0042', readBack: 'matched' }])
+  }, 60_000)
+
+  it('a copy handler that stops propagation is still captured', async () => {
+    const web = await open(undefined, undefined, 'clipboard')
+    const result = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Copy tracking code') })
+
+    expect(clipboardOf(result)?.[0]?.text).toBe('TRACK-77-ZZ')
+    expect(clipboardOf(result)).toEqual([{ source: 'copy-event', text: 'TRACK-77-ZZ', readBack: 'matched' }])
+  }, 60_000)
+
+  it('a select-and-execCommand copy is captured from the selection', async () => {
+    const web = await open(undefined, undefined, 'clipboard')
+    const result = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Copy order link') })
+
+    expect(clipboardOf(result)?.[0]?.text).toBe('https://shop.test/orders/42')
+    expect(clipboardOf(result)).toEqual([
+      { source: 'copy-event', text: 'https://shop.test/orders/42', readBack: 'matched' },
+    ])
+  }, 60_000)
+
+  it("agent-qa's own copy action records no app clipboard evidence", async () => {
+    const web = await open(undefined, undefined, 'clipboard')
+    const ref = await refFor(web, 'heading', 'Order ORDER-4471')
+    const seen = vi.spyOn(captureOf(web) as unknown as { onClipboardWrite: () => void }, 'onClipboardWrite')
+    const result = await web.execute({ type: 'copy', ref })
+
+    expect(result.success).toBe(true)
+    expect(result.data).toEqual({ copied: 'Order ORDER-4471' })
+    expect(seen).toHaveBeenCalled()
+    expect(result.metadata?.['clipboard']).toBeUndefined()
+  }, 60_000)
+
+  it("agent-qa's own paste action records none", async () => {
+    const web = await open(undefined, undefined, 'clipboard')
+    const result = await web.execute({ type: 'paste', ref: await refFor(web, 'textbox', 'Coupon'), value: 'SAVE10' })
+
+    expect(result.success).toBe(true)
+    expect(result.metadata?.['clipboard']).toBeUndefined()
+  }, 60_000)
+
+  it('a non-secure page records readBack unavailable', async () => {
+    const web = await open(undefined, undefined, 'clipboard')
+    const page = web.getPage()!
+    await page.route(`${INSECURE_ORIGIN}/**`, (route) => route.fulfill({ contentType: 'text/html', body: CLIPBOARD_PAGE }))
+    await page.goto(`${INSECURE_ORIGIN}/clipboard`)
+    expect(await page.evaluate('window.isSecureContext')).toBe(false)
+    const grants = vi.spyOn(page.context(), 'grantPermissions')
+
+    const copied = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Copy order link') })
+    expect(clipboardOf(copied)?.[0]?.readBack).toBe('unavailable')
+    expect(clipboardOf(copied)).toEqual([
+      { source: 'copy-event', text: 'https://shop.test/orders/42', readBack: 'unavailable' },
+    ])
+
+    const thrown = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Copy order number') })
+    expect(thrown.metadata?.['clipboard']).toBeUndefined()
+    expect(grants).not.toHaveBeenCalled()
+  }, 60_000)
+
+  it('the localhost and 127.0.0.1 fixture origins are secure contexts', async () => {
+    const web = await open(undefined, undefined, 'clipboard')
+    expect(await web.getPage()!.evaluate('window.isSecureContext')).toBe(true)
+    await web.getPage()!.goto(baseUrl.replace('localhost', '127.0.0.1') + 'clipboard')
+    expect(await web.getPage()!.evaluate('window.isSecureContext && typeof navigator.clipboard')).toBe('object')
+  }, 60_000)
+
+  it.each([['firefox', firefox], ['webkit', webkit]] as const)('%s sets up no clipboard hook', async (name, browserType) => {
+    vi.spyOn(browserType, 'launch').mockImplementation((options) => chromium.launch(options))
+    const created = new WebPlatformAdapter()
+    await created.setup({ platform: 'web', browser: { name, headless: true } })
+    adapter = created
+    await created.getPage()!.goto(baseUrl + 'clipboard')
+
+    expect(created.operationCaptureSupport).toEqual({ download: false, clipboard: false, reason: name })
+    expect(captureOf(created)).toBeNull()
+    expect(await created.getPage()!.evaluate(`typeof window[${JSON.stringify('__agentQaAppClipboardWrite')}]`)).toBe('undefined')
+    const result = await created.execute({ type: 'click', ref: await refFor(created, 'button', 'Copy invoice number') })
+    expect(result.metadata?.['clipboard']).toBeUndefined()
   }, 60_000)
 })
