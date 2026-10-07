@@ -21,6 +21,7 @@ import {
 import type {
   Action as SchemaAction,
   ActionAnnotation,
+  CompoundInputCount,
   LimitStopEvidence,
   RecordingAnnotationWitness,
   ActionResult as SchemaActionResult,
@@ -80,6 +81,8 @@ import { desiredStateSatisfied } from '../compound/idempotency.js'
 import {
   readUniqueValueMeta,
   readAssertValueOutcomeMeta,
+  readFillRereadMeta,
+  readScrollUntilVisibleMeta,
 } from '../compound/metadata.js'
 import { mintReportedValue, mintUniqueValue, defaultUniqueValueGenerator } from '../compound/dispatch-mint.js'
 import { compareAssertValue } from '../compound/assert-value.js'
@@ -162,6 +165,8 @@ export async function executeStep(
     maxActions: ports.plannerConfig?.maxActions ?? DEFAULT_PLANNER_LIMITS.maxActions,
     maxPlanningTurns: ports.plannerConfig?.maxPlanningTurns ?? DEFAULT_PLANNER_LIMITS.maxPlanningTurns,
   })
+  // 436 D-11: inner inputs of each executed compound action, keyed by its sub-action index.
+  const compoundInputs: CompoundInputCount[] = []
   const promptDate = context.promptDate ?? new Date().toISOString().slice(0, 10)
   context.promptDate = promptDate
   const verifierAuthorContext: VerifierAuthorContext | undefined =
@@ -503,7 +508,9 @@ export async function executeStep(
         ports.workingMemory.entries().map((entry) => ({ ...entry, value: maskValue(entry.value) })),
       )
     }
-    recorder.recordLimitUsage(meter.snapshot())
+    recorder.recordLimitUsage(meter.snapshot(
+      compoundInputs.filter((input) => input.subActionIndex < recorder.subActionCount),
+    ))
     // 381-41 (G-381-3): the step's {{env:NAME}} provenance pairs ride to the recorder
     // VERBATIM — deliberately NOT through maskValue (bound at line ~209), unlike the
     // workingMemory snapshot above. Masking would transform email-valued and
@@ -1381,6 +1388,7 @@ export async function executeStep(
       cacheBypass = true
       const av = action as { claim?: unknown; consensus?: unknown; video?: unknown; effort?: unknown }
       const claim = String(av.claim ?? '')
+      meter.recordJudgeCall()
       const judgment = await withAbort(
         ports.verifier.judgeClaim(claim, screenState, { abortSignal: ports.abortSignal, screenshot: context.screenshot }),
         ports.abortSignal,
@@ -1407,6 +1415,7 @@ export async function executeStep(
       const av = action as { query?: unknown; scope?: unknown }
       const query = String(av.query ?? '')
       const schema = (normalizedAction as { schema?: unknown }).schema
+      meter.recordJudgeCall()
       const extracted = await withAbort(
         ports.verifier.extractData(query, screenState, { schema, abortSignal: ports.abortSignal, screenshot: context.screenshot }),
         ports.abortSignal,
@@ -1531,7 +1540,13 @@ export async function executeStep(
     // — LOOP-02), bounded by the action limit and stepTimeout. The heal trail is
     // recorded in the sub-action's grounding block only; StepEvidence.selfHeal stays reserved
     // for replan-based heals (D-11). On no-match/ambiguous it falls through to the replan path.
-    if (execError !== undefined && (gateForcedRefMiss || isRefResolutionFailure(execError))) {
+    // 436 D-07: the heal re-execution is a counted action; at the limit it is skipped and the
+    // next loop top stops the step.
+    if (
+      execError !== undefined
+      && (gateForcedRefMiss || isRefResolutionFailure(execError))
+      && !meter.actionsExhausted()
+    ) {
       let freshElements: readonly ElementInfo[] | undefined
       try {
         freshElements = (await withAbort(ports.adapter.observe({ extractDom: true }), ports.abortSignal)).elements
@@ -1544,6 +1559,7 @@ export async function executeStep(
       if (heal !== null) {
         grounding = heal.grounding
         const patched = patchRef(normalizedAction, heal.field, heal.ref)
+        meter.tryDebitAction()
         const outcome = await executeResolvedAction(patched)
         execResult = outcome.result
         execError = outcome.error
@@ -1552,6 +1568,14 @@ export async function executeStep(
         const abortAfterHeal = checkAbort()
         if (abortAfterHeal) return abortAfterHeal
       }
+    }
+
+    const scrollMeta = readScrollUntilVisibleMeta(execResult)
+    if (scrollMeta !== undefined) {
+      compoundInputs.push({ subActionIndex: recorder.subActionCount, kind: 'scroll', count: scrollMeta.swipes })
+    }
+    if (readFillRereadMeta(execResult) !== undefined) {
+      compoundInputs.push({ subActionIndex: recorder.subActionCount, kind: 'fill', count: 1 })
     }
 
     // D-09 policy-denied terminal failure. A gate deny at ANY of the five dispatch paths ends the
@@ -1749,6 +1773,7 @@ export async function executeStep(
       if (abortBeforeVerify) return abortBeforeVerify
 
       let verifyResult
+      meter.recordVerifierCall()
       try {
         verifyResult = await withAbort(
           ports.verifier.verify(

@@ -441,6 +441,11 @@ export class EvidenceRecorder {
     })
   }
 
+  /** The number of sub-actions recorded so far; the next recordSubAction returns this index. */
+  get subActionCount(): number {
+    return this.subActions.length
+  }
+
   /** Append a §A8 SubActionEvidence. Returns its index (for attachStateAfter). */
   recordSubAction(input: RecordSubActionInput): number {
     const result: RecordedActionResult = toRecordedActionResult(input.result)
