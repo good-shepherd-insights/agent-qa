@@ -51,6 +51,9 @@
 // `--all` direct run's second member is skipped with events rather than dropped. Only the
 // single-test stdout and the `--all` stdout and eventTypes fields changed, by hand; the historical
 // capture was not regenerated, and stderr and exit codes are unchanged.
+// Phase 436-09 D-06 prints the effective planner limits before the first test of each run, so
+// the three stdout fields gained `Limits: 30 actions, 30 planning turns per step` ahead of each
+// `Running N test(s)...` line, by hand; the historical capture was not regenerated.
 // 418 CR-02 additionally requires one strict originating-run canary-policy.json per
 // produced handoff. The capture helper checks its exact contents and run identity;
 // the inventory below adds its explicit cardinality, without filtering the file.
