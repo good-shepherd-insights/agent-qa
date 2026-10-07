@@ -6,10 +6,16 @@ import { describe, expect, it } from 'vitest'
 
 import { AgentQaConfigSchema } from '../schema/config-schema.js'
 import { PlannerConfigSchema } from '../schema/primitives.js'
+import { RETIRED_MAX_SUB_ACTIONS_MESSAGE } from '../schema/retired-keys.js'
 import { SuiteDefinitionSchema } from '../schema/suite-schema.js'
 import { TestDefinitionSchema } from '../schema/test-schema.js'
 
 const LIMIT_KEYS = ['maxActions', 'maxPlanningTurns'] as const
+const OLD_KEY = 'maxSubActions'
+
+function retiredIssues(issues: readonly { path: PropertyKey[]; message: string }[] | undefined) {
+  return (issues ?? []).filter((issue) => issue.message === RETIRED_MAX_SUB_ACTIONS_MESSAGE)
+}
 
 function projectConfig(planner: Record<string, unknown> | undefined) {
   return {
@@ -119,5 +125,60 @@ describe('C436-PLANNER-LIMITS-CONFIG', () => {
     expect(resolvePlannerLimits(project, suite, test)).toEqual({ maxActions: 400, maxPlanningTurns: 80 })
     expect(resolvePlannerLimits(project, suite)).toEqual({ maxActions: 10, maxPlanningTurns: 80 })
     expect(resolvePlannerLimits(project)).toEqual({ maxActions: 10, maxPlanningTurns: 12 })
+  })
+
+  // 2026-10-07 (436-08, D-05, reconciliation 4): the hard cut. No alias, migration or fallback.
+  it('a project config with the old key fails with the plain message', () => {
+    const result = AgentQaConfigSchema.safeParse(projectConfig({ [OLD_KEY]: 10, previousStepCount: 5 }))
+    expect(result.success).toBe(false)
+    const issues = retiredIssues(result.error?.issues)
+    expect(issues, JSON.stringify(result.error?.issues)).toHaveLength(1)
+    expect(issues[0]!.path).toEqual(['use', 'planner', OLD_KEY])
+    expect(RETIRED_MAX_SUB_ACTIONS_MESSAGE).toContain('use.planner.maxActions (default 30)')
+    expect(RETIRED_MAX_SUB_ACTIONS_MESSAGE).toContain('use.planner.maxPlanningTurns (default 30)')
+    expect(RETIRED_MAX_SUB_ACTIONS_MESSAGE).toContain('refilling iteration count')
+  })
+
+  it("a test file's use override with the old key fails with the same message", () => {
+    const result = TestDefinitionSchema.safeParse(testDefinition({ [OLD_KEY]: 10 }))
+    expect(result.success).toBe(false)
+    expect(result.error?.issues.map((issue) => issue.message)).toEqual([RETIRED_MAX_SUB_ACTIONS_MESSAGE])
+    expect(result.error?.issues[0]!.path).toEqual(['use', 'planner', OLD_KEY])
+  })
+
+  it("a suite file's use override with the old key fails with the same message", () => {
+    const result = SuiteDefinitionSchema.safeParse(suiteDefinition({ [OLD_KEY]: 10 }))
+    expect(result.success).toBe(false)
+    expect(result.error?.issues.map((issue) => issue.message)).toEqual([RETIRED_MAX_SUB_ACTIONS_MESSAGE])
+    expect(result.error?.issues[0]!.path).toEqual(['use', 'planner', OLD_KEY])
+  })
+
+  it('the old key with the new pair beside it still fails', () => {
+    const both = { maxActions: 12, maxPlanningTurns: 12, [OLD_KEY]: 10 }
+    const config = AgentQaConfigSchema.safeParse(projectConfig({ ...both, previousStepCount: 5 }))
+    expect(config.success).toBe(false)
+    expect(retiredIssues(config.error?.issues)).toHaveLength(1)
+
+    const test = TestDefinitionSchema.safeParse(testDefinition(both))
+    expect(test.success).toBe(false)
+    expect(retiredIssues(test.error?.issues)).toHaveLength(1)
+
+    const suite = SuiteDefinitionSchema.safeParse(suiteDefinition(both))
+    expect(suite.success).toBe(false)
+    expect(retiredIssues(suite.error?.issues)).toHaveLength(1)
+
+    expect(PlannerConfigSchema.safeParse({ [OLD_KEY]: 10, previousStepCount: 5 }).success).toBe(false)
+  })
+
+  it('the new pair alone parses everywhere', () => {
+    const pair = { maxActions: 7, maxPlanningTurns: 9 }
+    const config = AgentQaConfigSchema.safeParse(projectConfig({ ...pair, previousStepCount: 5 }))
+    expect(config.success, JSON.stringify(config.error?.issues)).toBe(true)
+    const test = TestDefinitionSchema.safeParse(testDefinition(pair))
+    expect(test.success, JSON.stringify(test.error?.issues)).toBe(true)
+    expect(test.data?.use?.planner).toEqual(pair)
+    const suite = SuiteDefinitionSchema.safeParse(suiteDefinition(pair))
+    expect(suite.success, JSON.stringify(suite.error?.issues)).toBe(true)
+    expect(suite.data?.use?.planner).toEqual(pair)
   })
 })

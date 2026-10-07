@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { isCanonicalHookId, isCanonicalSuiteId, isCanonicalTestId } from '@vostride/agent-qa-ids'
+import { retiredUseKeyScan } from './retired-keys.js'
 import { UseOverrideSchema } from './use-schema.js'
 
 export const SuiteTestEntrySchema = z.object({
@@ -23,5 +24,5 @@ export const SuiteDefinitionSchema = z.object({
   setup: z.array(HookIdSchema).optional(),
   teardown: z.array(HookIdSchema).optional(),
   tests: z.array(SuiteTestEntrySchema).min(1),
-  use: UseOverrideSchema.optional(),
+  use: retiredUseKeyScan.pipe(UseOverrideSchema).optional(),
 }).strict()

@@ -470,7 +470,8 @@ describe('C432-RUNTIME-SETS: the 432-42 leftovers are absent and the retained ne
     const map = exported('CONFIG_MASKING_MAP') as Record<string, string>
     expect(Object.values(map).filter((maskingClass) => maskingClass === 'env-var-name')).toEqual([])
     // 2026-10-07 (436-07, D-02): the two per-step planner limits raise the leaf count from 92 to 94.
-    expect(Object.keys(map).length, 'non-vacuity: the leaf map is the real one').toBe(94)
+    // 2026-10-07 (436-08, D-05): the old refilling planner key's row is cut, so 93.
+    expect(Object.keys(map).length, 'non-vacuity: the leaf map is the real one').toBe(93)
   })
 })
 

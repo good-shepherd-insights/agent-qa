@@ -28,7 +28,8 @@ export const MASKING_CLASSES = [
  * the stdio config-write switch are deleted with their keys, so no schema leaf is classed
  * `env-var-name` today (the class stays in the shared vocabulary, which the dashboard and the CLI
  * masker still handle). 2026-10-07 (436-07, D-02): the two per-step planner limits
- * `use.planner.maxActions` and `use.planner.maxPlanningTurns` are added as plain leaves; 94 leaves remain.
+ * `use.planner.maxActions` and `use.planner.maxPlanningTurns` are added as plain leaves.
+ * 2026-10-07 (436-08, D-05): the old refilling planner key's row is deleted with its leaf; 93 leaves remain.
  */
 export const CONFIG_MASKING_MAP = Object.freeze({
   'allowProduction': 'plain',
@@ -113,7 +114,6 @@ export const CONFIG_MASKING_MAP = Object.freeze({
   'use.parallel': 'plain',
   'use.planner.maxActions': 'plain',
   'use.planner.maxPlanningTurns': 'plain',
-  'use.planner.maxSubActions': 'plain',
   'use.planner.previousStepCount': 'plain',
   'use.timeout.navigation': 'plain',
   'use.timeout.step': 'plain',

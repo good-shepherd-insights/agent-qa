@@ -103,10 +103,11 @@ describe('config schema leaves', () => {
   // by hand; the map/schema equality above is what makes a leaf without a masking class red here.
   // 2026-10-07 (436-07, D-02): the two per-step planner limits add two leaves (92 to 94); the cell
   // name no longer carries the count, so a later leaf change moves only the number.
+  // 2026-10-07 (436-08, D-05): the old refilling planner key's leaf is cut (94 to 93) and listed retired.
   it('C432-CONFIG-LEAVES: exactly the strict leaves, each classified, none of them retired', () => {
     const walked = schemaLeaves()
-    expect(walked).toHaveLength(94)
-    expect(CONFIG_SCHEMA_LEAVES).toHaveLength(94)
+    expect(walked).toHaveLength(93)
+    expect(CONFIG_SCHEMA_LEAVES).toHaveLength(93)
     expect(walked.filter((leaf) => leaf.startsWith('use.planner.max'))).toEqual(
       expect.arrayContaining(['use.planner.maxActions', 'use.planner.maxPlanningTurns']),
     )
@@ -126,6 +127,7 @@ describe('config schema leaves', () => {
       'services.mcp.tokens[].name',
       'services.mcp.tokens[].scopes[]',
       'services.mcp.tokens[].tokenEnvVar',
+      'use.planner.maxSubActions',
     ]
     expect(retired.filter(leaf => walked.includes(leaf))).toEqual([])
     expect(retired.filter(leaf => leaf in CONFIG_MASKING_MAP)).toEqual([])

@@ -22,8 +22,19 @@ const RETIRED_MEMORY_KEY_MESSAGES: Record<string, string> = {
   circuitBreakerThreshold: 'services.memory.circuitBreakerThreshold was removed — no circuit breaker exists',
 }
 
+// 2026-10-07 (436-08, D-05): the old refilling planner key is cut with no alias, migration or
+// fallback. The same message fires for the project config and for test and suite `use` overrides.
+export const RETIRED_MAX_SUB_ACTIONS_MESSAGE =
+  'use.planner.maxSubActions was removed in v2 — it was a refilling iteration count; set use.planner.maxActions (default 30) and use.planner.maxPlanningTurns (default 30)'
+
+const RETIRED_PLANNER_KEY = 'maxSubActions'
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function hasRetiredPlannerKey(use: unknown): boolean {
+  return isPlainObject(use) && isPlainObject(use.planner) && Object.hasOwn(use.planner, RETIRED_PLANNER_KEY)
 }
 
 export const retiredKeyScan = z.any().superRefine((value, ctx) => {
@@ -55,6 +66,25 @@ export const retiredKeyScan = z.any().superRefine((value, ctx) => {
       code: z.ZodIssueCode.custom,
       path: ['workspace', 'agentRules'],
       message: 'workspace.agentRules was removed in v2 — rules dissolve into agent-qa-knowledge/policies/<scope>.md files (served from Phase 380)',
+    })
+  }
+
+  if (hasRetiredPlannerKey(value.use)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['use', 'planner', RETIRED_PLANNER_KEY],
+      message: RETIRED_MAX_SUB_ACTIONS_MESSAGE,
+    })
+  }
+})
+
+// The pre-stage for a test or suite `use` override, for the same strict-parse reason as above.
+export const retiredUseKeyScan = z.any().superRefine((value, ctx) => {
+  if (hasRetiredPlannerKey(value)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['planner', RETIRED_PLANNER_KEY],
+      message: RETIRED_MAX_SUB_ACTIONS_MESSAGE,
     })
   }
 })
