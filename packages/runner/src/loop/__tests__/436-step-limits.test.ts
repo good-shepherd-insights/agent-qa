@@ -3,15 +3,22 @@
 import { describe, expect, it } from 'vitest'
 import { createMaskingContext } from '@vostride/agent-qa-safety'
 import {
+  asRecordId,
   DEFAULT_PLANNER_LIMITS,
   formatLimitStopReason,
   resolvePlannerLimits,
+  serializeProcedureBody,
 } from '@vostride/agent-qa-schema'
+import type { ProcedureBodyPayload, ScreenState, StepLimitUsage } from '@vostride/agent-qa-schema'
+import type { ActionPlanCache, CacheablePlannedAction, CachedPlanValue } from '../../cache/port.js'
+import type { KnowledgeHintReader } from '../../knowledge-hint-reader.js'
 import type { Action, ActionResult, PlatformAdapter } from '../../platform.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import { executeStep } from '../index.js'
 import type { LoopPorts } from '../ports.js'
+import type { StepLimitMeter } from '../step-limits.js'
 import type { ActionPlan, Planner, VerificationResult, Verifier } from '../types.js'
+import { noCautions, servedBrief } from './fixtures/served-trace.js'
 import { makeActionPlan, makeAdapter, makeStepContext } from './loop-harness.js'
 
 function ports(overrides: Partial<LoopPorts> & Pick<LoopPorts, 'adapter' | 'planner'>): LoopPorts {
@@ -192,5 +199,328 @@ describe('C436-STEP-LIMITS', () => {
       expect(formatLimitStopReason('actions', 30, 30)).toBe('Stopped: action limit reached — 30 of 30 actions used')
       expect(formatLimitStopReason('planning-turns', 30, 30)).toBe('Stopped: planning-turn limit reached — 30 of 30 planner calls used')
     })
+  })
+})
+
+const UNKNOWN_REF = 'Unknown ref "e9". Available refs: e1, e2'
+const REJECT: VerificationResult = { success: false, reasoning: 'Not done yet', isAppError: false }
+const ACCEPT: VerificationResult = { success: true, reasoning: 'Done', isAppError: false }
+const CACHED_LOGIN: CachedPlanValue = {
+  plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
+  groundedLocator: [{ role: 'button', nameNormalized: 'log in', ordinal: 0 }],
+  verificationOutcome: 'passed',
+}
+
+function scriptedAdapter(
+  results: ActionResult[],
+  screen: () => ScreenState = () => makeScreenState(),
+): PlatformAdapter & { executed: Action[] } {
+  const executed: Action[] = []
+  return {
+    executed,
+    platform: 'web',
+    async setup() {},
+    async cleanup() {},
+    async observe() { return screen() },
+    async execute(action: Action) {
+      executed.push(action)
+      return results[Math.min(executed.length - 1, results.length - 1)]
+    },
+  }
+}
+
+function judgingVerifier(): Verifier & { verifyCalls: number; judgeCalls: number } {
+  const verifier = {
+    verifyCalls: 0,
+    judgeCalls: 0,
+    async verify() {
+      verifier.verifyCalls++
+      return { verification: REJECT }
+    },
+    async judgeClaim() {
+      verifier.judgeCalls++
+      return { verdict: true, rationale: 'Visible' }
+    },
+    async extractData() {
+      verifier.judgeCalls++
+      return { title: 'Home' }
+    },
+  }
+  return verifier
+}
+
+function alwaysCache(value: CachedPlanValue): ActionPlanCache {
+  return { async get() { return value }, async set() {}, async invalidate() {} }
+}
+
+function procedureReader(): KnowledgeHintReader {
+  const id = asRecordId('proc-login')
+  const flowAnchor = { t: 'flow', name: 'login' } as const
+  const payload: ProcedureBodyPayload = {
+    schemaVersion: 1,
+    parameters: [],
+    steps: [{
+      instruction: 'Click the Log in button',
+      action: { type: 'click', targets: { ref: { role: 'button', nameNormalized: 'log in' } }, values: {} },
+      guard: { target: { role: 'button', nameNormalized: 'log in' }, pageAnchor: { t: 'page', route: 'https://example.test/login' } },
+    }],
+    successAssertion: 'Logged in',
+  }
+  return {
+    getRunBrief: () => servedBrief({ tiers: { L0: '', L1: '', L2: '' }, lines: [], truncation: '', admissions: [] }),
+    search: () => [],
+    read: (recordId) => ({
+      id: recordId,
+      title: 'Login procedure',
+      body: serializeProcedureBody(payload),
+      anchors: [flowAnchor],
+      evidenceDigest: 'digest',
+      relations: [],
+    }),
+    getCautions: () => noCautions(),
+    getProcedure: () => ({
+      id,
+      flowAnchor,
+      confidence: 0.9,
+      authoringModelTier: 'full',
+      parameterSchema: [],
+      replayRecommendation: 'replay',
+    }),
+    emitCanaryOutcome: () => {},
+  }
+}
+
+function expectActionStop(result: Awaited<ReturnType<typeof executeStep>>, n: number): void {
+  expect(result.status).toBe('failed')
+  expect(result.error).toBe(formatLimitStopReason('actions', n, n))
+  expect(result.evidence?.limitStop).toMatchObject({ limit: 'actions', configured: n, used: n })
+  expect(result.evidence?.limitUsage?.actionsUsed).toBe(n)
+  expect(result.evidence?.subActions).toHaveLength(n)
+}
+
+describe('C436-ACTION-PATHS', () => {
+  it('live', async () => {
+    const adapter = scriptedAdapter([{ success: true }])
+    const planner = scriptedPlanner([makeActionPlan({ stepComplete: false })])
+    const result = await executeStep('Keep clicking', ports({ adapter, planner, plannerConfig: limits(3) }), makeStepContext())
+    expectActionStop(result, 3)
+    expect(adapter.executed).toHaveLength(3)
+  })
+
+  it('retry after an execution failure', async () => {
+    const adapter = scriptedAdapter([{ success: false, error: 'Element is not interactable' }])
+    const planner = scriptedPlanner([makeActionPlan({ stepComplete: true })])
+    const result = await executeStep('Click Log in', ports({ adapter, planner, plannerConfig: limits(3) }), makeStepContext())
+    expectActionStop(result, 3)
+    expect(adapter.executed).toHaveLength(3)
+  })
+
+  it('recovery after a verifier rejection', async () => {
+    const adapter = scriptedAdapter([{ success: true }])
+    const planner = scriptedPlanner([makeActionPlan({ stepComplete: true })])
+    const verifier = scriptedVerifier([REJECT])
+    const result = await executeStep('Log in', ports({ adapter, planner, verifier, plannerConfig: limits(3) }), makeStepContext())
+    expectActionStop(result, 3)
+    expect(verifier.calls).toBe(3)
+  })
+
+  it('cached hits (zero planner calls)', async () => {
+    const adapter = scriptedAdapter([{ success: true }])
+    const planner = scriptedPlanner([makeActionPlan()])
+    const result = await executeStep(
+      'Click Log in',
+      ports({ adapter, planner, verifier: scriptedVerifier([REJECT]), cache: alwaysCache(CACHED_LOGIN), plannerConfig: limits(3) }),
+      makeStepContext(),
+    )
+    expectActionStop(result, 3)
+    expect(planner.calls).toBe(0)
+    expect(result.evidence?.limitUsage?.planningCallsUsed).toBe(0)
+  })
+
+  it('procedure replay (zero planner calls)', async () => {
+    const adapter = scriptedAdapter([{ success: true }])
+    const planner = scriptedPlanner([makeActionPlan()])
+    const result = await executeStep(
+      'Log in as the saved user',
+      ports({ adapter, planner, verifier: scriptedVerifier([REJECT]), knowledgeReader: procedureReader(), plannerConfig: limits(1) }),
+      makeStepContext({ testName: 'login' }),
+    )
+    expectActionStop(result, 1)
+    expect(planner.calls).toBe(0)
+    expect(result.evidence?.planSource).toMatchObject({ kind: 'procedure-replay' })
+  })
+
+  it('reportValue and uniqueValue mints', async () => {
+    for (const action of [{ type: 'reportValue', value: '42' }, { type: 'uniqueValue', prefix: 'user' }]) {
+      const adapter = scriptedAdapter([{ success: true }])
+      const planner = scriptedPlanner([makeActionPlan({ action, stepComplete: false })])
+      const result = await executeStep('Report it', ports({ adapter, planner, plannerConfig: limits(2) }), makeStepContext())
+      expectActionStop(result, 2)
+      expect(adapter.executed).toHaveLength(0)
+    }
+  })
+
+  it('assertAI and extractAI judges', async () => {
+    for (const action of [
+      { type: 'assertAI', claim: 'the banner is visible', mode: 'multimodal', effort: 'medium', consensus: 1 },
+      { type: 'extractAI', query: 'the page title' },
+    ]) {
+      const verifier = judgingVerifier()
+      const planner = scriptedPlanner([makeActionPlan({ action, stepComplete: false })])
+      const result = await executeStep('Judge it', ports({ adapter: scriptedAdapter([{ success: true }]), planner, verifier, plannerConfig: limits(2) }), makeStepContext())
+      expectActionStop(result, 2)
+      expect(verifier.judgeCalls).toBe(2)
+    }
+  })
+
+  it('assertValue', async () => {
+    const adapter = scriptedAdapter([{ success: true, data: 'https://example.test/home' }])
+    const planner = scriptedPlanner([makeActionPlan({ action: { type: 'assertValue', source: 'url', op: 'contains', expected: 'home' }, stepComplete: false })])
+    const result = await executeStep('Check the url', ports({ adapter, planner, plannerConfig: limits(2) }), makeStepContext())
+    expectActionStop(result, 2)
+    expect(adapter.executed).toHaveLength(2)
+  })
+
+  it('storageState', async () => {
+    const adapter = scriptedAdapter([{ success: true, data: { cookies: [] } }])
+    const saved: string[] = []
+    const storageState = {
+      async save(name: string) { saved.push(name); return { name, fingerprint: 'fp' } },
+      async load() { return undefined },
+    }
+    const planner = scriptedPlanner([makeActionPlan({ action: { type: 'storageState', op: 'save', name: 'authed' }, stepComplete: false })])
+    const result = await executeStep('Save the session', ports({ adapter, planner, storageState, plannerConfig: limits(2) }), makeStepContext())
+    expectActionStop(result, 2)
+    expect(saved).toEqual(['authed', 'authed'])
+  })
+
+  it('setVariable', async () => {
+    const set: string[] = []
+    const planner = scriptedPlanner([makeActionPlan({ action: { type: 'setVariable', name: 'ORDER_ID', value: '7' }, stepComplete: false })])
+    const result = await executeStep(
+      'Remember the order',
+      ports({ adapter: scriptedAdapter([{ success: true }]), planner, onSetVariable: (name) => { set.push(name) }, plannerConfig: limits(2) }),
+      makeStepContext(),
+    )
+    expectActionStop(result, 2)
+    expect(set).toEqual(['ORDER_ID', 'ORDER_ID'])
+  })
+
+  it('the idempotent no-op', async () => {
+    const base = makeScreenState()
+    const checked = (): ScreenState => ({
+      ...base,
+      elements: base.elements.map((el) => el.ref === 'e1' ? { ...el, role: 'checkbox', state: { ...el.state, checked: true } } : el),
+    })
+    const adapter = scriptedAdapter([{ success: true }], checked)
+    const planner = scriptedPlanner([makeActionPlan({ action: { type: 'tap', ref: 'e1', desiredState: 'checked' }, stepComplete: false })])
+    const result = await executeStep('Ensure it is on', ports({ adapter, planner, plannerConfig: limits(2) }), makeStepContext())
+    expectActionStop(result, 2)
+    expect(adapter.executed).toHaveLength(0)
+    expect(result.evidence?.subActions[0]?.result.metadata?.['idempotentNoop']).toBeDefined()
+  })
+
+  it('heal re-execution is a second debit in the same iteration', async () => {
+    const adapter = scriptedAdapter([{ success: false, error: UNKNOWN_REF }, { success: true }])
+    const planner = scriptedPlanner([makeActionPlan({ stepComplete: true })])
+    const result = await executeStep('Click Log in', ports({ adapter, planner, plannerConfig: limits(5) }), makeStepContext())
+    expect(result.status).toBe('passed')
+    expect(planner.calls).toBe(1)
+    expect(adapter.executed).toHaveLength(2)
+    expect(result.evidence?.limitUsage).toMatchObject({ actionsUsed: 2, planningCallsUsed: 1 })
+  })
+
+  it('a heal the limit refuses is skipped and the step stops at the next loop top', async () => {
+    const adapter = scriptedAdapter([{ success: false, error: UNKNOWN_REF }, { success: true }])
+    const planner = scriptedPlanner([makeActionPlan({ stepComplete: true })])
+    const result = await executeStep('Click Log in', ports({ adapter, planner, plannerConfig: limits(1) }), makeStepContext())
+    expect(adapter.executed).toHaveLength(1)
+    expect(planner.calls).toBe(1)
+    expectActionStop(result, 1)
+    expect(result.evidence?.subActions[0]?.result.success).toBe(false)
+  })
+
+  it('a gate-forced cache error is not debited', async () => {
+    const noRefMap = (): ScreenState => ({ ...makeScreenState(), refMap: {} })
+    const adapter = scriptedAdapter([{ success: true }], noRefMap)
+    const planner = scriptedPlanner([makeActionPlan()])
+    const result = await executeStep(
+      'Click Log in',
+      ports({ adapter, planner, cache: alwaysCache(CACHED_LOGIN), plannerConfig: limits(5) }),
+      makeStepContext(),
+    )
+    expect(result.status).toBe('passed')
+    expect(planner.calls).toBe(0)
+    expect(adapter.executed).toHaveLength(1)
+    expect(result.evidence?.limitUsage?.actionsUsed).toBe(adapter.executed.length)
+  })
+
+  it('verifier and judge calls are recorded and not debited', async () => {
+    const verifier = judgingVerifier()
+    let turn = 0
+    const planner: Planner = {
+      async plan() {
+        turn++
+        if (turn === 1) return { plan: makeActionPlan({ action: { type: 'assertAI', claim: 'banner', mode: 'multimodal', effort: 'medium', consensus: 1 }, stepComplete: false }) }
+        if (turn === 2) return { plan: makeActionPlan({ action: { type: 'extractAI', query: 'title' }, stepComplete: false }) }
+        return { plan: makeActionPlan({ stepComplete: true }) }
+      },
+    }
+    const result = await executeStep('Check and log in', ports({ adapter: scriptedAdapter([{ success: true }]), planner, verifier, plannerConfig: limits(4) }), makeStepContext())
+    expect(verifier.verifyCalls).toBe(2)
+    expect(verifier.judgeCalls).toBe(2)
+    expect(result.evidence?.limitUsage).toMatchObject({
+      actionsUsed: 4,
+      planningCallsUsed: 4,
+      verifierCalls: 2,
+      judgeCalls: 2,
+    })
+  })
+
+  it('compound inputs are recorded per sub-action', async () => {
+    const adapter = scriptedAdapter([
+      { success: true, metadata: { scrollUntilVisible: { swipes: 4, reversedOnce: false, outcome: 'found' } } },
+      { success: true, metadata: { fillReread: { expected: 'a@b.test', actual: 'a@b.test' } } },
+    ])
+    const planner = scriptedPlanner([
+      makeActionPlan({ action: { type: 'scroll', direction: 'down' }, stepComplete: false }),
+      makeActionPlan({ action: { type: 'fill', ref: 'e1', value: 'a@b.test' }, stepComplete: true }),
+    ])
+    const result = await executeStep('Scroll and fill', ports({ adapter, planner, plannerConfig: limits(5) }), makeStepContext())
+    expect(result.status).toBe('passed')
+    expect(result.evidence?.limitUsage?.actionsUsed).toBe(2)
+    expect(result.evidence?.limitUsage?.compoundInputs).toEqual([
+      { subActionIndex: 0, kind: 'scroll', count: 4 },
+      { subActionIndex: 1, kind: 'fill', count: 1 },
+    ])
+  })
+
+  it('usage is monotonic across heal, cache and recovery', async () => {
+    const snapshots: StepLimitUsage[] = []
+    let gets = 0
+    const cache: ActionPlanCache = {
+      async get() { return gets++ === 0 ? CACHED_LOGIN : null },
+      async set() {},
+      async invalidate() {},
+    }
+    const adapter = scriptedAdapter([{ success: true }, { success: false, error: UNKNOWN_REF }, { success: true }])
+    let turn = 0
+    const planner: Planner = {
+      async plan(_step, _screen, context) {
+        snapshots.push((context.planningCallGate as StepLimitMeter).snapshot())
+        turn++
+        return { plan: makeActionPlan({ stepComplete: turn > 1 }) }
+      },
+    }
+    const verifier = scriptedVerifier([REJECT, ACCEPT])
+    const result = await executeStep('Log in', ports({ adapter, planner, verifier, cache, plannerConfig: limits(10) }), makeStepContext())
+    expect(result.status).toBe('passed')
+    snapshots.push(result.evidence!.limitUsage!)
+    expect(snapshots.map((s) => s.actionsUsed)).toEqual([1, 3, 4])
+    for (let i = 1; i < snapshots.length; i++) {
+      for (const key of ['actionsUsed', 'planningCallsUsed', 'verifierCalls', 'judgeCalls'] as const) {
+        expect(snapshots[i][key]).toBeGreaterThanOrEqual(snapshots[i - 1][key])
+      }
+    }
   })
 })
