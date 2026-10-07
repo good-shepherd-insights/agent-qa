@@ -186,7 +186,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   // 428 D-12: the labelled snapshot preview standing in for a screencast withdrawn mid-stream.
   private withdrawnSnapshot: LiveStreamCapability | null = null
   private screencastRecoveryTimer: ReturnType<typeof setTimeout> | null = null
-  // 436 D-19: download capture, Chromium only; armed around each execute().
+  // 436 D-19, D-21: download and app-clipboard capture, Chromium only; armed around each execute().
   private operationCapture: OperationCapture | null = null
   // 436 D-23: Firefox and WebKit run no capture and name themselves as the reason.
   operationCaptureSupport: OperationCaptureSupport | undefined

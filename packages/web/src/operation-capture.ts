@@ -79,10 +79,41 @@ const CLIPBOARD_HOOK = `(() => {
       return write.apply(this, arguments);
     };
   }
+  // A copy event is tracked from window's capture phase, which runs before any app handler can
+  // stop propagation, and settled once dispatch is over: a prevented copy writes what the app
+  // set (seen through setData), an unprevented one writes the selection taken at dispatch.
+  let pending = null;
+  const selected = (event) => {
+    for (const el of [event.target, document.activeElement]) {
+      if (!el || (el.tagName !== 'TEXTAREA' && el.tagName !== 'INPUT')) continue;
+      try {
+        const start = el.selectionStart, end = el.selectionEnd;
+        if (typeof start === 'number' && typeof end === 'number' && end > start) return el.value.slice(start, end);
+      } catch {}
+    }
+    const selection = document.getSelection();
+    return selection ? selection.toString() : '';
+  };
+  const settle = () => {
+    const copy = pending;
+    pending = null;
+    if (!copy) return;
+    if (!copy.event.defaultPrevented) return report('copy-event', copy.selection);
+    if (copy.set !== undefined) return report('copy-event', copy.set);
+    try { report('copy-event', copy.event.clipboardData ? copy.event.clipboardData.getData('text/plain') : ''); } catch {}
+  };
+  if (typeof DataTransfer === 'function' && typeof DataTransfer.prototype.setData === 'function') {
+    const setData = DataTransfer.prototype.setData;
+    DataTransfer.prototype.setData = function (format, data) {
+      if (pending && this === pending.event.clipboardData && /^text(\\/plain)?$/i.test(String(format))) pending.set = String(data);
+      return setData.apply(this, arguments);
+    };
+  }
   window.addEventListener('copy', (event) => {
-    if (!event.defaultPrevented || !event.clipboardData) return;
-    report('copy-event', event.clipboardData.getData('text/plain'));
-  }, false);
+    settle();
+    pending = { event, selection: selected(event), set: undefined };
+    setTimeout(settle, 0);
+  }, true);
 })();`
 
 export interface OperationCaptureOptions {
