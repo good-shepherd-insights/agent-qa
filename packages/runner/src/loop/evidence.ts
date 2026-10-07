@@ -279,6 +279,8 @@ export interface RecordSubActionInput {
    * conditionally; structural absence means no live call record was available.
    */
   callRecord?: ModelCallRecord
+  /** 436 D-22: what the action produced outside the page, already masked by the loop. */
+  operationEvidence?: SubActionEvidence['operationEvidence']
 }
 
 export class EvidenceRecorder {
@@ -461,6 +463,7 @@ export class EvidenceRecorder {
     if (input.grounding) evidence.grounding = input.grounding
     if (input.decisionScreenshotRef) evidence.decisionScreenshotRef = input.decisionScreenshotRef
     if (input.artifactRefs) evidence.artifactRefs = [...input.artifactRefs]
+    if (input.operationEvidence) evidence.operationEvidence = input.operationEvidence
     this.subActions.push(evidence)
     this.cacheFlags.push(input.cached ?? false)
     const index = this.subActions.length - 1

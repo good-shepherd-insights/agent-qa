@@ -23,6 +23,7 @@ import type {
   ActionAnnotation,
   CompoundInputCount,
   LimitStopEvidence,
+  OperationEvidence,
   RecordingAnnotationWitness,
   ActionResult as SchemaActionResult,
   Anchor,
@@ -72,7 +73,7 @@ import {
   redactSecretValue,
   resolveSecretTemplatesInValue,
 } from './secrets.js'
-import { captureServedPromptTurn, estimateTokens, hasValidStepPosition } from './prompts.js'
+import { captureServedPromptTurn, estimateTokens, hasValidStepPosition, renderOperationEvidence } from './prompts.js'
 import { EvidenceRecorder, collapseAnnotation, persistAriaEvidence, projectLegacyTrace } from './evidence.js'
 import type { RecordSubActionInput } from './evidence.js'
 import { maskToolExchanges } from './mask-exchanges.js'
@@ -83,6 +84,7 @@ import {
   readAssertValueOutcomeMeta,
   readFillRereadMeta,
   readScrollUntilVisibleMeta,
+  readDownloadMeta,
 } from '../compound/metadata.js'
 import { mintReportedValue, mintUniqueValue, defaultUniqueValueGenerator } from '../compound/dispatch-mint.js'
 import { compareAssertValue } from '../compound/assert-value.js'
@@ -133,6 +135,7 @@ const DEFAULT_SETTLE_INTERVAL_MS = 0
 const VERIFY_SETTLE_INTERVAL_MS = 500
 
 type LiveDecisionEvidence = Pick<RecordSubActionInput, 'exchanges' | 'callRecord' | 'decisionScreenshotRef'>
+type DecisionEvidence = LiveDecisionEvidence & Pick<RecordSubActionInput, 'operationEvidence'>
 
 function recordingOffsetFrom(zeroMs: number | undefined): number | undefined {
   if (zeroMs === undefined) return undefined
@@ -1578,6 +1581,19 @@ export async function executeStep(
       compoundInputs.push({ subActionIndex: recorder.subActionCount, kind: 'fill', count: 1 })
     }
 
+    // 436 D-22: download evidence rides the action that started it. The adapter's metadata key is
+    // removed from the recorded and emitted result, so only the typed, masked evidence persists
+    // (D-16), and the planner's history carries it as app-observed data.
+    const taken = takeOperationEvidence(execResult, maskValue)
+    execResult = taken.result
+    const operationEvidence = taken.evidence
+    const decisionEvidence: DecisionEvidence | undefined = operationEvidence !== undefined
+      ? { ...(liveDecisionEvidence ?? {}), operationEvidence }
+      : liveDecisionEvidence
+    const historyEvidence = operationEvidence !== undefined
+      ? { evidence: wrapAppObservedData(renderOperationEvidence(operationEvidence)) }
+      : {}
+
     // D-09 policy-denied terminal failure. A gate deny at ANY of the five dispatch paths ends the
     // step immediately, carrying the gate's audited D-16 reason (classification + remediation come
     // from the safety package; the loop adds no wording) into §A8 evidence — no replan turn, no
@@ -1592,7 +1608,7 @@ export async function executeStep(
         result: toSchemaResult(execResult),
         cached,
         grounding,
-        ...(liveDecisionEvidence ?? {}),
+        ...(decisionEvidence ?? {}),
       })
       return failure(redactSecretValue(policyDenial.reason, ports.secretRedactor))
     }
@@ -1622,7 +1638,7 @@ export async function executeStep(
         result: toSchemaResult(execResult),
         cached,
         grounding,
-        ...(liveDecisionEvidence ?? {}),
+        ...(decisionEvidence ?? {}),
       })
       context.failureContext = undefined
       pendingSelfHeal = undefined
@@ -1672,7 +1688,7 @@ export async function executeStep(
         result: toSchemaResult(execResult, annotation),
         cached,
         grounding,
-        ...(liveDecisionEvidence ?? {}),
+        ...(decisionEvidence ?? {}),
       })
 
       context.subActionHistory!.push({
@@ -1681,6 +1697,7 @@ export async function executeStep(
         result: 'failure',
         error: execError,
         data: guardActionData(execResult.data, ports.guardBlob),
+        ...historyEvidence,
       })
 
       // A failed replay of a cached plan invalidates that key and re-plans (D-13).
@@ -1729,7 +1746,7 @@ export async function executeStep(
           annotation,
           cached,
           grounding,
-          liveDecisionEvidence,
+          decisionEvidence,
         )
         void idx
         maybeRecordSelfHeal(recorder, pendingSelfHeal, reasoning, action, execResult, annotation)
@@ -1809,7 +1826,7 @@ export async function executeStep(
           annotation,
           cached,
           grounding,
-          liveDecisionEvidence,
+          decisionEvidence,
         )
         recorder.attachStateAfter(idx, afterState)
         maybeRecordSelfHeal(recorder, pendingSelfHeal, reasoning, action, execResult, annotation)
@@ -1830,7 +1847,7 @@ export async function executeStep(
           result: toSchemaResult(execResult, annotation),
           cached,
           grounding,
-          ...(liveDecisionEvidence ?? {}),
+          ...(decisionEvidence ?? {}),
         })
         return failure(`Application error: ${verifyResult.verification.reasoning}`)
       }
@@ -1869,7 +1886,7 @@ export async function executeStep(
         annotation,
         cached,
         grounding,
-        liveDecisionEvidence,
+        decisionEvidence,
       )
       recorder.attachStateAfter(failedIdx, afterState)
       context.subActionHistory!.push({
@@ -1878,6 +1895,7 @@ export async function executeStep(
         result: 'success',
         verifierRejection: verifierReasoning,
         data: guardActionData(execResult.data, ports.guardBlob),
+        ...historyEvidence,
       })
       context.failureContext = `Sub-action ${actionIndex + 1} did not accomplish the goal: ${verifierReasoning}\n` +
         `Adapt your approach — try a different element or strategy.`
@@ -1901,7 +1919,7 @@ export async function executeStep(
         annotation,
         cached,
         grounding,
-        liveDecisionEvidence,
+        decisionEvidence,
       )
       maybeRecordSelfHeal(recorder, pendingSelfHeal, reasoning, action, execResult, annotation)
       pendingSelfHeal = undefined
@@ -1924,7 +1942,7 @@ export async function executeStep(
       annotation,
       cached,
       grounding,
-      liveDecisionEvidence,
+      decisionEvidence,
     )
     maybeRecordSelfHeal(recorder, pendingSelfHeal, reasoning, action, execResult, annotation)
     pendingSelfHeal = undefined
@@ -1934,6 +1952,7 @@ export async function executeStep(
       result: 'success',
       verifierRejection: rawPlan.stepComplete ? verifierReasoning : undefined,
       data: guardActionData(execResult.data, ports.guardBlob),
+      ...historyEvidence,
     })
     // Non-completing decision — not cached (only the step-completing plan is persisted).
   }
@@ -2715,6 +2734,29 @@ function regroundFailedRef(
   return { field: entry.field, ref: match.ref, grounding }
 }
 
+function takeOperationEvidence(
+  execResult: ActionResult,
+  mask: (value: string) => string,
+): { result: ActionResult; evidence?: OperationEvidence } {
+  if (execResult.metadata === undefined || !('download' in execResult.metadata)) return { result: execResult }
+  const downloads = readDownloadMeta(execResult)
+  const { download: _download, ...metadata } = execResult.metadata
+  void _download
+  const result: ActionResult = { ...execResult }
+  if (Object.keys(metadata).length > 0) result.metadata = metadata
+  else delete result.metadata
+  if (downloads === undefined) return { result }
+  return {
+    result,
+    evidence: {
+      downloads: downloads.map((download) => ({
+        ...download,
+        suggestedFilename: mask(download.suggestedFilename),
+      })),
+    },
+  }
+}
+
 function toSchemaResult(execResult: ActionResult, annotation?: ActionAnnotation): SchemaActionResult {
   const result: SchemaActionResult = { success: execResult.success }
   if (execResult.error !== undefined) result.error = execResult.error
@@ -2751,7 +2793,7 @@ function recordSuccess(
   annotation: ActionAnnotation | undefined,
   cached: boolean,
   grounding: GroundingEvidence | undefined,
-  liveDecisionEvidence: LiveDecisionEvidence | undefined,
+  decisionEvidence: DecisionEvidence | undefined,
 ): number {
   return recorder.recordSubAction({
     plan: reasoning,
@@ -2760,7 +2802,7 @@ function recordSuccess(
     result: toSchemaResult(execResult, annotation),
     cached,
     grounding,
-    ...(liveDecisionEvidence ?? {}),
+    ...(decisionEvidence ?? {}),
   })
 }
 

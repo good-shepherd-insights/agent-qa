@@ -28,6 +28,8 @@ import { runWebFillCompound, runWebScrollCompound, webOpenAppError } from './com
 import type { RefMap } from './types.js'
 import { formatMissingBrowserError, isPlaywrightMissingBrowserError } from './browser-install-error.js'
 import { createScreencastRecording } from './recording.js'
+import { OperationCapture } from './operation-capture.js'
+import type { OperationEvidence } from '@vostride/agent-qa-schema'
 
 // Browser-context hygiene: hide framework-injected [data-agent-qa-internal] overlays
 // from the ARIA snapshot (they would otherwise get ai-mode refs and pollute the state),
@@ -55,6 +57,13 @@ interface PageLogBuffers {
   consoleDrainIndex: number
   networkDrainIndex: number
   pendingRequests: Map<string, { url: string; method: string; headers: Record<string, string>; startTime: number; postData?: string }>
+}
+
+// 436 D-22: the adapter carries the capture on metadata.download; the loop moves it onto the
+// sub-action's operationEvidence and removes the key from the recorded result (D-16).
+function withDownloadMetadata(result: ActionResult, evidence: OperationEvidence | undefined): ActionResult {
+  if (!evidence?.downloads || evidence.downloads.length === 0) return result
+  return { ...result, metadata: { ...result.metadata, download: evidence.downloads } }
 }
 
 function clickDelayOption(clickDelay?: number): { delay?: number } {
@@ -170,6 +179,8 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   // 428 D-12: the labelled snapshot preview standing in for a screencast withdrawn mid-stream.
   private withdrawnSnapshot: LiveStreamCapability | null = null
   private screencastRecoveryTimer: ReturnType<typeof setTimeout> | null = null
+  // 436 D-19: download capture, Chromium only; armed around each execute().
+  private operationCapture: OperationCapture | null = null
 
   async setup(config: PlatformConfig): Promise<void> {
     this.recordingConfig = config.recording
@@ -221,6 +232,11 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
 
     this.page = await this.context.newPage()
     this.attachLogListeners(this.page)
+
+    if (browserName === 'chromium') {
+      this.operationCapture = new OperationCapture({ completionCapMs: config.timeouts?.step })
+      this.operationCapture.attach(this.context)
+    }
   }
 
   /**
@@ -574,6 +590,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     this.browser = null
     this.context = null
     this.page = null
+    this.operationCapture = null
     this.lastRefs = {}
     this.pageLogBuffers.clear()
     this.disconnected = false
@@ -649,6 +666,22 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
       throw new Error('WebPlatformAdapter not initialized — call setup() first')
     }
 
+    const capture = this.operationCapture
+    capture?.arm(action)
+    const result = await this.executeWithErrorResult(action)
+    let evidence: OperationEvidence | undefined
+    try {
+      evidence = await capture?.collect()
+    } catch {
+      evidence = undefined
+    }
+    return withDownloadMetadata(result, evidence)
+  }
+
+  private async executeWithErrorResult(action: ActionsFor<'web'>): Promise<ActionResult> {
+    if (!this.page) {
+      throw new Error('WebPlatformAdapter not initialized — call setup() first')
+    }
     try {
       return await this.executeAction(action)
     } catch (err) {

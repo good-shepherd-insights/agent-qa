@@ -10,6 +10,7 @@
 // presence + typeof checks, undefined otherwise. FillRereadMeta fields are pinned to the
 // 358 seam — `{ expected, actual }`, both string — and MUST NOT be renamed or nested.
 
+import type { DownloadEvidence } from '@vostride/agent-qa-schema'
 import type { ActionResult } from '../platform.js'
 
 /** EXEC-01 fill re-read verdict block. Byte-pinned to the 358 oracle/classifier readers. */
@@ -252,4 +253,34 @@ export function readFillSubmitMeta(actionResult?: MetadataCarrier): FillSubmitMe
     if (reason === 'multi-line-field') return { sent, reason }
   }
   return undefined
+}
+
+// ---------------------------------------------------------------------------
+// 436 D-19/D-22: the download capture a platform adapter attached to the action that started it.
+// Keyed `download`: an ordered array, one entry per download in start order. An entry that does
+// not narrow is dropped; the whole block reads undefined when nothing narrows.
+// ---------------------------------------------------------------------------
+
+const DOWNLOAD_STATES = new Set<DownloadEvidence['state']>(['completed', 'failed', 'canceled', 'unfinished'])
+
+function readDownloadEntry(raw: unknown): DownloadEvidence | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const { suggestedFilename, extension, size, sha256, state, failure } = raw as Record<string, unknown>
+  if (typeof suggestedFilename !== 'string' || typeof extension !== 'string') return undefined
+  if (!isMember(DOWNLOAD_STATES, state)) return undefined
+  const entry: DownloadEvidence = { suggestedFilename, extension, state }
+  if (state === 'completed') {
+    if (typeof size !== 'number' || typeof sha256 !== 'string') return undefined
+    entry.size = size
+    entry.sha256 = sha256
+  }
+  if (typeof failure === 'string') entry.failure = failure
+  return entry
+}
+
+export function readDownloadMeta(actionResult?: MetadataCarrier): DownloadEvidence[] | undefined {
+  const raw = actionResult?.metadata?.['download']
+  if (!Array.isArray(raw)) return undefined
+  const entries = raw.map(readDownloadEntry).filter((entry): entry is DownloadEvidence => entry !== undefined)
+  return entries.length > 0 ? entries : undefined
 }

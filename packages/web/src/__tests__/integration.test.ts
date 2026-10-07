@@ -93,6 +93,7 @@ const mockContext = {
   addInitScript: vi.fn().mockResolvedValue(undefined),
   pages: vi.fn().mockReturnValue([mockPage]),
   grantPermissions: vi.fn().mockResolvedValue(undefined),
+  on: vi.fn(),
 }
 
 const mockBrowserCloseFn = vi.fn().mockResolvedValue(undefined)

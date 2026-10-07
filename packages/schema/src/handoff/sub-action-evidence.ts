@@ -4,6 +4,7 @@ import type { RecordedActionResult } from '../result/index'
 import type { ScreenState } from '../screen/screen-state'
 import type { GroundingEvidence } from '../screen/target-descriptor'
 import type { ModelCallRecord } from './model-call-profile'
+import type { OperationEvidence } from './operation-evidence'
 import type { LocalEffectEvidence } from './progress-evidence'
 import type { ToolExchangeEvidence } from './tool-exchange'
 
@@ -39,4 +40,9 @@ export interface SubActionEvidence {
    * on the verb class and whether the action's local intended effect was achieved.
    */
   localEffect?: LocalEffectEvidence
+  /**
+   * What this action produced outside the page (436 D-22): the downloads it started, and the
+   * clipboard writes the app made. Absent when the action produced none; values arrive masked.
+   */
+  operationEvidence?: OperationEvidence
 }

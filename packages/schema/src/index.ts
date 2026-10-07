@@ -579,6 +579,18 @@ export type {
 // 2026-10-07 (436-04, D-11..D-13): the per-step limit stop and usage.
 export type { CompoundInputCount, LimitStopEvidence, StepLimitUsage } from './handoff/index'
 export { formatLimitStopReason, LIMIT_STOP_EVIDENCE_KEYS, STEP_LIMIT_USAGE_KEYS } from './handoff/index'
+// 2026-10-07 (436-10, D-19..D-23): operation-specific evidence on the triggering action.
+export type {
+  ClipboardEvidence,
+  DownloadEvidence,
+  OperationCaptureAvailability,
+  OperationEvidence,
+} from './handoff/index'
+export {
+  CLIPBOARD_EVIDENCE_KEYS,
+  DOWNLOAD_EVIDENCE_KEYS,
+  OPERATION_CAPTURE_AVAILABILITY_KEYS,
+} from './handoff/index'
 
 // 358 working-memory vocabulary (WM-01)
 export type { WorkingMemoryEntry } from './memory/index'

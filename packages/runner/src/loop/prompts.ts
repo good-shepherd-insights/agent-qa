@@ -8,6 +8,8 @@
 import {
   asRef,
   sha256hex,
+  type DownloadEvidence,
+  type OperationEvidence,
   type ScreenState,
   type ServedPromptTurn,
 } from '@vostride/agent-qa-schema'
@@ -305,12 +307,35 @@ function appendSubActionHistory(parts: string[], context: StepContext): void {
     const reason = sub.reasoning ? ` (${sub.reasoning})` : ''
     subHistoryParts.push(`  ${sub.result === 'success' ? '✓' : '✗'} ${sub.action}${reason}${suffix}`)
     if (sub.data) subHistoryParts.push(`    Returned data: ${sub.data}`)
+    if (sub.evidence) subHistoryParts.push(`    Operation evidence: ${sub.evidence}`)
   }
 
   // 2026-10-07 (436-03): no repetition warning here; requested repetition is legitimate (HARN-01).
 
   parts.push('')
   parts.push(subHistoryParts.join('\n'))
+}
+
+function renderDownload(download: DownloadEvidence): string {
+  const extension = download.extension.length > 0 ? download.extension : 'no extension'
+  const head = `Download "${download.suggestedFilename}" (${extension}): ${download.state}`
+  if (download.state === 'completed') return `${head}, ${String(download.size)} bytes, sha256 ${download.sha256 ?? ''}`
+  if (download.state === 'unfinished') return `${head}, not finished within the time limit`
+  return download.failure ? `${head}: ${download.failure}` : head
+}
+
+/**
+ * 436 D-22: one line per piece of operation evidence. Only a 'completed' download is evidence that
+ * a download happened; the text is app-controlled, so callers wrap it as app-observed data.
+ */
+export function renderOperationEvidence(evidence: OperationEvidence): string {
+  const lines: string[] = []
+  for (const download of evidence.downloads ?? []) lines.push(renderDownload(download))
+  for (const write of evidence.clipboard ?? []) {
+    const truncated = write.truncated ? ' (truncated)' : ''
+    lines.push(`Clipboard write (${write.source}): "${write.text}"${truncated}, read back ${write.readBack}`)
+  }
+  return lines.join('\n')
 }
 
 function appendFailureContext(parts: string[], context: StepContext): void {
