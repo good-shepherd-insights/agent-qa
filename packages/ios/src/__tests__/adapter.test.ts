@@ -539,9 +539,10 @@ describe('IOSPlatformAdapter', () => {
       const result = await adapter.execute({ type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: false })
       expect(result.success).toBe(true)
 
-      // ONE ActionResult carries the compound outcome on metadata (the gesture ran; the found/
-      // no-change verdict rides metadata.scrollUntilVisible for the 358 oracle's signal-presence read).
-      expect(result.metadata?.scrollUntilVisible).toBeDefined()
+      // ONE ActionResult carries the compound outcome on metadata. iOS swipes prove nothing about
+      // movement, so a direction gesture is one swipe that stays unresolved.
+      expect(result.metadata?.scrollUntilVisible).toEqual({ swipes: 1, reversedOnce: false, outcome: 'unresolved', endedBy: 'max-swipes' })
+      expect(mockDriver._pointerAction.perform).toHaveBeenCalledTimes(1)
       // A page-sized inverted-finger swipe fired via the pointer action.
       expect(mockDriver.action).toHaveBeenCalledWith('pointer', { parameters: { pointerType: 'touch' } })
       expect(mockDriver._pointerAction.perform).toHaveBeenCalled()

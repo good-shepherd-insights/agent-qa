@@ -63,6 +63,9 @@ let mockElement: ReturnType<typeof createMockElement>
 // `mobile: listApps` returns a package-id-keyed map. Configurable per test.
 let listAppsReturn: Record<string, Record<string, unknown>>
 let listAppsThrows: boolean
+// `mobile: scrollGesture` answers, one per call; the last repeats.
+let scrollGestureReturns: unknown[]
+let scrollGestureCalls: number
 
 function createMockDriver() {
   const pointerAction = createMockPointerAction()
@@ -82,6 +85,11 @@ function createMockDriver() {
       if (command === 'mobile: listApps') {
         if (listAppsThrows) return Promise.reject(new Error('listApps unavailable'))
         return Promise.resolve(listAppsReturn)
+      }
+      if (command === 'mobile: scrollGesture') {
+        const answer = scrollGestureReturns[Math.min(scrollGestureCalls, scrollGestureReturns.length - 1)]
+        scrollGestureCalls += 1
+        return Promise.resolve(answer)
       }
       return Promise.resolve(undefined)
     }),
@@ -110,6 +118,8 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
     focusedPasswordAttr = null
     listAppsReturn = {}
     listAppsThrows = false
+    scrollGestureReturns = [true]
+    scrollGestureCalls = 0
     mockElement = createMockElement()
     mockDriver = createMockDriver()
     const { remote } = await import('webdriverio')
@@ -244,6 +254,89 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       expect(result.success).toBe(false)
       const scrollCall = mockDriver.execute.mock.calls.find(c => c[0] === 'mobile: scroll')
       expect(scrollCall).toBeUndefined()
+    })
+  })
+
+  describe('C436-SCROLL Android scroll signals (436-02 · D-25)', () => {
+    type Primitives = { swipeOnce(direction: string, ref?: string): Promise<string> }
+    const primitivesOf = (a: AndroidPlatformAdapter): Promise<Primitives> =>
+      (a as unknown as { buildAndroidScrollPrimitives(d: string, m: number): Promise<Primitives> })
+        .buildAndroidScrollPrimitives('down', 0)
+    const gestureCalls = () => mockDriver.execute.mock.calls.filter(c => c[0] === 'mobile: scrollGesture')
+
+    it('swipeOnce maps mobile: scrollGesture true to moved and false to at-boundary', async () => {
+      await adapter.setup({ platform: 'android' })
+      const ref = await refFor('Sign In')
+      scrollGestureReturns = [true, false]
+      const p = await primitivesOf(adapter)
+
+      expect(await p.swipeOnce('down')).toBe('moved')
+      expect(gestureCalls()).toHaveLength(1)
+      expect(gestureCalls()[0][1]).toEqual({ left: 0, top: 0, width: 1080, height: 1920, direction: 'down', percent: 0.75 })
+
+      expect(await p.swipeOnce('up', ref)).toBe('at-boundary')
+      expect(gestureCalls()).toHaveLength(2)
+      expect(gestureCalls()[1][1]).toEqual({ left: 100, top: 550, width: 880, height: 100, direction: 'up', percent: 0.75 })
+      // The gesture is the driver's own scroll; no raw pointer swipe is sent beside it.
+      expect(mockDriver._pointerAction.perform).not.toHaveBeenCalled()
+    })
+
+    it('the WebView context reports movement from window.scrollY', async () => {
+      mockDriver.getContexts.mockResolvedValue(['NATIVE_APP', 'WEBVIEW_app.linear'])
+      mockDriver.execute.mockResolvedValueOnce({
+        nodes: [{ role: 'button', name: 'Create issue', bounds: { x: 1, y: 2, width: 3, height: 4 }, state: {}, labels: {}, attributes: {} }],
+        viewport: { width: 200, height: 100 },
+        scroll: { offsetX: 0, offsetY: 0, contentWidth: 200, contentHeight: 800 },
+        url: 'https://linear.local',
+      })
+      await adapter.setup({
+        platform: 'android',
+        device: { name: 'android-emu', platform: 'android', transport: 'local', match: { automationName: 'UiAutomator2' } },
+        appPackage: 'app.linear',
+      } as never)
+      await adapter.observe()
+      const offsets = [
+        { x: 0, y: 0, maxX: 0, maxY: 700 }, { x: 0, y: 400, maxX: 0, maxY: 700 },
+        { x: 0, y: 700, maxX: 0, maxY: 700 }, { x: 0, y: 700, maxX: 0, maxY: 700 },
+        { x: 0, y: 300, maxX: 0, maxY: 700 }, { x: 0, y: 300, maxX: 0, maxY: 700 },
+      ]
+      mockDriver.execute.mockImplementation((command: string) =>
+        Promise.resolve(typeof command === 'string' && command.startsWith('mobile:') ? undefined : offsets.shift()))
+      const p = await primitivesOf(adapter)
+
+      expect(await p.swipeOnce('down')).toBe('moved')
+      expect(await p.swipeOnce('down')).toBe('at-boundary')
+      expect(await p.swipeOnce('down')).toBe('unknown')
+      expect(gestureCalls()).toHaveLength(0)
+      expect(mockDriver._pointerAction.perform).toHaveBeenCalledTimes(3)
+    })
+
+    it('toEnd stops on the first at-boundary signal', async () => {
+      await adapter.setup({ platform: 'android' })
+      await adapter.observe()
+      scrollGestureReturns = [true, true, false, true]
+
+      const result = await adapter.execute({
+        type: 'scroll', mode: 'direction', direction: 'down', amount: 'toEnd', retryOpposite: false,
+      } as unknown as ExecAction)
+
+      expect(result.success).toBe(true)
+      expect(gestureCalls()).toHaveLength(3)
+      expect(result.metadata?.scrollUntilVisible).toEqual({ swipes: 3, reversedOnce: false, outcome: 'found', endedBy: 'boundary' })
+    })
+
+    it('untilVisible keeps going through an unchanged tree while scrollGesture says it can scroll', async () => {
+      await adapter.setup({ platform: 'android' })
+      await adapter.observe()
+      scrollGestureReturns = [true]
+
+      const result = await adapter.execute({
+        type: 'scroll', mode: 'untilVisible', text: 'Not on this screen', direction: 'down', maxSwipes: 4, retryOpposite: false,
+      } as unknown as ExecAction)
+
+      expect(result.success).toBe(true)
+      expect(gestureCalls().map(c => (c[1] as { direction: string }).direction)).toEqual(['down', 'down', 'down', 'down'])
+      expect(result.metadata?.scrollUntilVisible).toEqual({ swipes: 4, reversedOnce: false, outcome: 'unresolved', endedBy: 'max-swipes' })
     })
   })
 

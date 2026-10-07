@@ -269,6 +269,75 @@ describe('IOSPlatformAdapter compound behaviors (RED — Wave-0)', () => {
     })
   })
 
+  describe('C436-SCROLL iOS scroll signals (436-02 · D-25)', () => {
+    type Primitives = { swipeOnce(direction: string, ref?: string): Promise<string> }
+    const primitivesOf = (a: IOSPlatformAdapter): Promise<Primitives> =>
+      (a as unknown as { buildIOSScrollPrimitives(d: string, m: number): Promise<Primitives> })
+        .buildIOSScrollPrimitives('down', 0)
+    const WITH_SETTINGS = IOS_XML.replace('label="Welcome"', 'label="Settings"')
+
+    it('swipeOnce always reports unknown', async () => {
+      await adapter.setup({ platform: 'ios' })
+      await adapter.observe()
+      const p = await primitivesOf(adapter)
+      for (const direction of ['down', 'up', 'left', 'right']) {
+        expect(await p.swipeOnce(direction)).toBe('unknown')
+      }
+      expect(mockDriver._pointerAction.perform).toHaveBeenCalledTimes(4)
+    })
+
+    it('toEnd ends unresolved at the cap', async () => {
+      await adapter.setup({ platform: 'ios' })
+      await adapter.observe()
+
+      const result = await adapter.execute({
+        type: 'scroll', mode: 'direction', direction: 'down', amount: 'toEnd', retryOpposite: false,
+      } as unknown as ExecAction)
+
+      expect(result.success).toBe(true)
+      expect(mockDriver._pointerAction.perform).toHaveBeenCalledTimes(20)
+      expect(result.metadata?.scrollUntilVisible).toEqual({ swipes: 20, reversedOnce: false, outcome: 'unresolved', endedBy: 'max-swipes' })
+    })
+
+    it('untilVisible finds the target only by the visibility probe', async () => {
+      await adapter.setup({ platform: 'ios' })
+      await adapter.observe()
+      // The native rung resolves OK (WDA always does) but the target is not on screen: not found yet.
+      let reads = 0
+      mockDriver.getPageSource.mockImplementation(() => {
+        reads += 1
+        return Promise.resolve(reads >= 4 ? WITH_SETTINGS : IOS_XML)
+      })
+
+      const result = await adapter.execute({
+        type: 'scroll', mode: 'untilVisible', text: 'Settings', direction: 'down', maxSwipes: 5, retryOpposite: false,
+      } as unknown as ExecAction)
+
+      expect(result.metadata?.scrollUntilVisible).toEqual({ swipes: 2, reversedOnce: false, outcome: 'found', endedBy: 'target-visible' })
+
+      mockDriver.getPageSource.mockImplementation(() => Promise.resolve(IOS_XML))
+      const never = await adapter.execute({
+        type: 'scroll', mode: 'untilVisible', text: 'Settings', direction: 'down', maxSwipes: 2, retryOpposite: false,
+      } as unknown as ExecAction)
+      expect(never.metadata?.scrollUntilVisible).toEqual({ swipes: 2, reversedOnce: false, outcome: 'unresolved', endedBy: 'max-swipes' })
+    })
+
+    it('native search sends predicateString without direction', async () => {
+      await adapter.setup({ platform: 'ios' })
+      await adapter.observe()
+
+      await adapter.execute({
+        type: 'scroll', mode: 'untilVisible', text: 'Settings', direction: 'up', maxSwipes: 1, retryOpposite: false,
+      } as unknown as ExecAction)
+
+      const scrollCalls = mockDriver.execute.mock.calls.filter(c => c[0] === 'mobile: scroll')
+      expect(scrollCalls).toHaveLength(1)
+      const args = scrollCalls[0][1] as Record<string, unknown>
+      expect(Object.keys(args)).toEqual(['predicateString'])
+      expect(String(args.predicateString)).toMatch(/CONTAINS/)
+    })
+  })
+
   describe('EXEC-03 openApp resolution (D-10/D-12, Pitfall 5)', () => {
     it('success lane: resolves a CFBundleName label and launches via activateApp(resolvedId) with metadata', async () => {
       listAppsReturn = {
