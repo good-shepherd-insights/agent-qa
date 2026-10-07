@@ -1,0 +1,183 @@
+// A model-free scripted planner and verifier driving the real runner loop (executeStep) over a
+// real WebPlatformAdapter (436 D-28). The planner finds refs by role and accessible name in the
+// ScreenState the loop hands it; the verifier is a plain function of what the loop gives it,
+// including the step's operation evidence (436-10). No model is called anywhere.
+
+import { executeStep } from '@vostride/agent-qa-runner'
+import type {
+  Action,
+  ActionPlan,
+  ActionPlanCache,
+  CachedPlanValue,
+  LoopPorts,
+  PlannerConfig,
+  Planner,
+  PlanResult,
+  PlatformAdapter,
+  StepContext,
+  StepResult,
+  Verifier,
+  VerifyResult,
+} from '@vostride/agent-qa-runner'
+import type { CacheKey, OperationEvidence, Ref, ScreenState } from '@vostride/agent-qa-schema'
+
+/** The ref of the nth element with this role and accessible name, or a thrown error. */
+export function refFor(screen: ScreenState, role: string, name: string, nth = 0): Ref {
+  const matches = screen.elements.filter((element) => element.role === role && element.name === name)
+  const element = matches[nth]
+  if (element === undefined) {
+    throw new Error(`No ${role} "${name}" #${String(nth)} on the screen (found ${String(matches.length)})`)
+  }
+  return element.ref
+}
+
+/** One scripted planning turn: a plan computed from the screen the loop observed. */
+export type ScriptedTurn = (screen: ScreenState, context: StepContext) => ActionPlan
+
+export interface ScriptedPlanner extends Planner {
+  /** Planner calls made. */
+  readonly calls: number
+  /** Every plan returned, in order. */
+  readonly planned: readonly ActionPlan[]
+  /** Plans that ask the loop to execute an action (stepFailed plans execute nothing). */
+  readonly plannedActions: number
+}
+
+/** Turns are taken in order; past the end, the last turn repeats (a planner that keeps trying). */
+export function scriptedPlanner(turns: readonly ScriptedTurn[]): ScriptedPlanner {
+  const planned: ActionPlan[] = []
+  let calls = 0
+  return {
+    get calls() { return calls },
+    get planned() { return planned },
+    get plannedActions() { return planned.filter((plan) => plan.stepFailed !== true).length },
+    async plan(_step: string, screen: ScreenState, context: StepContext): Promise<PlanResult> {
+      const turn = turns[Math.min(calls, turns.length - 1)]
+      calls++
+      const plan = turn(screen, context)
+      planned.push(plan)
+      return { plan }
+    },
+  }
+}
+
+export function act(action: ActionPlan['action'], stepComplete: boolean, reasoning: string): ActionPlan {
+  return { reasoning, action, confidence: 0.9, stepComplete, stepFailed: false }
+}
+
+/** A stepFailed turn naming the missing outcome (prompt Rule 22). Nothing is executed. */
+export function giveUp(reasoning: string): ActionPlan {
+  return { reasoning, action: { type: 'delay', ms: 0 }, confidence: 0.9, stepComplete: false, stepFailed: true }
+}
+
+export interface VerifierInput {
+  step: string
+  before: ScreenState
+  after: ScreenState
+  action: Action
+  operationEvidence?: OperationEvidence
+}
+
+export interface VerifierVerdict {
+  pass: boolean
+  reason: string
+}
+
+export interface ScriptedVerifier extends Verifier {
+  readonly calls: number
+  readonly inputs: readonly VerifierInput[]
+}
+
+export function scriptedVerifier(check: (input: VerifierInput) => VerifierVerdict): ScriptedVerifier {
+  const inputs: VerifierInput[] = []
+  return {
+    get calls() { return inputs.length },
+    get inputs() { return inputs },
+    async verify(
+      step, before, after, action, _screenshot, _signal, _note, _predicate, _author, operationEvidence,
+    ): Promise<VerifyResult> {
+      const input: VerifierInput = { step, before, after, action, ...(operationEvidence ? { operationEvidence } : {}) }
+      inputs.push(input)
+      const verdict = check(input)
+      return { verification: { success: verdict.pass, reasoning: verdict.reason, isAppError: false } }
+    },
+  }
+}
+
+export interface MemoryCache extends ActionPlanCache {
+  readonly store: Map<string, CachedPlanValue>
+  readonly gets: { key: string; hit: boolean }[]
+  readonly sets: string[]
+}
+
+export function memoryCache(): MemoryCache {
+  const store = new Map<string, CachedPlanValue>()
+  const gets: { key: string; hit: boolean }[] = []
+  const sets: string[] = []
+  return {
+    store,
+    gets,
+    sets,
+    async get(key: CacheKey) {
+      const value = store.get(key) ?? null
+      gets.push({ key, hit: value !== null })
+      return value
+    },
+    async set(key: CacheKey, value: CachedPlanValue) {
+      sets.push(key)
+      store.set(key, value)
+    },
+    async invalidate(key: CacheKey) {
+      store.delete(key)
+    },
+  }
+}
+
+export interface ScriptedStepRun {
+  result: StepResult
+  /** Every action that reached the adapter, in order. */
+  executed: Action[]
+}
+
+/** Counts every adapter dispatch without changing what the adapter does. */
+function countingAdapter(adapter: PlatformAdapter, executed: Action[]): PlatformAdapter {
+  return new Proxy(adapter, {
+    get(target, property) {
+      if (property === 'execute') {
+        return async (action: Action) => {
+          executed.push(action)
+          return target.execute(action)
+        }
+      }
+      const value: unknown = Reflect.get(target, property, target)
+      return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value
+    },
+  })
+}
+
+export async function runScriptedStep(options: {
+  adapter: PlatformAdapter
+  instruction: string
+  planner: Planner
+  verifier: Verifier
+  cache?: ActionPlanCache
+  plannerConfig: PlannerConfig
+}): Promise<ScriptedStepRun> {
+  const executed: Action[] = []
+  const ports: LoopPorts = {
+    adapter: countingAdapter(options.adapter, executed),
+    planner: options.planner,
+    verifier: options.verifier,
+    plannerConfig: options.plannerConfig,
+    ...(options.cache ? { cache: options.cache } : {}),
+  }
+  const context: StepContext = {
+    stepInstruction: options.instruction,
+    testName: '436 outcome evidence',
+    previousSteps: [],
+    plannerModel: {} as StepContext['plannerModel'],
+    verifierModel: {} as StepContext['verifierModel'],
+  }
+  const result = await executeStep(options.instruction, ports, context)
+  return { result, executed }
+}
