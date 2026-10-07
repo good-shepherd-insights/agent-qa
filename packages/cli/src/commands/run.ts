@@ -14,7 +14,7 @@ import { resolveDevice, loadLocalBindings, resolveProviderCredentials, type Reso
 import { resolveLLMModels, resolveModelAuth, toModelProfileAndAuth } from '../llm-utils.js'
 import { formatInstallBrowsersRetryCommand, type BrowserInstallSelection } from './install-browsers.js'
 import type { ParsedTestBinding, TestDefinition, ParseError, SuiteDefinition, SuiteResult, RunSuiteConfig } from '@vostride/agent-qa-core'
-import { asRunId, maskPayloadStrings } from '@vostride/agent-qa-schema'
+import { asRunId, maskPayloadStrings, resolvePlannerLimits } from '@vostride/agent-qa-schema'
 import type {
   DeclaredModelProfile,
   ModelCapabilities,
@@ -4205,7 +4205,7 @@ export async function produceDirectRunMembers(
       const plannerAccounting = createTokenAccounting({ getCapabilities: () => resolveCapabilities(plannerProfile) })
       const verifierAccounting = createTokenAccounting({ getCapabilities: () => resolveCapabilities(verifierProfile) })
       const plannerConfig = {
-        maxSubActions: testMergedConfig.use?.planner?.maxSubActions ?? 10,
+        ...resolvePlannerLimits(testMergedConfig.use),
         previousStepCount: testMergedConfig.use?.planner?.previousStepCount ?? 3,
       }
 

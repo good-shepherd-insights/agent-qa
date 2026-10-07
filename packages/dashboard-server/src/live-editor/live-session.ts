@@ -30,7 +30,7 @@ import type {
   HookDefinition,
   MobilePlatform,
 } from '@vostride/agent-qa-core'
-import { buildProductionRefusal, distinctInFirstOccurrenceOrder } from '@vostride/agent-qa-schema'
+import { buildProductionRefusal, distinctInFirstOccurrenceOrder, resolvePlannerLimits } from '@vostride/agent-qa-schema'
 import type { DeclaredModelProfile } from '@vostride/agent-qa-schema'
 import type {
   PlatformAdapter,
@@ -1080,7 +1080,7 @@ export class LiveSession {
         planner: this.planner!,
         verifier: this.verifier!,
         modelProfiles: this.modelProfiles ?? undefined,
-        plannerConfig: { maxSubActions: 50, previousStepCount: 5 },
+        plannerConfig: { ...resolvePlannerLimits(), previousStepCount: 5 },
         vision: this.vision,
         onSetVariable: (name, value) => this.variableStore!.set(name, value, 'step'),
         abortSignal: this.abortController.signal,

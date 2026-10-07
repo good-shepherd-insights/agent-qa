@@ -37,7 +37,7 @@ const testFilePath = fileURLToPath(import.meta.url)
 const packagesRoot = resolve(dirname(testFilePath), '..', '..', '..', '..')
 const testsDir = dirname(testFilePath)
 
-const cfg = { maxSubActions: 4, previousStepCount: 0 }
+const cfg = { maxActions: 4, maxPlanningTurns: 4, previousStepCount: 0 }
 
 function ports(overrides: Partial<LoopPorts> & Pick<LoopPorts, 'adapter' | 'planner'>): LoopPorts {
   return overrides

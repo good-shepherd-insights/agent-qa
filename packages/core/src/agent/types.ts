@@ -6,7 +6,8 @@ import type { ActionPlan } from '../schema/action-schema.js'
 export type { ActionPlan } from '../schema/action-schema.js'
 
 export interface PlannerConfig {
-  maxSubActions: number
+  maxActions: number
+  maxPlanningTurns: number
   previousStepCount: number
 }
 

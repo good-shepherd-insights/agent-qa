@@ -144,7 +144,7 @@ describe('Block B — the seam suppresses a satisfied desiredState (D-14/D-16)',
 
     const result = await executeStep(
       'Ensure Wi-Fi is on',
-      ports({ adapter, planner: makePlanner(plans), verifier: makeVerifier(), plannerConfig: { maxSubActions: 4, previousStepCount: 0 } }),
+      ports({ adapter, planner: makePlanner(plans), verifier: makeVerifier(), plannerConfig: { maxActions: 4, maxPlanningTurns: 4, previousStepCount: 0 } }),
       makeStepContext(),
     )
 
@@ -169,7 +169,7 @@ describe('Block B — the seam suppresses a satisfied desiredState (D-14/D-16)',
 
     await executeStep(
       'Turn Wi-Fi on',
-      ports({ adapter, planner: makePlanner(plans), verifier: makeVerifier(), plannerConfig: { maxSubActions: 4, previousStepCount: 0 } }),
+      ports({ adapter, planner: makePlanner(plans), verifier: makeVerifier(), plannerConfig: { maxActions: 4, maxPlanningTurns: 4, previousStepCount: 0 } }),
       makeStepContext(),
     )
 

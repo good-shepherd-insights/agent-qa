@@ -163,7 +163,7 @@ async function dispatchReachesAdapter(action: Action, platform: Platform): Promi
         adapter,
         planner: makePlanner([makeActionPlan({ action: action as ActionPlan['action'], stepComplete: false })]),
         verifier: makeVerifier(),
-        plannerConfig: { maxSubActions: 1, previousStepCount: 0 },
+        plannerConfig: { maxActions: 1, maxPlanningTurns: 1, previousStepCount: 0 },
         onSetVariable: () => { setVariableRouted = true },
       }),
       makeStepContext(),

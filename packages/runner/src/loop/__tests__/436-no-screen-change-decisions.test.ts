@@ -103,7 +103,7 @@ function newTrace(): Trace {
 }
 
 function ports(overrides: Partial<LoopPorts> & Pick<LoopPorts, 'adapter' | 'planner'>): LoopPorts {
-  return { plannerConfig: { maxSubActions: 20, previousStepCount: 0 }, ...overrides }
+  return { plannerConfig: { maxActions: 20, maxPlanningTurns: 20, previousStepCount: 0 }, ...overrides }
 }
 
 function pressPlans(refs: string[]): ActionPlan[] {

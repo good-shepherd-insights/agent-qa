@@ -141,7 +141,7 @@ interface EvidenceView {
   verifierVerdict?: { reasoning?: string }
 }
 
-const cfg = { maxSubActions: 4, previousStepCount: 0 }
+const cfg = { maxActions: 4, maxPlanningTurns: 4, previousStepCount: 0 }
 
 // ---------------------------------------------------------------------------
 // Block A — the pure comparator (D-10 "runner judges")
@@ -343,7 +343,7 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
     expect((result.evidence as EvidenceView).verdictSource).toBeUndefined()
   })
 
-  it('an always-rejecting verifier is bounded by maxSubActions and records no verdict source', async () => {
+  it('an always-rejecting verifier is bounded by the action limit and records no verdict source', async () => {
     const adapter = readingAdapter(makeScreenState(), { success: true })
     const verifier = makeScriptedVerifier({
       judgment: { verdict: true, rationale: 'the header is present' },
@@ -361,9 +361,9 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
     )
 
     expect(result.status).toBe('failed')
-    expect(result.error).toContain('Sub-action limit reached')
-    expect(verifier.verifyArgs.length).toBeLessThanOrEqual(cfg.maxSubActions)
-    expect(verifier.judgeClaimCalls).toBeLessThanOrEqual(cfg.maxSubActions)
+    expect(result.error).toBe('Stopped: action limit reached — 4 of 4 actions used')
+    expect(verifier.verifyArgs.length).toBeLessThanOrEqual(cfg.maxActions)
+    expect(verifier.judgeClaimCalls).toBeLessThanOrEqual(cfg.maxActions)
     expect((result.evidence as EvidenceView).verdictSource).toBeUndefined()
   })
 

@@ -233,7 +233,7 @@ describe('EXEC-04 — a satisfied desiredState no-ops at the dispatch seam witho
 
     const result = await executeStep(
       'Ensure Wi-Fi is on',
-      ports({ adapter, planner: makePlanner(plans), verifier: makeVerifier(), plannerConfig: { maxSubActions: 4, previousStepCount: 0 } }),
+      ports({ adapter, planner: makePlanner(plans), verifier: makeVerifier(), plannerConfig: { maxActions: 4, maxPlanningTurns: 4, previousStepCount: 0 } }),
       makeStepContext(),
     )
 

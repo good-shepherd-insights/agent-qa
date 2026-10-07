@@ -367,7 +367,7 @@ describe('LiveSession', () => {
     expect(mockExecuteStep).toHaveBeenCalledWith(
       'Click the login button',
       expect.objectContaining({
-        plannerConfig: expect.objectContaining({ maxSubActions: 50 }),
+        plannerConfig: expect.objectContaining({ maxActions: 30, maxPlanningTurns: 30 }),
       }),
       expect.objectContaining({
         stepInstruction: 'Click the login button',

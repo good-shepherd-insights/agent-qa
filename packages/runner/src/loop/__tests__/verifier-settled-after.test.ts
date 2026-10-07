@@ -148,7 +148,7 @@ describe('verifier AFTER observation settles with a 500 ms interval (P6, L3)', (
 
     const result = await driveWithFakeClock<StepResult>(executeStep(
       'Send the message',
-      { adapter, planner, verifier, plannerConfig: { maxSubActions: 3, previousStepCount: 0 } },
+      { adapter, planner, verifier, plannerConfig: { maxActions: 3, maxPlanningTurns: 3, previousStepCount: 0 } },
       makeStepContext({ stepInstruction: 'Send the message' }),
     ))
 
@@ -176,7 +176,7 @@ describe('verifier AFTER observation settles with a 500 ms interval (P6, L3)', (
 
     const result = await driveWithFakeClock<StepResult>(executeStep(
       'Send the message',
-      { adapter, planner, verifier, plannerConfig: { maxSubActions: 3, previousStepCount: 0 } },
+      { adapter, planner, verifier, plannerConfig: { maxActions: 3, maxPlanningTurns: 3, previousStepCount: 0 } },
       makeStepContext({ stepInstruction: 'Send the message' }),
     ))
 

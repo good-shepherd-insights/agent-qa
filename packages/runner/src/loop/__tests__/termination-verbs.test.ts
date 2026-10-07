@@ -93,7 +93,7 @@ async function importDispatchMint(): Promise<Record<string, unknown>> {
   )
 }
 
-const cfg = { maxSubActions: 4, previousStepCount: 0 }
+const cfg = { maxActions: 4, maxPlanningTurns: 4, previousStepCount: 0 }
 
 // ---------------------------------------------------------------------------
 // Block A — reportValue mint (D-01/D-02/D-03)

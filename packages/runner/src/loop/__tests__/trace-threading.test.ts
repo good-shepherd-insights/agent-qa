@@ -131,8 +131,8 @@ interface LoopShape {
   /** Scripted adapter results; the last entry repeats, so `[ACTION_FAILED]` never succeeds. */
   executeResults?: ActionResult[]
   plans?: ActionPlan[]
-  /** D-10 remaining-budget cap. Absent ⇒ the loop's own default (50), i.e. no early exit. */
-  maxSubActions?: number
+  /** The per-step action limit. Absent ⇒ the schema default (30 actions), i.e. no early exit. */
+  maxActions?: number
 }
 
 function ports(serves: ServedCautions[], shape: LoopShape = {}): LoopPorts {
@@ -147,8 +147,8 @@ function ports(serves: ServedCautions[], shape: LoopShape = {}): LoopPorts {
     knowledgeReader: readerServing(...serves),
     knowledgeBudgets: BUDGETS,
   }
-  if (shape.maxSubActions !== undefined) {
-    loopPorts.plannerConfig = { maxSubActions: shape.maxSubActions, previousStepCount: 0 }
+  if (shape.maxActions !== undefined) {
+    loopPorts.plannerConfig = { maxActions: shape.maxActions, maxPlanningTurns: shape.maxActions, previousStepCount: 0 }
   }
   return loopPorts
 }
@@ -207,8 +207,8 @@ describe('a turn that injected ZERO cautions still lands the reader cut ledger (
 /**
  * WR-10′ (Phase 387-15): every case above drives a step that reaches its NEXT planning turn, which
  * is where a staged caution composite is picked up. The staged value is consumed there and nowhere
- * else, and the loop has exits above that pickup — the step deadline and the D-10 remaining-budget
- * cap. A step that ends at one of those exits loses the whole staged ledger, and the terminal
+ * else, and the loop has exits above that pickup — the step deadline and the per-step action
+ * limit. A step that ends at one of those exits loses the whole staged ledger, and the terminal
  * failure is precisely the turn "why didn't it mention X" is asked about.
  *
  * The suite's input domain had no step that ends early. These cases add one. The closure is a
@@ -228,10 +228,10 @@ function stagedServe(served: TraceLine[], cutCandidates: TraceLine[]): ServedCau
   )
 }
 
-/** A step whose every action fails and whose budget ends it after `maxSubActions` iterations. */
+/** A step whose every action fails and whose action limit ends it after `maxActions` actions. */
 async function endsAtBudget(
   serves: ServedCautions[],
-  maxSubActions: number,
+  maxActions: number,
 ): ReturnType<typeof executeStep> {
   return executeStep(
     'Click Log in',
@@ -241,7 +241,7 @@ async function endsAtBudget(
         makeActionPlan({ action: { type: 'click', ref: 'e2' } }),
         makeActionPlan({ action: { type: 'click', ref: 'e1' } }),
       ],
-      maxSubActions,
+      maxActions,
     }),
     makeStepContext({ testName: 'Checkout Flow' }),
   )
@@ -268,7 +268,7 @@ describe('a step that ENDS before its staged ledger is consumed still lands it (
 
     // The step really did end at the budget, not at a replan that happened to work.
     expect(served.status).toBe('failed')
-    expect(served.error).toContain('Sub-action limit reached')
+    expect(served.error).toContain('Stopped: action limit reached')
 
     const persisted = served.evidence?.retrievalTrace
     // Non-injected served lines first, then the reader's own cuts — the recorder's uniform split,
@@ -292,7 +292,7 @@ describe('a step that ENDS before its staged ledger is consumed still lands it (
       2,
     )
 
-    expect(served.error).toContain('Sub-action limit reached')
+    expect(served.error).toContain('Stopped: action limit reached')
     expect(served.evidence?.retrievalTrace?.truncated.map(({ recordId }) => recordId))
       .toEqual(['staged-a-cut', 'staged-b-cut'])
     expect(served.evidence?.retrievalTrace?.servedLines).toEqual([])

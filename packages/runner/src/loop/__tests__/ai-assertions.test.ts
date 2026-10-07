@@ -130,7 +130,7 @@ function makeCountingCache(): ActionPlanCache & { setCalls: number } {
   return cache
 }
 
-const cfg = { maxSubActions: 4, previousStepCount: 0 }
+const cfg = { maxActions: 4, maxPlanningTurns: 4, previousStepCount: 0 }
 
 // ---------------------------------------------------------------------------
 // assertAI — the single-model judge lane (D-05/D-06/D-09)
