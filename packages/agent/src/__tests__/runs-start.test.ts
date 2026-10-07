@@ -16,8 +16,8 @@
 // process (`composeLocalAgent()` with a run executor) and refused here, at the same time,
 // from the same spec.
 
-import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
-import type { FunctionCaller } from '@vostride/agent-qa-schema'
+import { CURRENT_HANDOFF_SCHEMA_VERSION, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import type { CompletedRunHandoff, FunctionCaller, RunId, RunStartAcknowledgement } from '@vostride/agent-qa-schema'
 import type { AuditSink, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
@@ -141,6 +141,75 @@ describe('runs.start declaration', () => {
 
     expect(runsStartSpec.output.safeParse(acknowledgement).success).toBe(true)
     expect(runsStartSpec.output.safeParse({ runId: 'run-alpha' }).success).toBe(false)
+  })
+})
+
+// 436-09 (D-06): the acknowledgement carries the limits the run recorded, never the request's.
+describe('C436-EFFECTIVE-LIMITS runs.start acknowledgement', () => {
+  const plannerLimits = {
+    maxActions: 30,
+    maxPlanningTurns: 30,
+    overrides: [{ testName: 'Bulk archive', filePath: 'tests/bulk.yaml', maxActions: 60, maxPlanningTurns: 30 }],
+  }
+
+  function recorded(withLimits: boolean): CompletedRunHandoff {
+    return {
+      schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
+      runId: 'run-limits' as RunId,
+      scope: { tier: 'product', key: 'shop' },
+      buildOrdinal: 4,
+      executionContext: 'local-headless',
+      aggregateVerdict: 'passed',
+      configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
+      startedAt: 1_700_000_000_000,
+      endedAt: 1_700_000_001_000,
+      tests: [],
+      ...(withLimits ? { plannerLimits } : {}),
+    }
+  }
+
+  async function acknowledge(document: CompletedRunHandoff): Promise<RunStartAcknowledgement> {
+    const base = fakeDeps()
+    return runsStartSpec.invoke({}, {
+      ...base,
+      runs: { ...base.runs, get: () => Promise.resolve(document) },
+      runInvocation: { start: () => Promise.resolve({ runId: document.runId }) },
+    }) as Promise<RunStartAcknowledgement>
+  }
+
+  it('toAcknowledgement carries limits from the record', async () => {
+    const acknowledgement = await acknowledge(recorded(true))
+    expect(acknowledgement.limits).toEqual(plannerLimits)
+    expect(runsStartSpec.output.parse(acknowledgement)).toEqual(acknowledgement)
+
+    const without = await acknowledge(recorded(false))
+    expect(without).not.toHaveProperty('limits')
+    expect(JSON.parse(JSON.stringify(without))).not.toHaveProperty('limits')
+  })
+
+  it('RunStartAcknowledgementSchema accepts limits and still rejects unknown keys', () => {
+    const acknowledgement = {
+      runId: 'run-alpha',
+      scope: { tier: 'product', key: 'shop' },
+      executionContext: 'ci',
+      buildOrdinal: 12,
+      startedAt: 1_700_000_000_000,
+      testCount: 3,
+    }
+    expect(runsStartSpec.output.safeParse({ ...acknowledgement, limits: plannerLimits }).success).toBe(true)
+    expect(runsStartSpec.output.safeParse({ ...acknowledgement, limits: { maxActions: 30, maxPlanningTurns: 30 } }).success)
+      .toBe(true)
+    expect(runsStartSpec.output.safeParse({ ...acknowledgement, plannerLimits }).success).toBe(false)
+    expect(runsStartSpec.output.safeParse({ ...acknowledgement, limits: { ...plannerLimits, extra: 1 } }).success)
+      .toBe(false)
+    expect(runsStartSpec.output.safeParse({
+      ...acknowledgement,
+      limits: { maxActions: 30, maxPlanningTurns: 30, overrides: [{ ...plannerLimits.overrides[0], extra: 1 }] },
+    }).success).toBe(false)
+    expect(runsStartSpec.output.safeParse({ ...acknowledgement, limits: { maxActions: 0, maxPlanningTurns: 30 } }).success)
+      .toBe(false)
+    expect(runsStartSpec.input.safeParse({ limits: plannerLimits }).success).toBe(false)
+    expect(runsStartSpec.input.safeParse({ maxActions: 60 }).success).toBe(false)
   })
 })
 

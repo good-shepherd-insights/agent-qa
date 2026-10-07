@@ -171,6 +171,33 @@ describe('handoff assembly instrumentation parity', () => {
     expect(excluded.excludedFromOutcomes).toBe(true)
     expect(JSON.parse(JSON.stringify(excluded))).toHaveProperty('excludedFromOutcomes', true)
   })
+
+  // 436-09 (D-06): the run's effective planner limits ride its own record to the acknowledgement.
+  it('assembleHandoff copies RunConfig.plannerLimits verbatim and leaves it absent when absent', () => {
+    const ordinaryConfig = {
+      runId: 'run-limits' as RunId,
+      scope,
+      executionContext: 'local-headless',
+      configDigests: { suiteConfigDigest: 'suite-d', testConfigDigest: 'test-d' },
+      buildOrdinal: 7,
+      members: [],
+      executor: async () => resultWithoutEvidence(),
+    } satisfies RunConfig
+    const plannerLimits = {
+      maxActions: 30,
+      maxPlanningTurns: 30,
+      overrides: [{ testName: 'Bulk archive', filePath: 'tests/bulk.yaml', maxActions: 60, maxPlanningTurns: 30 }],
+    }
+    const limitedConfig = { ...ordinaryConfig, plannerLimits } satisfies RunConfig
+
+    const ordinary = assembleHandoff(ordinaryConfig, [], 'passed', { startedAt: 1, endedAt: 2 })
+    const limited = assembleHandoff(limitedConfig, [], 'passed', { startedAt: 1, endedAt: 2 })
+
+    expect(ordinary).not.toHaveProperty('plannerLimits')
+    expect(JSON.parse(JSON.stringify(ordinary))).not.toHaveProperty('plannerLimits')
+    expect(limited.plannerLimits).toEqual(plannerLimits)
+    expect(guardCompletedRunHandoff(JSON.parse(JSON.stringify(limited))).plannerLimits).toEqual(plannerLimits)
+  })
 })
 
 describe('§A9 rootCause attach (373-07, D-01 presence rule)', () => {
