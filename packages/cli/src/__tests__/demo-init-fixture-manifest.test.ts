@@ -34,5 +34,5 @@ it('DEMO-INIT-FIXTURE: every vendored file matches its manifest sha-256 and size
 it('DEMO-INIT-FIXTURE: the frozen judge contracts and config keep their pinned hashes', () => {
   expect(sha('agent-qa-eval/contracts/judge-config.v1.json')).toBe('8f385c65a0c4011b7610a698c64848645c0cf51167b7e3f8018e280dd4ba9eea')
   expect(sha('agent-qa-eval/contracts/judge-config.v2.json')).toBe('7fc8f16e4210333638a7dd51f36cd9cc291c7a3a72809d96cc623de578b272ec')
-  expect(sha('agent-qa.config.yaml')).toBe('4eb8fc426a97110e1f43f4968e7d6956b445285900feb3681d3b59dd8ae77109')
+  expect(sha('agent-qa.config.yaml')).toBe('6be9e2eedfe2b79d00ba80fc683748464002bd1fe28e8deb30d38ff71c7677f4')
 })

@@ -18,7 +18,7 @@
 +# agent-qa init:end
 --- /dev/null
 +++ b/agent-qa.config.yaml
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,99 @@
 +# agent-qa Configuration
 +
 +# File discovery and project settings
@@ -108,8 +108,10 @@
 +    step: 20m
 +    test: 90m
 +    navigation: 2m
++  # Per-step limits: maxActions (actions) and maxPlanningTurns (planner calls); a step that needs more stops with the limit reason
 +  planner:
-+    maxSubActions: 10
++    maxActions: 30
++    maxPlanningTurns: 30
 +    previousStepCount: 5
 +  logCapture:
 +    console: true

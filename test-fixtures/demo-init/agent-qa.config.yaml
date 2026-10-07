@@ -165,7 +165,8 @@ use:
     test: 90m
     navigation: 2m
   planner:
-    maxSubActions: 10
+    maxActions: 30
+    maxPlanningTurns: 30
     previousStepCount: 5
   logCapture:
     console: true

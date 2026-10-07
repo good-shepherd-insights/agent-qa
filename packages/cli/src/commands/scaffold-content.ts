@@ -29,6 +29,7 @@
 // entries as an argument; markers, in-place splice and append are the shared managed-block
 // writer's (`managed-block.ts`, 431 D-19).
 
+import { DEFAULT_PLANNER_LIMITS } from '@vostride/agent-qa-schema'
 import { parseDocument, stringify } from 'yaml'
 
 import {
@@ -209,7 +210,11 @@ export function buildScaffoldConfig(
       ...(hasWeb(platform) ? { browser: { name: 'chromium', headless: true, viewport: { width: 1280, height: 720 } } } : {}),
       mobile: { appState: 'preserve' },
       timeout: { step: '20m', test: '90m', navigation: '2m' },
-      planner: { maxSubActions: 10, previousStepCount: 5 },
+      planner: {
+        maxActions: DEFAULT_PLANNER_LIMITS.maxActions,
+        maxPlanningTurns: DEFAULT_PLANNER_LIMITS.maxPlanningTurns,
+        previousStepCount: 5,
+      },
       logCapture: { console: true, network: true },
       parallel: false,
       ...(facts.llmEntries.length === 0
@@ -240,6 +245,8 @@ export function addYamlComments(yamlStr: string): string {
       result += '\n# Optional subscription auth plugin declarations\n'
     } else if (line.startsWith('use:')) {
       result += '\n# Execution settings (cascades: global -> suite -> test -> CLI flags)\n'
+    } else if (line === '  planner:') {
+      result += '  # Per-step limits: maxActions (actions) and maxPlanningTurns (planner calls); a step that needs more stops with the limit reason\n'
     }
     result += line + '\n'
 

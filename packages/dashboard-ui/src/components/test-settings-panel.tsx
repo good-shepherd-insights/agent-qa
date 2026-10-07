@@ -1,3 +1,4 @@
+import { DEFAULT_PLANNER_LIMITS } from '@vostride/agent-qa-schema'
 import { useYamlDocument } from '@/hooks/use-yaml-document'
 import { useTargetDetails } from '@/hooks/use-target-details'
 import { useEffect, useMemo, useState } from 'react'
@@ -134,7 +135,8 @@ export function TestSettingsPanel({ content, onChange, selectedTarget, showMeta 
   const stepTimeout = getIn(['use', 'timeout', 'step']) as string | undefined
   const testTimeout = getIn(['use', 'timeout', 'test']) as string | undefined
   const navTimeout = getIn(['use', 'timeout', 'navigation']) as string | undefined
-  const plannerMaxSubActions = getIn(['use', 'planner', 'maxSubActions']) as number | undefined
+  const plannerMaxActions = getIn(['use', 'planner', 'maxActions']) as number | undefined
+  const plannerMaxPlanningTurns = getIn(['use', 'planner', 'maxPlanningTurns']) as number | undefined
   const plannerPrevStepCount = getIn(['use', 'planner', 'previousStepCount']) as number | undefined
   const logConsole = getIn(['use', 'logCapture', 'console']) as boolean | undefined
   const logNetwork = getIn(['use', 'logCapture', 'network']) as boolean | undefined
@@ -406,13 +408,26 @@ export function TestSettingsPanel({ content, onChange, selectedTarget, showMeta 
         <span className="text-sm font-semibold text-foreground tracking-tight">Agent</span>
         <div className="grid grid-cols-3 gap-2">
           <div className="space-y-0.5">
-            <Label className="text-[11px] text-muted-foreground">Sub-Actions</Label>
+            <Label className="text-[11px] text-muted-foreground">Max Actions</Label>
             <Input
               type="number"
               min={1}
-              value={plannerMaxSubActions ?? ''}
-              onChange={(e) => handleSet(['use', 'planner', 'maxSubActions'], e.target.value ? Number(e.target.value) : undefined)}
-              placeholder={ih(g?.planner?.maxSubActions ?? 5)}
+              step={1}
+              value={plannerMaxActions ?? ''}
+              onChange={(e) => handleSet(['use', 'planner', 'maxActions'], e.target.value ? Number(e.target.value) : undefined)}
+              placeholder={ih(g?.planner?.maxActions ?? DEFAULT_PLANNER_LIMITS.maxActions)}
+              className="h-7 text-xs"
+            />
+          </div>
+          <div className="space-y-0.5">
+            <Label className="text-[11px] text-muted-foreground">Planner Calls</Label>
+            <Input
+              type="number"
+              min={1}
+              step={1}
+              value={plannerMaxPlanningTurns ?? ''}
+              onChange={(e) => handleSet(['use', 'planner', 'maxPlanningTurns'], e.target.value ? Number(e.target.value) : undefined)}
+              placeholder={ih(g?.planner?.maxPlanningTurns ?? DEFAULT_PLANNER_LIMITS.maxPlanningTurns)}
               className="h-7 text-xs"
             />
           </div>
