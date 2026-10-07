@@ -18,11 +18,24 @@ export interface FillRereadMeta {
   actual: string
 }
 
-/** EXEC-02 scroll-until-visible outcome block. */
+/** What ended a scroll: the target appeared, the swipe budget ran out, or a boundary signal. */
+export type ScrollEndedBy = 'target-visible' | 'max-swipes' | 'boundary'
+
+/** Outcomes new runs write (436-02, D-24). */
+export const SCROLL_OUTCOMES_WRITTEN = ['found', 'not-found', 'unresolved'] as const
+/** Outcomes only pre-436 runs wrote; still read so persisted metadata stays parseable (D-17). */
+export const SCROLL_OUTCOMES_READ_ONLY = ['no-change', 'cap'] as const
+
+const SCROLL_ENDED_BY: readonly ScrollEndedBy[] = ['target-visible', 'max-swipes', 'boundary']
+
+/** EXEC-02 scroll outcome block. `endedBy` is absent on pre-436 metadata. */
 export interface ScrollUntilVisibleMeta {
   swipes: number
   reversedOnce: boolean
-  outcome: 'found' | 'no-change' | 'cap'
+  outcome:
+    | (typeof SCROLL_OUTCOMES_WRITTEN)[number]
+    | (typeof SCROLL_OUTCOMES_READ_ONLY)[number]
+  endedBy?: ScrollEndedBy
 }
 
 /** EXEC-03 openApp resolution block. */
@@ -46,17 +59,26 @@ export function readFillRereadMeta(actionResult?: ActionResult): FillRereadMeta 
 }
 
 export function readScrollUntilVisibleMeta(
-  actionResult?: ActionResult,
+  actionResult?: MetadataCarrier,
 ): ScrollUntilVisibleMeta | undefined {
   const raw = actionResult?.metadata?.['scrollUntilVisible']
   if (raw && typeof raw === 'object' && 'swipes' in raw && 'reversedOnce' in raw && 'outcome' in raw) {
-    const { swipes, reversedOnce, outcome } = raw as Record<string, unknown>
+    const { swipes, reversedOnce, outcome, endedBy } = raw as Record<string, unknown>
+    const outcomes: readonly unknown[] = [...SCROLL_OUTCOMES_WRITTEN, ...SCROLL_OUTCOMES_READ_ONLY]
     if (
       typeof swipes === 'number' &&
       typeof reversedOnce === 'boolean' &&
-      (outcome === 'found' || outcome === 'no-change' || outcome === 'cap')
+      outcomes.includes(outcome)
     ) {
-      return { swipes, reversedOnce, outcome }
+      const meta: ScrollUntilVisibleMeta = {
+        swipes,
+        reversedOnce,
+        outcome: outcome as ScrollUntilVisibleMeta['outcome'],
+      }
+      if (endedBy === undefined) return meta
+      if ((SCROLL_ENDED_BY as readonly unknown[]).includes(endedBy)) {
+        return { ...meta, endedBy: endedBy as ScrollEndedBy }
+      }
     }
   }
   return undefined

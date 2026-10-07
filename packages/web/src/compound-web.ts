@@ -1,19 +1,21 @@
 // Web execute() compound behaviors shared by both web execute surfaces (adapter.ts +
 // farm-adapter.ts). Phase 359 · EXEC-01/02/03 · D-05..D-09. The runner owns the pure verdict
-// machine (compareFillReread) and loop discipline (runUntilVisibleLoop / runDirectionScrollWithRetry
-// over injected ScrollPrimitives); this module supplies the Playwright primitives and stitches
-// them into ONE ActionResult per compound. Extracted here (inside packages/web/src) so the two
-// adapter classes reuse one implementation instead of copy-pasting the compound.
+// machine (compareFillReread) and loop discipline (runUntilVisibleLoop / runDirectionScroll /
+// runToEndScroll over injected ScrollPrimitives); this module supplies the Playwright primitives
+// and stitches them into ONE ActionResult per compound. Extracted here (inside packages/web/src)
+// so the two adapter classes reuse one implementation instead of copy-pasting the compound.
 
 import type { Locator, Page } from 'playwright-core'
 import type { ActionResult } from '@vostride/agent-qa-runner'
 import {
   compareFillReread,
   runUntilVisibleLoop,
-  runDirectionScrollWithRetry,
-  interimTreeIdentity,
+  runDirectionScroll,
+  runToEndScroll,
+  swipeSignalFromOffsets,
+  type ScrollOffsets,
   type ScrollPrimitives,
-  type ScrollUntilVisibleMeta,
+  type SwipeSignal,
   type Direction,
 } from '@vostride/agent-qa-runner'
 import type { Fill, Scroll, Ref } from '@vostride/agent-qa-schema'
@@ -106,20 +108,74 @@ async function settle(page: Page): Promise<void> {
   })`)
 }
 
-// D-03 light probe + swipe/native primitives. readInterimTree re-runs ONLY the aria-snapshot
-// harvest → parseAriaSnapshot(text).nodes — NO buildScreenState, NO refMap mint, NO screenshot;
-// lastRefs stays bound to the pre-compound observation.
-function buildScrollPrimitives(page: Page, lastRefs: RefMap, magnitude: number): ScrollPrimitives {
+interface DocumentOffsets {
+  x: number
+  y: number
+  maxX: number
+  maxY: number
+}
+
+async function readDocumentOffsets(page: Page): Promise<DocumentOffsets | undefined> {
+  try {
+    const raw = (await page.evaluate(() => {
+      const doc = (globalThis as unknown as {
+        document: { scrollingElement: unknown; documentElement: unknown }
+      }).document
+      const el = (doc.scrollingElement ?? doc.documentElement) as {
+        scrollLeft: number
+        scrollTop: number
+        scrollWidth: number
+        scrollHeight: number
+        clientWidth: number
+        clientHeight: number
+      }
+      return {
+        x: el.scrollLeft,
+        y: el.scrollTop,
+        maxX: el.scrollWidth - el.clientWidth,
+        maxY: el.scrollHeight - el.clientHeight,
+      }
+    })) as DocumentOffsets | undefined
+    return raw && typeof raw === 'object' ? raw : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// No-ref wheel: the document scroller is measured before and after. The wheel lands on whatever
+// is under the pointer, so a document with no scroll range on this axis proves nothing.
+export function wheelSignal(
+  direction: Direction,
+  before: DocumentOffsets | undefined,
+  after: DocumentOffsets | undefined,
+): SwipeSignal {
+  if (!before || !after) return 'unknown'
+  const horizontal = direction === 'left' || direction === 'right'
+  const offsets: ScrollOffsets = horizontal
+    ? { before: before.x, after: after.x, max: after.maxX }
+    : { before: before.y, after: after.y, max: after.maxY }
+  if (!(offsets.max > 0)) return 'unknown'
+  return swipeSignalFromOffsets(direction, offsets)
+}
+
+// Light probe + swipe/native primitives. readInterimTree re-runs ONLY the aria-snapshot harvest
+// → parseAriaSnapshot(text).nodes — NO buildScreenState, NO refMap mint, NO screenshot; lastRefs
+// stays bound to the pre-compound observation. swipeOnce reports what the offsets proved.
+export function buildScrollPrimitives(page: Page, lastRefs: RefMap, magnitude: number): ScrollPrimitives {
   return {
-    async swipeOnce(direction: Direction, ref?: Ref): Promise<void> {
+    async swipeOnce(direction: Direction, ref?: Ref): Promise<SwipeSignal> {
       const refData = ref ? lastRefs[ref] : undefined
       const { dx, dy, axis } = deltaFor(direction, magnitude)
       if (refData) {
-        await scrollWithRef(page, refData, dx, dy, axis)
-      } else {
-        await page.mouse.wheel(dx, dy)
+        const scrolled = await scrollWithRef(page, refData, dx, dy, axis)
+        await settle(page)
+        return swipeSignalFromOffsets(direction, scrolled?.offsets)
       }
+      const before = await readDocumentOffsets(page)
+      await page.mouse.wheel(dx, dy)
       await settle(page)
+      const after = await readDocumentOffsets(page)
+      return wheelSignal(direction, before, after)
     },
     async nativeSearchScroll(target: string): Promise<boolean> {
       try {
@@ -136,27 +192,9 @@ function buildScrollPrimitives(page: Page, lastRefs: RefMap, magnitude: number):
   }
 }
 
-const MAX_TO_END_SWIPES = 20
-
-// 'toEnd' termination (RESEARCH Open Q4): swipe until the interim tree stops changing (or cap).
-async function scrollToEnd(primitives: ScrollPrimitives, direction: Direction, ref?: Ref): Promise<ScrollUntilVisibleMeta> {
-  let swipes = 0
-  let anyProgress = false
-  let prev = interimTreeIdentity(await primitives.readInterimTree())
-  while (swipes < MAX_TO_END_SWIPES) {
-    await primitives.swipeOnce(direction, ref)
-    swipes += 1
-    const current = interimTreeIdentity(await primitives.readInterimTree())
-    if (current === prev) break
-    anyProgress = true
-    prev = current
-  }
-  return { swipes, reversedOnce: false, outcome: anyProgress ? 'cap' : 'no-change' }
-}
-
-// EXEC-02: both schema Scroll modes over the shared loop (D-02/D-03). ONE ActionResult carrying
-// metadata.scrollUntilVisible; the gesture itself succeeds — the outcome (found/no-change/cap)
-// rides the metadata for the 358 oracle's signal-presence read, not the success flag.
+// EXEC-02: both schema Scroll modes over the shared loops. ONE ActionResult carrying
+// metadata.scrollUntilVisible; the gesture itself succeeds — the outcome and what ended it ride
+// the metadata, not the success flag.
 export async function runWebScrollCompound(page: Page, lastRefs: RefMap, action: Scroll): Promise<ActionResult> {
   const viewport = page.viewportSize() ?? { width: 1280, height: 720 }
   const horizontal = action.direction === 'left' || action.direction === 'right'
@@ -179,13 +217,12 @@ export async function runWebScrollCompound(page: Page, lastRefs: RefMap, action:
   const primitives = buildScrollPrimitives(page, lastRefs, magnitude)
 
   if (action.amount === 'toEnd') {
-    const meta = await scrollToEnd(primitives, action.direction, action.ref)
+    const { meta } = await runToEndScroll(primitives, action.direction, action.ref)
     return { success: true, metadata: { scrollUntilVisible: meta } }
   }
 
-  const { meta } = await runDirectionScrollWithRetry(primitives, {
+  const { meta } = await runDirectionScroll(primitives, {
     direction: action.direction,
-    retryOpposite: action.retryOpposite,
     ...(action.ref ? { ref: action.ref } : {}),
   })
   return { success: true, metadata: { scrollUntilVisible: meta } }

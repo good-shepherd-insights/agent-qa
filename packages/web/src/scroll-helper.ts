@@ -10,6 +10,8 @@ interface ScrollResult {
   bounds: { x: number; y: number; width: number; height: number } | null
   scrolledContainer: 'element' | 'ancestor' | 'documentElement' | 'notFound'
   scrolled: boolean
+  /** The scrolled container's offset on the swiped axis before and after, and its largest offset. */
+  offsets: { before: number; after: number; max: number }
 }
 
 export async function scrollWithRef(
@@ -84,10 +86,23 @@ export async function scrollWithRef(
         )
       }
 
+      const prop = axis === 'horizontal' ? 'scrollLeft' : 'scrollTop'
+      const maxOf = (el: any): number => axis === 'horizontal'
+        ? el.scrollWidth - el.clientWidth
+        : el.scrollHeight - el.clientHeight
+
       const target = matched[nth]
       if (!target) {
+        const scroller = doc.scrollingElement || doc.documentElement
+        const before = scroller[prop]
         win.scrollBy(dx, dy)
-        return { bounds: null, scrolledContainer: 'notFound' as const, scrolled: true }
+        const after = scroller[prop]
+        return {
+          bounds: null,
+          scrolledContainer: 'notFound' as const,
+          scrolled: before !== after,
+          offsets: { before, after, max: maxOf(scroller) },
+        }
       }
 
       // Check target element itself for scrollability
@@ -98,7 +113,6 @@ export async function scrollWithRef(
         ? target.scrollWidth > target.clientWidth
         : target.scrollHeight > target.clientHeight
       if (targetScrollable && targetHasContent) {
-        const prop = axis === 'horizontal' ? 'scrollLeft' : 'scrollTop'
         const before = target[prop]
         target.scrollBy(dx, dy)
         const after = target[prop]
@@ -107,6 +121,7 @@ export async function scrollWithRef(
           bounds: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
           scrolledContainer: 'element' as const,
           scrolled: before !== after,
+          offsets: { before, after, max: maxOf(target) },
         }
       }
 
@@ -120,7 +135,6 @@ export async function scrollWithRef(
           ? parent.scrollWidth > parent.clientWidth
           : parent.scrollHeight > parent.clientHeight
         if (isScrollable && hasContent) {
-          const prop = axis === 'horizontal' ? 'scrollLeft' : 'scrollTop'
           const before = parent[prop]
           parent.scrollBy(dx, dy)
           const after = parent[prop]
@@ -129,12 +143,12 @@ export async function scrollWithRef(
             bounds: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
             scrolledContainer: 'ancestor' as const,
             scrolled: before !== after,
+            offsets: { before, after, max: maxOf(parent) },
           }
         }
         parent = parent.parentElement
       }
 
-      const prop = axis === 'horizontal' ? 'scrollLeft' : 'scrollTop'
       const before = doc.documentElement[prop]
       doc.documentElement.scrollBy(dx, dy)
       const after = doc.documentElement[prop]
@@ -143,6 +157,7 @@ export async function scrollWithRef(
         bounds: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
         scrolledContainer: 'documentElement' as const,
         scrolled: before !== after,
+        offsets: { before, after, max: maxOf(doc.documentElement) },
       }
     },
     [refData.role, refData.name, refData.nth ?? 0, deltaX, deltaY, scrollAxis] as [string, string | undefined, number, number, number, string],

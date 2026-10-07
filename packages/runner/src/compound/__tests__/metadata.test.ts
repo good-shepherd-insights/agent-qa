@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { readFillRefusalMeta, readFillSubmitMeta } from '../metadata.js'
+import {
+  readFillRefusalMeta,
+  readFillSubmitMeta,
+  readScrollUntilVisibleMeta,
+  SCROLL_OUTCOMES_READ_ONLY,
+  SCROLL_OUTCOMES_WRITTEN,
+} from '../metadata.js'
 
 const carrier = (metadata: Record<string, unknown>) => ({ metadata })
 
@@ -46,5 +52,45 @@ describe('readFillSubmitMeta', () => {
     expect(readFillSubmitMeta(carrier({ fillSubmit: { sent: 'yes' } }))).toBeUndefined()
     expect(readFillSubmitMeta(carrier({ fillSubmit: { sent: false, reason: 'other' } }))).toBeUndefined()
     expect(readFillSubmitMeta(carrier({ fillSubmit: { sent: false, reason: 3 } }))).toBeUndefined()
+  })
+})
+
+describe('readScrollUntilVisibleMeta', () => {
+  it('readScrollUntilVisibleMeta reads historical no-change and cap', () => {
+    expect(readScrollUntilVisibleMeta(carrier({ scrollUntilVisible: { swipes: 3, reversedOnce: false, outcome: 'no-change' } }))).toEqual({
+      swipes: 3,
+      reversedOnce: false,
+      outcome: 'no-change',
+    })
+    expect(readScrollUntilVisibleMeta(carrier({ scrollUntilVisible: { swipes: 20, reversedOnce: true, outcome: 'cap' } }))).toEqual({
+      swipes: 20,
+      reversedOnce: true,
+      outcome: 'cap',
+    })
+    expect(SCROLL_OUTCOMES_READ_ONLY).toEqual(['no-change', 'cap'])
+  })
+
+  it('reads the new outcome and endedBy', () => {
+    expect(SCROLL_OUTCOMES_WRITTEN).toEqual(['found', 'not-found', 'unresolved'])
+    const cases = [
+      { outcome: 'found', endedBy: 'target-visible' },
+      { outcome: 'found', endedBy: 'boundary' },
+      { outcome: 'not-found', endedBy: 'boundary' },
+      { outcome: 'unresolved', endedBy: 'max-swipes' },
+    ]
+    for (const c of cases) {
+      const block = { swipes: 2, reversedOnce: false, ...c }
+      expect(readScrollUntilVisibleMeta(carrier({ scrollUntilVisible: block }))).toEqual(block)
+    }
+  })
+
+  it('returns undefined on any shape miss', () => {
+    expect(readScrollUntilVisibleMeta(undefined)).toBeUndefined()
+    expect(readScrollUntilVisibleMeta(carrier({}))).toBeUndefined()
+    expect(readScrollUntilVisibleMeta(carrier({ scrollUntilVisible: { swipes: 1, reversedOnce: false, outcome: 'moved' } }))).toBeUndefined()
+    expect(readScrollUntilVisibleMeta(carrier({ scrollUntilVisible: { swipes: '1', reversedOnce: false, outcome: 'found' } }))).toBeUndefined()
+    expect(
+      readScrollUntilVisibleMeta(carrier({ scrollUntilVisible: { swipes: 1, reversedOnce: false, outcome: 'found', endedBy: 'stall' } })),
+    ).toBeUndefined()
   })
 })

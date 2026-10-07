@@ -307,17 +307,20 @@ describe('iOS snapshot depth (P3)', () => {
       expect(driver.pause).not.toHaveBeenCalled()
     })
 
-    it('a toEnd scroll completes when one interim-tree read hits the snapshot error', async () => {
+    // 2026-10-07 (436-02): toEnd no longer reads the interim tree; untilVisible's visibility probe does.
+    it('an untilVisible scroll finds the target when one interim-tree read hits the snapshot error', async () => {
       driver.getPageSource.mockRejectedValueOnce(snapshotError())
       await adapter.setup({ platform: 'ios' })
       const result = await adapter.execute({
         type: 'scroll',
-        mode: 'direction',
+        mode: 'untilVisible',
+        text: 'Deep row',
         direction: 'down',
-        amount: 'toEnd',
+        maxSwipes: 2,
         retryOpposite: false,
       })
       expect(result.success).toBe(true)
+      expect(result.metadata?.scrollUntilVisible).toEqual({ swipes: 0, reversedOnce: false, outcome: 'found', endedBy: 'target-visible' })
       expect(driver.updateSettings).toHaveBeenCalledWith({ snapshotMaxDepth: 50 })
     })
   })

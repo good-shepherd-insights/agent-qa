@@ -12,16 +12,16 @@ import type {
   PlatformAdapter,
   PlatformConfig,
   ScrollPrimitives,
-  ScrollUntilVisibleMeta,
+  SwipeSignal,
 } from '@vostride/agent-qa-runner'
 import {
   assertNever,
   buildScreenState,
   compareFillReread,
   createSnapshotLiveStream,
-  interimTreeIdentity,
   resolveAppName,
-  runDirectionScrollWithRetry,
+  runDirectionScroll,
+  runToEndScroll,
   runUntilVisibleLoop,
 } from '@vostride/agent-qa-runner'
 import type { Ref, ScreenState } from '@vostride/agent-qa-schema'
@@ -885,7 +885,7 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
     const distance = Math.max(1, Math.round(axisLength * 0.6 * factor))
 
     return {
-      swipeOnce: async (direction: Direction, ref?: Ref): Promise<void> => {
+      swipeOnce: async (direction: Direction, ref?: Ref): Promise<SwipeSignal> => {
         let sx = Math.round(viewport.width / 2)
         let sy = Math.round(viewport.height / 2)
         if (ref) {
@@ -900,6 +900,7 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
           .move({ x: pts.endX, y: pts.endY, duration: 300 })
           .up({ button: 0 })
           )
+        return 'unknown'
       },
       nativeSearchScroll: async (target: string): Promise<boolean> => {
         // buildIOSPredicate re-validates + escapes; a control char throws (the case already rejected
@@ -918,27 +919,6 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
         return nodes
       },
     }
-  }
-
-  /** direction+toEnd: swipe until the interim tree stops changing (or a hard cap). */
-  private async scrollToEndIOS(
-    primitives: ScrollPrimitives,
-    direction: Direction,
-    ref?: Ref,
-  ): Promise<ScrollUntilVisibleMeta> {
-    const MAX_TO_END_SWIPES = 20
-    let swipes = 0
-    let anyProgress = false
-    let prev = interimTreeIdentity(await primitives.readInterimTree())
-    while (swipes < MAX_TO_END_SWIPES) {
-      await primitives.swipeOnce(direction, ref)
-      swipes += 1
-      const current = interimTreeIdentity(await primitives.readInterimTree())
-      if (current === prev) break
-      anyProgress = true
-      prev = current
-    }
-    return { swipes, reversedOnce: false, outcome: anyProgress ? 'cap' : 'no-change' }
   }
 
   /**
@@ -1231,12 +1211,11 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
         const factor = action.amount === 'halfPage' ? 0.5 : 1
         const primitives = await this.buildIOSScrollPrimitives(action.direction, 0, factor)
         if (action.amount === 'toEnd') {
-          const meta = await this.scrollToEndIOS(primitives, action.direction, action.ref)
+          const { meta } = await runToEndScroll(primitives, action.direction, action.ref)
           return { success: true, metadata: { scrollUntilVisible: meta } }
         }
-        const { meta } = await runDirectionScrollWithRetry(primitives, {
+        const { meta } = await runDirectionScroll(primitives, {
           direction: action.direction,
-          retryOpposite: action.retryOpposite,
           ...(action.ref ? { ref: action.ref } : {}),
         })
         return { success: true, metadata: { scrollUntilVisible: meta } }

@@ -22,6 +22,7 @@ import { compareFillReread } from '../../compound/fill-verify.js'
 import {
   runUntilVisibleLoop,
   type ScrollPrimitives,
+  type SwipeSignal,
   type Direction,
 } from '../../compound/scroll-until-visible.js'
 import type { InterimNode } from '../../screen-builder.js'
@@ -83,12 +84,17 @@ describe('EXEC-01 — Fill executes as one atomic compound producing a single Ac
 })
 
 // -----------------------------------------------------------------------------
-// EXEC-02 — scroll-until-visible: executor-owned loop with a real progress signal
+// EXEC-02 — scroll-until-visible: executor-owned loop over operation-specific signals (D-24/D-25)
 // -----------------------------------------------------------------------------
-function scrollPrimitives(trees: () => InterimNode[], swipeLog?: Direction[]): ScrollPrimitives {
+function scrollPrimitives(
+  trees: () => InterimNode[],
+  signal: () => SwipeSignal = () => 'unknown',
+  swipeLog?: Direction[],
+): ScrollPrimitives {
   return {
     async swipeOnce(direction: Direction) {
       swipeLog?.push(direction)
+      return signal()
     },
     async readInterimTree() {
       return trees()
@@ -96,7 +102,7 @@ function scrollPrimitives(trees: () => InterimNode[], swipeLog?: Direction[]): S
   }
 }
 
-describe('EXEC-02 — untilVisible re-observes between ≤maxSwipes swipes and terminates on target-visible / no-change / cap', () => {
+describe('EXEC-02 — untilVisible re-observes between ≤maxSwipes swipes and terminates on target-visible / max-swipes / boundary', () => {
   it('terminates found the moment the target appears in the re-read tree', async () => {
     let call = 0
     const prims = scrollPrimitives(() => {
@@ -105,27 +111,22 @@ describe('EXEC-02 — untilVisible re-observes between ≤maxSwipes swipes and t
     })
     const r = await runUntilVisibleLoop(prims, { target: 'Settings', direction: 'down', maxSwipes: 5, retryOpposite: false })
     expect(r.found).toBe(true)
-    expect(r.meta.outcome).toBe('found')
-    expect(r.meta.swipes).toBe(1)
-    // D-04 meta key set is exactly the ScrollUntilVisibleMeta contract.
-    expect(Object.keys(r.meta).sort()).toEqual(['outcome', 'reversedOnce', 'swipes'])
+    expect(r.meta).toEqual({ swipes: 1, reversedOnce: false, outcome: 'found', endedBy: 'target-visible' })
   })
 
-  it('an unchanging tree with no target terminates no-change at the swipe budget (never progressed)', async () => {
+  it('an unchanging tree while the container moves is not an end: the search uses its whole budget and stays unresolved', async () => {
     const SAME = [node('Row A'), node('Row B')]
-    const r = await runUntilVisibleLoop(scrollPrimitives(() => SAME), {
+    const r = await runUntilVisibleLoop(scrollPrimitives(() => SAME, () => 'moved'), {
       target: 'Nope',
       direction: 'down',
       maxSwipes: 3,
       retryOpposite: false,
     })
     expect(r.found).toBe(false)
-    expect(r.meta.outcome).toBe('no-change')
-    expect(r.meta.swipes).toBe(3)
-    expect(r.meta.reversedOnce).toBe(false)
+    expect(r.meta).toEqual({ swipes: 3, reversedOnce: false, outcome: 'unresolved', endedBy: 'max-swipes' })
   })
 
-  it('a progressing-but-never-found scroll terminates cap (progressed, hit the budget)', async () => {
+  it('a changing tree without a movement signal is not progress either: same budget, same unresolved outcome', async () => {
     let n = 0
     const r = await runUntilVisibleLoop(scrollPrimitives(() => { n += 1; return [node(`Row ${n}`)] }), {
       target: 'Nope',
@@ -134,22 +135,30 @@ describe('EXEC-02 — untilVisible re-observes between ≤maxSwipes swipes and t
       retryOpposite: false,
     })
     expect(r.found).toBe(false)
-    expect(r.meta.outcome).toBe('cap')
-    expect(r.meta.swipes).toBe(3)
+    expect(r.meta).toEqual({ swipes: 3, reversedOnce: false, outcome: 'unresolved', endedBy: 'max-swipes' })
   })
 
-  it('a stall with retryOpposite flips direction exactly once (single reversal self-heal)', async () => {
+  it('retryOpposite reverses only after the budget or a boundary, exactly once, and both boundaries end not-found', async () => {
     const SAME = [node('Row A')]
     const dirs: Direction[] = []
-    const r = await runUntilVisibleLoop(scrollPrimitives(() => SAME, dirs), {
+    const stalled = await runUntilVisibleLoop(scrollPrimitives(() => SAME, () => 'unknown', dirs), {
+      target: 'Nope',
+      direction: 'down',
+      maxSwipes: 2,
+      retryOpposite: true,
+    })
+    expect(dirs).toEqual(['down', 'down', 'up', 'up'])
+    expect(stalled.meta).toEqual({ swipes: 4, reversedOnce: true, outcome: 'unresolved', endedBy: 'max-swipes' })
+
+    const bounded: Direction[] = []
+    const walls = await runUntilVisibleLoop(scrollPrimitives(() => SAME, () => 'at-boundary', bounded), {
       target: 'Nope',
       direction: 'down',
       maxSwipes: 4,
       retryOpposite: true,
     })
-    expect(r.meta.reversedOnce).toBe(true)
-    expect(dirs[0]).toBe('down')
-    expect(dirs).toContain('up') // flipped after the first no-progress swipe
+    expect(bounded).toEqual(['down', 'up'])
+    expect(walls.meta).toEqual({ swipes: 2, reversedOnce: true, outcome: 'not-found', endedBy: 'boundary' })
   })
 })
 

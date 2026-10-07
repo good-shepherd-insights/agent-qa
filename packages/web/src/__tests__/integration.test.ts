@@ -310,11 +310,13 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     })
 
     expect(result.success).toBe(true)
-    const meta = result.metadata?.scrollUntilVisible as { swipes: number; reversedOnce: boolean; outcome: string } | undefined
+    const meta = result.metadata?.scrollUntilVisible as { swipes: number; reversedOnce: boolean; outcome: string; endedBy: string } | undefined
     expect(meta).toBeDefined()
     expect(typeof meta!.swipes).toBe('number')
     expect(typeof meta!.reversedOnce).toBe('boolean')
-    expect(['found', 'no-change', 'cap']).toContain(meta!.outcome)
+    // The mock page reports no offsets, so nothing proves movement or a boundary: both directions
+    // use their budget and the search stays unresolved.
+    expect(meta).toEqual({ swipes: 4, reversedOnce: true, outcome: 'unresolved', endedBy: 'max-swipes' })
     // the light probe never re-mints refs (D-03)
     expect(adapter['lastRefs']).toEqual(refsBefore)
   })

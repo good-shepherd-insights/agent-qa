@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { WebPlatformAdapter } from '../adapter.js'
+import { buildScrollPrimitives, runWebScrollCompound } from '../compound-web.js'
+import type { RefMap } from '../types.js'
 
 // ---------------------------------------------------------------------------
 // Wave-0 RED scaffold — Phase 359 Plan 02, Task 1 (EXEC-01/02/03; D-05..D-09).
@@ -229,6 +231,106 @@ describe('WebPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       const wheelIdx = calls.indexOf('wheel')
       if (wheelIdx !== -1) expect(nativeIdx).toBeLessThan(wheelIdx)
       expect(result.metadata?.scrollUntilVisible).toBeDefined()
+    })
+  })
+
+  describe('EXEC-02 scroll movement signals (436-02 · D-25)', () => {
+    type Offsets = { x: number; y: number; maxX: number; maxY: number }
+
+    // A page whose evaluate answers the three shapes compound-web sends: the settle string,
+    // the no-arg document-offset read, and scrollWithRef's function + argument tuple.
+    function signalPage(opts: { doc?: Offsets[]; container?: unknown[] }) {
+      const docReads = [...(opts.doc ?? [])]
+      const containerResults = [...(opts.container ?? [])]
+      const log: string[] = []
+      const page = {
+        evaluate: vi.fn(async (fn: unknown, arg?: unknown) => {
+          if (typeof fn === 'string') return 'raf'
+          if (Array.isArray(arg)) {
+            log.push('scrollWithRef')
+            return containerResults.shift()
+          }
+          log.push('readOffsets')
+          return docReads.shift()
+        }),
+        mouse: { wheel: vi.fn(async (dx: number, dy: number) => { log.push(`wheel:${dx},${dy}`) }) },
+        viewportSize: () => ({ width: 1280, height: 720 }),
+        getByText: vi.fn(() => ({ first: () => ({ scrollIntoViewIfNeeded: vi.fn().mockRejectedValue(new Error('not found')) }) })),
+        locator: vi.fn(() => ({ ariaSnapshot: vi.fn().mockResolvedValue('- text "Row A"') })),
+      }
+      return { page, log }
+    }
+
+    const refs = { e7: { role: 'list', name: 'Results', nth: 0 } } as unknown as RefMap
+    const container = (before: number, after: number, max: number) => ({
+      bounds: null,
+      scrolledContainer: 'element',
+      scrolled: before !== after,
+      offsets: { before, after, max },
+    })
+
+    it('swipeOnce reports moved when scrollTop changes, at-boundary at the scroll extent, unknown otherwise', async () => {
+      const { page, log } = signalPage({ container: [container(0, 720, 2000), container(2000, 2000, 2000), container(300, 300, 2000), undefined] })
+      const p = buildScrollPrimitives(page as never, refs, 720)
+      expect(await p.swipeOnce('down', 'e7' as never)).toBe('moved')
+      expect(await p.swipeOnce('down', 'e7' as never)).toBe('at-boundary')
+      expect(await p.swipeOnce('down', 'e7' as never)).toBe('unknown')
+      expect(await p.swipeOnce('down', 'e7' as never)).toBe('unknown')
+      expect(log).toEqual(['scrollWithRef', 'scrollWithRef', 'scrollWithRef', 'scrollWithRef'])
+      expect(page.mouse.wheel).not.toHaveBeenCalled()
+    })
+
+    it('the no-ref wheel path reads document.scrollingElement before and after', async () => {
+      const { page, log } = signalPage({
+        doc: [
+          { x: 0, y: 0, maxX: 0, maxY: 3000 }, { x: 0, y: 720, maxX: 0, maxY: 3000 },
+          { x: 0, y: 3000, maxX: 0, maxY: 3000 }, { x: 0, y: 3000, maxX: 0, maxY: 3000 },
+          { x: 0, y: 500, maxX: 0, maxY: 3000 }, { x: 0, y: 500, maxX: 0, maxY: 3000 },
+          { x: 0, y: 0, maxX: 0, maxY: 0 }, { x: 0, y: 0, maxX: 0, maxY: 0 },
+        ],
+      })
+      const p = buildScrollPrimitives(page as never, {} as RefMap, 720)
+      expect(await p.swipeOnce('down')).toBe('moved')
+      expect(await p.swipeOnce('down')).toBe('at-boundary')
+      expect(await p.swipeOnce('down')).toBe('unknown')
+      // A document with no scroll range proves nothing: the wheel may have moved a nested scroller.
+      expect(await p.swipeOnce('down')).toBe('unknown')
+      expect(log.slice(0, 3)).toEqual(['readOffsets', 'wheel:0,720', 'readOffsets'])
+    })
+
+    it('toEnd stops on the first at-boundary offset and reports found by boundary', async () => {
+      const { page } = signalPage({
+        doc: [
+          { x: 0, y: 0, maxX: 0, maxY: 1440 }, { x: 0, y: 720, maxX: 0, maxY: 1440 },
+          { x: 0, y: 720, maxX: 0, maxY: 1440 }, { x: 0, y: 1440, maxX: 0, maxY: 1440 },
+          { x: 0, y: 1440, maxX: 0, maxY: 1440 }, { x: 0, y: 1440, maxX: 0, maxY: 1440 },
+        ],
+      })
+      const result = await runWebScrollCompound(page as never, {} as RefMap, {
+        type: 'scroll', mode: 'direction', direction: 'down', amount: 'toEnd', retryOpposite: true,
+      } as never)
+      expect(result.metadata?.scrollUntilVisible).toEqual({ swipes: 3, reversedOnce: false, outcome: 'found', endedBy: 'boundary' })
+      expect(page.mouse.wheel).toHaveBeenCalledTimes(3)
+    })
+
+    it('direction mode is one wheel gesture even with retryOpposite and an unknown signal', async () => {
+      const { page } = signalPage({ doc: [] })
+      const result = await runWebScrollCompound(page as never, {} as RefMap, {
+        type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: true,
+      } as never)
+      expect(page.mouse.wheel).toHaveBeenCalledTimes(1)
+      expect(result.metadata?.scrollUntilVisible).toEqual({ swipes: 1, reversedOnce: false, outcome: 'unresolved', endedBy: 'max-swipes' })
+    })
+
+    it('a same-hash untilVisible scroll with moving offsets keeps going forward and stays unresolved', async () => {
+      const doc: Offsets[] = []
+      for (let i = 0; i < 3; i += 1) doc.push({ x: 0, y: i * 100, maxX: 0, maxY: 5000 }, { x: 0, y: (i + 1) * 100, maxX: 0, maxY: 5000 })
+      const { page } = signalPage({ doc })
+      const result = await runWebScrollCompound(page as never, {} as RefMap, {
+        type: 'scroll', mode: 'untilVisible', text: 'Footer link', direction: 'down', maxSwipes: 3, retryOpposite: false,
+      } as never)
+      expect(page.mouse.wheel.mock.calls).toEqual([[0, 720], [0, 720], [0, 720]])
+      expect(result.metadata?.scrollUntilVisible).toEqual({ swipes: 3, reversedOnce: false, outcome: 'unresolved', endedBy: 'max-swipes' })
     })
   })
 
