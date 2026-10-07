@@ -27,8 +27,8 @@
     "THE PAIRS THIS BUYS, each crossing an arm boundary on one field:",
     "  clean-definitive-assertion-fail (FINDING)  vs  mechanics-termination        (REPAIR)",
     "  clean-definitive-assertion-fail (FINDING)  vs  mechanics-planning-failure   (REPAIR)",
-    "  clean-definitive-assertion-fail (FINDING)  vs  mechanics-cycle              (REPAIR)",
-    "  clean-definitive-assertion-fail (FINDING)  vs  mechanics-stagnation         (REPAIR)",
+    "  clean-definitive-assertion-fail (FINDING)  vs  historical-cycle             (FINDING, since 436 D-14)",
+    "  clean-definitive-assertion-fail (FINDING)  vs  historical-stagnation        (FINDING, since 436 D-14)",
     "  passing-run                     (REFUSE)   vs  mechanics-member-timeout     (REPAIR)",
     "  passing-run                     (REFUSE)   vs  mechanics-member-cancelled   (REPAIR)",
     "and the sharpest pair in the table, which differs in NO field at all except one integer:",
@@ -46,7 +46,8 @@
     "measured/ rationale on every row records what was actually observed on 2026-08-11 by",
     "running the row through the shipped classifier, not what the table's author expected.",
     "",
-    "2026-09-02 (Phase 411): the second arm was renamed from its v52 spelling to `stop` with the Issue-slot cleanup; every row's classification is byte-identical -- see `DELETION-INVENTORY.md`."
+    "2026-09-02 (Phase 411): the second arm was renamed from its v52 spelling to `stop` with the Issue-slot cleanup; every row's classification is byte-identical -- see `DELETION-INVENTORY.md`.",
+    "2026-10-07 (Phase 436, D-14): an owner-decided contract change, not a gap-closure re-classification. `cycle` and `stagnation` left the router's mechanics signals with the progress subsystem; their blocks survive only in pre-change handoffs and are read as nothing. The two rows that pinned them as REPAIR are renamed historical-cycle and historical-stagnation and now pin the opposite: the same member spec routes exactly like the signature cell (stop, clean-definitive-assertion-fail). No member spec changed, so every variant declaration still holds. The limit-stop rule is pinned by the 436 cells in router.test.ts, outside this table."
   ],
 
   "schemaVersion": 1,
@@ -67,7 +68,9 @@
   "stopDirectionRows": [
     "clean-definitive-assertion-fail",
     "mixed-evidence",
-    "indefinitive-failure"
+    "indefinitive-failure",
+    "historical-cycle",
+    "historical-stagnation"
   ],
 
   "rows": [
@@ -144,7 +147,7 @@
       "measured": "route repair, signalClass execution-mechanics, mechanics [{stepIndex 1, planning-failure}]."
     },
     {
-      "id": "mechanics-cycle",
+      "id": "historical-cycle",
       "variantOf": "clean-definitive-assertion-fail",
       "variesBy": ["cycleSteps"],
       "member": {
@@ -158,17 +161,17 @@
         "stagnationSteps": []
       },
       "expected": {
-        "route": "repair",
-        "signalClass": "execution-mechanics",
+        "route": "stop",
+        "signalClass": "clean-definitive-assertion-fail",
         "failingStepIndex": 1,
-        "verdictSource": null,
-        "mechanics": [{ "stepIndex": 1, "signal": "cycle" }]
+        "verdictSource": "assert-value",
+        "mechanics": []
       },
-      "rationale": "SOLE CATCHER for: a flagged cycle is execution mechanics. The gate-1 indefinitive family 393 measured has four members and this is the third; a router keyed on the first two would send a cycling draft to a finding, which reports an application bug that the run never established.",
-      "measured": "route repair, signalClass execution-mechanics, mechanics [{stepIndex 1, cycle}]."
+      "rationale": "SOLE CATCHER for: a historical cycle block is NOT a mechanics signal (436 D-14). Until 2026-10-07 this row was mechanics-cycle and routed to repair. The progress subsystem that wrote cycle blocks is deleted, so only pre-change handoffs carry one, and reading it as mechanics would send an old dead-control run to repair. The signature cell plus a cycle block must therefore route exactly like the signature cell; a router that still pushed 'cycle' would answer repair here.",
+      "measured": "2026-10-07: route stop, signalClass clean-definitive-assertion-fail, failurePoint step 1 with verdictSource assert-value; the cycle block on step 1 contributed no mechanics signal."
     },
     {
-      "id": "mechanics-stagnation",
+      "id": "historical-stagnation",
       "variantOf": "clean-definitive-assertion-fail",
       "variesBy": ["stagnationSteps"],
       "member": {
@@ -182,14 +185,14 @@
         "stagnationSteps": [1]
       },
       "expected": {
-        "route": "repair",
-        "signalClass": "execution-mechanics",
+        "route": "stop",
+        "signalClass": "clean-definitive-assertion-fail",
         "failingStepIndex": 1,
-        "verdictSource": null,
-        "mechanics": [{ "stepIndex": 1, "signal": "stagnation" }]
+        "verdictSource": "assert-value",
+        "mechanics": []
       },
-      "rationale": "SOLE CATCHER for: an exhausted per-element stagnation ladder is execution mechanics -- the fourth member of the indefinitive family, and the one most easily mistaken for an assertion problem because the step text is usually an assertion. The ladder exhausting means the element never responded, which is a grounding fact, not a claim about what the application displays.",
-      "measured": "route repair, signalClass execution-mechanics, mechanics [{stepIndex 1, stagnation}]."
+      "rationale": "SOLE CATCHER for: a historical stagnation block is NOT a mechanics signal (436 D-14). Until 2026-10-07 this row was mechanics-stagnation and routed to repair. A dead control now ends at a typed limit stop instead of an exhausted ladder, and the ladder's old blocks are read as nothing; a router that still pushed 'stagnation' would answer repair here.",
+      "measured": "2026-10-07: route stop, signalClass clean-definitive-assertion-fail, failurePoint step 1 with verdictSource assert-value; the stagnation block on step 1 contributed no mechanics signal."
     },
     {
       "id": "mechanics-member-timeout",

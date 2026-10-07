@@ -41,9 +41,10 @@ import { describe, expect, it } from 'vitest'
 import {
   ACCEPT_CONTROL_DRAFT,
   LOCAL_FORM_URL,
+  limitStopEvidence,
   runDocument,
 } from './evidence-fixtures.js'
-import type { MemberFixture, SubActionFixture } from './evidence-fixtures.js'
+import type { LimitStopFixture, MemberFixture, SubActionFixture } from './evidence-fixtures.js'
 
 const CORPUS_DIR = join(import.meta.dirname, 'fixtures', 'router-corpus')
 
@@ -180,12 +181,13 @@ describe('the frozen router corpus is intact', () => {
     }
   })
 
-  it('names three stop-direction rows, and they are the rows that route to stop', () => {
+  it('names five stop-direction rows, and they are the rows that route to stop', () => {
+    // Three since 394; the two historical rows joined on 2026-10-07 (436 D-14).
     const stopRows = EXPECTATIONS.rows
       .filter((row) => row.expected.route === 'stop')
       .map((row) => row.id)
     expect([...stopRows].sort()).toEqual([...EXPECTATIONS.stopDirectionRows].sort())
-    expect(EXPECTATIONS.stopDirectionRows).toHaveLength(3)
+    expect(EXPECTATIONS.stopDirectionRows).toHaveLength(5)
   })
 
   it('every variant declaration is mechanically true against the data', () => {
@@ -222,19 +224,29 @@ describe('the frozen router corpus is intact', () => {
     expect(byRoute('stop').length).toBeGreaterThanOrEqual(3)
     expect(byRoute('refuse').length).toBeGreaterThanOrEqual(1)
 
-    // Each of the four STEP-level mechanics signals has a cross-arm partner differing by the one
+    // Each of the two STEP-level mechanics signals has a cross-arm partner differing by the one
     // field that carries it, and that partner is the signature cell.
     for (const [id, field] of [
       ['mechanics-termination', 'infeasibleSteps'],
       ['mechanics-planning-failure', 'planningFailureSteps'],
-      ['mechanics-cycle', 'cycleSteps'],
-      ['mechanics-stagnation', 'stagnationSteps'],
     ] as const) {
       const row = rowNamed(id)
       expect(row.variantOf, `${id} pairs against the signature cell`).toBe(EXPECTATIONS.baseRow)
       expect(row.variesBy).toEqual([field])
       expect(row.expected.route).toBe('repair')
       expect(rowNamed(EXPECTATIONS.baseRow).expected.route).toBe('stop')
+    }
+
+    // 2026-10-07 (436-06): the two removed signals pair against the signature cell by the same one
+    // field and now land on the SAME arm and class — the proof that they route nothing (D-14).
+    for (const [id, field] of [
+      ['historical-cycle', 'cycleSteps'],
+      ['historical-stagnation', 'stagnationSteps'],
+    ] as const) {
+      const row = rowNamed(id)
+      expect(row.variantOf, `${id} pairs against the signature cell`).toBe(EXPECTATIONS.baseRow)
+      expect(row.variesBy).toEqual([field])
+      expect(row.expected).toEqual(rowNamed(EXPECTATIONS.baseRow).expected)
     }
 
     // Both MEMBER-level mechanics outcomes pair against the passing run by `outcome` alone.
@@ -412,5 +424,157 @@ describe('the router is total where it can be and refuses by name where it canno
       expect(vocabulary.has(classifyFailureEvidence(DRAFT_REF, handoffFor(row)))).toBe(true)
     }
     expect(vocabulary.has(classifyFailureEvidence(DRAFT_REF, undefined))).toBe(true)
+  })
+})
+
+// ---- 436 D-14: a limit stop is indefinitive and stops; cycle and stagnation route nothing ----
+
+const AGENT_QA_ROOT = join(import.meta.dirname, '..', '..', '..', '..', '..')
+const PRE_CHANGE_HANDOFF_PATH = join(AGENT_QA_ROOT, 'test-fixtures', '436-pre-change', 'handoff.json')
+
+const ACTION_LIMIT_ON_STEP_1: LimitStopFixture = {
+  stepIndex: 1,
+  limit: 'actions',
+  configured: 30,
+  used: 30,
+}
+
+function limitMember(overrides: Partial<MemberFixture> = {}): MemberFixture {
+  return {
+    filePath: DRAFT_REF.filePath,
+    testName: DRAFT_REF.testName,
+    outcome: 'failed',
+    steps: ROUTER_SUBACTIONS,
+    limitStopSteps: [ACTION_LIMIT_ON_STEP_1],
+    ...overrides,
+  }
+}
+
+describe('436 D-14: a limit-stopped draft routes to stop, never repair', () => {
+  it('ROUTER_MECHANICS_SIGNALS equals the four remaining members, in order', async () => {
+    // From the module itself: the agent barrel does not export the constant.
+    const { ROUTER_MECHANICS_SIGNALS } = await loadRouter()
+    expect(ROUTER_MECHANICS_SIGNALS).toEqual([
+      'termination',
+      'planning-failure',
+      'member-timeout',
+      'member-cancelled',
+    ])
+  })
+
+  it(
+    'a failed member with a limit-stopped step is indefinitive-failure and routes to stop',
+    async () => {
+      const { classifyFailureEvidence, routeRepairOrStop } = await loadRouter()
+      const handoff = runDocument('r_router-limit', [limitMember()])
+      expect(() => guardCompletedRunHandoff(handoff)).not.toThrow()
+
+      expect(classifyFailureEvidence(DRAFT_REF, handoff)).toBe('indefinitive-failure')
+      const route = routeRepairOrStop(DRAFT_REF, handoff)
+      expect(route.kind).toBe('stop')
+      if (route.kind !== 'stop') return
+      expect(route.signalClass).toBe('indefinitive-failure')
+      expect(route.failurePoint?.stepIndex).toBe(1)
+      expect(route.failurePoint?.reasoning).toBe(limitStopEvidence(ACTION_LIMIT_ON_STEP_1).reason)
+      expect(route.failurePoint?.verdictSource).toBeUndefined()
+      expect(route.evidenceRefs.length).toBeGreaterThan(0)
+    },
+  )
+
+  it('a planning-turn limit stop routes the same way', async () => {
+    const { classifyFailureEvidence } = await loadRouter()
+    const handoff = runDocument('r_router-planning-limit', [
+      limitMember({
+        limitStopSteps: [{ stepIndex: 1, limit: 'planning-turns', configured: 30, used: 30 }],
+      }),
+    ])
+    expect(classifyFailureEvidence(DRAFT_REF, handoff)).toBe('indefinitive-failure')
+  })
+
+  it('a limit stop beats a recorded verdictSource on another step', async () => {
+    const { classifyFailureEvidence, routeRepairOrStop } = await loadRouter()
+    // Step 0 is a clean definitive assertion-fail on its own; without the limit rule this member
+    // is clean-definitive-assertion-fail, and with a termination beside it, mixed-evidence.
+    const cleanElsewhere = limitMember({
+      failedSteps: [0],
+      verdictSourceSteps: [{ stepIndex: 0, source: 'assert-value' }],
+    })
+    const withoutLimit = runDocument('r_router-no-limit', [
+      { ...cleanElsewhere, limitStopSteps: [] },
+    ])
+    expect(classifyFailureEvidence(DRAFT_REF, withoutLimit)).toBe('clean-definitive-assertion-fail')
+    const mixedWithoutLimit = runDocument('r_router-mixed-no-limit', [
+      { ...cleanElsewhere, infeasibleSteps: [1], limitStopSteps: [] },
+    ])
+    expect(classifyFailureEvidence(DRAFT_REF, mixedWithoutLimit)).toBe('mixed-evidence')
+
+    for (const member of [
+      cleanElsewhere,
+      { ...cleanElsewhere, infeasibleSteps: [1] },
+      // The limit-stopped step itself recording a verdictSource is still not definitive.
+      limitMember({ verdictSourceSteps: [{ stepIndex: 1, source: 'assert-value' }] }),
+    ]) {
+      const handoff = runDocument('r_router-limit-beats-source', [member])
+      expect(classifyFailureEvidence(DRAFT_REF, handoff)).toBe('indefinitive-failure')
+      const route = routeRepairOrStop(DRAFT_REF, handoff)
+      expect(route.kind).toBe('stop')
+      expect(route.signalClass).toBe('indefinitive-failure')
+      if (route.kind === 'stop') expect(route.failurePoint?.stepIndex).toBe(1)
+    }
+  })
+
+  it(
+    'a limit stop beats a mechanics signal on another step, so it never reaches repair',
+    async () => {
+      const { classifyFailureEvidence, routeRepairOrStop } = await loadRouter()
+      const mechanicsElsewhere = limitMember({ planningFailureSteps: [0] })
+      const withoutLimit = runDocument('r_router-mechanics-only', [
+        { ...mechanicsElsewhere, limitStopSteps: [] },
+      ])
+      expect(classifyFailureEvidence(DRAFT_REF, withoutLimit)).toBe('execution-mechanics')
+
+      const handoff = runDocument('r_router-limit-beats-mechanics', [mechanicsElsewhere])
+      expect(classifyFailureEvidence(DRAFT_REF, handoff)).toBe('indefinitive-failure')
+      expect(routeRepairOrStop(DRAFT_REF, handoff).kind).toBe('stop')
+    },
+  )
+
+  it(
+    'a step that only carries a historical stagnation or cycle block is not a mechanics signal',
+    async () => {
+      const { classifyFailureEvidence, routeRepairOrStop } = await loadRouter()
+      for (const historical of [{ cycleSteps: [1] }, { stagnationSteps: [1] }]) {
+        const handoff = runDocument('r_router-historical', [
+          limitMember({ limitStopSteps: [], failedSteps: [1], ...historical }),
+        ])
+        expect(classifyFailureEvidence(DRAFT_REF, handoff)).toBe('indefinitive-failure')
+        const route = routeRepairOrStop(DRAFT_REF, handoff)
+        expect(route.kind).toBe('stop')
+      }
+    },
+  )
+
+  it('the 436-01 pre-change handoff classifies and routes without throwing', async () => {
+    const { classifyFailureEvidence, routeRepairOrStop } = await loadRouter()
+    const handoff = guardCompletedRunHandoff(
+      JSON.parse(readFileSync(PRE_CHANGE_HANDOFF_PATH, 'utf8')),
+    )
+    const member = handoff.tests[0]
+    if (member === undefined) throw new Error('the pre-change handoff carries one member')
+    expect(member.steps.some((step) => step.stagnation !== undefined)).toBe(true)
+    expect(member.steps.some((step) => step.cycle !== undefined)).toBe(true)
+    const draftRef: DraftRef = {
+      filePath: member.filePath,
+      testId: member.testId,
+      testName: member.testName,
+      contentDigest: 'pre-change',
+    }
+
+    expect(classifyFailureEvidence(draftRef, handoff)).toBe('indefinitive-failure')
+    const route = routeRepairOrStop(draftRef, handoff)
+    expect(route.kind).toBe('stop')
+    if (route.kind !== 'stop') return
+    const firstRejected = member.steps.find((step) => !step.verifierVerdict.pass)
+    expect(route.failurePoint?.stepIndex).toBe(firstRejected?.stepIndex)
   })
 })

@@ -12,6 +12,11 @@
 //      verdict false -> `no-failure` -> REFUSED BY NAME. A healed pass is a pass (393-01 F3).
 //      Nothing here is a routing question, and either arm would be a wrong answer wearing a
 //      correct one's clothes.
+//   1b. SOME step carries a typed `limitStop` block -> `indefinitive-failure` -> STOP. The run ran
+//      out of an action or planning-turn limit rather than into an answer, so it says nothing
+//      about the application, and repairing it could iterate a dead control into a passing test
+//      (436 D-14). Evaluated before rule 2, so a verdictSource on another step never makes it
+//      definitive; a limit is never a mechanics signal.
 //   2. SOME step is a CLEAN DEFINITIVE ASSERTION-FAIL — its verifier said no, a `verdictSource`
 //      records which path produced that verdict, and that step carries no mechanics signal of
 //      its own. Then:
@@ -101,17 +106,17 @@ export type RouterStopSignalClass =
 /**
  * The closed set of execution-mechanics signals, spelled once.
  *
- * The first four are the gate-1 indefinitive family 393 measured, read as PRESENCE exactly as
- * gate 1 reads them: a recorded termination block is a turn declaring the step could not be
- * carried out, and narrowing that to today's single `kind` literal would silently reclassify a
- * later one as an assertion problem. The last two are member-level and carried by the outcome
- * rather than by any step, which is why a scan over `StepEvidence` alone cannot see them.
+ * The first two are read as PRESENCE exactly as gate 1 reads them: a recorded termination block is
+ * a turn declaring the step could not be carried out, and narrowing that to today's single `kind`
+ * literal would silently reclassify a later one as an assertion problem. The last two are
+ * member-level and carried by the outcome rather than by any step, which is why a scan over
+ * `StepEvidence` alone cannot see them.
  */
+// 2026-10-07 (436-06): 'cycle' and 'stagnation' left with the progress subsystem (D-14); their
+// blocks survive only in pre-change handoffs and are no longer read as mechanics.
 export const ROUTER_MECHANICS_SIGNALS = [
   'termination',
   'planning-failure',
-  'cycle',
-  'stagnation',
   'member-timeout',
   'member-cancelled',
 ] as const
@@ -222,9 +227,12 @@ function stepMechanics(step: StepEvidence): readonly RouterMechanicsSignalName[]
   const found: RouterMechanicsSignalName[] = []
   if (step.termination !== undefined) found.push('termination')
   if (step.planningFailure !== undefined) found.push('planning-failure')
-  if (step.cycle !== undefined) found.push('cycle')
-  if (step.stagnation !== undefined) found.push('stagnation')
   return found
+}
+
+/** A step a per-step action or planning-turn limit stopped (436 D-12). Never a mechanics signal. */
+export function stepLimitStopped(step: StepEvidence): boolean {
+  return step.limitStop !== undefined
 }
 
 /** Every mechanics signal in the member: the whole step scan, then the member-level outcome. */
@@ -254,7 +262,8 @@ function firstCleanDefinitiveFail(member: PerTestOutcome): StepEvidence | undefi
     (step) =>
       isFailedVerdict(step)
       && step.verdictSource !== undefined
-      && stepMechanics(step).length === 0,
+      && stepMechanics(step).length === 0
+      && !stepLimitStopped(step),
   )
 }
 
@@ -284,6 +293,7 @@ export function classifyFailureEvidence(
 
   const failed = !NON_FAILING_OUTCOMES.includes(member.outcome) || member.steps.some(isFailedVerdict)
   if (!failed) return 'no-failure'
+  if (member.steps.some(stepLimitStopped)) return 'indefinitive-failure'
 
   const mechanics = scanMechanics(member)
   if (firstCleanDefinitiveFail(member) !== undefined) {
@@ -420,10 +430,13 @@ export function routeRepairOrStop(
     }
   }
 
-  // The stop points at the step whose CLAIM failed when there is one, and otherwise at the first
-  // step the verifier rejected — never at a step chosen because it carried a mechanics signal,
-  // which would name a symptom of the run rather than the application behaviour.
-  const point = firstCleanDefinitiveFail(member) ?? failingStep
+  // The stop points at the step a limit stopped when there is one (that is why it stopped), then
+  // at the step whose CLAIM failed, and otherwise at the first step the verifier rejected — never
+  // at a step chosen because it carried a mechanics signal, which would name a symptom of the run
+  // rather than the application behaviour.
+  const point = member.steps.find(stepLimitStopped)
+    ?? firstCleanDefinitiveFail(member)
+    ?? failingStep
   return {
     kind: 'stop',
     signalClass: signalClass as RouterStopSignalClass,

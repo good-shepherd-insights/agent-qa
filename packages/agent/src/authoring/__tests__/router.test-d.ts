@@ -108,11 +108,12 @@ expectTypeOf<RouterSignalClass>().toEqualTypeOf<
 expectTypeOf<RouterMechanicsSignalName>().toEqualTypeOf<
   | 'termination'
   | 'planning-failure'
-  | 'cycle'
-  | 'stagnation'
   | 'member-timeout'
   | 'member-cancelled'
 >()
+// 2026-10-07 (436-06): the two signals that left with the progress subsystem (D-14) are rejected.
+expectTypeOf<'cycle'>().not.toExtend<RouterMechanicsSignalName>()
+expectTypeOf<'stagnation'>().not.toExtend<RouterMechanicsSignalName>()
 expectTypeOf<RunEvidenceChannel>().toEqualTypeOf<
   'step-trace' | 'state-before' | 'state-after'
 >()

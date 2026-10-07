@@ -9,11 +9,12 @@
 //
 // Not a `.test.ts` file, so vitest's `src/**/__tests__/**/*.test.ts` include never collects it.
 
-import { actionAnchorElement } from '@vostride/agent-qa-schema'
+import { actionAnchorElement, formatLimitStopReason } from '@vostride/agent-qa-schema'
 import type {
   Action,
   CompletedRunHandoff,
   ElementInfo,
+  LimitStopEvidence,
   MemberTestOutcome,
   PerTestOutcome,
   RunStartAcknowledgement,
@@ -72,6 +73,27 @@ export interface MemberFixture {
   readonly verdictSourceSteps?: readonly VerdictSourceFixture[]
   /** Step indices carrying the exhausted-ladder stagnation terminal block (394-05). */
   readonly stagnationSteps?: readonly number[]
+  /** Steps a per-step limit stopped (436-06). Each such step's verifier said no with the reason. */
+  readonly limitStopSteps?: readonly LimitStopFixture[]
+}
+
+/** One step's limit stop, as the runner's limit funnel records it (436-04/05). */
+export interface LimitStopFixture {
+  readonly stepIndex: number
+  readonly limit: LimitStopEvidence['limit']
+  readonly configured: number
+  readonly used: number
+}
+
+/** The typed block the runner writes for a limit stop, reason minted by the shipped formatter. */
+export function limitStopEvidence(fixture: LimitStopFixture): LimitStopEvidence {
+  return {
+    limit: fixture.limit,
+    configured: fixture.configured,
+    used: fixture.used,
+    reason: formatLimitStopReason(fixture.limit, fixture.configured, fixture.used),
+    requestedOutcome: 'unverified',
+  }
 }
 
 /** One step's recorded {@link VerdictSource}. */
@@ -146,6 +168,8 @@ function stepEvidence(
   subActions: readonly SubActionFixture[],
   member: MemberFixture,
 ): StepEvidence {
+  const limitRow = member.limitStopSteps?.find((entry) => entry.stepIndex === stepIndex)
+  const limitStop = limitRow === undefined ? undefined : limitStopEvidence(limitRow)
   return {
     stepIndex,
     stepText: `step ${stepIndex}`,
@@ -160,9 +184,12 @@ function stepEvidence(
       channel3: [],
     },
     subActions: subActions.map(subActionEvidence),
-    verifierVerdict: member.failedSteps?.includes(stepIndex) === true
-      ? { pass: false, reasoning: `fixture: step ${stepIndex} did not show what the test claims` }
-      : { pass: true, reasoning: 'fixture' },
+    verifierVerdict: limitStop !== undefined
+      ? { pass: false, reasoning: limitStop.reason }
+      : member.failedSteps?.includes(stepIndex) === true
+        ? { pass: false, reasoning: `fixture: step ${stepIndex} did not show what the test claims` }
+        : { pass: true, reasoning: 'fixture' },
+    ...(limitStop === undefined ? {} : { limitStop }),
     ...(() => {
       const row = member.verdictSourceSteps?.find((entry) => entry.stepIndex === stepIndex)
       return row === undefined ? {} : { verdictSource: row.source }

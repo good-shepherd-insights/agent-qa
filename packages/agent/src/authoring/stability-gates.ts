@@ -170,6 +170,15 @@ function classifyGateRun(member: PerTestOutcome): { definitive: boolean; reason:
           + 'executed to a verdict, so the enum below describes the attempt, not the app (D-17)',
       }
     }
+    if (step.limitStop !== undefined) {
+      const { limit, used, configured } = step.limitStop
+      return {
+        definitive: false,
+        reason: `step ${step.stepIndex} stopped at its ${limit} limit (${used} of ${configured} `
+          + 'used): the run ran out of limit, not into an answer (D-12)',
+      }
+    }
+    // Historical reader: only pre-436 handoffs carry a cycle block.
     if (step.cycle !== undefined) {
       return {
         definitive: false,
@@ -189,8 +198,8 @@ function classifyGateRun(member: PerTestOutcome): { definitive: boolean; reason:
 
   return {
     definitive: true,
-    reason: `member outcome '${member.outcome}' with no planning failure, cycle flag or `
-      + 'termination on any step — a final answer about the draft'
+    reason: `member outcome '${member.outcome}' with no planning failure, limit stop, cycle flag `
+      + 'or termination on any step — a final answer about the draft'
       + (member.outcome === 'healed' ? '; a healed pass IS a pass (393-01 F3)' : ''),
   }
 }

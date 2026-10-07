@@ -128,12 +128,38 @@ describe('runStabilityGates — D-17', () => {
     expect(result.gateRuns[1]?.definitive).toBe(true)
   })
 
+  // Historical reader: only pre-436 handoffs carry a cycle block (436 Open Question 3).
   it('a flagged cycle is indefinitive', async () => {
     const { result } = await gates([[member({ outcome: 'failed', cycleSteps: [1] })]], 1)
 
     expect(result.executesDefinitive).toBe(false)
     expect(result.gateRuns[0]?.reason).toContain('cycle')
   })
+
+  it(
+    'a limit-stopped member is not definitive and the reason names the limit and its usage',
+    async () => {
+      const { result } = await gates([
+        [member({
+          outcome: 'failed',
+          limitStopSteps: [{ stepIndex: 1, limit: 'actions', configured: 30, used: 30 }],
+        })],
+        [member({
+          outcome: 'failed',
+          limitStopSteps: [{ stepIndex: 0, limit: 'planning-turns', configured: 12, used: 12 }],
+        })],
+      ], 2)
+
+      expect(result.executesDefinitive).toBe(false)
+      expect(result.gateRuns.every((row) => !row.definitive)).toBe(true)
+      expect(result.gateRuns[0]?.reason).toBe(
+        'step 1 stopped at its actions limit (30 of 30 used): the run ran out of limit, '
+          + 'not into an answer (D-12)',
+      )
+      expect(result.gateRuns[1]?.reason).toContain('step 0 stopped at its planning-turns limit')
+      expect(result.gateRuns[1]?.reason).toContain('12 of 12 used')
+    },
+  )
 
   it('timeout and cancelled member outcomes are indefinitive', async () => {
     for (const outcome of ['timeout', 'cancelled', 'skipped'] as const) {
