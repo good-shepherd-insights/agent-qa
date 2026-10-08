@@ -5,7 +5,8 @@
 // headless Chromium through WebPlatformAdapter, fixtures served from a loopback node:http server.
 // 2026-10-08 (436-22): C436-SCROLL-REF adds the propagating body, quirks mode, body and html
 // scrollers, shadow roots and an iframe-only ref (review CR-06). C436-SCROLL-FRAMES: the probe
-// sees every frame and answers visible, hidden or unknown (review CR-07).
+// sees every frame and answers visible, hidden or unknown (review CR-07). C436-SCROLL-DECOYS:
+// hidden, transparent and covered copies never count, positioned targets are hit-tested (WR-16).
 
 import { createServer } from 'node:http'
 import type { Server } from 'node:http'
@@ -15,6 +16,7 @@ import type { Page } from 'playwright-core'
 import type { Ref } from '@vostride/agent-qa-schema'
 import { WebPlatformAdapter } from '../adapter.js'
 import { buildScrollPrimitives } from '../compound-web.js'
+import { runUntilVisibleLoop } from '@vostride/agent-qa-runner'
 
 const page = (title: string, body: string): string =>
   `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>${title}</title></head><body>${body}</body></html>`
@@ -88,7 +90,46 @@ const FRAME_SCALED = framePage('/frame-pay', `${FRAME_STYLE};transform:scale(0.5
 const FRAME_COVERED = framePage('/frame-pay', FRAME_STYLE, '',
   '<div style="height:850px">Body</div><div style="position:fixed;inset:0;background:rgba(0,0,0,0.3)"></div>')
 
+// WR-16: a copy of the target at the top, the real button 4000 px down.
+const decoyPage = (title: string, decoy: string): string => page(title, `
+  ${decoy}
+  <div style="height:4000px">Spacer</div>
+  <button id="real">Delete account</button>
+  <div style="height:1000px">Tail</div>`)
+const SR_ONLY = 'position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0'
+const DECOY_SR_ONLY = decoyPage('sr-only', `<a href="#real" style="${SR_ONLY}">Delete account</a>`)
+const DECOY_OPACITY = decoyPage('opacity', '<div style="opacity:0">Delete account</div>')
+const DECOY_OVERLAY = decoyPage('overlay',
+  '<p>Delete account</p><div style="position:fixed;inset:0;background:rgba(0,0,0,0.3)"></div>')
+const POSITIONED_FIXED = page('fixed', `
+  <div style="overflow:hidden;height:10px"><button style="position:fixed;bottom:20px;right:20px">Chat with us</button></div>
+  <div style="height:2000px">Tail</div>`)
+const POSITIONED_ABSOLUTE = page('absolute', `
+  <div style="overflow:hidden;height:10px"><span style="position:absolute;top:100px">Escaped label</span></div>
+  <div style="height:2000px">Tail</div>`)
+const POINTER_NONE = page('pointer-events', `
+  <button><span style="pointer-events:none">Save draft</span></button>
+  <div style="height:2000px">Tail</div>`)
+const SHADOW_TARGET = page('shadow target', `
+  <div id="host"><template shadowrootmode="open"><button>Shadow pay</button></template></div>
+  <div style="height:2000px">Tail</div>`)
+// Slot item 25 sits 500 px down a 200 px internal scroller: inside the viewport's rectangle,
+// outside the scroller's box.
+const SLOTTED_CLIPPED = page('slotted clipped', `
+  <div id="host"><template shadowrootmode="open"><div id="inner" style="height:200px;overflow:auto"><slot></slot></div></template>
+    ${Array.from({ length: 40 }, (_, i) => `<div style="height:20px">Slot item ${String(i)}</div>`).join('')}
+  </div>
+  <div style="height:3000px">Page tail</div>`)
+
 const PAGES: Record<string, string | ((port: number) => string)> = {
+  '/decoy-sr-only': DECOY_SR_ONLY,
+  '/decoy-opacity': DECOY_OPACITY,
+  '/decoy-overlay': DECOY_OVERLAY,
+  '/positioned-fixed': POSITIONED_FIXED,
+  '/positioned-absolute': POSITIONED_ABSOLUTE,
+  '/pointer-none': POINTER_NONE,
+  '/shadow-target': SHADOW_TARGET,
+  '/slotted-clipped': SLOTTED_CLIPPED,
   '/frame-same': FRAME_SAME,
   '/frame-cross': FRAME_CROSS,
   '/frame-nested': FRAME_NESTED,
@@ -561,5 +602,90 @@ describe('C436-SCROLL-FRAMES', () => {
     expect(await payNow(tab)).toBe('unknown')
     const result = await web.execute(search('down', 5))
     expect(result.metadata?.scrollUntilVisible).toMatchObject({ outcome: 'unresolved' })
+  }, 60_000)
+})
+
+async function realButtonOnScreen(tab: Page): Promise<boolean> {
+  return tab.evaluate<boolean>(`(() => {
+    const r = document.getElementById('real').getBoundingClientRect()
+    return r.top >= 0 && r.bottom <= innerHeight
+  })()`)
+}
+
+async function innerScrollTop(tab: Page): Promise<number> {
+  return tab.evaluate<number>("document.getElementById('host').shadowRoot.getElementById('inner').scrollTop")
+}
+
+const ZERO_SWIPES_FOUND = { swipes: 0, reversedOnce: false, outcome: 'found', endedBy: 'target-visible' }
+
+describe('C436-SCROLL-DECOYS', () => {
+  it('a visually hidden copy never ends found at zero swipes', async () => {
+    const { web, tab } = await open('/decoy-sr-only')
+    const result = await web.execute(untilVisible('Delete account', 10))
+    const meta = result.metadata?.scrollUntilVisible as { swipes: number } | undefined
+    expect(meta).toMatchObject({ outcome: 'found', endedBy: 'target-visible' })
+    expect(meta!.swipes).toBeGreaterThanOrEqual(1)
+    expect(await realButtonOnScreen(tab)).toBe(true)
+  }, 60_000)
+
+  it('a transparent copy never ends found at zero swipes', async () => {
+    const { web, tab } = await open('/decoy-opacity')
+    const result = await web.execute(untilVisible('Delete account', 10))
+    const meta = result.metadata?.scrollUntilVisible as { swipes: number } | undefined
+    expect(meta).toMatchObject({ outcome: 'found', endedBy: 'target-visible' })
+    expect(meta!.swipes).toBeGreaterThanOrEqual(1)
+    expect(await realButtonOnScreen(tab)).toBe(true)
+  }, 60_000)
+
+  it('a copy under a fixed overlay never ends found', async () => {
+    const { web } = await open('/decoy-overlay')
+    const result = await web.execute(untilVisible('Delete account', 10))
+    expect(result.metadata?.scrollUntilVisible).toMatchObject({ outcome: 'unresolved' })
+  }, 60_000)
+
+  it('a fixed-position target inside an overflow-hidden wrapper ends found', async () => {
+    const { web } = await open('/positioned-fixed')
+    const result = await web.execute(untilVisible('Chat with us', 3))
+    expect(result.metadata?.scrollUntilVisible).toEqual(ZERO_SWIPES_FOUND)
+  }, 60_000)
+
+  it('an absolutely positioned target escaping a non-positioned clipping wrapper ends found', async () => {
+    const { web } = await open('/positioned-absolute')
+    const result = await web.execute(untilVisible('Escaped label', 3))
+    expect(result.metadata?.scrollUntilVisible).toEqual(ZERO_SWIPES_FOUND)
+  }, 60_000)
+
+  it('a pointer-events:none label on screen ends found', async () => {
+    const { web } = await open('/pointer-none')
+    const result = await web.execute(untilVisible('Save draft', 3))
+    expect(result.metadata?.scrollUntilVisible).toEqual(ZERO_SWIPES_FOUND)
+  }, 60_000)
+
+  it('an on-screen target inside an open shadow root ends found', async () => {
+    const { web } = await open('/shadow-target')
+    const result = await web.execute(untilVisible('Shadow pay', 3))
+    expect(result.metadata?.scrollUntilVisible).toEqual(ZERO_SWIPES_FOUND)
+  }, 60_000)
+
+  it("a slotted target clipped by its shadow root's internal scroller is not found at zero swipes", async () => {
+    const { web, tab } = await open('/slotted-clipped')
+    const primitives = buildScrollPrimitives(tab, {}, 720)
+    expect(await primitives.probeTargetVisible!('Slot item 25')).toBe('unknown')
+    // Without the native rung nothing moves the internal scroller: never found at 0 swipes, never not-found.
+    const { nativeSearchScroll: _native, ...swipesOnly } = primitives
+    const { meta } = await runUntilVisibleLoop(swipesOnly, {
+      target: 'Slot item 25', direction: 'down', maxSwipes: 3, retryOpposite: true,
+    })
+    expect(meta.outcome).not.toBe('not-found')
+    expect(meta).not.toEqual(ZERO_SWIPES_FOUND)
+    expect(await innerScrollTop(tab), 'the internal scroller did not move').toBe(0)
+    // The web search's native rung scrolls the internal scroller itself; found then means on screen.
+    const result = await web.execute({ ...untilVisible('Slot item 25', 3), retryOpposite: true })
+    const searched = result.metadata?.scrollUntilVisible as { outcome: string } | undefined
+    expect(searched!.outcome).not.toBe('not-found')
+    if (searched!.outcome === 'found') {
+      expect(await innerScrollTop(tab)).toBeGreaterThan(0)
+      expect(await primitives.probeTargetVisible!('Slot item 25')).toBe('visible')
+    }
   }, 60_000)
 })
