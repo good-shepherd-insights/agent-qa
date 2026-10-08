@@ -4,8 +4,8 @@ import { ReasoningPipeline } from "@/components/reasoning-pipeline"
 import type { SectionDef, ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
 import { MaskedText } from "@/components/run-detail/masked-text"
 import type { DisplayStep } from "@/lib/display-step"
-import type { RunDetailSubAction } from "@vostride/agent-qa-schema"
-import { displayTargetName } from "@/lib/action-vocabulary"
+import { readIdempotentNoopMeta, type RunDetailSubAction } from "@vostride/agent-qa-schema"
+import { RESULT_WORDS, displayTargetName } from "@/lib/action-vocabulary"
 
 import { Player, type PlayerProps } from "./player"
 
@@ -35,9 +35,15 @@ interface TabOverviewProps extends OverviewPlayerProps {
   pipelineRef?: React.RefObject<ReasoningPipelineHandle | null>
 }
 
-/** The two words a recorded result can be — raw, closed, and never a sentence. */
-function resultWord(sub: RunDetailSubAction): "success" | "failure" {
+/** The three words a recorded result can be — raw, closed, and never a sentence. */
+function resultWord(sub: RunDetailSubAction): "success" | "failure" | typeof RESULT_WORDS["no-input"] {
+  if (readIdempotentNoopMeta(sub.result)) return RESULT_WORDS["no-input"]
   return sub.result.success ? "success" : "failure"
+}
+
+function resultColour(sub: RunDetailSubAction): string {
+  if (readIdempotentNoopMeta(sub.result)) return "text-muted-foreground"
+  return sub.result.success ? "text-emerald-500" : "text-red-500"
 }
 
 function buildSubActionSections(sub: RunDetailSubAction): SectionDef[] {
@@ -83,7 +89,7 @@ function buildSubActionSections(sub: RunDetailSubAction): SectionDef[] {
     duration: null,
     outcome: (
       <span
-        className={`text-xs font-medium ${sub.result.success ? "text-emerald-500" : "text-red-500"}`}
+        className={`text-xs font-medium ${resultColour(sub)}`}
       >
         {resultWord(sub)}
       </span>

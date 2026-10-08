@@ -7,6 +7,7 @@ import {
   TIMELINE_AXES, MARKER_RESULTS, MARKER_FRAMES, PLAYER_SOURCES, SNAP_THRESHOLD_PX,
 } from '../playhead'
 import { runDetailStepKey, type Selection } from '../selection'
+import { TIMELINE_COPY, timelineValueText } from '../timeline-view'
 import type { RunDetailGroup } from '../run-detail-view'
 
 function frame(index: number, extra: Partial<RunDetailArtifactRef> = {}): RunDetailArtifactRef {
@@ -289,6 +290,22 @@ test('CITED-SHA-FINDS-MARKER', () => {
 })
 
 test('C424-TIMELINE-AXES-EXACT', () => expect(TIMELINE_AXES).toEqual(['time', 'ordinal']))
-test('C424-MARKER-RESULTS-EXACT', () => expect(MARKER_RESULTS).toEqual(['passed', 'failed', 'healed']))
+// 2026-10-08 (437-03, D-05): 'no-input' joins the closed set.
+test('C424-MARKER-RESULTS-EXACT', () => expect(MARKER_RESULTS).toEqual(['passed', 'failed', 'healed', 'no-input']))
 test('C424-MARKER-FRAMES-EXACT', () => expect(MARKER_FRAMES).toEqual(['available', 'absent']))
 test('C424-PLAYER-SOURCES-EXACT', () => expect(PLAYER_SOURCES).toEqual(['frames', 'video']))
+
+// 2026-10-08 (437-03, D-05): a skipped tap's marker is neither passed nor failed.
+test('C437-NO-INPUT-LABEL a skipped tap\'s timeline marker result is no-input', () => {
+  const input = group()
+  input.steps[0]!.subActions[0]!.result = {
+    success: false, metadata: { idempotentNoop: { currentState: 'checked', inputSent: false } },
+  }
+  input.steps[0]!.subActions[1]!.result = { success: true, metadata: { idempotentNoop: { currentState: 'checked' } } }
+  input.steps[1]!.subActions[0]!.result = { success: false, error: 'failed' }
+  const markers = buildTimelineModel(input).markers
+  expect(markers.map(marker => marker.result)).toEqual(['no-input', 'no-input', 'failed'])
+  expect(MARKER_RESULTS).toContain('no-input')
+  expect(TIMELINE_COPY.results[markers[0]!.result]).toBe('no input sent')
+  expect(timelineValueText(markers[0]!, markers.length)).toContain(', no input sent')
+})

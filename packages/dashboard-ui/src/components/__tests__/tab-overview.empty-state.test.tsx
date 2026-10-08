@@ -178,3 +178,35 @@ describe("TabOverview screenshot states", () => {
     expect(view.querySelector("img")?.getAttribute("src")).toBe(routes.runArtifact("run-1", SHA))
   })
 })
+
+// 2026-10-08 (437-03, D-05): a tap that sent no input reads neither success nor failure.
+describe("C437-NO-INPUT-LABEL", () => {
+  function resultOutcome(view: HTMLElement) {
+    const words = ["success", "failure", "no input sent"]
+    return [...view.querySelectorAll("span.text-xs.font-medium")].find((span) => words.includes(span.textContent ?? ""))
+  }
+
+  it("the overview tab's result reads no input sent", async () => {
+    const skipped: RunDetailSubAction = {
+      ...makeSubAction(),
+      plannedAction: { type: "tap", ref: asRef("wifi") },
+      result: { success: false, metadata: { idempotentNoop: { currentState: "checked", inputSent: false } } },
+    }
+    const outcome = resultOutcome(await renderOverview(skipped))
+    expect(outcome?.textContent).toBe("no input sent")
+    expect(outcome?.className).toContain("text-muted-foreground")
+    expect(outcome?.className).not.toContain("text-red-500")
+    expect(outcome?.className).not.toContain("text-emerald-500")
+  })
+
+  it("success and failure results are unchanged", async () => {
+    const passed = resultOutcome(await renderOverview(makeSubAction()))
+    expect(passed?.textContent).toBe("success")
+    expect(passed?.className).toContain("text-emerald-500")
+    act(() => root!.unmount())
+    container?.remove()
+    const failed = resultOutcome(await renderOverview({ ...makeSubAction(), result: { success: false, error: "boom" } }))
+    expect(failed?.textContent).toBe("failure")
+    expect(failed?.className).toContain("text-red-500")
+  })
+})

@@ -13,7 +13,8 @@ test('C424-TIMELINE-AXES-EXACT', () => {
 })
 
 test('C424-MARKER-RESULTS-EXACT', () => {
-  type Expected = 'passed' | 'failed' | 'healed'
+  // 2026-10-08 (437-03, D-05): 'no-input' joins the closed set for a tap that sent no input.
+  type Expected = 'passed' | 'failed' | 'healed' | 'no-input'
   expectTypeOf<MarkerResult>().toEqualTypeOf<Expected>()
   expectTypeOf<(typeof MARKER_RESULTS)[number]>().toEqualTypeOf<Expected>()
   expectTypeOf<Exclude<MarkerResult, (typeof MARKER_RESULTS)[number]>>().toEqualTypeOf<never>()

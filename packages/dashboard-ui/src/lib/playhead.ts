@@ -1,4 +1,6 @@
-import type { RunDetailArtifactRef, RunDetailSubAction } from '@vostride/agent-qa-schema'
+import {
+  readIdempotentNoopMeta, type RunDetailArtifactRef, type RunDetailSubAction,
+} from '@vostride/agent-qa-schema'
 import { decisionScreenshotRef, type RunDetailGroup, type RunDetailStepGroup } from './run-detail-view'
 import { parseRunDetailStepKey, runDetailStepKey, type Selection } from './selection'
 import { videoActionOffset } from './frame-annotation'
@@ -66,8 +68,10 @@ export function selectionFromPlayhead(playhead: Playhead | null | undefined): Se
 
 export type TimelineAxis = 'time' | 'ordinal'
 export const TIMELINE_AXES = ['time', 'ordinal'] as const satisfies readonly TimelineAxis[]
-export type MarkerResult = 'passed' | 'failed' | 'healed'
-export const MARKER_RESULTS = ['passed', 'failed', 'healed'] as const satisfies readonly MarkerResult[]
+export type MarkerResult = 'passed' | 'failed' | 'healed' | 'no-input'
+export const MARKER_RESULTS = [
+  'passed', 'failed', 'healed', 'no-input',
+] as const satisfies readonly MarkerResult[]
 export type MarkerFrame = 'available' | 'absent'
 export const MARKER_FRAMES = ['available', 'absent'] as const satisfies readonly MarkerFrame[]
 export type PlayerSource = 'frames' | 'video'
@@ -126,7 +130,8 @@ export function buildTimelineModel(group: RunDetailGroup): TimelineModel {
         position: axis === 'time'
           ? extent === 0 ? (playbackOffset! > 0 ? 1 : 0) : Math.min(1, Math.max(0, playbackOffset! / extent))
           : (slot + 0.5) / extent,
-        result: subAction.result.success ? 'passed' : 'failed',
+        result: readIdempotentNoopMeta(subAction.result) ? 'no-input'
+          : subAction.result.success ? 'passed' : 'failed',
         frame: frameUsable(ref) ? 'available' : 'absent',
         ...(ref ? { ref } : {}),
         ...(offset === undefined ? {} : { recordingOffsetMs: offset }),
