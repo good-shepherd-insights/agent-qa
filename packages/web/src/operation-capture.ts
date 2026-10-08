@@ -42,6 +42,8 @@ export const DOWNLOAD_START_GRACE_MS = 500
 export const NAVIGATION_SETTLE_MS = 250
 /** The download wait's bound for an action dispatched with no step deadline. */
 export const DOWNLOAD_COMPLETION_CAP_MS = 120_000
+/** The longest the start window stays open for navigations that do not answer; never more than half the action's time left. */
+export const NAVIGATION_WINDOW_CAP_MS = 5_000
 
 /** The web actions that can start a download; see isDownloadActivation for tab and fill. */
 export const DOWNLOAD_ACTIVATION_ACTIONS: ReadonlySet<string> = new Set([

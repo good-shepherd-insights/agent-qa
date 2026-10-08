@@ -3,6 +3,8 @@
 // that produced them. C436-DOWNLOAD-DEADLINE (436-15): the download wait ends at the step deadline.
 // C436-DOWNLOAD-ARMING (436-16): every download-starting action is armed, a slow attachment is
 // waited for, and a late download is held for the next action or deleted at cleanup.
+// C436-DOWNLOAD-WINDOW (436-24): a navigation that never answers, from any frame or popup, ends the
+// start window at NAVIGATION_WINDOW_CAP_MS or half the action's time left (CR-05).
 
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
@@ -23,6 +25,7 @@ import {
   CLIPBOARD_BINDING,
   DOWNLOAD_ACTIVATION_ACTIONS,
   DOWNLOAD_START_GRACE_MS,
+  NAVIGATION_WINDOW_CAP_MS,
   READ_BACK_TIMEOUT_MS,
   isDownloadActivation,
   isHeadlessLaunch,
@@ -329,6 +332,47 @@ const ORACLE_POPUP = `<!DOCTYPE html>
 </html>
 `
 
+// 436-24 (CR-05): links into pages and popups whose navigations never answer, and frames that
+// start attachments inside or after the start window.
+const WINDOW_PAGE = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>window fixture</title></head>
+<body>
+  <h1>Window</h1>
+  <a href="/window-frame">Open framed page</a>
+  <a href="/window-cross">Open cross-framed page</a>
+  <a href="/hang" target="_blank">Open hung popup</a>
+  <a href="/hang">Open hung page</a>
+  <button id="data-frame" onclick="insertFrame('/files/data')">Load data in a frame</button>
+  <button id="late-frame" onclick="insertFrame('/files/late-frame')">Load late file in a frame</button>
+  <script>
+    function insertFrame(src) {
+      const frame = document.createElement('iframe')
+      frame.style.display = 'none'
+      frame.src = src
+      document.body.append(frame)
+    }
+  </script>
+</body>
+</html>
+`
+
+const WINDOW_FRAME_PAGE = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>framed</title></head>
+<body><h1>Framed</h1><iframe title="hung" src="/hang"></iframe></body>
+</html>
+`
+
+const WINDOW_CROSS_PAGE = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>cross framed</title></head>
+<body>
+  <h1>Cross framed</h1>
+  <iframe id="cross" title="hung cross origin"></iframe>
+  <script>document.getElementById('cross').src = location.protocol + '//127.0.0.1:' + location.port + '/hang'</script>
+</body>
+</html>
+`
+
 const INSECURE_ORIGIN = 'http://fixture.test'
 
 let server: Server
@@ -342,6 +386,11 @@ function sha256(text: string): string {
 beforeAll(async () => {
   server = createServer((req, res) => {
     const url = req.url ?? '/'
+    if (url.startsWith('/hang')) {
+      openSlowResponses.add(res)
+      res.on('close', () => openSlowResponses.delete(res))
+      return
+    }
     if (url === '/files/data') {
       res.writeHead(200, {
         'Content-Type': 'application/octet-stream',
@@ -401,6 +450,9 @@ beforeAll(async () => {
       '/oracle-frames': ORACLE_FRAMES_PAGE,
       '/oracle-frame': ORACLE_FRAME,
       '/oracle-popup': ORACLE_POPUP,
+      '/window': WINDOW_PAGE,
+      '/window-frame': WINDOW_FRAME_PAGE,
+      '/window-cross': WINDOW_CROSS_PAGE,
     }
     res.end(pages[url] ?? PAGE)
   })
@@ -1535,5 +1587,91 @@ describe('C436-CLIPBOARD-ORACLE', () => {
     for (const value of values) {
       expect(typeof value === 'number' || ['none', 'read', 'unreadable'].includes(value as string), canonical(value)).toBe(true)
     }
+  }, 60_000)
+})
+
+// 2026-10-08 (436-24): a navigation that never answers ends the start window at the cap (CR-05).
+describe('C436-DOWNLOAD-WINDOW', () => {
+  const limits: PlannerConfig = { maxActions: 5, maxPlanningTurns: 5, previousStepCount: 0 }
+  const CAPPED_MS = NAVIGATION_WINDOW_CAP_MS + 1_500
+
+  // Races execute() so an unbounded wait fails on its assertion rather than the cell's timeout.
+  async function timedClick(
+    web: WebPlatformAdapter,
+    name: string,
+    options?: Parameters<WebPlatformAdapter['execute']>[1],
+  ): Promise<{ result: ActionResult; elapsed: number }> {
+    const ref = await refFor(web, 'link', name)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const started = performance.now()
+    const outcome = await Promise.race([
+      web.execute({ type: 'click', ref }, options),
+      new Promise<'still waiting'>((resolve) => { timer = setTimeout(() => { resolve('still waiting') }, 15_000) }),
+    ])
+    const elapsed = performance.now() - started
+    clearTimeout(timer)
+    expect(outcome, `${name} returned`).not.toBe('still waiting')
+    return { result: outcome as ActionResult, elapsed }
+  }
+
+  async function endsAtCap(name: string): Promise<void> {
+    const web = await open(undefined, undefined, 'window')
+    const { result, elapsed } = await timedClick(web, name, { remainingStepMs: 20_000 })
+
+    expect(result.success).toBe(true)
+    expect(result.metadata?.['download']).toBeUndefined()
+    expect(elapsed).toBeLessThan(CAPPED_MS)
+  }
+
+  it('a hung subframe does not time the step out', async () => {
+    const web = await open(undefined, undefined, 'window')
+    const planner = scriptedPlanner([
+      (screen) => act({ type: 'click', ref: screenRefFor(screen, 'link', 'Open framed page') }, true, 'open the framed page'),
+    ])
+    const verifier = scriptedVerifier(() => ({ pass: true, reason: 'the framed page is open' }))
+    const run = await runScriptedStep({
+      adapter: web,
+      instruction: 'Open the framed page',
+      planner,
+      verifier,
+      plannerConfig: limits,
+      stepTimeout: 20_000,
+    })
+
+    expect(run.executed).toHaveLength(1)
+    expect(run.result.error ?? '').not.toContain('Step timed out')
+    expect(run.result.status).toBe('passed')
+  }, 60_000)
+
+  it('a same-origin iframe that never answers ends the window at the cap', async () => {
+    await endsAtCap('Open framed page')
+  }, 60_000)
+
+  it('a cross-origin iframe that never answers ends the window at the cap', async () => {
+    await endsAtCap('Open cross-framed page')
+  }, 60_000)
+
+  it('a popup whose navigation never answers ends the window at the cap', async () => {
+    await endsAtCap('Open hung popup')
+  }, 60_000)
+
+  it('a click whose own navigation never answers ends the window at the cap', async () => {
+    await endsAtCap('Open hung page')
+  }, 60_000)
+
+  it('the navigation extension never takes more than half the time left', async () => {
+    const web = await open(undefined, undefined, 'window')
+    const { result, elapsed } = await timedClick(web, 'Open framed page', { remainingStepMs: 4_000 })
+
+    expect(result.success).toBe(true)
+    expect(elapsed).toBeLessThan(2_000 + 1_500)
+  }, 60_000)
+
+  it('with no step deadline the window still ends at the cap', async () => {
+    const web = await open(undefined, undefined, 'window')
+    const { result, elapsed } = await timedClick(web, 'Open framed page')
+
+    expect(result.success).toBe(true)
+    expect(elapsed).toBeLessThan(CAPPED_MS)
   }, 60_000)
 })
