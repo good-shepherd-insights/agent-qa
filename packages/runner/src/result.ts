@@ -29,6 +29,7 @@ export interface SubActionTrace {
   plannedAction: Action
   result: 'success' | 'failure'
   error?: string
+  noInputSent?: { currentState: string }
   screenStateBefore: string
   screenStateAfter?: string
   screenContextBefore?: string

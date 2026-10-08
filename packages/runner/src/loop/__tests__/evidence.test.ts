@@ -446,6 +446,41 @@ describe('projectLegacyTrace', () => {
   })
 })
 
+// 2026-10-08 (437-03, D-05): the legacy trace says why a skipped tap reads 'failure'.
+describe('C437-NO-INPUT', () => {
+  function traceOf(result: PlatformActionResult) {
+    const recorder = new EvidenceRecorder()
+    recorder.recordSubAction({
+      plan: 'turn Wi-Fi on',
+      plannedAction: { type: 'tap', ref: asRef('e3') },
+      stateBefore: makeScreenState(),
+      result,
+    })
+    return projectLegacyTrace(recorder.finalize(passVerdict, 0, 'turn Wi-Fi on'))[0]!
+  }
+
+  it('the legacy trace marks a skipped tap', () => {
+    const trace = traceOf({
+      success: false,
+      metadata: { idempotentNoop: { currentState: 'checked', inputSent: false } },
+    })
+    expect(trace.noInputSent).toEqual({ currentState: 'checked' })
+    expect(trace.result).toBe('failure')
+    expect('error' in trace).toBe(false)
+  })
+
+  it('an ordinary success and an ordinary failure project exactly as before', () => {
+    const passed = traceOf({ success: true })
+    expect(passed.result).toBe('success')
+    expect('noInputSent' in passed).toBe(false)
+    expect('error' in passed).toBe(false)
+    const failed = traceOf({ success: false, error: 'element not found' })
+    expect(failed.result).toBe('failure')
+    expect(failed.error).toBe('element not found')
+    expect('noInputSent' in failed).toBe(false)
+  })
+})
+
 describe('EvidenceRecorder.recordSelfHeal', () => {
   it('stores the {failedDecision, recoveringDecision} pair on the finalized StepEvidence (D-12)', () => {
     const recorder = new EvidenceRecorder()

@@ -12,6 +12,7 @@ import {
   computeBriefDigest,
   EvidenceArtifactRefSchema,
   NO_KNOWLEDGE_READER_TRUNCATION,
+  readIdempotentNoopMeta,
   toRecordedActionResult,
   TRACE_TRUNCATION_TOP_K,
 } from '@vostride/agent-qa-schema'
@@ -830,7 +831,9 @@ export function projectLegacyTrace(evidence: StepEvidence): SubActionTrace[] {
       screenStateBefore: sub.stateBefore.tree,
       cached: false,
     }
-    if (sub.result.error !== undefined) trace.error = sub.result.error
+    const noInput = readIdempotentNoopMeta(sub.result)
+    if (noInput) trace.noInputSent = { currentState: noInput.currentState }
+    else if (sub.result.error !== undefined) trace.error = sub.result.error
     if (sub.stateAfter) trace.screenStateAfter = sub.stateAfter.tree
     if (sub.result.annotation) {
       trace.annotation = toLegacyStepAnnotation(sub.result.annotation, sub.plannedAction.type)
