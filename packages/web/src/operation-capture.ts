@@ -17,6 +17,8 @@
 // unanswered, and a download that starts outside the window is held for the next action, marked
 // late, or cancelled and deleted at dispose (WR-05). The clipboard is disarmed when the start
 // window closes, before any completion wait (IN-09).
+// 2026-10-08 (436-21): a closed or crashed probe is reset (only the probe context closes) and
+// opened once more; held downloads survive it and only dispose() cancels them (WR-18).
 
 import { createHash } from 'node:crypto'
 import { extname } from 'node:path'
@@ -354,13 +356,27 @@ export class OperationCapture {
       .evaluate('window.isSecureContext && !!(navigator.clipboard && navigator.clipboard.readText)')
       .catch(() => false)
     if (secure !== true) return undefined
-    const probe = await this.openProbe()
-    if (!probe) return undefined
-    if (probe.isClosed()) {
-      await this.dispose()
-      return undefined
+    let index: number | undefined
+    for (let attempt = 0; ; attempt += 1) {
+      const probe = await this.openProbe()
+      if (!probe) return undefined
+      try {
+        if (probe.isClosed()) throw new Error('probe closed')
+        index = await this.askProbe(probe, texts)
+        break
+      } catch {
+        // The probe page closed or crashed, or its context went away: replace it once.
+        await this.resetProbe()
+        if (attempt > 0) return undefined
+      }
     }
-    const index = await withTimeout(
+    if (typeof index !== 'number' || index === READ_BACK_UNREADABLE || index >= texts.length) return undefined
+    return index < 0 ? -1 : index
+  }
+
+  // Rejects when the probe page is gone; resolves undefined on a timeout.
+  private askProbe(probe: Page, texts: string[]): Promise<number | undefined> {
+    return withTimeout(
       probe.evaluate(async (claimed: string[]) => {
         const scope = globalThis as unknown as {
           isSecureContext?: boolean
@@ -377,9 +393,7 @@ export class OperationCapture {
         return claimed.lastIndexOf(text)
       }, texts),
       READ_BACK_TIMEOUT_MS,
-    ).catch(() => undefined)
-    if (typeof index !== 'number' || index === READ_BACK_UNREADABLE || index >= texts.length) return undefined
-    return index < 0 ? -1 : index
+    )
   }
 
   private openProbe(): Promise<Page | undefined> {
@@ -431,6 +445,11 @@ export class OperationCapture {
       await download.cancel().catch(() => undefined)
       await download.delete().catch(() => undefined)
     }
+    await this.resetProbe()
+  }
+
+  // Closes only the probe context; held downloads are never touched here.
+  private async resetProbe(): Promise<void> {
     const context = this.probeContext
     this.probeGeneration += 1
     this.probe = null

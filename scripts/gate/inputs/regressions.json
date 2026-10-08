@@ -2412,6 +2412,36 @@
       "file": "packages/dashboard-ui/src/components/__tests__/test-settings-panel.test.tsx",
       "fullName": "C436-LIMIT-INPUTS an empty input removes the key",
       "origin": "436 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-HELD a held late download survives a closed probe and is recorded late on the next action",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-HELD a held late download survives a crashed probe",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-HELD a download that starts during a probe reset is held for the next action",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-PROBE-LIFECYCLE a closed probe is replaced once and the read answers",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-PROBE-LIFECYCLE a crashed probe is replaced once and the read answers",
+      "origin": "436 D-21"
     }
   ]
 }
