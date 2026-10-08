@@ -150,17 +150,21 @@ async function readEntityUse(
 }
 
 /**
- * 436 D-03: the limits a live session runs under — the project config's `use` block, then the
- * suite or test definition the session edits when the door can load it. An entity it cannot load
- * leaves the project value.
+ * 436 D-03: the limits a live session runs under — the project config's `use` block, then each
+ * entity's `use` in order (a suite, then a test of it) when the door can load it. An entity it
+ * cannot load contributes nothing.
  */
 export async function resolveLivePlannerLimits(
   configManager: ConfigManager | undefined,
-  entity: EntityRef | undefined,
+  entities: EntityRef | readonly EntityRef[] | undefined,
   readers: LiveEntityDefinitionReaders,
 ): Promise<PlannerLimits> {
   const config = configManager === undefined ? {} : await readConfigValues(configManager)
-  return resolvePlannerLimits(config.use, await readEntityUse(entity, readers))
+  const uses: unknown[] = []
+  for (const entity of ([] as EntityRef[]).concat(entities ?? [])) {
+    uses.push(await readEntityUse(entity, readers))
+  }
+  return resolvePlannerLimits(config.use, ...uses)
 }
 
 /** The refusal a finding calls for, or nothing when the target is not production or is opted in. */
@@ -372,6 +376,7 @@ export class LiveSession {
   private _modelName = 'unknown'
   private vision: { screenshotSize?: number; effectiveResolution?: number } | undefined
   private plannerLimits: PlannerLimits | undefined
+  private plannerLimitsForTest: ((testId: string) => Promise<PlannerLimits>) | undefined
   private readyForInteraction = false
   private terminalError: string | null = null
   private setupHooks: string[] = []
@@ -786,6 +791,7 @@ export class LiveSession {
     this.hookRegistryError = config.hookRegistryError ?? null
     this.vision = config.llmConfig.vision
     this.plannerLimits = config.plannerLimits
+    this.plannerLimitsForTest = config.plannerLimitsForTest
     this.readyForInteraction = false
     this.terminalError = null
 
@@ -1088,6 +1094,7 @@ export class LiveSession {
     stepIndex: number | undefined,
     onPhase: ((event: StepPhaseEvent) => void) | undefined,
     draft: LiveDraftMetadata | undefined,
+    limits: PlannerLimits,
   ): Promise<LiveStepExecutionResult> {
     this.abortController = new AbortController()
     try {
@@ -1121,7 +1128,7 @@ export class LiveSession {
         planner: this.planner!,
         verifier: this.verifier!,
         modelProfiles: this.modelProfiles ?? undefined,
-        plannerConfig: { ...(this.plannerLimits ?? resolvePlannerLimits()), previousStepCount: 5 },
+        plannerConfig: { ...limits, previousStepCount: 5 },
         vision: this.vision,
         onSetVariable: (name, value) => this.variableStore!.set(name, value, 'step'),
         abortSignal: this.abortController.signal,
@@ -1184,7 +1191,13 @@ export class LiveSession {
     this.status = 'executing'
     this.currentStep = stepInstruction
     try {
-      return await this.executeStepInternal(stepInstruction, stepIndex, onPhase, draft)
+      return await this.executeStepInternal(
+        stepInstruction,
+        stepIndex,
+        onPhase,
+        draft,
+        this.plannerLimits ?? resolvePlannerLimits(),
+      )
     } finally {
       this.executing = false
       this.currentStep = null
@@ -1232,6 +1245,12 @@ export class LiveSession {
     }
 
     try {
+      // 436 D-03: a test runs at its own effective limits (project, suite, then its own `use`),
+      // resolved once before its first step, exactly as the CLI suite producer resolves a member.
+      const testLimits = this.plannerLimitsForTest !== undefined && testDraft.testId.length > 0
+        ? await this.plannerLimitsForTest(testDraft.testId)
+        : this.plannerLimits ?? resolvePlannerLimits()
+
       // Per-test setup (D-09). Per-test setup failure short-circuits the
       // test AND skips per-test teardown, matching suite/runner.ts:230 break
       // (Pitfall 2). Suite-level teardown still fires at session cleanup.
@@ -1290,6 +1309,7 @@ export class LiveSession {
               onPhase?.(event)
             },
             perStepDraft,
+            testLimits,
           )
         } catch (error) {
           const message = this.redact(error instanceof Error ? error.message : String(error))

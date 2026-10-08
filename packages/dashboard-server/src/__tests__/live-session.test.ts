@@ -249,6 +249,7 @@ vi.mock('@vostride/agent-qa-model', async () => {
 import { LiveSession, resolveLivePlannerLimits } from '../live-editor/live-session.js'
 import type { ConfigManager } from '../config/index.js'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
+import { resolvePlannerLimits } from '@vostride/agent-qa-schema'
 
 const webConfig: LiveSessionConfig = {
   platform: 'web',
@@ -1077,5 +1078,91 @@ describe('C436-EFFECTIVE-LIMITS live editor', () => {
       .toEqual({ maxActions: 20, maxPlanningTurns: 15 })
     expect(await resolveLivePlannerLimits(undefined, undefined, readers))
       .toEqual({ maxActions: 30, maxPlanningTurns: 30 })
+  })
+})
+
+// 436-19 (D-03, WR-12): a live suite session runs each child at its own effective limits.
+describe('C436-EFFECTIVE-LIMITS live suite children', () => {
+  let session: LiveSession
+
+  beforeEach(() => {
+    session = new LiveSession('suite-limits-session')
+    vi.clearAllMocks()
+    variableStoreEntries.clear()
+    mockExecuteStep.mockResolvedValue({ name: 'test-step', status: 'passed', duration: 100 })
+    mockRunHooks.mockResolvedValue({ results: new Map(), variables: {}, allPassed: true, duration: 5 })
+  })
+
+  function plannerConfigsOfSteps(): unknown[] {
+    return mockExecuteStep.mock.calls.map(
+      (call) => ((call as unknown[])[1] as { plannerConfig?: unknown } | undefined)?.plannerConfig,
+    )
+  }
+
+  const projectUse = { planner: { maxActions: 20, maxPlanningTurns: 15 } }
+  const project = {
+    readWithRevision: async () => ({ kind: 'ok', config: { use: projectUse }, raw: '', revision: 'r1' }),
+  } as unknown as ConfigManager
+  const suiteUse = { planner: { maxPlanningTurns: 40 } }
+  const bulkUse = { planner: { maxActions: 80 } }
+  const suiteYaml = 'suite-id: s_inbox\nname: Inbox\nuse:\n  planner:\n    maxPlanningTurns: 40\ntests: []\n'
+  const bulkYaml = 'test-id: t_bulk\nname: Bulk archive\nuse:\n  planner:\n    maxActions: 80\nsteps:\n  - archive all\n'
+  const plainYaml = 'test-id: t_plain\nname: Plain\nsteps:\n  - open inbox\n'
+  const readers = {
+    findTest: async (id: string) =>
+      id === 't_bulk' ? { content: bulkYaml } : id === 't_plain' ? { content: plainYaml } : null,
+    findSuite: async (id: string) => (id === 's_inbox' ? { content: suiteYaml } : null),
+  }
+  const suiteRef = { type: 'suite' as const, id: 's_inbox' }
+
+  async function initializeSuiteSession(): Promise<void> {
+    await session.initialize({
+      ...webConfig,
+      plannerLimits: await resolveLivePlannerLimits(project, suiteRef, readers),
+      plannerLimitsForTest: (testId) =>
+        resolveLivePlannerLimits(project, [suiteRef, { type: 'test', id: testId }], readers),
+    })
+  }
+
+  function draft(testId: string, steps: string[]) {
+    return { testIndex: 0, testId, testName: testId, steps, setup: [], teardown: [] }
+  }
+
+  it('a suite child with its own override runs at its own limits', async () => {
+    await initializeSuiteSession()
+    const result = await session.executeTestCommand('exec-bulk', draft('t_bulk', ['archive all', 'confirm']))
+    expect(result.status).toBe('passed')
+    expect(plannerConfigsOfSteps()).toEqual([
+      { maxActions: 80, maxPlanningTurns: 40, previousStepCount: 5 },
+      { maxActions: 80, maxPlanningTurns: 40, previousStepCount: 5 },
+    ])
+  })
+
+  it('a sibling without its own block runs at project then suite', async () => {
+    await initializeSuiteSession()
+    await session.executeTestCommand('exec-plain', draft('t_plain', ['open inbox', 'read first']))
+    expect(plannerConfigsOfSteps()).toEqual([
+      { maxActions: 20, maxPlanningTurns: 40, previousStepCount: 5 },
+      { maxActions: 20, maxPlanningTurns: 40, previousStepCount: 5 },
+    ])
+  })
+
+  it('the live child limits equal the CLI resolver for the same blocks', async () => {
+    await initializeSuiteSession()
+    await session.executeTestCommand('exec-bulk', draft('t_bulk', ['archive all']))
+    await session.executeTestCommand('exec-plain', draft('t_plain', ['open inbox']))
+    const [bulk, plain] = plannerConfigsOfSteps() as Array<{ maxActions: number; maxPlanningTurns: number }>
+    const limitsOf = (c: { maxActions: number; maxPlanningTurns: number }) => ({
+      maxActions: c.maxActions,
+      maxPlanningTurns: c.maxPlanningTurns,
+    })
+    expect(limitsOf(bulk)).toEqual(resolvePlannerLimits(projectUse, suiteUse, bulkUse))
+    expect(limitsOf(plain)).toEqual(resolvePlannerLimits(projectUse, suiteUse, undefined))
+  })
+
+  it('a single step keeps the session limits', async () => {
+    await initializeSuiteSession()
+    await session.executeStepCommand('Click archive', 0)
+    expect(plannerConfigsOfSteps()).toEqual([{ maxActions: 20, maxPlanningTurns: 40, previousStepCount: 5 }])
   })
 })

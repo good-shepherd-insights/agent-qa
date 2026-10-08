@@ -4984,16 +4984,29 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
           hookRegistryError = hookCatalog.hookRegistryError
           // 436 D-03: the limits come from the project config and the edited entity's own `use`,
           // read through the workspace managers by canonical id; never from the request.
-          const plannerLimits = await resolveLivePlannerLimits(configManager, entityRef, {
+          const entityReaders = {
             ...(testFileManager === undefined ? {} : { findTest: (id: string) => testFileManager.findByTestId(id) }),
             ...(suiteFileManager === undefined ? {} : { findSuite: (id: string) => suiteFileManager.findBySuiteId(id) }),
-          })
+          }
+          const plannerLimits = await resolveLivePlannerLimits(configManager, entityRef, entityReaders)
+          // Each test a session runs gets project, then the session's suite, then its own `use`:
+          // the chain the CLI suite producer resolves per member.
+          const sessionSuiteRef = entityRef?.type === 'suite' ? entityRef : undefined
+          const plannerLimitsForTest = (testId: string) =>
+            resolveLivePlannerLimits(
+              configManager,
+              sessionSuiteRef === undefined
+                ? [{ type: 'test', id: testId }]
+                : [sessionSuiteRef, { type: 'test', id: testId }],
+              entityReaders,
+            )
           const { sessionId, sessionNumber } = await sessionManager.createSession(
             {
               platform: platform as 'web' | 'android' | 'ios',
               targetName,
               production: { productionTargetNames: production.productionTargetNames },
               plannerLimits,
+              plannerLimitsForTest,
               llmConfig: runtimeLLM.llmConfig,
               authFetch: runtimeLLM.authFetch,
               envVars,

@@ -209,6 +209,8 @@ export interface LiveSessionConfig {
   production?: LiveProductionFinding
   /** 436 D-03: resolved at the create door from the project config and the edited entity. */
   plannerLimits?: PlannerLimits
+  /** 436 D-03: per executed test, project then suite then the test's own `use`. */
+  plannerLimitsForTest?: (testId: string) => Promise<PlannerLimits>
   llmConfig: LiveSessionLLMConfig
   authFetch?: typeof globalThis.fetch
   envVars?: Record<string, string>
