@@ -4,12 +4,15 @@
 //
 // Clipboard: a page-world hook reports the text the app writes through the binding. Only while an
 // action other than agent-qa's own `copy` / `paste` is armed is a write kept, and only after a
-// kept write is the clipboard read back, under a `clipboard-read` grant that lasts for that read.
-// The text leaves raw; the loop masks and bounds it (CLIPBOARD_TEXT_LIMIT).
+// kept write is the clipboard read back. The text leaves raw; the loop masks and bounds it
+// (CLIPBOARD_TEXT_LIMIT).
+// 2026-10-08 (436-14): the read-back runs in an agent-qa-owned probe context at a reserved origin,
+// never on an app origin, and only the index of the claimed write equal to the clipboard leaves
+// the probe page (CR-01, IN-08). No app origin is ever granted `clipboard-read`.
 
 import { createHash } from 'node:crypto'
 import { extname } from 'node:path'
-import type { BrowserContext, Download, Frame, Page } from 'playwright-core'
+import type { Browser, BrowserContext, Download, Frame, Page } from 'playwright-core'
 import type { ClipboardEvidence, DownloadEvidence } from '@vostride/agent-qa-schema'
 
 export { CLIPBOARD_TEXT_LIMIT } from '@vostride/agent-qa-runner'
@@ -37,6 +40,9 @@ export const CLIPBOARD_BINDING = '__agentQaAppClipboardWrite'
 const CLIPBOARD_EXCLUDED_ACTIONS: ReadonlySet<string> = new Set(['copy', 'paste'])
 const CLIPBOARD_SOURCES: ReadonlySet<string> = new Set(['writeText', 'write', 'copy-event'])
 const READ_BACK_TIMEOUT_MS = 2_000
+/** The reserved origin of the read-back probe page; nothing else loads in the probe context. */
+export const CLIPBOARD_READBACK_ORIGIN = 'https://agent-qa-readback.invalid'
+const READ_BACK_UNREADABLE = -2
 
 export type CapturedClipboardWrite = Pick<ClipboardEvidence, 'source' | 'text' | 'readBack'>
 
@@ -131,6 +137,10 @@ export class OperationCapture {
   private clipboardArmed = false
   private activation = false
   private notify: (() => void) | null = null
+  private browser: Browser | null = null
+  private probe: Promise<Page | undefined> | null = null
+  private probeContext: BrowserContext | null = null
+  private probeGeneration = 0
 
   constructor(options: OperationCaptureOptions = {}) {
     this.completionCapMs = options.completionCapMs ?? DOWNLOAD_COMPLETION_CAP_MS
@@ -138,6 +148,7 @@ export class OperationCapture {
   }
 
   async attach(context: BrowserContext): Promise<void> {
+    this.browser = context.browser()
     for (const page of context.pages()) this.attachPage(page)
     context.on('page', (page) => this.attachPage(page))
     await context.exposeBinding(CLIPBOARD_BINDING, (source, payload: unknown) => {
@@ -198,40 +209,106 @@ export class OperationCapture {
   // whose text differs was overwritten and cannot be confirmed either way.
   private async readBack(writes: PendingClipboardWrite[]): Promise<CapturedClipboardWrite[]> {
     const last = writes.length - 1
-    const read = await this.readClipboard(writes[last]!.frame)
-    return writes.map(({ source, text }, index) => ({
+    const index = await this.readClipboard(writes[last]!.frame, writes.map((write) => write.text))
+    const matched = index !== undefined && index >= 0 ? writes[index]!.text : undefined
+    return writes.map(({ source, text }, position) => ({
       source,
       text,
-      readBack: read === undefined
+      readBack: index === undefined
         ? 'unavailable'
-        : read === text ? 'matched' : index === last ? 'mismatched' : 'unavailable',
+        : text === matched ? 'matched' : position === last ? 'mismatched' : 'unavailable',
     }))
   }
 
-  private async readClipboard(frame: Frame): Promise<string | undefined> {
+  // The index of the last claimed text equal to the clipboard, -1 for none, undefined when the
+  // clipboard cannot be read. The clipboard text itself never leaves the probe page.
+  private async readClipboard(frame: Frame, texts: string[]): Promise<number | undefined> {
     if (frame.isDetached()) return undefined
-    let origin: string
     try {
-      origin = new URL(frame.url()).origin
+      if (new URL(frame.url()).origin === 'null') return undefined
     } catch {
       return undefined
     }
-    if (origin === 'null') return undefined
-    const readable = await frame
+    const secure = await frame
       .evaluate('window.isSecureContext && !!(navigator.clipboard && navigator.clipboard.readText)')
       .catch(() => false)
-    if (readable !== true) return undefined
-    const context = frame.page().context()
-    try {
-      await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin })
-      const text = await withTimeout(frame.evaluate('navigator.clipboard.readText()'), READ_BACK_TIMEOUT_MS)
-      return typeof text === 'string' ? text : undefined
-    } catch {
+    if (secure !== true) return undefined
+    const probe = await this.openProbe()
+    if (!probe) return undefined
+    if (probe.isClosed()) {
+      await this.dispose()
       return undefined
-    } finally {
-      await context.clearPermissions().catch(() => undefined)
-      await context.grantPermissions(['clipboard-write']).catch(() => undefined)
     }
+    const index = await withTimeout(
+      probe.evaluate(async (claimed: string[]) => {
+        const scope = globalThis as unknown as {
+          isSecureContext?: boolean
+          navigator?: { clipboard?: { readText?: () => Promise<string> } }
+        }
+        const clipboard = scope.navigator?.clipboard
+        if (scope.isSecureContext !== true || typeof clipboard?.readText !== 'function') return -2
+        let text: string
+        try {
+          text = await clipboard.readText()
+        } catch {
+          return -2
+        }
+        return claimed.lastIndexOf(text)
+      }, texts),
+      READ_BACK_TIMEOUT_MS,
+    ).catch(() => undefined)
+    if (typeof index !== 'number' || index === READ_BACK_UNREADABLE || index >= texts.length) return undefined
+    return index < 0 ? -1 : index
+  }
+
+  private openProbe(): Promise<Page | undefined> {
+    this.probe ??= this.createProbe(this.probeGeneration)
+    return this.probe
+  }
+
+  // A separate context of the app's browser: only the reserved origin loads (a blank document, no
+  // init script), every other request is aborted, and only that origin may read the clipboard.
+  private async createProbe(generation: number): Promise<Page | undefined> {
+    const browser = this.browser
+    if (!browser) return undefined
+    let context: BrowserContext | undefined
+    try {
+      context = await browser.newContext()
+      if (generation !== this.probeGeneration) {
+        await context.close().catch(() => undefined)
+        return undefined
+      }
+      this.probeContext = context
+      await context.route('**/*', (route) => {
+        let origin = ''
+        try {
+          origin = new URL(route.request().url()).origin
+        } catch { /* aborted below */ }
+        return origin === CLIPBOARD_READBACK_ORIGIN
+          ? route.fulfill({ contentType: 'text/html', body: '<!doctype html>' })
+          : route.abort()
+      })
+      await context.grantPermissions(['clipboard-read'], { origin: CLIPBOARD_READBACK_ORIGIN })
+      const page = await context.newPage()
+      await page.goto(`${CLIPBOARD_READBACK_ORIGIN}/`)
+      return page
+    } catch {
+      if (generation === this.probeGeneration) {
+        this.probe = null
+        this.probeContext = null
+      }
+      await context?.close().catch(() => undefined)
+      return undefined
+    }
+  }
+
+  /** Closes the read-back probe context; the next read-back opens a fresh one. */
+  async dispose(): Promise<void> {
+    const context = this.probeContext
+    this.probeGeneration += 1
+    this.probe = null
+    this.probeContext = null
+    await context?.close().catch(() => undefined)
   }
 
   private attachPage(page: Page): void {

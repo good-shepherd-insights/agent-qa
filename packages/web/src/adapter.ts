@@ -585,6 +585,8 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     await this.stopWithdrawnSnapshot()
     try { await this.screencastCapability?.stop() } catch { /* best-effort */ }
     this.screencastCapability = null
+    // 2026-10-08 (436-14): close the clipboard read-back probe context before the browser goes.
+    try { await this.operationCapture?.dispose() } catch { /* best-effort */ }
     // Pitfall 7: clear persistent route interception, network emulation, and any pending
     // dialog arm BEFORE closing the browser so state never bleeds into the next test.
     if (this.context) {

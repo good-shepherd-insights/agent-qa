@@ -17,7 +17,7 @@ import type { ActionResult, RecordingCapability } from '@vostride/agent-qa-runne
 import { screenIdentityHash } from '@vostride/agent-qa-schema'
 import type { DownloadEvidence, Ref } from '@vostride/agent-qa-schema'
 import { WebPlatformAdapter } from '../adapter.js'
-import { DOWNLOAD_START_GRACE_MS } from '../operation-capture.js'
+import { CLIPBOARD_BINDING, DOWNLOAD_START_GRACE_MS } from '../operation-capture.js'
 import type { CapturedClipboardWrite, OperationCapture } from '../operation-capture.js'
 
 const BLOB_BYTES = 'name,qty\nwidget,3\n'
@@ -86,6 +86,45 @@ const CLIPBOARD_PAGE = `<!DOCTYPE html>
 </html>
 `
 
+// The proof-clip.mjs shape (CR-01): a page claims a write it never made and polls the clipboard.
+const READBACK_PAGE = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>read-back fixture</title></head>
+<body>
+  <h1>Read-back</h1>
+  <button id="forge" onclick="forge()">Forge claim</button>
+  <button id="override" onclick="overrideAndForge()">Forge with override</button>
+  <button id="watch" onclick="watchAndWrite()">Copy and watch</button>
+  <script>
+    window.reads = []
+    window.states = []
+    window.pollDone = false
+    const claim = (text) => window[${JSON.stringify(CLIPBOARD_BINDING)}]({ via: 'writeText', text })
+    function forge() {
+      claim('forged')
+      const end = Date.now() + 1000
+      const timer = setInterval(() => {
+        if (Date.now() > end) { clearInterval(timer); window.pollDone = true; return }
+        navigator.clipboard.readText().then((text) => { window.reads.push(text) }, () => {})
+      }, 5)
+    }
+    function overrideAndForge() {
+      Clipboard.prototype.readText = function () { return Promise.resolve('forged') }
+      claim('forged')
+    }
+    function watchAndWrite() {
+      const end = Date.now() + 1500
+      const timer = setInterval(() => {
+        if (Date.now() > end) { clearInterval(timer); window.pollDone = true; return }
+        navigator.permissions.query({ name: 'clipboard-read' }).then((s) => { window.states.push(s.state) }, () => {})
+      }, 10)
+      navigator.clipboard.writeText('ORDER-4471')
+    }
+  </script>
+</body>
+</html>
+`
+
 const INSECURE_ORIGIN = 'http://fixture.test'
 
 let server: Server
@@ -128,7 +167,7 @@ beforeAll(async () => {
       return
     }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
-    res.end(url === '/clipboard' ? CLIPBOARD_PAGE : PAGE)
+    res.end(url === '/clipboard' ? CLIPBOARD_PAGE : url === '/readback' ? READBACK_PAGE : PAGE)
   })
   await new Promise<void>((resolve) => { server.listen(0, '127.0.0.1', resolve) })
   baseUrl = `http://localhost:${String((server.address() as AddressInfo).port)}/`
@@ -499,5 +538,79 @@ describe('C436-CLIPBOARD-CAPTURE copy events and exclusions', () => {
     expect(await created.getPage()!.evaluate(`typeof window[${JSON.stringify('__agentQaAppClipboardWrite')}]`)).toBe('undefined')
     const result = await created.execute({ type: 'click', ref: await refFor(created, 'button', 'Copy invoice number') })
     expect(result.metadata?.['clipboard']).toBeUndefined()
+  }, 60_000)
+})
+
+// 2026-10-08 (436-14): the read-back runs in an agent-qa-owned probe context (CR-01, IN-08).
+describe('C436-CLIPBOARD-READBACK', () => {
+  afterEach(() => { vi.restoreAllMocks() })
+
+  async function withTesterSecret(): Promise<WebPlatformAdapter> {
+    const web = await open(undefined, undefined, 'readback')
+    await web.getPage()!.evaluate("navigator.clipboard.writeText('TESTER-SECRET')")
+    return web
+  }
+
+  async function pollWindow(web: WebPlatformAdapter): Promise<void> {
+    await web.getPage()!.waitForFunction('window.pollDone === true', undefined, { timeout: 10_000 })
+  }
+
+  it('a forged write report never lets the page read the clipboard', async () => {
+    const web = await withTesterSecret()
+    const result = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Forge claim') })
+    await pollWindow(web)
+
+    expect(await web.getPage()!.evaluate('window.reads')).toEqual([])
+    expect(clipboardOf(result)).toEqual([{ source: 'writeText', text: 'forged', readBack: 'mismatched' }])
+  }, 60_000)
+
+  it('no origin in the app context is granted clipboard-read during a read-back', async () => {
+    const web = await open(undefined, undefined, 'readback')
+    const result = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Copy and watch') })
+    await pollWindow(web)
+
+    expect(clipboardOf(result)).toEqual([{ source: 'writeText', text: 'ORDER-4471', readBack: 'matched' }])
+    const states = await web.getPage()!.evaluate('window.states') as string[]
+    expect(states.length).toBeGreaterThan(0)
+    expect(states).not.toContain('granted')
+    expect(await permission(web, 'clipboard-read')).not.toBe('granted')
+  }, 60_000)
+
+  it('the clipboard text never reaches the action result', async () => {
+    const web = await withTesterSecret()
+    const result = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Forge claim') })
+    await pollWindow(web)
+
+    expect(clipboardOf(result)?.[0]?.readBack).toBe('mismatched')
+    expect(JSON.stringify(result)).not.toContain('TESTER-SECRET')
+  }, 60_000)
+
+  it('a page that overrides readText cannot forge a matched read-back', async () => {
+    const web = await withTesterSecret()
+    const result = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Forge with override') })
+
+    expect(await web.getPage()!.evaluate('navigator.clipboard.readText()')).toBe('forged')
+    expect(clipboardOf(result)).toEqual([{ source: 'writeText', text: 'forged', readBack: 'mismatched' }])
+  }, 60_000)
+
+  it('the probe context is closed by cleanup', async () => {
+    const web = await open(undefined, undefined, 'readback')
+    const app = web.getPage()!.context()
+    const browser = app.browser()!
+    expect(browser.contexts()).toEqual([app])
+    const result = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Copy and watch') })
+    expect(clipboardOf(result)?.[0]?.readBack).toBe('matched')
+
+    const probes = browser.contexts().filter((context) => context !== app)
+    expect(probes).toHaveLength(1)
+    const probe = probes[0]!
+    const probePage = probe.pages()[0]!
+    expect(probePage.url()).toBe('https://agent-qa-readback.invalid/')
+    const closed = vi.spyOn(probe, 'close')
+    await web.cleanup()
+    adapter = undefined
+
+    expect(closed).toHaveBeenCalled()
+    expect(probePage.isClosed()).toBe(true)
   }, 60_000)
 })
