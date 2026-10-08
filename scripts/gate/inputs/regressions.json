@@ -2307,6 +2307,36 @@
     },
     {
       "runner": "vitest",
+      "file": "packages/android/src/__tests__/compound.test.ts",
+      "fullName": "AndroidPlatformAdapter compound behaviors (RED — Wave-0) C436-SCROLL-WEBVIEW a WebView touch swipe is judged over every WebView scroller (436-18 · D-25) a WebView with a frame on screen reads unknown",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/compound.test.ts",
+      "fullName": "AndroidPlatformAdapter compound behaviors (RED — Wave-0) C436-SCROLL-WEBVIEW a WebView touch swipe is judged over every WebView scroller (436-18 · D-25) members are paired by identity, not position",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/compound.test.ts",
+      "fullName": "AndroidPlatformAdapter compound behaviors (RED — Wave-0) C436-SCROLL-WEBVIEW a WebView touch swipe is judged over every WebView scroller (436-18 · D-25) a changed membership with a common member moving reads moved",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/compound.test.ts",
+      "fullName": "AndroidPlatformAdapter compound behaviors (RED — Wave-0) C436-SCROLL-WEBVIEW a WebView touch swipe is judged over every WebView scroller (436-18 · D-25) a same-count reorder is judged per member",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/compound.test.ts",
+      "fullName": "AndroidPlatformAdapter compound behaviors (RED — Wave-0) C436-SCROLL-WEBVIEW a WebView touch swipe is judged over every WebView scroller (436-18 · D-25) duplicate, missing or malformed ids read unknown",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
       "file": "packages/dashboard-server/src/__tests__/436-live-limits-door.test.ts",
       "fullName": "C436-EFFECTIVE-LIMITS live door a saved test file with an invalid limit is refused with 400 and no session",
       "origin": "436 D-03"

@@ -13,7 +13,6 @@ import type {
   LiveStreamCapability,
   PlatformConfig,
   RecordingCapability,
-  DocumentScrollOffsets,
   ScrollPrimitives,
   SwipeSignal,
 } from '@vostride/agent-qa-runner'
@@ -26,22 +25,24 @@ import {
   runDirectionScroll,
   runToEndScroll,
   runUntilVisibleLoop,
-  scrollerSetSwipeSignal,
 } from '@vostride/agent-qa-runner'
 import type { ElementLabels, ElementState, Ref, ScreenState } from '@vostride/agent-qa-schema'
 import {
   KEY_MAP,
   MobileElementResolver,
   MobileSetupError,
+  WEBVIEW_SCROLLERS_SCRIPT,
   buildRefEntries,
   computeFingerPositions,
   computePinch,
   computeSwipe,
   deriveMobileScroll,
   parseMobileSource,
+  parseWebViewScrollers,
   warnIfOutOfBounds,
+  webViewSwipeSignal,
 } from '@vostride/agent-qa-core'
-import type { MobileRefMap } from '@vostride/agent-qa-core'
+import type { IdentifiedScrollOffsets, MobileRefMap } from '@vostride/agent-qa-core'
 import { createAndroidSession } from './session.js'
 import type { AndroidAdapterConfig } from './types.js'
 
@@ -970,7 +971,8 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
    * EXEC-02 platform primitives injected into the shared runner scroll loops (D-02/D-03; 436-02
    * D-25). A native swipe is `mobile: scrollGesture` over the container (the ref's bounds, else the
    * screen), whose boolean is the driver's own boundary signal; in a WebView the touch swipe is
-   * measured over every WebView scroller before and after (436-18). nativeSearchScroll drives the UiAutomator
+   * measured over every WebView scroller before and after (436-18), paired by identity (436-23).
+   * nativeSearchScroll drives the UiAutomator
    * `UiScrollable.scrollIntoView` rung over an injection-escaped selector; readInterimTree is a
    * light page-source parse — NO refMap mint, NO screenshot, lastRefs untouched.
    */
@@ -1001,7 +1003,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
         .up({ button: 0 })
         )
       const after = await this.readWebViewScrollers()
-      return scrollerSetSwipeSignal(direction, before, after)
+      return webViewSwipeSignal(direction, before, after)
     }
 
     return {
@@ -1051,41 +1053,15 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
   }
 
   /**
-   * Every scroller in the WebView, in document order: the document scroller first, then each
-   * element with scroll range on an axis whose overflow scrolls (436-18 · D-25). The touch point
-   * cannot be mapped into the WebView's CSS coordinates, so the swipe is judged over all of them.
+   * The WebView scrollers a touch swipe may have acted on (436-18 · D-25), read by the shared
+   * WEBVIEW_SCROLLERS_SCRIPT. The touch point cannot be mapped into the WebView's CSS coordinates,
+   * so the swipe is judged over all of them.
+   * 2026-10-08 (436-23): a frame in view reads unknown; members carry an identity and are paired
+   * by it; open shadow roots are walked; only on-screen element scrollers are members.
    */
-  private async readWebViewScrollers(): Promise<DocumentScrollOffsets[] | undefined> {
+  private async readWebViewScrollers(): Promise<IdentifiedScrollOffsets[] | undefined> {
     try {
-      const raw = await this.driver!.execute(
-        'var d = document, s = d.scrollingElement || d.documentElement;'
-        + 'var sc = function (v) { return v === "auto" || v === "scroll" || v === "overlay"; };'
-        + 'var rs = getComputedStyle(d.documentElement);'
-        + 'var bodyPropagates = rs.overflowX === "visible" && rs.overflowY === "visible";'
-        + 'var out = [{ x: window.scrollX, y: window.scrollY,'
-        + ' maxX: s.scrollWidth - s.clientWidth, maxY: s.scrollHeight - s.clientHeight }];'
-        + 'var all = d.querySelectorAll("*");'
-        + 'for (var i = 0; i < all.length; i++) {'
-        + ' var el = all[i];'
-        + ' if (el === s || el === d.documentElement || (el === d.body && bodyPropagates)) continue;'
-        + ' var mx = el.scrollWidth - el.clientWidth, my = el.scrollHeight - el.clientHeight;'
-        + ' if (!(mx > 0 || my > 0)) continue;'
-        + ' var st = getComputedStyle(el);'
-        + ' var sx = mx > 0 && sc(st.overflowX), sy = my > 0 && sc(st.overflowY);'
-        + ' if (!sx && !sy) continue;'
-        + ' out.push({ x: el.scrollLeft, y: el.scrollTop, maxX: sx ? mx : 0, maxY: sy ? my : 0 });'
-        + '}'
-        + 'return out;',
-      ) as unknown
-      if (!Array.isArray(raw) || raw.length === 0) return undefined
-      const scrollers: DocumentScrollOffsets[] = []
-      for (const member of raw as unknown[]) {
-        if (!member || typeof member !== 'object') return undefined
-        const { x, y, maxX, maxY } = member as Record<string, unknown>
-        if (![x, y, maxX, maxY].every((n) => typeof n === 'number')) return undefined
-        scrollers.push({ x, y, maxX, maxY } as DocumentScrollOffsets)
-      }
-      return scrollers
+      return parseWebViewScrollers(await this.driver!.execute(WEBVIEW_SCROLLERS_SCRIPT) as unknown)
     } catch {
       return undefined
     }
