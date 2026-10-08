@@ -205,6 +205,57 @@ describe('runUntilVisibleLoop — native rung and visibility probe', () => {
   })
 })
 
+describe('C436-SCROLL-PROBE — an adapter visibility probe replaces the tree match (436-17 · D-24)', () => {
+  it('probeTargetVisible replaces the tree match when supplied', async () => {
+    const { p, calls } = makeFakePrimitives({ trees: [SAME], signals: ['moved'] })
+    const probes: { target: string; ref?: string }[] = []
+    p.probeTargetVisible = async (target, ref) => {
+      probes.push({ target, ...(ref ? { ref } : {}) })
+      return calls.swipes.length >= 2
+    }
+    const r = await runUntilVisibleLoop(p, {
+      target: TARGET,
+      direction: 'down',
+      maxSwipes: 5,
+      retryOpposite: false,
+      ref: 'e3' as never,
+    })
+    expect(r.found).toBe(true)
+    expect(r.meta).toEqual({ swipes: 2, reversedOnce: false, outcome: 'found', endedBy: 'target-visible' })
+    expect(calls.swipes).toEqual(['down', 'down'])
+    expect(calls.reads).toBe(0)
+    expect(probes).toEqual([
+      { target: TARGET, ref: 'e3' },
+      { target: TARGET, ref: 'e3' },
+      { target: TARGET, ref: 'e3' },
+    ])
+  })
+
+  it('the native rung is confirmed by the probe', async () => {
+    const confirmed = makeFakePrimitives({ trees: [SAME], native: () => true })
+    let probesConfirmed = 0
+    confirmed.p.probeTargetVisible = async () => {
+      probesConfirmed += 1
+      return confirmed.calls.natives.length > 0
+    }
+    const found = await runUntilVisibleLoop(confirmed.p, { target: TARGET, direction: 'down', maxSwipes: 3, retryOpposite: false })
+    expect(found.meta).toEqual({ swipes: 0, reversedOnce: false, outcome: 'found', endedBy: 'target-visible' })
+    expect(confirmed.calls.swipes).toEqual([])
+    expect(probesConfirmed).toBe(2)
+    expect(confirmed.calls.reads).toBe(0)
+
+    // The tree names the target, but the probe says it is not on screen: the native rung's true
+    // is not trusted and the loop swipes on.
+    const refuted = makeFakePrimitives({ trees: [withTarget], signals: ['moved'], native: () => true })
+    refuted.p.probeTargetVisible = async () => false
+    const swiped = await runUntilVisibleLoop(refuted.p, { target: TARGET, direction: 'down', maxSwipes: 2, retryOpposite: false })
+    expect(swiped.found).toBe(false)
+    expect(refuted.calls.swipes).toEqual(['down', 'down'])
+    expect(swiped.meta).toEqual({ swipes: 2, reversedOnce: false, outcome: 'unresolved', endedBy: 'max-swipes' })
+    expect(refuted.calls.reads).toBe(0)
+  })
+})
+
 describe('swipeSignalFromOffsets — the offset rule', () => {
   it('a changed offset is moved', () => {
     expect(swipeSignalFromOffsets('down', { before: 0, after: 720, max: 3000 })).toBe('moved')

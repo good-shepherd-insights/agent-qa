@@ -24,6 +24,8 @@ export interface ScrollPrimitives {
   nativeSearchScroll?(target: string, ref?: Ref, direction?: Direction): Promise<boolean>
   /** Light probe: interim nodes only, NO refMap mint, NO screenshot. Read for visibility only. */
   readInterimTree(): Promise<InterimNode[]>
+  /** Is `target` on screen now? When supplied it replaces the interim-tree name match. */
+  probeTargetVisible?(target: string, ref?: Ref): Promise<boolean>
 }
 
 export interface UntilVisibleParams {
@@ -133,12 +135,14 @@ export async function runUntilVisibleLoop(
 ): Promise<ScrollLoopResult> {
   const { target, maxSwipes, retryOpposite, ref } = params
   let swipes = 0
+  const visible = async (): Promise<boolean> =>
+    p.probeTargetVisible ? p.probeTargetVisible(target, ref) : targetVisible(await p.readInterimTree(), target)
 
-  if (targetVisible(await p.readInterimTree(), target)) return result(true, 0, false, 'found', 'target-visible')
+  if (await visible()) return result(true, 0, false, 'found', 'target-visible')
 
   if (p.nativeSearchScroll) {
     const reported = await p.nativeSearchScroll(target, ref, params.direction)
-    if (reported && targetVisible(await p.readInterimTree(), target)) {
+    if (reported && (await visible())) {
       return result(true, 0, false, 'found', 'target-visible')
     }
   }
@@ -148,7 +152,7 @@ export async function runUntilVisibleLoop(
     for (let used = 0; used < maxSwipes; used += 1) {
       const signal = await p.swipeOnce(direction, ref)
       swipes += 1
-      if (targetVisible(await p.readInterimTree(), target)) return 'target-visible'
+      if (await visible()) return 'target-visible'
       if (signal === 'at-boundary') return 'boundary'
     }
     return 'max-swipes'

@@ -136,10 +136,75 @@ async function readDocumentOffsets(page: Page): Promise<DocumentScrollOffsets | 
   }
 }
 
+// Is any element carrying `target` (text, label, alt or title; Playwright's case-insensitive,
+// whitespace-normalized substring match) on screen now? On screen means computed visibility
+// `visible` and a box with positive area inside the viewport and inside the client box of every
+// clipping ancestor. evaluateAll never waits; any error answers false (436-17 · D-24/D-25).
+async function probeOnScreen(page: Page, target: string): Promise<boolean> {
+  try {
+    const candidates = page
+      .getByText(target)
+      .or(page.getByLabel(target))
+      .or(page.getByAltText(target))
+      .or(page.getByTitle(target))
+    return await candidates.evaluateAll((elements) => {
+      type Box = { left: number; top: number; right: number; bottom: number }
+      type El = {
+        parentElement: El | null
+        clientLeft: number
+        clientTop: number
+        clientWidth: number
+        clientHeight: number
+        getBoundingClientRect(): Box
+      }
+      const g = globalThis as unknown as {
+        innerWidth: number
+        innerHeight: number
+        document: { documentElement: El; body: El | null }
+        getComputedStyle(el: El): { visibility: string; overflowX: string; overflowY: string }
+      }
+      const root = g.document.documentElement
+      const rootStyle = g.getComputedStyle(root)
+      // A body overflow propagates to the viewport while the root's own overflow is visible.
+      const bodyClips = rootStyle.overflowX !== 'visible' || rootStyle.overflowY !== 'visible'
+      const clips = (el: El): boolean => {
+        const style = g.getComputedStyle(el)
+        return style.overflowX !== 'visible' || style.overflowY !== 'visible'
+      }
+      const onScreen = (el: El): boolean => {
+        if (g.getComputedStyle(el).visibility !== 'visible') return false
+        const r = el.getBoundingClientRect()
+        let left = Math.max(r.left, 0)
+        let top = Math.max(r.top, 0)
+        let right = Math.min(r.right, g.innerWidth)
+        let bottom = Math.min(r.bottom, g.innerHeight)
+        if (!(right > left && bottom > top)) return false
+        for (let a = el.parentElement; a && a !== root; a = a.parentElement) {
+          if (a === g.document.body && !bodyClips) continue
+          if (!clips(a)) continue
+          const b = a.getBoundingClientRect()
+          const cl = b.left + a.clientLeft
+          const ct = b.top + a.clientTop
+          left = Math.max(left, cl)
+          top = Math.max(top, ct)
+          right = Math.min(right, cl + a.clientWidth)
+          bottom = Math.min(bottom, ct + a.clientHeight)
+          if (!(right > left && bottom > top)) return false
+        }
+        return true
+      }
+      return (elements as unknown as El[]).some(onScreen)
+    })
+  } catch {
+    return false
+  }
+}
+
 // Light probe + swipe/native primitives. readInterimTree re-runs ONLY the aria-snapshot harvest
 // → parseAriaSnapshot(text).nodes — NO buildScreenState, NO refMap mint, NO screenshot; lastRefs
-// stays bound to the pre-compound observation. swipeOnce reports what the offsets proved; the
-// no-ref wheel measures the document scroller before and after.
+// stays bound to the pre-compound observation. probeTargetVisible decides target visibility for
+// the loop. swipeOnce reports what the offsets proved; the no-ref wheel measures the document
+// scroller before and after.
 export function buildScrollPrimitives(page: Page, lastRefs: RefMap, magnitude: number): ScrollPrimitives {
   return {
     async swipeOnce(direction: Direction, ref?: Ref): Promise<SwipeSignal> {
@@ -167,6 +232,9 @@ export function buildScrollPrimitives(page: Page, lastRefs: RefMap, magnitude: n
     async readInterimTree() {
       const tree = await page.locator(':root').ariaSnapshot({ mode: 'ai' })
       return parseAriaSnapshot(tree).nodes
+    },
+    async probeTargetVisible(target: string): Promise<boolean> {
+      return probeOnScreen(page, target)
     },
   }
 }
