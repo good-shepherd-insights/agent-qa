@@ -17,6 +17,7 @@ import type {
   PlatformConfig,
   RecordingCapability,
   ScrollPrimitives,
+  ShellActionMeta,
   SwipeSignal,
 } from '@vostride/agent-qa-runner'
 import {
@@ -63,6 +64,8 @@ const DEL_KEYCODE = 67
 const MULTI_LINE_SUBMIT_NOTICE =
   'submit not sent: Return would add a new line in this multi-line field; tap its send or submit control'
 const LINE_BREAK_RE = /[\r\n]/
+// The fixed @appium/base-driver text for a refused insecure feature (437 D-18).
+const ADB_SHELL_REFUSAL = "Potentially insecure feature 'adb_shell' has not been enabled"
 
 // 437 D-11: the WebView fill and clear use page scripts only to probe focus and read the value.
 // The probe runs after a trusted tap at the ref's centre and never writes to the page.
@@ -169,6 +172,10 @@ function fieldKindOf(refData: MobileRefMap[string] | undefined): FieldKind {
 function firstErrorLine(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err)
   return message.split('\n')[0]!.trim()
+}
+
+function isShellRefusal(err: unknown): boolean {
+  return (err instanceof Error ? err.message : String(err)).includes(ADB_SHELL_REFUSAL)
 }
 
 function isAndroidWebContextName(context: string): boolean {
@@ -974,6 +981,38 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
   private async readFocusedValue(el: { getText: () => Promise<string> }): Promise<string | undefined> {
     if (await this.focusedMatches(FOCUSED_HINT_XPATH)) return ''
     return await this.readElementText(el)
+  }
+
+  /**
+   * The `mobile: shell` route of keyevent and openQuickSettings (437 D-18). A refusal by secure
+   * Appium is recorded as unavailable and any other driver error as failed; neither is a pass.
+   */
+  private async runShell(
+    verb: ShellActionMeta['verb'],
+    args: { command: string; args: string[] },
+  ): Promise<ActionResult> {
+    try {
+      await this.driver!.execute('mobile: shell', args)
+      return { success: true }
+    } catch (err) {
+      if (isShellRefusal(err)) {
+        const shellAction: ShellActionMeta = {
+          verb,
+          outcome: 'unavailable',
+          reason: 'adb-shell-disabled',
+        }
+        return {
+          success: false,
+          error:
+            `${verb} unavailable: Appium does not allow mobile: shell here (adb_shell is not `
+            + 'enabled), so nothing was sent. Use pressBack, pressHome or keypress where they fit.',
+          metadata: { shellAction },
+        }
+      }
+      const detail = firstErrorLine(err)
+      const shellAction: ShellActionMeta = { verb, outcome: 'failed', detail }
+      return { success: false, error: `${verb} failed: ${detail}`, metadata: { shellAction } }
+    }
   }
 
   /** The one submit mechanism on every Android path (437 D-13); pressed once, never retried. */
@@ -1987,8 +2026,10 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
 
       case 'openQuickSettings':
         // args-array shell (A1) — never a concatenated command string (Pitfall 6).
-        await driver.execute('mobile: shell', { command: 'cmd', args: ['statusbar', 'expand-settings'] })
-        return { success: true }
+        return await this.runShell('openQuickSettings', {
+          command: 'cmd',
+          args: ['statusbar', 'expand-settings'],
+        })
 
       case 'intent': {
         // T-360-02 / Pitfall 6: map the schema fields onto TYPED mobile: startActivity args. Extras
@@ -2020,8 +2061,10 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
             error: `keyevent: "${action.keycode}" is not a valid Android key code. Provide a symbolic code matching ^KEYCODE_[A-Z0-9_]+$ (e.g. KEYCODE_ENTER, KEYCODE_TAB).`,
           }
         }
-        await driver.execute('mobile: shell', { command: 'input', args: ['keyevent', action.keycode] })
-        return { success: true }
+        return await this.runShell('keyevent', {
+          command: 'input',
+          args: ['keyevent', action.keycode],
+        })
       }
 
       case 'assertValue': {
