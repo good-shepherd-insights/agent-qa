@@ -6,8 +6,15 @@
 // switch already in the requested state is not tapped and is recorded as no input sent, and out of
 // state it is tapped once. The switch's original state is restored after each cell.
 //
+// C437-ANDROID-SECURE-LIVE (437 D-18): on an Appium started without relaxed security or any
+// insecure feature, a shell key event (`keyevent`, `openQuickSettings`) is refused by the server
+// and recorded as unavailable with reason adb-shell-disabled; nothing throws and the step does not
+// pass, even with a verifier that would accept any screen.
+//
 // Skipped unless AGENT_QA_437_ANDROID_LIVE=1, with a booted emulator and Appium reachable at
-// AGENT_QA_APPIUM_URL or http://localhost:4723. A skipped cell is registered as not run in
+// AGENT_QA_APPIUM_URL or http://localhost:4723. The secure cells also need
+// AGENT_QA_437_SECURE_APPIUM_URL naming such a plain Appium server; they point the session at it
+// for their own setup only. A skipped cell is registered as not run in
 // scripts/gate/inputs/register.json; a skip is never a pass.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -27,6 +34,7 @@ import type { Ref, ScreenState } from '@vostride/agent-qa-schema'
 import { AndroidPlatformAdapter } from '../adapter.js'
 
 const LIVE = process.env.AGENT_QA_437_ANDROID_LIVE === '1'
+const SECURE_APPIUM_URL = process.env.AGENT_QA_437_SECURE_APPIUM_URL
 const SETTINGS = 'com.android.settings'
 const LIMITS: PlannerConfig = { maxActions: 30, maxPlanningTurns: 30, previousStepCount: 0 }
 const ROW = 'Network & internet'
@@ -146,16 +154,20 @@ async function runStep(
   return { result, executed, planned }
 }
 
+async function openSettings(): Promise<AndroidPlatformAdapter> {
+  const created = new AndroidPlatformAdapter()
+  await created.setup({ platform: 'android', appPackage: SETTINGS, appActivity: '.Settings' } as Parameters<typeof created.setup>[0])
+  const driver = (created as unknown as { driver: WebdriverIO.Browser }).driver
+  await driver.terminateApp(SETTINGS)
+  await driver.activateApp(SETTINGS)
+  return created
+}
+
 describe.skipIf(!LIVE)('C437-ANDROID-LIVE', () => {
   let adapter: AndroidPlatformAdapter | undefined
 
   beforeEach(async () => {
-    const created = new AndroidPlatformAdapter()
-    await created.setup({ platform: 'android', appPackage: SETTINGS, appActivity: '.Settings' } as Parameters<typeof created.setup>[0])
-    adapter = created
-    const driver = (created as unknown as { driver: WebdriverIO.Browser }).driver
-    await driver.terminateApp(SETTINGS)
-    await driver.activateApp(SETTINGS)
+    adapter = await openSettings()
   }, 120_000)
 
   let restore: SwitchTurn | undefined
@@ -253,5 +265,50 @@ describe.skipIf(!LIVE)('C437-ANDROID-LIVE', () => {
     expect(last.result.success).toBe(true)
     expect(last.result.metadata?.['idempotentNoop']).toBeUndefined()
     expect(darkThemeChecked(await adapter!.observe())).toBe(!seen.original)
+  }, 240_000)
+})
+
+describe.skipIf(!LIVE || SECURE_APPIUM_URL === undefined)('C437-ANDROID-SECURE-LIVE', () => {
+  let adapter: AndroidPlatformAdapter | undefined
+  let savedUrl: string | undefined
+
+  beforeEach(async () => {
+    savedUrl = process.env.AGENT_QA_APPIUM_URL
+    process.env.AGENT_QA_APPIUM_URL = SECURE_APPIUM_URL
+    adapter = await openSettings()
+  }, 120_000)
+
+  afterEach(async () => {
+    try {
+      await adapter?.cleanup()
+    } finally {
+      adapter = undefined
+      if (savedUrl === undefined) delete process.env.AGENT_QA_APPIUM_URL
+      else process.env.AGENT_QA_APPIUM_URL = savedUrl
+    }
+  }, 120_000)
+
+  const giveUp = (): ActionPlan => ({ reasoning: 'The key event was not sent', action: { type: 'wait', duration: 0 }, confidence: 0.9, stepComplete: false, stepFailed: true })
+
+  async function expectUnavailable(verb: 'keyevent' | 'openQuickSettings', action: ActionPlan['action']): Promise<void> {
+    const pending = runStep(adapter!, `Send ${verb}`, [() => act(action, true, `Send ${verb}`), giveUp], () => true)
+    await expect(pending).resolves.toBeDefined()
+    const run = await pending
+
+    expect(run.executed).toHaveLength(1)
+    expect(run.executed[0]).toMatchObject({ type: verb })
+    const sub = run.result.evidence!.subActions[0]
+    expect(sub.result.success).toBe(false)
+    expect(sub.result.error).toMatch(new RegExp(`^${verb} unavailable:`))
+    expect(sub.result.metadata?.['shellAction']).toEqual({ verb, outcome: 'unavailable', reason: 'adb-shell-disabled' })
+    expect(run.result.status).not.toBe('passed')
+  }
+
+  it('keyevent is recorded unavailable', async () => {
+    await expectUnavailable('keyevent', { type: 'keyevent', keycode: 'KEYCODE_ENTER' })
+  }, 240_000)
+
+  it('openQuickSettings is recorded unavailable', async () => {
+    await expectUnavailable('openQuickSettings', { type: 'openQuickSettings' })
   }, 240_000)
 })
