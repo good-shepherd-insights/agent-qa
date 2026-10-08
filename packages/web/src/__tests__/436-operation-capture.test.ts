@@ -321,10 +321,10 @@ describe('C436-DOWNLOAD-CAPTURE', () => {
   }, 60_000)
 
   it('a download that never finishes is recorded unfinished within the step timeout', async () => {
-    const web = await open(1_500)
+    const web = await open()
     const ref = await refFor(web, 'link', 'Get slow file')
     const started = Date.now()
-    const result = await web.execute({ type: 'click', ref })
+    const result = await web.execute({ type: 'click', ref }, { remainingStepMs: 1_500 })
 
     expect(Date.now() - started).toBeLessThan(10_000)
     expect(downloadsOf(result)).toEqual([
@@ -430,6 +430,44 @@ describe('C436-DOWNLOAD-DEADLINE', () => {
 
     expect(downloadsOf(result)).toEqual([UNFINISHED_SLOW])
     expect(elapsed).toBeLessThan(800 + 1_500)
+    expectFilesGone(files, 1)
+  }, 60_000)
+
+  it('a step timeout of 0 no longer cancels downloads', async () => {
+    const web = await open(0)
+    const ref = await refFor(web, 'button', 'Export CSV')
+    const result = await web.execute({ type: 'click', ref })
+
+    expect(downloadsOf(result)?.map((download) => download.state).join(',')).toBe('completed')
+    expect(downloadsOf(result)).toEqual([
+      {
+        suggestedFilename: 'report.csv',
+        extension: '.csv',
+        size: Buffer.byteLength(BLOB_BYTES),
+        sha256: sha256(BLOB_BYTES),
+        state: 'completed',
+      },
+    ])
+  }, 60_000)
+
+  it('an abort during the wait cancels the download', async () => {
+    const web = await open()
+    const files = downloadFilesOf(web)
+    const ref = await refFor(web, 'link', 'Get slow file')
+    const controller = new AbortController()
+    web.getPage()!.once('download', () => { setTimeout(() => { controller.abort() }, 300) })
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const started = performance.now()
+    const outcome = await Promise.race([
+      web.execute({ type: 'click', ref }, { abortSignal: controller.signal }),
+      new Promise<'still waiting'>((resolve) => { timer = setTimeout(() => { resolve('still waiting') }, 5_000) }),
+    ])
+    const elapsed = performance.now() - started
+    clearTimeout(timer)
+
+    expect(outcome).not.toBe('still waiting')
+    expect(downloadsOf(outcome as ActionResult)).toEqual([UNFINISHED_SLOW])
+    expect(elapsed).toBeLessThan(300 + 1_500)
     expectFilesGone(files, 1)
   }, 60_000)
 })
