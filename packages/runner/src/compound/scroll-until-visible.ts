@@ -7,6 +7,8 @@
 // visibility: an unchanged tree never ends, reverses or retries a search, and a changed tree is
 // never movement.
 // 2026-10-07 (436-02): the interim-tree identity helper and the retrying direction helper are gone.
+// 2026-10-08 (436-22): the visibility probe answers visible, hidden or unknown; a search in which
+// any answer was unknown never ends not-found (D-24, review CR-07).
 
 import type { Ref } from '@vostride/agent-qa-schema'
 import type { InterimNode } from '../screen-builder.js'
@@ -17,6 +19,9 @@ export type Direction = 'up' | 'down' | 'left' | 'right'
 /** What one swipe proved: the container moved, it is at its extent, or nothing is known. */
 export type SwipeSignal = 'moved' | 'at-boundary' | 'unknown'
 
+/** The target is on screen, definitively not on screen, or cannot be judged. */
+export type TargetVisibility = 'visible' | 'hidden' | 'unknown'
+
 export interface ScrollPrimitives {
   /** One platform swipe in `direction`, optionally inside container `ref`. */
   swipeOnce(direction: Direction, ref?: Ref): Promise<SwipeSignal>
@@ -24,8 +29,11 @@ export interface ScrollPrimitives {
   nativeSearchScroll?(target: string, ref?: Ref, direction?: Direction): Promise<boolean>
   /** Light probe: interim nodes only, NO refMap mint, NO screenshot. Read for visibility only. */
   readInterimTree(): Promise<InterimNode[]>
-  /** Is `target` on screen now? When supplied it replaces the interim-tree name match. */
-  probeTargetVisible?(target: string, ref?: Ref): Promise<boolean>
+  /**
+   * Is `target` visible, definitively not on screen, or impossible to judge? When supplied it
+   * replaces the interim-tree name match; any other answer counts as unknown.
+   */
+  probeTargetVisible?(target: string, ref?: Ref): Promise<TargetVisibility>
 }
 
 export interface UntilVisibleParams {
@@ -162,8 +170,18 @@ export async function runUntilVisibleLoop(
 ): Promise<ScrollLoopResult> {
   const { target, maxSwipes, retryOpposite, ref } = params
   let swipes = 0
-  const visible = async (): Promise<boolean> =>
-    p.probeTargetVisible ? p.probeTargetVisible(target, ref) : targetVisible(await p.readInterimTree(), target)
+  // Set once any answer could not be judged: such a search ends unresolved, never not-found.
+  let undetermined = false
+  const visibility = async (): Promise<TargetVisibility> => {
+    if (!p.probeTargetVisible) return targetVisible(await p.readInterimTree(), target) ? 'visible' : 'hidden'
+    const answer: unknown = await p.probeTargetVisible(target, ref)
+    return answer === 'visible' || answer === 'hidden' ? answer : 'unknown'
+  }
+  const visible = async (): Promise<boolean> => {
+    const answer = await visibility()
+    if (answer === 'unknown') undetermined = true
+    return answer === 'visible'
+  }
 
   if (await visible()) return result(true, 0, false, 'found', 'target-visible')
 
@@ -188,13 +206,13 @@ export async function runUntilVisibleLoop(
   const first = await search(params.direction)
   if (first === 'target-visible') return result(true, swipes, false, 'found', 'target-visible')
   if (!retryOpposite) {
-    return result(false, swipes, false, first === 'boundary' ? 'not-found' : 'unresolved', first)
+    return result(false, swipes, false, first === 'boundary' && !undetermined ? 'not-found' : 'unresolved', first)
   }
 
   const second = await search(opposite(params.direction))
   if (second === 'target-visible') return result(true, swipes, true, 'found', 'target-visible')
   const bothBoundaries = first === 'boundary' && second === 'boundary'
-  return result(false, swipes, true, bothBoundaries ? 'not-found' : 'unresolved', second)
+  return result(false, swipes, true, bothBoundaries && !undetermined ? 'not-found' : 'unresolved', second)
 }
 
 export interface DirectionScrollParams {

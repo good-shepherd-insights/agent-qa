@@ -5,7 +5,7 @@
 // and stitches them into ONE ActionResult per compound. Extracted here (inside packages/web/src)
 // so the two adapter classes reuse one implementation instead of copy-pasting the compound.
 
-import type { JSHandle, Locator, Page } from 'playwright-core'
+import type { Frame, JSHandle, Locator, Page } from 'playwright-core'
 import type { ActionResult } from '@vostride/agent-qa-runner'
 import {
   compareFillReread,
@@ -18,6 +18,7 @@ import {
   type ScrollPrimitives,
   type SwipeSignal,
   type Direction,
+  type TargetVisibility,
 } from '@vostride/agent-qa-runner'
 import type { Fill, Scroll, Ref } from '@vostride/agent-qa-schema'
 import { parseAriaSnapshot } from './observer.js'
@@ -238,75 +239,198 @@ async function wheelPointerChain(page: Page, dx: number, dy: number, axis: Axis)
   }
 }
 
-// Is any element carrying `target` (text, label, alt or title; Playwright's case-insensitive,
-// whitespace-normalized substring match) on screen now? On screen means computed visibility
-// `visible` and a box with positive area inside the viewport and inside the client box of every
-// clipping ancestor. evaluateAll never waits; any error answers false (436-17 · D-24/D-25).
-async function probeOnScreen(page: Page, target: string): Promise<boolean> {
-  try {
-    const candidates = page
-      .getByText(target)
-      .or(page.getByLabel(target))
-      .or(page.getByAltText(target))
-      .or(page.getByTitle(target))
-    return await candidates.evaluateAll((elements) => {
-      type Box = { left: number; top: number; right: number; bottom: number }
-      type El = {
-        parentElement: El | null
-        clientLeft: number
-        clientTop: number
-        clientWidth: number
-        clientHeight: number
-        getBoundingClientRect(): Box
-      }
-      const g = globalThis as unknown as {
-        innerWidth: number
-        innerHeight: number
-        document: { documentElement: El; body: El | null }
-        getComputedStyle(el: El): { visibility: string; overflowX: string; overflowY: string }
-      }
-      const root = g.document.documentElement
-      const rootStyle = g.getComputedStyle(root)
-      // A body overflow propagates to the viewport while the root's own overflow is visible.
-      const bodyClips = rootStyle.overflowX !== 'visible' || rootStyle.overflowY !== 'visible'
-      const clips = (el: El): boolean => {
-        const style = g.getComputedStyle(el)
-        return style.overflowX !== 'visible' || style.overflowY !== 'visible'
-      }
-      const onScreen = (el: El): boolean => {
-        if (g.getComputedStyle(el).visibility !== 'visible') return false
-        const r = el.getBoundingClientRect()
-        let left = Math.max(r.left, 0)
-        let top = Math.max(r.top, 0)
-        let right = Math.min(r.right, g.innerWidth)
-        let bottom = Math.min(r.bottom, g.innerHeight)
-        if (!(right > left && bottom > top)) return false
-        for (let a = el.parentElement; a && a !== root; a = a.parentElement) {
-          if (a === g.document.body && !bodyClips) continue
-          if (!clips(a)) continue
-          const b = a.getBoundingClientRect()
-          const cl = b.left + a.clientLeft
-          const ct = b.top + a.clientTop
-          left = Math.max(left, cl)
-          top = Math.max(top, ct)
-          right = Math.min(right, cl + a.clientWidth)
-          bottom = Math.min(bottom, ct + a.clientHeight)
-          if (!(right > left && bottom > top)) return false
-        }
-        return true
-      }
-      return (elements as unknown as El[]).some(onScreen)
-    })
-  } catch {
-    return false
+type ProbeBox = { left: number; top: number; right: number; bottom: number }
+type Judged = { state: TargetVisibility; rect?: ProbeBox }
+
+// In-page judge for every candidate of one frame, in that frame's own viewport. Hidden: computed
+// visibility other than `visible`, or a box outside the viewport. Unknown: a box that a clipping
+// ancestor (a nested scroller the search may not have moved) empties. Visible: the clipped box.
+// Ancestors are walked over the flat tree (assigned slot, parent element, shadow host), skipping a
+// body whose overflow propagates to the viewport. Self-contained: Playwright serializes it.
+function judgeCandidates(elements: unknown[]): unknown {
+  const g = globalThis as any
+  const doc = g.document
+  const root = doc.documentElement
+  const rootStyle = g.getComputedStyle(root)
+  const bodyPropagates = rootStyle.overflowX === 'visible' && rootStyle.overflowY === 'visible'
+  const parentOf = (node: any): any => node.assignedSlot ?? node.parentElement ?? node.parentNode?.host ?? null
+  const clips = (node: any): boolean => {
+    const style = g.getComputedStyle(node)
+    return style.overflowX !== 'visible' || style.overflowY !== 'visible'
   }
+  const judge = (el: any): unknown => {
+    if (g.getComputedStyle(el).visibility !== 'visible') return { state: 'hidden' }
+    const r = el.getBoundingClientRect()
+    let left = Math.max(r.left, 0)
+    let top = Math.max(r.top, 0)
+    let right = Math.min(r.right, g.innerWidth)
+    let bottom = Math.min(r.bottom, g.innerHeight)
+    if (!(right > left && bottom > top)) return { state: 'hidden' }
+    for (let a = parentOf(el); a && a !== root; a = parentOf(a)) {
+      if (a === doc.body && bodyPropagates) continue
+      if (!clips(a)) continue
+      const b = a.getBoundingClientRect()
+      const cl = b.left + a.clientLeft
+      const ct = b.top + a.clientTop
+      left = Math.max(left, cl)
+      top = Math.max(top, ct)
+      right = Math.min(right, cl + a.clientWidth)
+      bottom = Math.min(bottom, ct + a.clientHeight)
+      if (!(right > left && bottom > top)) return { state: 'unknown' }
+    }
+    return { state: 'visible', rect: { left, top, right, bottom } }
+  }
+  return elements.map(judge)
+}
+
+// In-page, in the parent frame: projects a box from a child frame's viewport through its frame
+// element into the parent's viewport, or null when it cannot be judged: a transform or zoom on the
+// frame element or a flat-tree ancestor, an empty result after the content box, clipping ancestors
+// and the viewport, or a hit test at its centre that lands on anything but the frame element.
+// Its flat-tree walk and clip rules are a copy of judgeCandidates'.
+function projectThroughFrame(frameElement: unknown, box: ProbeBox): unknown {
+  const g = globalThis as any
+  const doc = g.document
+  const root = doc.documentElement
+  const el = frameElement as any
+  const rootStyle = g.getComputedStyle(root)
+  const bodyPropagates = rootStyle.overflowX === 'visible' && rootStyle.overflowY === 'visible'
+  const parentOf = (node: any): any => node.assignedSlot ?? node.parentElement ?? node.parentNode?.host ?? null
+  const clips = (node: any): boolean => {
+    const style = g.getComputedStyle(node)
+    return style.overflowX !== 'visible' || style.overflowY !== 'visible'
+  }
+  for (let n = el; n; n = parentOf(n)) {
+    const style = g.getComputedStyle(n)
+    if (style.transform !== 'none') return null
+    const zoom = Number.parseFloat(style.zoom)
+    if (Number.isFinite(zoom) && zoom !== 1) return null
+  }
+  const style = g.getComputedStyle(el)
+  const padLeft = Number.parseFloat(style.paddingLeft) || 0
+  const padTop = Number.parseFloat(style.paddingTop) || 0
+  const padRight = Number.parseFloat(style.paddingRight) || 0
+  const padBottom = Number.parseFloat(style.paddingBottom) || 0
+  const r = el.getBoundingClientRect()
+  const ox = r.left + el.clientLeft + padLeft
+  const oy = r.top + el.clientTop + padTop
+  let left = Math.max(box.left + ox, ox, 0)
+  let top = Math.max(box.top + oy, oy, 0)
+  let right = Math.min(box.right + ox, ox + el.clientWidth - padLeft - padRight, g.innerWidth)
+  let bottom = Math.min(box.bottom + oy, oy + el.clientHeight - padTop - padBottom, g.innerHeight)
+  if (!(right > left && bottom > top)) return null
+  for (let a = parentOf(el); a && a !== root; a = parentOf(a)) {
+    if (a === doc.body && bodyPropagates) continue
+    if (!clips(a)) continue
+    const b = a.getBoundingClientRect()
+    const cl = b.left + a.clientLeft
+    const ct = b.top + a.clientTop
+    left = Math.max(left, cl)
+    top = Math.max(top, ct)
+    right = Math.min(right, cl + a.clientWidth)
+    bottom = Math.min(bottom, ct + a.clientHeight)
+    if (!(right > left && bottom > top)) return null
+  }
+  const hit = el.getRootNode().elementFromPoint((left + right) / 2, (top + bottom) / 2)
+  if (hit !== el) return null
+  return { left, top, right, bottom }
+}
+
+function candidatesIn(scope: Page | Frame, target: string): Locator {
+  return scope
+    .getByText(target)
+    .or(scope.getByLabel(target))
+    .or(scope.getByAltText(target))
+    .or(scope.getByTitle(target))
+}
+
+async function judgeIn(scope: Page | Frame, target: string): Promise<Judged[]> {
+  const judged = await candidatesIn(scope, target).evaluateAll(judgeCandidates)
+  if (!Array.isArray(judged)) throw new Error('probe answered no list')
+  return judged.map((candidate: Partial<Judged> | null) => {
+    const state = candidate?.state
+    if (state === 'visible' && candidate?.rect) return { state, rect: candidate.rect }
+    return { state: state === 'hidden' ? 'hidden' : 'unknown' }
+  })
+}
+
+function combine(states: readonly TargetVisibility[]): TargetVisibility {
+  if (states.includes('visible')) return 'visible'
+  if (states.includes('unknown')) return 'unknown'
+  return 'hidden'
+}
+
+// A child frame's box, projected through each ancestor frame element up to the main frame.
+async function projectToMainFrame(frame: Frame, box: ProbeBox): Promise<boolean> {
+  let current = frame
+  let projected = box
+  for (let parent = current.parentFrame(); parent; parent = current.parentFrame()) {
+    const handle = await current.frameElement()
+    try {
+      const next = (await handle.evaluate(projectThroughFrame, projected)) as ProbeBox | null
+      if (!next || typeof next !== 'object') return false
+      projected = next
+    } finally {
+      await handle.dispose().catch(() => undefined)
+    }
+    current = parent
+  }
+  return true
+}
+
+// A candidate that is not visible inside its own frame may sit where the page search cannot move
+// it, so it is unknown, never hidden; so is one the projection cannot follow to the main frame.
+async function probeChildFrame(frame: Frame, target: string): Promise<TargetVisibility> {
+  try {
+    const states: TargetVisibility[] = []
+    for (const candidate of await judgeIn(frame, target)) {
+      if (candidate.state === 'visible' && candidate.rect && (await projectToMainFrame(frame, candidate.rect))) {
+        return 'visible'
+      }
+      states.push('unknown')
+    }
+    return combine(states)
+  } catch {
+    return 'unknown'
+  }
+}
+
+// Is any element carrying `target` (text, label, alt or title; Playwright's case-insensitive,
+// whitespace-normalized substring match) on screen now, in the main frame or any child frame?
+// Any visible candidate is visible; else any unknown is unknown; else hidden. evaluateAll never
+// waits. An error on the main frame answers unknown, and on a child frame makes that frame unknown
+// (436-17 · D-24/D-25).
+// 2026-10-08 (436-22): tri-state over every frame, each child frame's candidates projected through
+// its frame elements; a nested-scroller clip, a frame target not on screen inside its frame, a
+// transformed or zoomed frame and a covered frame are unknown (review CR-07).
+async function probeOnScreen(page: Page, target: string): Promise<TargetVisibility> {
+  let states: TargetVisibility[]
+  try {
+    states = (await judgeIn(page, target)).map((candidate) => candidate.state)
+  } catch {
+    return 'unknown'
+  }
+  if (combine(states) === 'visible') return 'visible'
+  try {
+    const main = page.mainFrame()
+    for (const frame of page.frames()) {
+      if (frame === main || frame.isDetached()) continue
+      const answer = await probeChildFrame(frame, target)
+      if (answer === 'visible') return 'visible'
+      states.push(answer)
+    }
+  } catch {
+    states.push('unknown')
+  }
+  return combine(states)
 }
 
 // Light probe + swipe/native primitives. readInterimTree re-runs ONLY the aria-snapshot harvest
 // → parseAriaSnapshot(text).nodes — NO buildScreenState, NO refMap mint, NO screenshot; lastRefs
 // stays bound to the pre-compound observation. probeTargetVisible decides target visibility for
-// the loop. swipeOnce reports what the offsets proved; the no-ref wheel measures the scrollers
-// under the pointer before and after.
+// the loop: page-wide, every frame, and it ignores the container ref. swipeOnce reports what the
+// offsets proved; the no-ref wheel measures the scrollers under the pointer before and after.
+// 2026-10-08 (436-22): probeTargetVisible answers visible, hidden or unknown.
 export function buildScrollPrimitives(page: Page, lastRefs: RefMap, magnitude: number): ScrollPrimitives {
   return {
     async swipeOnce(direction: Direction, ref?: Ref): Promise<SwipeSignal> {
@@ -332,7 +456,7 @@ export function buildScrollPrimitives(page: Page, lastRefs: RefMap, magnitude: n
       const tree = await page.locator(':root').ariaSnapshot({ mode: 'ai' })
       return parseAriaSnapshot(tree).nodes
     },
-    async probeTargetVisible(target: string): Promise<boolean> {
+    async probeTargetVisible(target: string): Promise<TargetVisibility> {
       return probeOnScreen(page, target)
     },
   }

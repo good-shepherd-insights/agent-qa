@@ -2598,6 +2598,78 @@
       "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
       "fullName": "C436-SCROLL-REF an iframe-only ref moves nothing and reads unknown",
       "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-FRAMES an on-screen target in a same-origin iframe ends found",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-FRAMES an on-screen target in a cross-origin iframe ends found",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-FRAMES an on-screen target in an iframe nested in an iframe ends found",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-FRAMES an iframe below the fold is found once the page brings it on screen",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-FRAMES a target scrolled out of view inside its iframe never ends not-found",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-FRAMES a target in a scaled iframe is never judged by a guess",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-FRAMES an iframe covered by a fixed overlay never ends found or not-found",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/scroll-until-visible.test.ts",
+      "fullName": "C436-SCROLL-PROBE — an unknown answer never ends a search not-found (436-22 · D-24) an unknown answer anywhere in the search never ends not-found",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/scroll-until-visible.test.ts",
+      "fullName": "C436-SCROLL-PROBE — an unknown answer never ends a search not-found (436-22 · D-24) unknown then visible ends found",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/scroll-until-visible.test.ts",
+      "fullName": "C436-SCROLL-PROBE — an unknown answer never ends a search not-found (436-22 · D-24) the native rung is confirmed only by visible",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/scroll-until-visible.test.ts",
+      "fullName": "C436-SCROLL-PROBE — an unknown answer never ends a search not-found (436-22 · D-24) an answer that is neither visible nor hidden counts as unknown",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/scroll-until-visible.test.ts",
+      "fullName": "C436-SCROLL-PROBE — an unknown answer never ends a search not-found (436-22 · D-24) hidden answers and two boundaries still end not-found",
+      "origin": "436 D-24"
     }
   ]
 }

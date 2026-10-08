@@ -488,6 +488,10 @@ function search(direction: 'up' | 'down', maxSwipes: number) {
   return { type: 'scroll' as const, mode: 'untilVisible' as const, text: 'Pay now', direction, maxSwipes, retryOpposite: true }
 }
 
+async function payNow(tab: Page): Promise<string> {
+  return buildScrollPrimitives(tab, {}, 720).probeTargetVisible!('Pay now')
+}
+
 async function frameIntersectsViewport(tab: Page): Promise<boolean> {
   return tab.evaluate<boolean>(`(() => {
     const r = document.getElementById('frame').getBoundingClientRect()
@@ -497,7 +501,8 @@ async function frameIntersectsViewport(tab: Page): Promise<boolean> {
 
 describe('C436-SCROLL-FRAMES', () => {
   it('an on-screen target in a same-origin iframe ends found', async () => {
-    const { web } = await open('/frame-same')
+    const { web, tab } = await open('/frame-same')
+    expect(await payNow(tab)).toBe('visible')
     const result = await web.execute(search('up', 5))
     expect(result.metadata?.scrollUntilVisible).toEqual({
       swipes: 0, reversedOnce: false, outcome: 'found', endedBy: 'target-visible',
@@ -507,6 +512,7 @@ describe('C436-SCROLL-FRAMES', () => {
   it('an on-screen target in a cross-origin iframe ends found', async () => {
     const { web, tab } = await open('/frame-cross')
     expect(tab.frames().some((f) => f.url().startsWith('http://127.0.0.1:'))).toBe(true)
+    expect(await payNow(tab)).toBe('visible')
     const result = await web.execute(search('up', 5))
     expect(result.metadata?.scrollUntilVisible).toEqual({
       swipes: 0, reversedOnce: false, outcome: 'found', endedBy: 'target-visible',
@@ -516,6 +522,7 @@ describe('C436-SCROLL-FRAMES', () => {
   it('an on-screen target in an iframe nested in an iframe ends found', async () => {
     const { web, tab } = await open('/frame-nested')
     expect(tab.frames()).toHaveLength(3)
+    expect(await payNow(tab)).toBe('visible')
     const result = await web.execute(search('up', 5))
     expect(result.metadata?.scrollUntilVisible).toEqual({
       swipes: 0, reversedOnce: false, outcome: 'found', endedBy: 'target-visible',
@@ -525,6 +532,7 @@ describe('C436-SCROLL-FRAMES', () => {
   it('an iframe below the fold is found once the page brings it on screen', async () => {
     const { web, tab } = await open('/frame-below')
     expect(await frameIntersectsViewport(tab)).toBe(false)
+    expect(await payNow(tab)).toBe('unknown')
     const result = await web.execute(search('down', 5))
     const meta = result.metadata?.scrollUntilVisible as { swipes: number } | undefined
     expect(meta).toMatchObject({ outcome: 'found', endedBy: 'target-visible' })
@@ -533,7 +541,8 @@ describe('C436-SCROLL-FRAMES', () => {
   }, 60_000)
 
   it('a target scrolled out of view inside its iframe never ends not-found', async () => {
-    const { web } = await open('/frame-scrolled-out')
+    const { web, tab } = await open('/frame-scrolled-out')
+    expect(await payNow(tab)).toBe('unknown')
     const result = await web.execute(search('down', 5))
     expect(result.metadata?.scrollUntilVisible).toMatchObject({ outcome: 'unresolved' })
   }, 60_000)
@@ -541,6 +550,7 @@ describe('C436-SCROLL-FRAMES', () => {
   it('a target in a scaled iframe is never judged by a guess', async () => {
     const { web, tab } = await open('/frame-scaled')
     expect(await frameIntersectsViewport(tab)).toBe(true)
+    expect(await payNow(tab)).toBe('unknown')
     const result = await web.execute(search('down', 5))
     expect(result.metadata?.scrollUntilVisible).toMatchObject({ outcome: 'unresolved' })
   }, 60_000)
@@ -548,6 +558,7 @@ describe('C436-SCROLL-FRAMES', () => {
   it('an iframe covered by a fixed overlay never ends found or not-found', async () => {
     const { web, tab } = await open('/frame-covered')
     expect(await frameIntersectsViewport(tab)).toBe(true)
+    expect(await payNow(tab)).toBe('unknown')
     const result = await web.execute(search('down', 5))
     expect(result.metadata?.scrollUntilVisible).toMatchObject({ outcome: 'unresolved' })
   }, 60_000)
