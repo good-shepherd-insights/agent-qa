@@ -244,7 +244,8 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     this.attachLogListeners(this.page)
 
     if (browserName === 'chromium') {
-      this.operationCapture = new OperationCapture({ completionCapMs: config.timeouts?.step })
+      // 2026-10-08 (436-15): the step deadline reaches the capture per action through execute().
+      this.operationCapture = new OperationCapture()
       await this.operationCapture.attach(this.context)
       this.operationCaptureSupport = { download: true, clipboard: true }
     } else {

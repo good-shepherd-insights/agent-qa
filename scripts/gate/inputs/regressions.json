@@ -1449,6 +1449,18 @@
     },
     {
       "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-execute-deadline.test.ts",
+      "fullName": "C436-DOWNLOAD-DEADLINE the loop hands execute the time left to the step deadline and the abort signal",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-execute-deadline.test.ts",
+      "fullName": "C436-DOWNLOAD-DEADLINE without a step deadline execute gets no remaining time",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/loop-bounds.test.ts",
       "fullName": "loop bounds (LOOP-02 / 436 D-10) an always-failing adapter terminates at the action limit with a failed result and no counter",
       "origin": "436 D-10"
@@ -1914,6 +1926,30 @@
       "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
       "fullName": "C436-CLIPBOARD-READBACK an unreadable probe records unavailable, never mismatched",
       "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-DEADLINE the bound holds through the real loop",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-DEADLINE a never-finishing download is unfinished at the remaining step time",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-DEADLINE a step timeout of 0 no longer cancels downloads",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-DEADLINE an abort during the wait cancels the download",
+      "origin": "436 D-19"
     },
     {
       "runner": "vitest",

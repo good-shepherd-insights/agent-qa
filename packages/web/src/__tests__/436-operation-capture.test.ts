@@ -384,12 +384,15 @@ function downloadFilesOf(web: WebPlatformAdapter): string[] {
   return files
 }
 
-function expectFilesGone(files: string[], count: number): void {
+// Chromium removes a cancelled download's partial file shortly after the cancel (measured under
+// 7 ms with four browsers running), so the check allows a short settle rather than an instant.
+async function expectFilesGone(files: string[], count: number): Promise<void> {
   expect(files).toHaveLength(count)
   for (const file of files) {
     expect(file.length).toBeGreaterThan(0)
-    expect(existsSync(file), `${file} is gone`).toBe(false)
-    expect(existsSync(`${file}.crdownload`), `${file}.crdownload is gone`).toBe(false)
+    for (const path of [file, `${file}.crdownload`]) {
+      await expect.poll(() => existsSync(path), { message: `${path} is gone`, timeout: 2_000, interval: 20 }).toBe(false)
+    }
   }
 }
 
@@ -417,7 +420,7 @@ describe('C436-DOWNLOAD-DEADLINE', () => {
     expect(run.executed).toHaveLength(1)
     expect(run.result.evidence?.subActions[0]?.operationEvidence?.downloads).toEqual([UNFINISHED_SLOW])
     expect(elapsed).toBeLessThan(2_000 + 2_000)
-    expectFilesGone(files, 1)
+    await expectFilesGone(files, 1)
   }, 60_000)
 
   it('a never-finishing download is unfinished at the remaining step time', async () => {
@@ -430,7 +433,7 @@ describe('C436-DOWNLOAD-DEADLINE', () => {
 
     expect(downloadsOf(result)).toEqual([UNFINISHED_SLOW])
     expect(elapsed).toBeLessThan(800 + 1_500)
-    expectFilesGone(files, 1)
+    await expectFilesGone(files, 1)
   }, 60_000)
 
   it('a step timeout of 0 no longer cancels downloads', async () => {
@@ -468,7 +471,7 @@ describe('C436-DOWNLOAD-DEADLINE', () => {
     expect(outcome).not.toBe('still waiting')
     expect(downloadsOf(outcome as ActionResult)).toEqual([UNFINISHED_SLOW])
     expect(elapsed).toBeLessThan(300 + 1_500)
-    expectFilesGone(files, 1)
+    await expectFilesGone(files, 1)
   }, 60_000)
 })
 

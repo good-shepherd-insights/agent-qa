@@ -10,7 +10,8 @@
 // never on an app origin, and only the index of the claimed write equal to the clipboard leaves
 // the probe page (CR-01, IN-08). No app origin is ever granted `clipboard-read`.
 // 2026-10-08 (436-15): the download wait of one action ends at the step's remaining time when the
-// loop hands one over, else at DOWNLOAD_COMPLETION_CAP_MS (WR-07).
+// loop hands one over, else at DOWNLOAD_COMPLETION_CAP_MS, and at once when the step is aborted
+// (WR-07). A download ended there is cancelled and deleted.
 
 import { createHash } from 'node:crypto'
 import { extname } from 'node:path'
@@ -189,7 +190,19 @@ export class OperationCapture {
   }
 
   private timeLeft(): number {
-    return this.boundAt - Date.now()
+    return this.abortSignal?.aborted ? 0 : this.boundAt - Date.now()
+  }
+
+  // Calls `fire` once when the action's abort signal fires; the returned function removes it.
+  private onAbort(fire: () => void): () => void {
+    const signal = this.abortSignal
+    if (!signal) return () => undefined
+    if (signal.aborted) {
+      queueMicrotask(fire)
+      return () => undefined
+    }
+    signal.addEventListener('abort', fire, { once: true })
+    return () => { signal.removeEventListener('abort', fire) }
   }
 
   async collect(): Promise<CapturedOperations | undefined> {
@@ -351,6 +364,7 @@ export class OperationCapture {
 
   private async waitForDownloadStart(graceMs: number, seen: number): Promise<void> {
     if (this.downloads.length > seen) return
+    let off = (): void => undefined
     await new Promise<void>((resolve) => {
       const timer = setTimeout(done, graceMs)
       function done(): void {
@@ -358,7 +372,9 @@ export class OperationCapture {
         resolve()
       }
       this.notify = done
+      off = this.onAbort(done)
     })
+    off()
     this.notify = null
   }
 
@@ -369,13 +385,17 @@ export class OperationCapture {
       extension: extname(suggestedFilename),
     }
     let timer: ReturnType<typeof setTimeout> | undefined
+    let off = (): void => undefined
     const outcome = await Promise.race([
       download.failure().catch((error: unknown) => (error instanceof Error ? error.message : String(error))),
       new Promise<typeof UNFINISHED>((resolve) => {
-        timer = setTimeout(() => resolve(UNFINISHED), Math.max(0, this.timeLeft()))
+        const end = (): void => { resolve(UNFINISHED) }
+        timer = setTimeout(end, Math.max(0, this.timeLeft()))
+        off = this.onAbort(end)
       }),
     ])
     clearTimeout(timer)
+    off()
     if (outcome === UNFINISHED) {
       await download.cancel().catch(() => undefined)
       await download.delete().catch(() => undefined)
