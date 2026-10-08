@@ -61,6 +61,16 @@ interface PageLogBuffers {
   pendingRequests: Map<string, { url: string; method: string; headers: Record<string, string>; startTime: number; postData?: string }>
 }
 
+// 2026-10-08 (436-24): a frame or navigation that never answers must not hold observe, the
+// screenshot or a Chromium click (CR-05). The ai-mode snapshot waits for each child frame and the
+// screenshot for document.fonts.ready, which a hung iframe keeps pending; both are bounded here. A
+// Chromium click no longer waits for the navigation it starts to commit: the capture's start
+// window owns that wait and ends it at NAVIGATION_WINDOW_CAP_MS.
+/** The longest observe's ai-mode snapshot waits; a child frame that has not answered by then is left empty. */
+export const OBSERVE_SNAPSHOT_TIMEOUT_MS = 5_000
+/** The longest screenshot() waits before it gives up and returns undefined. */
+export const SCREENSHOT_TIMEOUT_MS = 5_000
+
 // 436 D-22: the adapter carries the capture on metadata.download and metadata.clipboard; the loop
 // masks it, moves it onto the sub-action's operationEvidence and removes both keys from the
 // recorded result (D-16).
@@ -640,7 +650,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     await page.evaluate(hideAgentQaElements)
     let ariaTree: string
     try {
-      ariaTree = await page.locator(':root').ariaSnapshot({ mode: 'ai' })
+      ariaTree = await page.locator(':root').ariaSnapshot({ mode: 'ai', timeout: OBSERVE_SNAPSHOT_TIMEOUT_MS })
     } finally {
       await page.evaluate(restoreAgentQaElements)
     }
@@ -735,7 +745,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   async screenshot(): Promise<Buffer | undefined> {
     try {
       if (this.page) {
-        return await this.page.screenshot({ scale: 'css' })
+        return await this.page.screenshot({ scale: 'css', timeout: SCREENSHOT_TIMEOUT_MS })
       }
       return undefined
     } catch {
@@ -881,6 +891,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
         const coordinates = box ? { x: box.x + box.width / 2, y: box.y + box.height / 2 } : undefined
         await locator.click({
           ...clickDelayOption(action.clickDelay),
+          ...(this.operationCapture ? { noWaitAfter: true } : {}),
         })
         return { success: true, coordinates, boundingBox: box ?? undefined }
       }
