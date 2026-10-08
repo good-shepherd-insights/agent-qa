@@ -160,7 +160,7 @@ export class LivePlannerLimitsRefusedError extends Error {
   }
 }
 
-const LIVE_LIMIT_LEAVES = ['maxActions', 'maxPlanningTurns', 'maxSubActions'] as const
+const LIVE_LIMIT_LEAVES = ['maxActions', 'maxPlanningTurns'] as const
 type LiveLimitLeaf = (typeof LIVE_LIMIT_LEAVES)[number]
 type EntityUseSchema = typeof TestDefinitionSchema.shape.use | typeof SuiteDefinitionSchema.shape.use
 
@@ -176,25 +176,41 @@ function useLeafIssue(schema: EntityUseSchema, key: LiveLimitLeaf, value: unknow
 }
 
 function projectLeafIssue(key: LiveLimitLeaf, value: unknown): string | undefined {
-  if (key === 'maxSubActions') return useLeafIssue(TestDefinitionSchema.shape.use, key, value)
   const parsed = PlannerConfigSchema.shape[key].safeParse(value)
   return parsed.success ? undefined : parsed.error.issues[0]?.message ?? 'invalid value'
+}
+
+// A planner key core retired is named only by core's retired-key scan, as a custom issue at
+// ['planner', key]; the live editor asks core rather than spelling the key (436 D-18 census).
+function retiredPlannerKeyIssue(schema: EntityUseSchema, key: string, value: unknown): string | undefined {
+  const parsed = schema.safeParse({ planner: { [key]: value } })
+  if (parsed.success) return undefined
+  return parsed.error.issues.find(issue => issue.code === 'custom'
+    && issue.path.length === 2 && issue.path[0] === 'planner' && issue.path[1] === key)?.message
 }
 
 function refuseInvalidLimits(
   layer: string,
   use: unknown,
   issueOf: (key: LiveLimitLeaf, value: unknown) => string | undefined,
+  retiredSchema: () => EntityUseSchema,
 ): void {
   if (!isConfigRecord(use) || !isConfigRecord(use.planner)) return
   const planner = use.planner
-  for (const key of LIVE_LIMIT_LEAVES) {
-    if (!Object.hasOwn(planner, key)) continue
-    const issue = issueOf(key, planner[key])
-    if (issue === undefined) continue
+  const refuse = (key: string, issue: string): never => {
     throw new LivePlannerLimitsRefusedError(
       `${layer} sets use.planner.${key} to ${shownLimitValue(planner[key])}: ${issue}. The CLI refuses this file too.`,
     )
+  }
+  for (const key of LIVE_LIMIT_LEAVES) {
+    if (!Object.hasOwn(planner, key)) continue
+    const issue = issueOf(key, planner[key])
+    if (issue !== undefined) refuse(key, issue)
+  }
+  for (const key of Object.keys(planner)) {
+    if ((LIVE_LIMIT_LEAVES as readonly string[]).includes(key)) continue
+    const issue = retiredPlannerKeyIssue(retiredSchema(), key, planner[key])
+    if (issue !== undefined) refuse(key, issue)
   }
 }
 
@@ -209,15 +225,13 @@ export async function resolveLivePlannerLimits(
   readers: LiveEntityDefinitionReaders,
 ): Promise<PlannerLimits> {
   const config = configManager === undefined ? {} : await readConfigValues(configManager)
-  refuseInvalidLimits('project config', config.use, projectLeafIssue)
+  refuseInvalidLimits('project config', config.use, projectLeafIssue, () => TestDefinitionSchema.shape.use)
   const uses: unknown[] = []
   for (const entity of ([] as EntityRef[]).concat(entities ?? [])) {
     const use = await readEntityUse(entity, readers)
-    refuseInvalidLimits(`${entity.type} file ${entity.id}`, use, (key, value) => useLeafIssue(
-      entity.type === 'suite' ? SuiteDefinitionSchema.shape.use : TestDefinitionSchema.shape.use,
-      key,
-      value,
-    ))
+    const schema = (): EntityUseSchema =>
+      entity.type === 'suite' ? SuiteDefinitionSchema.shape.use : TestDefinitionSchema.shape.use
+    refuseInvalidLimits(`${entity.type} file ${entity.id}`, use, (key, value) => useLeafIssue(schema(), key, value), schema)
     uses.push(use)
   }
   return resolvePlannerLimits(config.use, ...uses)
