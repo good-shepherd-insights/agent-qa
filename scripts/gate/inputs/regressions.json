@@ -2220,6 +2220,90 @@
       "file": "packages/web/src/__tests__/compound.test.ts",
       "fullName": "WebPlatformAdapter compound behaviors (RED — Wave-0) EXEC-02 scroll movement signals (436-02 · D-25) a container ref that does not resolve performs no gesture and reports unknown",
       "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/scroll-until-visible.test.ts",
+      "fullName": "C436-SCROLL-CHAIN — a gesture under the pointer is judged by every scroller it may have moved (436-18 · D-25) any member moving is moved",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/scroll-until-visible.test.ts",
+      "fullName": "C436-SCROLL-CHAIN — a gesture under the pointer is judged by every scroller it may have moved (436-18 · D-25) every member with range at its extent is at-boundary",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/scroll-until-visible.test.ts",
+      "fullName": "C436-SCROLL-CHAIN — a gesture under the pointer is judged by every scroller it may have moved (436-18 · D-25) one member with range short of its extent is unknown",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/scroll-until-visible.test.ts",
+      "fullName": "C436-SCROLL-CHAIN — a gesture under the pointer is judged by every scroller it may have moved (436-18 · D-25) no member with range is unknown",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/scroll-until-visible.test.ts",
+      "fullName": "C436-SCROLL-CHAIN — a gesture under the pointer is judged by every scroller it may have moved (436-18 · D-25) missing, empty or misaligned arrays are unknown",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/scroll-until-visible.test.ts",
+      "fullName": "C436-SCROLL-CHAIN — a gesture under the pointer is judged by every scroller it may have moved (436-18 · D-25) documentSwipeSignal keeps its answers",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-POINTER toEnd with the pointer in a nested list follows the list to its end",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-POINTER untilVisible in the nested list never ends not-found on the document boundary",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-POINTER a wheel over the document alone keeps the document rule",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-POINTER the probe leaves nothing on the page",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/compound.test.ts",
+      "fullName": "AndroidPlatformAdapter compound behaviors (RED — Wave-0) C436-SCROLL-WEBVIEW a WebView touch swipe is judged over every WebView scroller (436-18 · D-25) a moving nested WebView scroller is moved, never a boundary",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/compound.test.ts",
+      "fullName": "AndroidPlatformAdapter compound behaviors (RED — Wave-0) C436-SCROLL-WEBVIEW a WebView touch swipe is judged over every WebView scroller (436-18 · D-25) a boundary needs every WebView scroller at its extent",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/compound.test.ts",
+      "fullName": "AndroidPlatformAdapter compound behaviors (RED — Wave-0) C436-SCROLL-WEBVIEW a WebView touch swipe is judged over every WebView scroller (436-18 · D-25) a WebView with no scroll range is unknown",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/compound.test.ts",
+      "fullName": "AndroidPlatformAdapter compound behaviors (RED — Wave-0) C436-SCROLL-WEBVIEW a WebView touch swipe is judged over every WebView scroller (436-18 · D-25) a changed scroller count is unknown",
+      "origin": "436 D-25"
     }
   ]
 }
