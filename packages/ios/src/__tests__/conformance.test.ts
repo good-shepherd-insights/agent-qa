@@ -97,11 +97,11 @@ describe('iOS D-08 attribute pins — truthful mapping, no fabrication', () => {
     expect(disabled!.state.enabled).toBe(false)
   })
 
-  it('never fabricates checked from a value string (D-08)', () => {
+  it('lifts a switch value "1" to checked true and renders [checked] (437 D-03)', () => {
     const { state } = build()
-    // Switch carries value="1" — the adapter/parser must NOT coerce that into checked.
     const wifi = state.elements.find(e => e.name === 'Wifi')
-    expect('checked' in wifi!.state).toBe(false)
+    expect(wifi!.state.checked).toBe(true)
+    expect(state.tree).toContain('- switch "Wifi" [ref=e4] @(10,200 100x40) [disabled] [checked] [selected]')
   })
 
   it('leaves signals the platform did not emit typed-absent', () => {

@@ -167,6 +167,7 @@ describe('renderScreenTree — pinned grammar (D-02)', () => {
             bounds: { x: 10, y: 20, width: 30, height: 40 },
             parentIndex: 0,
             state: { checked: true },
+            attributes: { checkable: 'true' },
           },
           { role: 'generic' }, // unnamed + boundsless
           {
@@ -258,6 +259,54 @@ describe('renderScreenTree — pinned grammar (D-02)', () => {
   it('is invoked directly on structured elements + metadata (renderer-only swap point)', () => {
     const { state } = buildScreenState(makeInput([{ role: 'button', name: 'Save' }]))
     expect(renderScreenTree(state.elements, state.metadata)).toBe(state.tree)
+  })
+})
+
+describe('C437-TREE-TOGGLE', () => {
+  function treeOf(nodes: InterimNode[]): string[] {
+    const { state } = buildScreenState(makeInput(nodes, { viewport: { width: 200, height: 100 } }))
+    return state.tree.split('\n').slice(1)
+  }
+
+  it('an ordinary button with selected true renders [selected] and never [checked]', () => {
+    expect(
+      treeOf([
+        {
+          role: 'button',
+          name: 'Network',
+          state: { selected: true },
+          attributes: { checkable: 'false', selected: 'true' },
+        },
+      ]),
+    ).toEqual(['- button "Network" [ref=e1] [selected]'])
+  })
+
+  it('a checkbox with checked true renders [checked]', () => {
+    expect(treeOf([{ role: 'checkbox', name: 'Agree', state: { checked: true } }])).toEqual([
+      '- checkbox "Agree" [ref=e1] [checked]',
+    ])
+  })
+
+  it('a role-button element with checkable "true" and checked true renders [checked]', () => {
+    expect(
+      treeOf([
+        { role: 'button', name: 'Bold', state: { checked: true }, attributes: { checkable: 'true' } },
+      ]),
+    ).toEqual(['- button "Bold" [ref=e1] [checked]'])
+  })
+
+  it('a non-toggle element carrying a hand-built checked true renders no [checked]', () => {
+    expect(
+      treeOf([
+        {
+          role: 'button',
+          name: 'Save',
+          state: { checked: true, selected: true },
+          attributes: { checkable: 'false' },
+        },
+        { role: 'text', name: 'Caption', state: { checked: true } },
+      ]),
+    ).toEqual(['- button "Save" [ref=e1] [selected]', '- text "Caption" [ref=e2]'])
   })
 })
 

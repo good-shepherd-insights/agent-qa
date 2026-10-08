@@ -352,6 +352,22 @@ describe('IOSPlatformAdapter', () => {
     })
   })
 
+  describe('C437-TREE-TOGGLE — adapter-level iOS tree', () => {
+    it('a switch with value "1" renders [checked] and one with value "0" does not', async () => {
+      mockDriver.getPageSource.mockResolvedValue(
+        IOS_XML.replace('label="Stay signed in" value="0"', 'label="Stay signed in" value="1"'),
+      )
+      await adapter.setup({ platform: 'ios' })
+      const on = await adapter.observe()
+      expect(on.tree).toContain('- switch "Stay signed in" [ref=e5] @(50,400 290x40) [checked]')
+
+      mockDriver.getPageSource.mockResolvedValue(IOS_XML)
+      const off = await adapter.observe()
+      expect(off.tree).toContain('- switch "Stay signed in" [ref=e5] @(50,400 290x40)\n')
+      expect(off.tree).not.toContain('[checked]')
+    })
+  })
+
   describe('observe — accessible labelled Others (P4)', () => {
     it('observes the Bluesky sheet row as a button and taps its centre', async () => {
       mockDriver.getPageSource.mockResolvedValue(IOS_SHEET_XML)

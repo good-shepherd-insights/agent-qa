@@ -10,6 +10,7 @@
 
 import {
   asRef,
+  isToggleElement,
   normalizeAccessibleName,
   type BoundingBox,
   type ElementBounds,
@@ -293,7 +294,7 @@ export function renderScreenTree(
     }
     if (!element.state.enabled) line += ' [disabled]'
     if (element.state.visible === false) line += ' [offscreen]'
-    if (element.state.checked === true) line += ' [checked]'
+    if (element.state.checked === true && isToggleElement(element)) line += ' [checked]'
     if (element.state.selected === true) line += ' [selected]'
     if (element.state.editable === true) line += ' [editable]'
     return line
