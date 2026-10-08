@@ -5,6 +5,8 @@
 // waited for, and a late download is held for the next action or deleted at cleanup.
 // C436-DOWNLOAD-WINDOW (436-24): a navigation that never answers, from any frame or popup, ends the
 // start window at NAVIGATION_WINDOW_CAP_MS or half the action's time left (CR-05).
+// 2026-10-08 (436-27): the acting page's own main-frame navigation waits up to half the time left,
+// so a slow export is recorded on its click (WR-21); subframes and popups keep the cap.
 
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
@@ -41,6 +43,7 @@ const EXPORT_BYTES = 'a,b\n1,2\n'
 const DELAYED_BYTES = 'delayed,report\n'
 const SLOW_FINISH_MS = 2_000
 const LATE_FRAME_BYTES = 'late,frame\n'
+const SLOW_MAIN_BYTES = 'slow,main\nreport,1\n'
 
 const PAGE = `<!DOCTYPE html>
 <html lang="en">
@@ -344,8 +347,10 @@ const WINDOW_PAGE = `<!DOCTYPE html>
   <a href="/window-cross">Open cross-framed page</a>
   <a href="/hang" target="_blank">Open hung popup</a>
   <a href="/hang">Open hung page</a>
+  <a href="/files/slow-main">Export slow report</a>
   <button id="data-frame" onclick="insertFrame('/files/data')">Load data in a frame</button>
   <button id="late-frame" onclick="insertFrame('/files/late-frame')">Load late file in a frame</button>
+  <button id="hung-export" onclick="insertFrame('/hang'); location.href = '/files/slow-main'">Load a hung frame and export</button>
   <script>
     function insertFrame(src) {
       const frame = document.createElement('iframe')
@@ -438,6 +443,18 @@ beforeAll(async () => {
       const timer = setTimeout(() => {
         res.writeHead(200, { 'Content-Type': 'text/csv', 'Content-Disposition': 'attachment; filename="late-frame.csv"' })
         res.end(LATE_FRAME_BYTES)
+      }, NAVIGATION_WINDOW_CAP_MS + 1_000)
+      res.on('close', () => {
+        clearTimeout(timer)
+        openSlowResponses.delete(res)
+      })
+      return
+    }
+    if (url === '/files/slow-main') {
+      openSlowResponses.add(res)
+      const timer = setTimeout(() => {
+        res.writeHead(200, { 'Content-Type': 'text/csv', 'Content-Disposition': 'attachment; filename="slow-main.csv"' })
+        res.end(SLOW_MAIN_BYTES)
       }, NAVIGATION_WINDOW_CAP_MS + 1_000)
       res.on('close', () => {
         clearTimeout(timer)
@@ -1607,14 +1624,22 @@ describe('C436-CLIPBOARD-ORACLE', () => {
 describe('C436-DOWNLOAD-WINDOW', () => {
   const limits: PlannerConfig = { maxActions: 5, maxPlanningTurns: 5, previousStepCount: 0 }
   const CAPPED_MS = NAVIGATION_WINDOW_CAP_MS + 1_500
+  const SLOW_MAIN: DownloadEvidence = {
+    suggestedFilename: 'slow-main.csv',
+    extension: '.csv',
+    size: Buffer.byteLength(SLOW_MAIN_BYTES),
+    sha256: sha256(SLOW_MAIN_BYTES),
+    state: 'completed',
+  }
 
   // Races execute() so an unbounded wait fails on its assertion rather than the cell's timeout.
   async function timedClick(
     web: WebPlatformAdapter,
     name: string,
     options?: Parameters<WebPlatformAdapter['execute']>[1],
+    role = 'link',
   ): Promise<{ result: ActionResult; elapsed: number }> {
-    const ref = await refFor(web, 'link', name)
+    const ref = await refFor(web, role, name)
     let timer: ReturnType<typeof setTimeout> | undefined
     const started = performance.now()
     const outcome = await Promise.race([
@@ -1668,8 +1693,41 @@ describe('C436-DOWNLOAD-WINDOW', () => {
     await endsAtCap('Open hung popup')
   }, 60_000)
 
-  it('a click whose own navigation never answers ends the window at the cap', async () => {
-    await endsAtCap('Open hung page')
+  // 436-27 (WR-21): was "ends the window at the cap"; the acting page's own main frame may answer slowly.
+  it('a click whose own navigation never answers ends the window at half the time left', async () => {
+    const web = await open(undefined, undefined, 'window')
+    const { result, elapsed } = await timedClick(web, 'Open hung page', { remainingStepMs: 20_000 })
+
+    expect(result.success).toBe(true)
+    expect(result.metadata?.['download']).toBeUndefined()
+    expect(elapsed).toBeGreaterThanOrEqual(9_500)
+    expect(elapsed).toBeLessThan(11_500)
+  }, 60_000)
+
+  it('a main-frame attachment answered after the cap is recorded on the click', async () => {
+    const web = await open(undefined, undefined, 'window')
+    const { result, elapsed } = await timedClick(web, 'Export slow report', { remainingStepMs: 60_000 })
+
+    expect(result.success).toBe(true)
+    expect(canonical(downloadsOf(result))).toBe(canonical([SLOW_MAIN]))
+    expect(elapsed).toBeGreaterThanOrEqual(NAVIGATION_WINDOW_CAP_MS + 1_000)
+    expect(elapsed).toBeLessThan(NAVIGATION_WINDOW_CAP_MS + 2_500)
+    const next = await web.execute({ type: 'delay', ms: 0 })
+    expect(canonical(downloadsOf(next))).toBe('null')
+  }, 60_000)
+
+  it('a hung subframe beside a slow main-frame export records the export on the click', async () => {
+    const web = await open(undefined, undefined, 'window')
+    const { result, elapsed } = await timedClick(
+      web,
+      'Load a hung frame and export',
+      { remainingStepMs: 60_000 },
+      'button',
+    )
+
+    expect(result.success).toBe(true)
+    expect(canonical(downloadsOf(result))).toBe(canonical([SLOW_MAIN]))
+    expect(elapsed).toBeLessThan(NAVIGATION_WINDOW_CAP_MS + 2_500)
   }, 60_000)
 
   it('the navigation extension never takes more than half the time left', async () => {
