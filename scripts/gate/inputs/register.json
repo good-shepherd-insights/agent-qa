@@ -375,7 +375,7 @@
       "file": "packages/ios/src/__tests__/436-ios-live.test.ts",
       "fullName": "C436-IOS-LIVE untilVisible finds a far row by the visibility probe while swipes report unknown",
       "kind": "skipped",
-      "reason": "needs a booted iOS simulator with XCUITest 10.25.0; not run by 436-12, recorded in 436-RECORD.md",
+      "reason": "needs a booted iOS simulator with XCUITest 10.25.0; not run by 436-12, recorded in 436-RECORD.md; run live by 437-09 on the iPhone 18 Pro simulator (iOS 27.0, Appium 3.7.0) at agent-qa 26ca50c31 and failed 2 of 2 in the cells' own beforeEach (it assigns over the read-only driver.execute, WINDOWS #564), recorded in 437-RECORD.md",
       "condition": "AGENT_QA_436_IOS_LIVE is not '1' (describe.skipIf(process.env.AGENT_QA_436_IOS_LIVE !== '1'))",
       "conditional": true
     },
@@ -384,8 +384,98 @@
       "file": "packages/ios/src/__tests__/436-ios-live.test.ts",
       "fullName": "C436-IOS-LIVE the predicate search runs without a direction",
       "kind": "skipped",
-      "reason": "needs a booted iOS simulator with XCUITest 10.25.0; not run by 436-12, recorded in 436-RECORD.md",
+      "reason": "needs a booted iOS simulator with XCUITest 10.25.0; not run by 436-12, recorded in 436-RECORD.md; run live by 437-09 on the iPhone 18 Pro simulator (iOS 27.0, Appium 3.7.0) at agent-qa 26ca50c31 and failed 2 of 2 in the cells' own beforeEach (it assigns over the read-only driver.execute, WINDOWS #564), recorded in 437-RECORD.md",
       "condition": "AGENT_QA_436_IOS_LIVE is not '1' (describe.skipIf(process.env.AGENT_QA_436_IOS_LIVE !== '1'))",
+      "conditional": true
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-android-live.test.ts",
+      "fullName": "C437-ANDROID-LIVE an ordinary row is tapped under desiredState unselected on the ref path",
+      "kind": "skipped",
+      "reason": "needs a booted Android emulator with Appium 3.7.0 / UiAutomator2 7.0.0 and the phone's own com.android.settings (docker/Dockerfile.android installs Appium and the uiautomator2 driver unpinned); run live by 437-08 on the Pixel_10_Pro AVD (Android 17, API 37.1, google_apis_ps16k arm64-v8a) at agent-qa 976acd7b5 and passed, recorded in 437-RECORD.md",
+      "condition": "AGENT_QA_437_ANDROID_LIVE is not '1' (describe.skipIf(process.env.AGENT_QA_437_ANDROID_LIVE !== '1'))",
+      "conditional": true
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-android-live.test.ts",
+      "fullName": "C437-ANDROID-LIVE the same row through tapCoordinate is sent",
+      "kind": "skipped",
+      "reason": "needs a booted Android emulator with Appium 3.7.0 / UiAutomator2 7.0.0 and the phone's own com.android.settings (docker/Dockerfile.android installs Appium and the uiautomator2 driver unpinned); run live by 437-08 on the Pixel_10_Pro AVD (Android 17, API 37.1, google_apis_ps16k arm64-v8a) at agent-qa 976acd7b5 and passed, recorded in 437-RECORD.md",
+      "condition": "AGENT_QA_437_ANDROID_LIVE is not '1' (describe.skipIf(process.env.AGENT_QA_437_ANDROID_LIVE !== '1'))",
+      "conditional": true
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-android-live.test.ts",
+      "fullName": "C437-ANDROID-LIVE a switch already in the requested state sends no input",
+      "kind": "skipped",
+      "reason": "needs a booted Android emulator with Appium 3.7.0 / UiAutomator2 7.0.0 and the phone's own com.android.settings (docker/Dockerfile.android installs Appium and the uiautomator2 driver unpinned); run live by 437-08 on the Pixel_10_Pro AVD (Android 17, API 37.1, google_apis_ps16k arm64-v8a) at agent-qa 976acd7b5 and passed, recorded in 437-RECORD.md",
+      "condition": "AGENT_QA_437_ANDROID_LIVE is not '1' (describe.skipIf(process.env.AGENT_QA_437_ANDROID_LIVE !== '1'))",
+      "conditional": true
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-android-live.test.ts",
+      "fullName": "C437-ANDROID-LIVE a switch not in the requested state is tapped once",
+      "kind": "skipped",
+      "reason": "needs a booted Android emulator with Appium 3.7.0 / UiAutomator2 7.0.0 and the phone's own com.android.settings (docker/Dockerfile.android installs Appium and the uiautomator2 driver unpinned); run live by 437-08 on the Pixel_10_Pro AVD (Android 17, API 37.1, google_apis_ps16k arm64-v8a) at agent-qa 976acd7b5 and passed, recorded in 437-RECORD.md",
+      "condition": "AGENT_QA_437_ANDROID_LIVE is not '1' (describe.skipIf(process.env.AGENT_QA_437_ANDROID_LIVE !== '1'))",
+      "conditional": true
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-android-live.test.ts",
+      "fullName": "C437-ANDROID-SECURE-LIVE keyevent is recorded unavailable",
+      "kind": "skipped",
+      "reason": "needs the same Android emulator and an Appium 3.7.0 / UiAutomator2 7.0.0 server started without relaxed security (appium --port 4723, adb_shell not enabled); run live by 437-08 on the Pixel_10_Pro AVD (Android 17, API 37.1) at agent-qa 976acd7b5 and passed (recorded unavailable, adb-shell-disabled), recorded in 437-RECORD.md",
+      "condition": "AGENT_QA_437_ANDROID_LIVE is not '1' or AGENT_QA_437_SECURE_APPIUM_URL is unset (describe.skipIf(!LIVE || SECURE_APPIUM_URL === undefined))",
+      "conditional": true
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-android-live.test.ts",
+      "fullName": "C437-ANDROID-SECURE-LIVE openQuickSettings is recorded unavailable",
+      "kind": "skipped",
+      "reason": "needs the same Android emulator and an Appium 3.7.0 / UiAutomator2 7.0.0 server started without relaxed security (appium --port 4723, adb_shell not enabled); run live by 437-08 on the Pixel_10_Pro AVD (Android 17, API 37.1) at agent-qa 976acd7b5 and passed (recorded unavailable, adb-shell-disabled), recorded in 437-RECORD.md",
+      "condition": "AGENT_QA_437_ANDROID_LIVE is not '1' or AGENT_QA_437_SECURE_APPIUM_URL is unset (describe.skipIf(!LIVE || SECURE_APPIUM_URL === undefined))",
+      "conditional": true
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/437-ios-live.test.ts",
+      "fullName": "C437-IOS-LIVE a switch's value is read as its checked state",
+      "kind": "skipped",
+      "reason": "needs a booted iOS simulator with Appium 3.7.0 / XCUITest 10.25.0 and the simulator's own com.apple.Preferences; run live by 437-09 on the iPhone 18 Pro simulator (iOS 27.0) at agent-qa 26ca50c31 and passed, recorded in 437-RECORD.md",
+      "condition": "AGENT_QA_437_IOS_LIVE is not '1' (describe.skipIf(process.env.AGENT_QA_437_IOS_LIVE !== '1'); AGENT_QA_437_IOS_UDID names the simulator)",
+      "conditional": true
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/437-ios-live.test.ts",
+      "fullName": "C437-IOS-LIVE a switch already in the requested state sends no input",
+      "kind": "skipped",
+      "reason": "needs a booted iOS simulator with Appium 3.7.0 / XCUITest 10.25.0 and the simulator's own com.apple.Preferences; run live by 437-09 on the iPhone 18 Pro simulator (iOS 27.0) at agent-qa 26ca50c31 and passed, recorded in 437-RECORD.md",
+      "condition": "AGENT_QA_437_IOS_LIVE is not '1' (describe.skipIf(process.env.AGENT_QA_437_IOS_LIVE !== '1'); AGENT_QA_437_IOS_UDID names the simulator)",
+      "conditional": true
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/437-ios-live.test.ts",
+      "fullName": "C437-IOS-LIVE a switch not in the requested state is tapped once",
+      "kind": "skipped",
+      "reason": "needs a booted iOS simulator with Appium 3.7.0 / XCUITest 10.25.0 and the simulator's own com.apple.Preferences; run live by 437-09 on the iPhone 18 Pro simulator (iOS 27.0) at agent-qa 26ca50c31 and passed, recorded in 437-RECORD.md",
+      "condition": "AGENT_QA_437_IOS_LIVE is not '1' (describe.skipIf(process.env.AGENT_QA_437_IOS_LIVE !== '1'); AGENT_QA_437_IOS_UDID names the simulator)",
+      "conditional": true
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/437-ios-live.test.ts",
+      "fullName": "C437-IOS-LIVE an ordinary row is not a toggle and is tapped under desiredState unselected",
+      "kind": "skipped",
+      "reason": "needs a booted iOS simulator with Appium 3.7.0 / XCUITest 10.25.0 and the simulator's own com.apple.Preferences; run live by 437-09 on the iPhone 18 Pro simulator (iOS 27.0) at agent-qa 26ca50c31 and passed, recorded in 437-RECORD.md",
+      "condition": "AGENT_QA_437_IOS_LIVE is not '1' (describe.skipIf(process.env.AGENT_QA_437_IOS_LIVE !== '1'); AGENT_QA_437_IOS_UDID names the simulator)",
       "conditional": true
     }
   ]

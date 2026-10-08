@@ -2994,6 +2994,1314 @@
       "file": "packages/web/src/__tests__/436-observe-bound.test.ts",
       "fullName": "C436-OBSERVE-BOUND a snapshot that times out twice is thrown",
       "origin": "436 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/compound.test.ts",
+      "fullName": "AndroidPlatformAdapter compound behaviors (RED — Wave-0) EXEC-01 fill compound (D-05/D-06/D-07/D-08) 437 D-09: an unreadable re-read is unverified and still sends the requested Enter, after setValue and the read attempt",
+      "origin": "437 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-NATIVE an unreadable read-back still sends the requested Enter once",
+      "origin": "437 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-NATIVE a mismatch holds Enter",
+      "origin": "437 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-NATIVE a normalized read-back passes and submits",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-NATIVE an empty field's hint is not its value",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-NATIVE a failed Enter is recorded and not repeated",
+      "origin": "437 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-NATIVE a secure field is never exact",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-NATIVE submit false sends no Enter and records no fillSubmit",
+      "origin": "437 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-NATIVE a multi-line field never gets Enter",
+      "origin": "437 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-NATIVE line breaks into a single-line field are refused before typing (a newline)",
+      "origin": "437 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-NATIVE line breaks into a single-line field are refused before typing (a carriage return)",
+      "origin": "437 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-NATIVE the D-08 texts are typed once and read back exact: multi-line text with blank lines into a multi-line field",
+      "origin": "437 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-NATIVE the D-08 texts are typed once and read back exact: leading and trailing spaces and tabs",
+      "origin": "437 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-NATIVE the D-08 texts are typed once and read back exact: commas, semicolons, pipes and quotes",
+      "origin": "437 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-NATIVE the D-08 texts are typed once and read back exact: accented, CJK and emoji characters",
+      "origin": "437 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-NATIVE a character the path could not type is recorded as a mismatch, never hidden",
+      "origin": "437 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-KEYBOARD a replace with submit is Ctrl+A, DEL, one mobile: type, read-back, one Enter",
+      "origin": "437 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-KEYBOARD no handle after typing is unverified and still submits",
+      "origin": "437 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-KEYBOARD append types at the cursor with no clear and is unverified",
+      "origin": "437 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-KEYBOARD the D-08 texts are each one mobile: type call: multi-line text with blank lines",
+      "origin": "437 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-KEYBOARD the D-08 texts are each one mobile: type call: leading and trailing spaces and tabs",
+      "origin": "437 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-KEYBOARD the D-08 texts are each one mobile: type call: commas, semicolons, pipes and quotes",
+      "origin": "437 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-KEYBOARD the D-08 texts are each one mobile: type call: accented, CJK and emoji characters",
+      "origin": "437 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-KEYBOARD a multi-line field on the keyboard path never gets Enter",
+      "origin": "437 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-KEYBOARD an unknown field on the keyboard path gets the requested Enter (input-type 0)",
+      "origin": "437 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-KEYBOARD an unknown field on the keyboard path gets the requested Enter (no input-type)",
+      "origin": "437 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-KEYBOARD line breaks into a known single-line keyboard field are refused",
+      "origin": "437 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-KEYBOARD a known single-line keyboard field still gets the requested Enter",
+      "origin": "437 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-CLEAR a native clear reads back empty and is exact",
+      "origin": "437 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-CLEAR a native clear that leaves text is a mismatch",
+      "origin": "437 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-CLEAR a native clear whose read-back fails is unverified, not a failure",
+      "origin": "437 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-CLEAR a secure native clear is never exact",
+      "origin": "437 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-CLEAR a keyboard clear is Ctrl+A then DEL, then a read-back or unverified",
+      "origin": "437 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-CLEAR a clear interrupted by a driver error is reported and not repeated",
+      "origin": "437 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-ONE-PATH a native setValue that throws is never typed again",
+      "origin": "437 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-ONE-PATH a native setValue that throws without a submit records no fillSubmit",
+      "origin": "437 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-ONE-PATH a focus lookup that throws chooses the keyboard path before any text is delivered",
+      "origin": "437 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-ONE-PATH a replace fill run twice leaves the text once and presses Enter once per fill",
+      "origin": "437 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-ONE-PATH a mobile: type that throws is not retried",
+      "origin": "437 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-ONE-PATH a keyboard-path mobile: type that throws is not retried",
+      "origin": "437 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-ONE-PATH a WebView key input that throws ends the fill before typing",
+      "origin": "437 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-ONE-PATH a WebView clear whose key input throws is not repeated",
+      "origin": "437 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-ONE-PATH a WebView replace fill run twice leaves the text once and presses Enter once per fill",
+      "origin": "437 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-WEBVIEW a replace with submit is tap, probe, Ctrl+A, Backspace, typing, read-back, one Enter, in that order",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-WEBVIEW no executed script writes a value or builds a key event",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-WEBVIEW an unreadable read-back still sends Enter once",
+      "origin": "437 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-WEBVIEW a mismatch holds Enter",
+      "origin": "437 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-WEBVIEW a tap that focuses body writes nothing",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-WEBVIEW a tap that focuses a different editable field writes nothing",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-WEBVIEW append moves the caret to the end and keeps the prior text",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-WEBVIEW an append whose prior value is unreadable is unverified",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-WEBVIEW a textarea never gets Enter",
+      "origin": "437 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-WEBVIEW line breaks into an INPUT are refused before any key input (a newline)",
+      "origin": "437 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-WEBVIEW line breaks into an INPUT are refused before any key input (a carriage return)",
+      "origin": "437 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-WEBVIEW a password field is never exact",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-WEBVIEW the single-line D-08 texts reach mobile: type exactly once: leading and trailing spaces and tabs",
+      "origin": "437 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-WEBVIEW the single-line D-08 texts reach mobile: type exactly once: commas, semicolons, pipes and quotes",
+      "origin": "437 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-WEBVIEW the single-line D-08 texts reach mobile: type exactly once: accented, CJK and emoji characters",
+      "origin": "437 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-WEBVIEW a WebView clearText clears the named field by keys and reads it back",
+      "origin": "437 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-WEBVIEW every WebView script in the fill and clear paths only reads",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-keyevent.test.ts",
+      "fullName": "C437-SHELL-UNAVAILABLE a refused keyevent is unavailable",
+      "origin": "437 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-keyevent.test.ts",
+      "fullName": "C437-SHELL-UNAVAILABLE another driver error is failed",
+      "origin": "437 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-keyevent.test.ts",
+      "fullName": "C437-SHELL-UNAVAILABLE an allowed keyevent still uses mobile: shell input keyevent",
+      "origin": "437 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-keyevent.test.ts",
+      "fullName": "C437-SHELL-UNAVAILABLE the allow-list still rejects a hostile code before any driver call",
+      "origin": "437 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-keyevent.test.ts",
+      "fullName": "C437-SHELL-UNAVAILABLE a refused openQuickSettings is unavailable",
+      "origin": "437 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/437-mobile-input-census.test.ts",
+      "fullName": "C437-CENSUS — the mobile input census (437 D-01, D-05, D-11, D-12, D-14, D-19) C437-UNIVERSE-FLOORS: every region reads real code, so no cell can pass over an empty scan",
+      "origin": "437 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/437-mobile-input-census.test.ts",
+      "fullName": "C437-CENSUS — the mobile input census (437 D-01, D-05, D-11, D-12, D-14, D-19) C437-ONE-CLASSIFIER: the toggle classifier and its role set are declared once, in the schema, and its readers import it",
+      "origin": "437 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/437-mobile-input-census.test.ts",
+      "fullName": "C437-CENSUS — the mobile input census (437 D-01, D-05, D-11, D-12, D-14, D-19) C437-NO-SUCCESS-NOOP: no runner result pairs a true success with the idempotent no-op",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/437-mobile-input-census.test.ts",
+      "fullName": "C437-CENSUS — the mobile input census (437 D-01, D-05, D-11, D-12, D-14, D-19) C437-NO-SCRIPT-WRITE: no Android page script assigns a field value",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/437-mobile-input-census.test.ts",
+      "fullName": "C437-CENSUS — the mobile input census (437 D-01, D-05, D-11, D-12, D-14, D-19) C437-NO-SYNTHETIC-KEY: no Android page script constructs or dispatches a key event",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/437-mobile-input-census.test.ts",
+      "fullName": "C437-CENSUS — the mobile input census (437 D-01, D-05, D-11, D-12, D-14, D-19) C437-NO-KEYS-TYPING: the Android adapter never types fill text through key events",
+      "origin": "437 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/437-mobile-input-census.test.ts",
+      "fullName": "C437-CENSUS — the mobile input census (437 D-01, D-05, D-11, D-12, D-14, D-19) C437-NO-PATH-FALLBACK: the fill dispatch picks one input path, and no path falls through to another on a failure",
+      "origin": "437 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/437-mobile-input-census.test.ts",
+      "fullName": "C437-CENSUS — the mobile input census (437 D-01, D-05, D-11, D-12, D-14, D-19) C437-NO-FIXTURES: agent-qa tracks no app package and no 437 path outside the 437 test files",
+      "origin": "437 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/437-mobile-input-census.test.ts",
+      "fullName": "C437-CENSUS instruments C437-PLANTED-POSITIVE: every removed shape is found when planted as code, and none as a comment",
+      "origin": "437 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/437-mobile-input-census.test.ts",
+      "fullName": "C437-CENSUS instruments C437-SELF-MATCH: this file spells none of the needles it assembles, and lies outside every region it scans",
+      "origin": "437 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/xml-parser.test.ts",
+      "fullName": "parseMobileSource → InterimNode[] iOS walk maps value/selected/enabled and lifts a switch value \"1\" to checked true (437 D-03)",
+      "origin": "437 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/xml-parser.test.ts",
+      "fullName": "C437-TOGGLE-PARSE Android an ordinary Button with selected=\"true\" checkable=\"false\" checked=\"false\" lifts selected, no checked, and is not a toggle",
+      "origin": "437 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/xml-parser.test.ts",
+      "fullName": "C437-TOGGLE-PARSE Android CheckBox, ToggleButton, Chip and CheckedTextView with checkable=\"true\" checked=\"true\" lift checked true and are toggles",
+      "origin": "437 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/xml-parser.test.ts",
+      "fullName": "C437-TOGGLE-PARSE Android a Switch with checked=\"false\" and no checkable attribute gets no checked key",
+      "origin": "437 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/xml-parser.test.ts",
+      "fullName": "C437-TOGGLE-PARSE iOS XCUIElementTypeSwitch value=\"1\" lifts checked true",
+      "origin": "437 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/xml-parser.test.ts",
+      "fullName": "C437-TOGGLE-PARSE iOS XCUIElementTypeSwitch value=\"0\" lifts checked false",
+      "origin": "437 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/xml-parser.test.ts",
+      "fullName": "C437-TOGGLE-PARSE iOS XCUIElementTypeSwitch value=\"\" or value=\"On\" or no value leaves checked absent",
+      "origin": "437 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/xml-parser.test.ts",
+      "fullName": "C437-TOGGLE-PARSE iOS XCUIElementTypeToggle value=\"1\" lifts checked true",
+      "origin": "437 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/xml-parser.test.ts",
+      "fullName": "C437-TOGGLE-PARSE iOS XCUIElementTypeCheckBox value=\"0\" lifts checked false",
+      "origin": "437 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/xml-parser.test.ts",
+      "fullName": "C437-TOGGLE-PARSE iOS XCUIElementTypeButton selected=\"true\" value=\"1\" lifts selected, no checked, and is not a toggle",
+      "origin": "437 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/xml-parser.test.ts",
+      "fullName": "C437-TOGGLE-PARSE iOS the labelled outer switch and its unlabelled inner knob both parse as switches with checked false",
+      "origin": "437 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/xml-parser.test.ts",
+      "fullName": "C437-TOGGLE-PARSE iOS screenIdentityHash of a parsed iOS switch screen is the same with or without lifted checked (HARN-04)",
+      "origin": "437 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/xml-parser.test.ts",
+      "fullName": "C437-REF-INPUT-TYPE an EditText with input-type=\"1048577\" carries inputType 1048577",
+      "origin": "437 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/xml-parser.test.ts",
+      "fullName": "C437-REF-INPUT-TYPE the text class with the multi-line flag (131073) carries 131073",
+      "origin": "437 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/xml-parser.test.ts",
+      "fullName": "C437-REF-INPUT-TYPE input-type=\"0\" carries 0",
+      "origin": "437 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/xml-parser.test.ts",
+      "fullName": "C437-REF-INPUT-TYPE a node with no attribute carries no inputType",
+      "origin": "437 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/xml-parser.test.ts",
+      "fullName": "C437-REF-INPUT-TYPE a node with a non-integer carries no inputType",
+      "origin": "437 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/xml-parser.test.ts",
+      "fullName": "C437-REF-INPUT-TYPE a node with a negative number carries no inputType",
+      "origin": "437 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/xml-parser.test.ts",
+      "fullName": "C437-REF-INPUT-TYPE a node with a decimal carries no inputType",
+      "origin": "437 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/xml-parser.test.ts",
+      "fullName": "C437-REF-INPUT-TYPE a node with an empty value carries no inputType",
+      "origin": "437 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/__tests__/tab-overview.empty-state.test.tsx",
+      "fullName": "C437-NO-INPUT-LABEL the overview tab's result reads no input sent",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/__tests__/tab-overview.empty-state.test.tsx",
+      "fullName": "C437-NO-INPUT-LABEL success and failure results are unchanged",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/lib/__tests__/action-vocabulary.test.ts",
+      "fullName": "C437-NO-INPUT-LABEL the action sentence of a skipped tap says no input sent",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/lib/__tests__/action-vocabulary.test.ts",
+      "fullName": "C437-NO-INPUT-LABEL a pre-437 skipped tap (success true) is labelled no input sent too",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/lib/__tests__/playhead.test.ts",
+      "fullName": "C437-NO-INPUT-LABEL a skipped tap's timeline marker result is no-input",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/run-detail/__tests__/sub-action-tree-item.test.tsx",
+      "fullName": "C437-NO-INPUT-LABEL the tree item marks a skipped tap no-input",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/adapter.test.ts",
+      "fullName": "IOSPlatformAdapter C437-TREE-TOGGLE — adapter-level iOS tree a switch with value \"1\" renders [checked] and one with value \"0\" does not",
+      "origin": "437 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/adapter.test.ts",
+      "fullName": "IOSPlatformAdapter C437-IOS-TAP-HOLD — single taps hold the touch between down and up a ref tap is move, down, pause 100, up",
+      "origin": "437 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/adapter.test.ts",
+      "fullName": "IOSPlatformAdapter C437-IOS-TAP-HOLD — single taps hold the touch between down and up a coordinate tap is move, down, pause 100, up",
+      "origin": "437 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/adapter.test.ts",
+      "fullName": "IOSPlatformAdapter C437-IOS-TAP-HOLD — single taps hold the touch between down and up a double tap keeps its own unheld chain",
+      "origin": "437 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/text-input.test.ts",
+      "fullName": "IOSPlatformAdapter text input (AUTO-18) C437-FILL-IOS a replace whose re-read equals the text records exact",
+      "origin": "437 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/text-input.test.ts",
+      "fullName": "IOSPlatformAdapter text input (AUTO-18) C437-FILL-IOS a re-read with merged whitespace records mismatch and sends no Return",
+      "origin": "437 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/text-input.test.ts",
+      "fullName": "IOSPlatformAdapter text input (AUTO-18) C437-FILL-IOS an unreadable re-read keeps the early return and records unverified",
+      "origin": "437 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/text-input.test.ts",
+      "fullName": "IOSPlatformAdapter text input (AUTO-18) C437-FILL-IOS a multi-line submit still records not sent for a multi-line field, with the notice",
+      "origin": "437 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/text-input.test.ts",
+      "fullName": "IOSPlatformAdapter text input (AUTO-18) C437-FILL-IOS appends whose re-read never showed the appended text an append whose re-read equals the prior value is unverified (FA-1, owner 2026-10-08)",
+      "origin": "437 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/text-input.test.ts",
+      "fullName": "IOSPlatformAdapter text input (AUTO-18) C437-FILL-IOS appends whose re-read never showed the appended text the same append into a single-line field with submit sends Return exactly once (FA-1, submit unchanged)",
+      "origin": "437 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/text-input.test.ts",
+      "fullName": "IOSPlatformAdapter text input (AUTO-18) C437-FILL-IOS an append whose re-read shows the appended text records exact",
+      "origin": "437 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/__tests__/screen-builder.test.ts",
+      "fullName": "C437-TREE-TOGGLE an ordinary button with selected true renders [selected] and never [checked]",
+      "origin": "437 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/__tests__/screen-builder.test.ts",
+      "fullName": "C437-TREE-TOGGLE a checkbox with checked true renders [checked]",
+      "origin": "437 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/__tests__/screen-builder.test.ts",
+      "fullName": "C437-TREE-TOGGLE a role-button element with checkable \"true\" and checked true renders [checked]",
+      "origin": "437 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/__tests__/screen-builder.test.ts",
+      "fullName": "C437-TREE-TOGGLE a non-toggle element carrying a hand-built checked true renders no [checked]",
+      "origin": "437 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT exact a read-back equal to the requested text is exact",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT exact the meta keeps exactly the two string keys the existing readers pin",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT normalized P2: a phone number the field formatted with spaces and hyphens is normalized and keeps both values",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT normalized a card number grouped with spaces is normalized",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT normalized ':' is not a separator, so '0930' read back as '09:30' is a mismatch",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT normalized an inserted no-break space is normalized ('ab' vs 'a\\u00a0b')",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT normalized an inserted narrow no-break space is normalized ('ab' vs 'a\\u202fb')",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT normalized brackets and a space inserted together are normalized",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT normalized an inserted space that joins another space is a mismatch (whitespace changed)",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT normalized the separator set is exactly the A6 set: no tab, newline or comma",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT mismatch merged whitespace (the old collapse cell flips) is a mismatch",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT mismatch P14: a blank line merged into one newline is a mismatch",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT mismatch trimmed padding is a mismatch",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT mismatch a case change is a mismatch",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT mismatch truncation is a mismatch",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT mismatch a multi-line text folded onto one line is a mismatch",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT mismatch a mismatch keeps the exact self-correcting error text",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT unverified no readable value is unverified: not a failure, no meta, no error",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT secure fields a non-empty secure read-back is unverified with secure true and length-sentinel meta, never the raw value",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT secure fields an empty secure read-back is a mismatch with differing sentinels and the error",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT secure fields a secure field is never exact",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT clearText (D-16) an empty read-back is exact",
+      "origin": "437 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT clearText (D-16) a single leftover space is a mismatch",
+      "origin": "437 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT clearText (D-16) leftover text is a mismatch",
+      "origin": "437 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT clearText (D-16) an unreadable read-back is unverified",
+      "origin": "437 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT clearText (D-16) a secure clear is unverified with secure true",
+      "origin": "437 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT D-08 mixed text the single-line Unicode mix compared with itself is exact",
+      "origin": "437 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT D-08 mixed text the same mix with its trailing spaces trimmed is a mismatch",
+      "origin": "437 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/metadata.test.ts",
+      "fullName": "readFillRefusalMeta reads the 437 single-line refusal pair (owner 2026-10-08, refuse before typing)",
+      "origin": "437 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/metadata.test.ts",
+      "fullName": "readFillSubmitMeta reads the 437 outcome shapes (D-17)",
+      "origin": "437 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/metadata.test.ts",
+      "fullName": "readFillVerdictMeta (C437-FILL-VERDICT) reads every verdict for both verbs, with and without path and secure",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/metadata.test.ts",
+      "fullName": "readFillVerdictMeta (C437-FILL-VERDICT) rejects an unknown verdict, verb or path, and any other shape miss",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-input-evidence.test.ts",
+      "fullName": "C437-INPUT-EVIDENCE an unverified keyboard-path fill with a sent Enter reaches the verifier",
+      "origin": "437 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-input-evidence.test.ts",
+      "fullName": "C437-INPUT-EVIDENCE a mismatch holds Enter and the planner sees why",
+      "origin": "437 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-input-evidence.test.ts",
+      "fullName": "C437-INPUT-EVIDENCE a refused fill is recorded as no input sent",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-input-evidence.test.ts",
+      "fullName": "C437-INPUT-EVIDENCE an unavailable keyevent is recorded and rendered",
+      "origin": "437 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-input-evidence.test.ts",
+      "fullName": "C437-INPUT-EVIDENCE a secure fill renders as not read back",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-input-evidence.test.ts",
+      "fullName": "C437-INPUT-EVIDENCE an ordinary exact fill with a sent Enter adds nothing to the prompts",
+      "origin": "437 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-input-evidence.test.ts",
+      "fullName": "C437-INPUT-EVIDENCE a pre-437 iOS submit block still derives",
+      "origin": "437 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-input-evidence.test.ts",
+      "fullName": "C437-INPUT-EVIDENCE a clearText that left text renders the clear wording",
+      "origin": "437 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-input-evidence.test.ts",
+      "fullName": "C437-INPUT-EVIDENCE the input evidence never carries the typed or read-back text",
+      "origin": "437 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-toggle-loop.test.ts",
+      "fullName": "C437-TOGGLE-LOOP an ordinary button with selected false is tapped under desiredState unselected",
+      "origin": "437 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-toggle-loop.test.ts",
+      "fullName": "C437-TOGGLE-LOOP an ordinary button with selected true is tapped under desiredState selected",
+      "origin": "437 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-toggle-loop.test.ts",
+      "fullName": "C437-TOGGLE-LOOP a tapCoordinate at the ordinary node's centre is sent",
+      "origin": "437 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-toggle-loop.test.ts",
+      "fullName": "C437-TOGGLE-LOOP a checkable button already checked is not tapped under desiredState selected",
+      "origin": "437 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-toggle-loop.test.ts",
+      "fullName": "C437-TOGGLE-LOOP a switch not in the requested state is tapped once",
+      "origin": "437 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-toggle-loop.test.ts",
+      "fullName": "C437-TOGGLE-LOOP a switch with no checked state is tapped once",
+      "origin": "437 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-toggle-loop.test.ts",
+      "fullName": "C437-NO-INPUT a skipped tap is recorded with success false, no error and inputSent false",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-toggle-loop.test.ts",
+      "fullName": "C437-NO-INPUT the skipped tap is one counted action",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-toggle-loop.test.ts",
+      "fullName": "C437-NO-INPUT a skipped tap with a rejecting verifier replans without a failure context naming an error",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-toggle-loop.test.ts",
+      "fullName": "C437-NO-INPUT the same skipped tap planned twice sends nothing either time",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-toggle-loop.test.ts",
+      "fullName": "C437-NO-INPUT an abort raised during a skipped-tap step executes nothing",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-toggle-loop.test.ts",
+      "fullName": "C437-NO-INPUT readIdempotentNoopMeta reads the pre-437 block and the new block",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-toggle-loop.test.ts",
+      "fullName": "C437-NO-INPUT the verifier receives the skipped tap as operation evidence",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-toggle-loop.test.ts",
+      "fullName": "C437-NO-INPUT the recorded sub-action carries the typed input evidence",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-toggle-loop.test.ts",
+      "fullName": "C437-NO-INPUT a step with only an ordinary sent tap passes no evidence to the verifier",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-toggle-loop.test.ts",
+      "fullName": "C437-NO-INPUT a picker no-op masks its currentState",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-toggle-loop.test.ts",
+      "fullName": "C437-NO-INPUT the planner history shows the skipped tap with the no-input glyph",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/437-toggle-loop.test.ts",
+      "fullName": "C437-NO-INPUT a verifier-rejected skipped tap is history result no-input",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/compound-coverage.test.ts",
+      "fullName": "EXEC-01 — Fill executes as one atomic compound producing a single ActionResult with a verified field re-read a card number the field re-groups with spaces is normalized, not a loss (437 D-06)",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/compound-coverage.test.ts",
+      "fullName": "EXEC-04 — a satisfied desiredState no-ops at the dispatch seam without calling adapter.execute a checked toggle with desiredState=checked mints a no-input no-op (437 D-05)",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/compound-coverage.test.ts",
+      "fullName": "437 D-06 — an unverified fill still counts as one compound input a result carrying only fillVerdict unverified counts one fill input",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/compound-coverage.test.ts",
+      "fullName": "437 D-06 — an unverified fill still counts as one compound input a result carrying fillReread and fillVerdict counts once, not twice",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/compound-coverage.test.ts",
+      "fullName": "437 D-06 — an unverified fill still counts as one compound input a clearText verdict counts no fill input",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/compound-coverage.test.ts",
+      "fullName": "437 D-06 — an unverified fill still counts as one compound input a clearText verdict beside a fillReread block still counts no fill input",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/compound-coverage.test.ts",
+      "fullName": "437 D-06 — an unverified fill still counts as one compound input a pre-437 result with fillReread alone still counts one fill input",
+      "origin": "437 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/evidence.test.ts",
+      "fullName": "C437-NO-INPUT the legacy trace marks a skipped tap",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/evidence.test.ts",
+      "fullName": "C437-NO-INPUT an ordinary success and an ordinary failure project exactly as before",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/idempotency.test.ts",
+      "fullName": "Block A — desiredStateSatisfied: real toggles read checked for all four states (437 D-02) role checkbox with checked true satisfies checked and selected as 'checked', and neither of the others",
+      "origin": "437 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/idempotency.test.ts",
+      "fullName": "Block A — desiredStateSatisfied: real toggles read checked for all four states (437 D-02) role checkbox with checked false satisfies unchecked and unselected as 'unchecked', and neither of the others",
+      "origin": "437 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/idempotency.test.ts",
+      "fullName": "Block A — desiredStateSatisfied: real toggles read checked for all four states (437 D-02) role checkbox with checked ABSENT satisfies none of the four — positive evidence only (D-04)",
+      "origin": "437 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/idempotency.test.ts",
+      "fullName": "Block A — desiredStateSatisfied: real toggles read checked for all four states (437 D-02) role switch with checked true satisfies checked and selected as 'checked', and neither of the others",
+      "origin": "437 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/idempotency.test.ts",
+      "fullName": "Block A — desiredStateSatisfied: real toggles read checked for all four states (437 D-02) role switch with checked false satisfies unchecked and unselected as 'unchecked', and neither of the others",
+      "origin": "437 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/idempotency.test.ts",
+      "fullName": "Block A — desiredStateSatisfied: real toggles read checked for all four states (437 D-02) role switch with checked ABSENT satisfies none of the four — positive evidence only (D-04)",
+      "origin": "437 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/idempotency.test.ts",
+      "fullName": "Block A — desiredStateSatisfied: real toggles read checked for all four states (437 D-02) role radio with checked true satisfies checked and selected as 'checked', and neither of the others",
+      "origin": "437 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/idempotency.test.ts",
+      "fullName": "Block A — desiredStateSatisfied: real toggles read checked for all four states (437 D-02) role radio with checked false satisfies unchecked and unselected as 'unchecked', and neither of the others",
+      "origin": "437 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/idempotency.test.ts",
+      "fullName": "Block A — desiredStateSatisfied: real toggles read checked for all four states (437 D-02) role radio with checked ABSENT satisfies none of the four — positive evidence only (D-04)",
+      "origin": "437 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/idempotency.test.ts",
+      "fullName": "Block A — desiredStateSatisfied: real toggles read checked for all four states (437 D-02) role button with checkable \"true\" with checked true satisfies checked and selected as 'checked', and neither of the others",
+      "origin": "437 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/idempotency.test.ts",
+      "fullName": "Block A — desiredStateSatisfied: real toggles read checked for all four states (437 D-02) role button with checkable \"true\" with checked false satisfies unchecked and unselected as 'unchecked', and neither of the others",
+      "origin": "437 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/idempotency.test.ts",
+      "fullName": "Block A — desiredStateSatisfied: real toggles read checked for all four states (437 D-02) role button with checkable \"true\" with checked ABSENT satisfies none of the four — positive evidence only (D-04)",
+      "origin": "437 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/idempotency.test.ts",
+      "fullName": "Block A — desiredStateSatisfied: an ordinary node exposing selected always acts (437 D-01/D-04) an ordinary role-button with selected true satisfies none of the four",
+      "origin": "437 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/idempotency.test.ts",
+      "fullName": "Block A — desiredStateSatisfied: an ordinary node exposing selected always acts (437 D-01/D-04) an ordinary role-button with selected false satisfies none of the four",
+      "origin": "437 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/idempotency.test.ts",
+      "fullName": "Block A — desiredStateSatisfied: an ordinary node exposing selected always acts (437 D-01/D-04) an ordinary role-button carrying a hand-built checked state still acts",
+      "origin": "437 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/437-input-evidence-keys.test.ts",
+      "fullName": "C437-KEY-SETS the input evidence carries exactly its nine members",
+      "origin": "437 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/437-input-evidence-keys.test.ts",
+      "fullName": "C437-KEY-SETS operation evidence gains an optional input array",
+      "origin": "437 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/437-input-evidence-keys.test.ts",
+      "fullName": "C437-KEY-SETS the handoff schema version is still 7",
+      "origin": "437 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/result/__tests__/no-input.test.ts",
+      "fullName": "C437-NO-INPUT-READER reads the 437 block that marks no input sent",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/result/__tests__/no-input.test.ts",
+      "fullName": "C437-NO-INPUT-READER reads a pre-437 block that carries only the current state",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/result/__tests__/no-input.test.ts",
+      "fullName": "C437-NO-INPUT-READER returns undefined for a missing block",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/result/__tests__/no-input.test.ts",
+      "fullName": "C437-NO-INPUT-READER returns undefined for a current state that is not a string",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/result/__tests__/no-input.test.ts",
+      "fullName": "C437-NO-INPUT-READER returns undefined when the block says input was sent",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/screen/__tests__/toggle.test.ts",
+      "fullName": "C437-TOGGLE-CLASSIFIER role switch, checkbox and radio are toggles with no attributes",
+      "origin": "437 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/screen/__tests__/toggle.test.ts",
+      "fullName": "C437-TOGGLE-CLASSIFIER role button, text or cell with checkable \"true\" is a toggle",
+      "origin": "437 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/screen/__tests__/toggle.test.ts",
+      "fullName": "C437-TOGGLE-CLASSIFIER role button, tab, cell or text carrying only selected is not a toggle",
+      "origin": "437 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/screen/__tests__/toggle.test.ts",
+      "fullName": "C437-TOGGLE-CLASSIFIER checkable \"false\" on role button is not a toggle",
+      "origin": "437 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/screen/__tests__/toggle.test.ts",
+      "fullName": "C437-TOGGLE-CLASSIFIER role switch is a toggle whatever its attributes",
+      "origin": "437 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/screen/__tests__/toggle.test.ts",
+      "fullName": "C437-TOGGLE-CLASSIFIER TOGGLE_ROLES is exactly switch, checkbox and radio, and the root index re-exports both",
+      "origin": "437 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/compound.test.ts",
+      "fullName": "WebPlatformAdapter compound behaviors (RED — Wave-0) C437-FILL-WEB a re-read with formatting separators records normalized and presses Enter when submit is set",
+      "origin": "437 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/compound.test.ts",
+      "fullName": "WebPlatformAdapter compound behaviors (RED — Wave-0) C437-FILL-WEB a re-read with merged whitespace records mismatch, returns the error and never presses Enter",
+      "origin": "437 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/compound.test.ts",
+      "fullName": "WebPlatformAdapter compound behaviors (RED — Wave-0) C437-FILL-WEB an unreadable value keeps the early return (success, no Enter) and records unverified",
+      "origin": "437 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/compound.test.ts",
+      "fullName": "WebPlatformAdapter compound behaviors (RED — Wave-0) C437-FILL-WEB an exact re-read records exact beside fillReread",
+      "origin": "437 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/compound.test.ts",
+      "fullName": "WebPlatformAdapter compound behaviors (RED — Wave-0) C437-FILL-WEB a password field records unverified with secure true and never the raw value",
+      "origin": "437 D-07"
     }
   ]
 }

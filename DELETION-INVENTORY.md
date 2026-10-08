@@ -1810,7 +1810,8 @@ this section. `git diff --shortstat 5e3e932a2..a2ab1651f`: 161 files changed, 11
   - the bench repositories' config writers: `agent-qa-android-world-bench`,
     `agent-qa-app-control-bench` and `agent-qa-miniwob-bench` (each `src/<package>/product.py`), and
     the run workspaces under `agent-qa-online-mind2web-bench/runs/`.
-  QAval carries no `use.planner.*` key (435 D-08), so the Phase 439 re-measure is unaffected.
+  The private eval set behind the external live measurement carries no `use.planner.*` key
+  (435 D-08), so the Phase 439 re-measure is unaffected.
 - **Live iOS was not run.** The two `C436-IOS-LIVE` cells typecheck and have never executed (WINDOWS
   #561, open); iOS scrolling is covered by mock-driver cells only. The four `C436-ANDROID-LIVE` cells
   ran and passed once on an emulator at `4a788968f` (`436-RECORD.md` § Platforms not run). All six
@@ -1858,3 +1859,166 @@ final SHA.
 
 **Toolchain:** node 24.15.0 · pnpm 10.6.1 · turbo 2.9.7 · Chromium 149.0.7827.55 (revision 1228) ·
 macOS (Darwin 27.0.0, arm64, 12 CPUs).
+
+## 2026-10-09 — Phase 437: Android and iOS toggle and submit (V2-EXEC-05, V2-EXEC-06)
+
+This section appends to the register and rewrites no earlier section; the 2026-10-07 Phase 436
+row "Phase 437 fixes the Android classifier" stays as written. Phase 437 made one classifier decide
+what a toggle is, recorded a skipped toggle tap as input that was never sent, and made every Android
+fill and clear path deliver its text once, read it back honestly and submit only when asked. It kept
+real toggles' desired-state idempotency, the picker's value check, `[selected]` in the planner tree
+and every reader of persisted history. The section follows the 2026-10-07 shape. Dated 2026-10-09;
+written by 437-14.
+
+### The ruling
+
+> V2-EXEC-05: An ordinary node exposing `selected` is not a toggle, and its tap is never skipped as
+> already satisfied, including under `desiredState: unselected`.
+>
+> V2-EXEC-06: Android replace, append, clear and requested submit work correctly on the native,
+> WebView and last-resort keyboard input paths.
+
+From `.planning/REQUIREMENTS.md`, taken verbatim from `spec/v2/release-readiness.md`. The owner's
+choices among the planned options and the delegated details are recorded as D-01..D-23 in
+`.planning/phases/437-android-and-ios-toggle-and-submit/437-CONTEXT.md`, with two owner decisions
+taken during execution on 2026-10-08: FA-1, an iOS append whose re-read never showed the appended
+text is recorded unverified; FA-2, line breaks sent to a single-line field are refused before
+typing. A third, fix-tap (2026-10-09), made iOS single taps hold the touch for 100 ms. D-19 keeps
+agent-qa free of fixtures: its proof is model-free cells with inline snippets, a scripted planner
+through the real loop and mocked drivers, plus opt-in live cells on the phones' own Settings apps.
+
+### How this inventory is measured
+
+| Instrument | What it claims | Where |
+|---|---|---|
+| the census | `C437-CENSUS`: `C437-ONE-CLASSIFIER` (the classifier and its role set are declared once, in `schema/src/screen/toggle.ts`, no other production Set or array literal is made only of toggle roles, and the comparator, the core parser and the planner-tree renderer import it), `C437-NO-SUCCESS-NOOP` (no runner result pairs `success: true` with the idempotent no-op), `C437-NO-SCRIPT-WRITE` and `C437-NO-SYNTHETIC-KEY` (no string built in `android/src` assigns a field's value or constructs or dispatches an event; strings are read from the TypeScript AST with `+` chains joined, so a comment never counts), `C437-NO-KEYS-TYPING` (no fill text reaches `driver.keys`), `C437-NO-PATH-FALLBACK` (the fill dispatch has no `try`/`catch` and calls each path once, and every `catch` in the five Android input-path methods ends the path by returning), `C437-NO-FIXTURES` (agent-qa's own `git ls-files` lists no `.apk`, `.aab`, `.apks`, `.xapk` or `.ipa`, and no path naming the phase outside `packages/*/src/**/__tests__/437-*`), with `C437-UNIVERSE-FLOORS`, `C437-PLANTED-POSITIVE` and `C437-SELF-MATCH`. Every needle is two halves joined at run time; comments are blanked by the 432 and 436 lexer. 10 cells, in `validate:arch`. Run against the pre-437 tree (`c26bdd294`), 8 of the 10 red: the six removal cells on their removed shapes, and the universe and fixture cells because the classifier file and the 437 test files did not exist yet. | `packages/arch/src/__tests__/437-mobile-input-census.test.ts` (437-14 `7d7950b8d`) |
+| the runtime key sets | `C437-KEY-SETS`: the input evidence carries exactly its nine members, operation evidence gains an optional `input` array, and the handoff schema version is still 7. | `packages/schema/src/__tests__/437-input-evidence-keys.test.ts` (437-04) |
+| the behaviour cells | 218 model-free cells by name in the 434 gate's regression list, each with the `437 D-NN` decision it proves: every `C437-*` cell from 437-01 to 437-09 and 437-14, and the `437 D-NN` cells in existing files (`idempotency.test.ts` Block A, `compound-coverage.test.ts`, the Android `compound.test.ts` unreadable-submit cell). | `scripts/gate/inputs/regressions.json` |
+| the live cells | 10 opt-in cells on `com.android.settings` and `com.apple.Preferences` (`C437-ANDROID-LIVE` ×4, `C437-ANDROID-SECURE-LIVE` ×2, `C437-IOS-LIVE` ×4), registered as conditional not-run entries, so a skip is never a pass. | `scripts/gate/inputs/register.json` |
+
+**This file names retired shapes literally**, as the 2026-09-02 section explains for the whole
+register. `DELETION-INVENTORY.md` sits outside every census region.
+
+### What was removed
+
+Baseline `c26bdd294` (`version-0.2`, the parent of 437's first agent-qa commit `c9f58e4e7`).
+Code-closing HEAD `26ca50c31`, the last commit before the census. `git diff --shortstat
+c26bdd294..26ca50c31`: 56 files changed, 5,116 insertions, 398 deletions; no file deleted.
+
+- **`selected` deciding a skip.** The comparator (`runner/src/compound/idempotency.ts`) read
+  `state.selected` for `desiredState: selected`/`unselected` on any node, so every UiAutomator2 node
+  exposing `selected` behaved as a toggle and an ordinary button was skipped as already satisfied.
+  Now `isToggleElement` (`checkable="true"`, or role `switch`, `checkbox` or `radio`) gates the
+  skip, and all four desired states read the checked state (437-01 `c9f58e4e7`). The parser's rule
+  that never derived `checked` from a value string is gone for iOS switches, toggles and checkboxes,
+  whose `1`/`0` value is now their checked state (`465b25377`), and the planner tree tags
+  `[checked]` only on toggles (`2184413d5`). `C437-ONE-CLASSIFIER`.
+- **The success-shaped skipped tap** `{ success: true, metadata: { idempotentNoop } }` in
+  `runner/src/loop/index.ts`. A skipped tap is now `success: false` with no error and
+  `idempotentNoop.inputSent: false`, still one counted action, and reaches the verifier, the
+  planner's history, the legacy trace and the dashboard as "no input sent — already <state>"
+  (437-02 `86d65f669`, `024e30b2a`, `b866da1cd`; 437-03 `5e3bba71f`, `ba93daff2`, `25d282b6e`).
+  `C437-NO-SUCCESS-NOOP`.
+- **The WebView value-writing script and its synthetic Enter** (`android/src/adapter.ts`
+  `fillWebViewCompound`): a page script wrote `el.value = text` (or `prior + text`) into whatever
+  `document.activeElement` was, fired `dispatchEvent(new Event("input"))`, returned success when it
+  could read nothing, and submitted with `new KeyboardEvent("keydown")`/`("keyup")`. Now a W3C
+  touch tap on the ref, a read-only focus probe, W3C Ctrl+A and Backspace, `mobile: type` from
+  NATIVE_APP, a read-only read-back and one `mobile: pressKey 66`; a focus miss writes nothing
+  (437-06 `a16048487`, `0937851b5`). `C437-NO-SCRIPT-WRITE`, `C437-NO-SYNTHETIC-KEY`.
+- **The native-to-keyboard fall-through.** The fill dispatch looked up the focused element inside a
+  `try` whose empty `catch` ("fall through to last resort") sent a failed native fill to the
+  keyboard path, which typed the text again. The path is now chosen once, before any text is
+  delivered, and a driver error ends the fill with what was delivered (437-05 `0ff53805f`).
+  `C437-NO-PATH-FALLBACK`.
+- **Keyboard typing through key events.** The last-resort path typed with `driver.keys([action.text])`,
+  never cleared a replace, never sent a requested Enter and returned success when nothing was
+  readable. It now clears by Ctrl+A then DEL through `mobile: pressKey`, types once through
+  `mobile: type`, reads back from a re-found handle or records unverified, and sends a requested Enter
+  once (437-07 `ff47f0368`, `0d5ea038c`). `C437-NO-KEYS-TYPING`.
+- **The unreadable early returns before a requested submit** on the native, WebView and keyboard
+  paths. An unreadable value is now `unverified`, and a requested Enter is still sent once; a
+  mismatch or a multi-line field holds it (437-05 `8020bbf63`, 437-06, 437-07).
+- **The always-successful `clearText`.** Native, keyboard and WebView clears now read the field back
+  and record exact, mismatch or unverified (437-06 `0937851b5`, 437-07 `0d5ea038c`).
+- **The whitespace-collapse and numbers-only fill normalization** in `compareFillReread`
+  (`runner/src/compound/fill-verify.ts`). Four verdicts replace them: exact; normalized, when the
+  field only inserted separators (space, U+00A0, U+202F, U+2009, `-`, `(`, `)`, `[`, `]`, `{`, `}`,
+  `.`, `/`); mismatch; unverified. Merged, trimmed or lost whitespace is a mismatch on web, Android
+  and iOS (437-04 `bcedf9c13`).
+- **The iOS append substitution.** When an iOS append's re-read equalled the prior value, the adapter
+  compared the expected text with itself and recorded it as matched. Per the owner's FA-1 decision
+  of 2026-10-08 it is now recorded `unverified`, with no `fillReread` block and no `prior + typed`
+  text, and a requested Return on a single-line field is still sent once (437-04 `a6cd61644`). Cell:
+  `C437-FILL-IOS appends whose re-read never showed the appended text an append whose re-read
+  equals the prior value is unverified (FA-1, owner 2026-10-08)` in
+  `packages/ios/src/__tests__/text-input.test.ts`.
+
+### What was RETAINED, and why
+
+| Item | Why kept | What pins it |
+|---|---|---|
+| desired-state idempotency on real toggles | a switch, checkbox, radio or checkable control already in the requested state must not be flipped (V2-EXEC-05) | `idempotency.test.ts` Block A, `C437-TOGGLE-LOOP`, the live `C437-ANDROID-LIVE` and `C437-IOS-LIVE` switch cells |
+| the picker's value idempotency | a picker already on the requested value is a different, value-based check (Phase 359 D-15) | `idempotency.test.ts`, `C437-NO-INPUT` (a picker no-op masks its currentState) |
+| `selected` on every node and `[selected]` in the planner tree | it stays visible with no toggle meaning, so `screenIdentityHash` and the cache partition do not move (D-01) | `C437-TREE-TOGGLE`, `C437-TOGGLE-PARSE` (the hash is the same with or without lifted checked) |
+| `keyevent` and `openQuickSettings` on `mobile: shell` | the tools keep their route; a refusal by secure Appium is recorded `unavailable`, never an unhandled error (D-18) | `C437-SHELL-UNAVAILABLE`, `C437-ANDROID-SECURE-LIVE` |
+| the iOS unreadable early return | deferred: an unreadable iOS value still returns before Return, now recorded `unverified` (437-04) | `C437-FILL-IOS` (an unreadable re-read keeps the early return) |
+| the web unreadable early return | the same deferral on web: no Enter, recorded `unverified` | `C437-FILL-WEB` |
+| the WebView `tap` through a page `click()` | D-11 covers fill, clear and submit; a WebView tap still clicks the element at the ref's point through a script | not pinned by a 437 cell |
+| the `fillReread { expected, actual }` block | its two string keys are what existing readers pin; it is written whenever a value was read back (secure fields carry length sentinels only) | `C437-FILL-VERDICT` (the meta keeps exactly the two string keys) |
+
+### What degrades, stated plainly
+
+- **A formatted value that inserts other characters fails.** A field that turns `0930` into `09:30`
+  records a mismatch, because `:` is not a separator, and a field that collapses double spaces fails
+  where it used to pass.
+- **Single-line Android and WebView fields refuse text with line breaks** before typing (FA-2), with
+  a plain error; the text is never typed with its line breaks dropped.
+- **A multi-line field never gets Enter**, on any path: the submit is recorded "not sent:
+  multi-line field" and the planner is told to tap the send control.
+- **A skipped toggle tap no longer reads as success** anywhere. A step whose only action was a
+  skipped tap passes only when the verifier sees the requested state.
+- **iOS single taps take about 100 ms longer** (fix-tap), so a Settings switch knob flips.
+- **On an Appium without relaxed security, `keyevent` and `openQuickSettings` do nothing** and are
+  recorded `unavailable` with the reason `adb-shell-disabled`.
+
+### Persisted values that keep reading
+
+| Persisted value | Disposition | Evidence |
+|---|---|---|
+| pre-437 skipped taps: `metadata.idempotentNoop { currentState }` with `success: true` | **Read and relabelled.** `readIdempotentNoopMeta` (now in the schema package) reads the old block and the new one, and the dashboard and trace label both "no input sent". | `C437-NO-INPUT-READER`, `C437-NO-INPUT` (readIdempotentNoopMeta reads the pre-437 block), `C437-NO-INPUT-LABEL` (a pre-437 skipped tap is labelled no input sent too) |
+| old iOS `fillSubmit { sent, reason }` blocks | **Read.** They still derive the input evidence. New runs add `outcome` (sent, not-sent, unavailable, failed) and an optional `detail`. | `C437-INPUT-EVIDENCE` (a pre-437 iOS submit block still derives) |
+| `fillReread` blocks without a `fillVerdict` | **Read.** A pre-437 result still counts as one fill input. | `compound-coverage.test.ts` (`437 D-06` cells) |
+| new optional `fillVerdict`, `fillRefusal`, `shellAction`, `idempotentNoop.inputSent` and `SubActionEvidence.operationEvidence.input` | **Written by new runs, optional to readers.** `CURRENT_HANDOFF_SCHEMA_VERSION` stays 7. The input evidence never carries the typed or read-back text. | `C437-KEY-SETS`, `C437-INPUT-EVIDENCE` |
+
+### The instruments that notice a return
+
+- **`pnpm run validate:arch`** runs the 437 census after the 436 file. It also runs in the
+  workspace's `turbo test`, so a second classifier, a success-shaped no-op, a value-writing or
+  key-event script, keyboard typing of fill text, a fall-through between input paths, or a tracked
+  app package or phase fixture reds by name on the commit that adds it.
+- **The 434 gate** (`pnpm run gate:local`) must execute and pass all 218 listed 437 cells. The ten
+  live cells are conditional entries: when they are not run, the gate counts them as registered
+  skips, never as passes. No mutation driver was added (D-19).
+
+### Not observed, stated as such
+
+- **Only the combinations installed on this Mac ran live** (D-23): the Pixel_10_Pro AVD (Android 17,
+  API 37.1, `google_apis_ps16k` arm64-v8a) and the iPhone 18 Pro simulator (iOS 27.0), with Appium
+  3.7.0, UiAutomator2 7.0.0 and XCUITest 10.25.0, on macOS 27.0.1 on an Apple M2 Pro. Other Appium
+  and driver versions, API 33, x86_64 Linux and the Docker image (`docker/Dockerfile.android`
+  installs Appium unpinned), physical devices and device farms are preview/unverified, never passing.
+- **agent-qa's live cells drive Settings only.** The live fill and submit proof on a real app, with
+  the exact text received and the submission count, is an external live measurement that agent-qa
+  never reads (D-19, D-22); its result is a data point that gates nothing.
+- **No live model ran** in agent-qa's cells: a scripted planner and verifier drive the real loop.
+- **436's two `C436-IOS-LIVE` cells ran live for the first time** (437-09, at `26ca50c31`) and failed
+  2 of 2 in their own `beforeEach`, which assigns over WebdriverIO's read-only `driver.execute`
+  (WINDOWS #564, a test-only defect, deferred). Their register entries say so.
+
+### Reconciliation
+
+D-06 narrows `spec/v2/tools-and-actions.md` §12 item 11 (separators replace the digits-only and
+whitespace-collapse rules), and D-19 and D-21 move fixtures and device proof out of agent-qa. Their
+reconciliations are recorded in `.planning/REQUIREMENTS.md` by 437-16. The fix-tap change was made
+by the owner's decision during 437-09 and is disclosed in that plan's summary.
