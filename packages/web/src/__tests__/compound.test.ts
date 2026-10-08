@@ -184,7 +184,10 @@ describe('WebPlatformAdapter compound behaviors (RED — Wave-0)', () => {
 
       expect(result.success).toBe(false)
       expect(result.error).toMatch(/reads .* after typing .* re-observe and retry/i)
-      expect(result.metadata?.fillReread).toEqual({ expected: 'intended', actual: 'wrong' })
+      expect(result.metadata).toEqual({
+        fillReread: { expected: 'intended', actual: 'wrong' },
+        fillVerdict: { verb: 'fill', verdict: 'mismatch' },
+      })
       // single-shot typing — no silent re-attempt (D-08)
       expect(locator.fill).toHaveBeenCalledTimes(1)
     })
@@ -214,6 +217,76 @@ describe('WebPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       // never fabricate a re-read pair when nothing is readable
       expect(result.success).toBe(true)
       expect(result.metadata?.fillReread).toBeUndefined()
+      expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'unverified' })
+    })
+  })
+
+  describe('C437-FILL-WEB', () => {
+    it('a re-read with formatting separators records normalized and presses Enter when submit is set', async () => {
+      const ref = await setupWithEmailField(adapter)
+      inputValueReturn = '+1 392-074-1751'
+
+      const result = await adapter.execute({ type: 'fill', ref, text: '+13920741751', clearMode: 'replace', submit: true } as unknown as ExecAction)
+
+      expect(result.success).toBe(true)
+      expect(result.error).toBeUndefined()
+      expect(result.metadata).toEqual({
+        fillReread: { expected: '+13920741751', actual: '+1 392-074-1751' },
+        fillVerdict: { verb: 'fill', verdict: 'normalized' },
+      })
+      expect(calls.filter(c => c === 'press:Enter')).toHaveLength(1)
+    })
+
+    it('a re-read with merged whitespace records mismatch, returns the error and never presses Enter', async () => {
+      const ref = await setupWithEmailField(adapter)
+      inputValueReturn = 'foo  bar'
+
+      const result = await adapter.execute({ type: 'fill', ref, text: 'foo bar', clearMode: 'replace', submit: true } as unknown as ExecAction)
+
+      expect(result.success).toBe(false)
+      expect(result.error).toBe('field reads "foo  bar" after typing "foo bar" — re-observe and retry')
+      expect(result.metadata).toEqual({
+        fillReread: { expected: 'foo bar', actual: 'foo  bar' },
+        fillVerdict: { verb: 'fill', verdict: 'mismatch' },
+      })
+      expect(calls).not.toContain('press:Enter')
+    })
+
+    it('an unreadable value keeps the early return (success, no Enter) and records unverified', async () => {
+      const ref = await setupWithEmailField(adapter)
+      inputValueThrows = true
+      evaluateReturn = undefined
+
+      const result = await adapter.execute({ type: 'fill', ref, text: 'hello', clearMode: 'replace', submit: true } as unknown as ExecAction)
+
+      expect(result.success).toBe(true)
+      expect(result.error).toBeUndefined()
+      expect(result.metadata).toEqual({ fillVerdict: { verb: 'fill', verdict: 'unverified' } })
+      expect(calls).not.toContain('press:Enter')
+    })
+
+    it('an exact re-read records exact beside fillReread', async () => {
+      const ref = await setupWithEmailField(adapter)
+      inputValueReturn = 'hello'
+
+      const result = await adapter.execute({ type: 'fill', ref, text: 'hello', clearMode: 'replace', submit: false } as unknown as ExecAction)
+
+      expect(result.metadata).toEqual({
+        fillReread: { expected: 'hello', actual: 'hello' },
+        fillVerdict: { verb: 'fill', verdict: 'exact' },
+      })
+    })
+
+    it('a password field records unverified with secure true and never the raw value', async () => {
+      const ref = await setupWithEmailField(adapter)
+      typeAttrReturn = 'password'
+      inputValueReturn = 'sup3rSecret'
+
+      const result = await adapter.execute({ type: 'fill', ref, text: 'sup3rSecret', clearMode: 'replace', submit: false } as unknown as ExecAction)
+
+      expect(result.success).toBe(true)
+      expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'unverified', secure: true })
+      expect(JSON.stringify(result)).not.toContain('sup3rSecret')
     })
   })
 

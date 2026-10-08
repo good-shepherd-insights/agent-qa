@@ -71,19 +71,26 @@ export async function runWebFillCompound(
   const actual = await safeInputValue(locator)
   const box = boundingBox ? { boundingBox } : {}
 
-  // Unreadable value ⇒ honest success with NO fillReread block (never fabricate, Pitfall 8).
+  // Unreadable value: success with no fillReread block and no Enter, recorded unverified (437 D-06).
   if (actual === undefined) {
-    return { success: true, ...box }
+    return { success: true, ...box, metadata: { fillVerdict: { verb: 'fill', verdict: 'unverified' } } }
   }
 
   const verdict = compareFillReread({ expected, actual, secure })
-  // Enter AFTER the re-read, only when the text landed (D-07).
   if (verdict.ok && action.submit) {
     await locator.press('Enter')
   }
+  const metadata = {
+    ...(verdict.meta ? { fillReread: verdict.meta } : {}),
+    fillVerdict: {
+      verb: 'fill',
+      verdict: verdict.verdict,
+      ...(verdict.secure ? { secure: true } : {}),
+    },
+  }
   return verdict.ok
-    ? { success: true, ...box, metadata: { fillReread: verdict.meta } }
-    : { success: false, error: verdict.selfCorrectingError, ...box, metadata: { fillReread: verdict.meta } }
+    ? { success: true, ...box, metadata }
+    : { success: false, error: verdict.selfCorrectingError, ...box, metadata }
 }
 
 function deltaFor(direction: Direction, magnitude: number): { dx: number; dy: number; axis: 'horizontal' | 'vertical' } {

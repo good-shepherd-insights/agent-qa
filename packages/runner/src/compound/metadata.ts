@@ -6,14 +6,18 @@
 // degradation. Each block rides the existing ActionResult.metalabelled by its own key — no
 // ActionResult break (schema-DTO promotion is deferred to Phase 361).
 //
-// The readers mirror oracle.ts's private readFillReread defensive guard byte-for-byte:
-// presence + typeof checks, undefined otherwise. FillRereadMeta fields are pinned to the
-// 358 seam — `{ expected, actual }`, both string — and MUST NOT be renamed or nested.
+// The readers narrow by presence, typeof and closed-set membership, and return undefined
+// otherwise. FillRereadMeta stays `{ expected, actual }`, both string, never renamed or nested.
 
-import type { ClipboardEvidence, DownloadEvidence } from '@vostride/agent-qa-schema'
+import type {
+  ClipboardEvidence,
+  DownloadEvidence,
+  FillVerdict,
+  InputPath,
+} from '@vostride/agent-qa-schema'
 import type { ActionResult } from '../platform.js'
 
-/** EXEC-01 fill re-read verdict block. Byte-pinned to the 358 oracle/classifier readers. */
+/** The values a readable fill compared: requested and read back (sentinels for a secure field). */
 export interface FillRereadMeta {
   expected: string
   actual: string
@@ -230,6 +234,31 @@ export function readFillRefusalMeta(actionResult?: MetadataCarrier): FillRefusal
     }
   }
   return undefined
+}
+
+/** How a fill or clear's read-back compared with the requested text (437 D-06). Keyed `fillVerdict`. */
+export interface FillVerdictMeta {
+  verb: 'fill' | 'clearText'
+  verdict: FillVerdict
+  path?: InputPath
+  secure?: true
+}
+
+const FILL_VERDICT_VERBS = new Set<FillVerdictMeta['verb']>(['fill', 'clearText'])
+const FILL_VERDICTS = new Set<FillVerdict>(['exact', 'normalized', 'mismatch', 'unverified'])
+const INPUT_PATHS = new Set<InputPath>(['native', 'webview', 'keyboard'])
+
+export function readFillVerdictMeta(actionResult?: MetadataCarrier): FillVerdictMeta | undefined {
+  const raw = actionResult?.metadata?.['fillVerdict']
+  if (!raw || typeof raw !== 'object') return undefined
+  const { verb, verdict, path, secure } = raw as Record<string, unknown>
+  if (!isMember(FILL_VERDICT_VERBS, verb) || !isMember(FILL_VERDICTS, verdict)) return undefined
+  if (path !== undefined && !isMember(INPUT_PATHS, path)) return undefined
+  if (secure !== undefined && secure !== true) return undefined
+  const meta: FillVerdictMeta = { verb, verdict }
+  if (path !== undefined) meta.path = path
+  if (secure === true) meta.secure = true
+  return meta
 }
 
 export function readFillSubmitMeta(actionResult?: MetadataCarrier): FillSubmitMeta | undefined {

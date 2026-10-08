@@ -52,23 +52,28 @@ describe('EXEC-01 — Fill executes as one atomic compound producing a single Ac
   it('a genuine value-loss mismatch is an honest failure verdict with the byte-pinned fillReread shape and a §7.1 self-correcting error', () => {
     const miss = compareFillReread({ expected: 'hello', actual: 'helo', secure: false })
     expect(miss.ok).toBe(false)
-    // The 358-pinned seam: metadata.fillReread = { expected, actual }, both strings, never nested.
+    expect(miss.verdict).toBe('mismatch')
+    // metadata.fillReread = { expected, actual }, both strings, never nested.
     expect(miss.meta).toEqual({ expected: 'hello', actual: 'helo' })
-    expect(Object.keys(miss.meta).sort()).toEqual(['actual', 'expected'])
+    expect(Object.keys(miss.meta ?? {}).sort()).toEqual(['actual', 'expected'])
     expect(miss.selfCorrectingError).toContain('re-observe and retry')
   })
 
-  it('auto-formatting inputs pass on the normalized re-compare (a card number the field re-groups is not a loss)', () => {
+  it('a card number the field re-groups with spaces is normalized, not a loss (437 D-06)', () => {
     const formatted = compareFillReread({ expected: '4242424242424242', actual: '4242 4242 4242 4242', secure: false })
     expect(formatted.ok).toBe(true)
+    expect(formatted.verdict).toBe('normalized')
+    expect(formatted.meta).toEqual({ expected: '4242424242424242', actual: '4242 4242 4242 4242' })
     expect(formatted.selfCorrectingError).toBeUndefined()
   })
 
-  it('secure fields verify non-emptiness only and NEVER echo the raw value (T-359-02 masking)', () => {
+  it('secure fields are never exact: non-empty is unverified, and the raw value is never echoed (T-359-02 masking)', () => {
     const secure = compareFillReread({ expected: 'topSecretPw', actual: 'topSecretPw', secure: true })
     expect(secure.ok).toBe(true)
-    expect(secure.meta.expected).not.toContain('topSecret')
-    expect(secure.meta.actual).not.toContain('topSecret')
+    expect(secure.verdict).toBe('unverified')
+    expect(secure.secure).toBe(true)
+    expect(secure.meta?.expected).not.toContain('topSecret')
+    expect(secure.meta?.actual).not.toContain('topSecret')
     // An empty secure re-read (nothing landed) still fails honestly.
     expect(compareFillReread({ expected: 'topSecretPw', actual: '', secure: true }).ok).toBe(false)
   })

@@ -145,7 +145,10 @@ describe('FarmWebAdapter compound behaviors', () => {
 
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/reads .* after typing .* re-observe and retry/i)
-    expect(result.metadata?.fillReread).toEqual({ expected: 'intended', actual: 'wrong' })
+    expect(result.metadata).toEqual({
+      fillReread: { expected: 'intended', actual: 'wrong' },
+      fillVerdict: { verb: 'fill', verdict: 'mismatch' },
+    })
     expect(locator.fill).toHaveBeenCalledTimes(1)
   })
 

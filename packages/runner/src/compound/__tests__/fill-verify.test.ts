@@ -1,90 +1,180 @@
-// RED scaffold (Wave 0, Phase 359 · EXEC-01 · D-06/D-07/D-08 · Pattern 2 · spec §12.11/§7.1).
-// Pins the pure fill re-read comparator BEFORE Plan 03 implements it. The comparator is the
-// platform-neutral verdict machine the three adapters call after clear→type→RE-READ: exact
-// compare, then whitespace/digits normalization, then honest failure with the §7.1
-// self-correcting error; secure fields verify non-emptiness only and NEVER echo the raw value.
-//
-// RED BY DESIGN: `../fill-verify.js` does not exist until Plan 03 — the unresolved import IS
-// the intended failure (vitest strips types, so the runtime module-resolution error fails the
-// whole suite; `tsc -p .` stays green via the @ts-expect-error directive that Plan 03 removes).
-//
-// Pinned contract (Plan 03 implements to it exactly):
-//   compareFillReread({ expected: string; actual: string; secure: boolean })
-//     → { ok: boolean; meta: { expected: string; actual: string }; selfCorrectingError?: string }
-//   - ok=true on exact / whitespace-collapsed / digits-only-equal / secure-nonempty.
-//   - ok=false ⇒ selfCorrectingError = `field reads "<actual>" after typing "<expected>" — re-observe and retry`.
-//   - meta.expected/meta.actual are sentinel forms for secure fields (NEVER the raw value).
-//   - meta sorted keys are EXACTLY ["actual","expected"] (the 358 oracle byte-pin, D-04).
+// The shared fill comparator (437 D-06, D-07, D-16): four verdicts, kept apart. Exact equality;
+// normalized when the field only inserted separator characters around the typed text; mismatch for
+// anything else; unverified when nothing was read back. Secure fields are never exact.
 import { describe, it, expect } from 'vitest'
-import { compareFillReread } from '../fill-verify.js'
+import { compareFillReread, FILL_SEPARATORS } from '../fill-verify.js'
 
-describe('compareFillReread — exact and normalized matches (D-06)', () => {
-  it('(1) exact match passes', () => {
-    const r = compareFillReread({ expected: 'hello world', actual: 'hello world', secure: false })
-    expect(r.ok).toBe(true)
-  })
+const ERROR = (actual: string, expected: string) =>
+  `field reads "${actual}" after typing "${expected}" — re-observe and retry`
 
-  it('(2) a whitespace-only difference passes via collapse-and-trim normalization', () => {
-    const r = compareFillReread({ expected: 'foo bar', actual: 'foo  bar', secure: false })
-    expect(r.ok).toBe(true)
-  })
-
-  it('(3a) digits-only expected passes despite auto-formatting spaces (card fixture)', () => {
-    const r = compareFillReread({
-      expected: '4242424242424242',
-      actual: '4242 4242 4242 4242',
-      secure: false,
+describe('C437-FILL-VERDICT', () => {
+  describe('exact', () => {
+    it('a read-back equal to the requested text is exact', () => {
+      const r = compareFillReread({ expected: 'abc', actual: 'abc', secure: false })
+      expect(r).toEqual({ verdict: 'exact', ok: true, meta: { expected: 'abc', actual: 'abc' } })
     })
-    expect(r.ok).toBe(true)
+
+    it('the meta keeps exactly the two string keys the existing readers pin', () => {
+      const r = compareFillReread({ expected: 'abc', actual: 'abc', secure: false })
+      const meta = r.meta as unknown as Record<string, unknown>
+      expect(Object.keys(meta).sort()).toEqual(['actual', 'expected'])
+    })
   })
 
-  it('(3b) a non-digit expected with a differing actual does NOT pass through digits normalization', () => {
-    const r = compareFillReread({ expected: 'hello', actual: 'h3llo', secure: false })
-    expect(r.ok).toBe(false)
+  describe('normalized', () => {
+    it('P2: a phone number the field formatted with spaces and hyphens is normalized and keeps both values', () => {
+      const r = compareFillReread({ expected: '+13920741751', actual: '+1 392-074-1751', secure: false })
+      expect(r.verdict).toBe('normalized')
+      expect(r.ok).toBe(true)
+      expect(r.meta).toEqual({ expected: '+13920741751', actual: '+1 392-074-1751' })
+      expect(r.selfCorrectingError).toBeUndefined()
+    })
+
+    it('a card number grouped with spaces is normalized', () => {
+      const r = compareFillReread({ expected: '4111111111111111', actual: '4111 1111 1111 1111', secure: false })
+      expect(r.verdict).toBe('normalized')
+    })
+
+    it("':' is not a separator, so '0930' read back as '09:30' is a mismatch", () => {
+      const r = compareFillReread({ expected: '0930', actual: '09:30', secure: false })
+      expect(r.verdict).toBe('mismatch')
+      expect(r.ok).toBe(false)
+    })
+
+    it("an inserted no-break space is normalized ('ab' vs 'a\\u00a0b')", () => {
+      const r = compareFillReread({ expected: 'ab', actual: 'a b', secure: false })
+      expect(r.verdict).toBe('normalized')
+    })
+
+    it("an inserted narrow no-break space is normalized ('ab' vs 'a\\u202fb')", () => {
+      const r = compareFillReread({ expected: 'ab', actual: 'a b', secure: false })
+      expect(r.verdict).toBe('normalized')
+    })
+
+    it('brackets and a space inserted together are normalized', () => {
+      const r = compareFillReread({ expected: '13920741751', actual: '1 (392) 074-1751', secure: false })
+      expect(r.verdict).toBe('normalized')
+    })
+
+    it('an inserted space that joins another space is a mismatch (whitespace changed)', () => {
+      expect(compareFillReread({ expected: 'ab', actual: 'a  b', secure: false }).verdict).toBe('mismatch')
+      expect(compareFillReread({ expected: 'a b', actual: 'a  b', secure: false }).verdict).toBe('mismatch')
+    })
+
+    it('the separator set is exactly the A6 set: no tab, newline or comma', () => {
+      expect([...FILL_SEPARATORS].sort()).toEqual(
+        [' ', ' ', ' ', ' ', '-', '(', ')', '[', ']', '{', '}', '.', '/'].sort(),
+      )
+      for (const ch of ['\t', '\n', ',', ':']) {
+        expect(compareFillReread({ expected: 'ab', actual: `a${ch}b`, secure: false }).verdict).toBe('mismatch')
+      }
+    })
   })
-})
 
-describe('compareFillReread — real mismatch mints the §7.1 self-correcting error (D-08)', () => {
-  it('(4) a genuine value-loss returns not-ok with the exact lowercase/em-dash/imperative form', () => {
-    const r = compareFillReread({ expected: 'hello', actual: 'world', secure: false })
-    expect(r.ok).toBe(false)
-    expect(r.selfCorrectingError).toBe('field reads "world" after typing "hello" — re-observe and retry')
-  })
-})
+  describe('mismatch', () => {
+    const cases: Array<[string, string, string]> = [
+      ['merged whitespace (the old collapse cell flips)', 'foo bar', 'foo  bar'],
+      ['P14: a blank line merged into one newline', 'a\n\nb', 'a\nb'],
+      ['trimmed padding', '  pad  ', 'pad'],
+      ['a case change', 'Abc', 'abc'],
+      ['truncation', 'abcdef', 'abc'],
+      ['a multi-line text folded onto one line', 'l1\n\nl3', 'l1  l3'],
+    ]
+    for (const [label, expected, actual] of cases) {
+      it(`${label} is a mismatch`, () => {
+        const r = compareFillReread({ expected, actual, secure: false })
+        expect(r.verdict).toBe('mismatch')
+        expect(r.ok).toBe(false)
+        expect(r.meta).toEqual({ expected, actual })
+      })
+    }
 
-const SECRET = 'hunter2-SUPER-secret'
-const SECRET_LEN8 = 'passw0rd'
-
-describe('compareFillReread — secure fields verify length only, never leak the value (D-06, T-359-02)', () => {
-
-  it('(5) secure with a non-empty actual passes AND the raw value never appears in the result', () => {
-    const r = compareFillReread({ expected: SECRET, actual: SECRET, secure: true })
-    expect(r.ok).toBe(true)
-    // The whole serialized verdict — meta included — must carry only sentinel forms.
-    expect(JSON.stringify(r)).not.toContain(SECRET)
-  })
-
-  it('(6) secure with an empty actual fails (nothing landed)', () => {
-    const r = compareFillReread({ expected: SECRET, actual: '', secure: true })
-    expect(r.ok).toBe(false)
-  })
-})
-
-describe('compareFillReread — the fillReread meta byte-pin (D-04, 358 oracle seam)', () => {
-  it('(7) meta sorted keys are exactly ["actual","expected"] with string values', () => {
-    const r = compareFillReread({ expected: 'abc', actual: 'abc', secure: false })
-    const meta = r.meta as unknown as Record<string, unknown>
-    expect(Object.keys(meta).sort()).toEqual(['actual', 'expected'])
-    expect(typeof meta['expected']).toBe('string')
-    expect(typeof meta['actual']).toBe('string')
+    it('a mismatch keeps the exact self-correcting error text', () => {
+      const r = compareFillReread({ expected: 'hello', actual: 'world', secure: false })
+      expect(r.selfCorrectingError).toBe(ERROR('world', 'hello'))
+    })
   })
 
-  it('(7b) the secure meta keeps the same two-key shape (sentinels, not raw values)', () => {
-    const r = compareFillReread({ expected: SECRET_LEN8, actual: SECRET_LEN8, secure: true })
-    const meta = r.meta as unknown as Record<string, unknown>
-    expect(Object.keys(meta).sort()).toEqual(['actual', 'expected'])
-    expect(typeof meta['expected']).toBe('string')
-    expect(typeof meta['actual']).toBe('string')
-    expect(JSON.stringify(meta)).not.toContain(SECRET_LEN8)
+  describe('unverified', () => {
+    it('no readable value is unverified: not a failure, no meta, no error', () => {
+      const r = compareFillReread({ expected: 'hello', actual: undefined, secure: false })
+      expect(r).toEqual({ verdict: 'unverified', ok: true })
+    })
+  })
+
+  describe('secure fields', () => {
+    const SECRET = 'hunter2-SUPER-secret'
+
+    it('a non-empty secure read-back is unverified with secure true and length-sentinel meta, never the raw value', () => {
+      const r = compareFillReread({ expected: SECRET, actual: SECRET, secure: true })
+      expect(r.verdict).toBe('unverified')
+      expect(r.secure).toBe(true)
+      expect(r.ok).toBe(true)
+      expect(r.selfCorrectingError).toBeUndefined()
+      expect(r.meta).toEqual({ expected: `<len:${SECRET.length}>`, actual: `<len:${SECRET.length}>` })
+      expect(JSON.stringify(r)).not.toContain(SECRET)
+    })
+
+    it('an empty secure read-back is a mismatch with differing sentinels and the error', () => {
+      const r = compareFillReread({ expected: SECRET, actual: '', secure: true })
+      expect(r.verdict).toBe('mismatch')
+      expect(r.ok).toBe(false)
+      expect(r.meta).toEqual({ expected: `<len:${SECRET.length}>`, actual: '<len:0>' })
+      expect(r.selfCorrectingError).toBe(ERROR('<len:0>', `<len:${SECRET.length}>`))
+      expect(JSON.stringify(r)).not.toContain(SECRET)
+    })
+
+    it('a secure field is never exact', () => {
+      for (const actual of [SECRET, 'x', '', undefined]) {
+        expect(compareFillReread({ expected: SECRET, actual, secure: true }).verdict).not.toBe('exact')
+      }
+    })
+  })
+
+  describe('clearText (D-16)', () => {
+    it('an empty read-back is exact', () => {
+      const r = compareFillReread({ expected: '', actual: '', secure: false, verb: 'clearText' })
+      expect(r.verdict).toBe('exact')
+      expect(r.ok).toBe(true)
+    })
+
+    it('a single leftover space is a mismatch', () => {
+      const r = compareFillReread({ expected: '', actual: ' ', secure: false, verb: 'clearText' })
+      expect(r.verdict).toBe('mismatch')
+      expect(r.ok).toBe(false)
+      expect(r.selfCorrectingError).toBeDefined()
+    })
+
+    it('leftover text is a mismatch', () => {
+      const r = compareFillReread({ expected: '', actual: 'x', secure: false, verb: 'clearText' })
+      expect(r.verdict).toBe('mismatch')
+      expect(r.selfCorrectingError).toContain('"x"')
+    })
+
+    it('an unreadable read-back is unverified', () => {
+      const r = compareFillReread({ expected: '', actual: undefined, secure: false, verb: 'clearText' })
+      expect(r).toEqual({ verdict: 'unverified', ok: true })
+    })
+
+    it('a secure clear is unverified with secure true', () => {
+      for (const actual of ['', 'xxxx', undefined]) {
+        const r = compareFillReread({ expected: '', actual, secure: true, verb: 'clearText' })
+        expect(r.verdict).toBe('unverified')
+        expect(r.secure).toBe(true)
+        expect(r.ok).toBe(true)
+      }
+    })
+  })
+
+  describe('D-08 mixed text', () => {
+    const MIX = `  a,b;c|d "q" 's' é ü 中文 😀\tz  `
+
+    it('the single-line Unicode mix compared with itself is exact', () => {
+      expect(compareFillReread({ expected: MIX, actual: MIX, secure: false }).verdict).toBe('exact')
+    })
+
+    it('the same mix with its trailing spaces trimmed is a mismatch', () => {
+      expect(compareFillReread({ expected: MIX, actual: MIX.trimEnd(), secure: false }).verdict).toBe('mismatch')
+    })
   })
 })

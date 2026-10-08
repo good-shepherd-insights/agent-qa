@@ -1,63 +1,122 @@
-// Pure fill re-read comparator (Phase 359 · EXEC-01 · D-06/D-07/D-08 · spec §12.11/§7.1).
+// The shared fill and clear comparator for web, Android and iOS (437 D-06, D-07, D-16).
 //
-// CRITICAL: provider-neutral + storage-neutral. No driver imports, no node:* imports — the
-// platform-neutral verdict machine the three adapters call after clear→type→RE-READ. Exact
-// compare first, then whitespace-collapse, then digits-only re-compare (auto-formatting inputs
-// like card numbers); a genuine value-loss mints the §7.1 self-correcting error. Secure fields
-// verify non-emptiness only and NEVER echo the raw value — meta carries length sentinels so the
-// 358 oracle's expected===actual comparison still yields an honest verdict without leaking
-// (T-359-02). No internal retry (D-08) — the comparator only reports; the 358 ladder mediates.
+// Provider- and storage-neutral: no driver and no node:* imports. Four verdicts, kept apart:
+// - exact: the read-back equals the requested text;
+// - normalized: the field only inserted characters from FILL_SEPARATORS, every typed character is
+//   still there, in order, and no inserted space widened or joined a whitespace run;
+// - mismatch: anything else, including lost, merged or trimmed whitespace, case changes and
+//   truncation; it carries the self-correcting error;
+// - unverified: nothing could be read back; not a failure, never presented as verified.
+// A secure field is never exact: non-empty is unverified, empty is a mismatch, and its meta carries
+// length sentinels, never the value. A clear compares against the empty string.
 
+import type { FillVerdict } from '@vostride/agent-qa-schema'
 import type { FillRereadMeta } from './metadata.js'
 
 export interface FillVerifyInput {
   expected: string
-  actual: string
+  actual: string | undefined
   secure: boolean
+  verb?: 'fill' | 'clearText'
 }
 
 export interface FillVerifyResult {
+  verdict: FillVerdict
   ok: boolean
-  meta: FillRereadMeta
+  secure?: true
+  meta?: FillRereadMeta
   selfCorrectingError?: string
 }
 
+export const FILL_SEPARATORS: ReadonlySet<string> = new Set([
+  ' ',
+  ' ',
+  ' ',
+  ' ',
+  '-',
+  '(',
+  ')',
+  '[',
+  ']',
+  '{',
+  '}',
+  '.',
+  '/',
+])
+
 export function compareFillReread(input: FillVerifyInput): FillVerifyResult {
-  const { expected, actual, secure } = input
+  const { actual, secure } = input
+  const expected = input.verb === 'clearText' ? '' : input.expected
 
   if (secure) {
-    const ok = actual.length > 0
+    if (input.verb === 'clearText' || actual === undefined) {
+      return { verdict: 'unverified', ok: true, secure: true }
+    }
     const expectedSentinel = `<len:${expected.length}>`
-    // On a hit, mirror the sentinel so the oracle's expected===actual read stays honest;
-    // on a miss (nothing landed) let the length sentinels differ so the mismatch propagates.
-    const actualSentinel = ok ? expectedSentinel : `<len:${actual.length}>`
-    return buildResult(ok, expectedSentinel, actualSentinel)
+    if (actual.length > 0) {
+      return {
+        verdict: 'unverified',
+        ok: true,
+        secure: true,
+        meta: { expected: expectedSentinel, actual: expectedSentinel },
+      }
+    }
+    return mismatch(expectedSentinel, `<len:${actual.length}>`, input.verb)
   }
 
-  return matches(expected, actual)
-    ? buildResult(true, expected, actual)
-    : buildResult(false, expected, actual)
-}
-
-function matches(expected: string, actual: string): boolean {
-  if (actual === expected) return true
-  const collapse = (s: string): string => s.replace(/\s+/g, ' ').trim()
-  if (collapse(actual) === collapse(expected)) return true
-  // Digits-only normalization applies ONLY when the typed text (minus whitespace) is all digits
-  // — card/OTP/date auto-formatting inserts separators the field owns.
-  if (/^\d+$/.test(expected.replace(/\s/g, ''))) {
-    const digits = (s: string): string => s.replace(/\D+/g, '')
-    if (digits(actual) === digits(expected)) return true
+  if (actual === undefined) return { verdict: 'unverified', ok: true }
+  const meta: FillRereadMeta = { expected, actual }
+  if (actual === expected) return { verdict: 'exact', ok: true, meta }
+  if (expected !== '' && insertedSeparatorsOnly(expected, actual)) {
+    return { verdict: 'normalized', ok: true, meta }
   }
-  return false
+  return mismatch(expected, actual, input.verb)
 }
 
-function buildResult(ok: boolean, metaExpected: string, metaActual: string): FillVerifyResult {
-  const meta: FillRereadMeta = { expected: metaExpected, actual: metaActual }
-  if (ok) return { ok: true, meta }
+const SPACES: ReadonlySet<string> = new Set([' ', ' ', ' ', ' '])
+
+// Greedy is exact here: a skipped read-back character must be a separator, so consuming the
+// earliest equal character is never worse than skipping it. An inserted space must stand alone:
+// one that widens or joins a whitespace run changed the typed whitespace, which is a mismatch.
+function insertedSeparatorsOnly(expected: string, actual: string): boolean {
+  const typed = Array.from(expected)
+  const read = Array.from(actual)
+  const inserted: boolean[] = []
+  let i = 0
+  for (const ch of read) {
+    if (i < typed.length && ch === typed[i]) {
+      i++
+      inserted.push(false)
+    } else if (FILL_SEPARATORS.has(ch)) {
+      inserted.push(true)
+    } else {
+      return false
+    }
+  }
+  if (i !== typed.length) return false
+  return read.every(
+    (ch, k) =>
+      !(inserted[k] && SPACES.has(ch)) ||
+      (!isWhitespace(read[k - 1]) && !isWhitespace(read[k + 1])),
+  )
+}
+
+function isWhitespace(ch: string | undefined): boolean {
+  return ch !== undefined && /\s/u.test(ch)
+}
+
+function mismatch(
+  metaExpected: string,
+  metaActual: string,
+  verb: FillVerifyInput['verb'],
+): FillVerifyResult {
   return {
+    verdict: 'mismatch',
     ok: false,
-    meta,
-    selfCorrectingError: `field reads "${metaActual}" after typing "${metaExpected}" — re-observe and retry`,
+    meta: { expected: metaExpected, actual: metaActual },
+    selfCorrectingError:
+      verb === 'clearText'
+        ? `field still reads "${metaActual}" after clearing — re-observe and retry`
+        : `field reads "${metaActual}" after typing "${metaExpected}" — re-observe and retry`,
   }
 }

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   readFillRefusalMeta,
   readFillSubmitMeta,
+  readFillVerdictMeta,
   readScrollUntilVisibleMeta,
   SCROLL_OUTCOMES_READ_ONLY,
   SCROLL_OUTCOMES_WRITTEN,
@@ -52,6 +53,36 @@ describe('readFillSubmitMeta', () => {
     expect(readFillSubmitMeta(carrier({ fillSubmit: { sent: 'yes' } }))).toBeUndefined()
     expect(readFillSubmitMeta(carrier({ fillSubmit: { sent: false, reason: 'other' } }))).toBeUndefined()
     expect(readFillSubmitMeta(carrier({ fillSubmit: { sent: false, reason: 3 } }))).toBeUndefined()
+  })
+})
+
+describe('readFillVerdictMeta (C437-FILL-VERDICT)', () => {
+  it('reads every verdict for both verbs, with and without path and secure', () => {
+    for (const verb of ['fill', 'clearText'] as const) {
+      for (const verdict of ['exact', 'normalized', 'mismatch', 'unverified'] as const) {
+        expect(readFillVerdictMeta(carrier({ fillVerdict: { verb, verdict } }))).toEqual({ verb, verdict })
+        for (const path of ['native', 'webview', 'keyboard'] as const) {
+          expect(readFillVerdictMeta(carrier({ fillVerdict: { verb, verdict, path } }))).toEqual({ verb, verdict, path })
+        }
+      }
+    }
+    expect(
+      readFillVerdictMeta(carrier({ fillVerdict: { verb: 'fill', verdict: 'unverified', secure: true } })),
+    ).toEqual({ verb: 'fill', verdict: 'unverified', secure: true })
+    expect(
+      readFillVerdictMeta(carrier({ fillVerdict: { verb: 'fill', verdict: 'unverified', path: 'keyboard', secure: true } })),
+    ).toEqual({ verb: 'fill', verdict: 'unverified', path: 'keyboard', secure: true })
+  })
+
+  it('rejects an unknown verdict, verb or path, and any other shape miss', () => {
+    expect(readFillVerdictMeta(undefined)).toBeUndefined()
+    expect(readFillVerdictMeta(carrier({}))).toBeUndefined()
+    expect(readFillVerdictMeta(carrier({ fillVerdict: 'exact' }))).toBeUndefined()
+    expect(readFillVerdictMeta(carrier({ fillVerdict: { verb: 'fill', verdict: 'verified' } }))).toBeUndefined()
+    expect(readFillVerdictMeta(carrier({ fillVerdict: { verb: 'tap', verdict: 'exact' } }))).toBeUndefined()
+    expect(readFillVerdictMeta(carrier({ fillVerdict: { verb: 'fill', verdict: 'exact', path: 'ime' } }))).toBeUndefined()
+    expect(readFillVerdictMeta(carrier({ fillVerdict: { verb: 'fill', verdict: 'exact', secure: 'yes' } }))).toBeUndefined()
+    expect(readFillVerdictMeta(carrier({ fillVerdict: { verdict: 'exact' } }))).toBeUndefined()
   })
 })
 
