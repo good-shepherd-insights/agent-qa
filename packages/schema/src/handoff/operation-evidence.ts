@@ -26,10 +26,37 @@ export interface ClipboardEvidence {
   readBack: 'matched' | 'mismatched' | 'unavailable'
 }
 
+/** How a fill's read-back compared with the requested text (437 D-05). */
+export type FillVerdict = 'exact' | 'normalized' | 'mismatch' | 'unverified'
+
+/** Which route delivered a fill's text (437 D-05). */
+export type InputPath = 'native' | 'webview' | 'keyboard'
+
+/** What happened to a requested submit after a fill (437 D-05). */
+export type SubmitOutcome = 'sent' | 'not-sent' | 'unavailable' | 'failed'
+
+/** Why a requested submit was not sent (437 D-05). */
+export type SubmitReason = 'mismatch' | 'multi-line-field' | 'input-failed'
+
+/** What one action's input actually delivered (437 D-05). `currentState` is masked. */
+export interface InputEvidence {
+  verb: string
+  inputSent: boolean
+  currentState?: string
+  fillVerdict?: FillVerdict
+  inputPath?: InputPath
+  secure?: true
+  submit?: SubmitOutcome
+  submitReason?: SubmitReason
+  unavailableReason?: string
+}
+
 /** Evidence that rides the action that produced it (D-22). */
 export interface OperationEvidence {
   downloads?: DownloadEvidence[]
   clipboard?: ClipboardEvidence[]
+  /** Optional-additive at handoff schema version 7 (437 D-05). */
+  input?: InputEvidence[]
 }
 
 /** Whether the step's platform could capture each operation at all (D-23). */
@@ -55,6 +82,18 @@ export const CLIPBOARD_EVIDENCE_KEYS = [
   'truncated',
   'readBack',
 ] as const satisfies readonly (keyof ClipboardEvidence)[]
+
+export const INPUT_EVIDENCE_KEYS = [
+  'verb',
+  'inputSent',
+  'currentState',
+  'fillVerdict',
+  'inputPath',
+  'secure',
+  'submit',
+  'submitReason',
+  'unavailableReason',
+] as const satisfies readonly (keyof InputEvidence)[]
 
 export const OPERATION_CAPTURE_AVAILABILITY_KEYS = [
   'download',

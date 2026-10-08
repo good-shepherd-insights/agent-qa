@@ -75,7 +75,13 @@ import {
   redactSecretValue,
   resolveSecretTemplatesInValue,
 } from './secrets.js'
-import { captureServedPromptTurn, estimateTokens, hasValidStepPosition, renderOperationEvidence } from './prompts.js'
+import {
+  captureServedPromptTurn,
+  estimateTokens,
+  hasValidStepPosition,
+  renderInputEvidence,
+  renderOperationEvidence,
+} from './prompts.js'
 import { EvidenceRecorder, collapseAnnotation, persistAriaEvidence, projectLegacyTrace } from './evidence.js'
 import type { RecordSubActionInput } from './evidence.js'
 import { maskToolExchanges } from './mask-exchanges.js'
@@ -88,6 +94,7 @@ import {
   readScrollUntilVisibleMeta,
   readDownloadMeta,
   readClipboardMeta,
+  readIdempotentNoopMeta,
   CLIPBOARD_TEXT_LIMIT,
   CLIPBOARD_TRUNCATION_MARKER,
 } from '../compound/metadata.js'
@@ -1599,21 +1606,31 @@ export async function executeStep(
 
     // 436 D-21/D-22: download and clipboard evidence ride the action that produced them. The adapter's metadata key is
     // removed from the recorded and emitted result, so only the typed, masked evidence persists
-    // (D-16), and the planner's history carries it as app-observed data.
-    const taken = takeOperationEvidence(execResult, maskValue)
+    // (D-16), and the planner's history carries it as app-observed data. 437 D-05: the input
+    // evidence is derived from the result's metadata, which keeps its own keys.
+    const taken = takeOperationEvidence(execResult, maskValue, action.type)
     execResult = taken.result
     const operationEvidence = taken.evidence
     const decisionEvidence: DecisionEvidence | undefined = operationEvidence !== undefined
       ? { ...(liveDecisionEvidence ?? {}), operationEvidence }
       : liveDecisionEvidence
-    const historyEvidence = operationEvidence !== undefined
-      ? { evidence: wrapAppObservedData(renderOperationEvidence(operationEvidence)) }
+    const renderedEvidence = operationEvidence !== undefined
+      ? renderOperationEvidence(operationEvidence)
+      : ''
+    const historyEvidence = renderedEvidence.length > 0
+      ? { evidence: wrapAppObservedData(renderedEvidence) }
       : {}
     if (operationEvidence?.downloads) {
       stepOperationEvidence.downloads = [...(stepOperationEvidence.downloads ?? []), ...operationEvidence.downloads]
     }
     if (operationEvidence?.clipboard) {
       stepOperationEvidence.clipboard = [...(stepOperationEvidence.clipboard ?? []), ...operationEvidence.clipboard]
+    }
+    const notableInput = operationEvidence?.input?.filter(
+      (entry) => renderInputEvidence(entry) !== undefined,
+    )
+    if (notableInput !== undefined && notableInput.length > 0) {
+      stepOperationEvidence.input = [...(stepOperationEvidence.input ?? []), ...notableInput]
     }
 
     // D-09 policy-denied terminal failure. A gate deny at ANY of the five dispatch paths ends the
@@ -1819,7 +1836,7 @@ export async function executeStep(
             stepInstruction, screenState, afterState, action,
             gate.attachImage ? verifyScreenshot : undefined,
             ports.abortSignal, gate.promptNote, activePredicate, verifierAuthorContext,
-            ...(stepOperationEvidence.downloads || stepOperationEvidence.clipboard ? [stepOperationEvidence] : []),
+            ...(hasOperationEvidence(stepOperationEvidence) ? [stepOperationEvidence] : []),
           ),
           ports.abortSignal,
         )
@@ -2769,26 +2786,37 @@ function operationCaptureAvailability(
 function takeOperationEvidence(
   execResult: ActionResult,
   mask: (value: string) => string,
+  verb: string,
 ): { result: ActionResult; evidence?: OperationEvidence } {
-  const raw = execResult.metadata
-  if (raw === undefined || (!('download' in raw) && !('clipboard' in raw))) return { result: execResult }
-  const downloads = readDownloadMeta(execResult)
-  const clipboard = readClipboardMeta(execResult)
-  const { download: _download, clipboard: _clipboard, ...metadata } = raw
-  void _download
-  void _clipboard
-  const result: ActionResult = { ...execResult }
-  if (Object.keys(metadata).length > 0) result.metadata = metadata
-  else delete result.metadata
   const evidence: OperationEvidence = {}
-  if (downloads !== undefined) {
-    evidence.downloads = downloads.map((download) => ({
-      ...download,
-      suggestedFilename: mask(download.suggestedFilename),
-    }))
+  const raw = execResult.metadata
+  let result = execResult
+  if (raw !== undefined && ('download' in raw || 'clipboard' in raw)) {
+    const downloads = readDownloadMeta(execResult)
+    const clipboard = readClipboardMeta(execResult)
+    const { download: _download, clipboard: _clipboard, ...metadata } = raw
+    void _download
+    void _clipboard
+    result = { ...execResult }
+    if (Object.keys(metadata).length > 0) result.metadata = metadata
+    else delete result.metadata
+    if (downloads !== undefined) {
+      evidence.downloads = downloads.map((download) => ({
+        ...download,
+        suggestedFilename: mask(download.suggestedFilename),
+      }))
+    }
+    if (clipboard !== undefined) evidence.clipboard = clipboard.map((write) => boundClipboardWrite(write, mask))
   }
-  if (clipboard !== undefined) evidence.clipboard = clipboard.map((write) => boundClipboardWrite(write, mask))
-  return evidence.downloads || evidence.clipboard ? { result, evidence } : { result }
+  const noop = readIdempotentNoopMeta(execResult)
+  if (noop !== undefined) {
+    evidence.input = [{ verb, inputSent: false, currentState: mask(noop.currentState) }]
+  }
+  return hasOperationEvidence(evidence) ? { result, evidence } : { result }
+}
+
+function hasOperationEvidence(evidence: OperationEvidence): boolean {
+  return !!(evidence.downloads || evidence.clipboard || evidence.input)
 }
 
 // 436 D-21: masked first, so a secret is never cut into an unmaskable fragment, then bounded.

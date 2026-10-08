@@ -48,6 +48,7 @@ describe('C436-KEY-SETS narrowed types', () => {
       operationEvidence?: OperationEvidence
       localEffect?: LocalEffectEvidence
     }>()
-    expectTypeOf<keyof OperationEvidence>().toEqualTypeOf<'downloads' | 'clipboard'>()
+    // 2026-10-08 (437-02): input evidence joins downloads and clipboard (D-05).
+    expectTypeOf<keyof OperationEvidence>().toEqualTypeOf<'downloads' | 'clipboard' | 'input'>()
   })
 })

@@ -5,8 +5,11 @@ import type { LoopPorts } from '../ports.js'
 import { executeStep } from '../index.js'
 import { buildAgentScreenState, type LooseElement } from './screen-fixtures.js'
 import { makeActionPlan, makeStepContext, makeVerifier, makePlanner } from './loop-harness.js'
-import type { ActionPlan, Planner, VerificationResult } from '../types.js'
+import type { ActionPlan, Planner, VerificationResult, Verifier } from '../types.js'
 import { readIdempotentNoopMeta } from '../../compound/metadata.js'
+import { buildVerificationPrompt } from '../prompts.js'
+import { APP_OBSERVED_DATA_CLOSE, APP_OBSERVED_DATA_OPEN } from '@vostride/agent-qa-safety'
+import type { MaskingContext, OperationEvidence } from '@vostride/agent-qa-schema'
 
 const ROW_BOUNDS = { x: 0, y: 400, width: 1280, height: 160 }
 const ROW_CENTRE = { x: 640, y: 480 }
@@ -271,5 +274,104 @@ describe('C437-NO-INPUT', () => {
     expect(
       readIdempotentNoopMeta(noopResult(false, { currentState: 'checked', inputSent: true })),
     ).toBeUndefined()
+  })
+})
+
+type VerifyArgs = Parameters<Verifier['verify']>
+
+function capturingVerifier(captured: VerifyArgs[]): Verifier {
+  return {
+    async verify(...args: VerifyArgs) {
+      captured.push(args)
+      return { verification: { success: true, reasoning: 'Step completed', isAppError: false } }
+    },
+  }
+}
+
+async function runCaptured(
+  observation: ScreenState,
+  action: Record<string, unknown> & { type: string },
+  masking?: MaskingContext,
+) {
+  const calls: Action[] = []
+  const captured: VerifyArgs[] = []
+  const ports: LoopPorts = {
+    adapter: recordingAdapter(observation, calls),
+    planner: makePlanner([makeActionPlan({ action, stepComplete: true })]),
+    verifier: capturingVerifier(captured),
+    plannerConfig: { maxActions: 4, maxPlanningTurns: 4, previousStepCount: 0 },
+    ...(masking ? { masking } : {}),
+  }
+  const result = await executeStep('Turn dark theme on', ports, makeStepContext())
+  return { calls, captured, result }
+}
+
+const NO_INPUT_ENTRY = { verb: 'tap', inputSent: false, currentState: 'checked' }
+
+describe('C437-NO-INPUT', () => {
+  it('the verifier receives the skipped tap as operation evidence', async () => {
+    const { captured } = await runCaptured(checkedSwitch(), SKIPPED_TAP)
+    expect(captured).toHaveLength(1)
+    const evidence = captured[0][9] as OperationEvidence | undefined
+    expect(evidence?.input).toEqual([NO_INPUT_ENTRY])
+    const [step, before, after, action] = captured[0]
+    const prompt = buildVerificationPrompt(
+      step,
+      before,
+      after,
+      action,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      evidence,
+    )
+    expect(prompt).toContain(
+      `${APP_OBSERVED_DATA_OPEN}\ntap: no input sent — already checked\n${APP_OBSERVED_DATA_CLOSE}`,
+    )
+  })
+
+  it('the recorded sub-action carries the typed input evidence', async () => {
+    const { result } = await runCaptured(checkedSwitch(), SKIPPED_TAP)
+    const sub = result.evidence?.subActions[0]
+    expect(sub?.operationEvidence?.input?.[0]).toEqual(NO_INPUT_ENTRY)
+    expect(sub?.result.metadata?.['idempotentNoop']).toEqual(NO_INPUT)
+  })
+
+  it('a step with only an ordinary sent tap passes no evidence to the verifier', async () => {
+    const off = screenWith({
+      role: 'switch',
+      name: 'Dark theme',
+      state: { checked: false, selected: false },
+      attributes: { checkable: 'true', checked: 'false', selected: 'false' },
+    })
+    const { calls, captured } = await runCaptured(off, SKIPPED_TAP)
+    expect(calls).toHaveLength(1)
+    expect(captured).toHaveLength(1)
+    expect(captured[0]).toHaveLength(9)
+    expect(captured[0][9]).toBeUndefined()
+    const [step, before, after, action] = captured[0]
+    const withoutEvidence = buildVerificationPrompt(step, before, after, action)
+    const emptyEvidence: OperationEvidence = {}
+    expect(
+      buildVerificationPrompt(step, before, after, action, false, undefined, undefined, undefined, emptyEvidence),
+    ).toBe(withoutEvidence)
+  })
+
+  it('a picker no-op masks its currentState', async () => {
+    const picker = screenWith({ role: 'combobox', name: 'Plan', value: 'Secret Option' })
+    const masking: MaskingContext = {
+      mask: (text) => text.replaceAll('Secret Option', '***'),
+      unmask: (text) => text,
+    }
+    const { calls, result } = await runCaptured(
+      picker,
+      { type: 'pickerSelect', ref: 'e1', value: 'Secret Option' },
+      masking,
+    )
+    expect(calls).toHaveLength(0)
+    const entry = result.evidence?.subActions[0]?.operationEvidence?.input?.[0]
+    expect(entry?.currentState).toBe('***')
+    expect(entry?.inputSent).toBe(false)
   })
 })

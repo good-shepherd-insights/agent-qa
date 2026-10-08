@@ -9,6 +9,7 @@ import {
   asRef,
   sha256hex,
   type DownloadEvidence,
+  type InputEvidence,
   type OperationEvidence,
   type ScreenState,
   type ServedPromptTurn,
@@ -344,7 +345,19 @@ export function renderOperationEvidence(evidence: OperationEvidence): string {
     const truncated = write.truncated ? ' (truncated)' : ''
     lines.push(`Clipboard write (${write.source}): "${write.text}"${truncated}, read back ${write.readBack}`)
   }
+  for (const entry of evidence.input ?? []) {
+    const line = renderInputEvidence(entry)
+    if (line !== undefined) lines.push(line)
+  }
   return lines.join('\n')
+}
+
+/** 437 D-05: only a notable input outcome renders; an ordinary delivered input adds no line. */
+export function renderInputEvidence(entry: InputEvidence): string | undefined {
+  if (entry.inputSent === false && entry.currentState !== undefined) {
+    return `${entry.verb}: no input sent — already ${entry.currentState}`
+  }
+  return undefined
 }
 
 function appendFailureContext(parts: string[], context: StepContext): void {

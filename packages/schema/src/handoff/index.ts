@@ -42,3 +42,12 @@ export {
   DOWNLOAD_EVIDENCE_KEYS,
   OPERATION_CAPTURE_AVAILABILITY_KEYS,
 } from './operation-evidence'
+// 2026-10-08 (437-02, D-05): what an action's input delivered, on the same evidence.
+export type {
+  FillVerdict,
+  InputEvidence,
+  InputPath,
+  SubmitOutcome,
+  SubmitReason,
+} from './operation-evidence'
+export { INPUT_EVIDENCE_KEYS } from './operation-evidence'

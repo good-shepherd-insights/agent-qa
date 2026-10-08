@@ -597,6 +597,15 @@ export {
   DOWNLOAD_EVIDENCE_KEYS,
   OPERATION_CAPTURE_AVAILABILITY_KEYS,
 } from './handoff/index'
+// 2026-10-08 (437-02, D-05): what an action's input delivered, on the same evidence.
+export type {
+  FillVerdict,
+  InputEvidence,
+  InputPath,
+  SubmitOutcome,
+  SubmitReason,
+} from './handoff/index'
+export { INPUT_EVIDENCE_KEYS } from './handoff/index'
 
 // 358 working-memory vocabulary (WM-01)
 export type { WorkingMemoryEntry } from './memory/index'
