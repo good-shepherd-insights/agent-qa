@@ -927,3 +927,44 @@ describe('normalizeRole', () => {
     expect(Object.keys(IOS_ROLE_MAP).length).toBeGreaterThanOrEqual(15)
   })
 })
+
+// 437 D-15: the keyboard path learns a field's kind from the observed node's raw input-type.
+describe('C437-REF-INPUT-TYPE', () => {
+  function entryFor(attr: string) {
+    const xml = androidPage(
+      `  <android.widget.EditText bounds="[0,0][800,120]" content-desc="Field" text="" enabled="true"${attr} />`,
+    )
+    const { nodes } = parseMobileSource(xml, 'android')
+    const { state, binding } = buildScreenState({
+      platform: 'android',
+      nodes,
+      viewport: { width: 1080, height: 1920 },
+      scroll: deriveMobileScroll(nodes, { width: 1080, height: 1920 }),
+      coordSpace: 'viewport',
+      timestamp: 0,
+    })
+    return buildRefEntries(nodes, binding)[state.elements.find((e) => e.name === 'Field')!.ref]
+  }
+
+  it('an EditText with input-type="1048577" carries inputType 1048577', () => {
+    expect(entryFor(' input-type="1048577"').inputType).toBe(1048577)
+  })
+
+  it('the text class with the multi-line flag (131073) carries 131073', () => {
+    expect(entryFor(' input-type="131073"').inputType).toBe(131073)
+  })
+
+  it('input-type="0" carries 0', () => {
+    expect(entryFor(' input-type="0"').inputType).toBe(0)
+  })
+
+  it.each([
+    ['no attribute', ''],
+    ['a non-integer', ' input-type="text"'],
+    ['a negative number', ' input-type="-1"'],
+    ['a decimal', ' input-type="1.5"'],
+    ['an empty value', ' input-type=""'],
+  ])('a node with %s carries no inputType', (_label, attr) => {
+    expect('inputType' in entryFor(attr)).toBe(false)
+  })
+})

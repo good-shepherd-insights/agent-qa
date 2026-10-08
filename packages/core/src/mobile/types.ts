@@ -25,6 +25,8 @@ export interface RefEntry {
   nativeType?: string
   value?: string
   editable?: boolean
+  /** Android's raw `input-type` bitmask from the observed node (437 D-15). */
+  inputType?: number
 }
 
 /** Execute-time ref -> resolution record map (adapter-private `lastRefs`). */

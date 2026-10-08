@@ -391,6 +391,7 @@ export function buildRefEntries(
   for (const [ref, { index, nth }] of Object.entries(binding)) {
     const node = nodes[index]
     if (!node) continue
+    const rawInputType = node.attributes?.['input-type']
     entries[ref] = {
       role: node.role,
       ...(node.name !== undefined ? { name: node.name } : {}),
@@ -399,6 +400,9 @@ export function buildRefEntries(
       ...(node.nativeType !== undefined ? { nativeType: node.nativeType } : {}),
       ...(node.value !== undefined ? { value: node.value } : {}),
       ...(node.state?.editable === true ? { editable: true } : {}),
+      ...(rawInputType !== undefined && /^\d+$/.test(rawInputType)
+        ? { inputType: Number(rawInputType) }
+        : {}),
     }
   }
   return entries

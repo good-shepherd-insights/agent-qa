@@ -39,6 +39,7 @@ interface FieldModel {
   focusHidden?: boolean
   revealOnType?: boolean
   typeThrows?: boolean
+  clearThrows?: boolean
 }
 
 // 437-06: a WebView field. The focus probe answers editable/matches/multiline/secure/value from it,
@@ -69,6 +70,12 @@ let observing = false
 let scripts: string[] = []
 let taps: Array<{ ctx: string; move: unknown }> = []
 let selectedAll = false
+let pageXml = ANDROID_XML
+
+// 437-07 (D-15): the observed Username EditText with a raw input-type attribute.
+function usernameInputType(value: string): void {
+  pageXml = ANDROID_XML.replace('content-desc="Username"', `content-desc="Username" input-type="${value}"`)
+}
 
 function newField(): FieldModel {
   return { value: '', password: false, getTextThrows: false, setValueThrows: false, focusThrows: false }
@@ -149,7 +156,12 @@ function createFocusedElement() {
       if (name === 'password') return Promise.resolve(field.password ? 'true' : 'false')
       return Promise.reject(new Error(`attribute is unknown: ${name}`))
     }),
-    clearValue: vi.fn().mockResolvedValue(undefined),
+    clearValue: vi.fn().mockImplementation(() => {
+      calls.push('clearValue')
+      if (field.clearThrows) return Promise.reject(new Error('socket hang up'))
+      field.value = ''
+      return Promise.resolve()
+    }),
   }
 }
 let focused: ReturnType<typeof createFocusedElement>
@@ -170,7 +182,7 @@ function createMockDriver() {
     return Promise.resolve()
   })
   return {
-    getPageSource: vi.fn().mockResolvedValue(ANDROID_XML),
+    getPageSource: vi.fn().mockImplementation(() => Promise.resolve(pageXml)),
     getWindowSize: vi.fn().mockResolvedValue({ width: 1080, height: 1920 }),
     takeScreenshot: vi.fn().mockResolvedValue(SCREENSHOT_BASE64),
     deleteSession: vi.fn().mockResolvedValue(undefined),
@@ -252,6 +264,7 @@ beforeEach(async () => {
   ctx = 'NATIVE_APP'
   observing = false
   selectedAll = false
+  pageXml = ANDROID_XML
   field = newField()
   focused = createFocusedElement()
   driver = createMockDriver()
@@ -580,6 +593,205 @@ describe('C437-FILL-KEYBOARD', () => {
     expect(result.success).toBe(true)
     expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'exact', path: 'keyboard' })
     expect(result.metadata?.fillReread).toEqual({ expected: text, actual: text })
+  })
+
+  it('a multi-line field on the keyboard path never gets Enter', async () => {
+    usernameInputType('131073')
+    field.focusHidden = true
+
+    const result = await fill('Username', 'line one\nline two', { submit: true })
+
+    expect(count('execute:mobile: type')).toBe(1)
+    expect(count(PRESS_ENTER)).toBe(0)
+    expect(result.success).toBe(true)
+    expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'unverified', path: 'keyboard' })
+    expect(result.metadata?.fillSubmit).toEqual({
+      sent: false,
+      outcome: 'not-sent',
+      reason: 'multi-line-field',
+    })
+    expect(result.data).toBe(
+      'submit not sent: Return would add a new line in this multi-line field; tap its send or submit control',
+    )
+  })
+
+  it.each([
+    ['input-type 0', '0'],
+    ['no input-type', undefined],
+  ])('an unknown field on the keyboard path gets the requested Enter (%s)', async (_label, inputType) => {
+    if (inputType !== undefined) usernameInputType(inputType)
+    field.focusHidden = true
+
+    const result = await fill('Username', 'hello', { submit: true })
+
+    expect(count(PRESS_ENTER)).toBe(1)
+    expect(result.success).toBe(true)
+    expect(result.metadata?.fillSubmit).toEqual({ sent: true, outcome: 'sent' })
+  })
+
+  it('line breaks into a known single-line keyboard field are refused', async () => {
+    usernameInputType('1048577')
+    field.value = 'kept'
+    field.focusHidden = true
+
+    const result = await fill('Username', 'a\nb', { submit: true })
+
+    expect(count('execute:mobile: pressKey')).toBe(0)
+    expect(count('execute:mobile: type')).toBe(0)
+    expect(driver.keys).not.toHaveBeenCalled()
+    expect(field.value).toBe('kept')
+    expect(result.success).toBe(false)
+    expect(result.error).toBe(
+      'fill: this field is single-line and the text has line breaks; nothing was typed. '
+        + 'Send the text without line breaks, or use a multi-line field.',
+    )
+    expect(result.metadata?.fillRefusal).toEqual({
+      verb: 'fill',
+      cause: 'single-line-field',
+      evidence: 'text-has-line-breaks',
+    })
+    expect(result.metadata?.fillSubmit).toEqual({
+      sent: false,
+      outcome: 'not-sent',
+      reason: 'input-failed',
+    })
+  })
+
+  it('a known single-line keyboard field still gets the requested Enter', async () => {
+    usernameInputType('1048577')
+    field.focusHidden = true
+
+    const result = await fill('Username', 'hello', { submit: true })
+
+    expect(count(PRESS_ENTER)).toBe(1)
+    expect(result.metadata?.fillSubmit).toEqual({ sent: true, outcome: 'sent' })
+  })
+})
+
+// 437-07 (D-16): clearText on the native and keyboard paths is checked like a fill. Empty is
+// exact, leftover text is a mismatch, and an unreadable field is unverified.
+describe('C437-CLEAR', () => {
+  it('a native clear reads back empty and is exact', async () => {
+    field.value = 'old text'
+    field.hint = 'Username'
+
+    const result = await clear('Username')
+
+    expect(count('clearValue')).toBe(1)
+    expect(calls.indexOf(`$:${FOCUSED_HINT_XPATH}`)).toBeGreaterThan(calls.indexOf('clearValue'))
+    expect(count('execute:mobile: pressKey')).toBe(0)
+    expect(field.value).toBe('')
+    expect(result.success).toBe(true)
+    expect(result.metadata?.fillVerdict).toEqual({ verb: 'clearText', verdict: 'exact', path: 'native' })
+    expect(result.metadata?.fillReread).toEqual({ expected: '', actual: '' })
+  })
+
+  it('a native clear that leaves text is a mismatch', async () => {
+    field.value = 'abc'
+    field.readBack = () => 'abc'
+
+    const result = await clear('Username')
+
+    expect(result.success).toBe(false)
+    expect(result.error).toBe('field still reads "abc" after clearing — re-observe and retry')
+    expect(result.metadata?.fillVerdict).toEqual({ verb: 'clearText', verdict: 'mismatch', path: 'native' })
+    expect(result.metadata?.fillReread).toEqual({ expected: '', actual: 'abc' })
+  })
+
+  it('a native clear whose read-back fails is unverified, not a failure', async () => {
+    field.value = 'abc'
+    field.getTextThrows = true
+
+    const result = await clear('Username')
+
+    expect(count('clearValue')).toBe(1)
+    expect(result.success).toBe(true)
+    expect(result.error).toBeUndefined()
+    expect(result.metadata?.fillVerdict).toEqual({ verb: 'clearText', verdict: 'unverified', path: 'native' })
+    expect(result.metadata).not.toHaveProperty('fillReread')
+  })
+
+  it('a secure native clear is never exact', async () => {
+    field.value = 'topSecretPw'
+    field.password = true
+
+    const result = await clear('Password')
+
+    expect(result.success).toBe(true)
+    expect(result.metadata?.fillVerdict).toEqual({
+      verb: 'clearText',
+      verdict: 'unverified',
+      path: 'native',
+      secure: true,
+    })
+    expect(JSON.stringify(result)).not.toContain('topSecretPw')
+  })
+
+  it('a keyboard clear is Ctrl+A then DEL, then a read-back or unverified', async () => {
+    field.value = 'old text'
+    field.focusHidden = true
+
+    const unseen = await clear('Username')
+
+    expect(calls).toEqual(['tap', `$:${FOCUSED_XPATH}`, CTRL_A, DEL, `$:${FOCUSED_XPATH}`])
+    expect(focused.clearValue).not.toHaveBeenCalled()
+    expect(driver.keys).not.toHaveBeenCalled()
+    expect(field.value).toBe('')
+    expect(unseen.success).toBe(true)
+    expect(unseen.metadata?.fillVerdict).toEqual({
+      verb: 'clearText',
+      verdict: 'unverified',
+      path: 'keyboard',
+    })
+
+    field = { ...newField(), value: 'old text', hint: 'Username' }
+    focused.isExisting.mockResolvedValueOnce(false)
+    const seen = await clear('Username')
+
+    expect(focused.clearValue).not.toHaveBeenCalled()
+    expect(count(CTRL_A)).toBe(1)
+    expect(count(DEL)).toBe(1)
+    expect(seen.success).toBe(true)
+    expect(seen.metadata?.fillVerdict).toEqual({ verb: 'clearText', verdict: 'exact', path: 'keyboard' })
+
+    field = { ...newField(), value: 'old text', readBack: () => 'old text' }
+    focused.isExisting.mockResolvedValueOnce(false)
+    const left = await clear('Username')
+
+    expect(left.success).toBe(false)
+    expect(left.error).toBe('field still reads "old text" after clearing — re-observe and retry')
+    expect(left.metadata?.fillVerdict).toEqual({ verb: 'clearText', verdict: 'mismatch', path: 'keyboard' })
+  })
+
+  it('a clear interrupted by a driver error is reported and not repeated', async () => {
+    field.value = 'old text'
+    field.clearThrows = true
+
+    const native = await clear('Username')
+
+    expect(count('clearValue')).toBe(1)
+    expect(count('execute:mobile: pressKey')).toBe(0)
+    expect(native.success).toBe(false)
+    expect(native.error).toMatch(/clearText was interrupted/)
+    expect(native.error).toMatch(/not cleared again/)
+    expect(native.metadata?.fillVerdict).toEqual({
+      verb: 'clearText',
+      verdict: 'unverified',
+      path: 'native',
+    })
+
+    field = { ...newField(), value: 'old text', focusHidden: true, pressKeyError: 'socket hang up' }
+    const keyboard = await clear('Username')
+
+    expect(count('execute:mobile: pressKey')).toBe(1)
+    expect(count('clearValue')).toBe(0)
+    expect(keyboard.success).toBe(false)
+    expect(keyboard.error).toMatch(/clearText was interrupted/)
+    expect(keyboard.metadata?.fillVerdict).toEqual({
+      verb: 'clearText',
+      verdict: 'unverified',
+      path: 'keyboard',
+    })
   })
 })
 

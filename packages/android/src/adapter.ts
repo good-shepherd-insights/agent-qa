@@ -156,6 +156,16 @@ type InputPath = NonNullable<FillVerdictMeta['path']>
 
 const INPUT_FAILED: FillSubmitMeta = { sent: false, outcome: 'not-sent', reason: 'input-failed' }
 
+type FieldKind = 'single-line' | 'multi-line' | 'unknown'
+
+// Android InputType: the low nibble is the class (1 = text); 0x20000 is TYPE_TEXT_FLAG_MULTI_LINE.
+function fieldKindOf(refData: MobileRefMap[string] | undefined): FieldKind {
+  const inputType = refData?.inputType
+  if (inputType === undefined || (inputType & 0xf) === 0) return 'unknown'
+  if ((inputType & 0xf) === 1 && (inputType & 0x20000) !== 0) return 'multi-line'
+  return 'single-line'
+}
+
 function firstErrorLine(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err)
   return message.split('\n')[0]!.trim()
@@ -1054,13 +1064,19 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
    * The last-resort keyboard path (437 D-14): the tap left no focused handle. Replace clears by
    * keys, the text goes through one `mobile: type` (Appium's Unicode IME, exact for every D-08
    * text), and the value is read back only when a focused handle can be found afterwards. An
-   * append's prior value is unknown, so it is never better than unverified.
+   * append's prior value is unknown, so it is never better than unverified. The field's kind comes
+   * from the observed input-type (D-15): only positive evidence refuses line breaks or holds Enter.
    */
   private async fillKeyboardPath(
     action: { text: string; clearMode: 'replace' | 'append'; submit: boolean },
     box: TextBox,
+    refData: MobileRefMap[string] | undefined,
   ): Promise<ActionResult> {
     const isAppend = action.clearMode === 'append'
+    const kind = fieldKindOf(refData)
+    if (kind === 'single-line' && LINE_BREAK_RE.test(action.text)) {
+      return this.refuseLineBreaks(action, box)
+    }
     try {
       if (!isAppend) await this.clearByKeys()
       await this.driver!.execute('mobile: type', { text: action.text })
@@ -1072,16 +1088,78 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     let secure = false
     let actual: string | undefined
     if (handle) {
-      secure = (await handle.getAttribute('password').catch(() => null)) === 'true'
+      secure = await this.isSecure(handle)
       if (!isAppend) actual = await this.readFocusedValue(handle)
     }
     const verdict = compareFillReread({ expected: action.text, actual, secure })
     return await this.settleFill(action, box, {
       path: 'keyboard',
       verdict,
-      multiline: false,
+      multiline: kind === 'multi-line',
       enter: () => this.pressEnter(),
     })
+  }
+
+  /**
+   * Native and keyboard clearText (437 D-16): clearValue on the focused handle, or Ctrl+A then DEL
+   * when the tap left none, then the hint-aware read-back judged against the empty string.
+   */
+  private async clearNativeOrKeyboard(box: TextBox): Promise<ActionResult> {
+    const handle = await this.focusedField()
+    const path: InputPath = handle ? 'native' : 'keyboard'
+    const before = handle ? await this.isSecure(handle) : false
+    try {
+      if (handle) await handle.clearValue()
+      else await this.clearByKeys()
+    } catch {
+      return this.interruptedClear(path, before, box)
+    }
+    const readable = handle ?? (await this.focusedField())
+    if (!readable) return this.settleClear(path, undefined, false, box)
+    const secure = handle ? before : await this.isSecure(readable)
+    return this.settleClear(path, await this.readFocusedValue(readable), secure, box)
+  }
+
+  private async isSecure(el: FocusedField): Promise<boolean> {
+    return (await el.getAttribute('password').catch(() => null)) === 'true'
+  }
+
+  private settleClear(
+    path: InputPath,
+    actual: string | undefined,
+    secure: boolean,
+    box: TextBox,
+  ): ActionResult {
+    const verdict = compareFillReread({ expected: '', actual, secure, verb: 'clearText' })
+    const fillVerdict: FillVerdictMeta = {
+      verb: 'clearText',
+      verdict: verdict.verdict,
+      path,
+      ...(verdict.secure ? { secure: true as const } : {}),
+    }
+    const metadata = { ...(verdict.meta ? { fillReread: verdict.meta } : {}), fillVerdict }
+    return verdict.ok
+      ? { success: true, ...box, metadata }
+      : { success: false, error: verdict.selfCorrectingError, ...box, metadata }
+  }
+
+  /** A driver error while clearing ends the clear; it is never repeated. */
+  private interruptedClear(path: InputPath, secure: boolean, box: TextBox): ActionResult {
+    return {
+      success: false,
+      error:
+        'clearText was interrupted by a driver error; the field may be partly cleared, and it '
+        + 'was not cleared again. Re-observe the field before clearing it again.',
+      ...box,
+      metadata: {
+        fillVerdict: {
+          verb: 'clearText',
+          verdict: 'unverified',
+          path,
+          ...(secure ? { secure: true as const } : {}),
+        },
+      },
+    }
   }
 
   /** A driver error during delivery ends the fill: nothing is typed again and no Enter follows. */
@@ -1247,39 +1325,13 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     if (!focus.editable || !focus.matches) {
       return this.refuseWebFocus('clearText', ref, focus, false, box)
     }
-    const secure = focus.secure ? { secure: true as const } : {}
     try {
       await driver.keys(['Control', 'a'])
       await driver.keys(['Backspace'])
     } catch {
-      return {
-        success: false,
-        error:
-          'clearText was interrupted by a driver error; the field may be partly cleared, and it '
-          + 'was not cleared again. Re-observe the field before clearing it again.',
-        ...box,
-        metadata: {
-          fillVerdict: { verb: 'clearText', verdict: 'unverified', path: 'webview', ...secure },
-        },
-      }
+      return this.interruptedClear('webview', focus.secure, box)
     }
-    const actual = await this.readWebFieldValue()
-    const verdict = compareFillReread({
-      expected: '',
-      actual,
-      secure: focus.secure,
-      verb: 'clearText',
-    })
-    const fillVerdict: FillVerdictMeta = {
-      verb: 'clearText',
-      verdict: verdict.verdict,
-      path: 'webview',
-      ...(verdict.secure ? { secure: true as const } : {}),
-    }
-    const metadata = { ...(verdict.meta ? { fillReread: verdict.meta } : {}), fillVerdict }
-    return verdict.ok
-      ? { success: true, ...box, metadata }
-      : { success: false, error: verdict.selfCorrectingError, ...box, metadata }
+    return this.settleClear('webview', await this.readWebFieldValue(), focus.secure, box)
   }
 
   /**
@@ -1616,7 +1668,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
         // 437-05 (2026-10-08, D-12): the path is chosen here, before any text is delivered.
         const focusedEl = await this.focusedField()
         if (focusedEl) return await this.fillNativeCompound(focusedEl, action, box)
-        return await this.fillKeyboardPath(action, box)
+        return await this.fillKeyboardPath(action, box, refData)
       }
 
       case 'nativeSelect': {
@@ -1912,15 +1964,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
           .down({ button: 0 })
           .up({ button: 0 })
           )
-        try {
-          const el = await driver.$(FOCUSED_XPATH)
-          if (await el.isExisting()) {
-            await el.clearValue()
-          }
-        } catch {
-          // best-effort
-        }
-        return { success: true, coordinates: center, boundingBox: bounds }
+        return await this.clearNativeOrKeyboard({ coordinates: center, boundingBox: bounds })
       }
 
       // --- Android hardware / system verbs (numeric keycodes / typed driver args only) ---
