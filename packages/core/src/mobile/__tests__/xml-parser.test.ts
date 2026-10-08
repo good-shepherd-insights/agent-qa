@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { buildScreenState } from '@vostride/agent-qa-runner'
+import { isToggleElement, screenIdentityHash } from '@vostride/agent-qa-schema'
+import type { ScreenState } from '@vostride/agent-qa-schema'
 import { parseMobileSource, buildRefEntries, deriveMobileScroll } from '../xml-parser.js'
 import { normalizeRole, ANDROID_ROLE_MAP, IOS_ROLE_MAP } from '../role-map.js'
 import { MobileElementResolver } from '../element-resolver.js'
@@ -193,7 +195,7 @@ describe('parseMobileSource → InterimNode[]', () => {
       expect(email.bounds).toEqual({ x: 20, y: 150, width: 350, height: 40 })
     })
 
-    it('maps value/selected/enabled and never fabricates checked from value', () => {
+    it('maps value/selected/enabled and lifts a switch value "1" to checked true (437 D-03)', () => {
       const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <AppiumAUT>
   <XCUIElementTypeSwitch label="Wifi" value="1" x="10" y="20" width="100" height="40" selected="true" enabled="false" />
@@ -205,8 +207,7 @@ describe('parseMobileSource → InterimNode[]', () => {
       expect(sw.value).toBe('1')
       expect(sw.state?.selected).toBe(true)
       expect(sw.state?.enabled).toBe(false)
-      // value="1" must NOT become a checked signal — fabrication banned (D-08).
-      expect('checked' in (sw.state ?? {})).toBe(false)
+      expect(sw.state?.checked).toBe(true)
     })
 
     it('preserves native metadata for iOS picker wheel controls', () => {
@@ -722,6 +723,165 @@ describe('buildScreenState integration (typed-absence survives the builder)', ()
     // resource-id/content-desc rode through to schema labels.
     expect(cb.labels.testId).toBe('agree')
     expect(cb.labels.ariaLabel).toBe('Accept')
+  })
+})
+
+function iosPage(inner: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<AppiumAUT>
+  <XCUIElementTypeApplication name="Settings" label="Settings" x="0" y="0" width="402" height="874">
+    <XCUIElementTypeWindow x="0" y="0" width="402" height="874">
+${inner}
+    </XCUIElementTypeWindow>
+  </XCUIElementTypeApplication>
+</AppiumAUT>`
+}
+
+function androidPage(inner: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<hierarchy rotation="0">
+${inner}
+</hierarchy>`
+}
+
+function onlyNode(xml: string, platform: 'android' | 'ios') {
+  const { nodes } = parseMobileSource(xml, platform)
+  expect(nodes).toHaveLength(1)
+  return nodes[0]
+}
+
+describe('C437-TOGGLE-PARSE', () => {
+  describe('Android', () => {
+    it('an ordinary Button with selected="true" checkable="false" checked="false" lifts selected, no checked, and is not a toggle', () => {
+      const node = onlyNode(
+        androidPage(
+          '  <android.widget.Button bounds="[0,400][1280,560]" text="Network &amp; internet" selected="true" checkable="false" checked="false" enabled="true" />',
+        ),
+        'android',
+      )
+      expect(node.state?.selected).toBe(true)
+      expect('checked' in (node.state ?? {})).toBe(false)
+      expect(isToggleElement(node)).toBe(false)
+    })
+
+    it('CheckBox, ToggleButton, Chip and CheckedTextView with checkable="true" checked="true" lift checked true and are toggles', () => {
+      const cases: { tag: string; role: string }[] = [
+        { tag: 'android.widget.CheckBox', role: 'checkbox' },
+        { tag: 'android.widget.ToggleButton', role: 'button' },
+        { tag: 'com.google.android.material.chip.Chip', role: 'button' },
+        { tag: 'android.widget.CheckedTextView', role: 'text' },
+      ]
+      for (const { tag, role } of cases) {
+        const node = onlyNode(
+          androidPage(
+            `  <${tag} bounds="[0,0][400,120]" text="Bold" checkable="true" checked="true" selected="false" enabled="true" />`,
+          ),
+          'android',
+        )
+        expect(node.role).toBe(role)
+        expect(node.state?.checked).toBe(true)
+        expect(isToggleElement(node)).toBe(true)
+      }
+    })
+
+    it('a Switch with checked="false" and no checkable attribute gets no checked key', () => {
+      const node = onlyNode(
+        androidPage(
+          '  <android.widget.Switch bounds="[1000,420][1200,540]" content-desc="Dark theme" checked="false" enabled="true" />',
+        ),
+        'android',
+      )
+      expect(node.role).toBe('switch')
+      expect('checked' in (node.state ?? {})).toBe(false)
+    })
+  })
+
+  describe('iOS', () => {
+    function iosSwitchLike(tag: string, value: string | undefined, extra = ''): string {
+      const valueAttr = value === undefined ? '' : ` value="${value}"`
+      return iosPage(
+        `      <${tag} name="REDUCE_MOTION" label="Reduce Motion"${valueAttr}${extra} x="16" y="200" width="370" height="52" enabled="true" visible="true" />`,
+      )
+    }
+
+    it('XCUIElementTypeSwitch value="1" lifts checked true', () => {
+      const node = onlyNode(iosSwitchLike('XCUIElementTypeSwitch', '1'), 'ios')
+      expect(node.role).toBe('switch')
+      expect(node.state?.checked).toBe(true)
+      expect(isToggleElement(node)).toBe(true)
+    })
+
+    it('XCUIElementTypeSwitch value="0" lifts checked false', () => {
+      const node = onlyNode(iosSwitchLike('XCUIElementTypeSwitch', '0'), 'ios')
+      expect(node.state?.checked).toBe(false)
+    })
+
+    it('XCUIElementTypeSwitch value="" or value="On" or no value leaves checked absent', () => {
+      for (const value of ['', 'On', undefined]) {
+        const node = onlyNode(iosSwitchLike('XCUIElementTypeSwitch', value), 'ios')
+        expect(node.role).toBe('switch')
+        expect('checked' in (node.state ?? {})).toBe(false)
+      }
+    })
+
+    it('XCUIElementTypeToggle value="1" lifts checked true', () => {
+      const node = onlyNode(iosSwitchLike('XCUIElementTypeToggle', '1'), 'ios')
+      expect(node.role).toBe('switch')
+      expect(node.state?.checked).toBe(true)
+    })
+
+    it('XCUIElementTypeCheckBox value="0" lifts checked false', () => {
+      const node = onlyNode(iosSwitchLike('XCUIElementTypeCheckBox', '0'), 'ios')
+      expect(node.role).toBe('checkbox')
+      expect(node.state?.checked).toBe(false)
+    })
+
+    it('XCUIElementTypeButton selected="true" value="1" lifts selected, no checked, and is not a toggle', () => {
+      const node = onlyNode(iosSwitchLike('XCUIElementTypeButton', '1', ' selected="true"'), 'ios')
+      expect(node.role).toBe('button')
+      expect(node.state?.selected).toBe(true)
+      expect('checked' in (node.state ?? {})).toBe(false)
+      expect(isToggleElement(node)).toBe(false)
+    })
+
+    const SETTINGS_SWITCH_ROW = iosPage(`      <XCUIElementTypeCell x="0" y="300" width="402" height="52" enabled="true" visible="true">
+        <XCUIElementTypeSwitch type="XCUIElementTypeSwitch" value="0" name="PREFER_NONBLINKING_CURSOR" label="Prefer Non-Blinking Cursor" enabled="true" visible="true" accessible="true" x="20" y="300" width="330" height="52" traits="ToggleButton, StaticText, Button">
+          <XCUIElementTypeSwitch type="XCUIElementTypeSwitch" value="0" enabled="true" visible="true" accessible="false" x="303" y="311" width="63" height="29" traits="ToggleButton, Button" />
+        </XCUIElementTypeSwitch>
+      </XCUIElementTypeCell>`)
+
+    it('the labelled outer switch and its unlabelled inner knob both parse as switches with checked false', () => {
+      const { nodes } = parseMobileSource(SETTINGS_SWITCH_ROW, 'ios')
+      const switches = nodes.filter((n) => n.nativeType === 'XCUIElementTypeSwitch')
+      expect(switches).toHaveLength(2)
+      const [outer, inner] = switches
+      expect(outer.name).toBe('Prefer Non-Blinking Cursor')
+      expect(inner.bounds).toEqual({ x: 303, y: 311, width: 63, height: 29 })
+      expect(inner.parentIndex).toBe(nodes.indexOf(outer))
+      for (const sw of switches) {
+        expect(sw.role).toBe('switch')
+        expect(sw.state?.checked).toBe(false)
+      }
+    })
+
+    it('screenIdentityHash of a parsed iOS switch screen is the same with or without lifted checked (HARN-04)', () => {
+      const viewport = { width: 402, height: 874 }
+      const { nodes } = parseMobileSource(SETTINGS_SWITCH_ROW, 'ios', viewport)
+      const { state } = buildScreenState({
+        platform: 'ios',
+        nodes,
+        viewport,
+        scroll: deriveMobileScroll(nodes, viewport),
+        coordSpace: 'viewport',
+        timestamp: 0,
+      })
+      expect(state.elements.filter((el) => el.state.checked === false)).toHaveLength(2)
+
+      const stripped = JSON.parse(JSON.stringify(state)) as ScreenState
+      for (const el of stripped.elements) delete el.state.checked
+      expect(stripped.elements.some((el) => 'checked' in el.state)).toBe(false)
+      expect(screenIdentityHash(stripped)).toBe(screenIdentityHash(state))
+    })
   })
 })
 

@@ -1,6 +1,6 @@
 import { XMLParser } from 'fast-xml-parser'
 import type { InterimNode, RefBinding } from '@vostride/agent-qa-runner'
-import type { ElementLabels, ElementState } from '@vostride/agent-qa-schema'
+import { isToggleElement, type ElementLabels, type ElementState } from '@vostride/agent-qa-schema'
 import type { ParsedMobileSource, RefEntry } from './types.js'
 import { IOS_EDITABLE_TYPES, iosAccessibleOtherRole, normalizeRole } from './role-map.js'
 
@@ -92,9 +92,15 @@ function extractValue(attrs: Record<string, any>, platform: 'android' | 'ios'): 
  * tvOS, and `traits` lists public UIKit traits only), so the XCUI text-entry type is the
  * platform's editability signal. It is a candidate: the adapter confirms it by keyboard
  * focus at execution, which is how a static UITextView is told apart.
+ *
+ * iOS `checked` (437 D-03): XCUITest reports a switch, toggle or checkbox's state only as its
+ * `value`, so for a classifier toggle of role `switch` or `checkbox` the value '1' lifts to
+ * checked true and '0' to checked false. Any other value, or none, leaves `checked` absent.
+ * `selected` keeps no toggle meaning on either platform.
  */
 function liftState(
   tagName: string,
+  role: string,
   attrs: Record<string, any>,
   platform: 'android' | 'ios',
   bounds: { x: number; y: number; width: number; height: number } | undefined,
@@ -125,8 +131,11 @@ function liftState(
       state.visible = false
     }
   } else {
-    // iOS: value/selected/enabled only — NO checked derivation from value strings
-    // (fabrication banned per D-08).
+    if ((role === 'switch' || role === 'checkbox') && isToggleElement({ role })) {
+      const value = attrs['@_value']
+      if (value === '1') state.checked = true
+      else if (value === '0') state.checked = false
+    }
     if (attrs['@_visible'] !== undefined && !boolAttr(attrs['@_visible'])) {
       state.visible = false
     } else if (bounds && viewport && (bounds.y + bounds.height < 0 || bounds.y > viewport.height)) {
@@ -282,7 +291,7 @@ function walkNode(node: any, tagName: string, parentIndex: number | undefined, c
       bounds = parseIosBounds(attrs)
     }
 
-    const state = liftState(tagName, attrs, ctx.platform, bounds, ctx.viewport)
+    const state = liftState(tagName, role, attrs, ctx.platform, bounds, ctx.viewport)
     const labels = liftLabels(attrs, ctx.platform)
 
     // Retain the raw platform attribute bag (prefix stripped, values stringified).
