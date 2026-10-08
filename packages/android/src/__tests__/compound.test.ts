@@ -104,6 +104,7 @@ function createMockDriver() {
 vi.mock('webdriverio', () => ({ remote: vi.fn() }))
 
 import { AndroidPlatformAdapter } from '../adapter.js'
+import { WEBVIEW_SCROLLERS_SCRIPT } from '@vostride/agent-qa-core'
 
 type ExecAction = Parameters<AndroidPlatformAdapter['execute']>[0]
 
@@ -312,9 +313,9 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       await adapter.observe()
       // One document scroller per read: the WebView answers the array of every scroller.
       const offsets = [
-        [{ x: 0, y: 0, maxX: 0, maxY: 700 }], [{ x: 0, y: 400, maxX: 0, maxY: 700 }],
-        [{ x: 0, y: 700, maxX: 0, maxY: 700 }], [{ x: 0, y: 700, maxX: 0, maxY: 700 }],
-        [{ x: 0, y: 300, maxX: 0, maxY: 700 }], [{ x: 0, y: 300, maxX: 0, maxY: 700 }],
+        [{ id: 'document', x: 0, y: 0, maxX: 0, maxY: 700 }], [{ id: 'document', x: 0, y: 400, maxX: 0, maxY: 700 }],
+        [{ id: 'document', x: 0, y: 700, maxX: 0, maxY: 700 }], [{ id: 'document', x: 0, y: 700, maxX: 0, maxY: 700 }],
+        [{ id: 'document', x: 0, y: 300, maxX: 0, maxY: 700 }], [{ id: 'document', x: 0, y: 300, maxX: 0, maxY: 700 }],
       ]
       mockDriver.execute.mockImplementation((command: string) =>
         Promise.resolve(typeof command === 'string' && command.startsWith('mobile:') ? undefined : offsets.shift()))
@@ -358,8 +359,13 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
 
   describe('C436-SCROLL-WEBVIEW a WebView touch swipe is judged over every WebView scroller (436-18 · D-25)', () => {
     type Primitives = { swipeOnce(direction: string, ref?: string): Promise<string> }
-    type Offsets = { x: number; y: number; maxX: number; maxY: number }
-    const at = (y: number, maxY: number, x = 0, maxX = 0): Offsets => ({ x, y, maxX, maxY })
+    type Member = { id: string; x: number; y: number; maxX: number; maxY: number }
+    // 2026-10-08 (436-23): members carry an identity; the document scroller is always `document`.
+    const doc = (y: number, maxY: number, x = 0, maxX = 0): Member => ({ id: 'document', x, y, maxX, maxY })
+    const el = (id: string, y: number, maxY: number, x = 0, maxX = 0): Member => ({ id, x, y, maxX, maxY })
+    const LIST = '0/1/0|div#list.feed'
+    const A = '0/1/2|div#a.'
+    const B = '0/1/3|div#b.'
 
     // A WebView session whose scroller read answers `reads` in order, one per read (before, after).
     async function webView(reads: unknown[]): Promise<Primitives> {
@@ -385,7 +391,7 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
 
     it('a moving nested WebView scroller is moved, never a boundary', async () => {
       // The document is at its end; the nested list the finger landed on moved.
-      const p = await webView([[at(700, 700), at(0, 1200)], [at(700, 700), at(600, 1200)]])
+      const p = await webView([[doc(700, 700), el(LIST, 0, 1200)], [doc(700, 700), el(LIST, 600, 1200)]])
       expect(await p.swipeOnce('down')).toBe('moved')
       expect(mockDriver._pointerAction.perform).toHaveBeenCalledTimes(1)
       expect(mockDriver.execute.mock.calls.filter(c => c[0] === 'mobile: scrollGesture')).toHaveLength(0)
@@ -393,8 +399,8 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
 
     it('a boundary needs every WebView scroller at its extent', async () => {
       const p = await webView([
-        [at(700, 700), at(1200, 1200)], [at(700, 700), at(1200, 1200)],
-        [at(700, 700), at(300, 1200)], [at(700, 700), at(300, 1200)],
+        [doc(700, 700), el(LIST, 1200, 1200)], [doc(700, 700), el(LIST, 1200, 1200)],
+        [doc(700, 700), el(LIST, 300, 1200)], [doc(700, 700), el(LIST, 300, 1200)],
       ])
       expect(await p.swipeOnce('down')).toBe('at-boundary')
       // HARN-03 adjacency: the document at its end with a nested scroller short of its end.
@@ -403,8 +409,8 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
 
     it('a WebView with no scroll range is unknown', async () => {
       const p = await webView([
-        [at(0, 0)], [at(0, 0)],
-        [at(0, 0), at(0, 0, 0, 500)], [at(0, 0), at(0, 0, 0, 500)],
+        [doc(0, 0)], [doc(0, 0)],
+        [doc(0, 0), el(LIST, 0, 0, 0, 500)], [doc(0, 0), el(LIST, 0, 0, 0, 500)],
       ])
       expect(await p.swipeOnce('down')).toBe('unknown')
       expect(await p.swipeOnce('down')).toBe('unknown')
@@ -412,12 +418,53 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
 
     it('a changed scroller count is unknown', async () => {
       const p = await webView([
-        [at(700, 700), at(1200, 1200)], [at(700, 700)],
-        at(700, 700), at(700, 700),
-        [at(700, 700), { x: 0, y: 'end', maxX: 0, maxY: 1200 }], [at(700, 700), { x: 0, y: 'end', maxX: 0, maxY: 1200 }],
+        [doc(700, 700), el(LIST, 1200, 1200)], [doc(700, 700)],
+        doc(700, 700), doc(700, 700),
+        [doc(700, 700), { id: LIST, x: 0, y: 'end', maxX: 0, maxY: 1200 }], [doc(700, 700), { id: LIST, x: 0, y: 'end', maxX: 0, maxY: 1200 }],
       ])
       expect(await p.swipeOnce('down')).toBe('unknown')
       // A malformed answer (not an array, or a member without numeric offsets) proves nothing either.
+      expect(await p.swipeOnce('down')).toBe('unknown')
+      expect(await p.swipeOnce('down')).toBe('unknown')
+    })
+
+    it('a WebView with a frame on screen reads unknown', async () => {
+      // The shared script answers null when a frame intersects the viewport (436-23 · WR-20).
+      const p = await webView([null, null])
+      expect(await p.swipeOnce('down')).toBe('unknown')
+      expect(mockDriver._pointerAction.perform).toHaveBeenCalledTimes(1)
+      expect(mockDriver.execute.mock.calls.filter(c => c[0] === 'mobile: scrollGesture')).toHaveLength(0)
+      expect(mockDriver.execute.mock.calls.filter(c => c[0] === WEBVIEW_SCROLLERS_SCRIPT)).toHaveLength(2)
+    })
+
+    it('members are paired by identity, not position', async () => {
+      // Index pairing compares `a` with `b` and reads at-boundary.
+      const p = await webView([[doc(700, 700), el(A, 1200, 1200)], [doc(700, 700), el(B, 1200, 1200)]])
+      expect(await p.swipeOnce('down')).toBe('unknown')
+    })
+
+    it('a changed membership with a common member moving reads moved', async () => {
+      const p = await webView([[doc(0, 700), el(A, 0, 1200)], [doc(300, 700), el(B, 0, 1200)]])
+      expect(await p.swipeOnce('down')).toBe('moved')
+    })
+
+    it('a same-count reorder is judged per member', async () => {
+      // Index pairing compares `a` (1200) with `b` (0) and reads moved; per member nothing moved
+      // and `b` is short of its extent.
+      const p = await webView([
+        [doc(700, 700), el(A, 1200, 1200), el(B, 0, 1200)],
+        [doc(700, 700), el(B, 0, 1200), el(A, 1200, 1200)],
+      ])
+      expect(await p.swipeOnce('down')).toBe('unknown')
+    })
+
+    it('duplicate, missing or malformed ids read unknown', async () => {
+      const p = await webView([
+        [doc(700, 700), el(A, 1200, 1200), el(A, 1200, 1200)], [doc(700, 700), el(A, 1200, 1200), el(A, 1200, 1200)],
+        [doc(700, 700), { x: 0, y: 1200, maxX: 0, maxY: 1200 }], [doc(700, 700), { x: 0, y: 1200, maxX: 0, maxY: 1200 }],
+        [doc(700, 700), { id: A, x: 0, y: '1200', maxX: 0, maxY: 1200 }], [doc(700, 700), { id: A, x: 0, y: '1200', maxX: 0, maxY: 1200 }],
+      ])
+      expect(await p.swipeOnce('down')).toBe('unknown')
       expect(await p.swipeOnce('down')).toBe('unknown')
       expect(await p.swipeOnce('down')).toBe('unknown')
     })
