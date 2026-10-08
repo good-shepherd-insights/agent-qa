@@ -2,3 +2,5 @@ export type { ActionAnnotation, ActionAnnotationBase, RecordingAnnotationWitness
 export { validRecordingAnnotation, validRecordedAnnotation } from './annotation'
 export type { ActionResult, RecordedActionResult } from './action-result'
 export { toRecordedActionResult } from './action-result'
+export type { IdempotentNoopMeta } from './no-input'
+export { readIdempotentNoopMeta } from './no-input'

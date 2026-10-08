@@ -1,4 +1,4 @@
-import type { RunDetailSubAction } from '@vostride/agent-qa-schema'
+import { readIdempotentNoopMeta, type RunDetailSubAction } from '@vostride/agent-qa-schema'
 
 import { ActionSentence } from './action-sentence'
 import { CacheStatusIconWrapper } from './cache-status-marker'
@@ -15,8 +15,9 @@ interface SubActionTreeItemProps {
   onSelect: () => void
 }
 
-/** The two words a recorded result can be. Raw, closed, and never a sentence. */
-function resultWord(sub: RunDetailSubAction): 'success' | 'failure' {
+/** The three words a recorded result can be. Raw, closed, and never a sentence. */
+function resultWord(sub: RunDetailSubAction): 'success' | 'failure' | 'no-input' {
+  if (readIdempotentNoopMeta(sub.result)) return 'no-input'
   return sub.result.success ? 'success' : 'failure'
 }
 

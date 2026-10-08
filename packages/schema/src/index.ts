@@ -803,6 +803,8 @@ export type { BundleKind, FactSubtype, OriginStage } from './delta/index'
 export { toRecordedActionResult } from './result/index'
 export { validRecordingAnnotation, validRecordedAnnotation } from './result/index'
 export type { RecordingAnnotationWitness } from './result/index'
+export type { IdempotentNoopMeta } from './result/index'
+export { readIdempotentNoopMeta } from './result/index'
 export { computeEvidenceToken } from './ids/index'
 
 // 338 reader DTOs (PORT-03)

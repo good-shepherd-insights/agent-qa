@@ -1,5 +1,5 @@
 import {
-  actionFamilyOf, type Action, type ActionFamily, type RunDetailSubAction,
+  actionFamilyOf, readIdempotentNoopMeta, type Action, type ActionFamily, type RunDetailSubAction,
 } from '@vostride/agent-qa-schema'
 import {
   Braces, CircleDashed, Compass, Hand, Hourglass, MousePointer2, CircleCheck,
@@ -74,9 +74,11 @@ export const ACTION_FAMILY_ICONS = {
 } satisfies Record<ActionFamily, LucideIcon>
 
 export const UNKNOWN_ACTION_ICON = CircleDashed
-export type ActionOutcome = 'succeeded' | 'failed'
-export const ACTION_OUTCOMES = ['succeeded', 'failed'] as const satisfies readonly ActionOutcome[]
-export const RESULT_WORDS = { passed: 'passed', failed: 'failed', healed: 'healed' } as const
+export type ActionOutcome = 'succeeded' | 'failed' | 'no-input'
+export const ACTION_OUTCOMES = ['succeeded', 'failed', 'no-input'] as const satisfies readonly ActionOutcome[]
+export const RESULT_WORDS = {
+  passed: 'passed', failed: 'failed', healed: 'healed', 'no-input': 'no input sent',
+} as const
 export const ACTION_FAILURE_SUFFIX = ' — failed'
 const UNKNOWN_VERB = { past: 'Performed an action', infinitive: 'perform an action' }
 const NAVIGATION_VERBS = {
@@ -115,14 +117,16 @@ export function buildActionSentence(sub: RunDetailSubAction): ActionSentenceMode
   const action = sub.plannedAction
   const known = Object.hasOwn(ACTION_VERBS, action.type)
   const family = known ? actionFamilyOf(action.type) : undefined
-  const outcome: ActionOutcome = sub.result.success ? 'succeeded' : 'failed'
+  const noInput = readIdempotentNoopMeta(sub.result)
+  const outcome: ActionOutcome = noInput ? 'no-input' : sub.result.success ? 'succeeded' : 'failed'
   let verb = known ? ACTION_VERBS[action.type] : UNKNOWN_VERB
   if (action.type === 'navigate' && Object.hasOwn(NAVIGATION_VERBS, action.to)) {
     verb = NAVIGATION_VERBS[action.to]
   }
   const parts: ActionSentencePart[] = [{
     kind: 'text',
-    text: outcome === 'succeeded' ? verb.past : `Tried to ${verb.infinitive}`,
+    text: outcome === 'succeeded' ? verb.past
+      : outcome === 'no-input' ? `Did not ${verb.infinitive}` : `Tried to ${verb.infinitive}`,
   }]
   const text = (value: string) => { parts.push({ kind: 'text', text: value }) }
   const masked = (value: string) => { parts.push({ kind: 'masked', text: value }) }
@@ -170,6 +174,10 @@ export function buildActionSentence(sub: RunDetailSubAction): ActionSentenceMode
     }
   }
   if (outcome === 'failed') text(ACTION_FAILURE_SUFFIX)
+  if (noInput) {
+    text(' — no input sent, already ')
+    masked(noInput.currentState)
+  }
   return { family, outcome, parts }
 }
 

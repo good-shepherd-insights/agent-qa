@@ -2,7 +2,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { asRef, maskedMarker, type RunDetailSubAction } from '@vostride/agent-qa-schema'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SubActionTreeItem } from '../sub-action-tree-item'
 import { TooltipProvider } from '@/components/ui/tooltip'
 
@@ -61,4 +61,24 @@ it('TREE-ROW-NO-PLAN-TEXT uses a truncated sentence and keeps secrets behind chi
   }} stepId='0:0' cached={false} isSelected={false} onSelect={() => {}} />))
   expect(container.querySelector('[data-masked="secret"]')).not.toBeNull()
   expect(container.innerHTML).not.toContain(secret)
+})
+
+describe('C437-NO-INPUT-LABEL', () => {
+  it('the tree item marks a skipped tap no-input', () => {
+    const { sub } = mount(true)
+    expect(container.querySelector('[data-sub-action]')!.getAttribute('data-sub-action-result')).toBe('success')
+    act(() => root!.render(<SubActionTreeItem sub={{ ...sub, result: { success: false } }}
+      stepId='0:0' cached={false} isSelected={false} onSelect={() => {}} />))
+    expect(container.querySelector('[data-sub-action]')!.getAttribute('data-sub-action-result')).toBe('failure')
+    act(() => root!.render(<SubActionTreeItem sub={{ ...sub,
+      plannedAction: { type: 'tap', ref: asRef('wifi') },
+      grounding: { descriptor: { name: 'Wi-Fi' }, attempts: [] },
+      result: { success: false, metadata: { idempotentNoop: { currentState: 'checked', inputSent: false } } },
+    }} stepId='0:0' cached={false} isSelected={false} onSelect={() => {}} />))
+    const row = container.querySelector('[data-sub-action]')!
+    expect(row.getAttribute('data-sub-action-result')).toBe('no-input')
+    expect(row.querySelector('[data-action-outcome="no-input"]')).not.toBeNull()
+    expect(row.textContent).toBe("Did not tap 'Wi-Fi' — no input sent, already checked")
+    expect(row.querySelector('svg.text-red-500')).toBeNull()
+  })
 })

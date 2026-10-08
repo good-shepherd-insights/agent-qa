@@ -1,4 +1,4 @@
-import { ACTION_FAMILY_BY_TYPE, maskedMarker, type Action, type RunDetailSubAction } from '@vostride/agent-qa-schema'
+import { ACTION_FAMILY_BY_TYPE, asRef, maskedMarker, type Action, type RunDetailSubAction } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 import { copyTextOf } from '../display-text'
 
@@ -98,4 +98,32 @@ it('SENTENCE-TARGET-ICON-FONT removes decorative private-use glyphs only in disp
   const text = actionSentenceText(buildActionSentence(recorded))
   expect(text).toBe(`Clicked 'Products 日本語 👩🏽‍💻 ${copyTextOf(maskedMarker('secret'))}'`)
   expect(recorded.grounding?.descriptor.name).toBe(name)
+})
+
+// 2026-10-08 (437-03, D-05): a tap that sent no input is never shown as succeeded or failed.
+describe('C437-NO-INPUT-LABEL', () => {
+  function skippedTap(success: boolean, idempotentNoop: Record<string, unknown>): RunDetailSubAction {
+    return { testIndex: 0, stepIndex: 0, subActionIndex: 0, plan: 'Planner reasoning',
+      plannedAction: { type: 'tap', ref: asRef('wifi') }, grounding: { descriptor: { name: 'Wi-Fi' }, attempts: [] },
+      result: { success, metadata: { idempotentNoop } }, screenStateHash: 'screen' }
+  }
+
+  it('the action sentence of a skipped tap says no input sent', () => {
+    const { buildActionSentence, actionSentenceText, ACTION_OUTCOMES, RESULT_WORDS } = vocabulary()
+    const model = buildActionSentence(skippedTap(false, { currentState: 'checked', inputSent: false }))
+    expect(model.outcome).toBe('no-input')
+    expect(actionSentenceText(model)).toBe("Did not tap 'Wi-Fi' — no input sent, already checked")
+    expect(model.parts.at(-1)).toEqual({ kind: 'masked', text: 'checked' })
+    expect(actionSentenceText(model)).not.toContain('Tapped')
+    expect(actionSentenceText(model)).not.toContain(' — failed')
+    expect(ACTION_OUTCOMES).toContain('no-input')
+    expect(RESULT_WORDS['no-input']).toBe('no input sent')
+  })
+
+  it('a pre-437 skipped tap (success true) is labelled no input sent too', () => {
+    const { buildActionSentence, actionSentenceText } = vocabulary()
+    const model = buildActionSentence(skippedTap(true, { currentState: 'checked' }))
+    expect(model.outcome).toBe('no-input')
+    expect(actionSentenceText(model)).toBe("Did not tap 'Wi-Fi' — no input sent, already checked")
+  })
 })
