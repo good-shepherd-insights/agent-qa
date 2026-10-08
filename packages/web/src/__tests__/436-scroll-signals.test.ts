@@ -3,6 +3,8 @@
 // container ref scrolls and measures only the container it names. C436-SCROLL-POINTER (436-18 ·
 // D-24/D-25, review CR-02): a no-ref wheel is judged by the scrollers under the pointer. Real
 // headless Chromium through WebPlatformAdapter, fixtures served from a loopback node:http server.
+// 2026-10-08 (436-22): C436-SCROLL-REF adds the propagating body, quirks mode, body and html
+// scrollers, shadow roots and an iframe-only ref (review CR-06).
 
 import { createServer } from 'node:http'
 import type { Server } from 'node:http'
@@ -43,7 +45,39 @@ const POINTER = page('pointer', `
   <ul id="list">${Array.from({ length: 200 }, (_, i) => `<li><button>Item ${String(i)}</button></li>`).join('')}</ul>
   <footer>Footer</footer>`)
 
+// review2-body-prop*.mjs and review2-quirks.mjs: a ref near the top of a 3000 px page whose body
+// overflow propagates to the viewport, or a quirks-mode page.
+const PROP_TAIL = '<div style="height:3000px"><button style="position:relative;top:10px">Item one</button></div><p>Footer text</p>'
+const PROP_BODY = `<!DOCTYPE html><html><head><style>html,body{height:100%} body{margin:0;overflow-x:hidden}</style></head><body>${PROP_TAIL}</body></html>`
+const PROP_BODY_Y = `<!DOCTYPE html><html><head><style>html{height:100%} body{height:100%;margin:0;overflow-y:auto}</style></head><body>${PROP_TAIL}</body></html>`
+const QUIRKS = `<html><head></head><body>${PROP_TAIL}</body></html>`
+const BODY_SCROLLER = `<!DOCTYPE html><html><head><style>html{height:100%;overflow:hidden} body{height:100%;margin:0;overflow:auto}</style></head><body>${PROP_TAIL}</body></html>`
+const HTML_SCROLLER = `<!DOCTYPE html><html><head><style>html{height:100%;overflow:auto}</style></head><body>${PROP_TAIL}</body></html>`
+const SLOTTED = page('slotted', `
+  <div id="host"><template shadowrootmode="open"><div id="inner" style="height:200px;overflow:auto"><slot></slot></div></template>
+    ${Array.from({ length: 30 }, (_, i) => `<button style="display:block;height:40px">Slot item ${String(i)}</button>`).join('')}
+  </div>
+  <div style="height:3000px">Page tail</div>`)
+const SHADOW_TREE = page('shadow tree', `
+  <div id="box" style="height:200px;overflow:auto">
+    <div id="host"><template shadowrootmode="open"><div style="height:1200px"><button>Shadow item</button></div></template></div>
+  </div>
+  <div style="height:3000px">Page tail</div>`)
+const FRAMED_ONLY = page('framed only', `
+  <iframe id="frame" src="/framed-only-inner" style="width:400px;height:150px"></iframe>
+  <div style="height:3000px">Page tail</div>`)
+const FRAMED_ONLY_INNER = page('framed only inner', '<div style="height:2000px"><button>Framed item</button></div>')
+
 const PAGES: Record<string, string> = {
+  '/prop-body': PROP_BODY,
+  '/prop-body-y': PROP_BODY_Y,
+  '/quirks': QUIRKS,
+  '/body-scroller': BODY_SCROLLER,
+  '/html-scroller': HTML_SCROLLER,
+  '/slotted': SLOTTED,
+  '/shadow-tree': SHADOW_TREE,
+  '/framed-only': FRAMED_ONLY,
+  '/framed-only-inner': FRAMED_ONLY_INNER,
   '/pointer': POINTER,
   '/paragraphs': PARAGRAPHS,
   '/buttons': BUTTONS,
@@ -228,7 +262,86 @@ describe('C436-SCROLL-REF', () => {
     })
     expect(await scrollY(tab)).toBe(0)
   }, 60_000)
+
+  it('a ref under a body whose overflow propagates scrolls the page', async () => {
+    await refScrollsThePage('/prop-body')
+  }, 60_000)
+
+  it('the overflow-y:auto propagating body variant scrolls the page', async () => {
+    await refScrollsThePage('/prop-body-y')
+  }, 60_000)
+
+  it('a quirks-mode page scrolls through document.scrollingElement', async () => {
+    await refScrollsThePage('/quirks')
+  }, 60_000)
+
+  it('a body that is its own scroller is scrolled and measured itself', async () => {
+    const { web, tab } = await open('/body-scroller')
+    const ref = await refFor(web, 'button', 'Item one')
+    await web.execute({ type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: false, ref })
+    expect(await valueOf(tab, 'document.body.scrollTop')).toBe(720)
+    expect(await scrollY(tab), 'the window did not move').toBe(0)
+    await tab.evaluate('document.body.scrollTop = 1500')
+    const result = await web.execute({
+      type: 'scroll', mode: 'direction', direction: 'up', amount: 'toEnd', retryOpposite: false, ref,
+    })
+    expect(result.metadata?.scrollUntilVisible).toMatchObject({ outcome: 'found', endedBy: 'boundary' })
+    expect(await valueOf(tab, 'document.body.scrollTop')).toBe(0)
+  }, 60_000)
+
+  it('an html scroller is measured as the document scroller', async () => {
+    const { web, tab } = await open('/html-scroller')
+    const ref = await refFor(web, 'button', 'Item one')
+    await web.execute({ type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: false, ref })
+    expect(await valueOf(tab, 'document.documentElement.scrollTop')).toBe(720)
+  }, 60_000)
+
+  it("a slotted ref scrolls its open shadow root's internal scroller", async () => {
+    const { web, tab } = await open('/slotted')
+    const ref = await refFor(web, 'button', 'Slot item 0')
+    await web.execute({ type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: false, ref })
+    expect(await valueOf(tab, "document.getElementById('host').shadowRoot.getElementById('inner').scrollTop")).toBeGreaterThan(0)
+    expect(await scrollY(tab), 'the window did not move').toBe(0)
+  }, 60_000)
+
+  it("a ref inside an open shadow tree scrolls its host's scrolling ancestor", async () => {
+    const { web, tab } = await open('/shadow-tree')
+    const ref = await refFor(web, 'button', 'Shadow item')
+    await web.execute({ type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: false, ref })
+    expect(await valueOf(tab, "document.getElementById('box').scrollTop")).toBeGreaterThan(0)
+    expect(await scrollY(tab), 'the window did not move').toBe(0)
+  }, 60_000)
+
+  it('an iframe-only ref moves nothing and reads unknown', async () => {
+    const { web, tab } = await open('/framed-only')
+    const ref = await refFor(web, 'button', 'Framed item')
+    const result = await web.execute({
+      type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: false, ref,
+    })
+    expect(result.metadata?.scrollUntilVisible).toMatchObject({ endedBy: 'max-swipes' })
+    expect(await scrollY(tab), 'the window did not move').toBe(0)
+    expect(await valueOf(tab, "document.getElementById('frame').contentWindow.scrollY"), 'the iframe did not move').toBe(0)
+  }, 60_000)
 })
+
+async function valueOf(tab: Page, expression: string): Promise<number> {
+  return tab.evaluate<number>(expression)
+}
+
+// A ref near the top: `down` moves the page one viewport, and `toEnd up` from 1500 ends on the
+// page's own top, never on a container the gesture did not move (review CR-06).
+async function refScrollsThePage(path: string): Promise<void> {
+  const { web, tab } = await open(path)
+  const ref = await refFor(web, 'button', 'Item one')
+  await web.execute({ type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: false, ref })
+  expect(await scrollY(tab), 'down moved the page one viewport').toBe(720)
+  await tab.evaluate('window.scrollTo(0, 1500)')
+  const result = await web.execute({
+    type: 'scroll', mode: 'direction', direction: 'up', amount: 'toEnd', retryOpposite: false, ref,
+  })
+  expect(result.metadata?.scrollUntilVisible).toMatchObject({ outcome: 'found', endedBy: 'boundary' })
+  expect(await scrollY(tab), 'the boundary is the page top').toBe(0)
+}
 
 type Extent = { top: number; max: number }
 
