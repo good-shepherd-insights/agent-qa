@@ -95,11 +95,36 @@ const READBACK_PAGE = `<!DOCTYPE html>
   <button id="forge" onclick="forge()">Forge claim</button>
   <button id="override" onclick="overrideAndForge()">Forge with override</button>
   <button id="watch" onclick="watchAndWrite()">Copy and watch</button>
+  <button id="rejected" onclick="rejectedWrite()">Write rejected item</button>
+  <button id="order" onclick="copyOrder()">Copy order number</button>
+  <button id="twice" onclick="writeTwice()">Copy twice</button>
   <script>
     window.reads = []
     window.states = []
     window.pollDone = false
-    const claim = (text) => window[${JSON.stringify(CLIPBOARD_BINDING)}]({ via: 'writeText', text })
+    window.reports = 0
+    const binding = ${JSON.stringify(CLIPBOARD_BINDING)}
+    const claim = (text) => window[binding]({ via: 'writeText', text })
+    function countReports() {
+      const send = window[binding]
+      window[binding] = function () { window.reports += 1; return send.apply(this, arguments) }
+    }
+    function rejectedWrite() {
+      const item = new ClipboardItem({
+        'text/plain': new Blob(['REJECTED-1'], { type: 'text/plain' }),
+        'application/x-agent-qa-unsupported': new Blob(['x'], { type: 'application/x-agent-qa-unsupported' }),
+      })
+      navigator.clipboard.write([item]).then(() => { window.writeOutcome = 'resolved' }, () => { window.writeOutcome = 'rejected' })
+    }
+    function copyOrder() {
+      countReports()
+      navigator.clipboard.writeText('ORDER-4471')
+      window.reportedInline = window.reports
+    }
+    function writeTwice() {
+      navigator.clipboard.writeText('A')
+      navigator.clipboard.writeText('B')
+    }
     function forge() {
       claim('forged')
       const end = Date.now() + 1000
@@ -612,5 +637,36 @@ describe('C436-CLIPBOARD-READBACK', () => {
 
     expect(closed).toHaveBeenCalled()
     expect(probePage.isClosed()).toBe(true)
+  }, 60_000)
+
+  it('a write the browser rejects is not reported and reads nothing back', async () => {
+    const web = await withTesterSecret()
+    const readPath = vi.spyOn(captureOf(web) as unknown as { readClipboard: () => Promise<unknown> }, 'readClipboard')
+    const result = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Write rejected item') })
+
+    expect(await web.getPage()!.evaluate('window.writeOutcome')).toBe('rejected')
+    expect(JSON.stringify(result.metadata?.['clipboard'] ?? null)).toBe('null')
+    expect(readPath).not.toHaveBeenCalled()
+  }, 60_000)
+
+  it('a writeText is reported after it resolves', async () => {
+    const web = await open(undefined, undefined, 'readback')
+    const result = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Copy order number') })
+
+    expect(await web.getPage()!.evaluate('window.reportedInline')).toBe(0)
+    expect(await web.getPage()!.evaluate('window.reports')).toBe(1)
+    expect(clipboardOf(result)).toEqual([{ source: 'writeText', text: 'ORDER-4471', readBack: 'matched' }])
+  }, 60_000)
+
+  it('two writes in one click read back once', async () => {
+    const web = await open(undefined, undefined, 'readback')
+    const readPath = vi.spyOn(captureOf(web) as unknown as { readClipboard: () => Promise<unknown> }, 'readClipboard')
+    const result = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Copy twice') })
+
+    expect(readPath).toHaveBeenCalledTimes(1)
+    expect(clipboardOf(result)).toEqual([
+      { source: 'writeText', text: 'A', readBack: 'unavailable' },
+      { source: 'writeText', text: 'B', readBack: 'matched' },
+    ])
   }, 60_000)
 })
