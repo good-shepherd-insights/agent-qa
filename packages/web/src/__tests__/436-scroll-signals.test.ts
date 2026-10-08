@@ -53,6 +53,8 @@ const PROP_BODY_Y = `<!DOCTYPE html><html><head><style>html{height:100%} body{he
 const QUIRKS = `<html><head></head><body>${PROP_TAIL}</body></html>`
 const BODY_SCROLLER = `<!DOCTYPE html><html><head><style>html{height:100%;overflow:hidden} body{height:100%;margin:0;overflow:auto}</style></head><body>${PROP_TAIL}</body></html>`
 const HTML_SCROLLER = `<!DOCTYPE html><html><head><style>html{height:100%;overflow:auto}</style></head><body>${PROP_TAIL}</body></html>`
+// Quirks mode with a body that could scroll: document.scrollingElement is null.
+const NO_SCROLLING_ELEMENT = '<html><head><style>html{height:100%;overflow:hidden} body{height:100%;margin:0;overflow:auto}</style></head><body><button>Lone button</button></body></html>'
 const SLOTTED = page('slotted', `
   <div id="host"><template shadowrootmode="open"><div id="inner" style="height:200px;overflow:auto"><slot></slot></div></template>
     ${Array.from({ length: 30 }, (_, i) => `<button style="display:block;height:40px">Slot item ${String(i)}</button>`).join('')}
@@ -74,6 +76,7 @@ const PAGES: Record<string, string> = {
   '/quirks': QUIRKS,
   '/body-scroller': BODY_SCROLLER,
   '/html-scroller': HTML_SCROLLER,
+  '/no-scrolling-element': NO_SCROLLING_ELEMENT,
   '/slotted': SLOTTED,
   '/shadow-tree': SHADOW_TREE,
   '/framed-only': FRAMED_ONLY,
@@ -310,6 +313,18 @@ describe('C436-SCROLL-REF', () => {
     await web.execute({ type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: false, ref })
     expect(await valueOf(tab, "document.getElementById('box').scrollTop")).toBeGreaterThan(0)
     expect(await scrollY(tab), 'the window did not move').toBe(0)
+  }, 60_000)
+
+  it('a page with no scrolling element reports unknown', async () => {
+    const { web, tab } = await open('/no-scrolling-element')
+    expect(await tab.evaluate('document.scrollingElement === null')).toBe(true)
+    const ref = await refFor(web, 'button', 'Lone button')
+    const result = await web.execute({
+      type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: false, ref,
+    })
+    expect(result.metadata?.scrollUntilVisible).toEqual({
+      swipes: 1, reversedOnce: false, outcome: 'unresolved', endedBy: 'max-swipes',
+    })
   }, 60_000)
 
   it('an iframe-only ref moves nothing and reads unknown', async () => {

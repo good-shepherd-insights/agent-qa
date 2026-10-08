@@ -1,8 +1,12 @@
 // Container scroll for a ref (436-17 · D-25, review CR-03). The ref resolves through
 // ElementResolver, the role locator every other web action uses. A ref that does not resolve
-// performs no gesture and reports no offsets, so the swipe reads `unknown`; offsets always belong
-// to the container that was actually scrolled, and the document reports them only when it has
-// scroll range on the swiped axis.
+// performs no gesture and reports no offsets, so the swipe reads `unknown`. Offsets always belong
+// to the container that was actually scrolled: the element, its nearest scrolling ancestor over
+// the flat tree, or document.scrollingElement, which reports them only when it has scroll range on
+// the swiped axis.
+// 2026-10-08 (436-22): the walk follows the flat tree (slot, parent, shadow host), never takes a
+// body whose overflow propagates to the viewport as a container, and the document fallback scrolls
+// and measures document.scrollingElement; with none, it reports no offsets (review CR-06).
 
 import type { Page } from 'playwright-core'
 import type { Ref } from '@vostride/agent-qa-schema'
@@ -54,27 +58,48 @@ export async function scrollWithRef(
           return (overflow === 'auto' || overflow === 'scroll' || overflow === 'hidden') && maxOf(node) > 0
         }
 
-        // The element itself, then its nearest scrollable ancestor.
-        if (scrollable(el)) {
-          const before = el[prop]
-          el.scrollBy(dx, dy)
-          const after = el[prop]
-          return { bounds: boundsOf(), scrolledContainer: 'element', scrolled: before !== after, offsets: { before, after, max: maxOf(el) } }
-        }
-        for (let parent = el.parentElement; parent && parent !== doc.documentElement; parent = parent.parentElement) {
-          if (!scrollable(parent)) continue
-          const before = parent[prop]
-          parent.scrollBy(dx, dy)
-          const after = parent[prop]
-          return { bounds: boundsOf(), scrolledContainer: 'ancestor', scrolled: before !== after, offsets: { before, after, max: maxOf(parent) } }
+        // A body whose overflow propagates to the viewport is not a scroll container; the
+        // document scroller stands for the page in standards and quirks mode alike.
+        const scroller = doc.scrollingElement
+        const rootStyle = win.getComputedStyle(doc.documentElement)
+        const bodyPropagates = rootStyle.overflowX === 'visible' && rootStyle.overflowY === 'visible'
+        const isDocumentScroller = (node: any): boolean =>
+          node === doc.documentElement || node === scroller || (bodyPropagates && node === doc.body)
+        const parentOf = (node: any): any => {
+          if (node.assignedSlot) return node.assignedSlot
+          if (node.parentElement) return node.parentElement
+          const parent = node.parentNode
+          return parent && parent.host ? parent.host : null
         }
 
-        // The document, whose offsets prove something only when it has range on this axis.
-        const root = doc.documentElement
-        const before = root[prop]
-        root.scrollBy(dx, dy)
-        const after = root[prop]
-        const max = maxOf(root)
+        // The element itself, then its nearest scrollable ancestor over the flat tree.
+        if (!isDocumentScroller(el)) {
+          if (scrollable(el)) {
+            const before = el[prop]
+            el.scrollBy(dx, dy)
+            const after = el[prop]
+            return { bounds: boundsOf(), scrolledContainer: 'element', scrolled: before !== after, offsets: { before, after, max: maxOf(el) } }
+          }
+          for (let parent = parentOf(el); parent && !isDocumentScroller(parent); parent = parentOf(parent)) {
+            if (!scrollable(parent)) continue
+            const before = parent[prop]
+            parent.scrollBy(dx, dy)
+            const after = parent[prop]
+            return { bounds: boundsOf(), scrolledContainer: 'ancestor', scrolled: before !== after, offsets: { before, after, max: maxOf(parent) } }
+          }
+        }
+
+        // The document scroller, whose offsets prove something only when it has range on this axis.
+        if (!scroller) {
+          const x = win.scrollX
+          const y = win.scrollY
+          win.scrollBy(dx, dy)
+          return { bounds: boundsOf(), scrolledContainer: 'documentElement', scrolled: x !== win.scrollX || y !== win.scrollY }
+        }
+        const before = scroller[prop]
+        scroller.scrollBy(dx, dy)
+        const after = scroller[prop]
+        const max = maxOf(scroller)
         return {
           bounds: boundsOf(),
           scrolledContainer: 'documentElement',

@@ -2544,6 +2544,60 @@
       "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
       "fullName": "C436-PROBE-LIFECYCLE a probe whose read never settles is skipped while that probe lives",
       "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-REF a ref under a body whose overflow propagates scrolls the page",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-REF the overflow-y:auto propagating body variant scrolls the page",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-REF a quirks-mode page scrolls through document.scrollingElement",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-REF a body that is its own scroller is scrolled and measured itself",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-REF an html scroller is measured as the document scroller",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-REF a slotted ref scrolls its open shadow root's internal scroller",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-REF a ref inside an open shadow tree scrolls its host's scrolling ancestor",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-REF a page with no scrolling element reports unknown",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-REF an iframe-only ref moves nothing and reads unknown",
+      "origin": "436 D-25"
     }
   ]
 }
