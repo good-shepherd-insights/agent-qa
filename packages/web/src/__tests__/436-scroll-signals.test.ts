@@ -4,7 +4,8 @@
 // D-24/D-25, review CR-02): a no-ref wheel is judged by the scrollers under the pointer. Real
 // headless Chromium through WebPlatformAdapter, fixtures served from a loopback node:http server.
 // 2026-10-08 (436-22): C436-SCROLL-REF adds the propagating body, quirks mode, body and html
-// scrollers, shadow roots and an iframe-only ref (review CR-06).
+// scrollers, shadow roots and an iframe-only ref (review CR-06). C436-SCROLL-FRAMES: the probe
+// sees every frame and answers visible, hidden or unknown (review CR-07).
 
 import { createServer } from 'node:http'
 import type { Server } from 'node:http'
@@ -70,7 +71,34 @@ const FRAMED_ONLY = page('framed only', `
   <div style="height:3000px">Page tail</div>`)
 const FRAMED_ONLY_INNER = page('framed only inner', '<div style="height:2000px"><button>Framed item</button></div>')
 
-const PAGES: Record<string, string> = {
+// review2-iframe-target3.mjs: an on-screen iframe away from the pointer, then 2000 px of page.
+const PAY_FRAME = '<!DOCTYPE html><html><body><button>Pay now</button></body></html>'
+const FRAME_STYLE = 'margin-left:500px;width:400px;height:150px;border:0;display:block'
+const framePage = (src: string, style = FRAME_STYLE, before = '', after = '<div style="height:2000px">Body</div>'): string =>
+  `<!DOCTYPE html><html><body style="margin:0">${before}<iframe id="frame" src="${src}" style="${style}"></iframe>${after}</body></html>`
+const FRAME_SAME = framePage('/frame-pay')
+const FRAME_CROSS = (port: number): string => framePage(`http://127.0.0.1:${String(port)}/frame-pay`)
+const FRAME_NESTED = framePage('/frame-mid', 'margin-left:500px;width:400px;height:300px;border:0;display:block')
+const FRAME_MID = '<!DOCTYPE html><html><body style="margin:0"><iframe src="/frame-pay" style="width:300px;height:150px;border:0"></iframe></body></html>'
+const FRAME_BELOW = framePage('/frame-pay', FRAME_STYLE, '<div style="height:2000px">Above</div>', '<div style="height:1000px">Below</div>')
+// The page itself can scroll 280 px, so both searches meet real boundaries.
+const FRAME_SCROLLED_OUT = framePage('/frame-pay-deep', FRAME_STYLE, '', '<div style="height:850px">Body</div>')
+const PAY_FRAME_DEEP = '<!DOCTYPE html><html><body><div style="height:1500px">Top</div><button>Pay now</button></body></html>'
+const FRAME_SCALED = framePage('/frame-pay', `${FRAME_STYLE};transform:scale(0.5)`, '', '<div style="height:850px">Body</div>')
+const FRAME_COVERED = framePage('/frame-pay', FRAME_STYLE, '',
+  '<div style="height:850px">Body</div><div style="position:fixed;inset:0;background:rgba(0,0,0,0.3)"></div>')
+
+const PAGES: Record<string, string | ((port: number) => string)> = {
+  '/frame-same': FRAME_SAME,
+  '/frame-cross': FRAME_CROSS,
+  '/frame-nested': FRAME_NESTED,
+  '/frame-mid': FRAME_MID,
+  '/frame-pay': PAY_FRAME,
+  '/frame-below': FRAME_BELOW,
+  '/frame-scrolled-out': FRAME_SCROLLED_OUT,
+  '/frame-pay-deep': PAY_FRAME_DEEP,
+  '/frame-scaled': FRAME_SCALED,
+  '/frame-covered': FRAME_COVERED,
   '/prop-body': PROP_BODY,
   '/prop-body-y': PROP_BODY_Y,
   '/quirks': QUIRKS,
@@ -101,7 +129,8 @@ let adapter: WebPlatformAdapter | undefined
 
 beforeAll(async () => {
   server = createServer((req, res) => {
-    const html = PAGES[(req.url ?? '/').split('?')[0]]
+    const entry = PAGES[(req.url ?? '/').split('?')[0]]
+    const html = typeof entry === 'function' ? entry((server.address() as AddressInfo).port) : entry
     res.writeHead(html === undefined ? 404 : 200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
     res.end(html ?? 'not found')
   })
@@ -177,13 +206,14 @@ describe('C436-SCROLL-VISIBILITY', () => {
     expect(rect.innerHeight).toBe(720)
     expect(rect.top).toBeGreaterThanOrEqual(0)
     expect(rect.bottom).toBeLessThanOrEqual(rect.innerHeight)
+    expect(await buildScrollPrimitives(tab, {}, 720).probeTargetVisible!('Paragraph 190')).toBe('visible')
   }, 60_000)
 
   it('a named button below the fold is not found until it is on screen', async () => {
     const { web, tab } = await open('/buttons')
     const probe = buildScrollPrimitives(tab, {}, 720)
-    expect(await probe.probeTargetVisible!('Buy 190')).toBe(false)
-    expect(await probe.probeTargetVisible!('Buy 1')).toBe(true)
+    expect(await probe.probeTargetVisible!('Buy 190')).toBe('hidden')
+    expect(await probe.probeTargetVisible!('Buy 1')).toBe('visible')
     expect(await scrollY(tab)).toBe(0)
 
     const result = await web.execute(untilVisible('Buy 190', 3))
@@ -192,7 +222,7 @@ describe('C436-SCROLL-VISIBILITY', () => {
     const rect = await rectOf(tab, 'button', 190)
     expect(rect.top).toBeGreaterThanOrEqual(0)
     expect(rect.bottom).toBeLessThanOrEqual(rect.innerHeight)
-    expect(await probe.probeTargetVisible!('Buy 190')).toBe(true)
+    expect(await probe.probeTargetVisible!('Buy 190')).toBe('visible')
   }, 60_000)
 
   it('an element clipped by a nested scroller is not visible', async () => {
@@ -202,14 +232,15 @@ describe('C436-SCROLL-VISIBILITY', () => {
     const clipped = await rectOf(tab, '#list > div', 10)
     expect(clipped.top).toBeGreaterThan(0)
     expect(clipped.bottom).toBeLessThan(clipped.innerHeight)
-    expect(await probe.probeTargetVisible!('Entry 10')).toBe(false)
-    expect(await probe.probeTargetVisible!('Entry 0')).toBe(true)
+    // The search may not have moved the list, so the clip cannot prove the entry hidden.
+    expect(await probe.probeTargetVisible!('Entry 10')).toBe('unknown')
+    expect(await probe.probeTargetVisible!('Entry 0')).toBe('visible')
   }, 60_000)
 
   it('an aria-label-only target counts when on screen', async () => {
     const { tab } = await open('/labelled')
     const probe = buildScrollPrimitives(tab, {}, 720)
-    expect(await probe.probeTargetVisible!('close dialog')).toBe(true)
+    expect(await probe.probeTargetVisible!('close dialog')).toBe('visible')
   }, 60_000)
 
   it('a target absent from the page never ends found', async () => {
@@ -449,5 +480,75 @@ describe('C436-SCROLL-POINTER', () => {
     const after = await fingerprint()
     expect(after.keys).toEqual(before.keys)
     expect(after.attributes).toEqual(before.attributes)
+  }, 60_000)
+})
+
+// Every search starts at the top with the pointer away from the iframe.
+function search(direction: 'up' | 'down', maxSwipes: number) {
+  return { type: 'scroll' as const, mode: 'untilVisible' as const, text: 'Pay now', direction, maxSwipes, retryOpposite: true }
+}
+
+async function frameIntersectsViewport(tab: Page): Promise<boolean> {
+  return tab.evaluate<boolean>(`(() => {
+    const r = document.getElementById('frame').getBoundingClientRect()
+    return r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth
+  })()`)
+}
+
+describe('C436-SCROLL-FRAMES', () => {
+  it('an on-screen target in a same-origin iframe ends found', async () => {
+    const { web } = await open('/frame-same')
+    const result = await web.execute(search('up', 5))
+    expect(result.metadata?.scrollUntilVisible).toEqual({
+      swipes: 0, reversedOnce: false, outcome: 'found', endedBy: 'target-visible',
+    })
+  }, 60_000)
+
+  it('an on-screen target in a cross-origin iframe ends found', async () => {
+    const { web, tab } = await open('/frame-cross')
+    expect(tab.frames().some((f) => f.url().startsWith('http://127.0.0.1:'))).toBe(true)
+    const result = await web.execute(search('up', 5))
+    expect(result.metadata?.scrollUntilVisible).toEqual({
+      swipes: 0, reversedOnce: false, outcome: 'found', endedBy: 'target-visible',
+    })
+  }, 60_000)
+
+  it('an on-screen target in an iframe nested in an iframe ends found', async () => {
+    const { web, tab } = await open('/frame-nested')
+    expect(tab.frames()).toHaveLength(3)
+    const result = await web.execute(search('up', 5))
+    expect(result.metadata?.scrollUntilVisible).toEqual({
+      swipes: 0, reversedOnce: false, outcome: 'found', endedBy: 'target-visible',
+    })
+  }, 60_000)
+
+  it('an iframe below the fold is found once the page brings it on screen', async () => {
+    const { web, tab } = await open('/frame-below')
+    expect(await frameIntersectsViewport(tab)).toBe(false)
+    const result = await web.execute(search('down', 5))
+    const meta = result.metadata?.scrollUntilVisible as { swipes: number } | undefined
+    expect(meta).toMatchObject({ outcome: 'found', endedBy: 'target-visible' })
+    expect(meta!.swipes).toBeGreaterThanOrEqual(1)
+    expect(await frameIntersectsViewport(tab)).toBe(true)
+  }, 60_000)
+
+  it('a target scrolled out of view inside its iframe never ends not-found', async () => {
+    const { web } = await open('/frame-scrolled-out')
+    const result = await web.execute(search('down', 5))
+    expect(result.metadata?.scrollUntilVisible).toMatchObject({ outcome: 'unresolved' })
+  }, 60_000)
+
+  it('a target in a scaled iframe is never judged by a guess', async () => {
+    const { web, tab } = await open('/frame-scaled')
+    expect(await frameIntersectsViewport(tab)).toBe(true)
+    const result = await web.execute(search('down', 5))
+    expect(result.metadata?.scrollUntilVisible).toMatchObject({ outcome: 'unresolved' })
+  }, 60_000)
+
+  it('an iframe covered by a fixed overlay never ends found or not-found', async () => {
+    const { web, tab } = await open('/frame-covered')
+    expect(await frameIntersectsViewport(tab)).toBe(true)
+    const result = await web.execute(search('down', 5))
+    expect(result.metadata?.scrollUntilVisible).toMatchObject({ outcome: 'unresolved' })
   }, 60_000)
 })

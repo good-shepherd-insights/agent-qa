@@ -2,6 +2,7 @@
 // swipe reports a scripted SwipeSignal and every interim-tree read returns a scripted tree, so the
 // cells can hold movement evidence and visible content apart: the tree decides target visibility
 // only, never movement, end, reversal or retry. All fakes resolve immediately; no timers.
+// 2026-10-08 (436-22): probe fakes answer visible, hidden or unknown (TargetVisibility).
 import { describe, it, expect } from 'vitest'
 import type { InterimNode } from '@vostride/agent-qa-runner'
 import {
@@ -12,7 +13,7 @@ import {
   scrollerSetSwipeSignal,
   documentSwipeSignal,
 } from '../scroll-until-visible.js'
-import type { ScrollPrimitives, SwipeSignal, Direction } from '../scroll-until-visible.js'
+import type { ScrollPrimitives, SwipeSignal, Direction, TargetVisibility } from '../scroll-until-visible.js'
 
 interface FakeCalls {
   swipes: Direction[]
@@ -213,7 +214,7 @@ describe('C436-SCROLL-PROBE — an adapter visibility probe replaces the tree ma
     const probes: { target: string; ref?: string }[] = []
     p.probeTargetVisible = async (target, ref) => {
       probes.push({ target, ...(ref ? { ref } : {}) })
-      return calls.swipes.length >= 2
+      return calls.swipes.length >= 2 ? 'visible' : 'hidden'
     }
     const r = await runUntilVisibleLoop(p, {
       target: TARGET,
@@ -238,7 +239,7 @@ describe('C436-SCROLL-PROBE — an adapter visibility probe replaces the tree ma
     let probesConfirmed = 0
     confirmed.p.probeTargetVisible = async () => {
       probesConfirmed += 1
-      return confirmed.calls.natives.length > 0
+      return confirmed.calls.natives.length > 0 ? 'visible' : 'hidden'
     }
     const found = await runUntilVisibleLoop(confirmed.p, { target: TARGET, direction: 'down', maxSwipes: 3, retryOpposite: false })
     expect(found.meta).toEqual({ swipes: 0, reversedOnce: false, outcome: 'found', endedBy: 'target-visible' })
@@ -249,12 +250,69 @@ describe('C436-SCROLL-PROBE — an adapter visibility probe replaces the tree ma
     // The tree names the target, but the probe says it is not on screen: the native rung's true
     // is not trusted and the loop swipes on.
     const refuted = makeFakePrimitives({ trees: [withTarget], signals: ['moved'], native: () => true })
-    refuted.p.probeTargetVisible = async () => false
+    refuted.p.probeTargetVisible = async () => 'hidden'
     const swiped = await runUntilVisibleLoop(refuted.p, { target: TARGET, direction: 'down', maxSwipes: 2, retryOpposite: false })
     expect(swiped.found).toBe(false)
     expect(refuted.calls.swipes).toEqual(['down', 'down'])
     expect(swiped.meta).toEqual({ swipes: 2, reversedOnce: false, outcome: 'unresolved', endedBy: 'max-swipes' })
     expect(refuted.calls.reads).toBe(0)
+  })
+})
+
+// Answers are consumed one per probe call; the last repeats once exhausted.
+function scriptedProbe(answers: TargetVisibility[]): { probe: NonNullable<ScrollPrimitives['probeTargetVisible']>; calls: () => number } {
+  let n = 0
+  return {
+    probe: async () => answers[Math.min(n++, answers.length - 1)],
+    calls: () => n,
+  }
+}
+
+describe('C436-SCROLL-PROBE — an unknown answer never ends a search not-found (436-22 · D-24)', () => {
+  it('an unknown answer anywhere in the search never ends not-found', async () => {
+    const { p, calls } = makeFakePrimitives({ trees: [SAME], signals: ['at-boundary'] })
+    p.probeTargetVisible = scriptedProbe(['hidden', 'unknown', 'hidden']).probe
+    const r = await runUntilVisibleLoop(p, { target: TARGET, direction: 'down', maxSwipes: 3, retryOpposite: true })
+    expect(calls.swipes).toEqual(['down', 'up'])
+    expect(r.found).toBe(false)
+    expect(r.meta).toEqual({ swipes: 2, reversedOnce: true, outcome: 'unresolved', endedBy: 'boundary' })
+  })
+
+  it('unknown then visible ends found', async () => {
+    const { p, calls } = makeFakePrimitives({ trees: [SAME], signals: ['moved'] })
+    p.probeTargetVisible = scriptedProbe(['unknown', 'unknown', 'visible']).probe
+    const r = await runUntilVisibleLoop(p, { target: TARGET, direction: 'down', maxSwipes: 5, retryOpposite: false })
+    expect(r.found).toBe(true)
+    expect(r.meta).toEqual({ swipes: 2, reversedOnce: false, outcome: 'found', endedBy: 'target-visible' })
+    expect(calls.reads).toBe(0)
+  })
+
+  it('the native rung is confirmed only by visible', async () => {
+    const { p, calls } = makeFakePrimitives({ trees: [withTarget], signals: ['moved'], native: () => true })
+    p.probeTargetVisible = scriptedProbe(['unknown']).probe
+    const r = await runUntilVisibleLoop(p, { target: TARGET, direction: 'down', maxSwipes: 2, retryOpposite: false })
+    expect(calls.natives).toHaveLength(1)
+    expect(calls.swipes).toEqual(['down', 'down'])
+    expect(r.found).toBe(false)
+    expect(r.meta).toEqual({ swipes: 2, reversedOnce: false, outcome: 'unresolved', endedBy: 'max-swipes' })
+  })
+
+  it('an answer that is neither visible nor hidden counts as unknown', async () => {
+    const { p, calls } = makeFakePrimitives({ trees: [withTarget], signals: ['at-boundary'] })
+    p.probeTargetVisible = async () => true as never
+    const r = await runUntilVisibleLoop(p, { target: TARGET, direction: 'down', maxSwipes: 3, retryOpposite: true })
+    expect(calls.swipes).toEqual(['down', 'up'])
+    expect(r.found).toBe(false)
+    expect(r.meta.outcome).not.toBe('found')
+    expect(r.meta.outcome).not.toBe('not-found')
+    expect(r.meta).toEqual({ swipes: 2, reversedOnce: true, outcome: 'unresolved', endedBy: 'boundary' })
+  })
+
+  it('hidden answers and two boundaries still end not-found', async () => {
+    const { p } = makeFakePrimitives({ trees: [SAME], signals: ['at-boundary'] })
+    p.probeTargetVisible = scriptedProbe(['hidden']).probe
+    const r = await runUntilVisibleLoop(p, { target: TARGET, direction: 'down', maxSwipes: 3, retryOpposite: true })
+    expect(r.meta).toEqual({ swipes: 2, reversedOnce: true, outcome: 'not-found', endedBy: 'boundary' })
   })
 })
 
