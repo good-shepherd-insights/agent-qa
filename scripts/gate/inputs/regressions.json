@@ -2304,6 +2304,114 @@
       "file": "packages/android/src/__tests__/compound.test.ts",
       "fullName": "AndroidPlatformAdapter compound behaviors (RED — Wave-0) C436-SCROLL-WEBVIEW a WebView touch swipe is judged over every WebView scroller (436-18 · D-25) a changed scroller count is unknown",
       "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/436-live-limits-door.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS live door a saved test file with an invalid limit is refused with 400 and no session",
+      "origin": "436 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/436-live-limits-door.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS live door a valid file opens the session with the resolved limits and the per-test closure",
+      "origin": "436 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/live-session.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS live suite children a suite child with its own override runs at its own limits",
+      "origin": "436 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/live-session.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS live suite children a sibling without its own block runs at project then suite",
+      "origin": "436 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/live-session.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS live suite children the live child limits equal the CLI resolver for the same blocks",
+      "origin": "436 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/live-session.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS live suite children a single step keeps the session limits",
+      "origin": "436 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/live-session.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS live refusal a test maxActions of 0 is refused, naming the test file and the key",
+      "origin": "436 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/live-session.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS live refusal a test maxActions of -1 is refused, naming the test file and the key",
+      "origin": "436 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/live-session.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS live refusal a test maxActions of 2.5 is refused, naming the test file and the key",
+      "origin": "436 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/live-session.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS live refusal a test maxActions of '30' is refused, naming the test file and the key",
+      "origin": "436 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/live-session.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS live refusal a suite maxPlanningTurns of 0 is refused, naming the suite file",
+      "origin": "436 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/live-session.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS live refusal a project maxActions of 0 is refused, naming the project config",
+      "origin": "436 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/live-session.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS live refusal the retired maxSubActions is refused with the core message at every layer",
+      "origin": "436 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/live-session.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS live refusal exactly 1 at every layer resolves",
+      "origin": "436 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/live-session.test.ts",
+      "fullName": "C436-EFFECTIVE-LIMITS live refusal a suite child with an invalid limit fails without running a step",
+      "origin": "436 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/__tests__/test-settings-panel.test.tsx",
+      "fullName": "C436-LIMIT-INPUTS a positive whole number is written",
+      "origin": "436 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/__tests__/test-settings-panel.test.tsx",
+      "fullName": "C436-LIMIT-INPUTS invalid input is refused in place",
+      "origin": "436 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/__tests__/test-settings-panel.test.tsx",
+      "fullName": "C436-LIMIT-INPUTS an empty input removes the key",
+      "origin": "436 D-03"
     }
   ]
 }

@@ -1,7 +1,8 @@
 import { DEFAULT_PLANNER_LIMITS } from '@vostride/agent-qa-schema'
 import { useYamlDocument } from '@/hooks/use-yaml-document'
 import { useTargetDetails } from '@/hooks/use-target-details'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
+import { parseConfigNumberInput } from '@/components/config-manager/numeric-input'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
@@ -103,6 +104,60 @@ function serializeAuthStateUse(name: string, load: boolean, capture: boolean): s
     ...(!load ? { load: false } : {}),
     ...(capture ? { capture: true } : {}),
   }
+}
+
+interface PlannerLimitInputProps {
+  label: string
+  value: number | undefined
+  placeholder: string
+  onCommit: (value: number | undefined) => void
+}
+
+// 436 D-02/D-03: a limit reaches the YAML only as a positive whole number, the value the CLI
+// accepts. Anything else stays in the box with an inline error and the YAML is left alone.
+function PlannerLimitInput({ label, value, placeholder, onCommit }: PlannerLimitInputProps) {
+  const errorId = useId()
+  const [text, setText] = useState(value === undefined ? '' : String(value))
+  const [error, setError] = useState<string | null>(null)
+  const [syncedValue, setSyncedValue] = useState(value)
+
+  const parse = (raw: string) => parseConfigNumberInput(raw, { label, min: 1, integer: true, allowEmpty: true })
+
+  // The YAML changed from outside (not by this box's own commit): show the new value.
+  if (syncedValue !== value) {
+    setSyncedValue(value)
+    const current = parse(text)
+    if (current.error !== null || current.value !== value) {
+      setText(value === undefined ? '' : String(value))
+      setError(null)
+    }
+  }
+
+  function edit(raw: string) {
+    setText(raw)
+    const parsed = parse(raw)
+    setError(parsed.error)
+    if (parsed.error === null) onCommit(parsed.value)
+  }
+
+  return (
+    <div className="space-y-0.5">
+      <Label className="text-[11px] text-muted-foreground">{label}</Label>
+      <Input
+        type="text"
+        inputMode="numeric"
+        value={text}
+        onChange={(e) => edit(e.target.value)}
+        placeholder={placeholder}
+        aria-invalid={error === null ? undefined : true}
+        aria-describedby={error === null ? undefined : errorId}
+        className="h-7 text-xs"
+      />
+      {error !== null && (
+        <p id={errorId} className="text-[11px] text-destructive break-words">{error}</p>
+      )}
+    </div>
+  )
 }
 
 export function TestSettingsPanel({ content, onChange, selectedTarget, showMeta = true }: TestSettingsPanelProps) {
@@ -407,30 +462,18 @@ export function TestSettingsPanel({ content, onChange, selectedTarget, showMeta 
       <div className="space-y-2">
         <span className="text-sm font-semibold text-foreground tracking-tight">Agent</span>
         <div className="grid grid-cols-3 gap-2">
-          <div className="space-y-0.5">
-            <Label className="text-[11px] text-muted-foreground">Max Actions</Label>
-            <Input
-              type="number"
-              min={1}
-              step={1}
-              value={plannerMaxActions ?? ''}
-              onChange={(e) => handleSet(['use', 'planner', 'maxActions'], e.target.value ? Number(e.target.value) : undefined)}
-              placeholder={ih(g?.planner?.maxActions ?? DEFAULT_PLANNER_LIMITS.maxActions)}
-              className="h-7 text-xs"
-            />
-          </div>
-          <div className="space-y-0.5">
-            <Label className="text-[11px] text-muted-foreground">Planner Calls</Label>
-            <Input
-              type="number"
-              min={1}
-              step={1}
-              value={plannerMaxPlanningTurns ?? ''}
-              onChange={(e) => handleSet(['use', 'planner', 'maxPlanningTurns'], e.target.value ? Number(e.target.value) : undefined)}
-              placeholder={ih(g?.planner?.maxPlanningTurns ?? DEFAULT_PLANNER_LIMITS.maxPlanningTurns)}
-              className="h-7 text-xs"
-            />
-          </div>
+          <PlannerLimitInput
+            label="Max Actions"
+            value={plannerMaxActions}
+            onCommit={(value) => handleSet(['use', 'planner', 'maxActions'], value)}
+            placeholder={ih(g?.planner?.maxActions ?? DEFAULT_PLANNER_LIMITS.maxActions)}
+          />
+          <PlannerLimitInput
+            label="Planner Calls"
+            value={plannerMaxPlanningTurns}
+            onCommit={(value) => handleSet(['use', 'planner', 'maxPlanningTurns'], value)}
+            placeholder={ih(g?.planner?.maxPlanningTurns ?? DEFAULT_PLANNER_LIMITS.maxPlanningTurns)}
+          />
           <div className="space-y-0.5">
             <Label className="text-[11px] text-muted-foreground">Prev Steps</Label>
             <Input
