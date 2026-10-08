@@ -284,4 +284,148 @@ describe('C437-FILL-NATIVE', () => {
     expect(result.metadata).not.toHaveProperty('fillSubmit')
     expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'exact', path: 'native' })
   })
+
+  it('a multi-line field never gets Enter', async () => {
+    field.multiline = true
+
+    const result = await fill('Username', 'hello', { submit: true })
+
+    expect(count('execute:mobile: pressKey')).toBe(0)
+    expect(result.success).toBe(true)
+    expect(result.metadata?.fillSubmit).toEqual({
+      sent: false,
+      outcome: 'not-sent',
+      reason: 'multi-line-field',
+    })
+    expect(result.data).toBe(
+      'submit not sent: Return would add a new line in this multi-line field; tap its send or submit control',
+    )
+  })
+
+  it.each([
+    ['a newline', 'l1\nl2'],
+    ['a carriage return', 'l1\rl2'],
+  ])('line breaks into a single-line field are refused before typing (%s)', async (_label, text) => {
+    field.multiline = false
+
+    const result = await fill('Username', text, { submit: true })
+
+    expect(count('setValue:')).toBe(0)
+    expect(count('addValue:')).toBe(0)
+    expect(count('keys:')).toBe(0)
+    expect(count('execute:mobile: pressKey')).toBe(0)
+    expect(result.success).toBe(false)
+    expect(result.error).toBe(
+      'fill: this field is single-line and the text has line breaks; nothing was typed. '
+        + 'Send the text without line breaks, or use a multi-line field.',
+    )
+    expect(result.metadata?.fillRefusal).toEqual({
+      verb: 'fill',
+      cause: 'single-line-field',
+      evidence: 'text-has-line-breaks',
+    })
+    expect(result.metadata?.fillSubmit).toEqual({
+      sent: false,
+      outcome: 'not-sent',
+      reason: 'input-failed',
+    })
+    expect(result.metadata).not.toHaveProperty('fillVerdict')
+  })
+
+  it.each([
+    ['multi-line text with blank lines into a multi-line field', 'line one\n\nline three\n  indented\ttab |;," end  ', true],
+    ['leading and trailing spaces and tabs', '\t  lead and trail  \t', false],
+    ['commas, semicolons, pipes and quotes', `a,b;c|d "q" 's'`, false],
+    ['accented, CJK and emoji characters', 'é ü 中文 😀', false],
+  ])('the D-08 texts are typed once and read back exact: %s', async (_label, text, multiline) => {
+    field.multiline = multiline
+
+    const result = await fill('Username', text)
+
+    expect(calls.filter((c) => c.startsWith('setValue:'))).toEqual([`setValue:${text}`])
+    expect(count('keys:')).toBe(0)
+    expect(count('execute:mobile: type')).toBe(0)
+    expect(result.success).toBe(true)
+    expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'exact', path: 'native' })
+    expect(result.metadata?.fillReread).toEqual({ expected: text, actual: text })
+  })
+
+  it('a character the path could not type is recorded as a mismatch, never hidden', async () => {
+    field.readBack = () => 'é ü 中文 '
+
+    const result = await fill('Username', 'é ü 中文 😀', { submit: true })
+
+    expect(count('setValue:')).toBe(1)
+    expect(count('execute:mobile: pressKey')).toBe(0)
+    expect(result.success).toBe(false)
+    expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'mismatch', path: 'native' })
+    expect(result.metadata?.fillSubmit).toEqual({ sent: false, outcome: 'not-sent', reason: 'mismatch' })
+  })
+})
+
+// The assumption-delta invariant (437 D-12): every fill delivers its text through exactly one path
+// and presses Enter at most once. 437-06 adds the WebView cells and 437-07 the keyboard cells.
+describe('C437-ONE-PATH', () => {
+  it('a native setValue that throws is never typed again', async () => {
+    field.setValueThrows = true
+
+    const result = await fill('Username', 'hello', { submit: true })
+
+    expect(count('setValue:')).toBe(1)
+    expect(count('addValue:')).toBe(0)
+    expect(count('keys:')).toBe(0)
+    expect(count('execute:mobile: type')).toBe(0)
+    expect(count('execute:mobile: pressKey')).toBe(0)
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/typing was interrupted/)
+    expect(result.error).toMatch(/may hold part of the text/)
+    expect(result.error).toMatch(/not typed again/)
+    expect(result.error).not.toContain('hello')
+    expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'unverified', path: 'native' })
+    expect(result.metadata?.fillSubmit).toEqual({
+      sent: false,
+      outcome: 'not-sent',
+      reason: 'input-failed',
+    })
+  })
+
+  it('a native setValue that throws without a submit records no fillSubmit', async () => {
+    field.setValueThrows = true
+
+    const result = await fill('Username', 'hello')
+
+    expect(count('keys:')).toBe(0)
+    expect(result.success).toBe(false)
+    expect(result.metadata).not.toHaveProperty('fillSubmit')
+  })
+
+  it('a focus lookup that throws chooses the keyboard path before any text is delivered', async () => {
+    field.focusThrows = true
+
+    const result = await fill('Username', 'hello')
+
+    expect(focused.setValue).not.toHaveBeenCalled()
+    expect(focused.addValue).not.toHaveBeenCalled()
+    expect(count('keys:') + count('execute:mobile: type')).toBe(1)
+    expect(calls.findIndex((c) => c.startsWith('keys:') || c.startsWith('execute:mobile: type')))
+      .toBeGreaterThan(calls.indexOf(`$:${FOCUSED_XPATH}`))
+    expect(result.metadata?.fillVerdict).not.toEqual(expect.objectContaining({ path: 'native' }))
+  })
+
+  it('a replace fill run twice leaves the text once and presses Enter once per fill', async () => {
+    field.value = 'stale'
+
+    const first = await fill('Username', 'hello', { submit: true })
+    const firstEnters = count('execute:mobile: pressKey')
+    const second = await fill('Username', 'hello', { submit: true })
+    const secondEnters = count('execute:mobile: pressKey')
+
+    expect(field.value).toBe('hello')
+    expect(focused.setValue.mock.calls).toEqual([['hello'], ['hello']])
+    expect(first.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'exact', path: 'native' })
+    expect(second.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'exact', path: 'native' })
+    expect(firstEnters + secondEnters).toBe(2)
+    expect(firstEnters).toBe(1)
+    expect(secondEnters).toBe(1)
+  })
 })

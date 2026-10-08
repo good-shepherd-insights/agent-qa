@@ -7,6 +7,7 @@ import type {
   AppRegistryEntry,
   ConsoleLogEntry,
   Direction,
+  FillRefusalMeta,
   FillSubmitMeta,
   FillVerdictMeta,
   InterimNode,
@@ -54,7 +55,12 @@ const ANDROID_FILLABLE_ROLES = new Set(['textbox', 'searchbox', 'edittext', 'com
 // are read through XPath over the focused node's page-source attributes (437 Pitfall 5).
 const FOCUSED_XPATH = '//*[@focused="true"]'
 const FOCUSED_HINT_XPATH = '//*[@focused="true" and @showing-hint="true"]'
+const FOCUSED_MULTILINE_XPATH = '//*[@focused="true" and @multiline="true"]'
+const FOCUSED_SINGLE_LINE_XPATH = '//*[@focused="true" and @multiline="false"]'
 const ENTER_KEYCODE = 66
+const MULTI_LINE_SUBMIT_NOTICE =
+  'submit not sent: Return would add a new line in this multi-line field; tap its send or submit control'
+const LINE_BREAK_RE = /[\r\n]/
 const ANDROID_NATIVE_SELECT_ROLES = new Set(['combobox', 'spinbutton', 'listbox', 'list'])
 const ANDROID_NATIVE_SELECT_TYPES = new Set([
   'android.widget.Spinner',
@@ -93,6 +99,20 @@ function firstNonEmpty(...values: Array<string | null | undefined>): string | un
   }
   return undefined
 }
+
+type TextBox = {
+  coordinates: { x: number; y: number }
+  boundingBox: { x: number; y: number; width: number; height: number }
+}
+
+type FocusedField = {
+  getText: () => Promise<string>
+  getAttribute: (name: string) => Promise<string | null>
+  setValue: (value: string) => Promise<void>
+  addValue: (value: string) => Promise<void>
+}
+
+const INPUT_FAILED: FillSubmitMeta = { sent: false, outcome: 'not-sent', reason: 'input-failed' }
 
 function firstErrorLine(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err)
@@ -914,30 +934,65 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     }
   }
 
+  /** 437 FA-2 (owner, 2026-10-08): line breaks into a single-line field are refused before typing. */
+  private refuseLineBreaks(action: { submit: boolean }, box: TextBox): ActionResult {
+    const fillRefusal: FillRefusalMeta = {
+      verb: 'fill',
+      cause: 'single-line-field',
+      evidence: 'text-has-line-breaks',
+    }
+    return {
+      success: false,
+      error:
+        'fill: this field is single-line and the text has line breaks; nothing was typed. '
+        + 'Send the text without line breaks, or use a multi-line field.',
+      ...box,
+      metadata: { fillRefusal, ...(action.submit ? { fillSubmit: { ...INPUT_FAILED } } : {}) },
+    }
+  }
+
   /**
-   * Native fill from the focused handle (437 D-09, D-10, D-13, D-17). Delivers once (addValue for
-   * append, setValue for replace), reads back from the same handle and records the shared verdict.
-   * An unknown append prior or an unreadable read-back is unverified, which never stops a
-   * requested Enter; a mismatch holds it. A secure field yields length sentinels only.
+   * Native fill from the focused handle (437 D-08..D-10, D-12, D-13, D-15, D-17). Delivers once
+   * (addValue for append, setValue for replace), reads back from the same handle and records the
+   * shared verdict. An unknown append prior or an unreadable read-back is unverified, which never
+   * stops a requested Enter; a mismatch or a multi-line field holds it. A driver error during
+   * delivery ends the fill: nothing is typed again and no Enter follows. A secure field yields
+   * length sentinels only.
    */
   private async fillNativeCompound(
-    el: {
-      getText: () => Promise<string>
-      getAttribute: (name: string) => Promise<string | null>
-      setValue: (value: string) => Promise<void>
-      addValue: (value: string) => Promise<void>
-    },
+    el: FocusedField,
     action: { text: string; clearMode: 'replace' | 'append'; submit: boolean },
-    box: { coordinates: { x: number; y: number }; boundingBox: { x: number; y: number; width: number; height: number } },
+    box: TextBox,
   ): Promise<ActionResult> {
     const isAppend = action.clearMode === 'append'
+    if (LINE_BREAK_RE.test(action.text) && await this.focusedMatches(FOCUSED_SINGLE_LINE_XPATH)) {
+      return this.refuseLineBreaks(action, box)
+    }
+    const multiline = action.submit && await this.focusedMatches(FOCUSED_MULTILINE_XPATH)
     const secure = (await el.getAttribute('password').catch(() => null)) === 'true'
     const prior = isAppend ? await this.readFocusedValue(el) : ''
 
-    if (isAppend) {
-      await el.addValue(action.text)
-    } else {
-      await el.setValue(action.text)
+    try {
+      if (isAppend) {
+        await el.addValue(action.text)
+      } else {
+        await el.setValue(action.text)
+      }
+    } catch {
+      const fillVerdict: FillVerdictMeta = {
+        verb: 'fill',
+        verdict: 'unverified',
+        path: 'native',
+        ...(secure ? { secure: true as const } : {}),
+      }
+      return {
+        success: false,
+        error:
+          'fill: typing was interrupted by a driver error; the field may hold part of the text, '
+          + 'and it was not typed again. Re-observe the field before filling it again.',
+        ...box,
+        metadata: { fillVerdict, ...(action.submit ? { fillSubmit: { ...INPUT_FAILED } } : {}) },
+      }
     }
 
     const actual = prior === undefined ? undefined : await this.readFocusedValue(el)
@@ -951,10 +1006,15 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
 
     let fillSubmit: FillSubmitMeta | undefined
     if (action.submit) {
-      fillSubmit = verdict.verdict === 'mismatch'
-        ? { sent: false, outcome: 'not-sent', reason: 'mismatch' }
-        : await this.pressEnter()
+      if (verdict.verdict === 'mismatch') {
+        fillSubmit = { sent: false, outcome: 'not-sent', reason: 'mismatch' }
+      } else if (multiline) {
+        fillSubmit = { sent: false, outcome: 'not-sent', reason: 'multi-line-field' }
+      } else {
+        fillSubmit = await this.pressEnter()
+      }
     }
+    const notice = fillSubmit?.reason === 'multi-line-field' ? { data: MULTI_LINE_SUBMIT_NOTICE } : {}
     const metadata = {
       ...(verdict.meta ? { fillReread: verdict.meta } : {}),
       fillVerdict,
@@ -971,7 +1031,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
         metadata,
       }
     }
-    return { success: true, ...box, metadata }
+    return { success: true, ...box, ...notice, metadata }
   }
 
   /**
@@ -1302,15 +1362,16 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
           .down({ button: 0 })
           .up({ button: 0 })
           )
+        let focusedEl: FocusedField | undefined
         try {
           const el = await driver.$(FOCUSED_XPATH)
-          if (await el.isExisting()) {
-            return await this.fillNativeCompound(el, action, box)
-          }
+          if (await el.isExisting()) focusedEl = el
         } catch {
-          // fall through to last resort
+          focusedEl = undefined
         }
-        // Last resort — type via keyboard (pass whole string, not split chars). Attempt a focused
+        // 437-05 (2026-10-08, D-12): the path is chosen here, before any text is delivered.
+        if (focusedEl) return await this.fillNativeCompound(focusedEl, action, box)
+        // Keyboard path — type via keyboard (pass whole string, not split chars). Attempt a focused
         // re-read; when no element value is readable, return success with NO fillReread block —
         // signal-presence law: never fabricate a re-read pair.
         await driver.keys([action.text])
