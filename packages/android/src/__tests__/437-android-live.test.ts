@@ -2,7 +2,9 @@
 // (com.android.settings), through the real runner loop with a scripted planner and verifier. No
 // model is called. It proves on a device that an ordinary node exposing `selected` is never
 // skipped as already satisfied: a row tapped under desiredState unselected is sent, by ref and by
-// coordinate.
+// coordinate. A real toggle keeps desired-state idempotency on its checked state: the Dark theme
+// switch already in the requested state is not tapped and is recorded as no input sent, and out of
+// state it is tapped once. The switch's original state is restored after each cell.
 //
 // Skipped unless AGENT_QA_437_ANDROID_LIVE=1, with a booted emulator and Appium reachable at
 // AGENT_QA_APPIUM_URL or http://localhost:4723. A skipped cell is registered as not run in
@@ -20,6 +22,7 @@ import type {
   StepResult,
   Verifier,
 } from '@vostride/agent-qa-runner'
+import { isToggleElement } from '@vostride/agent-qa-schema'
 import type { Ref, ScreenState } from '@vostride/agent-qa-schema'
 import { AndroidPlatformAdapter } from '../adapter.js'
 
@@ -27,6 +30,8 @@ const LIVE = process.env.AGENT_QA_437_ANDROID_LIVE === '1'
 const SETTINGS = 'com.android.settings'
 const LIMITS: PlannerConfig = { maxActions: 30, maxPlanningTurns: 30, previousStepCount: 0 }
 const ROW = 'Network & internet'
+const DISPLAY = 'Display & touch'
+const DARK_THEME = 'Dark theme'
 
 type Turn = (screen: ScreenState) => ActionPlan
 type Element = ScreenState['elements'][number]
@@ -53,6 +58,42 @@ function onScreen(screen: ScreenState, name: string): boolean {
 
 function onNetworkPage(screen: ScreenState): boolean {
   return onScreen(screen, 'Airplane mode') || onScreen(screen, 'Internet')
+}
+
+function darkThemeSwitch(screen: ScreenState): Element | undefined {
+  return screen.elements.find((e) => e.name === DARK_THEME && isToggleElement(e))
+}
+
+function darkThemeChecked(screen: ScreenState): boolean | undefined {
+  const checked = darkThemeSwitch(screen)?.state.checked
+  return typeof checked === 'boolean' ? checked : undefined
+}
+
+interface SwitchTurn {
+  original?: boolean
+  ref?: Ref
+  unreadable?: boolean
+}
+
+// One turn function serves every planning turn: reach Display & touch, then plan the switch tap
+// with the desired state chosen from the switch's own observed checked state.
+function toDarkTheme(seen: SwitchTurn, desired: (original: boolean) => 'checked' | 'unchecked'): Turn {
+  return (screen) => {
+    const control = darkThemeSwitch(screen)
+    if (control !== undefined) {
+      const checked = control.state.checked
+      if (typeof checked !== 'boolean') {
+        seen.unreadable = true
+        return { reasoning: 'The Dark theme switch exposes no checked state', action: { type: 'wait', duration: 0 }, confidence: 0.9, stepComplete: false, stepFailed: true }
+      }
+      seen.original ??= checked
+      seen.ref = control.ref
+      return act({ type: 'tap', ref: control.ref, desiredState: desired(seen.original) }, true, 'Set the Dark theme switch')
+    }
+    if (onScreen(screen, DISPLAY)) return act({ type: 'tap', ref: refFor(screen, DISPLAY) }, false, 'Open Display & touch')
+    const target = screen.elements.some((e) => e.name === DARK_THEME) ? DARK_THEME : DISPLAY
+    return act({ type: 'scroll', mode: 'untilVisible', text: target, direction: 'down', maxSwipes: 6, retryOpposite: false }, false, `Bring ${target} into view`)
+  }
 }
 
 interface Run {
@@ -117,9 +158,26 @@ describe.skipIf(!LIVE)('C437-ANDROID-LIVE', () => {
     await driver.activateApp(SETTINGS)
   }, 120_000)
 
+  let restore: SwitchTurn | undefined
+
   afterEach(async () => {
-    await adapter?.cleanup()
-    adapter = undefined
+    try {
+      if (restore?.original !== undefined && adapter !== undefined) {
+        const screen = await adapter.observe()
+        const control = darkThemeSwitch(screen)
+        if (control === undefined) throw new Error('The Dark theme switch is not on screen; its original state could not be restored')
+        if (control.state.checked !== restore.original) {
+          const tapped = await adapter.execute({ type: 'tap', ref: control.ref })
+          if (!tapped.success) throw new Error(`Restoring the Dark theme switch failed: ${tapped.error ?? 'no error text'}`)
+          const after = darkThemeChecked(await adapter.observe())
+          if (after !== restore.original) throw new Error(`The Dark theme switch reads ${String(after)} after restoring, not ${String(restore.original)}`)
+        }
+      }
+    } finally {
+      restore = undefined
+      await adapter?.cleanup()
+      adapter = undefined
+    }
   }, 120_000)
 
   it('an ordinary row is tapped under desiredState unselected on the ref path', async () => {
@@ -152,5 +210,48 @@ describe.skipIf(!LIVE)('C437-ANDROID-LIVE', () => {
     const sub = run.result.evidence!.subActions[0]
     expect(sub.result.success).toBe(true)
     expect(sub.result.metadata?.['idempotentNoop']).toBeUndefined()
+  }, 240_000)
+
+  it('a switch already in the requested state sends no input', async () => {
+    const seen: SwitchTurn = {}
+    restore = seen
+    const inState = (original: boolean) => (original ? 'checked' : 'unchecked')
+    const run = await runStep(adapter!, 'Leave Dark theme as it is', [toDarkTheme(seen, inState)],
+      (after) => seen.original !== undefined && darkThemeChecked(after) === seen.original)
+
+    expect(seen.unreadable, 'the Dark theme switch exposes no boolean checked state').toBeUndefined()
+    expect(typeof seen.original, 'the Dark theme switch was reached and read').toBe('boolean')
+    const current = inState(seen.original!)
+    expect(run.result.status).toBe('passed')
+    expect(run.executed.filter((a) => a.type === 'tap' && (a as { ref?: string }).ref === seen.ref), 'no input reached the switch').toHaveLength(0)
+    const subs = run.result.evidence!.subActions
+    const switchTaps = subs.filter((s) => s.plannedAction.type === 'tap' && (s.plannedAction as { ref?: string }).ref === seen.ref)
+    expect(switchTaps).toHaveLength(1)
+    const sub = switchTaps[0]
+    expect(sub.result.success).toBe(false)
+    expect(sub.result.error).toBeUndefined()
+    expect(sub.result.metadata?.['idempotentNoop']).toEqual({ currentState: current, inputSent: false })
+    expect(sub.operationEvidence?.input?.[0]?.inputSent).toBe(false)
+    expect(run.executed).toHaveLength(subs.length - 1)
+  }, 240_000)
+
+  it('a switch not in the requested state is tapped once', async () => {
+    const seen: SwitchTurn = {}
+    restore = seen
+    const flipped = (original: boolean) => (original ? 'unchecked' : 'checked')
+    const run = await runStep(adapter!, 'Turn Dark theme to the other state', [toDarkTheme(seen, flipped)],
+      (after) => seen.original !== undefined && darkThemeChecked(after) === !seen.original)
+
+    expect(seen.unreadable, 'the Dark theme switch exposes no boolean checked state').toBeUndefined()
+    expect(typeof seen.original, 'the Dark theme switch was reached and read').toBe('boolean')
+    expect(run.result.status).toBe('passed')
+    const switchTaps = run.executed.filter((a) => a.type === 'tap' && (a as { ref?: string }).ref === seen.ref)
+    expect(switchTaps, 'the switch was tapped exactly once').toHaveLength(1)
+    expect(switchTaps[0]).toMatchObject({ desiredState: flipped(seen.original!) })
+    const subs = run.result.evidence!.subActions
+    const last = subs[subs.length - 1]
+    expect(last.result.success).toBe(true)
+    expect(last.result.metadata?.['idempotentNoop']).toBeUndefined()
+    expect(darkThemeChecked(await adapter!.observe())).toBe(!seen.original)
   }, 240_000)
 })
