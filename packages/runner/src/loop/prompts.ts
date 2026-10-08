@@ -317,7 +317,15 @@ function appendSubActionHistory(parts: string[], context: StepContext): void {
   parts.push(subHistoryParts.join('\n'))
 }
 
+// 2026-10-08 (436-16): a late download is marked as not started by the action it rides (WR-05).
+const LATE_DOWNLOAD_NOTE = ", started after the previous action's capture ended; not attributed to this action"
+
 function renderDownload(download: DownloadEvidence): string {
+  const line = renderDownloadOutcome(download)
+  return download.late === true ? `${line}${LATE_DOWNLOAD_NOTE}` : line
+}
+
+function renderDownloadOutcome(download: DownloadEvidence): string {
   const extension = download.extension.length > 0 ? download.extension : 'no extension'
   const head = `Download "${download.suggestedFilename}" (${extension}): ${download.state}`
   if (download.state === 'completed') return `${head}, ${String(download.size)} bytes, sha256 ${download.sha256 ?? ''}`

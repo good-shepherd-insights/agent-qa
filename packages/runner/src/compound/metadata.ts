@@ -265,7 +265,7 @@ const DOWNLOAD_STATES = new Set<DownloadEvidence['state']>(['completed', 'failed
 
 function readDownloadEntry(raw: unknown): DownloadEvidence | undefined {
   if (!raw || typeof raw !== 'object') return undefined
-  const { suggestedFilename, extension, size, sha256, state, failure } = raw as Record<string, unknown>
+  const { suggestedFilename, extension, size, sha256, state, failure, late } = raw as Record<string, unknown>
   if (typeof suggestedFilename !== 'string' || typeof extension !== 'string') return undefined
   if (!isMember(DOWNLOAD_STATES, state)) return undefined
   const entry: DownloadEvidence = { suggestedFilename, extension, state }
@@ -275,6 +275,7 @@ function readDownloadEntry(raw: unknown): DownloadEvidence | undefined {
     entry.sha256 = sha256
   }
   if (typeof failure === 'string') entry.failure = failure
+  if (late === true) entry.late = true
   return entry
 }
 

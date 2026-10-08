@@ -68,7 +68,8 @@ describe('C436-KEY-SETS', () => {
   })
 
   it('download, clipboard and capture-availability evidence carry exactly their members', () => {
-    expect(sorted(DOWNLOAD_EVIDENCE_KEYS)).toEqual(['extension', 'failure', 'sha256', 'size', 'state', 'suggestedFilename'])
+    // 2026-10-08 (436-16): late, the WR-05 marker
+    expect(sorted(DOWNLOAD_EVIDENCE_KEYS)).toEqual(['extension', 'failure', 'late', 'sha256', 'size', 'state', 'suggestedFilename'])
     expectTypeOf<keyof DownloadEvidence>().toEqualTypeOf<(typeof DOWNLOAD_EVIDENCE_KEYS)[number]>()
     expect(sorted(CLIPBOARD_EVIDENCE_KEYS)).toEqual(['readBack', 'source', 'text', 'truncated'])
     expectTypeOf<keyof ClipboardEvidence>().toEqualTypeOf<(typeof CLIPBOARD_EVIDENCE_KEYS)[number]>()

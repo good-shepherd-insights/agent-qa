@@ -14,6 +14,8 @@ export interface DownloadEvidence {
   state: 'completed' | 'failed' | 'canceled' | 'unfinished'
   /** The browser's failure text for 'failed' and 'canceled'. */
   failure?: string
+  /** Started after the capture window of the action before it closed; no action is credited with starting it. */
+  late?: true
 }
 
 /** One clipboard write the app made during the action (436-11). */
@@ -44,6 +46,7 @@ export const DOWNLOAD_EVIDENCE_KEYS = [
   'sha256',
   'state',
   'failure',
+  'late',
 ] as const satisfies readonly (keyof DownloadEvidence)[]
 
 export const CLIPBOARD_EVIDENCE_KEYS = [

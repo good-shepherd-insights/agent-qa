@@ -416,3 +416,94 @@ describe('C436-CLIPBOARD-CAPTURE loop recording', () => {
     ])
   })
 })
+
+// C436-DOWNLOAD-LATE (436-16, D-19 / D-22, WR-05): a download that started after the previous
+// action's capture window closed rides the next action marked late, and is never credited to it.
+const LATE_NOTE = "started after the previous action's capture ended; not attributed to this action"
+
+const LATE: DownloadEvidence = {
+  suggestedFilename: 'late-secret.csv',
+  extension: '.csv',
+  size: 7,
+  sha256: 'c'.repeat(64),
+  state: 'completed',
+  late: true,
+}
+
+function threeClicks(): ActionPlan[] {
+  return [
+    makeActionPlan({ reasoning: 'Start the export', action: { type: 'click', ref: 'e1' }, stepComplete: false }),
+    makeActionPlan({ reasoning: 'Open the menu', action: { type: 'click', ref: 'e1' }, stepComplete: false }),
+    makeActionPlan({ reasoning: 'Confirm the export', action: { type: 'click', ref: 'e1' }, stepComplete: true }),
+  ]
+}
+
+describe('C436-DOWNLOAD-LATE', () => {
+  it('a late download reaches history and the verifier marked late', async () => {
+    const contexts: StepContext[] = []
+    const calls: unknown[][] = []
+    const result = await executeStep(
+      'Export the report',
+      ports({
+        adapter: makeAdapter({
+          executeResults: [{ success: true }, { success: true, metadata: { download: [LATE] } }, { success: true }],
+        }),
+        planner: scriptedPlanner(threeClicks(), contexts),
+        verifier: recordingVerifier(calls, true),
+      }),
+      makeStepContext({ stepInstruction: 'Export the report' }),
+    )
+
+    const masked = { ...LATE, suggestedFilename: 'late-[MASKED].csv' }
+    expect(result.status).toBe('passed')
+    expect(result.evidence!.subActions[1]!.operationEvidence).toEqual({ downloads: [masked] })
+    expect(result.evidence!.subActions[0]).not.toHaveProperty('operationEvidence')
+
+    const history = contexts[2]!.subActionHistory!
+    expect(history[0]).not.toHaveProperty('evidence')
+    expect(history[1]!.evidence).toBe([
+      APP_OBSERVED_DATA_OPEN,
+      `Download "late-[MASKED].csv" (.csv): completed, 7 bytes, sha256 ${'c'.repeat(64)}, ${LATE_NOTE}`,
+      APP_OBSERVED_DATA_CLOSE,
+    ].join('\n'))
+
+    expect(calls).toHaveLength(1)
+    const verifierEvidence = calls[0]![9] as OperationEvidence
+    expect(verifierEvidence).toEqual({ downloads: [masked] })
+    const screen = makeScreenState()
+    const prompt = buildVerificationPrompt('Export the report', screen, screen, { type: 'click', ref: 'e1' } as Action,
+      false, undefined, undefined, undefined, verifierEvidence)
+    expect(prompt).toContain(LATE_NOTE)
+  })
+
+  it('a late download keeps its marker through the reader', () => {
+    const { late: _late, ...onTime } = LATE
+    void _late
+    expect(readDownloadMeta({
+      metadata: {
+        download: [
+          LATE,
+          { ...onTime, late: 'true' },
+          { ...onTime, late: false },
+          { suggestedFilename: 'u.bin', extension: '.bin', state: 'unfinished', late: true },
+        ],
+      },
+    })).toEqual([
+      LATE,
+      onTime,
+      onTime,
+      { suggestedFilename: 'u.bin', extension: '.bin', state: 'unfinished', late: true },
+    ])
+  })
+
+  it('a late download is rendered as not started by this action', () => {
+    const { late: _late, ...onTime } = LATE
+    void _late
+    const rendered = renderOperationEvidence({ downloads: [LATE] })
+    const completedLine = `Download "late-secret.csv" (.csv): completed, 7 bytes, sha256 ${'c'.repeat(64)}`
+    expect(rendered).toBe(`${completedLine}, ${LATE_NOTE}`)
+    expect(renderOperationEvidence({ downloads: [onTime] })).toBe(completedLine)
+    expect(renderOperationEvidence({ downloads: [{ suggestedFilename: 'u.bin', extension: '.bin', state: 'unfinished', late: true }] }))
+      .toBe(`Download "u.bin" (.bin): unfinished, not finished within the time limit, ${LATE_NOTE}`)
+  })
+})
