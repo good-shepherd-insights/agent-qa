@@ -2964,6 +2964,36 @@
       "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
       "fullName": "C436-DOWNLOAD-WINDOW an abort during the main-frame extension ends the wait at once",
       "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-observe-bound.test.ts",
+      "fullName": "C436-OBSERVE-BOUND a main frame whose snapshot outlasts the short bound is still observed",
+      "origin": "436 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-observe-bound.test.ts",
+      "fullName": "C436-OBSERVE-BOUND a page whose iframe never answers is observed at the short bound with one snapshot",
+      "origin": "436 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-observe-bound.test.ts",
+      "fullName": "C436-OBSERVE-BOUND a slow main frame beside a hung iframe is observed and never throws",
+      "origin": "436 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-observe-bound.test.ts",
+      "fullName": "C436-OBSERVE-BOUND a snapshot error that is not a timeout is thrown without a second attempt",
+      "origin": "436 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-observe-bound.test.ts",
+      "fullName": "C436-OBSERVE-BOUND a snapshot that times out twice is thrown",
+      "origin": "436 D-29"
     }
   ]
 }

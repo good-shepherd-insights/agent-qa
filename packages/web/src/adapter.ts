@@ -66,7 +66,11 @@ interface PageLogBuffers {
 // screenshot for document.fonts.ready, which a hung iframe keeps pending; both are bounded here. A
 // Chromium click no longer waits for the navigation it starts to commit: the capture's start
 // window owns that wait and ends it at NAVIGATION_WINDOW_CAP_MS.
-/** The longest observe's ai-mode snapshot waits; a child frame that has not answered by then is left empty. */
+// 2026-10-08 (436-27): the short snapshot bound applies to the first attempt only. Playwright
+// absorbs a child frame's timeout, so a TimeoutError means the main frame itself was slow: the
+// snapshot is taken once more with OBSERVE_SNAPSHOT_RETRY_TIMEOUT_MS (CR-09). The acting page is
+// passed to the capture, whose own main-frame navigation waits up to half the time left (WR-21).
+/** The longest observe's first ai-mode snapshot waits; a child frame that has not answered by then is left empty. */
 export const OBSERVE_SNAPSHOT_TIMEOUT_MS = 5_000
 /** The bound a main-frame snapshot gets after it outlasts the short one: Playwright's default, the pre-436-24 bound. */
 export const OBSERVE_SNAPSHOT_RETRY_TIMEOUT_MS = 30_000
@@ -653,6 +657,10 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     let ariaTree: string
     try {
       ariaTree = await page.locator(':root').ariaSnapshot({ mode: 'ai', timeout: OBSERVE_SNAPSHOT_TIMEOUT_MS })
+        .catch((error: unknown) => {
+          if (!(error instanceof Error && error.name === 'TimeoutError')) throw error
+          return page.locator(':root').ariaSnapshot({ mode: 'ai', timeout: OBSERVE_SNAPSHOT_RETRY_TIMEOUT_MS })
+        })
     } finally {
       await page.evaluate(restoreAgentQaElements)
     }
