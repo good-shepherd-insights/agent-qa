@@ -1857,6 +1857,54 @@
     },
     {
       "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-READBACK a forged write report never lets the page read the clipboard",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-READBACK no origin in the app context is granted clipboard-read during a read-back",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-READBACK the clipboard text never reaches the action result",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-READBACK a page that overrides readText cannot forge a matched read-back",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-READBACK the probe context is closed by cleanup",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-READBACK a write the browser rejects is not reported and reads nothing back",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-READBACK a writeText is reported after it resolves",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-READBACK two writes in one click read back once",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
       "file": "packages/web/src/__tests__/436-outcome-evidence.test.ts",
       "fullName": "C436-OUTCOME-EVIDENCE a download on an unchanged page passes on its name, extension and digest",
       "origin": "436 D-28"

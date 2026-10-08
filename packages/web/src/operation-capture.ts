@@ -12,7 +12,7 @@
 
 import { createHash } from 'node:crypto'
 import { extname } from 'node:path'
-import type { Browser, BrowserContext, Download, Frame, Page } from 'playwright-core'
+import type { BrowserContext, Download, Frame, Page } from 'playwright-core'
 import type { ClipboardEvidence, DownloadEvidence } from '@vostride/agent-qa-schema'
 
 export { CLIPBOARD_TEXT_LIMIT } from '@vostride/agent-qa-runner'
@@ -65,24 +65,37 @@ const CLIPBOARD_HOOK = `(() => {
     if (typeof send !== 'function' || typeof text !== 'string' || text.length === 0) return;
     try { Promise.resolve(send({ via, text })).catch(() => {}); } catch {}
   };
+  // 2026-10-08 (436-14): a write is reported only once the browser accepted it; the app still
+  // gets the original promise, rejections included.
   const proto = typeof Clipboard === 'function' ? Clipboard.prototype : undefined;
   if (proto && typeof proto.writeText === 'function') {
     const writeText = proto.writeText;
     proto.writeText = function (data) {
-      report('writeText', String(data));
-      return writeText.apply(this, arguments);
+      let text;
+      try { text = String(data); } catch {}
+      const result = writeText.apply(this, arguments);
+      try { Promise.resolve(result).then(() => report('writeText', text), () => {}); } catch {}
+      return result;
     };
   }
   if (proto && typeof proto.write === 'function') {
     const write = proto.write;
     proto.write = function (items) {
+      const texts = [];
       try {
         for (const item of Array.from(items || [])) {
           if (!item || !Array.from(item.types || []).includes('text/plain')) continue;
-          item.getType('text/plain').then((blob) => blob.text()).then((text) => report('write', text), () => {});
+          texts.push(item.getType('text/plain').then((blob) => blob.text()).catch(() => undefined));
         }
       } catch {}
-      return write.apply(this, arguments);
+      const result = write.apply(this, arguments);
+      try {
+        Promise.resolve(result).then(
+          () => Promise.all(texts).then((all) => { for (const text of all) report('write', text); }),
+          () => {},
+        );
+      } catch {}
+      return result;
     };
   }
   // A copy event is tracked from window's capture phase, which runs before any app handler can
@@ -137,7 +150,7 @@ export class OperationCapture {
   private clipboardArmed = false
   private activation = false
   private notify: (() => void) | null = null
-  private browser: Browser | null = null
+  private appContext: BrowserContext | null = null
   private probe: Promise<Page | undefined> | null = null
   private probeContext: BrowserContext | null = null
   private probeGeneration = 0
@@ -148,7 +161,7 @@ export class OperationCapture {
   }
 
   async attach(context: BrowserContext): Promise<void> {
-    this.browser = context.browser()
+    this.appContext = context
     for (const page of context.pages()) this.attachPage(page)
     context.on('page', (page) => this.attachPage(page))
     await context.exposeBinding(CLIPBOARD_BINDING, (source, payload: unknown) => {
@@ -269,10 +282,10 @@ export class OperationCapture {
   // A separate context of the app's browser: only the reserved origin loads (a blank document, no
   // init script), every other request is aborted, and only that origin may read the clipboard.
   private async createProbe(generation: number): Promise<Page | undefined> {
-    const browser = this.browser
-    if (!browser) return undefined
     let context: BrowserContext | undefined
     try {
+      const browser = this.appContext?.browser()
+      if (!browser) return undefined
       context = await browser.newContext()
       if (generation !== this.probeGeneration) {
         await context.close().catch(() => undefined)
