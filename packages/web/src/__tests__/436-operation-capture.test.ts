@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { chromium, firefox, webkit } from 'playwright-core'
-import type { Download } from 'playwright-core'
+import type { BrowserContext, Download, Page } from 'playwright-core'
 import type { ActionResult, PlannerConfig, RecordingCapability } from '@vostride/agent-qa-runner'
 import { screenIdentityHash } from '@vostride/agent-qa-schema'
 import type { DownloadEvidence, Ref } from '@vostride/agent-qa-schema'
@@ -206,6 +206,30 @@ const ARMING_PAGE = `<!DOCTYPE html>
 </html>
 `
 
+// 436-21 (WR-18): a late download held across a probe reset, beside genuine clipboard writes.
+const HELD_PAGE = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>held fixture</title></head>
+<body>
+  <h1>Held</h1>
+  <button id="later" onclick="setTimeout(() => blobDownload('late.csv'), 1500)">Export later</button>
+  <button id="order" onclick="navigator.clipboard.writeText('ORDER-4471')">Copy order number</button>
+  <button id="second" onclick="navigator.clipboard.writeText('ORDER-4472')">Copy second order</button>
+  <script>
+    function blobDownload(name) {
+      const blob = new Blob([${JSON.stringify(BLOB_BYTES)}], { type: 'text/csv' })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = name
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+    }
+  </script>
+</body>
+</html>
+`
+
 const INSECURE_ORIGIN = 'http://fixture.test'
 
 let server: Server
@@ -268,7 +292,12 @@ beforeAll(async () => {
       return
     }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
-    const pages: Record<string, string> = { '/clipboard': CLIPBOARD_PAGE, '/readback': READBACK_PAGE, '/arming': ARMING_PAGE }
+    const pages: Record<string, string> = {
+      '/clipboard': CLIPBOARD_PAGE,
+      '/readback': READBACK_PAGE,
+      '/arming': ARMING_PAGE,
+      '/held': HELD_PAGE,
+    }
     res.end(pages[url] ?? PAGE)
   })
   await new Promise<void>((resolve) => { server.listen(0, '127.0.0.1', resolve) })
@@ -1009,5 +1038,118 @@ describe('C436-DOWNLOAD-ARMING', () => {
       canonical([['slow-finish.bin', 'completed']]),
     )
     expect(JSON.stringify(clipboardOf(result) ?? null)).toBe('null')
+  }, 60_000)
+})
+
+// 2026-10-08 (436-21): a probe reset closes only the probe; held downloads survive it (WR-18).
+const LATE_CSV: DownloadEvidence = {
+  suggestedFilename: 'late.csv',
+  extension: '.csv',
+  size: Buffer.byteLength(BLOB_BYTES),
+  sha256: sha256(BLOB_BYTES),
+  state: 'completed',
+  late: true,
+}
+
+function probeOf(web: WebPlatformAdapter): { context: BrowserContext; page: Page } {
+  const app = web.getPage()!.context()
+  const others = app.browser()!.contexts().filter((context) => context !== app)
+  expect(others, 'one probe context besides the app context').toHaveLength(1)
+  const context = others[0]!
+  expect(context.pages()).toHaveLength(1)
+  return { context, page: context.pages()[0]! }
+}
+
+async function breakProbe(web: WebPlatformAdapter, how: 'close' | 'crash'): Promise<void> {
+  const { context, page } = probeOf(web)
+  if (how === 'close') {
+    await page.close()
+    return
+  }
+  const crashed = page.waitForEvent('crash', { timeout: 10_000 })
+  const cdp = await context.newCDPSession(page)
+  void cdp.send('Page.crash').catch(() => undefined)
+  await crashed
+}
+
+async function copyOrder(web: WebPlatformAdapter): Promise<void> {
+  const first = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Copy order number') })
+  expect(clipboardOf(first)).toEqual([{ source: 'writeText', text: 'ORDER-4471', readBack: 'matched' }])
+}
+
+async function holdLateDownload(web: WebPlatformAdapter): Promise<void> {
+  const started = web.getPage()!.waitForEvent('download', { timeout: 10_000 })
+  const click = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Export later') })
+  expect(canonical(downloadsOf(click))).toBe('null')
+  await started
+}
+
+async function heldSurvives(how: 'close' | 'crash'): Promise<void> {
+  const web = await open(undefined, undefined, 'held')
+  await copyOrder(web)
+  await holdLateDownload(web)
+  await breakProbe(web, how)
+  const result = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Copy second order') })
+
+  expect(canonical(downloadsOf(result))).toBe(canonical([LATE_CSV]))
+  expect(clipboardOf(result)).toEqual([{ source: 'writeText', text: 'ORDER-4472', readBack: 'matched' }])
+}
+
+describe('C436-DOWNLOAD-HELD', () => {
+  afterEach(() => { vi.restoreAllMocks() })
+
+  it('a held late download survives a closed probe and is recorded late on the next action', async () => {
+    await heldSurvives('close')
+  }, 60_000)
+
+  it('a held late download survives a crashed probe', async () => {
+    await heldSurvives('crash')
+  }, 60_000)
+
+  it('a download that starts during a probe reset is held for the next action', async () => {
+    const web = await open(undefined, undefined, 'held')
+    const page = web.getPage()!
+    await copyOrder(web)
+    await breakProbe(web, 'close')
+    const capture = captureOf(web) as unknown as { readClipboard: (...args: unknown[]) => Promise<unknown> }
+    const original = capture.readClipboard.bind(capture)
+    vi.spyOn(capture, 'readClipboard').mockImplementation(async (...args: unknown[]) => {
+      const started = page.waitForEvent('download', { timeout: 10_000 })
+      await page.evaluate("blobDownload('mid.csv')")
+      await started
+      return original(...args)
+    })
+    const result = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Copy second order') })
+    vi.restoreAllMocks()
+
+    const next = await web.execute({ type: 'delay', ms: 0 })
+
+    expect(canonical(downloadsOf(result))).toBe('null')
+    expect(canonical(downloadsOf(next))).toBe(canonical([{ ...LATE_CSV, suggestedFilename: 'mid.csv' }]))
+    expect(clipboardOf(result)).toEqual([{ source: 'writeText', text: 'ORDER-4472', readBack: 'matched' }])
+  }, 60_000)
+})
+
+describe('C436-PROBE-LIFECYCLE', () => {
+  afterEach(() => { vi.restoreAllMocks() })
+
+  async function replacedOnce(how: 'close' | 'crash'): Promise<void> {
+    const web = await open(undefined, undefined, 'held')
+    await copyOrder(web)
+    await breakProbe(web, how)
+    const result = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Copy second order') })
+
+    expect(clipboardOf(result)).toEqual([{ source: 'writeText', text: 'ORDER-4472', readBack: 'matched' }])
+    const { page } = probeOf(web)
+    expect(page.isClosed()).toBe(false)
+    expect(page.url()).toBe('https://agent-qa-readback.invalid/')
+  }
+
+  it('a closed probe is replaced once and the read answers', async () => {
+    await replacedOnce('close')
+  }, 60_000)
+
+  it('a crashed probe is replaced once and the read answers', async () => {
+    await replacedOnce('crash')
   }, 60_000)
 })
