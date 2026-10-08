@@ -4,7 +4,8 @@
 // is read as its checked state (D-03) and that a real switch keeps desired-state idempotency: the
 // Prefer Non-Blinking Cursor switch already in the requested state is not tapped and is recorded
 // as no input sent, and out of state it is tapped once. The switch's original value is restored
-// after each cell.
+// after each cell. The ordinary General row is not a toggle, so a tap planned under desiredState
+// unselected is still sent and opens the General page.
 //
 // Each Settings switch row nests a labelled outer switch over an unlabelled knob, and only a tap on
 // the knob flips it, so the cells target the knob: the switch whose parent is the labelled one.
@@ -27,6 +28,7 @@ import type {
   StepResult,
   Verifier,
 } from '@vostride/agent-qa-runner'
+import { isToggleElement } from '@vostride/agent-qa-schema'
 import type { Ref, ScreenState } from '@vostride/agent-qa-schema'
 import { IOSPlatformAdapter } from '../adapter.js'
 
@@ -37,6 +39,8 @@ const LIMITS: PlannerConfig = { maxActions: 30, maxPlanningTurns: 30, previousSt
 const ACCESSIBILITY = 'Accessibility'
 const MOTION = 'Motion'
 const CURSOR = 'Prefer Non-Blinking Cursor'
+const GENERAL = 'General'
+const ABOUT = 'About'
 
 type Turn = (screen: ScreenState) => ActionPlan
 type Element = ScreenState['elements'][number]
@@ -259,5 +263,27 @@ describe.skipIf(!LIVE)('C437-IOS-LIVE', () => {
     expect(after?.state.checked).toBe(!seen.original)
     expect(after?.value, 'the knob value flipped').toBe(seen.original ? '0' : '1')
     console.log(`[C437-IOS-LIVE] out of state: knob value before=${seen.value} after=${after?.value}`)
+  }, 300_000)
+
+  it('an ordinary row is not a toggle and is tapped under desiredState unselected', async () => {
+    let general: Element | undefined
+    const run = await runStep(adapter!, 'Open General', [
+      (screen) => {
+        general = button(screen, GENERAL)
+        if (general === undefined) throw new Error(`"${GENERAL}" is not on the Settings home page`)
+        return act({ type: 'tap', ref: general.ref, desiredState: 'unselected' }, true, 'Open General')
+      },
+    ], (after) => button(after, ABOUT) !== undefined)
+
+    expect(general, 'the General row was observed').toBeDefined()
+    expect(isToggleElement(general!)).toBe(false)
+    expect(general!.state.selected).toBeUndefined()
+    expect(run.result.status).toBe('passed')
+    expect(run.executed).toHaveLength(1)
+    expect(run.executed[0]).toMatchObject({ type: 'tap', ref: general!.ref, desiredState: 'unselected' })
+    const sub = run.result.evidence!.subActions[0]
+    expect(sub.result.success).toBe(true)
+    expect(sub.result.metadata?.['idempotentNoop']).toBeUndefined()
+    console.log(`[C437-IOS-LIVE] ordinary row: role=${general!.role} selected=${String(general!.state.selected)} executes=${run.executed.length}`)
   }, 300_000)
 })
