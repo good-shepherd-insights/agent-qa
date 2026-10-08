@@ -355,12 +355,78 @@ export function renderOperationEvidence(evidence: OperationEvidence): string {
   return lines.join('\n')
 }
 
-/** 437 D-05: only a notable input outcome renders; an ordinary delivered input adds no line. */
+const NO_INPUT_REASONS: Record<string, string> = {
+  'single-line-field': 'the field is single-line and the text has line breaks',
+  'not-editable': 'the field is not editable',
+  'target-not-found': 'the target was not found where it was observed',
+}
+
+const UNAVAILABLE_REASONS: Record<string, string> = {
+  'adb-shell-disabled': 'Appium does not allow mobile: shell',
+}
+
+const SUBMIT_REASON_WORDS: Record<string, string> = {
+  mismatch: 'the text did not match',
+  'multi-line-field': 'multi-line field',
+  'input-failed': 'the input failed',
+}
+
+/**
+ * 437 D-05/D-06/D-17/D-18: only a notable input outcome renders; an exact or normalized fill whose
+ * Enter was sent, or not requested, adds no line.
+ */
 export function renderInputEvidence(entry: InputEvidence): string | undefined {
   if (entry.inputSent === false && entry.currentState !== undefined) {
     return `${entry.verb}: no input sent — already ${entry.currentState}`
   }
+  const prefix = entry.inputPath ? `${entry.verb} (${entry.inputPath} path)` : entry.verb
+  const lines: string[] = []
+  if (entry.inputSent === false) {
+    const reason = entry.unavailableReason
+    if (reason !== undefined && reason in UNAVAILABLE_REASONS) {
+      lines.push(`${prefix}: unavailable (${UNAVAILABLE_REASONS[reason]})`)
+    } else if (reason !== undefined && reason in NO_INPUT_REASONS) {
+      lines.push(`${prefix}: no input sent — ${NO_INPUT_REASONS[reason]}`)
+    } else {
+      lines.push(`${prefix}: no input sent`)
+    }
+  }
+  const verdictLine = renderFillVerdict(entry)
+  if (verdictLine !== undefined) lines.push(`${prefix}: ${verdictLine}`)
+  const submitLine = renderSubmit(entry)
+  if (submitLine !== undefined) lines.push(`${prefix}: ${submitLine}`)
+  return lines.length > 0 ? lines.join('\n') : undefined
+}
+
+function renderFillVerdict(entry: InputEvidence): string | undefined {
+  const clear = entry.verb === 'clearText'
+  if (entry.fillVerdict === 'unverified') {
+    if (entry.secure) return 'secure field, the value is not read back (unverified)'
+    return clear
+      ? 'the value could not be read back (unverified)'
+      : 'typed, but the value could not be read back (unverified)'
+  }
+  if (entry.fillVerdict === 'mismatch') {
+    return clear
+      ? 'text remains in the field (mismatch)'
+      : 'the field reads differently from the requested text (mismatch)'
+  }
   return undefined
+}
+
+function renderSubmit(entry: InputEvidence): string | undefined {
+  switch (entry.submit) {
+    case 'not-sent': {
+      const reason = entry.submitReason ? SUBMIT_REASON_WORDS[entry.submitReason] : undefined
+      return reason ? `Enter not sent (${reason})` : 'Enter not sent'
+    }
+    case 'failed':
+      return 'Enter failed'
+    case 'unavailable':
+      return 'Enter unavailable'
+    default:
+      return undefined
+  }
 }
 
 function appendFailureContext(parts: string[], context: StepContext): void {

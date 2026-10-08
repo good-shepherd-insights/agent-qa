@@ -23,6 +23,7 @@ import type {
   ActionAnnotation,
   ClipboardEvidence,
   CompoundInputCount,
+  InputEvidence,
   LimitStopEvidence,
   OperationCaptureAvailability,
   OperationEvidence,
@@ -96,6 +97,9 @@ import {
   readDownloadMeta,
   readClipboardMeta,
   readIdempotentNoopMeta,
+  readFillSubmitMeta,
+  readFillRefusalMeta,
+  readShellActionMeta,
   CLIPBOARD_TEXT_LIMIT,
   CLIPBOARD_TRUNCATION_MARKER,
 } from '../compound/metadata.js'
@@ -2816,8 +2820,38 @@ function takeOperationEvidence(
   const noop = readIdempotentNoopMeta(execResult)
   if (noop !== undefined) {
     evidence.input = [{ verb, inputSent: false, currentState: mask(noop.currentState) }]
+  } else {
+    const input = deriveInputEvidence(execResult, verb)
+    if (input !== undefined) evidence.input = [input]
   }
   return hasOperationEvidence(evidence) ? { result, evidence } : { result }
+}
+
+// 437 D-06/D-17/D-18: verdicts and outcomes only, never typed or read-back text. inputSent is false
+// only on positive evidence that nothing was delivered: a refusal or an unavailable mechanism.
+function deriveInputEvidence(execResult: ActionResult, verb: string): InputEvidence | undefined {
+  const fillVerdict = readFillVerdictMeta(execResult)
+  const submit = readFillSubmitMeta(execResult)
+  const refusal = readFillRefusalMeta(execResult)
+  const shell = readShellActionMeta(execResult)
+  if (!fillVerdict && !submit && !refusal && !shell) return undefined
+  const unavailable = shell?.outcome === 'unavailable'
+  const entry: InputEvidence = {
+    verb: fillVerdict?.verb ?? refusal?.verb ?? shell?.verb ?? verb,
+    inputSent: refusal === undefined && !unavailable,
+  }
+  if (fillVerdict) {
+    entry.fillVerdict = fillVerdict.verdict
+    if (fillVerdict.path) entry.inputPath = fillVerdict.path
+    if (fillVerdict.secure) entry.secure = true
+  }
+  if (submit) {
+    entry.submit = submit.outcome ?? (submit.sent ? 'sent' : 'not-sent')
+    if (submit.reason) entry.submitReason = submit.reason
+  }
+  if (refusal) entry.unavailableReason = refusal.cause
+  else if (unavailable && shell?.reason) entry.unavailableReason = shell.reason
+  return entry
 }
 
 function hasOperationEvidence(evidence: OperationEvidence): boolean {
