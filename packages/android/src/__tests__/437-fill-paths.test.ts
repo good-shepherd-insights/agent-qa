@@ -47,6 +47,7 @@ interface WebFieldModel {
   probeValue?: unknown
   readBack?: () => unknown
   typeThrows?: boolean
+  keysThrow?: boolean
 }
 
 const WEB_CTX = 'WEBVIEW_app.shop'
@@ -164,6 +165,7 @@ function createMockDriver() {
     action: vi.fn().mockReturnValue(chain),
     keys: vi.fn().mockImplementation((k: unknown) => {
       calls.push(`keys:${JSON.stringify(k)}`)
+      if (web?.keysThrow) return Promise.reject(new Error('socket hang up'))
       if (web) webKeys(k)
       return Promise.resolve()
     }),
@@ -275,6 +277,11 @@ async function webView(model: Partial<WebFieldModel> = {}): Promise<void> {
   web = { ...newWebField(), ...model }
   driver.getContexts.mockResolvedValue(['NATIVE_APP', WEB_CTX])
   await adapter.setup({ platform: 'android', appPackage: 'app.shop' } as never)
+}
+
+async function clear(name: string) {
+  const ref = await refFor(name)
+  return await adapter.execute({ type: 'clearText', ref } as unknown as ExecAction)
 }
 
 const WEB_PRESS_ENTER = [
@@ -533,6 +540,72 @@ describe('C437-ONE-PATH', () => {
     expect(firstEnters).toBe(1)
     expect(secondEnters).toBe(1)
   })
+
+  it('a mobile: type that throws is not retried', async () => {
+    await webView({ value: 'stale', typeThrows: true })
+
+    const result = await fill('Email', 'hello', { submit: true })
+
+    expect(count('execute:mobile: type')).toBe(1)
+    expect(calls.filter((c) => c.startsWith('keys:'))).toEqual([
+      'keys:["Control","a"]',
+      'keys:["Backspace"]',
+    ])
+    expect(count('execute:mobile: pressKey')).toBe(0)
+    expect(count('script:read')).toBe(0)
+    expect(calls.at(-1)).toBe(`switch:${WEB_CTX}`)
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/typing was interrupted/)
+    expect(result.error).toMatch(/not typed again/)
+    expect(result.error).not.toContain('hello')
+    expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'unverified', path: 'webview' })
+    expect(result.metadata?.fillSubmit).toEqual({
+      sent: false,
+      outcome: 'not-sent',
+      reason: 'input-failed',
+    })
+  })
+
+  it('a WebView key input that throws ends the fill before typing', async () => {
+    await webView({ value: 'stale', keysThrow: true })
+
+    const result = await fill('Email', 'hello', { submit: true })
+
+    expect(count('keys:')).toBe(1)
+    expect(count('execute:mobile: type')).toBe(0)
+    expect(count('execute:mobile: pressKey')).toBe(0)
+    expect(result.success).toBe(false)
+    expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'unverified', path: 'webview' })
+  })
+
+  it('a WebView clear whose key input throws is not repeated', async () => {
+    await webView({ value: 'old', keysThrow: true })
+
+    const result = await clear('Email')
+
+    expect(count('keys:')).toBe(1)
+    expect(count('script:read')).toBe(0)
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/clearText was interrupted/)
+    expect(result.metadata?.fillVerdict).toEqual({
+      verb: 'clearText',
+      verdict: 'unverified',
+      path: 'webview',
+    })
+  })
+
+  it('a WebView replace fill run twice leaves the text once and presses Enter once per fill', async () => {
+    await webView({ value: 'stale' })
+
+    await fill('Email', 'hello', { submit: true })
+    const firstEnters = count(PRESS_ENTER)
+    await fill('Email', 'hello', { submit: true })
+    const secondEnters = count(PRESS_ENTER)
+
+    expect(web!.value).toBe('hello')
+    expect(firstEnters).toBe(1)
+    expect(secondEnters).toBe(1)
+  })
 })
 
 // 437-06 (D-11): the WebView fill acts like a user through the driver. A W3C touch tap in the
@@ -611,5 +684,233 @@ describe('C437-FILL-WEBVIEW', () => {
     expect(result.error).toBe('field reads "helo" after typing "hello" — re-observe and retry')
     expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'mismatch', path: 'webview' })
     expect(result.metadata?.fillSubmit).toEqual({ sent: false, outcome: 'not-sent', reason: 'mismatch' })
+  })
+
+  const FOCUS_MISS =
+    'fill: the tap on e1 did not focus an editable field; nothing was typed. '
+    + 'Target the input itself and try again.'
+
+  function expectNothingTyped(): void {
+    expect(count('keys:')).toBe(0)
+    expect(count('execute:mobile: type')).toBe(0)
+    expect(count('execute:mobile: pressKey')).toBe(0)
+  }
+
+  it('a tap that focuses body writes nothing', async () => {
+    await webView({ editable: false, matches: true, value: 'kept' })
+
+    const result = await fill('Email', 'hello', { submit: true })
+
+    expect(calls).toEqual(['tap', 'script:probe:111,41'])
+    expectNothingTyped()
+    expect(web!.value).toBe('kept')
+    expect(result.success).toBe(false)
+    expect(result.error).toBe(FOCUS_MISS)
+    expect(result.metadata?.fillRefusal).toEqual({
+      verb: 'fill',
+      cause: 'not-editable',
+      evidence: 'no-keyboard-focus',
+    })
+    expect(result.metadata?.fillSubmit).toEqual({
+      sent: false,
+      outcome: 'not-sent',
+      reason: 'input-failed',
+    })
+    expect(result.metadata).not.toHaveProperty('fillVerdict')
+  })
+
+  it('a tap that focuses a different editable field writes nothing', async () => {
+    await webView({ editable: true, matches: false })
+
+    const result = await fill('Email', 'hello')
+
+    expectNothingTyped()
+    expect(result.success).toBe(false)
+    expect(result.error).toBe(FOCUS_MISS)
+    expect(result.metadata?.fillRefusal).toEqual({
+      verb: 'fill',
+      cause: 'not-editable',
+      evidence: 'focus-elsewhere',
+    })
+    expect(result.metadata).not.toHaveProperty('fillSubmit')
+  })
+
+  it('append moves the caret to the end and keeps the prior text', async () => {
+    await webView({ value: 'Hello' })
+
+    const result = await fill('Email', ' world', { clearMode: 'append' })
+
+    expect(calls.filter((c) => c.startsWith('keys:'))).toEqual(['keys:["End"]'])
+    expect(calls.indexOf('keys:["End"]')).toBeLessThan(calls.indexOf('execute:mobile: type:{"text":" world"}'))
+    expect(result.success).toBe(true)
+    expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'exact', path: 'webview' })
+    expect(result.metadata?.fillReread).toEqual({ expected: 'Hello world', actual: 'Hello world' })
+
+    web = { ...newWebField(), multiline: true, value: 'line one' }
+    const textarea = await fill('Email', '\nline two', { clearMode: 'append' })
+
+    expect(calls.filter((c) => c.startsWith('keys:'))).toEqual(['keys:["Control","End"]'])
+    expect(textarea.metadata?.fillReread).toEqual({
+      expected: 'line one\nline two',
+      actual: 'line one\nline two',
+    })
+  })
+
+  it('an append whose prior value is unreadable is unverified', async () => {
+    await webView({ value: 'Hello', probeValue: null })
+
+    const result = await fill('Email', ' world', { clearMode: 'append', submit: true })
+
+    expect(result.success).toBe(true)
+    expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'unverified', path: 'webview' })
+    expect(count(PRESS_ENTER)).toBe(1)
+  })
+
+  it('a textarea never gets Enter', async () => {
+    const text = 'line one\n\nline three\n  indented\ttab |;," end  '
+    await webView({ multiline: true })
+
+    const result = await fill('Email', text, { submit: true })
+
+    expect(calls.filter((c) => c.startsWith('execute:mobile: type'))).toEqual([
+      `execute:mobile: type:${JSON.stringify({ text })}`,
+    ])
+    expect(count('execute:mobile: pressKey')).toBe(0)
+    expect(result.success).toBe(true)
+    expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'exact', path: 'webview' })
+    expect(result.metadata?.fillReread).toEqual({ expected: text, actual: text })
+    expect(result.metadata?.fillSubmit).toEqual({
+      sent: false,
+      outcome: 'not-sent',
+      reason: 'multi-line-field',
+    })
+    expect(result.data).toBe(
+      'submit not sent: Return would add a new line in this multi-line field; tap its send or submit control',
+    )
+  })
+
+  it.each([
+    ['a newline', 'l1\nl2'],
+    ['a carriage return', 'l1\rl2'],
+  ])('line breaks into an INPUT are refused before any key input (%s)', async (_label, text) => {
+    await webView({ multiline: false, value: 'kept' })
+
+    const result = await fill('Email', text, { submit: true })
+
+    expectNothingTyped()
+    expect(web!.value).toBe('kept')
+    expect(result.success).toBe(false)
+    expect(result.error).toBe(
+      'fill: this field is single-line and the text has line breaks; nothing was typed. '
+        + 'Send the text without line breaks, or use a multi-line field.',
+    )
+    expect(result.metadata?.fillRefusal).toEqual({
+      verb: 'fill',
+      cause: 'single-line-field',
+      evidence: 'text-has-line-breaks',
+    })
+    expect(result.metadata?.fillSubmit).toEqual({
+      sent: false,
+      outcome: 'not-sent',
+      reason: 'input-failed',
+    })
+  })
+
+  it('a password field is never exact', async () => {
+    await webView({ secure: true })
+
+    const result = await fill('Email', 'topSecretPw', { submit: true })
+
+    expect(result.success).toBe(true)
+    expect(result.metadata?.fillVerdict).toEqual({
+      verb: 'fill',
+      verdict: 'unverified',
+      path: 'webview',
+      secure: true,
+    })
+    expect(result.metadata?.fillSubmit).toEqual({ sent: true, outcome: 'sent' })
+    expect(JSON.stringify(result)).not.toContain('topSecretPw')
+  })
+
+  it.each([
+    ['leading and trailing spaces and tabs', '\t  lead and trail  \t'],
+    ['commas, semicolons, pipes and quotes', `a,b;c|d "q" 's'`],
+    ['accented, CJK and emoji characters', 'é ü 中文 😀'],
+  ])('the single-line D-08 texts reach mobile: type exactly once: %s', async (_label, text) => {
+    await webView()
+
+    const result = await fill('Email', text)
+
+    expect(calls.filter((c) => c.startsWith('execute:mobile: type'))).toEqual([
+      `execute:mobile: type:${JSON.stringify({ text })}`,
+    ])
+    expect(result.success).toBe(true)
+    expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'exact', path: 'webview' })
+    expect(result.metadata?.fillReread).toEqual({ expected: text, actual: text })
+  })
+
+  it('a WebView clearText clears the named field by keys and reads it back', async () => {
+    await webView({ value: 'old text' })
+
+    const cleared = await clear('Email')
+
+    expect(calls).toEqual([
+      'tap',
+      'script:probe:111,41',
+      'keys:["Control","a"]',
+      'keys:["Backspace"]',
+      'script:read',
+    ])
+    expect(taps).toEqual([{ ctx: WEB_CTX, move: { x: 111, y: 41, origin: 'viewport' } }])
+    expect(web!.value).toBe('')
+    expect(cleared.success).toBe(true)
+    expect(cleared.metadata?.fillVerdict).toEqual({ verb: 'clearText', verdict: 'exact', path: 'webview' })
+
+    web = { ...newWebField(), value: 'x', readBack: () => 'x' }
+    const left = await clear('Email')
+
+    expect(left.success).toBe(false)
+    expect(left.error).toBe('field still reads "x" after clearing — re-observe and retry')
+    expect(left.metadata?.fillVerdict).toEqual({ verb: 'clearText', verdict: 'mismatch', path: 'webview' })
+
+    web = { ...newWebField(), value: 'x', readBack: () => null }
+    const unreadable = await clear('Email')
+
+    expect(unreadable.success).toBe(true)
+    expect(unreadable.metadata?.fillVerdict).toEqual({
+      verb: 'clearText',
+      verdict: 'unverified',
+      path: 'webview',
+    })
+
+    web = { ...newWebField(), editable: false, value: 'kept' }
+    const missed = await clear('Email')
+
+    expect(count('keys:')).toBe(0)
+    expect(web!.value).toBe('kept')
+    expect(missed.success).toBe(false)
+    expect(missed.error).toBe(
+      'clearText: the tap on e1 did not focus an editable field; nothing was cleared. '
+        + 'Target the input itself and try again.',
+    )
+    expect(missed.metadata?.fillRefusal).toEqual({
+      verb: 'clearText',
+      cause: 'not-editable',
+      evidence: 'no-keyboard-focus',
+    })
+  })
+
+  it('every WebView script in the fill and clear paths only reads', async () => {
+    await webView({ value: 'Hello', multiline: true })
+
+    await fill('Email', ' world', { clearMode: 'append', submit: true })
+    const executed = [...scripts]
+    await clear('Email')
+    executed.push(...scripts)
+
+    for (const source of executed) {
+      for (const pattern of WRITES_OR_EVENTS) expect(source).not.toMatch(pattern)
+    }
+    expect(executed.length).toBeGreaterThanOrEqual(4)
   })
 })

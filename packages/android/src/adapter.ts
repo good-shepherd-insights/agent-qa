@@ -1018,20 +1018,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
         await el.setValue(action.text)
       }
     } catch {
-      const fillVerdict: FillVerdictMeta = {
-        verb: 'fill',
-        verdict: 'unverified',
-        path: 'native',
-        ...(secure ? { secure: true as const } : {}),
-      }
-      return {
-        success: false,
-        error:
-          'fill: typing was interrupted by a driver error; the field may hold part of the text, '
-          + 'and it was not typed again. Re-observe the field before filling it again.',
-        ...box,
-        metadata: { fillVerdict, ...(action.submit ? { fillSubmit: { ...INPUT_FAILED } } : {}) },
-      }
+      return this.interruptedFill('native', secure, action, box)
     }
 
     const actual = prior === undefined ? undefined : await this.readFocusedValue(el)
@@ -1042,6 +1029,29 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       multiline,
       enter: () => this.pressEnter(),
     })
+  }
+
+  /** A driver error during delivery ends the fill: nothing is typed again and no Enter follows. */
+  private interruptedFill(
+    path: InputPath,
+    secure: boolean,
+    action: { submit: boolean },
+    box: TextBox,
+  ): ActionResult {
+    const fillVerdict: FillVerdictMeta = {
+      verb: 'fill',
+      verdict: 'unverified',
+      path,
+      ...(secure ? { secure: true as const } : {}),
+    }
+    return {
+      success: false,
+      error:
+        'fill: typing was interrupted by a driver error; the field may hold part of the text, '
+        + 'and it was not typed again. Re-observe the field before filling it again.',
+      ...box,
+      metadata: { fillVerdict, ...(action.submit ? { fillSubmit: { ...INPUT_FAILED } } : {}) },
+    }
   }
 
   /**
@@ -1145,6 +1155,80 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     }
   }
 
+  /** 437 D-11: a tap that left no editable field focused at the ref writes nothing. */
+  private refuseWebFocus(
+    verb: 'fill' | 'clearText',
+    ref: string,
+    focus: WebFocus,
+    submit: boolean,
+    box: TextBox,
+  ): ActionResult {
+    const fillRefusal: FillRefusalMeta = {
+      verb,
+      cause: 'not-editable',
+      evidence: focus.editable ? 'focus-elsewhere' : 'no-keyboard-focus',
+    }
+    const nothing = verb === 'fill' ? 'nothing was typed' : 'nothing was cleared'
+    return {
+      success: false,
+      error:
+        `${verb}: the tap on ${ref} did not focus an editable field; ${nothing}. `
+        + 'Target the input itself and try again.',
+      ...box,
+      metadata: { fillRefusal, ...(submit ? { fillSubmit: { ...INPUT_FAILED } } : {}) },
+    }
+  }
+
+  /**
+   * WebView clearText (437 D-11, D-16): the same tap and focus probe as the fill, W3C Ctrl+A and
+   * Backspace, then a read-back judged against the empty string. Never success without that check.
+   */
+  private async clearWebViewField(
+    ref: string,
+    center: { x: number; y: number },
+    box: TextBox,
+  ): Promise<ActionResult> {
+    const driver = this.driver!
+    await this.trustedWebTap(center)
+    const focus = await this.probeWebFocus(center)
+    if (!focus.editable || !focus.matches) {
+      return this.refuseWebFocus('clearText', ref, focus, false, box)
+    }
+    const secure = focus.secure ? { secure: true as const } : {}
+    try {
+      await driver.keys(['Control', 'a'])
+      await driver.keys(['Backspace'])
+    } catch {
+      return {
+        success: false,
+        error:
+          'clearText was interrupted by a driver error; the field may be partly cleared, and it '
+          + 'was not cleared again. Re-observe the field before clearing it again.',
+        ...box,
+        metadata: {
+          fillVerdict: { verb: 'clearText', verdict: 'unverified', path: 'webview', ...secure },
+        },
+      }
+    }
+    const actual = await this.readWebFieldValue()
+    const verdict = compareFillReread({
+      expected: '',
+      actual,
+      secure: focus.secure,
+      verb: 'clearText',
+    })
+    const fillVerdict: FillVerdictMeta = {
+      verb: 'clearText',
+      verdict: verdict.verdict,
+      path: 'webview',
+      ...(verdict.secure ? { secure: true as const } : {}),
+    }
+    const metadata = { ...(verdict.meta ? { fillReread: verdict.meta } : {}), fillVerdict }
+    return verdict.ok
+      ? { success: true, ...box, metadata }
+      : { success: false, error: verdict.selfCorrectingError, ...box, metadata }
+  }
+
   /**
    * WebView fill as trusted input (437 D-11): a W3C tap on the ref, a read-only focus probe,
    * W3C Ctrl+A and Backspace for replace, `mobile: type` from NATIVE_APP, a read-only read-back,
@@ -1160,18 +1244,23 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     await this.trustedWebTap(center)
     const focus = await this.probeWebFocus(center)
     if (!focus.editable || !focus.matches) {
-      return {
-        success: false,
-        error: `fill: the tap on ${action.ref} did not focus an editable field; nothing was typed.`,
-        ...box,
-      }
+      return this.refuseWebFocus('fill', action.ref, focus, action.submit, box)
+    }
+    if (!focus.multiline && LINE_BREAK_RE.test(action.text)) {
+      return this.refuseLineBreaks(action, box)
     }
     const prior = isAppend ? focus.value : ''
-    if (!isAppend) {
-      await driver.keys(['Control', 'a'])
-      await driver.keys(['Backspace'])
+    try {
+      if (isAppend) {
+        await driver.keys(focus.multiline ? ['Control', 'End'] : ['End'])
+      } else {
+        await driver.keys(['Control', 'a'])
+        await driver.keys(['Backspace'])
+      }
+      await this.withNativeContext(() => driver.execute('mobile: type', { text: action.text }))
+    } catch {
+      return this.interruptedFill('webview', focus.secure, action, box)
     }
-    await this.withNativeContext(() => driver.execute('mobile: type', { text: action.text }))
     const actual = prior === undefined ? undefined : await this.readWebFieldValue()
     const verdict = compareFillReread({
       expected: (prior ?? '') + action.text,
@@ -1783,6 +1872,12 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
             success: false,
             error: `Element ${action.ref} is not fillable (role: ${clearRole}). clearText only works on text inputs. Use a textbox or input element instead.`,
           }
+        }
+        if (inWeb) {
+          return await this.clearWebViewField(action.ref, center, {
+            coordinates: center,
+            boundingBox: bounds,
+          })
         }
         await safePerform(driver.action('pointer', { parameters: { pointerType: 'touch' } })
           .move({ x: Math.round(center.x), y: Math.round(center.y) })
