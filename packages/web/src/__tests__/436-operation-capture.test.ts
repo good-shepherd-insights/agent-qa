@@ -24,8 +24,10 @@ import {
   DOWNLOAD_ACTIVATION_ACTIONS,
   DOWNLOAD_START_GRACE_MS,
   isDownloadActivation,
+  isHeadlessLaunch,
+  OperationCapture,
 } from '../operation-capture.js'
-import type { CapturedClipboardWrite, OperationCapture } from '../operation-capture.js'
+import type { CapturedClipboardWrite, CapturedOperations, OperationCaptureOptions } from '../operation-capture.js'
 import { act, refFor as screenRefFor, runScriptedStep, scriptedPlanner, scriptedVerifier } from './fixtures/436-scripted-loop.js'
 
 const BLOB_BYTES = 'name,qty\nwidget,3\n'
@@ -230,6 +232,21 @@ const HELD_PAGE = `<!DOCTYPE html>
 </html>
 `
 
+// 436-21 (owner ruling on D-21): genuine writes, a forged claim and an attachment, for captures
+// built in each launch mode.
+const HEADED_PAGE = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>headed fixture</title></head>
+<body>
+  <h1>Headed</h1>
+  <button id="genuine" onclick="navigator.clipboard.writeText('ORDER-4471')">Copy order number</button>
+  <button id="forge" onclick="window[${JSON.stringify(CLIPBOARD_BINDING)}]({ via: 'writeText', text: 'PIN-417' })">Forge claim</button>
+  <button id="second" onclick="navigator.clipboard.writeText('ORDER-4472')">Copy second order</button>
+  <a id="export" href="/files/export">Export</a>
+</body>
+</html>
+`
+
 const INSECURE_ORIGIN = 'http://fixture.test'
 
 let server: Server
@@ -297,6 +314,7 @@ beforeAll(async () => {
       '/readback': READBACK_PAGE,
       '/arming': ARMING_PAGE,
       '/held': HELD_PAGE,
+      '/headed': HEADED_PAGE,
     }
     res.end(pages[url] ?? PAGE)
   })
@@ -1152,4 +1170,113 @@ describe('C436-PROBE-LIFECYCLE', () => {
   it('a crashed probe is replaced once and the read answers', async () => {
     await replacedOnce('crash')
   }, 60_000)
+})
+
+// 2026-10-08 (436-21): the owner's ruling on D-21 ("Headed: never read"). A capture built headed,
+// or with no launch mode, opens no probe and reads nothing; only a headless capture reads.
+interface OwnCapture {
+  browser: import('playwright-core').Browser
+  app: BrowserContext
+  page: Page
+  capture: OperationCapture
+  newContext: ReturnType<typeof vi.spyOn>
+  frameEvaluate: ReturnType<typeof vi.spyOn>
+}
+
+describe('C436-CLIPBOARD-HEADED', () => {
+  let own: OwnCapture | undefined
+
+  afterEach(async () => {
+    vi.restoreAllMocks()
+    await own?.capture.dispose().catch(() => undefined)
+    await own?.browser.close().catch(() => undefined)
+    own = undefined
+  }, 60_000)
+
+  async function ownCapture(options?: OperationCaptureOptions): Promise<OwnCapture> {
+    const browser = await chromium.launch({ headless: true })
+    const app = await browser.newContext()
+    await app.grantPermissions(['clipboard-write'])
+    const capture = options === undefined ? new OperationCapture() : new OperationCapture(options)
+    await capture.attach(app)
+    const page = await app.newPage()
+    await page.goto(baseUrl + 'headed')
+    own = {
+      browser,
+      app,
+      page,
+      capture,
+      newContext: vi.spyOn(browser, 'newContext'),
+      frameEvaluate: vi.spyOn(page.mainFrame(), 'evaluate'),
+    }
+    return own
+  }
+
+  // Between arm and the end of collect the page is driven only by page.click.
+  async function armedClick(target: OwnCapture, selector: string): Promise<CapturedOperations | undefined> {
+    await target.capture.arm({ type: 'click' })
+    const before = target.frameEvaluate.mock.calls.length
+    await target.page.click(selector)
+    const captured = await target.capture.collect()
+    expect(target.frameEvaluate.mock.calls.length, 'no app-frame evaluate between arm and collect').toBe(before)
+    return captured
+  }
+
+  async function neverReads(options?: OperationCaptureOptions): Promise<void> {
+    const target = await ownCapture(options)
+    const first = await armedClick(target, '#genuine')
+    const forged = await armedClick(target, '#forge')
+    const second = await armedClick(target, '#second')
+
+    expect(first?.clipboard).toEqual([{ source: 'writeText', text: 'ORDER-4471', readBack: 'unavailable' }])
+    expect(forged?.clipboard).toEqual([{ source: 'writeText', text: 'PIN-417', readBack: 'unavailable' }])
+    expect(second?.clipboard).toEqual([{ source: 'writeText', text: 'ORDER-4472', readBack: 'unavailable' }])
+    expect(target.newContext).not.toHaveBeenCalled()
+    expect(target.browser.contexts()).toEqual([target.app])
+  }
+
+  it('a capture launched headed records app writes unavailable and opens no probe', async () => {
+    await neverReads({ headless: false })
+  }, 60_000)
+
+  it('a capture with no launch mode never reads', async () => {
+    await neverReads()
+  }, 60_000)
+
+  it('a capture launched headless reads back a genuine write', async () => {
+    const target = await ownCapture({ headless: true })
+    await target.capture.arm({ type: 'click' })
+    await target.page.click('#genuine')
+    const captured = await target.capture.collect()
+
+    expect(captured?.clipboard).toEqual([{ source: 'writeText', text: 'ORDER-4471', readBack: 'matched' }])
+    expect(target.browser.contexts().filter((context) => context !== target.app)).toHaveLength(1)
+  }, 60_000)
+
+  it('a capture launched headed still records a download on the click', async () => {
+    const target = await ownCapture({ headless: false })
+    const captured = await armedClick(target, '#export')
+
+    expect(canonical(captured?.downloads)).toBe(canonical([
+      {
+        suggestedFilename: 'export.csv',
+        extension: '.csv',
+        size: Buffer.byteLength(EXPORT_BYTES),
+        sha256: sha256(EXPORT_BYTES),
+        state: 'completed',
+      },
+    ]))
+    expect(target.newContext).not.toHaveBeenCalled()
+  }, 60_000)
+
+  it('the launch-mode rule treats anything but a plain headless launch as headed', () => {
+    expect(isHeadlessLaunch({ headless: true }, {})).toBe(true)
+    for (const value of ['', '0', 'false']) expect(isHeadlessLaunch({ headless: true }, { PWDEBUG: value })).toBe(true)
+    for (const headless of [false, undefined, 'new']) expect(isHeadlessLaunch({ headless }, {})).toBe(false)
+    expect(isHeadlessLaunch({ headless: true, channel: 'chrome' }, {})).toBe(false)
+    expect(isHeadlessLaunch({ headless: true }, { PWDEBUG: '1' })).toBe(false)
+    expect(isHeadlessLaunch({ headless: true }, { PWDEBUG: 'console' })).toBe(false)
+    expect(isHeadlessLaunch({ headless: true }, { npm_config_pwdebug: '1' })).toBe(false)
+    expect(isHeadlessLaunch({ headless: true }, { npm_package_config_pwdebug: 'inspector' })).toBe(false)
+  })
 })
