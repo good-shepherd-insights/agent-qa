@@ -34,6 +34,11 @@ interface FieldModel {
   setValueThrows: boolean
   focusThrows: boolean
   pressKeyError?: string
+  // 437-07: the keyboard path. A hidden handle makes `//*[@focused="true"]` absent; revealOnType
+  // shows it once `mobile: type` has run. Ctrl+A then DEL clears the model.
+  focusHidden?: boolean
+  revealOnType?: boolean
+  typeThrows?: boolean
 }
 
 // 437-06: a WebView field. The focus probe answers editable/matches/multiline/secure/value from it,
@@ -111,9 +116,17 @@ function showingHint(): boolean {
   return field.value === '' && field.hint !== undefined
 }
 
+function nativeKey(args: { keycode: number; metastate?: number }): void {
+  if (args.keycode === 29 && args.metastate === 0x1000) selectedAll = true
+  else if (args.keycode === 67 && selectedAll) {
+    field.value = ''
+    selectedAll = false
+  } else selectedAll = false
+}
+
 function createFocusedElement() {
   return {
-    isExisting: vi.fn().mockResolvedValue(true),
+    isExisting: vi.fn().mockImplementation(() => Promise.resolve(field.focusHidden !== true)),
     setValue: vi.fn().mockImplementation((v: string) => {
       calls.push(`setValue:${v}`)
       if (field.setValueThrows) return Promise.reject(new Error('socket hang up'))
@@ -182,6 +195,12 @@ function createMockDriver() {
       if (command === 'mobile: type' && web) {
         if (web.typeThrows) return Promise.reject(new Error('socket hang up'))
         web.value += (args as { text: string }).text
+      } else if (command === 'mobile: type') {
+        if (field.typeThrows) return Promise.reject(new Error('socket hang up'))
+        field.value += (args as { text: string }).text
+        if (field.revealOnType) field.focusHidden = false
+      } else if (command === 'mobile: pressKey' && !web) {
+        nativeKey(args as { keycode: number; metastate?: number })
       }
       return Promise.resolve(undefined)
     }),
@@ -475,6 +494,95 @@ describe('C437-FILL-NATIVE', () => {
   })
 })
 
+// 437-07 (D-14): the keyboard path runs when the tap leaves no focused handle. Replace clears with
+// Ctrl+A then DEL through `mobile: pressKey`, the text goes through one `mobile: type`, the value is
+// read back from a re-found handle when there is one, and a requested Enter is sent once.
+const CTRL_A = 'execute:mobile: pressKey:{"keycode":29,"metastate":4096}'
+const DEL = 'execute:mobile: pressKey:{"keycode":67}'
+
+describe('C437-FILL-KEYBOARD', () => {
+  it('a replace with submit is Ctrl+A, DEL, one mobile: type, read-back, one Enter', async () => {
+    field.value = 'stale'
+    field.focusHidden = true
+    field.revealOnType = true
+
+    const result = await fill('Username', 'hello', { submit: true })
+
+    expect(calls).toEqual([
+      'tap',
+      `$:${FOCUSED_XPATH}`,
+      CTRL_A,
+      DEL,
+      'execute:mobile: type:{"text":"hello"}',
+      `$:${FOCUSED_XPATH}`,
+      'getAttr:password',
+      `$:${FOCUSED_HINT_XPATH}`,
+      'getText',
+      PRESS_ENTER,
+    ])
+    expect(driver.keys).not.toHaveBeenCalled()
+    expect(field.value).toBe('hello')
+    expect(result.success).toBe(true)
+    expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'exact', path: 'keyboard' })
+    expect(result.metadata?.fillReread).toEqual({ expected: 'hello', actual: 'hello' })
+    expect(result.metadata?.fillSubmit).toEqual({ sent: true, outcome: 'sent' })
+  })
+
+  it('no handle after typing is unverified and still submits', async () => {
+    field.focusHidden = true
+
+    const result = await fill('Username', 'hello', { submit: true })
+
+    expect(count('execute:mobile: type')).toBe(1)
+    expect(count(PRESS_ENTER)).toBe(1)
+    expect(calls.indexOf(PRESS_ENTER)).toBeGreaterThan(calls.indexOf('execute:mobile: type:{"text":"hello"}'))
+    expect(driver.keys).not.toHaveBeenCalled()
+    expect(result.success).toBe(true)
+    expect(result.error).toBeUndefined()
+    expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'unverified', path: 'keyboard' })
+    expect(result.metadata?.fillSubmit).toEqual({ sent: true, outcome: 'sent' })
+    expect(result.metadata).not.toHaveProperty('fillReread')
+  })
+
+  it('append types at the cursor with no clear and is unverified', async () => {
+    field.value = 'Hello'
+    field.focusHidden = true
+    field.revealOnType = true
+
+    const result = await fill('Username', ' world', { clearMode: 'append', submit: true })
+
+    expect(count(CTRL_A)).toBe(0)
+    expect(count(DEL)).toBe(0)
+    expect(calls.filter((c) => c.startsWith('execute:mobile: type'))).toEqual([
+      'execute:mobile: type:{"text":" world"}',
+    ])
+    expect(field.value).toBe('Hello world')
+    expect(result.success).toBe(true)
+    expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'unverified', path: 'keyboard' })
+    expect(result.metadata).not.toHaveProperty('fillReread')
+    expect(result.metadata?.fillSubmit).toEqual({ sent: true, outcome: 'sent' })
+  })
+
+  it.each([
+    ['multi-line text with blank lines', 'line one\n\nline three\n  indented\ttab |;," end  '],
+    ['leading and trailing spaces and tabs', '\t  lead and trail  \t'],
+    ['commas, semicolons, pipes and quotes', `a,b;c|d "q" 's'`],
+    ['accented, CJK and emoji characters', 'é ü 中文 😀'],
+  ])('the D-08 texts are each one mobile: type call: %s', async (_label, text) => {
+    field.focusHidden = true
+    field.revealOnType = true
+
+    const result = await fill('Username', text)
+
+    const typed = vi.mocked(driver.execute).mock.calls.filter((c) => c[0] === 'mobile: type')
+    expect(typed).toEqual([['mobile: type', { text }]])
+    expect(driver.keys).not.toHaveBeenCalled()
+    expect(result.success).toBe(true)
+    expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'exact', path: 'keyboard' })
+    expect(result.metadata?.fillReread).toEqual({ expected: text, actual: text })
+  })
+})
+
 // The assumption-delta invariant (437 D-12): every fill delivers its text through exactly one path
 // and presses Enter at most once. 437-06 adds the WebView cells and 437-07 the keyboard cells.
 describe('C437-ONE-PATH', () => {
@@ -559,6 +667,29 @@ describe('C437-ONE-PATH', () => {
     expect(result.error).toMatch(/not typed again/)
     expect(result.error).not.toContain('hello')
     expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'unverified', path: 'webview' })
+    expect(result.metadata?.fillSubmit).toEqual({
+      sent: false,
+      outcome: 'not-sent',
+      reason: 'input-failed',
+    })
+  })
+
+  it('a keyboard-path mobile: type that throws is not retried', async () => {
+    field.value = 'stale'
+    field.focusHidden = true
+    field.typeThrows = true
+
+    const result = await fill('Username', 'hello', { submit: true })
+
+    expect(count('execute:mobile: type')).toBe(1)
+    expect(driver.keys).not.toHaveBeenCalled()
+    expect(count(PRESS_ENTER)).toBe(0)
+    expect(focused.setValue).not.toHaveBeenCalled()
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/typing was interrupted/)
+    expect(result.error).toMatch(/not typed again/)
+    expect(result.error).not.toContain('hello')
+    expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'unverified', path: 'keyboard' })
     expect(result.metadata?.fillSubmit).toEqual({
       sent: false,
       outcome: 'not-sent',

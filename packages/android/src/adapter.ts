@@ -58,6 +58,8 @@ const FOCUSED_HINT_XPATH = '//*[@focused="true" and @showing-hint="true"]'
 const FOCUSED_MULTILINE_XPATH = '//*[@focused="true" and @multiline="true"]'
 const FOCUSED_SINGLE_LINE_XPATH = '//*[@focused="true" and @multiline="false"]'
 const ENTER_KEYCODE = 66
+const CTRL_A = { keycode: 29, metastate: 0x1000 }
+const DEL_KEYCODE = 67
 const MULTI_LINE_SUBMIT_NOTICE =
   'submit not sent: Return would add a new line in this multi-line field; tap its send or submit control'
 const LINE_BREAK_RE = /[\r\n]/
@@ -139,6 +141,7 @@ type FocusedField = {
   getAttribute: (name: string) => Promise<string | null>
   setValue: (value: string) => Promise<void>
   addValue: (value: string) => Promise<void>
+  clearValue: () => Promise<void>
 }
 
 type WebFocus = {
@@ -1031,6 +1034,56 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     })
   }
 
+  /** The focused element handle, or undefined when UiAutomator2 reports none or the lookup fails. */
+  private async focusedField(): Promise<FocusedField | undefined> {
+    try {
+      const el = await this.driver!.$(FOCUSED_XPATH)
+      return (await el.isExisting()) ? el : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  /** Ctrl+A then DEL as key input; clears only the view holding input focus (437 D-14). */
+  private async clearByKeys(): Promise<void> {
+    await this.driver!.execute('mobile: pressKey', CTRL_A)
+    await this.driver!.execute('mobile: pressKey', { keycode: DEL_KEYCODE })
+  }
+
+  /**
+   * The last-resort keyboard path (437 D-14): the tap left no focused handle. Replace clears by
+   * keys, the text goes through one `mobile: type` (Appium's Unicode IME, exact for every D-08
+   * text), and the value is read back only when a focused handle can be found afterwards. An
+   * append's prior value is unknown, so it is never better than unverified.
+   */
+  private async fillKeyboardPath(
+    action: { text: string; clearMode: 'replace' | 'append'; submit: boolean },
+    box: TextBox,
+  ): Promise<ActionResult> {
+    const isAppend = action.clearMode === 'append'
+    try {
+      if (!isAppend) await this.clearByKeys()
+      await this.driver!.execute('mobile: type', { text: action.text })
+    } catch {
+      return this.interruptedFill('keyboard', false, action, box)
+    }
+
+    const handle = await this.focusedField()
+    let secure = false
+    let actual: string | undefined
+    if (handle) {
+      secure = (await handle.getAttribute('password').catch(() => null)) === 'true'
+      if (!isAppend) actual = await this.readFocusedValue(handle)
+    }
+    const verdict = compareFillReread({ expected: action.text, actual, secure })
+    return await this.settleFill(action, box, {
+      path: 'keyboard',
+      verdict,
+      multiline: false,
+      enter: () => this.pressEnter(),
+    })
+  }
+
   /** A driver error during delivery ends the fill: nothing is typed again and no Enter follows. */
   private interruptedFill(
     path: InputPath,
@@ -1560,35 +1613,10 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
           .down({ button: 0 })
           .up({ button: 0 })
           )
-        let focusedEl: FocusedField | undefined
-        try {
-          const el = await driver.$(FOCUSED_XPATH)
-          if (await el.isExisting()) focusedEl = el
-        } catch {
-          focusedEl = undefined
-        }
         // 437-05 (2026-10-08, D-12): the path is chosen here, before any text is delivered.
+        const focusedEl = await this.focusedField()
         if (focusedEl) return await this.fillNativeCompound(focusedEl, action, box)
-        // Keyboard path — type via keyboard (pass whole string, not split chars). Attempt a focused
-        // re-read; when no element value is readable, return success with NO fillReread block —
-        // signal-presence law: never fabricate a re-read pair.
-        await driver.keys([action.text])
-        try {
-          const el = await driver.$(FOCUSED_XPATH)
-          if (await el.isExisting()) {
-            const secure = (await el.getAttribute('password')) === 'true'
-            const actual = await this.readElementText(el)
-            if (actual !== undefined) {
-              const verdict = compareFillReread({ expected: action.text, actual, secure })
-              return verdict.ok
-                ? { success: true, ...box, metadata: { fillReread: verdict.meta } }
-                : { success: false, error: verdict.selfCorrectingError, ...box, metadata: { fillReread: verdict.meta } }
-            }
-          }
-        } catch {
-          // no readable handle — degrade honestly below
-        }
-        return { success: true, ...box }
+        return await this.fillKeyboardPath(action, box)
       }
 
       case 'nativeSelect': {
