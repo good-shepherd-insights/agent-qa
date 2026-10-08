@@ -5,8 +5,12 @@
 // planner grounded against, Pitfall 10) — never re-observes. Suppresses an action on POSITIVE
 // evidence only (D-15): a missing/undefined state never satisfies. The dispatch-seam wiring
 // (D-14) and the D-16 oracle read land in Plan 08; this is the comparator they call.
+//
+// 437 D-01/D-02/D-04: a tap/click is skipped only when the target is a classifier toggle
+// (`isToggleElement`) AND its checked state is positively read. All four desired states read
+// `state.checked`; `selected` alone never suppresses input, so an ordinary node is always tapped.
 
-import type { ScreenState } from '@vostride/agent-qa-schema'
+import { isToggleElement, type ScreenState } from '@vostride/agent-qa-schema'
 import type { IdempotentNoopMeta } from './metadata.js'
 
 export type DesiredState = 'checked' | 'unchecked' | 'selected' | 'unselected'
@@ -29,15 +33,14 @@ export function desiredStateSatisfied(
   if (!element) return undefined
 
   if ((action.type === 'tap' || action.type === 'click') && action.desiredState) {
+    if (!isToggleElement(element)) return undefined
     switch (action.desiredState) {
       case 'checked':
+      case 'selected':
         return element.state.checked === true ? { currentState: 'checked' } : undefined
       case 'unchecked':
-        return element.state.checked === false ? { currentState: 'unchecked' } : undefined
-      case 'selected':
-        return element.state.selected === true ? { currentState: 'selected' } : undefined
       case 'unselected':
-        return element.state.selected === false ? { currentState: 'unselected' } : undefined
+        return element.state.checked === false ? { currentState: 'unchecked' } : undefined
     }
   }
 

@@ -1,8 +1,9 @@
 // RED scaffold (Wave 0, Phase 359 · EXEC-04 · D-13/D-14/D-15/D-16 · Pattern 5 · spec §12.13).
 // Pins the toggle/picker idempotency contract BEFORE Plans 03/04/08 wire it:
 //   Block A — the pure comparator `desiredStateSatisfied(action, screenState)` (D-15): suppress
-//     an action ONLY on positive persisted-state evidence (tap/click vs state.checked/selected;
-//     select/nativeSelect/pickerSelect vs the persisted value); undefined/missing state ⇒ act.
+//     an action ONLY on positive persisted-state evidence (tap/click on a classifier toggle vs
+//     state.checked, 437 D-01/D-02; select/nativeSelect/pickerSelect vs the persisted value);
+//     undefined/missing state or a non-toggle ⇒ act.
 //   Block B — the dispatch-seam short-circuit (D-14): at the ONE chokepoint before adapter.execute,
 //     a satisfied desiredState mints a success ActionResult with metadata.idempotentNoop
 //     { currentState } WITHOUT calling the adapter; an unsatisfied desiredState falls through
@@ -33,7 +34,10 @@ import { desiredStateSatisfied } from '../../compound/idempotency.js'
 // Block A — pure comparator fixtures (via the canonical v2 factory, 352 precedent)
 // ---------------------------------------------------------------------------
 
-function checkable(state: Partial<ElementState>, opts: { role?: string; value?: string } = {}): ScreenState {
+function checkable(
+  state: Partial<ElementState>,
+  opts: { role?: string; value?: string; attributes?: Record<string, string> } = {},
+): ScreenState {
   const element: ElementInfo = {
     ref: asRef('e1'),
     role: opts.role ?? 'checkbox',
@@ -41,38 +45,84 @@ function checkable(state: Partial<ElementState>, opts: { role?: string; value?: 
     nameNormalized: 'wi-fi',
     state: { enabled: true, focused: false, visible: true, ...state },
     labels: {},
-    attributes: {},
+    attributes: opts.attributes ?? {},
     ...(opts.value !== undefined ? { value: opts.value } : {}),
   }
   return makeScreenState({ elements: [element] })
 }
 
-describe('Block A — desiredStateSatisfied: checkable toggles (D-15)', () => {
-  it('tap desiredState=checked ⇒ {currentState} hit when persisted state.checked is true', () => {
-    const hit = desiredStateSatisfied({ type: 'tap', ref: 'e1', desiredState: 'checked' }, checkable({ checked: true }))
-    expect(hit).toBeDefined()
-    expect(hit!.currentState).toBeDefined()
+const ALL_DESIRED = ['checked', 'unchecked', 'selected', 'unselected'] as const
+
+const TOGGLE_FIXTURES: { label: string; role: string; attributes?: Record<string, string> }[] = [
+  { label: 'role checkbox', role: 'checkbox' },
+  { label: 'role switch', role: 'switch' },
+  { label: 'role radio', role: 'radio' },
+  { label: 'role button with checkable "true"', role: 'button', attributes: { checkable: 'true' } },
+]
+
+function ordinary(selected: boolean): ScreenState {
+  return checkable(
+    { selected },
+    { role: 'button', attributes: { checkable: 'false', selected: String(selected) } },
+  )
+}
+
+describe('Block A — desiredStateSatisfied: real toggles read checked for all four states (437 D-02)', () => {
+  for (const fx of TOGGLE_FIXTURES) {
+    it(`${fx.label} with checked true satisfies checked and selected as 'checked', and neither of the others`, () => {
+      const screen = checkable({ checked: true }, { role: fx.role, ...(fx.attributes ? { attributes: fx.attributes } : {}) })
+      for (const type of ['tap', 'click']) {
+        expect(desiredStateSatisfied({ type, ref: 'e1', desiredState: 'checked' }, screen)).toEqual({ currentState: 'checked' })
+        expect(desiredStateSatisfied({ type, ref: 'e1', desiredState: 'selected' }, screen)).toEqual({ currentState: 'checked' })
+        expect(desiredStateSatisfied({ type, ref: 'e1', desiredState: 'unchecked' }, screen)).toBeUndefined()
+        expect(desiredStateSatisfied({ type, ref: 'e1', desiredState: 'unselected' }, screen)).toBeUndefined()
+      }
+    })
+
+    it(`${fx.label} with checked false satisfies unchecked and unselected as 'unchecked', and neither of the others`, () => {
+      const screen = checkable({ checked: false }, { role: fx.role, ...(fx.attributes ? { attributes: fx.attributes } : {}) })
+      for (const type of ['tap', 'click']) {
+        expect(desiredStateSatisfied({ type, ref: 'e1', desiredState: 'unchecked' }, screen)).toEqual({ currentState: 'unchecked' })
+        expect(desiredStateSatisfied({ type, ref: 'e1', desiredState: 'unselected' }, screen)).toEqual({ currentState: 'unchecked' })
+        expect(desiredStateSatisfied({ type, ref: 'e1', desiredState: 'checked' }, screen)).toBeUndefined()
+        expect(desiredStateSatisfied({ type, ref: 'e1', desiredState: 'selected' }, screen)).toBeUndefined()
+      }
+    })
+
+    it(`${fx.label} with checked ABSENT satisfies none of the four — positive evidence only (D-04)`, () => {
+      for (const selected of [undefined, true, false]) {
+        const state: Partial<ElementState> = selected === undefined ? {} : { selected }
+        const screen = checkable(state, { role: fx.role, ...(fx.attributes ? { attributes: fx.attributes } : {}) })
+        for (const desiredState of ALL_DESIRED) {
+          expect(desiredStateSatisfied({ type: 'tap', ref: 'e1', desiredState }, screen)).toBeUndefined()
+        }
+      }
+    })
+  }
+})
+
+describe('Block A — desiredStateSatisfied: an ordinary node exposing selected always acts (437 D-01/D-04)', () => {
+  it('an ordinary role-button with selected true satisfies none of the four', () => {
+    for (const desiredState of ALL_DESIRED) {
+      expect(desiredStateSatisfied({ type: 'tap', ref: 'e1', desiredState }, ordinary(true))).toBeUndefined()
+      expect(desiredStateSatisfied({ type: 'click', ref: 'e1', desiredState }, ordinary(true))).toBeUndefined()
+    }
   })
 
-  it('tap desiredState=checked ⇒ act (undefined) when state.checked is false', () => {
-    expect(desiredStateSatisfied({ type: 'tap', ref: 'e1', desiredState: 'checked' }, checkable({ checked: false }))).toBeUndefined()
+  it('an ordinary role-button with selected false satisfies none of the four', () => {
+    for (const desiredState of ALL_DESIRED) {
+      expect(desiredStateSatisfied({ type: 'tap', ref: 'e1', desiredState }, ordinary(false))).toBeUndefined()
+      expect(desiredStateSatisfied({ type: 'click', ref: 'e1', desiredState }, ordinary(false))).toBeUndefined()
+    }
   })
 
-  it('tap desiredState=checked ⇒ act (undefined) when state.checked is ABSENT — positive evidence only', () => {
-    expect(desiredStateSatisfied({ type: 'tap', ref: 'e1', desiredState: 'checked' }, checkable({}))).toBeUndefined()
-  })
-
-  it('unchecked mirror: hit when checked=false, act when checked=true or absent', () => {
-    expect(desiredStateSatisfied({ type: 'tap', ref: 'e1', desiredState: 'unchecked' }, checkable({ checked: false }))).toBeDefined()
-    expect(desiredStateSatisfied({ type: 'tap', ref: 'e1', desiredState: 'unchecked' }, checkable({ checked: true }))).toBeUndefined()
-    expect(desiredStateSatisfied({ type: 'tap', ref: 'e1', desiredState: 'unchecked' }, checkable({}))).toBeUndefined()
-  })
-
-  it('selected/unselected mirror against state.selected', () => {
-    expect(desiredStateSatisfied({ type: 'click', ref: 'e1', desiredState: 'selected' }, checkable({ selected: true }))).toBeDefined()
-    expect(desiredStateSatisfied({ type: 'click', ref: 'e1', desiredState: 'selected' }, checkable({ selected: false }))).toBeUndefined()
-    expect(desiredStateSatisfied({ type: 'click', ref: 'e1', desiredState: 'unselected' }, checkable({ selected: false }))).toBeDefined()
-    expect(desiredStateSatisfied({ type: 'click', ref: 'e1', desiredState: 'unselected' }, checkable({ selected: true }))).toBeUndefined()
+  it('an ordinary role-button carrying a hand-built checked state still acts', () => {
+    for (const checked of [true, false]) {
+      const screen = checkable({ checked, selected: checked }, { role: 'button', attributes: { checkable: 'false' } })
+      for (const desiredState of ALL_DESIRED) {
+        expect(desiredStateSatisfied({ type: 'tap', ref: 'e1', desiredState }, screen)).toBeUndefined()
+      }
+    }
   })
 })
 

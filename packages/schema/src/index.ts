@@ -34,7 +34,13 @@ export type {
   WithEmittedTarget,
 } from './action/params'
 export type { ActionAnnotation, ActionResult } from './result/index'
-export { elementOrdinal, normalizeAccessibleName, distilledScreenStateDigest } from './screen/index'
+export {
+  elementOrdinal,
+  normalizeAccessibleName,
+  distilledScreenStateDigest,
+  isToggleElement,
+  TOGGLE_ROLES,
+} from './screen/index'
 export type { DistilledScreenStateInput } from './screen/index'
 export type { ElementBounds, ScrollContext } from './screen/index'
 export type { ElementInfo, ElementState, ElementLabels, ElementHierarchy } from './screen/index'
