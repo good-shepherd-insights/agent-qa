@@ -30,7 +30,7 @@ import { runWebFillCompound, runWebScrollCompound, webOpenAppError } from './com
 import type { RefMap } from './types.js'
 import { formatMissingBrowserError, isPlaywrightMissingBrowserError } from './browser-install-error.js'
 import { createScreencastRecording, type ScreencastRecording } from './recording.js'
-import { OperationCapture } from './operation-capture.js'
+import { isHeadlessLaunch, OperationCapture } from './operation-capture.js'
 import type { CapturedOperations } from './operation-capture.js'
 
 // Browser-context hygiene: hide framework-injected [data-agent-qa-internal] overlays
@@ -199,10 +199,11 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     const browserName = config.browser?.name ?? 'chromium'
     this.browserName = browserName
     const launcher = launchers[browserName]
+    const headless = config.browser?.headless ?? true
 
     try {
       this.browser = await launcher.launch({
-        headless: config.browser?.headless ?? true,
+        headless,
         ...(browserName === 'chromium' ? { args: ['--disable-blink-features=AutomationControlled'] } : {}),
       })
     } catch (error) {
@@ -245,7 +246,8 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
 
     if (browserName === 'chromium') {
       // 2026-10-08 (436-15): the step deadline reaches the capture per action through execute().
-      this.operationCapture = new OperationCapture()
+      // 2026-10-08 (436-21): owner ruling on D-21, a headed or undetermined launch never reads.
+      this.operationCapture = new OperationCapture({ headless: isHeadlessLaunch({ headless }, process.env) })
       await this.operationCapture.attach(this.context)
       this.operationCaptureSupport = { download: true, clipboard: true }
     } else {

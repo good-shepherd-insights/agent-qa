@@ -2442,6 +2442,36 @@
       "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
       "fullName": "C436-PROBE-LIFECYCLE a crashed probe is replaced once and the read answers",
       "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-HEADED a capture launched headed records app writes unavailable and opens no probe",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-HEADED a capture with no launch mode never reads",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-HEADED a capture launched headless reads back a genuine write",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-HEADED a capture launched headed still records a download on the click",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-HEADED the launch-mode rule treats anything but a plain headless launch as headed",
+      "origin": "436 D-21"
     }
   ]
 }

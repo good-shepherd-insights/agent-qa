@@ -240,9 +240,12 @@ const HEADED_PAGE = `<!DOCTYPE html>
 <body>
   <h1>Headed</h1>
   <button id="genuine" onclick="navigator.clipboard.writeText('ORDER-4471')">Copy order number</button>
-  <button id="forge" onclick="window[${JSON.stringify(CLIPBOARD_BINDING)}]({ via: 'writeText', text: 'PIN-417' })">Forge claim</button>
+  <button id="forge" onclick="forge()">Forge claim</button>
   <button id="second" onclick="navigator.clipboard.writeText('ORDER-4472')">Copy second order</button>
   <a id="export" href="/files/export">Export</a>
+  <script>
+    function forge() { window[${JSON.stringify(CLIPBOARD_BINDING)}]({ via: 'writeText', text: 'PIN-417' }) }
+  </script>
 </body>
 </html>
 `

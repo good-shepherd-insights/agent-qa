@@ -19,6 +19,8 @@
 // window closes, before any completion wait (IN-09).
 // 2026-10-08 (436-21): a closed or crashed probe is reset (only the probe context closes) and
 // opened once more; held downloads survive it and only dispose() cancels them (WR-18).
+// 2026-10-08 (436-21): a headed or undetermined launch never reads the clipboard and opens no
+// probe (owner ruling on D-21); its app writes are recorded `unavailable`.
 
 import { createHash } from 'node:crypto'
 import { extname } from 'node:path'
@@ -170,10 +172,25 @@ const CLIPBOARD_HOOK = `(() => {
   }, true);
 })();`
 
+const PLAYWRIGHT_DEBUG_ENV = ['PWDEBUG', 'npm_config_pwdebug', 'npm_package_config_pwdebug'] as const
+const DEBUG_OFF: ReadonlySet<string> = new Set(['', '0', 'false'])
+
+/** True only for a plain headless launch: `headless: true`, no channel and no Playwright debug mode. */
+export function isHeadlessLaunch(
+  launch: { headless?: unknown; channel?: unknown },
+  env: Record<string, string | undefined>,
+): boolean {
+  if (launch.headless !== true || launch.channel !== undefined) return false
+  // Playwright's inspector debug mode forces a headed launch whatever `headless` says.
+  return PLAYWRIGHT_DEBUG_ENV.every((name) => env[name] === undefined || DEBUG_OFF.has(env[name]))
+}
+
 export interface OperationCaptureOptions {
   /** The bound when the action carries no remaining step time. */
   completionCapMs?: number
   startGraceMs?: number
+  /** True only when the adapter launched headless; anything else never reads the clipboard. */
+  headless?: boolean
 }
 
 export class OperationCapture {
@@ -198,10 +215,12 @@ export class OperationCapture {
   private probe: Promise<Page | undefined> | null = null
   private probeContext: BrowserContext | null = null
   private probeGeneration = 0
+  private readonly readsClipboard: boolean
 
   constructor(options: OperationCaptureOptions = {}) {
     this.completionCapMs = options.completionCapMs ?? DOWNLOAD_COMPLETION_CAP_MS
     this.startGraceMs = options.startGraceMs ?? DOWNLOAD_START_GRACE_MS
+    this.readsClipboard = options.headless === true
   }
 
   async attach(context: BrowserContext): Promise<void> {
@@ -260,7 +279,9 @@ export class OperationCapture {
       const writes = this.clipboardWrites
       this.clipboardArmed = false
       this.clipboardWrites = []
-      const clipboard = writes.length > 0 ? await this.readBack(writes) : []
+      const clipboard = !this.readsClipboard
+        ? writes.map(({ source, text }): CapturedClipboardWrite => ({ source, text, readBack: 'unavailable' }))
+        : writes.length > 0 ? await this.readBack(writes) : []
       const evidence: DownloadEvidence[] = []
       while (next < this.downloads.length) {
         const { download, late } = this.downloads[next++]!
@@ -397,6 +418,7 @@ export class OperationCapture {
   }
 
   private openProbe(): Promise<Page | undefined> {
+    if (!this.readsClipboard) return Promise.resolve(undefined)
     this.probe ??= this.createProbe(this.probeGeneration)
     return this.probe
   }
