@@ -421,6 +421,49 @@ describe('IOSPlatformAdapter', () => {
     })
   })
 
+  // C437-IOS-TAP-HOLD (437-09): a zero-duration touch flipped an iOS 27 Settings switch knob 2 of
+  // 11 times live; the same touch held 100 ms between down and up flipped it every time.
+  describe('C437-IOS-TAP-HOLD — single taps hold the touch between down and up', () => {
+    function chainSteps(): string[] {
+      const chain = mockDriver._pointerAction
+      const steps: Array<[number, string]> = []
+      for (const name of ['move', 'down', 'pause', 'up'] as const) {
+        const fn = chain[name] as ReturnType<typeof vi.fn>
+        fn.mock.calls.forEach((args: unknown[], i: number) => {
+          steps.push([fn.mock.invocationCallOrder[i], name === 'pause' ? `pause:${String(args[0])}` : name])
+        })
+      }
+      return steps.sort((a, b) => a[0] - b[0]).map(([, step]) => step)
+    }
+
+    it('a ref tap is move, down, pause 100, up', async () => {
+      await adapter.setup({ platform: 'ios' })
+      const state = await adapter.observe()
+      const logIn = state.elements.find(e => e.name === 'Log In')
+      const result = await adapter.execute({ type: 'tap', ref: logIn!.ref })
+      expect(result.success).toBe(true)
+      expect(chainSteps()).toEqual(['move', 'down', 'pause:100', 'up'])
+      expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 195, y: 345 })
+    })
+
+    it('a coordinate tap is move, down, pause 100, up', async () => {
+      await adapter.setup({ platform: 'ios' })
+      const result = await adapter.execute({ type: 'tapCoordinate', x: 100, y: 200, coordSpace: 'viewport' })
+      expect(result.success).toBe(true)
+      expect(chainSteps()).toEqual(['move', 'down', 'pause:100', 'up'])
+      expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 100, y: 200 })
+    })
+
+    it('a double tap keeps its own unheld chain', async () => {
+      await adapter.setup({ platform: 'ios' })
+      const state = await adapter.observe()
+      const logIn = state.elements.find(e => e.name === 'Log In')
+      const result = await adapter.execute({ type: 'doubleTap', ref: logIn!.ref })
+      expect(result.success).toBe(true)
+      expect(chainSteps()).toEqual(['move', 'down', 'up', 'pause:50', 'down', 'up'])
+    })
+  })
+
   describe('execute — fill', () => {
     it('taps to focus then types the schema Fill compound via element setValue', async () => {
       await adapter.setup({ platform: 'ios' })

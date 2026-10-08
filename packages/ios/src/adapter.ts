@@ -114,6 +114,9 @@ function firstErrorLine(err: unknown): string {
   return (err instanceof Error ? err.message : String(err)).split('\n')[0]
 }
 
+// A zero-duration touch does not reliably flip an iOS 27 switch knob; a held one does.
+const IOS_TAP_HOLD_MS = 100
+
 // WebDriverIO's action().perform() calls DELETE /session/{id}/actions (releaseActions)
 // after performing. BrowserStack iOS doesn't support this endpoint and throws
 // "resource not found" errors. This wrapper swallows that specific error.
@@ -640,6 +643,7 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
     await safePerform(this.driver!.action('pointer', { parameters: { pointerType: 'touch' } })
       .move({ x: Math.round(point.x), y: Math.round(point.y) })
       .down({ button: 0 })
+      .pause(IOS_TAP_HOLD_MS)
       .up({ button: 0 })
       )
   }
@@ -1109,11 +1113,7 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
     switch (action.type) {
       case 'tap': {
         const { center, bounds } = resolver.resolve(action.ref)
-        await safePerform(driver.action('pointer', { parameters: { pointerType: 'touch' } })
-          .move({ x: Math.round(center.x), y: Math.round(center.y) })
-          .down({ button: 0 })
-          .up({ button: 0 })
-          )
+        await this.tapAt(center)
         return { success: true, coordinates: center, boundingBox: bounds }
       }
 
@@ -1614,11 +1614,7 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
         const y = action.y
         const tcVp = await driver.getWindowSize()
         warnIfOutOfBounds({ x, y }, { width: tcVp.width, height: tcVp.height }, 'tapCoordinate')
-        await safePerform(driver.action('pointer', { parameters: { pointerType: 'touch' } })
-          .move({ x, y })
-          .down({ button: 0 })
-          .up({ button: 0 })
-          )
+        await this.tapAt({ x, y })
         return { success: true, coordinates: { x, y } }
       }
 
