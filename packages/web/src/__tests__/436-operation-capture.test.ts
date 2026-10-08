@@ -1,6 +1,8 @@
 // C436-DOWNLOAD-CAPTURE (436 D-19, D-20) and C436-CLIPBOARD-CAPTURE (436 D-21): real headless
 // Chromium downloads and app clipboard writes served from a local fixture, captured on the action
 // that produced them. C436-DOWNLOAD-DEADLINE (436-15): the download wait ends at the step deadline.
+// C436-DOWNLOAD-ARMING (436-16): every download-starting action is armed, a slow attachment is
+// waited for, and a late download is held for the next action or deleted at cleanup.
 
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
@@ -18,12 +20,16 @@ import { screenIdentityHash } from '@vostride/agent-qa-schema'
 import type { DownloadEvidence, Ref } from '@vostride/agent-qa-schema'
 import { WebPlatformAdapter } from '../adapter.js'
 import { CLIPBOARD_BINDING, DOWNLOAD_START_GRACE_MS } from '../operation-capture.js'
+import * as captureModule from '../operation-capture.js'
 import type { CapturedClipboardWrite, OperationCapture } from '../operation-capture.js'
 import { act, refFor as screenRefFor, runScriptedStep, scriptedPlanner, scriptedVerifier } from './fixtures/436-scripted-loop.js'
 
 const BLOB_BYTES = 'name,qty\nwidget,3\n'
 const DISPOSITION_BYTES = JSON.stringify({ order: 42, lines: ['a', 'b'] })
 const POPUP_BYTES = 'second file from the popup\n'
+const EXPORT_BYTES = 'a,b\n1,2\n'
+const DELAYED_BYTES = 'delayed,report\n'
+const SLOW_FINISH_MS = 2_000
 
 const PAGE = `<!DOCTYPE html>
 <html lang="en">
@@ -163,6 +169,39 @@ const READBACK_PAGE = `<!DOCTYPE html>
 </html>
 `
 
+// 436-16 (WR-05): the proof-dl.mjs form, a script-started navigation to an attachment the server
+// answers late, a download a timer starts after the start window, and a timer clipboard write
+// during a slow download's completion wait (IN-09).
+const ARMING_PAGE = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>arming fixture</title></head>
+<body>
+  <h1>Arming</h1>
+  <form action="/files/export" method="get"><label>Query <input name="q"></label></form>
+  <button id="delayed" onclick="setTimeout(() => location.assign('/files/delayed'), 50)">Get delayed report</button>
+  <button id="later" onclick="setTimeout(() => blobDownload('late.csv'), 1500)">Export later</button>
+  <button id="slow-copy" onclick="slowWithCopy()">Export slowly and copy</button>
+  <script>
+    function blobDownload(name) {
+      const blob = new Blob([${JSON.stringify(BLOB_BYTES)}], { type: 'text/csv' })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = name
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+    }
+    function slowWithCopy() {
+      location.assign('/files/slow-finish')
+      setTimeout(() => {
+        navigator.clipboard.writeText('LATE-COPY').then(() => { window.lateCopy = 'resolved' }, () => { window.lateCopy = 'rejected' })
+      }, 800)
+    }
+  </script>
+</body>
+</html>
+`
+
 const INSECURE_ORIGIN = 'http://fixture.test'
 
 let server: Server
@@ -204,8 +243,29 @@ beforeAll(async () => {
       res.on('close', () => openSlowResponses.delete(res))
       return
     }
+    if (url.startsWith('/files/export')) {
+      res.writeHead(200, { 'Content-Type': 'text/csv', 'Content-Disposition': 'attachment; filename="export.csv"' })
+      res.end(EXPORT_BYTES)
+      return
+    }
+    if (url === '/files/delayed') {
+      const timer = setTimeout(() => {
+        res.writeHead(200, { 'Content-Type': 'text/csv', 'Content-Disposition': 'attachment; filename="delayed.csv"' })
+        res.end(DELAYED_BYTES)
+      }, 1_500)
+      res.on('close', () => { clearTimeout(timer) })
+      return
+    }
+    if (url === '/files/slow-finish') {
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': 'attachment; filename="slow-finish.bin"' })
+      res.write(Buffer.alloc(1024, 2))
+      const timer = setTimeout(() => { res.end(Buffer.alloc(1024, 3)) }, SLOW_FINISH_MS)
+      res.on('close', () => { clearTimeout(timer) })
+      return
+    }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
-    res.end(url === '/clipboard' ? CLIPBOARD_PAGE : url === '/readback' ? READBACK_PAGE : PAGE)
+    const pages: Record<string, string> = { '/clipboard': CLIPBOARD_PAGE, '/readback': READBACK_PAGE, '/arming': ARMING_PAGE }
+    res.end(pages[url] ?? PAGE)
   })
   await new Promise<void>((resolve) => { server.listen(0, '127.0.0.1', resolve) })
   baseUrl = `http://localhost:${String((server.address() as AddressInfo).port)}/`
@@ -811,5 +871,145 @@ describe('C436-CLIPBOARD-READBACK', () => {
     const second = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Copy second order') })
 
     expect(clipboardOf(second)).toEqual([{ source: 'writeText', text: 'ORDER-4472', readBack: 'unavailable' }])
+  }, 60_000)
+})
+
+// One-line, key-order-free form, so a failing cell reports one comparable line.
+function canonical(value: unknown): string {
+  return JSON.stringify(value ?? null, (_key, entry: unknown) =>
+    entry && typeof entry === 'object' && !Array.isArray(entry)
+      ? Object.fromEntries(Object.entries(entry).sort(([a], [b]) => a.localeCompare(b)))
+      : entry)
+}
+
+interface ArmingExports {
+  DOWNLOAD_ACTIVATION_ACTIONS: ReadonlySet<string>
+  isDownloadActivation: (action: { type: string; submit?: unknown; action?: unknown }) => boolean
+}
+
+describe('C436-DOWNLOAD-ARMING', () => {
+  it('the activation set is exactly the download-starting web actions', () => {
+    const { DOWNLOAD_ACTIVATION_ACTIONS, isDownloadActivation } = captureModule as unknown as ArmingExports
+    expect([...(DOWNLOAD_ACTIVATION_ACTIONS ?? [])].sort().join(',')).toBe([
+      'click', 'doubleClick', 'executeScript', 'fileUpload', 'handleDialog',
+      'keypress', 'navigate', 'rightClick', 'select', 'tab',
+    ].join(','))
+    expect(isDownloadActivation({ type: 'fill', submit: true })).toBe(true)
+    expect(isDownloadActivation({ type: 'fill' })).toBe(false)
+    expect(isDownloadActivation({ type: 'fill', submit: false })).toBe(false)
+    expect(isDownloadActivation({ type: 'tab', action: 'new' })).toBe(true)
+    expect(isDownloadActivation({ type: 'tab', action: 'switch' })).toBe(false)
+    expect(isDownloadActivation({ type: 'click' })).toBe(true)
+    for (const type of ['hover', 'delay', 'tap', 'press', 'copy', 'paste']) expect(isDownloadActivation({ type })).toBe(false)
+  })
+
+  it('a fill that submits a form answering with an attachment records the download on the fill', async () => {
+    const web = await open(undefined, undefined, 'arming')
+    const ref = await refFor(web, 'textbox', 'Query')
+    const result = await web.execute({ type: 'fill', ref, text: 'all', submit: true })
+
+    expect(canonical(downloadsOf(result))).toBe(canonical([
+      {
+        suggestedFilename: 'export.csv',
+        extension: '.csv',
+        size: Buffer.byteLength(EXPORT_BYTES),
+        sha256: sha256(EXPORT_BYTES),
+        state: 'completed',
+      },
+    ]))
+  }, 60_000)
+
+  // The web adapter answers executeScript as mobile-only; the cell pins that its dispatch still
+  // arms the start grace, so a download the page starts in it is recorded on it.
+  it('an executeScript dispatch arms the start grace and records a download started in it', async () => {
+    const web = await open(undefined, undefined, 'arming')
+    await web.getPage()!.evaluate("setTimeout(() => blobDownload('script.csv'), 100)")
+    const result = await web.execute({ type: 'executeScript', command: 'mobile: noop' })
+
+    expect(canonical(downloadsOf(result))).toBe(canonical([
+      {
+        suggestedFilename: 'script.csv',
+        extension: '.csv',
+        size: Buffer.byteLength(BLOB_BYTES),
+        sha256: sha256(BLOB_BYTES),
+        state: 'completed',
+      },
+    ]))
+  }, 60_000)
+
+  it('an attachment whose server answers after 1.5 s is recorded on the click', async () => {
+    const web = await open(undefined, undefined, 'arming')
+    const ref = await refFor(web, 'button', 'Get delayed report')
+    const result = await web.execute({ type: 'click', ref })
+
+    expect(canonical(downloadsOf(result))).toBe(canonical([
+      {
+        suggestedFilename: 'delayed.csv',
+        extension: '.csv',
+        size: Buffer.byteLength(DELAYED_BYTES),
+        sha256: sha256(DELAYED_BYTES),
+        state: 'completed',
+      },
+    ]))
+  }, 60_000)
+
+  it('a download a timer starts after the window is recorded late on the next action', async () => {
+    const web = await open(undefined, undefined, 'arming')
+    const files = downloadFilesOf(web)
+    const ref = await refFor(web, 'button', 'Export later')
+    const started = web.getPage()!.waitForEvent('download', { timeout: 10_000 })
+    const click = await web.execute({ type: 'click', ref })
+    expect(canonical(downloadsOf(click))).toBe('null')
+    await started
+
+    const next = await web.execute({ type: 'delay', ms: 0 })
+    expect(canonical(downloadsOf(next))).toBe(canonical([
+      {
+        suggestedFilename: 'late.csv',
+        extension: '.csv',
+        size: Buffer.byteLength(BLOB_BYTES),
+        sha256: sha256(BLOB_BYTES),
+        state: 'completed',
+        late: true,
+      },
+    ]))
+    const third = await web.execute({ type: 'delay', ms: 0 })
+    expect(canonical(downloadsOf(third))).toBe('null')
+    await expectFilesGone(files, 1)
+  }, 60_000)
+
+  it('a held download is cancelled and deleted at cleanup', async () => {
+    const web = await open(undefined, undefined, 'arming')
+    const files = downloadFilesOf(web)
+    const ref = await refFor(web, 'button', 'Export later')
+    const started = web.getPage()!.waitForEvent('download', { timeout: 10_000 })
+    const click = await web.execute({ type: 'click', ref })
+    expect(canonical(downloadsOf(click))).toBe('null')
+    const download = await started
+    const cancel = vi.spyOn(download, 'cancel')
+    const remove = vi.spyOn(download, 'delete')
+
+    await web.cleanup()
+    adapter = undefined
+
+    expect(cancel).toHaveBeenCalledTimes(1)
+    expect(remove).toHaveBeenCalledTimes(1)
+    expect(cancel.mock.invocationCallOrder[0]!).toBeLessThan(remove.mock.invocationCallOrder[0]!)
+    await expectFilesGone(files, 1)
+  }, 60_000)
+
+  it('a clipboard write during the completion wait is not attributed', async () => {
+    const web = await open(undefined, undefined, 'arming')
+    const ref = await refFor(web, 'button', 'Export slowly and copy')
+    const started = performance.now()
+    const result = await web.execute({ type: 'click', ref })
+    const elapsed = performance.now() - started
+
+    expect(await web.getPage()!.evaluate('window.lateCopy')).toBe('resolved')
+    expect(elapsed).toBeGreaterThanOrEqual(SLOW_FINISH_MS - 200)
+    expect(canonical(downloadsOf(result)?.map((download) => [download.suggestedFilename, download.state]))).toBe(
+      canonical([['slow-finish.bin', 'completed']]),
+    )
+    expect(JSON.stringify(clipboardOf(result) ?? null)).toBe('null')
   }, 60_000)
 })
