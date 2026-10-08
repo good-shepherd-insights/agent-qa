@@ -348,6 +348,7 @@ const WINDOW_PAGE = `<!DOCTYPE html>
   <a href="/hang" target="_blank">Open hung popup</a>
   <a href="/hang">Open hung page</a>
   <a href="/files/slow-main">Export slow report</a>
+  <a href="/files/slow-main" target="_blank">Export slow report in a new tab</a>
   <button id="data-frame" onclick="insertFrame('/files/data')">Load data in a frame</button>
   <button id="late-frame" onclick="insertFrame('/files/late-frame')">Load late file in a frame</button>
   <button id="hung-export" onclick="insertFrame('/hang'); location.href = '/files/slow-main'">Load a hung frame and export</button>
@@ -1783,6 +1784,86 @@ describe('C436-DOWNLOAD-WINDOW', () => {
     const third = await web.execute({ type: 'delay', ms: 0 })
     expect(canonical(downloadsOf(third))).toBe('null')
     await expectFilesGone(files, 1)
+  }, 60_000)
+
+  it('a main-frame attachment answered after half the time left is recorded late on the next action', async () => {
+    const web = await open(undefined, undefined, 'window')
+    const started = web.getPage()!.waitForEvent('download', { timeout: 20_000 })
+    const { result, elapsed } = await timedClick(web, 'Export slow report', { remainingStepMs: 8_000 })
+
+    expect(result.success).toBe(true)
+    expect(canonical(downloadsOf(result))).toBe('null')
+    expect(elapsed).toBeGreaterThanOrEqual(3_700)
+    expect(elapsed).toBeLessThan(5_500)
+    await started
+    const next = await web.execute({ type: 'delay', ms: 0 })
+    expect(canonical(downloadsOf(next))).toBe(canonical([{ ...SLOW_MAIN, late: true }]))
+    const third = await web.execute({ type: 'delay', ms: 0 })
+    expect(canonical(downloadsOf(third))).toBe('null')
+  }, 60_000)
+
+  it('a popup attachment answered after the cap is recorded late on the next action', async () => {
+    const web = await open(undefined, undefined, 'window')
+    // Playwright emits the popup's attachment on the opener page, before the popup's page event.
+    const started = web.getPage()!.waitForEvent('download', { timeout: 20_000 })
+    const { result, elapsed } = await timedClick(web, 'Export slow report in a new tab', { remainingStepMs: 60_000 })
+
+    expect(result.success).toBe(true)
+    expect(canonical(downloadsOf(result))).toBe('null')
+    expect(elapsed).toBeLessThan(CAPPED_MS)
+    await started
+    const next = await web.execute({ type: 'delay', ms: 0 })
+    expect(canonical(downloadsOf(next))).toBe(canonical([{ ...SLOW_MAIN, late: true }]))
+    const third = await web.execute({ type: 'delay', ms: 0 })
+    expect(canonical(downloadsOf(third))).toBe('null')
+  }, 60_000)
+
+  it("with no step deadline the acting page's main frame ends at half the completion bound", async () => {
+    const browser = await chromium.launch({ headless: true })
+    const capture = new OperationCapture({ completionCapMs: 16_000, headless: false })
+    try {
+      const context = await browser.newContext()
+      await capture.attach(context)
+      // Timed from arm, with no options, on a fresh page each time.
+      const timed = async (link: string, acting: boolean): Promise<number> => {
+        const page = await context.newPage()
+        await page.goto(baseUrl + 'window')
+        const started = performance.now()
+        await capture.arm({ type: 'click' }, {}, acting ? page : undefined)
+        await page.getByRole('link', { name: link, exact: true }).click({ noWaitAfter: true })
+        expect(await capture.collect()).toBeUndefined()
+        return performance.now() - started
+      }
+
+      const main = await timed('Open hung page', true)
+      expect(main).toBeGreaterThanOrEqual(7_700)
+      expect(main).toBeLessThan(9_500)
+      expect(await timed('Open framed page', true)).toBeLessThan(CAPPED_MS)
+      expect(await timed('Open hung page', false)).toBeLessThan(CAPPED_MS)
+    } finally {
+      await capture.dispose().catch(() => undefined)
+      await browser.close().catch(() => undefined)
+    }
+  }, 60_000)
+
+  it('an abort during the main-frame extension ends the wait at once', async () => {
+    const web = await open(undefined, undefined, 'window')
+    const ref = await refFor(web, 'link', 'Open hung page')
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const started = performance.now()
+    const abort = setTimeout(() => { controller.abort() }, 300)
+    const outcome = await Promise.race([
+      web.execute({ type: 'click', ref }, { abortSignal: controller.signal }),
+      new Promise<'still waiting'>((resolve) => { timer = setTimeout(() => { resolve('still waiting') }, 15_000) }),
+    ])
+    const elapsed = performance.now() - started
+    clearTimeout(timer)
+    clearTimeout(abort)
+
+    expect(outcome).not.toBe('still waiting')
+    expect((outcome as ActionResult).success).toBe(true)
+    expect(elapsed).toBeLessThan(300 + 1_500)
   }, 60_000)
 
   it('an abort during the navigation extension ends the wait at once', async () => {

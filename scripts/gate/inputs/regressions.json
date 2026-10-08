@@ -2940,6 +2940,30 @@
       "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
       "fullName": "C436-DOWNLOAD-WINDOW a hung subframe beside a slow main-frame export records the export on the click",
       "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-WINDOW a main-frame attachment answered after half the time left is recorded late on the next action",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-WINDOW a popup attachment answered after the cap is recorded late on the next action",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-WINDOW with no step deadline the acting page's main frame ends at half the completion bound",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-WINDOW an abort during the main-frame extension ends the wait at once",
+      "origin": "436 D-19"
     }
   ]
 }
