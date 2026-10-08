@@ -73,7 +73,40 @@ export interface DocumentScrollOffsets {
 
 /**
  * The offset rule for a gesture that lands on whatever is under the pointer (web wheel, WebView
- * touch swipe): the document scroller is measured, and a document with no scroll range on the
+ * touch swipe), over every scroller the gesture may have acted on, as aligned before/after arrays
+ * (436-18 · D-25). Any member that moved is movement. A boundary needs at least one member with
+ * range on the swiped axis and every member with range at its extent; a member short of its
+ * extent, no member with range, or missing, empty or misaligned arrays prove nothing.
+ */
+export function scrollerSetSwipeSignal(
+  direction: Direction,
+  before: readonly DocumentScrollOffsets[] | undefined,
+  after: readonly DocumentScrollOffsets[] | undefined,
+): SwipeSignal {
+  if (!before || !after || before.length === 0 || before.length !== after.length) return 'unknown'
+  const horizontal = direction === 'left' || direction === 'right'
+  const members: ScrollOffsets[] = []
+  for (let i = 0; i < before.length; i += 1) {
+    const b = before[i]
+    const a = after[i]
+    if (!b || !a) return 'unknown'
+    const offsets = horizontal
+      ? { before: b.x, after: a.x, max: a.maxX }
+      : { before: b.y, after: a.y, max: a.maxY }
+    if (![offsets.before, offsets.after, offsets.max].every((n) => typeof n === 'number' && Number.isFinite(n))) {
+      return 'unknown'
+    }
+    members.push(offsets)
+  }
+  const signals = members.map((offsets) => swipeSignalFromOffsets(direction, offsets))
+  if (signals.includes('moved')) return 'moved'
+  const withRange = members.flatMap((offsets, i) => (offsets.max > 0 ? [signals[i]] : []))
+  if (withRange.length === 0) return 'unknown'
+  return withRange.every((signal) => signal === 'at-boundary') ? 'at-boundary' : 'unknown'
+}
+
+/**
+ * The scroller-set rule over the document scroller alone: a document with no scroll range on the
  * swiped axis proves nothing, because the gesture may have moved a nested scroller.
  */
 export function documentSwipeSignal(
@@ -81,13 +114,7 @@ export function documentSwipeSignal(
   before: DocumentScrollOffsets | undefined,
   after: DocumentScrollOffsets | undefined,
 ): SwipeSignal {
-  if (!before || !after) return 'unknown'
-  const horizontal = direction === 'left' || direction === 'right'
-  const offsets: ScrollOffsets = horizontal
-    ? { before: before.x, after: after.x, max: after.maxX }
-    : { before: before.y, after: after.y, max: after.maxY }
-  if (!(offsets.max > 0)) return 'unknown'
-  return swipeSignalFromOffsets(direction, offsets)
+  return scrollerSetSwipeSignal(direction, before ? [before] : undefined, after ? [after] : undefined)
 }
 
 function normalizeName(value: string): string {

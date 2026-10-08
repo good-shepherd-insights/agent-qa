@@ -239,13 +239,23 @@ describe('WebPlatformAdapter compound behaviors (RED — Wave-0)', () => {
   describe('EXEC-02 scroll movement signals (436-02 · D-25)', () => {
     type Offsets = { x: number; y: number; maxX: number; maxY: number }
 
-    // A page whose evaluate answers the two shapes compound-web sends (the settle string and the
-    // no-arg document-offset read), and whose getByRole locator answers scrollWithRef: the
-    // container ref resolves through ElementResolver, then count() and evaluate(fn, [dx, dy, axis]).
+    // A page whose evaluate answers the settle string, whose evaluateHandle answers the no-ref
+    // wheel's scroller snapshot (the handle's evaluate returns the pointer chain, here the document
+    // scroller alone: one `doc` entry before the wheel, the next after), and whose getByRole
+    // locator answers scrollWithRef: the container ref resolves through ElementResolver, then
+    // count() and evaluate(fn, [dx, dy, axis]).
     function signalPage(opts: { doc?: Offsets[]; container?: unknown[]; count?: number }) {
       const docReads = [...(opts.doc ?? [])]
       const containerResults = [...(opts.container ?? [])]
       const log: string[] = []
+      const handle = (before: Offsets | undefined) => ({
+        evaluate: vi.fn(async () => {
+          log.push('chain')
+          const after = docReads.shift()
+          return before && after ? { before: [before], after: [after] } : undefined
+        }),
+        dispose: vi.fn(async () => undefined),
+      })
       const container = {
         nth: vi.fn(() => container),
         count: vi.fn(async () => opts.count ?? 1),
@@ -257,8 +267,11 @@ describe('WebPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       const page = {
         evaluate: vi.fn(async (fn: unknown) => {
           if (typeof fn === 'string') return 'raf'
-          log.push('readOffsets')
-          return docReads.shift()
+          return undefined
+        }),
+        evaluateHandle: vi.fn(async (_fn: unknown, axis: unknown) => {
+          log.push(`snapshot:${String(axis)}`)
+          return handle(docReads.shift())
         }),
         mouse: { wheel: vi.fn(async (dx: number, dy: number) => { log.push(`wheel:${dx},${dy}`) }) },
         viewportSize: () => ({ width: 1280, height: 720 }),
@@ -309,7 +322,7 @@ describe('WebPlatformAdapter compound behaviors (RED — Wave-0)', () => {
 
       for (const { page, log } of [gone, unknownRef]) {
         expect(page.mouse.wheel).not.toHaveBeenCalled()
-        expect(log).not.toContain('readOffsets')
+        expect(page.evaluateHandle).not.toHaveBeenCalled()
       }
     })
 
@@ -328,7 +341,15 @@ describe('WebPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       expect(await p.swipeOnce('down')).toBe('unknown')
       // A document with no scroll range proves nothing: the wheel may have moved a nested scroller.
       expect(await p.swipeOnce('down')).toBe('unknown')
-      expect(log.slice(0, 3)).toEqual(['readOffsets', 'wheel:0,720', 'readOffsets'])
+      // The scrollers are snapshotted before the wheel and the chain is read after it.
+      expect(log.slice(0, 3)).toEqual(['snapshot:vertical', 'wheel:0,720', 'chain'])
+      // No snapshot, or no observed wheel event, proves nothing.
+      const blind = signalPage({ doc: [] })
+      blind.page.evaluateHandle.mockRejectedValueOnce(new Error('navigated'))
+      const q = buildScrollPrimitives(blind.page as never, {} as RefMap, 720)
+      expect(await q.swipeOnce('down')).toBe('unknown')
+      expect(await q.swipeOnce('down')).toBe('unknown')
+      expect(blind.page.mouse.wheel).toHaveBeenCalledTimes(2)
     })
 
     it('toEnd stops on the first at-boundary offset and reports found by boundary', async () => {

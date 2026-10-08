@@ -9,6 +9,8 @@ import {
   runDirectionScroll,
   runToEndScroll,
   swipeSignalFromOffsets,
+  scrollerSetSwipeSignal,
+  documentSwipeSignal,
 } from '../scroll-until-visible.js'
 import type { ScrollPrimitives, SwipeSignal, Direction } from '../scroll-until-visible.js'
 
@@ -274,5 +276,49 @@ describe('swipeSignalFromOffsets — the offset rule', () => {
     expect(swipeSignalFromOffsets('up', { before: 3000, after: 3000, max: 3000 })).toBe('unknown')
     expect(swipeSignalFromOffsets('down', undefined)).toBe('unknown')
     expect(swipeSignalFromOffsets('down', { before: Number.NaN, after: 0, max: 10 })).toBe('unknown')
+  })
+})
+
+describe('C436-SCROLL-CHAIN — a gesture under the pointer is judged by every scroller it may have moved (436-18 · D-25)', () => {
+  const at = (y: number, maxY: number, x = 0, maxX = 0) => ({ x, y, maxX, maxY })
+
+  it('any member moving is moved', () => {
+    // The document is already at its end; the nested list under the pointer moved.
+    expect(scrollerSetSwipeSignal('down', [at(0, 720), at(120, 120)], [at(720, 7280), at(120, 120)])).toBe('moved')
+    expect(scrollerSetSwipeSignal('left', [at(0, 0, 400, 800), at(0, 0)], [at(0, 0, 0, 800), at(0, 0)])).toBe('moved')
+  })
+
+  it('every member with range at its extent is at-boundary', () => {
+    expect(scrollerSetSwipeSignal('down', [at(7280, 7280), at(120, 120)], [at(7280, 7280), at(120, 120)])).toBe('at-boundary')
+    // A member with no range on the swiped axis does not block the boundary.
+    expect(scrollerSetSwipeSignal('up', [at(0, 500), at(0, 0)], [at(0, 500), at(0, 0)])).toBe('at-boundary')
+    expect(scrollerSetSwipeSignal('right', [at(0, 900, 299.5, 300)], [at(0, 900, 299.5, 300)])).toBe('at-boundary')
+  })
+
+  it('one member with range short of its extent is unknown', () => {
+    // HARN-03 adjacency: the list at its end inside a document that is not, and the reverse.
+    expect(scrollerSetSwipeSignal('down', [at(7280, 7280), at(0, 120)], [at(7280, 7280), at(0, 120)])).toBe('unknown')
+    expect(scrollerSetSwipeSignal('down', [at(300, 7280), at(120, 120)], [at(300, 7280), at(120, 120)])).toBe('unknown')
+  })
+
+  it('no member with range is unknown', () => {
+    expect(scrollerSetSwipeSignal('down', [at(0, 0), at(0, 0)], [at(0, 0), at(0, 0)])).toBe('unknown')
+    expect(scrollerSetSwipeSignal('right', [at(0, 900)], [at(0, 900)])).toBe('unknown')
+  })
+
+  it('missing, empty or misaligned arrays are unknown', () => {
+    expect(scrollerSetSwipeSignal('down', undefined, [at(0, 10)])).toBe('unknown')
+    expect(scrollerSetSwipeSignal('down', [at(0, 10)], undefined)).toBe('unknown')
+    expect(scrollerSetSwipeSignal('down', [], [])).toBe('unknown')
+    expect(scrollerSetSwipeSignal('down', [at(10, 10)], [at(10, 10), at(0, 5)])).toBe('unknown')
+    expect(scrollerSetSwipeSignal('down', [at(Number.NaN, 10)], [at(10, 10)])).toBe('unknown')
+  })
+
+  it('documentSwipeSignal keeps its answers', () => {
+    expect(documentSwipeSignal('down', at(0, 3000), at(720, 3000))).toBe('moved')
+    expect(documentSwipeSignal('down', at(3000, 3000), at(3000, 3000))).toBe('at-boundary')
+    expect(documentSwipeSignal('down', at(500, 3000), at(500, 3000))).toBe('unknown')
+    expect(documentSwipeSignal('down', at(0, 0), at(0, 0))).toBe('unknown')
+    expect(documentSwipeSignal('down', undefined, at(0, 3000))).toBe('unknown')
   })
 })

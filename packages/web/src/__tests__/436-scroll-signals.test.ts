@@ -1,7 +1,8 @@
 // C436-SCROLL-VISIBILITY (436-17 · D-24/D-25, review CR-04 and WR-06): on the web lane untilVisible
 // decides target visibility by what is on screen. C436-SCROLL-REF (436-17 · D-25, review CR-03): a
-// container ref scrolls and measures only the container it names. Real headless Chromium through
-// WebPlatformAdapter, fixtures served from a loopback node:http server.
+// container ref scrolls and measures only the container it names. C436-SCROLL-POINTER (436-18 ·
+// D-24/D-25, review CR-02): a no-ref wheel is judged by the scrollers under the pointer. Real
+// headless Chromium through WebPlatformAdapter, fixtures served from a loopback node:http server.
 
 import { createServer } from 'node:http'
 import type { Server } from 'node:http'
@@ -36,7 +37,14 @@ const STALE = page('stale', `
   </div>
   <div style="height: 3000px">Page tail</div>`)
 
+// proof-wheel.mjs: a 700 px list above a footer, so the document can scroll only 120 px.
+const POINTER = page('pointer', `
+  <style>body{margin:0} #list{height:700px;overflow:auto;margin:0} footer{height:120px}</style>
+  <ul id="list">${Array.from({ length: 200 }, (_, i) => `<li><button>Item ${String(i)}</button></li>`).join('')}</ul>
+  <footer>Footer</footer>`)
+
 const PAGES: Record<string, string> = {
+  '/pointer': POINTER,
   '/paragraphs': PARAGRAPHS,
   '/buttons': BUTTONS,
   '/nested': NESTED,
@@ -219,5 +227,99 @@ describe('C436-SCROLL-REF', () => {
       swipes: 20, reversedOnce: false, outcome: 'unresolved', endedBy: 'max-swipes',
     })
     expect(await scrollY(tab)).toBe(0)
+  }, 60_000)
+})
+
+type Extent = { top: number; max: number }
+
+async function listExtent(tab: Page): Promise<Extent> {
+  return tab.evaluate(() => {
+    const el = (globalThis as unknown as {
+      document: { getElementById(id: string): { scrollTop: number; scrollHeight: number; clientHeight: number } }
+    }).document.getElementById('list')
+    return { top: el.scrollTop, max: el.scrollHeight - el.clientHeight }
+  })
+}
+
+async function documentExtent(tab: Page): Promise<Extent> {
+  return tab.evaluate(() => {
+    const el = (globalThis as unknown as {
+      document: { scrollingElement: { scrollTop: number; scrollHeight: number; clientHeight: number } }
+    }).document.scrollingElement
+    return { top: el.scrollTop, max: el.scrollHeight - el.clientHeight }
+  })
+}
+
+// The proof-wheel.mjs setup: the document already at its bottom, the pointer inside the list.
+async function openPointerList(): Promise<{ web: WebPlatformAdapter; tab: Page }> {
+  const opened = await open('/pointer')
+  await opened.tab.evaluate(() => {
+    const g = globalThis as unknown as {
+      scrollTo(x: number, y: number): void
+      document: { scrollingElement: { scrollHeight: number } }
+    }
+    g.scrollTo(0, g.document.scrollingElement.scrollHeight)
+  })
+  await opened.tab.mouse.click(200, 200)
+  const doc = await documentExtent(opened.tab)
+  expect(doc.max).toBeGreaterThan(0)
+  expect(Math.abs(doc.top - doc.max), 'the document starts at its bottom').toBeLessThanOrEqual(1)
+  expect((await listExtent(opened.tab)).top).toBe(0)
+  return opened
+}
+
+describe('C436-SCROLL-POINTER', () => {
+  it('toEnd with the pointer in a nested list follows the list to its end', async () => {
+    const { web, tab } = await openPointerList()
+    const result = await web.execute({
+      type: 'scroll', mode: 'direction', direction: 'down', amount: 'toEnd', retryOpposite: false,
+    })
+    const meta = result.metadata?.scrollUntilVisible as { swipes: number } | undefined
+    expect(meta).toMatchObject({ outcome: 'found', endedBy: 'boundary' })
+    expect(meta!.swipes).toBeGreaterThan(1)
+    const list = await listExtent(tab)
+    expect(list.max).toBeGreaterThan(0)
+    expect(Math.abs(list.top - list.max), 'the list reached its end').toBeLessThanOrEqual(1)
+  }, 60_000)
+
+  it('untilVisible in the nested list never ends not-found on the document boundary', async () => {
+    const { web, tab } = await openPointerList()
+    // The wheel under the pointer moves the list while the document sits at its bottom.
+    expect(await buildScrollPrimitives(tab, {}, 720).swipeOnce('down')).toBe('moved')
+    const result = await web.execute({
+      type: 'scroll', mode: 'untilVisible', text: 'Item 150', direction: 'down', maxSwipes: 3, retryOpposite: false,
+    })
+    const meta = result.metadata?.scrollUntilVisible as { outcome: string } | undefined
+    expect(meta).toBeDefined()
+    expect(['found', 'unresolved']).toContain(meta!.outcome)
+  }, 60_000)
+
+  it('a wheel over the document alone keeps the document rule', async () => {
+    const { web, tab } = await open('/paragraphs')
+    await tab.mouse.click(200, 200)
+    const result = await web.execute({
+      type: 'scroll', mode: 'direction', direction: 'down', amount: 'toEnd', retryOpposite: false,
+    })
+    expect(result.metadata?.scrollUntilVisible).toMatchObject({ outcome: 'found', endedBy: 'boundary' })
+    const doc = await documentExtent(tab)
+    expect(doc.max).toBeGreaterThan(0)
+    expect(Math.abs(doc.top - doc.max)).toBeLessThanOrEqual(1)
+  }, 60_000)
+
+  it('the probe leaves nothing on the page', async () => {
+    const { tab } = await openPointerList()
+    const fingerprint = () => tab.evaluate(() => {
+      const g = globalThis as unknown as {
+        document: { querySelectorAll(s: string): ArrayLike<{ tagName: string; getAttributeNames(): string[]; getAttribute(n: string): string | null }> }
+      }
+      const attributes = Array.from(g.document.querySelectorAll('*'), (el) =>
+        `${el.tagName}[${el.getAttributeNames().map((n) => `${n}=${String(el.getAttribute(n))}`).join(',')}]`)
+      return { keys: Object.keys(globalThis).sort(), attributes }
+    })
+    const before = await fingerprint()
+    expect(await buildScrollPrimitives(tab, {}, 720).swipeOnce('down')).toBe('moved')
+    const after = await fingerprint()
+    expect(after.keys).toEqual(before.keys)
+    expect(after.attributes).toEqual(before.attributes)
   }, 60_000)
 })

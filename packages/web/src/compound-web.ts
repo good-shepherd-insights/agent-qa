@@ -5,7 +5,7 @@
 // and stitches them into ONE ActionResult per compound. Extracted here (inside packages/web/src)
 // so the two adapter classes reuse one implementation instead of copy-pasting the compound.
 
-import type { Locator, Page } from 'playwright-core'
+import type { JSHandle, Locator, Page } from 'playwright-core'
 import type { ActionResult } from '@vostride/agent-qa-runner'
 import {
   compareFillReread,
@@ -13,7 +13,7 @@ import {
   runDirectionScroll,
   runToEndScroll,
   swipeSignalFromOffsets,
-  documentSwipeSignal,
+  scrollerSetSwipeSignal,
   type DocumentScrollOffsets,
   type ScrollPrimitives,
   type SwipeSignal,
@@ -109,30 +109,132 @@ async function settle(page: Page): Promise<void> {
   })`)
 }
 
-async function readDocumentOffsets(page: Page): Promise<DocumentScrollOffsets | undefined> {
+type Axis = 'horizontal' | 'vertical'
+type PointerChain = { before: DocumentScrollOffsets[]; after: DocumentScrollOffsets[] }
+
+// In-page, before the wheel: every element that can scroll on the swiped axis (range above 0 and
+// a scrolling overflow) plus the document scroller, mapped to its offsets, and a once-only passive
+// wheel listener on window that records the event target. The state is returned as a handle only;
+// nothing is written to window or the DOM.
+function snapshotScrollers(axis: Axis): unknown {
+  type El = {
+    scrollLeft: number
+    scrollTop: number
+    scrollWidth: number
+    scrollHeight: number
+    clientWidth: number
+    clientHeight: number
+  }
+  const g = globalThis as unknown as {
+    document: {
+      scrollingElement: El | null
+      documentElement: El
+      body: El | null
+      querySelectorAll(selector: string): ArrayLike<El>
+    }
+    getComputedStyle(el: El): { overflowX: string; overflowY: string }
+    addEventListener(type: string, listener: (event: { target: unknown }) => void, options: object): void
+  }
+  const doc = g.document
+  const root = doc.scrollingElement ?? doc.documentElement
+  const read = (el: El) => ({
+    x: el.scrollLeft,
+    y: el.scrollTop,
+    maxX: el.scrollWidth - el.clientWidth,
+    maxY: el.scrollHeight - el.clientHeight,
+  })
+  const scrolls = (value: string): boolean => value === 'auto' || value === 'scroll' || value === 'overlay'
+  const rootStyle = g.getComputedStyle(doc.documentElement)
+  const bodyPropagates = rootStyle.overflowX === 'visible' && rootStyle.overflowY === 'visible'
+  const offsets = new Map<El, ReturnType<typeof read>>()
+  offsets.set(root, read(root))
+  const all = doc.querySelectorAll('*')
+  for (let i = 0; i < all.length; i += 1) {
+    const el = all[i]
+    if (el === root || el === doc.documentElement) continue
+    if (el === doc.body && bodyPropagates) continue
+    const o = read(el)
+    if (!((axis === 'vertical' ? o.maxY : o.maxX) > 0)) continue
+    const style = g.getComputedStyle(el)
+    if (!scrolls(axis === 'vertical' ? style.overflowY : style.overflowX)) continue
+    offsets.set(el, o)
+  }
+  const state: { offsets: typeof offsets; target: unknown; listener: (event: { target: unknown }) => void } = {
+    offsets,
+    target: null,
+    listener: () => undefined,
+  }
+  state.listener = (event) => {
+    state.target = event.target
+  }
+  g.addEventListener('wheel', state.listener, { capture: true, once: true, passive: true })
+  return state
+}
+
+// In-page, after the wheel: the chain is the recorded target and its ancestors that were
+// snapshotted, in order, then the document scroller. Returns the aligned before/after offsets, or
+// nothing (and removes the listener) when no wheel event was observed.
+function readPointerChain(state: unknown): unknown {
+  type El = {
+    scrollLeft: number
+    scrollTop: number
+    scrollWidth: number
+    scrollHeight: number
+    clientWidth: number
+    clientHeight: number
+    parentElement: El | null
+  }
+  const g = globalThis as unknown as {
+    document: { scrollingElement: El | null; documentElement: El }
+    removeEventListener(type: string, listener: unknown, options: object): void
+  }
+  const s = state as { offsets: Map<El, unknown>; target: El | null; listener: unknown }
+  if (!s.target) {
+    g.removeEventListener('wheel', s.listener, { capture: true })
+    return undefined
+  }
+  const root = g.document.scrollingElement ?? g.document.documentElement
+  const chain: El[] = []
+  for (let el: El | null = s.target; el; el = el.parentElement) {
+    if (s.offsets.has(el) && !chain.includes(el)) chain.push(el)
+  }
+  if (!chain.includes(root)) chain.push(root)
+  return {
+    before: chain.map((el) => s.offsets.get(el)),
+    after: chain.map((el) => ({
+      x: el.scrollLeft,
+      y: el.scrollTop,
+      maxX: el.scrollWidth - el.clientWidth,
+      maxY: el.scrollHeight - el.clientHeight,
+    })),
+  }
+}
+
+// The no-ref wheel lands on whatever is under the pointer, so it is judged by the scrollers under
+// it: the wheel event's target up to the document scroller (436-18 · D-25, review CR-02). The
+// pointer position is not readable through Playwright and a passive listener runs after the
+// compositor has scrolled, so the "before" offsets are a snapshot taken before the wheel and the
+// listener only names the chain. No snapshot or no observed wheel event is unknown.
+async function wheelPointerChain(page: Page, dx: number, dy: number, axis: Axis): Promise<PointerChain | undefined> {
+  let handle: JSHandle | undefined
   try {
-    const raw = (await page.evaluate(() => {
-      const doc = (globalThis as unknown as {
-        document: { scrollingElement: unknown; documentElement: unknown }
-      }).document
-      const el = (doc.scrollingElement ?? doc.documentElement) as {
-        scrollLeft: number
-        scrollTop: number
-        scrollWidth: number
-        scrollHeight: number
-        clientWidth: number
-        clientHeight: number
-      }
-      return {
-        x: el.scrollLeft,
-        y: el.scrollTop,
-        maxX: el.scrollWidth - el.clientWidth,
-        maxY: el.scrollHeight - el.clientHeight,
-      }
-    })) as DocumentScrollOffsets | undefined
-    return raw && typeof raw === 'object' ? raw : undefined
+    handle = await page.evaluateHandle(snapshotScrollers, axis)
+  } catch {
+    handle = undefined
+  }
+  await page.mouse.wheel(dx, dy)
+  await settle(page)
+  if (!handle) return undefined
+  try {
+    const chain = (await handle.evaluate(readPointerChain)) as Partial<PointerChain> | undefined
+    if (!chain || typeof chain !== 'object' || !Array.isArray(chain.before) || !Array.isArray(chain.after)) {
+      return undefined
+    }
+    return { before: chain.before, after: chain.after }
   } catch {
     return undefined
+  } finally {
+    await handle.dispose().catch(() => undefined)
   }
 }
 
@@ -203,8 +305,8 @@ async function probeOnScreen(page: Page, target: string): Promise<boolean> {
 // Light probe + swipe/native primitives. readInterimTree re-runs ONLY the aria-snapshot harvest
 // → parseAriaSnapshot(text).nodes — NO buildScreenState, NO refMap mint, NO screenshot; lastRefs
 // stays bound to the pre-compound observation. probeTargetVisible decides target visibility for
-// the loop. swipeOnce reports what the offsets proved; the no-ref wheel measures the document
-// scroller before and after.
+// the loop. swipeOnce reports what the offsets proved; the no-ref wheel measures the scrollers
+// under the pointer before and after.
 export function buildScrollPrimitives(page: Page, lastRefs: RefMap, magnitude: number): ScrollPrimitives {
   return {
     async swipeOnce(direction: Direction, ref?: Ref): Promise<SwipeSignal> {
@@ -215,11 +317,8 @@ export function buildScrollPrimitives(page: Page, lastRefs: RefMap, magnitude: n
         if (scrolled.scrolledContainer !== 'notFound') await settle(page)
         return swipeSignalFromOffsets(direction, scrolled.offsets)
       }
-      const before = await readDocumentOffsets(page)
-      await page.mouse.wheel(dx, dy)
-      await settle(page)
-      const after = await readDocumentOffsets(page)
-      return documentSwipeSignal(direction, before, after)
+      const chain = await wheelPointerChain(page, dx, dy, axis)
+      return scrollerSetSwipeSignal(direction, chain?.before, chain?.after)
     },
     async nativeSearchScroll(target: string): Promise<boolean> {
       try {
