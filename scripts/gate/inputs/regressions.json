@@ -2748,6 +2748,90 @@
       "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
       "fullName": "C436-SCROLL-DECOYS a slotted target clipped by its shadow root's internal scroller is not found at zero swipes",
       "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/webview-scrollers.test.ts",
+      "fullName": "C436-WEBVIEW-SCROLLERS WebView scroller members are paired by identity (436-23 · D-25) identical membership is judged by the scroller-set rule",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/webview-scrollers.test.ts",
+      "fullName": "C436-WEBVIEW-SCROLLERS WebView scroller members are paired by identity (436-23 · D-25) a changed membership is moved only when a common member moved",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/webview-scrollers.test.ts",
+      "fullName": "C436-WEBVIEW-SCROLLERS WebView scroller members are paired by identity (436-23 · D-25) null, empty, malformed or duplicate reads are unknown",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/webview-scrollers.test.ts",
+      "fullName": "C436-WEBVIEW-SCROLLERS WebView scroller members are paired by identity (436-23 · D-25) members are aligned by id whatever their order",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-webview-scrollers.test.ts",
+      "fullName": "C436-WEBVIEW-SCRIPT the WebView scroller script in real Chromium (436-23 · D-25) an iframe under the gesture reads unknown, never at-boundary",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-webview-scrollers.test.ts",
+      "fullName": "C436-WEBVIEW-SCRIPT the WebView scroller script in real Chromium (436-23 · D-25) a cross-origin iframe in view reads unknown",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-webview-scrollers.test.ts",
+      "fullName": "C436-WEBVIEW-SCRIPT the WebView scroller script in real Chromium (436-23 · D-25) a zero-size or off-screen iframe is ignored",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-webview-scrollers.test.ts",
+      "fullName": "C436-WEBVIEW-SCRIPT the WebView scroller script in real Chromium (436-23 · D-25) an open-shadow internal scroller moving under the gesture reads moved",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-webview-scrollers.test.ts",
+      "fullName": "C436-WEBVIEW-SCRIPT the WebView scroller script in real Chromium (436-23 · D-25) an off-canvas scroller is not a member",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-webview-scrollers.test.ts",
+      "fullName": "C436-WEBVIEW-SCRIPT the WebView scroller script in real Chromium (436-23 · D-25) a propagating body is not a member and a quirks page reads its document scroller",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-webview-scrollers.test.ts",
+      "fullName": "C436-WEBVIEW-SCRIPT the WebView scroller script in real Chromium (436-23 · D-25) a body that scrolls itself is a member",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-webview-scrollers.test.ts",
+      "fullName": "C436-WEBVIEW-SCRIPT the WebView scroller script in real Chromium (436-23 · D-25) a scroller inserted between reads is unknown unless a common member moved",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-webview-scrollers.test.ts",
+      "fullName": "C436-WEBVIEW-SCRIPT the WebView scroller script in real Chromium (436-23 · D-25) member ids are stable across reads with no DOM change",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-webview-scrollers.test.ts",
+      "fullName": "C436-WEBVIEW-SCRIPT the WebView scroller script in real Chromium (436-23 · D-25) the script writes nothing to the page",
+      "origin": "436 D-25"
     }
   ]
 }
