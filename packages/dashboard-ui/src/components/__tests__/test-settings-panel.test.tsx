@@ -3,6 +3,7 @@
 import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { parse as parseYaml } from 'yaml'
 
 import { TestSettingsPanel } from '@/components/test-settings-panel'
 
@@ -169,5 +170,62 @@ describe('TestSettingsPanel auth state controls', () => {
     expect(document.getElementById('auth-state-name')).toBeNull()
     expect(document.getElementById('auth-state-load')).toBeNull()
     expect(latestYaml).toContain('authState: admin')
+  })
+})
+
+// 436-19 (D-02, D-03, WR-11): the panel writes a limit only as a positive whole number.
+describe('C436-LIMIT-INPUTS', () => {
+  function limitInput(label: string): HTMLInputElement {
+    const owner = Array.from(document.querySelectorAll('label')).find((el) => el.textContent === label)
+    const input = owner?.parentElement?.querySelector('input')
+    if (!(input instanceof HTMLInputElement)) throw new Error(`Missing limit input ${label}`)
+    return input
+  }
+
+  function plannerOf(yaml: string): Record<string, unknown> | undefined {
+    return (parseYaml(yaml) as { use?: { planner?: Record<string, unknown> } } | null)?.use?.planner
+  }
+
+  it('a positive whole number is written', () => {
+    renderPanel('name: Demo\nsteps: []\n')
+
+    setInputValue(limitInput('Max Actions'), '1')
+    expect(plannerOf(latestYaml)?.maxActions).toBe(1)
+    setInputValue(limitInput('Max Actions'), '60')
+    expect(plannerOf(latestYaml)?.maxActions).toBe(60)
+
+    setInputValue(limitInput('Planner Calls'), '1')
+    expect(plannerOf(latestYaml)?.maxPlanningTurns).toBe(1)
+    setInputValue(limitInput('Planner Calls'), '45')
+    expect(plannerOf(latestYaml)?.maxPlanningTurns).toBe(45)
+    expect(limitInput('Max Actions').getAttribute('aria-invalid')).toBeNull()
+  })
+
+  it('invalid input is refused in place', () => {
+    const initial = 'name: Demo\nuse:\n  planner:\n    maxActions: 60\n    maxPlanningTurns: 12\nsteps: []\n'
+    renderPanel(initial)
+
+    for (const label of ['Max Actions', 'Planner Calls']) {
+      for (const typed of ['0', '-3', '2.5', '1e9']) {
+        setInputValue(limitInput(label), typed)
+        const input = limitInput(label)
+        expect(plannerOf(latestYaml)?.maxActions).toBe(60)
+        expect(plannerOf(latestYaml)?.maxPlanningTurns).toBe(12)
+        expect(latestYaml).toBe(initial)
+        expect(input.value).toBe(typed)
+        expect(input.getAttribute('aria-invalid')).toBe('true')
+        const describedBy = input.getAttribute('aria-describedby') ?? ''
+        const error = describedBy === '' ? null : document.getElementById(describedBy)
+        expect(error?.textContent).toContain(label)
+      }
+    }
+  })
+
+  it('an empty input removes the key', () => {
+    renderPanel('name: Demo\nuse:\n  planner:\n    maxActions: 60\n    maxPlanningTurns: 12\nsteps: []\n')
+
+    setInputValue(limitInput('Max Actions'), '')
+    expect(plannerOf(latestYaml)).toEqual({ maxPlanningTurns: 12 })
+    expect(limitInput('Max Actions').getAttribute('aria-invalid')).toBeNull()
   })
 })
