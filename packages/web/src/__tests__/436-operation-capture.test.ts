@@ -98,6 +98,9 @@ const READBACK_PAGE = `<!DOCTYPE html>
   <button id="rejected" onclick="rejectedWrite()">Write rejected item</button>
   <button id="order" onclick="copyOrder()">Copy order number</button>
   <button id="twice" onclick="writeTwice()">Copy twice</button>
+  <label>Note <input id="note"></label>
+  <button id="focus-watch" onclick="watchFocusAndWrite()">Copy and watch focus</button>
+  <button id="second" onclick="navigator.clipboard.writeText('ORDER-4472')">Copy second order</button>
   <script>
     window.reads = []
     window.states = []
@@ -124,6 +127,15 @@ const READBACK_PAGE = `<!DOCTYPE html>
     function writeTwice() {
       navigator.clipboard.writeText('A')
       navigator.clipboard.writeText('B')
+    }
+    window.focusEvents = []
+    function watchFocusAndWrite() {
+      for (const [name, target] of [['window', window], ['document', document]]) {
+        for (const type of ['blur', 'focus', 'focusout', 'visibilitychange']) {
+          target.addEventListener(type, () => { window.focusEvents.push(name + ':' + type) }, true)
+        }
+      }
+      navigator.clipboard.writeText('ORDER-4471')
     }
     function forge() {
       claim('forged')
@@ -668,5 +680,32 @@ describe('C436-CLIPBOARD-READBACK', () => {
       { source: 'writeText', text: 'A', readBack: 'unavailable' },
       { source: 'writeText', text: 'B', readBack: 'matched' },
     ])
+  }, 60_000)
+
+  it('the read-back never moves focus off the app page', async () => {
+    const web = await open(undefined, undefined, 'readback')
+    const page = web.getPage()!
+    const result = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Copy and watch focus') })
+    await page.waitForTimeout(100)
+
+    expect(page.context().browser()!.contexts()).toHaveLength(2)
+    expect(await page.evaluate('document.hasFocus()')).toBe(true)
+    expect(await page.evaluate('document.activeElement && document.activeElement.id')).toBe('focus-watch')
+    expect(await page.evaluate('window.focusEvents')).toEqual([])
+    expect(clipboardOf(result)).toEqual([{ source: 'writeText', text: 'ORDER-4471', readBack: 'matched' }])
+  }, 60_000)
+
+  it('an unreadable probe records unavailable, never mismatched', async () => {
+    const web = await open(undefined, undefined, 'readback')
+    const app = web.getPage()!.context()
+    const first = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Copy order number') })
+    expect(clipboardOf(first)?.[0]?.readBack).toBe('matched')
+
+    const probes = app.browser()!.contexts().filter((context) => context !== app)
+    expect(probes).toHaveLength(1)
+    await probes[0]!.clearPermissions()
+    const second = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Copy second order') })
+
+    expect(clipboardOf(second)).toEqual([{ source: 'writeText', text: 'ORDER-4472', readBack: 'unavailable' }])
   }, 60_000)
 })

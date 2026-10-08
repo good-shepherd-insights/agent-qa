@@ -1905,6 +1905,18 @@
     },
     {
       "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-READBACK the read-back never moves focus off the app page",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-READBACK an unreadable probe records unavailable, never mismatched",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
       "file": "packages/web/src/__tests__/436-outcome-evidence.test.ts",
       "fullName": "C436-OUTCOME-EVIDENCE a download on an unchanged page passes on its name, extension and digest",
       "origin": "436 D-28"
