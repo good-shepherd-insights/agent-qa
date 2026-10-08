@@ -418,7 +418,13 @@ describe('C436-ACTION-PATHS', () => {
     const result = await executeStep('Ensure it is on', ports({ adapter, planner, plannerConfig: limits(2) }), makeStepContext())
     expectActionStop(result, 2)
     expect(adapter.executed).toHaveLength(0)
-    expect(result.evidence?.subActions[0]?.result.metadata?.['idempotentNoop']).toBeDefined()
+    const noop = result.evidence?.subActions[0]?.result
+    expect(noop?.success).toBe(false)
+    expect(noop?.error).toBeUndefined()
+    expect(noop?.metadata?.['idempotentNoop']).toEqual({
+      currentState: 'checked',
+      inputSent: false,
+    })
   })
 
   it('heal re-execution is a second debit in the same iteration', async () => {

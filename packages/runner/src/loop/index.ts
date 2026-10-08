@@ -1533,14 +1533,15 @@ export async function executeStep(
         }
       }
     } else if (idempotentNoop !== undefined) {
-      // D-14 pre-dispatch idempotency short-circuit at the ONE chokepoint before adapter.execute.
-      // Judged ONLY on `screenState` — the SAME settled observation the gate grounded against
-      // (Pitfall 10; no live probe). When the resolved control is already in the planner-declared
-      // desiredState (or a picker already sits on the requested value, D-15), mint a success no-op
-      // carrying metadata.idempotentNoop { currentState } (D-16) and SKIP adapter.execute entirely.
-      // Positive-evidence only: an undefined/missing persisted state never suppresses (D-15). One
-      // implementation serves web/android/ios — the field rides the action; adapters ignore it.
-      execResult = { success: true, metadata: { idempotentNoop } }
+      // D-14 pre-dispatch idempotency short-circuit at the ONE chokepoint before adapter.execute,
+      // judged on the settled `screenState` only (Pitfall 10; no live probe). The skipped tap
+      // delivers no input, so it is recorded with success false and no error, and it is still the
+      // action the meter already counted (437 D-05); the step stays on the success path and its
+      // outcome rests on the verifier. Positive-evidence only: a missing state never suppresses.
+      execResult = {
+        success: false,
+        metadata: { idempotentNoop: { ...idempotentNoop, inputSent: false } },
+      }
     } else {
       const outcome = await executeResolvedAction(normalizedAction)
       execResult = outcome.result

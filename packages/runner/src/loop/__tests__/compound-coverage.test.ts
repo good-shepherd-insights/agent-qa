@@ -217,11 +217,11 @@ function recordingAdapter(observation: ScreenState, calls: Action[]): PlatformAd
 }
 
 interface LooseSub {
-  result?: { metadata?: Record<string, unknown> }
+  result?: { success?: boolean; error?: string; metadata?: Record<string, unknown> }
 }
 
 describe('EXEC-04 — a satisfied desiredState no-ops at the dispatch seam without calling adapter.execute', () => {
-  it('a checked toggle with desiredState=checked mints success + idempotentNoop', async () => {
+  it('a checked toggle with desiredState=checked mints a no-input no-op (437 D-05)', async () => {
     const observation = buildAgentScreenState({
       url: 'https://x.test/settings',
       elements: [{ ref: 'e1', role: 'checkbox', name: 'Wi-Fi', state: { checked: true }, bounds: { x: 20, y: 80, width: 300, height: 44 } }],
@@ -243,8 +243,9 @@ describe('EXEC-04 — a satisfied desiredState no-ops at the dispatch seam witho
     // D-16: the minted no-op carries metadata.idempotentNoop.currentState ...
     const sub = (result.evidence as { subActions?: LooseSub[] } | undefined)?.subActions?.[0]
     const noop = sub?.result?.metadata?.['idempotentNoop'] as { currentState?: unknown } | undefined
-    expect(noop).toBeDefined()
-    expect(noop?.currentState).toBeDefined()
+    expect(noop).toEqual({ currentState: 'checked', inputSent: false })
+    expect(sub?.result?.success).toBe(false)
+    expect(sub?.result?.error).toBeUndefined()
   })
 })
 

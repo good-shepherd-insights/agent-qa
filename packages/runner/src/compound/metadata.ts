@@ -45,9 +45,10 @@ export interface OpenAppMeta {
   matchKind: 'exact' | 'fuzzy' | 'explicit'
 }
 
-/** EXEC-04 idempotent no-op block. */
+/** EXEC-04 idempotent no-op block. `inputSent: false` marks a skipped tap (437 D-05). */
 export interface IdempotentNoopMeta {
   currentState: string
+  inputSent?: false
 }
 
 export function readFillRereadMeta(actionResult?: ActionResult): FillRereadMeta | undefined {
@@ -104,8 +105,10 @@ export function readIdempotentNoopMeta(
 ): IdempotentNoopMeta | undefined {
   const raw = actionResult?.metadata?.['idempotentNoop']
   if (raw && typeof raw === 'object' && 'currentState' in raw) {
-    const { currentState } = raw as Record<string, unknown>
-    if (typeof currentState === 'string') return { currentState }
+    const { currentState, inputSent } = raw as Record<string, unknown>
+    if (typeof currentState !== 'string') return undefined
+    if (inputSent === undefined) return { currentState }
+    if (inputSent === false) return { currentState, inputSent }
   }
   return undefined
 }

@@ -5,6 +5,8 @@ import type { LoopPorts } from '../ports.js'
 import { executeStep } from '../index.js'
 import { buildAgentScreenState, type LooseElement } from './screen-fixtures.js'
 import { makeActionPlan, makeStepContext, makeVerifier, makePlanner } from './loop-harness.js'
+import type { ActionPlan, Planner, VerificationResult } from '../types.js'
+import { readIdempotentNoopMeta } from '../../compound/metadata.js'
 
 const ROW_BOUNDS = { x: 0, y: 400, width: 1280, height: 160 }
 const ROW_CENTRE = { x: 640, y: 480 }
@@ -140,5 +142,134 @@ describe('C437-TOGGLE-LOOP', () => {
     })
     expect(calls).toHaveLength(1)
     expect(calls[0]).toMatchObject({ type: 'tap', ref: 'e1' })
+  })
+})
+
+function checkedSwitch(): ScreenState {
+  return screenWith({
+    role: 'switch',
+    name: 'Dark theme',
+    state: { checked: true, selected: false },
+    attributes: { checkable: 'true', checked: 'true', selected: 'false' },
+  })
+}
+
+const SKIPPED_TAP = { type: 'tap', ref: 'e1', desiredState: 'checked' }
+const NO_INPUT = { currentState: 'checked', inputSent: false }
+
+interface RecordedSub {
+  result: { success: boolean; error?: string; metadata?: Record<string, unknown> }
+}
+
+function subActions(result: Awaited<ReturnType<typeof executeStep>>): RecordedSub[] {
+  return (result.evidence as { subActions?: RecordedSub[] } | undefined)?.subActions ?? []
+}
+
+function capturingPlanner(plans: ActionPlan[], failureContexts: (string | undefined)[]): Planner {
+  let call = 0
+  return {
+    async plan(_step, _screen, context) {
+      failureContexts.push(context.failureContext)
+      const plan = plans[Math.min(call, plans.length - 1)]
+      call++
+      return { plan }
+    },
+  }
+}
+
+interface RunOptions {
+  verifier?: VerificationResult[]
+  abortSignal?: AbortSignal
+  planner?: Planner
+}
+
+async function runPlans(plans: ActionPlan[], options: RunOptions = {}) {
+  const calls: Action[] = []
+  const ports: LoopPorts = {
+    adapter: recordingAdapter(checkedSwitch(), calls),
+    planner: options.planner ?? makePlanner(plans),
+    verifier: makeVerifier(options.verifier),
+    plannerConfig: { maxActions: 4, maxPlanningTurns: 4, previousStepCount: 0 },
+    ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+  }
+  const result = await executeStep('Turn dark theme on', ports, makeStepContext())
+  return { calls, result }
+}
+
+function noopResult(success: boolean, idempotentNoop: Record<string, unknown>): ActionResult {
+  return { success, metadata: { idempotentNoop } }
+}
+
+describe('C437-NO-INPUT', () => {
+  it('a skipped tap is recorded with success false, no error and inputSent false', async () => {
+    const { calls, result } = await runPlans([
+      makeActionPlan({ action: SKIPPED_TAP, stepComplete: true }),
+    ])
+    expect(calls).toHaveLength(0)
+    const sub = subActions(result)[0]
+    expect(sub.result.success).toBe(false)
+    expect(sub.result.error).toBeUndefined()
+    expect(sub.result.metadata?.['idempotentNoop']).toEqual(NO_INPUT)
+    expect(result.status).toBe('passed')
+  })
+
+  it('the skipped tap is one counted action', async () => {
+    const { result } = await runPlans([makeActionPlan({ action: SKIPPED_TAP, stepComplete: true })])
+    expect(result.evidence?.limitUsage?.actionsUsed).toBe(1)
+  })
+
+  it('a skipped tap with a rejecting verifier replans without a failure context naming an error', async () => {
+    const failureContexts: (string | undefined)[] = []
+    const plans = [
+      makeActionPlan({ action: SKIPPED_TAP, stepComplete: true }),
+      makeActionPlan({ action: { type: 'stepFailed' }, stepComplete: false, stepFailed: true }),
+    ]
+    const { calls } = await runPlans(plans, {
+      planner: capturingPlanner(plans, failureContexts),
+      verifier: [{ success: false, reasoning: 'The switch still reads off', isAppError: false }],
+    })
+    expect(calls).toHaveLength(0)
+    expect(failureContexts).toHaveLength(2)
+    const replanContext = failureContexts[1] ?? ''
+    expect(replanContext).toContain('did not accomplish the goal: The switch still reads off')
+    expect(replanContext).not.toContain('failed:')
+  })
+
+  it('the same skipped tap planned twice sends nothing either time', async () => {
+    const { calls, result } = await runPlans([
+      makeActionPlan({ action: SKIPPED_TAP, stepComplete: false }),
+      makeActionPlan({ action: SKIPPED_TAP, stepComplete: true }),
+    ])
+    expect(calls).toHaveLength(0)
+    const subs = subActions(result)
+    expect(subs).toHaveLength(2)
+    for (const sub of subs) {
+      expect(sub.result.success).toBe(false)
+      expect(sub.result.metadata?.['idempotentNoop']).toEqual(NO_INPUT)
+    }
+    expect(result.evidence?.limitUsage?.actionsUsed).toBe(2)
+  })
+
+  it('an abort raised during a skipped-tap step executes nothing', async () => {
+    const controller = new AbortController()
+    const planner: Planner = {
+      async plan() {
+        controller.abort(new Error('User cancelled'))
+        return { plan: makeActionPlan({ action: SKIPPED_TAP, stepComplete: true }) }
+      },
+    }
+    const { calls, result } = await runPlans([], { planner, abortSignal: controller.signal })
+    expect(result.status).toBe('cancelled')
+    expect(calls).toHaveLength(0)
+  })
+
+  it('readIdempotentNoopMeta reads the pre-437 block and the new block', () => {
+    expect(readIdempotentNoopMeta(noopResult(true, { currentState: 'checked' }))).toEqual({
+      currentState: 'checked',
+    })
+    expect(readIdempotentNoopMeta(noopResult(false, NO_INPUT))).toEqual(NO_INPUT)
+    expect(
+      readIdempotentNoopMeta(noopResult(false, { currentState: 'checked', inputSent: true })),
+    ).toBeUndefined()
   })
 })

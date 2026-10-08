@@ -5,8 +5,9 @@
 //     state.checked, 437 D-01/D-02; select/nativeSelect/pickerSelect vs the persisted value);
 //     undefined/missing state or a non-toggle ⇒ act.
 //   Block B — the dispatch-seam short-circuit (D-14): at the ONE chokepoint before adapter.execute,
-//     a satisfied desiredState mints a success ActionResult with metadata.idempotentNoop
-//     { currentState } WITHOUT calling the adapter; an unsatisfied desiredState falls through
+//     a satisfied desiredState mints a no-input ActionResult (success false, no error) with
+//     metadata.idempotentNoop { currentState, inputSent: false } WITHOUT calling the adapter
+//     (437 D-05); an unsatisfied desiredState falls through
 //     to a plain tap. The desiredState param must survive toolCallToActionPlan to the seam (D-13).
 //
 // RED BY DESIGN:
@@ -173,7 +174,7 @@ function recordingAdapter(observation: ScreenState, calls: Action[]): PlatformAd
 }
 
 interface LooseSub {
-  result?: { metadata?: Record<string, unknown> }
+  result?: { success?: boolean; error?: string; metadata?: Record<string, unknown> }
 }
 
 function firstSub(result: Awaited<ReturnType<typeof executeStep>>): LooseSub | undefined {
@@ -203,8 +204,9 @@ describe('Block B — the seam suppresses a satisfied desiredState (D-14/D-16)',
     // D-16: the minted no-op carries metadata.idempotentNoop.currentState ...
     const sub = firstSub(result)
     const noop = sub?.result?.metadata?.['idempotentNoop'] as { currentState?: unknown } | undefined
-    expect(noop).toBeDefined()
-    expect(noop?.currentState).toBeDefined()
+    expect(noop).toEqual({ currentState: 'checked', inputSent: false })
+    expect(sub?.result?.success).toBe(false)
+    expect(sub?.result?.error).toBeUndefined()
   })
 
   it('an UNsatisfied desiredState=checked (state.checked false) falls through to a plain tap', async () => {
