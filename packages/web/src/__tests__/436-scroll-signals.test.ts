@@ -12,8 +12,8 @@
 import { createServer } from 'node:http'
 import type { Server, ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import type { Page } from 'playwright-core'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import type { Frame, Page } from 'playwright-core'
 import type { Ref } from '@vostride/agent-qa-schema'
 import { WebPlatformAdapter } from '../adapter.js'
 import { buildScrollPrimitives, FRAME_PROBE_TIMEOUT_MS } from '../compound-web.js'
@@ -203,6 +203,7 @@ afterAll(async () => {
 })
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await adapter?.cleanup()
   adapter = undefined
   for (const res of parkedResponses) res.destroy()
@@ -696,7 +697,74 @@ describe('C436-SCROLL-FRAMES', () => {
     expect(run.ms).toBeLessThan(15_000)
     expect((run.value as ActionOutcome).metadata?.scrollUntilVisible).toMatchObject({ outcome: 'unresolved' })
   }, 60_000)
+
+  it('a frame with no committed document is unknown at once', async () => {
+    const { tab } = await openHung('/hung-absent')
+    await expect.poll(() => tab.frames().length).toBe(2)
+    const hung = tab.frames().find((frame) => frame !== tab.mainFrame())
+    expect(hung!.url()).toBe('')
+    const probe = await withSentinel(buildScrollPrimitives(tab, {}, 720).probeTargetVisible!('No such text'), 5_000)
+    expect(probe.value).toBe('unknown')
+    expect(probe.ms).toBeLessThan(FRAME_PROBE_TIMEOUT_MS)
+  }, 60_000)
+
+  it('committed frames that never answer are unknown at the bound, once per search', async () => {
+    const { tab } = await open('/short')
+    const calls = [0, 0]
+    const fakes = calls.map((_, i) => fakeFrame(tab, () => {
+      calls[i] += 1
+      return new Promise<unknown[]>(() => undefined)
+    }))
+    vi.spyOn(tab, 'frames').mockReturnValue([...tab.frames(), ...fakes])
+    const primitives = buildScrollPrimitives(tab, {}, 720)
+    const first = await withSentinel(primitives.probeTargetVisible!('No such text'), 5_000)
+    expect(first.value).toBe('unknown')
+    expect(first.ms).toBeGreaterThanOrEqual(FRAME_PROBE_TIMEOUT_MS - 50)
+    expect(first.ms, 'both frames judged at once').toBeLessThan(FRAME_PROBE_TIMEOUT_MS + 500)
+    const second = await withSentinel(primitives.probeTargetVisible!('No such text'), 5_000)
+    expect(second.value).toBe('unknown')
+    expect(second.ms).toBeLessThan(300)
+    expect(calls, 'no second evaluate while a judge is pending').toEqual([1, 1])
+  }, 60_000)
+
+  it('a frame that answers after the bound is judged again on the next probe', async () => {
+    const { tab } = await open('/short')
+    let calls = 0
+    let answerLate: (value: unknown[]) => void = () => undefined
+    const late = new Promise<unknown[]>((resolve) => { answerLate = resolve })
+    const fake = fakeFrame(tab, () => {
+      calls += 1
+      return calls === 1 ? late : Promise.resolve([])
+    })
+    vi.spyOn(tab, 'frames').mockReturnValue([...tab.frames(), fake])
+    const primitives = buildScrollPrimitives(tab, {}, 720)
+    const first = await withSentinel(primitives.probeTargetVisible!('No such text'), 5_000)
+    expect(first.value).toBe('unknown')
+    expect(first.ms).toBeGreaterThanOrEqual(FRAME_PROBE_TIMEOUT_MS - 50)
+    answerLate([])
+    await late
+    await new Promise((resolve) => { setTimeout(resolve, 0) })
+    const second = await withSentinel(primitives.probeTargetVisible!('No such text'), 5_000)
+    expect(calls).toBe(2)
+    expect(second.value).toBe('hidden')
+  }, 60_000)
 })
+
+// A committed child frame whose candidates locator answers through `evaluateAll`.
+function fakeFrame(tab: Page, evaluateAll: () => Promise<unknown[]>): Frame {
+  const locator: Record<string, unknown> = { evaluateAll }
+  locator.or = () => locator
+  const candidates = () => locator
+  return {
+    url: () => 'http://fake.invalid/frame',
+    isDetached: () => false,
+    parentFrame: () => tab.mainFrame(),
+    getByText: candidates,
+    getByLabel: candidates,
+    getByAltText: candidates,
+    getByTitle: candidates,
+  } as unknown as Frame
+}
 
 type ActionOutcome = Awaited<ReturnType<WebPlatformAdapter['execute']>>
 

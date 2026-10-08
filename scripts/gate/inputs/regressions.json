@@ -2910,6 +2910,24 @@
       "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
       "fullName": "C436-SCROLL-FRAMES an absent target beside a hung frame ends unresolved inside the budget",
       "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-FRAMES a frame with no committed document is unknown at once",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-FRAMES committed frames that never answer are unknown at the bound, once per search",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-FRAMES a frame that answers after the bound is judged again on the next probe",
+      "origin": "436 D-24"
     }
   ]
 }
