@@ -174,7 +174,7 @@ export interface StepContext {
    * Sub-actions already attempted in this step (multi-action mode), with each outcome and any
    * returned data. Screen change is not recorded here: outcomes decide (HARN-01).
    */
-  subActionHistory?: { action: string; reasoning?: string; result: 'success' | 'failure'; error?: string; verifierRejection?: string; data?: string; evidence?: string }[]
+  subActionHistory?: { action: string; reasoning?: string; result: 'success' | 'failure' | 'no-input'; error?: string; verifierRejection?: string; data?: string; evidence?: string }[]
   plannerConfig?: PlannerConfig
   /** 436 D-08: the step's planning-call meter, bound by the loop before each plan() call. */
   planningCallGate?: PlanningCallGate

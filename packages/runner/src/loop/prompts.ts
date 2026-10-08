@@ -295,6 +295,9 @@ function appendBulkCompletionPredicate(parts: string[], context: StepContext): v
   parts.push('Re-evaluate this predicate against the current observation each turn, and cite the positive evidence that it holds before setting stepComplete.')
 }
 
+// 437 D-05: a skipped tap sent no input, so it is neither a tick nor a cross.
+const HISTORY_GLYPHS = { success: '✓', failure: '✗', 'no-input': '–' } as const
+
 function appendSubActionHistory(parts: string[], context: StepContext): void {
   if (!context.subActionHistory || context.subActionHistory.length === 0) return
 
@@ -307,7 +310,7 @@ function appendSubActionHistory(parts: string[], context: StepContext): void {
     if (sub.result === 'failure') suffix = ` — FAILED: ${sub.error?.slice(0, 120)}`
     else if (sub.verifierRejection) suffix = ` — step NOT complete: ${sub.verifierRejection?.slice(0, 120)}`
     const reason = sub.reasoning ? ` (${sub.reasoning})` : ''
-    subHistoryParts.push(`  ${sub.result === 'success' ? '✓' : '✗'} ${sub.action}${reason}${suffix}`)
+    subHistoryParts.push(`  ${HISTORY_GLYPHS[sub.result]} ${sub.action}${reason}${suffix}`)
     if (sub.data) subHistoryParts.push(`    Returned data: ${sub.data}`)
     if (sub.evidence) subHistoryParts.push(`    Operation evidence: ${sub.evidence}`)
   }

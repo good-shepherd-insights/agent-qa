@@ -1626,6 +1626,9 @@ export async function executeStep(
     if (operationEvidence?.clipboard) {
       stepOperationEvidence.clipboard = [...(stepOperationEvidence.clipboard ?? []), ...operationEvidence.clipboard]
     }
+    const historyResult = readIdempotentNoopMeta(execResult)?.inputSent === false
+      ? 'no-input'
+      : 'success'
     const notableInput = operationEvidence?.input?.filter(
       (entry) => renderInputEvidence(entry) !== undefined,
     )
@@ -1932,7 +1935,7 @@ export async function executeStep(
       context.subActionHistory!.push({
         action: JSON.stringify(action),
         reasoning,
-        result: 'success',
+        result: historyResult,
         verifierRejection: verifierReasoning,
         data: guardActionData(execResult.data, ports.guardBlob),
         ...historyEvidence,
@@ -1989,7 +1992,7 @@ export async function executeStep(
     context.subActionHistory!.push({
       action: JSON.stringify(action),
       reasoning,
-      result: 'success',
+      result: historyResult,
       verifierRejection: rawPlan.stepComplete ? verifierReasoning : undefined,
       data: guardActionData(execResult.data, ports.guardBlob),
       ...historyEvidence,

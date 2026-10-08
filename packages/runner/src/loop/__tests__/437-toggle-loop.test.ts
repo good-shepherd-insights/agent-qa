@@ -5,9 +5,9 @@ import type { LoopPorts } from '../ports.js'
 import { executeStep } from '../index.js'
 import { buildAgentScreenState, type LooseElement } from './screen-fixtures.js'
 import { makeActionPlan, makeStepContext, makeVerifier, makePlanner } from './loop-harness.js'
-import type { ActionPlan, Planner, VerificationResult, Verifier } from '../types.js'
+import type { ActionPlan, Planner, StepContext, VerificationResult, Verifier } from '../types.js'
 import { readIdempotentNoopMeta } from '../../compound/metadata.js'
-import { buildVerificationPrompt } from '../prompts.js'
+import { buildVerificationPrompt, composeTurnMessages } from '../prompts.js'
 import { APP_OBSERVED_DATA_CLOSE, APP_OBSERVED_DATA_OPEN } from '@vostride/agent-qa-safety'
 import type { MaskingContext, OperationEvidence } from '@vostride/agent-qa-schema'
 
@@ -373,5 +373,58 @@ describe('C437-NO-INPUT', () => {
     const entry = result.evidence?.subActions[0]?.operationEvidence?.input?.[0]
     expect(entry?.currentState).toBe('***')
     expect(entry?.inputSent).toBe(false)
+  })
+})
+
+function contextCapturingPlanner(plans: ActionPlan[], contexts: StepContext[]): Planner {
+  let call = 0
+  return {
+    async plan(_step, _screen, context) {
+      contexts.push({ ...context, subActionHistory: [...(context.subActionHistory ?? [])] })
+      const plan = plans[Math.min(call, plans.length - 1)]
+      call++
+      return { plan }
+    },
+  }
+}
+
+function plannerTurn(context: StepContext, screen: ScreenState): string {
+  return composeTurnMessages(context, screen)
+    .map((message) => String(message.content))
+    .join('\n')
+}
+
+const STOP_PLAN = makeActionPlan({
+  action: { type: 'stepFailed' },
+  stepComplete: false,
+  stepFailed: true,
+})
+
+describe('C437-NO-INPUT', () => {
+  it('the planner history shows the skipped tap with the no-input glyph', async () => {
+    const contexts: StepContext[] = []
+    const plans = [makeActionPlan({ action: SKIPPED_TAP, stepComplete: false }), STOP_PLAN]
+    await runPlans(plans, { planner: contextCapturingPlanner(plans, contexts) })
+    expect(contexts).toHaveLength(2)
+    const turn = plannerTurn(contexts[1], checkedSwitch())
+    const historyLines = turn.split('\n').filter((line) => line.includes('{"type":"tap"'))
+    expect(historyLines).toHaveLength(1)
+    expect(historyLines[0].startsWith('  – {"type":"tap"')).toBe(true)
+    expect(historyLines[0]).not.toContain('✓')
+    expect(historyLines[0]).not.toContain('✗')
+    expect(turn).toContain('tap: no input sent — already checked')
+  })
+
+  it('a verifier-rejected skipped tap is history result no-input', async () => {
+    const contexts: StepContext[] = []
+    const plans = [makeActionPlan({ action: SKIPPED_TAP, stepComplete: true }), STOP_PLAN]
+    await runPlans(plans, {
+      planner: contextCapturingPlanner(plans, contexts),
+      verifier: [{ success: false, reasoning: 'The switch still reads off', isAppError: false }],
+    })
+    const history = contexts[1].subActionHistory ?? []
+    expect(history).toHaveLength(1)
+    expect(history[0].result).toBe('no-input')
+    expect(history[0].verifierRejection).toBe('The switch still reads off')
   })
 })
