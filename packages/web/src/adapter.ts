@@ -68,6 +68,8 @@ interface PageLogBuffers {
 // window owns that wait and ends it at NAVIGATION_WINDOW_CAP_MS.
 /** The longest observe's ai-mode snapshot waits; a child frame that has not answered by then is left empty. */
 export const OBSERVE_SNAPSHOT_TIMEOUT_MS = 5_000
+/** The bound a main-frame snapshot gets after it outlasts the short one: Playwright's default, the pre-436-24 bound. */
+export const OBSERVE_SNAPSHOT_RETRY_TIMEOUT_MS = 30_000
 /** The longest screenshot() waits before it gives up and returns undefined. */
 export const SCREENSHOT_TIMEOUT_MS = 5_000
 
