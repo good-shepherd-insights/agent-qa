@@ -31,6 +31,10 @@
 // window open at most NAVIGATION_WINDOW_CAP_MS and never past half the action's time left, so a
 // started download keeps the other half to finish. They are bounded, not dropped: a download that
 // starts after the window is held and recorded late. The 120 s no-deadline wait is gone (CR-05).
+// 2026-10-08 (436-27): the acting page's own main-frame navigation waits up to half the action's
+// time left, so a slow export is recorded on its click (WR-21); subframes and popups keep the cap.
+// With no step deadline the main frame waits up to half DOWNLOAD_COMPLETION_CAP_MS (60 s). A
+// capture armed without an acting page caps every navigation.
 
 import { createHash } from 'node:crypto'
 import { extname } from 'node:path'
@@ -46,7 +50,7 @@ export const DOWNLOAD_START_GRACE_MS = 500
 export const NAVIGATION_SETTLE_MS = 250
 /** The download wait's bound for an action dispatched with no step deadline. */
 export const DOWNLOAD_COMPLETION_CAP_MS = 120_000
-/** The longest the start window stays open for navigations that do not answer; never more than half the action's time left. */
+/** The longest the start window stays open for subframe and popup navigations; never more than half the action's time left. */
 export const NAVIGATION_WINDOW_CAP_MS = 5_000
 
 /** The web actions that can start a download; see isDownloadActivation for tab and fill. */
@@ -74,6 +78,12 @@ export function isDownloadActivation(action: DownloadActivationInput): boolean {
   if (action.type === 'fill') return action.submit === true
   if (action.type === 'tab') return action.action === 'new'
   return DOWNLOAD_ACTIVATION_ACTIONS.has(action.type)
+}
+
+interface PendingNavigation {
+  page: Page | undefined
+  /** The acting page's own main-frame navigation. */
+  main: boolean
 }
 
 interface TrackedDownload {
@@ -269,12 +279,14 @@ export class OperationCapture {
   private downloads: TrackedDownload[] = []
   /** Downloads that started while no start window was open, kept for the next action. */
   private held: Download[] = []
-  private readonly pendingNavigations = new Map<Request, Page | undefined>()
+  private readonly pendingNavigations = new Map<Request, PendingNavigation>()
   private clipboardWrites: PendingClipboardWrite[] = []
   private armed = false
   private startWindow = false
   private navigationWindow = false
   private navigationSettledAt = 0
+  private navigationSettledMain = false
+  private actingPage: Page | undefined
   private clipboardArmed = false
   private activation = false
   private boundAt = 0
@@ -309,7 +321,7 @@ export class OperationCapture {
     await context.addInitScript(CLIPBOARD_HOOK)
   }
 
-  async arm(action: DownloadActivationInput, options: ExecuteOptions = {}): Promise<void> {
+  async arm(action: DownloadActivationInput, options: ExecuteOptions = {}, actingPage?: Page): Promise<void> {
     const carried = [...this.downloads.map((entry) => entry.download), ...this.held]
     this.held = []
     this.downloads = carried.map((download) => ({ download, late: true }))
@@ -320,6 +332,8 @@ export class OperationCapture {
     this.activation = isDownloadActivation(action)
     this.navigationWindow = this.activation
     this.navigationSettledAt = 0
+    this.navigationSettledMain = false
+    this.actingPage = actingPage
     this.pendingNavigations.clear()
     const remaining = options.remainingStepMs
     this.boundAt = Date.now()
@@ -379,28 +393,47 @@ export class OperationCapture {
       this.downloads = []
       this.clipboardWrites = []
       this.abortSignal = undefined
+      this.actingPage = undefined
       this.preImageGeneration = -1
     }
   }
 
   // The grace after an activation action, then for as long as a navigation it started has neither
   // a response nor a failure, plus NAVIGATION_SETTLE_MS after the last answer; all bounded by the
-  // action's time left. The navigation part also ends at navEnd, fixed when the wait begins.
+  // action's time left. Fixed when the wait begins: the acting page's main-frame navigation ends at
+  // mainEnd (half the time left), any other at capEnd (also NAVIGATION_WINDOW_CAP_MS).
   private async waitForStartWindow(): Promise<void> {
     if (!this.activation) return
     const start = Date.now()
     const graceEnd = start + Math.min(this.startGraceMs, Math.max(0, this.timeLeft()))
-    const navEnd = start + Math.min(NAVIGATION_WINDOW_CAP_MS, Math.max(0, this.timeLeft()) / 2)
+    const reserve = Math.max(0, this.timeLeft()) / 2
+    const capEnd = start + Math.min(NAVIGATION_WINDOW_CAP_MS, reserve)
+    const mainEnd = start + reserve
     for (;;) {
       const left = this.timeLeft()
       if (left <= 0) return
       const now = Date.now()
-      const settleEnd = Math.min(this.navigationSettledAt + NAVIGATION_SETTLE_MS, navEnd)
+      const settleEnd = Math.min(
+        this.navigationSettledAt + NAVIGATION_SETTLE_MS,
+        this.navigationSettledMain ? mainEnd : capEnd,
+      )
       const openFor = Math.max(graceEnd, settleEnd) - now
+      const pendingEnd = this.pendingNavigationEnd(mainEnd, capEnd)
       if (openFor > 0) await this.waitForSignal(Math.min(openFor, left))
-      else if (this.pendingNavigations.size > 0 && now < navEnd) await this.waitForSignal(Math.min(navEnd - now, left))
+      else if (now < pendingEnd) await this.waitForSignal(Math.min(pendingEnd - now, left))
       else return
     }
+  }
+
+  // mainEnd while a main-frame navigation of the acting page is pending, else capEnd while any
+  // other is, else 0.
+  private pendingNavigationEnd(mainEnd: number, capEnd: number): number {
+    let end = 0
+    for (const { main } of this.pendingNavigations.values()) {
+      if (main) return mainEnd
+      end = capEnd
+    }
+    return end
   }
 
   private closeStartWindow(): void {
@@ -412,15 +445,21 @@ export class OperationCapture {
   private onRequest(request: Request): void {
     if (!this.navigationWindow || !request.isNavigationRequest()) return
     let page: Page | undefined
+    let main = false
     try {
-      page = request.frame().page()
+      const frame = request.frame()
+      page = frame.page()
+      main = this.actingPage !== undefined && frame === this.actingPage.mainFrame()
     } catch { /* not a frame request */ }
-    this.pendingNavigations.set(request, page)
+    this.pendingNavigations.set(request, { page, main })
   }
 
   private settleNavigation(request: Request): void {
-    if (!this.pendingNavigations.delete(request)) return
+    const pending = this.pendingNavigations.get(request)
+    if (!pending) return
+    this.pendingNavigations.delete(request)
     this.navigationSettledAt = Date.now()
+    this.navigationSettledMain = pending.main
     this.notify?.()
   }
 
@@ -610,7 +649,7 @@ export class OperationCapture {
       this.notify?.()
     })
     page.on('close', () => {
-      for (const [request, owner] of this.pendingNavigations) if (owner === page) this.settleNavigation(request)
+      for (const [request, pending] of this.pendingNavigations) if (pending.page === page) this.settleNavigation(request)
     })
   }
 

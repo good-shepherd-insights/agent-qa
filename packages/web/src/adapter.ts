@@ -696,7 +696,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     }
 
     const capture = this.operationCapture
-    await capture?.arm(action, options)
+    await capture?.arm(action, options, this.page)
     const result = await this.executeWithErrorResult(action)
     // The download-start grace and the clipboard read-back follow the action (436-10, 436-11); the
     // recorded interval is the action's.

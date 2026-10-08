@@ -2860,7 +2860,7 @@
     {
       "runner": "vitest",
       "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
-      "fullName": "C436-DOWNLOAD-WINDOW a click whose own navigation never answers ends the window at the cap",
+      "fullName": "C436-DOWNLOAD-WINDOW a click whose own navigation never answers ends the window at half the time left",
       "origin": "436 D-19"
     },
     {
@@ -2928,6 +2928,18 @@
       "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
       "fullName": "C436-SCROLL-FRAMES a frame that answers after the bound is judged again on the next probe",
       "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-WINDOW a main-frame attachment answered after the cap is recorded on the click",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-WINDOW a hung subframe beside a slow main-frame export records the export on the click",
+      "origin": "436 D-19"
     }
   ]
 }
