@@ -461,7 +461,7 @@ describe('AndroidPlatformAdapter', () => {
       expect(usernameEl).toBeDefined()
 
       // Mock the focused element finder — the compound re-reads via getText() and probes
-      // getAttribute('password') for the secure lane.
+      // getAttribute('password') for the secure lane. The showing-hint probe (437-05) matches nothing.
       const mockElement = {
         isExisting: vi.fn().mockResolvedValue(true),
         setValue: vi.fn().mockResolvedValue(undefined),
@@ -469,13 +469,22 @@ describe('AndroidPlatformAdapter', () => {
         getText: vi.fn().mockResolvedValue('test'),
         getAttribute: vi.fn().mockResolvedValue(null),
       }
-      mockDriver.$ = vi.fn().mockResolvedValue(mockElement)
+      const noMatch = { isExisting: vi.fn().mockResolvedValue(false) }
+      mockDriver.$ = vi.fn(async (selector: string) =>
+        selector === '//*[@focused="true"]' ? mockElement : noMatch) as any
 
       const result = await adapter.execute({ type: 'fill', ref: usernameEl!.ref, text: 'test', clearMode: 'replace', submit: false })
       expect(result.success).toBe(true)
+      expect(result.metadata).toEqual({
+        fillReread: { expected: 'test', actual: 'test' },
+        fillVerdict: { verb: 'fill', verdict: 'exact', path: 'native' },
+      })
 
-      // Verify tap to focus
+      // Verify tap to focus, then one setValue and the read-back, with no Enter
       expect(mockDriver._pointerAction.perform).toHaveBeenCalled()
+      expect(mockElement.setValue).toHaveBeenCalledTimes(1)
+      expect(mockElement.getText).toHaveBeenCalled()
+      expect(mockDriver.execute).not.toHaveBeenCalledWith('mobile: pressKey', { keycode: 66 })
     })
   })
 

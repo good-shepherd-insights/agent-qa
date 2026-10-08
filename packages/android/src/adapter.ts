@@ -7,6 +7,8 @@ import type {
   AppRegistryEntry,
   ConsoleLogEntry,
   Direction,
+  FillSubmitMeta,
+  FillVerdictMeta,
   InterimNode,
   ObserveOptions,
   PlatformAdapter,
@@ -47,6 +49,12 @@ import { createAndroidSession } from './session.js'
 import type { AndroidAdapterConfig } from './types.js'
 
 const ANDROID_FILLABLE_ROLES = new Set(['textbox', 'searchbox', 'edittext', 'combobox'])
+
+// UiAutomator2 refuses getAttribute for showing-hint and multiline although it lists them, so they
+// are read through XPath over the focused node's page-source attributes (437 Pitfall 5).
+const FOCUSED_XPATH = '//*[@focused="true"]'
+const FOCUSED_HINT_XPATH = '//*[@focused="true" and @showing-hint="true"]'
+const ENTER_KEYCODE = 66
 const ANDROID_NATIVE_SELECT_ROLES = new Set(['combobox', 'spinbutton', 'listbox', 'list'])
 const ANDROID_NATIVE_SELECT_TYPES = new Set([
   'android.widget.Spinner',
@@ -84,6 +92,11 @@ function firstNonEmpty(...values: Array<string | null | undefined>): string | un
     if (trimmed) return trimmed
   }
   return undefined
+}
+
+function firstErrorLine(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err)
+  return message.split('\n')[0]!.trim()
 }
 
 function isAndroidWebContextName(context: string): boolean {
@@ -877,13 +890,35 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     }
   }
 
+  private async focusedMatches(xpath: string): Promise<boolean> {
+    try {
+      return await (await this.driver!.$(xpath)).isExisting()
+    } catch {
+      return false
+    }
+  }
+
+  /** An empty field's getText() returns its hint (437 Pitfall 4), so a showing hint reads ''. */
+  private async readFocusedValue(el: { getText: () => Promise<string> }): Promise<string | undefined> {
+    if (await this.focusedMatches(FOCUSED_HINT_XPATH)) return ''
+    return await this.readElementText(el)
+  }
+
+  /** The one submit mechanism on every Android path (437 D-13); pressed once, never retried. */
+  private async pressEnter(): Promise<FillSubmitMeta> {
+    try {
+      await this.driver!.execute('mobile: pressKey', { keycode: ENTER_KEYCODE })
+      return { sent: true, outcome: 'sent' }
+    } catch (err) {
+      return { sent: false, outcome: 'failed', detail: firstErrorLine(err) }
+    }
+  }
+
   /**
-   * EXEC-01 native fill compound (D-05..D-08). From the SAME focused-element handle: (append)
-   * capture the prior text FIRST then addValue, or (replace) setValue; RE-READ via getText() on
-   * that same handle; verdict via compareFillReread; Enter (keycode 66) only AFTER a passing
-   * re-read and only when submit. Password fields (getAttribute('password')==='true') take the
-   * secure lane — the comparator yields length sentinels, so no raw value enters the result
-   * (T-359-02). Single typing attempt; a mismatch is success:false with the §7.1 error.
+   * Native fill from the focused handle (437 D-09, D-10, D-13, D-17). Delivers once (addValue for
+   * append, setValue for replace), reads back from the same handle and records the shared verdict.
+   * An unknown append prior or an unreadable read-back is unverified, which never stops a
+   * requested Enter; a mismatch holds it. A secure field yields length sentinels only.
    */
   private async fillNativeCompound(
     el: {
@@ -895,11 +930,9 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     action: { text: string; clearMode: 'replace' | 'append'; submit: boolean },
     box: { coordinates: { x: number; y: number }; boundingBox: { x: number; y: number; width: number; height: number } },
   ): Promise<ActionResult> {
-    const driver = this.driver!
     const isAppend = action.clearMode === 'append'
-    // Prior value FIRST for append (expected = prior + typed, D-07) — before any typing.
-    const prior = isAppend ? (await this.readElementText(el)) ?? '' : ''
-    const secure = (await el.getAttribute('password')) === 'true'
+    const secure = (await el.getAttribute('password').catch(() => null)) === 'true'
+    const prior = isAppend ? await this.readFocusedValue(el) : ''
 
     if (isAppend) {
       await el.addValue(action.text)
@@ -907,21 +940,38 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       await el.setValue(action.text)
     }
 
-    const expected = isAppend ? prior + action.text : action.text
-    const actual = await this.readElementText(el)
-    // Unreadable re-read ⇒ honest success with NO fillReread block (never fabricate).
-    if (actual === undefined) {
-      return { success: true, ...box }
+    const actual = prior === undefined ? undefined : await this.readFocusedValue(el)
+    const verdict = compareFillReread({ expected: (prior ?? '') + action.text, actual, secure })
+    const fillVerdict: FillVerdictMeta = {
+      verb: 'fill',
+      verdict: verdict.verdict,
+      path: 'native',
+      ...(verdict.secure ? { secure: true as const } : {}),
     }
 
-    const verdict = compareFillReread({ expected, actual, secure })
-    // Enter AFTER the re-read, only when the text landed (D-07, A4).
-    if (verdict.ok && action.submit) {
-      await driver.execute('mobile: pressKey', { keycode: 66 })
+    let fillSubmit: FillSubmitMeta | undefined
+    if (action.submit) {
+      fillSubmit = verdict.verdict === 'mismatch'
+        ? { sent: false, outcome: 'not-sent', reason: 'mismatch' }
+        : await this.pressEnter()
     }
-    return verdict.ok
-      ? { success: true, ...box, metadata: { fillReread: verdict.meta } }
-      : { success: false, error: verdict.selfCorrectingError, ...box, metadata: { fillReread: verdict.meta } }
+    const metadata = {
+      ...(verdict.meta ? { fillReread: verdict.meta } : {}),
+      fillVerdict,
+      ...(fillSubmit ? { fillSubmit } : {}),
+    }
+    if (!verdict.ok) return { success: false, error: verdict.selfCorrectingError, ...box, metadata }
+    if (fillSubmit?.outcome === 'failed') {
+      return {
+        success: false,
+        error:
+          'fill typed the text, but Enter failed and was not sent again. Re-observe the screen; '
+          + 'if the field still holds the text, submit it without typing it again.',
+        ...box,
+        metadata,
+      }
+    }
+    return { success: true, ...box, metadata }
   }
 
   /**
@@ -1253,7 +1303,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
           .up({ button: 0 })
           )
         try {
-          const el = await driver.$('//*[@focused="true"]')
+          const el = await driver.$(FOCUSED_XPATH)
           if (await el.isExisting()) {
             return await this.fillNativeCompound(el, action, box)
           }
@@ -1265,7 +1315,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
         // signal-presence law: never fabricate a re-read pair.
         await driver.keys([action.text])
         try {
-          const el = await driver.$('//*[@focused="true"]')
+          const el = await driver.$(FOCUSED_XPATH)
           if (await el.isExisting()) {
             const secure = (await el.getAttribute('password')) === 'true'
             const actual = await this.readElementText(el)
@@ -1570,7 +1620,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
           .up({ button: 0 })
           )
         try {
-          const el = await driver.$('//*[@focused="true"]')
+          const el = await driver.$(FOCUSED_XPATH)
           if (await el.isExisting()) {
             await el.clearValue()
           }

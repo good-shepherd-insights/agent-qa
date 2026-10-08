@@ -96,7 +96,10 @@ function createMockDriver() {
     getContexts: vi.fn().mockResolvedValue(['NATIVE_APP']),
     switchContext: vi.fn().mockResolvedValue(undefined),
     url: vi.fn().mockRejectedValue(new Error('not supported')),
-    $: vi.fn().mockImplementation(() => Promise.resolve(mockElement)),
+    // 437-05: only the focused-node lookup finds the field; the showing-hint and multiline probes
+    // match nothing, so the field reads as a non-empty single value.
+    $: vi.fn().mockImplementation((selector: string) =>
+      Promise.resolve(selector === '//*[@focused="true"]' ? mockElement : { isExisting: () => Promise.resolve(false) })),
     _pointerAction: pointerAction,
   }
 }
@@ -152,21 +155,32 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       const typeIdx = calls.findIndex(c => c.startsWith('setValue:'))
       const readIdx = calls.indexOf('getText')
       expect(readIdx).toBeGreaterThan(typeIdx)
+      expect(result.metadata).toEqual({
+        fillReread: { expected: 'hello', actual: 'hello' },
+        fillVerdict: { verb: 'fill', verdict: 'exact', path: 'native' },
+      })
     })
 
     it('append mode captures prior getText() BEFORE typing and uses addValue (A1)', async () => {
       await adapter.setup({ platform: 'android' })
       const ref = await refFor('Username')
       focusedGetTextReturn = 'abc'
+      mockElement.addValue.mockImplementation((v: string) => {
+        calls.push(`addValue:${v}`)
+        focusedGetTextReturn = `abc${v}`
+        return Promise.resolve()
+      })
       calls.length = 0
 
-      await adapter.execute({ type: 'fill', ref, text: 'XYZ', clearMode: 'append', submit: false } as unknown as ExecAction)
+      const result = await adapter.execute({ type: 'fill', ref, text: 'XYZ', clearMode: 'append', submit: false } as unknown as ExecAction)
 
       expect(mockElement.addValue).toHaveBeenCalledWith('XYZ')
       const priorReadIdx = calls.indexOf('getText')
       const typeIdx = calls.findIndex(c => c.startsWith('addValue:'))
       expect(priorReadIdx).toBeGreaterThanOrEqual(0)
       expect(priorReadIdx).toBeLessThan(typeIdx)
+      expect(result.metadata?.fillReread).toEqual({ expected: 'abcXYZ', actual: 'abcXYZ' })
+      expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'exact', path: 'native' })
     })
 
     it('submit=true presses KEYCODE_ENTER (mobile: pressKey keycode 66) AFTER the re-read (A4); submit=false does not', async () => {
@@ -175,12 +189,40 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       focusedGetTextReturn = 'hello'
       calls.length = 0
 
-      await adapter.execute({ type: 'fill', ref, text: 'hello', clearMode: 'replace', submit: true } as unknown as ExecAction)
+      const result = await adapter.execute({ type: 'fill', ref, text: 'hello', clearMode: 'replace', submit: true } as unknown as ExecAction)
 
       expect(mockDriver.execute).toHaveBeenCalledWith('mobile: pressKey', { keycode: 66 })
       const readIdx = calls.indexOf('getText')
       const enterIdx = calls.findIndex(c => c.includes('mobile: pressKey') && c.includes('66'))
       expect(enterIdx).toBeGreaterThan(readIdx)
+      expect(result.metadata?.fillSubmit).toEqual({ sent: true, outcome: 'sent' })
+
+      calls.length = 0
+      const unsubmitted = await adapter.execute({ type: 'fill', ref, text: 'hello', clearMode: 'replace', submit: false } as unknown as ExecAction)
+      expect(calls.some(c => c.includes('mobile: pressKey'))).toBe(false)
+      expect(unsubmitted.metadata).not.toHaveProperty('fillSubmit')
+    })
+
+    it('437 D-09: an unreadable re-read is unverified and still sends the requested Enter, after setValue and the read attempt', async () => {
+      await adapter.setup({ platform: 'android' })
+      const ref = await refFor('Username')
+      mockElement.getText.mockImplementation(() => { calls.push('getText'); return Promise.reject(new Error('stale element')) })
+      calls.length = 0
+
+      const result = await adapter.execute({ type: 'fill', ref, text: 'hello', clearMode: 'replace', submit: true } as unknown as ExecAction)
+
+      const typeIdx = calls.indexOf('setValue:hello')
+      const readIdx = calls.indexOf('getText')
+      const enterIdx = calls.findIndex(c => c.includes('mobile: pressKey') && c.includes('66'))
+      expect(typeIdx).toBeGreaterThanOrEqual(0)
+      expect(readIdx).toBeGreaterThan(typeIdx)
+      expect(enterIdx).toBeGreaterThan(readIdx)
+      expect(calls.filter(c => c.includes('mobile: pressKey'))).toHaveLength(1)
+      expect(result.success).toBe(true)
+      expect(result.metadata).toEqual({
+        fillVerdict: { verb: 'fill', verdict: 'unverified', path: 'native' },
+        fillSubmit: { sent: true, outcome: 'sent' },
+      })
     })
 
     it('mismatch yields success:false + §7.1 error + fillReread meta, single-shot typing (D-08)', async () => {
@@ -193,6 +235,8 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       expect(result.success).toBe(false)
       expect(result.error).toMatch(/reads .* after typing .* re-observe and retry/i)
       expect(result.metadata?.fillReread).toEqual({ expected: 'intended', actual: 'wrong' })
+      expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'mismatch', path: 'native' })
+      expect(result.metadata).not.toHaveProperty('fillSubmit')
       expect(mockElement.setValue).toHaveBeenCalledTimes(1)
       expect(mockElement.addValue).not.toHaveBeenCalled()
     })
@@ -206,7 +250,8 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       const result = await adapter.execute({ type: 'fill', ref, text: 'topSecretPw', clearMode: 'replace', submit: false } as unknown as ExecAction)
 
       expect(result.success).toBe(true)
-      expect(result.metadata?.fillReread).toBeDefined()
+      expect(result.metadata?.fillReread).toEqual({ expected: '<len:11>', actual: '<len:11>' })
+      expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'unverified', path: 'native', secure: true })
       expect(JSON.stringify(result)).not.toContain('topSecretPw')
     })
   })
