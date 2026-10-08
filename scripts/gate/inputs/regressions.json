@@ -2472,6 +2472,78 @@
       "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
       "fullName": "C436-CLIPBOARD-HEADED the launch-mode rule treats anything but a plain headless launch as headed",
       "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-ORACLE a thousand forged claims in one action confirm nothing",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-ORACLE a forged final claim equal to the clipboard is never matched",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-ORACLE the clipboard evidence does not depend on what the clipboard held",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-ORACLE forged guesses across actions are never matched",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-ORACLE a genuine write after forged claims is matched and the forged ones are not",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-ORACLE an app write of the text the clipboard already held reads unavailable",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-ORACLE forged claims from a same-origin and a cross-origin iframe confirm nothing",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-ORACLE a forged claim from a popup the click opened confirms nothing",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-ORACLE a forged copy of agent-qa's own copy confirms nothing",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-CLIPBOARD-ORACLE nothing but a status crosses from the probe page",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-PROBE-LIFECYCLE a probe closed between the pre-image and the read-back reads unavailable and keeps held downloads",
+      "origin": "436 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-PROBE-LIFECYCLE a probe whose read never settles is skipped while that probe lives",
+      "origin": "436 D-21"
     }
   ]
 }

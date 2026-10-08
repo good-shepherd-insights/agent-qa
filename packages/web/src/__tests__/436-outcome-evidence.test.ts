@@ -227,6 +227,9 @@ describe('C436-OUTCOME-EVIDENCE', () => {
         plannerConfig: LIMITS,
       })
       expect(first.result.status).toBe('passed')
+      // 2026-10-08 (436-21): the replay stands for a later run, whose clipboard does not already
+      // hold the copied text; rewriting identical text reads `unavailable` (owner ruling on D-21).
+      await web.getPage()!.evaluate("navigator.clipboard.writeText('BEFORE-REPLAY')")
 
       const planner = scriptedPlanner([copyOrder])
       const verifier = scriptedVerifier(clipboardCheck)

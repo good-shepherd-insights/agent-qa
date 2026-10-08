@@ -21,6 +21,12 @@
 // opened once more; held downloads survive it and only dispose() cancels them (WR-18).
 // 2026-10-08 (436-21): a headed or undetermined launch never reads the clipboard and opens no
 // probe (owner ruling on D-21); its app writes are recorded `unavailable`.
+// 2026-10-08 (436-21): in a headless launch the probe page takes a pre-image of the run-local
+// clipboard before each clipboard-armed action, and only the final claim is compared after it:
+// `matched` needs the clipboard to have changed during the action and to equal that claim (WR-17).
+// The pre-image stays in the probe page; only status words and numbers leave it. At most
+// CLIPBOARD_CLAIMS_PER_ACTION claims are kept per action in either mode, and a probe whose read
+// does not settle is skipped until it is replaced.
 
 import { createHash } from 'node:crypto'
 import { extname } from 'node:path'
@@ -77,9 +83,66 @@ export const CLIPBOARD_BINDING = '__agentQaAppClipboardWrite'
 const CLIPBOARD_EXCLUDED_ACTIONS: ReadonlySet<string> = new Set(['copy', 'paste'])
 const CLIPBOARD_SOURCES: ReadonlySet<string> = new Set(['writeText', 'write', 'copy-event'])
 export const READ_BACK_TIMEOUT_MS = 2_000
+/** The most recent app clipboard claims kept per action; older ones are dropped. */
+export const CLIPBOARD_CLAIMS_PER_ACTION = 8
 /** The reserved origin of the read-back probe page; nothing else loads in the probe context. */
 export const CLIPBOARD_READBACK_ORIGIN = 'https://agent-qa-readback.invalid'
-const READ_BACK_UNREADABLE = -2
+// The probe page's compare() answers that confirm anything; -2 (no pre-image or unreadable) and
+// -3 (unchanged) confirm nothing.
+const PROBE_MATCHED = 1
+const PROBE_DIFFERENT = 0
+
+type ProbeStatus = 'none' | 'read' | 'unreadable'
+
+interface ProbeReadback {
+  readonly status: ProbeStatus
+  snapshot(): Promise<ProbeStatus>
+  compare(finalText: string): Promise<number>
+}
+
+type ProbeScope = typeof globalThis & { __agentQaReadback: ProbeReadback }
+
+// Runs once in the probe page. The pre-image lives only in this closure; readText is looked up at
+// call time.
+function installProbeReadback(): void {
+  const scope = globalThis as unknown as {
+    navigator: { clipboard: { readText: () => Promise<unknown> } }
+  }
+  let preImage: string | undefined
+  let status: ProbeStatus = 'none'
+  const read = async (): Promise<string | undefined> => {
+    try {
+      const text = await scope.navigator.clipboard.readText()
+      return typeof text === 'string' ? text : undefined
+    } catch {
+      return undefined
+    }
+  }
+  Object.defineProperty(globalThis, '__agentQaReadback', {
+    value: Object.freeze({
+      get status() { return status },
+      async snapshot() {
+        preImage = undefined
+        status = 'none'
+        const text = await read()
+        if (text === undefined) {
+          status = 'unreadable'
+        } else {
+          preImage = text
+          status = 'read'
+        }
+        return status
+      },
+      async compare(finalText: string) {
+        if (status !== 'read') return -2
+        const now = await read()
+        if (now === undefined) return -2
+        if (now === preImage) return -3
+        return now === finalText ? 1 : 0
+      },
+    }),
+  })
+}
 
 export type CapturedClipboardWrite = Pick<ClipboardEvidence, 'source' | 'text' | 'readBack'>
 
@@ -216,6 +279,10 @@ export class OperationCapture {
   private probeContext: BrowserContext | null = null
   private probeGeneration = 0
   private readonly readsClipboard: boolean
+  /** The probe generation holding this action's pre-image; -1 when none was read. */
+  private preImageGeneration = -1
+  /** A probe generation whose read did not settle; skipped until resetProbe() replaces it. */
+  private unreadableGeneration = -1
 
   constructor(options: OperationCaptureOptions = {}) {
     this.completionCapMs = options.completionCapMs ?? DOWNLOAD_COMPLETION_CAP_MS
@@ -236,14 +303,14 @@ export class OperationCapture {
     await context.addInitScript(CLIPBOARD_HOOK)
   }
 
-  arm(action: DownloadActivationInput, options: ExecuteOptions = {}): void {
+  async arm(action: DownloadActivationInput, options: ExecuteOptions = {}): Promise<void> {
     const carried = [...this.downloads.map((entry) => entry.download), ...this.held]
     this.held = []
     this.downloads = carried.map((download) => ({ download, late: true }))
     this.clipboardWrites = []
     this.armed = true
     this.startWindow = true
-    this.clipboardArmed = !CLIPBOARD_EXCLUDED_ACTIONS.has(action.type)
+    this.clipboardArmed = false
     this.activation = isDownloadActivation(action)
     this.navigationWindow = this.activation
     this.navigationSettledAt = 0
@@ -252,6 +319,11 @@ export class OperationCapture {
     this.boundAt = Date.now()
       + (typeof remaining === 'number' && Number.isFinite(remaining) ? Math.max(0, remaining) : this.completionCapMs)
     this.abortSignal = options.abortSignal
+    this.preImageGeneration = -1
+    const clipboardAction = !CLIPBOARD_EXCLUDED_ACTIONS.has(action.type)
+    if (this.readsClipboard && clipboardAction && this.timeLeft() > 0) await this.takePreImage()
+    // Claims count only once the pre-image step settled, so a write made during it is not attributed.
+    this.clipboardArmed = this.armed && clipboardAction
   }
 
   private timeLeft(): number {
@@ -301,6 +373,7 @@ export class OperationCapture {
       this.downloads = []
       this.clipboardWrites = []
       this.abortSignal = undefined
+      this.preImageGeneration = -1
     }
   }
 
@@ -347,74 +420,105 @@ export class OperationCapture {
     const { via, text } = payload as Record<string, unknown>
     if (typeof via !== 'string' || !CLIPBOARD_SOURCES.has(via) || typeof text !== 'string') return
     this.clipboardWrites.push({ source: via as ClipboardEvidence['source'], text, frame })
+    if (this.clipboardWrites.length > CLIPBOARD_CLAIMS_PER_ACTION) this.clipboardWrites.shift()
   }
 
-  // The clipboard holds only the last write, so the read-back confirms that one; an earlier write
-  // whose text differs was overwritten and cannot be confirmed either way.
+  // Takes the probe page's pre-image of the clipboard; a closed or crashed probe is replaced once.
+  private async takePreImage(): Promise<void> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const probe = await this.openProbe()
+      if (!probe) return
+      if (probe.isClosed()) {
+        await this.resetProbe()
+        continue
+      }
+      const generation = this.probeGeneration
+      const bound = Math.min(READ_BACK_TIMEOUT_MS, this.timeLeft())
+      if (generation === this.unreadableGeneration || bound <= 0) return
+      try {
+        const status = await this.bounded(
+          probe.evaluate(() => (globalThis as ProbeScope).__agentQaReadback.snapshot()),
+          bound,
+        )
+        if (status === undefined) this.markUnreadable(generation, bound)
+        else if (status === 'read' && generation === this.probeGeneration) this.preImageGeneration = generation
+        return
+      } catch {
+        await this.resetProbe()
+      }
+    }
+  }
+
+  // Only the final claim is compared, against a clipboard that changed during the action; an
+  // earlier claim is matched only when its text equals a matched final claim.
   private async readBack(writes: PendingClipboardWrite[]): Promise<CapturedClipboardWrite[]> {
     const last = writes.length - 1
-    const index = await this.readClipboard(writes[last]!.frame, writes.map((write) => write.text))
-    const matched = index !== undefined && index >= 0 ? writes[index]!.text : undefined
+    const final = writes[last]!
+    const answer = await this.readClipboard(final.frame, final.text)
     return writes.map(({ source, text }, position) => ({
       source,
       text,
-      readBack: index === undefined
-        ? 'unavailable'
-        : text === matched ? 'matched' : position === last ? 'mismatched' : 'unavailable',
+      readBack: answer === PROBE_MATCHED && text === final.text
+        ? 'matched'
+        : answer === PROBE_DIFFERENT && position === last ? 'mismatched' : 'unavailable',
     }))
   }
 
-  // The index of the last claimed text equal to the clipboard, -1 for none, undefined when the
-  // clipboard cannot be read. The clipboard text itself never leaves the probe page.
-  private async readClipboard(frame: Frame, texts: string[]): Promise<number | undefined> {
+  // PROBE_MATCHED or PROBE_DIFFERENT when the clipboard changed during the action, else undefined.
+  // Only the final claim's text enters the probe page and only a number comes back.
+  private async readClipboard(frame: Frame, finalText: string): Promise<number | undefined> {
+    const generation = this.preImageGeneration
+    if (generation < 0 || generation !== this.probeGeneration || generation === this.unreadableGeneration) {
+      return undefined
+    }
     if (frame.isDetached()) return undefined
     try {
       if (new URL(frame.url()).origin === 'null') return undefined
     } catch {
       return undefined
     }
-    const secure = await frame
-      .evaluate('window.isSecureContext && !!(navigator.clipboard && navigator.clipboard.readText)')
-      .catch(() => false)
+    const frameBound = Math.min(READ_BACK_TIMEOUT_MS, this.timeLeft())
+    if (frameBound <= 0) return undefined
+    const secure = await this.bounded(
+      frame.evaluate('window.isSecureContext && !!(navigator.clipboard && navigator.clipboard.readText)'),
+      frameBound,
+    ).catch(() => false)
     if (secure !== true) return undefined
-    let index: number | undefined
-    for (let attempt = 0; ; attempt += 1) {
-      const probe = await this.openProbe()
-      if (!probe) return undefined
-      try {
-        if (probe.isClosed()) throw new Error('probe closed')
-        index = await this.askProbe(probe, texts)
-        break
-      } catch {
-        // The probe page closed or crashed, or its context went away: replace it once.
-        await this.resetProbe()
-        if (attempt > 0) return undefined
-      }
+    const probe = await this.openProbe()
+    const bound = Math.min(READ_BACK_TIMEOUT_MS, this.timeLeft())
+    if (!probe || generation !== this.probeGeneration || bound <= 0) return undefined
+    let answer: number | undefined
+    try {
+      if (probe.isClosed()) throw new Error('probe closed')
+      answer = await this.bounded(
+        probe.evaluate((text: string) => (globalThis as ProbeScope).__agentQaReadback.compare(text), finalText),
+        bound,
+      )
+    } catch {
+      // The probe page closed or crashed, or its context went away; its pre-image went with it.
+      await this.resetProbe()
+      return undefined
     }
-    if (typeof index !== 'number' || index === READ_BACK_UNREADABLE || index >= texts.length) return undefined
-    return index < 0 ? -1 : index
+    if (answer === undefined) this.markUnreadable(generation, bound)
+    return answer === PROBE_MATCHED || answer === PROBE_DIFFERENT ? answer : undefined
   }
 
-  // Rejects when the probe page is gone; resolves undefined on a timeout.
-  private askProbe(probe: Page, texts: string[]): Promise<number | undefined> {
-    return withTimeout(
-      probe.evaluate(async (claimed: string[]) => {
-        const scope = globalThis as unknown as {
-          isSecureContext?: boolean
-          navigator?: { clipboard?: { readText?: () => Promise<string> } }
-        }
-        const clipboard = scope.navigator?.clipboard
-        if (scope.isSecureContext !== true || typeof clipboard?.readText !== 'function') return -2
-        let text: string
-        try {
-          text = await clipboard.readText()
-        } catch {
-          return -2
-        }
-        return claimed.lastIndexOf(text)
-      }, texts),
-      READ_BACK_TIMEOUT_MS,
-    )
+  // A read cut short by the step's time or its abort says nothing about the probe.
+  private markUnreadable(generation: number, bound: number): void {
+    if (bound >= READ_BACK_TIMEOUT_MS && !this.abortSignal?.aborted) this.unreadableGeneration = generation
+  }
+
+  // Resolves undefined after `ms` or on the action's abort; rejects when `promise` rejects.
+  private async bounded<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
+    let off = (): void => undefined
+    try {
+      return await Promise.race([
+        withTimeout(promise, ms),
+        new Promise<undefined>((resolve) => { off = this.onAbort(() => { resolve(undefined) }) }),
+      ])
+    } finally {
+      off()
+    }
   }
 
   private openProbe(): Promise<Page | undefined> {
@@ -447,7 +551,11 @@ export class OperationCapture {
       })
       await context.grantPermissions(['clipboard-read'], { origin: CLIPBOARD_READBACK_ORIGIN })
       const page = await context.newPage()
+      page.once('crash', () => {
+        if (generation === this.probeGeneration) void this.resetProbe()
+      })
       await page.goto(`${CLIPBOARD_READBACK_ORIGIN}/`)
+      await page.evaluate(installProbeReadback)
       return page
     } catch {
       if (generation === this.probeGeneration) {
@@ -474,6 +582,7 @@ export class OperationCapture {
   private async resetProbe(): Promise<void> {
     const context = this.probeContext
     this.probeGeneration += 1
+    this.unreadableGeneration = -1
     this.probe = null
     this.probeContext = null
     await context?.close().catch(() => undefined)
