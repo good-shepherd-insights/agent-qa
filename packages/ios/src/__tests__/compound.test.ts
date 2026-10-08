@@ -171,6 +171,11 @@ describe('IOSPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       await adapter.setup({ platform: 'ios' })
       const ref = await refFor('Email')
       fieldValueReturn = 'abc'
+      mockElement.addValue.mockImplementation((v: string) => {
+        calls.push(`addValue:${v}`)
+        fieldValueReturn = `abc${v}`
+        return Promise.resolve()
+      })
       calls.length = 0
 
       const result = await adapter.execute({ type: 'fill', ref, text: 'XYZ', clearMode: 'append', submit: false } as unknown as ExecAction)
@@ -181,6 +186,7 @@ describe('IOSPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       expect(priorReadIdx).toBeGreaterThanOrEqual(0)
       expect(priorReadIdx).toBeLessThan(typeIdx)
       expect(result.metadata?.fillReread).toMatchObject({ expected: 'abcXYZ' })
+      expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'exact' })
     })
 
     it('secure field (XCUIElementTypeSecureTextField) verdicts on non-emptiness only; raw value absent from result (D-06, Pitfall 7)', async () => {
@@ -192,6 +198,7 @@ describe('IOSPlatformAdapter compound behaviors (RED — Wave-0)', () => {
 
       expect(result.success).toBe(true)
       expect(result.metadata?.fillReread).toBeDefined()
+      expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'unverified', secure: true })
       expect(JSON.stringify(result)).not.toContain('topSecretPw')
     })
 
@@ -204,7 +211,10 @@ describe('IOSPlatformAdapter compound behaviors (RED — Wave-0)', () => {
 
       expect(result.success).toBe(false)
       expect(result.error).toMatch(/reads .* after typing .* re-observe and retry/i)
-      expect(result.metadata?.fillReread).toEqual({ expected: 'intended', actual: 'wrong' })
+      expect(result.metadata).toEqual({
+        fillReread: { expected: 'intended', actual: 'wrong' },
+        fillVerdict: { verb: 'fill', verdict: 'mismatch' },
+      })
       expect(mockElement.setValue).toHaveBeenCalledTimes(1)
     })
 

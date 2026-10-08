@@ -255,6 +255,90 @@ describe('EXEC-04 — a satisfied desiredState no-ops at the dispatch seam witho
 })
 
 // -----------------------------------------------------------------------------
+// 437 D-06: a fill counts as one compound input whether its read-back was readable or unverified
+// -----------------------------------------------------------------------------
+function scriptedAdapter(observation: ScreenState, result: ActionResult): PlatformAdapter {
+  return {
+    platform: 'web',
+    async setup() {},
+    async cleanup() {},
+    async observe() {
+      return observation
+    },
+    async execute(): Promise<ActionResult> {
+      return result
+    },
+  }
+}
+
+describe('437 D-06 — an unverified fill still counts as one compound input', () => {
+  const observation = buildAgentScreenState({
+    url: 'https://x.test/form',
+    elements: [{ ref: 'e1', role: 'textbox', name: 'Name', bounds: { x: 20, y: 80, width: 300, height: 44 } }],
+    metadata: { coordSpace: 'viewport', viewportWidth: 390, viewportHeight: 844 },
+  })
+
+  async function runOne(action: { type: string; [key: string]: unknown }, result: ActionResult) {
+    return executeStep(
+      'Fill the name',
+      ports({
+        adapter: scriptedAdapter(observation, result),
+        planner: makePlanner([makeActionPlan({ action, stepComplete: true })]),
+        verifier: makeVerifier(),
+        plannerConfig: { maxActions: 4, maxPlanningTurns: 4, previousStepCount: 0 },
+      }),
+      makeStepContext(),
+    )
+  }
+
+  it('a result carrying only fillVerdict unverified counts one fill input', async () => {
+    const result = await runOne(
+      { type: 'fill', ref: 'e1', text: 'Ada', clearMode: 'replace', submit: false },
+      { success: true, metadata: { fillVerdict: { verb: 'fill', verdict: 'unverified' } } },
+    )
+    expect(result.evidence?.limitUsage?.compoundInputs).toEqual([{ subActionIndex: 0, kind: 'fill', count: 1 }])
+  })
+
+  it('a result carrying fillReread and fillVerdict counts once, not twice', async () => {
+    const result = await runOne(
+      { type: 'fill', ref: 'e1', text: 'Ada', clearMode: 'replace', submit: false },
+      {
+        success: true,
+        metadata: { fillReread: { expected: 'Ada', actual: 'Ada' }, fillVerdict: { verb: 'fill', verdict: 'exact' } },
+      },
+    )
+    expect(result.evidence?.limitUsage?.compoundInputs).toEqual([{ subActionIndex: 0, kind: 'fill', count: 1 }])
+  })
+
+  it('a clearText verdict counts no fill input', async () => {
+    const result = await runOne(
+      { type: 'clearText', ref: 'e1' },
+      { success: true, metadata: { fillVerdict: { verb: 'clearText', verdict: 'exact' } } },
+    )
+    expect(result.evidence?.limitUsage?.compoundInputs).toBeUndefined()
+  })
+
+  it('a clearText verdict beside a fillReread block still counts no fill input', async () => {
+    const result = await runOne(
+      { type: 'clearText', ref: 'e1' },
+      {
+        success: true,
+        metadata: { fillReread: { expected: '', actual: '' }, fillVerdict: { verb: 'clearText', verdict: 'exact' } },
+      },
+    )
+    expect(result.evidence?.limitUsage?.compoundInputs).toBeUndefined()
+  })
+
+  it('a pre-437 result with fillReread alone still counts one fill input', async () => {
+    const result = await runOne(
+      { type: 'fill', ref: 'e1', text: 'Ada', clearMode: 'replace', submit: false },
+      { success: true, metadata: { fillReread: { expected: 'Ada', actual: 'Ada' } } },
+    )
+    expect(result.evidence?.limitUsage?.compoundInputs).toEqual([{ subActionIndex: 0, kind: 'fill', count: 1 }])
+  })
+})
+
+// -----------------------------------------------------------------------------
 // Frozen catalog — the phase's desiredState is a PARAM on an existing tool (counts unchanged)
 // -----------------------------------------------------------------------------
 describe('frozen tool catalog — EXEC compounds register no tools', () => {

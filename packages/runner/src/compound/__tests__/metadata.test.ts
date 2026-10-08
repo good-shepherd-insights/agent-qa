@@ -4,6 +4,7 @@ import {
   readFillSubmitMeta,
   readFillVerdictMeta,
   readScrollUntilVisibleMeta,
+  readShellActionMeta,
   SCROLL_OUTCOMES_READ_ONLY,
   SCROLL_OUTCOMES_WRITTEN,
 } from '../metadata.js'
@@ -21,6 +22,12 @@ describe('readFillRefusalMeta', () => {
     for (const evidence of ['no-keyboard-focus', 'focus-elsewhere']) {
       expect(readFillRefusalMeta(carrier({ fillRefusal: { verb: 'fill', cause: 'not-editable', evidence } }))?.evidence).toBe(evidence)
     }
+  })
+
+  it('reads the 437 single-line refusal pair (owner 2026-10-08, refuse before typing)', () => {
+    expect(
+      readFillRefusalMeta(carrier({ fillRefusal: { verb: 'fill', cause: 'single-line-field', evidence: 'text-has-line-breaks' } })),
+    ).toEqual({ verb: 'fill', cause: 'single-line-field', evidence: 'text-has-line-breaks' })
   })
 
   it('returns undefined on any shape miss', () => {
@@ -53,6 +60,53 @@ describe('readFillSubmitMeta', () => {
     expect(readFillSubmitMeta(carrier({ fillSubmit: { sent: 'yes' } }))).toBeUndefined()
     expect(readFillSubmitMeta(carrier({ fillSubmit: { sent: false, reason: 'other' } }))).toBeUndefined()
     expect(readFillSubmitMeta(carrier({ fillSubmit: { sent: false, reason: 3 } }))).toBeUndefined()
+  })
+
+  it('reads the 437 outcome shapes (D-17)', () => {
+    const cases: Record<string, unknown>[] = [
+      { sent: true, outcome: 'sent' },
+      { sent: false, outcome: 'not-sent', reason: 'mismatch' },
+      { sent: false, outcome: 'not-sent', reason: 'input-failed' },
+      { sent: false, outcome: 'not-sent', reason: 'multi-line-field' },
+      { sent: false, outcome: 'unavailable', detail: 'adb_shell not enabled' },
+      { sent: false, outcome: 'failed', detail: 'socket hang up' },
+    ]
+    for (const block of cases) {
+      expect(readFillSubmitMeta(carrier({ fillSubmit: block }))).toEqual(block)
+    }
+  })
+
+  it('rejects an unknown outcome or reason, and a sent that contradicts the outcome', () => {
+    expect(readFillSubmitMeta(carrier({ fillSubmit: { sent: false, outcome: 'skipped' } }))).toBeUndefined()
+    expect(readFillSubmitMeta(carrier({ fillSubmit: { sent: false, outcome: 'not-sent', reason: 'busy' } }))).toBeUndefined()
+    for (const outcome of ['not-sent', 'unavailable', 'failed']) {
+      expect(readFillSubmitMeta(carrier({ fillSubmit: { sent: true, outcome } }))).toBeUndefined()
+    }
+    expect(readFillSubmitMeta(carrier({ fillSubmit: { sent: false, outcome: 'sent' } }))).toBeUndefined()
+    expect(readFillSubmitMeta(carrier({ fillSubmit: { sent: true, reason: 'mismatch' } }))).toBeUndefined()
+    expect(readFillSubmitMeta(carrier({ fillSubmit: { sent: false, outcome: 'failed', detail: 7 } }))).toBeUndefined()
+  })
+})
+
+describe('readShellActionMeta (D-18)', () => {
+  it('reads an unavailable keyevent and a failed openQuickSettings', () => {
+    expect(
+      readShellActionMeta(carrier({ shellAction: { verb: 'keyevent', outcome: 'unavailable', reason: 'adb-shell-disabled' } })),
+    ).toEqual({ verb: 'keyevent', outcome: 'unavailable', reason: 'adb-shell-disabled' })
+    expect(
+      readShellActionMeta(carrier({ shellAction: { verb: 'openQuickSettings', outcome: 'failed', detail: 'device offline' } })),
+    ).toEqual({ verb: 'openQuickSettings', outcome: 'failed', detail: 'device offline' })
+  })
+
+  it('rejects anything else', () => {
+    expect(readShellActionMeta(undefined)).toBeUndefined()
+    expect(readShellActionMeta(carrier({}))).toBeUndefined()
+    expect(readShellActionMeta(carrier({ shellAction: 'unavailable' }))).toBeUndefined()
+    expect(readShellActionMeta(carrier({ shellAction: { verb: 'tap', outcome: 'failed' } }))).toBeUndefined()
+    expect(readShellActionMeta(carrier({ shellAction: { verb: 'keyevent', outcome: 'sent' } }))).toBeUndefined()
+    expect(readShellActionMeta(carrier({ shellAction: { verb: 'keyevent', outcome: 'unavailable', reason: 'other' } }))).toBeUndefined()
+    expect(readShellActionMeta(carrier({ shellAction: { verb: 'keyevent', outcome: 'failed', detail: 1 } }))).toBeUndefined()
+    expect(readShellActionMeta(carrier({ shellAction: { outcome: 'failed' } }))).toBeUndefined()
   })
 })
 

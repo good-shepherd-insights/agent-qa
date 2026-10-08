@@ -14,6 +14,8 @@ import type {
   DownloadEvidence,
   FillVerdict,
   InputPath,
+  SubmitOutcome,
+  SubmitReason,
 } from '@vostride/agent-qa-schema'
 import type { ActionResult } from '../platform.js'
 
@@ -198,24 +200,51 @@ export function readAssertValueOutcomeMeta(
 /** Typed refusal of a fill/clearText before any text was typed. Keyed `fillRefusal`. */
 export interface FillRefusalMeta {
   verb: 'fill' | 'clearText'
-  cause: 'not-editable' | 'target-not-found'
-  evidence: 'no-editable-signal' | 'no-keyboard-focus' | 'focus-elsewhere' | 'stale-target'
+  cause: 'not-editable' | 'target-not-found' | 'single-line-field'
+  evidence:
+    | 'no-editable-signal'
+    | 'no-keyboard-focus'
+    | 'focus-elsewhere'
+    | 'stale-target'
+    | 'text-has-line-breaks'
 }
 
-/** Whether a requested submit key was sent after a fill. Keyed `fillSubmit`. */
+/**
+ * What happened to a requested submit after a fill (437 D-17). Keyed `fillSubmit`. Pre-437 blocks
+ * carry `sent` alone or `{ sent: false, reason: 'multi-line-field' }` and still read.
+ */
 export interface FillSubmitMeta {
   sent: boolean
-  reason?: 'multi-line-field'
+  outcome?: SubmitOutcome
+  reason?: SubmitReason
+  detail?: string
+}
+
+/** A shell-routed action refused or failed by the driver (437 D-18). Keyed `shellAction`. */
+export interface ShellActionMeta {
+  verb: 'keyevent' | 'openQuickSettings'
+  outcome: 'unavailable' | 'failed'
+  reason?: 'adb-shell-disabled'
+  detail?: string
 }
 
 const FILL_REFUSAL_VERBS = new Set<FillRefusalMeta['verb']>(['fill', 'clearText'])
-const FILL_REFUSAL_CAUSES = new Set<FillRefusalMeta['cause']>(['not-editable', 'target-not-found'])
+const FILL_REFUSAL_CAUSES = new Set<FillRefusalMeta['cause']>([
+  'not-editable',
+  'target-not-found',
+  'single-line-field',
+])
 const FILL_REFUSAL_EVIDENCE = new Set<FillRefusalMeta['evidence']>([
   'no-editable-signal',
   'no-keyboard-focus',
   'focus-elsewhere',
   'stale-target',
+  'text-has-line-breaks',
 ])
+const SUBMIT_OUTCOMES = new Set<SubmitOutcome>(['sent', 'not-sent', 'unavailable', 'failed'])
+const SUBMIT_REASONS = new Set<SubmitReason>(['mismatch', 'multi-line-field', 'input-failed'])
+const SHELL_VERBS = new Set<ShellActionMeta['verb']>(['keyevent', 'openQuickSettings'])
+const SHELL_OUTCOMES = new Set<ShellActionMeta['outcome']>(['unavailable', 'failed'])
 
 function isMember<T extends string>(set: ReadonlySet<T>, value: unknown): value is T {
   return typeof value === 'string' && set.has(value as T)
@@ -263,13 +292,35 @@ export function readFillVerdictMeta(actionResult?: MetadataCarrier): FillVerdict
 
 export function readFillSubmitMeta(actionResult?: MetadataCarrier): FillSubmitMeta | undefined {
   const raw = actionResult?.metadata?.['fillSubmit']
-  if (raw && typeof raw === 'object' && 'sent' in raw) {
-    const { sent, reason } = raw as Record<string, unknown>
-    if (typeof sent !== 'boolean') return undefined
-    if (reason === undefined) return { sent }
-    if (reason === 'multi-line-field') return { sent, reason }
+  if (!raw || typeof raw !== 'object') return undefined
+  const { sent, outcome, reason, detail } = raw as Record<string, unknown>
+  if (typeof sent !== 'boolean') return undefined
+  if (outcome !== undefined && (!isMember(SUBMIT_OUTCOMES, outcome) || sent !== (outcome === 'sent'))) {
+    return undefined
   }
-  return undefined
+  if (reason !== undefined) {
+    if (!isMember(SUBMIT_REASONS, reason) || sent) return undefined
+    if (outcome !== undefined && outcome !== 'not-sent') return undefined
+  }
+  if (detail !== undefined && typeof detail !== 'string') return undefined
+  const meta: FillSubmitMeta = { sent }
+  if (outcome !== undefined) meta.outcome = outcome
+  if (reason !== undefined) meta.reason = reason
+  if (detail !== undefined) meta.detail = detail
+  return meta
+}
+
+export function readShellActionMeta(actionResult?: MetadataCarrier): ShellActionMeta | undefined {
+  const raw = actionResult?.metadata?.['shellAction']
+  if (!raw || typeof raw !== 'object') return undefined
+  const { verb, outcome, reason, detail } = raw as Record<string, unknown>
+  if (!isMember(SHELL_VERBS, verb) || !isMember(SHELL_OUTCOMES, outcome)) return undefined
+  if (reason !== undefined && (reason !== 'adb-shell-disabled' || outcome !== 'unavailable')) return undefined
+  if (detail !== undefined && typeof detail !== 'string') return undefined
+  const meta: ShellActionMeta = { verb, outcome }
+  if (reason !== undefined) meta.reason = reason
+  if (detail !== undefined) meta.detail = detail
+  return meta
 }
 
 // ---------------------------------------------------------------------------

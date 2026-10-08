@@ -431,7 +431,7 @@ describe('IOSPlatformAdapter', () => {
 
       // Mock the own-element lookup ($$ by type + rect) and the keyboard-focus read the fill
       // compound uses after tap-to-focus. The element has no getAttribute, so the re-read
-      // degrades to undefined ⇒ honest success with no fillReread.
+      // degrades to undefined ⇒ success with no fillReread, recorded unverified.
       const mockElement = { elementId: 'email', isExisting: vi.fn().mockResolvedValue(true), clearValue: vi.fn(), setValue: vi.fn() }
       mockDriver.$$ = vi.fn().mockImplementation((selector: string) =>
         Promise.resolve(selector === '-ios class chain:**/XCUIElementTypeTextField' ? [mockElement] : []))
@@ -443,6 +443,7 @@ describe('IOSPlatformAdapter', () => {
       const result = await adapter.execute({ type: 'fill', ref: emailEl!.ref, text: 'user@test.com', clearMode: 'replace', submit: false })
       expect(result.success).toBe(true)
       expect(mockElement.setValue).toHaveBeenCalledWith('user@test.com')
+      expect(result.metadata).toEqual({ fillVerdict: { verb: 'fill', verdict: 'unverified' } })
 
       // Tap to focus fires a pointer action
       expect(mockDriver._pointerAction.perform).toHaveBeenCalled()

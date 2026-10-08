@@ -4,6 +4,7 @@ import type {
   AppRegistryEntry,
   FillRefusalMeta,
   FillSubmitMeta,
+  FillVerdictMeta,
   ConsoleLogEntry,
   Direction,
   InterimNode,
@@ -736,7 +737,7 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
   private textInputRefusal(
     verb: FillRefusalMeta['verb'],
     ref: string,
-    evidence: FillRefusalMeta['evidence'],
+    evidence: Exclude<FillRefusalMeta['evidence'], 'text-has-line-breaks'>,
     box?: TextBox,
   ): ActionResult {
     const nothing = verb === 'fill' ? 'Nothing was typed.' : 'Nothing was cleared.'
@@ -812,9 +813,9 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
    * (A3/Pitfall 7 — never a length compare). On a passing re-read AND submit, a return/newline is
    * delivered AFTER the re-read (D-07). Single typing attempt; a mismatch is success:false + §7.1.
    *
-   * A3 reconciliation (append): the XCUITest `value` attribute frequently returns the pre-edit value
-   * right after addValue (masked/lagged), so when the re-read is exactly the prior the performed
-   * append is trusted rather than fabricated into a mismatch. Replace stays strict (mismatch pin).
+   * Append (437 FA-1, owner 2026-10-08): the XCUITest `value` attribute often lags after addValue,
+   * so a re-read equal to the prior cannot show the appended text. That fill is recorded unverified:
+   * never exact, and never a mismatch. Every fill records the shared verdict as `fillVerdict`.
    * An empty field reads as its placeholder, so an append prior equal to it counts as empty.
    *
    * Return in a multi-line field adds a new line instead of submitting, so a multi-line submit is
@@ -845,24 +846,33 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
 
     const expected = isAppend ? prior + action.text : action.text
     const raw = await this.readIOSValue(el)
+    // A lagged append re-read equal to the prior shows nothing of the appended text: unverified.
+    const actual = isAppend && raw === prior ? undefined : raw
+    const verdict = compareFillReread({ expected, actual, secure })
+    const fillVerdict: FillVerdictMeta = {
+      verb: 'fill',
+      verdict: verdict.verdict,
+      ...(verdict.secure ? { secure: true as const } : {}),
+    }
     const unsent: FillSubmitMeta = multiline ? { sent: false, reason: 'multi-line-field' } : { sent: false }
     const notice = action.submit && multiline ? { data: MULTI_LINE_SUBMIT_NOTICE } : {}
-    // Unreadable re-read ⇒ honest success with NO fillReread block (never fabricate).
+    // Unreadable re-read: success with no fillReread block and no Return.
     if (raw === undefined) {
-      return { success: true, ...box, ...notice, ...(action.submit ? { metadata: { fillSubmit: unsent } } : {}) }
+      const metadata = { fillVerdict, ...(action.submit ? { fillSubmit: unsent } : {}) }
+      return { success: true, ...box, ...notice, metadata }
     }
-    // A3 append reconciliation: an unchanged value attribute (== prior) means the append did not
-    // surface in the re-read; trust the performed append. Replace always compares the raw re-read.
-    const actual = isAppend && raw === prior ? expected : raw
 
-    const verdict = compareFillReread({ expected, actual, secure })
-    // Return/newline AFTER the re-read, only when the text landed in a single-line field (D-07).
+    // Return/newline AFTER the re-read, only when the fill is not a failure, in a single-line field (D-07).
     let fillSubmit: FillSubmitMeta = unsent
     if (verdict.ok && action.submit && !multiline) {
       await driver.keys(['\n'])
       fillSubmit = { sent: true }
     }
-    const metadata = { fillReread: verdict.meta, ...(action.submit ? { fillSubmit } : {}) }
+    const metadata = {
+      ...(verdict.meta ? { fillReread: verdict.meta } : {}),
+      fillVerdict,
+      ...(action.submit ? { fillSubmit } : {}),
+    }
     return verdict.ok
       ? { success: true, ...box, ...notice, metadata }
       : { success: false, error: verdict.selfCorrectingError, ...box, ...notice, metadata }

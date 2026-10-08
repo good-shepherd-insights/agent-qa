@@ -91,6 +91,7 @@ import {
   readUniqueValueMeta,
   readAssertValueOutcomeMeta,
   readFillRereadMeta,
+  readFillVerdictMeta,
   readScrollUntilVisibleMeta,
   readDownloadMeta,
   readClipboardMeta,
@@ -1600,7 +1601,8 @@ export async function executeStep(
     if (scrollMeta !== undefined) {
       compoundInputs.push({ subActionIndex: recorder.subActionCount, kind: 'scroll', count: scrollMeta.swipes })
     }
-    if (readFillRereadMeta(execResult) !== undefined) {
+    const fillVerdict = readFillVerdictMeta(execResult)
+    if (fillVerdict ? fillVerdict.verb === 'fill' : readFillRereadMeta(execResult) !== undefined) {
       compoundInputs.push({ subActionIndex: recorder.subActionCount, kind: 'fill', count: 1 })
     }
 

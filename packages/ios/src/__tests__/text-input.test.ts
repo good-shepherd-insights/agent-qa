@@ -252,6 +252,7 @@ describe('IOSPlatformAdapter text input (AUTO-18)', () => {
       const readIdx = calls.lastIndexOf('getAttr:body:value')
       expect(readIdx).toBeGreaterThan(typeIdx)
       expect(result.metadata?.fillReread).toEqual({ expected: text, actual: text })
+      expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'exact' })
       expect(mockDriver.keys).not.toHaveBeenCalled()
     })
 
@@ -526,6 +527,132 @@ describe('IOSPlatformAdapter text input (AUTO-18)', () => {
 
       expect(result.success).toBe(true)
       expect(result.metadata?.fillReread).toEqual({ expected: 'abc', actual: 'abc' })
+      expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'exact' })
+    })
+  })
+
+  describe('C437-FILL-IOS', () => {
+    it('a replace whose re-read equals the text records exact', async () => {
+      await start()
+      const ref = await refFor('Title')
+
+      const result = await fill(ref, 'Hello')
+
+      expect(result.success).toBe(true)
+      expect(result.metadata).toEqual({
+        fillReread: { expected: 'Hello', actual: 'Hello' },
+        fillVerdict: { verb: 'fill', verdict: 'exact' },
+      })
+    })
+
+    it('a re-read with merged whitespace records mismatch and sends no Return', async () => {
+      fields.title.setValue.mockImplementation((v: string) => {
+        calls.push('setValue:title')
+        fields.title.value = v.replace(/\s+/g, ' ')
+        return Promise.resolve()
+      })
+      await start()
+      const ref = await refFor('Title')
+
+      const result = await fill(ref, 'foo  bar', { submit: true })
+
+      expect(result.success).toBe(false)
+      expect(result.error).toBe('field reads "foo bar" after typing "foo  bar" — re-observe and retry')
+      expect(result.metadata).toEqual({
+        fillReread: { expected: 'foo  bar', actual: 'foo bar' },
+        fillVerdict: { verb: 'fill', verdict: 'mismatch' },
+        fillSubmit: { sent: false },
+      })
+      expect(mockDriver.keys).not.toHaveBeenCalled()
+    })
+
+    it('an unreadable re-read keeps the early return and records unverified', async () => {
+      fields.title.getAttribute.mockImplementation((name: string) => {
+        calls.push(`getAttr:title:${name}`)
+        return name === 'value' ? Promise.reject(new Error('stale element')) : Promise.resolve(null)
+      })
+      await start()
+      const ref = await refFor('Title')
+
+      const result = await fill(ref, 'Hello', { submit: true })
+
+      expect(result.success).toBe(true)
+      expect(result.error).toBeUndefined()
+      expect(result.metadata).toEqual({
+        fillVerdict: { verb: 'fill', verdict: 'unverified' },
+        fillSubmit: { sent: false },
+      })
+      expect(mockDriver.keys).not.toHaveBeenCalled()
+    })
+
+    it('a multi-line submit still records not sent for a multi-line field, with the notice', async () => {
+      await start()
+      const ref = await refFor('Body')
+
+      const result = await fill(ref, 'message', { submit: true })
+
+      expect(result.success).toBe(true)
+      expect(result.data).toBe(SUBMIT_NOTICE)
+      expect(result.metadata).toEqual({
+        fillReread: { expected: 'message', actual: 'message' },
+        fillVerdict: { verb: 'fill', verdict: 'exact' },
+        fillSubmit: { sent: false, reason: 'multi-line-field' },
+      })
+      expect(mockDriver.keys).not.toHaveBeenCalled()
+    })
+
+    describe('appends whose re-read never showed the appended text', () => {
+      beforeEach(() => {
+        fields.title.value = 'abc'
+        fields.title.addValue.mockImplementation(() => {
+          calls.push('addValue:title')
+          return Promise.resolve()
+        })
+      })
+
+      it('an append whose re-read equals the prior value is unverified (FA-1, owner 2026-10-08)', async () => {
+        await start()
+        const ref = await refFor('Title')
+
+        const result = await fill(ref, 'XYZ', { clearMode: 'append' })
+
+        expect(fields.title.addValue).toHaveBeenCalledWith('XYZ')
+        expect(result.success).toBe(true)
+        expect(result.error).toBeUndefined()
+        expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'unverified' })
+        expect(result.metadata).not.toHaveProperty('fillReread')
+        expect(JSON.stringify(result)).not.toContain('abcXYZ')
+      })
+
+      it('the same append into a single-line field with submit sends Return exactly once (FA-1, submit unchanged)', async () => {
+        await start()
+        const ref = await refFor('Title')
+
+        const result = await fill(ref, 'XYZ', { clearMode: 'append', submit: true })
+
+        expect(result.success).toBe(true)
+        expect(mockDriver.keys).toHaveBeenCalledTimes(1)
+        expect(mockDriver.keys).toHaveBeenCalledWith(['\n'])
+        expect(result.metadata).toEqual({
+          fillVerdict: { verb: 'fill', verdict: 'unverified' },
+          fillSubmit: { sent: true },
+        })
+        expect(JSON.stringify(result)).not.toContain('abcXYZ')
+      })
+    })
+
+    it('an append whose re-read shows the appended text records exact', async () => {
+      fields.title.value = 'abc'
+      await start()
+      const ref = await refFor('Title')
+
+      const result = await fill(ref, 'XYZ', { clearMode: 'append' })
+
+      expect(result.success).toBe(true)
+      expect(result.metadata).toEqual({
+        fillReread: { expected: 'abcXYZ', actual: 'abcXYZ' },
+        fillVerdict: { verb: 'fill', verdict: 'exact' },
+      })
     })
   })
 })
