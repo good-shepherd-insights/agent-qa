@@ -61,6 +61,35 @@ const ENTER_KEYCODE = 66
 const MULTI_LINE_SUBMIT_NOTICE =
   'submit not sent: Return would add a new line in this multi-line field; tap its send or submit control'
 const LINE_BREAK_RE = /[\r\n]/
+
+// 437 D-11: the WebView fill and clear use page scripts only to probe focus and read the value.
+// The probe runs after a trusted tap at the ref's centre and never writes to the page.
+const WEB_FOCUS_PROBE_SCRIPT =
+  'var a = document.activeElement;'
+  + 'var hit = document.elementFromPoint(arguments[0], arguments[1]);'
+  + 'if (!a) {'
+  + ' return { editable: false, matches: false, multiline: false, secure: false, value: null };'
+  + '}'
+  + 'var tag = a.tagName;'
+  + 'var type = tag === "INPUT" ? String(a.type || "text").toLowerCase() : "";'
+  + 'var textual = ["text", "search", "email", "url", "tel", "password", "number"]'
+  + '.indexOf(type) >= 0;'
+  + 'var field = (tag === "INPUT" && textual) || tag === "TEXTAREA";'
+  + 'var rich = !field && a.isContentEditable === true;'
+  + 'var v = field ? a.value : (rich ? a.innerText : null);'
+  + 'return {'
+  + ' editable: (field && !a.readOnly && !a.disabled) || rich,'
+  + ' matches: !!hit && (a === hit || a.contains(hit)),'
+  + ' multiline: tag === "TEXTAREA" || rich,'
+  + ' secure: type === "password",'
+  + ' value: typeof v === "string" ? v : null'
+  + '};'
+const WEB_FIELD_VALUE_SCRIPT =
+  'var a = document.activeElement;'
+  + 'if (!a) { return null; }'
+  + 'var v = (a.tagName === "INPUT" || a.tagName === "TEXTAREA") ? a.value'
+  + ' : (a.isContentEditable ? a.innerText : null);'
+  + 'return typeof v === "string" ? v : null;'
 const ANDROID_NATIVE_SELECT_ROLES = new Set(['combobox', 'spinbutton', 'listbox', 'list'])
 const ANDROID_NATIVE_SELECT_TYPES = new Set([
   'android.widget.Spinner',
@@ -111,6 +140,16 @@ type FocusedField = {
   setValue: (value: string) => Promise<void>
   addValue: (value: string) => Promise<void>
 }
+
+type WebFocus = {
+  editable: boolean
+  matches: boolean
+  multiline: boolean
+  secure: boolean
+  value?: string
+}
+
+type InputPath = NonNullable<FillVerdictMeta['path']>
 
 const INPUT_FAILED: FillSubmitMeta = { sent: false, outcome: 'not-sent', reason: 'input-failed' }
 
@@ -997,10 +1036,34 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
 
     const actual = prior === undefined ? undefined : await this.readFocusedValue(el)
     const verdict = compareFillReread({ expected: (prior ?? '') + action.text, actual, secure })
+    return await this.settleFill(action, box, {
+      path: 'native',
+      verdict,
+      multiline,
+      enter: () => this.pressEnter(),
+    })
+  }
+
+  /**
+   * The shared end of every Android fill (437 D-09, D-10, D-13, D-15, D-17): records the verdict
+   * and, when a submit was requested, holds Enter on a mismatch or a multi-line field and otherwise
+   * presses it once through `enter`.
+   */
+  private async settleFill(
+    action: { submit: boolean },
+    box: TextBox,
+    settle: {
+      path: InputPath
+      verdict: ReturnType<typeof compareFillReread>
+      multiline: boolean
+      enter: () => Promise<FillSubmitMeta>
+    },
+  ): Promise<ActionResult> {
+    const { path, verdict, multiline, enter } = settle
     const fillVerdict: FillVerdictMeta = {
       verb: 'fill',
       verdict: verdict.verdict,
-      path: 'native',
+      path,
       ...(verdict.secure ? { secure: true as const } : {}),
     }
 
@@ -1011,7 +1074,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       } else if (multiline) {
         fillSubmit = { sent: false, outcome: 'not-sent', reason: 'multi-line-field' }
       } else {
-        fillSubmit = await this.pressEnter()
+        fillSubmit = await enter()
       }
     }
     const notice = fillSubmit?.reason === 'multi-line-field' ? { data: MULTI_LINE_SUBMIT_NOTICE } : {}
@@ -1034,47 +1097,93 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     return { success: true, ...box, ...notice, metadata }
   }
 
+  /** A real W3C touch tap in the WebView context at the ref's CSS-pixel centre (437 D-11). */
+  private async trustedWebTap(center: { x: number; y: number }): Promise<void> {
+    await safePerform(this.driver!.action('pointer', { parameters: { pointerType: 'touch' } })
+      .move({ x: Math.round(center.x), y: Math.round(center.y), origin: 'viewport' })
+      .down({ button: 0 })
+      .up({ button: 0 })
+      )
+  }
+
+  /** Whether the tap left an editable field focused at the ref's point; read-only. */
+  private async probeWebFocus(center: { x: number; y: number }): Promise<WebFocus> {
+    const none: WebFocus = { editable: false, matches: false, multiline: false, secure: false }
+    try {
+      const raw = await this.driver!.execute(
+        WEB_FOCUS_PROBE_SCRIPT, Math.round(center.x), Math.round(center.y),
+      ) as unknown as Record<string, unknown> | null
+      if (!raw || typeof raw !== 'object') return none
+      return {
+        editable: raw.editable === true,
+        matches: raw.matches === true,
+        multiline: raw.multiline === true,
+        secure: raw.secure === true,
+        ...(typeof raw.value === 'string' ? { value: raw.value } : {}),
+      }
+    } catch {
+      return none
+    }
+  }
+
+  private async readWebFieldValue(): Promise<string | undefined> {
+    try {
+      const value = await this.driver!.execute(WEB_FIELD_VALUE_SCRIPT) as unknown
+      return typeof value === 'string' ? value : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  /** Runs a driver call from NATIVE_APP and always returns to the active WebView context. */
+  private async withNativeContext<T>(fn: () => Promise<T>): Promise<T> {
+    await this.ensureContext('NATIVE_APP')
+    try {
+      return await fn()
+    } finally {
+      if (this.activeWebContext) await this.ensureContext(this.activeWebContext)
+    }
+  }
+
   /**
-   * EXEC-01 WebView fill compound. One JS eval focuses the active element, applies
-   * replace/append, and reads the value back in the SAME evaluation (RESEARCH Open Q3). The
-   * verdict is computed in TS and Enter is dispatched only after a passing re-read (D-07),
-   * mirroring the native lane rather than firing submit blindly inside the eval.
+   * WebView fill as trusted input (437 D-11): a W3C tap on the ref, a read-only focus probe,
+   * W3C Ctrl+A and Backspace for replace, `mobile: type` from NATIVE_APP, a read-only read-back,
+   * and one `mobile: pressKey 66` from NATIVE_APP. No script writes the field or fires an event.
    */
   private async fillWebViewCompound(
-    action: { text: string; clearMode: 'replace' | 'append'; submit: boolean },
-    box: { coordinates: { x: number; y: number }; boundingBox: { x: number; y: number; width: number; height: number } },
+    action: { ref: string; text: string; clearMode: 'replace' | 'append'; submit: boolean },
+    box: TextBox,
+    center: { x: number; y: number },
   ): Promise<ActionResult> {
     const driver = this.driver!
     const isAppend = action.clearMode === 'append'
-    const raw = await driver.execute(
-      'var el = document.activeElement;'
-      + 'if (!el) { return { readable: false }; }'
-      + 'var append = arguments[0]; var text = arguments[1];'
-      + 'var secure = (el.type === "password");'
-      + 'var prior = append ? (el.value || "") : "";'
-      + 'if (append) { el.value = prior + text; } else { el.value = text; }'
-      + 'el.dispatchEvent(new Event("input", {bubbles:true}));'
-      + 'return { readable: true, prior: prior, actual: el.value, secure: secure };',
-      isAppend, action.text,
-    ) as { readable?: boolean; prior?: unknown; actual?: unknown; secure?: unknown } | null
-
-    if (!raw || raw.readable !== true || typeof raw.actual !== 'string') {
-      return { success: true, ...box }
+    await this.trustedWebTap(center)
+    const focus = await this.probeWebFocus(center)
+    if (!focus.editable || !focus.matches) {
+      return {
+        success: false,
+        error: `fill: the tap on ${action.ref} did not focus an editable field; nothing was typed.`,
+        ...box,
+      }
     }
-    const prior = typeof raw.prior === 'string' ? raw.prior : ''
-    const secure = raw.secure === true
-    const expected = isAppend ? prior + action.text : action.text
-    const verdict = compareFillReread({ expected, actual: raw.actual, secure })
-    if (verdict.ok && action.submit) {
-      await driver.execute(
-        'var el = document.activeElement;'
-        + 'if (el) { el.dispatchEvent(new KeyboardEvent("keydown", {key:"Enter", bubbles:true}));'
-        + 'el.dispatchEvent(new KeyboardEvent("keyup", {key:"Enter", bubbles:true})); }',
-      )
+    const prior = isAppend ? focus.value : ''
+    if (!isAppend) {
+      await driver.keys(['Control', 'a'])
+      await driver.keys(['Backspace'])
     }
-    return verdict.ok
-      ? { success: true, ...box, metadata: { fillReread: verdict.meta } }
-      : { success: false, error: verdict.selfCorrectingError, ...box, metadata: { fillReread: verdict.meta } }
+    await this.withNativeContext(() => driver.execute('mobile: type', { text: action.text }))
+    const actual = prior === undefined ? undefined : await this.readWebFieldValue()
+    const verdict = compareFillReread({
+      expected: (prior ?? '') + action.text,
+      actual,
+      secure: focus.secure,
+    })
+    return await this.settleFill(action, box, {
+      path: 'webview',
+      verdict,
+      multiline: focus.multiline,
+      enter: () => this.withNativeContext(() => this.pressEnter()),
+    })
   }
 
   /**
@@ -1354,7 +1463,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
         }
         const box = { coordinates: center, boundingBox: bounds }
         if (inWeb) {
-          return await this.fillWebViewCompound(action, box)
+          return await this.fillWebViewCompound(action, box, center)
         }
         // Native fill — tap to focus, then run the compound from the focused-element handle.
         await safePerform(driver.action('pointer', { parameters: { pointerType: 'touch' } })

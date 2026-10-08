@@ -36,11 +36,74 @@ interface FieldModel {
   pressKeyError?: string
 }
 
+// 437-06: a WebView field. The focus probe answers editable/matches/multiline/secure/value from it,
+// W3C keys and `mobile: type` act on its value, and the read-back answers `readBack` when set.
+interface WebFieldModel {
+  editable: boolean
+  matches: boolean
+  multiline: boolean
+  secure: boolean
+  value: string
+  probeValue?: unknown
+  readBack?: () => unknown
+  typeThrows?: boolean
+}
+
+const WEB_CTX = 'WEBVIEW_app.shop'
+const WEB_NODES = [
+  { role: 'textbox', name: 'Email', bounds: { x: 10.4, y: 20.2, width: 201, height: 41 } },
+  { role: 'button', name: 'Place order', bounds: { x: 10, y: 100, width: 200, height: 40 } },
+].map((node) => ({ ...node, state: {}, labels: {}, attributes: {} }))
+
 let calls: string[] = []
 let field: FieldModel
+let web: WebFieldModel | null = null
+let ctx = 'NATIVE_APP'
+let observing = false
+let scripts: string[] = []
+let taps: Array<{ ctx: string; move: unknown }> = []
+let selectedAll = false
 
 function newField(): FieldModel {
   return { value: '', password: false, getTextThrows: false, setValueThrows: false, focusThrows: false }
+}
+
+function newWebField(): WebFieldModel {
+  return { editable: true, matches: true, multiline: false, secure: false, value: '' }
+}
+
+function webScript(source: string, args: unknown[]): unknown {
+  if (observing) {
+    return {
+      nodes: WEB_NODES,
+      viewport: { width: 400, height: 800 },
+      scroll: { offsetX: 0, offsetY: 0, contentWidth: 400, contentHeight: 800 },
+      url: 'https://shop.local/checkout',
+    }
+  }
+  scripts.push(source)
+  const w = web!
+  if (args.length === 2) {
+    calls.push(`script:probe:${args.join(',')}`)
+    return {
+      editable: w.editable,
+      matches: w.matches,
+      multiline: w.multiline,
+      secure: w.secure,
+      value: 'probeValue' in w ? w.probeValue : w.value,
+    }
+  }
+  calls.push('script:read')
+  return w.readBack ? w.readBack() : w.value
+}
+
+function webKeys(k: unknown): void {
+  const keys = JSON.stringify(k)
+  if (keys === '["Control","a"]') selectedAll = true
+  else if (keys === '["Backspace"]' && selectedAll) {
+    web!.value = ''
+    selectedAll = false
+  } else selectedAll = false
 }
 
 function showingHint(): boolean {
@@ -89,6 +152,7 @@ function createMockDriver() {
   chain.pause = vi.fn().mockReturnValue(chain)
   chain.perform = vi.fn().mockImplementation(() => {
     calls.push('tap')
+    taps.push({ ctx, move: chain.move.mock.lastCall?.[0] })
     return Promise.resolve()
   })
   return {
@@ -96,21 +160,35 @@ function createMockDriver() {
     getWindowSize: vi.fn().mockResolvedValue({ width: 1080, height: 1920 }),
     takeScreenshot: vi.fn().mockResolvedValue(SCREENSHOT_BASE64),
     deleteSession: vi.fn().mockResolvedValue(undefined),
+    activateApp: vi.fn().mockResolvedValue(undefined),
     action: vi.fn().mockReturnValue(chain),
     keys: vi.fn().mockImplementation((k: unknown) => {
       calls.push(`keys:${JSON.stringify(k)}`)
+      if (web) webKeys(k)
       return Promise.resolve()
     }),
     pause: vi.fn().mockResolvedValue(undefined),
-    execute: vi.fn().mockImplementation((command: string, args?: unknown) => {
+    execute: vi.fn().mockImplementation((command: unknown, ...rest: unknown[]) => {
+      if (typeof command !== 'string' || (web && !command.startsWith('mobile:'))) {
+        return Promise.resolve(webScript(String(command), rest))
+      }
+      const args = rest[0]
       calls.push(`execute:${command}:${JSON.stringify(args ?? null)}`)
       if (command === 'mobile: pressKey' && field.pressKeyError) {
         return Promise.reject(new Error(field.pressKeyError))
       }
+      if (command === 'mobile: type' && web) {
+        if (web.typeThrows) return Promise.reject(new Error('socket hang up'))
+        web.value += (args as { text: string }).text
+      }
       return Promise.resolve(undefined)
     }),
     getContexts: vi.fn().mockResolvedValue(['NATIVE_APP']),
-    switchContext: vi.fn().mockResolvedValue(undefined),
+    switchContext: vi.fn().mockImplementation((name: string) => {
+      if (!observing) calls.push(`switch:${name}`)
+      ctx = name
+      return Promise.resolve()
+    }),
     url: vi.fn().mockRejectedValue(new Error('not supported')),
     $: vi.fn().mockImplementation((selector: string) => {
       calls.push(`$:${selector}`)
@@ -147,6 +225,12 @@ let driver: ReturnType<typeof createMockDriver>
 beforeEach(async () => {
   vi.clearAllMocks()
   calls = []
+  scripts = []
+  taps = []
+  web = null
+  ctx = 'NATIVE_APP'
+  observing = false
+  selectedAll = false
   field = newField()
   focused = createFocusedElement()
   driver = createMockDriver()
@@ -165,18 +249,39 @@ async function fill(
   text: string,
   opts: { clearMode?: 'replace' | 'append'; submit?: boolean } = {},
 ) {
-  const state = await adapter.observe()
-  const el = state.elements.find((e) => e.name === name)
-  if (!el) throw new Error(`test fixture: element "${name}" not observed`)
-  calls.length = 0
+  const ref = await refFor(name)
   return await adapter.execute({
     type: 'fill',
-    ref: el.ref,
+    ref,
     text,
     clearMode: opts.clearMode ?? 'replace',
     submit: opts.submit ?? false,
   } as unknown as ExecAction)
 }
+
+async function refFor(name: string): Promise<string> {
+  observing = true
+  const state = await adapter.observe()
+  observing = false
+  const el = state.elements.find((e) => e.name === name)
+  if (!el) throw new Error(`test fixture: element "${name}" not observed`)
+  calls.length = 0
+  scripts.length = 0
+  taps.length = 0
+  return el.ref
+}
+
+async function webView(model: Partial<WebFieldModel> = {}): Promise<void> {
+  web = { ...newWebField(), ...model }
+  driver.getContexts.mockResolvedValue(['NATIVE_APP', WEB_CTX])
+  await adapter.setup({ platform: 'android', appPackage: 'app.shop' } as never)
+}
+
+const WEB_PRESS_ENTER = [
+  'switch:NATIVE_APP',
+  PRESS_ENTER,
+  `switch:${WEB_CTX}`,
+]
 
 describe('C437-FILL-NATIVE', () => {
   it('an unreadable read-back still sends the requested Enter once', async () => {
@@ -427,5 +532,84 @@ describe('C437-ONE-PATH', () => {
     expect(firstEnters + secondEnters).toBe(2)
     expect(firstEnters).toBe(1)
     expect(secondEnters).toBe(1)
+  })
+})
+
+// 437-06 (D-11): the WebView fill acts like a user through the driver. A W3C touch tap in the
+// WebView context focuses the ref, a read-only probe checks the focus, W3C keys clear,
+// `mobile: type` from NATIVE_APP types, a read-only script reads the value back, and one
+// `mobile: pressKey 66` from NATIVE_APP submits. No script writes the field or builds a key event.
+describe('C437-FILL-WEBVIEW', () => {
+  const WRITES_OR_EVENTS = [
+    /\.(value|innerText|textContent|innerHTML|outerHTML)\s*(\+?=)(?!=)/,
+    /dispatchEvent/,
+    /KeyboardEvent/,
+    /InputEvent/,
+    /new\s+Event\b/,
+    /execCommand|setRangeText/,
+  ]
+
+  it('a replace with submit is tap, probe, Ctrl+A, Backspace, typing, read-back, one Enter, in that order', async () => {
+    await webView({ value: 'stale' })
+
+    const result = await fill('Email', 'hello', { submit: true })
+
+    expect(calls).toEqual([
+      'tap',
+      'script:probe:111,41',
+      'keys:["Control","a"]',
+      'keys:["Backspace"]',
+      'switch:NATIVE_APP',
+      'execute:mobile: type:{"text":"hello"}',
+      `switch:${WEB_CTX}`,
+      'script:read',
+      ...WEB_PRESS_ENTER,
+    ])
+    expect(taps).toEqual([{ ctx: WEB_CTX, move: { x: 111, y: 41, origin: 'viewport' } }])
+    expect(driver.action).toHaveBeenCalledWith('pointer', { parameters: { pointerType: 'touch' } })
+    expect(web!.value).toBe('hello')
+    expect(result.success).toBe(true)
+    expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'exact', path: 'webview' })
+    expect(result.metadata?.fillReread).toEqual({ expected: 'hello', actual: 'hello' })
+    expect(result.metadata?.fillSubmit).toEqual({ sent: true, outcome: 'sent' })
+  })
+
+  it('no executed script writes a value or builds a key event', async () => {
+    await webView({ value: 'stale' })
+
+    await fill('Email', 'hello', { submit: true })
+    const executed = [...scripts]
+    await fill('Email', ' world', { clearMode: 'append', submit: true })
+    executed.push(...scripts)
+
+    for (const source of executed) {
+      for (const pattern of WRITES_OR_EVENTS) expect(source).not.toMatch(pattern)
+    }
+    expect(executed.length).toBeGreaterThanOrEqual(4)
+  })
+
+  it('an unreadable read-back still sends Enter once', async () => {
+    await webView({ readBack: () => null })
+
+    const result = await fill('Email', 'hello', { submit: true })
+
+    expect(count(PRESS_ENTER)).toBe(1)
+    expect(calls.indexOf(PRESS_ENTER)).toBeGreaterThan(calls.indexOf('script:read'))
+    expect(result.success).toBe(true)
+    expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'unverified', path: 'webview' })
+    expect(result.metadata?.fillSubmit).toEqual({ sent: true, outcome: 'sent' })
+    expect(result.metadata).not.toHaveProperty('fillReread')
+  })
+
+  it('a mismatch holds Enter', async () => {
+    await webView({ readBack: () => 'helo' })
+
+    const result = await fill('Email', 'hello', { submit: true })
+
+    expect(count('execute:mobile: pressKey')).toBe(0)
+    expect(result.success).toBe(false)
+    expect(result.error).toBe('field reads "helo" after typing "hello" — re-observe and retry')
+    expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'mismatch', path: 'webview' })
+    expect(result.metadata?.fillSubmit).toEqual({ sent: false, outcome: 'not-sent', reason: 'mismatch' })
   })
 })
