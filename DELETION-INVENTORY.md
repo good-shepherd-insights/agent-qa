@@ -2022,3 +2022,35 @@ D-06 narrows `spec/v2/tools-and-actions.md` §12 item 11 (separators replace the
 whitespace-collapse rules), and D-19 and D-21 move fixtures and device proof out of agent-qa. Their
 reconciliations are recorded in `.planning/REQUIREMENTS.md` by 437-16. The fix-tap change was made
 by the owner's decision during 437-09 and is disclosed in that plan's summary.
+
+### Gate at the time of writing (2026-10-09)
+
+Run by 437-14 from `agent-qa/` with `pnpm run gate:local -- --out <dir>`. The gate clones the
+committed SHA into a fresh temporary directory, installs with the frozen lockfile and runs every
+leg there. It ran on `384f93b3de35004f5f2c46e4e1a7f28eede95446`, this section's first commit: the
+census commit `7d7950b8d` plus this section without this subsection, and the 218 new regression
+and 10 new register entries. The source tree was clean (`sourceDirty: false`). The run lasted
+11 min 16 s (21:36:10Z to 21:47:27Z on 2026-10-08 UTC), with a 1-minute load of 9.7 at the start
+and a 5-minute load of 17.8 at the end.
+
+| Leg | Observed | Exit |
+|---|---|---|
+| clone, install | fresh clone at the SHA; `pnpm install --frozen-lockfile` | 0, 0 |
+| turbo build and typecheck | 46/46 tasks | **0** |
+| turbo test | 23,506 passed, 0 failed, 54 skipped, every skip a registered entry | **0** |
+| `validate:skills`, `validate:agents`, `validate:publish` | 4, 24 and 22 checks | **0** |
+| `validate:tools` | 14 passed, the same 14 as at `c26bdd294`, so no agent tool was added | **0** |
+| `validate:arch` | 516 passed (506 at 436, plus the 10 cells of the 437 census) | **0** |
+| `validate:safety`, `validate:431-discovery-imports`, `lint:namespace` | 9 passed; 873 imports; 3,037 files | **0** |
+| node-test, conformance selftest, conformance | 153 passed; 4; 50 | **0** |
+| audit (`pnpm audit --prod --json`) | 493 prod dependencies: critical 0, high 0, moderate 5, low 1. pnpm 10.6.1 exits 1 on any advisory, and the gate judges the JSON metadata (434's owner decision) | 1, judged pass |
+| regressions | **717 of 717 listed cells executed and passed**: 434's 40, Phase 436's 459 and Phase 437's 218 | — |
+| register | 53 entries, 54 skips matched, 0 stale, 0 unlisted; the ten 437 and six 436 live mobile cells were skipped as registered | — |
+
+Verdict: `gate green: 0 finding(s)`, `record: true`, exit **0**. The commit that adds this
+subsection changes only this file, which no test reads. 437-14 re-ran the validators and the gate
+on that commit; `.planning/phases/437-android-and-ios-toggle-and-submit/437-14-SUMMARY.md` records
+that run, at the final SHA.
+
+**Toolchain:** node 24.15.0 · pnpm 10.6.1 · turbo 2.9.7 · Chromium 149.0.7827.55 (revision 1228) ·
+macOS (Darwin 27.0.0, arm64, 12 CPUs).
