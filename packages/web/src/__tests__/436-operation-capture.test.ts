@@ -19,8 +19,12 @@ import type { ActionResult, PlannerConfig, RecordingCapability } from '@vostride
 import { screenIdentityHash } from '@vostride/agent-qa-schema'
 import type { DownloadEvidence, Ref } from '@vostride/agent-qa-schema'
 import { WebPlatformAdapter } from '../adapter.js'
-import { CLIPBOARD_BINDING, DOWNLOAD_START_GRACE_MS } from '../operation-capture.js'
-import * as captureModule from '../operation-capture.js'
+import {
+  CLIPBOARD_BINDING,
+  DOWNLOAD_ACTIVATION_ACTIONS,
+  DOWNLOAD_START_GRACE_MS,
+  isDownloadActivation,
+} from '../operation-capture.js'
 import type { CapturedClipboardWrite, OperationCapture } from '../operation-capture.js'
 import { act, refFor as screenRefFor, runScriptedStep, scriptedPlanner, scriptedVerifier } from './fixtures/436-scripted-loop.js'
 
@@ -882,15 +886,9 @@ function canonical(value: unknown): string {
       : entry)
 }
 
-interface ArmingExports {
-  DOWNLOAD_ACTIVATION_ACTIONS: ReadonlySet<string>
-  isDownloadActivation: (action: { type: string; submit?: unknown; action?: unknown }) => boolean
-}
-
 describe('C436-DOWNLOAD-ARMING', () => {
   it('the activation set is exactly the download-starting web actions', () => {
-    const { DOWNLOAD_ACTIVATION_ACTIONS, isDownloadActivation } = captureModule as unknown as ArmingExports
-    expect([...(DOWNLOAD_ACTIVATION_ACTIONS ?? [])].sort().join(',')).toBe([
+    expect([...DOWNLOAD_ACTIVATION_ACTIONS].sort().join(',')).toBe([
       'click', 'doubleClick', 'executeScript', 'fileUpload', 'handleDialog',
       'keypress', 'navigate', 'rightClick', 'select', 'tab',
     ].join(','))
@@ -906,7 +904,7 @@ describe('C436-DOWNLOAD-ARMING', () => {
   it('a fill that submits a form answering with an attachment records the download on the fill', async () => {
     const web = await open(undefined, undefined, 'arming')
     const ref = await refFor(web, 'textbox', 'Query')
-    const result = await web.execute({ type: 'fill', ref, text: 'all', submit: true })
+    const result = await web.execute({ type: 'fill', ref, text: 'all', clearMode: 'replace', submit: true })
 
     expect(canonical(downloadsOf(result))).toBe(canonical([
       {

@@ -12,10 +12,15 @@
 // 2026-10-08 (436-15): the download wait of one action ends at the step's remaining time when the
 // loop hands one over, else at DOWNLOAD_COMPLETION_CAP_MS, and at once when the step is aborted
 // (WR-07). A download ended there is cancelled and deleted.
+// 2026-10-08 (436-16): every download-starting web action is armed (fill only with submit, tab
+// only when it opens one), the start window stays open while a navigation the action started is
+// unanswered, and a download that starts outside the window is held for the next action, marked
+// late, or cancelled and deleted at dispose (WR-05). The clipboard is disarmed when the start
+// window closes, before any completion wait (IN-09).
 
 import { createHash } from 'node:crypto'
 import { extname } from 'node:path'
-import type { BrowserContext, Download, Frame, Page } from 'playwright-core'
+import type { BrowserContext, Download, Frame, Page, Request } from 'playwright-core'
 import type { ClipboardEvidence, DownloadEvidence } from '@vostride/agent-qa-schema'
 import type { ExecuteOptions } from '@vostride/agent-qa-runner'
 
@@ -23,18 +28,42 @@ export { CLIPBOARD_TEXT_LIMIT } from '@vostride/agent-qa-runner'
 
 /** How long an activation action is given to start a download after it returns. */
 export const DOWNLOAD_START_GRACE_MS = 500
+/** How long the start window stays open after a navigation the action started is answered; the download event follows the response. */
+export const NAVIGATION_SETTLE_MS = 250
 /** The download wait's bound for an action dispatched with no step deadline. */
 export const DOWNLOAD_COMPLETION_CAP_MS = 120_000
 
-const ACTIVATION_ACTIONS: ReadonlySet<string> = new Set([
+/** The web actions that can start a download; see isDownloadActivation for tab and fill. */
+export const DOWNLOAD_ACTIVATION_ACTIONS: ReadonlySet<string> = new Set([
   'click',
   'doubleClick',
-  'tap',
+  'rightClick',
   'keypress',
-  'press',
-  'navigate',
   'select',
+  'navigate',
+  'executeScript',
+  'handleDialog',
+  'fileUpload',
+  'tab',
 ])
+
+export interface DownloadActivationInput {
+  type: string
+  submit?: unknown
+  action?: unknown
+}
+
+/** Whether the action is given the download start window: a `tab` only when it opens one, a `fill` only when it submits. */
+export function isDownloadActivation(action: DownloadActivationInput): boolean {
+  if (action.type === 'fill') return action.submit === true
+  if (action.type === 'tab') return action.action === 'new'
+  return DOWNLOAD_ACTIVATION_ACTIONS.has(action.type)
+}
+
+interface TrackedDownload {
+  download: Download
+  late: boolean
+}
 
 const UNFINISHED = Symbol('unfinished')
 
@@ -149,9 +178,15 @@ export class OperationCapture {
   private readonly completionCapMs: number
   private readonly startGraceMs: number
   private readonly attachedPages = new WeakSet<Page>()
-  private downloads: Download[] = []
+  private downloads: TrackedDownload[] = []
+  /** Downloads that started while no start window was open, kept for the next action. */
+  private held: Download[] = []
+  private readonly pendingNavigations = new Map<Request, Page | undefined>()
   private clipboardWrites: PendingClipboardWrite[] = []
   private armed = false
+  private startWindow = false
+  private navigationWindow = false
+  private navigationSettledAt = 0
   private clipboardArmed = false
   private activation = false
   private boundAt = 0
@@ -171,18 +206,27 @@ export class OperationCapture {
     this.appContext = context
     for (const page of context.pages()) this.attachPage(page)
     context.on('page', (page) => this.attachPage(page))
+    context.on('request', (request) => this.onRequest(request))
+    context.on('response', (response) => { this.settleNavigation(response.request()) })
+    context.on('requestfailed', (request) => { this.settleNavigation(request) })
     await context.exposeBinding(CLIPBOARD_BINDING, (source, payload: unknown) => {
       this.onClipboardWrite(source.frame, payload)
     })
     await context.addInitScript(CLIPBOARD_HOOK)
   }
 
-  arm(action: { type: string }, options: ExecuteOptions = {}): void {
-    this.downloads = []
+  arm(action: DownloadActivationInput, options: ExecuteOptions = {}): void {
+    const carried = [...this.downloads.map((entry) => entry.download), ...this.held]
+    this.held = []
+    this.downloads = carried.map((download) => ({ download, late: true }))
     this.clipboardWrites = []
     this.armed = true
+    this.startWindow = true
     this.clipboardArmed = !CLIPBOARD_EXCLUDED_ACTIONS.has(action.type)
-    this.activation = ACTIVATION_ACTIONS.has(action.type)
+    this.activation = isDownloadActivation(action)
+    this.navigationWindow = this.activation
+    this.navigationSettledAt = 0
+    this.pendingNavigations.clear()
     const remaining = options.remainingStepMs
     this.boundAt = Date.now()
       + (typeof remaining === 'number' && Number.isFinite(remaining) ? Math.max(0, remaining) : this.completionCapMs)
@@ -207,35 +251,71 @@ export class OperationCapture {
 
   async collect(): Promise<CapturedOperations | undefined> {
     if (!this.armed) return undefined
+    let next = 0
     try {
-      const deadline = Date.now() + (this.activation ? Math.min(this.startGraceMs, this.timeLeft()) : 0)
-      const evidence: DownloadEvidence[] = []
-      let next = 0
-      for (;;) {
-        if (next >= this.downloads.length) {
-          const remaining = deadline - Date.now()
-          if (remaining <= 0) break
-          await this.waitForDownloadStart(remaining, next)
-          if (next >= this.downloads.length) break
-        }
-        evidence.push(await this.finish(this.downloads[next++]!))
-      }
+      await this.waitForStartWindow()
+      this.closeStartWindow()
       const writes = this.clipboardWrites
       this.clipboardArmed = false
       this.clipboardWrites = []
       const clipboard = writes.length > 0 ? await this.readBack(writes) : []
+      const evidence: DownloadEvidence[] = []
+      while (next < this.downloads.length) {
+        const { download, late } = this.downloads[next++]!
+        const finished = await this.finish(download)
+        evidence.push(late ? { ...finished, late: true } : finished)
+      }
       if (evidence.length === 0 && clipboard.length === 0) return undefined
       return {
         ...(evidence.length > 0 ? { downloads: evidence } : {}),
         ...(clipboard.length > 0 ? { clipboard } : {}),
       }
     } finally {
+      this.held.push(...this.downloads.slice(next).map((entry) => entry.download))
+      this.closeStartWindow()
       this.armed = false
       this.clipboardArmed = false
       this.downloads = []
       this.clipboardWrites = []
       this.abortSignal = undefined
     }
+  }
+
+  // The grace after an activation action, then for as long as a navigation it started has neither
+  // a response nor a failure, plus NAVIGATION_SETTLE_MS after the last answer; all bounded by the
+  // action's time left.
+  private async waitForStartWindow(): Promise<void> {
+    if (!this.activation) return
+    const graceEnd = Date.now() + Math.min(this.startGraceMs, Math.max(0, this.timeLeft()))
+    for (;;) {
+      const left = this.timeLeft()
+      if (left <= 0) return
+      const openFor = Math.max(graceEnd, this.navigationSettledAt + NAVIGATION_SETTLE_MS) - Date.now()
+      if (openFor > 0) await this.waitForSignal(Math.min(openFor, left))
+      else if (this.pendingNavigations.size > 0) await this.waitForSignal(left)
+      else return
+    }
+  }
+
+  private closeStartWindow(): void {
+    this.startWindow = false
+    this.navigationWindow = false
+    this.pendingNavigations.clear()
+  }
+
+  private onRequest(request: Request): void {
+    if (!this.navigationWindow || !request.isNavigationRequest()) return
+    let page: Page | undefined
+    try {
+      page = request.frame().page()
+    } catch { /* not a frame request */ }
+    this.pendingNavigations.set(request, page)
+  }
+
+  private settleNavigation(request: Request): void {
+    if (!this.pendingNavigations.delete(request)) return
+    this.navigationSettledAt = Date.now()
+    this.notify?.()
   }
 
   private onClipboardWrite(frame: Frame, payload: unknown): void {
@@ -343,8 +423,14 @@ export class OperationCapture {
     }
   }
 
-  /** Closes the read-back probe context; the next read-back opens a fresh one. */
+  /** Cancels and deletes every held download, then closes the read-back probe context. */
   async dispose(): Promise<void> {
+    const held = this.held
+    this.held = []
+    for (const download of held) {
+      await download.cancel().catch(() => undefined)
+      await download.delete().catch(() => undefined)
+    }
     const context = this.probeContext
     this.probeGeneration += 1
     this.probe = null
@@ -356,17 +442,23 @@ export class OperationCapture {
     if (this.attachedPages.has(page)) return
     this.attachedPages.add(page)
     page.on('download', (download) => {
-      if (!this.armed) return
-      this.downloads.push(download)
+      if (!this.startWindow) {
+        this.held.push(download)
+        return
+      }
+      this.downloads.push({ download, late: false })
       this.notify?.()
+    })
+    page.on('close', () => {
+      for (const [request, owner] of this.pendingNavigations) if (owner === page) this.settleNavigation(request)
     })
   }
 
-  private async waitForDownloadStart(graceMs: number, seen: number): Promise<void> {
-    if (this.downloads.length > seen) return
+  // Resolves on a download start, a settled navigation, the abort, or after `ms`.
+  private async waitForSignal(ms: number): Promise<void> {
     let off = (): void => undefined
     await new Promise<void>((resolve) => {
-      const timer = setTimeout(done, graceMs)
+      const timer = setTimeout(done, ms)
       function done(): void {
         clearTimeout(timer)
         resolve()

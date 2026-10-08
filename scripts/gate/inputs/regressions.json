@@ -1173,6 +1173,24 @@
     },
     {
       "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-operation-evidence.test.ts",
+      "fullName": "C436-DOWNLOAD-LATE a late download reaches history and the verifier marked late",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-operation-evidence.test.ts",
+      "fullName": "C436-DOWNLOAD-LATE a late download keeps its marker through the reader",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/436-operation-evidence.test.ts",
+      "fullName": "C436-DOWNLOAD-LATE a late download is rendered as not started by this action",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/436-planning-limits.test.ts",
       "fullName": "C436-PLANNING-LIMITS each read-only non-action round is one planner call",
       "origin": "436 D-08"
@@ -1949,6 +1967,48 @@
       "runner": "vitest",
       "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
       "fullName": "C436-DOWNLOAD-DEADLINE an abort during the wait cancels the download",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-ARMING the activation set is exactly the download-starting web actions",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-ARMING a fill that submits a form answering with an attachment records the download on the fill",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-ARMING an executeScript dispatch arms the start grace and records a download started in it",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-ARMING an attachment whose server answers after 1.5 s is recorded on the click",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-ARMING a download a timer starts after the window is recorded late on the next action",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-ARMING a held download is cancelled and deleted at cleanup",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-ARMING a clipboard write during the completion wait is not attributed",
       "origin": "436 D-19"
     },
     {
