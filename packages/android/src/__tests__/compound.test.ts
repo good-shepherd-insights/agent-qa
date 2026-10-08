@@ -310,10 +310,11 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
         appPackage: 'app.linear',
       } as never)
       await adapter.observe()
+      // One document scroller per read: the WebView answers the array of every scroller.
       const offsets = [
-        { x: 0, y: 0, maxX: 0, maxY: 700 }, { x: 0, y: 400, maxX: 0, maxY: 700 },
-        { x: 0, y: 700, maxX: 0, maxY: 700 }, { x: 0, y: 700, maxX: 0, maxY: 700 },
-        { x: 0, y: 300, maxX: 0, maxY: 700 }, { x: 0, y: 300, maxX: 0, maxY: 700 },
+        [{ x: 0, y: 0, maxX: 0, maxY: 700 }], [{ x: 0, y: 400, maxX: 0, maxY: 700 }],
+        [{ x: 0, y: 700, maxX: 0, maxY: 700 }], [{ x: 0, y: 700, maxX: 0, maxY: 700 }],
+        [{ x: 0, y: 300, maxX: 0, maxY: 700 }], [{ x: 0, y: 300, maxX: 0, maxY: 700 }],
       ]
       mockDriver.execute.mockImplementation((command: string) =>
         Promise.resolve(typeof command === 'string' && command.startsWith('mobile:') ? undefined : offsets.shift()))
@@ -352,6 +353,73 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       expect(result.success).toBe(true)
       expect(gestureCalls().map(c => (c[1] as { direction: string }).direction)).toEqual(['down', 'down', 'down', 'down'])
       expect(result.metadata?.scrollUntilVisible).toEqual({ swipes: 4, reversedOnce: false, outcome: 'unresolved', endedBy: 'max-swipes' })
+    })
+  })
+
+  describe('C436-SCROLL-WEBVIEW a WebView touch swipe is judged over every WebView scroller (436-18 · D-25)', () => {
+    type Primitives = { swipeOnce(direction: string, ref?: string): Promise<string> }
+    type Offsets = { x: number; y: number; maxX: number; maxY: number }
+    const at = (y: number, maxY: number, x = 0, maxX = 0): Offsets => ({ x, y, maxX, maxY })
+
+    // A WebView session whose scroller read answers `reads` in order, one per read (before, after).
+    async function webView(reads: unknown[]): Promise<Primitives> {
+      mockDriver.getContexts.mockResolvedValue(['NATIVE_APP', 'WEBVIEW_app.linear'])
+      mockDriver.execute.mockResolvedValueOnce({
+        nodes: [{ role: 'button', name: 'Create issue', bounds: { x: 1, y: 2, width: 3, height: 4 }, state: {}, labels: {}, attributes: {} }],
+        viewport: { width: 200, height: 100 },
+        scroll: { offsetX: 0, offsetY: 0, contentWidth: 200, contentHeight: 800 },
+        url: 'https://linear.local',
+      })
+      await adapter.setup({
+        platform: 'android',
+        device: { name: 'android-emu', platform: 'android', transport: 'local', match: { automationName: 'UiAutomator2' } },
+        appPackage: 'app.linear',
+      } as never)
+      await adapter.observe()
+      const queue = [...reads]
+      mockDriver.execute.mockImplementation((command: string) =>
+        Promise.resolve(typeof command === 'string' && command.startsWith('mobile:') ? undefined : queue.shift()))
+      return (adapter as unknown as { buildAndroidScrollPrimitives(d: string, m: number): Promise<Primitives> })
+        .buildAndroidScrollPrimitives('down', 0)
+    }
+
+    it('a moving nested WebView scroller is moved, never a boundary', async () => {
+      // The document is at its end; the nested list the finger landed on moved.
+      const p = await webView([[at(700, 700), at(0, 1200)], [at(700, 700), at(600, 1200)]])
+      expect(await p.swipeOnce('down')).toBe('moved')
+      expect(mockDriver._pointerAction.perform).toHaveBeenCalledTimes(1)
+      expect(mockDriver.execute.mock.calls.filter(c => c[0] === 'mobile: scrollGesture')).toHaveLength(0)
+    })
+
+    it('a boundary needs every WebView scroller at its extent', async () => {
+      const p = await webView([
+        [at(700, 700), at(1200, 1200)], [at(700, 700), at(1200, 1200)],
+        [at(700, 700), at(300, 1200)], [at(700, 700), at(300, 1200)],
+      ])
+      expect(await p.swipeOnce('down')).toBe('at-boundary')
+      // HARN-03 adjacency: the document at its end with a nested scroller short of its end.
+      expect(await p.swipeOnce('down')).toBe('unknown')
+    })
+
+    it('a WebView with no scroll range is unknown', async () => {
+      const p = await webView([
+        [at(0, 0)], [at(0, 0)],
+        [at(0, 0), at(0, 0, 0, 500)], [at(0, 0), at(0, 0, 0, 500)],
+      ])
+      expect(await p.swipeOnce('down')).toBe('unknown')
+      expect(await p.swipeOnce('down')).toBe('unknown')
+    })
+
+    it('a changed scroller count is unknown', async () => {
+      const p = await webView([
+        [at(700, 700), at(1200, 1200)], [at(700, 700)],
+        at(700, 700), at(700, 700),
+        [at(700, 700), { x: 0, y: 'end', maxX: 0, maxY: 1200 }], [at(700, 700), { x: 0, y: 'end', maxX: 0, maxY: 1200 }],
+      ])
+      expect(await p.swipeOnce('down')).toBe('unknown')
+      // A malformed answer (not an array, or a member without numeric offsets) proves nothing either.
+      expect(await p.swipeOnce('down')).toBe('unknown')
+      expect(await p.swipeOnce('down')).toBe('unknown')
     })
   })
 
