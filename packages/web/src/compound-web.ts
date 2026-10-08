@@ -424,16 +424,43 @@ async function probeChildFrame(frame: Frame, target: string): Promise<TargetVisi
   }
 }
 
+// Child-frame judges still running after their bound, per search.
+type PendingFrames = WeakMap<Frame, Promise<TargetVisibility>>
+
+// A frame with no committed document, or with a judge still pending from earlier in this search, is
+// unknown with no evaluate. Otherwise the judge and projection get FRAME_PROBE_TIMEOUT_MS; past it
+// the frame is unknown and its judge is parked in `pending` until it settles.
+async function probeChildFrameBounded(frame: Frame, target: string, pending: PendingFrames): Promise<TargetVisibility> {
+  if (frame.url() === '' || pending.has(frame)) return 'unknown'
+  const judge = probeChildFrame(frame, target)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const bound = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => { resolve('timeout') }, FRAME_PROBE_TIMEOUT_MS)
+  })
+  const answer = await Promise.race([judge, bound])
+  clearTimeout(timer)
+  if (answer !== 'timeout') return answer
+  pending.set(frame, judge)
+  const release = (): void => {
+    if (pending.get(frame) === judge) pending.delete(frame)
+  }
+  judge.then(release, release)
+  return 'unknown'
+}
+
 // Is any element carrying `target` (text, label, alt or title; Playwright's case-insensitive,
 // whitespace-normalized substring match) on screen now, in the main frame or any child frame?
-// Any visible candidate is visible; else any unknown is unknown; else hidden. evaluateAll never
-// waits. An error on the main frame answers unknown, and on a child frame makes that frame unknown
-// (436-17 · D-24/D-25).
+// Any visible candidate is visible; else any unknown is unknown; else hidden. An error on the main
+// frame answers unknown, and on a child frame makes that frame unknown (436-17 · D-24/D-25).
 // 2026-10-08 (436-22): tri-state over every frame, each child frame's candidates projected through
 // its frame elements (review CR-07). Hidden: visibility, opacity 0, a box under 2x2 or outside the
 // viewport. Unknown: a nested-scroller clip, a covered or clipped centre point, a frame target not
 // on screen inside its frame, a transformed, zoomed or covered frame (review WR-16).
-async function probeOnScreen(page: Page, target: string): Promise<TargetVisibility> {
+// 2026-10-08 (436-26): evaluateAll waits for a child frame's execution context, which a frame that
+// never answers never gets (review CR-08). Child frames are judged at once, each bounded by
+// FRAME_PROBE_TIMEOUT_MS and judged once per search; a frame with no committed document is unknown
+// at once. The main frame stays unbounded.
+async function probeOnScreen(page: Page, target: string, pending: PendingFrames): Promise<TargetVisibility> {
   let states: TargetVisibility[]
   try {
     states = (await judgeIn(page, target)).map((candidate) => candidate.state)
@@ -443,12 +470,8 @@ async function probeOnScreen(page: Page, target: string): Promise<TargetVisibili
   if (combine(states) === 'visible') return 'visible'
   try {
     const main = page.mainFrame()
-    for (const frame of page.frames()) {
-      if (frame === main || frame.isDetached()) continue
-      const answer = await probeChildFrame(frame, target)
-      if (answer === 'visible') return 'visible'
-      states.push(answer)
-    }
+    const children = page.frames().filter((frame) => frame !== main && !frame.isDetached())
+    states.push(...(await Promise.all(children.map((frame) => probeChildFrameBounded(frame, target, pending)))))
   } catch {
     states.push('unknown')
   }
@@ -461,7 +484,9 @@ async function probeOnScreen(page: Page, target: string): Promise<TargetVisibili
 // the loop: page-wide, every frame, and it ignores the container ref. swipeOnce reports what the
 // offsets proved; the no-ref wheel measures the scrollers under the pointer before and after.
 // 2026-10-08 (436-22): probeTargetVisible answers visible, hidden or unknown.
+// 2026-10-08 (436-26): one pending-frame memo per primitives instance, so per search (CR-08).
 export function buildScrollPrimitives(page: Page, lastRefs: RefMap, magnitude: number): ScrollPrimitives {
+  const pending: PendingFrames = new WeakMap()
   return {
     async swipeOnce(direction: Direction, ref?: Ref): Promise<SwipeSignal> {
       const { dx, dy, axis } = deltaFor(direction, magnitude)
@@ -487,7 +512,7 @@ export function buildScrollPrimitives(page: Page, lastRefs: RefMap, magnitude: n
       return parseAriaSnapshot(tree).nodes
     },
     async probeTargetVisible(target: string): Promise<TargetVisibility> {
-      return probeOnScreen(page, target)
+      return probeOnScreen(page, target, pending)
     },
   }
 }

@@ -649,7 +649,7 @@ describe('C436-SCROLL-FRAMES', () => {
   }, 60_000)
 
   it('a page whose iframe never answers ends untilVisible inside the budget', async () => {
-    const { web } = await openHung('/hung-probe')
+    const { web, tab } = await openHung('/hung-probe')
     const find = (text: string) => withSentinel(web.execute(
       { type: 'scroll', mode: 'untilVisible', direction: 'down', text, maxSwipes: 6, retryOpposite: false },
       { remainingStepMs: 60_000 },
@@ -661,9 +661,20 @@ describe('C436-SCROLL-FRAMES', () => {
     const far = await find('Far target')
     expect(far.value, 'Far target').not.toBe(STILL_WAITING)
     expect(far.ms).toBeLessThan(15_000)
-    const meta = (far.value as ActionOutcome).metadata?.scrollUntilVisible as { swipes: number } | undefined
-    expect(meta).toMatchObject({ outcome: 'found' })
-    expect(meta!.swipes).toBeGreaterThanOrEqual(1)
+    expect((far.value as ActionOutcome).metadata?.scrollUntilVisible).toMatchObject({ outcome: 'found' })
+    // The native rung brings the far target on screen; found then means the page really moved.
+    expect(await scrollY(tab), 'the page moved').toBeGreaterThan(0)
+    // Swipes only: every swipe is followed by a probe across the hung frame.
+    await tab.evaluate('window.scrollTo(0, 0)')
+    const { nativeSearchScroll: _native, ...swipesOnly } = buildScrollPrimitives(tab, {}, 720)
+    const swiped = await withSentinel(runUntilVisibleLoop(swipesOnly, {
+      target: 'Far target', direction: 'down', maxSwipes: 6, retryOpposite: false,
+    }))
+    expect(swiped.value, 'Far target by swipes').not.toBe(STILL_WAITING)
+    expect(swiped.ms).toBeLessThan(15_000)
+    const meta = (swiped.value as Awaited<ReturnType<typeof runUntilVisibleLoop>>).meta
+    expect(meta).toMatchObject({ outcome: 'found', endedBy: 'target-visible' })
+    expect(meta.swipes).toBeGreaterThanOrEqual(1)
   }, 60_000)
 
   it("a hung frame beside a healthy frame does not hide the healthy frame's target", async () => {
