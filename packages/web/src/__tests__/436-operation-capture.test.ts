@@ -23,6 +23,7 @@ import {
   CLIPBOARD_BINDING,
   DOWNLOAD_ACTIVATION_ACTIONS,
   DOWNLOAD_START_GRACE_MS,
+  READ_BACK_TIMEOUT_MS,
   isDownloadActivation,
   isHeadlessLaunch,
   OperationCapture,
@@ -250,6 +251,84 @@ const HEADED_PAGE = `<!DOCTYPE html>
 </html>
 `
 
+// 436-21 (WR-17): the review2-oracle.mjs shape and its neighbours. Every claim here goes through
+// the binding by name; only the buttons that call writeText make a genuine write.
+const ORACLE_PAGE = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>oracle fixture</title></head>
+<body>
+  <h1>Oracle</h1>
+  <h2>SECRET-COPY</h2>
+  <button id="thousand" onclick="forgeThousand()">Forge thousand</button>
+  <button id="final-guess" onclick="claim('PIN-001'); claim('PIN-417')">Forge final guess</button>
+  <button id="pair" onclick="claim('PIN-417'); claim('OTHER-555')">Forge pair</button>
+  <button id="write-forge" onclick="writeThenForge()">Write and forge</button>
+  <button id="g1" onclick="claim('PIN-001')">Guess one</button>
+  <button id="g2" onclick="claim('PIN-417')">Guess two</button>
+  <button id="g3" onclick="claim('PIN-999')">Guess three</button>
+  <button id="forge-write" onclick="forgeThenWrite()">Forge then write</button>
+  <button id="order" onclick="navigator.clipboard.writeText('ORDER-4471')">Copy order number</button>
+  <button id="nine" onclick="navigator.clipboard.writeText('ORDER-9')">Copy order nine</button>
+  <button id="popup" onclick="window.open('/oracle-popup')">Open popup</button>
+  <button id="forge-copy" onclick="claim('SECRET-COPY')">Forge copy</button>
+  <script>
+    const claim = (text) => window[${JSON.stringify(CLIPBOARD_BINDING)}]({ via: 'writeText', text })
+    function forgeThousand() {
+      for (let i = 0; i < 1000; i++) claim('PIN-' + String(i).padStart(3, '0'))
+    }
+    function writeThenForge() {
+      navigator.clipboard.writeText('ORDER-9').then(() => claim('PIN-417'))
+    }
+    function forgeThenWrite() {
+      for (let i = 1; i <= 5; i++) claim('PIN-00' + String(i))
+      setTimeout(() => navigator.clipboard.writeText('ORDER-9'), 50)
+    }
+  </script>
+</body>
+</html>
+`
+
+// A same-origin and a cross-origin iframe, each forging a claim when the click posts to it.
+const ORACLE_FRAMES_PAGE = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>oracle frames</title></head>
+<body>
+  <h1>Frames</h1>
+  <button id="ask" onclick="askFrames()">Ask frames</button>
+  <iframe id="same" title="same origin" src="/oracle-frame"></iframe>
+  <iframe id="cross" title="cross origin"></iframe>
+  <script>
+    document.getElementById('cross').src = location.protocol + '//127.0.0.1:' + location.port + '/oracle-frame'
+    function askFrames() {
+      for (const id of ['same', 'cross']) document.getElementById(id).contentWindow.postMessage('forge', '*')
+    }
+  </script>
+</body>
+</html>
+`
+
+const ORACLE_FRAME = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>frame</title></head>
+<body>
+  <p>frame</p>
+  <script>
+    window.addEventListener('message', () => {
+      window[${JSON.stringify(CLIPBOARD_BINDING)}]({ via: 'writeText', text: 'PIN-417' })
+    })
+  </script>
+</body>
+</html>
+`
+
+const ORACLE_POPUP = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>popup</title></head>
+<body>
+  <p>popup</p>
+  <script>window[${JSON.stringify(CLIPBOARD_BINDING)}]({ via: 'writeText', text: 'PIN-417' })</script>
+</body>
+</html>
+`
+
 const INSECURE_ORIGIN = 'http://fixture.test'
 
 let server: Server
@@ -318,6 +397,10 @@ beforeAll(async () => {
       '/arming': ARMING_PAGE,
       '/held': HELD_PAGE,
       '/headed': HEADED_PAGE,
+      '/oracle': ORACLE_PAGE,
+      '/oracle-frames': ORACLE_FRAMES_PAGE,
+      '/oracle-frame': ORACLE_FRAME,
+      '/oracle-popup': ORACLE_POPUP,
     }
     res.end(pages[url] ?? PAGE)
   })
@@ -816,7 +899,8 @@ describe('C436-CLIPBOARD-READBACK', () => {
     await pollWindow(web)
 
     expect(await web.getPage()!.evaluate('window.reads')).toEqual([])
-    expect(clipboardOf(result)).toEqual([{ source: 'writeText', text: 'forged', readBack: 'mismatched' }])
+    // 2026-10-08 (436-21): was `mismatched`; an unchanged clipboard confirms nothing.
+    expect(clipboardOf(result)).toEqual([{ source: 'writeText', text: 'forged', readBack: 'unavailable' }])
   }, 60_000)
 
   it('no origin in the app context is granted clipboard-read during a read-back', async () => {
@@ -836,7 +920,8 @@ describe('C436-CLIPBOARD-READBACK', () => {
     const result = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Forge claim') })
     await pollWindow(web)
 
-    expect(clipboardOf(result)?.[0]?.readBack).toBe('mismatched')
+    // 2026-10-08 (436-21): was `mismatched`; an unchanged clipboard confirms nothing.
+    expect(clipboardOf(result)?.[0]?.readBack).toBe('unavailable')
     expect(JSON.stringify(result)).not.toContain('TESTER-SECRET')
   }, 60_000)
 
@@ -845,7 +930,8 @@ describe('C436-CLIPBOARD-READBACK', () => {
     const result = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Forge with override') })
 
     expect(await web.getPage()!.evaluate('navigator.clipboard.readText()')).toBe('forged')
-    expect(clipboardOf(result)).toEqual([{ source: 'writeText', text: 'forged', readBack: 'mismatched' }])
+    // 2026-10-08 (436-21): was `mismatched`; an unchanged clipboard confirms nothing.
+    expect(clipboardOf(result)).toEqual([{ source: 'writeText', text: 'forged', readBack: 'unavailable' }])
   }, 60_000)
 
   it('the probe context is closed by cleanup', async () => {
@@ -1173,6 +1259,53 @@ describe('C436-PROBE-LIFECYCLE', () => {
   it('a crashed probe is replaced once and the read answers', async () => {
     await replacedOnce('crash')
   }, 60_000)
+
+  it('a probe closed between the pre-image and the read-back reads unavailable and keeps held downloads', async () => {
+    const web = await open(undefined, undefined, 'held')
+    const page = web.getPage()!
+    await copyOrder(web)
+    const capture = captureOf(web) as unknown as { readClipboard: (...args: unknown[]) => Promise<unknown> }
+    const original = capture.readClipboard.bind(capture)
+    vi.spyOn(capture, 'readClipboard').mockImplementation(async (...args: unknown[]) => {
+      const started = page.waitForEvent('download', { timeout: 10_000 })
+      await page.evaluate("blobDownload('late.csv')")
+      await started
+      await probeOf(web).page.close()
+      return original(...args)
+    })
+    const result = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Copy second order') })
+    vi.restoreAllMocks()
+    const next = await web.execute({ type: 'delay', ms: 0 })
+
+    expect(clipboardOf(result)).toEqual([{ source: 'writeText', text: 'ORDER-4472', readBack: 'unavailable' }])
+    expect(canonical(downloadsOf(result))).toBe('null')
+    expect(canonical(downloadsOf(next))).toBe(canonical([LATE_CSV]))
+  }, 60_000)
+
+  it('a probe whose read never settles is skipped while that probe lives', async () => {
+    const web = await open(undefined, undefined, 'held')
+    await copyOrder(web)
+    const { page: probePage } = probeOf(web)
+    await probePage.evaluate('navigator.clipboard.readText = () => new Promise(() => {})')
+    const second = await refFor(web, 'button', 'Copy second order')
+    const first = await refFor(web, 'button', 'Copy order number')
+
+    let started = performance.now()
+    const hung = await web.execute({ type: 'click', ref: second })
+    const hungMs = performance.now() - started
+    expect(clipboardOf(hung)).toEqual([{ source: 'writeText', text: 'ORDER-4472', readBack: 'unavailable' }])
+    expect(hungMs).toBeLessThan(READ_BACK_TIMEOUT_MS + 1_500)
+
+    started = performance.now()
+    const skipped = await web.execute({ type: 'click', ref: first })
+    const skippedMs = performance.now() - started
+    expect(clipboardOf(skipped)).toEqual([{ source: 'writeText', text: 'ORDER-4471', readBack: 'unavailable' }])
+    expect(skippedMs).toBeLessThan(DOWNLOAD_START_GRACE_MS + 1_000)
+
+    await probePage.close()
+    const replaced = await web.execute({ type: 'click', ref: second })
+    expect(clipboardOf(replaced)).toEqual([{ source: 'writeText', text: 'ORDER-4472', readBack: 'matched' }])
+  }, 60_000)
 })
 
 // 2026-10-08 (436-21): the owner's ruling on D-21 ("Headed: never read"). A capture built headed,
@@ -1282,4 +1415,125 @@ describe('C436-CLIPBOARD-HEADED', () => {
     expect(isHeadlessLaunch({ headless: true }, { npm_config_pwdebug: '1' })).toBe(false)
     expect(isHeadlessLaunch({ headless: true }, { npm_package_config_pwdebug: 'inspector' })).toBe(false)
   })
+})
+
+// 2026-10-08 (436-21, WR-17): in a headless launch the read-back confirms only a final claim that
+// changed the clipboard during the action, so a page cannot use it as a guessing oracle.
+describe('C436-CLIPBOARD-ORACLE', () => {
+  afterEach(() => { vi.restoreAllMocks() })
+
+  async function holding(text: string, path = 'oracle'): Promise<WebPlatformAdapter> {
+    const web = await open(undefined, undefined, path)
+    await web.getPage()!.evaluate(`navigator.clipboard.writeText(${JSON.stringify(text)})`)
+    return web
+  }
+
+  async function click(web: WebPlatformAdapter, name: string): Promise<ActionResult> {
+    return web.execute({ type: 'click', ref: await refFor(web, 'button', name) })
+  }
+
+  const unavailable = (text: string): CapturedClipboardWrite => ({ source: 'writeText', text, readBack: 'unavailable' })
+
+  it('a thousand forged claims in one action confirm nothing', async () => {
+    const web = await holding('PIN-417')
+    const result = await click(web, 'Forge thousand')
+
+    const expected = Array.from({ length: 8 }, (_, i) => unavailable(`PIN-${String(992 + i)}`))
+    expect(clipboardOf(result)).toEqual(expected)
+    expect(JSON.stringify(result)).not.toContain('PIN-417')
+  }, 60_000)
+
+  it('a forged final claim equal to the clipboard is never matched', async () => {
+    const web = await holding('PIN-417')
+    const result = await click(web, 'Forge final guess')
+
+    expect(clipboardOf(result)).toEqual([unavailable('PIN-001'), unavailable('PIN-417')])
+  }, 60_000)
+
+  it('the clipboard evidence does not depend on what the clipboard held', async () => {
+    async function evidence(held: string, button: string): Promise<string> {
+      const web = await holding(held)
+      const result = await click(web, button)
+      await web.cleanup()
+      adapter = undefined
+      return JSON.stringify(clipboardOf(result) ?? null)
+    }
+
+    const forgedA = await evidence('PIN-417', 'Forge pair')
+    const forgedB = await evidence('OTHER-555', 'Forge pair')
+    expect(forgedA).toBe(forgedB)
+    expect(JSON.parse(forgedA)).toEqual([unavailable('PIN-417'), unavailable('OTHER-555')])
+
+    const writtenA = await evidence('PIN-417', 'Write and forge')
+    const writtenB = await evidence('OTHER-555', 'Write and forge')
+    expect(writtenA).toBe(writtenB)
+    expect(JSON.parse(writtenA)).toEqual([
+      unavailable('ORDER-9'),
+      { source: 'writeText', text: 'PIN-417', readBack: 'mismatched' },
+    ])
+  }, 120_000)
+
+  it('forged guesses across actions are never matched', async () => {
+    const web = await holding('PIN-417')
+    for (const [name, text] of [['Guess one', 'PIN-001'], ['Guess two', 'PIN-417'], ['Guess three', 'PIN-999']] as const) {
+      expect(clipboardOf(await click(web, name))).toEqual([unavailable(text)])
+    }
+  }, 60_000)
+
+  it('a genuine write after forged claims is matched and the forged ones are not', async () => {
+    const web = await open(undefined, undefined, 'oracle')
+    const result = await click(web, 'Forge then write')
+
+    expect(clipboardOf(result)).toEqual([
+      ...[1, 2, 3, 4, 5].map((i) => unavailable(`PIN-00${String(i)}`)),
+      { source: 'writeText', text: 'ORDER-9', readBack: 'matched' },
+    ])
+  }, 60_000)
+
+  it('an app write of the text the clipboard already held reads unavailable', async () => {
+    const web = await holding('ORDER-4471')
+    const result = await click(web, 'Copy order number')
+
+    expect(clipboardOf(result)).toEqual([unavailable('ORDER-4471')])
+  }, 60_000)
+
+  it('forged claims from a same-origin and a cross-origin iframe confirm nothing', async () => {
+    const web = await holding('PIN-417', 'oracle-frames')
+    const page = web.getPage()!
+    await expect.poll(() => page.frames().length, { timeout: 10_000 }).toBe(3)
+    const result = await click(web, 'Ask frames')
+
+    expect(clipboardOf(result)).toEqual([unavailable('PIN-417'), unavailable('PIN-417')])
+  }, 60_000)
+
+  it('a forged claim from a popup the click opened confirms nothing', async () => {
+    const web = await holding('PIN-417')
+    const result = await click(web, 'Open popup')
+
+    expect(clipboardOf(result)).toEqual([unavailable('PIN-417')])
+  }, 60_000)
+
+  it("a forged copy of agent-qa's own copy confirms nothing", async () => {
+    const web = await open(undefined, undefined, 'oracle')
+    const copied = await web.execute({ type: 'copy', ref: await refFor(web, 'heading', 'SECRET-COPY') })
+    expect(copied.data).toEqual({ copied: 'SECRET-COPY' })
+    const result = await click(web, 'Forge copy')
+
+    expect(clipboardOf(result)).toEqual([unavailable('SECRET-COPY')])
+  }, 60_000)
+
+  it('nothing but a status crosses from the probe page', async () => {
+    const web = await open(undefined, undefined, 'oracle')
+    expect(clipboardOf(await click(web, 'Copy order nine'))?.[0]?.readBack).toBe('matched')
+    const { page: probePage } = probeOf(web)
+    const evaluate = vi.spyOn(probePage, 'evaluate')
+    expect(clipboardOf(await click(web, 'Copy order number'))?.[0]?.readBack).toBe('matched')
+    expect(clipboardOf(await click(web, 'Guess two'))).toEqual([unavailable('PIN-417')])
+
+    const values = await Promise.all(evaluate.mock.results.map((entry) => entry.value as Promise<unknown>))
+    expect(values.length).toBeGreaterThan(0)
+    for (const value of values) {
+      expect(typeof value === 'number' || ['none', 'read', 'unreadable'].includes(value as string), canonical(value)).toBe(true)
+    }
+  }, 60_000)
 })

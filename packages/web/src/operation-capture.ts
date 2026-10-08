@@ -76,7 +76,7 @@ export const CLIPBOARD_BINDING = '__agentQaAppClipboardWrite'
 /** agent-qa's own clipboard actions; their writes are never the app's. */
 const CLIPBOARD_EXCLUDED_ACTIONS: ReadonlySet<string> = new Set(['copy', 'paste'])
 const CLIPBOARD_SOURCES: ReadonlySet<string> = new Set(['writeText', 'write', 'copy-event'])
-const READ_BACK_TIMEOUT_MS = 2_000
+export const READ_BACK_TIMEOUT_MS = 2_000
 /** The reserved origin of the read-back probe page; nothing else loads in the probe context. */
 export const CLIPBOARD_READBACK_ORIGIN = 'https://agent-qa-readback.invalid'
 const READ_BACK_UNREADABLE = -2
