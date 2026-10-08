@@ -266,28 +266,29 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     expect(result.metadata?.scrollUntilVisible).toBeDefined()
   })
 
-  it('direction scroll with a container ref uses the scrollWithRef page.evaluate primitive, not mouse.wheel', async () => {
+  it('direction scroll with a container ref scrolls inside the resolver\'s role locator, not mouse.wheel', async () => {
     await adapter.setup({ platform: 'web' })
     await adapter.observe()
 
-    mockPageEvaluateFn.mockClear()
     mockMouseMoveFn.mockClear()
     mockMouseWheelFn.mockClear()
-    mockPageEvaluateFn.mockResolvedValue({ bounds: null, scrolledContainer: 'notFound', scrolled: true })
+    mockGetByRoleFn.mockClear()
+    mockLocatorEvaluateFn.mockClear()
+    const located = { ...createMockLocator(), count: vi.fn().mockResolvedValue(1) }
+    located.nth = vi.fn().mockReturnValue(located)
+    mockGetByRoleFn.mockReturnValue(located)
+    mockLocatorEvaluateFn.mockResolvedValue({ bounds: null, scrolledContainer: 'element', scrolled: true, offsets: { before: 0, after: 720, max: 2000 } })
     adapter['lastRefs']['e1'] = { role: 'listitem', name: 'Item 1', nth: 0 }
 
     const result = await adapter.execute({ type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: false, ref: asRef('e1') })
 
     expect(result.success).toBe(true)
-    // container scroll runs through scrollWithRef (function-argument page.evaluate), never mouse.wheel/move
-    const scrollCall = mockPageEvaluateFn.mock.calls.find(
-      (call: unknown[]) => typeof call[0] === 'function' && Array.isArray(call[1])
-    )
+    // container scroll resolves the ref through ElementResolver and runs inside that element
+    expect(mockGetByRoleFn).toHaveBeenCalledWith('listitem', { name: 'Item 1', exact: true })
+    expect(located.nth).toHaveBeenCalledWith(0)
+    const scrollCall = mockLocatorEvaluateFn.mock.calls.find((call: unknown[]) => typeof call[0] === 'function')
     expect(scrollCall).toBeDefined()
-    const args = scrollCall![1] as unknown[]
-    expect(args[0]).toBe('listitem')
-    expect(args[1]).toBe('Item 1')
-    expect(args[5]).toBe('vertical')
+    expect(scrollCall![1]).toEqual([0, 720, 'vertical'])
     expect(mockMouseMoveFn).not.toHaveBeenCalled()
     expect(mockMouseWheelFn).not.toHaveBeenCalled()
   })

@@ -239,28 +239,34 @@ describe('WebPlatformAdapter compound behaviors (RED — Wave-0)', () => {
   describe('EXEC-02 scroll movement signals (436-02 · D-25)', () => {
     type Offsets = { x: number; y: number; maxX: number; maxY: number }
 
-    // A page whose evaluate answers the three shapes compound-web sends: the settle string,
-    // the no-arg document-offset read, and scrollWithRef's function + argument tuple.
-    function signalPage(opts: { doc?: Offsets[]; container?: unknown[] }) {
+    // A page whose evaluate answers the two shapes compound-web sends (the settle string and the
+    // no-arg document-offset read), and whose getByRole locator answers scrollWithRef: the
+    // container ref resolves through ElementResolver, then count() and evaluate(fn, [dx, dy, axis]).
+    function signalPage(opts: { doc?: Offsets[]; container?: unknown[]; count?: number }) {
       const docReads = [...(opts.doc ?? [])]
       const containerResults = [...(opts.container ?? [])]
       const log: string[] = []
+      const container = {
+        nth: vi.fn(() => container),
+        count: vi.fn(async () => opts.count ?? 1),
+        evaluate: vi.fn(async (_fn: unknown, _arg?: unknown) => {
+          log.push('scrollWithRef')
+          return containerResults.shift()
+        }),
+      }
       const page = {
-        evaluate: vi.fn(async (fn: unknown, arg?: unknown) => {
+        evaluate: vi.fn(async (fn: unknown) => {
           if (typeof fn === 'string') return 'raf'
-          if (Array.isArray(arg)) {
-            log.push('scrollWithRef')
-            return containerResults.shift()
-          }
           log.push('readOffsets')
           return docReads.shift()
         }),
         mouse: { wheel: vi.fn(async (dx: number, dy: number) => { log.push(`wheel:${dx},${dy}`) }) },
         viewportSize: () => ({ width: 1280, height: 720 }),
+        getByRole: vi.fn(() => container),
         getByText: vi.fn(() => ({ first: () => ({ scrollIntoViewIfNeeded: vi.fn().mockRejectedValue(new Error('not found')) }) })),
         locator: vi.fn(() => ({ ariaSnapshot: vi.fn().mockResolvedValue('- text "Row A"') })),
       }
-      return { page, log }
+      return { page, log, container }
     }
 
     const refs = { e7: { role: 'list', name: 'Results', nth: 0 } } as unknown as RefMap
@@ -272,14 +278,39 @@ describe('WebPlatformAdapter compound behaviors (RED — Wave-0)', () => {
     })
 
     it('swipeOnce reports moved when scrollTop changes, at-boundary at the scroll extent, unknown otherwise', async () => {
-      const { page, log } = signalPage({ container: [container(0, 720, 2000), container(2000, 2000, 2000), container(300, 300, 2000), undefined] })
+      const noOffsets = { bounds: null, scrolledContainer: 'documentElement', scrolled: false }
+      const { page, log, container: located } = signalPage({
+        container: [container(0, 720, 2000), container(2000, 2000, 2000), container(300, 300, 2000), noOffsets, undefined],
+      })
       const p = buildScrollPrimitives(page as never, refs, 720)
       expect(await p.swipeOnce('down', 'e7' as never)).toBe('moved')
       expect(await p.swipeOnce('down', 'e7' as never)).toBe('at-boundary')
       expect(await p.swipeOnce('down', 'e7' as never)).toBe('unknown')
       expect(await p.swipeOnce('down', 'e7' as never)).toBe('unknown')
-      expect(log).toEqual(['scrollWithRef', 'scrollWithRef', 'scrollWithRef', 'scrollWithRef'])
+      expect(await p.swipeOnce('down', 'e7' as never)).toBe('unknown')
+      expect(log).toEqual(['scrollWithRef', 'scrollWithRef', 'scrollWithRef', 'scrollWithRef', 'scrollWithRef'])
+      // The container is the resolver's role locator, and the swipe runs inside that element.
+      expect(page.getByRole).toHaveBeenCalledWith('list', { name: 'Results', exact: true })
+      expect(located.nth).toHaveBeenCalledWith(0)
+      expect(located.evaluate.mock.calls[0][1]).toEqual([0, 720, 'vertical'])
       expect(page.mouse.wheel).not.toHaveBeenCalled()
+    })
+
+    it('a container ref that does not resolve performs no gesture and reports unknown', async () => {
+      const gone = signalPage({ container: [container(0, 720, 2000)], count: 0 })
+      const p = buildScrollPrimitives(gone.page as never, refs, 720)
+      expect(await p.swipeOnce('down', 'e7' as never)).toBe('unknown')
+      expect(gone.container.evaluate).not.toHaveBeenCalled()
+
+      const unknownRef = signalPage({ container: [container(0, 720, 2000)] })
+      const q = buildScrollPrimitives(unknownRef.page as never, refs, 720)
+      expect(await q.swipeOnce('down', 'e99' as never)).toBe('unknown')
+      expect(unknownRef.container.evaluate).not.toHaveBeenCalled()
+
+      for (const { page, log } of [gone, unknownRef]) {
+        expect(page.mouse.wheel).not.toHaveBeenCalled()
+        expect(log).not.toContain('readOffsets')
+      }
     })
 
     it('the no-ref wheel path reads document.scrollingElement before and after', async () => {

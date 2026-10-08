@@ -23,7 +23,18 @@ const NESTED = page('nested', `
   </div>
   <p>Below the list</p>`)
 const LABELLED = page('labelled', '<h1>Dialog</h1><button aria-label="Close dialog">×</button>')
-const SHORT = page('short', '<h1>Short page</h1><p>Nothing to scroll here.</p>')
+const SHORT = page('short', '<h1>Short page</h1><p>Nothing to scroll here.</p><button>Do nothing</button>')
+// The listbox scrolls, and so does the page around it, so a swipe on the wrong scroller shows.
+const LISTBOX = page('listbox', `
+  <select id="rows" multiple aria-label="Rows" style="height: 300px">
+    ${Array.from({ length: 100 }, (_, i) => `<option>Row ${String(i)}</option>`).join('')}
+  </select>
+  <div style="height: 3000px">Page tail</div>`)
+const STALE = page('stale', `
+  <div id="feed" role="region" aria-label="Feed" style="height: 200px; overflow: auto">
+    ${Array.from({ length: 30 }, (_, i) => `<div style="height: 40px">Post ${String(i)}</div>`).join('')}
+  </div>
+  <div style="height: 3000px">Page tail</div>`)
 
 const PAGES: Record<string, string> = {
   '/paragraphs': PARAGRAPHS,
@@ -31,6 +42,8 @@ const PAGES: Record<string, string> = {
   '/nested': NESTED,
   '/labelled': LABELLED,
   '/short': SHORT,
+  '/listbox': LISTBOX,
+  '/stale': STALE,
 }
 
 // The web native search waits the page's default action timeout for a target that is not in the
@@ -90,6 +103,12 @@ async function rectOf(tab: Page, selector: string, index: number): Promise<Rect>
 
 async function scrollY(tab: Page): Promise<number> {
   return tab.evaluate(() => (globalThis as unknown as { scrollY: number }).scrollY)
+}
+
+async function refFor(web: WebPlatformAdapter, role: string, name: string): Promise<Ref> {
+  const element = (await web.observe()).elements.find((e) => e.role === role && e.name === name)
+  expect(element, `${role} "${name}" is observed`).toBeDefined()
+  return element!.ref
 }
 
 function untilVisible(text: string, maxSwipes: number, ref?: Ref) {
@@ -154,5 +173,51 @@ describe('C436-SCROLL-VISIBILITY', () => {
     const meta = result.metadata?.scrollUntilVisible as { outcome: string } | undefined
     expect(meta).toBeDefined()
     expect(meta!.outcome).not.toBe('found')
+  }, 60_000)
+})
+
+describe('C436-SCROLL-REF', () => {
+  it('a listbox ref scrolls the listbox itself', async () => {
+    const { web, tab } = await open('/listbox')
+    const ref = await refFor(web, 'listbox', 'Rows')
+    const result = await web.execute({
+      type: 'scroll', mode: 'direction', direction: 'down', amount: 'toEnd', retryOpposite: false, ref,
+    })
+    expect(result.metadata?.scrollUntilVisible).toMatchObject({ outcome: 'found', endedBy: 'boundary' })
+    const list = await tab.evaluate(() => {
+      const el = (globalThis as unknown as {
+        document: { getElementById(id: string): { scrollTop: number; scrollHeight: number; clientHeight: number } }
+      }).document.getElementById('rows')
+      return { top: el.scrollTop, max: el.scrollHeight - el.clientHeight }
+    })
+    expect(list.max).toBeGreaterThan(0)
+    expect(Math.abs(list.top - list.max)).toBeLessThanOrEqual(1)
+    expect(await scrollY(tab), 'the window did not move').toBe(0)
+  }, 60_000)
+
+  it('a ref that no longer resolves reports unknown and moves nothing', async () => {
+    const { web, tab } = await open('/stale')
+    const ref = await refFor(web, 'region', 'Feed')
+    await tab.evaluate(() => {
+      (globalThis as unknown as { document: { getElementById(id: string): { remove(): void } } })
+        .document.getElementById('feed').remove()
+    })
+    const result = await web.execute(untilVisible('No such post', 2, ref))
+    expect(result.metadata?.scrollUntilVisible).toEqual({
+      swipes: 2, reversedOnce: false, outcome: 'unresolved', endedBy: 'max-swipes',
+    })
+    expect(await scrollY(tab), 'the window did not move').toBe(0)
+  }, 60_000)
+
+  it('a resolved element with no scrollable ancestor on a page that cannot scroll is unknown, never a boundary', async () => {
+    const { web, tab } = await open('/short')
+    const ref = await refFor(web, 'button', 'Do nothing')
+    const result = await web.execute({
+      type: 'scroll', mode: 'direction', direction: 'down', amount: 'toEnd', retryOpposite: false, ref,
+    })
+    expect(result.metadata?.scrollUntilVisible).toEqual({
+      swipes: 20, reversedOnce: false, outcome: 'unresolved', endedBy: 'max-swipes',
+    })
+    expect(await scrollY(tab)).toBe(0)
   }, 60_000)
 })
