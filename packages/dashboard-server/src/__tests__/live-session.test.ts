@@ -246,7 +246,7 @@ vi.mock('@vostride/agent-qa-model', async () => {
   }
 })
 
-import { LiveSession, resolveLivePlannerLimits } from '../live-editor/live-session.js'
+import { LivePlannerLimitsRefusedError, LiveSession, resolveLivePlannerLimits } from '../live-editor/live-session.js'
 import type { ConfigManager } from '../config/index.js'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { resolvePlannerLimits } from '@vostride/agent-qa-schema'
@@ -1164,5 +1164,120 @@ describe('C436-EFFECTIVE-LIMITS live suite children', () => {
     await initializeSuiteSession()
     await session.executeStepCommand('Click archive', 0)
     expect(plannerConfigsOfSteps()).toEqual([{ maxActions: 20, maxPlanningTurns: 40, previousStepCount: 5 }])
+  })
+})
+
+// 436-19 (D-02, D-03, D-05, WR-11): the live door refuses, never ignores, a limit the CLI refuses.
+describe('C436-EFFECTIVE-LIMITS live refusal', () => {
+  function configManagerWith(config: Record<string, unknown>): ConfigManager {
+    return { readWithRevision: async () => ({ kind: 'ok', config, raw: '', revision: 'r1' }) } as unknown as ConfigManager
+  }
+
+  function testYaml(planner: string): string {
+    return `test-id: t_bad\nname: Bad\nuse:\n  planner:\n${planner}steps:\n  - archive all\n`
+  }
+
+  function readersFor(test: string, suite?: string) {
+    return {
+      findTest: async (id: string) => (id === 't_bad' ? { content: test } : null),
+      findSuite: async (id: string) => (id === 's_bad' && suite !== undefined ? { content: suite } : null),
+    }
+  }
+
+  const project = configManagerWith({ use: { planner: { maxActions: 20, maxPlanningTurns: 15 } } })
+  const testRef = { type: 'test' as const, id: 't_bad' }
+
+  async function refusalOf(promise: Promise<unknown>): Promise<LivePlannerLimitsRefusedError> {
+    const error = await promise.then(() => undefined, (e: unknown) => e)
+    expect(error).toBeInstanceOf(LivePlannerLimitsRefusedError)
+    return error as LivePlannerLimitsRefusedError
+  }
+
+  it.each([
+    ['0', '0'],
+    ['-1', '-1'],
+    ['2.5', '2.5'],
+    ["'30'", '"30"'],
+  ])('a test maxActions of %s is refused, naming the test file and the key', async (written, shown) => {
+    const error = await refusalOf(
+      resolveLivePlannerLimits(project, testRef, readersFor(testYaml(`    maxActions: ${written}\n`))),
+    )
+    expect(error.message).toContain(`test file t_bad sets use.planner.maxActions to ${shown}: `)
+    expect(error.message).toContain('The CLI refuses this file too.')
+  })
+
+  it('a suite maxPlanningTurns of 0 is refused, naming the suite file', async () => {
+    const suite = 'suite-id: s_bad\nname: Bad suite\nuse:\n  planner:\n    maxPlanningTurns: 0\ntests: []\n'
+    const error = await refusalOf(resolveLivePlannerLimits(
+      project,
+      [{ type: 'suite', id: 's_bad' }, testRef],
+      readersFor('test-id: t_bad\nname: Bad\nsteps:\n  - a\n', suite),
+    ))
+    expect(error.message).toContain('suite file s_bad sets use.planner.maxPlanningTurns to 0: ')
+  })
+
+  it('a project maxActions of 0 is refused, naming the project config', async () => {
+    const error = await refusalOf(resolveLivePlannerLimits(
+      configManagerWith({ use: { planner: { maxActions: 0 } } }),
+      undefined,
+      {},
+    ))
+    expect(error.message).toContain('project config sets use.planner.maxActions to 0: ')
+  })
+
+  it('the retired maxSubActions is refused with the core message at every layer', async () => {
+    const retired = 'use.planner.maxSubActions was removed in v2'
+    const fromTest = await refusalOf(
+      resolveLivePlannerLimits(project, testRef, readersFor(testYaml('    maxSubActions: 10\n'))),
+    )
+    expect(fromTest.message).toContain('test file t_bad sets use.planner.maxSubActions to 10: ')
+    expect(fromTest.message).toContain(retired)
+    const fromProject = await refusalOf(resolveLivePlannerLimits(
+      configManagerWith({ use: { planner: { maxSubActions: 10 } } }),
+      undefined,
+      {},
+    ))
+    expect(fromProject.message).toContain('project config sets use.planner.maxSubActions to 10: ')
+    expect(fromProject.message).toContain(retired)
+  })
+
+  it('exactly 1 at every layer resolves', async () => {
+    const suite = 'suite-id: s_bad\nname: One\nuse:\n  planner:\n    maxActions: 1\n    maxPlanningTurns: 1\ntests: []\n'
+    const one = configManagerWith({ use: { planner: { maxActions: 1, maxPlanningTurns: 1 } } })
+    expect(await resolveLivePlannerLimits(
+      one,
+      [{ type: 'suite', id: 's_bad' }, testRef],
+      readersFor(testYaml('    maxActions: 1\n    maxPlanningTurns: 1\n'), suite),
+    )).toEqual({ maxActions: 1, maxPlanningTurns: 1 })
+  })
+
+  it('a suite child with an invalid limit fails without running a step', async () => {
+    const session = new LiveSession('refusal-session')
+    vi.clearAllMocks()
+    variableStoreEntries.clear()
+    mockExecuteStep.mockResolvedValue({ name: 'test-step', status: 'passed', duration: 100 })
+    mockRunHooks.mockResolvedValue({ results: new Map(), variables: {}, allPassed: true, duration: 5 })
+    const readers = readersFor(testYaml('    maxActions: 0\n'))
+    await session.initialize({
+      ...webConfig,
+      plannerLimits: await resolveLivePlannerLimits(project, undefined, readers),
+      plannerLimitsForTest: (testId) => resolveLivePlannerLimits(project, [{ type: 'test', id: testId }], readers),
+    })
+    mockRunHooks.mockClear()
+    const result = await session.executeTestCommand('exec-bad', {
+      testIndex: 0,
+      testId: 't_bad',
+      testName: 'Bad',
+      steps: ['archive all'],
+      setup: [HOOK_ID],
+      teardown: [TEARDOWN_HOOK_ID],
+    })
+    expect(result.status).toBe('failed')
+    expect(result.error).toContain('test file t_bad sets use.planner.maxActions to 0: ')
+    expect(result.stepResults).toEqual([])
+    expect(result.setupHookExecutions).toEqual([])
+    expect(result.teardownHookExecutions).toEqual([])
+    expect(mockExecuteStep).not.toHaveBeenCalled()
+    expect(mockRunHooks).not.toHaveBeenCalled()
   })
 })
