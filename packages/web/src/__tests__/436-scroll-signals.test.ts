@@ -7,15 +7,16 @@
 // scrollers, shadow roots and an iframe-only ref (review CR-06). C436-SCROLL-FRAMES: the probe
 // sees every frame and answers visible, hidden or unknown (review CR-07). C436-SCROLL-DECOYS:
 // hidden, transparent and covered copies never count, positioned targets are hit-tested (WR-16).
+// 2026-10-08 (436-26): C436-SCROLL-FRAMES adds iframes that never answer (review CR-08).
 
 import { createServer } from 'node:http'
-import type { Server } from 'node:http'
+import type { Server, ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import type { Page } from 'playwright-core'
 import type { Ref } from '@vostride/agent-qa-schema'
 import { WebPlatformAdapter } from '../adapter.js'
-import { buildScrollPrimitives } from '../compound-web.js'
+import { buildScrollPrimitives, FRAME_PROBE_TIMEOUT_MS } from '../compound-web.js'
 import { runUntilVisibleLoop } from '@vostride/agent-qa-runner'
 
 const page = (title: string, body: string): string =>
@@ -89,6 +90,12 @@ const PAY_FRAME_DEEP = '<!DOCTYPE html><html><body><div style="height:1500px">To
 const FRAME_SCALED = framePage('/frame-pay', `${FRAME_STYLE};transform:scale(0.5)`, '', '<div style="height:850px">Body</div>')
 const FRAME_COVERED = framePage('/frame-pay', FRAME_STYLE, '',
   '<div style="height:850px">Body</div><div style="position:fixed;inset:0;background:rgba(0,0,0,0.3)"></div>')
+// review3-hung-frame-probe.mjs: an iframe whose server never answers (/hang).
+const HUNG_PROBE = `<!DOCTYPE html><html><body><h1>Account</h1><button>Top target</button><iframe src="/hang" style="width:300px;height:120px"></iframe>
+<div style="height:3000px"></div><button>Far target</button></body></html>`
+const HUNG_BESIDE_HEALTHY = '<!DOCTYPE html><html><body style="margin:0"><iframe src="/hang"></iframe>' +
+  `<iframe id="pay" src="/frame-pay" style="${FRAME_STYLE}"></iframe><div style="height:850px">Body</div></body></html>`
+const HUNG_ABSENT = page('hung absent', '<h1>Account</h1><iframe src="/hang"></iframe><div style="height:1500px">Spacer</div>')
 
 // WR-16: a copy of the target at the top, the real button 4000 px down.
 const decoyPage = (title: string, decoy: string): string => page(title, `
@@ -140,6 +147,9 @@ const PAGES: Record<string, string | ((port: number) => string)> = {
   '/frame-pay-deep': PAY_FRAME_DEEP,
   '/frame-scaled': FRAME_SCALED,
   '/frame-covered': FRAME_COVERED,
+  '/hung-probe': HUNG_PROBE,
+  '/hung-beside-healthy': HUNG_BESIDE_HEALTHY,
+  '/hung-absent': HUNG_ABSENT,
   '/prop-body': PROP_BODY,
   '/prop-body-y': PROP_BODY_Y,
   '/quirks': QUIRKS,
@@ -167,10 +177,18 @@ const NATIVE_SEARCH_TIMEOUT_MS = 2_000
 let server: Server
 let baseUrl = ''
 let adapter: WebPlatformAdapter | undefined
+// /hang never answers; each parked response is destroyed after its cell.
+const parkedResponses = new Set<ServerResponse>()
 
 beforeAll(async () => {
   server = createServer((req, res) => {
-    const entry = PAGES[(req.url ?? '/').split('?')[0]]
+    const path = (req.url ?? '/').split('?')[0]
+    if (path === '/hang') {
+      parkedResponses.add(res)
+      res.on('close', () => parkedResponses.delete(res))
+      return
+    }
+    const entry = PAGES[path]
     const html = typeof entry === 'function' ? entry((server.address() as AddressInfo).port) : entry
     res.writeHead(html === undefined ? 404 : 200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
     res.end(html ?? 'not found')
@@ -180,15 +198,28 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
+  for (const res of parkedResponses) res.destroy()
   await new Promise<void>((resolve) => { server.close(() => { resolve() }) })
 })
 
 afterEach(async () => {
   await adapter?.cleanup()
   adapter = undefined
+  for (const res of parkedResponses) res.destroy()
 }, 60_000)
 
 async function open(path: string): Promise<{ web: WebPlatformAdapter; tab: Page }> {
+  const opened = await openLoaded(path, 'load')
+  await opened.web.observe()
+  return opened
+}
+
+// A page holding a hung iframe never fires `load`, so it is opened at domcontentloaded and not observed.
+async function openHung(path: string): Promise<{ web: WebPlatformAdapter; tab: Page }> {
+  return openLoaded(path, 'domcontentloaded')
+}
+
+async function openLoaded(path: string, waitUntil: 'load' | 'domcontentloaded'): Promise<{ web: WebPlatformAdapter; tab: Page }> {
   const created = new WebPlatformAdapter()
   try {
     await created.setup({ platform: 'web', browser: { name: 'chromium', headless: true } })
@@ -198,9 +229,22 @@ async function open(path: string): Promise<{ web: WebPlatformAdapter; tab: Page 
   adapter = created
   const tab = created.getPage()!
   tab.setDefaultTimeout(NATIVE_SEARCH_TIMEOUT_MS)
-  await tab.goto(baseUrl + path)
-  await created.observe()
+  await tab.goto(baseUrl + path, { waitUntil })
   return { web: created, tab }
+}
+
+const STILL_WAITING = 'still waiting at the sentinel'
+
+// An unbounded wait fails on its assertion, not on the cell timeout.
+async function withSentinel<T>(work: Promise<T>, ms = 20_000): Promise<{ value: T | typeof STILL_WAITING; ms: number }> {
+  const started = Date.now()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const value = await Promise.race([
+    work,
+    new Promise<typeof STILL_WAITING>((resolve) => { timer = setTimeout(() => { resolve(STILL_WAITING) }, ms) }),
+  ])
+  clearTimeout(timer)
+  return { value, ms: Date.now() - started }
 }
 
 type Rect = { top: number; bottom: number; innerHeight: number }
@@ -603,7 +647,47 @@ describe('C436-SCROLL-FRAMES', () => {
     const result = await web.execute(search('down', 5))
     expect(result.metadata?.scrollUntilVisible).toMatchObject({ outcome: 'unresolved' })
   }, 60_000)
+
+  it('a page whose iframe never answers ends untilVisible inside the budget', async () => {
+    const { web } = await openHung('/hung-probe')
+    const find = (text: string) => withSentinel(web.execute(
+      { type: 'scroll', mode: 'untilVisible', direction: 'down', text, maxSwipes: 6, retryOpposite: false },
+      { remainingStepMs: 60_000 },
+    ))
+    const top = await find('Top target')
+    expect(top.value, 'Top target').not.toBe(STILL_WAITING)
+    expect(top.ms).toBeLessThan(15_000)
+    expect((top.value as ActionOutcome).metadata?.scrollUntilVisible).toEqual(ZERO_SWIPES_FOUND)
+    const far = await find('Far target')
+    expect(far.value, 'Far target').not.toBe(STILL_WAITING)
+    expect(far.ms).toBeLessThan(15_000)
+    const meta = (far.value as ActionOutcome).metadata?.scrollUntilVisible as { swipes: number } | undefined
+    expect(meta).toMatchObject({ outcome: 'found' })
+    expect(meta!.swipes).toBeGreaterThanOrEqual(1)
+  }, 60_000)
+
+  it("a hung frame beside a healthy frame does not hide the healthy frame's target", async () => {
+    const { web, tab } = await openHung('/hung-beside-healthy')
+    await tab.frameLocator('#pay').getByText('Pay now').waitFor()
+    const run = await withSentinel(web.execute(untilVisible('Pay now', 3), { remainingStepMs: 60_000 }))
+    expect(run.value).not.toBe(STILL_WAITING)
+    expect(run.ms).toBeLessThan(FRAME_PROBE_TIMEOUT_MS + 1_500)
+    expect((run.value as ActionOutcome).metadata?.scrollUntilVisible).toEqual(ZERO_SWIPES_FOUND)
+  }, 60_000)
+
+  it('an absent target beside a hung frame ends unresolved inside the budget', async () => {
+    const { web } = await openHung('/hung-absent')
+    const run = await withSentinel(web.execute(
+      { ...untilVisible('No such text', 3), retryOpposite: true },
+      { remainingStepMs: 60_000 },
+    ))
+    expect(run.value).not.toBe(STILL_WAITING)
+    expect(run.ms).toBeLessThan(15_000)
+    expect((run.value as ActionOutcome).metadata?.scrollUntilVisible).toMatchObject({ outcome: 'unresolved' })
+  }, 60_000)
 })
+
+type ActionOutcome = Awaited<ReturnType<WebPlatformAdapter['execute']>>
 
 async function realButtonOnScreen(tab: Page): Promise<boolean> {
   return tab.evaluate<boolean>(`(() => {

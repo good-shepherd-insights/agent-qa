@@ -242,6 +242,9 @@ async function wheelPointerChain(page: Page, dx: number, dy: number, axis: Axis)
 type ProbeBox = { left: number; top: number; right: number; bottom: number }
 type Judged = { state: TargetVisibility; rect?: ProbeBox }
 
+// 2026-10-08 (436-26): the longest one child frame may take to answer the visibility probe (CR-08).
+export const FRAME_PROBE_TIMEOUT_MS = 1_000
+
 // In-page judge for every candidate of one frame, in that frame's own viewport. Ancestors are
 // walked over the flat tree (assigned slot, parent element, shadow host), skipping a body whose
 // overflow propagates to the viewport. Self-contained: Playwright serializes it.
