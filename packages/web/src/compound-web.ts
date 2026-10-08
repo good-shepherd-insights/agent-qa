@@ -242,11 +242,17 @@ async function wheelPointerChain(page: Page, dx: number, dy: number, axis: Axis)
 type ProbeBox = { left: number; top: number; right: number; bottom: number }
 type Judged = { state: TargetVisibility; rect?: ProbeBox }
 
-// In-page judge for every candidate of one frame, in that frame's own viewport. Hidden: computed
-// visibility other than `visible`, or a box outside the viewport. Unknown: a box that a clipping
-// ancestor (a nested scroller the search may not have moved) empties. Visible: the clipped box.
-// Ancestors are walked over the flat tree (assigned slot, parent element, shadow host), skipping a
-// body whose overflow propagates to the viewport. Self-contained: Playwright serializes it.
+// In-page judge for every candidate of one frame, in that frame's own viewport. Ancestors are
+// walked over the flat tree (assigned slot, parent element, shadow host), skipping a body whose
+// overflow propagates to the viewport. Self-contained: Playwright serializes it.
+// - hidden: computed visibility other than `visible`, opacity 0 on the element or an ancestor, an
+//   own box under 2x2 CSS px, or a box outside the viewport;
+// - unknown: a box a clipping ancestor (a nested scroller the search may not have moved) empties
+//   or shrinks under 2x2, or a hit test at its centre that lands on anything but the element (an
+//   overlay, a point removed by clip or clip-path, an approximate clip);
+// - visible: the hit lands on the element, inside it, or on an ancestor of a pointer-events:none
+//   element. A clip is skipped once the element or a node below the clipping ancestor is fixed or
+//   absolutely positioned, since it may escape the clip; the hit test then decides.
 function judgeCandidates(elements: unknown[]): unknown {
   const g = globalThis as any
   const doc = g.document
@@ -258,27 +264,47 @@ function judgeCandidates(elements: unknown[]): unknown {
     const style = g.getComputedStyle(node)
     return style.overflowX !== 'visible' || style.overflowY !== 'visible'
   }
+  const escapes = (node: any): boolean => {
+    const position = g.getComputedStyle(node).position
+    return position === 'fixed' || position === 'absolute'
+  }
   const judge = (el: any): unknown => {
-    if (g.getComputedStyle(el).visibility !== 'visible') return { state: 'hidden' }
+    const style = g.getComputedStyle(el)
+    if (style.visibility !== 'visible') return { state: 'hidden' }
+    for (let n = el; n; n = parentOf(n)) {
+      if (g.getComputedStyle(n).opacity === '0') return { state: 'hidden' }
+    }
     const r = el.getBoundingClientRect()
+    if (r.width < 2 || r.height < 2) return { state: 'hidden' }
     let left = Math.max(r.left, 0)
     let top = Math.max(r.top, 0)
     let right = Math.min(r.right, g.innerWidth)
     let bottom = Math.min(r.bottom, g.innerHeight)
     if (!(right > left && bottom > top)) return { state: 'hidden' }
+    let positioned = escapes(el)
     for (let a = parentOf(el); a && a !== root; a = parentOf(a)) {
-      if (a === doc.body && bodyPropagates) continue
-      if (!clips(a)) continue
-      const b = a.getBoundingClientRect()
-      const cl = b.left + a.clientLeft
-      const ct = b.top + a.clientTop
-      left = Math.max(left, cl)
-      top = Math.max(top, ct)
-      right = Math.min(right, cl + a.clientWidth)
-      bottom = Math.min(bottom, ct + a.clientHeight)
-      if (!(right > left && bottom > top)) return { state: 'unknown' }
+      if (!(a === doc.body && bodyPropagates) && !positioned && clips(a)) {
+        const b = a.getBoundingClientRect()
+        const cl = b.left + a.clientLeft
+        const ct = b.top + a.clientTop
+        left = Math.max(left, cl)
+        top = Math.max(top, ct)
+        right = Math.min(right, cl + a.clientWidth)
+        bottom = Math.min(bottom, ct + a.clientHeight)
+        if (!(right > left && bottom > top)) return { state: 'unknown' }
+      }
+      if (escapes(a)) positioned = true
     }
-    return { state: 'visible', rect: { left, top, right, bottom } }
+    if (right - left < 2 || bottom - top < 2) return { state: 'unknown' }
+    const hit = el.getRootNode().elementFromPoint((left + right) / 2, (top + bottom) / 2)
+    if (!hit) return { state: 'unknown' }
+    if (hit === el || el.contains(hit)) return { state: 'visible', rect: { left, top, right, bottom } }
+    if (style.pointerEvents === 'none') {
+      for (let a = parentOf(el); a; a = parentOf(a)) {
+        if (a === hit) return { state: 'visible', rect: { left, top, right, bottom } }
+      }
+    }
+    return { state: 'unknown' }
   }
   return elements.map(judge)
 }
@@ -287,7 +313,7 @@ function judgeCandidates(elements: unknown[]): unknown {
 // element into the parent's viewport, or null when it cannot be judged: a transform or zoom on the
 // frame element or a flat-tree ancestor, an empty result after the content box, clipping ancestors
 // and the viewport, or a hit test at its centre that lands on anything but the frame element.
-// Its flat-tree walk and clip rules are a copy of judgeCandidates'.
+// Its flat-tree walk and clip rules are a copy of judgeCandidates', without the positioned skip.
 function projectThroughFrame(frameElement: unknown, box: ProbeBox): unknown {
   const g = globalThis as any
   const doc = g.document
@@ -401,8 +427,9 @@ async function probeChildFrame(frame: Frame, target: string): Promise<TargetVisi
 // waits. An error on the main frame answers unknown, and on a child frame makes that frame unknown
 // (436-17 · D-24/D-25).
 // 2026-10-08 (436-22): tri-state over every frame, each child frame's candidates projected through
-// its frame elements; a nested-scroller clip, a frame target not on screen inside its frame, a
-// transformed or zoomed frame and a covered frame are unknown (review CR-07).
+// its frame elements (review CR-07). Hidden: visibility, opacity 0, a box under 2x2 or outside the
+// viewport. Unknown: a nested-scroller clip, a covered or clipped centre point, a frame target not
+// on screen inside its frame, a transformed, zoomed or covered frame (review WR-16).
 async function probeOnScreen(page: Page, target: string): Promise<TargetVisibility> {
   let states: TargetVisibility[]
   try {

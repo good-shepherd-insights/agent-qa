@@ -2670,6 +2670,54 @@
       "file": "packages/runner/src/compound/__tests__/scroll-until-visible.test.ts",
       "fullName": "C436-SCROLL-PROBE — an unknown answer never ends a search not-found (436-22 · D-24) hidden answers and two boundaries still end not-found",
       "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-DECOYS a visually hidden copy never ends found at zero swipes",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-DECOYS a transparent copy never ends found at zero swipes",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-DECOYS a copy under a fixed overlay never ends found",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-DECOYS a fixed-position target inside an overflow-hidden wrapper ends found",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-DECOYS an absolutely positioned target escaping a non-positioned clipping wrapper ends found",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-DECOYS a pointer-events:none label on screen ends found",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-DECOYS an on-screen target inside an open shadow root ends found",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-DECOYS a slotted target clipped by its shadow root's internal scroller is not found at zero swipes",
+      "origin": "436 D-24"
     }
   ]
 }
