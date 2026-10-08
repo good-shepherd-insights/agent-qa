@@ -27,6 +27,10 @@
 // The pre-image stays in the probe page; only status words and numbers leave it. At most
 // CLIPBOARD_CLAIMS_PER_ACTION claims are kept per action in either mode, and a probe whose read
 // does not settle is skipped until it is replaced.
+// 2026-10-08 (436-24): navigations that do not answer, from any frame or popup, keep the start
+// window open at most NAVIGATION_WINDOW_CAP_MS and never past half the action's time left, so a
+// started download keeps the other half to finish. They are bounded, not dropped: a download that
+// starts after the window is held and recorded late. The 120 s no-deadline wait is gone (CR-05).
 
 import { createHash } from 'node:crypto'
 import { extname } from 'node:path'
@@ -381,16 +385,20 @@ export class OperationCapture {
 
   // The grace after an activation action, then for as long as a navigation it started has neither
   // a response nor a failure, plus NAVIGATION_SETTLE_MS after the last answer; all bounded by the
-  // action's time left.
+  // action's time left. The navigation part also ends at navEnd, fixed when the wait begins.
   private async waitForStartWindow(): Promise<void> {
     if (!this.activation) return
-    const graceEnd = Date.now() + Math.min(this.startGraceMs, Math.max(0, this.timeLeft()))
+    const start = Date.now()
+    const graceEnd = start + Math.min(this.startGraceMs, Math.max(0, this.timeLeft()))
+    const navEnd = start + Math.min(NAVIGATION_WINDOW_CAP_MS, Math.max(0, this.timeLeft()) / 2)
     for (;;) {
       const left = this.timeLeft()
       if (left <= 0) return
-      const openFor = Math.max(graceEnd, this.navigationSettledAt + NAVIGATION_SETTLE_MS) - Date.now()
+      const now = Date.now()
+      const settleEnd = Math.min(this.navigationSettledAt + NAVIGATION_SETTLE_MS, navEnd)
+      const openFor = Math.max(graceEnd, settleEnd) - now
       if (openFor > 0) await this.waitForSignal(Math.min(openFor, left))
-      else if (this.pendingNavigations.size > 0) await this.waitForSignal(left)
+      else if (this.pendingNavigations.size > 0 && now < navEnd) await this.waitForSignal(Math.min(navEnd - now, left))
       else return
     }
   }

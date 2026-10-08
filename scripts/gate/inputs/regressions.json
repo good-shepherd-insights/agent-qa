@@ -2832,6 +2832,48 @@
       "file": "packages/web/src/__tests__/436-webview-scrollers.test.ts",
       "fullName": "C436-WEBVIEW-SCRIPT the WebView scroller script in real Chromium (436-23 · D-25) the script writes nothing to the page",
       "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-WINDOW a hung subframe does not time the step out",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-WINDOW a same-origin iframe that never answers ends the window at the cap",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-WINDOW a cross-origin iframe that never answers ends the window at the cap",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-WINDOW a popup whose navigation never answers ends the window at the cap",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-WINDOW a click whose own navigation never answers ends the window at the cap",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-WINDOW the navigation extension never takes more than half the time left",
+      "origin": "436 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C436-DOWNLOAD-WINDOW with no step deadline the window still ends at the cap",
+      "origin": "436 D-19"
     }
   ]
 }
