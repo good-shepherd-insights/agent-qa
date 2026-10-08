@@ -13,6 +13,7 @@ import { createUndoStore, UNDO_RETENTION_MS } from '../config/undo-store.js'
 import { HookRegistryManager, isHookRegistryMutationError } from '../hooks/hook-registry-manager.js'
 import { readJsonBody } from './body-parser.js'
 import {
+  LivePlannerLimitsRefusedError,
   LiveProductionRefusedError,
   liveProductionRefusal,
   resolveLivePlannerLimits,
@@ -5031,7 +5032,11 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err)
           // The config changed between the door's read and `initialize`'s: the same refusal.
-          jsonNoCors(res, { error: message }, err instanceof LiveProductionRefusedError ? 403 : 500)
+          // 436 D-03: a limit the CLI refuses is refused here, before any session exists.
+          const status = err instanceof LiveProductionRefusedError
+            ? 403
+            : err instanceof LivePlannerLimitsRefusedError ? 400 : 500
+          jsonNoCors(res, { error: message }, status)
         }
       })()
       return

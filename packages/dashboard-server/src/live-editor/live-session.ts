@@ -3,6 +3,9 @@ import { dirname, resolve as resolvePath } from 'node:path'
 import {
   AUTH_STATE_SCHEMA_VERSION,
   MobileSetupError,
+  PlannerConfigSchema,
+  SuiteDefinitionSchema,
+  TestDefinitionSchema,
   readAuthStateMetadata,
   redactAuthStateValue,
   resolveAuthStatePaths,
@@ -149,6 +152,52 @@ async function readEntityUse(
   }
 }
 
+/** 436 D-02/D-05: a layer sets a planner limit the CLI refuses, so the live editor refuses it too. */
+export class LivePlannerLimitsRefusedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'LivePlannerLimitsRefusedError'
+  }
+}
+
+const LIVE_LIMIT_LEAVES = ['maxActions', 'maxPlanningTurns', 'maxSubActions'] as const
+type LiveLimitLeaf = (typeof LIVE_LIMIT_LEAVES)[number]
+type EntityUseSchema = typeof TestDefinitionSchema.shape.use | typeof SuiteDefinitionSchema.shape.use
+
+function shownLimitValue(value: unknown): string {
+  return typeof value === 'number' ? String(value) : JSON.stringify(value) ?? String(value)
+}
+
+// Only the limit leaves are checked, with the core schemas the CLI applies to them; other `use`
+// keys are not the live editor's to refuse.
+function useLeafIssue(schema: EntityUseSchema, key: LiveLimitLeaf, value: unknown): string | undefined {
+  const parsed = schema.safeParse({ planner: { [key]: value } })
+  return parsed.success ? undefined : parsed.error.issues[0]?.message ?? 'invalid value'
+}
+
+function projectLeafIssue(key: LiveLimitLeaf, value: unknown): string | undefined {
+  if (key === 'maxSubActions') return useLeafIssue(TestDefinitionSchema.shape.use, key, value)
+  const parsed = PlannerConfigSchema.shape[key].safeParse(value)
+  return parsed.success ? undefined : parsed.error.issues[0]?.message ?? 'invalid value'
+}
+
+function refuseInvalidLimits(
+  layer: string,
+  use: unknown,
+  issueOf: (key: LiveLimitLeaf, value: unknown) => string | undefined,
+): void {
+  if (!isConfigRecord(use) || !isConfigRecord(use.planner)) return
+  const planner = use.planner
+  for (const key of LIVE_LIMIT_LEAVES) {
+    if (!Object.hasOwn(planner, key)) continue
+    const issue = issueOf(key, planner[key])
+    if (issue === undefined) continue
+    throw new LivePlannerLimitsRefusedError(
+      `${layer} sets use.planner.${key} to ${shownLimitValue(planner[key])}: ${issue}. The CLI refuses this file too.`,
+    )
+  }
+}
+
 /**
  * 436 D-03: the limits a live session runs under — the project config's `use` block, then each
  * entity's `use` in order (a suite, then a test of it) when the door can load it. An entity it
@@ -160,9 +209,16 @@ export async function resolveLivePlannerLimits(
   readers: LiveEntityDefinitionReaders,
 ): Promise<PlannerLimits> {
   const config = configManager === undefined ? {} : await readConfigValues(configManager)
+  refuseInvalidLimits('project config', config.use, projectLeafIssue)
   const uses: unknown[] = []
   for (const entity of ([] as EntityRef[]).concat(entities ?? [])) {
-    uses.push(await readEntityUse(entity, readers))
+    const use = await readEntityUse(entity, readers)
+    refuseInvalidLimits(`${entity.type} file ${entity.id}`, use, (key, value) => useLeafIssue(
+      entity.type === 'suite' ? SuiteDefinitionSchema.shape.use : TestDefinitionSchema.shape.use,
+      key,
+      value,
+    ))
+    uses.push(use)
   }
   return resolvePlannerLimits(config.use, ...uses)
 }
@@ -1247,9 +1303,23 @@ export class LiveSession {
     try {
       // 436 D-03: a test runs at its own effective limits (project, suite, then its own `use`),
       // resolved once before its first step, exactly as the CLI suite producer resolves a member.
-      const testLimits = this.plannerLimitsForTest !== undefined && testDraft.testId.length > 0
-        ? await this.plannerLimitsForTest(testDraft.testId)
-        : this.plannerLimits ?? resolvePlannerLimits()
+      let testLimits: PlannerLimits
+      try {
+        testLimits = this.plannerLimitsForTest !== undefined && testDraft.testId.length > 0
+          ? await this.plannerLimitsForTest(testDraft.testId)
+          : this.plannerLimits ?? resolvePlannerLimits()
+      } catch (error) {
+        if (!(error instanceof LivePlannerLimitsRefusedError)) throw error
+        console.warn(`[live-session] executeTestCommand: ${error.message}`, { testName: testDraft.testName })
+        return this.redact({
+          status: 'failed',
+          duration: performance.now() - start,
+          error: error.message,
+          setupHookExecutions: [],
+          stepResults: [],
+          teardownHookExecutions: [],
+        })
+      }
 
       // Per-test setup (D-09). Per-test setup failure short-circuits the
       // test AND skips per-test teardown, matching suite/runner.ts:230 break

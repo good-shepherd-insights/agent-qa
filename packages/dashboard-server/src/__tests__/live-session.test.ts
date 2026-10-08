@@ -137,7 +137,9 @@ vi.mock('@vostride/agent-qa-runner-local', async (importOriginal) => ({
   DockerHookExecutor: class { execute(...args: unknown[]) { return mockRunHookInSandbox(...args) } },
 }))
 
-vi.mock('@vostride/agent-qa-core', () => {
+vi.mock('@vostride/agent-qa-core', async () => {
+  // 436-19: the live door checks limit leaves with the real core schemas the CLI applies.
+  const actual = await vi.importActual<typeof import('@vostride/agent-qa-core')>('@vostride/agent-qa-core')
   class LocalSecretStore {
     private secrets: Record<string, string>
     constructor(secrets: Record<string, string> = {}) {
@@ -234,6 +236,9 @@ vi.mock('@vostride/agent-qa-core', () => {
     redactSecretValue,
     redactAuthStateValue,
     resolveSecretTemplatesInValue,
+    PlannerConfigSchema: actual.PlannerConfigSchema,
+    TestDefinitionSchema: actual.TestDefinitionSchema,
+    SuiteDefinitionSchema: actual.SuiteDefinitionSchema,
   }
 })
 
