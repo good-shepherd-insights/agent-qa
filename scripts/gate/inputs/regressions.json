@@ -2154,6 +2154,72 @@
       "file": "packages/web/src/__tests__/compound.test.ts",
       "fullName": "WebPlatformAdapter compound behaviors (RED — Wave-0) EXEC-02 scroll movement signals (436-02 · D-25) a same-hash untilVisible scroll with moving offsets keeps going forward and stays unresolved",
       "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/scroll-until-visible.test.ts",
+      "fullName": "C436-SCROLL-PROBE — an adapter visibility probe replaces the tree match (436-17 · D-24) probeTargetVisible replaces the tree match when supplied",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/scroll-until-visible.test.ts",
+      "fullName": "C436-SCROLL-PROBE — an adapter visibility probe replaces the tree match (436-17 · D-24) the native rung is confirmed by the probe",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-VISIBILITY on-screen plain text ends found",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-VISIBILITY a named button below the fold is not found until it is on screen",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-VISIBILITY an element clipped by a nested scroller is not visible",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-VISIBILITY an aria-label-only target counts when on screen",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-VISIBILITY a target absent from the page never ends found",
+      "origin": "436 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-REF a listbox ref scrolls the listbox itself",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-REF a ref that no longer resolves reports unknown and moves nothing",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-REF a resolved element with no scrollable ancestor on a page that cannot scroll is unknown, never a boundary",
+      "origin": "436 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/compound.test.ts",
+      "fullName": "WebPlatformAdapter compound behaviors (RED — Wave-0) EXEC-02 scroll movement signals (436-02 · D-25) a container ref that does not resolve performs no gesture and reports unknown",
+      "origin": "436 D-25"
     }
   ]
 }

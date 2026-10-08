@@ -208,12 +208,12 @@ async function probeOnScreen(page: Page, target: string): Promise<boolean> {
 export function buildScrollPrimitives(page: Page, lastRefs: RefMap, magnitude: number): ScrollPrimitives {
   return {
     async swipeOnce(direction: Direction, ref?: Ref): Promise<SwipeSignal> {
-      const refData = ref ? lastRefs[ref] : undefined
       const { dx, dy, axis } = deltaFor(direction, magnitude)
-      if (refData) {
-        const scrolled = await scrollWithRef(page, refData, dx, dy, axis)
-        await settle(page)
-        return swipeSignalFromOffsets(direction, scrolled?.offsets)
+      if (ref) {
+        // A ref that does not resolve moves nothing and carries no offsets: the signal is unknown.
+        const scrolled = await scrollWithRef(page, lastRefs, ref, dx, dy, axis)
+        if (scrolled.scrolledContainer !== 'notFound') await settle(page)
+        return swipeSignalFromOffsets(direction, scrolled.offsets)
       }
       const before = await readDocumentOffsets(page)
       await page.mouse.wheel(dx, dy)
