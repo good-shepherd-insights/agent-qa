@@ -1,6 +1,6 @@
 // C436-DOWNLOAD-CAPTURE (436 D-19, D-20) and C436-CLIPBOARD-CAPTURE (436 D-21): real headless
 // Chromium downloads and app clipboard writes served from a local fixture, captured on the action
-// that produced them.
+// that produced them. C436-DOWNLOAD-DEADLINE (436-15): the download wait ends at the step deadline.
 
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
@@ -13,12 +13,13 @@ import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { chromium, firefox, webkit } from 'playwright-core'
 import type { Download } from 'playwright-core'
-import type { ActionResult, RecordingCapability } from '@vostride/agent-qa-runner'
+import type { ActionResult, PlannerConfig, RecordingCapability } from '@vostride/agent-qa-runner'
 import { screenIdentityHash } from '@vostride/agent-qa-schema'
 import type { DownloadEvidence, Ref } from '@vostride/agent-qa-schema'
 import { WebPlatformAdapter } from '../adapter.js'
 import { CLIPBOARD_BINDING, DOWNLOAD_START_GRACE_MS } from '../operation-capture.js'
 import type { CapturedClipboardWrite, OperationCapture } from '../operation-capture.js'
+import { act, refFor as screenRefFor, runScriptedStep, scriptedPlanner, scriptedVerifier } from './fixtures/436-scripted-loop.js'
 
 const BLOB_BYTES = 'name,qty\nwidget,3\n'
 const DISPOSITION_BYTES = JSON.stringify({ order: 42, lines: ['a', 'b'] })
@@ -368,6 +369,68 @@ describe('C436-DOWNLOAD-CAPTURE', () => {
     expect(result.success).toBe(true)
     expect(performance.now() - started).toBeLessThan(DOWNLOAD_START_GRACE_MS)
     expect(result.metadata?.['download']).toBeUndefined()
+  }, 60_000)
+})
+
+const UNFINISHED_SLOW: DownloadEvidence = { suggestedFilename: 'never-ends.bin', extension: '.bin', state: 'unfinished' }
+
+/** Where Playwright stores each download this page starts; read only to prove the file is gone. */
+function downloadFilesOf(web: WebPlatformAdapter): string[] {
+  const files: string[] = []
+  web.getPage()!.on('download', (download: Download) => {
+    const artifact = (download as unknown as { _artifact: { _initializer: { absolutePath: string } } })._artifact
+    files.push(artifact._initializer.absolutePath)
+  })
+  return files
+}
+
+function expectFilesGone(files: string[], count: number): void {
+  expect(files).toHaveLength(count)
+  for (const file of files) {
+    expect(file.length).toBeGreaterThan(0)
+    expect(existsSync(file), `${file} is gone`).toBe(false)
+    expect(existsSync(`${file}.crdownload`), `${file}.crdownload is gone`).toBe(false)
+  }
+}
+
+describe('C436-DOWNLOAD-DEADLINE', () => {
+  const limits: PlannerConfig = { maxActions: 5, maxPlanningTurns: 5, previousStepCount: 0 }
+
+  it('the bound holds through the real loop', async () => {
+    const web = await open()
+    const files = downloadFilesOf(web)
+    const planner = scriptedPlanner([
+      (screen) => act({ type: 'click', ref: screenRefFor(screen, 'link', 'Get slow file') }, true, 'download the slow file'),
+    ])
+    const verifier = scriptedVerifier(() => ({ pass: false, reason: 'the slow file did not finish' }))
+    const started = performance.now()
+    const run = await runScriptedStep({
+      adapter: web,
+      instruction: 'Download the slow file',
+      planner,
+      verifier,
+      plannerConfig: limits,
+      stepTimeout: 2_000,
+    })
+    const elapsed = performance.now() - started
+
+    expect(run.executed).toHaveLength(1)
+    expect(run.result.evidence?.subActions[0]?.operationEvidence?.downloads).toEqual([UNFINISHED_SLOW])
+    expect(elapsed).toBeLessThan(2_000 + 2_000)
+    expectFilesGone(files, 1)
+  }, 60_000)
+
+  it('a never-finishing download is unfinished at the remaining step time', async () => {
+    const web = await open()
+    const files = downloadFilesOf(web)
+    const ref = await refFor(web, 'link', 'Get slow file')
+    const started = performance.now()
+    const result = await web.execute({ type: 'click', ref }, { remainingStepMs: 800 })
+    const elapsed = performance.now() - started
+
+    expect(downloadsOf(result)).toEqual([UNFINISHED_SLOW])
+    expect(elapsed).toBeLessThan(800 + 1_500)
+    expectFilesGone(files, 1)
   }, 60_000)
 })
 

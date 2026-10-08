@@ -14,6 +14,7 @@ export type {
   RecordingStop,
   RecordingCapability,
   OperationCaptureSupport,
+  ExecuteOptions,
 } from './platform.js'
 export type {
   KnowledgeHintReader,

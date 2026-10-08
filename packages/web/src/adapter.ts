@@ -3,6 +3,7 @@ import type {
   ActionsFor,
   ActionResult,
   ConsoleLogEntry,
+  ExecuteOptions,
   LiveStreamCapability,
   NetworkLogEntry,
   ObserveOptions,
@@ -676,13 +677,13 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     return state
   }
 
-  async execute(action: ActionsFor<'web'>): Promise<ActionResult> {
+  async execute(action: ActionsFor<'web'>, options?: ExecuteOptions): Promise<ActionResult> {
     if (!this.page) {
       throw new Error('WebPlatformAdapter not initialized — call setup() first')
     }
 
     const capture = this.operationCapture
-    capture?.arm(action)
+    capture?.arm(action, options)
     const result = await this.executeWithErrorResult(action)
     // The download-start grace and the clipboard read-back follow the action (436-10, 436-11); the
     // recorded interval is the action's.

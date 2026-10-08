@@ -9,6 +9,7 @@ import type {
   ActionPlan,
   ActionPlanCache,
   CachedPlanValue,
+  ExecuteOptions,
   LoopPorts,
   PlannerConfig,
   Planner,
@@ -144,9 +145,9 @@ function countingAdapter(adapter: PlatformAdapter, executed: Action[]): Platform
   return new Proxy(adapter, {
     get(target, property) {
       if (property === 'execute') {
-        return async (action: Action) => {
+        return async (action: Action, options?: ExecuteOptions) => {
           executed.push(action)
-          return target.execute(action)
+          return target.execute(action, options)
         }
       }
       const value: unknown = Reflect.get(target, property, target)
@@ -162,6 +163,8 @@ export async function runScriptedStep(options: {
   verifier: Verifier
   cache?: ActionPlanCache
   plannerConfig: PlannerConfig
+  stepTimeout?: number
+  abortSignal?: AbortSignal
 }): Promise<ScriptedStepRun> {
   const executed: Action[] = []
   const ports: LoopPorts = {
@@ -170,6 +173,8 @@ export async function runScriptedStep(options: {
     verifier: options.verifier,
     plannerConfig: options.plannerConfig,
     ...(options.cache ? { cache: options.cache } : {}),
+    ...(options.stepTimeout !== undefined ? { stepTimeout: options.stepTimeout } : {}),
+    ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
   }
   const context: StepContext = {
     stepInstruction: options.instruction,

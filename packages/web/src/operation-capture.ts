@@ -9,17 +9,20 @@
 // 2026-10-08 (436-14): the read-back runs in an agent-qa-owned probe context at a reserved origin,
 // never on an app origin, and only the index of the claimed write equal to the clipboard leaves
 // the probe page (CR-01, IN-08). No app origin is ever granted `clipboard-read`.
+// 2026-10-08 (436-15): the download wait of one action ends at the step's remaining time when the
+// loop hands one over, else at DOWNLOAD_COMPLETION_CAP_MS (WR-07).
 
 import { createHash } from 'node:crypto'
 import { extname } from 'node:path'
 import type { BrowserContext, Download, Frame, Page } from 'playwright-core'
 import type { ClipboardEvidence, DownloadEvidence } from '@vostride/agent-qa-schema'
+import type { ExecuteOptions } from '@vostride/agent-qa-runner'
 
 export { CLIPBOARD_TEXT_LIMIT } from '@vostride/agent-qa-runner'
 
 /** How long an activation action is given to start a download after it returns. */
 export const DOWNLOAD_START_GRACE_MS = 500
-/** The completion bound when the platform configures no step timeout. */
+/** The download wait's bound for an action dispatched with no step deadline. */
 export const DOWNLOAD_COMPLETION_CAP_MS = 120_000
 
 const ACTIVATION_ACTIONS: ReadonlySet<string> = new Set([
@@ -136,6 +139,7 @@ const CLIPBOARD_HOOK = `(() => {
 })();`
 
 export interface OperationCaptureOptions {
+  /** The bound when the action carries no remaining step time. */
   completionCapMs?: number
   startGraceMs?: number
 }
@@ -149,6 +153,8 @@ export class OperationCapture {
   private armed = false
   private clipboardArmed = false
   private activation = false
+  private boundAt = 0
+  private abortSignal: AbortSignal | undefined
   private notify: (() => void) | null = null
   private appContext: BrowserContext | null = null
   private probe: Promise<Page | undefined> | null = null
@@ -170,18 +176,26 @@ export class OperationCapture {
     await context.addInitScript(CLIPBOARD_HOOK)
   }
 
-  arm(action: { type: string }): void {
+  arm(action: { type: string }, options: ExecuteOptions = {}): void {
     this.downloads = []
     this.clipboardWrites = []
     this.armed = true
     this.clipboardArmed = !CLIPBOARD_EXCLUDED_ACTIONS.has(action.type)
     this.activation = ACTIVATION_ACTIONS.has(action.type)
+    const remaining = options.remainingStepMs
+    this.boundAt = Date.now()
+      + (typeof remaining === 'number' && Number.isFinite(remaining) ? Math.max(0, remaining) : this.completionCapMs)
+    this.abortSignal = options.abortSignal
+  }
+
+  private timeLeft(): number {
+    return this.boundAt - Date.now()
   }
 
   async collect(): Promise<CapturedOperations | undefined> {
     if (!this.armed) return undefined
     try {
-      const deadline = Date.now() + (this.activation ? this.startGraceMs : 0)
+      const deadline = Date.now() + (this.activation ? Math.min(this.startGraceMs, this.timeLeft()) : 0)
       const evidence: DownloadEvidence[] = []
       let next = 0
       for (;;) {
@@ -207,6 +221,7 @@ export class OperationCapture {
       this.clipboardArmed = false
       this.downloads = []
       this.clipboardWrites = []
+      this.abortSignal = undefined
     }
   }
 
@@ -357,7 +372,7 @@ export class OperationCapture {
     const outcome = await Promise.race([
       download.failure().catch((error: unknown) => (error instanceof Error ? error.message : String(error))),
       new Promise<typeof UNFINISHED>((resolve) => {
-        timer = setTimeout(() => resolve(UNFINISHED), this.completionCapMs)
+        timer = setTimeout(() => resolve(UNFINISHED), Math.max(0, this.timeLeft()))
       }),
     ])
     clearTimeout(timer)

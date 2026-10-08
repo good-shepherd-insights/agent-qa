@@ -53,7 +53,7 @@ import type {
   WorkingMemoryEntry,
 } from '@vostride/agent-qa-schema'
 import { wrapAppObservedData } from '@vostride/agent-qa-safety'
-import type { Action, ActionResult, OperationCaptureSupport } from '../platform.js'
+import type { Action, ActionResult, ExecuteOptions, OperationCaptureSupport } from '../platform.js'
 import type { StepResult, StepTrace, SubActionTrace, TokenUsage } from '../result.js'
 import { stampCaptureMode } from '../screen-builder.js'
 import { normalizePointerActionForStep } from '../tools/pointer-action-normalization.js'
@@ -658,7 +658,12 @@ export async function executeStep(
         }
         let finishAnnotation: (() => RecordingAnnotationWitness | undefined) | undefined
         try { finishAnnotation = ports.adapter.recording?.beginAnnotation?.() } catch { /* Optional evidence must not prevent execution. */ }
-        const executed = await withAbort(ports.adapter.execute(actionToExecute), ports.abortSignal)
+        // 2026-10-08 (436-15, D-19): the adapter's post-action wait ends at the step deadline or abort.
+        const executeOptions: ExecuteOptions = {
+          ...(deadline ? { remainingStepMs: Math.max(0, Math.floor(deadline - performance.now())) } : {}),
+          ...(ports.abortSignal ? { abortSignal: ports.abortSignal } : {}),
+        }
+        const executed = await withAbort(ports.adapter.execute(actionToExecute, executeOptions), ports.abortSignal)
         let recordingAnnotation: RecordingAnnotationWitness | undefined
         try { recordingAnnotation = finishAnnotation?.() } catch { /* Withhold an unproven interval. */ }
         result = redactSecretValue({ ...executed,

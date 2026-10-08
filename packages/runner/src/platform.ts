@@ -84,13 +84,22 @@ export interface OperationCaptureSupport {
   reason?: string
 }
 
+/**
+ * 2026-10-08 (436-15, D-19): what the loop hands one dispatch. `remainingStepMs` is set only when
+ * a step deadline is armed; adapters that run no post-action wait ignore both.
+ */
+export interface ExecuteOptions {
+  remainingStepMs?: number
+  abortSignal?: AbortSignal
+}
+
 export interface PlatformAdapter<P extends Platform = Platform> {
   readonly platform: P
 
   setup(config: PlatformConfig): Promise<void>
   cleanup(): Promise<void>
   observe(options?: ObserveOptions): Promise<ScreenState>
-  execute(action: ActionsFor<P>): Promise<ActionResult>
+  execute(action: ActionsFor<P>, options?: ExecuteOptions): Promise<ActionResult>
   screenshot?(): Promise<Buffer | undefined>
   /**
    * 403 D-05: the optional live-stream producer for this adapter's current target. ABSENT means
