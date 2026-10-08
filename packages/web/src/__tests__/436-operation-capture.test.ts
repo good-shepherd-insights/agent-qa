@@ -40,6 +40,7 @@ const POPUP_BYTES = 'second file from the popup\n'
 const EXPORT_BYTES = 'a,b\n1,2\n'
 const DELAYED_BYTES = 'delayed,report\n'
 const SLOW_FINISH_MS = 2_000
+const LATE_FRAME_BYTES = 'late,frame\n'
 
 const PAGE = `<!DOCTYPE html>
 <html lang="en">
@@ -430,6 +431,18 @@ beforeAll(async () => {
         res.end(DELAYED_BYTES)
       }, 1_500)
       res.on('close', () => { clearTimeout(timer) })
+      return
+    }
+    if (url === '/files/late-frame') {
+      openSlowResponses.add(res)
+      const timer = setTimeout(() => {
+        res.writeHead(200, { 'Content-Type': 'text/csv', 'Content-Disposition': 'attachment; filename="late-frame.csv"' })
+        res.end(LATE_FRAME_BYTES)
+      }, NAVIGATION_WINDOW_CAP_MS + 1_000)
+      res.on('close', () => {
+        clearTimeout(timer)
+        openSlowResponses.delete(res)
+      })
       return
     }
     if (url === '/files/slow-finish') {
@@ -1673,5 +1686,64 @@ describe('C436-DOWNLOAD-WINDOW', () => {
 
     expect(result.success).toBe(true)
     expect(elapsed).toBeLessThan(CAPPED_MS)
+  }, 60_000)
+
+  it('a hidden-iframe attachment inside the window is recorded on the click', async () => {
+    const web = await open(undefined, undefined, 'window')
+    const result = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Load data in a frame') })
+
+    expect(canonical(downloadsOf(result))).toBe(canonical([
+      {
+        suggestedFilename: 'order-42.json',
+        extension: '.json',
+        size: Buffer.byteLength(DISPOSITION_BYTES),
+        sha256: sha256(DISPOSITION_BYTES),
+        state: 'completed',
+      },
+    ]))
+  }, 60_000)
+
+  it('a subframe attachment answered after the cap is recorded late on the next action', async () => {
+    const web = await open(undefined, undefined, 'window')
+    const files = downloadFilesOf(web)
+    const started = web.getPage()!.waitForEvent('download', { timeout: 20_000 })
+    const click = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Load late file in a frame') })
+    expect(canonical(downloadsOf(click))).toBe('null')
+    await started
+
+    const next = await web.execute({ type: 'delay', ms: 0 })
+    expect(canonical(downloadsOf(next))).toBe(canonical([
+      {
+        suggestedFilename: 'late-frame.csv',
+        extension: '.csv',
+        size: Buffer.byteLength(LATE_FRAME_BYTES),
+        sha256: sha256(LATE_FRAME_BYTES),
+        state: 'completed',
+        late: true,
+      },
+    ]))
+    const third = await web.execute({ type: 'delay', ms: 0 })
+    expect(canonical(downloadsOf(third))).toBe('null')
+    await expectFilesGone(files, 1)
+  }, 60_000)
+
+  it('an abort during the navigation extension ends the wait at once', async () => {
+    const web = await open(undefined, undefined, 'window')
+    const ref = await refFor(web, 'link', 'Open framed page')
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const started = performance.now()
+    const abort = setTimeout(() => { controller.abort() }, 300)
+    const outcome = await Promise.race([
+      web.execute({ type: 'click', ref }, { abortSignal: controller.signal }),
+      new Promise<'still waiting'>((resolve) => { timer = setTimeout(() => { resolve('still waiting') }, 15_000) }),
+    ])
+    const elapsed = performance.now() - started
+    clearTimeout(timer)
+    clearTimeout(abort)
+
+    expect(outcome).not.toBe('still waiting')
+    expect((outcome as ActionResult).success).toBe(true)
+    expect(elapsed).toBeLessThan(300 + 1_500)
   }, 60_000)
 })
