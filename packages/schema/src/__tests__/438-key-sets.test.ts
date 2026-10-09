@@ -1,18 +1,21 @@
 // 2026-10-09 (438-02, D-02, D-05, 436 D-17): the persisted target refusal block, its historical
-// reader and the optional-additive grounding fields. Every expected set is spelled by hand, never
-// derived from the module under test.
+// reader and the optional-additive grounding fields; 438-06 (D-09) adds the binding block. Every
+// expected set is spelled by hand, never derived from the module under test.
 import { readFileSync } from 'node:fs'
 
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import {
+  BINDING_OUTCOME_KEYS,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   guardCompletedRunHandoff,
+  readBindingOutcomeMeta,
   readTargetRefusalMeta,
   TARGET_IDENTITY_KEYS,
   TARGET_REFUSAL_KEYS,
 } from '../index'
 import type {
+  BindingOutcomeMeta,
   CompletedRunHandoff,
   GroundingEvidence,
   TargetDescriptor,
@@ -39,6 +42,8 @@ function wellFormed(): Record<string, unknown> {
 }
 
 const withBlock = (block: unknown) => ({ success: false, metadata: { targetRefusal: block } })
+
+const withBinding = (block: unknown) => ({ success: false, metadata: { binding: block } })
 
 describe('C438-KEY-SETS', () => {
   it('the target refusal block carries exactly its eight members', () => {
@@ -133,5 +138,38 @@ describe('C438-KEY-SETS', () => {
     subAction.grounding = grounding
     const loaded = guardCompletedRunHandoff(JSON.parse(JSON.stringify(handoff)))
     expect(loaded.tests[0].steps[0].subActions[0].grounding).toEqual(grounding)
+  })
+
+  it('the binding block carries exactly outcome, ref, inputSent and an optional heal', () => {
+    expect([...BINDING_OUTCOME_KEYS].sort()).toEqual(['heal', 'inputSent', 'outcome', 'ref'])
+    expectTypeOf<keyof BindingOutcomeMeta>().toEqualTypeOf<(typeof BINDING_OUTCOME_KEYS)[number]>()
+  })
+
+  it('reads a binding block back, with and without heal', () => {
+    const block = { outcome: 'stale-observation', ref: 'e7', inputSent: false }
+    expect(readBindingOutcomeMeta(withBinding(block))).toEqual(block)
+    const healed = { outcome: 'binding-lost', ref: 'e7', inputSent: false, heal: 'not-unique' }
+    expect(readBindingOutcomeMeta(withBinding(healed))).toEqual(healed)
+  })
+
+  it('returns undefined for a missing binding block', () => {
+    expect(readBindingOutcomeMeta({ metadata: {} })).toBeUndefined()
+    expect(readBindingOutcomeMeta({})).toBeUndefined()
+    expect(readBindingOutcomeMeta(undefined)).toBeUndefined()
+  })
+
+  it('returns undefined for an unknown binding outcome', () => {
+    const block = { outcome: 'ordinal-moved', ref: 'e7', inputSent: false }
+    expect(readBindingOutcomeMeta(withBinding(block))).toBeUndefined()
+  })
+
+  it('returns undefined for a binding block with inputSent true', () => {
+    const block = { outcome: 'frame-detached', ref: 'e7', inputSent: true }
+    expect(readBindingOutcomeMeta(withBinding(block))).toBeUndefined()
+  })
+
+  it("returns undefined for a heal outside 'absent' and 'not-unique'", () => {
+    const block = { outcome: 'binding-changed', ref: 'e7', inputSent: false, heal: 'resolved' }
+    expect(readBindingOutcomeMeta(withBinding(block))).toBeUndefined()
   })
 })
