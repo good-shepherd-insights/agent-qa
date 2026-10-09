@@ -49,6 +49,8 @@ import type {
   ServedRetrievalTraceV1,
   StepPlanSource,
   TargetDescriptor,
+  TargetMismatchReason as RecordedMismatchReason,
+  TargetRefusalMeta,
   VerifierVerdict,
   Viewport,
   WorkingMemoryEntry,
@@ -67,7 +69,7 @@ import { deterministicDescriptorMatcher } from '../cache/reground.js'
 import { matchDescriptor } from '../grounding/matcher.js'
 import { groundActionPlan } from '../grounding/gate.js'
 import { judgeStatedTarget, renderTargetMismatch } from '../grounding/stated-target.js'
-import type { StatedTargetLane, StatedTargets, TargetIdentity } from '../grounding/stated-target.js'
+import type { StatedTargetLane, StatedTargets } from '../grounding/stated-target.js'
 import type { CachedPlanValue, GroundedLocator } from '../cache/port.js'
 import type { LoopPorts, SecretRedactorPort } from './ports.js'
 import { guardActionData } from './blob-guard.js'
@@ -2778,7 +2780,7 @@ function judgeStatedTargets(
   action: Action,
   elements: readonly ElementInfo[],
   scrub: (value: string) => string,
-): { message: string; block: Record<string, unknown> } | undefined {
+): { message: string; block: TargetRefusalMeta } | undefined {
   for (const lane of STATED_TARGET_LANES) {
     const stated = statedTargets[lane]
     const ref = (action as unknown as Record<string, unknown>)[lane]
@@ -2787,21 +2789,22 @@ function judgeStatedTargets(
     if (element === undefined) continue
     const judgement = judgeStatedTarget(stated, element, elements)
     if (judgement.verdict === 'agrees') continue
-    const statedIdentity: TargetIdentity = {
+    const statedIdentity: TargetRefusalMeta['stated'] = {
       ...(stated.role !== undefined ? { role: scrub(stated.role) } : {}),
       name: scrub(stated.name),
       ...(stated.row !== undefined ? { row: scrub(stated.row) } : {}),
     }
-    const observedIdentity: TargetIdentity = {
+    const observedIdentity: TargetRefusalMeta['observed'] = {
       role: scrub(element.role),
       name: scrub(element.name),
       ...(judgement.observedRow !== undefined
         ? { row: scrub(judgement.observedRow).slice(0, OBSERVED_ROW_CAP) }
         : {}),
     }
+    const reasons: RecordedMismatchReason[] = [...judgement.reasons]
     return {
       message: renderTargetMismatch({
-        lane, ref, stated: statedIdentity, observed: observedIdentity, reasons: judgement.reasons,
+        lane, ref, stated: statedIdentity, observed: observedIdentity, reasons,
       }),
       block: {
         kind: 'target-mismatch',
@@ -2809,7 +2812,7 @@ function judgeStatedTargets(
         path: 'live',
         stated: statedIdentity,
         observed: observedIdentity,
-        reasons: [...judgement.reasons],
+        reasons,
         rowStated: judgement.rowStated,
         inputSent: false,
       },
