@@ -2054,3 +2054,89 @@ that run, at the final SHA.
 
 **Toolchain:** node 24.15.0 · pnpm 10.6.1 · turbo 2.9.7 · Chromium 149.0.7827.55 (revision 1228) ·
 macOS (Darwin 27.0.0, arm64, 12 CPUs).
+
+### Gap closure round 1 (437-17 to 437-21, 437-25, 437-26), 2026-10-09
+
+This subsection appends to the Phase 437 section and rewrites none of it; written by 437-21. The
+owner set the round's scope on 2026-10-09 as "Gaps + fill-path bugs", and decided the secure clear
+question "Mismatch if text left". The findings are those of the phase's code review (CR-nn, WR-nn).
+Every commit below is in agent-qa on `version-0.2`; every cell is listed in
+`scripts/gate/inputs/regressions.json` with its `437 D-NN` origin.
+
+**What was removed**
+
+- **The binary legacy sub-action outcome** (CR-01). The legacy trace, the live editor's data and
+  every live editor surface read a skipped tap's `success: false` as a red failure. The sub-action
+  outcome is now `success | failure | no-input`, and the detail, row, step card and suite row show
+  "no input sent", muted. 437-17 `1858da9c8`, `2ae5e2d68`; 437-25 `05405cb48`, `2f453fdec`. Cells:
+  `C437-NO-INPUT the legacy trace marks the same skipped tap planned twice no-input both times`,
+  `C437-NO-INPUT-LABEL the live editor detail names a skipped tap no input sent in the muted
+  colour`, `C437-NO-INPUT-LABEL the live editor row draws a skipped tap with a muted dot`.
+- **Value-named and deduped WebView fields** (CR-02). The WebView observer named a field by its
+  typed value and dropped a second field with the same role and name. Fields are now named by their
+  labels, never by a value, and every distinct editable field is kept. 437-19 `a1cfac889`. Cells:
+  `C437-WEBVIEW-OBSERVE a labelled input and a labelled textarea both reach the tree, named by their
+  labels`, `C437-WEBVIEW-OBSERVE a typed value never becomes a field's name`,
+  `C437-WEBVIEW-OBSERVE two empty unlabelled fields are both kept`.
+- **The single-shot WebView focus probe** (WR-01, WINDOWS #568). The WebView fill and clear refused
+  after one probe. They now probe up to three times, 300 ms apart, before refusing. 437-19
+  `86ea180ec`. Cells: `C437-FILL-WEBVIEW a focus that lands on the second probe is typed once, with
+  no refusal`, `C437-FILL-WEBVIEW a focus that never lands is refused after three probes with
+  nothing typed`, `C437-FILL-WEBVIEW a WebView clear waits for focus the same way`.
+- **The native path's unchecked focus target** (WR-02). A native fill or clear typed into, or
+  cleared, whatever field held focus after the tap. A focused node whose bounds lie outside the
+  ref's by more than 1 px is now refused `focus-elsewhere` with nothing delivered. 437-20
+  `8e35f653f`, `e75c40f64`. Cells: `C437-FILL-NATIVE a fill whose tap left another field focused is
+  refused with nothing typed`, `C437-CLEAR a clear whose tap left another field focused clears
+  nothing`.
+- **Success-only readers** (WR-03). Feedback routing, the coverage fingerprint, eval label seeding
+  and soft-label population read `success === true` as "the action ran". They now read the shared
+  `actionDidNotFail`, which counts a skipped tap as not failed. 437-18 `2e6bf0405`, `b178b8a8d`;
+  437-26 `a40d36383`, `497821737`. Cells: `C437-NO-INPUT-READER actionDidNotFail is true for a
+  success and for a skipped tap`, `C437-NO-INPUT-READERS a step whose only action was a skipped tap
+  and whose verifier failed is assertion drift`, `C437-NO-INPUT-READERS a passing decision whose
+  sub-action was a skipped tap is not retired as missing`.
+- **The always-unverified secure clear** (WR-04). `compareFillReread` recorded every secure
+  `clearText` as unverified, so a password field that still held text after the clear passed. Per
+  the owner's "Mismatch if text left", a secure clear whose read-back is non-empty, masked bullets
+  included, is now a mismatch whose meta and error carry only `<len:0>` and `<len:N>`. An empty or
+  unreadable secure read-back stays unverified, because it proves nothing. Every Android clear path
+  reaches the rule through `settleClear`. 437-21 `b3a61bf40`. Cells: `C437-FILL-VERDICT clearText
+  (D-16) a secure clear that leaves text is a mismatch naming only its length (owner 2026-10-09)`,
+  `C437-CLEAR a secure native clear that leaves text is a mismatch and names only its length`,
+  `C437-CLEAR a secure keyboard clear that leaves text is a mismatch`, `C437-FILL-WEBVIEW a secure
+  WebView clear that leaves text is a mismatch`. The listed cell `a secure clear is unverified with
+  secure true` was re-spelled `a secure clear that reads back empty or unreadable is unverified
+  with secure true`, origin `437 D-16` kept.
+- **The iOS unreadable early return** (WR-05). The RETAINED table above lists it as deferred. By the
+  owner's choice of 2026-10-09 it is removed: an iOS fill whose re-read is unreadable is recorded
+  unverified and, when a submit was requested on a single-line field, sends Return once and records
+  `fillSubmit { sent: true }`, as Android does (D-09, D-10). A multi-line field and a mismatch still
+  send none. 437-21 `b8f608125`. Cells: `C437-FILL-IOS an unreadable re-read records unverified and
+  still sends the requested Return once (WR-05, owner 2026-10-09)` (re-spelled from `an unreadable
+  re-read keeps the early return and records unverified`, origin `437 D-07` kept),
+  `C437-FILL-IOS an unreadable re-read in a multi-line field sends no Return and records the
+  multi-line outcome`, `C437-FILL-IOS an unreadable re-read without a submit sends nothing and
+  records no submit outcome`.
+
+**What stays retained**
+
+| Item | Why kept | What pins it |
+|---|---|---|
+| the web unreadable early return | outside the round's scope: an unreadable web value still sends no Enter and is recorded `unverified` | `C437-FILL-WEB an unreadable value keeps the early return (success, no Enter) and records unverified` |
+
+**What degrades, stated plainly**
+
+- A password field that still reads back text after `clearText` now fails the clear with a
+  length-only error, on the native, keyboard and WebView paths. A field that always reports masked
+  bullets after a successful clear would fail in the same way.
+- An iOS fill whose value cannot be read back now sends the requested Return.
+
+**The instruments that notice a return**
+
+- 437-25's census cell `C437-NO-INPUT-REACHES-LIVE` in `validate:arch` reds when an outcome union,
+  the legacy trace or a dashboard-ui sub-action reader goes back to success or failure only.
+- The new cell families: `C437-NO-INPUT-LABEL`, `C437-NO-INPUT-READER`, `C437-NO-INPUT-READERS`,
+  `C437-WEBVIEW-OBSERVE`, the `C437-FILL-WEBVIEW` poll cells, the `C437-FILL-NATIVE` and
+  `C437-CLEAR` focus cells, the secure clear cells and the `C437-FILL-IOS` unreadable cells. The
+  434 gate's regression list grew from 717 to 761 cells over the round; 262 carry a `437` origin.
