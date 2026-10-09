@@ -29,6 +29,7 @@ import type {
   CurationAuthorship,
   Delta,
   ProcedureBodyPayload,
+  ProcedureGuardTarget,
   ProcedureJsonValue,
   ProcedureParameterSpec,
   ProcedureStepSpec,
@@ -678,6 +679,18 @@ function isReplayableTrajectoryStep(step: ProcedureTrajectoryStep): boolean {
   return isReplayableActionShape(step.action.type, fieldKeys)
 }
 
+type TrajectoryTarget = NonNullable<ProcedureTrajectoryStep['action']>['targets'][string]
+
+/** A committed body target (438 D-11): role, exact name and stated row words, never a position. */
+function bodyTarget(target: TrajectoryTarget): ProcedureGuardTarget {
+  return {
+    role: target.role,
+    nameNormalized: target.nameNormalized,
+    name: target.name,
+    ...(target.row === undefined ? {} : { row: target.row }),
+  }
+}
+
 function extractionInstructions(): string {
   return [
     'You are the agent-qa Curator extracting reusable procedures from one verified passing trajectory.',
@@ -708,7 +721,7 @@ function renderTrajectory(seed: ProcedureTrajectorySeed): string {
           targets: Object.fromEntries(
             Object.entries(step.action.targets).map(([lane, target]) => [
               lane,
-              { role: target.role, name: target.nameNormalized },
+              { role: target.role, name: target.name },
             ]),
           ),
           valueSlots: Object.fromEntries(
@@ -946,14 +959,7 @@ function buildCandidatePayload(
     const guardSource =
       step.action.targets['ref'] ?? step.action.targets[[...laneKeys].sort()[0]!]!
     const targets = Object.fromEntries(
-      Object.entries(step.action.targets).map(([lane, target]) => [
-        lane,
-        {
-          role: target.role,
-          nameNormalized: target.nameNormalized,
-          ordinal: target.ordinal,
-        },
-      ]),
+      Object.entries(step.action.targets).map(([lane, target]) => [lane, bodyTarget(target)]),
     )
     const values: Record<string, ProcedureValueSlot> = {}
     for (const [field, slot] of Object.entries(step.action.values)) {
@@ -1023,11 +1029,7 @@ function buildCandidatePayload(
       instruction: step.instruction,
       action: { type: step.action.type, targets, values },
       guard: {
-        target: {
-          role: guardSource.role,
-          nameNormalized: guardSource.nameNormalized,
-          ordinal: guardSource.ordinal,
-        },
+        target: bodyTarget(guardSource),
         pageAnchor: { t: 'page', route: step.pageRoute },
       },
     })

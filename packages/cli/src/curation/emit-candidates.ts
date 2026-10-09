@@ -13,7 +13,6 @@ import {
   canonicalJson,
   DISTILLED_OBSERVATION_SCHEMA_VERSION,
   deriveEvidenceToken,
-  elementOrdinal,
   isCredentialValueField,
   procedureJsonValueSchema,
   type Anchor,
@@ -493,14 +492,17 @@ function projectCaution(
   )
 }
 
-export const PROCEDURE_TRAJECTORY_SEED_VERSION = 1
+// 2026-10-09 (438-10): version 2 — targets carry the exact name and stated row words, never an
+// ordinal (D-11). A version-1 seed fails the literal and is never authored.
+export const PROCEDURE_TRAJECTORY_SEED_VERSION = 2
 
 const trajectoryGuardTargetSchema = z
   .object({
     ref: z.string().min(1),
     role: z.string(),
     nameNormalized: z.string(),
-    ordinal: z.number().int().nonnegative(),
+    name: z.string(),
+    row: z.string().optional(),
   })
   .strict()
 
@@ -789,11 +791,22 @@ function completingSubAction(step: StepEvidence): SubActionEvidence | undefined 
   return step.subActions.at(-1)
 }
 
+function tidyName(name: string): string {
+  return name.replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * The strict identity replay re-finds (438 D-11): role, the exact observed name and, on the lane
+ * the planner stated, the stated row words recorded in the step's evidence (already redacted).
+ * Name and row pass the active masking context like the rest of the body. No position is written.
+ */
 function trajectoryTargets(
   subAction: SubActionEvidence,
 ): Record<string, z.infer<typeof trajectoryGuardTargetSchema>> {
   const targets: Record<string, z.infer<typeof trajectoryGuardTargetSchema>> = {}
   const action = subAction.plannedAction as unknown as Record<string, unknown>
+  const stated = subAction.grounding?.stated
+  let statedLaneFound = false
   for (const key of ACTION_REF_KEYS) {
     const ref = action[key]
     if (typeof ref !== 'string') continue
@@ -801,11 +814,18 @@ function trajectoryTargets(
       (candidate) => candidate.ref === ref,
     )
     if (element === undefined) continue
+    const statedLane = !statedLaneFound
+      && stated !== undefined
+      && tidyName(stated.name) === tidyName(element.name)
+      && (stated.role === undefined || stated.role === element.role)
+    if (statedLane) statedLaneFound = true
+    const row = statedLane ? stated?.row?.trim() : undefined
     targets[key] = {
       ref,
       role: element.role,
       nameNormalized: element.nameNormalized,
-      ordinal: elementOrdinal(element, subAction.stateBefore.elements),
+      name: maskedProse(element.name),
+      ...(row === undefined || row === '' ? {} : { row: maskedProse(row) }),
     }
   }
   return targets

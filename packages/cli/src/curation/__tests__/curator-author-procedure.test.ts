@@ -21,6 +21,7 @@ import {
   createMaskingContext,
   defaultGuardrailPolicyInput,
   loadGuardrailPolicy,
+  setActiveMaskingContextResolver,
 } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
@@ -151,7 +152,7 @@ function renderedTrajectory(prompt: CapturedPrompt): {
 
 function trajectorySeed(): ProcedureTrajectorySeed {
   return {
-    version: 1,
+    version: 2,
     flowName: 'auth::sign-in-then-checkout',
     steps: [
       {
@@ -160,7 +161,7 @@ function trajectorySeed(): ProcedureTrajectorySeed {
         action: {
           type: 'click',
           targets: {
-            ref: { ref: 'open', role: 'button', nameNormalized: 'sign in', ordinal: 0 },
+            ref: { ref: 'open', role: 'button', nameNormalized: 'sign in', name: 'Sign in' },
           },
           values: {},
         },
@@ -172,7 +173,7 @@ function trajectorySeed(): ProcedureTrajectorySeed {
         action: {
           type: 'fill',
           targets: {
-            ref: { ref: 'email', role: 'textbox', nameNormalized: 'email', ordinal: 0 },
+            ref: { ref: 'email', role: 'textbox', nameNormalized: 'email', name: 'Email' },
           },
           values: {
             text: { observed: 'user@example.com', source: 'literal', targetRef: 'email' },
@@ -191,7 +192,7 @@ function trajectorySeed(): ProcedureTrajectorySeed {
               ref: 'password',
               role: 'textbox',
               nameNormalized: 'password',
-              ordinal: 0,
+              name: 'Password',
             },
           },
           values: {
@@ -208,7 +209,7 @@ function trajectorySeed(): ProcedureTrajectorySeed {
         action: {
           type: 'click',
           targets: {
-            ref: { ref: 'submit', role: 'button', nameNormalized: 'submit', ordinal: 0 },
+            ref: { ref: 'submit', role: 'button', nameNormalized: 'submit', name: 'Submit' },
           },
           values: {},
         },
@@ -227,7 +228,7 @@ function compositeTrajectorySeed(): ProcedureTrajectorySeed {
         ref: 'upload',
         role: 'button',
         nameNormalized: 'upload files',
-        ordinal: 0,
+        name: 'Upload files',
       },
     },
     values: {
@@ -748,15 +749,15 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
 
     expect(payload?.steps.map((step) => step.guard)).toEqual([
       {
-        target: { role: 'button', nameNormalized: 'sign in', ordinal: 0 },
+        target: { role: 'button', nameNormalized: 'sign in', name: 'Sign in' },
         pageAnchor: { t: 'page', route: '/login' },
       },
       {
-        target: { role: 'textbox', nameNormalized: 'email', ordinal: 0 },
+        target: { role: 'textbox', nameNormalized: 'email', name: 'Email' },
         pageAnchor: { t: 'page', route: '/login' },
       },
       {
-        target: { role: 'textbox', nameNormalized: 'password', ordinal: 0 },
+        target: { role: 'textbox', nameNormalized: 'password', name: 'Password' },
         pageAnchor: { t: 'page', route: '/login' },
       },
     ])
@@ -1439,5 +1440,211 @@ describe('guardrail-placeholder extraction (F-381-45-1, PROC-01)', () => {
     expect(payload?.parameters.map((parameter) => parameter.name).join()).not.toMatch(
       /step\d+_/,
     )
+  })
+})
+
+describe('C438-PROCEDURE-WRITE', () => {
+  const WRITE_PAGE = 'https://shop.example/invoices'
+
+  function writeElement(
+    ref: string,
+    role: string,
+    name: string,
+    nameNormalized: string,
+    parentRef?: string,
+  ): ElementInfo {
+    return {
+      ref: asRef(ref),
+      role,
+      name,
+      nameNormalized,
+      bounds: { x: 10, y: 20, width: 100, height: 40 },
+      center: { x: 60, y: 40 },
+      state: { enabled: true, focused: false, visible: true, clickable: true },
+      labels: {},
+      attributes: {},
+      ...(parentRef === undefined ? {} : { hierarchy: { parentRef: asRef(parentRef) } }),
+    }
+  }
+
+  function writeStep(input: {
+    stepIndex: number
+    stepText: string
+    elements: ElementInfo[]
+    ref: string
+    stated?: { role?: string; name: string; row?: string }
+  }): StepEvidence {
+    const state = { ...guardrailScreen(input.elements), url: WRITE_PAGE }
+    const evidence: SubActionEvidence = {
+      plan: `Use ${input.ref}`,
+      plannedAction: { type: 'click', ref: asRef(input.ref) },
+      stateBefore: state,
+      stateAfter: state,
+      result: { success: true },
+      ...(input.stated === undefined
+        ? {}
+        : { grounding: { descriptor: {}, attempts: [], stated: input.stated } }),
+    }
+    return {
+      ...guardrailStep({
+        stepIndex: input.stepIndex,
+        stepText: input.stepText,
+        ref: input.ref,
+        name: input.ref,
+      }),
+      subActions: [evidence],
+    }
+  }
+
+  function invoiceRun(): CompletedRunHandoff {
+    const steps = [
+      writeStep({
+        stepIndex: 0,
+        stepText: 'Open invoice 947',
+        elements: [
+          writeElement('e1', 'link', 'Invoice 946', 'invoice'),
+          writeElement('e2', 'link', 'Invoice 947', 'invoice'),
+        ],
+        ref: 'e2',
+        stated: { role: 'link', name: 'Invoice 947' },
+      }),
+      writeStep({
+        stepIndex: 1,
+        stepText: 'Edit the Elm Street label',
+        elements: [
+          writeElement('r1', 'listitem', '9 Oak Road', '9 oak road'),
+          writeElement('b1', 'button', 'Edit label', 'edit label', 'r1'),
+          writeElement('r2', 'listitem', '7 Elm Street', '7 elm street'),
+          writeElement('b2', 'button', 'Edit label', 'edit label', 'r2'),
+        ],
+        ref: 'b2',
+        stated: { role: 'button', name: 'Edit label', row: '7 Elm Street' },
+      }),
+      writeStep({
+        stepIndex: 2,
+        stepText: 'Save the label',
+        elements: [writeElement('s1', 'button', 'Save', 'save')],
+        ref: 's1',
+      }),
+    ]
+    return {
+      schemaVersion: 3,
+      runId: asRunId('r-procedure-write'),
+      scope: { tier: 'product', key: 'storefront' },
+      buildOrdinal: 42,
+      executionContext: 'local-interactive',
+      aggregateVerdict: 'passed',
+      configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
+      startedAt: 1_750_000_000_000,
+      endedAt: 1_750_000_001_000,
+      tests: [{
+        testId: 'invoices::edit-label',
+        testName: 'Edit an invoice label',
+        testIndex: 0,
+        outcome: 'passed',
+        steps,
+        filePath: 'invoices.spec.yaml',
+      }],
+    }
+  }
+
+  function writeSeed(): ProcedureTrajectorySeed {
+    const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
+    const [target] = projectCurationCandidates(invoiceRun(), policy).filter(
+      (row) => row.kind === 'procedure',
+    )
+    const seed = parseProcedureTrajectorySeed(target!.bodySeed)
+    if (seed === undefined) throw new Error('expected a parseable invoice seed')
+    return seed
+  }
+
+  function writeJob(seed: ProcedureTrajectorySeed): CurationJobView {
+    return procedureJob({
+      bodySeed: canonicalJson(seed),
+      anchors: [
+        { t: 'flow', name: seed.flowName },
+        { t: 'page', route: WRITE_PAGE },
+      ],
+      secretFlagged: false,
+      captureReceipt: {
+        regions: [],
+        interactions: [
+          { stepIndex: 0, elementRef: 'e2' },
+          { stepIndex: 1, elementRef: 'b2' },
+          { stepIndex: 2, elementRef: 's1' },
+        ],
+        omissions: [],
+        redactions: [],
+      },
+    })
+  }
+
+  const writeProposal = JSON.stringify({
+    candidates: [{
+      flowName: 'invoices::edit-label',
+      stepSpan: [0, 2],
+      parameters: [],
+      successAssertion: 'The label is saved',
+    }],
+  })
+
+  it('writes the exact name and no ordinal into the trajectory and the body', async () => {
+    const seed = writeSeed()
+    expect(seed.version).toBe(2)
+    expect(seed.steps[0]?.action?.targets).toEqual({
+      ref: { ref: 'e2', role: 'link', nameNormalized: 'invoice', name: 'Invoice 947' },
+    })
+
+    const outcome = await author([writeProposal])(writeJob(seed), [])
+    if (outcome.kind !== 'authored') throw new Error('expected authored outcome')
+    const payload = parseProcedureBody(addBundles(outcome.deltas)[0]!.body)
+    const invoice = { role: 'link', nameNormalized: 'invoice', name: 'Invoice 947' }
+    expect(payload?.steps[0]?.action.targets).toEqual({ ref: invoice })
+    expect(payload?.steps[0]?.guard.target).toEqual(invoice)
+    expect(addBundles(outcome.deltas)[0]!.body).not.toContain('ordinal')
+  })
+
+  it('writes the stated row words into the trajectory and the body', async () => {
+    const seed = writeSeed()
+    const editLabel = {
+      role: 'button',
+      nameNormalized: 'edit label',
+      name: 'Edit label',
+      row: '7 Elm Street',
+    }
+    expect(seed.steps[1]?.action?.targets).toEqual({ ref: { ref: 'b2', ...editLabel } })
+    expect(seed.steps[2]?.action?.targets['ref']).not.toHaveProperty('row')
+
+    const outcome = await author([writeProposal])(writeJob(seed), [])
+    if (outcome.kind !== 'authored') throw new Error('expected authored outcome')
+    const payload = parseProcedureBody(addBundles(outcome.deltas)[0]!.body)
+    expect(payload?.steps[1]?.action.targets).toEqual({ ref: editLabel })
+    expect(payload?.steps[1]?.guard.target).toEqual(editLabel)
+  })
+
+  it('passes the written name and row through the active masking context', () => {
+    setActiveMaskingContextResolver(() => ({
+      mask: (text) => text.replaceAll('Elm', '<ADDR_0>').replaceAll('947', '<NUM_0>'),
+      unmask: (text) => text,
+    }))
+    try {
+      const seed = writeSeed()
+      expect(seed.steps[0]?.action?.targets['ref']?.name).toBe('Invoice <NUM_0>')
+      expect(seed.steps[1]?.action?.targets['ref']?.row).toBe('7 <ADDR_0> Street')
+    } finally {
+      setActiveMaskingContextResolver(() => undefined)
+    }
+  })
+
+  it('rejects a version-1 seed as a candidate', async () => {
+    const legacy = { ...trajectorySeed(), version: 1 }
+    expect(parseProcedureTrajectorySeed(canonicalJson(legacy))).toBeUndefined()
+
+    const outcome = await author([writeProposal])(
+      procedureJob({ bodySeed: canonicalJson(legacy) }),
+      [],
+    )
+
+    expect(outcome).toEqual({ kind: 'fallback-required', reason: 'malformed' })
   })
 })
