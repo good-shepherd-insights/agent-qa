@@ -358,6 +358,9 @@ const openClients: Client[] = []
 afterEach(async () => {
   for (const client of openClients.splice(0)) await client.close().catch(() => {})
   for (const server of openServers.splice(0)) {
+    // Pooled keep-alive sockets stay open (see `serve`), so teardown closes them rather than
+    // waiting on a peer.
+    server.closeAllConnections()
     await new Promise<void>((resolve) => server.close(() => resolve()))
   }
 })
@@ -371,6 +374,11 @@ afterEach(async () => {
  */
 async function serve(listener: (req: never, res: never) => void): Promise<string> {
   const server = createServer(listener as never)
+  // 2026-10-10 (quick 261010-11a): the server never reaps an idle keep-alive socket mid-flow.
+  // Client and server share one event loop, so after a stall longer than the 5 s default the
+  // overdue reap ran before the loop read the request the client had already written on that
+  // pooled socket, and the client saw `fetch failed` (read ECONNRESET). Witnessed with a 6 s stall.
+  server.keepAliveTimeout = 0
   openServers.push(server)
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`
