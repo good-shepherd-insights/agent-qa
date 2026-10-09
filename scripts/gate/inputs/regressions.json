@@ -4518,6 +4518,18 @@
       "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
       "fullName": "C437-FILL-NATIVE a focus-elsewhere fill planned twice types nothing either time",
       "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-CLEAR a clear whose tap left another field focused clears nothing",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-CLEAR a clear within the ref's bounds and a keyboard clear are unchanged",
+      "origin": "437 D-11"
     }
   ]
 }

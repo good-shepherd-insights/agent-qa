@@ -1221,10 +1221,13 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
 
   /**
    * Native and keyboard clearText (437 D-16): clearValue on the focused handle, or Ctrl+A then DEL
-   * when the tap left none, then the hint-aware read-back judged against the empty string.
+   * when the tap left none, then the hint-aware read-back judged against the empty string. The
+   * caller has already checked that a focused handle is the referenced field (WR-02).
    */
-  private async clearNativeOrKeyboard(box: TextBox): Promise<ActionResult> {
-    const handle = await this.focusedField()
+  private async clearNativeOrKeyboard(
+    box: TextBox,
+    handle: FocusedField | undefined,
+  ): Promise<ActionResult> {
     const path: InputPath = handle ? 'native' : 'keyboard'
     const before = handle ? await this.isSecure(handle) : false
     try {
@@ -2096,7 +2099,12 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
           .down({ button: 0 })
           .up({ button: 0 })
           )
-        return await this.clearNativeOrKeyboard({ coordinates: center, boundingBox: bounds })
+        const clearBox = { coordinates: center, boundingBox: bounds }
+        const clearHandle = await this.focusedField()
+        if (clearHandle && await this.focusIsElsewhere(clearHandle, bounds)) {
+          return this.refuseFocus('clearText', action.ref, 'focus-elsewhere', 'native', false, clearBox)
+        }
+        return await this.clearNativeOrKeyboard(clearBox, clearHandle)
       }
 
       // --- Android hardware / system verbs (numeric keycodes / typed driver args only) ---

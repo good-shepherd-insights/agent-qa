@@ -935,6 +935,58 @@ describe('C437-CLEAR', () => {
       path: 'keyboard',
     })
   })
+
+  // 437-20 (WR-02): the same focus-target check as the fill.
+  it('a clear whose tap left another field focused clears nothing', async () => {
+    field.value = 'pw-kept'
+    field.bounds = '[100,400][980,500]'
+
+    const result = await clear('Username')
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(
+      /^clearText: after tapping \S+, input focus is on another field; nothing was cleared\. Input is never sent to a field other than the target\. Re-observe and target the field itself\.$/,
+    )
+    expect(result.metadata?.fillRefusal).toEqual({
+      verb: 'clearText',
+      cause: 'not-editable',
+      evidence: 'focus-elsewhere',
+    })
+    expect(result.metadata).not.toHaveProperty('fillVerdict')
+    expect(result.metadata).not.toHaveProperty('fillSubmit')
+    expect(focused.clearValue).not.toHaveBeenCalled()
+    expect(count(CTRL_A)).toBe(0)
+    expect(count(DEL)).toBe(0)
+    expect(driver.keys).not.toHaveBeenCalled()
+    expect(field.value).toBe('pw-kept')
+    expect(count(`$:${FOCUSED_XPATH}`)).toBe(1)
+  })
+
+  it("a clear within the ref's bounds and a keyboard clear are unchanged", async () => {
+    field.value = 'old text'
+    field.bounds = '[101,251][979,349]'
+
+    const native = await clear('Username')
+
+    expect(count('clearValue')).toBe(1)
+    expect(count(`$:${FOCUSED_XPATH}`)).toBe(1)
+    expect(field.value).toBe('')
+    expect(native.success).toBe(true)
+    expect(native.metadata?.fillVerdict).toEqual({ verb: 'clearText', verdict: 'exact', path: 'native' })
+
+    field = { ...newField(), value: 'old text', focusHidden: true }
+    const keyboard = await clear('Username')
+
+    expect(calls).toEqual(['tap', `$:${FOCUSED_XPATH}`, CTRL_A, DEL, `$:${FOCUSED_XPATH}`])
+    expect(focused.clearValue).toHaveBeenCalledTimes(1)
+    expect(field.value).toBe('')
+    expect(keyboard.success).toBe(true)
+    expect(keyboard.metadata?.fillVerdict).toEqual({
+      verb: 'clearText',
+      verdict: 'unverified',
+      path: 'keyboard',
+    })
+  })
 })
 
 // The assumption-delta invariant (437 D-12): every fill delivers its text through exactly one path
