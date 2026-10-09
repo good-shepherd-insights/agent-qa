@@ -49,6 +49,8 @@ import type {
   ServedRetrievalTraceV1,
   StepPlanSource,
   TargetDescriptor,
+  TargetMismatchReason,
+  TargetRefusalMeta,
   VerifierVerdict,
   Viewport,
   WorkingMemoryEntry,
@@ -2778,7 +2780,7 @@ function judgeStatedTargets(
   action: Action,
   elements: readonly ElementInfo[],
   scrub: (value: string) => string,
-): { message: string; block: Record<string, unknown> } | undefined {
+): { message: string; block: TargetRefusalMeta } | undefined {
   for (const lane of STATED_TARGET_LANES) {
     const stated = statedTargets[lane]
     const ref = (action as unknown as Record<string, unknown>)[lane]
@@ -2799,20 +2801,22 @@ function judgeStatedTargets(
         ? { row: scrub(judgement.observedRow).slice(0, OBSERVED_ROW_CAP) }
         : {}),
     }
+    const reasons: TargetMismatchReason[] = [...judgement.reasons]
+    const block: TargetRefusalMeta = {
+      kind: 'target-mismatch',
+      lane,
+      path: 'live',
+      stated: statedIdentity,
+      observed: observedIdentity,
+      reasons,
+      rowStated: judgement.rowStated,
+      inputSent: false,
+    }
     return {
       message: renderTargetMismatch({
-        lane, ref, stated: statedIdentity, observed: observedIdentity, reasons: judgement.reasons,
+        lane, ref, stated: statedIdentity, observed: observedIdentity, reasons,
       }),
-      block: {
-        kind: 'target-mismatch',
-        lane,
-        path: 'live',
-        stated: statedIdentity,
-        observed: observedIdentity,
-        reasons: [...judgement.reasons],
-        rowStated: judgement.rowStated,
-        inputSent: false,
-      },
+      block,
     }
   }
   return undefined
