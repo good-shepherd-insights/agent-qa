@@ -4392,6 +4392,30 @@
       "file": "packages/schema/src/verdict/__tests__/action-anchor-fingerprint.test.ts",
       "fullName": "C437-NO-INPUT-READERS a really failed sub-action still adds no element",
       "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval/src/labels/__tests__/437-no-input-readers.test.ts",
+      "fullName": "C437-NO-INPUT-READERS a passing decision whose sub-action was a skipped tap is not retired as missing",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval/src/labels/__tests__/437-no-input-readers.test.ts",
+      "fullName": "C437-NO-INPUT-READERS a passing decision whose sub-action really failed is still processed",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval/src/labels/__tests__/437-no-input-readers.test.ts",
+      "fullName": "C437-NO-INPUT-READERS a self-heal recovered by a skipped tap with a passing verifier is observed",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval/src/labels/__tests__/437-no-input-readers.test.ts",
+      "fullName": "C437-NO-INPUT-READERS a self-heal whose recovering action really failed is still unverified-success",
+      "origin": "437 D-05"
     }
   ]
 }
