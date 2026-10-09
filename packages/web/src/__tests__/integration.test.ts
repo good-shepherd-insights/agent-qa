@@ -16,20 +16,21 @@ const mockHoverFn = vi.fn().mockResolvedValue(undefined)
 const mockLocatorEvaluateFn = vi.fn().mockResolvedValue(undefined)
 const mockNthFn = vi.fn().mockReturnThis()
 
+// An ai-mode snapshot: every line carries Playwright's native [ref=eN] (438 D-06).
 const REALISTIC_ARIA_TREE = [
-  '- navigation "Main Nav"',
-  '  - link "Home"',
-  '  - link "About"',
-  '  - link "Contact"',
-  '- heading "Welcome to Example" [level=1]',
-  '- region "Content"',
-  '  - textbox "Email"',
-  '  - textbox "Password"',
-  '  - button "Sign In"',
-  '  - link "Forgot password?"',
-  '- heading "Features" [level=2]',
-  '  - listitem "Fast performance"',
-  '  - listitem "Easy to use"',
+  '- navigation "Main Nav" [ref=e1]',
+  '  - link "Home" [ref=e2]',
+  '  - link "About" [ref=e3]',
+  '  - link "Contact" [ref=e4]',
+  '- heading "Welcome to Example" [level=1] [ref=e5]',
+  '- region "Content" [ref=e6]',
+  '  - textbox "Email" [ref=e7]',
+  '  - textbox "Password" [ref=e8]',
+  '  - button "Sign In" [ref=e9]',
+  '  - link "Forgot password?" [ref=e10]',
+  '- heading "Features" [level=2] [ref=e11]',
+  '  - listitem "Fast performance" [ref=e12]',
+  '  - listitem "Easy to use" [ref=e13]',
 ].join('\n')
 
 const mockLocatorBoundingBoxFn = vi.fn().mockResolvedValue(null)
@@ -58,7 +59,19 @@ const mockScreenshotFn = vi.fn().mockResolvedValue(Buffer.from('fake-screenshot'
 const mockWaitForLoadStateFn = vi.fn().mockResolvedValue(undefined)
 const mockPageCloseFn = vi.fn().mockResolvedValue(undefined)
 const mockAriaSnapshotFn = vi.fn().mockResolvedValue(REALISTIC_ARIA_TREE)
-const mockGetByRoleFn = vi.fn().mockReturnValue(createMockLocator())
+// page.locator('aria-ref=eN'): the observed element's locator.
+const mockAriaRefLocatorFn = vi.fn().mockReturnValue(createMockLocator())
+
+// ':root' answers the ai snapshot (observe and the pre-dispatch binding check); any other
+// selector is an aria-ref locator.
+function pageLocator(selector: string) {
+  return selector === ':root' ? { ariaSnapshot: mockAriaSnapshotFn } : mockAriaRefLocatorFn(selector)
+}
+
+// The observation's document handle: still the page's document, disposable.
+function documentHandle() {
+  return { evaluate: vi.fn().mockResolvedValue(true), dispose: vi.fn().mockResolvedValue(undefined) }
+}
 
 const mockMouseMoveFn = vi.fn().mockResolvedValue(undefined)
 const mockMouseWheelFn = vi.fn().mockResolvedValue(undefined)
@@ -75,13 +88,11 @@ const mockPage = {
   video: vi.fn().mockReturnValue(null),
   waitForLoadState: mockWaitForLoadStateFn,
   close: mockPageCloseFn,
-  locator: vi.fn().mockReturnValue({
-    ariaSnapshot: mockAriaSnapshotFn,
-  }),
+  locator: vi.fn(pageLocator),
+  evaluateHandle: vi.fn(async () => documentHandle()),
   on: vi.fn(),
   url: vi.fn().mockReturnValue('https://example.com'),
   viewportSize: vi.fn().mockReturnValue({ width: 1280, height: 720 }),
-  getByRole: mockGetByRoleFn,
   getByText: vi.fn().mockReturnValue({
     first: () => ({ scrollIntoViewIfNeeded: vi.fn().mockResolvedValue(undefined) }),
   }),
@@ -122,9 +133,9 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     vi.clearAllMocks()
     // Re-wire mocks after clearAllMocks
     mockAriaSnapshotFn.mockResolvedValue(REALISTIC_ARIA_TREE)
-    mockPage.locator.mockReturnValue({ ariaSnapshot: mockAriaSnapshotFn })
+    mockPage.locator.mockImplementation(pageLocator)
     mockPage.url.mockReturnValue('https://example.com')
-    mockGetByRoleFn.mockReturnValue(createMockLocator())
+    mockAriaRefLocatorFn.mockReturnValue(createMockLocator())
     mockNthFn.mockReturnThis()
     mockChromiumLaunch.mockResolvedValue(mockBrowser)
     mockFirefoxLaunch.mockResolvedValue(mockBrowser)
@@ -222,16 +233,18 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     expect(typeof state.timestamp).toBe('number')
 
     // schema v2 refMap lives at state.refMap (geometry only); it is present but empty
-    // here because the mocked snapshot carries no ai-mode refs to enrich into bounds.
+    // here because the mocked aria-ref locators answer no element handle to enrich into bounds.
     expect(state.refMap).toBeDefined()
 
-    // Execute-time resolution refs are re-fed from the builder binding — one entry per
-    // observed element, keyed by the minted ref (role/name/nth reconstruct the locator).
+    // The native binding — one entry per observed element, keyed by the minted ref, holding
+    // the snapshot's native ref and the observed role and exact name (438 D-06).
     const lastRefs = adapter['lastRefs']
     expect(Object.keys(lastRefs).length).toBe(state.elements.length)
     for (const el of state.elements) {
       expect(lastRefs[el.ref]).toBeDefined()
       expect(lastRefs[el.ref].role).toBe(el.role)
+      expect(lastRefs[el.ref].name).toBe(el.name)
+      expect(lastRefs[el.ref].nativeRef).toMatch(/^e\d+$/)
     }
   })
 
@@ -272,20 +285,21 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
 
     mockMouseMoveFn.mockClear()
     mockMouseWheelFn.mockClear()
-    mockGetByRoleFn.mockClear()
+    mockAriaRefLocatorFn.mockClear()
     mockLocatorEvaluateFn.mockClear()
     const located = { ...createMockLocator(), count: vi.fn().mockResolvedValue(1) }
     located.nth = vi.fn().mockReturnValue(located)
-    mockGetByRoleFn.mockReturnValue(located)
+    mockAriaRefLocatorFn.mockReturnValue(located)
     mockLocatorEvaluateFn.mockResolvedValue({ bounds: null, scrolledContainer: 'element', scrolled: true, offsets: { before: 0, after: 720, max: 2000 } })
-    adapter['lastRefs']['e1'] = { nativeRef: 'e1', role: 'listitem', name: 'Item 1' }
+    adapter['lastRefs']['e1'] = { nativeRef: 'e12', role: 'listitem', name: 'Item 1' }
 
     const result = await adapter.execute({ type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: false, ref: asRef('e1') })
 
     expect(result.success).toBe(true)
-    // container scroll resolves the ref through ElementResolver and runs inside that element
-    expect(mockGetByRoleFn).toHaveBeenCalledWith('listitem', { name: 'Item 1', exact: true })
-    expect(located.nth).toHaveBeenCalledWith(0)
+    // container scroll resolves the ref through ElementResolver to the observed element's
+    // aria-ref locator, never a position, and runs inside that element (438 D-06)
+    expect(mockAriaRefLocatorFn).toHaveBeenCalledWith('aria-ref=e12')
+    expect(located.nth).not.toHaveBeenCalled()
     const scrollCall = mockLocatorEvaluateFn.mock.calls.find((call: unknown[]) => typeof call[0] === 'function')
     expect(scrollCall).toBeDefined()
     expect(scrollCall![1]).toEqual([0, 720, 'vertical'])
@@ -370,11 +384,11 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     const fillResult = await adapter.execute({ type: 'fill', ref: textbox1!.ref, text: 'hello', clearMode: 'replace', submit: false })
     expect(fillResult.success).toBe(true)
 
-    // Change ARIA tree for second observation
-    mockAriaSnapshotFn.mockResolvedValueOnce([
-      '- heading "Updated Page" [level=1]',
-      '- button "Submit"',
-      '- textbox "Search"',
+    // Change ARIA tree for second observation (and the binding check that follows it)
+    mockAriaSnapshotFn.mockResolvedValue([
+      '- heading "Updated Page" [level=1] [ref=e14]',
+      '- button "Submit" [ref=e15]',
+      '- textbox "Search" [ref=e16]',
     ].join('\n'))
 
     // Second observation — refs regenerated

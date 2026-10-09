@@ -111,23 +111,36 @@ function makeFarmLocator(opts: { inputValue?: string; type?: string }) {
   }
 }
 
+// The observation's document handle: still the page's document, disposable.
+function documentHandle() {
+  return { evaluate: vi.fn().mockResolvedValue(true), dispose: vi.fn().mockResolvedValue(undefined) }
+}
+
+// 438 D-06: ':root' answers the ai snapshot (the pre-dispatch binding check and the scroll
+// compound's interim tree); any other selector is the observed element's aria-ref locator.
 function makeFarmPage(locator: ReturnType<typeof makeFarmLocator>) {
   return {
-    getByRole: vi.fn().mockReturnValue(locator),
     getByText: vi.fn().mockReturnValue(locator),
     goto: vi.fn().mockResolvedValue(undefined),
     mouse: { wheel: vi.fn().mockResolvedValue(undefined) },
     viewportSize: vi.fn().mockReturnValue({ width: 1280, height: 720 }),
-    locator: vi.fn().mockReturnValue({ ariaSnapshot: vi.fn().mockResolvedValue('- textbox "Email"') }),
+    locator: vi.fn().mockImplementation((selector: string) => (selector === ':root'
+      ? { ariaSnapshot: vi.fn().mockResolvedValue('- textbox "Email" [ref=e1]') }
+      : locator)),
+    evaluateHandle: vi.fn().mockImplementation(async () => documentHandle()),
     evaluate: vi.fn().mockResolvedValue(undefined),
     screenshot: vi.fn().mockResolvedValue(Buffer.from('x')),
   }
 }
 
+// Direct injection of the page, the RefMap and the observation's document epoch.
 function primeAdapter(adapter: FarmWebAdapter, locator: ReturnType<typeof makeFarmLocator>) {
   const page = makeFarmPage(locator)
   ;(adapter as unknown as { page: unknown }).page = page
-  ;(adapter as unknown as { lastRefs: unknown }).lastRefs = { e1: { role: 'textbox', name: 'Email' } }
+  ;(adapter as unknown as { lastRefs: unknown }).lastRefs = {
+    e1: { nativeRef: 'e1', role: 'textbox', name: 'Email' },
+  }
+  ;(adapter as unknown as { epoch: unknown }).epoch = { page, document: documentHandle() }
   return page
 }
 

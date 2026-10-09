@@ -54,6 +54,10 @@ function makeLocator() {
 
 let locator: ReturnType<typeof makeLocator>
 
+// 438 D-06: page.locator(':root') answers the ai snapshot (observe and the pre-dispatch binding
+// check); any other selector is the observed element's aria-ref locator.
+const rootLocator = { ariaSnapshot: vi.fn().mockResolvedValue('- textbox "Email" [ref=e1]') }
+
 const mockPage = {
   goto: vi.fn().mockResolvedValue(undefined),
   keyboard: { press: vi.fn().mockResolvedValue(undefined) },
@@ -70,14 +74,15 @@ const mockPage = {
   screenshot: vi.fn().mockResolvedValue(Buffer.from('fake-screenshot')),
   addInitScript: vi.fn().mockResolvedValue(undefined),
   video: vi.fn().mockReturnValue(null),
-  locator: vi.fn().mockReturnValue({
-    ariaSnapshot: vi.fn().mockResolvedValue('- textbox "Email" [ref=e1]'),
-  }),
+  evaluateHandle: vi.fn().mockImplementation(async () => ({
+    evaluate: vi.fn().mockResolvedValue(true),
+    dispose: vi.fn().mockResolvedValue(undefined),
+  })),
+  locator: vi.fn((selector: string) => (selector === ':root' ? rootLocator : locator)),
   on: vi.fn(),
   url: vi.fn().mockReturnValue('https://example.com'),
   title: vi.fn().mockResolvedValue('Example Page'),
   viewportSize: vi.fn().mockReturnValue({ width: 1280, height: 720 }),
-  getByRole: vi.fn(() => locator),
   getByText: vi.fn().mockImplementation((t: string) => { calls.push(`getByText:${t}`); return locator }),
 }
 
@@ -314,7 +319,7 @@ describe('WebPlatformAdapter compound behaviors (RED — Wave-0)', () => {
 
     // A page whose evaluate answers the settle string, whose evaluateHandle answers the no-ref
     // wheel's scroller snapshot (the handle's evaluate returns the pointer chain, here the document
-    // scroller alone: one `doc` entry before the wheel, the next after), and whose getByRole
+    // scroller alone: one `doc` entry before the wheel, the next after), and whose aria-ref
     // locator answers scrollWithRef: the container ref resolves through ElementResolver, then
     // count() and evaluate(fn, [dx, dy, axis]).
     function signalPage(opts: { doc?: Offsets[]; container?: unknown[]; count?: number }) {
@@ -348,14 +353,15 @@ describe('WebPlatformAdapter compound behaviors (RED — Wave-0)', () => {
         }),
         mouse: { wheel: vi.fn(async (dx: number, dy: number) => { log.push(`wheel:${dx},${dy}`) }) },
         viewportSize: () => ({ width: 1280, height: 720 }),
-        getByRole: vi.fn(() => container),
         getByText: vi.fn(() => ({ first: () => ({ scrollIntoViewIfNeeded: vi.fn().mockRejectedValue(new Error('not found')) }) })),
-        locator: vi.fn(() => ({ ariaSnapshot: vi.fn().mockResolvedValue('- text "Row A"') })),
+        locator: vi.fn((selector: string) => selector.startsWith('aria-ref=')
+          ? container
+          : { ariaSnapshot: vi.fn().mockResolvedValue('- text "Row A"') }),
       }
       return { page, log, container }
     }
 
-    const refs = { e7: { role: 'list', name: 'Results', nth: 0 } } as unknown as RefMap
+    const refs: RefMap = { e7: { nativeRef: 'e12', role: 'list', name: 'Results' } }
     const container = (before: number, after: number, max: number) => ({
       bounds: null,
       scrolledContainer: 'element',
@@ -375,9 +381,10 @@ describe('WebPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       expect(await p.swipeOnce('down', 'e7' as never)).toBe('unknown')
       expect(await p.swipeOnce('down', 'e7' as never)).toBe('unknown')
       expect(log).toEqual(['scrollWithRef', 'scrollWithRef', 'scrollWithRef', 'scrollWithRef', 'scrollWithRef'])
-      // The container is the resolver's role locator, and the swipe runs inside that element.
-      expect(page.getByRole).toHaveBeenCalledWith('list', { name: 'Results', exact: true })
-      expect(located.nth).toHaveBeenCalledWith(0)
+      // The container is the observed element's aria-ref locator, never a position, and the swipe
+      // runs inside that element.
+      expect(page.locator).toHaveBeenCalledWith('aria-ref=e12')
+      expect(located.nth).not.toHaveBeenCalled()
       expect(located.evaluate.mock.calls[0][1]).toEqual([0, 720, 'vertical'])
       expect(page.mouse.wheel).not.toHaveBeenCalled()
     })

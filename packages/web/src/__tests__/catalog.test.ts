@@ -104,7 +104,12 @@ function makePage() {
     waitForSelector: vi.fn().mockImplementation(() => { calls.push('page.waitForSelector'); return Promise.resolve(null) }),
     waitForFunction: vi.fn().mockImplementation(() => { calls.push('page.waitForFunction'); return Promise.resolve(null) }),
     getByText: vi.fn().mockReturnValue({ waitFor: vi.fn().mockResolvedValue(undefined), first: vi.fn().mockReturnThis() }),
-    getByRole: vi.fn().mockImplementation(() => locator),
+    // 438 D-06: ':root' answers the ai snapshot the pre-dispatch binding check reads; any other
+    // selector is the observed element's aria-ref locator.
+    locator: vi.fn().mockImplementation((selector: string) => (selector === ':root'
+      ? { ariaSnapshot: vi.fn().mockResolvedValue('- textbox "Email" [ref=e1]') }
+      : locator)),
+    evaluateHandle: vi.fn().mockImplementation(async () => documentHandle()),
     context: vi.fn().mockImplementation(() => mockContext),
     bringToFront: vi.fn().mockResolvedValue(undefined),
   }
@@ -112,12 +117,19 @@ function makePage() {
 }
 let mockPage: ReturnType<typeof makePage>
 
-// Direct injection: page/context/lastRefs onto the private fields so a single set of pins
-// drives BOTH the main and farm execute switches without a live browser/farm session.
+// The observation's document handle: still the page's document, disposable.
+function documentHandle() {
+  return { evaluate: vi.fn().mockResolvedValue(true), dispose: vi.fn().mockResolvedValue(undefined) }
+}
+
+// Direct injection: page/context/lastRefs and the observation's document epoch onto the private
+// fields so a single set of pins drives BOTH the main and farm execute switches without a live
+// browser/farm session.
 function inject(adapter: WebAdapter): WebAdapter {
   ;(adapter as any).page = mockPage
   ;(adapter as any).context = mockContext
-  ;(adapter as any).lastRefs = { e1: { role: 'textbox', name: 'Email' } }
+  ;(adapter as any).lastRefs = { e1: { nativeRef: 'e1', role: 'textbox', name: 'Email' } }
+  ;(adapter as any).epoch = { page: mockPage, document: documentHandle() }
   return adapter
 }
 
@@ -231,7 +243,7 @@ describe.each(ADAPTERS)('web catalog RED — %s', (_label, factory) => {
     it('resolves the ref and calls locator.focus()', async () => {
       const r = await adapter.execute({ type: 'focus', ref: 'e1' } as unknown as ExecAction)
       expect(r.success).toBe(true)
-      expect(mockPage.getByRole).toHaveBeenCalled()
+      expect(mockPage.locator).toHaveBeenCalledWith('aria-ref=e1')
       expect(locator.focus).toHaveBeenCalled()
     })
   })
