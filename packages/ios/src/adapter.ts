@@ -824,6 +824,9 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
    *
    * Return in a multi-line field adds a new line instead of submitting, so a multi-line submit is
    * never sent and is recorded as such.
+   *
+   * An unreadable re-read is unverified and never stops a requested Return, as on Android (D-09,
+   * D-10; owner 2026-10-09); only a mismatch holds it.
    */
   private async fillIOSCompound(
     el: {
@@ -860,11 +863,6 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
     }
     const unsent: FillSubmitMeta = multiline ? { sent: false, reason: 'multi-line-field' } : { sent: false }
     const notice = action.submit && multiline ? { data: MULTI_LINE_SUBMIT_NOTICE } : {}
-    // Unreadable re-read: success with no fillReread block and no Return.
-    if (raw === undefined) {
-      const metadata = { fillVerdict, ...(action.submit ? { fillSubmit: unsent } : {}) }
-      return { success: true, ...box, ...notice, metadata }
-    }
 
     // Return/newline AFTER the re-read, only when the fill is not a failure, in a single-line field (D-07).
     let fillSubmit: FillSubmitMeta = unsent

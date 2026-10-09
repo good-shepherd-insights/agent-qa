@@ -566,11 +566,15 @@ describe('IOSPlatformAdapter text input (AUTO-18)', () => {
       expect(mockDriver.keys).not.toHaveBeenCalled()
     })
 
-    it('an unreadable re-read keeps the early return and records unverified', async () => {
-      fields.title.getAttribute.mockImplementation((name: string) => {
-        calls.push(`getAttr:title:${name}`)
+    function unreadable(field: MockField, id: string): void {
+      field.getAttribute.mockImplementation((name: string) => {
+        calls.push(`getAttr:${id}:${name}`)
         return name === 'value' ? Promise.reject(new Error('stale element')) : Promise.resolve(null)
       })
+    }
+
+    it('an unreadable re-read records unverified and still sends the requested Return once (WR-05, owner 2026-10-09)', async () => {
+      unreadable(fields.title, 'title')
       await start()
       const ref = await refFor('Title')
 
@@ -580,8 +584,40 @@ describe('IOSPlatformAdapter text input (AUTO-18)', () => {
       expect(result.error).toBeUndefined()
       expect(result.metadata).toEqual({
         fillVerdict: { verb: 'fill', verdict: 'unverified' },
-        fillSubmit: { sent: false },
+        fillSubmit: { sent: true },
       })
+      expect(mockDriver.keys).toHaveBeenCalledTimes(1)
+      expect(mockDriver.keys).toHaveBeenCalledWith(['\n'])
+      expect(calls.findIndex(c => c.startsWith('keys:'))).toBeGreaterThan(
+        calls.lastIndexOf('getAttr:title:value'),
+      )
+    })
+
+    it('an unreadable re-read in a multi-line field sends no Return and records the multi-line outcome', async () => {
+      unreadable(fields.body, 'body')
+      await start()
+      const ref = await refFor('Body')
+
+      const result = await fill(ref, 'message', { submit: true })
+
+      expect(result.success).toBe(true)
+      expect(result.data).toBe(SUBMIT_NOTICE)
+      expect(result.metadata).toEqual({
+        fillVerdict: { verb: 'fill', verdict: 'unverified' },
+        fillSubmit: { sent: false, reason: 'multi-line-field' },
+      })
+      expect(mockDriver.keys).not.toHaveBeenCalled()
+    })
+
+    it('an unreadable re-read without a submit sends nothing and records no submit outcome', async () => {
+      unreadable(fields.title, 'title')
+      await start()
+      const ref = await refFor('Title')
+
+      const result = await fill(ref, 'Hello')
+
+      expect(result.success).toBe(true)
+      expect(result.metadata).toEqual({ fillVerdict: { verb: 'fill', verdict: 'unverified' } })
       expect(mockDriver.keys).not.toHaveBeenCalled()
     })
 

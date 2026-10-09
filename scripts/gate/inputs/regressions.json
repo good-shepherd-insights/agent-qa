@@ -3640,7 +3640,7 @@
     {
       "runner": "vitest",
       "file": "packages/ios/src/__tests__/text-input.test.ts",
-      "fullName": "IOSPlatformAdapter text input (AUTO-18) C437-FILL-IOS an unreadable re-read keeps the early return and records unverified",
+      "fullName": "IOSPlatformAdapter text input (AUTO-18) C437-FILL-IOS an unreadable re-read records unverified and still sends the requested Return once (WR-05, owner 2026-10-09)",
       "origin": "437 D-07"
     },
     {
@@ -4554,6 +4554,18 @@
       "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
       "fullName": "C437-FILL-WEBVIEW a secure WebView clear that leaves text is a mismatch",
       "origin": "437 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/text-input.test.ts",
+      "fullName": "IOSPlatformAdapter text input (AUTO-18) C437-FILL-IOS an unreadable re-read in a multi-line field sends no Return and records the multi-line outcome",
+      "origin": "437 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/text-input.test.ts",
+      "fullName": "IOSPlatformAdapter text input (AUTO-18) C437-FILL-IOS an unreadable re-read without a submit sends nothing and records no submit outcome",
+      "origin": "437 D-09"
     }
   ]
 }
