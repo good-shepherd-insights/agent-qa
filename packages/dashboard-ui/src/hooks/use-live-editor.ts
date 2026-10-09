@@ -23,7 +23,7 @@ export interface LiveSubAction {
   observation: string
   reasoning: string
   plannedAction: unknown
-  result: 'success' | 'failure' | 'in-progress'
+  result: 'success' | 'failure' | 'no-input' | 'in-progress'
   error?: string
   confidence?: number
   verifierReasoning?: string

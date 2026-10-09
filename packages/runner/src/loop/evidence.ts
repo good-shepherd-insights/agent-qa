@@ -822,16 +822,16 @@ function toLegacyStepAnnotation(annotation: ActionAnnotation, actionType: string
 
 export function projectLegacyTrace(evidence: StepEvidence): SubActionTrace[] {
   return evidence.subActions.map((sub, index) => {
+    const noInput = readIdempotentNoopMeta(sub.result)
     const trace: SubActionTrace = {
       index,
       observation: sub.stateBefore.tree,
       reasoning: sub.plan,
       plannedAction: sub.plannedAction as PlatformAction,
-      result: sub.result.success ? 'success' : 'failure',
+      result: noInput ? 'no-input' : sub.result.success ? 'success' : 'failure',
       screenStateBefore: sub.stateBefore.tree,
       cached: false,
     }
-    const noInput = readIdempotentNoopMeta(sub.result)
     if (noInput) trace.noInputSent = { currentState: noInput.currentState }
     else if (sub.result.error !== undefined) trace.error = sub.result.error
     if (sub.stateAfter) trace.screenStateAfter = sub.stateAfter.tree

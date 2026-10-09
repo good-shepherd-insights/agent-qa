@@ -350,7 +350,7 @@ function getConfiguredAuthStateDir(config: Record<string, unknown>): string | un
   return typeof dir === 'string' ? dir : undefined
 }
 
-function toLiveSubActionData(result: StepResult): LiveSubActionData[] | undefined {
+export function toLiveSubActionData(result: StepResult): LiveSubActionData[] | undefined {
   return result.trace?.subActions?.map((subAction) => ({
     index: subAction.index,
     observation: subAction.observation,

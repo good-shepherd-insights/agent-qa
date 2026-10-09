@@ -446,8 +446,13 @@ describe('projectLegacyTrace', () => {
   })
 })
 
-// 2026-10-08 (437-03, D-05): the legacy trace says why a skipped tap reads 'failure'.
+// 2026-10-09 (437-17, D-05): a skipped tap is its own sub-action outcome, never 'failure'.
 describe('C437-NO-INPUT', () => {
+  const skippedTap: PlatformActionResult = {
+    success: false,
+    metadata: { idempotentNoop: { currentState: 'checked', inputSent: false } },
+  }
+
   function traceOf(result: PlatformActionResult) {
     const recorder = new EvidenceRecorder()
     recorder.recordSubAction({
@@ -460,13 +465,39 @@ describe('C437-NO-INPUT', () => {
   }
 
   it('the legacy trace marks a skipped tap', () => {
-    const trace = traceOf({
-      success: false,
-      metadata: { idempotentNoop: { currentState: 'checked', inputSent: false } },
-    })
+    const trace = traceOf(skippedTap)
+    expect(trace.result).toBe('no-input')
     expect(trace.noInputSent).toEqual({ currentState: 'checked' })
-    expect(trace.result).toBe('failure')
     expect('error' in trace).toBe(false)
+  })
+
+  it('the legacy trace marks the same skipped tap planned twice no-input both times', () => {
+    const recorder = new EvidenceRecorder()
+    for (let i = 0; i < 2; i++) {
+      recorder.recordSubAction({
+        plan: 'turn Wi-Fi on',
+        plannedAction: { type: 'tap', ref: asRef('e3') },
+        stateBefore: makeScreenState(),
+        result: skippedTap,
+      })
+    }
+    const trace = projectLegacyTrace(recorder.finalize(passVerdict, 0, 'turn Wi-Fi on'))
+    expect(trace.map((sub) => sub.result)).toEqual(['no-input', 'no-input'])
+    expect(trace.some((sub) => 'error' in sub)).toBe(false)
+  })
+
+  it('a cancelled step keeps its skipped tap no-input in the legacy trace', () => {
+    const recorder = new EvidenceRecorder()
+    recorder.recordSubAction({
+      plan: 'turn Wi-Fi on',
+      plannedAction: { type: 'tap', ref: asRef('e3') },
+      stateBefore: makeScreenState(),
+      result: skippedTap,
+    })
+    const cancelled: VerifierVerdict = { pass: false, reasoning: 'Step cancelled by user' }
+    const [trace] = projectLegacyTrace(recorder.finalize(cancelled, 0, 'turn Wi-Fi on'))
+    expect(trace!.result).toBe('no-input')
+    expect('error' in trace!).toBe(false)
   })
 
   it('an ordinary success and an ordinary failure project exactly as before', () => {

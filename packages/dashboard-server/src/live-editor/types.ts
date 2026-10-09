@@ -55,7 +55,7 @@ export interface LiveSubActionData {
   observation: string
   reasoning: string
   plannedAction: unknown
-  result: 'success' | 'failure' | 'in-progress'
+  result: 'success' | 'failure' | 'no-input' | 'in-progress'
   error?: string
   screenStateBefore: string
   screenStateAfter?: string
