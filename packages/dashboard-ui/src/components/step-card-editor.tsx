@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   CircleDashed,
+  CircleSlash,
 } from 'lucide-react'
 import {
   AlertDialog,
@@ -32,6 +33,7 @@ import { StepPillPreview, hasTemplateVars } from '@/components/step-pill-preview
 import { useStepAutocomplete } from '@/components/step-autocomplete'
 import type { VariableSuggestion } from '@/hooks/use-variable-suggestions'
 import type { LiveSubAction } from '@/hooks/use-live-editor'
+import { RESULT_WORDS } from '@/lib/action-vocabulary'
 import type { StepOverrides } from '@/lib/test-yaml-serializer'
 import { cn } from '@/lib/utils'
 
@@ -110,12 +112,18 @@ function isInteractiveTarget(target: EventTarget | null): boolean {
   return Boolean(target.closest('button, textarea, input, select, label, [role="switch"]'))
 }
 
-function SubActionStatusIcon({ result }: { result: LiveSubAction['result'] }) {
+export function SubActionStatusIcon({ result }: { result: LiveSubAction['result'] }) {
   switch (result) {
     case 'success':
       return <CheckCircle2 className="size-3.5 text-emerald-500" />
     case 'failure':
       return <AlertTriangle className="size-3.5 text-destructive" />
+    case 'no-input':
+      return (
+        <CircleSlash className="size-3.5 text-muted-foreground" aria-label={RESULT_WORDS['no-input']}>
+          <title>{RESULT_WORDS['no-input']}</title>
+        </CircleSlash>
+      )
     default:
       return <CircleDashed className="size-3.5 text-muted-foreground" />
   }

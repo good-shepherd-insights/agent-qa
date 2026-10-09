@@ -12,6 +12,7 @@ import {
   AlertTriangle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { RESULT_WORDS } from '@/lib/action-vocabulary'
 import { Button } from '@/components/ui/button'
 import type { LiveHookExecution, TestStepDetail } from '@/hooks/use-live-editor'
 import { fromEditorStep } from '@/lib/display-step'
@@ -77,11 +78,12 @@ function StepStatusIcon({ status }: { status: TestStepDetail['status'] }) {
   }
 }
 
-function formatSubActionSummary(subAction: LiveSubAction): string {
+export function formatSubActionSummary(subAction: LiveSubAction): string {
   if (subAction.observation) return subAction.observation
   if (subAction.reasoning) return subAction.reasoning
   if (subAction.plannedAction != null) return 'Planned action captured'
   if (subAction.verifierReasoning) return subAction.verifierReasoning
+  if (subAction.result === 'no-input') return RESULT_WORDS['no-input']
   return subAction.result
 }
 

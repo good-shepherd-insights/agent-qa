@@ -35,7 +35,7 @@ interface EditableStepWrapperProps {
 // SHARING ONE COMPONENT ACROSS BOTH WOULD MEAN FABRICATING THE DIFFERENCE: a `screenStateHash` the
 // editor never computed, or a `plan` reverse-engineered out of the action blob — which is exactly
 // the `JSON.parse`-and-guess the durable rewrite deleted. Two shapes, two rows, no invented facts.
-function EditorSubActionRow({ sub, index, stepId, isSelected, onSelect }: {
+export function EditorSubActionRow({ sub, index, stepId, isSelected, onSelect }: {
   sub: LiveSubAction
   index: number
   stepId: string
@@ -48,7 +48,11 @@ function EditorSubActionRow({ sub, index, stepId, isSelected, onSelect }: {
     <span
       className={cn(
         'h-1.5 w-1.5 shrink-0 rounded-full',
-        sub.result === 'success' ? 'bg-emerald-500' : 'bg-red-500',
+        sub.result === 'success'
+          ? 'bg-emerald-500'
+          : sub.result === 'no-input'
+            ? 'bg-muted-foreground'
+            : 'bg-red-500',
       )}
     />
   )

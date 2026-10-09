@@ -4332,6 +4332,24 @@
       "file": "packages/dashboard-ui/src/components/__tests__/437-live-editor-no-input.test.tsx",
       "fullName": "C437-NO-INPUT-LABEL the live editor detail names a skipped tap no input sent in the muted colour",
       "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/__tests__/437-live-editor-no-input.test.tsx",
+      "fullName": "C437-NO-INPUT-LABEL the live editor row draws a skipped tap with a muted dot",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/__tests__/437-live-editor-no-input.test.tsx",
+      "fullName": "C437-NO-INPUT-LABEL the step card marks a skipped tap with the muted no-input glyph",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/__tests__/437-live-editor-no-input.test.tsx",
+      "fullName": "C437-NO-INPUT-LABEL the suite row summary of a bare skipped tap reads no input sent",
+      "origin": "437 D-05"
     }
   ]
 }
