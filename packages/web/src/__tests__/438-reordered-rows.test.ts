@@ -1,7 +1,8 @@
 // C438-REORDERED-ROWS (438 D-09, SC2): what happens when the rows the planner looked at change
 // before its action reaches the page. Real headless Chromium through the real runner loop; pages
 // are inline snippets. 438-06 holds the navigated leg; 438-07 the replaced and recycled legs (the
-// strict heal, D-07, D-08); 438-08 and 438-09 add legs.
+// strict heal, D-07, D-08); 438-08 the cached leg (strict replay through the row words, D-10,
+// D-11); 438-09 adds legs.
 
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Action, ExecuteOptions, PlannerConfig } from '@vostride/agent-qa-runner'
@@ -10,6 +11,7 @@ import { WebPlatformAdapter } from '../adapter.js'
 import {
   act,
   giveUp,
+  memoryCache,
   refFor,
   runScriptedStep,
   scriptedPlanner,
@@ -140,6 +142,14 @@ const swapElmAndOak: PageChange = (page) => page.evaluate(() => {
     first.textContent = third.textContent
     third.textContent = text
   }
+})
+
+// The Elm row moves to the bottom of the list; every node is kept, so a binding follows it.
+const moveElmToBottom: PageChange = (page) => page.evaluate(() => {
+  type Node = { parentElement: { appendChild(node: Node): void } }
+  const doc = (globalThis as unknown as { document: { querySelector(s: string): Node } }).document
+  const elm = doc.querySelector('#addresses > li')
+  elm.parentElement.appendChild(elm)
 })
 
 interface Changing {
@@ -342,4 +352,52 @@ describe('C438-REORDERED-ROWS', () => {
       expect(clicks).not.toContain(leg.streetAtOldIndex)
     }
   }, 240_000)
+
+  it('cached: a real hit through the row words lands on Elm\'s row', async () => {
+    const cache = memoryCache()
+    const instruction = "Edit the label of the address '7 Elm Street'"
+
+    const live = await open(LIVE_ROWS_PAGE)
+    const livePlanner = scriptedPlanner([
+      (screen) => act(
+        { type: 'click', ref: refFor(screen, 'button', 'Edit label', 0), target: ELM_TARGET },
+        true,
+        'Edit the Elm Street label',
+      ),
+    ])
+    const first = await runScriptedStep({
+      adapter: live,
+      instruction,
+      planner: livePlanner,
+      verifier: passes,
+      cache,
+      plannerConfig: LIMITS,
+    })
+    expect(first.result.status).toBe('passed')
+    expect(await pageClicks(live)).toEqual(['7 Elm Street, Springfield'])
+    expect(cache.sets).toHaveLength(1)
+    expect(cache.store.get(cache.sets[0])?.groundedLocator).toEqual([
+      { role: 'button', name: 'Edit label', row: '7 Elm Street' },
+    ])
+
+    const web = await open(LIVE_ROWS_PAGE)
+    const changing = changingBeforeDispatch(web, moveElmToBottom)
+    const planner = scriptedPlanner([() => giveUp('the cached Elm Street label did not replay')])
+    const run = await runScriptedStep({
+      adapter: changing.adapter,
+      instruction,
+      planner,
+      verifier: passes,
+      cache,
+      plannerConfig: LIMITS,
+    })
+
+    expect(cache.gets.at(-1)).toEqual({ key: cache.sets[0], hit: true })
+    expect(run.result.evidence?.cacheStatus).toBe('hit')
+    expect(planner.calls).toBe(0)
+    expect(changing.clicksAfterFirst()).toEqual(['7 Elm Street, Springfield'])
+    expect(await pageClicks(web)).toEqual(['7 Elm Street, Springfield'])
+    expect(run.executed).toHaveLength(1)
+    expect(run.result.status).toBe('passed')
+  }, 90_000)
 })
