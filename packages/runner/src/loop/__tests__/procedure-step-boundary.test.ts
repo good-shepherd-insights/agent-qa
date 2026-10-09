@@ -519,7 +519,7 @@ describe('cross-step flow carry (F-381-51-1 · D-09/D-10/D-11)', () => {
     const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
     expect(learned).toContain('Guarded replay recovery evidence for procedure step 2')
     expect(learned).toContain('miss location: action-target lane=ref')
-    expect(learned).toContain('role=button; nameNormalized=submit')
+    expect(learned).toContain('role=button; name=Submit')
     expect(learned).toContain('fresh same-role candidates:\n- none')
     expect(learned).not.toContain('Click the Submit button')
     expect(flowCell.carry).toBeUndefined()
@@ -636,5 +636,114 @@ describe('cross-step flow carry (F-381-51-1 · D-09/D-10/D-11)', () => {
       flow: { cursor: 0, length: 2 },
     })
     expect(flowCell.carry).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// C438-RECOVERY-NO-POSITION (438 D-12): the guard-miss recovery context names stored and fresh
+// candidates by role and name only. No stored or derived position reaches the planner.
+// ---------------------------------------------------------------------------
+
+function okayScreen(): ScreenState {
+  const base = formScreen()
+  const okay = (ref: string, y: number) => ({
+    ...base.elements[1]!,
+    ref: asRef(ref),
+    name: 'Okay',
+    nameNormalized: 'okay',
+    bounds: { x: 20, y, width: 350, height: 44 },
+    center: { x: 195, y: y + 22 },
+  })
+  const elements = [okay('e1', 120), okay('e2', 200)]
+  return {
+    ...base,
+    tree: '- button "Okay" [ref=e1]\n- button "Okay" [ref=e2]',
+    elements,
+    refMap: Object.fromEntries(
+      elements.map((element) => [element.ref, { bounds: element.bounds, center: element.center }]),
+    ),
+  }
+}
+
+async function recoveryBlockFor(target: ProcedureBodyPayload['steps'][number]['guard']['target']) {
+  const payload: ProcedureBodyPayload = {
+    schemaVersion: 1,
+    parameters: [],
+    steps: [{
+      instruction: 'Confirm the dialog',
+      action: { type: 'click', targets: { ref: target }, values: {} },
+      guard: { target, pageAnchor: { t: 'page', route: FORM_ROUTE } },
+    }],
+    successAssertion: 'The dialog is confirmed',
+  }
+  const reader: KnowledgeHintReader = {
+    getRunBrief: () => servedBrief(emptyBrief),
+    search: () => [],
+    read: (id) => ({
+      id,
+      title: 'Confirm procedure',
+      body: serializeProcedureBody(payload),
+      anchors: [flowAnchor],
+      evidenceDigest: 'digest',
+      relations: [],
+    }),
+    getCautions: () => noCautions(),
+    getProcedure: () => ({ ...makeFlowMatch(), parameterSchema: [] }),
+    emitCanaryOutcome: () => {},
+  }
+  const screen = okayScreen()
+  const adapter: PlatformAdapter = {
+    platform: 'web',
+    async setup() {},
+    async cleanup() {},
+    async observe() {
+      return screen
+    },
+    async execute(): Promise<ActionResult> {
+      return { success: true }
+    },
+  }
+  const planner = capturingPlanner([
+    makeActionPlan({ action: { type: 'click', ref: 'e1' }, stepComplete: true }),
+  ])
+  const result = await executeStep(
+    'Confirm the dialog',
+    ports({ adapter, planner: planner.planner, knowledgeReader: reader }),
+    context(),
+  )
+  expect(result.status).toBe('passed')
+  expect(planner.calls).toHaveLength(1)
+  const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
+  return learned.slice(learned.indexOf('Guarded replay recovery evidence'))
+}
+
+describe('C438-RECOVERY-NO-POSITION', () => {
+  it('an ambiguous body target is recovered by role and name, with no position', async () => {
+    const block = await recoveryBlockFor({ role: 'button', nameNormalized: 'okay', name: 'Okay' })
+
+    expect(block).toContain('miss reason: descriptor-ambiguous')
+    expect(block).toContain('- ref: role=button; name=Okay\n')
+    expect(block).toContain('declared guard target: role=button; name=Okay\n')
+    expect(block).toContain(
+      'fresh same-role candidates:\n- role=button; name=Okay\n- role=button; name=Okay',
+    )
+    expect(block).not.toMatch(/ordinal/i)
+  })
+
+  it('a stored row is named, and a legacy body falls back to its normalized name', async () => {
+    const withRow = await recoveryBlockFor({
+      role: 'button',
+      nameNormalized: 'okay',
+      name: 'Okay',
+      row: '7 Elm Street',
+    })
+    expect(withRow).toContain('miss reason: descriptor-missing')
+    expect(withRow).toContain('declared guard target: role=button; name=Okay; row=7 Elm Street\n')
+    expect(withRow).not.toMatch(/ordinal/i)
+
+    const legacy = await recoveryBlockFor({ role: 'button', nameNormalized: 'okay', ordinal: 1 })
+    expect(legacy).toContain('miss reason: descriptor-missing')
+    expect(legacy).toContain('declared guard target: role=button; name=okay\n')
+    expect(legacy).not.toMatch(/ordinal/i)
   })
 })

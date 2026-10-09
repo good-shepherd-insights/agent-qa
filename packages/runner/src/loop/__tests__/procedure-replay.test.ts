@@ -602,7 +602,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
     const candidateRows = learned.split('\n').filter((line) => line.startsWith('- role='))
     expect(candidateRows).toEqual([
-      '- role=textbox; nameNormalized=account name; ordinal=0 (derived)',
+      '- role=textbox; name=Account name',
     ])
     expect(learned).toContain('Recovery evidence is advisory only; it is not replay authorization')
     expect(candidateRows.join('\n').toLowerCase()).not.toMatch(/\b(rename|match|equivalent)\b/)
@@ -1003,14 +1003,12 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(learned).not.toContain('Fill the email field')
     expect(learned).not.toContain('Click the Log in button')
     const candidates = learned.slice(learned.indexOf('fresh same-role candidates:'))
-    const first = candidates.indexOf(
-      'role=button; nameNormalized=log in; ordinal=0 (derived)',
+    // 438 D-12: both candidates are named by role and exact name, in screen order, with no
+    // position for the planner to pick by.
+    expect(candidates).toContain(
+      'fresh same-role candidates:\n- role=button; name=Log in\n- role=button; name=Log in',
     )
-    const second = candidates.indexOf(
-      'role=button; nameNormalized=log in; ordinal=1 (derived)',
-    )
-    expect(first).toBeGreaterThanOrEqual(0)
-    expect(second).toBeGreaterThan(first)
+    expect(candidates).not.toMatch(/ordinal/i)
     expect(candidates).not.toContain('ref=e2')
     expect(candidates).not.toContain('ref=e3')
     const candidateRows = candidates.split('\n').filter((line) => line.startsWith('- role='))
@@ -1057,10 +1055,10 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
     expect(learned).toContain('miss location: guard-target')
     expect(learned).toContain(
-      'declared guard target: role=button; nameNormalized=reset password',
+      'declared guard target: role=button; name=reset password',
     )
     expect(learned).toContain('fresh same-role candidates:')
-    expect(learned).toContain('role=button; nameNormalized=log in; ordinal=0 (derived)')
+    expect(learned).toContain('fresh same-role candidates:\n- role=button; name=Log in')
     expect(learned).not.toContain('Fill the email field')
     expect(result.evidence?.planSource).toEqual({
       kind: 'procedure-replay',
@@ -1103,8 +1101,10 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(learned).toContain('miss reason: descriptor-ambiguous')
     expect(learned).toContain('miss location: guard-target')
     const candidates = learned.slice(learned.indexOf('fresh same-role candidates:'))
-    expect(candidates).toContain('role=button; nameNormalized=log in; ordinal=0 (derived)')
-    expect(candidates).toContain('role=button; nameNormalized=log in; ordinal=1 (derived)')
+    expect(candidates).toContain(
+      'fresh same-role candidates:\n- role=button; name=Log in\n- role=button; name=Log in',
+    )
+    expect(candidates).not.toMatch(/ordinal/i)
     expect(learned).not.toContain('Fill the email field')
     expect(result.evidence?.planSource).toEqual({
       kind: 'procedure-replay',
@@ -1159,7 +1159,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     const candidates = learned.slice(learned.indexOf('fresh same-role candidates:'))
     expect(candidates).toContain('fresh same-role candidates:\n- none')
     expect(candidates).not.toContain('role=button')
-    expect(candidates).not.toContain('nameNormalized=log in')
+    expect(candidates).not.toContain('name=Log in')
     expect(learned).not.toContain('Drag using authored prose that recovery must omit')
     expect(result.evidence?.planSource).toMatchObject({
       guard: { miss: { reason: 'descriptor-missing' } },
@@ -1245,7 +1245,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(result.status).toBe('passed')
     expect(planner.calls).toHaveLength(1)
     const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
-    expect(learned).toContain('nameNormalized=MASKED_DESCRIPTOR_38155')
+    expect(learned).toContain('name=MASKED_DESCRIPTOR_38155')
     expect(learned).not.toContain('mask-me-missing')
     expect(learned).toContain('text <- parameter VAR_NAME (string, required)')
     expect(learned).toContain('clickDelay <- parameter MEM_NAME (number, optional)')
@@ -1321,7 +1321,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
     expect(learned).toContain('miss reason: gate-refused')
     expect(learned).toContain('miss location: grounding-gate')
-    expect(learned).toContain('role=button; nameNormalized=gate target')
+    expect(learned).toContain('role=button; name=Gate target')
     expect(learned).not.toContain('fresh same-role candidates:')
     expect(learned).not.toContain('GATE_ERROR_REF_RAW_38155')
     expect(learned).not.toContain('ref_not_in_snapshot')

@@ -2212,11 +2212,12 @@ type ProcedureReplayAttempt =
       location: ProcedureGuardMissLocation
     }
 
+// 2026-10-09 (438-10): no stored or derived position reaches the recovery context (D-12).
 interface ProcedureRecoveryDescriptor {
   lane: string
   role: string
-  nameNormalized: string
-  ordinal?: { index: number; provenance: 'stored' }
+  name: string
+  row?: string
 }
 
 interface ProcedureRecoveryParameter {
@@ -2271,11 +2272,7 @@ interface ProcedureGuardMissRecoveryContext {
     memory: readonly ProcedureRecoverySourceBinding[]
     secrets: readonly string[]
   }
-  freshCandidates?: readonly {
-    role: string
-    nameNormalized: string
-    ordinal: { index: number; provenance: 'derived' }
-  }[]
+  freshCandidates?: readonly { role: string; name: string }[]
 }
 
 /**
@@ -2471,16 +2468,14 @@ function projectProcedureRecoveryDescriptor(
   return {
     lane,
     role: target.role,
-    nameNormalized: target.nameNormalized,
-    ...(target.ordinal === undefined
-      ? {}
-      : { ordinal: { index: target.ordinal, provenance: 'stored' as const } }),
+    name: target.name ?? target.nameNormalized,
+    ...(target.row === undefined ? {} : { row: target.row }),
   }
 }
 
 /**
  * Safe upstream projector for a failed guard attempt. Raw loop/runtime inputs end here; only
- * structural names, capability bits, booleans, and ordinals survive into the renderer DTO.
+ * structural names, capability bits and booleans survive into the renderer DTO.
  */
 function projectProcedureGuardMissRecovery(input: {
   stepNumber: number
@@ -2555,8 +2550,8 @@ function projectProcedureGuardMissRecovery(input: {
     guard: {
       target: {
         role: guardTarget.role,
-        nameNormalized: guardTarget.nameNormalized,
-        ...(guardTarget.ordinal === undefined ? {} : { ordinal: guardTarget.ordinal }),
+        name: guardTarget.name,
+        ...(guardTarget.row === undefined ? {} : { row: guardTarget.row }),
       },
       pageAnchorEqual: storedPage.route === currentPage.route,
     },
@@ -2573,14 +2568,7 @@ function projectProcedureGuardMissRecovery(input: {
 
   const freshCandidates = input.screenState.elements
     .filter((element) => element.state.visible && element.role === failedRole)
-    .map((element) => ({
-      role: element.role,
-      nameNormalized: element.nameNormalized,
-      ordinal: {
-        index: elementOrdinal(element, input.screenState.elements),
-        provenance: 'derived' as const,
-      },
-    }))
+    .map((element) => ({ role: element.role, name: element.name }))
   return { ...base, freshCandidates } satisfies ProcedureGuardMissRecoveryContext
 }
 
@@ -2601,10 +2589,8 @@ function renderProcedureGuardMissLocation(location: ProcedureGuardMissLocation):
 function renderProcedureRecoveryDescriptor(
   descriptor: Omit<ProcedureRecoveryDescriptor, 'lane'>,
 ): string {
-  const ordinal = descriptor.ordinal === undefined
-    ? 'unspecified'
-    : `${descriptor.ordinal.index} (${descriptor.ordinal.provenance})`
-  return `role=${descriptor.role}; nameNormalized=${descriptor.nameNormalized}; ordinal=${ordinal}`
+  const row = descriptor.row === undefined ? '' : `; row=${descriptor.row}`
+  return `role=${descriptor.role}; name=${descriptor.name}${row}`
 }
 
 function renderProcedureRecoverySources(
@@ -2695,10 +2681,7 @@ function renderProcedureGuardMissRecoveryBlock(
       lines.push('- none')
     } else {
       for (const candidate of recovery.freshCandidates) {
-        lines.push(
-          `- role=${candidate.role}; nameNormalized=${candidate.nameNormalized}; `
-            + `ordinal=${candidate.ordinal.index} (${candidate.ordinal.provenance})`,
-        )
+        lines.push(`- role=${candidate.role}; name=${candidate.name}`)
       }
     }
   }
