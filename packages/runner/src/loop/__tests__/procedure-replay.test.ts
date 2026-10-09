@@ -16,6 +16,7 @@ import type {
   BriefBlock,
   CompletedRunHandoff,
   ProcedureBodyPayload,
+  ProcedureGuardTarget,
   ProcedureMatch,
   ScreenState,
   ServingRecordMetadata,
@@ -70,11 +71,11 @@ function loginPayload(): ProcedureBodyPayload {
         instruction: 'Fill the email field',
         action: {
           type: 'fill',
-          targets: { ref: { role: 'textbox', nameNormalized: 'email' } },
+          targets: { ref: { role: 'textbox', nameNormalized: 'email', name: 'Email' } },
           values: { text: { param: 'userEmail' } },
         },
         guard: {
-          target: { role: 'textbox', nameNormalized: 'email' },
+          target: { role: 'textbox', nameNormalized: 'email', name: 'Email' },
           pageAnchor: { t: 'page', route: 'https://example.test/login' },
         },
       },
@@ -82,11 +83,11 @@ function loginPayload(): ProcedureBodyPayload {
         instruction: 'Click the Log in button',
         action: {
           type: 'click',
-          targets: { ref: { role: 'button', nameNormalized: 'log in' } },
+          targets: { ref: { role: 'button', nameNormalized: 'log in', name: 'Log in' } },
           values: {},
         },
         guard: {
-          target: { role: 'button', nameNormalized: 'log in' },
+          target: { role: 'button', nameNormalized: 'log in', name: 'Log in' },
           pageAnchor: { t: 'page', route: 'https://example.test/login' },
         },
       },
@@ -264,11 +265,11 @@ function context(overrides: Partial<StepContext> = {}): StepContext {
 function singleActionPayload(input: {
   parameters?: ProcedureBodyPayload['parameters']
   type: string
-  target?: { role: string; nameNormalized: string }
+  target?: ProcedureGuardTarget
   values: ProcedureBodyPayload['steps'][number]['action']['values']
   instruction?: string
 }): ProcedureBodyPayload {
-  const target = input.target ?? { role: 'button', nameNormalized: 'log in' }
+  const target = input.target ?? { role: 'button', nameNormalized: 'log in', name: 'Log in' }
   return {
     schemaVersion: 1,
     parameters: input.parameters ?? [],
@@ -1079,7 +1080,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
       ...payload.steps[0],
       guard: {
         ...payload.steps[0].guard,
-        target: { role: 'button', nameNormalized: 'log in' },
+        target: { role: 'button', nameNormalized: 'log in', name: 'Log in' },
       },
     }]
     const spy = makeReader({ match: makeMatch(), payload })
@@ -1126,13 +1127,13 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
         action: {
           type: 'drag',
           targets: {
-            fromRef: { role: 'button', nameNormalized: 'log in' },
+            fromRef: { role: 'button', nameNormalized: 'log in', name: 'Log in' },
             toRef: { role: 'link', nameNormalized: 'destination' },
           },
           values: {},
         },
         guard: {
-          target: { role: 'button', nameNormalized: 'log in' },
+          target: { role: 'button', nameNormalized: 'log in', name: 'Log in' },
           pageAnchor: { t: 'page', route: 'https://example.test/login' },
         },
       }],
@@ -1299,7 +1300,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     }
     const payload = singleActionPayload({
       type: 'click',
-      target: { role: 'button', nameNormalized: 'gate target' },
+      target: { role: 'button', nameNormalized: 'gate target', name: 'Gate target' },
       values: {},
       instruction: 'AUTHORED_GATE_PROSE_38155',
     })
@@ -1336,7 +1337,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
       {
         ...payload.steps[1],
         guard: {
-          target: { role: 'button', nameNormalized: 'log in' },
+          target: { role: 'button', nameNormalized: 'log in', name: 'Log in' },
           pageAnchor: { t: 'page', route: 'https://example.test/checkout' },
         },
       },
@@ -1537,11 +1538,11 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
           instruction: 'Fill the email field',
           action: {
             type: 'fill',
-            targets: { ref: { role: 'textbox', nameNormalized: 'email' } },
+            targets: { ref: { role: 'textbox', nameNormalized: 'email', name: 'Email' } },
             values: { text: { param: 'userEmail' } },
           },
           guard: {
-            target: { role: 'textbox', nameNormalized: 'email' },
+            target: { role: 'textbox', nameNormalized: 'email', name: 'Email' },
             pageAnchor: { t: 'page', route: 'https://example.test/login' },
           },
         },
@@ -1549,11 +1550,11 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
           instruction: 'Fill the one-time code',
           action: {
             type: 'fill',
-            targets: { ref: { role: 'textbox', nameNormalized: 'code' } },
+            targets: { ref: { role: 'textbox', nameNormalized: 'code', name: 'Code' } },
             values: { text: { param: 'otpCode' } },
           },
           guard: {
-            target: { role: 'textbox', nameNormalized: 'code' },
+            target: { role: 'textbox', nameNormalized: 'code', name: 'Code' },
             pageAnchor: { t: 'page', route: 'https://example.test/login' },
           },
         },
@@ -1700,7 +1701,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     const payload = singleActionPayload({
       parameters: [{ name: 'missingEmail', type: 'string', required: true }],
       type: 'fill',
-      target: { role: 'textbox', nameNormalized: 'email' },
+      target: { role: 'textbox', nameNormalized: 'email', name: 'Email' },
       values: { text: { param: 'missingEmail' } },
       instruction: 'Fill the missing email',
     })
@@ -1800,7 +1801,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     const payload = singleActionPayload({
       parameters: [{ name: 'submitNow', type: 'boolean', required: true }],
       type: 'fill',
-      target: { role: 'textbox', nameNormalized: 'email' },
+      target: { role: 'textbox', nameNormalized: 'email', name: 'Email' },
       values: { text: 'user@example.com', submit: { param: 'submitNow' } },
     })
     const match = makeMatch({
@@ -1865,7 +1866,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
       payload: singleActionPayload({
         parameters: [{ name: 'submitNow', type: 'boolean', required: true }],
         type: 'fill',
-        target: { role: 'textbox', nameNormalized: 'email' },
+        target: { role: 'textbox', nameNormalized: 'email', name: 'Email' },
         values: { text: 'user@example.com', submit: { param: 'submitNow' } },
       }),
     },
@@ -1924,7 +1925,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     const payload = singleActionPayload({
       parameters: [{ name: 'loginSecret', type: 'secret', required: true }],
       type: 'fill',
-      target: { role: 'textbox', nameNormalized: 'email' },
+      target: { role: 'textbox', nameNormalized: 'email', name: 'Email' },
       values: { text: { param: 'loginSecret' } },
     })
     const match = makeMatch({
@@ -1973,7 +1974,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
   it('rejects a schema-invalid rebuilt action before it reaches the adapter', async () => {
     const payload = singleActionPayload({
       type: 'fill',
-      target: { role: 'textbox', nameNormalized: 'email' },
+      target: { role: 'textbox', nameNormalized: 'email', name: 'Email' },
       values: { submit: true },
       instruction: 'Invalid fill missing its required text',
     })

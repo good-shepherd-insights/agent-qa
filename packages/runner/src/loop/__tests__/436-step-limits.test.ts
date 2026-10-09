@@ -257,13 +257,14 @@ function alwaysCache(value: CachedPlanValue): ActionPlanCache {
 function procedureReader(): KnowledgeHintReader {
   const id = asRecordId('proc-login')
   const flowAnchor = { t: 'flow', name: 'login' } as const
+  const logIn = { role: 'button', nameNormalized: 'log in', name: 'Log in' }
   const payload: ProcedureBodyPayload = {
     schemaVersion: 1,
     parameters: [],
     steps: [{
       instruction: 'Click the Log in button',
-      action: { type: 'click', targets: { ref: { role: 'button', nameNormalized: 'log in' } }, values: {} },
-      guard: { target: { role: 'button', nameNormalized: 'log in' }, pageAnchor: { t: 'page', route: 'https://example.test/login' } },
+      action: { type: 'click', targets: { ref: logIn }, values: {} },
+      guard: { target: logIn, pageAnchor: { t: 'page', route: 'https://example.test/login' } },
     }],
     successAssertion: 'Logged in',
   }

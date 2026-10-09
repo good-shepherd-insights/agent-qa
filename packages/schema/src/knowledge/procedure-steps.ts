@@ -10,13 +10,17 @@ import type { Anchor } from '../identity/anchor'
 import type { ProcedureParamType } from './curator-tier'
 
 /**
- * A descriptor-only element target, shaped exactly like the runner's cached-plan locators
- * (role + nameNormalized + ordinal) so the deterministic descriptor matcher re-grounds it
- * against a fresh observation unchanged.
+ * A descriptor-only element target (438 D-11). Replay re-finds it strictly: exactly one current
+ * element with the same role, the exact observed `name` and, when stored, the `row` words. A
+ * target without `name` cannot be judged strictly and is a guard miss. `nameNormalized` stays
+ * for the readers that show it; `ordinal` is kept only so committed bodies still parse — nothing
+ * new writes it and replay never reads it.
  */
 export interface ProcedureGuardTarget {
   role: string
   nameNormalized: string
+  name?: string
+  row?: string
   ordinal?: number
 }
 
@@ -96,6 +100,8 @@ const guardTargetSchema = z
   .object({
     role: z.string(),
     nameNormalized: z.string(),
+    name: z.string().optional(),
+    row: z.string().optional(),
     ordinal: z.number().int().optional(),
   })
   .strict()

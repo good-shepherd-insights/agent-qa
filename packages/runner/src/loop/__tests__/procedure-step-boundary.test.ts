@@ -204,11 +204,11 @@ function flowPayload(): ProcedureBodyPayload {
         instruction: 'Type the probe email into the Username field',
         action: {
           type: 'fill',
-          targets: { ref: { role: 'textbox', nameNormalized: 'username' } },
+          targets: { ref: { role: 'textbox', nameNormalized: 'username', name: 'Username' } },
           values: { text: { param: 'PROBE_USER' } },
         },
         guard: {
-          target: { role: 'textbox', nameNormalized: 'username' },
+          target: { role: 'textbox', nameNormalized: 'username', name: 'Username' },
           pageAnchor: { t: 'page', route: FORM_ROUTE },
         },
       },
@@ -216,11 +216,11 @@ function flowPayload(): ProcedureBodyPayload {
         instruction: 'Click the Submit button',
         action: {
           type: 'click',
-          targets: { ref: { role: 'button', nameNormalized: 'submit' } },
+          targets: { ref: { role: 'button', nameNormalized: 'submit', name: 'Submit' } },
           values: {},
         },
         guard: {
-          target: { role: 'button', nameNormalized: 'submit' },
+          target: { role: 'button', nameNormalized: 'submit', name: 'Submit' },
           pageAnchor: { t: 'page', route: FORM_ROUTE },
         },
       },

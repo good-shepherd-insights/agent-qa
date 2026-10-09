@@ -214,6 +214,39 @@ describe('procedure body codec (D-04)', () => {
     ).toEqual({ json: { param: 'x' } })
   })
 
+  it('round-trips targets carrying the exact name and row words (438 D-11)', () => {
+    const payload = threeStepPayload()
+    const target = {
+      role: 'button',
+      nameNormalized: 'edit label',
+      name: 'Edit label',
+      row: '7 Elm Street',
+    }
+    payload.steps[2] = {
+      ...payload.steps[2]!,
+      action: { type: 'click', targets: { ref: target }, values: {} },
+      guard: { ...payload.steps[2]!.guard, target },
+    }
+    const first = serializeProcedureBody(payload)
+
+    const parsed = parseProcedureBody(first)
+
+    expect(parsed).toEqual(payload)
+    expect(parsed?.steps[2]?.action.targets.ref).toEqual(target)
+    expect(serializeProcedureBody(parsed as ProcedureBodyPayload)).toBe(first)
+  })
+
+  it('fails closed on an unknown target key', () => {
+    const payload = threeStepPayload() as unknown as {
+      steps: Array<{ guard: { target: Record<string, unknown> } }>
+    }
+    payload.steps[2]!.guard.target.nearText = 'Submit'
+
+    expect(
+      parseProcedureBody(serializeProcedureBody(payload as unknown as ProcedureBodyPayload)),
+    ).toBeUndefined()
+  })
+
   it('rejects duplicate parameter names at the committed parse wall', () => {
     const payload = threeStepPayload()
     payload.parameters = [

@@ -36,13 +36,13 @@ function fixture(path: 'live' | 'cache' | 'procedure' = 'live', zeroMs?: number)
       verificationOutcome: 'passed' }),
     set: async () => {}, invalidate: async () => {},
   }
+  const logIn = { role: 'button', nameNormalized: 'log in', name: 'Log in' }
   if (path === 'procedure') ports.procedureFlow = { carry: {
     match: { id: asRecordId('procedure-recording-offset'), flowAnchor: { t: 'flow', name: 'login' },
       confidence: 0.9, authoringModelTier: 'full', parameterSchema: [], replayRecommendation: 'replay' },
     payload: { schemaVersion: 1, parameters: [], steps: [{ instruction: 'Click Log in',
-      action: { type: 'click', targets: { ref: { role: 'button', nameNormalized: 'log in' } }, values: {} },
-      guard: { target: { role: 'button', nameNormalized: 'log in' },
-        pageAnchor: { t: 'page', route: 'https://example.test/login' } },
+      action: { type: 'click', targets: { ref: logIn }, values: {} },
+      guard: { target: logIn, pageAnchor: { t: 'page', route: 'https://example.test/login' } },
     }], successAssertion: 'Logged in' }, nextIndex: 0,
   } }
   const children = () => events.filter(event => event.type === 'subActionRecorded')

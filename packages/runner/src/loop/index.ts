@@ -42,6 +42,7 @@ import type {
   GroundingEvidence,
   ProcedureBodyPayload,
   ProcedureBindingAvailability,
+  ProcedureGuardTarget,
   ProcedureMatch,
   ProcedureParamType,
   ProcedureStepSpec,
@@ -68,7 +69,6 @@ import { classifyStep } from '../cache/classify.js'
 import { buildCacheableStepInput } from '../cache/key.js'
 import { buildCachedPlanValue } from '../cache/value.js'
 import { deterministicDescriptorMatcher } from '../cache/reground.js'
-import { matchDescriptor } from '../grounding/matcher.js'
 import { groundActionPlan, requiresElementRef } from '../grounding/gate.js'
 import { judgeStatedTarget, renderTargetMismatch } from '../grounding/stated-target.js'
 import { rowTextOf } from '../grounding/row-text.js'
@@ -2315,11 +2315,31 @@ function projectProcedureRecoverySuppliedSource(
 }
 
 /**
+ * Re-find one committed procedure target strictly (438 D-11): the one element with its role,
+ * exact name and stored row words. A target without a stored name (a body committed before
+ * 438) cannot be judged and is 'descriptor-missing'; no ordinal is read and nothing is picked.
+ */
+function strictProcedureTarget(
+  target: ProcedureGuardTarget,
+  elements: readonly ElementInfo[],
+):
+  | { ok: true; ref: Ref }
+  | { ok: false; reason: 'descriptor-missing' | 'descriptor-ambiguous' } {
+  if (target.name === undefined) return { ok: false, reason: 'descriptor-missing' }
+  const match = strictMatch({ role: target.role, name: target.name, row: target.row }, elements)
+  if (match.kind === 'resolved') return { ok: true, ref: match.ref }
+  return {
+    ok: false,
+    reason: match.kind === 'not-unique' ? 'descriptor-ambiguous' : 'descriptor-missing',
+  }
+}
+
+/**
  * The D-10 full guard for ONE committed procedure action, in order: (0) defense-in-depth
  * replayability shape check against the schema-shared list (Pitfall 6); (1) unique
- * fresh-screen re-ground of EVERY stored action target descriptor and the declared guard
- * target through the deterministic matcher ladder — ambiguous and no-match are distinct
- * miss reasons, never a pick (T-357-03a); (2) live-vs-stored page anchor equality through
+ * fresh-screen re-find of EVERY stored action target and the declared guard target through
+ * strictMatch (role, exact name, stored row words; 438 D-11) — not-unique and absent are
+ * distinct miss reasons, never a pick (T-357-03a); (2) live-vs-stored page anchor equality through
  * `normalizeAnchor` (D-10);
  * (3) loop-side value binding by NAME (values never crossed the reader port, T-381-21);
  * (4) the grounding gate exactly as the cached branch runs it, yielding the §A8 attempt
@@ -2346,53 +2366,16 @@ function attemptProcedureReplayAction(input: {
 
   const action: Record<string, unknown> = { type: spec.type }
   for (const [lane, target] of Object.entries(spec.targets)) {
-    const match = matchDescriptor({
-      descriptor: {
-        role: target.role,
-        nameNormalized: target.nameNormalized,
-        ordinal: target.ordinal,
-      },
-      elements: input.screenState.elements,
-    })
-    if (match.kind === 'ambiguous') {
-      return {
-        ok: false,
-        reason: 'descriptor-ambiguous',
-        location: { kind: 'action-target', lane },
-      }
-    }
-    if (match.kind !== 'resolved') {
-      return {
-        ok: false,
-        reason: 'descriptor-missing',
-        location: { kind: 'action-target', lane },
-      }
+    const match = strictProcedureTarget(target, input.screenState.elements)
+    if (!match.ok) {
+      return { ok: false, reason: match.reason, location: { kind: 'action-target', lane } }
     }
     action[lane] = match.ref
   }
 
-  const guardTarget = input.step.guard.target
-  const guardMatch = matchDescriptor({
-    descriptor: {
-      role: guardTarget.role,
-      nameNormalized: guardTarget.nameNormalized,
-      ordinal: guardTarget.ordinal,
-    },
-    elements: input.screenState.elements,
-  })
-  if (guardMatch.kind === 'ambiguous') {
-    return {
-      ok: false,
-      reason: 'descriptor-ambiguous',
-      location: { kind: 'guard-target' },
-    }
-  }
-  if (guardMatch.kind !== 'resolved') {
-    return {
-      ok: false,
-      reason: 'descriptor-missing',
-      location: { kind: 'guard-target' },
-    }
+  const guardMatch = strictProcedureTarget(input.step.guard.target, input.screenState.elements)
+  if (!guardMatch.ok) {
+    return { ok: false, reason: guardMatch.reason, location: { kind: 'guard-target' } }
   }
 
   const stored = normalizeAnchor(input.step.guard.pageAnchor) as Extract<Anchor, { t: 'page' }>
