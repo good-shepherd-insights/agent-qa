@@ -2140,3 +2140,220 @@ Every commit below is in agent-qa on `version-0.2`; every cell is listed in
   `C437-WEBVIEW-OBSERVE`, the `C437-FILL-WEBVIEW` poll cells, the `C437-FILL-NATIVE` and
   `C437-CLEAR` focus cells, the secure clear cells and the `C437-FILL-IOS` unreadable cells. The
   434 gate's regression list grew from 717 to 761 cells over the round; 262 carry a `437` origin.
+
+## 2026-10-09 — Phase 438: Intended target (V2-EXEC-04)
+
+This section appends to the register and rewrites no earlier section. Phase 438 removed every path
+that chose an element by its position among look-alikes: the web resolver's `nth`, the matcher's
+tiebreak, the stored cache and procedure positions, the heal's position and hierarchy tiebreak,
+the planner's `ordinal` and iOS's same-type position. In their place, every element action states
+the element it means beside its ref, a clear contradiction is refused before anything is sent, the
+web adapter keeps the observed element through its native binding, and replay acts only on a
+strictly unique match. It kept the sites that record a position without picking by it, and every
+reader of persisted history. The section follows the 2026-10-09 Phase 437 shape. Dated 2026-10-09;
+written by 438-14.
+
+### The ruling
+
+> V2-EXEC-04: The intended target is kept.
+> - An action whose stated target contradicts its resolved ref is refused with a typed
+>   `target-mismatch` naming both identities (AUTO-14).
+> - The observed target is retained or revalidated across same-label reordering, detachment and
+>   navigation rather than substituted by an `nth` match (the existing-target portion of WEB-02).
+> - Live, heal, procedure-replay and cached paths never choose by ordinal. A cached hit whose
+>   stored target is not unique among the current candidates, judged on the strict descriptor, is
+>   a cache miss.
+> - AUTO-15's ambiguity refusal is preserved and its identical-controls fixture added. A reordered
+>   identical-rows fixture proves intended-target dispatch or explicit refusal, live and cached.
+
+From `.planning/REQUIREMENTS.md`. The owner's picks among the planned options and the delegated
+details are recorded as D-01..D-17 in `.planning/phases/438-intended-target/438-CONTEXT.md`:
+
+- D-01 every element action carries a stated target (role, name, row words) beside its ref;
+- D-02 a repeated label also names its row;
+- D-03 refuse only on a clear contradiction: a role of another kind, a name sharing no word, row
+  words not in the row, and (Claude's refinement, flagged for the owner) a differing number in
+  otherwise matching names;
+- D-04 the check runs on every lane: ref, descriptor and heal;
+- D-05 a refusal never substitutes, is typed `target-mismatch`, names both identities redacted, is
+  not debited as an action, and the re-plan is a planning turn;
+- D-06 the web adapter keeps a native binding for each observed element;
+- D-07 a moved element is followed after a re-check;
+- D-08 a replaced element is re-found only when provably the same;
+- D-09 a navigation between looking and acting is `stale-observation`, nothing sent, never healed;
+- D-10 strict means the exact observed name (spacing tidied, numbers and badges kept);
+- D-11 strict replay on the cache, procedure and heal paths, with a recorded cache miss;
+- D-12 `ordinal` leaves the planner's target vocabulary;
+- D-13 the census: no ordinal or `nth` pick remains;
+- D-14 AUTO-15 is kept as it is;
+- D-15 acceptance is model-free regressions in agent-qa, in 434's named-cell list;
+- D-16 one opt-in live-model cell for AUTO-15;
+- D-17 one external live measurement on the final SHA, which gates nothing.
+
+D-15 keeps agent-qa free of fixtures (437 D-19): the "in-repo fixtures" are small HTML strings in
+the test files, loaded in real headless Chromium, and inline iOS and Android page sources.
+
+### How this inventory is measured
+
+| Instrument | What it claims | Where |
+|---|---|---|
+| the census | `C438-CENSUS`: `C438-NO-WEB-POSITION` (web production calls no Playwright position method on an element locator, and the resolver builds no role locator), `C438-NO-MATCHER-POSITION`, `C438-NO-CACHE-POSITION` (the stored locator declares no position, `value.ts` computes none, re-grounding returns the strict match), `C438-CACHE-MISS-RECORDED` (a key hit that does not replay records its typed miss before the entry is invalidated), `C438-NO-PROCEDURE-POSITION`, `C438-NO-HEAL-POSITION`, `C438-NO-TARGET-POSITION`, `C438-NO-BINDING-POSITION`, `C438-NO-IOS-POSITION`, `C438-NO-CURATION-POSITION`, `C438-RECORD-ONLY-CLASSIFIED` (the position helper is called only at the classified record-only sites named in the file header), `C438-ROOT-AI-SNAPSHOT-ONLY` (every accessibility snapshot in the web adapters, binding helper, resolver and compounds is `:root` ai mode, so no stray snapshot unbinds the observed refs), with `C438-UNIVERSE-FLOORS`, `C438-PLANTED-POSITIVE` and `C438-SELF-MATCH`. Needles are two halves joined at run time and comments are blanked by the 432 and 436 lexer; identifiers are read per region, because the word for a position is also used for builds, turns and steps. 15 cells, in `validate:arch`. Run against the pre-438 tree (`cb485d65a`), 12 of the 15 red on their removed shapes. | `packages/arch/src/__tests__/438-ordinal-census.test.ts` (438-12 `f42d74132`) |
+| the runtime key sets | `C438-KEY-SETS`: the target refusal block carries exactly its eight members and a target identity exactly role, name and row; grounding evidence gains an optional `stated`, a target descriptor an optional `row`; the binding block is exactly outcome, ref, `inputSent` and an optional heal; a cache miss reason is exactly `strict-absent`, `strict-not-unique` or `non-replayable`; the readers return undefined for anything malformed; handoffs carrying the new blocks load, and the handoff schema version is still 7. 23 cells. | `packages/schema/src/__tests__/438-key-sets.test.ts` (438-02, 438-06, 438-09) |
+| the binding's ground truth | `C438-ARIA-REF-CONFORMANCE`: seven raw-Playwright cells pin the native `aria-ref` facts the binding rests on at playwright-core 1.61.0 (refs follow a re-sorted node; a default-mode or sub-locator snapshot empties the ref map; a new document resets everything; pushState keeps the document and the ref; frames; a renamed node gets a new ref). A Playwright upgrade that changes any of them reds here first. | `packages/web/src/__tests__/438-aria-ref-conformance.test.ts` (438-06 `feb4aead9`) |
+| the behaviour cells | 195 model-free cells by name in the 434 gate's regression list, each with the `438 D-NN` decision it proves: every `C438-*` cell from 438-01 to 438-13 in the schema, runner, web, core, iOS, CLI and arch packages, including the census and key-set cells above. | `scripts/gate/inputs/regressions.json` (438-14 `e8cae3f51`) |
+| the live cell | `C438-AUTO15-LIVE`, 2 cells: the built CLI with a real model on an inline page with two identical Okay buttons. Registered as conditional not-run entries, so a skip is never a pass. | `scripts/gate/inputs/register.json` |
+
+**This file names retired shapes literally**, as the 2026-09-02 section explains for the whole
+register. `DELETION-INVENTORY.md` sits outside every census region.
+
+### What was removed
+
+Baseline `cb485d65a479d1a8051ce3c4fa945f8f9b8007c6` (`version-0.2`, the parent of 438's first
+agent-qa commit `6b9d19c60`). Code-closing HEAD `7025a0fc0`, the last commit before the census.
+`git diff --shortstat cb485d65a..7025a0fc0`: 92 files changed, 6,165 insertions, 736 deletions; no
+file deleted.
+
+- **The position-based web resolution.** `buildRefMap` in `web/src/element-resolver.ts` kept only
+  a role, a name and an `nth`, and `resolve` rebuilt `getByRole(role, { name, exact: true }).nth(nth)`
+  at action time. The `nth` was counted over role plus normalized name but applied to the exact
+  name, so "Invoice 946" beside "Invoice 947" resolved to nothing. Now the ref map keeps the native
+  `aria-ref` handle from the `:root` ai-mode snapshot, the observation's navigation epoch and the
+  observed role, exact name and row text (`web/src/binding.ts`). Before acting, the adapter
+  re-checks the current identity: a moved element is followed; recycled content is
+  `binding-changed`, a replaced node `binding-lost`, a removed frame `frame-detached` and a new
+  document `stale-observation`, each with nothing sent (438-05 `7dcabf1a1`; 438-06 `660107311`).
+  `C438-NO-WEB-POSITION`, `C438-NATIVE-BINDING the resolver defect: Invoice 946 beside Invoice 947
+  is clicked`.
+- **The matcher's tiebreak.** `matchDescriptor` (`runner/src/grounding/matcher.ts`) returned the
+  survivor at the descriptor's ordinal before its hierarchy check. Two survivors now stay
+  ambiguous with both refs; a stray position on a descriptor is never read, and the prior
+  hierarchy still resolves a single parent-chain match. The gate copies only the matcher's fields
+  (438-11 `3b1941ea6`). `C438-NO-MATCHER-POSITION`, `C438-MATCHER-AMBIGUITY`.
+- **The stored locator's normalized name and position.** The cached locator
+  (`runner/src/cache/port.ts`, `value.ts`) was `{ role, nameNormalized, ordinal }`, and
+  `cache/reground.ts` re-found it by that position. It is now `{ role, name, row? }` with the exact
+  observed name and the stated row words, replayed only through `strictMatch` when exactly one
+  current element matches (438-08 `7994ff54d`). The cache format moved from 11 to 12
+  (`runner-local/src/fs-action-cache.ts`, 438-09 `4d3e6a9c6`). `C438-NO-CACHE-POSITION`,
+  `C438-STRICT-REPLAY`.
+- **The heal's position and hierarchy tiebreak.** `regroundFailedRef` (`runner/src/loop/index.ts`)
+  re-found a failed ref by its ordinal, with the prior hierarchy as a tiebreak. It now acts only
+  when exactly one current element has the observed role, exact name and row text; a re-found
+  element is judged against the stated target (path `heal`), and when nothing is provably the same
+  nothing is sent and the binding block records `heal: 'absent' | 'not-unique'` (438-07
+  `3d64bb89e`). `C438-NO-HEAL-POSITION`, `C438-REORDERED-ROWS`.
+- **Procedure replay's position and the recovery context's positions.**
+  `attemptProcedureReplayAction` passed a stored or derived ordinal to the matcher, and the
+  guard-miss recovery context showed the model stored and fresh positions. Replay now matches the
+  exact name and row words through `strictMatch`; the recovery context names candidates by role and
+  name, and row when stored (438-10 `1454e4afb`, `a56b861fe`). The curation writers
+  (`cli/src/curation/emit-candidates.ts`, `curator-author.ts`) no longer write a position into
+  procedure targets; they write the exact name and the stated row words (438-10 `6794bf73b`).
+  `C438-NO-PROCEDURE-POSITION`, `C438-NO-CURATION-POSITION`, `C438-PROCEDURE-STRICT`,
+  `C438-RECOVERY-NO-POSITION`, `C438-PROCEDURE-WRITE`.
+- **`targetSchema.ordinal`** (`runner/src/tools/actions/index.ts`, `schema/src/action/params.ts`).
+  The planner's target is now `{ role, name, row? }`, closed (`.strict()`, `additionalProperties:
+  false`), with the role required; a stray `ordinal` is a `schema_invalid` throw. The grounding
+  error hints no longer invite an ordinal (438-04 `d780a7fbe`, `464339b52`).
+  `C438-NO-TARGET-POSITION`, `C438-TARGET-SCHEMA`, `C438-HINTS`.
+- **The builder and mobile binding positions.** `RefBinding` in `runner/src/screen-builder.ts`
+  carried a per-screen ordinal and the mobile `RefEntry` (`core/src/mobile/types.ts`,
+  `xml-parser.ts`) a position. Both are now the node index only (438-11 `d97628d73`).
+  `C438-NO-BINDING-POSITION`, `C438-BUILDER-NO-POSITION`.
+- **iOS's position-first text lookup.** `locateIOSTextTarget` (`ios/src/adapter.ts`) took the
+  candidate at the same-type position first. It now fills only through a unique match on the
+  observed bounds; two matches or none refuse the fill (438-12 `7025a0fc0`).
+  `C438-NO-IOS-POSITION`, `C438-IOS-UNIQUE-BOUNDS`.
+- **The gate's silent drop of a target beside a ref** (`runner/src/grounding/gate.ts`). A `target`
+  sent with a `ref` was discarded. The gate now keeps the stated target per lane and the loop
+  judges it before dispatch; a clear contradiction is a typed `targetRefusal` with nothing sent
+  (438-01 `6b9d19c60`, `948618574`). `C438-STATED-TARGET`, `C438-STATED-TARGET-LOOP`.
+- **The prompt's exactly-one rule.** "EXACTLY ONE of `ref` or `target` — NEVER both" in
+  `runner/src/loop/prompts.ts`. Rules 10 and 17 now ask for the target beside every ref, and Rule
+  17 keeps the no-guessing rule among identical controls; this was the phase's one re-pin of the
+  byte-pinned prompt cells (438-04 `9f42cc003`). `C438-PROMPT`.
+- **The silent invalidation of a cache hit that does not replay.** The exact-key hit branch of
+  `runner/src/loop/index.ts` deleted a non-replaying entry and planned live with no trace. The miss
+  is now recorded first, as `StepEvidence.cacheMiss.reason` with `cacheStatus: 'miss'`, then the
+  entry is invalidated (438-09 `5d12015dd`). `C438-CACHE-MISS-RECORDED`, `C438-STRICT-REPLAY the
+  946 miss is recorded with its reason`.
+
+### What was RETAINED, and why
+
+| Item | Why kept | What pins it |
+|---|---|---|
+| the record-only position sites: `schema/src/identity/exercised-anchors.ts`, `schema/src/screen/distilled-state-digest.ts`, `deriveFailureCautionAnchors`, the `el` recall anchor in `loop/memory-tools.ts` and the curator's `anchorSchema`, and the eval core's offline scoring identity | they record a position as identity for dedup, digests and knowledge recall, and never pick an element by it (D-13) | `C438-RECORD-ONLY-CLASSIFIED` (the position helper in `schema/src/screen/element-ordinal.ts` is called only there) |
+| `elementDescription` on the element tools | kept as logging only; `target` now carries the stated identity and is what the gate checks (Claude's discretion, RESEARCH A8). Tool counts are unchanged | not pinned by a 438 cell |
+| `near` | stays reserved: `spec/v2/tools-and-actions.md` §12 item 17 defines it as bounds proximity, and row words are identity for checking and replay, not a new way to search (D-02) | `C438-TARGET-SCHEMA targetSchema rejects near and selector-like keys`, `C438-HINTS near-unsupported points at name and role` |
+| live grounding's loose matcher rungs | a target-only descriptor on the screen the planner saw may still match with the role ignored or by normalized substring, followed by the D-04 check; replay never uses them (D-10) | `C438-STATED-TARGET-LOOP the descriptor lane is checked after a loose rung`, `C438-STRICT-MATCH` |
+| Android row text unknown | Android layout `ViewGroup`s map to `group` and are filtered out of the observation, so most Android rows have no container: the row is unknown, never a contradiction live, and a repeated label without a known row never replays | `C438-ROW-MOBILE an Android list row has unknown row text`, `C438-ROW-MOBILE a stated row on an Android button agrees with rowKnown false` |
+| mobile taps at the observed bounds | deferred: Android and iOS taps still go to the centre of the observed bounds, with no native handle and no re-check before tapping. The shared runner changes (the stated-target check, no ordinal, strict replay) apply to mobile | not pinned by a 438 cell |
+| `screenIdentityHash`, `serializeElement`, cache keys and `stepIndex` | the row text joins the planner tree but not the screen identity, so 436's cache-key cells stay green unedited (SC3) | `C438-ROW-TREE screenIdentityHash ignores row text`, `C436-CACHE-IDENTITY` |
+
+### What degrades, stated plainly
+
+- **A repeated label replays only with its row words.** A cached or procedure step whose live run
+  stated no row, on a screen where its label repeats, is a recorded miss and re-plans.
+- **A positional step on identical controls never replays from the cache**; it always misses and
+  re-plans (D-12).
+- **A changed badge or number is a miss.** "Cart (3)" stored and "Cart (4)" on screen, or "Invoice
+  947" against "Invoice 946", re-plans instead of replaying.
+- **Every cache entry written before format 12 is a miss once**; the cache rebuilds itself.
+- **Committed procedure bodies without `name` stop replaying their targets** until they are
+  re-curated. They still parse, and each target is a `descriptor-missing` guard miss that takes the
+  existing recovery path.
+- **A planner that states a contradicting target is refused**, including by the number rule, and
+  spends a planning turn on the re-plan. A refused action is not debited.
+- **A target without a role is refused by the tool schema**; a stray `ordinal` is `schema_invalid`.
+
+### Persisted values that keep reading
+
+| Persisted value | Disposition | Evidence |
+|---|---|---|
+| evidence `ordinal` on `TargetDescriptor` and `ProcedureGuardTarget` (`schema/src/screen/target-descriptor.ts`, `schema/src/knowledge/procedure-steps.ts`) | **Read, never written.** Old handoffs and committed bodies still parse; no matcher call reads the field (436 D-17's rule). | `C438-RECORD-ONLY-CLASSIFIED`, `C438-NO-PROCEDURE-POSITION`, `C438-MATCHER-AMBIGUITY a descriptor that still carries a position is ambiguous, and the position is never read` |
+| committed procedure bodies without `name` (`{ role, nameNormalized, ordinal }`) | **Parse and miss.** They cannot be judged strictly, so each target is a guard miss; an unknown target key fails closed. | `C438-PROCEDURE-STRICT a legacy body still parses and misses`, `C438-RECOVERY-NO-POSITION a stored row is named, and a legacy body falls back to its normalized name` |
+| cache entries of format version 11 | **Read as a miss**, with no migration (D-11). The cache is a local store behind a version. | `runner-local/src/__tests__/fs-action-cache.test.ts` (`reads a version-11 entry as a miss (438 D-11, no migration)`) |
+| handoff schema version 7 with the new optional `metadata.targetRefusal`, `metadata.binding`, `grounding.stated` and `StepEvidence.cacheMiss` | **Written by new runs, optional to readers.** `CURRENT_HANDOFF_SCHEMA_VERSION` stays 7. `readTargetRefusalMeta` and `readBindingOutcomeMeta` read anything malformed as undefined, and the stated and observed identities are redacted before record. | `C438-KEY-SETS`, `C438-STATED-TARGET-LOOP both identities are redacted before record` |
+
+### Accepted risks
+
+- **T-438-12, a node detaching after the re-check.** A node that detaches in the milliseconds
+  between the binding's re-check and the click makes the click wait the action's timeout and end as
+  an ordinary failure, which the planner re-plans. The re-check makes the window small, and no wrong
+  element can receive input. Not mapped to a typed outcome this phase.
+
+### The instruments that notice a return
+
+- **`pnpm run validate:arch`** runs the 438 census after the 437 file. It also runs in the
+  workspace's `turbo test`, so a position method on a web element locator, a role locator in the
+  resolver, a position tiebreak in the matcher, a stored or computed cache position, a non-replaying
+  hit invalidated without a recorded miss, a position in procedure replay, the heal, the planner's
+  target, a binding, the iOS lookup or a curation writer, or a non-`:root` snapshot in the web
+  adapters reds by name on the commit that adds it.
+- **The 434 gate** (`pnpm run gate:local`) must execute and pass all 195 listed 438 cells. The two
+  live cells are conditional entries: when they are not run, the gate counts them as registered
+  skips, never as passes. No mutation driver was added.
+
+### Not observed, stated as such
+
+- **The live-model cell ran once** (D-16), by 438-13 at agent-qa `eda7f190f`, with gpt-6.1-sol
+  through openai-subscription on this Mac: 2 of 2 passed. The real planner refused "Click the okay
+  button" as infeasible, naming both buttons and clicking neither, and clicked only the second for
+  "Click the second okay button". One sample says the rewritten Rule 17 can hold, not that it
+  always does. The cell's responding-model reader was corrected afterwards (`d048fcad6`), so that
+  run did not capture the responding model id.
+- **No mobile device ran.** The mobile cells are model-free, on inline iOS and Android page sources
+  and mocked drivers.
+- **The phase's false and correct refusals on real tests** are counted by an external live
+  measurement on the final SHA (D-17), which agent-qa never reads; its result is a data point that
+  gates nothing.
+- **Frames.** `frame-detached` is typed and one removed-iframe cell pins it; full frame and
+  out-of-process iframe coverage stays deferred.
+
+### Reconciliation
+
+D-11 and D-12 go further than `spec/v2/tools-and-actions.md` §12: item 7 gives the cached locator
+as `role + nameNormalized (+ ordinal)`, and item 17 gives the descriptor as `{ role?, name?, near?,
+ordinal? }` with the ordinal as a tiebreak and exactly one of ref or target. D-15 reads the
+roadmap's "in-repo fixtures" as inline test snippets under 437 D-19. Their reconciliations are
+recorded in `.planning/REQUIREMENTS.md` by 438-16.
