@@ -4350,6 +4350,12 @@
       "file": "packages/dashboard-ui/src/components/__tests__/437-live-editor-no-input.test.tsx",
       "fullName": "C437-NO-INPUT-LABEL the suite row summary of a bare skipped tap reads no input sent",
       "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/437-mobile-input-census.test.ts",
+      "fullName": "C437-CENSUS — the mobile input census (437 D-01, D-05, D-11, D-12, D-14, D-19) C437-NO-INPUT-REACHES-LIVE: every sub-action outcome a dashboard surface reads can say no input sent",
+      "origin": "437 D-05"
     }
   ]
 }

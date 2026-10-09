@@ -278,6 +278,29 @@ const APP_PACKAGE: Halves = ['\\.(?:apk|aab|apks|xapk|i', 'pa)$']
 const PHASE_TOKEN: Halves = ['(?:^|[^0-9A-Za-z])43', '7(?:[^0-9A-Za-z]|$)']
 const PHASE_TEST: Halves = ['^packages/[^/]+/src/(?:[^/]+/)*__tests__/43', '7-[^/]+\\.test\\.tsx?$']
 
+const DASHBOARD_UI = 'dashboard-ui/src/'
+const OUTCOME_UNIONS = [
+  { file: 'runner/src/result.ts', start: ['export interface SubAction', 'Trace {'], end: ['export interface Step', 'Trace'] },
+  { file: 'dashboard-server/src/live-editor/types.ts', start: ['export interface LiveSubAction', 'Data {'], end: ['\n', '}'] },
+  { file: 'dashboard-ui/src/hooks/use-live-editor.ts', start: ['export interface LiveSub', 'Action {'], end: ['\n', '}'] },
+] as const satisfies readonly { file: string; start: Halves; end: Halves }[]
+const LEGACY_TRACE = 'runner/src/loop/evidence.ts'
+const LEGACY_PROJECTOR: Halves = ['export function projectLegacy', 'Trace(']
+const RESULT_MEMBER: Halves = ['\\bresult\\s*:\\s*([^\\n]*', ')']
+const NO_INPUT_WORD: Halves = ["['\"]no-in", "put['\"]"]
+const NO_INPUT_READER: Halves = ['readIdempotentNoop', 'Meta(']
+const SUCCESS_FLAG: Halves = ['\\.succ', 'ess\\b']
+const SUB_ACTION_TYPE: Halves = ['\\b(?:LiveSubAction|RunDetailSub', 'Action)\\b']
+const SUCCESS_READS: readonly Halves[] = [
+  ["\\.result\\s*===\\s*['\"]succ", "ess['\"]"],
+  ['\\.result\\.succ', 'ess\\b'],
+  ["\\bcase\\s+['\"]succ", "ess['\"]\\s*:"],
+]
+const BINARY_NEEDLES: readonly Halves[] = [
+  ["subAction.result === 'succ", "ess' ? 'text-emerald-500' : 'text-red-500'"],
+  ['result: sub.result.succ', "ess ? 'success' : 'failure'"],
+]
+
 // ---------------------------------------------------------------------------------------------
 // Structural readers
 // ---------------------------------------------------------------------------------------------
@@ -374,6 +397,35 @@ function fixtureOffenders(paths: readonly string[]): string[] {
   ]
 }
 
+/** The `result:` member of a region, with its line in the whole text. */
+function resultMember(text: string, start: Halves, end: Halves): { line: number; value: string } | undefined {
+  const region = regionBetween(text, joined(start), joined(end))
+  if (region === undefined) return undefined
+  const m = rx(RESULT_MEMBER).exec(region)
+  return m === null ? undefined : { line: lineAt(text, text.indexOf(region) + m.index), value: m[1]!.trim() }
+}
+
+/** An outcome initializer that never names no-input, or reads the success flag before it does. */
+function readsSuccessFirst(initializer: string): boolean {
+  const noInput = initializer.search(rx(NO_INPUT_WORD))
+  const success = initializer.search(rx(SUCCESS_FLAG))
+  return noInput < 0 || (success >= 0 && success < noInput)
+}
+
+function successReadLines(text: string): number[] {
+  return SUCCESS_READS.flatMap((pattern) => [...text.matchAll(rx(pattern, 'g'))].map((m) => lineAt(text, m.index)))
+    .sort((a, b) => a - b)
+}
+
+/** A sub-action reader that words or colours an outcome by success alone: no no-input branch. */
+function binaryReaderOffense(file: string, text: string): string | undefined {
+  if (!rx(SUB_ACTION_TYPE).test(text)) return undefined
+  const reads = successReadLines(text)
+  if (reads.length === 0) return undefined
+  if (rx(NO_INPUT_WORD).test(text) || text.includes(joined(NO_INPUT_READER))) return undefined
+  return `${file}:${reads.join(',')}: reads a sub-action's success with no no-input branch`
+}
+
 // ---------------------------------------------------------------------------------------------
 // The cells
 // ---------------------------------------------------------------------------------------------
@@ -464,6 +516,34 @@ describe('C437-CENSUS — the mobile input census (437 D-01, D-05, D-11, D-12, D
     const offenders = fixtureOffenders(paths)
     expect(offenders, offenders.join('\n')).toEqual([])
   })
+
+  it('C437-NO-INPUT-REACHES-LIVE: every sub-action outcome a dashboard surface reads can say no input sent', () => {
+    for (const union of OUTCOME_UNIONS) {
+      const member = existsSync(join(PACKAGES_DIR, union.file)) ? resultMember(code(union.file), union.start, union.end) : undefined
+      expect(member, `${union.file}: the ${joined(union.start)} result member is not found`).toBeDefined()
+      if (member === undefined) continue
+      expect.soft(rx(NO_INPUT_WORD).test(member.value), `${union.file}:${member.line}: result: ${member.value} has no no-input`)
+        .toBe(true)
+    }
+
+    const legacy = existsSync(join(PACKAGES_DIR, LEGACY_TRACE))
+      ? resultMember(code(LEGACY_TRACE), LEGACY_PROJECTOR, ['\n', '}\n'])
+      : undefined
+    expect(legacy, `${LEGACY_TRACE}: the ${joined(LEGACY_PROJECTOR)} result initializer is not found`).toBeDefined()
+    if (legacy !== undefined) {
+      expect.soft(readsSuccessFirst(legacy.value), `${LEGACY_TRACE}:${legacy.line}: result: ${legacy.value} reads success before no-input`)
+        .toBe(false)
+    }
+
+    const files = scanned([DASHBOARD_UI])
+    expect(files.length, `${DASHBOARD_UI} scanned nothing`).toBeGreaterThan(100)
+    const typed = files.filter((file) => rx(SUB_ACTION_TYPE).test(code(file)))
+    expect(typed.length, 'too few dashboard-ui files name a sub-action type').toBeGreaterThanOrEqual(10)
+    const readers = typed.filter((file) => successReadLines(code(file)).length > 0)
+    expect(readers.length, 'too few dashboard-ui files read a sub-action success').toBeGreaterThanOrEqual(5)
+    const offenders = readers.flatMap((file) => binaryReaderOffense(file, code(file)) ?? [])
+    expect.soft(offenders, `a dashboard surface outcome is success-or-failure only:\n${offenders.join('\n')}`).toEqual([])
+  })
 })
 
 // ---------------------------------------------------------------------------------------------
@@ -534,6 +614,31 @@ describe('C437-CENSUS instruments', () => {
       joined(['apps/probe-43', '7.apk']),
       joined(['ios/Probe.i', 'pa']),
     ])).toHaveLength(4)
+
+    const liveMention = "import type { LiveSubAction } from '@/hooks/use-live-editor'\n"
+    const detailSpan = liveMention + joined(BINARY_NEEDLES[0]!).replace(/^/, 'const tone = ')
+    expect(binaryReaderOffense('planted.tsx', codeOf(detailSpan))).toBeDefined()
+    expect(binaryReaderOffense('planted.tsx', codeOf(`${liveMention}// ${detailSpan.slice(liveMention.length)}`))).toBeUndefined()
+    expect(binaryReaderOffense('planted.tsx', codeOf(detailSpan.replace('const tone = ', "const tone = subAction.result === 'no-input' ? 'text-muted-foreground' : "))))
+      .toBeUndefined()
+    const caseLabel = liveMention + joined(["function Icon({ result }: { result: LiveSubAction['result'] }) {\n  switch (result) {\n    case 'succ", "ess':\n      return 1\n  }\n}"])
+    expect(binaryReaderOffense('planted.tsx', codeOf(caseLabel))).toBeDefined()
+    expect(binaryReaderOffense('planted.tsx', codeOf(caseLabel.replace('switch (result) {', "switch (result) {\n    case 'no-input':\n      return 0"))))
+      .toBeUndefined()
+    expect(binaryReaderOffense('planted.tsx', codeOf(joined(BINARY_NEEDLES[0]!)))).toBeUndefined()
+
+    const projector = (initializer: string): string =>
+      `${liveMention}${joined(LEGACY_PROJECTOR)}evidence: StepEvidence): SubActionTrace[] {\n  return evidence.subActions.map((sub, index) => ({\n    index,\n    ${initializer},\n  }))\n}\n`
+    const legacy = projector(joined(BINARY_NEEDLES[1]!))
+    const planted = resultMember(codeOf(legacy), LEGACY_PROJECTOR, ['\n', '}\n'])
+    expect(planted !== undefined && readsSuccessFirst(planted.value)).toBe(true)
+    expect(binaryReaderOffense('planted.ts', codeOf(legacy))).toBeDefined()
+    expect(resultMember(codeOf(`/* ${legacy} */`), LEGACY_PROJECTOR, ['\n', '}\n'])).toBeUndefined()
+    expect(binaryReaderOffense('planted.ts', codeOf(`/* ${legacy} */`))).toBeUndefined()
+    const fixed = resultMember(codeOf(projector(joined(BINARY_NEEDLES[1]!).replace('result: ', "result: noInput ? 'no-input' : "))), LEGACY_PROJECTOR, ['\n', '}\n'])
+    expect(fixed !== undefined && readsSuccessFirst(fixed.value)).toBe(false)
+    const late = resultMember(codeOf(projector(joined(BINARY_NEEDLES[1]!).replace("'failure'", "noInput ? 'no-input' : 'failure'"))), LEGACY_PROJECTOR, ['\n', '}\n'])
+    expect(late !== undefined && readsSuccessFirst(late.value)).toBe(true)
   })
 
   it('C437-SELF-MATCH: this file spells none of the needles it assembles, and lies outside every region it scans', () => {
@@ -545,6 +650,7 @@ describe('C437-CENSUS instruments', () => {
       ...SYNTHETIC_KEY_NEEDLES,
       ...KEYS_TYPING_NEEDLES,
       ...FALLBACK_NEEDLES,
+      ...BINARY_NEEDLES,
       NOOP_CONTROL,
     ].map(joined)
     const spelled = needles.filter((needle) => own.includes(needle))
@@ -556,6 +662,7 @@ describe('C437-CENSUS instruments', () => {
       KEYS_TYPING_PATTERN,
       CLASSIFIER_DECLARATION,
       ARRAY_OF_ROLES,
+      ...SUCCESS_READS,
     ]
     const ownCode = codeOf(own)
     const matched = patterns.filter((pattern) => rx(pattern).test(ownCode)).map(joined)
