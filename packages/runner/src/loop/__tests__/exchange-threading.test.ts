@@ -201,7 +201,7 @@ describe('executeStep exchange threading', () => {
   it('keeps exchange fields absent on a cache-replayed sub-action', async () => {
     const cachedPlan: CachedPlanValue = {
       plannedActions: [{ type: 'click' } as CacheablePlannedAction],
-      groundedLocator: [{ role: 'button', nameNormalized: 'log in', ordinal: 0 }],
+      groundedLocator: [{ role: 'button', name: 'Log in' }],
       verificationOutcome: 'passed',
     }
     const cache: ActionPlanCache = {

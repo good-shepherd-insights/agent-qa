@@ -14,7 +14,7 @@ const KEY = '0123456789abcdef' as CacheKey
 function makeValue(outcome: 'passed' | 'failed' = 'passed'): CachedPlanValue {
   return {
     plannedActions: [],
-    groundedLocator: [{ role: 'button', nameNormalized: 'submit' }],
+    groundedLocator: [{ role: 'button', name: 'Submit' }],
     verificationOutcome: outcome,
   }
 }

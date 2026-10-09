@@ -309,7 +309,9 @@ export function groundActionPlan(input: GroundActionPlanInput): GateResult {
   const coordError = coordBoundsError(toolName, draft, screenState)
   if (coordError !== undefined) return fail(coordError, attempts)
 
-  const descriptor = toGroundedLocator(draft as unknown as Action, screenState.elements) ?? undefined
+  const descriptor =
+    toGroundedLocator(draft as unknown as Action, screenState.elements, statedTargets.ref)
+    ?? undefined
   return {
     ok: true,
     action: draft,

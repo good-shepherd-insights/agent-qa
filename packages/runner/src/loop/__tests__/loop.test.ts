@@ -235,7 +235,7 @@ describe('executeStep — cache (redesigned per-key port + hit ladder)', () => {
     // Descriptor-only value (D-12): ref/coords stripped; the locator re-grounds to the
     // fresh `log in` button (e2) against the observation at replay time.
     plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
-    groundedLocator: [{ role: 'button', nameNormalized: 'log in', ordinal: 0 }],
+    groundedLocator: [{ role: 'button', name: 'Log in' }],
     verificationOutcome: 'passed',
   }
 
@@ -256,7 +256,7 @@ describe('executeStep — cache (redesigned per-key port + hit ladder)', () => {
     let invalidateCalls = 0
     const staleHit: CachedPlanValue = {
       plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
-      groundedLocator: [{ role: 'button', nameNormalized: 'gone', ordinal: 0 }],
+      groundedLocator: [{ role: 'button', name: 'Gone' }],
       verificationOutcome: 'passed',
     }
     const cache: ActionPlanCache = {
@@ -517,7 +517,7 @@ describe('executeStep — decision screenshot persistence (CASS-02)', () => {
     const store = makeStore()
     const cachedLogin: CachedPlanValue = {
       plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
-      groundedLocator: [{ role: 'button', nameNormalized: 'log in', ordinal: 0 }],
+      groundedLocator: [{ role: 'button', name: 'Log in' }],
       verificationOutcome: 'passed',
     }
     const cache: ActionPlanCache = {

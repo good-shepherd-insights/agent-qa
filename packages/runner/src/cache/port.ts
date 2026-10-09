@@ -19,14 +19,15 @@ import type { Action } from '../platform.js'
 export type CacheablePlannedAction = Exclude<Action, { type: 'assertAI' } | { type: 'extractAI' }>
 
 /**
- * Descriptor-only locator (D-12). Identity is role + nameNormalized (+ a same-screen
- * ordinal), never a ref/selector/coordinates — those are re-derived at replay time
- * against a fresh observation via the GroundingStrategy seam.
+ * Descriptor-only locator (D-12, 438 D-10/D-11). Identity is the observed role, the exact
+ * observed name with spacing tidied (numbers and badges kept) and, when the planner stated a
+ * row the element's row holds, those row words. Never a position, a ref, a selector or
+ * coordinates: replay re-finds the one element with this identity in a fresh observation.
  */
 export interface GroundedLocator {
   role: string
-  nameNormalized: string
-  ordinal?: number
+  name: string
+  row?: string
 }
 
 /**

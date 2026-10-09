@@ -1,10 +1,8 @@
-// RED scaffold (Wave 0, Q4 replay mapping · Pitfall 5 · Pitfall 9). Pins the cache
-// replay path once it is rewired onto the shared D-12 matcher: benign drift is rescued,
-// ambiguity invalidates → replans (never a pick), multi-ref (drag) replays re-resolve
-// BOTH per-field refs, coordinate actions are non-replayable, and every grounded
-// sub-action carries the §A8 grounding block. These drive executeStep and fail under the
-// shipped 356 exact-first-pick replay / absent grounding evidence — the intended RED
-// (GREEN when Plans 03/06 land the matcher + replay rewire + evidence threading).
+// Q4 replay mapping · Pitfall 5 · Pitfall 9, strict since 438 D-10/D-11. Pins the cache replay
+// path: a stored role + exact name replays onto the one current element that has it at whatever
+// ref it now carries; a drifted name or two survivors invalidate → replan (never a pick);
+// multi-ref (drag) replays re-resolve BOTH per-field refs; coordinate actions are
+// non-replayable; and every grounded sub-action carries the §A8 grounding block.
 import { describe, it, expect, vi } from 'vitest'
 import { asRef } from '@vostride/agent-qa-schema'
 import type { ElementInfo, ScreenState } from '@vostride/agent-qa-schema'
@@ -20,12 +18,12 @@ function ports(overrides: Partial<LoopPorts> & Pick<LoopPorts, 'adapter' | 'plan
   return overrides
 }
 
-function el(ref: string, role: string, nameNormalized: string): ElementInfo {
+function el(ref: string, role: string, name: string): ElementInfo {
   return {
     ref: asRef(ref),
     role,
-    name: nameNormalized,
-    nameNormalized,
+    name,
+    nameNormalized: name.toLowerCase(),
     bounds: { x: 10, y: 10, width: 100, height: 40 },
     center: { x: 60, y: 30 },
     state: { enabled: true, focused: false, visible: true },
@@ -54,7 +52,7 @@ describe('replay re-ground mapping (Q4)', () => {
   it('exact replay: a resolving locator replays with NO planner call (preserved contract)', async () => {
     const cached: CachedPlanValue = {
       plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
-      groundedLocator: [{ role: 'button', nameNormalized: 'log in', ordinal: 0 }],
+      groundedLocator: [{ role: 'button', name: 'Log in' }],
       verificationOutcome: 'passed',
     }
     const plannerSpy = vi.fn()
@@ -68,31 +66,43 @@ describe('replay re-ground mapping (Q4)', () => {
   })
 
   it('stale ref + unique substring match ⇒ re-ground replay with the patched fresh ref (no replan)', async () => {
-    // Stored 'log in'; the live label drifted to 'log in now' — only the substring rung
-    // (Plan 03) rescues it. Under the shipped exact-only matcher this invalidates → replans.
-    const fresh = screenWith([el('e7', 'button', 'log in now')])
-    const cached: CachedPlanValue = {
+    // 2026-10-09 (438-08): replay has no substring rung (D-10). The stored exact name replays
+    // onto the element that now carries it at a new ref; a drifted name does not replay.
+    const cached = (): CachedPlanValue => ({
       plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
-      groundedLocator: [{ role: 'button', nameNormalized: 'log in', ordinal: 0 }],
+      groundedLocator: [{ role: 'button', name: 'Log in' }],
       verificationOutcome: 'passed',
-    }
+    })
+    const moved = screenWith([el('e7', 'button', 'Log in')])
     const plannerSpy = vi.fn()
     const result = await executeStep(
       'Click Log in',
-      ports({ adapter: makeAdapter({ observeResults: [fresh, fresh] }), planner: { plan: plannerSpy } as unknown as Planner, cache: cacheOf(cached) }),
+      ports({ adapter: makeAdapter({ observeResults: [moved, moved] }), planner: { plan: plannerSpy } as unknown as Planner, cache: cacheOf(cached()) }),
       makeStepContext(),
     )
     expect(result.status).toBe('passed')
     expect(plannerSpy).not.toHaveBeenCalled()
     expect((result.action as { ref?: string }).ref).toBe('e7')
+
+    const drifted = screenWith([el('e7', 'button', 'Log in now')])
+    const invalidateSpy = { invalidate: vi.fn() }
+    const replanSpy = vi.fn().mockResolvedValue({ plan: makeActionPlan({ action: { type: 'click', ref: 'e7' } }) })
+    const replanned = await executeStep(
+      'Click Log in',
+      ports({ adapter: makeAdapter({ observeResults: [drifted, drifted] }), planner: { plan: replanSpy }, cache: cacheOf(cached(), invalidateSpy), verifier: makeVerifier() }),
+      makeStepContext(),
+    )
+    expect(replanned.status).toBe('passed')
+    expect(invalidateSpy.invalidate).toHaveBeenCalledTimes(1)
+    expect(replanSpy).toHaveBeenCalledTimes(1)
   })
 
   it('ambiguous match on the replay path ⇒ invalidate ⇒ replan, never a pick', async () => {
-    const fresh = screenWith([el('e1', 'button', 'add'), el('e2', 'button', 'add')])
+    const fresh = screenWith([el('e1', 'button', 'Add'), el('e2', 'button', 'Add')])
     const ambiguous: CachedPlanValue = {
       plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
-      // No ordinal — two survivors ⇒ ambiguous ⇒ null on the cache path (D-12).
-      groundedLocator: [{ role: 'button', nameNormalized: 'add' } as GroundedLocator],
+      // Two survivors of role + exact name ⇒ not-unique ⇒ a miss on the cache path (D-10).
+      groundedLocator: [{ role: 'button', name: 'Add' } satisfies GroundedLocator],
       verificationOutcome: 'passed',
     }
     const invalidateSpy = { invalidate: vi.fn() }
@@ -108,12 +118,12 @@ describe('replay re-ground mapping (Q4)', () => {
   })
 
   it('a cached drag replays with BOTH fromRef and toRef re-resolved from per-field locators (Pitfall 5a)', async () => {
-    const fresh = screenWith([el('e5', 'listitem', 'row one'), el('e6', 'listitem', 'row two')])
+    const fresh = screenWith([el('e5', 'listitem', 'Row one'), el('e6', 'listitem', 'Row two')])
     const cachedDrag: CachedPlanValue = {
       plannedActions: [{ type: 'drag', fromRef: 'stale-from', toRef: 'stale-to' } as unknown as CacheablePlannedAction],
       groundedLocator: [
-        { role: 'listitem', nameNormalized: 'row one', ordinal: 0 },
-        { role: 'listitem', nameNormalized: 'row two', ordinal: 0 },
+        { role: 'listitem', name: 'Row one' },
+        { role: 'listitem', name: 'Row two' },
       ],
       verificationOutcome: 'passed',
     }

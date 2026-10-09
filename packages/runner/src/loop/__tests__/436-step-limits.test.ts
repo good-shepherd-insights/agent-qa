@@ -208,7 +208,7 @@ const REJECT: VerificationResult = { success: false, reasoning: 'Not done yet', 
 const ACCEPT: VerificationResult = { success: true, reasoning: 'Done', isAppError: false }
 const CACHED_LOGIN: CachedPlanValue = {
   plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
-  groundedLocator: [{ role: 'button', nameNormalized: 'log in', ordinal: 0 }],
+  groundedLocator: [{ role: 'button', name: 'Log in' }],
   verificationOutcome: 'passed',
 }
 

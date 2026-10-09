@@ -218,7 +218,7 @@ describe('C436-PLANNING-LIMITS', () => {
   it('a cache hit dispatches after the planning limit is spent', async () => {
     const cachedValue: CachedPlanValue = {
       plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
-      groundedLocator: [{ role: 'button', nameNormalized: 'log in', ordinal: 0 }],
+      groundedLocator: [{ role: 'button', name: 'Log in' }],
       verificationOutcome: 'passed',
     }
     let gets = 0

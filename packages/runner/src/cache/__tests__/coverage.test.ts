@@ -132,16 +132,16 @@ describe('CACHE roll-call — one green proof per phase acceptance criterion (35
     const serialized = JSON.stringify(value)
     expect(serialized).not.toContain(SENTINEL_REF)
     expect(serialized).not.toContain(SENTINEL_DATA)
-    expect(value.groundedLocator[0]).toMatchObject({ role: 'button', nameNormalized: 'checkout' })
+    expect(value.groundedLocator[0]).toEqual({ role: 'button', name: 'Checkout' })
 
     // The deterministic matcher re-derives a fresh ref from the descriptor against a
     // fresh observation (the replay → re-ground rung).
     const locator = toGroundedLocator(action, elements)
     expect(locator).not.toBeNull()
     const fresh = [element('e-fresh', 'button', 'checkout', 'Checkout')]
-    expect(deterministicDescriptorMatcher.reground(locator!, fresh)).toBe(fresh[0].ref)
-    // No match → null (fall through to replan).
-    expect(deterministicDescriptorMatcher.reground({ role: 'button', nameNormalized: 'missing' }, fresh)).toBeNull()
+    expect(deterministicDescriptorMatcher.reground(locator!, fresh)).toEqual({ kind: 'resolved', ref: fresh[0].ref })
+    // No match → absent (fall through to replan).
+    expect(deterministicDescriptorMatcher.reground({ role: 'button', name: 'Missing' }, fresh)).toEqual({ kind: 'absent' })
   })
 
   it('CACHE-04: branch is never a key component — the same tuple under two branches yields the same key', () => {

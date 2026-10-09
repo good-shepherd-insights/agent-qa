@@ -165,7 +165,7 @@ describe('loop tokenUsage on stepFinalized (405 D-05 — absent is not zero)', (
     const spy = makeEventsPort()
     const cachedLogin: CachedPlanValue = {
       plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
-      groundedLocator: [{ role: 'button', nameNormalized: 'log in', ordinal: 0 }],
+      groundedLocator: [{ role: 'button', name: 'Log in' }],
       verificationOutcome: 'passed',
     }
     const cache: ActionPlanCache = {

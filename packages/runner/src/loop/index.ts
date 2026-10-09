@@ -1027,17 +1027,17 @@ export async function executeStep(
       }))
       const hit = await ports.cache!.get(cacheKey)
       if (hit) {
-        // Exact-key hit: re-ground each stored descriptor against the FRESH observation
-        // (a stored descriptor never drives a blind click, T-356-04a). All resolve ⇒
-        // replay with NO LLM call. Any unmatched ⇒ invalidate and fall through to replan.
+        // Exact-key hit: re-find each stored target strictly in the FRESH observation (a stored
+        // target never drives a blind click, T-356-04a, and never a pick, D-10). All resolve ⇒
+        // replay with NO LLM call. A key hit that does not replay ⇒ invalidate and replan (A7).
         const replay = replayFromCache(hit, screenState.elements)
-        if (replay) {
-          planResult = { plan: replay }
+        if (replay.ok) {
+          planResult = { plan: replay.plan }
           cached = true
         } else {
           await ports.cache!.invalidate(cacheKey)
           ports.logger?.createScopedLogger('cache')?.debug(
-            'Cached descriptor no longer resolves — re-planning', { actionIndex },
+            'Cached target does not replay — re-planning', { actionIndex, reason: replay.reason },
           )
         }
       }
@@ -1362,8 +1362,9 @@ export async function executeStep(
 
     // Persist the completing decision's plan into the per-key cache as a descriptor-only
     // value (D-12 overfit guard: buildCachedPlanValue strips ref/coords/data and derives
-    // role+nameNormalized+ordinal locators). setVariable actions are never cached (env
-    // provenance). No-op for bypassed steps, cache hits, or when no cache is bound.
+    // role + exact name locators, with the decision's stated row words when the observed row
+    // holds them, D-11). setVariable actions are never cached (env provenance). No-op for
+    // bypassed steps, cache hits, or when no cache is bound.
     const cacheCompletingPlan = async (): Promise<void> => {
       // Pitfall 4 cache-vs-procedure precedence: a procedure-replayed completing plan is
       // NEVER persisted into the action cache. The procedure store owns replaying whole
@@ -1386,6 +1387,7 @@ export async function executeStep(
         plannedActions: [normalizedAction],
         elements: screenState.elements,
         verificationOutcome: 'passed',
+        ...(statedTargets !== undefined ? { statedTargets } : {}),
       }))
     }
 
@@ -2136,36 +2138,47 @@ function replayLanes(action: Record<string, unknown>, locatorCount: number): str
   return locatorCount >= 1 ? ['ref'] : []
 }
 
+// Why a cache key hit did not replay (D-10). 438-09 moves this union into the schema.
+type CacheReplayMissReason = 'strict-absent' | 'strict-not-unique' | 'non-replayable'
+
+type CacheReplay = { ok: true; plan: ActionPlan } | { ok: false; reason: CacheReplayMissReason }
+
 // Replay rung of the hit ladder (D-13): reconstruct an ActionPlan from a descriptor-only
-// cached value by re-grounding EVERY stored per-field locator against the FRESH
-// observation (Pitfall 5 — multi-ref drags re-resolve both fromRef and toRef). Returns
-// null — the invalidate-and-replan signal — when the action is non-replayable (carries raw
-// coordinates or lacks a locator for a ref lane) or any descriptor no longer resolves
-// uniquely (a stale/ambiguous descriptor never drives a blind action, T-356-04a / T-357-03a).
-function replayFromCache(value: CachedPlanValue, elements: readonly ElementInfo[]): ActionPlan | null {
+// cached value by re-finding EVERY stored per-field locator in the FRESH observation
+// (Pitfall 5 — multi-ref drags re-resolve both fromRef and toRef). A locator resolves only
+// through strictMatch: role, exact name and stated row words, one survivor (D-10). The action
+// shape or a missing lane locator is 'non-replayable'; the first lane with no survivor or with
+// several names the strict reason. Either way nothing replays (T-356-04a / T-438-15).
+function replayFromCache(value: CachedPlanValue, elements: readonly ElementInfo[]): CacheReplay {
   const action = value.plannedActions[0]
-  if (!action) return null
+  if (!action) return { ok: false, reason: 'non-replayable' }
   const replayAction: Record<string, unknown> = { ...action }
 
   // Non-replayable action shapes (coordinate-bearing / excluded types, the schema-shared
   // list) ⇒ invalidate ⇒ replan (Pitfall 5b).
-  if (!isReplayableActionShape(String(replayAction.type ?? ''), Object.keys(replayAction))) return null
+  if (!isReplayableActionShape(String(replayAction.type ?? ''), Object.keys(replayAction))) {
+    return { ok: false, reason: 'non-replayable' }
+  }
 
   const lanes = replayLanes(replayAction, value.groundedLocator.length)
   // A ref lane with no stored locator is an unreplayable value ⇒ invalidate ⇒ replan.
-  if (value.groundedLocator.length < lanes.length) return null
+  if (value.groundedLocator.length < lanes.length) return { ok: false, reason: 'non-replayable' }
 
   for (let lane = 0; lane < lanes.length; lane++) {
-    const freshRef = deterministicDescriptorMatcher.reground(value.groundedLocator[lane], elements)
-    if (freshRef === null) return null
-    replayAction[lanes[lane]] = freshRef
+    const match = deterministicDescriptorMatcher.reground(value.groundedLocator[lane], elements)
+    if (match.kind === 'absent') return { ok: false, reason: 'strict-absent' }
+    if (match.kind === 'not-unique') return { ok: false, reason: 'strict-not-unique' }
+    replayAction[lanes[lane]] = match.ref
   }
 
   return {
-    reasoning: 'Replayed from cache',
-    action: replayAction as ActionPlan['action'],
-    confidence: 1,
-    stepComplete: value.verificationOutcome === 'passed',
+    ok: true,
+    plan: {
+      reasoning: 'Replayed from cache',
+      action: replayAction as ActionPlan['action'],
+      confidence: 1,
+      stepComplete: value.verificationOutcome === 'passed',
+    },
   }
 }
 

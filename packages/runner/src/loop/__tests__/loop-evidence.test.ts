@@ -129,7 +129,7 @@ describe('loop evidence matrix (SCREEN-02 / D-15)', () => {
       // Descriptor-only value: ref/coords stripped; grounding rides on the locator, which
       // re-grounds to the fresh `log in` button (e2) in the observation.
       plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
-      groundedLocator: [{ role: 'button', nameNormalized: 'log in', ordinal: 0 }],
+      groundedLocator: [{ role: 'button', name: 'Log in' }],
       verificationOutcome: 'passed',
     }
     const cache: ActionPlanCache = {

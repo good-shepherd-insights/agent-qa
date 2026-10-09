@@ -32,7 +32,7 @@ function fixture(path: 'live' | 'cache' | 'procedure' = 'live', zeroMs?: number)
   if (path !== 'live') ports.planner = { plan: async () => { throw new Error('Replay must bypass planner') } }
   if (path === 'cache') ports.cache = {
     get: async () => ({ plannedActions: [{ type: 'click', ref: asRef('e2') }],
-      groundedLocator: [{ role: 'button', nameNormalized: 'log in', ordinal: 0 }],
+      groundedLocator: [{ role: 'button', name: 'Log in' }],
       verificationOutcome: 'passed' }),
     set: async () => {}, invalidate: async () => {},
   }

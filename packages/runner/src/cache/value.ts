@@ -1,10 +1,13 @@
-// Descriptor-only value projection (Phase 356, CACHE-03 / D-12).
+// Descriptor-only value projection (Phase 356, CACHE-03 / D-12; 438 D-10/D-11).
 // CRITICAL: storage-neutral — no node:* imports. Projects a planned action + the
-// fresh elements into a role+nameNormalized(+ordinal) descriptor and assembles a
-// CachedPlanValue that provably omits raw refs/selectors/coordinates and any step
+// fresh elements into a role + exact name (+ stated row words) descriptor and assembles a
+// CachedPlanValue that provably omits raw refs/selectors/coordinates, positions and any step
 // `data` value (the overfit guard: nothing run-specific survives into the cache).
 
 import type { ElementInfo } from '@vostride/agent-qa-schema'
+import { rowContains, rowTextOf, wordTokens } from '../grounding/row-text.js'
+import type { StatedTarget, StatedTargets } from '../grounding/stated-target.js'
+import { tidyName } from '../grounding/strict-match.js'
 import type { Action } from '../platform.js'
 import type { CacheablePlannedAction, CachedPlanValue, GroundedLocator } from './port.js'
 
@@ -13,7 +16,8 @@ export type { CacheablePlannedAction, CachedPlanValue, GroundedLocator } from '.
 // Fields that would overfit a cached plan to one run: locator bindings (single- AND
 // multi-ref lanes + emission-side target descriptors) and the raw step data value.
 // Stripped from every stored planned action so nothing run-specific ever persists —
-// grounding is carried SOLELY by the descriptor locators (D-12, Pitfall 5).
+// grounding is carried SOLELY by the descriptor locators (D-12, Pitfall 5). The stated
+// target never persists inside an action; its row reaches the store only through a locator.
 const OVERFIT_KEYS = new Set([
   'ref',
   'fromRef',
@@ -45,17 +49,21 @@ function fieldRef(action: Action, field: string): string | undefined {
   return typeof ref === 'string' ? ref : undefined
 }
 
-function locatorForRef(ref: string, elements: readonly ElementInfo[]): GroundedLocator | null {
+function locatorForRef(
+  ref: string,
+  elements: readonly ElementInfo[],
+  stated: StatedTarget | undefined,
+): GroundedLocator | null {
   const target = elements.find((element) => element.ref === ref)
   if (target === undefined) return null
 
-  const siblings = elements.filter(
-    (element) =>
-      element.role === target.role && element.nameNormalized === target.nameNormalized,
-  )
-  const ordinal = siblings.indexOf(target)
-
-  return { role: target.role, nameNormalized: target.nameNormalized, ordinal }
+  const locator: GroundedLocator = { role: target.role, name: tidyName(target.name) }
+  const row = stated?.row
+  if (row !== undefined && wordTokens(row).length > 0) {
+    const observedRow = rowTextOf(target, elements)
+    if (observedRow !== undefined && rowContains(observedRow, row)) locator.row = row.trim()
+  }
+  return locator
 }
 
 // The sanitized, stored form statically excludes the AI-assertion verbs (D-08): a completing
@@ -71,18 +79,18 @@ function sanitizeAction(action: Action): CacheablePlannedAction {
 }
 
 /**
- * Project a planned action's target element to a descriptor-only locator. Returns
- * null when the action targets no element (e.g. navigate) or the ref no longer
- * resolves. The ordinal is the target's position among same role+nameNormalized
- * elements in the current observation order — never a stored/reused index.
+ * Project a planned action's target element to a descriptor-only locator: its role, its exact
+ * name, and the stated row when the element's known row holds it. Returns null when the action
+ * targets no element (e.g. navigate) or the ref no longer resolves.
  */
 export function toGroundedLocator(
   action: Action,
   elements: readonly ElementInfo[],
+  stated?: StatedTarget,
 ): GroundedLocator | null {
   const ref = actionRef(action)
   if (ref === undefined) return null
-  return locatorForRef(ref, elements)
+  return locatorForRef(ref, elements, stated)
 }
 
 /**
@@ -95,19 +103,20 @@ export function toGroundedLocator(
 export function deriveLaneLocators(
   action: Action,
   elements: readonly ElementInfo[],
+  statedTargets?: StatedTargets,
 ): GroundedLocator[] {
   if ((action as { type?: unknown }).type === 'drag') {
     const locators: GroundedLocator[] = []
     for (const field of MULTI_REF_LANES) {
       const ref = fieldRef(action, field)
       if (ref === undefined) break
-      const locator = locatorForRef(ref, elements)
+      const locator = locatorForRef(ref, elements, statedTargets?.[field])
       if (locator === null) break
       locators.push(locator)
     }
     return locators
   }
-  const single = toGroundedLocator(action, elements)
+  const single = toGroundedLocator(action, elements, statedTargets?.ref)
   return single !== null ? [single] : []
 }
 
@@ -115,6 +124,8 @@ export interface BuildCachedPlanValueInput {
   plannedActions: readonly Action[]
   elements: readonly ElementInfo[]
   verificationOutcome: 'passed' | 'failed'
+  /** The completing decision's stated target per lane; supplies a locator's row words. */
+  statedTargets?: StatedTargets
 }
 
 /**
@@ -125,7 +136,7 @@ export interface BuildCachedPlanValueInput {
 export function buildCachedPlanValue(input: BuildCachedPlanValueInput): CachedPlanValue {
   const groundedLocator: GroundedLocator[] = []
   for (const action of input.plannedActions) {
-    groundedLocator.push(...deriveLaneLocators(action, input.elements))
+    groundedLocator.push(...deriveLaneLocators(action, input.elements, input.statedTargets))
   }
 
   return {
