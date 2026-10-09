@@ -1546,7 +1546,7 @@
     {
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/progress-prompts.test.ts",
-      "fullName": "C436-PROMPT Rules 10, 17, 19 and 23 are byte-unchanged",
+      "fullName": "C436-PROMPT Rules 19 and 23 are byte-unchanged",
       "origin": "436 D-26"
     },
     {

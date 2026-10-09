@@ -219,7 +219,8 @@ describe('QA mindset prompt rules', () => {
 
     it('Rule 17 contains stepFailed and listing the ambiguous candidates', () => {
       expect(systemPrompt).toContain('stepFailed')
-      expect(systemPrompt).toContain('listing the ambiguous candidates')
+      // 438 Rules 10 and 17 re-pin: the candidates ride an infeasible failure's reason.
+      expect(systemPrompt).toContain('failureKind "infeasible" and list the candidates')
     })
 
     it('Rule 17 contains ASSERTION PRECISION subsection', () => {

@@ -9,8 +9,8 @@
 // confident ref emitted a bare action.
 //
 // These tests are guidance-only regression guards. They assert nothing about the gate's
-// exactly-one-of rule (unchanged), the one-shot retry, or the ungroundable_action shape —
-// the shipped GROUND-01..03 contracts stay fixed.
+// ref-and-target rule (438 D-01 replaced exactly-one-of), the one-shot retry, or the
+// ungroundable_action shape — the shipped GROUND-01..03 contracts stay fixed.
 //
 // RED (before the prompts.ts fix): Test 1 fails — the assembled system prompt forbids only
 // "both" and never mentions "neither" nor mandates a target fallback. Tests 2 and 3 already
@@ -21,10 +21,10 @@ import { buildSystemPrompt } from '../prompts.js'
 import { defaultRegistry } from '../../tools/index.js'
 import { groundingError } from '../../tools/errors.js'
 
-// The TARGET DESCRIPTORS paragraph runs from its header to the next numbered rule.
+// The STATED TARGET paragraph (438 D-01) runs from its header to the next numbered rule.
 function targetDescriptorGuidance(platform: 'web' | 'android' | 'ios'): string {
   const sp = buildSystemPrompt(platform)
-  const start = sp.indexOf('TARGET DESCRIPTORS')
+  const start = sp.indexOf('STATED TARGET')
   expect(start).toBeGreaterThanOrEqual(0)
   const rest = sp.slice(start)
   const end = rest.search(/\n\s*\d+\.\s/)
@@ -32,20 +32,17 @@ function targetDescriptorGuidance(platform: 'web' | 'android' | 'ios'): string {
 }
 
 describe('363-02 planner grounding guidance (D-14 · LOOP-05)', () => {
-  // Test 1 (behavior block Test 1): the system guidance MANDATES exactly one of ref|target
-  // on every element-targeting action and explicitly forbids emitting NEITHER, instructing a
-  // no-confident-ref planner to construct a target rather than a bare action.
+  // Test 1 (behavior block Test 1): the system guidance requires ref and target on every
+  // element action (438 D-01), forbids emitting NEITHER, sends a target alone only with no
+  // confident ref, and says a clearly different ref is refused as target-mismatch.
   it.each(['web', 'android', 'ios'] as const)(
     'system prompt mandates exactly-one ref|target and forbids neither (%s)',
     (platform) => {
       const guidance = targetDescriptorGuidance(platform)
-      // Still forbids BOTH (the original half of the contract).
-      expect(guidance).toMatch(/never both/i)
-      // NEW: forbids NEITHER — the regression fix.
-      expect(guidance).toMatch(/\bneither\b/i)
-      // NEW: mandates the target-descriptor fallback when no confident ref (the "how to fix"
-      // half, so the model has a positive remedy rather than emitting a bare action).
-      expect(guidance).toMatch(/\bmust\b[^.]*\btarget\b/i)
+      expect(guidance).toMatch(/every element action[^.]*carries both `ref` and `target`/i)
+      expect(guidance).toMatch(/never send neither/i)
+      expect(guidance).toMatch(/with no confident ref, send `target` alone/i)
+      expect(guidance).toMatch(/clearly a different element[^.]*refused as target-mismatch/i)
     },
   )
 

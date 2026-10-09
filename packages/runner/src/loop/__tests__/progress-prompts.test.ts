@@ -1,7 +1,8 @@
 // C436-PROMPT (D-26, HARN-01): the planner prompt judges outcomes, not screen changes. The
 // stagnation and cycle-break blocks cannot render, the progress rules are gone, Rule 22 is the
-// outcome-evidence rule, Rule 13 allows requested repetition, and Rules 10, 17, 19 (web) and 23
-// are byte-identical to agent-qa 5e3e932a2.
+// outcome-evidence rule, Rule 13 allows requested repetition, and Rules 19 (web) and 23 are
+// byte-identical to agent-qa 5e3e932a2. Rules 10 and 17 were re-pinned once by 438 (D-01, D-14):
+// C438-PROMPT holds their 438 text; their 5e3e932a2 bytes stay below for the record.
 import { describe, it, expect } from 'vitest'
 import type { ModelMessage } from 'ai'
 import type { ScreenState } from '@vostride/agent-qa-schema'
@@ -24,6 +25,14 @@ const PINNED_RULES_5E3E932A2: Record<number, string> = {
     "19. ACTION STEP COMPLETION: When the step instruction is a pure action — a single verb like \"click\", \"select\", \"scroll to\", or \"fill\" targeting a specific element — and you found the target element and executed the action successfully, set stepComplete: true immediately. Do NOT retry expecting a visible screen change. Many successful actions produce no visible change on the current page: file downloads save to disk silently, external links open in new tabs, buttons trigger background processes, PDF links open in the browser's PDF viewer. This rule applies to SINGLE-ACTION steps only. If the step has multiple sub-goals (\"click X and then verify Y\"), complete the action sub-goal and move to the next per Rule 13 — do not set stepComplete until ALL sub-goals are done.",
   23:
     "23. SECRET PLACEHOLDERS — the value EXISTS and is bound at dispatch: A step may reference a secret in one of two forms: the template form {{secret:NAME}}, or its redacted display form [secret:NAME] (what you see once model-bound text has been masked). Both mean the same thing: a concrete value for NAME EXISTS and is already bound in this run's secret store. It is hidden from you deliberately, for security — it is NOT missing, NOT unavailable, and NOT a gap you must fill in.\n   TO USE IT: emit the template form {{secret:NAME}} VERBATIM as the action value (e.g. as the value of a fill action). The harness substitutes the real value at dispatch — after you plan, before the action reaches the app. Passing the placeholder through IS the correct, complete action.\n   NEVER declare the step infeasible, skip it, guess, or invent a stand-in because the literal is not visible to you — a hidden secret is not an impossible objective. stepFailed with failureKind \"infeasible\" (Rule 12) stays reserved for genuinely impossible objectives.\n   NEVER attempt to read, print, echo, assert on, or otherwise reveal the concrete secret value. You never need to see it to use it.",
+}
+
+// Copied from buildSystemPrompt('web') after the 438 rewrite of Rules 10 and 17.
+const PINNED_RULES_438: Record<number, string> = {
+  10:
+    "10. NEVER hallucinate a ref. A ref is a typed current-screen element handle from the observation, never a CSS selector, XPath, label, or guessed description. If an element appears in the observation without [ref=eN] (e.g. `- menuitemradio \"Chinese\"` with no ref), do NOT guess a ref number. Either use tapCoordinate with coordinates and coordSpace from the observation, or interact with a nearby ref'd element. If a tool offers elementDescription, use it only as optional disambiguation; it never replaces the ref or coordinates. Common no-ref cases: dropdown options, shadow DOM content, canvas elements, dynamically inserted items.\n   STATED TARGET: Every element action (click, tap, fill, select, hover, …) carries both `ref` and `target`. `ref` is the element's handle from the latest observation. `target` states the element you mean: its `role` and `name` as the observation shows them, plus `row`, words from its row's ` text: \"…\"`, whenever the same label appears more than once on the screen. Example: three \"Edit label\" buttons, one per address; to edit the Elm Street address, state `{ role: \"button\", name: \"Edit label\", row: \"7 Elm Street\" }`. Before anything is sent, the system compares the two: a ref that is clearly a different element (another kind of control, an unrelated name, a different number, another row) is refused as target-mismatch and nothing happens, so re-observe and use the ref of the element you mean. With no confident ref, send `target` alone and the system grounds it against the current screen. NEVER send neither: an element action with no `ref` and no `target` cannot be grounded and is rejected. `target` never holds a position or index; to act on \"the second\" of identical controls, use that control's ref. Unlike elementDescription (pure logging), `target` is checked. After a grounding error or a target-mismatch, do NOT retry the identical call.",
+  17:
+    "17. AMBIGUITY DETECTION: If the step instruction, the previous steps and the current screen do not single out exactly one element, set stepFailed with failureKind \"infeasible\" and list the candidates in the reason. NEVER guess among identical controls (\"the button\", \"the link\", \"the icon\"): when the step does not say which, never choose one by position, appearance or what worked before. A QA engineer asks rather than guesses. A single match = proceed. When the step does single one out, by position (\"the second Okay button\"), by region, or by neighbouring row text (\"Elm Street's Edit label\"), act on exactly that element: use its ref and state its row words in target.\n   ASSERTION PRECISION: Read quantity qualifiers carefully before asserting:\n   - \"exists\" / \"is present\" / \"is mentioned\" = at least one match. Multiple matches = pass.\n   - \"only once\" / \"exactly one\" / \"single\" = count must be exactly 1. Multiple = fail.\n   - \"should not exist\" / \"is not shown\" = zero matches. Any match = fail.",
 }
 
 function makeContext(overrides: Partial<StepContext> = {}): StepContext {
@@ -165,8 +174,8 @@ describe('C436-PROMPT', () => {
     }
   })
 
-  it('Rules 10, 17, 19 and 23 are byte-unchanged', () => {
-    for (const n of [10, 17, 19, 23]) {
+  it('Rules 19 and 23 are byte-unchanged', () => {
+    for (const n of [19, 23]) {
       expect(rule(n, 'web')).toBe(PINNED_RULES_5E3E932A2[n])
     }
   })
@@ -187,5 +196,26 @@ describe('C436-PROMPT', () => {
     const turn = renderTurn(composeTurnMessages(context, makeScreen()))
     expect(turn).not.toContain('Do NOT repeat')
     expect(turn).not.toContain('no visible change')
+  })
+})
+
+describe('C438-PROMPT', () => {
+  it('Rules 10 and 17 are the 438 text', () => {
+    for (const n of [10, 17]) {
+      expect(rule(n, 'web')).toBe(PINNED_RULES_438[n])
+    }
+  })
+
+  it.each(PLATFORMS)('Rule 17 keeps the no-guessing rule (%s)', (platform) => {
+    const text = rule(17, platform)
+    const lead = text.slice(0, text.indexOf('\n'))
+    const precision = (pinned: string) => pinned.slice(pinned.indexOf('\n   ASSERTION PRECISION:'))
+
+    expect(lead.startsWith('17. AMBIGUITY DETECTION:')).toBe(true)
+    expect(lead).toContain('failureKind "infeasible" and list the candidates')
+    expect(lead).toContain(
+      'when the step does not say which, never choose one by position, appearance or what worked before',
+    )
+    expect(precision(text)).toBe(precision(PINNED_RULES_5E3E932A2[17] as string))
   })
 })
