@@ -3,11 +3,16 @@
 // between observation and dispatch is followed, never substituted by the row now at its old
 // position, and an exact name beside a near-twin resolves. Real headless Chromium through the real
 // loop; pages are inline snippets.
+// 2026-10-09 (438-06): C438-BINDING-OUTCOMES (D-07, D-08, D-09) names each way a target stops being
+// the observed element at the adapter, and pins the benign changes that keep a binding.
 
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Action, ExecuteOptions, PlannerConfig } from '@vostride/agent-qa-runner'
 import { asRef } from '@vostride/agent-qa-runner'
+import { readBindingOutcomeMeta } from '@vostride/agent-qa-schema'
+import type { BindingOutcome } from '@vostride/agent-qa-schema'
 import { WebPlatformAdapter } from '../adapter.js'
+import { buildScrollPrimitives } from '../compound-web.js'
 import type { RefMap } from '../types.js'
 import {
   act,
@@ -173,6 +178,151 @@ describe('C438-NATIVE-BINDING', () => {
     expect(entry!['rowText']).toBe('Work 7 Elm Street, Springfield Edit label')
 
     const result = await web.execute({ type: 'click', ref: asRef(ref) } as never)
+
+    expect(result.success).toBe(true)
+    expect(await pageClicks(web)).toEqual(['7 Elm Street, Springfield'])
+  }, 60_000)
+})
+
+// The address rows above a tall tail, so a scroll moves the page.
+const TALL_ADDRESSES_PAGE = ADDRESSES_PAGE.replace(
+  '</ul>',
+  '</ul><div style="height: 3000px">Page tail</div>',
+)
+
+const frameButton = (name: string): string =>
+  `<button type='button' onclick='parent.__clicks.push(&quot;${name}&quot;)'>${name}</button>`
+
+const FRAMED_PAGE = `<!doctype html><html><head><script>window.__clicks = []</script></head><body>
+  <button type="button" onclick="window.__clicks.push('Main')">Main action</button>
+  <iframe id="payments" srcdoc="${frameButton('Approve')}${frameButton('Decline')}"></iframe>
+</body></html>`
+
+// The Elm and Oak rows trade their text; every li and button node stays where it was.
+const SWAP_ELM_AND_OAK_TEXT = `(() => {
+  const [elm, , oak] = document.querySelectorAll('#addresses > li')
+  const elmTexts = elm.querySelectorAll('p')
+  const oakTexts = oak.querySelectorAll('p')
+  elmTexts.forEach((p, i) => {
+    const text = p.innerHTML
+    p.innerHTML = oakTexts[i].innerHTML
+    oakTexts[i].innerHTML = text
+  })
+})()`
+
+// Identical markup, new nodes.
+const REWRITE_LIST = `(() => {
+  const list = document.getElementById('addresses')
+  list.innerHTML = list.innerHTML
+})()`
+
+const REMOVE_FRAME = `document.getElementById('payments').remove()`
+
+const PUSH_STATE = `history.pushState({}, '', '#moved')`
+
+function bindingOutcomeOf(
+  result: { metadata?: Record<string, unknown> },
+): BindingOutcome | undefined {
+  return readBindingOutcomeMeta(result)?.outcome
+}
+
+async function clickAfter(
+  web: WebPlatformAdapter,
+  ref: string,
+  change: (page: NonNullable<ReturnType<WebPlatformAdapter['getPage']>>) => Promise<unknown>,
+) {
+  await change(web.getPage()!)
+  return web.execute({ type: 'click', ref: asRef(ref) } as never)
+}
+
+describe('C438-BINDING-OUTCOMES', () => {
+  it('recycled: the Elm row text swapped under the same nodes is binding-changed', async () => {
+    const web = await open(ADDRESSES_PAGE)
+    const elm = refFor(await web.observe(), 'button', 'Edit label', 0)
+
+    const result = await clickAfter(web, elm, (page) => page.evaluate(SWAP_ELM_AND_OAK_TEXT))
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/^binding-changed:/)
+    expect(bindingOutcomeOf(result)).toBe('binding-changed')
+    expect(readBindingOutcomeMeta(result)).toEqual({
+      outcome: 'binding-changed',
+      ref: elm,
+      inputSent: false,
+    })
+    expect(await pageClicks(web)).toEqual([])
+  }, 60_000)
+
+  it('replaced: the list rewritten with identical markup is binding-lost', async () => {
+    const web = await open(ADDRESSES_PAGE)
+    const elm = refFor(await web.observe(), 'button', 'Edit label', 0)
+
+    const result = await clickAfter(web, elm, (page) => page.evaluate(REWRITE_LIST))
+
+    expect(result.success).toBe(false)
+    expect(bindingOutcomeOf(result)).toBe('binding-lost')
+    expect(await pageClicks(web)).toEqual([])
+  }, 60_000)
+
+  it('frame detached: a button in a removed iframe is frame-detached', async () => {
+    const web = await open(FRAMED_PAGE)
+    const state = await web.observe()
+    const approve = refFor(state, 'button', 'Approve')
+    expect(refMapOf(web)[approve]?.nativeRef).toMatch(/^f\d+e\d+$/)
+
+    const result = await clickAfter(web, approve, (page) => page.evaluate(REMOVE_FRAME))
+
+    expect(result.success).toBe(false)
+    expect(bindingOutcomeOf(result)).toBe('frame-detached')
+    expect(await pageClicks(web)).toEqual([])
+  }, 60_000)
+
+  it('pushState: a same-document URL change keeps the binding and the click lands', async () => {
+    const web = await open(ADDRESSES_PAGE)
+    const elm = refFor(await web.observe(), 'button', 'Edit label', 0)
+
+    const result = await clickAfter(web, elm, (page) => page.evaluate(PUSH_STATE))
+
+    expect(result.success).toBe(true)
+    expect(bindingOutcomeOf(result)).toBeUndefined()
+    expect(await pageClicks(web)).toEqual(['7 Elm Street, Springfield'])
+  }, 60_000)
+
+  it("a scroll compound's interim snapshot keeps the binding", async () => {
+    const web = await open(TALL_ADDRESSES_PAGE)
+    const elm = refFor(await web.observe(), 'button', 'Edit label', 0)
+    const page = web.getPage()!
+
+    const scrolled = await web.execute({
+      type: 'scroll',
+      mode: 'direction',
+      direction: 'down',
+      amount: 'page',
+      retryOpposite: false,
+    } as never)
+    expect(scrolled.success).toBe(true)
+    expect(await page.evaluate(() => (globalThis as unknown as { scrollY: number }).scrollY))
+      .toBeGreaterThan(0)
+    // The web compound decides visibility with its own probe, so the interim tree is read here.
+    const interim = await buildScrollPrimitives(page, refMapOf(web), 720).readInterimTree()
+    expect(interim.length).toBeGreaterThan(0)
+    expect(await pageClicks(web)).toEqual([])
+
+    const result = await web.execute({ type: 'click', ref: asRef(elm) } as never)
+
+    expect(result.success).toBe(true)
+    expect(await pageClicks(web)).toEqual(['7 Elm Street, Springfield'])
+  }, 60_000)
+
+  it('a default-mode snapshot taken by someone else is repaired by the re-check', async () => {
+    const web = await open(ADDRESSES_PAGE)
+    const elm = refFor(await web.observe(), 'button', 'Edit label', 0)
+    const nativeRef = refMapOf(web)[elm]!.nativeRef
+
+    const result = await clickAfter(web, elm, async (page) => {
+      await page.locator(':root').ariaSnapshot()
+      expect(await page.locator('aria-ref=' + nativeRef).count()).toBe(0)
+    })
 
     expect(result.success).toBe(true)
     expect(await pageClicks(web)).toEqual(['7 Elm Street, Springfield'])
