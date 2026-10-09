@@ -290,6 +290,40 @@ describe('constants measurement orchestration', () => {
     }
   })
 
+  it('refuses a mismatched snapshot in the real child before loading knowledge-local or the runner', async () => {
+    const fixture = await fixtureCorpusFile()
+    const resolveLog =
+      'data:text/javascript,import{registerHooks}from"node:module";' +
+      'registerHooks({resolve(s,c,n){process.stderr.write(`resolve ${s}\\n`);return n(s,c)}})'
+    try {
+      const payload = Buffer.from(
+        JSON.stringify({
+          candidate,
+          corpusPath: fixture.path,
+          corpusSha256: '0'.repeat(64),
+          performance: performanceConfig,
+          allowDownload: false,
+        }),
+      ).toString('base64url')
+      const { stdout, stderr } = await execFileAsync(process.execPath, [
+        '--import',
+        resolveLog,
+        fileURLToPath(new URL('../measure-constants.ts', import.meta.url)),
+        '--constants-child',
+        payload,
+      ])
+      expect(parseConstantsChildJson(stdout)).toMatchObject({
+        status: 'error',
+        error: { message: expect.stringContaining('corpus snapshot SHA-256 mismatch') },
+      })
+      const resolved = stderr.split('\n').filter((line) => line.startsWith('resolve '))
+      expect(resolved).toContain('resolve @vostride/agent-qa-schema')
+      expect(resolved.filter((line) => /knowledge-local|\/runner\.ts$/u.test(line))).toEqual([])
+    } finally {
+      await rm(fixture.directory, { recursive: true, force: true })
+    }
+  })
+
   it('uses one immutable corpus snapshot for all candidates', async () => {
     const fixture = await fixtureCorpusFile()
     const secondCandidate = { ...candidate, id: 'fixture-model-2' }

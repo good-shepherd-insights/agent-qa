@@ -365,13 +365,14 @@ async function measureChild(
     performance: settings,
     allowDownload,
   } = payload
-  const { resolveVecCapability } =
-    await import('@vostride/agent-qa-knowledge-local')
+  // The snapshot is verified before knowledge-local loads, so a refused corpus costs no import.
   const renderings = await loadCorpusRenderings(
     corpusPath,
     corpusSha256,
     Math.max(settings.singleDocumentSamples, settings.concurrentDocumentSamples),
   )
+  const { resolveVecCapability } =
+    await import('@vostride/agent-qa-knowledge-local')
   const effectiveSample = effectivePerformanceSample(settings, renderings.length)
   const singleRenderings = renderings.slice(0, effectiveSample.singleDocuments)
   const concurrentRenderings = renderings.slice(0, effectiveSample.concurrentDocuments)
