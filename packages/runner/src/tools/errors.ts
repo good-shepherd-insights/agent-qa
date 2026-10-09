@@ -8,8 +8,8 @@ export type GroundingErrorCode =
   | 'descriptor_ambiguous'
   | 'descriptor_invalid'
 
-/** The three invalid-descriptor shapes (D-04 exactly-one-of, D-13 name-less, D-06 near). */
-export type DescriptorProblem = 'exactly-one' | 'name-missing' | 'near-unsupported'
+/** The three invalid-descriptor shapes (438 D-01 no handle, D-13 name-less, D-06 near). */
+export type DescriptorProblem = 'no-handle' | 'name-missing' | 'near-unsupported'
 
 interface GroundingErrorArgs {
   code: GroundingErrorCode
@@ -78,7 +78,7 @@ export const groundingError = {
       code: 'descriptor_unresolved',
       toolName,
       message: `no element matching ${descriptorSummary} for tool "${toolName}" — re-observe or refine the descriptor`,
-      hint: 'Re-observe the screen, then use a ref from the latest observation or refine the descriptor (role, name, ordinal).',
+      hint: 'Re-observe the screen, then use a ref from the latest observation, or restate the target with the role, name and row words the observation shows.',
     })
   },
 
@@ -92,22 +92,22 @@ export const groundingError = {
       code: 'descriptor_ambiguous',
       toolName,
       message: `${candidateCount} elements match ${descriptorSummary} for tool "${toolName}"; the descriptor is ambiguous.`,
-      hint: 'Add an ordinal, use a more specific name, or use a ref from the latest observation to select exactly one element.',
+      hint: 'Use the ref of the element the step means, from the latest observation. If the step does not say which one, report the candidates and do not choose one.',
     })
   },
 
   // One code covering the three invalid-descriptor shapes (D-04 / D-13 / D-06).
   descriptorInvalid(toolName: string, problem: DescriptorProblem): GroundingError {
     const messages: Record<DescriptorProblem, string> = {
-      'exactly-one': 'provide exactly one of ref or target',
+      'no-handle': 'an element action needs a ref (with its stated target) or, with no confident ref, a target',
       'name-missing': 'the descriptor needs a name — refine the descriptor or use a ref',
-      'near-unsupported': 'near is not supported yet — use name, role, or ordinal',
+      'near-unsupported': 'near is not supported yet — use name and role',
     }
     const hints: Record<DescriptorProblem, string> = {
-      'exactly-one':
-        'Populate exactly one of ref (a committed ref from the latest observation) or target (a role+name descriptor).',
+      'no-handle':
+        'Send the ref of the element you mean from the latest observation with its stated target (role, name and row words); with no confident ref, send the target alone.',
       'name-missing': 'Add a name to the descriptor, or use a ref from the latest observation.',
-      'near-unsupported': 'Remove near and select the element by name, role, or ordinal.',
+      'near-unsupported': 'Remove near and state the element by its role and name, with row words when its label repeats.',
     }
     return new GroundingError({
       code: 'descriptor_invalid',

@@ -66,7 +66,7 @@ describe('GroundingError', () => {
     expect(err.message).toContain('button "Log in"')
     expect(err.message).toContain('re-observe or refine')
     expect(err.hint.toLowerCase()).toContain('re-observe')
-    expect(err.hint.toLowerCase()).toContain('refine')
+    expect(err.hint).toContain('restate the target with the role, name and row words')
   })
 
   it('builds a descriptor_ambiguous error naming the candidate count and disambiguation hint', () => {
@@ -78,14 +78,16 @@ describe('GroundingError', () => {
     expect(err.message).toContain('3')
     expect(err.message).toContain('button "Delete"')
     expect(err.message.toLowerCase()).toContain('ambiguous')
-    expect(err.hint.toLowerCase()).toContain('ordinal')
+    expect(err.hint).toContain('ref of the element the step means')
+    expect(err.hint).toContain('report the candidates')
+    expect(err.hint.toLowerCase()).not.toContain('ordinal')
   })
 
   it('builds a descriptor_invalid error for each of the three invalid shapes', () => {
-    const bothOrNeither = groundingError.descriptorInvalid('web_click', 'exactly-one')
-    expect(bothOrNeither).toBeInstanceOf(GroundingError)
-    expect(bothOrNeither.code).toBe('descriptor_invalid')
-    expect(bothOrNeither.message).toContain('exactly one of ref or target')
+    const noHandle = groundingError.descriptorInvalid('web_click', 'no-handle')
+    expect(noHandle).toBeInstanceOf(GroundingError)
+    expect(noHandle.code).toBe('descriptor_invalid')
+    expect(noHandle.message).toContain('needs a ref')
 
     const nameless = groundingError.descriptorInvalid('web_click', 'name-missing')
     expect(nameless.code).toBe('descriptor_invalid')

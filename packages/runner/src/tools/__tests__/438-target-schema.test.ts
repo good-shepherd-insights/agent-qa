@@ -1,6 +1,7 @@
 // C438-TARGET-SCHEMA (438 D-01, D-02, D-12): every element tool takes the ref plus the stated
 // target — role, name and row words — and an ordinal is a hard schema error, from the tool call
-// through the provider JSON schema into the plan the check reads.
+// through the provider JSON schema into the plan the check reads. C438-HINTS (D-12, D-14): no
+// grounding error invites a position, and each names its remedy.
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
@@ -9,7 +10,8 @@ import type { PlanResult } from '../../loop/types.js'
 import { makeFakeTokenAccounting, makeStepContext } from '../../loop/__tests__/loop-harness.js'
 import { targetSchema } from '../actions/index.js'
 import { describeBoundSurface, toolCallToActionPlan } from '../builder.js'
-import { GroundingError } from '../errors.js'
+import { groundActionPlan } from '../../grounding/gate.js'
+import { GroundingError, groundingError } from '../errors.js'
 import { defaultRegistry } from '../index.js'
 
 vi.mock('ai', async (importActual) => {
@@ -158,5 +160,66 @@ describe('C438-TARGET-SCHEMA', () => {
 
     expect(plan.statedTargets?.ref).toEqual({ role: 'button', name: 'Log in', row: 'Account' })
     expect(plan.action).not.toHaveProperty('target')
+  })
+})
+
+describe('C438-HINTS', () => {
+  const all = (): GroundingError[] => [
+    groundingError.descriptorUnresolved('web_click', 'button "Save"'),
+    groundingError.descriptorAmbiguous('web_click', 'button "Okay"', 2),
+    groundingError.descriptorInvalid('web_click', 'no-handle'),
+    groundingError.descriptorInvalid('web_click', 'name-missing'),
+    groundingError.descriptorInvalid('web_click', 'near-unsupported'),
+  ]
+
+  it('an unresolved target names role, name and row words as the restatement', () => {
+    const { hint } = groundingError.descriptorUnresolved('web_click', 'button "Save"')
+
+    expect(hint).toMatch(/\brole\b/)
+    expect(hint).toMatch(/\bname\b/)
+    expect(hint).toMatch(/row words/)
+  })
+
+  it('an ambiguous target keeps the count and points at the ref the step means, never a pick', () => {
+    const { message, hint } = groundingError.descriptorAmbiguous('web_click', 'button "Okay"', 3)
+
+    expect(message).toContain('3 elements match button "Okay"')
+    expect(hint).toMatch(/ref of the element the step means/)
+    expect(hint).toMatch(/latest observation/)
+    expect(hint).toMatch(/does not say which/)
+    expect(hint).toMatch(/report the candidates and do not choose/)
+  })
+
+  it('no-handle says an element action needs a ref with its target, or a target alone', () => {
+    const { message, hint } = groundingError.descriptorInvalid('web_click', 'no-handle')
+
+    expect(message).toContain('needs a ref (with its stated target) or, with no confident ref, a target')
+    expect(hint).toMatch(/\bref\b/)
+    expect(hint).toMatch(/no confident ref, send the target alone/)
+  })
+
+  it('near-unsupported points at name and role', () => {
+    const { message, hint } = groundingError.descriptorInvalid('web_click', 'near-unsupported')
+
+    expect(message).toMatch(/use name and role/)
+    expect(hint).toMatch(/role and name/)
+  })
+
+  it('no grounding error message or hint mentions an ordinal', () => {
+    for (const error of all()) {
+      expect(error.message, error.code).not.toMatch(/ordinal/i)
+      expect(error.hint, error.code).not.toMatch(/ordinal/i)
+    }
+  })
+
+  it('a descriptor renders as its role and quoted name only', () => {
+    const result = groundActionPlan({
+      toolName: 'click',
+      action: { type: 'click', target: { role: 'button', name: 'Okay', ordinal: 7 } },
+      screenState: makeScreenState(),
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.ok ? '' : result.error.message).toContain('button "Okay" for tool')
   })
 })

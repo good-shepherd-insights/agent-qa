@@ -176,8 +176,7 @@ function renderDescriptor(descriptor: DescriptorInput): string {
       : typeof descriptor.nameNormalized === 'string'
         ? descriptor.nameNormalized
         : ''
-  const ordinal = typeof descriptor.ordinal === 'number' ? ` #${descriptor.ordinal}` : ''
-  return name.length > 0 ? `${role} "${name}"${ordinal}` : `${role}${ordinal}`
+  return name.length > 0 ? `${role} "${name}"` : role
 }
 
 function coordBoundsError(
@@ -238,7 +237,7 @@ export function groundActionPlan(input: GroundActionPlanInput): GateResult {
     // container (scroll/swipe/pinch/multiTap may ground nothing).
     if (!hasRef && !hasTarget) {
       if (group.required) {
-        return fail(groundingError.descriptorInvalid(toolName, 'exactly-one'), attempts)
+        return fail(groundingError.descriptorInvalid(toolName, 'no-handle'), attempts)
       }
       continue
     }

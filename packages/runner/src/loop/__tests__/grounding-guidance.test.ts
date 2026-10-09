@@ -53,11 +53,11 @@ describe('363-02 planner grounding guidance (D-14 · LOOP-05)', () => {
   // §7.1 message the one-shot retry injects — names BOTH remedies (cite a ref / provide a
   // role+name target) so the retry can actually correct rather than repeat the mistake.
   it('descriptor_invalid exactly-one feedback names both remedies (ref and target)', () => {
-    const err = groundingError.descriptorInvalid('click', 'exactly-one')
+    const err = groundingError.descriptorInvalid('click', 'no-handle')
     const feedback = `${err.message} ${err.hint}`
     expect(feedback).toMatch(/\bref\b/i)
     expect(feedback).toMatch(/\btarget\b/i)
-    expect(feedback).toMatch(/exactly one/i)
+    expect(feedback).toMatch(/no confident ref/i)
   })
 
   // Test 3 (behavior block Test 3 — root cause is guidance-side, not observation-side, so
@@ -76,6 +76,7 @@ describe('363-02 planner grounding guidance (D-14 · LOOP-05)', () => {
     expect(line, `expected a doc line for ${toolId} on ${platform}`).toBeDefined()
     expect(line as string).toMatch(/\bref\b/i)
     expect(line as string).toMatch(/\btarget\b/i)
-    expect(line as string).toMatch(/exactly one of ref or target/i)
+    expect(line as string).toMatch(/alongside ref/i)
+    expect(line as string).toMatch(/no confident ref, send target alone/i)
   })
 })
