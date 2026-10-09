@@ -2,6 +2,7 @@
 // element with its role and exact name. 'Invoice 947' and 'Invoice 946' share a cache key (both
 // normalize to 'invoice'), so the second run is a key hit; the stored name decides whether it
 // replays. Real headless Chromium through the real runner loop; pages are inline snippets.
+// 438-09 (D-11): a key hit that does not replay is a recorded miss with its typed reason.
 
 import { afterEach, describe, expect, it } from 'vitest'
 import type { PlannerConfig } from '@vostride/agent-qa-runner'
@@ -138,4 +139,21 @@ describe('C438-STRICT-REPLAY', () => {
     expect(second.run.result.evidence?.cacheStatus).toBe('hit')
     expect(second.run.result.status).toBe('passed')
   }, 90_000)
+
+  it('the 946 miss is recorded with its reason', async () => {
+    const missCache = memoryCache()
+    await storeInvoice947(missCache, [947])
+    const miss = await replay(missCache, [946])
+    expect(missCache.gets.at(-1)).toEqual({ key: missCache.sets[0], hit: true })
+    expect(miss.run.result.evidence?.cacheStatus).toBe('miss')
+    expect(miss.run.result.evidence?.cacheMiss).toEqual({ reason: 'strict-absent' })
+
+    const hitCache = memoryCache()
+    await storeInvoice947(hitCache, [947, 946])
+    const hit = await replay(hitCache, [946, 947])
+    expect(hitCache.gets.at(-1)).toEqual({ key: hitCache.sets[0], hit: true })
+    expect(hit.clicks).toEqual(['Invoice 947'])
+    expect(hit.run.result.evidence?.cacheStatus).toBe('hit')
+    expect(hit.run.result.evidence).not.toHaveProperty('cacheMiss')
+  }, 120_000)
 })

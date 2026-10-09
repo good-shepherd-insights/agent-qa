@@ -556,6 +556,7 @@ export type {
   TraceLine,
 } from './brief/index'
 export type {
+  CacheMissReason,
   CompletedRunHandoff,
   CycleEvidence,
   DeclaredModelProfile,

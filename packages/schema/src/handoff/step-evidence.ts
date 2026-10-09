@@ -105,6 +105,12 @@ export type StepPlanSource =
       demotion?: 'body-unreadable' | 'body-unparseable' | 'body-empty'
     }
 
+/**
+ * Why a cache key hit did not replay (438 D-10, D-11): its stored target matched no current
+ * element strictly, matched several, or the stored value cannot replay at all.
+ */
+export type CacheMissReason = 'strict-absent' | 'strict-not-unique' | 'non-replayable'
+
 export interface Decision {
   plan: string
   plannedAction: Action
@@ -128,6 +134,12 @@ export interface StepEvidence {
   stepIndex: number
   stepText: string
   cacheStatus: 'hit' | 'miss' | 'bypass'
+  /**
+   * The first cache key hit in this step whose stored target was not the only strict match, or
+   * could not replay (438 D-11). Present only when `cacheStatus` is 'miss'; `cacheStatus` stays
+   * the three-value union and the handoff schema version stays 7 (optional-additive).
+   */
+  cacheMiss?: { reason: CacheMissReason }
   servedBrief: ServedBrief
   /**
    * The run-scoped verbatim working-memory entries served to this step's planning turns

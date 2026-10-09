@@ -5,7 +5,7 @@ import type { Ref } from '../primitives/ref'
  * what the planner emits to name a target element instead of a raw ref: the matcher
  * resolves it against a fresh observation at grounding time. One descriptor world is
  * shared by the tool surface, the matcher, and the cache's `GroundedLocator`
- * ({ role, nameNormalized, ordinal? } is structurally assignable here — every field
+ * ({ role, name, row? } since 438 D-11 is structurally assignable here — every field
  * is optional so the cache value shape is unchanged).
  *
  * Pure type-only DTO: no runtime code, no zod, no host APIs (schema ownership contract).

@@ -20,6 +20,7 @@ import type {
   Action,
   ActionAnnotation,
   AriaEvidenceEntry,
+  CacheMissReason,
   ActionResult as SchemaActionResult,
   AiJudgmentEvidence,
   AssertValueEvidence,
@@ -315,6 +316,7 @@ export class EvidenceRecorder {
   private assertOutcome?: AssertValueEvidence
   private verdictSource?: VerdictSource
   private planSource?: StepPlanSource
+  private cacheMiss?: { reason: CacheMissReason }
   /** D-06 run-declared planner context, copied onto every finalized step when bound. */
   private readonly modelProfile?: DeclaredModelProfile
   /** D-07 verifier identity copied beside every finalized verdict when bound. */
@@ -671,6 +673,14 @@ export class EvidenceRecorder {
   }
 
   /**
+   * Record why a cache key hit did not replay (438 D-11), before the loop invalidates the entry.
+   * The first reason in the step is kept.
+   */
+  recordCacheMiss(miss: { reason: CacheMissReason }): void {
+    this.cacheMiss ??= { reason: miss.reason }
+  }
+
+  /**
    * Attach the D-15 stateAfter at the spec-locked boundaries (assert sub-actions, the
    * verifier boundary, the self-heal boundary) by reuse of an observation the loop
    * already takes — no extra capture.
@@ -767,6 +777,7 @@ export class EvidenceRecorder {
     if (this.assertOutcome) evidence.assertOutcome = this.assertOutcome
     if (this.verdictSource) evidence.verdictSource = this.verdictSource
     if (this.planSource) evidence.planSource = this.planSource
+    if (this.cacheMiss && evidence.cacheStatus === 'miss') evidence.cacheMiss = this.cacheMiss
     if (this.modelProfile !== undefined) evidence.modelProfile = this.modelProfile
     if (this.verifierIdentity !== undefined) evidence.verifierIdentity = this.verifierIdentity
     if (this.toolSchemaDigest !== undefined) evidence.toolSchemaDigest = this.toolSchemaDigest

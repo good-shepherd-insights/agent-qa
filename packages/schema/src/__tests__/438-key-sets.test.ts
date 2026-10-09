@@ -1,6 +1,7 @@
 // 2026-10-09 (438-02, D-02, D-05, 436 D-17): the persisted target refusal block, its historical
-// reader and the optional-additive grounding fields; 438-06 (D-09) adds the binding block. Every
-// expected set is spelled by hand, never derived from the module under test.
+// reader and the optional-additive grounding fields; 438-06 (D-09) adds the binding block; 438-09
+// (D-11) adds the recorded cache miss. Every expected set is spelled by hand, never derived from
+// the module under test.
 import { readFileSync } from 'node:fs'
 
 import { describe, expect, expectTypeOf, it } from 'vitest'
@@ -16,8 +17,10 @@ import {
 } from '../index'
 import type {
   BindingOutcomeMeta,
+  CacheMissReason,
   CompletedRunHandoff,
   GroundingEvidence,
+  StepEvidence,
   TargetDescriptor,
   TargetIdentity,
   TargetRefusalMeta,
@@ -171,5 +174,27 @@ describe('C438-KEY-SETS', () => {
   it("returns undefined for a heal outside 'absent' and 'not-unique'", () => {
     const block = { outcome: 'binding-changed', ref: 'e7', inputSent: false, heal: 'resolved' }
     expect(readBindingOutcomeMeta(withBinding(block))).toBeUndefined()
+  })
+
+  it('a cache miss reason is exactly strict-absent, strict-not-unique or non-replayable', () => {
+    const reasons = ['strict-absent', 'strict-not-unique', 'non-replayable'] as const
+    expectTypeOf<CacheMissReason>().toEqualTypeOf<(typeof reasons)[number]>()
+  })
+
+  it('step evidence gains an optional cache miss and keeps its three cache statuses', () => {
+    expectTypeOf<Pick<StepEvidence, 'cacheMiss'>>().toEqualTypeOf<{
+      cacheMiss?: { reason: CacheMissReason }
+    }>()
+    expectTypeOf<StepEvidence['cacheStatus']>().toEqualTypeOf<'hit' | 'miss' | 'bypass'>()
+  })
+
+  it('a handoff whose step carries a cache miss still loads', () => {
+    const handoff = JSON.parse(readFileSync(preChangeHandoff, 'utf8')) as CompletedRunHandoff
+    const step = handoff.tests[0].steps[0]
+    step.cacheStatus = 'miss'
+    step.cacheMiss = { reason: 'strict-not-unique' }
+    const loaded = guardCompletedRunHandoff(JSON.parse(JSON.stringify(handoff)))
+    expect(loaded.tests[0].steps[0].cacheStatus).toBe('miss')
+    expect(loaded.tests[0].steps[0].cacheMiss).toEqual({ reason: 'strict-not-unique' })
   })
 })

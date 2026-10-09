@@ -22,6 +22,7 @@ import {
 import type {
   Action as SchemaAction,
   ActionAnnotation,
+  CacheMissReason,
   ClipboardEvidence,
   CompoundInputCount,
   InputEvidence,
@@ -1029,12 +1030,14 @@ export async function executeStep(
       if (hit) {
         // Exact-key hit: re-find each stored target strictly in the FRESH observation (a stored
         // target never drives a blind click, T-356-04a, and never a pick, D-10). All resolve ⇒
-        // replay with NO LLM call. A key hit that does not replay ⇒ invalidate and replan (A7).
+        // replay with NO LLM call. A key hit that does not replay is a recorded miss with its
+        // reason (D-11), then invalidated and replanned (A7).
         const replay = replayFromCache(hit, screenState.elements)
         if (replay.ok) {
           planResult = { plan: replay.plan }
           cached = true
         } else {
+          recorder.recordCacheMiss({ reason: replay.reason })
           await ports.cache!.invalidate(cacheKey)
           ports.logger?.createScopedLogger('cache')?.debug(
             'Cached target does not replay — re-planning', { actionIndex, reason: replay.reason },
@@ -2138,10 +2141,7 @@ function replayLanes(action: Record<string, unknown>, locatorCount: number): str
   return locatorCount >= 1 ? ['ref'] : []
 }
 
-// Why a cache key hit did not replay (D-10). 438-09 moves this union into the schema.
-type CacheReplayMissReason = 'strict-absent' | 'strict-not-unique' | 'non-replayable'
-
-type CacheReplay = { ok: true; plan: ActionPlan } | { ok: false; reason: CacheReplayMissReason }
+type CacheReplay = { ok: true; plan: ActionPlan } | { ok: false; reason: CacheMissReason }
 
 // Replay rung of the hit ladder (D-13): reconstruct an ActionPlan from a descriptor-only
 // cached value by re-finding EVERY stored per-field locator in the FRESH observation
