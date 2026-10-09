@@ -117,6 +117,11 @@ const REQUIRED_ELEMENT_TYPES = new Set<string>([
   'doubleTap',
 ])
 
+/** Whether an action type must name one element on its ref lane (438-09: cache replay reads it). */
+export function requiresElementRef(type: string): boolean {
+  return REQUIRED_ELEMENT_TYPES.has(type)
+}
+
 // Actions whose element target is an OPTIONAL container (may ground an element or not).
 const OPTIONAL_ELEMENT_TYPES = new Set<string>(['scroll', 'swipe', 'pinch', 'multiTap'])
 

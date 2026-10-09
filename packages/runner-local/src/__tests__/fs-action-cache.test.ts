@@ -110,6 +110,35 @@ describe('FsActionCache', () => {
 
   it('uses a schema version bumped above the retired v1 (9)', () => {
     expect(CACHE_SCHEMA_VERSION).toBeGreaterThan(9)
+    expect(CACHE_SCHEMA_VERSION).toBe(12)
+  })
+
+  it('reads a version-11 entry as a miss (438 D-11, no migration)', async () => {
+    const dir = join(root, 'main')
+    await mkdir(dir, { recursive: true })
+    await writeFile(
+      join(dir, `${KEY}.json`),
+      JSON.stringify({ schemaVersion: 11, value: makeValue() }),
+      'utf-8',
+    )
+
+    const cache = new FsActionCache({ root, policy: makePolicy() })
+    expect(await cache.get(KEY)).toBeNull()
+  })
+
+  it('round-trips a version-12 envelope', async () => {
+    const dir = join(root, 'main')
+    await mkdir(dir, { recursive: true })
+    const value = makeValue()
+    value.groundedLocator = [{ role: 'button', name: 'Edit label', row: '7 Elm Street' }]
+    await writeFile(
+      join(dir, `${KEY}.json`),
+      JSON.stringify({ schemaVersion: 12, value }),
+      'utf-8',
+    )
+
+    const cache = new FsActionCache({ root, policy: makePolicy() })
+    expect(await cache.get(KEY)).toEqual(value)
   })
 
   it('returns null for a corrupt entry rather than throwing', async () => {

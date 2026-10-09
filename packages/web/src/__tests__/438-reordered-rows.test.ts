@@ -2,7 +2,7 @@
 // before its action reaches the page. Real headless Chromium through the real runner loop; pages
 // are inline snippets. 438-06 holds the navigated leg; 438-07 the replaced and recycled legs (the
 // strict heal, D-07, D-08); 438-08 the cached leg (strict replay through the row words, D-10,
-// D-11); 438-09 adds legs.
+// D-11); 438-09 the cached miss leg (no row words, so the repeated label is a recorded miss).
 
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Action, ExecuteOptions, PlannerConfig } from '@vostride/agent-qa-runner'
@@ -399,5 +399,55 @@ describe('C438-REORDERED-ROWS', () => {
     expect(await pageClicks(web)).toEqual(['7 Elm Street, Springfield'])
     expect(run.executed).toHaveLength(1)
     expect(run.result.status).toBe('passed')
+  }, 90_000)
+
+  it('cached without row words: the repeated label is a miss', async () => {
+    const cache = memoryCache()
+    const instruction = "Edit the label of the address '7 Elm Street'"
+
+    const live = await open(LIVE_ROWS_PAGE)
+    const livePlanner = scriptedPlanner([
+      (screen) => act(
+        {
+          type: 'click',
+          ref: refFor(screen, 'button', 'Edit label', 0),
+          target: { role: 'button', name: 'Edit label' },
+        },
+        true,
+        'Edit the first address label',
+      ),
+    ])
+    const first = await runScriptedStep({
+      adapter: live,
+      instruction,
+      planner: livePlanner,
+      verifier: passes,
+      cache,
+      plannerConfig: LIMITS,
+    })
+    expect(first.result.status).toBe('passed')
+    expect(cache.sets).toHaveLength(1)
+    expect(cache.store.get(cache.sets[0])?.groundedLocator).toEqual([
+      { role: 'button', name: 'Edit label' },
+    ])
+
+    const web = await open(LIVE_ROWS_PAGE)
+    const planner = scriptedPlanner([() => giveUp('the cached label did not replay')])
+    const run = await runScriptedStep({
+      adapter: web,
+      instruction,
+      planner,
+      verifier: passes,
+      cache,
+      plannerConfig: LIMITS,
+    })
+
+    expect(cache.gets.at(-1)).toEqual({ key: cache.sets[0], hit: true })
+    expect(run.result.evidence?.cacheStatus).toBe('miss')
+    expect(run.result.evidence?.cacheMiss).toEqual({ reason: 'strict-not-unique' })
+    expect(planner.calls).toBe(1)
+    expect(run.executed).toEqual([])
+    expect(await pageClicks(web)).toEqual([])
+    expect(cache.store.size).toBe(0)
   }, 90_000)
 })

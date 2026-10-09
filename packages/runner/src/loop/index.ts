@@ -69,7 +69,7 @@ import { buildCacheableStepInput } from '../cache/key.js'
 import { buildCachedPlanValue } from '../cache/value.js'
 import { deterministicDescriptorMatcher } from '../cache/reground.js'
 import { matchDescriptor } from '../grounding/matcher.js'
-import { groundActionPlan } from '../grounding/gate.js'
+import { groundActionPlan, requiresElementRef } from '../grounding/gate.js'
 import { judgeStatedTarget, renderTargetMismatch } from '../grounding/stated-target.js'
 import { rowTextOf } from '../grounding/row-text.js'
 import { strictMatch } from '../grounding/strict-match.js'
@@ -2135,10 +2135,11 @@ function deriveEnvSetNames(stepText: string): string[] {
 
 // The ordered ref-field lanes replay must re-resolve for an action (Pitfall 5a): a drag
 // maps its two per-field locators onto fromRef/toRef; every other element action maps its
-// single locator onto ref. A locator-less action (navigate/waitFor/…) has no lane.
+// single locator onto ref. A locator-less action (navigate/waitFor/…) has no lane, but an
+// action type that must name an element always has its ref lane (438-09).
 function replayLanes(action: Record<string, unknown>, locatorCount: number): string[] {
   if (action.type === 'drag') return ['fromRef', 'toRef']
-  return locatorCount >= 1 ? ['ref'] : []
+  return locatorCount >= 1 || requiresElementRef(String(action.type ?? '')) ? ['ref'] : []
 }
 
 type CacheReplay = { ok: true; plan: ActionPlan } | { ok: false; reason: CacheMissReason }

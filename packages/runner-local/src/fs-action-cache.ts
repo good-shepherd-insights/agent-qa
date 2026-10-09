@@ -28,8 +28,11 @@ import { shouldWrite, type CachePolicy } from './write-policy.js'
  * Phase 360 (D-08/T-360-07): bumped 10 -> 11 for the catalog flip (D-15 platform.ts
  * action-shape re-key). No migration — a legacy-shaped entry serialized under version 10
  * fails the version gate and reads as a MISS, closing the stale-replay hazard from the flip.
+ *
+ * 2026-10-09 (438 D-11): bumped 11 -> 12 for strict locators `{ role, name, row? }`. A version-11
+ * entry (normalized name plus ordinal) reads as a miss; no migration.
  */
-export const CACHE_SCHEMA_VERSION = 11
+export const CACHE_SCHEMA_VERSION = 12
 
 interface CacheEnvelope {
   schemaVersion: number
