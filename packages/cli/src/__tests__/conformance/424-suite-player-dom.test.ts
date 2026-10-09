@@ -421,10 +421,32 @@ it('SUITE-BROWSER-MEDIA: real progress, marker details, local seeks and continue
     observations.continuousDrag = drag
     const target = drag.find(row => row.member === 1)!.fraction * durations.reduce((sum, value) => sum + value, 0)
     const expectedLocal = target - durations[0]!
+    // 2026-10-10 (quick 261010-11a): on member 1's new source the player first seeks to the
+    // selected marker's offset and applies the click's own seek from that seek's `seeked`. A
+    // read at an arbitrary moment could land between the two (0.33-0.43 s drift under load), so
+    // the recorder keeps the position of the first `seeked` on that source after which no
+    // further seek starts: the click's settled seek.
+    await page.evaluate(sha => {
+      const recorder = window as unknown as { clickSeek?: Promise<number> }
+      recorder.clickSeek = new Promise<number>(resolve => {
+        const settled = (event: Event) => {
+          const media = event.target as HTMLMediaElement
+          if (!media.currentSrc.includes(sha)) return
+          const position = media.currentTime
+          // Capture runs before the player's own `seeked` listener; look once dispatch is over.
+          setTimeout(() => {
+            if (media.seeking || !media.currentSrc.includes(sha)) return
+            document.removeEventListener('seeked', settled, true)
+            resolve(position)
+          }, 0)
+        }
+        document.addEventListener('seeked', settled, true)
+      })
+    }, detail.members[1]!.recording!.state === 'present' ? detail.members[1]!.recording!.ref.sha : 'missing')
     await page.mouse.click(bounds.x + bounds.width * target / durations.reduce((sum, value) => sum + value, 0), bounds.y + 2)
     await mediaReady(page)
     await expect.poll(() => page.locator('video').getAttribute('src')).toContain(detail.members[1]!.recording!.state === 'present' ? detail.members[1]!.recording!.ref.sha : 'missing')
-    const local = await page.locator('video').evaluate(video => (video as HTMLVideoElement).currentTime)
+    const local = await page.evaluate(() => (window as unknown as { clickSeek: Promise<number> }).clickSeek)
     expect(Math.abs(local - expectedLocal)).toBeLessThan(0.15)
     await page.getByRole('slider').press('Home')
     await mediaReady(page)
