@@ -4,9 +4,11 @@ import { resumePathClosureOf } from './resume-path-model-free.js'
 export interface CalibrationSource { file: string; text: string }
 export type PackageEntries = ReadonlyMap<string, string>
 
+export const parseCalibrationSource = (source: CalibrationSource) =>
+  ts.createSourceFile(source.file, source.text, ts.ScriptTarget.Latest, true)
+
 /** Parse statements rather than local names: aliases, re-exports and multiline imports count. */
-export function calibrationImports(source: CalibrationSource, runtimeOnly = false) {
-  const ast = ts.createSourceFile(source.file, source.text, ts.ScriptTarget.Latest, true)
+export function calibrationImports(source: CalibrationSource, runtimeOnly = false, ast = parseCalibrationSource(source)) {
   const hits: { file: string; line: number; specifier: string }[] = []
   const visit = (node: ts.Node): void => {
     // verbatimModuleSyntax erases only statement-level type imports/exports.
@@ -29,7 +31,7 @@ export function calibrationImports(source: CalibrationSource, runtimeOnly = fals
 export function calibrationClosure(sources: readonly CalibrationSource[], entries: readonly string[], packages: PackageEntries, runtimeOnly = false) {
   const known = new Set(sources.map(source => source.file))
   const unresolved: string[] = []
-  const modules = sources.map(source => ({ file: source.file, specifiers: calibrationImports(source, runtimeOnly).map(hit => {
+  const specifiersOf = (source: CalibrationSource) => calibrationImports(source, runtimeOnly).map(hit => {
     if (!hit.specifier.startsWith('@vostride/agent-qa-')) return hit
     const target = packages.get(hit.specifier)
     if (!target || !known.has(target)) {
@@ -38,7 +40,12 @@ export function calibrationClosure(sources: readonly CalibrationSource[], entrie
     }
     const depth = source.file.split('/').length - 1
     return { ...hit, specifier: '../'.repeat(depth) + target }
-  }) }))
+  })
+  // The walk reads specifiers only for files it reaches, so a file is parsed when first reached.
+  const modules = sources.map(source => {
+    let specifiers: ReturnType<typeof specifiersOf> | undefined
+    return { file: source.file, get specifiers() { return specifiers ??= specifiersOf(source) } }
+  })
   const closure = resumePathClosureOf(modules, entries)
   for (const edge of closure.unresolved) unresolved.push(`${edge.from}: ${edge.hit.specifier}`)
   return { ...closure, unresolved }
@@ -49,18 +56,20 @@ const privateCalibration = /\b(?:CHANNEL_TO_ORIGIN_CLASS|LabelSourceChannel|LABE
 
 export function calibrationBoundaryHits(sources: readonly CalibrationSource[]): string[] {
   const hits: string[] = []
+  // Both findings are about learner files, so only learner files are parsed, once each.
   for (const source of sources) {
+    if (!learner.test(source.file)) continue
     let leaked = false
-    const ast = ts.createSourceFile(source.file, source.text, ts.ScriptTarget.Latest, true)
+    const ast = parseCalibrationSource(source)
     const visit = (node: ts.Node): void => {
       if ((ts.isIdentifier(node) || ts.isStringLiteral(node)) && privateCalibration.test(node.text)) leaked = true
       ts.forEachChild(node, visit)
     }
     visit(ast)
-    if (learner.test(source.file) && leaked) hits.push(`${source.file}: calibration vocabulary crossed neutral boundary`)
-    for (const edge of calibrationImports(source)) {
-      if (learner.test(source.file) && (/^@vostride\/agent-qa-eval(?:-local)?(?:$|\/)/.test(edge.specifier)
-        && edge.specifier !== '@vostride/agent-qa-eval-local/reader')) hits.push(`${source.file}: eval main/writer import`)
+    if (leaked) hits.push(`${source.file}: calibration vocabulary crossed neutral boundary`)
+    for (const edge of calibrationImports(source, false, ast)) {
+      if (/^@vostride\/agent-qa-eval(?:-local)?(?:$|\/)/.test(edge.specifier)
+        && edge.specifier !== '@vostride/agent-qa-eval-local/reader') hits.push(`${source.file}: eval main/writer import`)
     }
   }
   return hits

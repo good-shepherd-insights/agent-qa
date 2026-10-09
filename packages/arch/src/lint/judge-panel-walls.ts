@@ -1,11 +1,10 @@
 import ts from 'typescript'
-import { calibrationImports, type CalibrationSource } from './label-calibration-walls.js'
+import { calibrationImports, parseCalibrationSource, type CalibrationSource } from './label-calibration-walls.js'
 
 export interface JudgePanelDiagnostic { file: string; rule: string; line: number }
 
 /** Lexical symbols matter: a local with the right spelling is not a profile or receipt. */
-function analysis(source: CalibrationSource) {
-  const ast = ts.createSourceFile(source.file, source.text, ts.ScriptTarget.Latest, true)
+function analysis(source: CalibrationSource, ast: ts.SourceFile) {
   const host = ts.createCompilerHost({ noLib: true, noResolve: true })
   host.getSourceFile = file => file === source.file ? ast : undefined
   const checker = ts.createProgram([source.file], { noLib: true, noResolve: true }, host).getTypeChecker()
@@ -161,8 +160,13 @@ export function judgePanelWalls(sources: readonly CalibrationSource[]): JudgePan
   const hits: JudgePanelDiagnostic[] = []
   for (const source of sources) {
     if (!/^(?:packages\/(?:eval(?:-local)?|core|knowledge(?:-local)?|agent(?:-local)?|schema)\/src\/)/.test(source.file)) continue
-    // Parse all imports cheaply; lexical analysis is needed only in source with a guarded surface.
-    const edges = calibrationImports(source)
+    // Core outside its schema directory has no import rule, so only a guarded surface parses it.
+    const importRules = !source.file.startsWith('packages/core/src/') || source.file.startsWith('packages/core/src/schema/')
+    const guarded = /assessPanelEligibility|createModel|bindJudgePanel|judgePairwise|adjudicate|Judge(?:Panel)?Port|AdjudicationPort|plannerFamily|judgeFamily/.test(source.text)
+    if (!importRules && !guarded) continue
+    // One parse per file serves both the import rules and the lexical analysis.
+    const ast = parseCalibrationSource(source)
+    const edges = importRules ? calibrationImports(source, false, ast) : []
     const addEdge = (rule: string, line: number) => hits.push({ file: source.file, rule, line })
     for (const edge of edges) {
       if (source.file.startsWith('packages/core/src/schema/')
@@ -174,8 +178,8 @@ export function judgePanelWalls(sources: readonly CalibrationSource[]): JudgePan
         && /(?:agent-qa-knowledge|\/knowledge(?:-local)?\/)/.test(edge.specifier)) addEdge('eval-knowledge-edge', edge.line)
       if (source.file === local + 'reader.ts' && /calibration|judge-binding|eval-local$/.test(edge.specifier)) addEdge('private-reader', edge.line)
     }
-    if (!/assessPanelEligibility|createModel|bindJudgePanel|judgePairwise|adjudicate|Judge(?:Panel)?Port|AdjudicationPort|plannerFamily|judgeFamily/.test(source.text)) continue
-    const a = analysis(source)
+    if (!guarded) continue
+    const a = analysis(source, ast)
     const add = (rule: string, node: ts.Node) => addEdge(rule, a.ast.getLineAndCharacterOfPosition(node.getStart(a.ast)).line + 1)
     const calls: ts.CallExpression[] = []
     a.walk(a.ast, node => {
