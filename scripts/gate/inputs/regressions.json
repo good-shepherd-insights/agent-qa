@@ -4356,6 +4356,42 @@
       "file": "packages/arch/src/__tests__/437-mobile-input-census.test.ts",
       "fullName": "C437-CENSUS — the mobile input census (437 D-01, D-05, D-11, D-12, D-14, D-19) C437-NO-INPUT-REACHES-LIVE: every sub-action outcome a dashboard surface reads can say no input sent",
       "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/result/__tests__/no-input.test.ts",
+      "fullName": "C437-NO-INPUT-READER actionDidNotFail is true for a success and for a skipped tap",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/result/__tests__/no-input.test.ts",
+      "fullName": "C437-NO-INPUT-READER actionDidNotFail is false for a real failure",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/knowledge-local/src/feedback/__tests__/apply-feedback.test.ts",
+      "fullName": "C437-NO-INPUT-READERS a step whose only action was a skipped tap and whose verifier failed is assertion drift",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/knowledge-local/src/feedback/__tests__/apply-feedback.test.ts",
+      "fullName": "C437-NO-INPUT-READERS a step with a real failed action and a failed verifier is not assertion drift",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/verdict/__tests__/action-anchor-fingerprint.test.ts",
+      "fullName": "C437-NO-INPUT-READERS a skipped tap's anchor counts in the test fingerprint, as before 437",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/verdict/__tests__/action-anchor-fingerprint.test.ts",
+      "fullName": "C437-NO-INPUT-READERS a really failed sub-action still adds no element",
+      "origin": "437 D-05"
     }
   ]
 }

@@ -36,6 +36,7 @@ import {
   resolvedElementEvidence,
 } from '../identity/exercised-anchors'
 import { normalizeAnchor } from '../identity/normalize-anchor'
+import { actionDidNotFail } from '../result/no-input'
 
 /**
  * The recipe version. Bumping it RE-KEYS every accumulated fingerprint: the derived suite
@@ -155,10 +156,12 @@ export interface FingerprintEvidenceLike {
  * "does this draft add value" with an artifact of the derivation. Living in `schema` is what lets
  * both readers reach it; `agent` names neither `core` nor `knowledge-local` and never will.
  *
- * ONLY SUCCEEDED SUB-ACTIONS COUNT. `result.success !== true` means the planned action did not
- * run to an accepted result, and a surface an action failed to reach is not surface the test
- * covers. Retuning that rule is a measurement, not a preference, and it must move on both sides
- * at once — which is now structurally guaranteed rather than merely intended.
+ * ONLY SUB-ACTIONS THAT DID NOT FAIL COUNT (`actionDidNotFail`). A failed sub-action did not run
+ * to an accepted result, and a surface an action failed to reach is not surface the test covers.
+ * A skipped tap did not fail: it found its target already in the desired state and sent no input
+ * (437 D-05), so its anchor counts, as it did before 437 recorded the skip `success: false`.
+ * Retuning that rule is a measurement, not a preference, and it must move on both sides at once —
+ * which is now structurally guaranteed rather than merely intended.
  *
  * A route is attached as CONTEXT only to element anchors. A page anchor already IS its route, so
  * repeating it would mint two spellings of one fact.
@@ -167,7 +170,7 @@ export function testFingerprintElements(test: FingerprintEvidenceLike): string[]
   const elements: string[] = []
   for (const step of test.steps ?? []) {
     for (const subAction of step.subActions ?? []) {
-      if (subAction.result?.success !== true) continue
+      if (!actionDidNotFail(subAction.result)) continue
       const anchor = subActionAnchor(step, subAction)
       if (anchor === undefined) continue
       const type = subAction.plannedAction.type

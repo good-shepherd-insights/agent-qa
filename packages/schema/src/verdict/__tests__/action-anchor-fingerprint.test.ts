@@ -11,11 +11,15 @@
 
 import { describe, expect, it } from 'vitest'
 
+import type { StepEvidence } from '../../handoff/step-evidence'
+import type { SubActionEvidence } from '../../handoff/sub-action-evidence'
 import type { Anchor } from '../../identity/anchor'
+import { asRef } from '../../primitives/ref'
 import {
   ACTION_ANCHOR_FINGERPRINT_VERSION,
   actionAnchorElement,
   actionAnchorSequence,
+  testFingerprintElements,
   type ActionAnchorElementInput,
 } from '../action-anchor-fingerprint'
 
@@ -144,5 +148,97 @@ describe('actionAnchorSequence (393 D-13)', () => {
 
   it('maps an empty step list to an empty sequence', () => {
     expect(actionAnchorSequence([])).toEqual([])
+  })
+})
+
+// 2026-10-09 (437-18, D-05, WR-03): a skipped tap sent no input but did not fail, so its anchor
+// is covered surface on both sides of gate 3, as it was before 437 recorded it `success: false`.
+describe('C437-NO-INPUT-READERS', () => {
+  const toggle = {
+    ref: asRef('e1'),
+    role: 'switch',
+    name: 'Notifications',
+    nameNormalized: 'notifications',
+    state: { enabled: true, focused: false, visible: true, checked: true },
+    labels: {},
+    attributes: {},
+  }
+
+  function testWith(result: SubActionEvidence['result']): { steps: StepEvidence[] } {
+    return {
+      steps: [
+        {
+          stepIndex: 0,
+          stepText: 'turn notifications on',
+          cacheStatus: 'miss',
+          servedBrief: {
+            scope: { tier: 'product', key: 'fingerprint' },
+            asOfBuild: 1,
+            budget: 0,
+            truncation: 'none',
+            channel1: [],
+            channel2: [],
+            channel3: [],
+            briefDigest: 'digest',
+          },
+          subActions: [
+            {
+              plan: 'tap Notifications',
+              plannedAction: { type: 'tap', ref: toggle.ref, desiredState: 'checked' },
+              stateBefore: {
+                platform: 'android',
+                tree: '',
+                elements: [toggle],
+                refMap: {},
+                timestamp: 1,
+                metadata: {
+                  coordSpace: 'viewport',
+                  viewportWidth: 1080,
+                  viewportHeight: 1920,
+                  scroll: { offsetX: 0, offsetY: 0, contentWidth: 1080, contentHeight: 1920 },
+                  captureMode: 'textOnly',
+                },
+              },
+              result,
+            },
+          ],
+          verifierVerdict: { pass: true, reasoning: 'notifications are on' },
+        },
+      ],
+    }
+  }
+
+  it("a skipped tap's anchor counts in the test fingerprint, as before 437", () => {
+    const skipped = testFingerprintElements(
+      testWith({
+        success: false,
+        metadata: { idempotentNoop: { currentState: 'checked', inputSent: false } },
+      }),
+    )
+    expect(skipped).toEqual([
+      actionAnchorElement({
+        kind: 'action',
+        type: 'tap',
+        anchor: { t: 'el', role: 'switch', name: 'notifications', ordinal: 0 },
+      }),
+    ])
+    const pre437 = testFingerprintElements(
+      testWith({ success: true, metadata: { idempotentNoop: { currentState: 'checked' } } }),
+    )
+    expect(pre437).toEqual(skipped)
+  })
+
+  it('a really failed sub-action still adds no element', () => {
+    expect(
+      testFingerprintElements(testWith({ success: false, error: 'element not found' })),
+    ).toEqual([])
+    expect(
+      testFingerprintElements(
+        testWith({
+          success: false,
+          metadata: { idempotentNoop: { currentState: 'checked', inputSent: true } },
+        }),
+      ),
+    ).toEqual([])
   })
 })
