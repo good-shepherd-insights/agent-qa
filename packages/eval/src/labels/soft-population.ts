@@ -1,4 +1,4 @@
-import { screenStateHash, sha256hex } from '@vostride/agent-qa-schema'
+import { actionDidNotFail, screenStateHash, sha256hex } from '@vostride/agent-qa-schema'
 import type { Action, CompletedRunHandoff, MarkReceipt, PerTestOutcome, StepEvidence, SubActionEvidence } from '@vostride/agent-qa-schema'
 import { canonicalJson } from '../canonical-json'
 import { resolveProductPartition } from './corpus-entry'
@@ -96,7 +96,9 @@ function observe(handoff: CompletedRunHandoff, test: PerTestOutcome, step: StepE
   if (!state || !Array.isArray(state.elements) || typeof state.platform !== 'string') return 'missing-failed-state'
   let failedScreenStateHash: string
   try { failedScreenStateHash = screenStateHash(state) } catch { return 'missing-failed-state' }
-  if (step.selfHeal?.recoveringDecision.result?.success !== true || recovering[0]!.result?.success !== true
+  // A skipped tap can recover a step (437 D-05): the recovering action only has to not fail.
+  if (!step.selfHeal || !actionDidNotFail(step.selfHeal.recoveringDecision.result)
+    || !actionDidNotFail(recovering[0]!.result)
     || step.verifierVerdict?.pass !== true) return 'unverified-success'
   const product = resolveProductPartition(handoff.scope)
   const recoveringCassetteId = deriveLeafCassetteId({ runSlug: deriveRunSlug(handoff.runId),

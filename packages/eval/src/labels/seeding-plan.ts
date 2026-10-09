@@ -24,7 +24,7 @@
  * clock APIs here — the CLI and eval-local resolve the committed manifest,
  * the ISO capture time and the target environment and pass them in.
  */
-import { screenStateHash, sha256hex } from '@vostride/agent-qa-schema'
+import { actionDidNotFail, screenStateHash, sha256hex } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, MarkReceipt, PerTestOutcome, Verdict } from '@vostride/agent-qa-schema'
 import { canonicalJson } from '../canonical-json'
 import { computeCorpusDigest } from '../census/corpus-digest'
@@ -187,8 +187,9 @@ function planRetirements(input: BuildSeedingPlanInput): Required<Pick<SeedingPla
     if (origin.decisions.length === 0) retirementCounts.missing++
     const seen = new Set<string>()
     for (const decision of origin.decisions) {
+      // A passing decision whose action did not fail (a skipped tap included, 437 D-05) is kept.
       if (decision.evidence.verifierVerdict.pass
-        && decision.evidence.subActions[decision.decisionOrdinal]?.result.success === true) continue
+        && actionDidNotFail(decision.evidence.subActions[decision.decisionOrdinal]?.result)) continue
       const id = deriveLeafCassetteId({ runSlug: deriveRunSlug(decision.runId), ...decision })
       const record = snapshot?.labelsById.get(id), cassette = snapshot?.cassettesById.get(id)
       const entries = snapshot?.entries.filter(entry => entry.cassetteId === id) ?? []
