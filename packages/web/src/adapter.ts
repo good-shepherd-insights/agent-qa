@@ -24,6 +24,16 @@ import { convertKeysForPlatform, isMacPlatform } from '@vostride/agent-qa-runner
 import { parseAriaSnapshot, enrichWebNodes, captureWebScroll } from './observer.js'
 import { extractDom } from './dom-extractor.js'
 import { ElementResolver, buildRefMap } from './element-resolver.js'
+import {
+  bindingRefusal,
+  captureEpoch,
+  checkBinding,
+  checkDocument,
+  disposeEpoch,
+  laneRefs,
+  snapshotRoot,
+} from './binding.js'
+import type { ObservationEpoch, SnapshotRootOptions } from './binding.js'
 import { validateAction } from './action-validator.js'
 import { waitForPageReady } from './smart-wait.js'
 import { runWebFillCompound, runWebScrollCompound, webOpenAppError } from './compound-web.js'
@@ -32,26 +42,6 @@ import { formatMissingBrowserError, isPlaywrightMissingBrowserError } from './br
 import { createScreencastRecording, type ScreencastRecording } from './recording.js'
 import { isHeadlessLaunch, OperationCapture } from './operation-capture.js'
 import type { CapturedOperations } from './operation-capture.js'
-
-// Browser-context hygiene: hide framework-injected [data-agent-qa-internal] overlays
-// from the ARIA snapshot (they would otherwise get ai-mode refs and pollute the state),
-// then restore them. `(globalThis as any).document` is used because the Node tsconfig
-// carries no DOM lib — these serialize and run in the browser.
-function hideAgentQaElements() {
-  const doc = (globalThis as any).document
-  doc.querySelectorAll('[data-agent-qa-internal]').forEach((el: any) => {
-    el.style.display = 'none'
-    el.setAttribute('aria-hidden', 'true')
-  })
-}
-
-function restoreAgentQaElements() {
-  const doc = (globalThis as any).document
-  doc.querySelectorAll('[data-agent-qa-internal]').forEach((el: any) => {
-    el.style.display = ''
-    el.removeAttribute('aria-hidden')
-  })
-}
 
 interface PageLogBuffers {
   consoleLogs: ConsoleLogEntry[]
@@ -74,6 +64,10 @@ interface PageLogBuffers {
 export const OBSERVE_SNAPSHOT_TIMEOUT_MS = 5_000
 /** The bound a main-frame snapshot gets after it outlasts the short one: Playwright's default, the pre-436-24 bound. */
 export const OBSERVE_SNAPSHOT_RETRY_TIMEOUT_MS = 30_000
+const OBSERVE_SNAPSHOT: SnapshotRootOptions = {
+  timeoutMs: OBSERVE_SNAPSHOT_TIMEOUT_MS,
+  retryTimeoutMs: OBSERVE_SNAPSHOT_RETRY_TIMEOUT_MS,
+}
 /** The longest screenshot() waits before it gives up and returns undefined. */
 export const SCREENSHOT_TIMEOUT_MS = 5_000
 
@@ -172,9 +166,10 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   private browser: Browser | null = null
   private context: BrowserContext | null = null
   private page: Page | null = null
-  // Execute-time resolution record, re-fed from the builder binding after each observe.
-  // The binding itself never crosses the port (observe returns only the ScreenState).
+  // The native binding of the last observation and its document (438 D-06). Neither crosses the
+  // port (observe returns only the ScreenState).
   private lastRefs: RefMap = {}
+  private epoch: ObservationEpoch | undefined
   private pageLogBuffers = new Map<Page, PageLogBuffers>()
   private logCaptureConfig: { console: boolean; network: boolean } = { console: true, network: true }
   private disconnected = false
@@ -618,6 +613,8 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     }
     this.armedRoutes.clear()
     this.pendingDialogArm = null
+    await disposeEpoch(this.epoch)
+    this.epoch = undefined
     if (this.browser) {
       await this.browser.close()
     }
@@ -650,20 +647,28 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
 
     await waitForPageReady(page)
 
+    // The epoch is taken before the snapshot, so a document replaced at any point after it is
+    // refused as stale-observation at dispatch (D-09).
+    const epoch = await captureEpoch(page)
+    try {
+      const state = await this.observeDocument(page, options)
+      await disposeEpoch(this.epoch)
+      this.epoch = epoch
+      return state
+    } catch (error) {
+      await disposeEpoch(epoch)
+      throw error
+    }
+  }
+
+  private async observeDocument(
+    page: Page,
+    options: ObserveOptions | undefined,
+  ): Promise<ScreenState> {
     // ai-mode snapshot: Playwright annotates each element with a native [ref=eN] handle
     // (adapter-PRIVATE) that aria-ref locators resolve against — the enrichment ground
-    // truth. Hide framework overlays around the snapshot, always restoring them.
-    await page.evaluate(hideAgentQaElements)
-    let ariaTree: string
-    try {
-      ariaTree = await page.locator(':root').ariaSnapshot({ mode: 'ai', timeout: OBSERVE_SNAPSHOT_TIMEOUT_MS })
-        .catch((error: unknown) => {
-          if (!(error instanceof Error && error.name === 'TimeoutError')) throw error
-          return page.locator(':root').ariaSnapshot({ mode: 'ai', timeout: OBSERVE_SNAPSHOT_RETRY_TIMEOUT_MS })
-        })
-    } finally {
-      await page.evaluate(restoreAgentQaElements)
-    }
+    // truth and the dispatch handle (D-06).
+    const ariaTree = await snapshotRoot(page, OBSERVE_SNAPSHOT)
 
     // parse -> enrich -> scroll: the interim-node walker (352-03), exact per-element
     // enrichment via aria-ref locators, and exact window scroll/viewport capture.
@@ -696,7 +701,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
       ...(domContext !== undefined ? { domContext } : {}),
     })
 
-    this.lastRefs = buildRefMap(binding, nodes)
+    this.lastRefs = buildRefMap(binding, nodes, nativeRefs, state.elements)
     return state
   }
 
@@ -883,6 +888,20 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   private async executeAction(action: ActionsFor<'web'>): Promise<ActionResult> {
     const page = this.page!
     const resolver = new ElementResolver(page, this.lastRefs)
+
+    // 438 D-07, D-09: the element each lane names must still be the one observed; anything else is
+    // a typed refusal with no page interaction. A ref absent from the map keeps the Unknown ref
+    // path.
+    for (const ref of laneRefs(action)) {
+      const entry = this.lastRefs[ref]
+      if (entry === undefined) continue
+      // A scroll's ref names its container, not an input target: only its document is checked,
+      // and a lost or child-frame container reads unknown in the compound (436 D-25).
+      const check = action.type === 'scroll'
+        ? await checkDocument(page, this.epoch)
+        : await checkBinding(page, this.epoch, entry, OBSERVE_SNAPSHOT)
+      if (check.outcome !== 'ok') return bindingRefusal(check.outcome, ref)
+    }
 
     // Validate action-element compatibility for ref-targeting actions
     if ('ref' in action && typeof (action as any).ref === 'string') {

@@ -17,31 +17,21 @@ import type { FarmWebConfig } from '@vostride/agent-qa-core'
 import { parseAriaSnapshot, enrichWebNodes, captureWebScroll } from './observer.js'
 import { extractDom } from './dom-extractor.js'
 import { ElementResolver, buildRefMap } from './element-resolver.js'
+import {
+  bindingRefusal,
+  captureEpoch,
+  checkBinding,
+  checkDocument,
+  disposeEpoch,
+  laneRefs,
+  snapshotRoot,
+} from './binding.js'
+import type { ObservationEpoch } from './binding.js'
 import { validateAction } from './action-validator.js'
 import { waitForPageReady } from './smart-wait.js'
 import { runWebFillCompound, runWebScrollCompound, webOpenAppError } from './compound-web.js'
 import type { RefMap } from './types.js'
 import { createScreencastRecording } from './recording.js'
-
-// Browser-context snapshot hygiene: hide framework-injected [data-agent-qa-internal]
-// overlays from the ARIA snapshot (they would otherwise receive ai-mode refs and
-// pollute the observed state), then restore them. `(globalThis as any).document` is
-// used because the Node tsconfig carries no DOM lib — these run in the browser.
-function hideAgentQaElements() {
-  const doc = (globalThis as any).document
-  doc.querySelectorAll('[data-agent-qa-internal]').forEach((el: any) => {
-    el.style.display = 'none'
-    el.setAttribute('aria-hidden', 'true')
-  })
-}
-
-function restoreAgentQaElements() {
-  const doc = (globalThis as any).document
-  doc.querySelectorAll('[data-agent-qa-internal]').forEach((el: any) => {
-    el.style.display = ''
-    el.removeAttribute('aria-hidden')
-  })
-}
 
 interface PageLogBuffers {
   consoleLogs: ConsoleLogEntry[]
@@ -69,7 +59,9 @@ export class FarmWebAdapter implements PlatformAdapter<'web'> {
   private browser: Browser | null = null
   private context: BrowserContext | null = null
   private page: Page | null = null
+  // The native binding of the last observation and its document (438 D-06).
   private lastRefs: RefMap = {}
+  private epoch: ObservationEpoch | undefined
   private sessionUrl: string | undefined
   private sessionId: string | undefined
   private testFailed = false
@@ -192,6 +184,8 @@ export class FarmWebAdapter implements PlatformAdapter<'web'> {
     }
     this.armedRoutes.clear()
     this.pendingDialogArm = null
+    await disposeEpoch(this.epoch)
+    this.epoch = undefined
 
     if (this.browser) {
       await this.browser.close()
@@ -233,13 +227,25 @@ export class FarmWebAdapter implements PlatformAdapter<'web'> {
 
     await waitForPageReady(page)
 
-    await page.evaluate(hideAgentQaElements)
-    let ariaTree: string
+    // The epoch is taken before the snapshot, so a document replaced at any point after it is
+    // refused as stale-observation at dispatch (438 D-09).
+    const epoch = await captureEpoch(page)
     try {
-      ariaTree = await page.locator(':root').ariaSnapshot({ mode: 'ai' })
-    } finally {
-      await page.evaluate(restoreAgentQaElements)
+      const state = await this.observeDocument(page, options)
+      await disposeEpoch(this.epoch)
+      this.epoch = epoch
+      return state
+    } catch (error) {
+      await disposeEpoch(epoch)
+      throw error
     }
+  }
+
+  private async observeDocument(
+    page: Page,
+    options: ObserveOptions | undefined,
+  ): Promise<ScreenState> {
+    const ariaTree = await snapshotRoot(page)
 
     const { nodes, nativeRefs } = parseAriaSnapshot(ariaTree)
     if (nodes.length > 0) {
@@ -267,7 +273,7 @@ export class FarmWebAdapter implements PlatformAdapter<'web'> {
       ...(domContext !== undefined ? { domContext } : {}),
     })
 
-    this.lastRefs = buildRefMap(binding, nodes)
+    this.lastRefs = buildRefMap(binding, nodes, nativeRefs, state.elements)
     return state
   }
 
@@ -447,6 +453,20 @@ export class FarmWebAdapter implements PlatformAdapter<'web'> {
   private async executeAction(action: ActionsFor<'web'>): Promise<ActionResult> {
     const page = this.page!
     const resolver = new ElementResolver(page, this.lastRefs)
+
+    // 438 D-07, D-09: the element each lane names must still be the one observed; anything else
+    // is a typed refusal with no page interaction. A ref absent from the map keeps the Unknown
+    // ref path.
+    for (const ref of laneRefs(action)) {
+      const entry = this.lastRefs[ref]
+      if (entry === undefined) continue
+      // A scroll's ref names its container, not an input target: only its document is checked,
+      // and a lost or child-frame container reads unknown in the compound (436 D-25).
+      const check = action.type === 'scroll'
+        ? await checkDocument(page, this.epoch)
+        : await checkBinding(page, this.epoch, entry)
+      if (check.outcome !== 'ok') return bindingRefusal(check.outcome, ref)
+    }
 
     if ('ref' in action && typeof (action as any).ref === 'string') {
       const refData = this.lastRefs[(action as any).ref]

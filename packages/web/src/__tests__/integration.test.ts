@@ -278,7 +278,7 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     located.nth = vi.fn().mockReturnValue(located)
     mockGetByRoleFn.mockReturnValue(located)
     mockLocatorEvaluateFn.mockResolvedValue({ bounds: null, scrolledContainer: 'element', scrolled: true, offsets: { before: 0, after: 720, max: 2000 } })
-    adapter['lastRefs']['e1'] = { role: 'listitem', name: 'Item 1', nth: 0 }
+    adapter['lastRefs']['e1'] = { nativeRef: 'e1', role: 'listitem', name: 'Item 1' }
 
     const result = await adapter.execute({ type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: false, ref: asRef('e1') })
 
