@@ -188,10 +188,10 @@ async function runLive(step: string): Promise<LiveRun> {
         if (line.trim() === '') continue
         const event = JSON.parse(line) as {
           type?: string
-          modelUsage?: { roles?: Record<string, { respondingModelIds?: string[] }> }
+          payload?: { modelUsage?: { roles?: Record<string, { respondingModelIds?: string[] }> } }
         }
         if (event.type !== 'stepFinalized') continue
-        for (const role of Object.values(event.modelUsage?.roles ?? {})) {
+        for (const role of Object.values(event.payload?.modelUsage?.roles ?? {})) {
           for (const id of role.respondingModelIds ?? []) respondingModelIds.add(id)
         }
       }
