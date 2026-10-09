@@ -691,4 +691,62 @@ describe('IOSPlatformAdapter text input (AUTO-18)', () => {
       })
     })
   })
+
+  describe('C438-IOS-UNIQUE-BOUNDS', () => {
+    beforeEach(() => {
+      fields = { body: createField('body'), notes: createField('notes') }
+    })
+
+    it('one candidate whose rect matches the observed bounds is used, wherever it sits in the list', async () => {
+      selectorResults = { [TEXT_VIEW]: [fields.notes, fields.body] }
+      await start(TWO_VIEWS_XML)
+      const ref = await refFor('Notes')
+
+      const result = await fill(ref, 'note text')
+
+      expect(result.success).toBe(true)
+      expect(fields.notes.setValue).toHaveBeenCalledWith('note text')
+      expect(fields.body.setValue).not.toHaveBeenCalled()
+    })
+
+    it('two candidates matching the observed bounds refuse the fill, never taking the one at the same-type position', async () => {
+      selectorResults = { [TEXT_VIEW]: [fields.body, fields.notes] }
+      await start(TWO_VIEWS_XML)
+      const ref = await refFor('Notes')
+      rects.body = { ...RECTS.notes }
+
+      const result = await fill(ref, 'note text')
+
+      expect(result.success).toBe(false)
+      expect(result.metadata?.fillRefusal).toEqual({ verb: 'fill', cause: 'target-not-found', evidence: 'stale-target' })
+      expect(mockDriver.action).not.toHaveBeenCalled()
+      nothingTyped()
+    })
+
+    it('two matching candidates refuse whatever their order', async () => {
+      selectorResults = { [TEXT_VIEW]: [fields.notes, fields.body] }
+      await start(TWO_VIEWS_XML)
+      const ref = await refFor('Body')
+      rects.notes = { ...RECTS.body }
+
+      const result = await fill(ref, 'body text')
+
+      expect(result.success).toBe(false)
+      expect(result.metadata?.fillRefusal).toEqual({ verb: 'fill', cause: 'target-not-found', evidence: 'stale-target' })
+      nothingTyped()
+    })
+
+    it('no candidate whose rect matches refuses the fill', async () => {
+      selectorResults = { [TEXT_VIEW]: [fields.body, fields.notes] }
+      await start(TWO_VIEWS_XML)
+      const ref = await refFor('Notes')
+      rects.notes = { ...RECTS.notes, y: RECTS.notes.y + 40 }
+
+      const result = await fill(ref, 'note text')
+
+      expect(result.success).toBe(false)
+      expect(result.metadata?.fillRefusal).toEqual({ verb: 'fill', cause: 'target-not-found', evidence: 'stale-target' })
+      nothingTyped()
+    })
+  })
 })

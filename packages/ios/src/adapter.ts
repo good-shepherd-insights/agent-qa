@@ -659,8 +659,8 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
 
   /**
    * The ref's own text-entry element: candidates of its XCUI type (selector built from the fixed
-   * type list only, never from app-supplied text), matched to the observed bounds, the
-   * same-type observed ordinal checked first. Ambiguous or absent ⇒ undefined.
+   * type list only, never from app-supplied text) whose rect matches the observed bounds. Only a
+   * unique match is used; two or more matches, or none, ⇒ undefined. Position never selects.
    */
   private async locateIOSTextTarget(ref: string): Promise<IOSTextTarget | undefined> {
     const refData = this.lastRefs[ref]
@@ -673,22 +673,11 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
     } catch {
       return undefined
     }
-    const ordinal = Object.entries(this.lastRefs)
-      .filter(([, data]) => data.nativeType === nativeType)
-      .map(([observedRef]) => observedRef)
-      .indexOf(ref)
-    const order = candidates.map((_, i) => i)
-    if (ordinal > 0 && ordinal < candidates.length) {
-      order.splice(ordinal, 1)
-      order.unshift(ordinal)
-    }
     const matches: IOSTextTarget[] = []
-    for (const i of order) {
-      const el = candidates[i]
+    for (const el of candidates) {
       if (!el?.elementId) continue
       const rect = await this.readRect(el.elementId)
       if (!rect || !rectMatches(rect, bounds)) continue
-      if (i === ordinal) return { el, rect }
       matches.push({ el, rect })
     }
     return matches.length === 1 ? matches[0] : undefined
