@@ -295,6 +295,36 @@ return (function() {
   var nodes = [];
   var includedEls = [];
   var seen = {};
+  var CAPTION_TYPES = { submit: true, button: true, reset: true };
+
+  function textOf(node) {
+    return node ? (node.textContent || '').trim() : '';
+  }
+
+  // 437 D-11 (CR-02): a field is named by its label, never by its value, so typed text never
+  // becomes a name. A wrapping label's text drops the field's own text (a select's options).
+  function labelText(el, label) {
+    var text = label.textContent || '';
+    var own = el.textContent || '';
+    if (own && label.contains(el)) text = text.replace(own, '');
+    return text.trim();
+  }
+
+  function fieldName(el, tag) {
+    var ids = (el.getAttribute('aria-labelledby') || '').split(' ');
+    var parts = [];
+    for (var j = 0; j < ids.length; j++) {
+      var part = ids[j] ? textOf(doc.getElementById(ids[j])) : '';
+      if (part) parts.push(part);
+    }
+    if (parts.length > 0) return parts.join(' ');
+    var label = el.labels && el.labels.length > 0 ? labelText(el, el.labels[0]) : '';
+    if (label) return label;
+    var hint = el.getAttribute('placeholder') || el.getAttribute('title');
+    if (hint) return hint;
+    if (tag === 'INPUT' && CAPTION_TYPES[String(el.type).toLowerCase()]) return el.value || '';
+    return '';
+  }
 
   // parentIndex is the nearest INCLUDED ancestor (structural/skipped nodes collapse
   // away, matching the mobile/web walkers' Pitfall #7 handling).
@@ -321,24 +351,28 @@ return (function() {
     var role = (ariaRole || TAG_ROLES[tag] || '').toLowerCase();
     if (!role) continue;
 
+    var field = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+    var editable = field || el.isContentEditable === true;
     var name = '';
     var ariaLabel = el.getAttribute('aria-label');
     if (ariaLabel) {
       name = ariaLabel;
     } else if (tag === 'IMG') {
       name = el.alt || '';
-    } else if (tag === 'INPUT' || tag === 'TEXTAREA') {
-      name = el.getAttribute('placeholder') || el.value || '';
+    } else if (field) {
+      name = fieldName(el, tag);
     } else {
       name = (el.textContent || '').trim();
     }
 
     name = name.slice(0, 100).replace(/[\\n\\r]+/g, ' ').trim();
-    if (!name && role !== 'textbox') continue;
+    if (!name && role !== 'textbox' && !editable) continue;
 
-    var key = role + ':' + name;
-    if (seen[key]) continue;
-    seen[key] = true;
+    if (!editable) {
+      var key = role + ':' + name;
+      if (seen[key]) continue;
+      seen[key] = true;
+    }
 
     var bounds = {
       x: Math.round(rect.left),

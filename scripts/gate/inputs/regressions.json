@@ -4416,6 +4416,48 @@
       "file": "packages/eval/src/labels/__tests__/437-no-input-readers.test.ts",
       "fullName": "C437-NO-INPUT-READERS a self-heal whose recovering action really failed is still unverified-success",
       "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE a labelled input and a labelled textarea both reach the tree, named by their labels",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE two empty unlabelled fields are both kept",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE a typed value never becomes a field's name",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE aria-labelledby and placeholder name a field when no label exists",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE non-editable nodes keep the role and name dedupe",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE a wrapping label names its select without the option text",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE a button-type input keeps its caption as its name",
+      "origin": "437 D-11"
     }
   ]
 }
