@@ -4566,6 +4566,1176 @@
       "file": "packages/ios/src/__tests__/text-input.test.ts",
       "fullName": "IOSPlatformAdapter text input (AUTO-18) C437-FILL-IOS an unreadable re-read without a submit sends nothing and records no submit outcome",
       "origin": "437 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/438-key-sets.test.ts",
+      "fullName": "C438-KEY-SETS the target refusal block carries exactly its eight members",
+      "origin": "438 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/438-key-sets.test.ts",
+      "fullName": "C438-KEY-SETS a target identity carries exactly role, name and row",
+      "origin": "438 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/438-key-sets.test.ts",
+      "fullName": "C438-KEY-SETS the handoff schema version is still 7",
+      "origin": "438 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/438-key-sets.test.ts",
+      "fullName": "C438-KEY-SETS reads a well-formed refusal block back",
+      "origin": "438 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/438-key-sets.test.ts",
+      "fullName": "C438-KEY-SETS reads a heal refusal with a stated row",
+      "origin": "438 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/438-key-sets.test.ts",
+      "fullName": "C438-KEY-SETS returns undefined for a result with no metadata",
+      "origin": "438 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/438-key-sets.test.ts",
+      "fullName": "C438-KEY-SETS returns undefined for an idempotentNoop result",
+      "origin": "438 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/438-key-sets.test.ts",
+      "fullName": "C438-KEY-SETS returns undefined for a block missing stated",
+      "origin": "438 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/438-key-sets.test.ts",
+      "fullName": "C438-KEY-SETS returns undefined for a block with inputSent true",
+      "origin": "438 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/438-key-sets.test.ts",
+      "fullName": "C438-KEY-SETS returns undefined for a block whose kind is not 'target-mismatch'",
+      "origin": "438 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/438-key-sets.test.ts",
+      "fullName": "C438-KEY-SETS returns undefined for a block whose reasons hold an unknown string",
+      "origin": "438 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/438-key-sets.test.ts",
+      "fullName": "C438-KEY-SETS grounding evidence gains an optional stated identity",
+      "origin": "438 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/438-key-sets.test.ts",
+      "fullName": "C438-KEY-SETS a target descriptor gains an optional row",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/438-key-sets.test.ts",
+      "fullName": "C438-KEY-SETS a handoff whose grounding carries stated still loads",
+      "origin": "438 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/438-key-sets.test.ts",
+      "fullName": "C438-KEY-SETS the binding block carries exactly outcome, ref, inputSent and an optional heal",
+      "origin": "438 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/438-key-sets.test.ts",
+      "fullName": "C438-KEY-SETS reads a binding block back, with and without heal",
+      "origin": "438 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/438-key-sets.test.ts",
+      "fullName": "C438-KEY-SETS returns undefined for a missing binding block",
+      "origin": "438 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/438-key-sets.test.ts",
+      "fullName": "C438-KEY-SETS returns undefined for an unknown binding outcome",
+      "origin": "438 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/438-key-sets.test.ts",
+      "fullName": "C438-KEY-SETS returns undefined for a binding block with inputSent true",
+      "origin": "438 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/438-key-sets.test.ts",
+      "fullName": "C438-KEY-SETS returns undefined for a heal outside 'absent' and 'not-unique'",
+      "origin": "438 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/438-key-sets.test.ts",
+      "fullName": "C438-KEY-SETS a cache miss reason is exactly strict-absent, strict-not-unique or non-replayable",
+      "origin": "438 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/438-key-sets.test.ts",
+      "fullName": "C438-KEY-SETS step evidence gains an optional cache miss and keeps its three cache statuses",
+      "origin": "438 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/438-key-sets.test.ts",
+      "fullName": "C438-KEY-SETS a handoff whose step carries a cache miss still loads",
+      "origin": "438 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/__tests__/screen-builder.test.ts",
+      "fullName": "C438-ROW-TREE a listitem with text renders its row text",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/__tests__/screen-builder.test.ts",
+      "fullName": "C438-ROW-TREE a row with 130 characters of text renders the first 120 then an ellipsis",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/__tests__/screen-builder.test.ts",
+      "fullName": "C438-ROW-TREE a text with a line break renders one space",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/__tests__/screen-builder.test.ts",
+      "fullName": "C438-ROW-TREE a button carrying text renders no suffix",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/__tests__/screen-builder.test.ts",
+      "fullName": "C438-ROW-TREE an element without text renders byte-identically to cb485d65a",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/__tests__/screen-builder.test.ts",
+      "fullName": "C438-ROW-TREE screenIdentityHash ignores row text",
+      "origin": "438 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/__tests__/screen-builder.test.ts",
+      "fullName": "C438-BUILDER-NO-POSITION binding entries are exactly { index }, repeated labels included",
+      "origin": "438 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/__tests__/screen-builder.test.ts",
+      "fullName": "C438-BUILDER-NO-POSITION ElementInfo and the tree are byte-identical to a56b861fe",
+      "origin": "438 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT the row containers are row, listitem, article and treeitem",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT the nearest row container wins over an outer cell",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT a row container wins over a nearer cell",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT a cell is the container when no row container exists",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT no container gives undefined",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT the text order is the container's name, its text, then descendants in document order",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT a hierarchy cycle ends the walk",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT rowContains: 'Elm St' is in '7 Elm Street, Springfield'",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT rowContains: 'Elm Street' is not in '1 Home Street, Springfield'",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT rowContains: '7' is not in '17 Elm Street'",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT rowContains: 'Springfield 7 Elm' is in 'Work 7 Elm Street, Springfield'",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT rowContains: 'ELM' is in '7 Elm Street'",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT rowContains: full-width digits match ASCII digits",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT rowContains: a one-letter word is never a prefix",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT the judge treats a row of '' or '   ' as not stated",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT the judge never adds 'row' when the row is unknown",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT the judge refuses a stated row that is not the ref row and names the observed row",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT the judge returns the observed row when the row agrees",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE button vs textbox is a role-kind contradiction",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE button vs link agrees (both press)",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE a stated button agrees with an observed text or cell",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE a stated target with no role never contradicts on role",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE \"Log in\" vs \"Sign in\" agrees",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE \"Delete\" vs \"Save\" shares no word",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE an unnamed textbox stated \"Email\" agrees",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE the value, aria-label, placeholder and title are observed words; the test id is not",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE \"Invoice 947\" vs \"Invoice 946\" is a name-number contradiction",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE \"Invoice 947\" vs \"Invoice 947\" agrees",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE \"Cart\" vs \"Cart (3)\" agrees (only one side has a number)",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE a full-width \"Ｓｕｂｍｉｔ\" agrees with \"Submit\"",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE \"SUBMIT\" agrees with \"Submit\"",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE an agreeing judgement reports whether a row was stated",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE renderTargetMismatch names both identities on one line",
+      "origin": "438 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE renderTargetMismatch caps each name at 80 characters",
+      "origin": "438 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-strict-match.test.ts",
+      "fullName": "C438-STRICT-MATCH zero candidates are absent",
+      "origin": "438 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-strict-match.test.ts",
+      "fullName": "C438-STRICT-MATCH one candidate resolves",
+      "origin": "438 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-strict-match.test.ts",
+      "fullName": "C438-STRICT-MATCH two identical candidates are not-unique with the count and no ref",
+      "origin": "438 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-strict-match.test.ts",
+      "fullName": "C438-STRICT-MATCH 'Invoice 947' never matches 'Invoice 946'",
+      "origin": "438 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-strict-match.test.ts",
+      "fullName": "C438-STRICT-MATCH 'Cart (3)' does not match 'Cart (4)'",
+      "origin": "438 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-strict-match.test.ts",
+      "fullName": "C438-STRICT-MATCH 'Edit  label' (two spaces) matches 'Edit label'",
+      "origin": "438 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-strict-match.test.ts",
+      "fullName": "C438-STRICT-MATCH 'edit label' does not match 'Edit label'",
+      "origin": "438 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-strict-match.test.ts",
+      "fullName": "C438-STRICT-MATCH a 'link' target never matches a 'button' of the same name",
+      "origin": "438 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-strict-match.test.ts",
+      "fullName": "C438-STRICT-MATCH three Edit label buttons in three rows: the row decides, or nothing does",
+      "origin": "438 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-strict-match.test.ts",
+      "fullName": "C438-STRICT-MATCH an element with unknown row text never survives a row-bearing target",
+      "origin": "438 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-strict-match.test.ts",
+      "fullName": "C438-STRICT-MATCH a row with no words is no row",
+      "origin": "438 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/gate.test.ts",
+      "fullName": "C438-MATCHER-AMBIGUITY a target-only Add on two Add buttons fails descriptor_ambiguous naming 2 candidates",
+      "origin": "438 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/gate.test.ts",
+      "fullName": "C438-MATCHER-AMBIGUITY a target-only Add carrying a stray position still fails descriptor_ambiguous",
+      "origin": "438 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/gate.test.ts",
+      "fullName": "C438-MATCHER-AMBIGUITY the prior hierarchy still resolves one Add through the gate",
+      "origin": "438 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/matcher.test.ts",
+      "fullName": "C438-MATCHER-AMBIGUITY two Add buttons are ambiguous with both refs",
+      "origin": "438 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/matcher.test.ts",
+      "fullName": "C438-MATCHER-AMBIGUITY a descriptor that still carries a position is ambiguous, and the position is never read",
+      "origin": "438 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/matcher.test.ts",
+      "fullName": "C438-MATCHER-AMBIGUITY the prior hierarchy still resolves when exactly one parent chain matches",
+      "origin": "438 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/cache/__tests__/438-strict-replay.test.ts",
+      "fullName": "C438-STRICT-REPLAY 'Cart (3)' stored against 'Cart (4)' is a recorded miss, strict-absent",
+      "origin": "438 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/cache/__tests__/438-strict-replay.test.ts",
+      "fullName": "C438-STRICT-REPLAY a drag whose stored toRef target is not unique is strict-not-unique, with no execute",
+      "origin": "438 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/cache/__tests__/438-strict-replay.test.ts",
+      "fullName": "C438-STRICT-REPLAY a stored value lacking a locator for its ref lane is non-replayable",
+      "origin": "438 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/tools/__tests__/438-target-schema.test.ts",
+      "fullName": "C438-TARGET-SCHEMA targetSchema takes role, name and row words",
+      "origin": "438 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/tools/__tests__/438-target-schema.test.ts",
+      "fullName": "C438-TARGET-SCHEMA targetSchema rejects an ordinal",
+      "origin": "438 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/tools/__tests__/438-target-schema.test.ts",
+      "fullName": "C438-TARGET-SCHEMA targetSchema requires the role",
+      "origin": "438 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/tools/__tests__/438-target-schema.test.ts",
+      "fullName": "C438-TARGET-SCHEMA targetSchema rejects near and selector-like keys",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/tools/__tests__/438-target-schema.test.ts",
+      "fullName": "C438-TARGET-SCHEMA web_click's provider JSON schema closes target to role, name and row",
+      "origin": "438 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/tools/__tests__/438-target-schema.test.ts",
+      "fullName": "C438-TARGET-SCHEMA a tool call carries the ref and the stated target into the plan",
+      "origin": "438 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/tools/__tests__/438-target-schema.test.ts",
+      "fullName": "C438-TARGET-SCHEMA a tool call whose target carries an ordinal throws schema_invalid",
+      "origin": "438 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/tools/__tests__/438-target-schema.test.ts",
+      "fullName": "C438-TARGET-SCHEMA every exposed target is described as sent alongside the ref, never \"never both\"",
+      "origin": "438 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/tools/__tests__/438-target-schema.test.ts",
+      "fullName": "C438-TARGET-SCHEMA a planning turn's stated row reaches the plan",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/tools/__tests__/438-target-schema.test.ts",
+      "fullName": "C438-HINTS an unresolved target names role, name and row words as the restatement",
+      "origin": "438 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/tools/__tests__/438-target-schema.test.ts",
+      "fullName": "C438-HINTS an ambiguous target keeps the count and points at the ref the step means, never a pick",
+      "origin": "438 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/tools/__tests__/438-target-schema.test.ts",
+      "fullName": "C438-HINTS no-handle says an element action needs a ref with its target, or a target alone",
+      "origin": "438 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/tools/__tests__/438-target-schema.test.ts",
+      "fullName": "C438-HINTS near-unsupported points at name and role",
+      "origin": "438 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/tools/__tests__/438-target-schema.test.ts",
+      "fullName": "C438-HINTS no grounding error message or hint mentions an ordinal",
+      "origin": "438 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/tools/__tests__/438-target-schema.test.ts",
+      "fullName": "C438-HINTS a descriptor renders as its role and quoted name only",
+      "origin": "438 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-identical-controls-loop.test.ts",
+      "fullName": "C438-IDENTICAL-CONTROLS-PROCEDURE procedure path: a body Okay on two identical buttons is a guard miss",
+      "origin": "438 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-procedure-strict.test.ts",
+      "fullName": "C438-PROCEDURE-STRICT 947 replays onto 947 beside 946",
+      "origin": "438 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-procedure-strict.test.ts",
+      "fullName": "C438-PROCEDURE-STRICT 947 against 946 alone is a guard miss",
+      "origin": "438 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-procedure-strict.test.ts",
+      "fullName": "C438-PROCEDURE-STRICT row words single out a repeated label",
+      "origin": "438 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-procedure-strict.test.ts",
+      "fullName": "C438-PROCEDURE-STRICT a legacy body still parses and misses",
+      "origin": "438 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-stated-target-loop.test.ts",
+      "fullName": "C438-STATED-TARGET-LOOP a planning turn's ref plus target reaches the check",
+      "origin": "438 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-stated-target-loop.test.ts",
+      "fullName": "C438-STATED-TARGET-LOOP the descriptor lane is checked after a loose rung",
+      "origin": "438 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-stated-target-loop.test.ts",
+      "fullName": "C438-STATED-TARGET-LOOP a drag is checked per lane",
+      "origin": "438 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-stated-target-loop.test.ts",
+      "fullName": "C438-STATED-TARGET-LOOP a refusal is not debited and the re-plan is a planning turn",
+      "origin": "438 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-stated-target-loop.test.ts",
+      "fullName": "C438-STATED-TARGET-LOOP both identities are redacted before record",
+      "origin": "438 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-stated-target-loop.test.ts",
+      "fullName": "C438-STATED-TARGET-LOOP a recorded refusal reads back through the schema reader",
+      "origin": "438 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-stated-target-loop.test.ts",
+      "fullName": "C438-STATED-TARGET-LOOP the grounding evidence carries the exact name and the stated identity",
+      "origin": "438 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-stated-target-loop.test.ts",
+      "fullName": "C438-STATED-TARGET-LOOP grounding evidence is redacted before record",
+      "origin": "438 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/procedure-step-boundary.test.ts",
+      "fullName": "C438-RECOVERY-NO-POSITION an ambiguous body target is recovered by role and name, with no position",
+      "origin": "438 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/procedure-step-boundary.test.ts",
+      "fullName": "C438-RECOVERY-NO-POSITION a stored row is named, and a legacy body falls back to its normalized name",
+      "origin": "438 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/progress-prompts.test.ts",
+      "fullName": "C438-PROMPT Rules 10 and 17 are the 438 text",
+      "origin": "438 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/progress-prompts.test.ts",
+      "fullName": "C438-PROMPT Rule 17 keeps the no-guessing rule (web)",
+      "origin": "438 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/progress-prompts.test.ts",
+      "fullName": "C438-PROMPT Rule 17 keeps the no-guessing rule (android)",
+      "origin": "438 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/progress-prompts.test.ts",
+      "fullName": "C438-PROMPT Rule 17 keeps the no-guessing rule (ios)",
+      "origin": "438 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/progress-prompts.test.ts",
+      "fullName": "C438-PROMPT Rule 17 keeps the no-guessing rule (undefined)",
+      "origin": "438 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-MOBILE an iOS cell is the Edit label button's row",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-MOBILE a stated row that is not the iOS cell's row is a 'row' contradiction",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-MOBILE an Android list row has unknown row text",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-MOBILE a stated row on an Android button agrees with rowKnown false",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/mobile/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-MOBILE the row definition is importable from the runner root",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/text-input.test.ts",
+      "fullName": "IOSPlatformAdapter text input (AUTO-18) C438-IOS-UNIQUE-BOUNDS one candidate whose rect matches the observed bounds is used, wherever it sits in the list",
+      "origin": "438 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/text-input.test.ts",
+      "fullName": "IOSPlatformAdapter text input (AUTO-18) C438-IOS-UNIQUE-BOUNDS two candidates matching the observed bounds refuse the fill, never taking the one at the same-type position",
+      "origin": "438 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/text-input.test.ts",
+      "fullName": "IOSPlatformAdapter text input (AUTO-18) C438-IOS-UNIQUE-BOUNDS two matching candidates refuse whatever their order",
+      "origin": "438 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/text-input.test.ts",
+      "fullName": "IOSPlatformAdapter text input (AUTO-18) C438-IOS-UNIQUE-BOUNDS no candidate whose rect matches refuses the fill",
+      "origin": "438 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/curator-author-procedure.test.ts",
+      "fullName": "C438-PROCEDURE-WRITE writes the exact name and no ordinal into the trajectory and the body",
+      "origin": "438 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/curator-author-procedure.test.ts",
+      "fullName": "C438-PROCEDURE-WRITE writes the stated row words into the trajectory and the body",
+      "origin": "438 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/curator-author-procedure.test.ts",
+      "fullName": "C438-PROCEDURE-WRITE passes the written name and row through the active masking context",
+      "origin": "438 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/curator-author-procedure.test.ts",
+      "fullName": "C438-PROCEDURE-WRITE rejects a version-1 seed as a candidate",
+      "origin": "438 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/438-ordinal-census.test.ts",
+      "fullName": "C438-CENSUS — no position pick on the live, heal, procedure-replay or cached paths (438 D-11, D-13) C438-UNIVERSE-FLOORS: every guarded file and region reads real code, so no cell can pass over an empty scan",
+      "origin": "438 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/438-ordinal-census.test.ts",
+      "fullName": "C438-CENSUS — no position pick on the live, heal, procedure-replay or cached paths (438 D-11, D-13) C438-NO-WEB-POSITION: web production calls no Playwright position method on an element locator, and the resolver builds no role locator",
+      "origin": "438 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/438-ordinal-census.test.ts",
+      "fullName": "C438-CENSUS — no position pick on the live, heal, procedure-replay or cached paths (438 D-11, D-13) C438-NO-MATCHER-POSITION: DescriptorInput declares no position member and matchDescriptor indexes no survivor list",
+      "origin": "438 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/438-ordinal-census.test.ts",
+      "fullName": "C438-CENSUS — no position pick on the live, heal, procedure-replay or cached paths (438 D-11, D-13) C438-NO-CACHE-POSITION: GroundedLocator declares no position, value.ts computes none, and re-grounding returns the strict match",
+      "origin": "438 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/438-ordinal-census.test.ts",
+      "fullName": "C438-CENSUS — no position pick on the live, heal, procedure-replay or cached paths (438 D-11, D-13) C438-CACHE-MISS-RECORDED: a key hit that does not replay records its typed miss before the entry is invalidated",
+      "origin": "438 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/438-ordinal-census.test.ts",
+      "fullName": "C438-CENSUS — no position pick on the live, heal, procedure-replay or cached paths (438 D-11, D-13) C438-NO-PROCEDURE-POSITION: procedure replay passes no position to a matcher, and the recovery context carries none",
+      "origin": "438 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/438-ordinal-census.test.ts",
+      "fullName": "C438-CENSUS — no position pick on the live, heal, procedure-replay or cached paths (438 D-11, D-13) C438-NO-HEAL-POSITION: the heal re-finds a replaced element strictly and passes no position",
+      "origin": "438 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/438-ordinal-census.test.ts",
+      "fullName": "C438-CENSUS — no position pick on the live, heal, procedure-replay or cached paths (438 D-11, D-13) C438-NO-TARGET-POSITION: the planner target schema and its emission type have no position key",
+      "origin": "438 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/438-ordinal-census.test.ts",
+      "fullName": "C438-CENSUS — no position pick on the live, heal, procedure-replay or cached paths (438 D-11, D-13) C438-NO-BINDING-POSITION: RefBinding, RefEntry and the web ref map carry no position member, and none is minted",
+      "origin": "438 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/438-ordinal-census.test.ts",
+      "fullName": "C438-CENSUS — no position pick on the live, heal, procedure-replay or cached paths (438 D-11, D-13) C438-NO-IOS-POSITION: the iOS text-target lookup computes no same-type position, and no mobile adapter names one",
+      "origin": "438 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/438-ordinal-census.test.ts",
+      "fullName": "C438-CENSUS — no position pick on the live, heal, procedure-replay or cached paths (438 D-11, D-13) C438-NO-CURATION-POSITION: the two curation writers write no position into procedure targets",
+      "origin": "438 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/438-ordinal-census.test.ts",
+      "fullName": "C438-CENSUS — no position pick on the live, heal, procedure-replay or cached paths (438 D-11, D-13) C438-RECORD-ONLY-CLASSIFIED: the position helper is called only at the classified record-only sites, each named in the header",
+      "origin": "438 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/438-ordinal-census.test.ts",
+      "fullName": "C438-CENSUS — no position pick on the live, heal, procedure-replay or cached paths (438 D-11, D-13) C438-ROOT-AI-SNAPSHOT-ONLY: every accessibility snapshot in the web adapters, binding helper, resolver and compounds is :root ai mode",
+      "origin": "438 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/438-ordinal-census.test.ts",
+      "fullName": "C438-CENSUS instruments C438-PLANTED-POSITIVE: every removed shape is found when planted as code, and none as a comment",
+      "origin": "438 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/438-ordinal-census.test.ts",
+      "fullName": "C438-CENSUS instruments C438-SELF-MATCH: this file spells none of the needles it assembles, and lies outside every region it scans",
+      "origin": "438 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-aria-ref-conformance.test.ts",
+      "fullName": "C438-ARIA-REF-CONFORMANCE the pin",
+      "origin": "438 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-aria-ref-conformance.test.ts",
+      "fullName": "C438-ARIA-REF-CONFORMANCE refs follow a re-sorted node",
+      "origin": "438 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-aria-ref-conformance.test.ts",
+      "fullName": "C438-ARIA-REF-CONFORMANCE a default-mode or sub-locator snapshot empties the ref map",
+      "origin": "438 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-aria-ref-conformance.test.ts",
+      "fullName": "C438-ARIA-REF-CONFORMANCE a new document resets everything",
+      "origin": "438 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-aria-ref-conformance.test.ts",
+      "fullName": "C438-ARIA-REF-CONFORMANCE pushState keeps the document and the ref",
+      "origin": "438 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-aria-ref-conformance.test.ts",
+      "fullName": "C438-ARIA-REF-CONFORMANCE frames",
+      "origin": "438 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-aria-ref-conformance.test.ts",
+      "fullName": "C438-ARIA-REF-CONFORMANCE a renamed node gets a new ref",
+      "origin": "438 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-identical-controls.test.ts",
+      "fullName": "C438-IDENTICAL-CONTROLS descriptor path: an ambiguous step clicks nothing",
+      "origin": "438 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-identical-controls.test.ts",
+      "fullName": "C438-IDENTICAL-CONTROLS \"the second okay button\" clicks the second",
+      "origin": "438 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-identical-controls.test.ts",
+      "fullName": "C438-IDENTICAL-CONTROLS the second stays the second when they swap",
+      "origin": "438 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-identical-controls.test.ts",
+      "fullName": "C438-IDENTICAL-CONTROLS cache path: a stored Okay never replays onto either",
+      "origin": "438 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-identical-controls.test.ts",
+      "fullName": "C438-IDENTICAL-CONTROLS heal path: a replaced Okay is not provably either",
+      "origin": "438 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-native-binding.test.ts",
+      "fullName": "C438-NATIVE-BINDING a moved row is followed, never the row now at its old position",
+      "origin": "438 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-native-binding.test.ts",
+      "fullName": "C438-NATIVE-BINDING the resolver defect: Invoice 946 beside Invoice 947 is clicked",
+      "origin": "438 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-native-binding.test.ts",
+      "fullName": "C438-NATIVE-BINDING an unchanged page dispatches through aria-ref",
+      "origin": "438 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-native-binding.test.ts",
+      "fullName": "C438-BINDING-OUTCOMES recycled: the Elm row text swapped under the same nodes is binding-changed",
+      "origin": "438 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-native-binding.test.ts",
+      "fullName": "C438-BINDING-OUTCOMES replaced: the list rewritten with identical markup is binding-lost",
+      "origin": "438 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-native-binding.test.ts",
+      "fullName": "C438-BINDING-OUTCOMES frame detached: a button in a removed iframe is frame-detached",
+      "origin": "438 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-native-binding.test.ts",
+      "fullName": "C438-BINDING-OUTCOMES pushState: a same-document URL change keeps the binding and the click lands",
+      "origin": "438 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-native-binding.test.ts",
+      "fullName": "C438-BINDING-OUTCOMES a scroll compound's interim snapshot keeps the binding",
+      "origin": "438 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-native-binding.test.ts",
+      "fullName": "C438-BINDING-OUTCOMES a default-mode snapshot taken by someone else is repaired by the re-check",
+      "origin": "438 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-reordered-rows.test.ts",
+      "fullName": "C438-REORDERED-ROWS navigated: stale-observation, nothing sent, never healed",
+      "origin": "438 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-reordered-rows.test.ts",
+      "fullName": "C438-REORDERED-ROWS replaced and provable: re-found and clicked",
+      "origin": "438 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-reordered-rows.test.ts",
+      "fullName": "C438-REORDERED-ROWS replaced and gone: refused",
+      "origin": "438 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-reordered-rows.test.ts",
+      "fullName": "C438-REORDERED-ROWS replaced into two identical rows: refused",
+      "origin": "438 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-reordered-rows.test.ts",
+      "fullName": "C438-REORDERED-ROWS recycled: the click follows the content",
+      "origin": "438 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-reordered-rows.test.ts",
+      "fullName": "C438-REORDERED-ROWS never the row at the old position",
+      "origin": "438 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-reordered-rows.test.ts",
+      "fullName": "C438-REORDERED-ROWS cached: a real hit through the row words lands on Elm's row",
+      "origin": "438 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-reordered-rows.test.ts",
+      "fullName": "C438-REORDERED-ROWS cached without row words: the repeated label is a miss",
+      "origin": "438 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-PARSE the address list yields three listitems carrying their row text",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-PARSE each Edit label's row text names its own address",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-PARSE the cart table yields row elements and each Remove button's row names its mug",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-PARSE no dropped line becomes an element",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-PARSE the element count is the count without the fold plus the row lines",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-STATED-TARGET a stated target that agrees with its ref is clicked",
+      "origin": "438 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-STATED-TARGET the MiniWoB shape is refused: Submit stated, an empty textbox ref",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-STATED-TARGET \"Invoice 947\" stated against \"Invoice 946\" is refused",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-STATED-TARGET a paraphrase is not a contradiction",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-STATED-TARGET a ref-only action is dispatched as before",
+      "origin": "438 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-STATED-TARGET a contradiction on the heal path is refused naming both identities",
+      "origin": "438 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-STATED-ROW the stated row agrees: Elm's Edit label is clicked",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-STATED-ROW a stated row that is not the ref's row is refused naming both rows",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-STATED-ROW row words left out are not a contradiction",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-STATED-ROW an abbreviated row still agrees",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-strict-replay.test.ts",
+      "fullName": "C438-STRICT-REPLAY 947 stored, replayed against 946 alone, is a miss",
+      "origin": "438 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-strict-replay.test.ts",
+      "fullName": "C438-STRICT-REPLAY 947 stored, replayed against both, clicks 947 wherever it sits",
+      "origin": "438 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-strict-replay.test.ts",
+      "fullName": "C438-STRICT-REPLAY the 946 miss is recorded with its reason",
+      "origin": "438 D-11"
     }
   ]
 }

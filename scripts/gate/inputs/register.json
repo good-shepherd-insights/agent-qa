@@ -477,6 +477,24 @@
       "reason": "needs a booted iOS simulator with Appium 3.7.0 / XCUITest 10.25.0 and the simulator's own com.apple.Preferences; run live by 437-09 on the iPhone 18 Pro simulator (iOS 27.0) at agent-qa 26ca50c31 and passed, recorded in 437-RECORD.md",
       "condition": "AGENT_QA_437_IOS_LIVE is not '1' (describe.skipIf(process.env.AGENT_QA_437_IOS_LIVE !== '1'); AGENT_QA_437_IOS_UDID names the simulator)",
       "conditional": true
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/438-auto15-live.test.ts",
+      "fullName": "C438-AUTO15-LIVE \"Click the okay button\" ends refused with no click",
+      "kind": "skipped",
+      "reason": "needs a real model: drives the built CLI (packages/cli/dist/cli.js, agent-qa run in a cold temporary workspace, --headless --disable-cache) against a loopback page with two identical Okay buttons, with gpt-6.1-sol through openai-subscription and the subscription-auth plugin; run live once by 438-13 at agent-qa eda7f190f and passed (2 of 2: the unspecific step refused as infeasible with no click, the second Okay clicked alone), recorded in 438-13-live-run.json; the cell's responding-model reader was corrected afterwards in d048fcad6",
+      "condition": "AGENT_QA_438_LIVE_MODEL is not '1' (describe.skipIf(!LIVE), LIVE = process.env.AGENT_QA_438_LIVE_MODEL === '1'; AGENT_QA_438_LIVE_AUTH_PLUGIN names the auth plugin)",
+      "conditional": true
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/438-auto15-live.test.ts",
+      "fullName": "C438-AUTO15-LIVE \"Click the second okay button\" clicks the second",
+      "kind": "skipped",
+      "reason": "needs a real model: drives the built CLI (packages/cli/dist/cli.js, agent-qa run in a cold temporary workspace, --headless --disable-cache) against a loopback page with two identical Okay buttons, with gpt-6.1-sol through openai-subscription and the subscription-auth plugin; run live once by 438-13 at agent-qa eda7f190f and passed (2 of 2: the unspecific step refused as infeasible with no click, the second Okay clicked alone), recorded in 438-13-live-run.json; the cell's responding-model reader was corrected afterwards in d048fcad6",
+      "condition": "AGENT_QA_438_LIVE_MODEL is not '1' (describe.skipIf(!LIVE), LIVE = process.env.AGENT_QA_438_LIVE_MODEL === '1'; AGENT_QA_438_LIVE_AUTH_PLUGIN names the auth plugin)",
+      "conditional": true
     }
   ]
 }
