@@ -1,11 +1,11 @@
 // RED scaffold (Wave 0, LOOP-04 · D-10/D-11 · Pitfall 7). Pins the re-ground-first
-// self-heal: a ref-resolution failure ('Unknown ref "…"') triggers re-observe → derive
-// the descriptor from the prior observation's ElementInfo → match with hierarchy
-// disambiguation → patch the ref → re-execute, WITH NO new planning turn (planner.plan
-// called exactly once). The heal is recorded in the sub-action grounding trail only;
-// StepEvidence.selfHeal stays reserved for replan heals (D-11). Non-ref failures (a bare
-// timeout) keep the replan-with-failure-context path (the conservative classifier), and
-// only one heal is attempted per planned action.
+// self-heal: a ref-resolution failure ('Unknown ref "…"') triggers re-observe → re-find the
+// prior observation's element by its role, exact name and row words (strictMatch, 438 D-08:
+// unique or nothing, no ordinal and no hierarchy tiebreak) → patch the ref → re-execute, WITH
+// NO new planning turn (planner.plan called exactly once). The heal is recorded in the
+// sub-action grounding trail only; StepEvidence.selfHeal stays reserved for replan heals
+// (D-11). Non-ref failures (a bare timeout) keep the replan-with-failure-context path (the
+// conservative classifier), and only one heal is attempted per planned action.
 //
 // Under the shipped loop a ref failure just replans (planner called twice) and never
 // records a grounding trail — the intended RED (GREEN when Plan 07 lands the heal).
@@ -56,9 +56,16 @@ describe('re-ground-first self-heal (LOOP-04 / D-10)', () => {
     expect(result.evidence?.selfHeal).toBeUndefined()
     const healed = result.evidence?.subActions?.find(
       (s) => (s as { grounding?: unknown }).grounding !== undefined,
-    ) as { grounding?: { attempts: Array<{ stage: string; outcome: string }> } } | undefined
+    ) as {
+      grounding?: {
+        descriptor: Record<string, unknown>
+        attempts: Array<{ stage: string; outcome: string }>
+      }
+    } | undefined
     expect(healed?.grounding).toBeDefined()
     expect(healed?.grounding?.attempts.some((a) => a.stage === 'tree-search' && a.outcome === 'resolved')).toBe(true)
+    // 438 D-08: the strict heal names the exact observed identity and never a position.
+    expect(healed?.grounding?.descriptor).toEqual({ role: 'button', name: 'Log in' })
   })
 
   it('does NOT heal a non-ref execution failure (bare timeout) — it takes the replan path', async () => {

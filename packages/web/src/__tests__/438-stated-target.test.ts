@@ -4,7 +4,7 @@
 // nothing and substituting nothing, when they clearly contradict. Pages are inline snippets.
 
 import { afterEach, describe, expect, it } from 'vitest'
-import type { PlannerConfig } from '@vostride/agent-qa-runner'
+import type { Action, ExecuteOptions, PlannerConfig } from '@vostride/agent-qa-runner'
 import { WebPlatformAdapter } from '../adapter.js'
 import {
   act,
@@ -67,6 +67,44 @@ const ADDRESSES_PAGE = `<!doctype html><html><head><script>window.__clicks = []<
     </li>
   </ul>
 </body></html>`
+
+const LONE_EDIT_PAGE = `<!doctype html><html><head><script>window.__clicks = []</script></head><body>
+  <button type="button" onclick="window.__clicks.push('lone')">Edit label</button>
+</body></html>`
+
+const HOME_ROW_BODY = `<ul>
+    <li>
+      <p><strong>Home</strong></p>
+      <p>1 Home Street, Springfield</p>
+      <button type="button" onclick="window.__clicks.push('1 Home Street, Springfield')">Edit label</button>
+    </li>
+  </ul>`
+
+// Replaces the page body once, right before the first dispatch reaches the adapter.
+function replacingBodyBeforeDispatch(web: WebPlatformAdapter, body: string): WebPlatformAdapter {
+  let replaced = false
+  return new Proxy(web, {
+    get(target, property) {
+      if (property === 'execute') {
+        return async (action: Action, options?: ExecuteOptions) => {
+          if (!replaced) {
+            replaced = true
+            await target.getPage()!.evaluate((html) => {
+              const doc = (globalThis as unknown as { document: { body: { innerHTML: string } } })
+                .document
+              doc.body.innerHTML = html
+            }, body)
+          }
+          return target.execute(action as never, options)
+        }
+      }
+      const value: unknown = Reflect.get(target, property, target)
+      return typeof value === 'function'
+        ? (value as (...args: unknown[]) => unknown).bind(target)
+        : value
+    },
+  })
+}
 
 interface PageEvent {
   id: string
@@ -260,6 +298,54 @@ describe('C438-STATED-TARGET', () => {
     expect(run.executed).toHaveLength(1)
     expect(clicks(await events(web))).toEqual([{ id: 'submit', type: 'click' }])
     expect(refusalOf(run)).toBeUndefined()
+  }, 60_000)
+
+  it('a contradiction on the heal path is refused naming both identities', async () => {
+    const web = await open(LONE_EDIT_PAGE)
+    const planner = scriptedPlanner([
+      (screen) => act(
+        {
+          type: 'click',
+          ref: refFor(screen, 'button', 'Edit label'),
+          target: { role: 'button', name: 'Edit label', row: '7 Elm Street' },
+        },
+        true,
+        'Edit the Elm Street label',
+      ),
+      () => giveUp('The Elm Street label could not be edited'),
+    ])
+    const run = await runScriptedStep({
+      adapter: replacingBodyBeforeDispatch(web, HOME_ROW_BODY),
+      instruction: 'Edit the label of the 7 Elm Street address',
+      planner,
+      verifier: passes,
+      plannerConfig: LIMITS,
+    })
+
+    expect(await addressClicks(web)).toEqual([])
+    expect(run.executed).toHaveLength(1)
+    const first = run.result.evidence!.subActions[0]
+    expect(first.result.success).toBe(false)
+    expect(first.result.error).toMatch(/^target-mismatch: /)
+    expect(first.result.error).toContain('"7 Elm Street"')
+    expect(first.result.error).toContain('1 Home Street')
+    const refusal = refusalOf(run)
+    expect(refusal).toMatchObject({
+      kind: 'target-mismatch',
+      lane: 'ref',
+      path: 'heal',
+      stated: { role: 'button', name: 'Edit label', row: '7 Elm Street' },
+      observed: { role: 'button', name: 'Edit label' },
+      reasons: ['row'],
+      rowStated: true,
+      inputSent: false,
+    })
+    const observed = refusal?.['observed'] as { row?: string } | undefined
+    expect(observed?.row).toContain('1 Home Street')
+    const attempts = first.grounding?.attempts ?? []
+    expect(attempts.at(-1)).toMatchObject({ stage: 'tree-search', outcome: 'resolved' })
+    expect(run.result.evidence?.limitUsage?.actionsUsed).toBe(1)
+    expect(planner.calls).toBe(2)
   }, 60_000)
 })
 
