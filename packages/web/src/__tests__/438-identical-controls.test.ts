@@ -1,14 +1,18 @@
 // C438-IDENTICAL-CONTROLS (438 D-12, D-14, SC4): AUTO-15 on two identical 'Okay' buttons. A step
 // that does not say which one clicks nothing and ends infeasible naming both; a step that names
 // the second clicks the second, and keeps clicking it after the two swap places. Real headless
-// Chromium through the real runner loop; the page is an inline snippet.
+// Chromium through the real runner loop; the page is an inline snippet. The cache and heal legs
+// refuse too: a stored Okay never replays onto either, and a replaced Okay is not provably either.
 
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Action, ExecuteOptions, PlannerConfig } from '@vostride/agent-qa-runner'
+import { readBindingOutcomeMeta } from '@vostride/agent-qa-schema'
 import type { Ref, ScreenState } from '@vostride/agent-qa-schema'
 import { WebPlatformAdapter } from '../adapter.js'
 import {
   act,
+  giveUp,
+  memoryCache,
   refFor,
   runScriptedStep,
   scriptedPlanner,
@@ -25,6 +29,12 @@ const TWO_OKAY_PAGE = `<!doctype html><html><head><script>window.__clicks = []</
   <div id="actions">
     <button type="button" onclick="window.__clicks.push('first')">Okay</button>
     <button type="button" onclick="window.__clicks.push('second')">Okay</button>
+  </div>
+</body></html>`
+
+const ONE_OKAY_PAGE = `<!doctype html><html><head><script>window.__clicks = []</script></head><body>
+  <div id="actions">
+    <button type="button" onclick="window.__clicks.push('only')">Okay</button>
   </div>
 </body></html>`
 
@@ -62,18 +72,38 @@ const swapOkays = (page: Page) => page.evaluate(() => {
   first.parentElement.insertBefore(second, first)
 })
 
+// The lone Okay is replaced by two new, identical Okay buttons.
+const replaceWithTwoOkays = (page: Page) => page.evaluate(() => {
+  const doc = (globalThis as unknown as {
+    document: { getElementById(id: string): { innerHTML: string } }
+  }).document
+  doc.getElementById('actions').innerHTML = `
+    <button type="button" onclick="window.__clicks.push('first')">Okay</button>
+    <button type="button" onclick="window.__clicks.push('second')">Okay</button>`
+})
+
+interface Changing {
+  adapter: WebPlatformAdapter
+  /** The adapter's result for the first dispatch, before any heal. */
+  firstResult: () => Awaited<ReturnType<WebPlatformAdapter['execute']>> | undefined
+}
+
 // Changes the page once, right before the first dispatch reaches the adapter.
-function changingBeforeDispatch(web: WebPlatformAdapter, change: (page: Page) => Promise<void>) {
+function changingBeforeDispatch(
+  web: WebPlatformAdapter,
+  change: (page: Page) => Promise<void>,
+): Changing {
   let changed = false
-  return new Proxy(web, {
+  let firstResult: Awaited<ReturnType<WebPlatformAdapter['execute']>> | undefined
+  const adapter = new Proxy(web, {
     get(target, property) {
       if (property === 'execute') {
         return async (action: Action, options?: ExecuteOptions) => {
-          if (!changed) {
-            changed = true
-            await change(target.getPage()!)
-          }
-          return target.execute(action as never, options)
+          if (changed) return target.execute(action as never, options)
+          changed = true
+          await change(target.getPage()!)
+          firstResult = await target.execute(action as never, options)
+          return firstResult
         }
       }
       const value: unknown = Reflect.get(target, property, target)
@@ -82,6 +112,7 @@ function changingBeforeDispatch(web: WebPlatformAdapter, change: (page: Page) =>
         : value
     },
   })
+  return { adapter, firstResult: () => firstResult }
 }
 
 function okayRefs(screen: ScreenState): Ref[] {
@@ -163,7 +194,7 @@ describe('C438-IDENTICAL-CONTROLS', () => {
     const web = await open(TWO_OKAY_PAGE)
     const planner = scriptedPlanner([clickSecondOkay])
     const run = await runScriptedStep({
-      adapter: changingBeforeDispatch(web, swapOkays),
+      adapter: changingBeforeDispatch(web, swapOkays).adapter,
       instruction: 'Click the second okay button',
       planner,
       verifier: passes,
@@ -180,5 +211,79 @@ describe('C438-IDENTICAL-CONTROLS', () => {
     expect(await pageClicks(web)).toEqual(['second'])
     expect(run.executed).toHaveLength(1)
     expect(run.result.status).toBe('passed')
+  }, 90_000)
+
+  it('cache path: a stored Okay never replays onto either', async () => {
+    const cache = memoryCache()
+    const instruction = 'Click the okay button'
+
+    const live = await open(TWO_OKAY_PAGE)
+    const livePlanner = scriptedPlanner([clickSecondOkay])
+    const first = await runScriptedStep({
+      adapter: live,
+      instruction,
+      planner: livePlanner,
+      verifier: passes,
+      cache,
+      plannerConfig: LIMITS,
+    })
+    expect(first.result.status).toBe('passed')
+    expect(await pageClicks(live)).toEqual(['second'])
+    expect(cache.sets).toHaveLength(1)
+    expect(cache.store.get(cache.sets[0])?.groundedLocator).toEqual([OKAY])
+
+    const web = await open(TWO_OKAY_PAGE)
+    const planner = scriptedPlanner([() => giveUp('the step does not say which Okay button')])
+    const run = await runScriptedStep({
+      adapter: web,
+      instruction,
+      planner,
+      verifier: passes,
+      cache,
+      plannerConfig: LIMITS,
+    })
+
+    expect(cache.gets.at(-1)).toEqual({ key: cache.sets[0], hit: true })
+    expect(run.result.evidence?.cacheStatus).toBe('miss')
+    expect(run.result.evidence?.cacheMiss).toEqual({ reason: 'strict-not-unique' })
+    expect(planner.calls).toBe(1)
+    expect(run.executed).toEqual([])
+    expect(await pageClicks(web)).toEqual([])
+    expect(await pageClicks(live)).toEqual(['second'])
+    expect(run.result.status).toBe('failed')
+  }, 90_000)
+
+  it('heal path: a replaced Okay is not provably either', async () => {
+    const web = await open(ONE_OKAY_PAGE)
+    const changing = changingBeforeDispatch(web, replaceWithTwoOkays)
+    const planner = scriptedPlanner([
+      (screen) => act(
+        { type: 'click', ref: refFor(screen, 'button', 'Okay'), target: OKAY },
+        true,
+        'Click the Okay button',
+      ),
+      () => giveUp('the Okay button was replaced by two identical ones'),
+    ])
+    const run = await runScriptedStep({
+      adapter: changing.adapter,
+      instruction: 'Click the okay button',
+      planner,
+      verifier: passes,
+      plannerConfig: LIMITS,
+    })
+
+    expect(readBindingOutcomeMeta(changing.firstResult())?.outcome).toBe('binding-lost')
+    expect(run.executed).toHaveLength(1)
+    const [first] = run.result.evidence!.subActions
+    expect(first.result.success).toBe(false)
+    expect(readBindingOutcomeMeta(first.result)).toEqual({
+      outcome: 'binding-lost',
+      ref: (first.plannedAction as { ref?: string }).ref,
+      inputSent: false,
+      heal: 'not-unique',
+    })
+    expect(planner.calls).toBe(2)
+    expect(await pageClicks(web)).toEqual([])
+    expect(run.result.status).toBe('failed')
   }, 90_000)
 })
