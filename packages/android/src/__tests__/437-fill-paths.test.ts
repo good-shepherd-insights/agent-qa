@@ -869,6 +869,50 @@ describe('C437-CLEAR', () => {
     expect(JSON.stringify(result)).not.toContain('topSecretPw')
   })
 
+  // 437-21 (WR-04, owner 2026-10-09, "Mismatch if text left"): a password field that still holds
+  // text after the clear fails the clear, naming only the leftover length.
+  it('a secure native clear that leaves text is a mismatch and names only its length', async () => {
+    field.value = 'topSecretPw'
+    field.password = true
+    field.readBack = () => 'topSecretPw'
+
+    const result = await clear('Password')
+
+    expect(count('clearValue')).toBe(1)
+    expect(result.success).toBe(false)
+    expect(result.error).toBe('field still reads "<len:11>" after clearing — re-observe and retry')
+    expect(result.metadata?.fillVerdict).toEqual({
+      verb: 'clearText',
+      verdict: 'mismatch',
+      path: 'native',
+      secure: true,
+    })
+    expect(result.metadata?.fillReread).toEqual({ expected: '<len:0>', actual: '<len:11>' })
+    expect(JSON.stringify(result)).not.toContain('topSecretPw')
+  })
+
+  it('a secure keyboard clear that leaves text is a mismatch', async () => {
+    field.value = 'topSecretPw'
+    field.password = true
+    field.readBack = () => 'topSecretPw'
+    focused.isExisting.mockResolvedValueOnce(false)
+
+    const result = await clear('Password')
+
+    expect(focused.clearValue).not.toHaveBeenCalled()
+    expect(count(CTRL_A)).toBe(1)
+    expect(count(DEL)).toBe(1)
+    expect(result.success).toBe(false)
+    expect(result.error).toBe('field still reads "<len:11>" after clearing — re-observe and retry')
+    expect(result.metadata?.fillVerdict).toEqual({
+      verb: 'clearText',
+      verdict: 'mismatch',
+      path: 'keyboard',
+      secure: true,
+    })
+    expect(JSON.stringify(result)).not.toContain('topSecretPw')
+  })
+
   it('a keyboard clear is Ctrl+A then DEL, then a read-back or unverified', async () => {
     field.value = 'old text'
     field.focusHidden = true
@@ -1494,6 +1538,24 @@ describe('C437-FILL-WEBVIEW', () => {
       secure: true,
     })
     expect(result.metadata?.fillSubmit).toEqual({ sent: true, outcome: 'sent' })
+    expect(JSON.stringify(result)).not.toContain('topSecretPw')
+  })
+
+  it('a secure WebView clear that leaves text is a mismatch', async () => {
+    await webView({ secure: true, value: 'topSecretPw', readBack: () => 'topSecretPw' })
+
+    const result = await clear('Email')
+
+    expect(count('keys:')).toBe(2)
+    expect(result.success).toBe(false)
+    expect(result.error).toBe('field still reads "<len:11>" after clearing — re-observe and retry')
+    expect(result.metadata?.fillVerdict).toEqual({
+      verb: 'clearText',
+      verdict: 'mismatch',
+      path: 'webview',
+      secure: true,
+    })
+    expect(result.metadata?.fillReread).toEqual({ expected: '<len:0>', actual: '<len:11>' })
     expect(JSON.stringify(result)).not.toContain('topSecretPw')
   })
 

@@ -3844,7 +3844,7 @@
     {
       "runner": "vitest",
       "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
-      "fullName": "C437-FILL-VERDICT clearText (D-16) a secure clear is unverified with secure true",
+      "fullName": "C437-FILL-VERDICT clearText (D-16) a secure clear that reads back empty or unreadable is unverified with secure true",
       "origin": "437 D-16"
     },
     {
@@ -4530,6 +4530,30 @@
       "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
       "fullName": "C437-CLEAR a clear within the ref's bounds and a keyboard clear are unchanged",
       "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/fill-verify.test.ts",
+      "fullName": "C437-FILL-VERDICT clearText (D-16) a secure clear that leaves text is a mismatch naming only its length (owner 2026-10-09)",
+      "origin": "437 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-CLEAR a secure native clear that leaves text is a mismatch and names only its length",
+      "origin": "437 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-CLEAR a secure keyboard clear that leaves text is a mismatch",
+      "origin": "437 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-WEBVIEW a secure WebView clear that leaves text is a mismatch",
+      "origin": "437 D-16"
     }
   ]
 }

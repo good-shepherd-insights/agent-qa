@@ -7,8 +7,10 @@
 // - mismatch: anything else, including lost, merged or trimmed whitespace, case changes and
 //   truncation; it carries the self-correcting error;
 // - unverified: nothing could be read back; not a failure, never presented as verified.
-// A secure field is never exact: non-empty is unverified, empty is a mismatch, and its meta carries
-// length sentinels, never the value. A clear compares against the empty string.
+// A secure field is never exact: a non-empty fill read-back is unverified, an empty one is a
+// mismatch; a secure clear that leaves text is a mismatch, and an empty or unreadable one is
+// unverified (owner, 2026-10-09). Its meta carries length sentinels, never the value. A clear
+// compares against the empty string.
 
 import type { FillVerdict } from '@vostride/agent-qa-schema'
 import type { FillRereadMeta } from './metadata.js'
@@ -49,8 +51,11 @@ export function compareFillReread(input: FillVerifyInput): FillVerifyResult {
   const expected = input.verb === 'clearText' ? '' : input.expected
 
   if (secure) {
-    if (input.verb === 'clearText' || actual === undefined) {
+    if (actual === undefined || (input.verb === 'clearText' && actual === '')) {
       return { verdict: 'unverified', ok: true, secure: true }
+    }
+    if (input.verb === 'clearText') {
+      return { ...mismatch('<len:0>', `<len:${actual.length}>`, 'clearText'), secure: true }
     }
     const expectedSentinel = `<len:${expected.length}>`
     if (actual.length > 0) {

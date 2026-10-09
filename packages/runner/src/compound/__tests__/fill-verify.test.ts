@@ -156,12 +156,25 @@ describe('C437-FILL-VERDICT', () => {
       expect(r).toEqual({ verdict: 'unverified', ok: true })
     })
 
-    it('a secure clear is unverified with secure true', () => {
-      for (const actual of ['', 'xxxx', undefined]) {
+    it('a secure clear that reads back empty or unreadable is unverified with secure true', () => {
+      for (const actual of ['', undefined]) {
         const r = compareFillReread({ expected: '', actual, secure: true, verb: 'clearText' })
-        expect(r.verdict).toBe('unverified')
+        expect(r).toEqual({ verdict: 'unverified', ok: true, secure: true })
+      }
+    })
+
+    it('a secure clear that leaves text is a mismatch naming only its length (owner 2026-10-09)', () => {
+      for (const actual of ['xxxx', '••••']) {
+        const r = compareFillReread({ expected: '', actual, secure: true, verb: 'clearText' })
+        expect(r.verdict).toBe('mismatch')
+        expect(r.ok).toBe(false)
         expect(r.secure).toBe(true)
-        expect(r.ok).toBe(true)
+        expect(r.meta).toEqual({ expected: '<len:0>', actual: '<len:4>' })
+        expect(r.selfCorrectingError).toBe(
+          'field still reads "<len:4>" after clearing — re-observe and retry',
+        )
+        expect(JSON.stringify(r)).not.toContain('xxxx')
+        expect(JSON.stringify(r)).not.toContain('••••')
       }
     })
   })
