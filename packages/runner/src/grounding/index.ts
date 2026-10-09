@@ -35,3 +35,6 @@ export type {
 } from './stated-target.js'
 
 export { ROW_CONTAINER_ROLES, rowContains, rowTextOf, wordTokens } from './row-text.js'
+
+export { strictMatch, tidyName } from './strict-match.js'
+export type { StrictMatchResult, StrictTarget } from './strict-match.js'

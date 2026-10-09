@@ -13,6 +13,7 @@ import {
   normalizeAnchor,
   parseProcedureBody,
   procedureSourceBinding,
+  readBindingOutcomeMeta,
   servingRecordMetadata,
   toRecordedActionResult,
   validRecordingAnnotation,
@@ -64,18 +65,20 @@ import { projectRiskAction } from '../tools/project-risk-action.js'
 import { defaultRegistry } from '../tools/registry.js'
 import { classifyStep } from '../cache/classify.js'
 import { buildCacheableStepInput } from '../cache/key.js'
-import { buildCachedPlanValue, toGroundedLocator } from '../cache/value.js'
+import { buildCachedPlanValue } from '../cache/value.js'
 import { deterministicDescriptorMatcher } from '../cache/reground.js'
 import { matchDescriptor } from '../grounding/matcher.js'
 import { groundActionPlan } from '../grounding/gate.js'
 import { judgeStatedTarget, renderTargetMismatch } from '../grounding/stated-target.js'
+import { rowTextOf } from '../grounding/row-text.js'
+import { strictMatch } from '../grounding/strict-match.js'
 import type {
   StatedTarget,
   StatedTargetLane,
   StatedTargets,
   TargetIdentity,
 } from '../grounding/stated-target.js'
-import type { CachedPlanValue, GroundedLocator } from '../cache/port.js'
+import type { CachedPlanValue } from '../cache/port.js'
 import type { LoopPorts, SecretRedactorPort } from './ports.js'
 import { guardActionData } from './blob-guard.js'
 import type { ActionPlan, PlanResult, StepContext, VerifierAuthorContext } from './types.js'
@@ -141,6 +144,19 @@ const REF_RESOLUTION_FAILURE_PATTERNS: RegExp[] = [
 
 function isRefResolutionFailure(errorMsg: string): boolean {
   return REF_RESOLUTION_FAILURE_PATTERNS.some((pattern) => pattern.test(errorMsg))
+}
+
+// 438 D-07/D-08/D-09: the adapter's typed binding outcomes that send the loop to re-find the
+// element. A new document (stale-observation) or a removed frame (frame-detached) never does.
+function startsBindingHeal(result: ActionResult): boolean {
+  const outcome = readBindingOutcomeMeta(result)?.outcome
+  return outcome === 'binding-lost' || outcome === 'binding-changed'
+}
+
+function unprovenHealNote(reason: 'absent' | 'not-unique'): string {
+  const found = reason === 'absent' ? 'none matches it' : 'more than one matches it'
+  return 'The element was replaced or changed, and no single current element is provably the '
+    + `same (role, exact name and row: ${found}), so nothing was sent.`
 }
 
 const CANCELLED_MESSAGE = 'Step cancelled by user'
@@ -1616,18 +1632,22 @@ export async function executeStep(
     if (abortAfterExecute) return abortAfterExecute
 
     // 3b. D-10 RE-GROUND-FIRST HEAL (LOOP-04, Pitfall 7). On a CONSERVATIVELY-classified
-    // ref-resolution failure (or the replay gate's ref_not_in_snapshot), re-observe and
-    // re-ground the failed action's descriptor on nameNormalized + hierarchy (the prior
-    // ElementInfo as disambiguator), then re-execute the patched ref — NO planning turn.
-    // Exactly ONE heal per planned action (a per-iteration one-shot boolean, never a counter
-    // — LOOP-02), bounded by the action limit and stepTimeout. The heal trail is
-    // recorded in the sub-action's grounding block only; StepEvidence.selfHeal stays reserved
-    // for replan-based heals (D-11). On no-match/ambiguous it falls through to the replan path.
+    // ref-resolution failure, the replay gate's ref_not_in_snapshot, or the adapter's typed
+    // binding-lost / binding-changed (D-07, D-08), re-observe and re-find the failed element by its
+    // observed role, exact name and row words (strictMatch), then re-execute the patched ref — NO
+    // planning turn. stale-observation and frame-detached never heal (D-09). Exactly ONE heal per
+    // planned action (a per-iteration one-shot, never a counter — LOOP-02), bounded by the action
+    // limit and stepTimeout. A re-found element is judged against the lane's stated target first
+    // (D-04): a contradiction is refused on path 'heal', not sent and not debited. When no single
+    // element is provably the same, nothing is sent and the failure branch hands the planner the
+    // outcome. The heal trail is recorded in the sub-action's grounding block only;
+    // StepEvidence.selfHeal stays reserved for replan-based heals (D-11).
     // 436 D-07: the heal re-execution is a counted action; at the limit it is skipped and the
     // next loop top stops the step.
+    let healUnproven: 'absent' | 'not-unique' | undefined
     if (
       execError !== undefined
-      && (gateForcedRefMiss || isRefResolutionFailure(execError))
+      && (gateForcedRefMiss || isRefResolutionFailure(execError) || startsBindingHeal(execResult))
       && !meter.actionsExhausted()
     ) {
       let freshElements: readonly ElementInfo[] | undefined
@@ -1639,17 +1659,43 @@ export async function executeStep(
         throw err
       }
       const heal = regroundFailedRef(action, screenState.elements, freshElements, ports.secretRedactor)
-      if (heal !== null) {
-        grounding = heal.grounding
-        const patched = patchRef(normalizedAction, heal.field, heal.ref)
-        meter.tryDebitAction()
-        const outcome = await executeResolvedAction(patched)
-        execResult = outcome.result
-        execError = outcome.error
-        action = redactSecretValue(patched, ports.secretRedactor)
-        lastPlannedAction = action
-        const abortAfterHeal = checkAbort()
-        if (abortAfterHeal) return abortAfterHeal
+      if (heal?.kind === 'resolved') {
+        grounding = grounding?.stated !== undefined
+          ? { ...heal.grounding, stated: grounding.stated }
+          : heal.grounding
+        const lane = heal.field as StatedTargetLane
+        const stated = statedTargets?.[lane]
+        const healRefusal = stated === undefined
+          ? undefined
+          : judgeLane(lane, 'heal', stated, heal.element, freshElements,
+              (value) => maskValue(redactSecretValue(value, ports.secretRedactor)))
+        if (healRefusal !== undefined) {
+          execResult = {
+            success: false,
+            error: healRefusal.message,
+            metadata: { ...(execResult.metadata ?? {}), targetRefusal: healRefusal.block },
+          }
+          execError = healRefusal.message
+        } else {
+          const patched = patchRef(normalizedAction, heal.field, heal.ref)
+          meter.tryDebitAction()
+          const outcome = await executeResolvedAction(patched)
+          execResult = outcome.result
+          execError = outcome.error
+          action = redactSecretValue(patched, ports.secretRedactor)
+          lastPlannedAction = action
+          const abortAfterHeal = checkAbort()
+          if (abortAfterHeal) return abortAfterHeal
+        }
+      } else if (heal?.kind === 'unproven') {
+        healUnproven = heal.reason
+        const binding = readBindingOutcomeMeta(execResult)
+        if (binding !== undefined) {
+          execResult = {
+            ...execResult,
+            metadata: { ...execResult.metadata, binding: { ...binding, heal: heal.reason } },
+          }
+        }
       }
     }
 
@@ -1807,6 +1853,7 @@ export async function executeStep(
 
       // Failure context injected for the next planning turn (the surviving mitigation).
       context.failureContext = `Sub-action ${actionIndex + 1} failed: ${execError}\n` +
+        (healUnproven !== undefined ? `${unprovenHealNote(healUnproven)}\n` : '') +
         `Failed action: ${JSON.stringify(action)}\n` +
         `Adapt your approach — try a different element or strategy.`
 
@@ -2780,6 +2827,8 @@ function carriesStatedTarget(action: Action): boolean {
   return 'target' in action || 'fromTarget' in action || 'toTarget' in action
 }
 
+type TargetRefusal = { message: string; block: TargetRefusalMeta }
+
 // D-05: the first lane whose stated target clearly contradicts the element its ref names. Both
 // identities are scrubbed (secret redaction, then masking) before they reach the block or message.
 function judgeStatedTargets(
@@ -2787,46 +2836,60 @@ function judgeStatedTargets(
   action: Action,
   elements: readonly ElementInfo[],
   scrub: (value: string) => string,
-): { message: string; block: TargetRefusalMeta } | undefined {
+): TargetRefusal | undefined {
   for (const lane of STATED_TARGET_LANES) {
     const stated = statedTargets[lane]
     const ref = (action as unknown as Record<string, unknown>)[lane]
     if (stated === undefined || typeof ref !== 'string') continue
     const element = elements.find((candidate) => candidate.ref === ref)
     if (element === undefined) continue
-    const judgement = judgeStatedTarget(stated, element, elements)
-    if (judgement.verdict === 'agrees') continue
-    const statedIdentity: TargetIdentity = {
-      ...(stated.role !== undefined ? { role: scrub(stated.role) } : {}),
-      name: scrub(stated.name),
-      ...(stated.row !== undefined ? { row: scrub(stated.row) } : {}),
-    }
-    const observedIdentity: TargetIdentity = {
-      role: scrub(element.role),
-      name: scrub(element.name),
-      ...(judgement.observedRow !== undefined
-        ? { row: scrub(judgement.observedRow).slice(0, OBSERVED_ROW_CAP) }
-        : {}),
-    }
-    const reasons: TargetMismatchReason[] = [...judgement.reasons]
-    const block: TargetRefusalMeta = {
-      kind: 'target-mismatch',
-      lane,
-      path: 'live',
-      stated: statedIdentity,
-      observed: observedIdentity,
-      reasons,
-      rowStated: judgement.rowStated,
-      inputSent: false,
-    }
-    return {
-      message: renderTargetMismatch({
-        lane, ref, stated: statedIdentity, observed: observedIdentity, reasons,
-      }),
-      block,
-    }
+    const refusal = judgeLane(lane, 'live', stated, element, elements, scrub)
+    if (refusal !== undefined) return refusal
   }
   return undefined
+}
+
+// D-04/D-05: one lane's stated target judged against `element` in `elements`; a refusal on a
+// contradiction, else undefined. `path` says whether the element is the live ref's or the heal's.
+function judgeLane(
+  lane: StatedTargetLane,
+  path: TargetRefusalMeta['path'],
+  stated: StatedTarget,
+  element: ElementInfo,
+  elements: readonly ElementInfo[],
+  scrub: (value: string) => string,
+): TargetRefusal | undefined {
+  const judgement = judgeStatedTarget(stated, element, elements)
+  if (judgement.verdict === 'agrees') return undefined
+  const statedIdentity: TargetIdentity = {
+    ...(stated.role !== undefined ? { role: scrub(stated.role) } : {}),
+    name: scrub(stated.name),
+    ...(stated.row !== undefined ? { row: scrub(stated.row) } : {}),
+  }
+  const observedIdentity: TargetIdentity = {
+    role: scrub(element.role),
+    name: scrub(element.name),
+    ...(judgement.observedRow !== undefined
+      ? { row: scrub(judgement.observedRow).slice(0, OBSERVED_ROW_CAP) }
+      : {}),
+  }
+  const reasons: TargetMismatchReason[] = [...judgement.reasons]
+  const block: TargetRefusalMeta = {
+    kind: 'target-mismatch',
+    lane,
+    path,
+    stated: statedIdentity,
+    observed: observedIdentity,
+    reasons,
+    rowStated: judgement.rowStated,
+    inputSent: false,
+  }
+  return {
+    message: renderTargetMismatch({
+      lane, ref: element.ref, stated: statedIdentity, observed: observedIdentity, reasons,
+    }),
+    block,
+  }
 }
 
 // Build the §A8 grounding block for a grounded sub-action (GROUND-02). Present ONLY when the
@@ -2873,36 +2936,36 @@ function firstStatedTarget(statedTargets: StatedTargets | undefined): StatedTarg
   return undefined
 }
 
-// D-10 re-ground heal (LOOP-04). Re-derive the failed action's descriptor from the PRIOR
-// observation's ElementInfo, then re-match it against the FRESH observation (with the prior
-// element as a hierarchy disambiguator). On a unique resolve, returns the fresh ref plus the
-// §A8 attempt trail (ref no-match → tree-search resolved); on no-match/ambiguous returns null
-// so the caller falls through to the replan-with-failure-context path. Never replans.
+type RegroundOutcome =
+  | { kind: 'resolved'; field: string; ref: Ref; element: ElementInfo; grounding: GroundingEvidence }
+  | { kind: 'unproven'; reason: 'absent' | 'not-unique' }
+
+// D-08 re-find (LOOP-04). The failed lane's element is re-found in the FRESH observation only when
+// exactly one element there has the observed role, exact name and row words (strictMatch): no
+// ordinal, no hierarchy tiebreak, no looser rung. Resolved carries the fresh ref, element and the
+// §A8 trail (ref no-match → tree-search resolved); unproven says why nothing is provably the same;
+// null means the failed action names no element of the prior observation. Never replans.
 function regroundFailedRef(
   action: Action,
   priorElements: readonly ElementInfo[],
   freshElements: readonly ElementInfo[],
   redactor: SecretRedactorPort | undefined,
-): { field: string; ref: Ref; grounding: GroundingEvidence } | null {
+): RegroundOutcome | null {
   const entry = firstRefFieldEntry(action)
   if (entry === undefined) return null
-  const priorTarget = priorElements.find((element) => element.ref === entry.ref)
-  if (priorTarget === undefined) return null
-  const locator: GroundedLocator | null = toGroundedLocator(
-    { ...(action as unknown as Record<string, unknown>), ref: entry.ref } as unknown as Action,
-    priorElements,
-  )
-  if (locator === null) return null
+  const prior = priorElements.find((element) => element.ref === entry.ref)
+  if (prior === undefined) return null
+  const row = rowTextOf(prior, priorElements)
 
-  const match = matchDescriptor({
-    descriptor: { role: locator.role, nameNormalized: locator.nameNormalized, ordinal: locator.ordinal },
-    elements: freshElements,
-    prior: { target: priorTarget, elements: priorElements },
-  })
-  if (match.kind !== 'resolved') return null
+  const match = strictMatch({ role: prior.role, name: prior.name, row }, freshElements)
+  if (match.kind !== 'resolved') return { kind: 'unproven', reason: match.kind }
+  const element = freshElements.find((candidate) => candidate.ref === match.ref)!
 
-  const descriptor: TargetDescriptor = { role: locator.role, name: redactSecretValue(locator.nameNormalized, redactor) }
-  if (locator.ordinal !== undefined) descriptor.ordinal = locator.ordinal
+  const descriptor: TargetDescriptor = {
+    role: prior.role,
+    name: redactSecretValue(prior.name, redactor),
+    ...(row !== undefined ? { row: redactSecretValue(row, redactor) } : {}),
+  }
   const grounding: GroundingEvidence = {
     descriptor,
     attempts: [
@@ -2910,7 +2973,7 @@ function regroundFailedRef(
       { stage: 'tree-search', outcome: 'resolved', resolvedRef: match.ref },
     ],
   }
-  return { field: entry.field, ref: match.ref, grounding }
+  return { kind: 'resolved', field: entry.field, ref: match.ref, element, grounding }
 }
 
 function operationCaptureAvailability(
