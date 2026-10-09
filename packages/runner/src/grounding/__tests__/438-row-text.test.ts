@@ -1,0 +1,178 @@
+// C438-ROW-TEXT (438 D-02, RESEARCH Pattern 3): the one row definition and row containment, read
+// through the runner root. Observations are built by the shared builder from inline nodes.
+
+import { describe, expect, it } from 'vitest'
+import type { ElementInfo } from '@vostride/agent-qa-schema'
+import {
+  buildScreenState,
+  judgeStatedTarget,
+  ROW_CONTAINER_ROLES,
+  rowContains,
+  rowTextOf,
+  wordTokens,
+  type InterimNode,
+} from '../../index.js'
+
+function elementsOf(nodes: InterimNode[]): ElementInfo[] {
+  return buildScreenState({
+    platform: 'web',
+    nodes,
+    viewport: { width: 400, height: 800 },
+    scroll: { offsetX: 0, offsetY: 0, contentWidth: 400, contentHeight: 800 },
+    coordSpace: 'viewport',
+    timestamp: 0,
+  }).state.elements
+}
+
+function named(elements: ElementInfo[], name: string): ElementInfo {
+  const element = elements.find((candidate) => candidate.name === name)
+  if (element === undefined) throw new Error(`no element named ${name}`)
+  return element
+}
+
+const ADDRESSES: InterimNode[] = [
+  { role: 'listitem', text: 'Work 7 Elm Street, Springfield' },
+  { role: 'button', name: 'Edit label', parentIndex: 0 },
+  { role: 'listitem', text: 'Home 1 Home Street, Springfield' },
+  { role: 'button', name: 'Edit label', parentIndex: 2 },
+]
+
+describe('C438-ROW-TEXT', () => {
+  it('the row containers are row, listitem, article and treeitem', () => {
+    expect([...ROW_CONTAINER_ROLES]).toEqual(['row', 'listitem', 'article', 'treeitem'])
+  })
+
+  it('the nearest row container wins over an outer cell', () => {
+    const elements = elementsOf([
+      { role: 'cell', name: 'Outer cell' },
+      { role: 'listitem', text: 'Inner row', parentIndex: 0 },
+      { role: 'button', name: 'Go', parentIndex: 1 },
+    ])
+    expect(rowTextOf(named(elements, 'Go'), elements)).toBe('Inner row Go')
+  })
+
+  it('a row container wins over a nearer cell', () => {
+    const elements = elementsOf([
+      { role: 'row', name: 'Green mug Remove' },
+      { role: 'cell', name: 'Remove', parentIndex: 0 },
+      { role: 'button', name: 'Remove', parentIndex: 1 },
+    ])
+    expect(rowTextOf(elements[2], elements)).toBe('Green mug Remove Remove Remove')
+  })
+
+  it('a cell is the container when no row container exists', () => {
+    const elements = elementsOf([
+      { role: 'cell', name: 'Address', text: '7 Elm Street' },
+      { role: 'button', name: 'Edit label', parentIndex: 0 },
+    ])
+    expect(rowTextOf(named(elements, 'Edit label'), elements)).toBe(
+      'Address 7 Elm Street Edit label',
+    )
+  })
+
+  it('no container gives undefined', () => {
+    const elements = elementsOf([
+      { role: 'heading', name: 'Addresses' },
+      { role: 'button', name: 'Edit label', parentIndex: 0 },
+    ])
+    expect(rowTextOf(named(elements, 'Edit label'), elements)).toBeUndefined()
+  })
+
+  it("the text order is the container's name, its text, then descendants in document order", () => {
+    const elements = elementsOf([
+      { role: 'row', name: 'R', text: 'T' },
+      { role: 'cell', name: 'A', text: 'a1', parentIndex: 0 },
+      { role: 'button', name: 'B', parentIndex: 1 },
+      { role: 'cell', name: 'C', parentIndex: 0 },
+      { role: 'row', name: 'Other' },
+    ])
+    expect(rowTextOf(named(elements, 'B'), elements)).toBe('R T A a1 B C')
+  })
+
+  it('a hierarchy cycle ends the walk', () => {
+    const elements = elementsOf([{ role: 'button', name: 'Loop' }])
+    const looped: ElementInfo = {
+      ...elements[0],
+      hierarchy: { parentRef: elements[0].ref },
+    }
+    expect(rowTextOf(looped, [looped])).toBeUndefined()
+  })
+
+  it("rowContains: 'Elm St' is in '7 Elm Street, Springfield'", () => {
+    expect(rowContains('7 Elm Street, Springfield', 'Elm St')).toBe(true)
+  })
+
+  it("rowContains: 'Elm Street' is not in '1 Home Street, Springfield'", () => {
+    expect(rowContains('1 Home Street, Springfield', 'Elm Street')).toBe(false)
+  })
+
+  it("rowContains: '7' is not in '17 Elm Street'", () => {
+    expect(rowContains('17 Elm Street', '7')).toBe(false)
+  })
+
+  it("rowContains: 'Springfield 7 Elm' is in 'Work 7 Elm Street, Springfield'", () => {
+    expect(rowContains('Work 7 Elm Street, Springfield', 'Springfield 7 Elm')).toBe(true)
+  })
+
+  it("rowContains: 'ELM' is in '7 Elm Street'", () => {
+    expect(rowContains('7 Elm Street', 'ELM')).toBe(true)
+  })
+
+  it('rowContains: full-width digits match ASCII digits', () => {
+    expect(rowContains('7 Elm Street', '７ Elm')).toBe(true)
+    expect(wordTokens('１７ Elm')).toEqual(['17', 'elm'])
+  })
+
+  it('rowContains: a one-letter word is never a prefix', () => {
+    expect(rowContains('7 Elm Street', 'E')).toBe(false)
+  })
+
+  it("the judge treats a row of '' or '   ' as not stated", () => {
+    const elements = elementsOf(ADDRESSES)
+    for (const row of ['', '   ']) {
+      const judgement = judgeStatedTarget(
+        { role: 'button', name: 'Edit label', row },
+        elements[3],
+        elements,
+      )
+      expect(judgement).toMatchObject({ verdict: 'agrees', rowStated: false, rowKnown: true })
+    }
+  })
+
+  it("the judge never adds 'row' when the row is unknown", () => {
+    const elements = elementsOf([{ role: 'button', name: 'Edit label' }])
+    const judgement = judgeStatedTarget(
+      { role: 'button', name: 'Edit label', row: '7 Elm Street' },
+      elements[0],
+      elements,
+    )
+    expect(judgement).toEqual({ verdict: 'agrees', rowStated: true, rowKnown: false })
+  })
+
+  it('the judge refuses a stated row that is not the ref row and names the observed row', () => {
+    const elements = elementsOf(ADDRESSES)
+    const judgement = judgeStatedTarget(
+      { role: 'button', name: 'Edit label', row: '7 Elm Street' },
+      elements[3],
+      elements,
+    )
+    expect(judgement).toEqual({
+      verdict: 'contradicts',
+      reasons: ['row'],
+      rowStated: true,
+      observedRow: 'Home 1 Home Street, Springfield Edit label',
+    })
+  })
+
+  it('the judge returns the observed row when the row agrees', () => {
+    const elements = elementsOf(ADDRESSES)
+    expect(
+      judgeStatedTarget({ role: 'button', name: 'Edit label', row: 'Elm St' }, elements[1], elements),
+    ).toEqual({
+      verdict: 'agrees',
+      rowStated: true,
+      rowKnown: true,
+      observedRow: 'Work 7 Elm Street, Springfield Edit label',
+    })
+  })
+})

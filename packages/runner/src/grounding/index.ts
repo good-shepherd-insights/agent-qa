@@ -33,3 +33,5 @@ export type {
   TargetMismatchInput,
   TargetMismatchReason,
 } from './stated-target.js'
+
+export { ROW_CONTAINER_ROLES, rowContains, rowTextOf, wordTokens } from './row-text.js'
