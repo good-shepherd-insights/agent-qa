@@ -116,6 +116,15 @@ function parseNumericConstant(source: string, name: string): number {
   return value
 }
 
+// Imported once with this module, so each calibration reuses the loaded production module
+// instead of importing it again.
+const productionMatchModule = await import(
+  new URL(
+    '../../../packages/knowledge-local/src/retrieval/fts-match.ts',
+    import.meta.url,
+  ).href
+) as ProductionMatchModule
+
 async function loadProductionFtsContract(): Promise<ProductionFtsContract> {
   const constantsSource = await readFile(
     new URL('../../../packages/knowledge-local/src/retrieval/constants.ts', import.meta.url),
@@ -129,12 +138,7 @@ async function loadProductionFtsContract(): Promise<ProductionFtsContract> {
   if (!ftsShape.test(indexOpenSource) || !indexOpenSource.includes(FTS_TOKENIZER)) {
     throw new Error('production FTS shape no longer matches the calibrated three-column tokenizer')
   }
-  const matchModule = await import(
-    new URL(
-      '../../../packages/knowledge-local/src/retrieval/fts-match.ts',
-      import.meta.url,
-    ).href
-  ) as ProductionMatchModule
+  const matchModule = productionMatchModule
   if (
     typeof matchModule.LEXICAL_MATCH_SEMANTICS !== 'string'
     || typeof matchModule.buildLexicalMatchExpression !== 'function'

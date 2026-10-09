@@ -35,13 +35,16 @@ interface SchemaV2ReceiptView {
 
 const FTS_TOKENIZER = "unicode61 tokenchars '#-_./:[]=>@'"
 
+// Loaded while the file is collected, so no cell pays a module import.
+const productionMatch = await import(
+  new URL(
+    '../../../../packages/knowledge-local/src/retrieval/fts-match.ts',
+    import.meta.url,
+  ).href
+) as ProductionMatchModule
+
 async function productionMatchModule(): Promise<ProductionMatchModule> {
-  return await import(
-    new URL(
-      '../../../../packages/knowledge-local/src/retrieval/fts-match.ts',
-      import.meta.url,
-    ).href
-  ) as ProductionMatchModule
+  return productionMatch
 }
 
 function scoreWithProductionMatch(
