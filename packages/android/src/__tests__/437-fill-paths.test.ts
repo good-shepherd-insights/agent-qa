@@ -54,6 +54,9 @@ interface WebFieldModel {
   readBack?: () => unknown
   typeThrows?: boolean
   keysThrow?: boolean
+  // 437-19 (WR-01): answers for the first probes, in order; later probes answer from the model.
+  probes?: Array<{ editable: boolean; matches: boolean }>
+  probeThrows?: boolean
 }
 
 const WEB_CTX = 'WEBVIEW_app.shop'
@@ -98,9 +101,11 @@ function webScript(source: string, args: unknown[]): unknown {
   const w = web!
   if (args.length === 2) {
     calls.push(`script:probe:${args.join(',')}`)
+    if (w.probeThrows) throw new Error('no such window')
+    const next = w.probes?.shift()
     return {
-      editable: w.editable,
-      matches: w.matches,
+      editable: next ? next.editable : w.editable,
+      matches: next ? next.matches : w.matches,
       multiline: w.multiline,
       secure: w.secure,
       value: 'probeValue' in w ? w.probeValue : w.value,
@@ -194,7 +199,10 @@ function createMockDriver() {
       if (web) webKeys(k)
       return Promise.resolve()
     }),
-    pause: vi.fn().mockResolvedValue(undefined),
+    pause: vi.fn().mockImplementation((ms: number) => {
+      calls.push(`pause:${ms}`)
+      return Promise.resolve()
+    }),
     execute: vi.fn().mockImplementation((command: unknown, ...rest: unknown[]) => {
       if (typeof command !== 'string' || (web && !command.startsWith('mobile:'))) {
         return Promise.resolve(webScript(String(command), rest))
@@ -1044,7 +1052,14 @@ describe('C437-FILL-WEBVIEW', () => {
 
     const result = await fill('Email', 'hello', { submit: true })
 
-    expect(calls).toEqual(['tap', 'script:probe:111,41'])
+    expect(calls).toEqual([
+      'tap',
+      'script:probe:111,41',
+      'pause:300',
+      'script:probe:111,41',
+      'pause:300',
+      'script:probe:111,41',
+    ])
     expectNothingTyped()
     expect(web!.value).toBe('kept')
     expect(result.success).toBe(false)
@@ -1076,6 +1091,127 @@ describe('C437-FILL-WEBVIEW', () => {
       evidence: 'focus-elsewhere',
     })
     expect(result.metadata).not.toHaveProperty('fillSubmit')
+  })
+
+  const PROBE = 'script:probe:111,41'
+  const NOT_FOCUSED = { editable: false, matches: true }
+
+  it('a focus that lands on the second probe is typed once, with no refusal', async () => {
+    await webView({ value: 'stale', probes: [NOT_FOCUSED] })
+
+    const result = await fill('Email', 'hello', { submit: true })
+
+    expect(calls).toEqual([
+      'tap',
+      PROBE,
+      'pause:300',
+      PROBE,
+      'keys:["Control","a"]',
+      'keys:["Backspace"]',
+      'switch:NATIVE_APP',
+      'execute:mobile: type:{"text":"hello"}',
+      `switch:${WEB_CTX}`,
+      'script:read',
+      ...WEB_PRESS_ENTER,
+    ])
+    expect(driver.pause).toHaveBeenCalledTimes(1)
+    expect(driver.pause).toHaveBeenCalledWith(300)
+    expect(count('execute:mobile: type')).toBe(1)
+    expect(web!.value).toBe('hello')
+    expect(result.success).toBe(true)
+    expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'exact', path: 'webview' })
+    expect(result.metadata).not.toHaveProperty('fillRefusal')
+  })
+
+  it('a focus that never lands is refused after three probes with nothing typed', async () => {
+    await webView({ editable: false, matches: true, value: 'kept' })
+
+    const result = await fill('Email', 'hello', { submit: true })
+
+    expect(calls).toEqual(['tap', PROBE, 'pause:300', PROBE, 'pause:300', PROBE])
+    expectNothingTyped()
+    expect(web!.value).toBe('kept')
+    expect(result.success).toBe(false)
+    expect(result.error).toBe(FOCUS_MISS)
+    expect(result.metadata?.fillRefusal).toEqual({
+      verb: 'fill',
+      cause: 'not-editable',
+      evidence: 'no-keyboard-focus',
+    })
+
+    web = { ...newWebField(), matches: false, probes: [NOT_FOCUSED, NOT_FOCUSED] }
+    const elsewhere = await fill('Email', 'hello')
+
+    expect(count(PROBE)).toBe(3)
+    expectNothingTyped()
+    expect(elsewhere.metadata?.fillRefusal).toEqual({
+      verb: 'fill',
+      cause: 'not-editable',
+      evidence: 'focus-elsewhere',
+    })
+  })
+
+  it('a WebView clear waits for focus the same way', async () => {
+    await webView({ value: 'old text', probes: [NOT_FOCUSED] })
+
+    const cleared = await clear('Email')
+
+    expect(calls).toEqual([
+      'tap',
+      PROBE,
+      'pause:300',
+      PROBE,
+      'keys:["Control","a"]',
+      'keys:["Backspace"]',
+      'script:read',
+    ])
+    expect(web!.value).toBe('')
+    expect(cleared.success).toBe(true)
+    expect(cleared.metadata?.fillVerdict).toEqual({ verb: 'clearText', verdict: 'exact', path: 'webview' })
+
+    web = { ...newWebField(), editable: false, value: 'kept' }
+    const missed = await clear('Email')
+
+    expect(calls).toEqual(['tap', PROBE, 'pause:300', PROBE, 'pause:300', PROBE])
+    expect(count('keys:')).toBe(0)
+    expect(web!.value).toBe('kept')
+    expect(missed.success).toBe(false)
+    expect(missed.metadata?.fillRefusal).toEqual({
+      verb: 'clearText',
+      cause: 'not-editable',
+      evidence: 'no-keyboard-focus',
+    })
+  })
+
+  it('a probe that throws on every poll ends in a refusal with nothing typed', async () => {
+    await webView({ value: 'kept', probeThrows: true })
+
+    const result = await fill('Email', 'hello', { submit: true })
+
+    expect(count(PROBE)).toBe(3)
+    expectNothingTyped()
+    expect(web!.value).toBe('kept')
+    expect(result.success).toBe(false)
+    expect(result.metadata?.fillRefusal).toEqual({
+      verb: 'fill',
+      cause: 'not-editable',
+      evidence: 'no-keyboard-focus',
+    })
+    expect(result.metadata).not.toHaveProperty('fillVerdict')
+  })
+
+  it('a WebView fill with late focus run twice types once per fill and presses Enter once per fill', async () => {
+    await webView({ value: 'stale', probes: [NOT_FOCUSED] })
+
+    await fill('Email', 'hello', { submit: true })
+    const first = { types: count('execute:mobile: type'), enters: count(PRESS_ENTER), pauses: count('pause:') }
+    web!.probes = [NOT_FOCUSED]
+    await fill('Email', 'hello', { submit: true })
+    const second = { types: count('execute:mobile: type'), enters: count(PRESS_ENTER), pauses: count('pause:') }
+
+    expect(web!.value).toBe('hello')
+    expect(first).toEqual({ types: 1, enters: 1, pauses: 1 })
+    expect(second).toEqual({ types: 1, enters: 1, pauses: 1 })
   })
 
   it('append moves the caret to the end and keeps the prior text', async () => {

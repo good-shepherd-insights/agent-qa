@@ -89,6 +89,10 @@ const WEB_FOCUS_PROBE_SCRIPT =
   + ' secure: type === "password",'
   + ' value: typeof v === "string" ? v : null'
   + '};'
+// 437 D-11 (WR-01): Chromium moves focus a moment after the tap, so the probe is polled the way
+// iOS polls its focus (FOCUS_POLLS, FOCUS_POLL_PAUSE_MS) before the WebView path refuses.
+const WEB_FOCUS_POLLS = 3
+const WEB_FOCUS_POLL_MS = 300
 const WEB_FIELD_VALUE_SCRIPT =
   'var a = document.activeElement;'
   + 'if (!a) { return null; }'
@@ -1340,6 +1344,16 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     }
   }
 
+  /** Polls the read-only probe until the tap's field holds focus; returns the last answer. */
+  private async awaitWebFocus(center: { x: number; y: number }): Promise<WebFocus> {
+    let focus = await this.probeWebFocus(center)
+    for (let poll = 1; poll < WEB_FOCUS_POLLS && !(focus.editable && focus.matches); poll++) {
+      await this.driver!.pause(WEB_FOCUS_POLL_MS)
+      focus = await this.probeWebFocus(center)
+    }
+    return focus
+  }
+
   private async readWebFieldValue(): Promise<string | undefined> {
     try {
       const value = await this.driver!.execute(WEB_FIELD_VALUE_SCRIPT) as unknown
@@ -1394,7 +1408,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
   ): Promise<ActionResult> {
     const driver = this.driver!
     await this.trustedWebTap(center)
-    const focus = await this.probeWebFocus(center)
+    const focus = await this.awaitWebFocus(center)
     if (!focus.editable || !focus.matches) {
       return this.refuseWebFocus('clearText', ref, focus, false, box)
     }
@@ -1420,7 +1434,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     const driver = this.driver!
     const isAppend = action.clearMode === 'append'
     await this.trustedWebTap(center)
-    const focus = await this.probeWebFocus(center)
+    const focus = await this.awaitWebFocus(center)
     if (!focus.editable || !focus.matches) {
       return this.refuseWebFocus('fill', action.ref, focus, action.submit, box)
     }

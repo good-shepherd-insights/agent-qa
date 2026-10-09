@@ -4458,6 +4458,36 @@
       "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
       "fullName": "C437-WEBVIEW-OBSERVE a button-type input keeps its caption as its name",
       "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-WEBVIEW a focus that lands on the second probe is typed once, with no refusal",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-WEBVIEW a focus that never lands is refused after three probes with nothing typed",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-WEBVIEW a WebView clear waits for focus the same way",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-WEBVIEW a probe that throws on every poll ends in a refusal with nothing typed",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-WEBVIEW a WebView fill with late focus run twice types once per fill and presses Enter once per fill",
+      "origin": "437 D-11"
     }
   ]
 }
