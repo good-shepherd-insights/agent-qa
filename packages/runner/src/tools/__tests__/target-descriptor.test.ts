@@ -1,8 +1,8 @@
 // RED scaffold (Wave 0, GROUND-01 · D-04/D-05/D-06). Pins the uniform `target`
 // tool-surface coverage rule the way element-description.test.ts pins its companion
 // field: wherever a ref can name an element, an optional `target` TargetDescriptor
-// sibling can too, and the ref becomes optional (exactly-one-of enforced later at the
-// grounding gate). The `target` fields do not exist yet, so these assertions fail
+// sibling can too, and the ref becomes optional (438 D-01: the target is sent beside the
+// ref and checked against it at the grounding gate). The `target` fields do not exist yet, so these assertions fail
 // (assertion failures, not import/syntax errors); they turn GREEN when Plan 05 lands the
 // tool-schema change. The enumerated ID list is the D-05 "one scanner rule, no exception
 // list" spec (357-RESEARCH Pitfall 10 verified inventory).
@@ -72,12 +72,13 @@ function expectOptional(fieldSchema: z.ZodType): void {
   expect(fieldSchema.safeParse(undefined).success).toBe(true)
 }
 
-// The `target` field must be an optional strict TargetDescriptor: role/name/ordinal
-// ONLY — never `near` (D-06, omitted from the M1 LLM surface) and never a selector-like
-// field (the grounding-surface rule).
+// The `target` field must be an optional strict stated target: role, name and row words ONLY
+// (438 D-01, D-02) — never an ordinal (438 D-12), never `near` (D-06, omitted from the M1 LLM
+// surface) and never a selector-like field (the grounding-surface rule).
 function expectTargetDescriptorShape(fieldSchema: z.ZodType): void {
   expectOptional(fieldSchema)
-  expect(fieldSchema.safeParse({ role: 'button', name: 'Save', ordinal: 0 }).success).toBe(true)
+  expect(fieldSchema.safeParse({ role: 'button', name: 'Save', row: '7 Elm Street' }).success).toBe(true)
+  expect(fieldSchema.safeParse({ role: 'button', name: 'Save', ordinal: 0 }).success).toBe(false)
   expect(fieldSchema.safeParse({ role: 'button', name: 'Save', near: { nameNormalized: 'email' } }).success).toBe(false)
   expect(fieldSchema.safeParse({ role: 'button', name: 'Save', selector: '#save' }).success).toBe(false)
 }
@@ -128,10 +129,10 @@ describe('target descriptor coverage (D-05 uniform scanner rule)', () => {
     for (const id of ['web_click', 'mobile_tap', 'common_scroll'] as const) {
       for (const shape of refBearingShapes(schemaFor(registry, id))) {
         expectOmitWhenDescribe(shape.ref)
-        expectOmitWhenDescribe(shape.target)
-        // the exactly-one-of contract is stated in prose (invisible to JSON schema
-        // otherwise — Pitfall 4).
-        expect(shape.target.description ?? '').toMatch(/exactly one/i)
+        // 438 D-01: the target is sent alongside the ref, and alone only with no confident ref;
+        // the contract is stated in prose (invisible to JSON schema otherwise — Pitfall 4).
+        expect(shape.target.description ?? '').toMatch(/alongside ref/i)
+        expect(shape.target.description ?? '').toMatch(/no confident ref, send target alone/i)
       }
     }
   })

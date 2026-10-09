@@ -65,19 +65,18 @@ export type SwipeByPath = SwipeBase & {
 }
 
 // --- EMISSION projection (planner-facing) -----------------------------------------------
-// What the planner MAY emit for a ref-bearing tool: `ref` becomes optional and an
-// exactly-one-of `target` descriptor sibling appears. These are NOT the shapes adapters
-// receive — the grounding gate (Plan 04) resolves `target` → `ref` before execution.
+// What the planner MAY emit for a ref-bearing tool: `ref` becomes optional and a `target`
+// sibling appears, the stated target sent beside the ref (438 D-01). These are NOT the shapes
+// adapters receive — the grounding gate resolves `target` → `ref` before execution.
 //
-// `EmittedTargetDescriptor` mirrors the tool surface's `targetSchema` (the runner
-// `targetSchema` zod const): matcher-required `name`, `near` omitted from the M1 surface
-// (D-06), no selector-like field. It is the tool-surface projection of the schema
-// `TargetDescriptor` vocabulary; params-drift pins `z.infer<typeof targetSchema>` against it
-// so the two never drift.
+// `EmittedTargetDescriptor` mirrors the tool surface's `targetSchema` (the runner zod const):
+// role, name and the row words of a repeated label (D-02); no `near`, no selector-like field
+// and no ordinal (D-12). Recorded evidence keeps reading the schema `TargetDescriptor`;
+// params-drift pins `z.infer<typeof targetSchema>` against this type so the two never drift.
 export type EmittedTargetDescriptor = {
-  role?: string
+  role: string
   name: string
-  ordinal?: number
+  row?: string
 }
 
 // Flattens an intersection into a single object literal (preserving `?`/`readonly` via a

@@ -11,30 +11,28 @@ const ELEMENT_DESCRIPTION_SCHEMA = z.string().optional()
 export const refSchema = (description: string) =>
   z.string().transform((v): Ref => asRef(v)).describe(description)
 
-// D-04/D-05/D-06: the LLM-facing target descriptor — role/name/ordinal ONLY. No `near`
-// (D-06, reserved off the M1 surface) and no selector-like field (grounding-surface
-// rule); `.strict()` rejects both. The exactly-one-of ref/target contract is stated in
-// prose on each sibling because zod refinements are invisible in the provider JSON schema
-// (Pitfall 4) — enforcement is the Plan-04 grounding gate, not zod.
+// 438 D-01, D-02, D-12: the element the planner means, sent beside the ref and checked against
+// it before dispatch; `row` holds a repeated label's row words. No position field, no `near`
+// and no selector-like field: `.strict()` rejects them.
 export const targetSchema = z.object({
-  role: z.string().optional()
-    .describe('Accessibility role of the target element, e.g. button or textbox. Omit when the accessible name alone is unambiguous.'),
+  role: z.string()
+    .describe('The element\'s role as the observation shows it, e.g. button or textbox.'),
   name: z.string()
-    .describe('Accessible name / visible label of the target element. Always provide it — a name-less descriptor cannot be grounded and is rejected by the matcher.'),
-  ordinal: z.number().int().optional()
-    .describe('0-based tiebreak among same-screen elements that share this role and name, in observation order. Omit when the role/name pair is unique on the current screen.'),
+    .describe('The element\'s accessible name or visible label as the observation shows it.'),
+  row: z.string().optional()
+    .describe('Words from the element\'s row text: the ` text: "…"` of its list item, table row or card in the tree. Give it whenever the same label appears more than once on the screen; omit it when the label is unique.'),
 }).strict()
 
-// An optional target-descriptor sibling for a ref-bearing param (D-05). `noun` names the
-// element the descriptor points at (e.g. "element to click", "container to scroll within").
+// The stated-target sibling of a ref-bearing param. `noun` names the element it states (e.g.
+// "element to click", "container to scroll within").
 const targetSibling = (noun: string) =>
   targetSchema.optional()
-    .describe(`Descriptor naming the ${noun} for grounding when you have no confident ref from the current observation. Provide exactly one of ref or target, never both. Omit when a ref is provided.`)
+    .describe(`The ${noun} you mean: role, name and, when its label repeats on the screen, row words. Send it with every element action alongside ref; the action is refused when the ref is clearly a different element. When you have no confident ref, send target alone and it is grounded against the current screen.`)
 
-// A ref that is now optional because a target descriptor may replace it (D-05).
+// A ref that is optional because a stated target alone may be grounded instead.
 const optionalRef = (description: string) =>
   refSchema(description).optional()
-    .describe(`${description}. Omit when target is provided instead.`)
+    .describe(`${description}. Omit when you have no confident ref; target alone is then grounded.`)
 
 type ActionMeta = Pick<ToolDefinition, 'destructive' | 'readOnly'>
 
@@ -85,7 +83,7 @@ export const scrollSchema = z.discriminatedUnion('mode', [
     mode: z.literal('direction'),
     direction: z.enum(['up', 'down', 'left', 'right']).describe('Direction to scroll'),
     ref: refSchema(`Element to scroll within; ${CURRENT_SCREEN_REF_DESCRIPTION}.`).optional()
-      .describe(`Element to scroll within; ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when scrolling the whole page or screen, or when a target descriptor is provided instead.`),
+      .describe(`Element to scroll within; ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when scrolling the whole page or screen, or when you have no confident ref; target alone is then grounded.`),
     target: targetSibling('container to scroll within'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     amount: z.enum(['page', 'halfPage', 'toEnd']).default('page')
@@ -97,7 +95,7 @@ export const scrollSchema = z.discriminatedUnion('mode', [
     mode: z.literal('untilVisible'),
     text: z.string().describe('Visible text or accessible name to reveal'),
     ref: refSchema(`Element or list to search within; ${CURRENT_SCREEN_REF_DESCRIPTION}.`).optional()
-      .describe(`Element or list to search within; ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when searching the whole page or screen, or when a target descriptor is provided instead.`),
+      .describe(`Element or list to search within; ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when searching the whole page or screen, or when you have no confident ref; target alone is then grounded.`),
     target: targetSibling('container to search within'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     direction: z.enum(['up', 'down', 'left', 'right']).default('down')
@@ -211,7 +209,7 @@ export const swipeSchema = z.discriminatedUnion('mode', [
     mode: z.literal('direction'),
     direction: z.enum(['up', 'down', 'left', 'right']).describe('Swipe direction'),
     ref: refSchema(`Element to swipe within; ${CURRENT_SCREEN_REF_DESCRIPTION}.`).optional()
-      .describe(`Element to swipe within; ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when swiping the whole screen, or when a target descriptor is provided instead.`),
+      .describe(`Element to swipe within; ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when swiping the whole screen, or when you have no confident ref; target alone is then grounded.`),
     target: targetSibling('container to swipe within'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     durationMs: z.number().int().min(50).max(5000).default(300)
@@ -579,11 +577,11 @@ export const ACTION_DEFINITIONS: ToolDefinition[] = [
 
   action('drag', 'Drag an element to another element (reorder lists, sliders)', z.object({
     fromRef: refSchema(`Drag source ${CURRENT_SCREEN_REF_DESCRIPTION}`).optional()
-      .describe(`Drag source ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when fromTarget is provided instead.`),
+      .describe(`Drag source ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when you have no confident fromRef; fromTarget alone is then grounded.`),
     toRef: refSchema(`Drop target ${CURRENT_SCREEN_REF_DESCRIPTION}`).optional()
-      .describe(`Drop target ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when toTarget is provided instead.`),
-    fromTarget: targetSibling('drag source').describe('Descriptor naming the drag source for grounding when you have no confident fromRef. Provide exactly one of fromRef or fromTarget, never both. Omit when fromRef is provided.'),
-    toTarget: targetSibling('drop target').describe('Descriptor naming the drop target for grounding when you have no confident toRef. Provide exactly one of toRef or toTarget, never both. Omit when toRef is provided.'),
+      .describe(`Drop target ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when you have no confident toRef; toTarget alone is then grounded.`),
+    fromTarget: targetSibling('drag source').describe('The drag source you mean: role, name and, when its label repeats on the screen, row words. Send it alongside fromRef; the drag is refused when fromRef is clearly a different element. When you have no confident fromRef, send fromTarget alone and it is grounded against the current screen.'),
+    toTarget: targetSibling('drop target').describe('The drop target you mean: role, name and, when its label repeats on the screen, row words. Send it alongside toRef; the drag is refused when toRef is clearly a different element. When you have no confident toRef, send toTarget alone and it is grounded against the current screen.'),
     fromDescription: z.string().optional()
       .describe('Human-readable label of the drag source. Omit when fromRef is unambiguous.'),
     toDescription: z.string().optional()
