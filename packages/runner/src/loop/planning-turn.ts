@@ -33,6 +33,7 @@ import type {
   ToolExchangeEvidence,
 } from '@vostride/agent-qa-schema'
 import type { ActionPlan, PlanningCallGate } from './types.js'
+import type { StatedTargets } from '../grounding/stated-target.js'
 import type { TokenUsage } from '../result.js'
 import type { LoopScopedLogger } from './ports.js'
 import { toolCallToActionPlan } from '../tools/builder.js'
@@ -91,7 +92,12 @@ export type PlanningTurnFailureReason =
  * SAME conversation as an error-text tool result for the model's one-shot correction.
  */
 export type GroundabilityResult =
-  | { ok: true; action?: Record<string, unknown>; attempts?: GroundingAttempt[] }
+  | {
+      ok: true
+      action?: Record<string, unknown>
+      attempts?: GroundingAttempt[]
+      statedTargets?: StatedTargets
+    }
   | { ok: false; message: string }
 
 /** The injected groundability callback: parsed action → groundability verdict (D-09). */
@@ -446,6 +452,7 @@ export async function executePlanningTurn(
         // when the callback supplies them (LLMPlanner does; test seams may not).
         if (grounded.action) plan.action = grounded.action as ActionPlan['action']
         if (grounded.attempts) plan.groundingAttempts = grounded.attempts
+        if (grounded.statedTargets) plan.statedTargets = grounded.statedTargets
       }
 
       return { ok: true, plan, exchanges, tokenUsage: tokenUsage(), callRecord: callRecord() }

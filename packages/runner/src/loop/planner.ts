@@ -233,7 +233,12 @@ export class LLMPlanner implements Planner {
       const toolName = typeof parsed.action.type === 'string' ? parsed.action.type : 'action'
       const gate = groundActionPlan({ toolName, action: parsed.action, screenState })
       if (gate.ok) {
-        return { ok: true, action: gate.action, attempts: gate.attempts }
+        return {
+          ok: true,
+          action: gate.action,
+          attempts: gate.attempts,
+          statedTargets: gate.statedTargets,
+        }
       }
 
       // The gate rejected the planned action. Surface a diagnostic so an ungroundable action
