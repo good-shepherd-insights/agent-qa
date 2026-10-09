@@ -25,6 +25,7 @@ import {
   type ScreenStateMetadataBase,
   type ScrollContext,
 } from '@vostride/agent-qa-schema'
+import { ROW_CONTAINER_ROLES } from './grounding/row-text.js'
 
 /**
  * Adapter -> builder input for a single observed node.
@@ -250,6 +251,15 @@ export function buildScreenState(input: BuildScreenStateInput): BuildScreenState
 }
 
 const LINE_BREAKS = /\s*[\r\n\u2028\u2029]+\s*/g
+const ROW_TEXT_CAP = 120
+
+function renderedRowText(element: ElementInfo): string | undefined {
+  if (!ROW_CONTAINER_ROLES.includes(element.role)) return undefined
+  const oneLine = element.text?.replace(LINE_BREAKS, ' ')
+  if (!oneLine) return undefined
+  const chars = Array.from(oneLine)
+  return chars.length > ROW_TEXT_CAP ? `${chars.slice(0, ROW_TEXT_CAP).join('')}…` : oneLine
+}
 
 function depthOf(element: ElementInfo, byRef: Map<Ref, ElementInfo>): number {
   let depth = 0
@@ -270,10 +280,14 @@ function depthOf(element: ElementInfo, byRef: Map<Ref, ElementInfo>): number {
  *
  * Grammar (pinned; RESEARCH Pitfall #10):
  *   [Viewport: {viewportWidth}x{viewportHeight}] [{elements.length} elements]
- *   {2 spaces × depth}- {role}{ "name"?} [ref={ref}]{ @(x,y wxh)?}{ [disabled]?}{ [offscreen]?}{ [checked]?}{ [selected]?}{ [editable]?}
+ *   {2 spaces × depth}- {role}{ "name"?} [ref={ref}]{ @(x,y wxh)?}{ [disabled]?}{ [offscreen]?}{ [checked]?}{ [selected]?}{ [editable]?}{ text: "row text"?}
  * depth = length of the parentRef chain (root elements depth 0).
  * A rendered name collapses each line break, with the whitespace around it, to one space, so
  * every element stays on one line; element.name and value keep the raw text.
+ * ` text: "…"` appears only on a row container (ROW_CONTAINER_ROLES) whose element.text is
+ * non-empty (438 D-02: the planner must see a row to state it); line breaks collapse the same
+ * way and the rendered text is capped at 120 characters plus `…`. element.text keeps the full
+ * text the judge and replay compare against.
  */
 export function renderScreenTree(
   elements: ElementInfo[],
@@ -300,6 +314,8 @@ export function renderScreenTree(
     if (element.state.checked === true && isToggleElement(element)) line += ' [checked]'
     if (element.state.selected === true) line += ' [selected]'
     if (element.state.editable === true) line += ' [editable]'
+    const rowText = renderedRowText(element)
+    if (rowText !== undefined) line += ` text: "${rowText}"`
     return line
   })
 

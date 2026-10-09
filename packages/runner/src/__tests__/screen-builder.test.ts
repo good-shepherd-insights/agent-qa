@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { asRef, screenStateHash } from '@vostride/agent-qa-schema'
+import { asRef, screenIdentityHash, screenStateHash } from '@vostride/agent-qa-schema'
 import {
   buildScreenState,
   renderScreenTree,
@@ -355,5 +355,81 @@ describe('buildScreenState — determinism (byte-equality oracle)', () => {
     const changed: InterimNode[] = [nodes[0], { ...nodes[1], name: 'Submit' }]
     const b = buildScreenState(makeInput(changed)).state
     expect(screenStateHash(a)).not.toBe(screenStateHash(b))
+  })
+})
+
+describe('C438-ROW-TREE', () => {
+  function treeOf(nodes: InterimNode[]): string[] {
+    const { state } = buildScreenState(makeInput(nodes, { viewport: { width: 200, height: 100 } }))
+    return state.tree.split('\n').slice(1)
+  }
+
+  it('a listitem with text renders its row text', () => {
+    expect(
+      treeOf([
+        { role: 'listitem', text: 'Work 7 Elm Street, Springfield' },
+        { role: 'button', name: 'Edit label', parentIndex: 0 },
+      ]),
+    ).toEqual([
+      '- listitem [ref=e1] text: "Work 7 Elm Street, Springfield"',
+      '  - button "Edit label" [ref=e2]',
+    ])
+  })
+
+  it('a row with 130 characters of text renders the first 120 then an ellipsis', () => {
+    const text = 'x'.repeat(130)
+    expect(treeOf([{ role: 'row', name: 'Green mug Remove', text }])).toEqual([
+      `- row "Green mug Remove" [ref=e1] text: "${'x'.repeat(120)}…"`,
+    ])
+  })
+
+  it('a text with a line break renders one space', () => {
+    expect(treeOf([{ role: 'article', text: 'Order 12\n  shipped' }])).toEqual([
+      '- article [ref=e1] text: "Order 12 shipped"',
+    ])
+  })
+
+  it('a button carrying text renders no suffix', () => {
+    expect(treeOf([{ role: 'button', name: 'Save', text: 'unsaved changes' }])).toEqual([
+      '- button "Save" [ref=e1]',
+    ])
+  })
+
+  it('an element without text renders byte-identically to cb485d65a', () => {
+    const { state } = buildScreenState(
+      makeInput([
+        { role: 'listitem', bounds: { x: 0, y: 0, width: 200, height: 40 } },
+        { role: 'button', name: 'Edit label', parentIndex: 0, state: { enabled: false } },
+        { role: 'row', name: 'Green mug Remove' },
+        { role: 'checkbox', name: 'Agree', state: { checked: true } },
+      ]),
+    )
+    expect(state.tree).toBe(
+      [
+        '[Viewport: 390x100] [4 elements]',
+        '- listitem [ref=e1] @(0,0 200x40)',
+        '  - button "Edit label" [ref=e2] [disabled]',
+        '- row "Green mug Remove" [ref=e3]',
+        '- checkbox "Agree" [ref=e4] [checked]',
+      ].join('\n'),
+    )
+  })
+
+  it('screenIdentityHash ignores row text', () => {
+    const { state } = buildScreenState(
+      makeInput([
+        { role: 'listitem', text: 'Work 7 Elm Street, Springfield' },
+        { role: 'button', name: 'Edit label', parentIndex: 0 },
+        { role: 'listitem', text: 'Home 1 Home Street, Springfield' },
+        { role: 'button', name: 'Edit label', parentIndex: 2 },
+        { role: 'listitem', text: 'Old 9 Oak Road, Springfield' },
+        { role: 'button', name: 'Edit label', parentIndex: 4 },
+      ]),
+    )
+    const withoutText = structuredClone(state)
+    for (const element of withoutText.elements) delete element.text
+
+    expect(state.elements.filter((element) => element.text !== undefined)).toHaveLength(3)
+    expect(screenIdentityHash(state)).toBe(screenIdentityHash(withoutText))
   })
 })
