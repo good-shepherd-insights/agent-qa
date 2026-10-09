@@ -34,10 +34,9 @@ export interface TargetDescriptor {
    */
   row?: string
   /**
-   * Same-screen intra-result-set tiebreak only (§A3): the position among elements
-   * that share this role + name in the current observation order. Never a
-   * cross-run identity — never stored or reused across runs. Still read from old
-   * handoffs; new runs never write it (438 D-13, 436 D-17).
+   * A position among elements sharing this role + name, recorded by runs before 438. Read
+   * from old handoffs only: nothing new writes it, and no matcher, heal, cache or procedure
+   * path selects by it (438 D-12, D-13; 436 D-17).
    */
   ordinal?: number
 }

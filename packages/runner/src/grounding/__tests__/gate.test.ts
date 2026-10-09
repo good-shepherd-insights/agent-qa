@@ -15,7 +15,8 @@
 //   negotiation (GROUND-02); the committed-ref happy path records a ref attempt.
 import { describe, expect, it } from 'vitest'
 
-import type { Ref, ScreenState } from '@vostride/agent-qa-schema'
+import { asRef } from '@vostride/agent-qa-schema'
+import type { ElementInfo, Ref, ScreenState } from '@vostride/agent-qa-schema'
 
 import { GroundingError } from '../../tools/errors.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
@@ -216,5 +217,70 @@ describe('groundActionPlan — target descriptor ladder (D-08, GROUND-02)', () =
     expectError(disabled, 'descriptor_unresolved')
     if (disabled.ok) throw new Error('expected failure')
     expect(disabled.attempts).toContainEqual({ stage: 'visual', outcome: 'skipped' })
+  })
+})
+
+describe('C438-MATCHER-AMBIGUITY', () => {
+  function el(ref: string, role: string, name: string, parentRef?: string): ElementInfo {
+    return {
+      ref: asRef(ref),
+      role,
+      name,
+      nameNormalized: name.toLowerCase(),
+      state: { enabled: true, focused: false, visible: true },
+      labels: {},
+      attributes: {},
+      ...(parentRef !== undefined ? { hierarchy: { parentRef: asRef(parentRef) } } : {}),
+    }
+  }
+
+  function twoAddScreen(): ScreenState {
+    const elements = [
+      el('e20', 'list', 'Cart'),
+      el('e21', 'list', 'Wishlist'),
+      el('e10', 'button', 'Add', 'e20'),
+      el('e11', 'button', 'Add', 'e21'),
+    ]
+    const box = { bounds: { x: 0, y: 0, width: 10, height: 10 }, center: { x: 5, y: 5 } }
+    return makeScreenState({
+      elements,
+      refMap: Object.fromEntries(elements.map((element) => [element.ref, box])),
+    })
+  }
+
+  it('a target-only Add on two Add buttons fails descriptor_ambiguous naming 2 candidates', () => {
+    const result = groundActionPlan({
+      toolName: 'web_click',
+      action: { type: 'click', target: { role: 'button', name: 'Add' } } as never,
+      screenState: twoAddScreen(),
+    })
+
+    const error = expectError(result, 'descriptor_ambiguous')
+    expect(error.message).toContain('2 elements match button "Add"')
+  })
+
+  it('a target-only Add carrying a stray position still fails descriptor_ambiguous', () => {
+    const result = groundActionPlan({
+      toolName: 'web_click',
+      action: { type: 'click', target: { role: 'button', name: 'Add', ordinal: 0 } } as never,
+      screenState: twoAddScreen(),
+    })
+
+    const error = expectError(result, 'descriptor_ambiguous')
+    expect(error.message).toContain('2 elements match button "Add"')
+  })
+
+  it('the prior hierarchy still resolves one Add through the gate', () => {
+    const priorTarget = el('e5', 'button', 'Add', 'e2')
+    const result = groundActionPlan({
+      toolName: 'web_click',
+      action: { type: 'click', target: { role: 'button', name: 'Add', ordinal: 1 } } as never,
+      screenState: twoAddScreen(),
+      options: { prior: priorTarget, priorElements: [el('e2', 'list', 'Cart'), priorTarget] },
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('expected success')
+    expect(result.action.ref).toBe('e10')
   })
 })

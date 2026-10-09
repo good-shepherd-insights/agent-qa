@@ -208,6 +208,18 @@ function coordBoundsError(
   return undefined
 }
 
+// Only the matcher's fields are copied, so a stray position on the target is never read (D-12).
+function toDescriptorInput(value: unknown): DescriptorInput {
+  if (typeof value !== 'object' || value === null) return {}
+  const { role, name, nameNormalized, near } = value as Record<string, unknown>
+  return {
+    ...(role !== undefined ? { role: role as string } : {}),
+    ...(name !== undefined ? { name: name as string } : {}),
+    ...(nameNormalized !== undefined ? { nameNormalized: nameNormalized as string } : {}),
+    ...(near !== undefined ? { near } : {}),
+  }
+}
+
 function toStatedTarget(value: unknown): StatedTarget | undefined {
   if (typeof value !== 'object' || value === null) return undefined
   const { role, name, row } = value as Record<string, unknown>
@@ -271,7 +283,8 @@ export function groundActionPlan(input: GroundActionPlanInput): GateResult {
     }
 
     // (2) descriptor lane: name/near pre-validation, then the tree-search(+visual) ladder.
-    const descriptor = draft[group.targetKey] as DescriptorInput
+    const target = draft[group.targetKey]
+    const descriptor = toDescriptorInput(target)
     const preflight = matchDescriptor({ descriptor, elements: screenState.elements })
     if (preflight.kind === 'rejected') {
       const problem = preflight.reason === 'name-missing' ? 'name-missing' : 'near-unsupported'
@@ -305,7 +318,7 @@ export function groundActionPlan(input: GroundActionPlanInput): GateResult {
     }
 
     draft[group.refKey] = outcome.resolvedRef
-    const stated = toStatedTarget(descriptor)
+    const stated = toStatedTarget(target)
     if (stated !== undefined) statedTargets[group.refKey] = stated
     delete draft[group.targetKey]
   }

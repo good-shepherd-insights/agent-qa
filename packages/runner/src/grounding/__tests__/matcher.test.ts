@@ -5,9 +5,9 @@
 //
 // Contract pinned here (spec §12.17 / 357-RESEARCH Pattern 2):
 //   precedence: role+nameNormalized exact → nameNormalized exact → normalized-substring;
-//   ordinal is an intra-result-set tiebreak ONLY (an ordinal beyond the set is a
-//   no-match, never a clamp); ≥2 survivors after the ladder+ordinal ⇒ ambiguous, never
-//   a pick (the never-pick security property, T-357-01a); name-less ⇒ rejected
+//   no position selects (438 D-12): ≥2 survivors after the ladder and the hierarchy check
+//   ⇒ ambiguous, never a pick (the never-pick security property, T-357-01a);
+//   name-less ⇒ rejected
 //   'name-missing' (D-13); a `near`-bearing descriptor ⇒ rejected 'near-unsupported'
 //   (D-06 defensive backstop); raw `name` is normalized exactly once (Pitfall 6) while a
 //   pre-normalized `nameNormalized` is passed through untouched; prior-ElementInfo
@@ -19,7 +19,7 @@ import { asRef } from '@vostride/agent-qa-schema'
 import type { ElementInfo, Ref } from '@vostride/agent-qa-schema'
 
 import { matchDescriptor } from '../matcher.js'
-import type { DescriptorMatchInput, MatchResult } from '../matcher.js'
+import type { DescriptorInput, DescriptorMatchInput, MatchResult } from '../matcher.js'
 
 interface ElementOverrides {
   name?: string
@@ -43,6 +43,11 @@ function element(ref: string, role: string, nameNormalized: string, overrides: E
 
 function match(input: DescriptorMatchInput): MatchResult {
   return matchDescriptor(input)
+}
+
+// A descriptor that still carries a stray position field, as an old handoff or a planner might.
+function withPosition(descriptor: DescriptorInput, ordinal: number): DescriptorInput {
+  return { ...descriptor, ordinal } as DescriptorInput
 }
 
 describe('matchDescriptor — precedence ladder (D-12)', () => {
@@ -82,17 +87,20 @@ describe('matchDescriptor — precedence ladder (D-12)', () => {
 })
 
 describe('matchDescriptor — ordinal is a tiebreak only (D-12)', () => {
+  // 2026-10-09 (438-11): no position selects (D-12); a stray ordinal is never read.
   it('ordinal selects within the surviving result set', () => {
     const elements = [
       element('e1', 'button', 'add'),
       element('e2', 'button', 'add'),
       element('e3', 'button', 'add'),
     ]
+    const add = { role: 'button', nameNormalized: 'add' }
+    const all = elements.map((el) => el.ref)
 
-    expect(match({ descriptor: { role: 'button', nameNormalized: 'add', ordinal: 0 }, elements }))
-      .toEqual<MatchResult>({ kind: 'resolved', ref: elements[0].ref })
-    expect(match({ descriptor: { role: 'button', nameNormalized: 'add', ordinal: 2 }, elements }))
-      .toEqual<MatchResult>({ kind: 'resolved', ref: elements[2].ref })
+    expect(match({ descriptor: withPosition(add, 0), elements }))
+      .toEqual<MatchResult>({ kind: 'ambiguous', candidates: all })
+    expect(match({ descriptor: withPosition(add, 2), elements }))
+      .toEqual<MatchResult>({ kind: 'ambiguous', candidates: all })
   })
 
   it('an ordinal beyond the surviving set is a no-match, never a clamp to the last element', () => {
@@ -101,9 +109,14 @@ describe('matchDescriptor — ordinal is a tiebreak only (D-12)', () => {
       element('e2', 'button', 'add'),
     ]
 
-    const result = match({ descriptor: { role: 'button', nameNormalized: 'add', ordinal: 5 }, elements })
+    const add = { role: 'button', nameNormalized: 'add' }
 
-    expect(result).toEqual<MatchResult>({ kind: 'no-match' })
+    const result = match({ descriptor: withPosition(add, 5), elements })
+
+    expect(result).toEqual<MatchResult>({
+      kind: 'ambiguous',
+      candidates: [elements[0].ref, elements[1].ref],
+    })
   })
 })
 
@@ -185,5 +198,41 @@ describe('matchDescriptor — prior-ElementInfo hierarchy disambiguation (Patter
     })
 
     expect(result).toEqual<MatchResult>({ kind: 'resolved', ref: asRef('e10') })
+  })
+})
+
+describe('C438-MATCHER-AMBIGUITY', () => {
+  function addScreen(): ElementInfo[] {
+    return [
+      element('e20', 'list', 'cart'),
+      element('e21', 'list', 'wishlist'),
+      element('e10', 'button', 'add', { name: 'Add', parentRef: 'e20' }),
+      element('e11', 'button', 'add', { name: 'Add', parentRef: 'e21' }),
+    ]
+  }
+
+  const add = { role: 'button', name: 'Add' }
+  const both: MatchResult = { kind: 'ambiguous', candidates: [asRef('e10'), asRef('e11')] }
+
+  it('two Add buttons are ambiguous with both refs', () => {
+    expect(match({ descriptor: add, elements: addScreen() })).toEqual<MatchResult>(both)
+  })
+
+  it('a descriptor that still carries a position is ambiguous, and the position is never read', () => {
+    const result = match({ descriptor: withPosition(add, 0), elements: addScreen() })
+
+    expect(result).toEqual<MatchResult>(both)
+  })
+
+  it('the prior hierarchy still resolves when exactly one parent chain matches', () => {
+    const priorTarget = element('e5', 'button', 'add', { name: 'Add', parentRef: 'e2' })
+    const prior = { target: priorTarget, elements: [element('e2', 'list', 'cart'), priorTarget] }
+
+    const resolved: MatchResult = { kind: 'resolved', ref: asRef('e10') }
+
+    expect(match({ descriptor: add, elements: addScreen(), prior })).toEqual<MatchResult>(resolved)
+    // A stray position pointing at the other button changes nothing.
+    expect(match({ descriptor: withPosition(add, 1), elements: addScreen(), prior }))
+      .toEqual<MatchResult>(resolved)
   })
 })
