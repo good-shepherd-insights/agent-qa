@@ -1,14 +1,29 @@
-// 2026-10-09 (438-02, D-05, 436 D-17): the persisted target refusal block and its historical
-// reader. Every expected set is spelled by hand, never derived from the module under test.
+// 2026-10-09 (438-02, D-02, D-05, 436 D-17): the persisted target refusal block, its historical
+// reader and the optional-additive grounding fields. Every expected set is spelled by hand, never
+// derived from the module under test.
+import { readFileSync } from 'node:fs'
+
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
+  guardCompletedRunHandoff,
   readTargetRefusalMeta,
   TARGET_IDENTITY_KEYS,
   TARGET_REFUSAL_KEYS,
 } from '../index'
-import type { TargetIdentity, TargetRefusalMeta } from '../index'
+import type {
+  CompletedRunHandoff,
+  GroundingEvidence,
+  TargetDescriptor,
+  TargetIdentity,
+  TargetRefusalMeta,
+} from '../index'
+
+const preChangeHandoff = new URL(
+  '../../../../test-fixtures/436-pre-change/handoff.json',
+  import.meta.url,
+)
 
 function wellFormed(): Record<string, unknown> {
   return {
@@ -95,5 +110,28 @@ describe('C438-KEY-SETS', () => {
   it('returns undefined for a block whose reasons hold an unknown string', () => {
     const block = { ...wellFormed(), reasons: ['role-kind', 'ordinal'] }
     expect(readTargetRefusalMeta(withBlock(block))).toBeUndefined()
+  })
+
+  it('grounding evidence gains an optional stated identity', () => {
+    expectTypeOf<Pick<GroundingEvidence, 'stated'>>().toEqualTypeOf<{
+      stated?: { role?: string; name: string; row?: string }
+    }>()
+  })
+
+  it('a target descriptor gains an optional row', () => {
+    expectTypeOf<Pick<TargetDescriptor, 'row'>>().toEqualTypeOf<{ row?: string }>()
+  })
+
+  it('a handoff whose grounding carries stated still loads', () => {
+    const handoff = JSON.parse(readFileSync(preChangeHandoff, 'utf8')) as CompletedRunHandoff
+    const subAction = handoff.tests[0].steps[0].subActions[0]
+    const grounding: GroundingEvidence = {
+      descriptor: { role: 'link', name: 'Settings' },
+      attempts: [{ stage: 'ref', outcome: 'resolved' }],
+      stated: { role: 'link', name: 'Settings' },
+    }
+    subAction.grounding = grounding
+    const loaded = guardCompletedRunHandoff(JSON.parse(JSON.stringify(handoff)))
+    expect(loaded.tests[0].steps[0].subActions[0].grounding).toEqual(grounding)
   })
 })

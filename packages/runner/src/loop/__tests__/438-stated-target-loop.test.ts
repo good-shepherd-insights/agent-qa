@@ -308,4 +308,85 @@ describe('C438-STATED-TARGET-LOOP', () => {
     })
     expect(meta?.reasons).toContain('role-kind')
   })
+
+  it('the grounding evidence carries the exact name and the stated identity', async () => {
+    const base = makeScreenState()
+    const screen = makeScreenState({
+      elements: [
+        {
+          ...base.elements[1],
+          ref: asRef('e1'),
+          role: 'link',
+          name: 'Invoice 946',
+          nameNormalized: 'invoice',
+          labels: {},
+        },
+        {
+          ...base.elements[1],
+          ref: asRef('e2'),
+          role: 'link',
+          name: 'Invoice 947',
+          nameNormalized: 'invoice',
+          labels: {},
+        },
+      ],
+    })
+    const a = adapter(screen)
+    const result = await executeStep(
+      'Open invoice 947',
+      {
+        adapter: a,
+        planner: scriptedPlanner([
+          plan({ type: 'click', ref: 'e2', target: { role: 'link', name: 'Invoice 947' } }),
+        ]),
+        plannerConfig: limits(10, 10),
+      },
+      makeStepContext(),
+    )
+
+    expect(a.executed).toHaveLength(1)
+    const grounding = result.evidence?.subActions[0]?.grounding
+    expect(grounding?.descriptor.name).toBe('Invoice 947')
+    expect(grounding?.descriptor).not.toHaveProperty('ordinal')
+    expect(grounding?.stated).toEqual({ role: 'link', name: 'Invoice 947' })
+    expect(grounding?.stated).not.toHaveProperty('row')
+  })
+
+  it('grounding evidence is redacted before record', async () => {
+    const secret = 'zz-secret-label'
+    const masked = 'zz-masked-word'
+    const base = makeScreenState()
+    const name = `Pay ${secret} ${masked}`
+    const screen = makeScreenState({
+      elements: [
+        base.elements[0],
+        { ...base.elements[1], name, nameNormalized: name.toLowerCase(), labels: {} },
+      ],
+    })
+    const a = adapter(screen)
+    const result = await executeStep(
+      'Pay',
+      {
+        adapter: a,
+        planner: scriptedPlanner([
+          plan({ type: 'click', ref: 'e2', target: { role: 'button', name } }),
+        ]),
+        plannerConfig: limits(10, 10),
+        secretRedactor: { redactString: (value) => value.split(secret).join('[SECRET]') },
+        masking: {
+          mask: (value) => value.split(masked).join('[MASKED]'),
+          unmask: (value) => value,
+        },
+      },
+      makeStepContext(),
+    )
+
+    expect(a.executed).toHaveLength(1)
+    const grounding = result.evidence?.subActions[0]?.grounding
+    expect(grounding?.stated?.name).toBe('Pay [SECRET] [MASKED]')
+    expect(grounding?.descriptor.name).toBe('Pay [SECRET] [MASKED]')
+    const recorded = JSON.stringify(grounding)
+    expect(recorded).not.toContain(secret)
+    expect(recorded).not.toContain(masked)
+  })
 })

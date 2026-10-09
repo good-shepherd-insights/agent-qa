@@ -69,7 +69,12 @@ import { deterministicDescriptorMatcher } from '../cache/reground.js'
 import { matchDescriptor } from '../grounding/matcher.js'
 import { groundActionPlan } from '../grounding/gate.js'
 import { judgeStatedTarget, renderTargetMismatch } from '../grounding/stated-target.js'
-import type { StatedTargetLane, StatedTargets, TargetIdentity } from '../grounding/stated-target.js'
+import type {
+  StatedTarget,
+  StatedTargetLane,
+  StatedTargets,
+  TargetIdentity,
+} from '../grounding/stated-target.js'
 import type { CachedPlanValue, GroundedLocator } from '../cache/port.js'
 import type { LoopPorts, SecretRedactorPort } from './ports.js'
 import { guardActionData } from './blob-guard.js'
@@ -1331,7 +1336,13 @@ export async function executeStep(
 
     // The §A8 grounding block for this sub-action's evidence (GROUND-02), redacted before
     // record (T-357-02a). Recomputed to the heal trail below if the D-10 heal fires.
-    let grounding = buildGroundingEvidence(action, screenState.elements, gateAttempts, ports.secretRedactor)
+    let grounding = buildGroundingEvidence(
+      action,
+      screenState.elements,
+      gateAttempts,
+      statedTargets,
+      (value) => maskValue(redactSecretValue(value, ports.secretRedactor)),
+    )
 
     // Persist the completing decision's plan into the per-key cache as a descriptor-only
     // value (D-12 overfit guard: buildCachedPlanValue strips ref/coords/data and derives
@@ -2762,10 +2773,6 @@ function synthesizeRefAttempts(action: Action): GroundingAttempt[] {
   return trail
 }
 
-// Build the §A8 grounding block for a grounded sub-action (GROUND-02, Pitfall 9). Present
-// ONLY when the action carries an element field; the descriptor is redacted BEFORE it lands
-// in evidence (T-357-02a redact-before-record). Attempts come from the turn gate / heal when
-// supplied, else a synthesized ref-resolved trail for the committed ref(s).
 const STATED_TARGET_LANES: readonly StatedTargetLane[] = ['ref', 'fromRef', 'toRef']
 const OBSERVED_ROW_CAP = 200
 
@@ -2822,22 +2829,48 @@ function judgeStatedTargets(
   return undefined
 }
 
+// Build the §A8 grounding block for a grounded sub-action (GROUND-02). Present ONLY when the
+// action carries an element field. Pitfall 9, D-02: the descriptor names the grounded element by
+// its exact name, never by position, and the first lane's stated target is recorded beside it.
+// Every identity is scrubbed BEFORE it lands in evidence (T-357-02a, D-05). Attempts come from
+// the turn gate / heal when supplied, else a synthesized ref-resolved trail for the committed ref.
 function buildGroundingEvidence(
   action: Action,
   elements: readonly ElementInfo[],
   attempts: GroundingAttempt[] | undefined,
-  redactor: SecretRedactorPort | undefined,
+  statedTargets: StatedTargets | undefined,
+  scrub: (value: string) => string,
 ): GroundingEvidence | undefined {
   const ref = firstRefField(action)
   if (ref === undefined) return undefined
-  const locator = toGroundedLocator({ ...(action as unknown as Record<string, unknown>), ref } as unknown as Action, elements)
-  if (locator === null) return undefined
+  const element = elements.find((candidate) => candidate.ref === ref)
+  if (element === undefined) return undefined
   const descriptor: TargetDescriptor = {}
-  if (locator.role) descriptor.role = locator.role
-  descriptor.name = redactSecretValue(locator.nameNormalized, redactor)
-  if (locator.ordinal !== undefined) descriptor.ordinal = locator.ordinal
+  if (element.role) descriptor.role = scrub(element.role)
+  descriptor.name = scrub(element.name)
   const trail = attempts !== undefined && attempts.length > 0 ? attempts : synthesizeRefAttempts(action)
-  return { descriptor, attempts: trail }
+  const stated = firstStatedTarget(statedTargets)
+  if (stated === undefined) return { descriptor, attempts: trail }
+  return {
+    descriptor,
+    attempts: trail,
+    stated: {
+      ...(stated.role !== undefined ? { role: scrub(stated.role) } : {}),
+      name: scrub(stated.name),
+      ...(stated.row !== undefined && stated.row.trim().length > 0
+        ? { row: scrub(stated.row) }
+        : {}),
+    },
+  }
+}
+
+function firstStatedTarget(statedTargets: StatedTargets | undefined): StatedTarget | undefined {
+  if (statedTargets === undefined) return undefined
+  for (const lane of STATED_TARGET_LANES) {
+    const stated = statedTargets[lane]
+    if (stated !== undefined) return stated
+  }
+  return undefined
 }
 
 // D-10 re-ground heal (LOOP-04). Re-derive the failed action's descriptor from the PRIOR

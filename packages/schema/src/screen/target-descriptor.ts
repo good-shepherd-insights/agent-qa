@@ -29,9 +29,15 @@ export interface TargetDescriptor {
    */
   near?: string
   /**
+   * The row words of a repeated label (438 D-02): text of the element's enclosing row, list
+   * item or similar container. Identity for checking and replay, never a search hint.
+   */
+  row?: string
+  /**
    * Same-screen intra-result-set tiebreak only (§A3): the position among elements
    * that share this role + name in the current observation order. Never a
-   * cross-run identity — never stored or reused across runs.
+   * cross-run identity — never stored or reused across runs. Still read from old
+   * handoffs; new runs never write it (438 D-13, 436 D-17).
    */
   ordinal?: number
 }
@@ -56,4 +62,9 @@ export interface GroundingAttempt {
 export interface GroundingEvidence {
   descriptor: TargetDescriptor
   attempts: GroundingAttempt[]
+  /**
+   * The element the planner meant, from the first lane that stated one (438 D-01, D-02),
+   * redacted like the descriptor. `row` is absent when the planner stated no row words.
+   */
+  stated?: { role?: string; name: string; row?: string }
 }
