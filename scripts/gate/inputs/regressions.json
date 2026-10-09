@@ -4302,6 +4302,36 @@
       "file": "packages/web/src/__tests__/compound.test.ts",
       "fullName": "WebPlatformAdapter compound behaviors (RED — Wave-0) C437-FILL-WEB a password field records unverified with secure true and never the raw value",
       "origin": "437 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/evidence.test.ts",
+      "fullName": "C437-NO-INPUT the legacy trace marks the same skipped tap planned twice no-input both times",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/evidence.test.ts",
+      "fullName": "C437-NO-INPUT a cancelled step keeps its skipped tap no-input in the legacy trace",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/live-editor/__tests__/437-live-no-input.test.ts",
+      "fullName": "C437-NO-INPUT-LABEL the live editor data carries a skipped tap as no-input",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/live-editor/__tests__/437-live-no-input.test.ts",
+      "fullName": "C437-NO-INPUT-LABEL the live editor data keeps success and failure unchanged",
+      "origin": "437 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/__tests__/437-live-editor-no-input.test.tsx",
+      "fullName": "C437-NO-INPUT-LABEL the live editor detail names a skipped tap no input sent in the muted colour",
+      "origin": "437 D-05"
     }
   ]
 }
