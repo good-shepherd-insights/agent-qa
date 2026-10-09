@@ -3,8 +3,8 @@
 // no node:* imports, no model/core/adapter package imports, and no hashing here
 // (the cache-key hash swap is Phase 356). Imports only from @vostride/agent-qa-schema.
 //
-// This is the single implementation of ref minting, name normalization, ordinal
-// computation, elements/refMap/metadata assembly, and deterministic tree rendering
+// This is the single implementation of ref minting, name normalization,
+// elements/refMap/metadata assembly, and deterministic tree rendering
 // that all three platform adapters invoke (D-01, D-02, D-03). Identity byte-equality
 // across platforms depends on there being exactly one producer.
 
@@ -85,13 +85,11 @@ export interface BuildScreenStateInput {
 }
 
 /**
- * Execute-time resolution stays adapter-private:
- *   index = position of the live node in the input nodes array
- *   nth   = same-screen ordinal for role + nameNormalized (NEVER stored on ElementInfo)
+ * Execute-time resolution stays adapter-private: `index` is the live node's place in the
+ * input nodes array. No same-screen position is minted for anything to pick by (438 D-13).
  */
 export interface RefBinding {
   index: number
-  nth: number
 }
 
 export interface BuildScreenStateResult {
@@ -151,7 +149,6 @@ export function buildScreenState(input: BuildScreenStateInput): BuildScreenState
   const elements: ElementInfo[] = []
   const refMap: Record<Ref, ElementBounds> = {}
   const binding: Record<Ref, RefBinding> = {}
-  const ordinals = new Map<string, number>()
 
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i]
@@ -159,11 +156,8 @@ export function buildScreenState(input: BuildScreenStateInput): BuildScreenState
     const name = node.name ?? ''
     const nameNormalized = normalizeAccessibleName(name)
 
-    // Same-screen ordinal, counted in document order (binding-only; D-03).
-    const ordinalKey = `${node.role} ${nameNormalized}`
-    const nth = ordinals.get(ordinalKey) ?? 0
-    ordinals.set(ordinalKey, nth + 1)
-    binding[ref] = { index: i, nth }
+    // 2026-10-09 (438-11): the per-screen position is no longer minted (D-13).
+    binding[ref] = { index: i }
 
     const bounds: BoundingBox | undefined = node.bounds
     const center: Point | undefined =

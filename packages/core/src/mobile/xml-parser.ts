@@ -380,22 +380,21 @@ export function parseMobileSource(
 /**
  * Reconstruct the execute-time `lastRefs` record from the interim nodes plus the shared
  * builder's ref->node binding (D-01/D-03). The mobile adapters store this privately so
- * planner-ref -> live-node resolution survives the builder taking over ref minting;
- * `nth` lives ONLY here (never on ElementInfo, per D-03).
+ * planner-ref -> live-node resolution survives the builder taking over ref minting. No
+ * position lives anywhere: not here, not on the binding, not on ElementInfo (438 D-13).
  */
 export function buildRefEntries(
   nodes: InterimNode[],
   binding: Record<string, RefBinding>,
 ): Record<string, RefEntry> {
   const entries: Record<string, RefEntry> = {}
-  for (const [ref, { index, nth }] of Object.entries(binding)) {
+  for (const [ref, { index }] of Object.entries(binding)) {
     const node = nodes[index]
     if (!node) continue
     const rawInputType = node.attributes?.['input-type']
     entries[ref] = {
       role: node.role,
       ...(node.name !== undefined ? { name: node.name } : {}),
-      nth,
       ...(node.bounds !== undefined ? { bounds: node.bounds } : {}),
       ...(node.nativeType !== undefined ? { nativeType: node.nativeType } : {}),
       ...(node.value !== undefined ? { value: node.value } : {}),

@@ -20,7 +20,6 @@ export interface MobileNode {
 export interface RefEntry {
   role: string
   name?: string
-  nth: number
   bounds?: { x: number; y: number; width: number; height: number }
   nativeType?: string
   value?: string

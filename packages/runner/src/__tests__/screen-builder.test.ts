@@ -33,9 +33,10 @@ describe('buildScreenState — ref minting & binding', () => {
     )
 
     expect(state.elements.map(e => e.ref)).toEqual([asRef('e1'), asRef('e2'), asRef('e3')])
-    expect(binding[asRef('e1')]).toEqual({ index: 0, nth: 0 })
-    expect(binding[asRef('e2')]).toEqual({ index: 1, nth: 0 })
-    expect(binding[asRef('e3')]).toEqual({ index: 2, nth: 0 })
+    // 2026-10-09 (438-11): the binding carries no position (D-13).
+    expect(binding[asRef('e1')]).toEqual({ index: 0 })
+    expect(binding[asRef('e2')]).toEqual({ index: 1 })
+    expect(binding[asRef('e3')]).toEqual({ index: 2 })
   })
 
   it('assigns same-screen ordinals on role+nameNormalized (binding only; not on ElementInfo)', () => {
@@ -48,8 +49,9 @@ describe('buildScreenState — ref minting & binding', () => {
 
     expect(state.elements[0].nameNormalized).toBe('save')
     expect(state.elements[1].nameNormalized).toBe('save')
-    expect(binding[asRef('e1')].nth).toBe(0)
-    expect(binding[asRef('e2')].nth).toBe(1)
+    // 2026-10-09 (438-11): no position is minted anywhere, binding or ElementInfo (D-13).
+    expect(binding[asRef('e1')]).toEqual({ index: 0 })
+    expect(binding[asRef('e2')]).toEqual({ index: 1 })
     // ElementInfo carries no ordinal field
     expect(state.elements[0]).not.toHaveProperty('nth')
     expect(state.elements[0]).not.toHaveProperty('ordinal')
@@ -431,5 +433,64 @@ describe('C438-ROW-TREE', () => {
 
     expect(state.elements.filter((element) => element.text !== undefined)).toHaveLength(3)
     expect(screenIdentityHash(state)).toBe(screenIdentityHash(withoutText))
+  })
+})
+
+describe('C438-BUILDER-NO-POSITION', () => {
+  const nodes: InterimNode[] = [
+    { role: 'list', name: 'Cart', bounds: { x: 0, y: 0, width: 390, height: 200 } },
+    {
+      role: 'button',
+      name: 'Add',
+      parentIndex: 0,
+      bounds: { x: 10, y: 10, width: 80, height: 40 },
+    },
+    {
+      role: 'button',
+      name: 'Add ',
+      parentIndex: 0,
+      bounds: { x: 10, y: 60, width: 80, height: 40 },
+    },
+    { role: 'link', name: 'Help', state: { focused: true } },
+  ]
+  const input: BuildScreenStateInput = {
+    platform: 'web',
+    nodes,
+    viewport: { width: 390, height: 844 },
+    scroll: { offsetX: 0, offsetY: 0, contentWidth: 390, contentHeight: 844 },
+    coordSpace: 'viewport',
+    timestamp: 1700000000000,
+    url: 'https://example.test/cart',
+  }
+
+  it('binding entries are exactly { index }, repeated labels included', () => {
+    const { binding } = buildScreenState(input)
+
+    expect(binding).toEqual({
+      [asRef('e1')]: { index: 0 },
+      [asRef('e2')]: { index: 1 },
+      [asRef('e3')]: { index: 2 },
+      [asRef('e4')]: { index: 3 },
+    })
+  })
+
+  it('ElementInfo and the tree are byte-identical to a56b861fe', () => {
+    const { state } = buildScreenState(input)
+
+    expect(screenStateHash(state)).toBe(
+      '7a4dacafb53299cb7594aefd70a10e033b872c35f16b4e08b0bde9f8ac3413eb',
+    )
+    expect(screenIdentityHash(state)).toBe(
+      '0fcae011286525da2c4169ffebd3ed309de52595a43c39ca33048156eaad3b67',
+    )
+    expect(state.tree).toBe(
+      [
+        '[Viewport: 390x844] [4 elements]',
+        '- list "Cart" [ref=e1] @(0,0 390x200)',
+        '  - button "Add" [ref=e2] @(10,10 80x40)',
+        '  - button "Add " [ref=e3] @(10,60 80x40)',
+        '- link "Help" [ref=e4]',
+      ].join('\n'),
+    )
   })
 })
