@@ -4488,6 +4488,36 @@
       "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
       "fullName": "C437-FILL-WEBVIEW a WebView fill with late focus run twice types once per fill and presses Enter once per fill",
       "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-NATIVE a fill whose tap left another field focused is refused with nothing typed",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-NATIVE a focused field within the ref's bounds keeps the native path",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-NATIVE a focused field whose bounds cannot be read keeps the native path",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-NATIVE a field the keyboard moved after the tap is refused, and the re-observed fill types once",
+      "origin": "437 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-NATIVE a focus-elsewhere fill planned twice types nothing either time",
+      "origin": "437 D-11"
     }
   ]
 }

@@ -58,6 +58,9 @@ const FOCUSED_XPATH = '//*[@focused="true"]'
 const FOCUSED_HINT_XPATH = '//*[@focused="true" and @showing-hint="true"]'
 const FOCUSED_MULTILINE_XPATH = '//*[@focused="true" and @multiline="true"]'
 const FOCUSED_SINGLE_LINE_XPATH = '//*[@focused="true" and @multiline="false"]'
+// 437 D-11 (WR-02): the focused node's `bounds` must lie within the ref's, within iOS's RECT_TOLERANCE.
+const FOCUS_BOUNDS_TOLERANCE = 1
+const ANDROID_BOUNDS_RE = /^\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]$/
 const ENTER_KEYCODE = 66
 const CTRL_A = { keycode: 29, metastate: 0x1000 }
 const DEL_KEYCODE = 67
@@ -171,6 +174,27 @@ function fieldKindOf(refData: MobileRefMap[string] | undefined): FieldKind {
   if (inputType === undefined || (inputType & 0xf) === 0) return 'unknown'
   if ((inputType & 0xf) === 1 && (inputType & 0x20000) !== 0) return 'multi-line'
   return 'single-line'
+}
+
+type Rect = { x: number; y: number; width: number; height: number }
+
+function webFocusEvidence(focus: WebFocus): 'no-keyboard-focus' | 'focus-elsewhere' {
+  return focus.editable ? 'focus-elsewhere' : 'no-keyboard-focus'
+}
+
+function parseBoundsAttr(value: unknown): Rect | undefined {
+  if (typeof value !== 'string') return undefined
+  const match = ANDROID_BOUNDS_RE.exec(value.trim())
+  if (!match) return undefined
+  const [left, top, right, bottom] = match.slice(1).map(Number) as [number, number, number, number]
+  return { x: left, y: top, width: right - left, height: bottom - top }
+}
+
+function rectWithin(inner: Rect, outer: Rect): boolean {
+  return inner.x >= outer.x - FOCUS_BOUNDS_TOLERANCE
+    && inner.y >= outer.y - FOCUS_BOUNDS_TOLERANCE
+    && inner.x + inner.width <= outer.x + outer.width + FOCUS_BOUNDS_TOLERANCE
+    && inner.y + inner.height <= outer.y + outer.height + FOCUS_BOUNDS_TOLERANCE
 }
 
 function firstErrorLine(err: unknown): string {
@@ -1131,6 +1155,24 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     }
   }
 
+  /**
+   * 437 D-11 (WR-02): true only when the focused node's bounds are read and lie outside the ref's.
+   * An unreadable or unparseable value is no evidence, so the native path stays (D-04, D-15).
+   */
+  private async focusIsElsewhere(
+    handle: FocusedField,
+    bounds: { x: number; y: number; width: number; height: number },
+  ): Promise<boolean> {
+    let raw: string | null
+    try {
+      raw = await handle.getAttribute('bounds')
+    } catch {
+      return false
+    }
+    const focused = parseBoundsAttr(raw)
+    return focused !== undefined && !rectWithin(focused, bounds)
+  }
+
   /** Ctrl+A then DEL as key input; clears only the view holding input focus (437 D-14). */
   private async clearByKeys(): Promise<void> {
     await this.driver!.execute('mobile: pressKey', CTRL_A)
@@ -1373,25 +1415,25 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     }
   }
 
-  /** 437 D-11: a tap that left no editable field focused at the ref writes nothing. */
-  private refuseWebFocus(
+  /** 437 D-11: a tap that left no editable field, or another field, focused writes nothing. */
+  private refuseFocus(
     verb: 'fill' | 'clearText',
     ref: string,
-    focus: WebFocus,
+    evidence: 'no-keyboard-focus' | 'focus-elsewhere',
+    path: 'webview' | 'native',
     submit: boolean,
     box: TextBox,
   ): ActionResult {
-    const fillRefusal: FillRefusalMeta = {
-      verb,
-      cause: 'not-editable',
-      evidence: focus.editable ? 'focus-elsewhere' : 'no-keyboard-focus',
-    }
+    const fillRefusal: FillRefusalMeta = { verb, cause: 'not-editable', evidence }
     const nothing = verb === 'fill' ? 'nothing was typed' : 'nothing was cleared'
+    const error = path === 'webview'
+      ? `${verb}: the tap on ${ref} did not focus an editable field; ${nothing}. `
+        + 'Target the input itself and try again.'
+      : `${verb}: after tapping ${ref}, input focus is on another field; ${nothing}. `
+        + 'Input is never sent to a field other than the target. Re-observe and target the field itself.'
     return {
       success: false,
-      error:
-        `${verb}: the tap on ${ref} did not focus an editable field; ${nothing}. `
-        + 'Target the input itself and try again.',
+      error,
       ...box,
       metadata: { fillRefusal, ...(submit ? { fillSubmit: { ...INPUT_FAILED } } : {}) },
     }
@@ -1410,7 +1452,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     await this.trustedWebTap(center)
     const focus = await this.awaitWebFocus(center)
     if (!focus.editable || !focus.matches) {
-      return this.refuseWebFocus('clearText', ref, focus, false, box)
+      return this.refuseFocus('clearText', ref, webFocusEvidence(focus), 'webview', false, box)
     }
     try {
       await driver.keys(['Control', 'a'])
@@ -1436,7 +1478,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     await this.trustedWebTap(center)
     const focus = await this.awaitWebFocus(center)
     if (!focus.editable || !focus.matches) {
-      return this.refuseWebFocus('fill', action.ref, focus, action.submit, box)
+      return this.refuseFocus('fill', action.ref, webFocusEvidence(focus), 'webview', action.submit, box)
     }
     if (!focus.multiline && LINE_BREAK_RE.test(action.text)) {
       return this.refuseLineBreaks(action, box)
@@ -1754,6 +1796,9 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
           )
         // 437-05 (2026-10-08, D-12): the path is chosen here, before any text is delivered.
         const focusedEl = await this.focusedField()
+        if (focusedEl && await this.focusIsElsewhere(focusedEl, bounds)) {
+          return this.refuseFocus('fill', action.ref, 'focus-elsewhere', 'native', action.submit, box)
+        }
         if (focusedEl) return await this.fillNativeCompound(focusedEl, action, box)
         return await this.fillKeyboardPath(action, box, refData)
       }

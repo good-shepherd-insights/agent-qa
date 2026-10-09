@@ -40,6 +40,9 @@ interface FieldModel {
   revealOnType?: boolean
   typeThrows?: boolean
   clearThrows?: boolean
+  // 437-20 (WR-02): the focused node's `bounds` attribute; unset answers as UiAutomator2 does for
+  // an unknown attribute name.
+  bounds?: string
 }
 
 // 437-06: a WebView field. The focus probe answers editable/matches/multiline/secure/value from it,
@@ -159,6 +162,7 @@ function createFocusedElement() {
     getAttribute: vi.fn().mockImplementation((name: string) => {
       calls.push(`getAttr:${name}`)
       if (name === 'password') return Promise.resolve(field.password ? 'true' : 'false')
+      if (name === 'bounds' && field.bounds !== undefined) return Promise.resolve(field.bounds)
       return Promise.reject(new Error(`attribute is unknown: ${name}`))
     }),
     clearValue: vi.fn().mockImplementation(() => {
@@ -512,6 +516,136 @@ describe('C437-FILL-NATIVE', () => {
     expect(result.success).toBe(false)
     expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'mismatch', path: 'native' })
     expect(result.metadata?.fillSubmit).toEqual({ sent: false, outcome: 'not-sent', reason: 'mismatch' })
+  })
+
+  // 437-20 (WR-02): the tap must leave the referenced field focused; only bounds that are read and
+  // lie outside the ref's refuse.
+  const PASSWORD_BOUNDS = '[100,400][980,500]'
+  const FOCUS_ELSEWHERE_ERROR =
+    /^fill: after tapping \S+, input focus is on another field; nothing was typed\. Input is never sent to a field other than the target\. Re-observe and target the field itself\.$/
+
+  function typedCount(): number {
+    return focused.setValue.mock.calls.length
+      + focused.addValue.mock.calls.length
+      + driver.execute.mock.calls.filter(([c]) => c === 'mobile: type').length
+  }
+
+  function enterCount(): number {
+    return driver.execute.mock.calls
+      .filter(([c, a]) => c === 'mobile: pressKey' && (a as { keycode?: number })?.keycode === 66).length
+  }
+
+  it('a fill whose tap left another field focused is refused with nothing typed', async () => {
+    field.value = 'pw-kept'
+    field.bounds = PASSWORD_BOUNDS
+
+    const plain = await fill('Username', 'hello')
+
+    expect(plain.success).toBe(false)
+    expect(plain.error).toMatch(FOCUS_ELSEWHERE_ERROR)
+    expect(plain.metadata?.fillRefusal).toEqual({
+      verb: 'fill',
+      cause: 'not-editable',
+      evidence: 'focus-elsewhere',
+    })
+    expect(plain.metadata).not.toHaveProperty('fillSubmit')
+    expect(plain.metadata).not.toHaveProperty('fillVerdict')
+
+    const submitted = await fill('Username', 'hello', { submit: true })
+
+    expect(submitted.success).toBe(false)
+    expect(submitted.metadata?.fillRefusal).toEqual({
+      verb: 'fill',
+      cause: 'not-editable',
+      evidence: 'focus-elsewhere',
+    })
+    expect(submitted.metadata?.fillSubmit).toEqual({
+      sent: false,
+      outcome: 'not-sent',
+      reason: 'input-failed',
+    })
+    expect(typedCount()).toBe(0)
+    expect(enterCount()).toBe(0)
+    expect(driver.keys).not.toHaveBeenCalled()
+    expect(focused.clearValue).not.toHaveBeenCalled()
+    expect(field.value).toBe('pw-kept')
+  })
+
+  it("a focused field within the ref's bounds keeps the native path", async () => {
+    for (const bounds of ['[100,250][980,350]', '[101,251][979,349]', '[99,249][981,351]']) {
+      field = { ...newField(), bounds }
+
+      const result = await fill('Username', 'hello')
+
+      expect(calls.filter((c) => c.startsWith('setValue:')), bounds).toEqual(['setValue:hello'])
+      expect(result.success, bounds).toBe(true)
+      expect(result.metadata?.fillVerdict, bounds).toEqual({ verb: 'fill', verdict: 'exact', path: 'native' })
+      expect(result.metadata, bounds).not.toHaveProperty('fillRefusal')
+    }
+  })
+
+  it('a focused field whose bounds cannot be read keeps the native path', async () => {
+    for (const bounds of [undefined, 'not-bounds', '[100,400][980]']) {
+      field = { ...newField(), bounds }
+
+      const result = await fill('Username', 'hello', { submit: true })
+
+      expect(count('getAttr:bounds'), String(bounds)).toBe(1)
+      expect(calls.filter((c) => c.startsWith('setValue:')), String(bounds)).toEqual(['setValue:hello'])
+      expect(count(PRESS_ENTER), String(bounds)).toBe(1)
+      expect(result.success, String(bounds)).toBe(true)
+      expect(result.metadata?.fillVerdict, String(bounds)).toEqual({ verb: 'fill', verdict: 'exact', path: 'native' })
+    }
+  })
+
+  it('a field the keyboard moved after the tap is refused, and the re-observed fill types once', async () => {
+    pageXml = ANDROID_XML.replace('bounds="[100,250][980,350]"', 'bounds="[100,1500][980,1600]"')
+    field.bounds = '[100,1100][980,1200]'
+
+    const moved = await fill('Username', 'hello')
+
+    expect(moved.success).toBe(false)
+    expect(moved.metadata?.fillRefusal).toEqual({
+      verb: 'fill',
+      cause: 'not-editable',
+      evidence: 'focus-elsewhere',
+    })
+    expect(typedCount()).toBe(0)
+    expect(field.value).toBe('')
+
+    pageXml = ANDROID_XML.replace('bounds="[100,250][980,350]"', 'bounds="[100,1100][980,1200]"')
+    const reobserved = await fill('Username', 'hello')
+
+    expect(taps.at(-1)?.move).toEqual({ x: 540, y: 1150 })
+    expect(typedCount()).toBe(1)
+    expect(field.value).toBe('hello')
+    expect(reobserved.success).toBe(true)
+    expect(reobserved.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'exact', path: 'native' })
+  })
+
+  it('a focus-elsewhere fill planned twice types nothing either time', async () => {
+    field.value = 'pw-kept'
+    field.bounds = PASSWORD_BOUNDS
+
+    const first = await fill('Username', 'hello', { submit: true })
+    const second = await fill('Username', 'hello', { submit: true })
+
+    for (const result of [first, second]) {
+      expect(result.success).toBe(false)
+      expect(result.metadata?.fillRefusal).toEqual({
+        verb: 'fill',
+        cause: 'not-editable',
+        evidence: 'focus-elsewhere',
+      })
+      expect(result.metadata?.fillSubmit).toEqual({
+        sent: false,
+        outcome: 'not-sent',
+        reason: 'input-failed',
+      })
+    }
+    expect(typedCount()).toBe(0)
+    expect(enterCount()).toBe(0)
+    expect(field.value).toBe('pw-kept')
   })
 })
 
