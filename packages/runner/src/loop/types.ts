@@ -18,6 +18,7 @@ import type {
 } from '@vostride/agent-qa-schema'
 import type { Action } from '../platform.js'
 import type { TokenUsage } from '../result.js'
+import type { StatedTargets } from '../grounding/stated-target.js'
 
 /**
  * A planned action plus the frozen v45 plan envelope (D-09). Structural mirror of
@@ -37,6 +38,8 @@ export interface ActionPlan {
    * callback is injected or the gate recorded no attempts.
    */
   groundingAttempts?: GroundingAttempt[]
+  /** D-01: the element the planner meant per element lane, judged before dispatch. */
+  statedTargets?: StatedTargets
   /**
    * WM-01 write channel (spec §12.15, ratified 2026-07-05). Verbatim facts the planner captured
    * this turn via the `remember[]` plan-field; the loop hands them to the run-scoped

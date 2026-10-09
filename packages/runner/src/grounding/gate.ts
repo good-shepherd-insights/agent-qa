@@ -11,9 +11,10 @@
 //   - a required-element field carrying NEITHER a ref nor a target ⇒ descriptor_invalid
 //     (D-04, gate-side, never a zod refine). Optional container fields (scroll/swipe/pinch/
 //     multiTap) may carry neither. A field carrying BOTH a ref and a target is NOT rejected:
-//     the committed ref wins (exact handle), the target is dropped; an invalid ref with a
-//     target present falls back to the target lane. (Hard-rejecting "both" regressed real
-//     runs; exactly-one-of stays a prompt-side guidance ideal, not a gate hard-fail.)
+//     the committed ref grounds the action (exact handle) and the target never grounds over
+//     a resolving ref; it is kept as the stated identity for the AUTO-14 check (D-01), which
+//     the loop runs before dispatch. An invalid ref with a target present falls back to the
+//     target lane, whose resolved descriptor is kept the same way.
 //   - a target descriptor: name-less ⇒ descriptor_invalid; near-bearing ⇒ descriptor_invalid;
 //     unresolved ⇒ descriptor_unresolved (§12.17 self-correcting form); >1 match ⇒
 //     descriptor_ambiguous. The tree-search (+ optional capability-gated visual) ladder runs;
@@ -37,6 +38,7 @@ import { toGroundedLocator } from '../cache/value.js'
 import type { GroundedLocator } from '../cache/value.js'
 import type { Action } from '../platform.js'
 import { GroundingError, groundingError } from '../tools/errors.js'
+import type { StatedTarget, StatedTargetLane, StatedTargets } from './stated-target.js'
 import type { ElementInfo, GroundingAttempt, Ref, ScreenState } from '@vostride/agent-qa-schema'
 
 /**
@@ -79,12 +81,19 @@ export interface GroundActionPlanInput {
  * structured GroundingError and the attempts recorded before the failure.
  */
 export type GateResult =
-  | { ok: true; action: Record<string, unknown>; attempts: GroundingAttempt[]; descriptor?: GroundedLocator }
+  | {
+      ok: true
+      action: Record<string, unknown>
+      attempts: GroundingAttempt[]
+      descriptor?: GroundedLocator
+      /** The planner's stated target per element lane, kept for the pre-dispatch check (D-01). */
+      statedTargets?: StatedTargets
+    }
   | { ok: false; error: GroundingError; attempts: GroundingAttempt[] }
 
 /** A ref/target lane on the action: a paired ref field + descriptor field. */
 interface FieldGroup {
-  refKey: string
+  refKey: StatedTargetLane
   targetKey: string
   /** A required-element field errors on neither; an optional container field may carry neither. */
   required: boolean
@@ -195,6 +204,16 @@ function coordBoundsError(
   return undefined
 }
 
+function toStatedTarget(value: unknown): StatedTarget | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const { role, name, row } = value as Record<string, unknown>
+  return {
+    ...(typeof role === 'string' ? { role } : {}),
+    name: typeof name === 'string' ? name : '',
+    ...(typeof row === 'string' ? { row } : {}),
+  }
+}
+
 function fail(error: GroundingError, attempts: GroundingAttempt[]): GateResult {
   return { ok: false, error, attempts }
 }
@@ -209,6 +228,7 @@ export function groundActionPlan(input: GroundActionPlanInput): GateResult {
   const options = input.options ?? {}
   const draft: Record<string, unknown> = { ...input.action }
   const attempts: GroundingAttempt[] = []
+  const statedTargets: StatedTargets = {}
 
   for (const group of elementGroups(draft)) {
     const hasRef = has(draft, group.refKey)
@@ -223,18 +243,18 @@ export function groundActionPlan(input: GroundActionPlanInput): GateResult {
       continue
     }
 
-    // (2) Committed-ref lane — the ref wins whenever present. A planner that supplies BOTH a
-    // ref and a redundant target is NOT ambiguous: the committed ref is the exact current-
-    // screen handle, so it takes precedence and the target is dropped. (Hard-rejecting "both"
-    // regressed real runs — a common belt-and-suspenders plan where the model both cites the
-    // ref it found AND re-describes it from the step wording; D-04's exactly-one-of is a
-    // guidance ideal, enforced in the prompt, not a reason to fail a groundable plan.) The ref
-    // is validated against the fresh refMap; if it does NOT resolve we fall back to the target
-    // descriptor when one was supplied, else raise ref_not_in_snapshot.
+    // (2) Committed-ref lane — the ref grounds the action whenever it resolves. A target sent
+    // beside it is the element the planner meant (D-01): it never grounds over the resolving
+    // ref, it is kept as the stated identity the loop checks before dispatch, and it leaves
+    // the execution action. The ref is validated against the fresh refMap; if it does NOT
+    // resolve we fall back to the target descriptor when one was supplied, else raise
+    // ref_not_in_snapshot.
     if (hasRef) {
       const ref = String(draft[group.refKey])
       if (ref in screenState.refMap) {
         attempts.push({ stage: 'ref', outcome: 'resolved', resolvedRef: ref as Ref })
+        const stated = hasTarget ? toStatedTarget(draft[group.targetKey]) : undefined
+        if (stated !== undefined) statedTargets[group.refKey] = stated
         delete draft[group.targetKey]
         continue
       }
@@ -281,6 +301,8 @@ export function groundActionPlan(input: GroundActionPlanInput): GateResult {
     }
 
     draft[group.refKey] = outcome.resolvedRef
+    const stated = toStatedTarget(descriptor)
+    if (stated !== undefined) statedTargets[group.refKey] = stated
     delete draft[group.targetKey]
   }
 
@@ -289,5 +311,11 @@ export function groundActionPlan(input: GroundActionPlanInput): GateResult {
   if (coordError !== undefined) return fail(coordError, attempts)
 
   const descriptor = toGroundedLocator(draft as unknown as Action, screenState.elements) ?? undefined
-  return { ok: true, action: draft, attempts, descriptor }
+  return {
+    ok: true,
+    action: draft,
+    attempts,
+    descriptor,
+    ...(Object.keys(statedTargets).length > 0 ? { statedTargets } : {}),
+  }
 }

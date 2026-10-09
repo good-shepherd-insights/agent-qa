@@ -66,6 +66,8 @@ import { buildCachedPlanValue, toGroundedLocator } from '../cache/value.js'
 import { deterministicDescriptorMatcher } from '../cache/reground.js'
 import { matchDescriptor } from '../grounding/matcher.js'
 import { groundActionPlan } from '../grounding/gate.js'
+import { judgeStatedTarget, renderTargetMismatch } from '../grounding/stated-target.js'
+import type { StatedTargetLane, StatedTargets, TargetIdentity } from '../grounding/stated-target.js'
 import type { CachedPlanValue, GroundedLocator } from '../cache/port.js'
 import type { LoopPorts, SecretRedactorPort } from './ports.js'
 import { guardActionData } from './blob-guard.js'
@@ -1267,7 +1269,7 @@ export async function executeStep(
     // D-09 persist the declared bulk-completion predicate for the rest of the run.
     if (rawPlan.bulkCompletionPredicate) activePredicate = rawPlan.bulkCompletionPredicate
 
-    const normalizedAction = normalizePointerActionForStep(rawPlan.action as Action, stepInstruction)
+    let normalizedAction = normalizePointerActionForStep(rawPlan.action as Action, stepInstruction)
     // Redact BEFORE recording (Information-disclosure control, T-353-08): every value
     // that reaches evidence/display is pre-redacted; secret templates are resolved only
     // at the execute boundary below.
@@ -1287,6 +1289,7 @@ export async function executeStep(
     let gateAttempts: GroundingAttempt[] | undefined = rawPlan.groundingAttempts
     let gateForcedError: string | undefined
     let gateForcedRefMiss = false
+    let residualStatedTargets: StatedTargets | undefined
     if (cached) {
       const gateResult = groundActionPlan({
         toolName: normalizedAction.type,
@@ -1299,7 +1302,30 @@ export async function executeStep(
         gateForcedError = gateResult.error.message
         gateForcedRefMiss = gateResult.error.code === 'ref_not_in_snapshot'
       }
+    } else if (
+      !procedureReplayed
+      && rawPlan.groundingAttempts === undefined
+      && carriesStatedTarget(normalizedAction)
+    ) {
+      // D-04: a residual out-of-turn plan carrying a target is grounded here, so its stated
+      // target reaches the pre-dispatch check like a live turn's; the grounded action executes.
+      const gateResult = groundActionPlan({
+        toolName: normalizedAction.type,
+        action: normalizedAction as unknown as Record<string, unknown>,
+        screenState,
+      })
+      if (gateResult.ok) {
+        normalizedAction = gateResult.action as unknown as Action
+        action = redactSecretValue(normalizedAction, ports.secretRedactor)
+        lastPlannedAction = action
+        gateAttempts = gateResult.attempts
+        residualStatedTargets = gateResult.statedTargets
+      } else {
+        gateForcedError = gateResult.error.message
+        gateForcedRefMiss = gateResult.error.code === 'ref_not_in_snapshot'
+      }
     }
+    const statedTargets = rawPlan.statedTargets ?? residualStatedTargets
 
     // The §A8 grounding block for this sub-action's evidence (GROUND-02), redacted before
     // record (T-357-02a). Recomputed to the heal trail below if the D-10 heal fires.
@@ -1367,9 +1393,15 @@ export async function executeStep(
     // 436 D-07: the one pre-dispatch debit for every executed action on every decision path; a
     // gate-forced cache error never executes and is not debited. The loop top already refused an
     // exhausted meter, so this debit cannot be refused here.
-    if (gateForcedError === undefined) meter.tryDebitAction()
+    // D-04/D-05: the stated target is judged against each lane's element before the debit; a
+    // clear contradiction sends nothing, substitutes nothing and is not debited.
+    const targetRefusal = gateForcedError === undefined && statedTargets !== undefined
+      ? judgeStatedTargets(statedTargets, normalizedAction, screenState.elements,
+          (value) => maskValue(redactSecretValue(value, ports.secretRedactor)))
+      : undefined
+    if (gateForcedError === undefined && targetRefusal === undefined) meter.tryDebitAction()
     // D-14: judged pre-dispatch on the settled `screenState` only (never a live probe, Pitfall 10).
-    const idempotentNoop = gateForcedError === undefined
+    const idempotentNoop = gateForcedError === undefined && targetRefusal === undefined
       ? desiredStateSatisfied(normalizedAction, screenState)
       : undefined
     // Phase 360 dispatch verbs siblinged at the ONE chokepoint (357 D-08 law): the runner-mint
@@ -1384,6 +1416,13 @@ export async function executeStep(
     if (gateForcedError !== undefined) {
       execResult = { success: false, error: gateForcedError }
       execError = gateForcedError
+    } else if (targetRefusal !== undefined) {
+      execResult = {
+        success: false,
+        error: targetRefusal.message,
+        metadata: { targetRefusal: targetRefusal.block },
+      }
+      execError = targetRefusal.message
     } else if (dispatchVerb === 'reportValue') {
       // D-01/D-02/D-03: a platform-less answer verb mints a success ActionResult here — never
       // adapter.execute. The answer surfaces on metadata.reportedValue and lands masked-before-
@@ -2725,6 +2764,60 @@ function synthesizeRefAttempts(action: Action): GroundingAttempt[] {
 // ONLY when the action carries an element field; the descriptor is redacted BEFORE it lands
 // in evidence (T-357-02a redact-before-record). Attempts come from the turn gate / heal when
 // supplied, else a synthesized ref-resolved trail for the committed ref(s).
+const STATED_TARGET_LANES: readonly StatedTargetLane[] = ['ref', 'fromRef', 'toRef']
+const OBSERVED_ROW_CAP = 200
+
+function carriesStatedTarget(action: Action): boolean {
+  return 'target' in action || 'fromTarget' in action || 'toTarget' in action
+}
+
+// D-05: the first lane whose stated target clearly contradicts the element its ref names. Both
+// identities are scrubbed (secret redaction, then masking) before they reach the block or message.
+function judgeStatedTargets(
+  statedTargets: StatedTargets,
+  action: Action,
+  elements: readonly ElementInfo[],
+  scrub: (value: string) => string,
+): { message: string; block: Record<string, unknown> } | undefined {
+  for (const lane of STATED_TARGET_LANES) {
+    const stated = statedTargets[lane]
+    const ref = (action as unknown as Record<string, unknown>)[lane]
+    if (stated === undefined || typeof ref !== 'string') continue
+    const element = elements.find((candidate) => candidate.ref === ref)
+    if (element === undefined) continue
+    const judgement = judgeStatedTarget(stated, element, elements)
+    if (judgement.verdict === 'agrees') continue
+    const statedIdentity: TargetIdentity = {
+      ...(stated.role !== undefined ? { role: scrub(stated.role) } : {}),
+      name: scrub(stated.name),
+      ...(stated.row !== undefined ? { row: scrub(stated.row) } : {}),
+    }
+    const observedIdentity: TargetIdentity = {
+      role: scrub(element.role),
+      name: scrub(element.name),
+      ...(judgement.observedRow !== undefined
+        ? { row: scrub(judgement.observedRow).slice(0, OBSERVED_ROW_CAP) }
+        : {}),
+    }
+    return {
+      message: renderTargetMismatch({
+        lane, ref, stated: statedIdentity, observed: observedIdentity, reasons: judgement.reasons,
+      }),
+      block: {
+        kind: 'target-mismatch',
+        lane,
+        path: 'live',
+        stated: statedIdentity,
+        observed: observedIdentity,
+        reasons: [...judgement.reasons],
+        rowStated: judgement.rowStated,
+        inputSent: false,
+      },
+    }
+  }
+  return undefined
+}
+
 function buildGroundingEvidence(
   action: Action,
   elements: readonly ElementInfo[],

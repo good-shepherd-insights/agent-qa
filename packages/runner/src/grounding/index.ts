@@ -21,3 +21,15 @@ export type {
 
 export { groundActionPlan } from './gate.js'
 export type { GateOptions, GateResult, GateVisualRung, GroundActionPlanInput } from './gate.js'
+
+export { judgeStatedTarget, renderTargetMismatch, ROLE_KIND } from './stated-target.js'
+export type {
+  RoleKind,
+  StatedTarget,
+  StatedTargetJudgement,
+  StatedTargetLane,
+  StatedTargets,
+  TargetIdentity,
+  TargetMismatchInput,
+  TargetMismatchReason,
+} from './stated-target.js'
