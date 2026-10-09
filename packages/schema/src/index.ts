@@ -804,7 +804,7 @@ export { toRecordedActionResult } from './result/index'
 export { validRecordingAnnotation, validRecordedAnnotation } from './result/index'
 export type { RecordingAnnotationWitness } from './result/index'
 export type { IdempotentNoopMeta } from './result/index'
-export { readIdempotentNoopMeta } from './result/index'
+export { actionDidNotFail, readIdempotentNoopMeta } from './result/index'
 export { computeEvidenceToken } from './ids/index'
 
 // 338 reader DTOs (PORT-03)

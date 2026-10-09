@@ -17,3 +17,11 @@ export function readIdempotentNoopMeta(
   }
   return undefined
 }
+
+// A skipped tap sent no input and did not fail (D-05), whichever shape recorded it.
+export function actionDidNotFail(result?: {
+  success?: boolean
+  metadata?: Record<string, unknown>
+}): boolean {
+  return result?.success === true || readIdempotentNoopMeta(result)?.inputSent === false
+}

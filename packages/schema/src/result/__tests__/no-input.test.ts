@@ -2,7 +2,7 @@
 // runner and the dashboard.
 import { describe, expect, it } from 'vitest'
 
-import { readIdempotentNoopMeta } from '../../index'
+import { actionDidNotFail, readIdempotentNoopMeta } from '../../index'
 
 const withNoop = (idempotentNoop: unknown) => ({ metadata: { idempotentNoop } })
 
@@ -36,5 +36,34 @@ describe('C437-NO-INPUT-READER', () => {
   it('returns undefined when the block says input was sent', () => {
     expect(readIdempotentNoopMeta(withNoop({ currentState: 'checked', inputSent: true }))).toBeUndefined()
     expect(readIdempotentNoopMeta(withNoop({ currentState: 'checked', inputSent: 'no' }))).toBeUndefined()
+  })
+
+  it('actionDidNotFail is true for a success and for a skipped tap', () => {
+    expect(actionDidNotFail({ success: true })).toBe(true)
+    expect(
+      actionDidNotFail({
+        success: false,
+        metadata: { idempotentNoop: { currentState: 'checked', inputSent: false } },
+      }),
+    ).toBe(true)
+    expect(
+      actionDidNotFail({
+        success: true,
+        metadata: { idempotentNoop: { currentState: 'checked' } },
+      }),
+    ).toBe(true)
+  })
+
+  it('actionDidNotFail is false for a real failure', () => {
+    const failed = { success: false, error: 'x' }
+    expect(actionDidNotFail(failed)).toBe(false)
+    expect(actionDidNotFail({ success: false })).toBe(false)
+    expect(actionDidNotFail(undefined)).toBe(false)
+    expect(
+      actionDidNotFail({
+        success: false,
+        metadata: { idempotentNoop: { currentState: 'checked', inputSent: true } },
+      }),
+    ).toBe(false)
   })
 })

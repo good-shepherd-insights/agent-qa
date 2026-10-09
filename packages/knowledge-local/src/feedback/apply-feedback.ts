@@ -2,6 +2,7 @@
 import {
   ImprovementPlanSchema,
   MARK_QUARANTINE_CLASSES,
+  actionDidNotFail,
   asEvidenceToken,
   asRecordId,
   type Anchor,
@@ -50,10 +51,10 @@ export function procedureReadOn(member: PerTestOutcome, stepIndex: number): stri
 }
 
 export function assertionDrift(member: PerTestOutcome, step: StepEvidence): boolean {
-  // RecordedActionResult has a boolean success arm, not an executed/ok discriminant.
+  // Every sub-action did not fail (actionDidNotFail): a skipped tap sent no input but did not fail.
   return member.rootCause?.class === 'test_bug'
     || (step.verifierVerdict.pass === false
-      && step.subActions.every((action) => action.result.success === true))
+      && step.subActions.every((action) => actionDidNotFail(action.result)))
 }
 
 export interface ServedRecordFacts {

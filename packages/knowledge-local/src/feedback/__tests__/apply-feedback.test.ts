@@ -81,6 +81,34 @@ describe('mechanical mark triage and selection', () => {
   })
 })
 
+describe('C437-NO-INPUT-READERS', () => {
+  const skippedTap = { success: false,
+    metadata: { idempotentNoop: { currentState: 'checked', inputSent: false } } }
+  const base = { kind: 'false-fail' as const, stepIndex: 0, served: [] }
+
+  it('a step whose only action was a skipped tap and whose verifier failed is assertion drift', () => {
+    const m = member()
+    const s = m.steps[0]!
+    s.subActions[0]!.result = skippedTap
+    s.verifierVerdict.pass = false
+    expect(assertionDrift(m, s)).toBe(true)
+    expect(selectFixKind({ ...base, member: m, step: s })).toEqual({ fix: 'test-edit' })
+    expect(selectFixKind({ ...base, kind: 'false-pass', member: m, step: s }))
+      .toEqual({ fix: 'test-edit' })
+  })
+
+  it('a step with a real failed action and a failed verifier is not assertion drift', () => {
+    const m = member()
+    const s = m.steps[0]!
+    s.subActions[0]!.result = { success: false, error: 'element not found' }
+    s.subActions.push({ ...s.subActions[0]!, result: skippedTap })
+    s.verifierVerdict.pass = false
+    expect(assertionDrift(m, s)).toBe(false)
+    expect(selectFixKind({ ...base, member: m, step: s })).toEqual({ fix: 'none',
+      checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } })
+  })
+})
+
 describe('schema-valid floor plans', () => {
   it.each(['caution', 'unknown'] as const)('does not offer an uncommittable fact from a served %s', kind => {
     const value = input()
