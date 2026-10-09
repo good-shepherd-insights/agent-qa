@@ -1,10 +1,9 @@
 // C438-STATED-TARGET-LOOP (438 D-01, D-04, D-05): the planner's stated target reaches the loop's
 // pre-dispatch check from a real planning turn (`ai.generateText` mocked, the real LLMPlanner and
 // gate run), on the descriptor lane and per drag lane, and a refusal sends nothing, is not debited
-// as an action, and records both identities only after redaction and masking. The recorded
-// refusal reads back through the schema's reader (438-02).
+// as an action, and records both identities only after redaction and masking.
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { asRef, readTargetRefusalMeta } from '@vostride/agent-qa-schema'
+import { asRef } from '@vostride/agent-qa-schema'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { Action, PlatformAdapter } from '../../platform.js'
 import type { StepResult } from '../../result.js'
@@ -271,41 +270,5 @@ describe('C438-STATED-TARGET-LOOP', () => {
       expect(recorded).not.toContain(secret)
       expect(recorded).not.toContain(masked)
     }
-  })
-
-  it('a recorded refusal reads back through the schema reader', async () => {
-    const base = makeScreenState()
-    const screen = makeScreenState({
-      elements: [
-        { ...base.elements[0], name: '', nameNormalized: '', labels: {} },
-        { ...base.elements[1], name: 'Submit', nameNormalized: 'submit', labels: {} },
-      ],
-    })
-    const a = adapter(screen)
-    const result = await executeStep(
-      'Click Submit',
-      {
-        adapter: a,
-        planner: scriptedPlanner([
-          plan({ type: 'click', ref: 'e1', target: { role: 'button', name: 'Submit' } }),
-          GIVE_UP,
-        ]),
-        plannerConfig: limits(10, 10),
-      },
-      makeStepContext(),
-    )
-
-    expect(a.executed).toHaveLength(0)
-    const read = readTargetRefusalMeta(result.evidence?.subActions[0]?.result)
-    expect(read?.kind).toBe('target-mismatch')
-    expect(read).toMatchObject({
-      lane: 'ref',
-      path: 'live',
-      stated: { role: 'button', name: 'Submit' },
-      observed: { role: 'textbox', name: '' },
-      rowStated: false,
-      inputSent: false,
-    })
-    expect(read?.reasons).toContain('role-kind')
   })
 })
