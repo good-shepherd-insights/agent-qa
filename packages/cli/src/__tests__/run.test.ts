@@ -876,10 +876,30 @@ async function parseRemovedRunFlag(...runArgs: string[]) {
   return program.parseAsync(['node', 'agent-qa', 'run', ...runArgs])
 }
 
-async function waitForCondition(predicate: () => boolean) {
-  await vi.waitFor(() => {
-    expect(predicate()).toBe(true)
-  }, { timeout: 2_000, interval: 5 })
+// Member starts resolve waits, so a slow run start costs time rather than a poll ceiling.
+function memberArrivals() {
+  const started: string[] = []
+  const waiting: { count: number; resolve: () => void }[] = []
+  const arrive = (name: string) => {
+    started.push(name)
+    for (const waiter of waiting.filter(({ count }) => started.length >= count)) {
+      waiting.splice(waiting.indexOf(waiter), 1)
+      waiter.resolve()
+    }
+  }
+  // Resolves once `count` members have started and pending work has had a turn to start more,
+  // so a sequential claim made right after still sees any member started early.
+  const reached = async (count: number, command: Promise<unknown>) => {
+    await Promise.race([
+      started.length >= count ? Promise.resolve()
+        : new Promise<void>((resolve) => { waiting.push({ count, resolve }) }),
+      command.then(() => {
+        throw new Error(`the run settled with ${started.length} of ${count} members started: ${started.join(', ')}`)
+      }),
+    ])
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+  return { started, arrive, reached }
 }
 
 function deferredRunResult(name: string) {
@@ -3315,19 +3335,19 @@ describe('run command — reporter integration', () => {
     })
     const first = deferredRunResult('Test One')
     const second = deferredRunResult('Test Two')
-    const started: string[] = []
+    const { started, arrive, reached } = memberArrivals()
     mockRunMemberTest.mockImplementation((test: any) => {
-      started.push(test.name)
+      arrive(test.name)
       return test.name === 'Test One' ? first.promise : second.promise
     })
 
     const commandPromise = runCommand('tests/**/*.yaml')
-    await waitForCondition(() => started.length >= 1)
+    await reached(1, commandPromise)
     // Sequential: Test Two does not start until Test One's member resolves.
     expect(started).toEqual(['Test One'])
 
     first.resolve()
-    await waitForCondition(() => started.length >= 2)
+    await reached(2, commandPromise)
     expect(started).toEqual(['Test One', 'Test Two'])
 
     second.resolve()
@@ -3346,19 +3366,19 @@ describe('run command — reporter integration', () => {
     })
     const first = deferredRunResult('Test One')
     const second = deferredRunResult('Test Two')
-    const started: string[] = []
+    const { started, arrive, reached } = memberArrivals()
     mockRunMemberTest.mockImplementation((test: any) => {
-      started.push(test.name)
+      arrive(test.name)
       return test.name === 'Test One' ? first.promise : second.promise
     })
 
     const commandPromise = runCommand('tests/**/*.yaml')
-    await waitForCondition(() => started.length >= 1)
+    await reached(1, commandPromise)
 
     expect(started).toEqual(['Test One'])
 
     first.resolve()
-    await waitForCondition(() => started.length >= 2)
+    await reached(2, commandPromise)
     expect(started).toEqual(['Test One', 'Test Two'])
 
     second.resolve()
@@ -3384,22 +3404,22 @@ describe('run command — reporter integration', () => {
       ['Test Two', deferredRunResult('Test Two')],
       ['Test Three', deferredRunResult('Test Three')],
     ])
-    const started: string[] = []
+    const { started, arrive, reached } = memberArrivals()
     mockRunMemberTest.mockImplementation((test: any) => {
-      started.push(test.name)
+      arrive(test.name)
       return runs.get(test.name)!.promise
     })
 
     const commandPromise = runCommand('tests/**/*.yaml')
-    await waitForCondition(() => started.length >= 1)
+    await reached(1, commandPromise)
     expect(started).toEqual(['Test One'])
 
     runs.get('Test One')!.resolve()
-    await waitForCondition(() => started.length >= 2)
+    await reached(2, commandPromise)
     expect(started).toEqual(['Test One', 'Test Two'])
 
     runs.get('Test Two')!.resolve()
-    await waitForCondition(() => started.length >= 3)
+    await reached(3, commandPromise)
     expect(started).toEqual(['Test One', 'Test Two', 'Test Three'])
 
     runs.get('Test Three')!.resolve()
@@ -3425,20 +3445,20 @@ describe('run command — reporter integration', () => {
     mockParseTestFile.mockReturnValue({ tests: [makeTest()], errors: [] })
     const first = deferredSuiteResult('Suite A')
     const second = deferredSuiteResult('Suite B')
-    const started: string[] = []
+    const { started, arrive, reached } = memberArrivals()
     mockRunMemberTest.mockImplementation((member: any) => {
       const suiteName = String(member.filePath).includes('a.yaml') ? 'Suite A' : 'Suite B'
-      started.push(suiteName)
+      arrive(suiteName)
       return suiteName === 'Suite A' ? first.promise : second.promise
     })
 
     const commandPromise = runCommandWithGlobalArgs(['--config', configPath], '--suite')
     // Sequential: Suite B's member does not start until Suite A's member resolves.
-    await waitForCondition(() => started.length >= 1)
+    await reached(1, commandPromise)
     expect(started).toEqual(['Suite A'])
 
     first.resolve()
-    await waitForCondition(() => started.length >= 2)
+    await reached(2, commandPromise)
     expect(started).toEqual(['Suite A', 'Suite B'])
 
     second.resolve()
@@ -3460,19 +3480,19 @@ describe('run command — reporter integration', () => {
     mockParseTestFile.mockReturnValue({ tests: [makeTest()], errors: [] })
     const first = deferredSuiteResult('Suite A')
     const second = deferredSuiteResult('Suite B')
-    const started: string[] = []
+    const { started, arrive, reached } = memberArrivals()
     mockRunMemberTest.mockImplementation((member: any) => {
       const suiteName = String(member.filePath).includes('a.yaml') ? 'Suite A' : 'Suite B'
-      started.push(suiteName)
+      arrive(suiteName)
       return suiteName === 'Suite A' ? first.promise : second.promise
     })
 
     const commandPromise = runCommandWithGlobalArgs(['--config', configPath], '--suite')
-    await waitForCondition(() => started.length >= 1)
+    await reached(1, commandPromise)
     expect(started).toEqual(['Suite A'])
 
     first.resolve()
-    await waitForCondition(() => started.length >= 2)
+    await reached(2, commandPromise)
     expect(started).toEqual(['Suite A', 'Suite B'])
 
     second.resolve()
@@ -3497,23 +3517,23 @@ describe('run command — reporter integration', () => {
       ['Suite B', deferredSuiteResult('Suite B')],
       ['Suite C', deferredSuiteResult('Suite C')],
     ])
-    const started: string[] = []
+    const { started, arrive, reached } = memberArrivals()
     mockRunMemberTest.mockImplementation((member: any) => {
       const suiteName = String(member.filePath).includes('a.yaml') ? 'Suite A' : String(member.filePath).includes('b.yaml') ? 'Suite B' : 'Suite C'
-      started.push(suiteName)
+      arrive(suiteName)
       return runs.get(suiteName)!.promise
     })
 
     const commandPromise = runCommandWithGlobalArgs(['--config', configPath], '--suite')
-    await waitForCondition(() => started.length >= 1)
+    await reached(1, commandPromise)
     expect(started).toEqual(['Suite A'])
 
     runs.get('Suite A')!.resolve()
-    await waitForCondition(() => started.length >= 2)
+    await reached(2, commandPromise)
     expect(started).toEqual(['Suite A', 'Suite B'])
 
     runs.get('Suite B')!.resolve()
-    await waitForCondition(() => started.length >= 3)
+    await reached(3, commandPromise)
     expect(started).toEqual(['Suite A', 'Suite B', 'Suite C'])
 
     runs.get('Suite C')!.resolve()
