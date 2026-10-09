@@ -57,6 +57,8 @@ export interface InterimNode {
   labels?: ElementLabels
   /** Raw platform bag, passed through to ElementInfo.attributes (default {}). */
   attributes?: Record<string, string>
+  /** Static text folded in from children that are not nodes; copied to ElementInfo.text. */
+  text?: string
   /** Adapter-private hint (e.g. android class / XCUI type); the builder ignores it. */
   nativeType?: string
   /** D-10; the builder maps containerIndex -> the minted container Ref. */
@@ -193,6 +195,7 @@ export function buildScreenState(input: BuildScreenStateInput): BuildScreenState
       ...(bounds !== undefined ? { bounds } : {}),
       ...(center !== undefined ? { center } : {}),
       ...(hierarchy !== undefined ? { hierarchy } : {}),
+      ...(node.text !== undefined && node.text.length > 0 ? { text: node.text } : {}),
     }
     elements.push(element)
 

@@ -48,6 +48,26 @@ const SIGN_IN_PAGE = `<!doctype html><html><body>
   ${EVENT_LOG}
 </body></html>`
 
+const ADDRESSES_PAGE = `<!doctype html><html><head><script>window.__clicks = []</script></head><body>
+  <ul>
+    <li>
+      <p><strong>Work</strong></p>
+      <p>7 Elm Street, Springfield</p>
+      <button type="button" onclick="window.__clicks.push('7 Elm Street, Springfield')">Edit label</button>
+    </li>
+    <li>
+      <p><strong>Home</strong></p>
+      <p>1 Home Street, Springfield</p>
+      <button type="button" onclick="window.__clicks.push('1 Home Street, Springfield')">Edit label</button>
+    </li>
+    <li>
+      <p><strong>Old</strong></p>
+      <p>9 Oak Road, Springfield</p>
+      <button type="button" onclick="window.__clicks.push('9 Oak Road, Springfield')">Edit label</button>
+    </li>
+  </ul>
+</body></html>`
+
 interface PageEvent {
   id: string
   type: string
@@ -76,6 +96,10 @@ async function open(html: string): Promise<WebPlatformAdapter> {
 
 async function events(web: WebPlatformAdapter): Promise<PageEvent[]> {
   return web.getPage()!.evaluate(() => (globalThis as unknown as { __events: PageEvent[] }).__events)
+}
+
+async function addressClicks(web: WebPlatformAdapter): Promise<string[]> {
+  return web.getPage()!.evaluate(() => (globalThis as unknown as { __clicks: string[] }).__clicks)
 }
 
 function clicks(log: readonly PageEvent[]): PageEvent[] {
@@ -235,6 +259,92 @@ describe('C438-STATED-TARGET', () => {
     expect(run.result.status).toBe('passed')
     expect(run.executed).toHaveLength(1)
     expect(clicks(await events(web))).toEqual([{ id: 'submit', type: 'click' }])
+    expect(refusalOf(run)).toBeUndefined()
+  }, 60_000)
+})
+
+describe('C438-STATED-ROW', () => {
+  async function runEditLabel(
+    nth: number,
+    target: { role: string; name: string; row?: string },
+    fallback = true,
+  ) {
+    const web = await open(ADDRESSES_PAGE)
+    const planner = scriptedPlanner([
+      (screen) => act(
+        { type: 'click', ref: refFor(screen, 'button', 'Edit label', nth), target },
+        true,
+        'Edit the address label',
+      ),
+      ...(fallback ? [() => giveUp('The address label could not be edited')] : []),
+    ])
+    const run = await runScriptedStep({
+      adapter: web,
+      instruction: 'Edit the label of the 7 Elm Street address',
+      planner,
+      verifier: passes,
+      plannerConfig: LIMITS,
+    })
+    return { web, run }
+  }
+
+  it("the stated row agrees: Elm's Edit label is clicked", async () => {
+    const { web, run } = await runEditLabel(0, {
+      role: 'button',
+      name: 'Edit label',
+      row: '7 Elm Street',
+    })
+
+    expect(run.result.status).toBe('passed')
+    expect(run.executed).toHaveLength(1)
+    expect(await addressClicks(web)).toEqual(['7 Elm Street, Springfield'])
+    expect(refusalOf(run)).toBeUndefined()
+  }, 60_000)
+
+  it("a stated row that is not the ref's row is refused naming both rows", async () => {
+    const { web, run } = await runEditLabel(1, {
+      role: 'button',
+      name: 'Edit label',
+      row: '7 Elm Street',
+    })
+
+    expect(run.executed).toHaveLength(0)
+    expect(await addressClicks(web)).toEqual([])
+    const first = run.result.evidence!.subActions[0]
+    expect(first.result.success).toBe(false)
+    expect(first.result.error).toMatch(/^target-mismatch: /)
+    const refusal = refusalOf(run)
+    expect(refusal).toMatchObject({
+      kind: 'target-mismatch',
+      lane: 'ref',
+      stated: { role: 'button', name: 'Edit label', row: '7 Elm Street' },
+      observed: { role: 'button', name: 'Edit label' },
+      reasons: ['row'],
+      rowStated: true,
+      inputSent: false,
+    })
+    const observed = refusal?.['observed'] as { row?: string } | undefined
+    expect(observed?.row).toContain('1 Home Street')
+  }, 60_000)
+
+  it('row words left out are not a contradiction', async () => {
+    const { web, run } = await runEditLabel(1, { role: 'button', name: 'Edit label' }, false)
+
+    expect(run.result.status).toBe('passed')
+    expect(run.executed).toHaveLength(1)
+    expect(await addressClicks(web)).toEqual(['1 Home Street, Springfield'])
+    expect(refusalOf(run)).toBeUndefined()
+    const grounding = run.result.evidence!.subActions[0].grounding
+    expect(grounding?.stated).toEqual({ role: 'button', name: 'Edit label' })
+    expect(grounding?.stated).not.toHaveProperty('row')
+  }, 60_000)
+
+  it('an abbreviated row still agrees', async () => {
+    const { web, run } = await runEditLabel(0, { role: 'button', name: 'Edit label', row: 'Elm St' })
+
+    expect(run.result.status).toBe('passed')
+    expect(run.executed).toHaveLength(1)
+    expect(await addressClicks(web)).toEqual(['7 Elm Street, Springfield'])
     expect(refusalOf(run)).toBeUndefined()
   }, 60_000)
 })

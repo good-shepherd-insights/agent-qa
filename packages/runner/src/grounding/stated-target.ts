@@ -12,6 +12,8 @@
 //     and no stated name word is one of them. A nameless element never contradicts on name.
 //   - name-number: both names carry number tokens and the number multisets differ ("Invoice
 //     947" stated, "Invoice 946" found) — the shared word "Invoice" alone would let it pass.
+//   - row: a row was stated, the element's row is known (row-text.ts) and the stated row words
+//     are not in it. An empty stated row is not stated; an unknown row never contradicts.
 // A paraphrase that shares a word ("Log in" for "Sign in") agrees; exact equality is never
 // required. A refusal names both identities and never picks a substitute element.
 //
@@ -21,6 +23,7 @@
 // Pure functions: no recording, no side effects. Redaction is the caller's job.
 
 import type { ElementInfo } from '@vostride/agent-qa-schema'
+import { rowContains, rowTextOf, wordTokens } from './row-text.js'
 
 /** The element the planner meant beside its ref (D-01); `row` names a repeated label's row. */
 export interface StatedTarget {
@@ -67,20 +70,10 @@ export type StatedTargetJudgement =
       observedRow?: string
     }
 
-const NOT_LETTER_OR_DIGIT = /[^\p{L}\p{N}]+/u
 const NUMBER_TOKEN = /^\p{N}+$/u
 
-function tokens(text: string | undefined): string[] {
-  if (text === undefined) return []
-  return text
-    .normalize('NFKC')
-    .toLowerCase()
-    .split(NOT_LETTER_OR_DIGIT)
-    .filter((word) => word.length > 0)
-}
-
 function numberTokens(text: string | undefined): string[] {
-  return tokens(text).filter((word) => NUMBER_TOKEN.test(word)).sort()
+  return wordTokens(text).filter((word) => NUMBER_TOKEN.test(word)).sort()
 }
 
 function numbersDiffer(stated: string, observed: string): boolean {
@@ -96,19 +89,19 @@ function observedWords(element: ElementInfo): Set<string> {
   const words = new Set<string>()
   for (const source of sources) {
     if (typeof source !== 'string') continue
-    for (const word of tokens(source)) words.add(word)
+    for (const word of wordTokens(source)) words.add(word)
   }
   return words
 }
 
 /**
  * Judge a stated target against the element its ref names (D-03). `elements` is the observation
- * the element belongs to; the row comparison that reads it lands with the row-text definition.
+ * the element belongs to; the element's row is read from it (D-02).
  */
 export function judgeStatedTarget(
   stated: StatedTarget,
   element: ElementInfo,
-  _elements: readonly ElementInfo[],
+  elements: readonly ElementInfo[],
 ): StatedTargetJudgement {
   const reasons: TargetMismatchReason[] = []
 
@@ -119,16 +112,25 @@ export function judgeStatedTarget(
   }
 
   const observed = observedWords(element)
-  const statedWords = tokens(stated.name)
+  const statedWords = wordTokens(stated.name)
   if (observed.size > 0 && statedWords.length > 0) {
     if (!statedWords.some((word) => observed.has(word))) reasons.push('name-no-shared-word')
     if (numbersDiffer(stated.name, element.name)) reasons.push('name-number')
   }
 
-  const rowStated = typeof stated.row === 'string' && stated.row.trim().length > 0
+  const statedRow =
+    typeof stated.row === 'string' && stated.row.trim().length > 0 ? stated.row : undefined
+  const rowStated = statedRow !== undefined
+  const observedRow = rowTextOf(element, elements)
+  const rowKnown = observedRow !== undefined
+  if (statedRow !== undefined && observedRow !== undefined && !rowContains(observedRow, statedRow)) {
+    reasons.push('row')
+  }
+
+  const row = observedRow !== undefined ? { observedRow } : {}
   return reasons.length > 0
-    ? { verdict: 'contradicts', reasons, rowStated }
-    : { verdict: 'agrees', rowStated, rowKnown: false }
+    ? { verdict: 'contradicts', reasons, rowStated, ...row }
+    : { verdict: 'agrees', rowStated, rowKnown, ...row }
 }
 
 /** One identity as the refusal message renders it. */

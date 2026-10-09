@@ -49,4 +49,9 @@ export interface ElementInfo {
   labels: ElementLabels
   hierarchy?: ElementHierarchy
   attributes: Record<string, string>
+  /**
+   * App-observed DATA: static text folded into this element from children that are not elements
+   * (438 D-02, the row text a planner states). Never part of identity hashing or serialization.
+   */
+  text?: string
 }

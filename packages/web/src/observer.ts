@@ -15,7 +15,7 @@ const INTERACTIVE_ROLES = new Set([
 
 const CONTENT_ROLES = new Set([
   'heading', 'cell', 'listitem', 'article', 'region', 'navigation',
-  'progressbar', 'tabpanel',
+  'progressbar', 'tabpanel', 'row',
 ])
 
 const LINE_PATTERN = /^(\s*-\s*)(\w+)(?:\s+"([^"]*)")?(.*)$/
@@ -28,13 +28,37 @@ const QUOTED_LINE_PATTERN = /^(\s*-\s*)'(\w+)(?:\s+"([^"]*)")?(.*)'\s*$/
 // aria-ref locators; they are NEVER copied into the node identity (D-03).
 const REF_ANNOTATION = /\[ref=([A-Za-z0-9_-]+)\]/
 const BRACKET_ATTR = /\[(\w+)(?:=([^\]]*))?\]/g
+// The inline text after a line's bracket annotations: `- paragraph [ref=e7]: 7 Elm Street`.
+const INLINE_TEXT = /^(?:\s*\[[^\]]*\])*\s*:\s*(.*)$/
+
+function inlineText(suffix: string | undefined): string | undefined {
+  const raw = suffix?.match(INLINE_TEXT)?.[1]?.trim()
+  if (!raw) return undefined
+  if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) {
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      if (typeof parsed === 'string') return parsed
+    } catch {
+      return raw.slice(1, -1)
+    }
+  }
+  return raw
+}
+
+function appendText(node: InterimNode, text: string | undefined): void {
+  const tidy = text?.replace(/\s+/g, ' ').trim()
+  if (!tidy) return
+  node.text = node.text === undefined ? tidy : `${node.text} ${tidy}`
+}
 
 /**
  * Parse a Playwright ARIA snapshot into platform-neutral runner interim nodes.
  *
  * Emits nodes in document order with role/name/attributes and a `parentIndex`
  * derived from indentation depth (nearest SURVIVING ancestor — RESEARCH Pitfall
- * #7). Playwright ai-mode `[ref=eN]` annotations are captured into an
+ * #7). A line whose role is not kept never becomes a node: its quoted name and inline
+ * text fold into the nearest kept ancestor's `text` (438 D-02, the row text), and a
+ * kept content line's own inline text becomes its `text`. Playwright ai-mode `[ref=eN]` annotations are captured into an
  * index-aligned `nativeRefs` array (adapter-private native handles) and are never
  * written into the node. Accepts both ai-mode (annotated) and default-mode
  * (unannotated) snapshot text.
@@ -58,11 +82,25 @@ export function parseAriaSnapshot(ariaTree: string): {
 
     const [, , role, name, suffix] = match
     const roleLower = role.toLowerCase()
-    if (!INTERACTIVE_ROLES.has(roleLower) && !CONTENT_ROLES.has(roleLower)) continue
 
     // Indentation depth: Playwright indents snapshot children by 2 spaces per level.
     const leadingSpaces = line.length - line.trimStart().length
     const depth = Math.floor(leadingSpaces / 2)
+
+    if (!INTERACTIVE_ROLES.has(roleLower) && !CONTENT_ROLES.has(roleLower)) {
+      let keptAncestor: number | undefined
+      for (let k = ancestors.length - 1; k >= 0; k--) {
+        if (ancestors[k].depth < depth) {
+          keptAncestor = ancestors[k].index
+          break
+        }
+      }
+      if (keptAncestor !== undefined) {
+        appendText(nodes[keptAncestor], name)
+        appendText(nodes[keptAncestor], inlineText(suffix))
+      }
+      continue
+    }
 
     // parentIndex points at the nearest SURVIVING ancestor (strictly shallower
     // depth); skipped structural rows collapse away.
@@ -92,6 +130,8 @@ export function parseAriaSnapshot(ariaTree: string): {
     // builder derives all defaults. A [disabled] annotation is the only state
     // signal the default snapshot text carries.
     if ('disabled' in attributes) node.state = { enabled: false }
+    // A control's inline text is its value (a password field's included), never static text.
+    if (CONTENT_ROLES.has(roleLower)) appendText(node, inlineText(suffix))
 
     const index = nodes.length
     nodes.push(node)
