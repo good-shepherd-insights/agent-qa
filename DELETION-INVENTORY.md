@@ -2357,3 +2357,45 @@ as `role + nameNormalized (+ ordinal)`, and item 17 gives the descriptor as `{ r
 ordinal? }` with the ordinal as a tiebreak and exactly one of ref or target. D-15 reads the
 roadmap's "in-repo fixtures" as inline test snippets under 437 D-19. Their reconciliations are
 recorded in `.planning/REQUIREMENTS.md` by 438-16.
+
+### Gate at the time of writing (2026-10-10)
+
+Run by 438-14 from `agent-qa/` with `pnpm run gate:local -- --out <dir>`, at turbo's default
+concurrency (434 D-20). The gate clones the committed SHA into a fresh temporary directory, installs
+with the frozen lockfile and runs every leg there. It ran on
+`5876686db01556ea32b04eeafc4c349b6fc3a9d8`. That commit is this section without this subsection
+(`e65a86ae7`), the 195 new regression cells and 2 new register entries (`e8cae3f51`), the seven
+commits of quick 261010-11a that made load-sensitive cells deterministic (`30b456bfa` to
+`9945644f6`), and the scrollers hook budget (`5876686db`). The source tree was clean
+(`sourceDirty: false`). The run lasted 10 min 58 s (22:24:28Z to 22:35:26Z on 2026-10-09 UTC). The
+1-minute load was 5.7 at the start, peaked at 72.6 during the test leg, and the 5-minute load was
+16.3 at the end.
+
+Two earlier runs at `e65a86ae7` went red on timing cells outside 438. 434 D-20 and D-21 do not
+allow a pass on retry, so those cells were made deterministic, not re-run until green. Quick
+261010-11a fixed eight of them without raising a time budget or loosening a limit. The ninth is the
+`436-webview-scrollers` `afterAll`, whose slow step is Chromium's own `browser.close()` under full
+load. By the owner's delegated decision (2026-10-10), that one hook gets 261002-tmo's 120 s hook
+budget; no other hook, timeout, assertion or gate input changed.
+
+| Leg | Observed | Exit |
+|---|---|---|
+| clone, install | fresh clone at the SHA; `pnpm install --frozen-lockfile` | 0, 0 |
+| turbo build and typecheck | 46/46 tasks | **0** |
+| turbo test | 46/46 tasks; 23,752 passed, 0 failed, 56 skipped, every skip a registered entry | **0** |
+| `validate:skills`, `validate:agents`, `validate:publish` | 4, 24 and 22 checks | **0** |
+| `validate:tools` | 14 passed, the same 14 as at `cb485d65a`, so no agent tool was added | **0** |
+| `validate:arch` | 532 passed (517 at `cb485d65a`, plus the 15 cells of the 438 census) | **0** |
+| `validate:safety`, `validate:431-discovery-imports`, `lint:namespace` | 9 passed; 879 imports; 3,065 files | **0** |
+| node-test, conformance selftest, conformance | 153 passed; 4; 50 | **0** |
+| audit (`pnpm audit --prod --json`) | 493 prod dependencies: critical 0, high 0, moderate 5, low 1. pnpm 10.6.1 exits 1 on any advisory, and the gate judges the JSON metadata (434's owner decision) | 1, judged pass |
+| regressions | **956 of 956 listed cells executed and passed**: 434's 40, Phase 436's 459, Phase 437's 262 and Phase 438's 195 | — |
+| register | 55 entries, 56 skips matched, 0 stale, 0 unlisted; the two `C438-AUTO15-LIVE` cells were skipped as registered, with 0 conditional entries run | — |
+
+Verdict: `gate green: 0 finding(s)`, `record: true`, exit **0**. Before the gate, `pnpm build`,
+`pnpm typecheck`, `validate:arch`, `validate:tools`, `validate:skills` and `validate:publish` each
+exited 0 in the working tree at the same SHA. The commit that adds this subsection changes only this
+file, which no test reads.
+
+**Toolchain:** node 24.15.0 · pnpm 10.6.1 · turbo 2.9.7 · Chromium 149.0.7827.55 (revision 1228) ·
+macOS (Darwin 27.0.0, arm64, 12 CPUs).
