@@ -284,9 +284,25 @@ async function startRecoveryDaemon(f: ReturnType<typeof continuationFixture>, ca
   const signals = new Map<NodeJS.Signals, () => void>()
   const cadence: (() => void)[] = []
   let started = false
+  const ready = deferred<void>()
+  // Recovery passes are counted as they start and settle, so a door awaits the pass it caused.
+  let passesStarted = 0
+  let passesSettled = 0
+  const settlements: { pass: number; resolve: () => void }[] = []
+  const settled = (pass: number) => passesSettled >= pass ? Promise.resolve()
+    : new Promise<void>((resolve) => { settlements.push({ pass, resolve }) })
   const operations = {
-    recoverPendingPostVerdictContinuations: (input: Parameters<typeof recoverPendingPostVerdictContinuations>[0]) =>
-      recoverPendingPostVerdictContinuations({ ...input, misdirection: caps }),
+    recoverPendingPostVerdictContinuations: async (input: Parameters<typeof recoverPendingPostVerdictContinuations>[0]) => {
+      passesStarted += 1
+      try { return await recoverPendingPostVerdictContinuations({ ...input, misdirection: caps }) }
+      finally {
+        passesSettled += 1
+        for (const waiter of settlements.filter(({ pass }) => pass <= passesSettled)) {
+          settlements.splice(settlements.indexOf(waiter), 1)
+          waiter.resolve()
+        }
+      }
+    },
     acquireWriterLease: () => ({ kind: 'acquired', leaseId: 'fixture-daemon', epoch: 41 }),
     releaseLease: () => ({ kind: 'released' }), heartbeatLease: () => ({ kind: 'alive',
       holder: { pid: process.pid, epoch: 41, heartbeatAtMs: Date.now(), leaseId: 'fixture-daemon' } }),
@@ -300,7 +316,11 @@ async function startRecoveryDaemon(f: ReturnType<typeof continuationFixture>, ca
     inspectDrainableCurationWork: () => ({ queuedCandidateIds: [], recoverableClaimedCandidateIds: [] }),
     countRemainingCurationWork: () => ({ queued: 0, claimedNonterminal: 0, quarantined: 0 }),
     listQueuedCandidates: () => [], runMaintenanceTail: async () => undefined,
-    setInterval: (callback: () => void, ms: number) => { if (ms === CURATION_QUEUE_POLL_MS) cadence.push(callback); return 1 },
+    setInterval: (callback: () => void, ms: number) => {
+      if (ms === CURATION_QUEUE_POLL_MS) cadence.push(callback)
+      if (started && cadence.length > 0) ready.resolve()
+      return 1
+    },
     clearInterval: () => undefined, setTimeout: () => 1, clearTimeout: () => undefined,
     onSignal: (signal: NodeJS.Signals, listener: () => void) => signals.set(signal, listener),
     offSignal: (signal: NodeJS.Signals) => signals.delete(signal),
@@ -312,10 +332,21 @@ async function startRecoveryDaemon(f: ReturnType<typeof continuationFixture>, ca
     model: () => ({ modelId: 'fixture', generate: async () => { throw new Error('provider forbidden') } }),
     operations, logger: { info: () => undefined, error: () => undefined },
   })
-  try { await vi.waitFor(() => expect(started && cadence.length > 0).toBe(true)) }
-  catch (error) { signals.get('SIGTERM')?.(); await running; throw error }
-  return { tick: () => cadence.forEach((callback) => callback()),
-    stop: async () => { signals.get('SIGTERM')!(); await running } }
+  try {
+    await Promise.race([ready.promise,
+      running.then(() => { throw new Error('the daemon host returned before it registered its cadence') })])
+  } catch (error) { signals.get('SIGTERM')?.(); await running; throw error }
+  return {
+    // The pass a tick requests is the next one to start; it resolves when that pass settles.
+    tick: () => {
+      const pass = passesStarted + 1
+      cadence.forEach((callback) => callback())
+      return settled(pass)
+    },
+    // Pass 1 is the drain the host requests itself once it has registered.
+    recovered: settled,
+    stop: async () => { signals.get('SIGTERM')!(); await running },
+  }
 }
 
 it.each(['terminal', 'daemon'] as const)('%s discovers a killed owner without repeating its consumed check', async (door) => {
@@ -333,12 +364,12 @@ it.each(['terminal', 'daemon'] as const)('%s discovers a killed owner without re
     const reservationBytes = readdirSync(reservationDir).sort().map((file) => sha256hex(readFileSync(join(reservationDir, file), 'utf8')))
     // An already-running daemon/terminal must not treat a live reservation as interrupted.
     if (daemon === undefined) await terminalRecover(f, caps)
-    else { daemon.tick(); await new Promise((done) => setTimeout(done, 50)) }
+    else await daemon.tick()
     expect(existsSync(f.pendingPath)).toBe(true)
     expect(existsSync(join(f.runDir, 'misdirection-completions'))).toBe(false)
     await child.stop()
     if (daemon === undefined) await terminalRecover(f, caps)
-    else { daemon.tick(); await vi.waitFor(() => expect(existsSync(f.pendingPath)).toBe(false)) }
+    else { await daemon.tick(); expect(existsSync(f.pendingPath)).toBe(false) }
     const after = readMisdirectionRunState(f.runDir, f.input.runId)
     expect(sha256hex(canonicalJson(after.reservations))).toBe(reservationHash)
     expect(readdirSync(reservationDir).sort().map((file) => sha256hex(readFileSync(join(reservationDir, file), 'utf8')))).toEqual(reservationBytes)
@@ -401,7 +432,7 @@ it.each(['terminal', 'daemon'] as const)('CR-10 %s recovery preserves flag one a
   if (door === 'terminal') await terminalRecover(f, recoveryCapabilities(check))
   else {
     const daemon = await startRecoveryDaemon(f, recoveryCapabilities(check))
-    try { await vi.waitFor(() => expect(existsSync(f.pendingPath)).toBe(false)) }
+    try { await daemon.recovered(1); expect(existsSync(f.pendingPath)).toBe(false) }
     finally { await daemon.stop() }
   }
   expect(readRunCanaryPolicy(f.runDir, f.input.runId), 'the original flag one must never become recovery default four')
