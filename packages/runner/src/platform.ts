@@ -119,6 +119,8 @@ export interface PlatformAdapter<P extends Platform = Platform> {
   readonly operationCaptureSupport?: OperationCaptureSupport
   drainConsoleLogs?(level?: string): ConsoleLogEntry[]
   drainNetworkLogs?(urlPattern?: string): NetworkLogEntry[]
+  /** 439 D-14: the undrained network log, read without consuming it; the step-end drain still sees it. */
+  peekNetworkLogs?(urlPattern?: string): NetworkLogEntry[]
 }
 
 export function assertNever(value: never): never {

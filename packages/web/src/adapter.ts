@@ -794,6 +794,15 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     return all.filter(e => e.url.includes(urlPattern))
   }
 
+  peekNetworkLogs(urlPattern?: string): NetworkLogEntry[] {
+    const all: NetworkLogEntry[] = []
+    for (const buffers of this.pageLogBuffers.values()) {
+      all.push(...buffers.networkLogs.slice(buffers.networkDrainIndex))
+    }
+    if (!urlPattern) return all
+    return all.filter(e => e.url.includes(urlPattern))
+  }
+
   private attachLogListeners(page: Page): void {
     const buffers: PageLogBuffers = {
       consoleLogs: [],
@@ -968,9 +977,6 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
       }
 
       case 'waitFor': {
-        // Schema on-shapes drive real waiting keyed on `text`/`selector` (the degenerate
-        // legacy `{condition,timeout}` read is retired — Pitfall 1). Best-effort: on timeout we
-        // still return success so the agent loop re-observes rather than hard-failing the step.
         const timeout = action.timeoutMs
         try {
           switch (action.on) {
@@ -985,7 +991,9 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
               break
           }
         } catch {
-          // Best-effort — condition never satisfied; let the loop re-observe.
+          const what = action.on === 'selector' ? `selector "${action.selector}"` : `text "${action.text}"`
+          const how = action.on === 'gone' ? 'was still present after' : 'did not appear within'
+          return { success: false, error: `waitFor: ${what} ${how} ${timeout}ms.` }
         }
         return { success: true }
       }
@@ -1226,7 +1234,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
                   )
               break
             case 'network':
-              value = this.drainNetworkLogs()
+              value = this.peekNetworkLogs()
               break
             case 'expr-result':
               value = undefined

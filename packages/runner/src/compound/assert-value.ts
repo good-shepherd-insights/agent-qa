@@ -5,7 +5,7 @@
 // loop/index import — a pure function so the Plan 10 dispatch seam composes it without cycles. The
 // D-10 division: the adapter reads the value source (url/storage/network/expr) and returns the raw
 // actual; this comparator applies exactly one closed op and produces the deterministic outcome. A
-// passing outcome short-circuits the per-step verifier with zero model call (D-11).
+// passing outcome is evidence the verifier may cite, never a pass by itself (439 D-12).
 //
 // The result shape mirrors the schema AssertValueEvidence: sorted keys for a comparison carrying an
 // expected value are exactly ["actual","expected","op","passed","source"] (the Plan 01 pin). No
@@ -19,8 +19,10 @@ export interface AssertValueInput {
   op: AssertValueOp
   /** Absent for the no-expected ops (isNull/isDefined). */
   expected?: string
-  /** The raw value the adapter read. `null` is a legitimate read (drives isNull/isDefined). */
+  /** The raw value the adapter read. `null` is a read; `undefined` is unread and fails every op. */
   actual?: string | null
+  /** Each network log entry's JSON, for `source: 'network'`. Absent or empty is unread. */
+  entries?: string[]
 }
 
 /** Comparator outcome — projects onto the schema AssertValueEvidence block. */
@@ -38,34 +40,46 @@ function toNumber(value: unknown): number {
 
 /**
  * Apply the closed assertValue op deterministically. Type-aware per the Block A pins: gt/lt coerce
- * numeric; equals/notEquals/contains compare as strings; isNull/isDefined test nullish presence.
+ * numeric; equals/notEquals/contains compare as strings; isNull passes only on a null read. An
+ * unread value fails every op (439 D-14). A network read passes only on a matching entry.
  */
 export function compareAssertValue(input: AssertValueInput): AssertValueResult {
   const { op, expected, actual } = input
   let passed = false
 
-  switch (op) {
-    case 'isNull':
-      passed = actual === null || actual === undefined
-      break
-    case 'isDefined':
-      passed = actual !== null && actual !== undefined
-      break
-    case 'equals':
-      passed = String(actual) === String(expected)
-      break
-    case 'notEquals':
-      passed = String(actual) !== String(expected)
-      break
-    case 'gt':
-      passed = toNumber(actual) > toNumber(expected)
-      break
-    case 'lt':
-      passed = toNumber(actual) < toNumber(expected)
-      break
-    case 'contains':
-      passed = String(actual).includes(String(expected))
-      break
+  if (input.source === 'network') {
+    const entries = input.entries ?? []
+    if (entries.length > 0) {
+      if (op === 'isDefined') passed = true
+      else if (op === 'contains') passed = entries.some((entry) => entry.includes(String(expected)))
+      else if (op === 'equals') passed = entries.some((entry) => entry === String(expected))
+    }
+  } else if (actual === null) {
+    passed = op === 'isNull'
+  } else if (actual !== undefined) {
+    switch (op) {
+      case 'isNull':
+        passed = false
+        break
+      case 'isDefined':
+        passed = true
+        break
+      case 'equals':
+        passed = actual === String(expected)
+        break
+      case 'notEquals':
+        passed = actual !== String(expected)
+        break
+      case 'gt':
+        passed = toNumber(actual) > toNumber(expected)
+        break
+      case 'lt':
+        passed = toNumber(actual) < toNumber(expected)
+        break
+      case 'contains':
+        passed = actual.includes(String(expected))
+        break
+    }
   }
 
   const result: AssertValueResult = {

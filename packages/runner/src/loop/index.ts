@@ -1683,11 +1683,16 @@ export async function executeStep(
       recorder.recordAiJudgment({ verb: 'extractAI', ...(degradedScope ? { degradedScope: true } : {}) })
       execResult = { success: true, metadata: { aiJudgment: { verb: 'extractAI' }, extracted } }
       execError = undefined
+    } else if (dispatchVerb === 'assertValue' && (action as { source?: unknown }).source === 'expr-result') {
+      // 439 D-14: no platform reads a value for expr-result, so it is refused before dispatch.
+      const unreadable = 'assertValue {source:"expr-result"} reads no value on any platform; assert on url, storage or network, or evaluate an expr.'
+      execResult = { success: false, error: unreadable }
+      execError = unreadable
     } else if (dispatchVerb === 'assertValue') {
       // D-10 "adapter reads, runner judges": dispatch the source read to the adapter ONCE (it
       // returns the raw source value in data, or a §7.1 source-unavailable error), then apply the
       // pure comparator and mint the outcome. A failing comparison is an honest §7.1 failure the
-      // planner mediates — a passing outcome feeds the D-11 verifier short-circuit below.
+      // planner mediates; a passing one is a read the verifier may cite (439 D-12).
       const read = await executeResolvedAction(normalizedAction)
       if (!read.result.success) {
         execResult = read.result
@@ -1698,11 +1703,18 @@ export async function executeStep(
         const rawActual = read.result.data
         // Object reads (storage map, network log array) stringify as JSON so `contains`
         // has something honest to match — String() would collapse them to [object Object].
-        const actual = rawActual === null || rawActual === undefined
-          ? (rawActual as null | undefined)
-          : typeof rawActual === 'object' ? JSON.stringify(rawActual) : String(rawActual)
+        // 439 D-14: a network read is judged per entry, and an empty log is unread.
+        const entries = source === 'network' && Array.isArray(rawActual)
+          ? rawActual.map((entry) => JSON.stringify(entry))
+          : undefined
+        const actual = rawActual === undefined || entries?.length === 0
+          ? undefined
+          : rawActual === null ? null
+            : typeof rawActual === 'object' ? JSON.stringify(rawActual) : String(rawActual)
         const expected = typeof av.expected === 'string' ? av.expected : undefined
-        const outcome = compareAssertValue({ source, op: av.op as AssertValueOp, expected, actual })
+        const outcome = compareAssertValue({
+          source, op: av.op as AssertValueOp, expected, actual, ...(entries !== undefined ? { entries } : {}),
+        })
         recorder.recordAssertOutcome({
           source: outcome.source,
           op: outcome.op,

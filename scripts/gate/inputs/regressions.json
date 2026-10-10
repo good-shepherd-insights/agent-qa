@@ -6588,6 +6588,144 @@
       "file": "packages/runner/src/run/__tests__/439-root-cause.test.ts",
       "fullName": "C439-ROOT-CAUSE an unproven step's rationale passes through the run's mask",
       "origin": "439 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-farm-waits.test.ts",
+      "fullName": "C439-FARM-WAITS a wait whose condition never holds fails and names what it waited for",
+      "origin": "439 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-farm-waits.test.ts",
+      "fullName": "C439-FARM-WAITS a wait whose condition holds succeeds",
+      "origin": "439 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-farm-waits.test.ts",
+      "fullName": "C439-FARM-WAITS a network assertion peeks at the log and leaves it for the step-end drain",
+      "origin": "439 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-waits-and-reads.test.ts",
+      "fullName": "C439-WAITS-AND-READS a text that never appears fails the wait and the planner sees why",
+      "origin": "439 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-waits-and-reads.test.ts",
+      "fullName": "C439-WAITS-AND-READS a text that never goes and a selector that never appears fail",
+      "origin": "439 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-waits-and-reads.test.ts",
+      "fullName": "C439-WAITS-AND-READS a network assertion reads without consuming",
+      "origin": "439 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-waits-and-reads.test.ts",
+      "fullName": "C439-WAITS-AND-READS an empty network log never satisfies isDefined",
+      "origin": "439 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-waits-and-reads.test.ts",
+      "fullName": "C439-WAITS-AND-READS expr-result reads nothing and fails",
+      "origin": "439 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-waits-and-reads.test.ts",
+      "fullName": "C439-WAITS-AND-READS an expr that evaluates to undefined is unread, null is a read",
+      "origin": "439 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-assert-compare.test.ts",
+      "fullName": "C439-ASSERT-COMPARE an unread value fails isNull",
+      "origin": "439 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-assert-compare.test.ts",
+      "fullName": "C439-ASSERT-COMPARE an unread value fails isDefined",
+      "origin": "439 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-assert-compare.test.ts",
+      "fullName": "C439-ASSERT-COMPARE an unread value fails equals",
+      "origin": "439 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-assert-compare.test.ts",
+      "fullName": "C439-ASSERT-COMPARE an unread value fails notEquals",
+      "origin": "439 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-assert-compare.test.ts",
+      "fullName": "C439-ASSERT-COMPARE an unread value fails contains",
+      "origin": "439 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-assert-compare.test.ts",
+      "fullName": "C439-ASSERT-COMPARE an unread value fails gt",
+      "origin": "439 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-assert-compare.test.ts",
+      "fullName": "C439-ASSERT-COMPARE an unread value fails lt",
+      "origin": "439 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-assert-compare.test.ts",
+      "fullName": "C439-ASSERT-COMPARE null is a read: it passes isNull and nothing else",
+      "origin": "439 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-assert-compare.test.ts",
+      "fullName": "C439-ASSERT-COMPARE an empty network log never satisfies isDefined",
+      "origin": "439 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-assert-compare.test.ts",
+      "fullName": "C439-ASSERT-COMPARE network contains and equals match within one entry only",
+      "origin": "439 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-assert-compare.test.ts",
+      "fullName": "C439-ASSERT-COMPARE network isNull never passes",
+      "origin": "439 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-assert-compare.test.ts",
+      "fullName": "C439-ASSERT-COMPARE network notEquals never passes",
+      "origin": "439 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-assert-compare.test.ts",
+      "fullName": "C439-ASSERT-COMPARE network gt never passes",
+      "origin": "439 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-assert-compare.test.ts",
+      "fullName": "C439-ASSERT-COMPARE network lt never passes",
+      "origin": "439 D-14"
     }
   ]
 }
