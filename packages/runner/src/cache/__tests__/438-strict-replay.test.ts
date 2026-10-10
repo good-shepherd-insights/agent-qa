@@ -153,4 +153,37 @@ describe('C438-STRICT-REPLAY', () => {
     expect(result.evidence?.cacheStatus).toBe('miss')
     expect(result.evidence?.cacheMiss).toEqual({ reason: 'non-replayable' })
   })
+
+  it("a stored nested treeitem with its parent row replays onto that parent's item", async () => {
+    const child = (ref: string, parentRef: string): ElementInfo => ({
+      ...el(ref, 'treeitem', 'Invoices'),
+      hierarchy: { parentRef: asRef(parentRef) },
+    })
+    const adapter = recordingAdapter(
+      screenWith([
+        el('e1', 'treeitem', '2024'),
+        child('e2', 'e1'),
+        el('e3', 'treeitem', '2025'),
+        child('e4', 'e3'),
+      ]),
+    )
+    const cache = cacheOf({
+      plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
+      groundedLocator: [{ role: 'treeitem', name: 'Invoices', row: '2025' }],
+      verificationOutcome: 'passed',
+    })
+    const planner = plannerOf(giveUp)
+
+    const result = await executeStep(
+      'Open the 2025 invoices',
+      { adapter, planner, cache, verifier: makeVerifier() },
+      makeStepContext(),
+    )
+
+    expect(adapter.executed).toEqual([{ type: 'click', ref: 'e4' }])
+    expect(result.evidence?.cacheStatus).toBe('hit')
+    expect(result.evidence?.cacheMiss).toBeUndefined()
+    expect(cache.invalidated).toBe(0)
+    expect(planner.plan).not.toHaveBeenCalled()
+  })
 })

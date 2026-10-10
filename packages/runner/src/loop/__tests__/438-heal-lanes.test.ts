@@ -244,6 +244,45 @@ describe('C438-HEAL-LANES', () => {
     expect(a.executed).toHaveLength(1)
     expect(metadataOf(result, 'binding')).toMatchObject({ heal: 'not-unique' })
   })
+
+  it("a nested treeitem whose binding is lost heals onto the same parent's item", async () => {
+    const tree: InterimNode[] = [
+      { role: 'treeitem', name: '2024' },
+      { role: 'treeitem', name: 'Invoices', parentIndex: 0 },
+      { role: 'treeitem', name: '2025' },
+      { role: 'treeitem', name: 'Invoices', parentIndex: 2 },
+    ]
+    const prior = screenOf(tree)
+    // A banner is inserted first, so 2025's Invoices moves from e4 to e5.
+    const fresh = screenOf([
+      { role: 'button', name: 'Banner' },
+      ...tree.map((node) =>
+        node.parentIndex === undefined ? node : { ...node, parentIndex: node.parentIndex + 1 },
+      ),
+    ])
+    const bindingLost: ActionResult = {
+      success: false,
+      error: 'binding-lost: ref e4 — the observed element is no longer on the page; nothing was sent',
+      metadata: { binding: { outcome: 'binding-lost', ref: 'e4', inputSent: false } },
+    }
+    const a = adapter(prior, fresh, [bindingLost, { success: true }])
+    const result = await executeStep(
+      'Open the 2025 invoices',
+      {
+        adapter: a,
+        planner: scriptedPlanner([
+          plan({ type: 'click', ref: 'e4', target: { role: 'treeitem', name: 'Invoices' } }),
+          GIVE_UP,
+        ]),
+        plannerConfig: limits(10, 10),
+      },
+      makeStepContext(),
+    )
+
+    expect(a.executed).toHaveLength(2)
+    expect(a.executed[1]).toEqual({ type: 'click', ref: 'e5' })
+    expect(result.status).toBe('passed')
+  })
 })
 
 const SECRET = 'zz-secret-label'

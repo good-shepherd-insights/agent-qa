@@ -12,6 +12,7 @@ import {
   wordTokens,
   type InterimNode,
 } from '../../index.js'
+import { strictMatch } from '../strict-match.js'
 
 function elementsOf(nodes: InterimNode[]): ElementInfo[] {
   return buildScreenState({
@@ -198,5 +199,75 @@ describe('C438-ROW-TEXT', () => {
     )
     expect(judgement).toMatchObject({ verdict: 'contradicts', reasons: ['row'] })
     expect(judgement.observedRow).toContain('1 Home Street')
+  })
+
+  // 438 gap round 2, WR-10: a nested row container keeps its parent row's own line.
+  const TREE: InterimNode[] = [
+    { role: 'treeitem', name: '2024' },
+    { role: 'treeitem', name: 'Invoices', parentIndex: 0 },
+    { role: 'treeitem', name: '2025' },
+    { role: 'treeitem', name: 'Invoices', parentIndex: 2 },
+  ]
+
+  it("a nested row container's row is its parent row's own line, then its own row", () => {
+    const elements = elementsOf(TREE)
+    expect(rowTextOf(elements[3], elements)).toBe('2025 Invoices')
+    expect(rowTextOf(elements[1], elements)).toBe('2024 Invoices')
+  })
+
+  it('the judge agrees with a nested treeitem stated with its parent row', () => {
+    const elements = elementsOf(TREE)
+    const judgement = judgeStatedTarget(
+      { role: 'treeitem', name: 'Invoices', row: '2025' },
+      elements[3],
+      elements,
+    )
+    expect(judgement).toMatchObject({ verdict: 'agrees', rowStated: true, rowKnown: true })
+  })
+
+  it('strictMatch tells a nested treeitem from its twin under another parent', () => {
+    const elements = elementsOf(TREE)
+    expect(strictMatch({ role: 'treeitem', name: 'Invoices', row: '2025' }, elements)).toEqual({
+      kind: 'resolved',
+      ref: elements[3].ref,
+    })
+    const row = rowTextOf(elements[3], elements) ?? ''
+    expect(strictMatch({ role: 'treeitem', name: 'Invoices', row }, elements)).toEqual({
+      kind: 'resolved',
+      ref: elements[3].ref,
+    })
+  })
+
+  it("the judge refuses a nested treeitem stated with another parent's row", () => {
+    const elements = elementsOf(TREE)
+    const judgement = judgeStatedTarget(
+      { role: 'treeitem', name: 'Invoices', row: '2025' },
+      elements[1],
+      elements,
+    )
+    expect(judgement).toMatchObject({ verdict: 'contradicts', reasons: ['row'] })
+  })
+
+  it("a nested row container's row does not take a sibling row's words", () => {
+    const elements = elementsOf([
+      { role: 'treeitem', name: '2025' },
+      { role: 'treeitem', name: 'Invoices', parentIndex: 0 },
+      { role: 'treeitem', name: 'Receipts', parentIndex: 0 },
+    ])
+    const judgement = judgeStatedTarget(
+      { role: 'treeitem', name: 'Invoices', row: 'Receipts' },
+      named(elements, 'Invoices'),
+      elements,
+    )
+    expect(judgement).toMatchObject({ verdict: 'contradicts', reasons: ['row'] })
+  })
+
+  it("a control inside a nested row container reads only that container's row", () => {
+    const elements = elementsOf([
+      { role: 'listitem', text: 'Ann: first post' },
+      { role: 'listitem', text: 'Bo: a reply', parentIndex: 0 },
+      { role: 'button', name: 'Reply', parentIndex: 1 },
+    ])
+    expect(rowTextOf(named(elements, 'Reply'), elements)).toBe('Bo: a reply Reply')
   })
 })

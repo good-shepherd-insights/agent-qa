@@ -90,6 +90,21 @@ const CLICKABLE_ROWS_PAGE = `<!doctype html><html><head><script>window.__clicks 
   </ul>
 </body></html>`
 
+const NESTED_TREE_PAGE = `<!doctype html><html><head><script>window.__clicks = []</script></head><body>
+  <ul role="tree" aria-label="Years">
+    <li role="treeitem" aria-label="2024" aria-expanded="true">
+      <ul role="group">
+        <li role="treeitem" onclick="window.__clicks.push('2024 Invoices')">Invoices</li>
+      </ul>
+    </li>
+    <li role="treeitem" aria-label="2025" aria-expanded="true">
+      <ul role="group">
+        <li role="treeitem" onclick="window.__clicks.push('2025 Invoices')">Invoices</li>
+      </ul>
+    </li>
+  </ul>
+</body></html>`
+
 const LONE_EDIT_PAGE = `<!doctype html><html><head><script>window.__clicks = []</script></head><body>
   <button type="button" onclick="window.__clicks.push('lone')">Edit label</button>
 </body></html>`
@@ -535,5 +550,46 @@ describe('C438-STATED-ROW', () => {
     expect(run.executed).toHaveLength(1)
     expect(await addressClicks(web)).toEqual(['1 Home Street, Springfield'])
     expect(refusalOf(run)).toBeUndefined()
+  }, 60_000)
+
+  it('a nested treeitem stated with its parent row is clicked', async () => {
+    const web = await open(NESTED_TREE_PAGE)
+    const planner = scriptedPlanner([
+      (screen) => {
+        const parent = screen.elements.find(
+          (element) => element.role === 'treeitem' && element.name === '2025',
+        )
+        const item = screen.elements.find(
+          (element) =>
+            element.role === 'treeitem'
+            && element.name === 'Invoices'
+            && parent !== undefined
+            && element.hierarchy?.parentRef === parent.ref,
+        )
+        if (item === undefined) throw new Error('no treeitem "Invoices" under treeitem "2025"')
+        return act(
+          {
+            type: 'click',
+            ref: item.ref,
+            target: { role: 'treeitem', name: 'Invoices', row: '2025' },
+          },
+          true,
+          'Open the 2025 invoices',
+        )
+      },
+      () => giveUp('The 2025 invoices could not be opened'),
+    ])
+    const run = await runScriptedStep({
+      adapter: web,
+      instruction: 'Open the invoices of 2025',
+      planner,
+      verifier: passes,
+      plannerConfig: LIMITS,
+    })
+
+    expect(refusalOf(run)).toBeUndefined()
+    expect(run.result.status).toBe('passed')
+    expect(run.executed).toHaveLength(1)
+    expect(await addressClicks(web)).toEqual(['2025 Invoices'])
   }, 60_000)
 })
