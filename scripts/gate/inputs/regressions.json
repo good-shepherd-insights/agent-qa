@@ -5661,6 +5661,36 @@
     },
     {
       "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-PARSE a later sibling container's text and controls never fold into the preceding row",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-PARSE in real Chromium a control after the list has no row and the last row keeps only its own text",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-PARSE a stated row with a sibling container's words is refused on the last row's button",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-PARSE an iframe after a list is parented under no row",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-PARSE a table after a heading, a button and a navigation is parented under none of them",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
       "file": "packages/web/src/__tests__/438-stated-target.test.ts",
       "fullName": "C438-STATED-TARGET a stated target that agrees with its ref is clicked",
       "origin": "438 D-01"
