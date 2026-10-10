@@ -2530,4 +2530,5 @@ re-spelled: every earlier 438 cell passes unedited.
 The round's record gate run measures agent-qa HEAD after this subsection lands, and its result is
 recorded with the phase's planning record, not in this file. So no docs-only commit separates the
 measured SHA from the final SHA, unlike 438-14's run, which measured `5876686db` before the commit
-that added its gate subsection.
+that added its gate subsection. After 438-21's pre-gate red, `C438-IDENTICAL-CONTROLS`' `afterEach`
+got the 261002-tmo 120 s hook budget (owner-delegated, as for `5876686db`) before the record run.

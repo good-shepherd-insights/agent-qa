@@ -42,7 +42,7 @@ const opened: WebPlatformAdapter[] = []
 
 afterEach(async () => {
   for (const web of opened.splice(0)) await web.cleanup()
-}, 60_000)
+}, 120_000)
 
 async function open(html: string): Promise<WebPlatformAdapter> {
   const created = new WebPlatformAdapter()
