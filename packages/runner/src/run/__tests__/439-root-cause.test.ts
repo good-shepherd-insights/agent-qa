@@ -69,6 +69,18 @@ describe('C439-ROOT-CAUSE', () => {
     })
   })
 
+  it("an unproven step's rationale passes through the run's mask", () => {
+    const masked = (text: string) => text.replace('The draft was not saved', '<SECRET_1>')
+    const verdict = classifyRootCause({
+      result: failed([judgedStep('unverified')]),
+      outcome: 'failed',
+      testIndex: 0,
+      mask: masked,
+    })
+    expect(verdict?.evidence.rationale).toBe(masked(UNPROVEN_ERROR))
+    expect(verdict?.evidence.rationale).not.toContain('The draft was not saved')
+  })
+
   it("an unproven step without an error cites the verifier verdict's reasoning", () => {
     const step = judgedStep('inconclusive')
     delete step.error

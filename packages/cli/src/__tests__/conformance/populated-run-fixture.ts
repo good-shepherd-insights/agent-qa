@@ -453,6 +453,20 @@ interface ChatCompletionsBody {
 }
 
 /** Collect every text part of every message, in order, as one string. */
+/** The first line of the verifier turn's final screen, or the step record's action outcome. */
+function finalScreenCitation(prompt: string): { source: string; quote: string } {
+  const header = 'Screen now (settled, after the last action):'
+  const at = prompt.indexOf(header)
+  const line = at < 0
+    ? undefined
+    : prompt.slice(at + header.length).split('\n')
+      .map((text) => text.trim().replace(/^- /, ''))
+      .find((text) => text.replace(/\s/g, '').length >= 3)
+  return line === undefined
+    ? { source: 'action', quote: '→ success' }
+    : { source: 'final-screen', quote: line.slice(0, 200) }
+}
+
 function promptTextOf(body: ChatCompletionsBody): string {
   if (!Array.isArray(body.messages)) return ''
   const parts: string[] = []
@@ -891,8 +905,9 @@ export async function startStubModelServer(
                 needs: 'none',
                 controlRef: '',
                 file: { name: '', match: 'none', text: '' },
-                // 2026-10-11 (439-03): the action part is the step record's action lines (D-03).
-                citations: [{ source: 'action', quote: '→ success' }],
+                // 2026-10-11 (439-04): a line of the final screen, which every verification turn
+                // carries; a give-up the verifier now judges (D-08) records no action to cite.
+                citations: [finalScreenCitation(prompt)],
                 reasoning: 'The notice state changed.',
               }],
               dialogs: [],

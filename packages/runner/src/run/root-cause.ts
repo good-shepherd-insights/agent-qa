@@ -16,7 +16,8 @@
 //                     is added; analyze-run excludes these members from model authorship.
 //      unproven     — right after the limit stop (439 D-07): a failing step the verifier left
 //                     unverified or inconclusive (stepOutcomeUnproven) is 'unknown', confidence
-//                     0, with the step's reason as rationale. Never an application class.
+//                     0, with the step's reason, masked by the run's mask, as rationale.
+//                     Never an application class.
 //   3. flake        — final status 'passed' with retryCount > 0 (member-runner retry loop)
 //   4. unknown      — any other failure; confidence 0, the safe Noop default M4's
 //                     analyze-run later supersedes via producer keying (D-03)
@@ -79,6 +80,11 @@ export interface RootCauseInput {
   testIndex: number
   /** Run-start baseline probe outcome (D-04, web targets; threaded by Plan 07). */
   baselineProbe?: { status?: number; elapsedMs: number; error?: string }
+  /**
+   * The run's mask (439 D-08). An unproven step's reason carries the planner's own words, which
+   * the step error holds unmasked, so its rationale passes through this before it is recorded.
+   */
+  mask?: (text: string) => string
 }
 
 /**
@@ -141,12 +147,15 @@ function limitStoppedSteps(result: TestResult): { index: number; reason: string 
   return stopped
 }
 
-/** Failing steps the verifier left unproven (439 D-07), with the step's reason. */
-function unprovenSteps(result: TestResult): { index: number; reason: string }[] {
+/** Failing steps the verifier left unproven (439 D-07), with the step's reason, masked. */
+function unprovenSteps(
+  result: TestResult,
+  mask: (text: string) => string,
+): { index: number; reason: string }[] {
   const unproven: { index: number; reason: string }[] = []
   result.steps.forEach((s, i) => {
     if (s.status === 'failed' && s.evidence !== undefined && stepOutcomeUnproven(s.evidence)) {
-      unproven.push({ index: i, reason: s.error ?? s.evidence.verifierVerdict.reasoning })
+      unproven.push({ index: i, reason: mask(s.error ?? s.evidence.verifierVerdict.reasoning) })
     }
   })
   return unproven
@@ -236,7 +245,7 @@ export function classifyRootCause(input: RootCauseInput): Verdict | undefined {
   const limitStopped = limitStoppedSteps(result)
   if (limitStopped.length > 0) return unknownFromSteps(limitStopped, testIndex)
 
-  const unproven = unprovenSteps(result)
+  const unproven = unprovenSteps(result, input.mask ?? ((text) => text))
   if (unproven.length > 0) return unknownFromSteps(unproven, testIndex)
 
   const texts = failureErrorTexts(result)

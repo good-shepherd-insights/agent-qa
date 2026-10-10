@@ -443,6 +443,7 @@ export function startRun(config: RunConfig): RunSession {
         outcome,
         testIndex,
         ...(member.baselineProbe === undefined ? {} : { baselineProbe: member.baselineProbe }),
+        mask,
       })
 
       // 420 D-06: classify actual original evidence with this same member's baseline.
@@ -461,6 +462,7 @@ export function startRun(config: RunConfig): RunSession {
               outcome: originalOutcome,
               testIndex,
               ...(member.baselineProbe === undefined ? {} : { baselineProbe: member.baselineProbe }),
+              mask,
             }),
           }
         : undefined

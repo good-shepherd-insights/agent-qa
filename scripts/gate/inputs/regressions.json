@@ -6582,6 +6582,12 @@
       "file": "packages/arch/src/__tests__/439-verifier-binding-census.test.ts",
       "fullName": "C439-CENSUS C439-SELF-MATCH: this file spells none of the needles it assembles, and lies outside every region it scans",
       "origin": "439 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/run/__tests__/439-root-cause.test.ts",
+      "fullName": "C439-ROOT-CAUSE an unproven step's rationale passes through the run's mask",
+      "origin": "439 D-08"
     }
   ]
 }
