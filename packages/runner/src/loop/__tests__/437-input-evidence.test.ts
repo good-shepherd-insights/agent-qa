@@ -7,6 +7,7 @@ import { buildAgentScreenState } from './screen-fixtures.js'
 import { makeActionPlan, makeStepContext, makePlanner } from './loop-harness.js'
 import type { ActionPlan, Planner, StepContext, Verifier } from '../types.js'
 import { buildVerificationPrompt, composeTurnMessages } from '../prompts.js'
+import type { VerifierStepRecord } from '../step-record.js'
 import { scriptedVerification } from '../../testing/condition-verdicts.js'
 
 const FIELD = buildAgentScreenState({
@@ -86,7 +87,8 @@ async function runReplanned(action: Record<string, unknown> & { type: string }, 
 function verifierPrompt(args: VerifyArgs): string {
   const [step, before, after, action] = args
   const evidence = args[9] as OperationEvidence | undefined
-  return buildVerificationPrompt(step, before, after, action, false, undefined, undefined, undefined, evidence)
+  const record = args[10] as VerifierStepRecord | undefined
+  return buildVerificationPrompt(step, before, after, action, false, undefined, undefined, undefined, evidence, record)
 }
 
 function plannerTurn(context: StepContext): string {
@@ -206,9 +208,13 @@ describe('C437-INPUT-EVIDENCE', () => {
 
     const withMeta = await runVerified(FILL, ordinary)
     const without = await runVerified(FILL, bare)
-    expect(withMeta.captured[0]).toHaveLength(9)
+    expect(withMeta.captured[0]).toHaveLength(11)
     expect(withMeta.captured[0][9]).toBeUndefined()
-    expect(verifierPrompt(withMeta.captured[0])).toBe(verifierPrompt(without.captured[0]))
+    // 439 D-03: the verifier's record names every fill verdict, an ordinary one included.
+    expect(verifierPrompt(withMeta.captured[0])).toContain(
+      'action 1: fill on ref="e1": input sent, fill verdict exact, Enter sent',
+    )
+    expect(verifierPrompt(without.captured[0])).not.toContain('Operation evidence')
     expect(inputOf(withMeta.step)).toEqual({ verb: 'fill', inputSent: true, fillVerdict: 'exact', submit: 'sent' })
 
     const metaContexts = await runReplanned(FILL, ordinary)

@@ -17,7 +17,8 @@ import type { StepResult } from '../../result.js'
 import { rowTextOf } from '../../grounding/row-text.js'
 import { buildScreenState, type InterimNode } from '../../screen-builder.js'
 import { executeStep } from '../index.js'
-import type { ActionPlan, Planner, StepContext } from '../types.js'
+import type { ActionPlan, Planner, StepContext, Verifier } from '../types.js'
+import { renderStepRecord, type VerifierStepRecord } from '../step-record.js'
 import { makeStepContext } from './loop-harness.js'
 import { scriptedVerification } from '../../testing/condition-verdicts.js'
 import { servedBrief, servedCautions } from './fixtures/served-trace.js'
@@ -501,10 +502,11 @@ describe('C438-HEAL-RECORD', () => {
   })
 
   it('the verifier of a healed click reads the action against the fresh observation', async () => {
-    const calls: Array<{ before: ScreenState; action: Action }> = []
+    const calls: Array<{ action: Action; record: VerifierStepRecord }> = []
     const verifier = {
-      async verify(step: string, before: ScreenState, after: ScreenState, action: Action) {
-        calls.push({ before, action })
+      async verify(...args: Parameters<Verifier['verify']>) {
+        const [step, , after, action] = args
+        calls.push({ action, record: args[10]! })
         return { verification: scriptedVerification({ step, after, action, pass: true, reasoning: 'accepted' }) }
       },
     }
@@ -516,6 +518,8 @@ describe('C438-HEAL-RECORD', () => {
     expect(calls).toHaveLength(1)
     const ref = (calls[0]!.action as { ref?: unknown }).ref
     expect(ref).toBe('e3')
-    expect(nameAt(calls[0]!.before, ref)).toBe('Save')
+    // 439 D-03: the record names the element each action acted on, from that action's observation.
+    expect(calls[0]!.record.actions.at(-1)?.element).toEqual({ role: 'button', name: 'Save' })
+    expect(renderStepRecord(calls[0]!.record).actions).toContain('click on ref="e3" (button "Save")')
   })
 })

@@ -182,7 +182,7 @@ describe('executeStep — verifier author context wiring (P2)', () => {
 
   it('passes suite and test context as the ninth argument', async () => {
     const args = await ninthArgFor({ testContext: 'T', suiteContext: 'S' })
-    expect(args).toHaveLength(9)
+    expect(args).toHaveLength(11)
     expect(args[8]).toEqual({ suiteContext: 'S', testContext: 'T' })
   })
 

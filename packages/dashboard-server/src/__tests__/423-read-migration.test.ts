@@ -118,7 +118,7 @@ async function usageRun(options: { retry?: boolean; omitCache?: boolean; unscope
               reasoning: 'Confirm with an assertion' }
             : { conditions: [{ quote: 'Click and verify Log in', verdict: 'met', needs: 'none', controlRef: '',
                 file: { name: '', match: 'none', text: '' },
-                citations: [{ source: 'action', quote: 'Action taken' }], reasoning: 'Log in is visible' }],
+                citations: [{ source: 'action', quote: '→ success' }], reasoning: 'Log in is visible' }],
               dialogs: [], isAppError: false, reasoning: 'Log in is visible' }) } }],
       usage: { prompt_tokens: 100, completion_tokens: 7,
         ...(options.omitCache ? {} : { prompt_tokens_details: { cached_tokens: 30 } }) },

@@ -21,6 +21,7 @@ import {
 import { executeStep } from '../index.js'
 import type { LoopEventEmitPort, LoopPorts } from '../ports.js'
 import { buildVerificationPrompt, composeTurnMessages, renderOperationEvidence } from '../prompts.js'
+import { renderStepRecord, type VerifierStepRecord } from '../step-record.js'
 import type { ActionPlan, Planner, StepContext, Verifier } from '../types.js'
 import { makeActionPlan, makeAdapter, makeStepContext } from './loop-harness.js'
 
@@ -235,12 +236,19 @@ describe('C436-OPERATION-EVIDENCE verifier input and availability', () => {
     expect(calls[0]![9]).toEqual({
       downloads: [{ ...REPORT, suggestedFilename: 'report-[MASKED].csv' }, SECOND],
     })
+    const record = calls[0]![10] as VerifierStepRecord
+    expect(renderStepRecord(record).operationEvidence.split('\n')).toEqual([
+      `action 1: ${renderOperationEvidence({ downloads: [{ ...REPORT, suggestedFilename: 'report-[MASKED].csv' }] })}`,
+      `action 2: ${renderOperationEvidence({ downloads: [SECOND] })}`,
+    ])
   })
 
-  it('a step with no operation evidence passes no trailing verifier argument', async () => {
+  it('a step with no operation evidence passes no operation evidence to the verifier', async () => {
     const calls: unknown[][] = []
     await runWith(makeAdapter(), recordingVerifier(calls, true))
+    expect(calls[0]).toHaveLength(11)
     expect(calls[0]![9]).toBeUndefined()
+    expect((calls[0]![10] as VerifierStepRecord).actions).toHaveLength(2)
   })
 
   it('buildVerificationPrompt renders an Operation evidence section only when evidence exists', () => {
@@ -473,8 +481,8 @@ describe('C436-DOWNLOAD-LATE', () => {
     expect(verifierEvidence).toEqual({ downloads: [masked] })
     const screen = makeScreenState()
     const prompt = buildVerificationPrompt('Export the report', screen, screen, { type: 'click', ref: 'e1' } as Action,
-      false, undefined, undefined, undefined, verifierEvidence)
-    expect(prompt).toContain(LATE_NOTE)
+      false, undefined, undefined, undefined, verifierEvidence, calls[0]![10] as VerifierStepRecord)
+    expect(prompt).toContain(`action 2: Download "late-[MASKED].csv" (.csv): completed, 7 bytes, sha256 ${'c'.repeat(64)}, ${LATE_NOTE}`)
   })
 
   it('a late download keeps its marker through the reader', () => {

@@ -114,7 +114,7 @@ beforeEach(() => {
             : judging ? { verdict: true, rationale: 'The button is visible' }
             : { conditions: [{ quote: 'Click', verdict: 'met', needs: 'none', controlRef: '',
                 file: { name: '', match: 'none', text: '' },
-                citations: [{ source: 'action', quote: 'Action taken' }], reasoning: 'Button clicked' }],
+                citations: [{ source: 'action', quote: '→ success' }], reasoning: 'Button clicked' }],
               dialogs: [], isAppError: false, reasoning: 'Button clicked' }) } }],
       usage: { prompt_tokens: 100, completion_tokens: 7,
         ...(boundary.omitCache ? {} : { prompt_tokens_details: { cached_tokens: 30 } }) },

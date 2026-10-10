@@ -98,6 +98,7 @@ import {
   renderOperationEvidence,
 } from './prompts.js'
 import { judgeConditions } from './requested-conditions.js'
+import { StepRecordAccumulator, type RecordedActionOutcome } from './step-record.js'
 import { EvidenceRecorder, collapseAnnotation, persistAriaEvidence, projectLegacyTrace } from './evidence.js'
 import type { RecordSubActionInput } from './evidence.js'
 import { maskToolExchanges } from './mask-exchanges.js'
@@ -279,6 +280,9 @@ export async function executeStep(
   recorder.recordOperationCapture(operationCaptureAvailability(ports.adapter.operationCaptureSupport))
   // 436 D-22: the step's operation evidence across its sub-actions, for the verifier.
   const stepOperationEvidence: OperationEvidence = {}
+  // 439 D-03: everything the step did and read, for the verifier; never the planner's reasoning.
+  const stepRecord = new StepRecordAccumulator()
+  const recordMask = (value: string) => maskValue(redactSecretValue(value, ports.secretRedactor))
   // D-17: one ledger object lives where turns live. A bound object is shared with Channel-2 tool
   // closures; otherwise this step-local instance still accounts for the frozen Channel-1 brief.
   const recordLedger = ports.recordLedger ?? createRecordLedger({
@@ -749,6 +753,7 @@ export async function executeStep(
       )
       screenState = settled.state
       settledHash = settled.hash
+      stepRecord.start(screenState)
     } catch (err) {
       const abortResult = checkAbort()
       if (abortResult) return abortResult
@@ -1469,6 +1474,7 @@ export async function executeStep(
       execResult = mintReportedValue({ value: reportedValue })
       execError = undefined
       recorder.recordReportedValue({ value: reportedValue })
+      stepRecord.addRead({ kind: 'reportValue', text: `"${reportedValue}"` })
     } else if (dispatchVerb === 'uniqueValue') {
       // D-16: mint prefix + injectable-generator suffix here (zero adapter.execute), then auto-write
       // the minted value into run-scoped working memory keyed by the prefix (kind extracted-value /
@@ -1505,6 +1511,16 @@ export async function executeStep(
       if (typeof av.video === 'boolean') requested.video = av.video
       if (av.effort === 'low' || av.effort === 'medium' || av.effort === 'high') requested.effort = av.effort
       recorder.recordAiJudgment({ verb: 'assertAI', verdict: judgment.verdict, rationale: maskValue(rationale), requested })
+      const judgedClaim = recordMask(claim)
+      const mode = typeof (action as { mode?: unknown }).mode === 'string'
+        ? (action as { mode: string }).mode
+        : undefined
+      stepRecord.addRead({
+        kind: 'assertAI',
+        text: `"${judgedClaim}"${mode !== undefined ? ` (${mode})` : ''}: judged ${judgment.verdict ? 'true' : 'false'}: ${maskValue(rationale)}`,
+        claim: judgedClaim,
+        ...(mode !== undefined ? { mode } : {}),
+      })
       if (judgment.verdict) {
         execResult = { success: true, metadata: { aiJudgment: { verb: 'assertAI', verdict: true } } }
         execError = undefined
@@ -1534,6 +1550,11 @@ export async function executeStep(
         stepIndex: actionIndex,
       }))
       if (entries.length > 0) ports.workingMemory?.capture(entries, { step: actionIndex })
+      const fields = entries.map((entry) => `${recordMask(entry.key)} = "${entry.value}"`)
+      stepRecord.addRead({
+        kind: 'extractAI',
+        text: `"${recordMask(query)}": ${fields.length > 0 ? fields.join(', ') : 'no fields'}`,
+      })
       const degradedScope = av.scope === 'global'
       recorder.recordAiJudgment({ verb: 'extractAI', ...(degradedScope ? { degradedScope: true } : {}) })
       execResult = { success: true, metadata: { aiJudgment: { verb: 'extractAI' }, extracted } }
@@ -1564,6 +1585,20 @@ export async function executeStep(
           passed: outcome.passed,
           ...(outcome.expected !== undefined ? { expected: outcome.expected } : {}),
           ...(outcome.actual !== undefined ? { actual: outcome.actual } : {}),
+        })
+        const assertExpected = outcome.expected !== undefined ? recordMask(outcome.expected) : undefined
+        const assertActual = typeof outcome.actual === 'string'
+          ? ` (read "${recordMask(outcome.actual)}")`
+          : outcome.actual === null ? ' (read null)' : ''
+        stepRecord.addRead({
+          kind: 'assertValue',
+          text: `${outcome.source} ${outcome.op}${assertExpected !== undefined ? ` "${assertExpected}"` : ''}: ${outcome.passed ? 'passed' : 'failed'}${assertActual}`,
+          assert: {
+            source: outcome.source,
+            op: outcome.op,
+            ...(assertExpected !== undefined ? { expected: assertExpected } : {}),
+            passed: outcome.passed,
+          },
         })
         if (outcome.passed) {
           execResult = { success: true, metadata: { assertValueOutcome: outcome } }
@@ -1752,6 +1787,25 @@ export async function executeStep(
     const historyResult = readIdempotentNoopMeta(execResult)?.inputSent === false
       ? 'no-input'
       : 'success'
+    const recordedOutcome: RecordedActionOutcome =
+      gateForcedError !== undefined || execResult.metadata?.['targetRefusal'] !== undefined
+        ? 'refused'
+        : historyResult === 'no-input'
+          ? 'no-input'
+          : execError !== undefined ? 'failure' : 'success'
+    const actedRef = 'ref' in action && typeof action.ref === 'string' ? action.ref : undefined
+    const actedElement = actedRef !== undefined
+      ? actedState.elements.find((element) => element.ref === actedRef)
+      : undefined
+    stepRecord.addAction({
+      action,
+      ...(actedElement !== undefined
+        ? { element: { role: actedElement.role, name: recordMask(actedElement.name) } }
+        : {}),
+      outcome: recordedOutcome,
+      ...(execError !== undefined ? { error: recordMask(execError) } : {}),
+      ...(operationEvidence !== undefined ? { operationEvidence } : {}),
+    })
     const notableInput = operationEvidence?.input?.filter(
       (entry) => renderInputEvidence(entry) !== undefined,
     )
@@ -1955,15 +2009,20 @@ export async function executeStep(
       const abortBeforeVerify = checkAbort()
       if (abortBeforeVerify) return abortBeforeVerify
 
+      // 439 D-03: the verifier judges the whole step, from its settled start to its final screen.
+      const record = stepRecord.snapshot()
+      const accumulatedEvidence = hasOperationEvidence(stepOperationEvidence)
+        ? stepOperationEvidence
+        : undefined
       let verifyResult
       meter.recordVerifierCall()
       try {
         verifyResult = await withAbort(
           ports.verifier.verify(
-            stepInstruction, actedState, afterState, action,
+            stepInstruction, record.startScreen, afterState, action,
             gate.attachImage ? verifyScreenshot : undefined,
             ports.abortSignal, gate.promptNote, activePredicate, verifierAuthorContext,
-            ...(hasOperationEvidence(stepOperationEvidence) ? [stepOperationEvidence] : []),
+            accumulatedEvidence, record,
           ),
           ports.abortSignal,
         )
@@ -1981,10 +2040,11 @@ export async function executeStep(
         stepText: stepInstruction,
         output: verifyResult.verification,
         sources: buildVerifierCitationSources(
-          actedState,
+          record.startScreen,
           afterState,
           action,
-          hasOperationEvidence(stepOperationEvidence) ? stepOperationEvidence : undefined,
+          accumulatedEvidence,
+          record,
         ),
         mask: (value) => maskValue(redactSecretValue(value, ports.secretRedactor)),
         imageAttached: gate.attachImage && verifyScreenshot !== undefined,

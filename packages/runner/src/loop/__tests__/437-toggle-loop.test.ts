@@ -9,6 +9,7 @@ import type { ActionPlan, Planner, StepContext, Verifier } from '../types.js'
 import type { ScriptedVerdict } from '../../testing/condition-verdicts.js'
 import { readIdempotentNoopMeta } from '../../compound/metadata.js'
 import { buildVerificationPrompt, composeTurnMessages } from '../prompts.js'
+import type { VerifierStepRecord } from '../step-record.js'
 import { scriptedVerification } from '../../testing/condition-verdicts.js'
 import { APP_OBSERVED_DATA_CLOSE, APP_OBSERVED_DATA_OPEN } from '@vostride/agent-qa-safety'
 import type { MaskingContext, OperationEvidence } from '@vostride/agent-qa-schema'
@@ -330,10 +331,12 @@ describe('C437-NO-INPUT', () => {
       undefined,
       undefined,
       evidence,
+      captured[0][10] as VerifierStepRecord,
     )
     expect(prompt).toContain(
-      `${APP_OBSERVED_DATA_OPEN}\ntap: no input sent — already checked\n${APP_OBSERVED_DATA_CLOSE}`,
+      `${APP_OBSERVED_DATA_OPEN}\naction 1: tap: no input sent — already checked\n${APP_OBSERVED_DATA_CLOSE}`,
     )
+    expect(prompt).toContain('1. tap on ref="e1" (switch "Dark theme") → no-input')
   })
 
   it('the recorded sub-action carries the typed input evidence', async () => {
@@ -353,9 +356,13 @@ describe('C437-NO-INPUT', () => {
     const { calls, captured } = await runCaptured(off, SKIPPED_TAP)
     expect(calls).toHaveLength(1)
     expect(captured).toHaveLength(1)
-    expect(captured[0]).toHaveLength(9)
+    expect(captured[0]).toHaveLength(11)
     expect(captured[0][9]).toBeUndefined()
     const [step, before, after, action] = captured[0]
+    const record = captured[0][10] as VerifierStepRecord
+    expect(
+      buildVerificationPrompt(step, before, after, action, false, undefined, undefined, undefined, undefined, record),
+    ).not.toContain('Operation evidence')
     const withoutEvidence = buildVerificationPrompt(step, before, after, action)
     const emptyEvidence: OperationEvidence = {}
     expect(

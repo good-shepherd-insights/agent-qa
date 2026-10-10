@@ -5,6 +5,7 @@
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { Action } from '../platform.js'
 import type { VerificationResult } from '../loop/types.js'
+import { verifierActionDescription } from '../loop/prompts.js'
 
 /** A legacy `{ success }` verdict a double may still be written with, or the full result. */
 export type ScriptedVerdict =
@@ -31,7 +32,10 @@ export function metVerification(options: {
   const line = citedLine(options.after)
   const citation = line !== undefined
     ? { source: 'final-screen' as const, quote: line }
-    : { source: 'action' as const, quote: 'Action taken' }
+    : {
+        source: 'action' as const,
+        quote: options.action ? verifierActionDescription(options.action).slice(0, 200) : 'Action taken',
+      }
   const reasoning = options.reasoning ?? 'Step completed'
   return {
     conditions: [

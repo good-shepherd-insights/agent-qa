@@ -11,6 +11,7 @@ import { CITATION_SOURCES, CONDITION_NEEDS, CONDITION_VERDICTS } from '@vostride
 import type { DeclaredModelProfile, OperationEvidence, ScreenState } from '@vostride/agent-qa-schema'
 import type { Action } from '../platform.js'
 import type { Verifier, VerifierAuthorContext, VerifyResult } from './types.js'
+import type { VerifierStepRecord } from './step-record.js'
 import type { LanguageModelUsage } from 'ai'
 import type { TokenAccounting } from './ports.js'
 import { buildVerificationPrompt, buildVerifierStableTier } from './prompts.js'
@@ -163,12 +164,13 @@ export class LLMVerifier implements Verifier {
     bulkCompletionPredicate?: string,
     authorContext?: VerifierAuthorContext,
     operationEvidence?: OperationEvidence,
+    record?: VerifierStepRecord,
   ): Promise<VerifyResult> {
     try {
       // D-09 backstop: the declared bulk-completion predicate rides the per-call VOLATILE turn
       // content (never buildVerifierStableTier — the 355 verifier cache contract keeps the
       // stable tier byte-stable). The verifier weighs the predicate alongside the states.
-      const promptText = buildVerificationPrompt(step, before, after, action, !!screenshot, promptNote, bulkCompletionPredicate, authorContext, operationEvidence)
+      const promptText = buildVerificationPrompt(step, before, after, action, !!screenshot, promptNote, bulkCompletionPredicate, authorContext, operationEvidence, record)
 
       // Verdict-identity cached stable prefix (D-11): a one-tier SystemModelMessage array
       // carrying the single Anthropic ephemeral cache_control breakpoint. Byte-stable per

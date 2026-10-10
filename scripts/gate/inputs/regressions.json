@@ -1120,7 +1120,7 @@
     {
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/436-operation-evidence.test.ts",
-      "fullName": "C436-OPERATION-EVIDENCE verifier input and availability a step with no operation evidence passes no trailing verifier argument",
+      "fullName": "C436-OPERATION-EVIDENCE verifier input and availability a step with no operation evidence passes no operation evidence to the verifier",
       "origin": "436 D-22"
     },
     {
@@ -6444,6 +6444,36 @@
       "file": "packages/cli/src/__tests__/reporters/439-unproven-reason.test.ts",
       "fullName": "C439-UNPROVEN-REASON the reason text reaches JUnit and the console verbatim",
       "origin": "439 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-step-record.test.ts",
+      "fullName": "C439-STEP-RECORD the verifier sees every action and read of the step, and no planner reasoning",
+      "origin": "439 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-step-record.test.ts",
+      "fullName": "C439-STEP-RECORD an earlier action's download is citable",
+      "origin": "439 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-step-record.test.ts",
+      "fullName": "C439-STEP-RECORD the author's context is never evidence",
+      "origin": "439 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-step-record.test.ts",
+      "fullName": "C439-STEP-RECORD a long step is bounded and keeps every evidence line",
+      "origin": "439 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-step-record.test.ts",
+      "fullName": "C439-STEP-RECORD the start screen is the step's first settled observation",
+      "origin": "439 D-03"
     }
   ]
 }

@@ -890,7 +890,8 @@ export async function startStubModelServer(
                 needs: 'none',
                 controlRef: '',
                 file: { name: '', match: 'none', text: '' },
-                citations: [{ source: 'action', quote: 'Action taken' }],
+                // 2026-10-11 (439-03): the action part is the step record's action lines (D-03).
+                citations: [{ source: 'action', quote: '→ success' }],
                 reasoning: 'The notice state changed.',
               }],
               dialogs: [],

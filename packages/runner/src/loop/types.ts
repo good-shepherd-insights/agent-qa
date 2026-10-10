@@ -22,6 +22,7 @@ import type {
 import type { Action } from '../platform.js'
 import type { TokenUsage } from '../result.js'
 import type { StatedTargets } from '../grounding/stated-target.js'
+import type { VerifierStepRecord } from './step-record.js'
 
 /**
  * A planned action plus the frozen v45 plan envelope (D-09). Structural mirror of
@@ -236,7 +237,7 @@ export interface VerifierAuthorContext {
 }
 
 export interface Verifier {
-  verify(step: string, before: ScreenState, after: ScreenState, action: Action, screenshot?: Buffer, abortSignal?: AbortSignal, promptNote?: string, bulkCompletionPredicate?: string, authorContext?: VerifierAuthorContext, operationEvidence?: OperationEvidence): Promise<VerifyResult>
+  verify(step: string, before: ScreenState, after: ScreenState, action: Action, screenshot?: Buffer, abortSignal?: AbortSignal, promptNote?: string, bulkCompletionPredicate?: string, authorContext?: VerifierAuthorContext, operationEvidence?: OperationEvidence, record?: VerifierStepRecord): Promise<VerifyResult>
   /**
    * D-05 AI judge lane (EXEC-07, spec §9.6/§12.2) — OPTIONAL so every existing Verifier
    * implementor keeps compiling (D-05: no new port). Plan 09 implements this on LLMVerifier

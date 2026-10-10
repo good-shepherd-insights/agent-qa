@@ -19,6 +19,7 @@ import type { ModelMessage, SystemModelMessage } from 'ai'
 import type { Action } from '../platform.js'
 import type { StepContext, AssertionInput, ExtractorInput, VerifierAuthorContext } from './types.js'
 import type { CitationSources } from './requested-conditions.js'
+import { renderStepRecord, type VerifierStepRecord } from './step-record.js'
 import { defaultRegistry } from '../tools/index.js'
 
 type PromptPlatform = 'web' | 'android' | 'ios'
@@ -850,7 +851,7 @@ Return a JSON object with:
 - isAppError (boolean): whether the screen shows an application error that the step does not expect`
 }
 
-function verifierActionDescription(action: Action): string {
+export function verifierActionDescription(action: Action): string {
   if (action.type === 'assertAI') return `observation only; planner's unverified claim: "${action.claim}"`
   if (action.type === 'extractAI') return `observation only; planner's extraction query: "${action.query}"`
   return formatAction(action)
@@ -874,7 +875,18 @@ export function buildVerifierCitationSources(
   afterState: ScreenState,
   action: Action,
   operationEvidence?: OperationEvidence,
+  record?: VerifierStepRecord,
 ): CitationSources {
+  if (record !== undefined) {
+    const rendered = renderStepRecord(record)
+    return {
+      'start-screen': truncateScreenState(record.startScreen),
+      'final-screen': truncateScreenState(afterState),
+      action: [rendered.actions, rendered.operationEvidence].filter((part) => part.length > 0).join('\n'),
+      read: rendered.reads,
+      carried: rendered.carried,
+    }
+  }
   const evidence = operationEvidence ? renderOperationEvidence(operationEvidence) : ''
   const actionPart = [`Action taken: ${verifierActionLine(action, beforeState)}`]
   if (evidence.length > 0) actionPart.push(evidence)
@@ -905,6 +917,34 @@ function verifierAuthorHeader(authorContext: VerifierAuthorContext): string {
     : VERIFIER_AUTHOR_HEADER
 }
 
+function bulkPredicateLine(predicate: string): string {
+  return `Declared bulk-completion predicate: "${predicate}". Confirm this predicate holds against the AFTER state before agreeing the step is complete.`
+}
+
+function appendWrappedSection(parts: string[], heading: string, text: string): void {
+  if (text.length === 0) return
+  parts.push('')
+  parts.push(heading)
+  parts.push(wrapAppObservedData(text))
+}
+
+// 439 D-03: the whole step in place of the last action and the screens around it.
+function appendStepRecord(parts: string[], record: VerifierStepRecord, afterState: ScreenState): void {
+  const rendered = renderStepRecord(record)
+  parts.push('')
+  parts.push('Screen at the start of the step:')
+  parts.push(truncateScreenState(record.startScreen))
+  parts.push('')
+  parts.push('Actions in this step:')
+  parts.push(rendered.actions.length > 0 ? wrapAppObservedData(rendered.actions) : '(none)')
+  appendWrappedSection(parts, 'Operation evidence (by action):', rendered.operationEvidence)
+  appendWrappedSection(parts, 'Values read in this step:', rendered.reads)
+  appendWrappedSection(parts, 'Carried from earlier steps in this test:', rendered.carried)
+  parts.push('')
+  parts.push('Screen now (settled, after the last action):')
+  parts.push(truncateScreenState(afterState))
+}
+
 /**
  * VERIFIER per-call turn content (D-11). Only the per-verification-call bytes: the step
  * goal, the enriched action description, and the before/after screen states (+ the
@@ -922,6 +962,7 @@ export function buildVerificationPrompt(
   bulkCompletionPredicate?: string,
   authorContext?: VerifierAuthorContext,
   operationEvidence?: OperationEvidence,
+  record?: VerifierStepRecord,
 ): string {
   const parts: string[] = []
 
@@ -934,12 +975,20 @@ export function buildVerificationPrompt(
   }
 
   parts.push(`Step goal: "${step}"`)
+  if (record !== undefined) {
+    if (bulkCompletionPredicate) parts.push(bulkPredicateLine(bulkCompletionPredicate))
+    appendStepRecord(parts, record, afterState)
+    if (hasScreenshot) {
+      parts.push('')
+      parts.push('A screenshot of the AFTER state is attached for visual verification.')
+    }
+    appendPromptNote(parts, promptNote)
+    return parts.join('\n')
+  }
   parts.push(`Action taken: ${verifierActionLine(action, beforeState)}`)
   // D-09 backstop: when a bulk "do X to all" predicate was declared, the verifier weighs it
   // as positive-evidence context (opaque display text, per-call volatile — never the stable tier).
-  if (bulkCompletionPredicate) {
-    parts.push(`Declared bulk-completion predicate: "${bulkCompletionPredicate}". Confirm this predicate holds against the AFTER state before agreeing the step is complete.`)
-  }
+  if (bulkCompletionPredicate) parts.push(bulkPredicateLine(bulkCompletionPredicate))
   parts.push('')
   parts.push('Screen BEFORE action:')
   parts.push(truncateScreenState(beforeState))

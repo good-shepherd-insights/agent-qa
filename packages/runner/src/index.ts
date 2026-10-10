@@ -148,6 +148,22 @@ export {
   estimateTokens,
 } from './loop/prompts.js'
 export {
+  StepRecordAccumulator,
+  renderStepRecord,
+  RECORD_ACTION_LINE_CAP,
+  RECORD_LINE_CHAR_CAP,
+  RECORD_LIST_CAP,
+} from './loop/step-record.js'
+export type {
+  CarriedLine,
+  RecordedAction,
+  RecordedActionOutcome,
+  RecordedRead,
+  RecordedReadKind,
+  RenderedStepRecord,
+  VerifierStepRecord,
+} from './loop/step-record.js'
+export {
   CHARS_PER_TOKEN_ESTIMATE,
   OBSERVATION_LINE_PREFIX,
   assembleBriefTiers,
