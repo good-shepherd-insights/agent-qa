@@ -432,7 +432,7 @@ describe('C438-HEAL-RECORD', () => {
   })
 
   it('a healed click whose re-dispatch fails anchors its caution to the element acted on', async () => {
-    const getCautions = vi.fn(() =>
+    const getCautions = vi.fn((_anchors: unknown, _budget?: unknown) =>
       servedCautions({ cautions: [], budgetUsed: 0, admissions: [] }),
     )
     const knowledgeReader: KnowledgeHintReader = {
@@ -452,7 +452,7 @@ describe('C438-HEAL-RECORD', () => {
     })
 
     expect(getCautions).toHaveBeenCalled()
-    const anchors = getCautions.mock.calls[0]![0] as unknown as Array<Record<string, unknown>>
+    const anchors = getCautions.mock.calls[0]![0] as Array<Record<string, unknown>>
     expect(anchors).toContainEqual(
       expect.objectContaining({ t: 'el', role: 'button', name: 'save' }),
     )
