@@ -61,7 +61,7 @@ import type {
 import { wrapAppObservedData } from '@vostride/agent-qa-safety'
 import type { Action, ActionResult, ExecuteOptions, OperationCaptureSupport } from '../platform.js'
 import type { StepResult, StepTrace, SubActionTrace, TokenUsage } from '../result.js'
-import { stampCaptureMode } from '../screen-builder.js'
+import { stampCaptureMode, type CaptureStamp } from '../screen-builder.js'
 import { normalizePointerActionForStep } from '../tools/pointer-action-normalization.js'
 import { projectRiskAction } from '../tools/project-risk-action.js'
 import { defaultRegistry } from '../tools/registry.js'
@@ -826,9 +826,10 @@ export async function executeStep(
     // One authoritative modality stamp over the finalized attachment: `full` (with the selected
     // dims) when an image is attached, otherwise `textOnly`. This is the single source of the
     // recorded stateBefore.metadata.captureMode for every planner call.
-    screenState = context.screenshot && captureDims
-      ? stampCaptureMode(screenState, { mode: 'full', imageWidth: captureDims.imageWidth, imageHeight: captureDims.imageHeight })
-      : stampCaptureMode(screenState, { mode: 'textOnly' })
+    const captureStamp: CaptureStamp = context.screenshot && captureDims
+      ? { mode: 'full', imageWidth: captureDims.imageWidth, imageHeight: captureDims.imageHeight }
+      : { mode: 'textOnly' }
+    screenState = stampCaptureMode(screenState, captureStamp)
 
     // 2. PLAN — procedure-first at step start (PROC-02/D-09), then the replay → re-ground →
     // replan hit ladder (D-13), then the planning turn.
@@ -1647,23 +1648,29 @@ export async function executeStep(
     // contradiction on any lane is refused on path 'heal', not sent and not debited. When any lane
     // has no single provably-same element, nothing is sent and the failure branch hands the
     // planner the outcome. The heal trail is recorded in the sub-action's grounding block only;
-    // StepEvidence.selfHeal stays reserved for replan-based heals (D-11).
+    // StepEvidence.selfHeal stays reserved for replan-based heals (D-11). A heal that re-dispatches
+    // sends refs taken from its fresh observation, so the sub-action is recorded against that
+    // observation, re-stamped with the planner call's capture stamp, and never beside the pre-heal
+    // one its refs do not index (CR-03). The cache write keeps the unpatched action and the
+    // pre-heal elements.
     // 436 D-07: the heal re-execution is a counted action; at the limit it is skipped and the
     // next loop top stops the step.
     let healUnproven: 'absent' | 'not-unique' | undefined
+    let actedState: ScreenState = screenState
     if (
       execError !== undefined
       && (gateForcedRefMiss || isRefResolutionFailure(execError) || startsBindingHeal(execResult))
       && !meter.actionsExhausted()
     ) {
-      let freshElements: readonly ElementInfo[] | undefined
+      let freshState: ScreenState
       try {
-        freshElements = (await withAbort(ports.adapter.observe({ extractDom: true }), ports.abortSignal)).elements
+        freshState = await withAbort(ports.adapter.observe({ extractDom: true }), ports.abortSignal)
       } catch (err) {
         const abortDuringHeal = checkAbort()
         if (abortDuringHeal) return abortDuringHeal
         throw err
       }
+      const freshElements = freshState.elements
       const scrub = (value: string) => maskValue(redactSecretValue(value, ports.secretRedactor))
       const heal = regroundFailedRef(action, screenState.elements, freshElements, scrub)
       if (heal?.kind === 'resolved') {
@@ -1692,6 +1699,7 @@ export async function executeStep(
           execResult = outcome.result
           execError = outcome.error
           action = redactSecretValue(patched, ports.secretRedactor)
+          actedState = stampCaptureMode(freshState, captureStamp)
           lastPlannedAction = action
           const abortAfterHeal = checkAbort()
           if (abortAfterHeal) return abortAfterHeal
@@ -1759,7 +1767,7 @@ export async function executeStep(
       recorder.recordSubAction({
         plan: reasoning,
         plannedAction: action as unknown as SchemaAction,
-        stateBefore: screenState,
+        stateBefore: actedState,
         result: toSchemaResult(execResult),
         cached,
         grounding,
@@ -1789,7 +1797,7 @@ export async function executeStep(
       recorder.recordSubAction({
         plan: reasoning,
         plannedAction: action as unknown as SchemaAction,
-        stateBefore: screenState,
+        stateBefore: actedState,
         result: toSchemaResult(execResult),
         cached,
         grounding,
@@ -1897,7 +1905,7 @@ export async function executeStep(
           recorder,
           reasoning,
           action,
-          screenState,
+          actedState,
           execResult,
           annotation,
           cached,
@@ -1978,7 +1986,7 @@ export async function executeStep(
           recorder,
           reasoning,
           action,
-          screenState,
+          actedState,
           execResult,
           annotation,
           cached,
@@ -2000,7 +2008,7 @@ export async function executeStep(
         recorder.recordSubAction({
           plan: reasoning,
           plannedAction: action as unknown as SchemaAction,
-          stateBefore: screenState,
+          stateBefore: actedState,
           result: toSchemaResult(execResult, annotation),
           cached,
           grounding,
@@ -2038,7 +2046,7 @@ export async function executeStep(
         recorder,
         reasoning,
         action,
-        screenState,
+        actedState,
         execResult,
         annotation,
         cached,
@@ -2071,7 +2079,7 @@ export async function executeStep(
         recorder,
         reasoning,
         action,
-        screenState,
+        actedState,
         execResult,
         annotation,
         cached,
@@ -2094,7 +2102,7 @@ export async function executeStep(
       recorder,
       reasoning,
       action,
-      screenState,
+      actedState,
       execResult,
       annotation,
       cached,
