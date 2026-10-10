@@ -4,10 +4,15 @@
 // after a heal. Model-free: a scripted planner and a recording android adapter that shows the
 // prior page until the first dispatch and the fresh page on every observation after it (the
 // loop's settle needs two equal reads, so the page changes when the first action is attempted).
+//
+// C438-HEAL-EVIDENCE (438 D-05; WR-01): the heal's grounding block passes role, name and row
+// through secret redaction then masking, like the live block, and caps the prior row text at the
+// refusal block's observed-row cap.
 import { describe, expect, it } from 'vitest'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { Action, ActionResult, PlatformAdapter } from '../../platform.js'
 import type { StepResult } from '../../result.js'
+import { rowTextOf } from '../../grounding/row-text.js'
 import { buildScreenState, type InterimNode } from '../../screen-builder.js'
 import { executeStep } from '../index.js'
 import type { ActionPlan, Planner, StepContext } from '../types.js'
@@ -235,5 +240,72 @@ describe('C438-HEAL-LANES', () => {
 
     expect(a.executed).toHaveLength(1)
     expect(metadataOf(result, 'binding')).toMatchObject({ heal: 'not-unique' })
+  })
+})
+
+const SECRET = 'zz-secret-label'
+const MASKED = 'zz-masked-word'
+const PAY = `Pay ${SECRET} ${MASKED}`
+
+async function runClickHeal(rowText: string, ports: Record<string, unknown> = {}) {
+  const prior = screenOf([
+    { role: 'listitem', text: rowText },
+    { role: 'button', name: PAY, parentIndex: 0 },
+  ])
+  const fresh = screenOf([
+    { role: 'button', name: 'Banner' },
+    { role: 'listitem', text: rowText },
+    { role: 'button', name: PAY, parentIndex: 1 },
+  ])
+  const a = adapter(prior, fresh, [UNKNOWN_TO_REF, { success: true }])
+  const result = await executeStep(
+    'Pay',
+    {
+      adapter: a,
+      planner: scriptedPlanner([plan({ type: 'click', ref: 'e2' }), GIVE_UP]),
+      plannerConfig: limits(10, 10),
+      ...ports,
+    },
+    makeStepContext(),
+  )
+  return { a, prior, result }
+}
+
+describe('C438-HEAL-EVIDENCE', () => {
+  it('the heal grounding block is masked like the live block', async () => {
+    const { a, result } = await runClickHeal(`Order 12 ${MASKED}`, {
+      secretRedactor: { redactString: (value: string) => value.split(SECRET).join('[SECRET]') },
+      masking: {
+        mask: (value: string) => value.split(MASKED).join('[MASKED]'),
+        unmask: (value: string) => value,
+      },
+    })
+
+    expect(a.executed).toHaveLength(2)
+    expect(a.executed[1]).toEqual({ type: 'click', ref: 'e3' })
+    const grounding = result.evidence?.subActions[0]?.grounding
+    expect(grounding?.attempts).toContainEqual({
+      stage: 'tree-search',
+      outcome: 'resolved',
+      resolvedRef: 'e3',
+    })
+    expect(grounding?.descriptor.name).toBe('Pay [SECRET] [MASKED]')
+    expect(grounding?.descriptor.row).toContain('[MASKED]')
+    const recorded = JSON.stringify(grounding)
+    expect(recorded).not.toContain(SECRET)
+    expect(recorded).not.toContain(MASKED)
+  })
+
+  it('the heal grounding block caps the prior row text at 200 characters', async () => {
+    const longRow = `Order ${'abcdefghi '.repeat(30)}`.trim()
+    const { a, prior, result } = await runClickHeal(longRow)
+
+    expect(a.executed).toHaveLength(2)
+    const priorRow = rowTextOf(prior.elements[1]!, prior.elements)!
+    expect(priorRow.length).toBeGreaterThan(300)
+    const row = result.evidence?.subActions[0]?.grounding?.descriptor.row
+    expect(row).toBeDefined()
+    expect(row!.length).toBeLessThanOrEqual(200)
+    expect(row).toBe(priorRow.slice(0, 200))
   })
 })
