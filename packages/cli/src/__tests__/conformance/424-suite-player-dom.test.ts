@@ -104,15 +104,18 @@ async function dragSuite(page: Page, durations?: number[]) {
   return rows
 }
 
-function memberSha(index: number) {
-  const recording = detail.members[index]?.recording
-  return recording?.state === 'present' ? recording.ref.sha : 'missing'
+function memberSha(testIndex: number) {
+  const recording = detail.members.find(member => member.testIndex === testIndex)?.recording
+  if (recording?.state !== 'present') throw new Error(`member ${testIndex} has no present recording`)
+  return recording.ref.sha
 }
+const SETTLED_SEEK_TIMEOUT_MS = 10_000
 // A click on a new member's source can start more than one seek. The recorder keeps the
 // position of the first `seeked` on that source after which no further seek starts.
 async function armSettledSeek(page: Page, sha: string) {
   await page.evaluate(sha => {
-    const recorder = window as unknown as { settledSeek?: Promise<number> }
+    const recorder = window as unknown as { settledSeek?: Promise<number>; settledSeekSource?: string }
+    recorder.settledSeekSource = sha
     recorder.settledSeek = new Promise<number>(resolve => {
       const settled = (event: Event) => {
         const media = event.target as HTMLMediaElement
@@ -130,9 +133,15 @@ async function armSettledSeek(page: Page, sha: string) {
   }, sha)
 }
 async function settledSeek(page: Page) {
-  return page.evaluate(() => (window as unknown as { settledSeek: Promise<number> }).settledSeek)
+  return page.evaluate(bound => {
+    const recorder = window as unknown as { settledSeek: Promise<number>; settledSeekSource: string }
+    let timer = 0
+    const expired = new Promise<never>((_, reject) => {
+      timer = window.setTimeout(() => reject(new Error(`no settled seek on source ${recorder.settledSeekSource} within ${bound} ms`)), bound)
+    })
+    return Promise.race([recorder.settledSeek, expired]).finally(() => window.clearTimeout(timer))
+  }, SETTLED_SEEK_TIMEOUT_MS)
 }
-const SETTLED_SEEK_TIMEOUT_MS = 10_000
 
 type MemberSpan = { member: number; start: number; width: number }
 async function memberSpans(page: Page): Promise<MemberSpan[]> {
@@ -146,7 +155,9 @@ async function memberSpans(page: Page): Promise<MemberSpan[]> {
   }))
 }
 function freeMemberAt(spans: readonly MemberSpan[], fraction: number) {
-  return spans.findIndex(span => fraction >= span.start && fraction < span.start + span.width)
+  const span = spans.find(span => fraction >= span.start && fraction < span.start + span.width)
+  if (!span) throw new Error(`no timeline member spans ${fraction}`)
+  return span.member
 }
 
 async function clickMarker(page: Page, ordinal: number) {
