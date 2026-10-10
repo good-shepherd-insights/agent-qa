@@ -6144,6 +6144,150 @@
       "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
       "fullName": "C439-JUDGE stepOutcomeUnproven reads only verifier endings",
       "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-COVERAGE stop words never need coverage",
+      "origin": "439 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-COVERAGE overlapping quotes cover the first clause once",
+      "origin": "439 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-COVERAGE a quote occurring twice covers both occurrences",
+      "origin": "439 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-COVERAGE a placeholder token in the step is covered by a quote holding it",
+      "origin": "439 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-COVERAGE full-width digits match ASCII after NFKC",
+      "origin": "439 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-COVERAGE a verify step quoted without its verb is fully covered",
+      "origin": "439 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-COVERAGE a quote that is not a run of the step words is unverified and its words stay uncovered",
+      "origin": "439 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES refused: The setting has not been saved on Save the setting",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES refused: The message wasn't sent on Send the message",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES refused: I did not submit it on Submit the form",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES refused: The app failed to export the file on Export orders",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES refused: Clicked Pay but nothing happened on Click Pay",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES kept met: The dialog has not reappeared on Close the dialog",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES kept met: No error is shown on Verify no error is shown",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES kept met: The card was not charged twice on Pay once",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES kept met: Clicked the tab and nothing happened on Open the Help tab",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES kept met: The error is not visible on Verify the error is not visible",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES stemWord folds the inflections the check compares",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES a met condition whose reasoning admits it is not met, and the reason quotes the phrase",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES the planner's completion reasoning refuses a met condition",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-checks-loop.test.ts",
+      "fullName": "C439-CHECKS-LOOP a two-part step judged on one part does not pass",
+      "origin": "439 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-checks-loop.test.ts",
+      "fullName": "C439-CHECKS-LOOP a condition reworded away from the step is not a pass",
+      "origin": "439 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-checks-loop.test.ts",
+      "fullName": "C439-CHECKS-LOOP a planner that admits the form was not submitted cannot pass",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-checks-loop.test.ts",
+      "fullName": "C439-CHECKS-LOOP the verifier's own admission refuses its met verdict",
+      "origin": "439 D-11"
     }
   ]
 }

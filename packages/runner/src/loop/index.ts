@@ -1989,6 +1989,7 @@ export async function executeStep(
         mask: (value) => maskValue(redactSecretValue(value, ports.secretRedactor)),
         imageAttached: gate.attachImage && verifyScreenshot !== undefined,
         ending: 'completion',
+        plannerReasoning: reasoning,
       })
       recorder.recordConditionVerdicts(judged.evidence)
       verifierReasoning = judged.pass ? verifyResult.verification.reasoning : judged.reason
