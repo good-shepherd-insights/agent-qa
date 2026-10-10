@@ -112,7 +112,7 @@ beforeEach(() => {
         : { role: 'assistant', content: JSON.stringify(extracting
             ? { value: 'captured', reasoning: 'Read from the screen' }
             : judging ? { verdict: true, rationale: 'The button is visible' }
-            : { conditions: [{ quote: 'Click', verdict: 'met', needs: 'none', controlRef: '',
+            : { conditions: [{ quote: 'Click Log in', verdict: 'met', needs: 'none', controlRef: '',
                 file: { name: '', match: 'none', text: '' },
                 citations: [{ source: 'action', quote: '→ success' }], reasoning: 'Button clicked' }],
               dialogs: [], isAppError: false, reasoning: 'Button clicked' }) } }],

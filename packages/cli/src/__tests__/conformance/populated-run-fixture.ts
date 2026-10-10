@@ -884,8 +884,9 @@ export async function startStubModelServer(
             role: 'assistant',
             content: JSON.stringify({
               // 2026-10-11 (439-01): the verification lane answers per condition (D-07, D-10).
+              // 2026-10-11 (439-03): the quote is the whole step, so every step word is covered (D-02).
               conditions: [{
-                quote: POPULATED_BUTTON_LABEL,
+                quote: /^Step goal: "(.*)"$/m.exec(prompt)?.[1] ?? POPULATED_BUTTON_LABEL,
                 verdict: 'met',
                 needs: 'none',
                 controlRef: '',
