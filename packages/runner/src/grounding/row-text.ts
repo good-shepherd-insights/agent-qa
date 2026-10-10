@@ -2,12 +2,16 @@
 // and iOS. CRITICAL: provider-neutral + storage-neutral. No node:* imports, no fs/sharp, no
 // core/model/adapter package imports — imports only schema types.
 //
-// The row container of an element is its nearest ancestor (via hierarchy.parentRef) whose role is
-// in ROW_CONTAINER_ROLES; when there is none, its nearest `cell` ancestor (iOS
+// The row container of an element is the element itself when its role is in ROW_CONTAINER_ROLES,
+// else its nearest ancestor (via hierarchy.parentRef) in ROW_CONTAINER_ROLES; when neither exists,
+// the element itself when it is a `cell`, else its nearest `cell` ancestor (iOS
 // XCUIElementTypeCell maps to `cell`; on web a table cell is always found below its `row` first).
-// Row text is the container's name, its folded static text, then every descendant's name and text
-// in document order. No container means the row is unknown — never a contradiction (Android
-// layout groups are filtered out of the observation, so a list row there has no container).
+// A row container is its own row (438 gap round, WR-04), so a clicked listitem or row is checked
+// against its own row words. Row text is the container's name, its folded static text, then every
+// descendant's name and text in document order. No container means the row is unknown — never a
+// contradiction (Android layout groups are filtered out of the observation, so a list row there
+// has no container). strictMatch, the cache locator's row lift and the web binding (observe-time
+// and dispatch-time row text) all read this one definition.
 //
 // Containment compares word tokens after NFKC and lowercasing. Each stated word must equal a row
 // word or be a prefix (two or more characters) of a non-number row word; a number must match a row
@@ -60,10 +64,10 @@ function rowContainerOf(
   element: ElementInfo,
   byRef: Map<Ref, ElementInfo>,
 ): ElementInfo | undefined {
-  const chain = ancestorsOf(element, byRef)
+  const chain = [element, ...ancestorsOf(element, byRef)]
   return (
-    chain.find((ancestor) => ROW_CONTAINER_ROLES.includes(ancestor.role))
-    ?? chain.find((ancestor) => ancestor.role === FALLBACK_CONTAINER_ROLE)
+    chain.find((candidate) => ROW_CONTAINER_ROLES.includes(candidate.role))
+    ?? chain.find((candidate) => candidate.role === FALLBACK_CONTAINER_ROLE)
   )
 }
 
