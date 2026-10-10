@@ -27,6 +27,7 @@ import type {
   BoundingBox,
   BriefBlock,
   CautionLine,
+  ConditionVerdictsEvidence,
   Decision,
   DeclaredModelProfile,
   InterpolatedVariable,
@@ -310,6 +311,7 @@ export class EvidenceRecorder {
   private reportedValue?: ReportedValueEvidence
   private termination?: TerminationEvidence
   private limitStop?: LimitStopEvidence
+  private conditionVerdicts?: ConditionVerdictsEvidence
   private limitUsage?: StepLimitUsage
   private operationCapture?: OperationCaptureAvailability
   private aiJudgment?: AiJudgmentEvidence
@@ -622,6 +624,14 @@ export class EvidenceRecorder {
     this.limitStop = evidence
   }
 
+  /**
+   * Record the per-condition verdicts (439 D-07). Text fields arrive masked and bounded; a later
+   * judgment of the same step replaces an earlier one.
+   */
+  recordConditionVerdicts(evidence: ConditionVerdictsEvidence): void {
+    this.conditionVerdicts = evidence
+  }
+
   /** Record whether the step's platform could capture each operation (436 D-23). */
   recordOperationCapture(availability: OperationCaptureAvailability): void {
     this.operationCapture = availability
@@ -771,6 +781,7 @@ export class EvidenceRecorder {
     if (this.reportedValue) evidence.reportedValue = this.reportedValue
     if (this.termination) evidence.termination = this.termination
     if (this.limitStop) evidence.limitStop = this.limitStop
+    if (this.conditionVerdicts) evidence.conditionVerdicts = this.conditionVerdicts
     if (this.limitUsage) evidence.limitUsage = this.limitUsage
     if (this.operationCapture) evidence.operationCapture = this.operationCapture
     if (this.aiJudgment) evidence.aiJudgment = this.aiJudgment

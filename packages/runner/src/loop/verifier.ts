@@ -7,6 +7,7 @@ import { generateText, Output } from 'ai'
 import { withStepModelCall } from '../run/step-model-observations.js'
 import type { LanguageModel, ModelMessage, SystemModelMessage } from 'ai'
 import { z } from 'zod'
+import { CITATION_SOURCES, CONDITION_NEEDS, CONDITION_VERDICTS } from '@vostride/agent-qa-schema'
 import type { DeclaredModelProfile, OperationEvidence, ScreenState } from '@vostride/agent-qa-schema'
 import type { Action } from '../platform.js'
 import type { Verifier, VerifierAuthorContext, VerifyResult } from './types.js'
@@ -15,18 +16,62 @@ import type { TokenAccounting } from './ports.js'
 import { buildVerificationPrompt, buildVerifierStableTier } from './prompts.js'
 import { executeClampedCall } from './clamp.js'
 
-// Three-outcome verification strategy (multi-action replanning):
-// The planner self-reports goal completion via stepComplete. The verifier
-// is only called on stepComplete: true or execution failure.
-//   - success: true  + stepComplete: true  → goal met, step done
-//   - success: true  + stepComplete: false → action worked but goal not met, continue
-//   - success: false                       → action failed, inject error and replan
+// Per-condition verification (439 D-02, D-07, D-10): the planner self-reports goal completion via
+// stepComplete, and the verifier then lists the step's conditions, each quoting the step and
+// citing evidence. The verifier gives no overall success; the runner computes the pass from the
+// conditions (judgeConditions), and a computed non-pass is a rejection that replans.
+const ConditionJudgmentSchema = z.object({
+  quote: z.string().describe('The exact words of the step this condition covers'),
+  verdict: z
+    .enum(CONDITION_VERDICTS)
+    .describe(
+      'met only when cited evidence shows the condition holds; not-met when evidence shows it does not; unverified when the evidence needed is missing; inconclusive when the evidence cannot settle it',
+    ),
+  needs: z
+    .enum(['none', ...CONDITION_NEEDS])
+    .describe('What the condition needs beyond a cited line, or none'),
+  controlRef: z
+    .string()
+    .describe("For limit-max or limit-min: the control's ref on the final screen; otherwise ''"),
+  file: z
+    .object({
+      name: z.string().describe("The expected file name, or '' when this is not a file condition"),
+      match: z.enum(['none', 'exact', 'lines']).describe('How the file text must match, or none'),
+      text: z.string().describe("The expected file text read from the step or the screen, or ''"),
+    })
+    .describe('The expected saved file, for a file condition'),
+  citations: z
+    .array(
+      z.object({
+        source: z
+          .enum(CITATION_SOURCES)
+          .describe('Which part of the request the quote comes from'),
+        quote: z.string().describe('Text copied exactly from that part'),
+      }),
+    )
+    .describe('The evidence for the verdict; a met condition needs at least one'),
+  reasoning: z.string().describe('Why this condition has this verdict'),
+})
+
 export const VerificationResultSchema = z.object({
-  success: z.boolean().describe('Whether the step goal was accomplished'),
-  reasoning: z.string().describe('Explanation of why the step succeeded or failed'),
+  conditions: z
+    .array(ConditionJudgmentSchema)
+    .describe('Every condition the step asks for, each quoting the step words it covers'),
+  dialogs: z
+    .array(
+      z.object({
+        name: z.string().describe("The open dialog's name"),
+        account: z
+          .enum(['bears-on-condition', 'unrelated'])
+          .describe('Whether the open dialog bears on a condition or is unrelated'),
+        reasoning: z.string().describe('Why'),
+      }),
+    )
+    .describe('Every dialog still open on the final screen'),
   isAppError: z.boolean().describe(
     'Whether the screen shows an application error (HTTP error, error toast, crash) that the step and the test author do not expect, vs the agent simply not accomplishing the goal. An error or refusal the step expects is not an application error.',
   ),
+  reasoning: z.string().describe('A short overall explanation of the judgment'),
 })
 
 // §9.6/§12.2 AI judge lane (D-05/D-06/D-07/D-09). The judge and extractor ride the SAME
@@ -169,11 +214,14 @@ export class LLMVerifier implements Verifier {
       }
     } catch (error: unknown) {
       if (abortSignal?.aborted) throw error
+      const message = error instanceof Error ? error.message : String(error)
       return {
         verification: {
-          success: false,
-          reasoning: `Verification failed: ${error instanceof Error ? error.message : String(error)}`,
+          conditions: [],
+          dialogs: [],
           isAppError: false,
+          reasoning: `Verification failed: ${message}`,
+          verifierError: message,
         },
       }
     }
@@ -198,7 +246,7 @@ export class LLMVerifier implements Verifier {
     const outputConfig = Output.object({
       schema: VerificationResultSchema,
       name: 'verification_result',
-      description: 'Verification of whether the test step succeeded',
+      description: 'Per-condition verification of the test step',
     })
     return executeClampedCall({
       accounting: this.accounting,

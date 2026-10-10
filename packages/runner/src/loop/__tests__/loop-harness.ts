@@ -12,7 +12,9 @@ import type {
   RunnerDegradeOptions,
   RunnerDegradeOutcome,
 } from '../ports.js'
-import type { ActionPlan, PlanResult, Planner, StepContext, VerificationResult, Verifier } from '../types.js'
+import type { ActionPlan, PlanResult, Planner, StepContext, Verifier } from '../types.js'
+import { toVerificationResult } from '../../testing/condition-verdicts.js'
+import type { ScriptedVerdict } from '../../testing/condition-verdicts.js'
 
 export const fakeModel = {} as unknown as LanguageModel
 
@@ -87,14 +89,15 @@ export function makePlanner(plans?: ActionPlan[]): Planner {
   }
 }
 
-export function makeVerifier(results?: VerificationResult[]): Verifier {
+/** Scripted verdicts in order (the last repeats); a `{ success }` entry becomes per-condition output. */
+export function makeVerifier(results?: ScriptedVerdict[]): Verifier {
   let call = 0
-  const list = results ?? [{ success: true, reasoning: 'Step completed', isAppError: false }]
+  const list: ScriptedVerdict[] = results ?? [{ success: true, reasoning: 'Step completed', isAppError: false }]
   return {
-    async verify() {
+    async verify(step, _before, after, action) {
       const idx = Math.min(call, list.length - 1)
       call++
-      return { verification: list[idx] }
+      return { verification: toVerificationResult(list[idx], { step, after, action }) }
     },
   }
 }

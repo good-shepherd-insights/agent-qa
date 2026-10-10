@@ -52,6 +52,13 @@ export * from './compound/index.js'
 
 export { makeScreenState, makeInterimNodes } from './testing/screen-fixtures.js'
 export type { InterimFixture, InterimFixtureKind } from './testing/screen-fixtures.js'
+export {
+  metVerification,
+  notMetVerification,
+  scriptedVerification,
+  toVerificationResult,
+} from './testing/condition-verdicts.js'
+export type { ScriptedVerdict } from './testing/condition-verdicts.js'
 export { screenConformanceCases } from './testing/conformance.js'
 export type { ConformanceInput, ScreenConformanceCase } from './testing/conformance.js'
 
@@ -88,6 +95,8 @@ export type {
   PlanningCallGate,
   PlanResult,
   VerificationResult,
+  ConditionJudgment,
+  DialogAccount,
   VerifyResult,
   StepContext,
   Planner,

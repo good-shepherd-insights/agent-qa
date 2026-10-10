@@ -35,6 +35,29 @@ export type {
 // 2026-10-07 (436-04, D-11..D-13): the per-step limit stop and usage.
 export type { CompoundInputCount, LimitStopEvidence, StepLimitUsage } from './limit-evidence'
 export { formatLimitStopReason, LIMIT_STOP_EVIDENCE_KEYS, STEP_LIMIT_USAGE_KEYS } from './limit-evidence'
+// 2026-10-11 (439-01, D-07, D-10): the per-condition verdict block.
+export type {
+  CitationSource,
+  ConditionCitation,
+  ConditionEnding,
+  ConditionFileCheck,
+  ConditionGuard,
+  ConditionNeed,
+  ConditionRecord,
+  ConditionVerdict,
+  ConditionVerdictsEvidence,
+  OpenDialogAccount,
+} from './condition-evidence'
+export {
+  CITATION_SOURCES,
+  CONDITION_ENDINGS,
+  CONDITION_GUARDS,
+  CONDITION_NEEDS,
+  CONDITION_RECORD_KEYS,
+  CONDITION_VERDICTS,
+  CONDITION_VERDICTS_EVIDENCE_KEYS,
+  stepOutcomeUnproven,
+} from './condition-evidence'
 // 2026-10-07 (436-10, D-19..D-23): operation-specific evidence on the triggering action.
 export type {
   ClipboardEvidence,

@@ -8,6 +8,9 @@
 
 import type { LanguageModel } from 'ai'
 import type {
+  CitationSource,
+  ConditionNeed,
+  ConditionVerdict,
   GroundingAttempt,
   InterpolatedVariable,
   ModelCallRecord,
@@ -95,10 +98,34 @@ export interface PlanResult {
   callRecord?: ModelCallRecord
 }
 
-export interface VerificationResult {
-  success: boolean
+/** One condition as the verifier judged it (439 D-02, D-10); the runner decides what it counts for. */
+export interface ConditionJudgment {
+  quote: string
+  verdict: ConditionVerdict
+  needs: 'none' | ConditionNeed
+  controlRef: string
+  file: { name: string; match: 'none' | 'exact' | 'lines'; text: string }
+  citations: { source: CitationSource; quote: string }[]
   reasoning: string
+}
+
+/** An open dialog as the verifier accounted for it (439 D-16). */
+export interface DialogAccount {
+  name: string
+  account: 'bears-on-condition' | 'unrelated'
+  reasoning: string
+}
+
+/**
+ * The verifier's per-condition output. There is no overall success: the runner computes the pass
+ * (439 D-10). `verifierError` is set only by the fallback when the model call failed.
+ */
+export interface VerificationResult {
+  conditions: ConditionJudgment[]
+  dialogs: DialogAccount[]
   isAppError: boolean
+  reasoning: string
+  verifierError?: string
 }
 
 export interface VerifyResult {

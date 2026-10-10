@@ -6066,6 +6066,36 @@
       "file": "packages/cli/src/__tests__/conformance/424-suite-player-dom.test.ts",
       "fullName": "C438-SETTLED-SEEK a point no member spans fails with a message",
       "origin": "434 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-computed-pass.test.ts",
+      "fullName": "C439-COMPUTED-PASS a met condition cited from the final screen passes",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-computed-pass.test.ts",
+      "fullName": "C439-COMPUTED-PASS a met condition whose citation is in nothing the verifier was given is not a pass",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-computed-pass.test.ts",
+      "fullName": "C439-COMPUTED-PASS a verification with no conditions never passes",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-computed-pass.test.ts",
+      "fullName": "C439-COMPUTED-PASS a not-met condition is an ordinary rejection",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-computed-pass.test.ts",
+      "fullName": "C439-COMPUTED-PASS a screenshot citation counts only when an image was attached",
+      "origin": "439 D-10"
     }
   ]
 }

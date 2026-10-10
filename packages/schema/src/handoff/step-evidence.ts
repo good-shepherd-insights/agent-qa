@@ -5,6 +5,7 @@ import type { ServedBrief } from '../brief/served-brief'
 import type { RecordId } from '../ids/record-id'
 import type { WorkingMemoryEntry } from '../memory/working-memory-entry'
 import type { RecordedActionResult } from '../result/index'
+import type { ConditionVerdictsEvidence } from './condition-evidence'
 import type { LimitStopEvidence, StepLimitUsage } from './limit-evidence'
 import type { DeclaredModelProfile, ModelIdentity } from './model-call-profile'
 import type { OperationCaptureAvailability } from './operation-evidence'
@@ -203,6 +204,11 @@ export interface StepEvidence {
    * the broadly constructed `VerifierVerdict` value.
    */
   verifierIdentity?: ModelIdentity
+  /**
+   * The per-condition verdicts the runner computed the pass from (439 D-07), beside
+   * `verifierVerdict` and never inside it. Optional-additive at handoff schema version 7.
+   */
+  conditionVerdicts?: ConditionVerdictsEvidence
   /**
    * The failed planning-turn block (D-03). Present only when planning failed structurally,
    * preserving that turn's exchanges instead of silently losing them.

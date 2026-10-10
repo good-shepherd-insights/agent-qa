@@ -310,7 +310,7 @@ describe('C436-OUTCOME-EVIDENCE', () => {
       configured: 4,
       used: 4,
       requestedOutcome: 'unverified',
-      lastVerifierRejection: 'The draft was not saved',
+      lastVerifierRejection: 'Not met: "Save the draft" (The draft was not saved)',
     })
     expect(site.state.saved).toEqual([])
     expect(planner.calls).toBe(4)

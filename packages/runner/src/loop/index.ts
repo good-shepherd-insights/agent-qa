@@ -90,12 +90,14 @@ import {
   resolveSecretTemplatesInValue,
 } from './secrets.js'
 import {
+  buildVerifierCitationSources,
   captureServedPromptTurn,
   estimateTokens,
   hasValidStepPosition,
   renderInputEvidence,
   renderOperationEvidence,
 } from './prompts.js'
+import { judgeConditions } from './requested-conditions.js'
 import { EvidenceRecorder, collapseAnnotation, persistAriaEvidence, projectLegacyTrace } from './evidence.js'
 import type { RecordSubActionInput } from './evidence.js'
 import { maskToolExchanges } from './mask-exchanges.js'
@@ -1974,13 +1976,28 @@ export async function executeStep(
         totalPromptTokens += verifyResult.tokenUsage.promptTokens
         totalCompletionTokens += verifyResult.tokenUsage.completionTokens
       }
-      verifierReasoning = verifyResult.verification.reasoning
-      if (!verifyResult.verification.success) lastVerifierRejection = verifierReasoning
+      // 439 D-07/D-10: the runner computes the pass from the cited per-condition verdicts.
+      const judged = judgeConditions({
+        stepText: stepInstruction,
+        output: verifyResult.verification,
+        sources: buildVerifierCitationSources(
+          actedState,
+          afterState,
+          action,
+          hasOperationEvidence(stepOperationEvidence) ? stepOperationEvidence : undefined,
+        ),
+        mask: (value) => maskValue(redactSecretValue(value, ports.secretRedactor)),
+        imageAttached: gate.attachImage && verifyScreenshot !== undefined,
+        ending: 'completion',
+      })
+      recorder.recordConditionVerdicts(judged.evidence)
+      verifierReasoning = judged.pass ? verifyResult.verification.reasoning : judged.reason
+      if (!judged.pass) lastVerifierRejection = verifierReasoning
 
       const abortAfterVerify = checkAbort()
       if (abortAfterVerify) return abortAfterVerify
 
-      if (verifyResult.verification.success) {
+      if (judged.pass) {
         recorder.recordVerdictSource('verifier-model')
         const idx = recordSuccess(
           recorder,

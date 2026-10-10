@@ -3,7 +3,7 @@
 // ScreenState the loop hands it; the verifier is a plain function of what the loop gives it,
 // including the step's operation evidence (436-10). No model is called anywhere.
 
-import { executeStep } from '@vostride/agent-qa-runner'
+import { executeStep, scriptedVerification } from '@vostride/agent-qa-runner'
 import type {
   Action,
   ActionPlan,
@@ -100,7 +100,9 @@ export function scriptedVerifier(check: (input: VerifierInput) => VerifierVerdic
       const input: VerifierInput = { step, before, after, action, ...(operationEvidence ? { operationEvidence } : {}) }
       inputs.push(input)
       const verdict = check(input)
-      return { verification: { success: verdict.pass, reasoning: verdict.reason, isAppError: false } }
+      return {
+        verification: scriptedVerification({ step, after, action, pass: verdict.pass, reasoning: verdict.reason }),
+      }
     },
   }
 }
@@ -165,6 +167,7 @@ export async function runScriptedStep(options: {
   plannerConfig: PlannerConfig
   stepTimeout?: number
   abortSignal?: AbortSignal
+  visionGate?: LoopPorts['visionGate']
 }): Promise<ScriptedStepRun> {
   const executed: Action[] = []
   const ports: LoopPorts = {
@@ -175,6 +178,7 @@ export async function runScriptedStep(options: {
     ...(options.cache ? { cache: options.cache } : {}),
     ...(options.stepTimeout !== undefined ? { stepTimeout: options.stepTimeout } : {}),
     ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+    ...(options.visionGate ? { visionGate: options.visionGate } : {}),
   }
   const context: StepContext = {
     stepInstruction: options.instruction,

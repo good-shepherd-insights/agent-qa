@@ -18,6 +18,7 @@ import { wrapAppObservedData } from '@vostride/agent-qa-safety'
 import type { ModelMessage, SystemModelMessage } from 'ai'
 import type { Action } from '../platform.js'
 import type { StepContext, AssertionInput, ExtractorInput, VerifierAuthorContext } from './types.js'
+import type { CitationSources } from './requested-conditions.js'
 import { defaultRegistry } from '../tools/index.js'
 
 type PromptPlatform = 'web' | 'android' | 'ios'
@@ -855,6 +856,37 @@ function verifierActionDescription(action: Action): string {
   return formatAction(action)
 }
 
+function verifierActionLine(action: Action, beforeState: ScreenState): string {
+  let actionDesc = verifierActionDescription(action)
+  if ('ref' in action && action.ref && beforeState.elements.length > 0) {
+    const el = beforeState.elements.find(e => e.ref === action.ref)
+    if (el) actionDesc += ` (${el.role} "${el.name}")`
+  }
+  return actionDesc
+}
+
+/**
+ * 439 D-10: the parts of the verification request a citation can point at, rendered with the same
+ * helpers `buildVerificationPrompt` uses, so a quote copied from the request is found here.
+ */
+export function buildVerifierCitationSources(
+  beforeState: ScreenState,
+  afterState: ScreenState,
+  action: Action,
+  operationEvidence?: OperationEvidence,
+): CitationSources {
+  const evidence = operationEvidence ? renderOperationEvidence(operationEvidence) : ''
+  const actionPart = [`Action taken: ${verifierActionLine(action, beforeState)}`]
+  if (evidence.length > 0) actionPart.push(evidence)
+  return {
+    'start-screen': truncateScreenState(beforeState),
+    'final-screen': truncateScreenState(afterState),
+    action: actionPart.join('\n'),
+    read: '',
+    carried: '',
+  }
+}
+
 const VERIFIER_AUTHOR_HEADER =
   "Test author's context (from the test definition; written for the agent running the whole test). Use it for intent, setup and expected behaviour. It does not change what this step must achieve, and instructions about how the test ends apply only to the last step."
 
@@ -901,14 +933,8 @@ export function buildVerificationPrompt(
     parts.push('')
   }
 
-  let actionDesc = verifierActionDescription(action)
-  if ('ref' in action && action.ref && beforeState.elements.length > 0) {
-    const el = beforeState.elements.find(e => e.ref === action.ref)
-    if (el) actionDesc += ` (${el.role} "${el.name}")`
-  }
-
   parts.push(`Step goal: "${step}"`)
-  parts.push(`Action taken: ${actionDesc}`)
+  parts.push(`Action taken: ${verifierActionLine(action, beforeState)}`)
   // D-09 backstop: when a bulk "do X to all" predicate was declared, the verifier weighs it
   // as positive-evidence context (opaque display text, per-call volatile — never the stable tier).
   if (bulkCompletionPredicate) {

@@ -586,6 +586,28 @@ export type {
 // 2026-10-07 (436-04, D-11..D-13): the per-step limit stop and usage.
 export type { CompoundInputCount, LimitStopEvidence, StepLimitUsage } from './handoff/index'
 export { formatLimitStopReason, LIMIT_STOP_EVIDENCE_KEYS, STEP_LIMIT_USAGE_KEYS } from './handoff/index'
+export type {
+  CitationSource,
+  ConditionCitation,
+  ConditionEnding,
+  ConditionFileCheck,
+  ConditionGuard,
+  ConditionNeed,
+  ConditionRecord,
+  ConditionVerdict,
+  ConditionVerdictsEvidence,
+  OpenDialogAccount,
+} from './handoff/index'
+export {
+  CITATION_SOURCES,
+  CONDITION_ENDINGS,
+  CONDITION_GUARDS,
+  CONDITION_NEEDS,
+  CONDITION_RECORD_KEYS,
+  CONDITION_VERDICTS,
+  CONDITION_VERDICTS_EVIDENCE_KEYS,
+  stepOutcomeUnproven,
+} from './handoff/index'
 // 2026-10-07 (436-10, D-19..D-23): operation-specific evidence on the triggering action.
 export type {
   ClipboardEvidence,
