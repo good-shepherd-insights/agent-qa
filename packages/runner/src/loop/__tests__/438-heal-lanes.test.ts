@@ -9,14 +9,17 @@
 // through secret redaction then masking, like the live block, and caps the prior row text at the
 // refusal block's observed-row cap.
 import { describe, expect, it } from 'vitest'
+import { vi } from 'vitest'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { Action, ActionResult, PlatformAdapter } from '../../platform.js'
+import type { KnowledgeHintReader } from '../../knowledge-hint-reader.js'
 import type { StepResult } from '../../result.js'
 import { rowTextOf } from '../../grounding/row-text.js'
 import { buildScreenState, type InterimNode } from '../../screen-builder.js'
 import { executeStep } from '../index.js'
 import type { ActionPlan, Planner, StepContext } from '../types.js'
 import { makeStepContext } from './loop-harness.js'
+import { servedBrief, servedCautions } from './fixtures/served-trace.js'
 
 // Every node gets bounds so its ref is in the refMap and the committed-ref lane grounds it.
 function screenOf(nodes: InterimNode[]): ScreenState {
@@ -413,5 +416,66 @@ describe('C438-HEAL-RECORD', () => {
     expect(recorded?.plannedAction).toEqual({ type: 'click', ref: 'e2' })
     expect(nameAt(recorded?.stateBefore, 'e2')).toBe('Save')
     expect(recorded?.stateBefore).toEqual(expect.objectContaining({ elements: SAVE_PRIOR.elements }))
+  })
+  const NOT_INTERACTABLE: ActionResult = { success: false, error: 'element is not interactable' }
+
+  it('a healed click whose re-dispatch fails is recorded against the fresh observation', async () => {
+    const { a, result } = await runSave(SAVE_FRESH, [BINDING_LOST_TO_REF, NOT_INTERACTABLE])
+
+    expect(a.executed).toEqual([
+      { type: 'click', ref: 'e2' },
+      { type: 'click', ref: 'e3' },
+    ])
+    const recorded = result.evidence?.subActions[0]
+    expect(recorded?.plannedAction).toEqual({ type: 'click', ref: 'e3' })
+    expect(nameAt(recorded?.stateBefore, 'e3')).toBe('Save')
+  })
+
+  it('a healed click whose re-dispatch fails anchors its caution to the element acted on', async () => {
+    const getCautions = vi.fn(() =>
+      servedCautions({ cautions: [], budgetUsed: 0, admissions: [] }),
+    )
+    const knowledgeReader: KnowledgeHintReader = {
+      getRunBrief: () =>
+        servedBrief({ tiers: { L0: '', L1: '', L2: '' }, lines: [], truncation: '', admissions: [] }),
+      search: () => [],
+      read: () => {
+        throw new Error('not used')
+      },
+      getCautions,
+      getProcedure: () => undefined,
+      emitCanaryOutcome: () => {},
+    }
+    await runSave(SAVE_FRESH, [BINDING_LOST_TO_REF, NOT_INTERACTABLE], {
+      knowledgeReader,
+      knowledgeBudgets: { brief: 64, searchResults: 64, caution: 24, readBody: 64, recordCap: 8 },
+    })
+
+    expect(getCautions).toHaveBeenCalled()
+    const anchors = getCautions.mock.calls[0]![0] as unknown as Array<Record<string, unknown>>
+    expect(anchors).toContainEqual(
+      expect.objectContaining({ t: 'el', role: 'button', name: 'save' }),
+    )
+    expect(anchors.filter((anchor) => anchor['t'] === 'el' && anchor['name'] === 'cancel'))
+      .toEqual([])
+  })
+
+  it('the verifier of a healed click reads the action against the fresh observation', async () => {
+    const calls: Array<{ before: ScreenState; action: Action }> = []
+    const verifier = {
+      async verify(_step: string, before: ScreenState, _after: ScreenState, action: Action) {
+        calls.push({ before, action })
+        return { verification: { success: true, reasoning: 'accepted', isAppError: false } }
+      },
+    }
+    const { result } = await runSave(SAVE_FRESH, [BINDING_LOST_TO_REF, { success: true }], {
+      verifier,
+    })
+
+    expect(result.status).toBe('passed')
+    expect(calls).toHaveLength(1)
+    const ref = (calls[0]!.action as { ref?: unknown }).ref
+    expect(ref).toBe('e3')
+    expect(nameAt(calls[0]!.before, ref)).toBe('Save')
   })
 })
