@@ -5934,6 +5934,120 @@
       "file": "packages/runner/src/loop/__tests__/438-heal-lanes.test.ts",
       "fullName": "C438-HEAL-EVIDENCE the heal grounding block caps the prior row text at 200 characters",
       "origin": "438 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT a nested row container's row is its parent row's own line, then its own row",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT the judge agrees with a nested treeitem stated with its parent row",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT strictMatch tells a nested treeitem from its twin under another parent",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT the judge refuses a nested treeitem stated with another parent's row",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT a nested row container's row does not take a sibling row's words",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT a control inside a nested row container reads only that container's row",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-heal-lanes.test.ts",
+      "fullName": "C438-HEAL-LANES a nested treeitem whose binding is lost heals onto the same parent's item",
+      "origin": "438 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/cache/__tests__/438-strict-replay.test.ts",
+      "fullName": "C438-STRICT-REPLAY a stored nested treeitem with its parent row replays onto that parent's item",
+      "origin": "438 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-STATED-ROW a nested treeitem stated with its parent row is clicked",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT wordTokens reads a digit group split by a comma, an underscore, a narrow no-break space or a no-break space as one number",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT rowContains reads \"1,234\" and \"1234\" as one number in both directions",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT wordTokens keeps a plain space, a dot and a short group as separators",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE \"1234\" vs \"1,234\" agrees (a digit group is one number)",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE \"1,234\" vs \"1234\" agrees",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE \"1234\" vs \"1 234\" with a narrow no-break space agrees",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE \"1234\" vs \"1 234\" with a no-break space agrees",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE \"Weight 1.234\" vs \"Weight 1234\" is a name-number contradiction (a dot is never a separator)",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-STATED-TARGET \"1234\" stated against \"1,234\" is clicked",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-STATED-ROW a row stated \"Invoice 1234\" against \"Invoice 1,234\" is clicked",
+      "origin": "438 D-02"
     }
   ]
 }
