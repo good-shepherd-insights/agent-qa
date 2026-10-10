@@ -1,6 +1,8 @@
 // The runner's judge over the verifier's per-condition output (439 D-07, D-09, D-10). Pure: the
 // model judges each condition, the runner checks every citation against what the verifier was
-// given and computes the pass. Masking is injected; nothing here reads a model or a platform.
+// given and computes the pass. A quote matches when it occurs in the clear record, or masked in
+// the masked record (the model sees placeholders). Masking is injected; nothing here reads a
+// model or a platform.
 
 import type {
   CitationSource,
@@ -60,15 +62,23 @@ function citable(quote: string): boolean {
   return quote.replace(/\s/g, '').length >= MIN_QUOTE_CHARACTERS
 }
 
+interface Haystack {
+  raw: string
+  masked: string
+}
+
 function checkCitation(
   citation: { source: CitationSource; quote: string },
-  haystacks: Record<keyof CitationSources, string>,
+  haystacks: Record<keyof CitationSources, Haystack>,
   mask: (value: string) => string,
   imageAttached: boolean,
 ): ConditionCitation {
-  const quote = collapse(mask(citation.quote ?? ''))
+  const raw = collapse(citation.quote ?? '')
+  const quote = collapse(mask(raw))
   const recorded = bound(quote, QUOTE_MAX)
-  if (!citable(quote)) return { source: citation.source, quote: recorded, found: false }
+  if (!citable(raw) || !citable(quote)) {
+    return { source: citation.source, quote: recorded, found: false }
+  }
   if (citation.source === 'screenshot' && imageAttached) {
     return { source: 'screenshot', quote: recorded, found: 'unchecked' }
   }
@@ -77,7 +87,10 @@ function checkCitation(
       ? TEXT_SOURCES
       : [citation.source, ...TEXT_SOURCES.filter((source) => source !== citation.source)]
   for (const source of order) {
-    if ((haystacks[source] ?? '').includes(quote)) return { source, quote: recorded, found: true }
+    const haystack = haystacks[source]
+    if (haystack.masked.includes(quote) || haystack.raw.includes(raw)) {
+      return { source, quote: recorded, found: true }
+    }
   }
   return { source: citation.source, quote: recorded, found: false }
 }
@@ -93,7 +106,7 @@ function guarded(
 
 function judgeOne(
   judgment: ConditionJudgment,
-  haystacks: Record<keyof CitationSources, string>,
+  haystacks: Record<keyof CitationSources, Haystack>,
   input: JudgeConditionsInput,
 ): ConditionRecord {
   const quote = bound(collapse(input.mask(judgment.quote ?? '')), QUOTE_MAX)
@@ -133,8 +146,11 @@ export function judgeConditions(input: JudgeConditionsInput): ConditionJudgeResu
     conditions = [guarded(stepQuote, 'verifier-error', reason)]
   } else {
     const haystacks = Object.fromEntries(
-      TEXT_SOURCES.map((source) => [source, collapse(input.mask(input.sources[source] ?? ''))]),
-    ) as Record<keyof CitationSources, string>
+      TEXT_SOURCES.map((source) => {
+        const raw = collapse(input.sources[source] ?? '')
+        return [source, { raw, masked: collapse(input.mask(raw)) }]
+      }),
+    ) as Record<keyof CitationSources, Haystack>
     const judgments = Array.isArray(output.conditions) ? output.conditions : []
     conditions = judgments.map((judgment) => judgeOne(judgment, haystacks, input))
     if (conditions.length === 0) {
