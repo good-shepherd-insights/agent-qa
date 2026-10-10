@@ -1847,7 +1847,7 @@ export async function executeStep(
       const failedIdx = recorder.recordSubAction({
         plan: reasoning,
         plannedAction: action as unknown as SchemaAction,
-        stateBefore: screenState,
+        stateBefore: actedState,
         result: toSchemaResult(execResult, annotation),
         cached,
         grounding,
@@ -1881,7 +1881,7 @@ export async function executeStep(
       // D-13: a grounding miss is a failed action in substance. It reaches this same branch after
       // the conservative re-ground-first heal has exhausted, so all execution-failure shapes stage
       // exactly one caution lookup for the next replan turn.
-      stageFailureCautions(action, screenState)
+      stageFailureCautions(action, actedState)
       continue
     }
 
@@ -1958,7 +1958,7 @@ export async function executeStep(
       try {
         verifyResult = await withAbort(
           ports.verifier.verify(
-            stepInstruction, screenState, afterState, action,
+            stepInstruction, actedState, afterState, action,
             gate.attachImage ? verifyScreenshot : undefined,
             ports.abortSignal, gate.promptNote, activePredicate, verifierAuthorContext,
             ...(hasOperationEvidence(stepOperationEvidence) ? [stepOperationEvidence] : []),
