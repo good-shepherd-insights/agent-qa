@@ -5736,6 +5736,48 @@
       "file": "packages/web/src/__tests__/438-strict-replay.test.ts",
       "fullName": "C438-STRICT-REPLAY the 946 miss is recorded with its reason",
       "origin": "438 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-heal-lanes.test.ts",
+      "fullName": "C438-HEAL-LANES a drag whose toRef binding is lost re-finds both lanes and drops on the re-found target",
+      "origin": "438 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-heal-lanes.test.ts",
+      "fullName": "C438-HEAL-LANES a drag whose toRef is an unknown ref re-finds both lanes the same way",
+      "origin": "438 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-heal-lanes.test.ts",
+      "fullName": "C438-HEAL-LANES a stated toTarget that contradicts the re-found drop target is refused on the heal path",
+      "origin": "438 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-heal-lanes.test.ts",
+      "fullName": "C438-HEAL-LANES a drop target that is not provably the same refuses the heal and nothing is re-dispatched",
+      "origin": "438 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-heal-lanes.test.ts",
+      "fullName": "C438-HEAL-LANES two lanes that re-find one element refuse the heal",
+      "origin": "438 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-heal-lanes.test.ts",
+      "fullName": "C438-HEAL-EVIDENCE the heal grounding block is masked like the live block",
+      "origin": "438 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-heal-lanes.test.ts",
+      "fullName": "C438-HEAL-EVIDENCE the heal grounding block caps the prior row text at 200 characters",
+      "origin": "438 D-05"
     }
   ]
 }
