@@ -52,6 +52,7 @@ import {
   RunNotificationSchemaError,
   sha256hex,
   slugBranch,
+  stepOutcomeUnproven,
   validateAnalysisAgainstHandoff,
 } from '@vostride/agent-qa-schema'
 import type { JobCheckpointReadOutcome } from '../ports/job-store.js'
@@ -1014,11 +1015,14 @@ function realAnalyzeRunHandler(capabilities: PostRunJobCapabilities): JobHandler
       // returned shape are final from plan 01.
       async (model) => {
         const floor = projectHandoffVerdicts(handoff)
-        // 436 D-12: a limit stop is the run running out of limit, never something a model may
-        // label; its floor verdict passes through byte-identical.
+        // 436 D-12: a limit stop is the run running out of limit, and 439 D-07: a step the
+        // verifier left unverified or inconclusive is unproven, not an application failure.
+        // Neither is something a model may label; their floor verdicts pass through byte-identical.
         const limitStopped = new Set(
           handoff.tests
-            .filter((test) => test.steps.some((step) => step.limitStop !== undefined))
+            .filter((test) =>
+              test.steps.some((step) => step.limitStop !== undefined || stepOutcomeUnproven(step)),
+            )
             .map((test) => test.testIndex),
         )
         const unknownTests = floor

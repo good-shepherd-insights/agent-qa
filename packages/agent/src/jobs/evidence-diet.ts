@@ -3,10 +3,10 @@
 // WHAT A PACK IS. One per unknown-verdict failed test: the failing step plus a bounded
 // neighbor window, QUOTING StepEvidence fields verbatim — `stepText`,
 // `verifierVerdict.reasoning`, each sub-action's `plan` and `result.error`, and the
-// reportedValue/aiJudgment/assertOutcome/termination/limitStop blocks when present — so the
-// authored sentence can cite captured bytes rather than paraphrase them. Assembly (here) is kept
-// separate from rendering (plan 04's author feeds packs into the prompt's volatile tier),
-// which is what makes the ladder testable on bytes.
+// reportedValue/aiJudgment/assertOutcome/termination/limitStop/conditionVerdicts blocks when
+// present — so the authored sentence can cite captured bytes rather than paraphrase them.
+// Assembly (here) is kept separate from rendering (plan 04's author feeds packs into the
+// prompt's volatile tier), which is what makes the ladder testable on bytes.
 //
 // THE TWO FORCED CHANNELS (D-02). Every pack carries (1) the test's prior-build outcome,
 // derived from a caller-injected history record, and (2) the failing step's `servedBrief`
@@ -31,6 +31,7 @@ import type {
   ArtifactRef,
   AssertValueEvidence,
   CompletedRunHandoff,
+  ConditionVerdictsEvidence,
   LimitStopEvidence,
   MemberTestOutcome,
   PerTestOutcome,
@@ -126,6 +127,7 @@ export interface EvidenceStepQuote {
   readonly assertOutcome?: AssertValueEvidence
   readonly termination?: TerminationEvidence
   readonly limitStop?: LimitStopEvidence
+  readonly conditionVerdicts?: ConditionVerdictsEvidence
 }
 
 export interface EvidencePack {
@@ -171,6 +173,7 @@ function quoteStep(step: StepEvidence, role: 'failing' | 'neighbor'): EvidenceSt
     ...(step.assertOutcome === undefined ? {} : { assertOutcome: step.assertOutcome }),
     ...(step.termination === undefined ? {} : { termination: step.termination }),
     ...(step.limitStop === undefined ? {} : { limitStop: step.limitStop }),
+    ...(step.conditionVerdicts === undefined ? {} : { conditionVerdicts: step.conditionVerdicts }),
   }
 }
 

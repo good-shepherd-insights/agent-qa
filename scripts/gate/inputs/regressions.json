@@ -6414,6 +6414,36 @@
       "file": "packages/runner/src/run/__tests__/439-root-cause.test.ts",
       "fullName": "C439-ROOT-CAUSE a limit stop keeps its own branch",
       "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/jobs/__tests__/439-unproven-analysis.test.ts",
+      "fullName": "C439-UNPROVEN-ANALYSIS an unproven test is never model-labelled",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/jobs/__tests__/439-unproven-analysis.test.ts",
+      "fullName": "C439-UNPROVEN-ANALYSIS a run whose only unknown member is unproven reaches no model",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/jobs/__tests__/439-unproven-analysis.test.ts",
+      "fullName": "C439-UNPROVEN-ANALYSIS a test with a not-met-only block is still eligible as today",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/jobs/__tests__/439-unproven-analysis.test.ts",
+      "fullName": "C439-UNPROVEN-ANALYSIS the diet quotes the step's conditions",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/reporters/439-unproven-reason.test.ts",
+      "fullName": "C439-UNPROVEN-REASON the reason text reaches JUnit and the console verbatim",
+      "origin": "439 D-09"
     }
   ]
 }
