@@ -1638,14 +1638,15 @@ export async function executeStep(
 
     // 3b. D-10 RE-GROUND-FIRST HEAL (LOOP-04, Pitfall 7). On a CONSERVATIVELY-classified
     // ref-resolution failure, the replay gate's ref_not_in_snapshot, or the adapter's typed
-    // binding-lost / binding-changed (D-07, D-08), re-observe and re-find the failed element by its
-    // observed role, exact name and row words (strictMatch), then re-execute the patched ref — NO
-    // planning turn. stale-observation and frame-detached never heal (D-09). Exactly ONE heal per
-    // planned action (a per-iteration one-shot, never a counter — LOOP-02), bounded by the action
-    // limit and stepTimeout. A re-found element is judged against the lane's stated target first
-    // (D-04): a contradiction is refused on path 'heal', not sent and not debited. When no single
-    // element is provably the same, nothing is sent and the failure branch hands the planner the
-    // outcome. The heal trail is recorded in the sub-action's grounding block only;
+    // binding-lost / binding-changed (D-07, D-08), re-observe and re-find EVERY ref lane of the
+    // action by its observed role, exact name and row words (strictMatch), then re-execute with
+    // every lane patched — NO planning turn, and no pre-observe ref is ever re-sent (CR-01).
+    // stale-observation and frame-detached never heal (D-09). Exactly ONE heal per planned action
+    // (a per-iteration one-shot, never a counter — LOOP-02), bounded by the action limit and
+    // stepTimeout. Every re-found lane is judged against its stated target first (D-04): a
+    // contradiction on any lane is refused on path 'heal', not sent and not debited. When any lane
+    // has no single provably-same element, nothing is sent and the failure branch hands the
+    // planner the outcome. The heal trail is recorded in the sub-action's grounding block only;
     // StepEvidence.selfHeal stays reserved for replan-based heals (D-11).
     // 436 D-07: the heal re-execution is a counted action; at the limit it is skipped and the
     // next loop top stops the step.
@@ -1668,12 +1669,14 @@ export async function executeStep(
         grounding = grounding?.stated !== undefined
           ? { ...heal.grounding, stated: grounding.stated }
           : heal.grounding
-        const lane = heal.field as StatedTargetLane
-        const stated = statedTargets?.[lane]
-        const healRefusal = stated === undefined
-          ? undefined
-          : judgeLane(lane, 'heal', stated, heal.element, freshElements,
-              (value) => maskValue(redactSecretValue(value, ports.secretRedactor)))
+        const scrub = (value: string) => maskValue(redactSecretValue(value, ports.secretRedactor))
+        let healRefusal: TargetRefusal | undefined
+        for (const lane of heal.lanes) {
+          const stated = statedTargets?.[lane.field]
+          if (stated === undefined) continue
+          healRefusal = judgeLane(lane.field, 'heal', stated, lane.element, freshElements, scrub)
+          if (healRefusal !== undefined) break
+        }
         if (healRefusal !== undefined) {
           execResult = {
             success: false,
@@ -1682,7 +1685,8 @@ export async function executeStep(
           }
           execError = healRefusal.message
         } else {
-          const patched = patchRef(normalizedAction, heal.field, heal.ref)
+          let patched = normalizedAction
+          for (const lane of heal.lanes) patched = patchRef(patched, lane.field, lane.ref)
           meter.tryDebitAction()
           const outcome = await executeResolvedAction(patched)
           execResult = outcome.result
@@ -2916,44 +2920,57 @@ function firstStatedTarget(statedTargets: StatedTargets | undefined): StatedTarg
   return undefined
 }
 
+type HealLane = { field: StatedTargetLane; ref: Ref; element: ElementInfo }
+
 type RegroundOutcome =
-  | { kind: 'resolved'; field: string; ref: Ref; element: ElementInfo; grounding: GroundingEvidence }
+  | { kind: 'resolved'; lanes: HealLane[]; grounding: GroundingEvidence }
   | { kind: 'unproven'; reason: 'absent' | 'not-unique' }
 
-// D-08 re-find (LOOP-04). The failed lane's element is re-found in the FRESH observation only when
-// exactly one element there has the observed role, exact name and row words (strictMatch): no
-// ordinal, no hierarchy tiebreak, no looser rung. Resolved carries the fresh ref, element and the
-// §A8 trail (ref no-match → tree-search resolved); unproven says why nothing is provably the same;
-// null means the failed action names no element of the prior observation. Never replans.
+// D-08 re-find (LOOP-04, CR-01). EVERY ref lane of the failed action is re-found in the FRESH
+// observation, each only when exactly one element there has its observed role, exact name and row
+// words (strictMatch): no ordinal, no hierarchy tiebreak, no looser rung. One unproven lane, or two
+// lanes with different prior refs collapsing onto one fresh element, makes the whole heal unproven,
+// so no pre-observe ref is ever dispatched against the fresh observation. Resolved carries every
+// lane's fresh ref and element and the §A8 trail (per lane: ref no-match → tree-search resolved),
+// its descriptor naming the first lane; null means a lane names no element of the prior
+// observation. Never replans.
 function regroundFailedRef(
   action: Action,
   priorElements: readonly ElementInfo[],
   freshElements: readonly ElementInfo[],
   redactor: SecretRedactorPort | undefined,
 ): RegroundOutcome | null {
-  const entry = firstRefFieldEntry(action)
-  if (entry === undefined) return null
-  const prior = priorElements.find((element) => element.ref === entry.ref)
-  if (prior === undefined) return null
-  const row = rowTextOf(prior, priorElements)
+  const lanes: HealLane[] = []
+  const priorRefs: string[] = []
+  const attempts: GroundingAttempt[] = []
+  let descriptor: TargetDescriptor | undefined
+  for (const field of REF_EVIDENCE_FIELDS) {
+    const priorRef = (action as unknown as Record<string, unknown>)[field]
+    if (typeof priorRef !== 'string') continue
+    const prior = priorElements.find((element) => element.ref === priorRef)
+    if (prior === undefined) return null
+    const row = rowTextOf(prior, priorElements)
 
-  const match = strictMatch({ role: prior.role, name: prior.name, row }, freshElements)
-  if (match.kind !== 'resolved') return { kind: 'unproven', reason: match.kind }
-  const element = freshElements.find((candidate) => candidate.ref === match.ref)!
+    const match = strictMatch({ role: prior.role, name: prior.name, row }, freshElements)
+    if (match.kind !== 'resolved') return { kind: 'unproven', reason: match.kind }
+    const collapsed = lanes.some((lane, i) => lane.ref === match.ref && priorRefs[i] !== priorRef)
+    if (collapsed) return { kind: 'unproven', reason: 'not-unique' }
+    const element = freshElements.find((candidate) => candidate.ref === match.ref)!
 
-  const descriptor: TargetDescriptor = {
-    role: prior.role,
-    name: redactSecretValue(prior.name, redactor),
-    ...(row !== undefined ? { row: redactSecretValue(row, redactor) } : {}),
-  }
-  const grounding: GroundingEvidence = {
-    descriptor,
-    attempts: [
+    descriptor ??= {
+      role: prior.role,
+      name: redactSecretValue(prior.name, redactor),
+      ...(row !== undefined ? { row: redactSecretValue(row, redactor) } : {}),
+    }
+    lanes.push({ field, ref: match.ref, element })
+    priorRefs.push(priorRef)
+    attempts.push(
       { stage: 'ref', outcome: 'no-match' },
       { stage: 'tree-search', outcome: 'resolved', resolvedRef: match.ref },
-    ],
+    )
   }
-  return { kind: 'resolved', field: entry.field, ref: match.ref, element, grounding }
+  if (descriptor === undefined) return null
+  return { kind: 'resolved', lanes, grounding: { descriptor, attempts } }
 }
 
 function operationCaptureAvailability(
