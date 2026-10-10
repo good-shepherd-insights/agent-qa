@@ -2,13 +2,17 @@ import type { RunStepModelPorts } from '../commands/run.js'
 
 type ScopeInput = Parameters<RunStepModelPorts['createScope']>[0]
 type ModelInput = Parameters<RunStepModelPorts['createModel']>
+type Consumers = ScopeInput['createConsumers']
 
 export interface CliStepModelScopeOptions {
   ports: RunStepModelPorts
   planner: { profile: ModelInput[0]; auth: ModelInput[1]; model: ScopeInput['models']['planner']['model'] }
   verifier: { profile: ModelInput[0]; auth: ModelInput[1]; model: ScopeInput['models']['verifier']['model'] }
   mask: ScopeInput['mask']
-  createConsumers: ScopeInput['createConsumers']
+  /** 439 D-12: every step's consumers carry a verifier, so no scoped step trusts the planner. */
+  createConsumers: (...models: Parameters<Consumers>) => ReturnType<Consumers> & {
+    verifier: NonNullable<ReturnType<Consumers>['verifier']>
+  }
 }
 
 /**

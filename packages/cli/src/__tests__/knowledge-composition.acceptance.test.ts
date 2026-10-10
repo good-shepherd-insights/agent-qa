@@ -245,6 +245,7 @@ describe('knowledge composition acceptance (D-14/SC1)', () => {
     const config = Object.assign(buildMemberRunConfig({
       adapter: { platform: 'web' } as unknown as PlatformAdapter,
       planner: {} as never,
+      verifier: {} as never,
       knowledgeReader,
       plannerModel: {} as never,
       verifierModel: {} as never,

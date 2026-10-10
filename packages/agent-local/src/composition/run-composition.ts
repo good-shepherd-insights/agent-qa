@@ -988,7 +988,7 @@ export interface BuildMemberRunConfigInput {
   // loop host impls
   adapter: PlatformAdapter
   planner: Planner
-  verifier?: Verifier
+  verifier: Verifier
   cache?: ActionPlanCache
   masking?: MaskingContext
   workingMemory?: WorkingMemoryPort

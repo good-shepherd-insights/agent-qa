@@ -112,7 +112,6 @@ import { settle } from './settle.js'
 import { desiredStateSatisfied } from '../compound/idempotency.js'
 import {
   readUniqueValueMeta,
-  readAssertValueOutcomeMeta,
   readFillRereadMeta,
   readFillVerdictMeta,
   readScrollUntilVisibleMeta,
@@ -1991,9 +1990,8 @@ export async function executeStep(
       return success()
     }
 
-    // D-19 (Phase 360): the legacy non-visual-`assert` short-circuit was deleted here. The
-    // retired `assert` verb is gone; its deterministic-verdict replacement is D-11's
-    // assertValue outcome short-circuit (quick 261004-lsa: assertValue only).
+    // D-19 (Phase 360): the legacy non-visual-`assert` short-circuit was deleted here. Its
+    // assertValue successor went too (439 D-12); a passing read is now verifier evidence.
 
     const annotation = buildAnnotation(action, execResult, viewport, !!execError)
 
@@ -2073,39 +2071,12 @@ export async function executeStep(
     // 5. VERIFY — only when the planner signals stepComplete (three-outcome strategy).
     let verifierReasoning: string | undefined
     if (rawPlan.stepComplete && ports.verifier) {
-      // D-11 deterministic short-circuit BEFORE any verifier model call: only assertValue's
-      // deterministic comparator short-circuits ('assert-value', T-360-09). Every AI-judged
-      // conclusion (assertAI or extractAI) was written by the planner, so the step verifier, with
-      // the author's context, decides it (quick 261004-lsa); the judgment stays on aiJudgment.
-      // 'verifier-model' is recorded only with the final verdict. A FAILING assertValue or a
-      // false assertAI never reaches here — each set execError above.
-      const assertOutcome = readAssertValueOutcomeMeta(execResult)
-      if (assertOutcome) {
-        const pass = assertOutcome.passed
-        recorder.recordVerdictSource('assert-value')
-        const idx = recordSuccess(
-          recorder,
-          reasoning,
-          action,
-          actedState,
-          execResult,
-          annotation,
-          cached,
-          grounding,
-          decisionEvidence,
-        )
-        void idx
-        maybeRecordSelfHeal(recorder, pendingSelfHeal, reasoning, action, execResult, annotation)
-        pendingSelfHeal = undefined
-        await cacheCompletingPlan()
-        // F-381-51-1 · D-09: a deterministic PASS verdict accepts the replayed step the
-        // same way a verifier acceptance does; a failing verdict leaves the cell empty.
-        if (pass && procedureReplayed) rearmProcedureFlowCarry()
-        return pass
-          ? finish('passed', { pass: true, reasoning: 'Step verified deterministically from the assertion outcome' })
-          : finish('failed', { pass: false, reasoning: 'The assertion outcome did not hold' }, 'Assertion did not hold')
-      }
-      // No assertValue outcome — the verifier's own model call produces the verdict.
+      // 2026-10-11 (439-04): the assertValue short-circuit is gone (D-12). Every completion claim,
+      // including one after a passing assertValue, is judged by the verifier; the read sits in
+      // the step record as citable evidence for its own condition. The AI judge lanes were
+      // already judged here (quick 261004-lsa). 'verifier-model' is recorded only with the final
+      // verdict. A FAILING assertValue or a false assertAI never reaches here — each set
+      // execError above.
       // D-15b: the verifier's own re-observation IS stateAfter. (The retired-`assert`
       // afterState reuse special-case was deleted with the verb — D-19, Phase 360.)
       let afterState: ScreenState
@@ -2277,7 +2248,8 @@ export async function executeStep(
       continue
     }
 
-    // No verifier but the planner claims completion — trust the planner.
+    // No verifier but the planner claims completion — trust the planner. A test seam only: every
+    // production door binds a verifier, which C439-CENSUS proves (439 D-12).
     if (rawPlan.stepComplete && !ports.verifier) {
       const idx = recordSuccess(
         recorder,

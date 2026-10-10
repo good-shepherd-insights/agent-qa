@@ -285,8 +285,10 @@ describe('EXEC-07 — assertAI executes single-model cache-bypassed; assertValue
       makeStepContext(),
     )
 
-    expect(verifier.verifyCalls).toBe(0)
-    expect((result.evidence as { verdictSource?: string }).verdictSource).toBe('assert-value')
+    // 439 D-12: the short-circuit is gone; the verifier judges the step with the read as evidence.
+    expect(verifier.verifyCalls).toBe(1)
+    expect(result.status).toBe('passed')
+    expect((result.evidence as { verdictSource?: string }).verdictSource).toBe('verifier-model')
   })
 
   it('control: a completing step with no assertion outcome keeps the verifier-model path intact — exactly one verify, verdictSource verifier-model', async () => {

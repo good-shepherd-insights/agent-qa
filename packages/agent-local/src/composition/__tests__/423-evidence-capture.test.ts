@@ -21,6 +21,7 @@ function fixture() {
   }
   const input = {
     adapter, masking, planner: { plan: async () => { throw new Error('No model call permitted') } },
+    verifier: { verify: async () => { throw new Error('No model call permitted') } },
     plannerModel: {} as MemberRunConfig['plannerModel'], verifierModel: {} as MemberRunConfig['verifierModel'],
     sink: createMemberEventSink({ bus, masking, testIndex: 0 }),
     testIndex: 0, abortSignal: new AbortController().signal, filePath: 'synthetic.yaml',

@@ -31,7 +31,7 @@ export interface RunSuiteConfig {
   adapter: PlatformAdapter
   platformConfig: PlatformConfig
   planner: Planner
-  verifier?: Verifier
+  verifier: Verifier
   cache?: ActionPlanCache
   /** D-05 masking seam threaded through to each test's runner loop (identity pre-362). */
   masking?: MaskingContext

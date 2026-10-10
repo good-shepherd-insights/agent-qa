@@ -4,10 +4,9 @@
 //     deterministic case per closed op in the registered assertValue schema
 //     (isNull/isDefined/equals/notEquals/gt/lt/contains); a mismatch carries both values; the
 //     outcome shape matches AssertValueEvidence with sorted keys.
-//   Block B — orchestration + the D-11 verifier short-circuit: the adapter reads the source and
-//     the runner comparator mints (D-10 division); only a passing assertValue on a completing
-//     step yields a deterministic verdict with ZERO verifier.verify calls and verdictSource
-//     'assert-value'. Every AI-judged conclusion (assertAI or extractAI) goes through the step
+//   Block B — orchestration: the adapter reads the source and the runner comparator mints (D-10
+//     division). Since 439 D-12 a passing assertValue on a completing step no longer short-circuits
+//     the verifier: the verifier judges it with the read as evidence. Every AI-judged conclusion (assertAI or extractAI) goes through the step
 //     verifier with the author's context (quick 261004-lsa), and verdictSource 'verifier-model'
 //     is recorded only with the final verdict, so a rejection leaves it undefined. A false
 //     assertAI never calls verify; a failing assertValue and a platform-unavailable source are
@@ -194,8 +193,11 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
       makeStepContext(),
     )
 
-    expect(verifier.verifyCalls).toBe(0)
-    expect((result.evidence as { verdictSource?: string }).verdictSource).toBe('assert-value')
+    // 439 D-12: the short-circuit is gone; the passing read is evidence the verifier judges.
+    expect(verifier.verifyCalls).toBe(1)
+    expect(result.status).toBe('passed')
+    expect((result.evidence as { verdictSource?: string }).verdictSource).toBe('verifier-model')
+    expect((result.evidence as { assertOutcome?: { passed?: boolean } }).assertOutcome?.passed).toBe(true)
   })
 
   it('a passing assertAI does not close the step by itself — the step verifier runs once and decides, verdictSource verifier-model (quick 261004-0hc)', async () => {

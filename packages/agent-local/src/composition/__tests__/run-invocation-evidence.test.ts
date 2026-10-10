@@ -37,7 +37,7 @@ import type {
   RunStartAcknowledgement,
   RunsStartInput,
 } from '@vostride/agent-qa-schema'
-import { makeScreenState, runMemberTest } from '@vostride/agent-qa-runner'
+import { makeScreenState, metVerification, runMemberTest } from '@vostride/agent-qa-runner'
 import type { MemberRunConfig, PlatformAdapter } from '@vostride/agent-qa-runner'
 
 import {
@@ -421,6 +421,7 @@ function memberRunConfigFixtureInput(): Parameters<typeof buildMemberRunConfig>[
   return {
     adapter: fixtureAdapter(),
     planner: { plan: () => { throw new Error('no planning in this cell') } },
+    verifier: { verify: () => { throw new Error('no verification in this cell') } },
     plannerModel: {} as never,
     verifierModel: {} as never,
     sink: fixtureSink(),
@@ -480,6 +481,12 @@ describe('THE THREAD END TO END — a real member run stamps the composed rung (
             },
           }),
         } as never,
+        // 439 D-12: every member run binds a verifier; this one accepts each step.
+        verifier: {
+          verify: async (step, _before, after, action) => ({
+            verification: metVerification({ step, after, action }),
+          }),
+        },
         knowledgeReader: composition.reader,
         knowledgeBudgets: composition.budgets,
         knowledgeAsOfBuild: 7,

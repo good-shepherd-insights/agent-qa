@@ -6540,6 +6540,48 @@
       "file": "packages/runner/src/loop/__tests__/439-endings.test.ts",
       "fullName": "C439-ENDINGS timeout and abort make no verifier call",
       "origin": "439 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-assert-evidence.test.ts",
+      "fullName": "C439-ASSERT-EVIDENCE two requested things cannot pass on one check",
+      "origin": "439 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-assert-evidence.test.ts",
+      "fullName": "C439-ASSERT-EVIDENCE a passing read is cited evidence for its own condition",
+      "origin": "439 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-assert-evidence.test.ts",
+      "fullName": "C439-ASSERT-EVIDENCE setVariable with stepComplete stays call-free",
+      "origin": "439 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/439-verifier-binding-census.test.ts",
+      "fullName": "C439-CENSUS executeStep runs only behind a bound verifier",
+      "origin": "439 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/439-verifier-binding-census.test.ts",
+      "fullName": "C439-CENSUS the member-run input requires a verifier",
+      "origin": "439 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/439-verifier-binding-census.test.ts",
+      "fullName": "C439-CENSUS C439-UNIVERSE-FLOORS: every scanned file and region reads real code, so no cell can pass over an empty scan",
+      "origin": "439 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/439-verifier-binding-census.test.ts",
+      "fullName": "C439-CENSUS C439-SELF-MATCH: this file spells none of the needles it assembles, and lies outside every region it scans",
+      "origin": "439 D-12"
     }
   ]
 }
