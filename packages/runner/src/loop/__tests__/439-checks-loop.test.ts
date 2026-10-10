@@ -136,20 +136,20 @@ describe('C439-CHECKS-LOOP', () => {
   })
 
   it('a planner that admits the form was not submitted cannot pass', async () => {
-    const { result, conditions } = await run(
+    const { result, contexts, conditions } = await run(
       'Submit the contact form',
       verification([condition('Submit the contact form')]),
       'Filled the fields; the form has not yet been submitted',
     )
 
     expect(result.status).not.toBe('passed')
-    expect(conditions[0]).toMatchObject({
-      quote: 'Submit the contact form',
-      verdict: 'not-met',
-      judged: 'met',
-      guard: 'admits-not-done',
-    })
-    expect(conditions[0].reason).toContain('has not yet been submitted')
+    // The completion's refusal reaches the planner; the give-up's own judgment (439 D-08) reads
+    // no planner reasoning, so its block keeps the verifier's met verdict and the step still fails.
+    expect(contexts[1]).toContain(
+      'Not met: "Submit the contact form" (The reasoning says "has not yet been submitted")',
+    )
+    expect(result.evidence?.conditionVerdicts?.ending).toBe('give-up')
+    expect(conditions[0]).toMatchObject({ quote: 'Submit the contact form', verdict: 'met' })
   })
 
   it("the verifier's own admission refuses its met verdict", async () => {

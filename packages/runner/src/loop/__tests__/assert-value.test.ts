@@ -244,9 +244,11 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
     )
 
     expect(result.status).toBe('failed')
-    expect(verifier.verifyArgs).toHaveLength(1)
+    // The rejected completion, then the give-up's own judgment (439 D-08).
+    expect(verifier.verifyArgs).toHaveLength(2)
     expect(verifyCall(verifier.verifyArgs[0]).action.type).toBe('assertAI')
     expect(verifyCall(verifier.verifyArgs[0]).authorContext).toEqual({ testContext: 'Only the final screen is graded.' })
+    expect(result.evidence?.conditionVerdicts?.ending).toBe('give-up')
     expect(verifier.judgeClaimCalls).toBe(1)
     expect(planner.failureContexts).toHaveLength(2)
     expect(planner.failureContexts[1]).toContain('The final screen is Safari, not Bluesky')
@@ -296,7 +298,10 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
       makeStepContext(),
     )
 
-    expect(verifier.verifyArgs).toHaveLength(0)
+    // The false assertAI's completion claim is never verified; the one call is the give-up's
+    // own judgment (439 D-08).
+    expect(verifier.verifyArgs).toHaveLength(1)
+    expect(result.evidence?.conditionVerdicts?.ending).toBe('give-up')
     expect(result.status).toBe('failed')
     expect(subs(result)[0]?.result?.success).toBe(false)
     expect(subs(result)[0]?.result?.error).toContain('judged false')
@@ -342,7 +347,10 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
       makeStepContext(),
     )
 
-    expect(verifier.verifyArgs).toHaveLength(1)
+    // The rejected completion, then the give-up's own judgment (439 D-08).
+    expect(verifier.verifyArgs).toHaveLength(2)
+    expect(verifyCall(verifier.verifyArgs[0]).action.type).toBe('extractAI')
+    expect(result.evidence?.conditionVerdicts?.ending).toBe('give-up')
     expect(result.status).not.toBe('passed')
     expect((result.evidence as EvidenceView).verdictSource).toBeUndefined()
   })
@@ -365,8 +373,11 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
     )
 
     expect(result.status).toBe('failed')
-    expect(result.error).toBe('Stopped: action limit reached — 4 of 4 actions used')
-    expect(verifier.verifyArgs.length).toBeLessThanOrEqual(cfg.maxActions)
+    expect(result.error).toBe(
+      'Stopped: action limit reached — 4 of 4 actions used — Not met: "Verify the header is shown" (The header is not visible)',
+    )
+    // One call per completion claim, plus the limit stop's own judgment (439 D-08).
+    expect(verifier.verifyArgs.length).toBeLessThanOrEqual(cfg.maxActions + 1)
     expect(verifier.judgeClaimCalls).toBeLessThanOrEqual(cfg.maxActions)
     expect((result.evidence as EvidenceView).verdictSource).toBeUndefined()
   })

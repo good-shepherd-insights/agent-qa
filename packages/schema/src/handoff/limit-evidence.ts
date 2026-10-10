@@ -12,7 +12,11 @@ export interface LimitStopEvidence {
   configured: number
   used: number
   reason: string
-  /** The step's requested outcome as a whole; no model call is made at exhaustion (D-13). */
+  /**
+   * The step's requested outcome as a whole. Since 439 D-08 (superseding 436 D-13) the verifier
+   * judges the stop once, and its per-condition verdicts sit beside this block in
+   * `StepEvidence.conditionVerdicts`.
+   */
   requestedOutcome: 'unverified'
   /** The last verifier rejection's reasoning, masked-before-record. */
   lastVerifierRejection?: string

@@ -16,6 +16,7 @@ import type { Action, ActionResult, PlatformAdapter } from '../../platform.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import { createTimeoutAbortReason } from '../abort.js'
 import { executeStep } from '../index.js'
+import { formatUnprovenReason } from '../requested-conditions.js'
 import type { LoopPorts } from '../ports.js'
 import type { StepLimitMeter } from '../step-limits.js'
 import type { ActionPlan, Planner, Verifier } from '../types.js'
@@ -139,7 +140,9 @@ describe('C436-STEP-LIMITS', () => {
     const result = await executeStep('Save the form', ports({ adapter, planner, verifier, masking, plannerConfig: limits(3) }), makeStepContext())
     expect(result.status).toBe('failed')
     expect(adapter.executed).toHaveLength(3)
-    expect(verifier.calls).toBe(3)
+    // Three rejected completions, then the stop's own judgment (439 D-08).
+    expect(verifier.calls).toBe(4)
+    expect(result.evidence?.conditionVerdicts?.ending).toBe('limit-stop')
     const stop = result.evidence?.limitStop
     expect(stop?.lastVerifierRejection).toBe(
       `Not met: "Save the form" (${masking.mask('Saved banner absent for hunter2-secret')})`,
@@ -297,9 +300,14 @@ function procedureReader(): KnowledgeHintReader {
 }
 
 function expectActionStop(result: Awaited<ReturnType<typeof executeStep>>, n: number): void {
+  const reason = formatLimitStopReason('actions', n, n)
+  // 439 D-08: with a verifier bound the stop is judged and the unproven conditions follow.
+  const judged = result.evidence?.conditionVerdicts
+  const unproven = judged === undefined ? '' : formatUnprovenReason(judged.conditions)
   expect(result.status).toBe('failed')
-  expect(result.error).toBe(formatLimitStopReason('actions', n, n))
-  expect(result.evidence?.limitStop).toMatchObject({ limit: 'actions', configured: n, used: n })
+  expect(result.error).toBe(unproven === '' ? reason : `${reason} — ${unproven}`)
+  if (judged !== undefined) expect(judged.ending).toBe('limit-stop')
+  expect(result.evidence?.limitStop).toMatchObject({ limit: 'actions', configured: n, used: n, reason })
   expect(result.evidence?.limitUsage?.actionsUsed).toBe(n)
   expect(result.evidence?.subActions).toHaveLength(n)
 }
@@ -327,7 +335,8 @@ describe('C436-ACTION-PATHS', () => {
     const verifier = scriptedVerifier([REJECT])
     const result = await executeStep('Log in', ports({ adapter, planner, verifier, plannerConfig: limits(3) }), makeStepContext())
     expectActionStop(result, 3)
-    expect(verifier.calls).toBe(3)
+    expect(result.error).toBe(`${formatLimitStopReason('actions', 3, 3)} — Not met: "Log in" (Not done yet)`)
+    expect(verifier.calls).toBe(4)
   })
 
   it('cached hits (zero planner calls)', async () => {
@@ -479,12 +488,13 @@ describe('C436-ACTION-PATHS', () => {
       },
     }
     const result = await executeStep('Check and log in', ports({ adapter: scriptedAdapter([{ success: true }]), planner, verifier, plannerConfig: limits(4) }), makeStepContext())
-    expect(verifier.verifyCalls).toBe(2)
+    // Two rejected completions, then the limit stop's own judgment (439 D-08).
+    expect(verifier.verifyCalls).toBe(3)
     expect(verifier.judgeCalls).toBe(2)
     expect(result.evidence?.limitUsage).toMatchObject({
       actionsUsed: 4,
       planningCallsUsed: 4,
-      verifierCalls: 2,
+      verifierCalls: 3,
       judgeCalls: 2,
     })
   })
@@ -650,12 +660,14 @@ describe('C436-BULK-AND-BOUNDS', () => {
     expect(result.status).toBe('failed')
     expect(adapter.executed).toHaveLength(30)
     expect(planner.calls).toBe(30)
-    expect(verifier.calls).toBe(0)
+    // The stop is judged once (439 D-08) and never counted against the limits.
+    expect(verifier.calls).toBe(1)
     expect(result.evidence?.limitStop).toEqual({ limit: 'actions', configured: 30, used: 30, reason, requestedOutcome: 'unverified' })
     expect(result.evidence?.planningFailure).toBeUndefined()
     expect(result.evidence?.termination).toBeUndefined()
     expect(result.evidence?.verdictSource).toBeUndefined()
-    expect(result.error).toBe(reason)
+    expect(result.evidence?.conditionVerdicts?.ending).toBe('limit-stop')
+    expect(result.error).toBe(`${reason} — Not met: "Mark every row in the list" (Rows remain)`)
     expect(result.error).not.toMatch(/Application error|Step failed|infeasible/)
   })
 

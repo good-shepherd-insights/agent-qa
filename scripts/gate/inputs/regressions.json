@@ -6498,6 +6498,48 @@
       "file": "packages/runner/src/loop/__tests__/439-verifier-prompt.test.ts",
       "fullName": "C439-VERIFIER-PROMPT the real verifier sends the stable tier as its system message",
       "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-endings.test.ts",
+      "fullName": "C439-ENDINGS a give-up is judged once and names the unproven condition",
+      "origin": "439 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-endings.test.ts",
+      "fullName": "C439-ENDINGS an \"N/A\" infeasible declaration still names its unmet condition (folded todo 399 failure-reason placeholder)",
+      "origin": "439 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-endings.test.ts",
+      "fullName": "C439-ENDINGS an ambiguity refusal keeps its candidates first",
+      "origin": "439 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-endings.test.ts",
+      "fullName": "C439-ENDINGS an action-limit stop observes, then is judged",
+      "origin": "439 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-endings.test.ts",
+      "fullName": "C439-ENDINGS a planning-turn limit stop is judged",
+      "origin": "439 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-endings.test.ts",
+      "fullName": "C439-ENDINGS a give-up whose conditions are all met still fails",
+      "origin": "439 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-endings.test.ts",
+      "fullName": "C439-ENDINGS timeout and abort make no verifier call",
+      "origin": "439 D-08"
     }
   ]
 }

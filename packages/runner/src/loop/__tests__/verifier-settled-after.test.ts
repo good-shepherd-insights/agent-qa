@@ -197,8 +197,11 @@ describe('verifier AFTER observation settles with a 500 ms interval (P6, L3)', (
     expect(log[2].offsetFromSend).toBeLessThan(100)
     expect(log[3].frame).toBe('TYPED')
     expect(log[3].at - log[2].at).toBe(VERIFY_SETTLE_INTERVAL_MS)
-    expect(verifier.observesAtCall).toEqual([4])
-    expect(verifier.calls).toHaveLength(1)
+    // The rejected completion at observe 4, then the give-up's own judgment over a fresh
+    // settle (439 D-08).
+    expect(verifier.observesAtCall).toEqual([4, 9])
+    expect(verifier.calls).toHaveLength(2)
+    expect(result.evidence?.conditionVerdicts?.ending).toBe('give-up')
     expect(verifyCall(verifier.calls[0]).after).toBe(log[3].state)
     expect(hasMessageRow(verifyCall(verifier.calls[0]).after)).toBe(false)
 

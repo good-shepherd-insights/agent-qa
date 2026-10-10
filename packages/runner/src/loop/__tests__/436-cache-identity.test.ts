@@ -290,7 +290,9 @@ describe('C436-CACHE-IDENTITY', () => {
     )
     expect(result.status).toBe('failed')
     expect(result.evidence!.verifierVerdict.pass).toBe(false)
-    expect(verifies).toBe(1)
+    // The rejected completion, then the give-up's own judgment (439 D-08).
+    expect(verifies).toBe(2)
+    expect(result.evidence!.conditionVerdicts?.ending).toBe('give-up')
     expect(planner.calls).toBe(2)
     const rejected = result.evidence!.subActions[0]
     expect(screenIdentityHash(rejected.stateAfter!)).toBe(screenIdentityHash(rejected.stateBefore))

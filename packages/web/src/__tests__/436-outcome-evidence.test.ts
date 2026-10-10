@@ -282,7 +282,9 @@ describe('C436-OUTCOME-EVIDENCE', () => {
     expect(run.result.evidence!.limitStop).toBeUndefined()
     expect(site.state.saved).toEqual([])
     expect(planner.calls).toBe(3)
-    expect(verifier.calls).toBe(2)
+    // Two rejected completions, then the give-up's own judgment (439 D-08).
+    expect(verifier.calls).toBe(3)
+    expect(run.result.evidence!.conditionVerdicts?.ending).toBe('give-up')
     const clocks = run.result.evidence!.subActions
       .map((s) => s.stateBefore.elements.find((e) => e.role === 'heading' && e.name.startsWith('Local time'))?.name)
     expect(new Set(clocks).size, 'the clock ticked between observations').toBeGreaterThan(1)
@@ -314,7 +316,12 @@ describe('C436-OUTCOME-EVIDENCE', () => {
     })
     expect(site.state.saved).toEqual([])
     expect(planner.calls).toBe(4)
-    expect(verifier.calls).toBe(4)
+    // Four rejected completions, then the limit stop's own judgment (439 D-08).
+    expect(verifier.calls).toBe(5)
+    expect(run.result.evidence!.conditionVerdicts?.ending).toBe('limit-stop')
+    expect(run.result.error).toBe(
+      'Stopped: action limit reached — 4 of 4 actions used — Not met: "Save the draft" (The draft was not saved)',
+    )
     expectOutcomeOnly(run, liveActions(planner))
   }, 60_000)
 
@@ -342,7 +349,9 @@ describe('C436-OUTCOME-EVIDENCE', () => {
 
     expect(run.result.status).toBe('failed')
     expect(run.result.error).toContain('The invite dialog did not open')
-    expect(verifier.calls).toBe(2)
+    // Two rejected completions, then the give-up's own judgment (439 D-08).
+    expect(verifier.calls).toBe(3)
+    expect(run.result.evidence!.conditionVerdicts?.ending).toBe('give-up')
     expect(verifier.inputs.every((input) => !dialogCheck(input).pass)).toBe(true)
     expectOutcomeOnly(run, liveActions(planner))
   }, 60_000)
@@ -529,7 +538,9 @@ describe('C436-OUTCOME-EVIDENCE', () => {
     const tickers = run.result.evidence!.subActions
       .map((s) => s.stateBefore.elements.find((e) => e.role === 'heading' && e.name.startsWith('Updated'))?.name)
     expect(new Set(tickers).size, 'the ticker changed while the feed did not move').toBe(2)
-    expect(verifier.calls).toBe(0)
+    // No completion is claimed; the one call is the give-up's own judgment (439 D-08).
+    expect(verifier.calls).toBe(1)
+    expect(run.result.evidence!.conditionVerdicts?.ending).toBe('give-up')
     expect(planner.calls).toBe(2)
     expectOutcomeOnly(run, liveActions(planner))
   }, 60_000)

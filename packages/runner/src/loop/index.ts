@@ -82,7 +82,13 @@ import type {
 import type { CachedPlanValue } from '../cache/port.js'
 import type { LoopPorts } from './ports.js'
 import { guardActionData } from './blob-guard.js'
-import type { ActionPlan, PlanResult, StepContext, VerifierAuthorContext } from './types.js'
+import type {
+  ActionPlan,
+  PlanResult,
+  StepContext,
+  VerificationResult,
+  VerifierAuthorContext,
+} from './types.js'
 import { PlanningLimitReachedError, PlanningTurnError } from './planner.js'
 import { withAbort, getTimeoutAbortReason } from './abort.js'
 import {
@@ -97,7 +103,7 @@ import {
   renderInputEvidence,
   renderOperationEvidence,
 } from './prompts.js'
-import { judgeConditions } from './requested-conditions.js'
+import { judgeConditions, type CitationSources } from './requested-conditions.js'
 import { StepRecordAccumulator, type RecordedActionOutcome } from './step-record.js'
 import { EvidenceRecorder, collapseAnnotation, persistAriaEvidence, projectLegacyTrace } from './evidence.js'
 import type { RecordSubActionInput } from './evidence.js'
@@ -189,16 +195,19 @@ function recordingOffsetFrom(zeroMs: number | undefined): number | undefined {
   return Math.max(0, Math.round(performance.now() - zeroMs))
 }
 
-// The 8 surviving return paths (v1 had 9; the exec-fail-limit path is deleted, D-10):
-//   1. planner stepFailed          → failed  (no execution)
+// The return paths:
+//   1. planner stepFailed          → failed  (no execution; one verifier call, ending 'give-up'
+//                                    or 'infeasible', unproven conditions after the reason)
 //   2. setVariable + stepComplete  → passed  (short-circuit, no verify)
-//   3. assertValue + complete      → passed | failed  (comparator short-circuit, no verify)
-//   4. verify success              → passed  (stateAfter = verifier re-observation, D-15b)
-//   5. verify app-error            → failed  (no further replan)
-//   6. no-verifier + stepComplete  → passed  (trust the planner)
-//   7. action limit reached        → failed  (typed limitStop, requested outcome unverified)
-//   8. abort / timeout             → cancelled | failed  (all three getTimeoutAbortReason variants)
-// Execution failure and verifier "not done" are NOT return paths — they inject failure
+//   3. verify pass                 → passed  (the runner's judgment of cited per-condition verdicts)
+//   4. verify app-error            → failed  (no further replan)
+//   5. no-verifier + stepComplete  → passed  (test seam only; C439-CENSUS proves every production
+//                                    door binds a verifier)
+//   6. action or planning limit    → failed  (typed limitStop; one verifier call, ending 'limit-stop')
+//   7. policy denial or a planning failure → failed  (no verifier call)
+//   8. abort / timeout             → cancelled | failed  (no verifier call; the requested outcome
+//                                    is recorded unverified with their reason)
+// Execution failure and a rejected completion are NOT return paths — they inject failure
 // context and continue the loop (self-heal = replan-with-failure-context, D-12).
 export async function executeStep(
   stepInstruction: string,
@@ -314,6 +323,7 @@ export async function executeStep(
   let totalPromptTokens = 0
   let totalCompletionTokens = 0
   let lastPlannedAction: Action | undefined
+  let lastExecutedAction: Action | undefined
   // D-13: a failure retrieves once at the failure moment, then the returned block is consumed
   // by the immediately-following live planning turn. Clearing happens before that turn renders,
   // so a successful follow-up cannot make the caution sticky; a recurring failure stages anew.
@@ -614,9 +624,111 @@ export async function executeStep(
   const failure = (error: string): StepResult => finish('failed', { pass: false, reasoning: error }, error)
   const cancelled = (): StepResult => finish('cancelled', { pass: false, reasoning: CANCELLED_MESSAGE }, CANCELLED_MESSAGE)
 
-  // 436 D-12/D-13: the limit stop ends the step through the ordinary failure funnel with its own
-  // typed block — never a planning failure, a termination or a verdict, and no model call.
-  const limitStop = (limit: LimitStopEvidence['limit']): StepResult => {
+  const withUnproven = (error: string, unproven: string): string =>
+    unproven === '' ? error : `${error} — ${unproven}`
+
+  // 439 D-08: timeout, abort and cancel make no verifier call; the requested outcome is recorded
+  // unverified as a whole, with their reason.
+  const recordUnverifiedEnding = (ending: 'timeout' | 'cancelled', reason: string): void => {
+    const collapse = (value: string) => value.replace(/\s+/g, ' ').trim()
+    recorder.recordConditionVerdicts({
+      ending,
+      conditions: [{
+        quote: collapse(recordMask(stepInstruction)).slice(0, 300),
+        verdict: 'unverified',
+        reason: collapse(recordMask(reason)).slice(0, 200),
+        citations: [],
+      }],
+    })
+  }
+
+  // 439 D-08 (supersedes 436 D-13's no model call at exhaustion): a give-up, an infeasible
+  // declaration and a limit stop are each judged once per condition over a settled final screen.
+  // The call is recorded, never debited (436 D-09). It returns the unproven conditions' reason
+  // ('' when none, or when no verifier is bound), or the abort result when the step was aborted.
+  // The verdicts explain the ending; they never turn it into a pass.
+  async function verifyEnding(
+    ending: 'give-up' | 'infeasible' | 'limit-stop',
+    lastAction: Action | undefined,
+  ): Promise<string | StepResult> {
+    if (!ports.verifier) return ''
+    const action: Action = lastAction ?? { type: 'delay', ms: 0 }
+    const judge = (output: VerificationResult, sources: CitationSources, imageAttached: boolean) => {
+      const judged = judgeConditions({
+        stepText: stepInstruction,
+        output,
+        sources,
+        mask: recordMask,
+        imageAttached,
+        ending,
+      })
+      recorder.recordConditionVerdicts(judged.evidence)
+      return judged.reason
+    }
+    let finalState: ScreenState
+    try {
+      const settled = await settle(
+        () => withAbort(ports.adapter.observe(), ports.abortSignal),
+        {
+          maxPolls: DEFAULT_SETTLE_MAX_POLLS,
+          intervalMs: VERIFY_SETTLE_INTERVAL_MS,
+          deadline,
+          signal: ports.abortSignal,
+        },
+      )
+      finalState = settled.state
+    } catch (observeError: unknown) {
+      const abortDuringObserve = checkAbort()
+      if (abortDuringObserve) return abortDuringObserve
+      return judge(endingVerifierError(observeError), NO_CITATION_SOURCES, false)
+    }
+    stepRecord.start(finalState)
+    let screenshot: Buffer | undefined
+    if (gate.attachImage && ports.adapter.screenshot) {
+      try { screenshot = await withAbort(ports.adapter.screenshot(), ports.abortSignal) } catch { /* best-effort */ }
+    }
+    const abortBeforeVerify = checkAbort()
+    if (abortBeforeVerify) return abortBeforeVerify
+    const record = stepRecord.snapshot()
+    const accumulatedEvidence = hasOperationEvidence(stepOperationEvidence)
+      ? stepOperationEvidence
+      : undefined
+    meter.recordVerifierCall()
+    let verification: VerificationResult
+    try {
+      const verifyResult = await withAbort(
+        ports.verifier.verify(
+          stepInstruction, record.startScreen, finalState, action,
+          gate.attachImage ? screenshot : undefined,
+          ports.abortSignal, gate.promptNote, activePredicate, verifierAuthorContext,
+          accumulatedEvidence, record,
+        ),
+        ports.abortSignal,
+      )
+      if (verifyResult.tokenUsage) {
+        totalPromptTokens += verifyResult.tokenUsage.promptTokens
+        totalCompletionTokens += verifyResult.tokenUsage.completionTokens
+      }
+      verification = verifyResult.verification
+    } catch (verifyError: unknown) {
+      const abortDuringVerify = checkAbort()
+      if (abortDuringVerify) return abortDuringVerify
+      verification = endingVerifierError(verifyError)
+    }
+    const abortAfterVerify = checkAbort()
+    if (abortAfterVerify) return abortAfterVerify
+    return judge(
+      verification,
+      buildVerifierCitationSources(record.startScreen, finalState, action, accumulatedEvidence, record),
+      gate.attachImage && screenshot !== undefined,
+    )
+  }
+
+  // 436 D-12: the limit stop ends the step through the ordinary failure funnel with its own typed
+  // block — never a planning failure, a termination or a verdict. 439 D-08: it is judged once.
+  const limitStop = async (limit: LimitStopEvidence['limit']): Promise<StepResult> => {
+    const judged = await verifyEnding('limit-stop', lastExecutedAction)
+    if (typeof judged !== 'string') return judged
     const configured = limit === 'actions' ? meter.maxActions : meter.maxPlanningTurns
     const used = limit === 'actions' ? meter.actionsUsed : meter.planningCallsUsed
     const reason = formatLimitStopReason(limit, configured, used)
@@ -629,14 +741,19 @@ export async function executeStep(
       ...(lastVerifierRejection !== undefined ? { lastVerifierRejection: maskValue(lastVerifierRejection) } : {}),
       ...(lastPlannerReasoning !== undefined ? { lastPlannerReasoning: maskValue(lastPlannerReasoning) } : {}),
     })
-    return failure(reason)
+    return failure(withUnproven(reason, judged))
   }
 
   // Abort/timeout check — the three v1 timeout/cancel variants (getTimeoutAbortReason).
   const checkAbort = (): StepResult | undefined => {
     if (!ports.abortSignal?.aborted) return undefined
     const timeout = getTimeoutAbortReason(ports.abortSignal)
-    return timeout ? failure(timeout.message) : cancelled()
+    if (timeout) {
+      recordUnverifiedEnding('timeout', timeout.message)
+      return failure(timeout.message)
+    }
+    recordUnverifiedEnding('cancelled', CANCELLED_MESSAGE)
+    return cancelled()
   }
 
   const initialAbort = checkAbort()
@@ -728,11 +845,14 @@ export async function executeStep(
     if (abortBeforeObserve) return abortBeforeObserve
 
     if (deadline && performance.now() > deadline) {
-      return failure(`Step timed out after ${ports.stepTimeout}ms`)
+      const timedOut = `Step timed out after ${ports.stepTimeout}ms`
+      recordUnverifiedEnding('timeout', timedOut)
+      return failure(timedOut)
     }
 
-    // 436 D-10: the next action would be refused, so stop before any planner call.
-    if (meter.actionsExhausted()) return limitStop('actions')
+    // 436 D-10: the next action would be refused, so stop before any planner call. 439 D-08: the
+    // stop settles and observes once (not counted) so the verifier judges a final screen.
+    if (meter.actionsExhausted()) return await limitStop('actions')
 
     // 1. SETTLE + OBSERVE — the bounded settle gate polls screenIdentityHash and proceeds
     // only on two consecutive matching hashes (or the maxPolls/deadline bound, D-16). The
@@ -1056,7 +1176,7 @@ export async function executeStep(
 
     if (!procedureReplayed && !cached) {
       // 436 D-08: a live decision needs a planner call; cache and procedure replay do not.
-      if (meter.planningExhausted()) return limitStop('planning-turns')
+      if (meter.planningExhausted()) return await limitStop('planning-turns')
       const turnOrdinal = nextLiveTurnOrdinal
       // Safety context attachment point (loop.ts:265) — optional-chained (D-05).
       context = ports.safetyHooks?.runContext(context).context ?? context
@@ -1239,7 +1359,7 @@ export async function executeStep(
         if (abortDuringPlan) return abortDuringPlan
         // 436 D-12: the planning limit refused a planner call — its own typed stop, never a
         // planning failure.
-        if (planError instanceof PlanningLimitReachedError) return limitStop('planning-turns')
+        if (planError instanceof PlanningLimitReachedError) return await limitStop('planning-turns')
         if (planError instanceof PlanningTurnError) {
           recorder.recordPlanningFailure({
             reason: planError.reason,
@@ -1422,9 +1542,14 @@ export async function executeStep(
       if (rawPlan.failureKind === 'infeasible') {
         const reason = redactSecretValue(rawPlan.failureReason ?? '', ports.secretRedactor)
         recorder.recordTermination({ kind: 'infeasible', reason })
-        return failure(`Step declared infeasible: ${reason}`)
+        // 439 D-08: the declaration's own reason (an ambiguity refusal's candidates) stays first.
+        const unproven = await verifyEnding('infeasible', lastExecutedAction)
+        if (typeof unproven !== 'string') return unproven
+        return failure(withUnproven(`Step declared infeasible: ${reason}`, unproven))
       }
-      return failure(`Step failed: ${reasoning}`)
+      const unproven = await verifyEnding('give-up', lastExecutedAction)
+      if (typeof unproven !== 'string') return unproven
+      return failure(withUnproven(`Step failed: ${reasoning}`, unproven))
     }
 
     // 3. EXECUTE — resolve templates only here; gate through the tool_call hook. The
@@ -1797,6 +1922,7 @@ export async function executeStep(
     const actedElement = actedRef !== undefined
       ? actedState.elements.find((element) => element.ref === actedRef)
       : undefined
+    if (recordedOutcome !== 'refused') lastExecutedAction = action
     stepRecord.addAction({
       action,
       ...(actedElement !== undefined
@@ -3129,6 +3255,24 @@ function deriveInputEvidence(execResult: ActionResult, verb: string): InputEvide
   if (refusal) entry.unavailableReason = refusal.cause
   else if (unavailable && shell?.reason) entry.unavailableReason = shell.reason
   return entry
+}
+
+const NO_CITATION_SOURCES: CitationSources = {
+  'start-screen': '',
+  'final-screen': '',
+  action: '',
+  read: '',
+  carried: '',
+}
+
+function endingVerifierError(error: unknown): VerificationResult {
+  return {
+    conditions: [],
+    dialogs: [],
+    isAppError: false,
+    reasoning: '',
+    verifierError: error instanceof Error ? error.message : String(error),
+  }
 }
 
 function hasOperationEvidence(evidence: OperationEvidence): boolean {

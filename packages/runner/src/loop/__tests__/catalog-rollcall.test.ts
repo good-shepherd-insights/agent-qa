@@ -25,7 +25,7 @@ import type { LoopPorts } from '../ports.js'
 import type { ActionPlan } from '../types.js'
 import { executeStep } from '../index.js'
 import { buildAgentScreenState } from './screen-fixtures.js'
-import { makePlanner, makeVerifier, makeStepContext, makeActionPlan } from './loop-harness.js'
+import { makePlanner, makeStepContext, makeActionPlan } from './loop-harness.js'
 
 const PLATFORMS: Platform[] = ['web', 'android', 'ios']
 
@@ -162,7 +162,8 @@ async function dispatchReachesAdapter(action: Action, platform: Platform): Promi
       ports({
         adapter,
         planner: makePlanner([makeActionPlan({ action: action as ActionPlan['action'], stepComplete: false })]),
-        verifier: makeVerifier(),
+        // No verifier: the probe ends at its action limit, which a bound verifier would judge
+        // over a settled screen (439 D-08); dispatch is all this probe reads.
         plannerConfig: { maxActions: 1, maxPlanningTurns: 1, previousStepCount: 0 },
         onSetVariable: () => { setVariableRouted = true },
       }),

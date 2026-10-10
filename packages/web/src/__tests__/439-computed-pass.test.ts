@@ -130,6 +130,9 @@ describe('C439-COMPUTED-PASS', () => {
 
     expect(run.result.status).toBe('failed')
     expect(run.result.evidence!.verifierVerdict.pass).toBe(false)
+    // The completion, then the give-up's own judgment (439 D-08), which records the last block.
+    expect(verifier.calls).toBe(2)
+    expect(run.result.evidence!.conditionVerdicts!.ending).toBe('give-up')
     const recorded = run.result.evidence!.conditionVerdicts!.conditions
     expect(recorded).toHaveLength(1)
     expect(recorded[0]).toMatchObject({ verdict: 'unverified', judged: 'met', guard: 'citation-missing' })
@@ -148,6 +151,8 @@ describe('C439-COMPUTED-PASS', () => {
     })
 
     expect(run.result.status).toBe('failed')
+    expect(verifier.calls).toBe(2)
+    expect(run.result.evidence!.conditionVerdicts!.ending).toBe('give-up')
     const recorded = run.result.evidence!.conditionVerdicts!.conditions
     expect(recorded).toHaveLength(1)
     expect(recorded[0]).toMatchObject({ quote: STEP, verdict: 'unverified', guard: 'not-covered' })
@@ -166,6 +171,8 @@ describe('C439-COMPUTED-PASS', () => {
     })
 
     expect(run.result.status).toBe('failed')
+    expect(verifier.calls).toBe(2)
+    expect(run.result.evidence!.conditionVerdicts!.ending).toBe('give-up')
     const recorded = run.result.evidence!.conditionVerdicts!.conditions
     expect(recorded[0].verdict).toBe('not-met')
     expect(recorded[0].guard).toBeUndefined()

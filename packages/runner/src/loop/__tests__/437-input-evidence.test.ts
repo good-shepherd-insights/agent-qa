@@ -180,7 +180,10 @@ describe('C437-INPUT-EVIDENCE', () => {
       metadata: { shellAction: { verb: 'keyevent', outcome: 'unavailable', reason: 'adb-shell-disabled' } },
     })
     expect(plannerTurn(contexts[1])).toContain('keyevent: unavailable (Appium does not allow mobile: shell)')
-    expect(captured).toHaveLength(0)
+    // No failed keyevent is verified as a completion; the one call is the limit stop's own
+    // judgment (439 D-08).
+    expect(captured).toHaveLength(1)
+    expect(step.evidence?.conditionVerdicts?.ending).toBe('limit-stop')
   })
 
   it('a secure fill renders as not read back', async () => {
