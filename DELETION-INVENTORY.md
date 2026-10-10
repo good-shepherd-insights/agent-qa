@@ -2535,3 +2535,148 @@ got the 261002-tmo 120 s hook budget (owner-delegated, as for `5876686db`) befor
 The first record run, at `a14de0976`, was red on one non-listed cell, `SUITE-BROWSER-MEDIA`'s
 free-playhead read (1-minute load 71), and that read was made deterministic before the record run
 was taken again.
+
+### Gap closure round 2 (438-24 to 438-28), 2026-10-10
+
+This subsection appends to the Phase 438 section and rewrites none of it, round 1's subsection
+included; written by 438-27. The owner delegated round 2's scope to the orchestrator on
+2026-10-10: the four findings below, with every other finding left open and listed as retained.
+The findings are those of the round-1 re-review (`438-REVIEW.md`, "Gap closure round 1
+re-review", at `565fbf53d`) and the phase's re-verification: CR-03, WR-10, WR-11 and IN-10. Every
+commit below is in agent-qa on `version-0.2` and signed; every cell is listed in
+`scripts/gate/inputs/regressions.json`, with a `438 D-NN` origin or, for the settled-seek cells,
+`434 D-20`. No listed cell was re-spelled: every earlier cell passes unedited, and the round's
+diffs of earlier test files add lines only, except `SUITE-BROWSER-MEDIA`'s free-playhead block
+(not a listed cell), which now arms its wait through the new helpers with its expectation
+unchanged.
+
+**What was removed**
+
+- **A healed sub-action recorded against the pre-heal observation** (CR-03). After a heal
+  re-dispatched, the loop (`runner/src/loop/index.ts`) recorded the patched action, whose refs came
+  from the heal's fresh observation, next to the `stateBefore` taken before the heal. Builder refs
+  are positional, so curation, the failure caution and the verifier read each ref as another
+  element: a healed "Save" click curated into a body naming "Cancel", and a healed drag lost its
+  drop target. Now the healed sub-action is recorded, cautioned and verified against the heal's
+  fresh observation (`actedState`), re-stamped with the planner call's capture stamp. A heal that
+  sends nothing, and an action that never healed, keep the pre-heal pairing, and the cache write
+  is unchanged. 438-24 `59eb81592`, `5f07053e9`, `795dcee2a`, `2fffe5fb0`, `d8f09c017`,
+  gate-listed in `f8167dd7d`. Cells:
+  - `C438-HEAL-RECORD a healed click is recorded against the fresh observation it was sent to`
+  - `C438-HEAL-RECORD a healed drag is recorded against the fresh observation on both lanes`
+  - `C438-HEAL-RECORD a healed sub-action is recorded against the fresh observation with the planner call's capture stamp`
+  - `C438-HEAL-RECORD a heal that sends nothing is recorded against the pre-heal observation`
+  - `C438-HEAL-RECORD a healed click whose re-dispatch fails is recorded against the fresh observation`
+  - `C438-HEAL-RECORD a healed click whose re-dispatch fails anchors its caution to the element acted on`
+  - `C438-HEAL-RECORD the verifier of a healed click reads the action against the fresh observation`
+  - `C438-HEALED-BODY a healed click's procedure body names the clicked element`
+  - `C438-HEALED-BODY a healed drag's procedure body names the dragged element and the drop target`
+- **A nested row container without its parent row** (WR-10). Round 1's self-first rule made a row
+  container that is itself the element only its own row, so the two "Invoices" items under "2024"
+  and "2025" both read "Invoices": a stated parent row was refused, and `strictMatch`, the heal and
+  the cache could not tell them apart. `rowTextOf` (`runner/src/grounding/row-text.ts`) now starts
+  such a container's row with its nearest enclosing row container's own line (name and folded
+  text), never that container's other descendants and never a second ancestor. A control inside a
+  nested row container keeps that container's row. 438-25 `d48520505`, `375c479d3`, gate-listed in
+  `d309e61b0`. Cells:
+  - `C438-ROW-TEXT a nested row container's row is its parent row's own line, then its own row`
+  - `C438-ROW-TEXT the judge agrees with a nested treeitem stated with its parent row`
+  - `C438-ROW-TEXT strictMatch tells a nested treeitem from its twin under another parent`
+  - `C438-ROW-TEXT the judge refuses a nested treeitem stated with another parent's row`
+  - `C438-ROW-TEXT a nested row container's row does not take a sibling row's words`
+  - `C438-ROW-TEXT a control inside a nested row container reads only that container's row`
+  - `C438-HEAL-LANES a nested treeitem whose binding is lost heals onto the same parent's item`
+  - `C438-STRICT-REPLAY a stored nested treeitem with its parent row replays onto that parent's item`
+  - `C438-STATED-ROW a nested treeitem stated with its parent row is clicked`
+- **Thousands separators read by the number rule only** (WR-11). Round 1 ignored `,` and `_`
+  between digits only inside `numbersDiffer`, so the shared-word and row rules still split "1,234"
+  into "1" and "234", and NFKC turned U+202F and U+00A0 into a plain space. Now `wordTokens`
+  (`row-text.ts`) reads a digit group split by `,`, `_`, U+202F or U+00A0, between a digit and
+  exactly three digits that no further digit follows, as one number; `numberTokens`
+  (`stated-target.ts`) reads `wordTokens`, and the `THOUSANDS_SEPARATOR` constant is gone. A dot
+  and a plain space never group. 438-25 `cfbd51648`, `e64580c21`, gate-listed in `d309e61b0`.
+  Cells:
+  - `C438-ROW-TEXT wordTokens reads a digit group split by a comma, an underscore, a narrow no-break space or a no-break space as one number`
+  - `C438-ROW-TEXT rowContains reads "1,234" and "1234" as one number in both directions`
+  - `C438-ROW-TEXT wordTokens keeps a plain space, a dot and a short group as separators`
+  - `C438-JUDGE "1234" vs "1,234" agrees (a digit group is one number)`
+  - `C438-JUDGE "1,234" vs "1234" agrees`
+  - `C438-JUDGE "1234" vs "1 234" with a narrow no-break space agrees`
+  - `C438-JUDGE "1234" vs "1 234" with a no-break space agrees`
+  - `C438-JUDGE "Weight 1.234" vs "Weight 1234" is a name-number contradiction (a dot is never a separator)`
+  - `C438-STATED-TARGET "1234" stated against "1,234" is clicked`
+  - `C438-STATED-ROW a row stated "Invoice 1234" against "Invoice 1,234" is clicked`
+- **An unbounded, position-keyed free-playhead wait** (IN-10). `SUITE-BROWSER-MEDIA`'s settled-seek
+  wait (`cli/src/__tests__/conformance/424-suite-player-dom.test.ts`) awaited a promise with no
+  bound and picked the free-playhead member by its span's DOM position, so a missed seek sat until
+  the 120 s cell timeout, and a point on no span armed the wait on a `'missing'` source that never
+  seeks. Now `settledSeek` is bounded at 10 s and rejects with
+  `no settled seek on source <sha> within 10000 ms`, the member is read from the span's
+  `data-timeline-member-span`, and a point no member spans, or a member with no present recording,
+  fails at once with a message. No assertion, poll or budget changed. 438-26 `660e3abaf`, `fb84ebfe9`, gate-listed in `0b2619649`. Cells:
+  - `C438-SETTLED-SEEK a settled-seek wait that sees no seek on the member's source fails with a message within its bound`
+  - `C438-SETTLED-SEEK the free-playhead member is read from its data-timeline-member-span attribute, not its DOM position`
+  - `C438-SETTLED-SEEK a point no member spans fails with a message`
+
+**What stays retained**
+
+| Item | Why kept | Where recorded |
+|---|---|---|
+| IN-09: the heal grounding block describes only the first lane, and its attempts do not say which lane they belong to | outside the round's scope; it did not fall out of CR-03, which changes the observation a healed sub-action is recorded against, not the heal block | `438-REVIEW.md` IN-09 |
+| `.` locale grouping such as `1.234,50` is not normalized | a dot is ambiguous with a decimal point; WR-11's scope is `,`, `_`, U+202F and U+00A0 | `438-REVIEW.md` WR-11; the 438-25 summary |
+| the cross-member double seek: a click on the free rail first seeks to a marker's offset, so the playhead briefly shows that marker's transparent circle | product behaviour, not a test read; the free-playhead poll's end-state expectation is unchanged and tolerates nothing more than before | `438-REVIEW.md` IN-10; the phase's `deferred-items.md` (438-28) |
+| element names in the planner tree keep their `"…"` quoting, unescaped | still open from round 1; the round's scope does not name it | `438-REVIEW.md` WR-02; the 438-20 summary |
+| WINDOWS #570: a scroll's container ref gets only the document check, not the role, name and row re-check | still open from round 1; outside the round's scope | `.planning/WINDOWS.md` #570 (438-05) |
+| the vacuous cache `hit`: a step that records a miss and then records no sub-action folds to `hit` and hides `cacheMiss` | still open from round 1; outside the round's scope | `438-RECORD.md` § SC3 (438-09) |
+| WR-05: row text is identity in the binding and the heal, so a row whose text changes blocks every dispatch inside it | still open; WR-10 adds the parent row's line to what a nested row container binds on, and does not change that row text is identity | `438-REVIEW.md` WR-05 and WR-10 |
+| WR-06: a committed procedure body masks `name` and keeps the raw `nameNormalized`, and a masked name never replays | still open from round 1; outside the round's scope | `438-REVIEW.md` WR-06 |
+| WR-07: a web element without a native ref is shown with a ref but cannot be dispatched | still open from round 1; no wrong element receives input | `438-REVIEW.md` WR-07 |
+| WR-08: the external measurement's refusal counter drops binding refusals whose heal never ran | outside agent-qa and outside the round's scope | `438-REVIEW.md` WR-08 |
+| WR-09: `ElementInfo.text` is written raw into every handoff's `stateBefore`, though its doc says it is never serialized | still open from round 1; CR-03 changes which observation a healed sub-action's `stateBefore` is, not what it holds | `438-REVIEW.md` WR-09 |
+| IN-01: iOS rows render no `text:`, though the prompt points the planner at it | still open from round 1 | `438-REVIEW.md` IN-01 |
+| IN-02: `TargetIdentity` and `TargetMismatchReason` are defined twice | still open from round 1 | `438-REVIEW.md` IN-02 |
+| IN-03: snapshot hygiene is not in one place | still open from round 1 | `438-REVIEW.md` IN-03 |
+| IN-04: the heal note's wording and the action debit rule | still open from round 1; the note's text is unchanged | `438-REVIEW.md` IN-04 |
+| IN-05: the descriptor lane drops `row`, so a target-only repeated label is always ambiguous | still open from round 1 | `438-REVIEW.md` IN-05 |
+| IN-06: `tau-lex.ts` imports `fts-match.ts` with a top-level `await` | still open from round 1; a tool, not a package | `438-REVIEW.md` IN-06 |
+| IN-07: quick-task test fixtures depend on ordering, and some waits are unbounded | still open from round 1; IN-10 bounds only the free-playhead wait | `438-REVIEW.md` IN-07 |
+| IN-08: the external measurement's summary cites defaults at an older SHA | outside agent-qa and outside the round's scope | `438-REVIEW.md` IN-08 |
+| curation does not check a stated row against the observed row | curation may not import the runner's row helpers; it fails safe, as a body that misses into recovery, never a wrong dispatch | `438-RECORD.md` § Still open (438-10) |
+| the eval package's offline adversarial generator finds a control by position | allow-listed by `C438-RECORD-ONLY-CLASSIFIED`; no live, heal, procedure-replay or cached path imports it | `438-RECORD.md` (438-12) |
+| the live AUTO-15 run's responding model id | not captured by that run; the run was not repeated | `438-RECORD.md` § Live AUTO-15 run (438-13) |
+
+**What degrades, stated plainly**
+
+- **A healed sub-action's `stateBefore` is the heal's fresh observation**, and so are its aria
+  evidence artifact and its `screenStateHash` in the handoff, while its decision screenshot stays
+  the planner's pre-heal input.
+- **A nested row container binds and checks on its parent's line too.** A change in that line
+  between looking and acting reads `binding-changed`, with nothing sent, and the heal needs those
+  words (WR-05 stays open).
+- **"1,234" now agrees with "1234" in names and rows**, and a stored row with either spelling
+  replays onto the other, while replayed names stay exact.
+- **Procedure bodies curated from healed steps before this round are not rewritten.** The phase is
+  unreleased, and re-curation goes through the normal loop.
+
+**The instruments that notice a return**
+
+- The new cell families `C438-HEAL-RECORD` and `C438-HEALED-BODY` red when a healed sub-action is
+  recorded, cautioned or verified against the pre-heal observation again, or its procedure body
+  names an element other than the one acted on.
+- The new `C438-ROW-TEXT`, `C438-HEAL-LANES`, `C438-STRICT-REPLAY` and `C438-STATED-ROW` cells for a
+  nested treeitem red when a nested row container loses its parent's line or takes a sibling's
+  words; the new `C438-ROW-TEXT`, `C438-JUDGE`, `C438-STATED-TARGET` and `C438-STATED-ROW` cells for
+  digit groups red when any rule splits a digit group again, or a dot or a plain space starts to
+  group.
+- The new cell family `C438-SETTLED-SEEK` reds when the free-playhead wait loses its bound or its
+  message, or picks the member by DOM position again.
+- The census cell `C438-NO-HEAL-POSITION`, unchanged, still reds on a position in the heal.
+- The 434 gate's regression list grew from 980 to 1011 cells over the round (9 from 438-24, 19 from
+  438-25, 3 from 438-26); 247 carry a `438` origin, and the three settled-seek cells carry
+  `434 D-20`.
+
+**Gate**
+
+The round's record gate run measures agent-qa HEAD after this subsection lands, and its result is
+recorded with the phase's planning record, not in this file, as in round 1. So no docs-only commit
+separates the measured SHA from the final SHA.
