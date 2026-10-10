@@ -2399,3 +2399,135 @@ file, which no test reads.
 
 **Toolchain:** node 24.15.0 · pnpm 10.6.1 · turbo 2.9.7 · Chromium 149.0.7827.55 (revision 1228) ·
 macOS (Darwin 27.0.0, arm64, 12 CPUs).
+
+### Gap closure round 1 (438-17 to 438-23), 2026-10-10
+
+This subsection appends to the Phase 438 section and rewrites none of it; written by 438-21. The
+owner delegated the round's scope to the orchestrator on 2026-10-10: the six findings below, with
+every other finding left open and listed as retained. The findings are those of the phase's code
+review (CR-nn, WR-nn). Every commit below is in agent-qa on `version-0.2` and signed; every cell is
+listed in `scripts/gate/inputs/regressions.json` with its `438 D-NN` origin. No listed cell was
+re-spelled: every earlier 438 cell passes unedited.
+
+**What was removed**
+
+- **The heal's first-lane-only re-find** (CR-01). `regroundFailedRef` (`runner/src/loop/index.ts`)
+  re-found, judged and patched only the first ref lane of the failed action, so a drag whose
+  `toRef` was lost was re-dispatched with the stale `toRef` against the fresh observation. Now every
+  lane (`ref`, `fromRef`, `toRef`) is re-found by `strictMatch` and judged on path `heal`, and every
+  lane is patched before the one debit and re-dispatch. When any lane is not provably the same, or
+  two lanes with different prior refs re-find one fresh element, nothing is sent and the binding
+  block records `heal: 'absent' | 'not-unique'`. 438-17 `4b5cba028`, `a15261528`, gate-listed in
+  `8c8ee0b39`. Cells:
+  - `C438-HEAL-LANES a drag whose toRef binding is lost re-finds both lanes and drops on the re-found target`
+  - `C438-HEAL-LANES a drag whose toRef is an unknown ref re-finds both lanes the same way`
+  - `C438-HEAL-LANES a stated toTarget that contradicts the re-found drop target is refused on the heal path`
+  - `C438-HEAL-LANES a drop target that is not provably the same refuses the heal and nothing is re-dispatched`
+  - `C438-HEAL-LANES two lanes that re-find one element refuse the heal`
+- **The heal grounding block's unmasked identities and uncapped row** (WR-01). The heal block
+  redacted the name only and wrote the whole prior row text. Its role, name and row now pass the
+  loop's scrub like the live block (secret redaction, then masking), and the row is capped at 200
+  characters (`OBSERVED_ROW_CAP`). 438-17 `4864ae363`, `a524fde5e`, gate-listed in `8c8ee0b39`.
+  Cells:
+  - `C438-HEAL-EVIDENCE the heal grounding block is masked like the live block`
+  - `C438-HEAL-EVIDENCE the heal grounding block caps the prior row text at 200 characters`
+- **The parser's kept-lines-only ancestor stack** (CR-02). `parseAriaSnapshot`
+  (`web/src/observer.ts`) held only kept lines on its ancestor stack, so the text and controls of a
+  later sibling container that the tree drops were folded into, and parented under, the preceding
+  row. Every matched line now bounds its subtree: a dropped line still takes a place on the stack,
+  and fold and parent go to the nearest kept entry among the line's true ancestors. 438-19
+  `f9594392b`, `61743d363`, gate-listed in `62269190e`. Cells:
+  - `C438-ROW-PARSE a later sibling container's text and controls never fold into the preceding row`
+  - `C438-ROW-PARSE in real Chromium a control after the list has no row and the last row keeps only its own text`
+  - `C438-ROW-PARSE a stated row with a sibling container's words is refused on the last row's button`
+  - `C438-ROW-PARSE an iframe after a list is parented under no row`
+  - `C438-ROW-PARSE a table after a heading, a button and a navigation is parented under none of them`
+- **A row container with no row of its own** (WR-04). `rowContainerOf`
+  (`runner/src/grounding/row-text.ts`) looked only at ancestors, so a clicked `listitem`, `row`,
+  `article` or `treeitem` had an unknown row and any stated row agreed. A row container is now its
+  own row, then the cell fallback, each rung looking at the element itself first. The judge, strict
+  replay, the cache locator's row and the web binding read the same definition. 438-20
+  `4069ceae6`, `5901a2839`, gate-listed in `9e370ddb7`. Cells:
+  - `C438-ROW-TEXT a row container is its own row: a listitem's row is its own text and descendants`
+  - `C438-ROW-TEXT a cell with no row container above it is its own row`
+  - `C438-ROW-TEXT the judge refuses a listitem stated with another row's words`
+  - `C438-STATED-ROW a listitem ref stated with another row's words is refused`
+  - `C438-STATED-ROW a listitem ref stated with its own row words is clicked`
+- **The multiset number rule and the split thousands** (WR-03, within D-03). `numbersDiffer`
+  (`runner/src/grounding/stated-target.ts`) required equal number multisets and split `$1,234.50`
+  into three numbers, so "Invoice 947" stated against "Invoice 947 due 2026-10-31", and "Pay
+  $1234.50" against "Pay $1,234.50", were refused. Now only a stated number absent from the
+  element's name refuses. Numbers are read after NFKC, with a thousands separator (`,` or `_`
+  between a digit and exactly three digits) ignored. 438-20 `c3e5b7143`, `030accb50`, gate-listed
+  in `9e370ddb7`. Cells:
+  - `C438-JUDGE "Invoice 947" vs "Invoice 947 due 2026-10-31" agrees (every stated number is observed)`
+  - `C438-JUDGE "Pay $1234.50" vs "Pay $1,234.50" agrees (a thousands separator is ignored)`
+  - `C438-JUDGE "Pay $1,234.50" vs "Pay $1,235.50" is a name-number contradiction`
+  - `C438-JUDGE "Rows 1,2" vs "Rows 12" is a name-number contradiction (only a thousands separator is ignored)`
+  - `C438-STATED-TARGET "Pay $1234.50" stated against "Pay $1,234.50" is clicked`
+- **Unescaped row text in the planner tree** (WR-02, T-438-04). `runner/src/screen-builder.ts`
+  rendered row text inside quotes without escaping, so app text could close the quote and forge a
+  ref, a flag or a line. Row text is now rendered as a JSON string; text with no quote, backslash or
+  control character renders as before. 438-20 `565ebace2`, `c077e5ac3`, gate-listed in
+  `9e370ddb7`. Cells:
+  - `C438-ROW-TREE a row text that closes its quote cannot forge a tree line`
+  - `C438-ROW-TREE a backslash in row text renders escaped`
+
+**What stays retained**
+
+| Item | Why kept | Where recorded |
+|---|---|---|
+| element names in the planner tree keep their `"…"` quoting, unescaped | WR-02's recipe also covers names, but the round's scope names row text only; a planner lured to a forged ref still states an identity that is judged against the real element | `438-REVIEW.md` WR-02; the 438-20 summary |
+| WINDOWS #570: a scroll's container ref gets only the document check, not the role, name and row re-check | outside the round's scope | `.planning/WINDOWS.md` #570 (438-05) |
+| the vacuous cache `hit`: a step that records a miss and then records no sub-action folds to `hit` and hides `cacheMiss` | outside the round's scope; no cell reaches it, and `C438-CACHE-MISS-RECORDED` reads the hit branch, not `finalize` | `438-RECORD.md` § SC3 (438-09) |
+| WR-05: row text is identity in the binding and the heal, so a row whose text changes blocks every dispatch inside it | outside the round's scope; 438-19 and 438-20 change what a row holds, not that it is identity | `438-REVIEW.md` WR-05 |
+| WR-06: a committed procedure body masks `name` and keeps the raw `nameNormalized`, and a masked name never replays | outside the round's scope | `438-REVIEW.md` WR-06 |
+| WR-07: a web element without a native ref is shown with a ref but cannot be dispatched | outside the round's scope; no wrong element receives input | `438-REVIEW.md` WR-07 |
+| WR-08: the external measurement's refusal counter drops binding refusals whose heal never ran | outside agent-qa and outside the round's scope | `438-REVIEW.md` WR-08 |
+| WR-09: `ElementInfo.text` is written raw into every handoff's `stateBefore`, though its doc says it is never serialized | outside the round's scope; since 438-19 it holds only the element's own subtree | `438-REVIEW.md` WR-09 |
+| IN-01: iOS rows render no `text:`, though the prompt points the planner at it | outside the round's scope | `438-REVIEW.md` IN-01 |
+| IN-02: `TargetIdentity` and `TargetMismatchReason` are defined twice | outside the round's scope | `438-REVIEW.md` IN-02 |
+| IN-03: snapshot hygiene is not in one place | outside the round's scope | `438-REVIEW.md` IN-03 |
+| IN-04: the heal note's wording and the action debit rule | outside the round's scope; the note's text is unchanged | `438-REVIEW.md` IN-04 |
+| IN-05: the descriptor lane drops `row`, so a target-only repeated label is always ambiguous | outside the round's scope | `438-REVIEW.md` IN-05 |
+| IN-06: `tau-lex.ts` imports `fts-match.ts` with a top-level `await` | outside the round's scope; a tool, not a package | `438-REVIEW.md` IN-06 |
+| IN-07: quick-task test fixtures depend on ordering, and some waits are unbounded | outside the round's scope | `438-REVIEW.md` IN-07 |
+| IN-08: the external measurement's summary cites defaults at an older SHA | outside agent-qa and outside the round's scope | `438-REVIEW.md` IN-08 |
+| curation does not check a stated row against the observed row | curation may not import the runner's row helpers; it fails safe, as a body that misses into recovery, never a wrong dispatch | `438-RECORD.md` § Still open (438-10) |
+| the eval package's offline adversarial generator finds a control by position | allow-listed by `C438-RECORD-ONLY-CLASSIFIED`; no live, heal, procedure-replay or cached path imports it | `438-RECORD.md` (438-12) |
+| the live AUTO-15 run's responding model id | not captured by that run; the reader was fixed in `d048fcad6` and the run was not repeated | `438-RECORD.md` § Live AUTO-15 run (438-13) |
+
+**What degrades, stated plainly**
+
+- **A heal of a multi-lane action refuses when any lane is not provably the same.** A drag that the
+  first-lane heal would have re-dispatched now sends nothing and re-plans.
+- **A clicked row container binds and checks on its own row text.** A change in that text between
+  looking and acting reads `binding-changed`, with nothing sent.
+- **Real web pages' tree indentation changes where a control follows a non-kept container**, because
+  the control is no longer parented under the preceding row. The `screenStateHash` of such a page
+  changes; its `screenIdentityHash` and cache keys do not.
+- **A stored cache locator or procedure target whose row words came from a neighbouring container
+  now misses.** It is a recorded miss and a re-plan, never a wrong replay; no cache-format bump is
+  needed.
+- **A stated number absent from the element's name still refuses**, so "Invoice 947" against
+  "Invoice 946" and "Pay $1,234.50" against "Pay $1,235.50" re-plan.
+
+**The instruments that notice a return**
+
+- The new cell families `C438-HEAL-LANES` and `C438-HEAL-EVIDENCE` red when a heal re-finds, judges
+  or patches fewer than every lane, or records an identity unmasked or a row uncapped.
+- The new `C438-ROW-PARSE` cells red when a dropped container's text or controls join the preceding
+  row again; the new `C438-ROW-TEXT` and `C438-STATED-ROW` cells when a row container loses its own
+  row; the new `C438-JUDGE` and `C438-STATED-TARGET` cells when the number rule returns to multiset
+  equality or splits a thousands separator; the new `C438-ROW-TREE` cells when row text reaches the
+  tree unescaped.
+- The census cell `C438-NO-HEAL-POSITION`, unchanged, still reds on a position in the heal.
+- The 434 gate's regression list grew from 956 to 980 cells over the round (7 from 438-17, 5 from
+  438-19, 12 from 438-20); 219 carry a `438` origin.
+
+**Gate**
+
+The round's record gate run measures agent-qa HEAD after this subsection lands, and its result is
+recorded with the phase's planning record, not in this file. So no docs-only commit separates the
+measured SHA from the final SHA, unlike 438-14's run, which measured `5876686db` before the commit
+that added its gate subsection.
