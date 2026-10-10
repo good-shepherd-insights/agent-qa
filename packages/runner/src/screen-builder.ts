@@ -274,14 +274,16 @@ function depthOf(element: ElementInfo, byRef: Map<Ref, ElementInfo>): number {
  *
  * Grammar (pinned; RESEARCH Pitfall #10):
  *   [Viewport: {viewportWidth}x{viewportHeight}] [{elements.length} elements]
- *   {2 spaces × depth}- {role}{ "name"?} [ref={ref}]{ @(x,y wxh)?}{ [disabled]?}{ [offscreen]?}{ [checked]?}{ [selected]?}{ [editable]?}{ text: "row text"?}
+ *   {2 spaces × depth}- {role}{ "name"?} [ref={ref}]{ @(x,y wxh)?}{ [disabled]?}{ [offscreen]?}{ [checked]?}{ [selected]?}{ [editable]?}{ text: <row text as a JSON string>?}
  * depth = length of the parentRef chain (root elements depth 0).
  * A rendered name collapses each line break, with the whitespace around it, to one space, so
  * every element stays on one line; element.name and value keep the raw text.
  * ` text: "…"` appears only on a row container (ROW_CONTAINER_ROLES) whose element.text is
  * non-empty (438 D-02: the planner must see a row to state it); line breaks collapse the same
- * way and the rendered text is capped at 120 characters plus `…`. element.text keeps the full
- * text the judge and replay compare against.
+ * way and the rendered text is capped at 120 characters plus `…`. The row text is a JSON string
+ * (JSON.stringify, as quoted() renders names in the refusal line), so a quote or backslash in app
+ * text cannot end the string or forge a ref, flag or line (438 gap round, WR-02, T-438-04).
+ * element.text keeps the full text the judge and replay compare against.
  */
 export function renderScreenTree(
   elements: ElementInfo[],
@@ -309,7 +311,7 @@ export function renderScreenTree(
     if (element.state.selected === true) line += ' [selected]'
     if (element.state.editable === true) line += ' [editable]'
     const rowText = renderedRowText(element)
-    if (rowText !== undefined) line += ` text: "${rowText}"`
+    if (rowText !== undefined) line += ` text: ${JSON.stringify(rowText)}`
     return line
   })
 
