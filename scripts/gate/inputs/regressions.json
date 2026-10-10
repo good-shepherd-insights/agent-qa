@@ -5421,6 +5421,18 @@
     },
     {
       "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/curator-author-procedure.test.ts",
+      "fullName": "C438-HEALED-BODY a healed click's procedure body names the clicked element",
+      "origin": "438 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/curator-author-procedure.test.ts",
+      "fullName": "C438-HEALED-BODY a healed drag's procedure body names the dragged element and the drop target",
+      "origin": "438 D-11"
+    },
+    {
+      "runner": "vitest",
       "file": "packages/arch/src/__tests__/438-ordinal-census.test.ts",
       "fullName": "C438-CENSUS — no position pick on the live, heal, procedure-replay or cached paths (438 D-11, D-13) C438-UNIVERSE-FLOORS: every guarded file and region reads real code, so no cell can pass over an empty scan",
       "origin": "438 D-13"
@@ -5867,6 +5879,48 @@
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/438-heal-lanes.test.ts",
       "fullName": "C438-HEAL-LANES two lanes that re-find one element refuse the heal",
+      "origin": "438 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-heal-lanes.test.ts",
+      "fullName": "C438-HEAL-RECORD a healed click is recorded against the fresh observation it was sent to",
+      "origin": "438 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-heal-lanes.test.ts",
+      "fullName": "C438-HEAL-RECORD a healed drag is recorded against the fresh observation on both lanes",
+      "origin": "438 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-heal-lanes.test.ts",
+      "fullName": "C438-HEAL-RECORD a healed sub-action is recorded against the fresh observation with the planner call's capture stamp",
+      "origin": "438 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-heal-lanes.test.ts",
+      "fullName": "C438-HEAL-RECORD a heal that sends nothing is recorded against the pre-heal observation",
+      "origin": "438 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-heal-lanes.test.ts",
+      "fullName": "C438-HEAL-RECORD a healed click whose re-dispatch fails is recorded against the fresh observation",
+      "origin": "438 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-heal-lanes.test.ts",
+      "fullName": "C438-HEAL-RECORD a healed click whose re-dispatch fails anchors its caution to the element acted on",
+      "origin": "438 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-heal-lanes.test.ts",
+      "fullName": "C438-HEAL-RECORD the verifier of a healed click reads the action against the fresh observation",
       "origin": "438 D-08"
     },
     {
