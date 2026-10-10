@@ -10,8 +10,10 @@
 //     pressable control as `text` or `group`.
 //   - name-no-shared-word: the element has words (name, value, aria-label, placeholder, title)
 //     and no stated name word is one of them. A nameless element never contradicts on name.
-//   - name-number: both names carry number tokens and the number multisets differ ("Invoice
-//     947" stated, "Invoice 946" found) — the shared word "Invoice" alone would let it pass.
+//   - name-number: both names carry numbers and a stated number is absent from the element's name
+//     ("Invoice 947" stated, "Invoice 946" found) — the shared word "Invoice" alone would let it
+//     pass. A thousands separator is ignored ("$1,234.50" equals "$1234.50"), and extra numbers
+//     in the element's name never refuse (438 gap round, WR-03, within D-03).
 //   - row: a row was stated, the element's row is known (row-text.ts) and the stated row words
 //     are not in it. An empty stated row is not stated; an unknown row never contradicts.
 // A paraphrase that shares a word ("Log in" for "Sign in") agrees; exact equality is never
@@ -71,16 +73,19 @@ export type StatedTargetJudgement =
     }
 
 const NUMBER_TOKEN = /^\p{N}+$/u
+const THOUSANDS_SEPARATOR = /(?<=\p{N})[,_](?=\p{N}{3}(?!\p{N}))/gu
 
 function numberTokens(text: string | undefined): string[] {
-  return wordTokens(text).filter((word) => NUMBER_TOKEN.test(word)).sort()
+  if (text === undefined) return []
+  const ungrouped = text.normalize('NFKC').replace(THOUSANDS_SEPARATOR, '')
+  return wordTokens(ungrouped).filter((word) => NUMBER_TOKEN.test(word))
 }
 
 function numbersDiffer(stated: string, observed: string): boolean {
-  const a = numberTokens(stated)
-  const b = numberTokens(observed)
-  if (a.length === 0 || b.length === 0) return false
-  return a.length !== b.length || a.some((word, index) => word !== b[index])
+  const statedNumbers = numberTokens(stated)
+  const observedNumbers = numberTokens(observed)
+  if (statedNumbers.length === 0 || observedNumbers.length === 0) return false
+  return statedNumbers.some((number) => !observedNumbers.includes(number))
 }
 
 function observedWords(element: ElementInfo): Set<string> {
