@@ -11,7 +11,9 @@
 // source (and expr) failed and the later one asks for less: a proper substring of the expected
 // value, a looser operator, fewer listed items, or for assertAI a claim that is a proper substring
 // of an earlier false claim. Persistence: met only with a reload or reopen after the step's last
-// state-changing action and a citation from the final screen.
+// state-changing action and a citation from the final screen. Visual: a condition tagged visual,
+// or one citing an assertAI judgment made in 'visual' mode, is inconclusive when no image was
+// attached.
 
 import type {
   CitationSource,
@@ -352,4 +354,36 @@ export function applyPersistenceGuard(
     )
   }
   return record
+}
+
+export const VISUAL_TEXT_ONLY_REASON =
+  'only a picture can settle this condition and the verifier was given no image'
+
+/**
+ * A met condition that only a picture can settle (tagged visual, or citing an assertAI judgment
+ * made in 'visual' mode) is inconclusive when no image was attached (439 D-19).
+ */
+export function applyVisualGuard(
+  record: ConditionRecord,
+  judgment: ConditionJudgment,
+  cited: readonly CheckedCitation[],
+  stepRecord: GuardRecord | undefined,
+  imageAttached: boolean,
+  mask: (value: string) => string,
+): ConditionRecord {
+  if (imageAttached || record.verdict !== 'met') return record
+  const reads = stepRecord?.reads ?? []
+  const visualRead = cited.some(
+    (citation) =>
+      citation.found === true &&
+      citation.source === 'read' &&
+      reads.some(
+        (read) =>
+          read.kind === 'assertAI' &&
+          read.mode === 'visual' &&
+          lineHolds(readLine(read), citation.quote, mask),
+      ),
+  )
+  if (judgment.needs !== 'visual' && !visualRead) return record
+  return demote(record, 'inconclusive', 'visual-text-only', VISUAL_TEXT_ONLY_REASON)
 }

@@ -13,6 +13,8 @@ import type { PlannerLimits } from '@vostride/agent-qa-schema'
 
 export type LiveSessionLLMConfig = DashboardLLMConfig & {
   vision?: { screenshotSize?: number; effectiveResolution?: number }
+  /** The model entry's own `vision` flag, when the config sets it (439 D-19). */
+  modelVision?: boolean
 }
 
 export interface LiveDraftMetadata {

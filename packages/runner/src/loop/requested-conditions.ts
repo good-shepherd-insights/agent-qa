@@ -32,6 +32,7 @@ import {
   applyLimitGuard,
   applyNarrowedGuard,
   applyPersistenceGuard,
+  applyVisualGuard,
   openDialogsOn,
   type CheckedCitation,
 } from './condition-guards.js'
@@ -322,10 +323,11 @@ function judgeOne(
     quote: judgment.citations[i]?.quote ?? '',
     found: citation.found,
   }))
-  const { finalElements, record } = context.guards
+  const { finalElements, record, imageAttached } = context.guards
   let guardedRecord = applyLimitGuard(met, judgment, finalElements, input.mask)
   guardedRecord = applyNarrowedGuard(guardedRecord, cited, record, input.mask)
-  return applyPersistenceGuard(guardedRecord, judgment, cited, record)
+  guardedRecord = applyPersistenceGuard(guardedRecord, judgment, cited, record)
+  return applyVisualGuard(guardedRecord, judgment, cited, record, imageAttached, input.mask)
 }
 
 /**

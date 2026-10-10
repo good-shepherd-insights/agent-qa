@@ -17,6 +17,13 @@
  *   cli/src/commands/run.ts                  both member-run configs pass a verifier, and every
  *                                            step-model consumer factory builds one; the input
  *                                            type requires it [C439-CENSUS 2]
+ *
+ * THE VISION GATES (D-19) [C439-VISION-GATE]
+ *
+ *   cli/src/commands/run.ts                  both gates read the configured vision, else the
+ *                                            planner model's capability table
+ *   dashboard-server/src/live-editor/        the live editor resolves its gate the same way and
+ *     live-session.ts                        binds it on its ports
  */
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
@@ -242,6 +249,11 @@ const MEMBER_CALL_DECLARATION: Halves = ['\\bfunction\\s+runMember', 'Test\\s*\\
 const MEMBER_CONFIG_ASSIGN: Halves = ['const memberRunConfig = Object.assign(buildMemberRun', 'Config({']
 const CONSUMER_FACTORY: Halves = ["const createConsumers: CliStepModelScopeOptions\\['create", "Consumers'\\]\\s*="]
 const LLM_VERIFIER: Halves = ['verifier: new LLMVeri', 'fier(']
+const VISION_DEFAULT: Halves = ['vision ?', '? true']
+const GATE_SITE: Halves = ['visionGate: resolveVision', 'Gate\\s*\\(']
+const FROM_CONFIG: Halves = ['visionFrom', 'Config(']
+const LIVE_GATE_RESOLVE: Halves = ['this.visionGate = resolveVisionGate({ vision: visionFrom', 'Config(']
+const LIVE_GATE_BINDING: Halves = ['visionGate: this.vision', 'Gate,']
 
 const LOOP_INDEX = 'runner/src/loop/index.ts'
 const MEMBER_RUNNER = 'runner/src/run/member-runner.ts'
@@ -327,17 +339,42 @@ describe('C439-CENSUS', () => {
   it('C439-SELF-MATCH: this file spells none of the needles it assembles, and lies outside every region it scans', () => {
     const own = readFileSync(THIS_FILE).toString('utf8')
     expect(existsSync(join(PACKAGES_DIR, OWN)), 'the self path is wrong').toBe(true)
-    const literal = [MEMBER_BINDING, LIVE_BINDING, PORTS_LITERAL, INPUT_INTERFACE, MEMBER_CONFIG_ASSIGN, LLM_VERIFIER]
-      .map(joined)
+    const literal = [
+      MEMBER_BINDING, LIVE_BINDING, PORTS_LITERAL, INPUT_INTERFACE, MEMBER_CONFIG_ASSIGN, LLM_VERIFIER,
+      VISION_DEFAULT, FROM_CONFIG, LIVE_GATE_RESOLVE, LIVE_GATE_BINDING,
+    ].map(joined)
     const spelled = literal.filter((needle) => own.includes(needle))
     expect(spelled, `this file spells what it reads: ${spelled.join(', ')}`).toEqual([])
     const ownCode = codeOf(own)
-    const patterns = [STEP_CALL, CONFIG_CALL, MEMBER_CALL, REQUIRED_VERIFIER, CONSUMER_FACTORY]
+    const patterns = [STEP_CALL, CONFIG_CALL, MEMBER_CALL, REQUIRED_VERIFIER, CONSUMER_FACTORY, GATE_SITE]
     const matched = patterns.filter((pattern) => rx(pattern, 'm').test(ownCode)).map(joined)
     expect(matched, `this file's code matches a pattern it reads: ${matched.join(', ')}`).toEqual([])
     const regions = production()
     expect(regions, 'this census file is inside a region it scans').not.toContain(OWN)
     expect(regions.filter((file) => file.includes('/__tests__/')), 'a test file was scanned').toEqual([])
     expect(regions.filter((file) => file.includes('/testing/')), 'a testing helper was scanned').toEqual([])
+  })
+})
+
+describe('C439-VISION-GATE', () => {
+  it('both CLI gates read the configured vision, else the model capability table', () => {
+    const cli = code(CLI_RUN)
+    expect(cli.includes(joined(VISION_DEFAULT)), `${CLI_RUN} still defaults vision to true`).toBe(false)
+    const gates = sitesOf([CLI_RUN], rx(GATE_SITE))
+    expect(gates.length, `${CLI_RUN}: expected both gate sites`).toBe(2)
+    for (const gate of gates) {
+      expect(gate.region, `${CLI_RUN}:${gate.line} does not resolve vision from the model`)
+        .toContain(joined(FROM_CONFIG))
+    }
+  })
+
+  it('the live editor resolves its gate from its model and binds it on its ports', () => {
+    const live = code(LIVE_SESSION)
+    expect(live.includes(joined(LIVE_GATE_RESOLVE)), `${LIVE_SESSION} resolves no vision gate`).toBe(true)
+    const literal = new RegExp(joined(PORTS_LITERAL).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    const ports = sitesOf([LIVE_SESSION], literal)
+    expect(ports.length, `${LIVE_SESSION}: no ports literal`).toBe(1)
+    expect(ports[0]!.region, 'the live ports literal does not bind the vision gate')
+      .toContain(joined(LIVE_GATE_BINDING))
   })
 })

@@ -42,7 +42,7 @@ export type { ModelCallEvent, ModelCallReport, ModelCallReportOrigin } from './p
 export { validateProfile } from './validate'
 export { resolveVisionConfig } from './vision/resolve-config'
 export type { VisionSizingConfig } from './vision/resolve-config'
-export { resolveVisionGate } from './vision/resolve-gate'
+export { resolveVisionGate, visionFromConfig } from './vision/resolve-gate'
 export type { VisionGate } from './vision/resolve-gate'
 export type {
   ModelAuthDeclaration,

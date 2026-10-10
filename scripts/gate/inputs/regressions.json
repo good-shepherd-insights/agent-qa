@@ -6966,6 +6966,54 @@
       "file": "packages/runner/src/loop/__tests__/439-condition-guards.test.ts",
       "fullName": "C439-GUARDS persistence a re-read not cited from the final screen is unverified",
       "origin": "439 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-vision.test.ts",
+      "fullName": "C439-VISION a visual condition under a text-only gate is inconclusive",
+      "origin": "439 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-vision.test.ts",
+      "fullName": "C439-VISION the same condition passes with an image",
+      "origin": "439 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-vision.test.ts",
+      "fullName": "C439-VISION an assertAI visual judgment is not evidence without an image",
+      "origin": "439 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-vision.test.ts",
+      "fullName": "C439-VISION a non-visual condition passes under a text-only gate",
+      "origin": "439 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/model/src/__tests__/439-configured-vision.test.ts",
+      "fullName": "C439-CONFIGURED-VISION a configured vision wins over the capability table",
+      "origin": "439 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/model/src/__tests__/439-configured-vision.test.ts",
+      "fullName": "C439-CONFIGURED-VISION an unset vision follows the capability table",
+      "origin": "439 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/439-verifier-binding-census.test.ts",
+      "fullName": "C439-VISION-GATE both CLI gates read the configured vision, else the model capability table",
+      "origin": "439 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/439-verifier-binding-census.test.ts",
+      "fullName": "C439-VISION-GATE the live editor resolves its gate from its model and binds it on its ports",
+      "origin": "439 D-19"
     }
   ]
 }

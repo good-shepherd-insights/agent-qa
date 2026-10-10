@@ -1245,11 +1245,11 @@ async function startDashboardBackedServices(
       authFetch = fetch
       resolvedLLMConfig = modelConfig
     }
-    const { vision: _modelVision, ...serverLLMConfig } = resolvedLLMConfig
-    void _modelVision
+    const { vision: modelVision, ...serverLLMConfig } = resolvedLLMConfig
     const dashboardLLMConfig = {
       ...serverLLMConfig,
       vision: resolveVisionConfig((config as any).services?.vision),
+      ...(typeof modelVision === 'boolean' ? { modelVision } : {}),
     }
 
     const {

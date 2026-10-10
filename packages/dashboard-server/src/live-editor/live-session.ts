@@ -27,7 +27,14 @@ import {
   liveStreamFor,
 } from '@vostride/agent-qa-runner'
 import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
-import { createModel, createTokenAccounting, resolveCapabilities } from '@vostride/agent-qa-model'
+import {
+  createModel,
+  createTokenAccounting,
+  resolveCapabilities,
+  resolveVisionGate,
+  visionFromConfig,
+  type VisionGate,
+} from '@vostride/agent-qa-model'
 import type {
   AuthStateMetadata,
   HookDefinition,
@@ -445,6 +452,7 @@ export class LiveSession {
   private idleTimer: ReturnType<typeof setTimeout> | null = null
   private _modelName = 'unknown'
   private vision: { screenshotSize?: number; effectiveResolution?: number } | undefined
+  private visionGate: VisionGate | undefined
   private plannerLimits: PlannerLimits | undefined
   private plannerLimitsForTest: ((testId: string) => Promise<PlannerLimits>) | undefined
   private readyForInteraction = false
@@ -895,14 +903,16 @@ export class LiveSession {
     }
     this.openLiveHub()
 
-    const { vision: _vision, ...modelIdentity } = config.llmConfig
-    void _vision
+    const { vision: _visionSizing, modelVision, ...modelIdentity } = config.llmConfig
+    void _visionSizing
     const runtimeAuth = authFromRuntimeConfig(
       modelIdentity,
       authFromFetch(modelIdentity.provider, config.authFetch),
     )
     const { profile, auth } = toModelProfileAndAuth(modelIdentity, runtimeAuth)
     const capabilities = resolveCapabilities(profile)
+    // 439 D-19: the live editor resolves vision as the CLI does, from the model it uses.
+    this.visionGate = resolveVisionGate({ vision: visionFromConfig(modelVision, capabilities) })
     const plannerDeclared: DeclaredModelProfile = {
       provider: profile.provider,
       modelId: profile.model,
@@ -1200,6 +1210,7 @@ export class LiveSession {
         modelProfiles: this.modelProfiles ?? undefined,
         plannerConfig: { ...limits, previousStepCount: 5 },
         vision: this.vision,
+        visionGate: this.visionGate,
         onSetVariable: (name, value) => this.variableStore!.set(name, value, 'step'),
         abortSignal: this.abortController.signal,
         secretStore: this.secretStore,

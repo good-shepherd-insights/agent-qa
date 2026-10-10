@@ -8,7 +8,7 @@ import { resolveConfig, mergeWithTestConfig, mergeUseBlocks, formatConfigDebug, 
 import { ATTR_RUNNER, ATTR_TRIGGER, AUTH_STATE_SCHEMA_VERSION, buildInternalRunAttributes, DEFAULT_AGENT_QA_ARTIFACTS_DIR, DEFAULT_AGENT_QA_CACHE_DIR, formatRunAttributesBlock, generateRunId, isCanonicalRunId, mergeRunAttributes, MobileSetupError, normalizeAuthStateUse, parseRunAttrFlags, redactAuthStateValue, resolveAuthStateForRun, resolveAuthStatePaths, resolveKnowledgeRoot, resolveMobileRunConfig, validateTrustedRunAttributes } from '@vostride/agent-qa-core'
 import { discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, resolveWorkspacePaths, workspaceRelativeIdentityPath } from '@vostride/agent-qa-core'
 import type { AgentQaConfig, AuthStateMetadata, MemberLogScope, NormalizedAuthStateUse, ResolvedAuthStateForRun, ResolvedAuthStatePaths, ResolvedMobileRunConfig, ResolvedWorkspacePaths, RunAttributes, RunAttributeRunner, RunAttributeTrigger, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
-import { createModel, createTokenAccounting, resolveCapabilities, resolveVisionConfig, resolveVisionGate } from '@vostride/agent-qa-model'
+import { createModel, createTokenAccounting, resolveCapabilities, resolveVisionConfig, resolveVisionGate, visionFromConfig } from '@vostride/agent-qa-model'
 import { resolveTarget, type ResolvedTarget } from '../targets.js'
 import { resolveDevice, loadLocalBindings, resolveProviderCredentials, type ResolvedDevice } from '../devices.js'
 import { resolveLLMModels, resolveModelAuth, toModelProfileAndAuth } from '../llm-utils.js'
@@ -3101,9 +3101,9 @@ export async function produceSuiteRunMembers(
       accessibility: config.services?.accessibility,
       accessibilityCheck: runWebAccessibilityCheck,
       vision: resolveVisionConfig(config.services?.vision),
-      // D-11: resolve the vision gate once per run at the composition root and
-      // thread it structurally into the loop (undeclared vision => full capture).
-      visionGate: resolveVisionGate({ vision: plannerCfg.vision ?? true }),
+      // D-11: resolve the vision gate once per run at the composition root and thread it
+      // structurally into the loop. 439 D-19: undeclared vision follows the capability table.
+      visionGate: resolveVisionGate({ vision: visionFromConfig(plannerCfg.vision, plannerCapabilities) }),
       authStateCapture: suiteAuthStateCapturePaths
         ? {
             capture: () => captureAuthStateForRun({ adapter, paths: suiteAuthStateCapturePaths }),
@@ -4449,7 +4449,7 @@ export async function produceDirectRunMembers(
         logger,
         logCapture: testLogCapture,
         vision: resolveVisionConfig(config.services?.vision),
-        visionGate: resolveVisionGate({ vision: plannerCfg.vision ?? true }),
+        visionGate: resolveVisionGate({ vision: visionFromConfig(plannerCfg.vision, plannerCapabilities) }),
         contextWindow: plannerCfg.contextWindow,
         filePath,
       }), {

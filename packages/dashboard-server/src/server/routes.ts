@@ -391,6 +391,7 @@ function serializeAuthProviderPlugin(plugin: LLMAuthProviderPlugin): DashboardLL
 
 type DashboardRuntimeLLMConfig = DashboardLLMConfig & {
   vision?: DashboardVisionConfig
+  modelVision?: boolean
 }
 
 type DashboardVisionConfig = {
@@ -425,6 +426,7 @@ function normalizeRuntimeLLMConfig(raw: unknown): { configName: string; config: 
     }
     config.providerHeaders = headers
   }
+  if (typeof raw.vision === 'boolean') config.modelVision = raw.vision
 
   return { configName: raw.name, config }
 }
