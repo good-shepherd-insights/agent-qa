@@ -30,6 +30,7 @@ import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
 import type { Action, ActionResult, PlatformAdapter, RecordingCapability, RecordingStop, RuntimeAuthStateConfig } from '../platform.js'
 import type { AccessibilityViolation, StepResult, TestResult } from '../result.js'
 import type {
+  CarriedArtifacts,
   EvidenceArtifactStorePort,
   LoopLogger,
   LoopPorts,
@@ -483,6 +484,8 @@ async function runMemberAttempt(
   // step. Loop-side state only: never serialized, never in evidence or the handoff; its
   // lifetime is this test member.
   const procedureFlow: { carry?: ProcedureFlowCarry } = {}
+  // 439 D-04: this member's downloads and latest clipboard write, carried to its later steps.
+  const carriedArtifacts: CarriedArtifacts = { downloads: [] }
 
   const startedRecording = await startAttemptRecording(config)
   let recording: AttemptRecording
@@ -806,6 +809,7 @@ async function runMemberAttempt(
       safetyHooks: config.safetyHooks,
       knowledgeReader: config.knowledgeReader,
       procedureFlow,
+      carriedArtifacts,
       knowledgeBudgets: config.knowledgeBudgets,
       knowledgeAsOfBuild: config.knowledgeAsOfBuild,
       knowledgeRetrievalRung: config.knowledgeRetrievalRung,

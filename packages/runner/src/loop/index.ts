@@ -80,7 +80,7 @@ import type {
   TargetIdentity,
 } from '../grounding/stated-target.js'
 import type { CachedPlanValue } from '../cache/port.js'
-import type { LoopPorts } from './ports.js'
+import type { CarriedArtifacts, LoopPorts } from './ports.js'
 import { guardActionData } from './blob-guard.js'
 import type {
   ActionPlan,
@@ -104,7 +104,7 @@ import {
   renderOperationEvidence,
 } from './prompts.js'
 import { judgeConditions, type CitationSources } from './requested-conditions.js'
-import { StepRecordAccumulator, type RecordedActionOutcome } from './step-record.js'
+import { StepRecordAccumulator, type RecordedAction, type RecordedActionOutcome } from './step-record.js'
 import { EvidenceRecorder, collapseAnnotation, persistAriaEvidence, projectLegacyTrace } from './evidence.js'
 import type { RecordSubActionInput } from './evidence.js'
 import { maskToolExchanges } from './mask-exchanges.js'
@@ -291,6 +291,10 @@ export async function executeStep(
   // 439 D-03: everything the step did and read, for the verifier; never the planner's reasoning.
   const stepRecord = new StepRecordAccumulator()
   const recordMask = (value: string) => maskValue(redactSecretValue(value, ports.secretRedactor))
+  // 439 D-04: what earlier steps of this test downloaded or copied, labelled by its producer.
+  for (const item of carriedItems(ports.carriedArtifacts)) {
+    stepRecord.addCarried({ stepNumber: item.stepNumber, actionIndex: item.actionIndex, text: recordMask(item.text) })
+  }
   // D-17: one ledger object lives where turns live. A bound object is shared with Channel-2 tool
   // closures; otherwise this step-local instance still accounts for the frozen Channel-1 brief.
   const recordLedger = ports.recordLedger ?? createRecordLedger({
@@ -528,6 +532,9 @@ export async function executeStep(
     verdict: VerifierVerdict,
     error?: string,
   ): StepResult => {
+    if (ports.carriedArtifacts !== undefined && context.stepNumber !== undefined) {
+      carryForward(ports.carriedArtifacts, context.stepNumber, stepRecord.recordedActions())
+    }
     // Capture any model-visible reads admitted immediately before a terminal return. Normal
     // planner turns drain at their own boundary; this final drain is the no-loss backstop.
     recorder.recordServedReadTraces(ports.drainMemoryReadTraces?.() ?? [])
@@ -3177,6 +3184,36 @@ function operationCaptureAvailability(
   const clipboard = support?.clipboard ? 'available' : 'unavailable'
   if (download === 'available' && clipboard === 'available') return { download, clipboard }
   return { download, clipboard, reason: support?.reason ?? 'platform' }
+}
+
+function carriedItems(cell: CarriedArtifacts | undefined): { stepNumber: number; actionIndex: number; text: string }[] {
+  if (cell === undefined) return []
+  const items = cell.downloads.map((entry) => ({
+    stepNumber: entry.stepNumber,
+    actionIndex: entry.actionIndex,
+    text: renderOperationEvidence({ downloads: [entry.evidence] }),
+  }))
+  if (cell.clipboard !== undefined) {
+    items.push({
+      stepNumber: cell.clipboard.stepNumber,
+      actionIndex: cell.clipboard.actionIndex,
+      text: renderOperationEvidence({ clipboard: [cell.clipboard.evidence] }),
+    })
+  }
+  return items
+}
+
+// 439 D-04: only a completed download is evidence it happened; the clipboard keeps the latest write.
+function carryForward(cell: CarriedArtifacts, stepNumber: number, actions: readonly RecordedAction[]): void {
+  for (const action of actions) {
+    for (const download of action.operationEvidence?.downloads ?? []) {
+      if (download.state === 'completed') {
+        cell.downloads.push({ stepNumber, actionIndex: action.index, evidence: download })
+      }
+    }
+    const latest = action.operationEvidence?.clipboard?.at(-1)
+    if (latest !== undefined) cell.clipboard = { stepNumber, actionIndex: action.index, evidence: latest }
+  }
 }
 
 function takeOperationEvidence(

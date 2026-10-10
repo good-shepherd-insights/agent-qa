@@ -8,6 +8,8 @@
 import type { LanguageModelUsage, ModelMessage } from 'ai'
 import type {
   ArtifactRef,
+  ClipboardEvidence,
+  DownloadEvidence,
   EvidenceDocument,
   DeclaredModelProfile,
   MaskingContext,
@@ -225,6 +227,26 @@ export interface ProcedureFlowCarry {
   nextIndex: number
 }
 
+/** 439 D-04: a completed download from an earlier step of this test, labelled by its producer. */
+export interface CarriedDownload {
+  stepNumber: number
+  /** 1-based position of the producing action in its step. */
+  actionIndex: number
+  evidence: DownloadEvidence
+}
+
+/** 439 D-04: the latest app clipboard write from an earlier step of this test. */
+export interface CarriedClipboard {
+  stepNumber: number
+  actionIndex: number
+  evidence: ClipboardEvidence
+}
+
+export interface CarriedArtifacts {
+  downloads: CarriedDownload[]
+  clipboard?: CarriedClipboard
+}
+
 /**
  * The runner-owned port bundle the loop executes against — successor to v1's
  * AgentLoopConfig (core types.ts:66-104), minus the D-10 healing/attempt-limit
@@ -293,6 +315,15 @@ export interface LoopPorts {
    * degrade-when-absent).
    */
   procedureFlow?: { carry?: ProcedureFlowCarry }
+  /**
+   * 439 D-04 member-scoped carry cell, the `procedureFlow` precedent: the caller owns ONE cell per
+   * test member and threads the SAME object into every per-step ports literal. The loop renders its
+   * items into the step record's carried lines at step start, and at the step's end appends the
+   * step's completed downloads and replaces the clipboard with its latest write. Loop-side state
+   * only: never serialized, never recorded into evidence or the handoff, never crosses a test
+   * boundary. Absent ⇒ nothing carries (the live editor).
+   */
+  carriedArtifacts?: CarriedArtifacts
   /**
    * D-02/D-15/D-17 knowledge budgets are computed beside model token accounting at the
    * composition root and arrive here as plain numbers. The provider-neutral loop never derives

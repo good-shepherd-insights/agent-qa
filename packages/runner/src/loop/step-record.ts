@@ -81,6 +81,11 @@ export class StepRecordAccumulator {
     this.carried.push(line)
   }
 
+  /** The actions recorded so far; unlike `snapshot` it needs no start screen. */
+  recordedActions(): RecordedAction[] {
+    return [...this.actions]
+  }
+
   snapshot(): VerifierStepRecord {
     if (this.startScreen === undefined) throw new Error('The step record has no start screen')
     return {

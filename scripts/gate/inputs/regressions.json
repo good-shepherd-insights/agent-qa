@@ -6756,6 +6756,36 @@
       "file": "packages/runner/src/loop/__tests__/439-replay.test.ts",
       "fullName": "C439-REPLAY procedure replay re-verifies each replayed step",
       "origin": "439 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-carry.test.ts",
+      "fullName": "C439-CARRY a later step cites the earlier step's download by its label",
+      "origin": "439 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-carry.test.ts",
+      "fullName": "C439-CARRY only the latest clipboard write carries",
+      "origin": "439 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-carry.test.ts",
+      "fullName": "C439-CARRY screens, reads and unfinished downloads never carry",
+      "origin": "439 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-carry.test.ts",
+      "fullName": "C439-CARRY without a cell nothing carries",
+      "origin": "439 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/run/__tests__/439-carry-member.test.ts",
+      "fullName": "C439-CARRY-MEMBER each test member has its own cell",
+      "origin": "439 D-04"
     }
   ]
 }
