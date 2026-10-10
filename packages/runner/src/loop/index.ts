@@ -80,7 +80,7 @@ import type {
   TargetIdentity,
 } from '../grounding/stated-target.js'
 import type { CachedPlanValue } from '../cache/port.js'
-import type { LoopPorts, SecretRedactorPort } from './ports.js'
+import type { LoopPorts } from './ports.js'
 import { guardActionData } from './blob-guard.js'
 import type { ActionPlan, PlanResult, StepContext, VerifierAuthorContext } from './types.js'
 import { PlanningLimitReachedError, PlanningTurnError } from './planner.js'
@@ -1664,12 +1664,12 @@ export async function executeStep(
         if (abortDuringHeal) return abortDuringHeal
         throw err
       }
-      const heal = regroundFailedRef(action, screenState.elements, freshElements, ports.secretRedactor)
+      const scrub = (value: string) => maskValue(redactSecretValue(value, ports.secretRedactor))
+      const heal = regroundFailedRef(action, screenState.elements, freshElements, scrub)
       if (heal?.kind === 'resolved') {
         grounding = grounding?.stated !== undefined
           ? { ...heal.grounding, stated: grounding.stated }
           : heal.grounding
-        const scrub = (value: string) => maskValue(redactSecretValue(value, ports.secretRedactor))
         let healRefusal: TargetRefusal | undefined
         for (const lane of heal.lanes) {
           const stated = statedTargets?.[lane.field]
@@ -2932,13 +2932,14 @@ type RegroundOutcome =
 // lanes with different prior refs collapsing onto one fresh element, makes the whole heal unproven,
 // so no pre-observe ref is ever dispatched against the fresh observation. Resolved carries every
 // lane's fresh ref and element and the §A8 trail (per lane: ref no-match → tree-search resolved),
-// its descriptor naming the first lane; null means a lane names no element of the prior
-// observation. Never replans.
+// its descriptor naming the first lane, scrubbed like the live block and its row capped like the
+// refusal block's (WR-01, D-05); null means a lane names no element of the prior observation.
+// Never replans.
 function regroundFailedRef(
   action: Action,
   priorElements: readonly ElementInfo[],
   freshElements: readonly ElementInfo[],
-  redactor: SecretRedactorPort | undefined,
+  scrub: (value: string) => string,
 ): RegroundOutcome | null {
   const lanes: HealLane[] = []
   const priorRefs: string[] = []
@@ -2958,9 +2959,9 @@ function regroundFailedRef(
     const element = freshElements.find((candidate) => candidate.ref === match.ref)!
 
     descriptor ??= {
-      role: prior.role,
-      name: redactSecretValue(prior.name, redactor),
-      ...(row !== undefined ? { row: redactSecretValue(row, redactor) } : {}),
+      role: scrub(prior.role),
+      name: scrub(prior.name),
+      ...(row !== undefined ? { row: scrub(row).slice(0, OBSERVED_ROW_CAP) } : {}),
     }
     lanes.push({ field, ref: match.ref, element })
     priorRefs.push(priorRef)
