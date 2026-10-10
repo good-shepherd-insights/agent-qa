@@ -8,10 +8,14 @@
 // XCUIElementTypeCell maps to `cell`; on web a table cell is always found below its `row` first).
 // A row container is its own row (438 gap round, WR-04), so a clicked listitem or row is checked
 // against its own row words. Row text is the container's name, its folded static text, then every
-// descendant's name and text in document order. No container means the row is unknown — never a
-// contradiction (Android layout groups are filtered out of the observation, so a list row there
-// has no container). strictMatch, the cache locator's row lift and the web binding (observe-time
-// and dispatch-time row text) all read this one definition.
+// descendant's name and text in document order. A row container that is the element itself and
+// has an enclosing row container also carries that enclosing container's own line (its name and
+// folded text) first, so `2025 > Invoices` reads '2025 Invoices' (438 gap round 2, WR-10); only
+// the nearest one joins and none of its other descendants, so a sibling row's words never join.
+// No container means the row is unknown — never a contradiction (Android layout groups are
+// filtered out of the observation, so a list row there has no container). strictMatch, the cache
+// locator's row lift, the heal's prior row and the web binding (observe-time and dispatch-time
+// row text) all read this one definition.
 //
 // Containment compares word tokens after NFKC and lowercasing. Each stated word must equal a row
 // word or be a prefix (two or more characters) of a non-number row word; a number must match a row
@@ -96,7 +100,14 @@ export function rowTextOf(
   const container = rowContainerOf(element, byRef)
   if (container === undefined) return undefined
 
-  const parts: string[] = [container.name, container.text ?? '']
+  const parts: string[] = []
+  if (container.ref === element.ref && ROW_CONTAINER_ROLES.includes(element.role)) {
+    const enclosing = ancestorsOf(element, byRef).find((ancestor) =>
+      ROW_CONTAINER_ROLES.includes(ancestor.role),
+    )
+    if (enclosing !== undefined) parts.push(enclosing.name, enclosing.text ?? '')
+  }
+  parts.push(container.name, container.text ?? '')
   for (const descendant of descendantsInOrder(container, elements, byRef)) {
     parts.push(descendant.name, descendant.text ?? '')
   }
