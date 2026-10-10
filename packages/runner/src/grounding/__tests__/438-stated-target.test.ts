@@ -119,6 +119,29 @@ describe('C438-JUDGE', () => {
     ])
   })
 
+  // 438 gap round 2, WR-11: a digit group is one number to the shared-word rule too.
+  it('"1234" vs "1,234" agrees (a digit group is one number)', () => {
+    expect(reasons({ role: 'button', name: '1234' }, element('button', '1,234'))).toEqual([])
+  })
+
+  it('"1,234" vs "1234" agrees', () => {
+    expect(reasons({ role: 'button', name: '1,234' }, element('button', '1234'))).toEqual([])
+  })
+
+  it('"1234" vs "1 234" with a narrow no-break space agrees', () => {
+    expect(reasons({ role: 'button', name: '1234' }, element('button', '1\u202F234'))).toEqual([])
+  })
+
+  it('"1234" vs "1 234" with a no-break space agrees', () => {
+    expect(reasons({ role: 'button', name: '1234' }, element('button', '1\u00A0234'))).toEqual([])
+  })
+
+  it('"Weight 1.234" vs "Weight 1234" is a name-number contradiction (a dot is never a separator)', () => {
+    expect(
+      reasons({ role: 'button', name: 'Weight 1.234' }, element('button', 'Weight 1234')),
+    ).toEqual(['name-number'])
+  })
+
   it('a full-width "Ｓｕｂｍｉｔ" agrees with "Submit"', () => {
     const observed = element('button', 'Submit')
     expect(reasons({ role: 'button', name: 'Ｓｕｂｍｉｔ' }, observed)).toEqual([])

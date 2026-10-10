@@ -124,6 +124,25 @@ describe('C438-ROW-TEXT', () => {
     expect(wordTokens('１７ Elm')).toEqual(['17', 'elm'])
   })
 
+  // 438 gap round 2, WR-11: digit grouping is read once, in the shared tokenizer.
+  it('wordTokens reads a digit group split by a comma, an underscore, a narrow no-break space or a no-break space as one number', () => {
+    expect(wordTokens('1,234 1_234 1\u202F234 1\u00A0234')).toEqual([
+      '1234',
+      '1234',
+      '1234',
+      '1234',
+    ])
+  })
+
+  it('rowContains reads "1,234" and "1234" as one number in both directions', () => {
+    expect(rowContains('Invoice 1,234 due', 'Invoice 1234')).toBe(true)
+    expect(rowContains('Invoice 1234 due', 'Invoice 1,234')).toBe(true)
+  })
+
+  it('wordTokens keeps a plain space, a dot and a short group as separators', () => {
+    expect(wordTokens('1 234 1.234 1,23')).toEqual(['1', '234', '1', '234', '1', '23'])
+  })
+
   it('rowContains: a one-letter word is never a prefix', () => {
     expect(rowContains('7 Elm Street', 'E')).toBe(false)
   })

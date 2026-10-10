@@ -53,6 +53,24 @@ const PAY_PAGE = `<!doctype html><html><body>
   ${EVENT_LOG}
 </body></html>`
 
+const GROUPED_PAGE = `<!doctype html><html><body>
+  <button id="grouped" type="button">1,234</button>
+  ${EVENT_LOG}
+</body></html>`
+
+const GROUPED_ROWS_PAGE = `<!doctype html><html><head><script>window.__clicks = []</script></head><body>
+  <ul>
+    <li>
+      <p>Invoice 1,234 due 2026-11-01</p>
+      <button type="button" onclick="window.__clicks.push('1,234')">Open</button>
+    </li>
+    <li>
+      <p>Invoice 1,235 due 2026-11-02</p>
+      <button type="button" onclick="window.__clicks.push('1,235')">Open</button>
+    </li>
+  </ul>
+</body></html>`
+
 const ADDRESSES_PAGE = `<!doctype html><html><head><script>window.__clicks = []</script></head><body>
   <ul>
     <li>
@@ -316,6 +334,34 @@ describe('C438-STATED-TARGET', () => {
     expect(run.executed).toHaveLength(1)
     expect(clicks(await events(web))).toEqual([{ id: 'pay', type: 'click' }])
     expect(refusalOf(run)).toBeUndefined()
+  }, 60_000)
+
+  it('"1234" stated against "1,234" is clicked', async () => {
+    const web = await open(GROUPED_PAGE)
+    const planner = scriptedPlanner([
+      (screen) => act(
+        {
+          type: 'click',
+          ref: refFor(screen, 'button', '1,234'),
+          target: { role: 'button', name: '1234' },
+        },
+        true,
+        'Pick 1234',
+      ),
+      () => giveUp('1234 could not be picked'),
+    ])
+    const run = await runScriptedStep({
+      adapter: web,
+      instruction: 'Pick 1234',
+      planner,
+      verifier: passes,
+      plannerConfig: LIMITS,
+    })
+
+    expect(refusalOf(run)).toBeUndefined()
+    expect(run.result.status).toBe('passed')
+    expect(run.executed).toHaveLength(1)
+    expect(clicks(await events(web))).toEqual([{ id: 'grouped', type: 'click' }])
   }, 60_000)
 
   it('a paraphrase is not a contradiction', async () => {
@@ -591,5 +637,46 @@ describe('C438-STATED-ROW', () => {
     expect(run.result.status).toBe('passed')
     expect(run.executed).toHaveLength(1)
     expect(await addressClicks(web)).toEqual(['2025 Invoices'])
+  }, 60_000)
+
+  it('a row stated "Invoice 1234" against "Invoice 1,234" is clicked', async () => {
+    const web = await open(GROUPED_ROWS_PAGE)
+    const planner = scriptedPlanner([
+      (screen) => {
+        const row = screen.elements.find(
+          (element) => element.role === 'listitem' && element.text?.includes('Invoice 1,234'),
+        )
+        const button = screen.elements.find(
+          (element) =>
+            element.role === 'button'
+            && element.name === 'Open'
+            && row !== undefined
+            && element.hierarchy?.parentRef === row.ref,
+        )
+        if (button === undefined) throw new Error('no button "Open" in the Invoice 1,234 row')
+        return act(
+          {
+            type: 'click',
+            ref: button.ref,
+            target: { role: 'button', name: 'Open', row: 'Invoice 1234' },
+          },
+          true,
+          'Open invoice 1234',
+        )
+      },
+      () => giveUp('Invoice 1234 could not be opened'),
+    ])
+    const run = await runScriptedStep({
+      adapter: web,
+      instruction: 'Open invoice 1234',
+      planner,
+      verifier: passes,
+      plannerConfig: LIMITS,
+    })
+
+    expect(refusalOf(run)).toBeUndefined()
+    expect(run.result.status).toBe('passed')
+    expect(run.executed).toHaveLength(1)
+    expect(await addressClicks(web)).toEqual(['1,234'])
   }, 60_000)
 })
