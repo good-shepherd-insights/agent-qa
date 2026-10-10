@@ -3,8 +3,8 @@
 // element: only `row` lines become new elements. Pages are inline snippets.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { buildScreenState, rowTextOf } from '@vostride/agent-qa-runner'
-import type { ScreenState } from '@vostride/agent-qa-schema'
+import { buildScreenState, judgeStatedTarget, rowTextOf } from '@vostride/agent-qa-runner'
+import type { ElementInfo, ScreenState } from '@vostride/agent-qa-schema'
 import { WebPlatformAdapter } from '../adapter.js'
 import { parseAriaSnapshot } from '../observer.js'
 
@@ -36,7 +36,76 @@ const CART_PAGE = `<!doctype html><html><body>
   </table>
 </body></html>`
 
+const SIBLING_CONTAINER_SNAPSHOT = [
+  '- list:',
+  '  - listitem:',
+  '    - text: 7 Elm Street',
+  '    - button "Edit label"',
+  '  - listitem:',
+  '    - text: 12 Oak Avenue',
+  '    - button "Edit label"',
+  '- generic:',
+  '  - generic:',
+  '    - text: Promo 4111 1111',
+  '    - button "Add address"',
+].join('\n')
+
+const SIBLING_CONTAINER_PAGE = `<!doctype html><html><body>
+  <ul>
+    <li>
+      <p>7 Elm Street</p>
+      <button type="button">Edit label</button>
+    </li>
+    <li>
+      <p>12 Oak Avenue</p>
+      <button type="button">Edit label</button>
+    </li>
+  </ul>
+  <div role="group"><div>
+    <span>Promo 4111 1111</span>
+    <button type="button">Add address</button>
+  </div></div>
+</body></html>`
+
+const IFRAME_AFTER_LIST_PAGE = `<!doctype html><html><body>
+  <ul>
+    <li>
+      <p>7 Elm Street</p>
+      <button type="button">Edit label</button>
+    </li>
+    <li>
+      <p>9 Oak Road</p>
+      <button type="button">Edit label</button>
+    </li>
+  </ul>
+  <iframe srcdoc="<button>Inner A</button><button>Inner B</button>"></iframe>
+</body></html>`
+
+const ORDERS_PAGE = `<!doctype html><html><body>
+  <nav aria-label="Main"><ul><li><a href="#">Orders</a></li></ul></nav>
+  <main>
+    <h1>Orders</h1>
+    <button type="button">Export order history</button>
+    <p>Total spent: $354.00</p>
+    <table>
+      <tr><th>Order</th><th>Date</th><th>Total</th></tr>
+      <tr><td>1034</td><td>2026-06-05</td><td>$12.00</td></tr>
+      <tr><td>1035</td><td>2026-06-06</td><td>$20.00</td></tr>
+    </table>
+  </main>
+</body></html>`
+
 const DROPPED_ROLES = ['paragraph', 'strong', 'text', 'generic', 'emphasis']
+
+function named(state: ScreenState, role: string, name: string): ElementInfo[] {
+  return state.elements.filter((element) => element.role === role && element.name === name)
+}
+
+function only(state: ScreenState, role: string, name: string): ElementInfo {
+  const found = named(state, role, name)
+  expect(found).toHaveLength(1)
+  return found[0]
+}
 
 let adapter: WebPlatformAdapter | undefined
 
@@ -146,5 +215,91 @@ describe('C438-ROW-PARSE', () => {
       'row', 'cell', 'cell', 'cell', 'button',
       'row', 'cell', 'cell', 'cell', 'button',
     ])
+  }, 60_000)
+
+  it("a later sibling container's text and controls never fold into the preceding row", () => {
+    const state = build(SIBLING_CONTAINER_SNAPSHOT)
+    const items = state.elements.filter((element) => element.role === 'listitem')
+    const addAddress = only(state, 'button', 'Add address')
+
+    expect(items).toHaveLength(2)
+    expect(items[1].text).toBe('12 Oak Avenue')
+    expect(addAddress.hierarchy?.parentRef).toBeUndefined()
+    expect(rowTextOf(addAddress, state.elements)).toBeUndefined()
+    expect(
+      judgeStatedTarget(
+        { role: 'button', name: 'Add address', row: 'Oak Avenue' },
+        addAddress,
+        state.elements,
+      ),
+    ).toEqual({ verdict: 'agrees', rowStated: true, rowKnown: false })
+  })
+
+  it('in real Chromium a control after the list has no row and the last row keeps only its own text', async () => {
+    const snapshot = await snapshotOf(SIBLING_CONTAINER_PAGE)
+    expect(snapshot).toMatch(/^\s*-\s*group\b/m)
+    const state = build(snapshot)
+    const items = state.elements.filter((element) => element.role === 'listitem')
+    const addAddress = only(state, 'button', 'Add address')
+
+    expect(items).toHaveLength(2)
+    expect(items[1].text).toBe('12 Oak Avenue')
+    expect(addAddress.hierarchy?.parentRef).toBeUndefined()
+    expect(rowTextOf(addAddress, state.elements)).toBeUndefined()
+    expect(
+      judgeStatedTarget(
+        { role: 'button', name: 'Add address', row: 'Oak Avenue' },
+        addAddress,
+        state.elements,
+      ),
+    ).toEqual({ verdict: 'agrees', rowStated: true, rowKnown: false })
+  }, 60_000)
+
+  it("a stated row with a sibling container's words is refused on the last row's button", async () => {
+    const state = build(await snapshotOf(SIBLING_CONTAINER_PAGE))
+    const editLabels = named(state, 'button', 'Edit label')
+
+    expect(editLabels).toHaveLength(2)
+    const judgement = judgeStatedTarget(
+      { role: 'button', name: 'Edit label', row: 'Promo' },
+      editLabels[1],
+      state.elements,
+    )
+    expect(judgement.verdict).toBe('contradicts')
+    expect(judgement.verdict === 'contradicts' ? judgement.reasons : []).toEqual(['row'])
+  }, 60_000)
+
+  it('an iframe after a list is parented under no row', async () => {
+    const page = adapter!.getPage()!
+    await page.setContent(IFRAME_AFTER_LIST_PAGE)
+    await page.frameLocator('iframe').getByRole('button', { name: 'Inner B' }).waitFor()
+    const state = build(await page.locator(':root').ariaSnapshot({ mode: 'ai' }))
+    const innerA = only(state, 'button', 'Inner A')
+    const innerB = only(state, 'button', 'Inner B')
+    const editLabels = named(state, 'button', 'Edit label')
+
+    expect(rowTextOf(innerA, state.elements)).toBeUndefined()
+    expect(rowTextOf(innerB, state.elements)).toBeUndefined()
+    expect(editLabels).toHaveLength(2)
+    const lastRow = rowTextOf(editLabels[1], state.elements)
+    expect(lastRow).toContain('9 Oak Road')
+    expect(lastRow).not.toContain('Inner A')
+    expect(lastRow).not.toContain('Inner B')
+  }, 60_000)
+
+  it('a table after a heading, a button and a navigation is parented under none of them', async () => {
+    const state = build(await snapshotOf(ORDERS_PAGE))
+    const navigation = only(state, 'navigation', 'Main')
+    const exportButton = only(state, 'button', 'Export order history')
+    const heading = only(state, 'heading', 'Orders')
+    const rows = state.elements.filter((element) => element.role === 'row')
+
+    expect(rows).toHaveLength(3)
+    for (const row of rows) {
+      expect(row.hierarchy?.parentRef).not.toBe(exportButton.ref)
+      expect(row.hierarchy?.parentRef).not.toBe(navigation.ref)
+    }
+    expect(heading.hierarchy?.parentRef).not.toBe(navigation.ref)
+    expect(navigation.text ?? '').not.toContain('Total spent')
   }, 60_000)
 })
