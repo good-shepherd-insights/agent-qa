@@ -4,6 +4,8 @@
 // condition, while each twin passes. The verifier is written inline and returns the per-condition
 // shape; pages are inline snippets, and the persistence pair is served by a loopback server here.
 
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 import type {
   ConditionJudgment,
@@ -46,11 +48,66 @@ const NUMBER_PAGE = `<!doctype html><html><body><main>
   <input type="number" aria-label="Volume" value="50">
 </main></body></html>`
 
+const ORDER_STEP = 'Verify the order row reads ORD-1001,42.50'
+const ORDER_QUOTE = 'the order row reads ORD-1001,42.50'
+const ORDER_PAGE = (row: string) => `<!doctype html><html><body><main>
+  <h2>Orders</h2><div id="row">${row}</div>
+</main></body></html>`
+const ROW_EXPR = "document.getElementById('row').textContent"
+
+const DEALS_STEP = 'Turn on deals emails and verify the setting is saved'
+
+interface SettingsServer {
+  url: string
+  close(): Promise<void>
+}
+
+/** A settings page whose Save says "Saved"; only a working server keeps the setting. */
+async function settingsServer(mode: 'working' | 'dead'): Promise<SettingsServer> {
+  let deals = false
+  const server = createServer((request, response) => {
+    if (request.method === 'POST' && request.url === '/save') {
+      let body = ''
+      request.on('data', (chunk: Buffer) => { body += chunk.toString() })
+      request.on('end', () => {
+        if (mode === 'working') deals = body === 'on'
+        response.writeHead(204, { 'cache-control': 'no-store' })
+        response.end()
+      })
+      return
+    }
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+    response.end(`<!doctype html><html><body><main>
+  <h1>Settings</h1>
+  <h2>Deals emails: ${deals ? 'on' : 'off'}</h2>
+  <input type="checkbox" role="switch" id="deals" aria-label="Deals emails" ${deals ? 'checked' : ''}>
+  <button type="button" onclick="save()">Save</button>
+  <h3 id="status"></h3>
+</main>
+<script>
+  async function save() {
+    const on = document.getElementById('deals').checked ? 'on' : 'off'
+    await fetch('/save', { method: 'POST', body: on })
+    document.getElementById('status').textContent = 'Saved'
+  }
+</script></body></html>`)
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const { port } = server.address() as AddressInfo
+  return {
+    url: `http://localhost:${String(port)}/settings`,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  }
+}
+
 let adapter: WebPlatformAdapter | undefined
+let settings: SettingsServer | undefined
 
 afterEach(async () => {
   await adapter?.cleanup()
   adapter = undefined
+  await settings?.close()
+  settings = undefined
 }, 60_000)
 
 async function open(html: string): Promise<WebPlatformAdapter> {
@@ -116,6 +173,40 @@ function thenGiveUp(first: ScriptedTurn, seen: { failureContext?: string }): Scr
       return giveUp('The step could not be proven')
     },
   ]
+}
+
+/** "Turn on deals emails" met on the click; "the setting is saved" judged from the final screen. */
+function dealsVerifier(): JudgingVerifier {
+  return judgingVerifier((after) => {
+    const has = (name: string) => after.elements.some((e) => e.role === 'heading' && e.name === name)
+    const saved = has('Saved')
+      ? condition('the setting is saved', [{ source: 'final-screen', quote: 'heading "Saved"' }], { needs: 'persistence' })
+      : has('Deals emails: on')
+        ? condition('the setting is saved', [{ source: 'final-screen', quote: 'heading "Deals emails: on"' }], { needs: 'persistence' })
+        : condition('the setting is saved', [{ source: 'final-screen', quote: 'heading "Deals emails: off"' }], {
+          needs: 'persistence',
+          verdict: 'not-met',
+          reasoning: 'After the reload the setting reads off',
+        })
+    return verification([
+      condition('Turn on deals emails', [{ source: 'action', quote: '→ success' }]),
+      saved,
+    ])
+  })
+}
+
+const toggleDeals: ScriptedTurn = (screen) =>
+  act({ type: 'click', ref: refFor(screen, 'switch', 'Deals emails') }, false, 'Turn on deals emails')
+const saveDeals = (complete: boolean): ScriptedTurn => (screen) =>
+  act({ type: 'click', ref: refFor(screen, 'button', 'Save') }, complete, 'Save the setting')
+const reload = (complete: boolean): ScriptedTurn => () =>
+  act({ type: 'navigate', to: 'reload' }, complete, 'Reload to re-read the setting')
+
+async function openSettings(mode: 'working' | 'dead'): Promise<WebPlatformAdapter> {
+  settings = await settingsServer(mode)
+  const web = await open('<!doctype html><html><body></body></html>')
+  await web.getPage()!.goto(settings.url)
+  return web
 }
 
 describe('C439-AUTO12', () => {
@@ -237,6 +328,105 @@ describe('C439-AUTO12', () => {
       verdict: 'unverified',
       judged: 'met',
       guard: 'limit',
+    })
+  }, 60_000)
+
+  it('a narrower passing check cannot replace a failed one', async () => {
+    const verifier = judgingVerifier(() => verification([
+      condition(ORDER_QUOTE, [{ source: 'read', quote: 'contains "ORD-1001": passed' }]),
+    ]))
+    const seen: { failureContext?: string } = {}
+    const planner = scriptedPlanner([
+      () => act({ type: 'assertValue', expr: ROW_EXPR, op: 'contains', expected: 'ORD-1001,42.50' }, false, 'Check the row'),
+      () => act({ type: 'assertValue', expr: ROW_EXPR, op: 'contains', expected: 'ORD-1001' }, true, 'The row reads the order'),
+      (_screen, context) => {
+        seen.failureContext = context.failureContext
+        return giveUp('The row does not read ORD-1001,42.50')
+      },
+    ])
+
+    const web = await open(ORDER_PAGE('ORD-1001,42.00'))
+    const run = await runScriptedStep({ adapter: web, instruction: ORDER_STEP, planner, verifier, plannerConfig: LIMITS })
+
+    expect(run.result.status).toBe('failed')
+    expect(seen.failureContext).toContain('an earlier check asking for more failed')
+    expect(run.result.evidence!.conditionVerdicts!.conditions[0]).toMatchObject({
+      quote: ORDER_QUOTE,
+      verdict: 'not-met',
+      judged: 'met',
+      guard: 'narrowed',
+    })
+  }, 60_000)
+
+  it('the full check passing first time is met', async () => {
+    const verifier = judgingVerifier(() => verification([
+      condition(ORDER_QUOTE, [{ source: 'read', quote: 'contains "ORD-1001,42.50": passed' }]),
+    ]))
+    const planner = scriptedPlanner([
+      () => act({ type: 'assertValue', expr: ROW_EXPR, op: 'contains', expected: 'ORD-1001,42.50' }, true, 'The row reads the order'),
+    ])
+
+    const web = await open(ORDER_PAGE('ORD-1001,42.50'))
+    const run = await runScriptedStep({ adapter: web, instruction: ORDER_STEP, planner, verifier, plannerConfig: LIMITS })
+
+    expect(run.result.status).toBe('passed')
+    expect(run.result.evidence!.conditionVerdicts!.conditions[0]).toMatchObject({ verdict: 'met' })
+  }, 60_000)
+
+  it('"Saved" without a re-read after reload is not persistence', async () => {
+    const web = await openSettings('dead')
+    const seen: { failureContext?: string }[] = []
+    const remember = (turn: ScriptedTurn): ScriptedTurn => (screen, context) => {
+      seen.push({ failureContext: context.failureContext })
+      return turn(screen, context)
+    }
+    const planner = scriptedPlanner([
+      toggleDeals,
+      saveDeals(true),
+      remember(reload(true)),
+      remember(() => giveUp('After the reload the setting reads off')),
+    ])
+
+    const run = await runScriptedStep({ adapter: web, instruction: DEALS_STEP, planner, verifier: dealsVerifier(), plannerConfig: LIMITS })
+
+    expect(run.result.status).toBe('failed')
+    expect(seen[0].failureContext).toContain('no re-read after a reload or reopen')
+    expect(seen[0].failureContext).toContain('Unverified: "the setting is saved"')
+    expect(seen[1].failureContext).toContain('Not met: "the setting is saved"')
+    const conditions = run.result.evidence!.conditionVerdicts!.conditions
+    expect(conditions[1]).toMatchObject({ verdict: 'not-met', needs: 'persistence' })
+  }, 60_000)
+
+  it('a re-read after reload proves persistence', async () => {
+    const web = await openSettings('working')
+    const planner = scriptedPlanner([toggleDeals, saveDeals(false), reload(true)])
+
+    const run = await runScriptedStep({ adapter: web, instruction: DEALS_STEP, planner, verifier: dealsVerifier(), plannerConfig: LIMITS })
+
+    expect(run.result.status).toBe('passed')
+    expect(run.result.evidence!.conditionVerdicts!.conditions[1]).toMatchObject({
+      verdict: 'met',
+      needs: 'persistence',
+      citations: [{ source: 'final-screen', quote: 'heading "Deals emails: on"', found: true }],
+    })
+  }, 60_000)
+
+  it('a reload before the change does not count', async () => {
+    const web = await openSettings('working')
+    const planner = scriptedPlanner([
+      reload(false),
+      toggleDeals,
+      saveDeals(true),
+      () => giveUp('The setting was never re-read after the save'),
+    ])
+
+    const run = await runScriptedStep({ adapter: web, instruction: DEALS_STEP, planner, verifier: dealsVerifier(), plannerConfig: LIMITS })
+
+    expect(run.result.status).toBe('failed')
+    expect(run.result.evidence!.conditionVerdicts!.conditions[1]).toMatchObject({
+      verdict: 'unverified',
+      judged: 'met',
+      guard: 'no-reload',
     })
   }, 60_000)
 })

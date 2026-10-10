@@ -27,7 +27,14 @@ import type {
   OpenDialogAccount,
   Platform,
 } from '@vostride/agent-qa-schema'
-import { applyDialogGuard, applyLimitGuard, openDialogsOn } from './condition-guards.js'
+import {
+  applyDialogGuard,
+  applyLimitGuard,
+  applyNarrowedGuard,
+  applyPersistenceGuard,
+  openDialogsOn,
+  type CheckedCitation,
+} from './condition-guards.js'
 import type { VerifierStepRecord } from './step-record.js'
 import type { ConditionJudgment, VerificationResult } from './types.js'
 
@@ -310,7 +317,15 @@ function judgeOne(
     }
   }
   const met: ConditionRecord = { quote, verdict: 'met', ...needs, reason, citations }
-  return applyLimitGuard(met, judgment, context.guards.finalElements, input.mask)
+  const cited: CheckedCitation[] = checked.map((citation, i) => ({
+    source: citation.source,
+    quote: judgment.citations[i]?.quote ?? '',
+    found: citation.found,
+  }))
+  const { finalElements, record } = context.guards
+  let guardedRecord = applyLimitGuard(met, judgment, finalElements, input.mask)
+  guardedRecord = applyNarrowedGuard(guardedRecord, cited, record, input.mask)
+  return applyPersistenceGuard(guardedRecord, judgment, cited, record)
 }
 
 /**

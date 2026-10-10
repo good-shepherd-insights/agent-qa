@@ -5,7 +5,17 @@
 import { describe, expect, it } from 'vitest'
 import { asRef } from '@vostride/agent-qa-schema'
 import type { ConditionRecord, ElementInfo } from '@vostride/agent-qa-schema'
-import { applyDialogGuard, applyLimitGuard, openDialogsOn } from '../condition-guards.js'
+import {
+  applyDialogGuard,
+  applyLimitGuard,
+  applyNarrowedGuard,
+  applyPersistenceGuard,
+  isStateChangingAction,
+  openDialogsOn,
+} from '../condition-guards.js'
+import type { CheckedCitation, GuardRecord } from '../condition-guards.js'
+import type { Action } from '../../platform.js'
+import type { RecordedAction, RecordedRead } from '../step-record.js'
 import { judgeConditions } from '../requested-conditions.js'
 import type { CitationSources } from '../requested-conditions.js'
 import type { ConditionJudgment, VerificationResult } from '../types.js'
@@ -193,5 +203,177 @@ describe('C439-GUARDS', () => {
       expect(judged.evidence.conditions[0].verdict).toBe(verdict)
       expect(judged.pass).toBe(false)
     }
+  })
+})
+
+function assertRead(
+  index: number,
+  op: string,
+  expected: string | undefined,
+  passed: boolean,
+  source = 'expr-result',
+): RecordedRead {
+  const shown = expected !== undefined ? ` "${expected}"` : ''
+  return {
+    index,
+    kind: 'assertValue',
+    text: `${source} ${op}${shown}: ${passed ? 'passed' : 'failed'}`,
+    assert: { source, op, ...(expected !== undefined ? { expected } : {}), passed },
+  }
+}
+
+function claimRead(index: number, claim: string, judged: boolean): RecordedRead {
+  return {
+    index,
+    kind: 'assertAI',
+    text: `"${claim}": judged ${String(judged)}: r`,
+    claim,
+    judged,
+  }
+}
+
+function recorded(index: number, action: Action, outcome: RecordedAction['outcome'] = 'success'): RecordedAction {
+  return { index, action, outcome }
+}
+
+function readRecord(reads: RecordedRead[]): GuardRecord {
+  const expr = "document.getElementById('row').textContent"
+  return {
+    reads,
+    actions: reads.map((read) => recorded(read.index, read.kind === 'assertAI'
+      ? { type: 'assertAI', claim: read.claim ?? '', mode: 'text', effort: 'low', consensus: 1 }
+      : { type: 'assertValue', expr, op: 'contains' } as Action)),
+  }
+}
+
+function citeRead(quote: string): CheckedCitation[] {
+  return [{ source: 'read', quote, found: true }]
+}
+
+function metOn(quote: string): ConditionRecord {
+  return { quote: 'the order row', verdict: 'met', reason: 'r', citations: [{ source: 'read', quote, found: true }] }
+}
+
+describe('C439-GUARDS narrowing', () => {
+  const cases: { title: string; reads: RecordedRead[]; cite: string; narrowed: boolean }[] = [
+    {
+      title: 'a substring of the failed expected value',
+      reads: [assertRead(1, 'contains', 'ORD-1001,42.50', false), assertRead(2, 'contains', 'ORD-1001', true)],
+      cite: 'contains "ORD-1001": passed',
+      narrowed: true,
+    },
+    {
+      title: 'equals loosened to contains',
+      reads: [assertRead(1, 'equals', 'Total 42.50', false), assertRead(2, 'contains', 'Total 42.50', true)],
+      cite: 'contains "Total 42.50": passed',
+      narrowed: true,
+    },
+    {
+      title: 'contains loosened to isDefined',
+      reads: [assertRead(1, 'contains', 'ORD-1001', false), assertRead(2, 'isDefined', undefined, true)],
+      cite: 'isDefined: passed',
+      narrowed: true,
+    },
+    {
+      title: 'fewer listed items',
+      reads: [assertRead(1, 'equals', 'A, B, C', false), assertRead(2, 'equals', 'A, C', true)],
+      cite: 'equals "A, C": passed',
+      narrowed: true,
+    },
+    {
+      title: 'a narrowed assertAI claim',
+      reads: [
+        claimRead(1, 'the cart shows 3 items and a total of 42.50', false),
+        claimRead(2, 'the cart shows 3 items', true),
+      ],
+      cite: '"the cart shows 3 items": judged true',
+      narrowed: true,
+    },
+    {
+      title: 'a different source is not narrowing',
+      reads: [
+        assertRead(1, 'contains', 'ORD-1001,42.50', false, 'url'),
+        assertRead(2, 'contains', 'ORD-1001', true, 'storage'),
+      ],
+      cite: 'storage contains "ORD-1001": passed',
+      narrowed: false,
+    },
+    {
+      title: 'a later stricter check is not narrowing',
+      reads: [assertRead(1, 'contains', 'ORD-1001', false), assertRead(2, 'contains', 'ORD-1001,42.50', true)],
+      cite: 'contains "ORD-1001,42.50": passed',
+      narrowed: false,
+    },
+  ]
+
+  for (const entry of cases) {
+    it(entry.title, () => {
+      const result = applyNarrowedGuard(metOn(entry.cite), citeRead(entry.cite), readRecord(entry.reads), identity)
+      if (entry.narrowed) {
+        expect(result).toMatchObject({ verdict: 'not-met', judged: 'met', guard: 'narrowed' })
+        expect(result.reason).toContain('an earlier check asking for more failed: read 1:')
+      } else {
+        expect(result).toEqual(metOn(entry.cite))
+      }
+    })
+  }
+})
+
+describe('C439-GUARDS persistence', () => {
+  it('state-changing actions and observations', () => {
+    const changing: Action[] = [
+      { type: 'click', ref: asRef('e1') },
+      { type: 'fill', ref: asRef('e1'), text: 'x', clearMode: 'replace', submit: false },
+      { type: 'select', ref: asRef('e1'), value: 'x' },
+      { type: 'keypress', keys: ['Enter'], mode: 'press' },
+      { type: 'drag', fromRef: asRef('e1'), toRef: asRef('e2') },
+      { type: 'fileUpload', ref: asRef('e1'), files: ['a.txt'] },
+      { type: 'clearText', ref: asRef('e1') },
+    ]
+    for (const action of changing) expect(isStateChangingAction(action), action.type).toBe(true)
+    const observing = [
+      'assertAI', 'assertValue', 'extractAI', 'reportValue', 'waitFor', 'waitForUrl', 'delay', 'scroll',
+      'inspect', 'hover', 'setVariable', 'navigate', 'openApp', 'tab', 'route',
+    ]
+    for (const type of observing) expect(isStateChangingAction({ type } as Action), type).toBe(false)
+  })
+
+  const persisted: ConditionRecord = {
+    quote: 'the setting is saved',
+    verdict: 'met',
+    needs: 'persistence',
+    reason: 'r',
+    citations: [{ source: 'final-screen', quote: 'heading "Deals emails: on"', found: true }],
+  }
+  const persistence = judgment({ quote: 'the setting is saved', needs: 'persistence', controlRef: '' })
+  const finalCited: CheckedCitation[] = [{ source: 'final-screen', quote: 'heading "Deals emails: on"', found: true }]
+  const click = (index: number) => recorded(index, { type: 'click', ref: asRef('e1') })
+  const reload = (index: number) => recorded(index, { type: 'navigate', to: 'reload' })
+
+  it('a reopen after the last change and a final-screen citation is met', () => {
+    const record = { actions: [click(1), click(2), reload(3)], reads: [] }
+    expect(applyPersistenceGuard(persisted, persistence, finalCited, record)).toEqual(persisted)
+    const reopened = { actions: [click(1), recorded(2, { type: 'openApp', appName: 'Shop' })], reads: [] }
+    expect(applyPersistenceGuard(persisted, persistence, finalCited, reopened)).toEqual(persisted)
+  })
+
+  it('a reload before the change, or none, is unverified', () => {
+    for (const actions of [[reload(1), click(2), click(3)], [click(1)], []]) {
+      expect(applyPersistenceGuard(persisted, persistence, finalCited, { actions, reads: [] })).toMatchObject({
+        verdict: 'unverified',
+        judged: 'met',
+        guard: 'no-reload',
+        reason: expect.stringContaining('no re-read after a reload or reopen'),
+      })
+    }
+  })
+
+  it('a re-read not cited from the final screen is unverified', () => {
+    const record = { actions: [click(1), reload(2)], reads: [] }
+    const fromAction: CheckedCitation[] = [{ source: 'action', quote: '→ success', found: true }]
+    expect(applyPersistenceGuard(persisted, persistence, fromAction, record)).toMatchObject({
+      verdict: 'unverified',
+      guard: 'no-reload',
+    })
   })
 })

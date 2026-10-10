@@ -6,8 +6,15 @@
 // never a dialog); on iOS role 'alert'; on Android an element whose resource-id is
 // android:id/alertTitle (named by it) or, with no title, android:id/button1 (unnamed). Compose
 // dialogs and iOS sheets stay undetected; the verifier still judges them.
+//
+// Narrowed: a met condition citing a passing read is not met when an earlier read on the same
+// source (and expr) failed and the later one asks for less: a proper substring of the expected
+// value, a looser operator, fewer listed items, or for assertAI a claim that is a proper substring
+// of an earlier false claim. Persistence: met only with a reload or reopen after the step's last
+// state-changing action and a citation from the final screen.
 
 import type {
+  CitationSource,
   ConditionGuard,
   ConditionRecord,
   ConditionVerdict,
@@ -15,6 +22,8 @@ import type {
   OpenDialogAccount,
   Platform,
 } from '@vostride/agent-qa-schema'
+import type { Action } from '../platform.js'
+import { readLine, type RecordedAction, type RecordedRead } from './step-record.js'
 import type { ConditionJudgment, DialogAccount } from './types.js'
 
 const REASON_MAX = 200
@@ -170,4 +179,177 @@ export function renderControlLimits(elements: readonly ElementInfo[]): string {
   if (lines.length <= LIMIT_LINES_MAX) return lines.join('\n')
   const omitted = lines.length - LIMIT_LINES_MAX
   return [...lines.slice(0, LIMIT_LINES_MAX), `… ${omitted} more controls omitted …`].join('\n')
+}
+
+/** A model citation as written, with where the runner found it. */
+export interface CheckedCitation {
+  source: CitationSource
+  quote: string
+  found: boolean | 'unchecked'
+}
+
+export interface GuardRecord {
+  actions: readonly RecordedAction[]
+  reads: readonly RecordedRead[]
+}
+
+const LOOSER_OPERATORS: Readonly<Record<string, readonly string[]>> = {
+  equals: ['contains', 'isDefined'],
+  contains: ['isDefined'],
+  gt: ['isDefined'],
+  lt: ['isDefined'],
+  notEquals: ['isDefined'],
+}
+
+function readPassed(read: RecordedRead): boolean | undefined {
+  if (read.kind === 'assertValue') return read.assert?.passed
+  if (read.kind === 'assertAI') return read.judged
+  return undefined
+}
+
+function exprOf(actions: readonly RecordedAction[], index: number): string | undefined {
+  const action = actions.find((entry) => entry.index === index)?.action as
+    | { expr?: unknown }
+    | undefined
+  return typeof action?.expr === 'string' ? action.expr : undefined
+}
+
+function listItems(value: string): string[] {
+  return value
+    .split(/[,\n]/)
+    .map((item) => collapse(item))
+    .filter((item) => item.length > 0)
+}
+
+function properSubstring(smaller: string, larger: string): boolean {
+  return smaller.length > 0 && smaller !== larger && larger.includes(smaller)
+}
+
+function fewerItems(smaller: string, larger: string): boolean {
+  const all = listItems(larger)
+  const some = listItems(smaller)
+  return all.length > 1 && some.length < all.length && some.every((item) => all.includes(item))
+}
+
+/** Whether `later`, which passed, asks for less than `earlier`, which failed. */
+function asksForLess(
+  earlier: RecordedRead,
+  later: RecordedRead,
+  actions: readonly RecordedAction[],
+): boolean {
+  if (earlier.kind === 'assertAI' && later.kind === 'assertAI') {
+    return properSubstring(collapse(later.claim ?? ''), collapse(earlier.claim ?? ''))
+  }
+  if (earlier.kind !== 'assertValue' || later.kind !== 'assertValue') return false
+  const before = earlier.assert
+  const after = later.assert
+  if (before === undefined || after === undefined || before.source !== after.source) return false
+  if (exprOf(actions, earlier.index) !== exprOf(actions, later.index)) return false
+  const wanted = before.expected !== undefined ? collapse(before.expected) : undefined
+  const asked = after.expected !== undefined ? collapse(after.expected) : undefined
+  const looser = LOOSER_OPERATORS[before.op]?.includes(after.op) ?? false
+  if (looser && (asked === undefined || (wanted !== undefined && wanted.includes(asked)))) return true
+  if (!looser && after.op !== before.op) return false
+  if (wanted === undefined || asked === undefined) return false
+  return properSubstring(asked, wanted) || fewerItems(asked, wanted)
+}
+
+function lineHolds(line: string, quote: string, mask: (value: string) => string): boolean {
+  const raw = collapse(quote)
+  if (raw.length === 0) return false
+  return collapse(line).includes(raw) || collapse(mask(line)).includes(collapse(mask(raw)))
+}
+
+/**
+ * A met condition citing a passing read is not met when an earlier failed read asked for more
+ * (439 D-16, RESEARCH Open Question 4: the failed check is the direct evidence).
+ */
+export function applyNarrowedGuard(
+  record: ConditionRecord,
+  cited: readonly CheckedCitation[],
+  stepRecord: GuardRecord | undefined,
+  mask: (value: string) => string,
+): ConditionRecord {
+  if (record.verdict !== 'met' || stepRecord === undefined) return record
+  const reads = stepRecord.reads
+  const lines = reads.map(readLine)
+  for (const citation of cited) {
+    if (citation.found !== true || citation.source !== 'read') continue
+    for (let k = 0; k < reads.length; k++) {
+      if (readPassed(reads[k]) !== true || !lineHolds(lines[k], citation.quote, mask)) continue
+      for (let j = 0; j < k; j++) {
+        if (readPassed(reads[j]) !== false) continue
+        if (!asksForLess(reads[j], reads[k], stepRecord.actions)) continue
+        const why = `an earlier check asking for more failed: ${collapse(mask(lines[j]))}`
+        return demote(record, 'not-met', 'narrowed', why)
+      }
+    }
+  }
+  return record
+}
+
+const OBSERVATION_ACTIONS: ReadonlySet<string> = new Set([
+  'assertAI',
+  'assertValue',
+  'extractAI',
+  'reportValue',
+  'waitFor',
+  'waitForUrl',
+  'delay',
+  'scroll',
+  'inspect',
+  'hover',
+  'setVariable',
+  'navigate',
+  'openApp',
+  'tab',
+  'route',
+])
+
+/** Whether an action can change the app's state (every type outside the observation list). */
+export function isStateChangingAction(action: Pick<Action, 'type'>): boolean {
+  return !OBSERVATION_ACTIONS.has(action.type)
+}
+
+function isReopen(action: Action): boolean {
+  if (action.type === 'openApp') return true
+  if (action.type !== 'navigate') return false
+  const to = (action as { to?: unknown }).to
+  return to === 'reload' || to === 'url' || to === 'back'
+}
+
+export const NO_REREAD_REASON =
+  'no re-read after a reload or reopen following the last change; a "Saved" message is the app\'s claim'
+
+/**
+ * A met persistence condition holds only when the step reloaded or reopened after its last
+ * state-changing action and the condition cites the final screen (439 D-18).
+ */
+export function applyPersistenceGuard(
+  record: ConditionRecord,
+  judgment: ConditionJudgment,
+  cited: readonly CheckedCitation[],
+  stepRecord: GuardRecord | undefined,
+): ConditionRecord {
+  if (record.verdict !== 'met' || judgment.needs !== 'persistence') return record
+  const actions = stepRecord?.actions ?? []
+  let lastChange = 0
+  for (const entry of actions) {
+    if (entry.outcome !== 'refused' && isStateChangingAction(entry.action)) {
+      lastChange = Math.max(lastChange, entry.index)
+    }
+  }
+  const reopened = actions.some(
+    (entry) => entry.index > lastChange && entry.outcome === 'success' && isReopen(entry.action),
+  )
+  if (!reopened) return demote(record, 'unverified', 'no-reload', NO_REREAD_REASON)
+  if (!cited.some((citation) => citation.found === true && citation.source === 'final-screen')) {
+    return demote(
+      record,
+      'unverified',
+      'no-reload',
+      'the re-read after the reload is not cited from the final screen',
+    )
+  }
+  return record
 }

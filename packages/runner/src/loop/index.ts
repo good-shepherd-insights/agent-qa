@@ -1658,6 +1658,7 @@ export async function executeStep(
         kind: 'assertAI',
         text: `"${judgedClaim}"${mode !== undefined ? ` (${mode})` : ''}: judged ${judgment.verdict ? 'true' : 'false'}: ${maskValue(rationale)}`,
         claim: judgedClaim,
+        judged: judgment.verdict,
         ...(mode !== undefined ? { mode } : {}),
       })
       if (judgment.verdict) {

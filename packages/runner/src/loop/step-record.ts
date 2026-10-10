@@ -27,6 +27,8 @@ export interface RecordedRead {
   text: string
   assert?: { source: string; op: string; expected?: string; passed: boolean }
   claim?: string
+  /** An assertAI read's verdict on its claim. */
+  judged?: boolean
   mode?: string
 }
 
@@ -155,10 +157,15 @@ function actionLines(actions: RecordedAction[]): string[] {
   ]
 }
 
+/** One read as the verifier turn and the 'read' citation source show it. */
+export function readLine(read: RecordedRead): string {
+  return capLine(`read ${read.index}: ${read.kind} ${read.text}`)
+}
+
 /** The record as the verifier turn and the citation sources show it, one string per part. */
 export function renderStepRecord(record: VerifierStepRecord): RenderedStepRecord {
   const evidence = record.actions.flatMap(evidenceLines)
-  const reads = record.reads.map((read) => capLine(`read ${read.index}: ${read.kind} ${read.text}`))
+  const reads = record.reads.map(readLine)
   const carried = record.carried.map((line) =>
     capLine(`carried from step ${line.stepNumber}, action ${line.actionIndex}: ${line.text}`),
   )

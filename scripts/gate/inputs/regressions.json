@@ -6870,6 +6870,102 @@
       "file": "packages/web/src/__tests__/439-auto12.test.ts",
       "fullName": "C439-AUTO12 a range input reports its value and the default limits",
       "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-auto12.test.ts",
+      "fullName": "C439-AUTO12 a narrower passing check cannot replace a failed one",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-auto12.test.ts",
+      "fullName": "C439-AUTO12 the full check passing first time is met",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-auto12.test.ts",
+      "fullName": "C439-AUTO12 \"Saved\" without a re-read after reload is not persistence",
+      "origin": "439 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-auto12.test.ts",
+      "fullName": "C439-AUTO12 a re-read after reload proves persistence",
+      "origin": "439 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-auto12.test.ts",
+      "fullName": "C439-AUTO12 a reload before the change does not count",
+      "origin": "439 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-condition-guards.test.ts",
+      "fullName": "C439-GUARDS narrowing a substring of the failed expected value",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-condition-guards.test.ts",
+      "fullName": "C439-GUARDS narrowing equals loosened to contains",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-condition-guards.test.ts",
+      "fullName": "C439-GUARDS narrowing contains loosened to isDefined",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-condition-guards.test.ts",
+      "fullName": "C439-GUARDS narrowing fewer listed items",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-condition-guards.test.ts",
+      "fullName": "C439-GUARDS narrowing a narrowed assertAI claim",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-condition-guards.test.ts",
+      "fullName": "C439-GUARDS narrowing a different source is not narrowing",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-condition-guards.test.ts",
+      "fullName": "C439-GUARDS narrowing a later stricter check is not narrowing",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-condition-guards.test.ts",
+      "fullName": "C439-GUARDS persistence state-changing actions and observations",
+      "origin": "439 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-condition-guards.test.ts",
+      "fullName": "C439-GUARDS persistence a reopen after the last change and a final-screen citation is met",
+      "origin": "439 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-condition-guards.test.ts",
+      "fullName": "C439-GUARDS persistence a reload before the change, or none, is unverified",
+      "origin": "439 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-condition-guards.test.ts",
+      "fullName": "C439-GUARDS persistence a re-read not cited from the final screen is unverified",
+      "origin": "439 D-18"
     }
   ]
 }
