@@ -6786,6 +6786,90 @@
       "file": "packages/runner/src/run/__tests__/439-carry-member.test.ts",
       "fullName": "C439-CARRY-MEMBER each test member has its own cell",
       "origin": "439 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-auto12.test.ts",
+      "fullName": "C439-AUTO12 a confirmation dialog left open after Save never passes",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-auto12.test.ts",
+      "fullName": "C439-AUTO12 the same step passes when the dialog is closed",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-auto12.test.ts",
+      "fullName": "C439-AUTO12 a cookie banner accounted as unrelated does not block",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-auto12.test.ts",
+      "fullName": "C439-AUTO12 a dialog that bears on a condition blocks",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-auto12.test.ts",
+      "fullName": "C439-AUTO12 a slider short of its maximum is not at its limit",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-auto12.test.ts",
+      "fullName": "C439-AUTO12 a control that reports no limit leaves the condition unverified",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-condition-guards.test.ts",
+      "fullName": "C439-GUARDS an Android alert title is one open dialog named by it",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-condition-guards.test.ts",
+      "fullName": "C439-GUARDS an iOS alert is an open dialog and a web alert is not",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-condition-guards.test.ts",
+      "fullName": "C439-GUARDS a dialog is matched to its account by name, and an unaccounted dialog blocks the pass",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-condition-guards.test.ts",
+      "fullName": "C439-GUARDS a range input at its default maximum meets limit-max",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-condition-guards.test.ts",
+      "fullName": "C439-GUARDS one unit short of the reported maximum is not met",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-condition-guards.test.ts",
+      "fullName": "C439-GUARDS a control with no reported limit, or no such control, leaves the condition unverified",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-condition-guards.test.ts",
+      "fullName": "C439-GUARDS a guard never raises a not-met or unverified verdict",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-auto12.test.ts",
+      "fullName": "C439-AUTO12 a range input reports its value and the default limits",
+      "origin": "439 D-16"
     }
   ]
 }

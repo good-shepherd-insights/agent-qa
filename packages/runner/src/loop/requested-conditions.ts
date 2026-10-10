@@ -23,8 +23,12 @@ import type {
   ConditionGuard,
   ConditionRecord,
   ConditionVerdictsEvidence,
+  ElementInfo,
   OpenDialogAccount,
+  Platform,
 } from '@vostride/agent-qa-schema'
+import { applyDialogGuard, applyLimitGuard, openDialogsOn } from './condition-guards.js'
+import type { VerifierStepRecord } from './step-record.js'
 import type { ConditionJudgment, VerificationResult } from './types.js'
 
 /** The rendered parts of the verification request a citation can point at. */
@@ -39,6 +43,15 @@ export interface JudgeConditionsInput {
   ending: ConditionEnding
   /** The planner's completion reasoning, read only by the runner (never sent to the verifier). */
   plannerReasoning?: string
+  /** What the runner's own checks read (439 D-16, D-18, D-19). Absent: nothing to read. */
+  guards?: ConditionGuardFacts
+}
+
+export interface ConditionGuardFacts {
+  finalElements: readonly ElementInfo[]
+  platform: Platform
+  record?: Pick<VerifierStepRecord, 'actions' | 'reads'>
+  imageAttached: boolean
 }
 
 export interface ConditionJudgeResult {
@@ -253,6 +266,7 @@ interface JudgeContext {
   input: JudgeConditionsInput
   haystacks: Record<keyof CitationSources, Haystack>
   plannerReasoning: string
+  guards: ConditionGuardFacts
 }
 
 function judgeOne(
@@ -295,7 +309,8 @@ function judgeOne(
       return changed('not-met', 'admits-not-done', `The reasoning says "${phrase}"`)
     }
   }
-  return { quote, verdict: 'met', ...needs, reason, citations }
+  const met: ConditionRecord = { quote, verdict: 'met', ...needs, reason, citations }
+  return applyLimitGuard(met, judgment, context.guards.finalElements, input.mask)
 }
 
 /**
@@ -303,7 +318,8 @@ function judgeOne(
  * quote that is not the step's own words is unverified; step words no quote covers become one
  * unverified condition; a met condition needs a citation the runner finds (or a screenshot
  * citation when an image was attached) and reasoning that does not admit the action did not
- * happen. The step passes only when there is a condition and every verdict is met.
+ * happen; the runner's own checks (condition-guards.ts) then only lower a met verdict. The step
+ * passes only when there is a condition, every verdict is met and every open dialog is unrelated.
  */
 export function judgeConditions(input: JudgeConditionsInput): ConditionJudgeResult {
   const maskedStep = collapse(input.mask(input.stepText))
@@ -328,7 +344,7 @@ export function judgeConditions(input: JudgeConditionsInput): ConditionJudgeResu
       judgments.map((judgment) => tokenize(input.mask(judgment.quote ?? ''))),
     )
     const plannerReasoning = collapse(input.mask(input.plannerReasoning ?? ''))
-    const context: JudgeContext = { input, haystacks, plannerReasoning }
+    const context: JudgeContext = { input, haystacks, plannerReasoning, guards: guardFacts(input) }
     conditions = judgments.map((judgment, i) =>
       judgeOne(judgment, coverage.inStep[i] ?? false, context),
     )
@@ -339,9 +355,28 @@ export function judgeConditions(input: JudgeConditionsInput): ConditionJudgeResu
       conditions.push(guarded(bound(words, QUOTE_MAX), 'not-covered', UNCOVERED_REASON))
     }
   }
-  const evidence: ConditionVerdictsEvidence = { ending: input.ending, conditions }
-  const pass = conditions.length > 0 && conditions.every((condition) => condition.verdict === 'met')
-  return { evidence, pass, reason: pass ? '' : formatUnprovenReason(conditions) }
+  const facts = guardFacts(input)
+  const openDialogs = applyDialogGuard(
+    openDialogsOn(facts.finalElements, facts.platform),
+    Array.isArray(output.dialogs) ? output.dialogs : [],
+    input.mask,
+  )
+  const evidence: ConditionVerdictsEvidence = {
+    ending: input.ending,
+    conditions,
+    ...(openDialogs.length > 0 ? { openDialogs } : {}),
+  }
+  const pass =
+    conditions.length > 0 &&
+    conditions.every((condition) => condition.verdict === 'met') &&
+    openDialogs.every((dialog) => dialog.account === 'unrelated')
+  return { evidence, pass, reason: pass ? '' : formatUnprovenReason(conditions, openDialogs) }
+}
+
+function guardFacts(input: JudgeConditionsInput): ConditionGuardFacts {
+  return (
+    input.guards ?? { finalElements: [], platform: 'web', imageAttached: input.imageAttached }
+  )
 }
 
 function entry(quote: string, reason: string): string {
@@ -363,9 +398,9 @@ export function formatUnprovenReason(
     .filter((c) => c.verdict === 'unverified')
     .map((c) => entry(c.quote, c.reason))
   for (const dialog of openDialogs ?? []) {
-    if (dialog.account === 'unaccounted') {
-      unverified.push(`dialog "${dialog.name}" (left open and not accounted for)`)
-    }
+    const named = dialog.name.length > 0 ? `open dialog "${dialog.name}"` : 'an unnamed open dialog'
+    if (dialog.account === 'bears-on-condition') notMet.push(`${named} bears on a condition`)
+    if (dialog.account === 'unaccounted') unverified.push(`${named} was not accounted for`)
   }
   const inconclusive = conditions
     .filter((c) => c.verdict === 'inconclusive')

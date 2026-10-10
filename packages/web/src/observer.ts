@@ -13,10 +13,13 @@ const INTERACTIVE_ROLES = new Set([
   'grid', 'menu', 'menubar', 'tree', 'treegrid',
 ])
 
+// 439 D-16: 'dialog' and 'alertdialog' are kept so an open dialog is on the screen the judge reads.
 const CONTENT_ROLES = new Set([
   'heading', 'cell', 'listitem', 'article', 'region', 'navigation',
-  'progressbar', 'tabpanel', 'row',
+  'progressbar', 'tabpanel', 'row', 'dialog', 'alertdialog',
 ])
+
+const LIMIT_KEYS = ['valuenow', 'valuemin', 'valuemax'] as const
 
 const LINE_PATTERN = /^(\s*-\s*)(\w+)(?:\s+"([^"]*)")?(.*)$/
 // Playwright wraps ARIA entries in single quotes when element names contain
@@ -264,6 +267,9 @@ export async function enrichWebNodes(
           (typeof el.getAttribute === 'function' && el.getAttribute('aria-disabled') === 'true')
         const attr = (n: string) =>
           typeof el.getAttribute === 'function' ? el.getAttribute(n) : null
+        const inputType = el.tagName === 'INPUT' && typeof el.type === 'string' ? el.type : ''
+        const isRange = inputType === 'range'
+        const isNumber = inputType === 'number'
         return {
           bounds: rect
             ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
@@ -275,6 +281,9 @@ export async function enrichWebNodes(
           ariaLabel: attr('aria-label'),
           placeholder: attr('placeholder'),
           title: attr('title'),
+          valuenow: attr('aria-valuenow') ?? (isRange || isNumber ? String(el.value) : null),
+          valuemin: attr('aria-valuemin') ?? (isRange ? el.min || '0' : isNumber ? el.min || null : null),
+          valuemax: attr('aria-valuemax') ?? (isRange ? el.max || '100' : isNumber ? el.max || null : null),
         }
       })
     }, handles)
@@ -308,6 +317,14 @@ export async function enrichWebNodes(
       const title = coerceString((info as any).title)
       if (title) labels.title = title
       if (Object.keys(labels).length > 0) node.labels = labels
+
+      // 439 D-16: a control's reported value and limits; attributes are neither hashed nor rendered.
+      const limits: Record<string, string> = {}
+      for (const key of LIMIT_KEYS) {
+        const value = coerceString((info as any)[key])
+        if (value) limits[key] = value
+      }
+      if (Object.keys(limits).length > 0) node.attributes = { ...(node.attributes ?? {}), ...limits }
     }
   } catch {
     // Enrichment is best-effort — degrade to unenriched nodes, never throw.

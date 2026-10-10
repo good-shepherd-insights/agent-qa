@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
 import { screenIdentityHash } from '@vostride/agent-qa-schema'
 import type { DownloadEvidence } from '@vostride/agent-qa-schema'
-import type { PlannerConfig, StepResult } from '@vostride/agent-qa-runner'
+import type { PlannerConfig, StepResult, Verifier } from '@vostride/agent-qa-runner'
 import { WebPlatformAdapter } from '../adapter.js'
 import { ORDERS_CSV_BYTES, startOutcomePages } from './fixtures/436-outcome-pages.js'
 import type { OutcomePages } from './fixtures/436-outcome-pages.js'
@@ -359,7 +359,21 @@ describe('C436-OUTCOME-EVIDENCE', () => {
   it('the same button passes when it opens the dialog (the dead dialog\'s twin)', async () => {
     await open('/dialog')
     const planner = scriptedPlanner(inviteTurns)
-    const verifier = scriptedVerifier(dialogCheck)
+    // 439 D-16: the open invite dialog is the requested outcome, so the verifier accounts it as
+    // unrelated (it shows nothing left undone); an unaccounted open dialog would block the pass.
+    const scripted = scriptedVerifier(dialogCheck)
+    const verifier: Verifier = {
+      async verify(...args) {
+        const result = await scripted.verify(...args)
+        return {
+          ...result,
+          verification: {
+            ...result.verification,
+            dialogs: [{ name: '', account: 'unrelated', reasoning: 'the requested invite dialog' }],
+          },
+        }
+      },
+    }
 
     const run = await runScriptedStep({ adapter: adapter!, instruction: DIALOG_STEP, planner, verifier, plannerConfig: LIMITS })
 

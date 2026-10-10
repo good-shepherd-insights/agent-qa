@@ -19,6 +19,7 @@ import type { ModelMessage, SystemModelMessage } from 'ai'
 import type { Action } from '../platform.js'
 import type { StepContext, AssertionInput, ExtractorInput, VerifierAuthorContext } from './types.js'
 import type { CitationSources } from './requested-conditions.js'
+import { renderControlLimits } from './condition-guards.js'
 import { renderStepRecord, type VerifierStepRecord } from './step-record.js'
 import { defaultRegistry } from '../tools/index.js'
 
@@ -887,9 +888,10 @@ export function buildVerifierCitationSources(
 ): CitationSources {
   if (record !== undefined) {
     const rendered = renderStepRecord(record)
+    const limits = renderControlLimits(afterState.elements)
     return {
       'start-screen': truncateScreenState(record.startScreen),
-      'final-screen': truncateScreenState(afterState),
+      'final-screen': [truncateScreenState(afterState), limits].filter((part) => part.length > 0).join('\n'),
       action: [rendered.actions, rendered.operationEvidence].filter((part) => part.length > 0).join('\n'),
       read: rendered.reads,
       carried: rendered.carried,
@@ -951,6 +953,7 @@ function appendStepRecord(parts: string[], record: VerifierStepRecord, afterStat
   parts.push('')
   parts.push('Screen now (settled, after the last action):')
   parts.push(truncateScreenState(afterState))
+  appendWrappedSection(parts, 'Controls with reported limits:', renderControlLimits(afterState.elements))
 }
 
 /**

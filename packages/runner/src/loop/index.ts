@@ -103,7 +103,7 @@ import {
   renderInputEvidence,
   renderOperationEvidence,
 } from './prompts.js'
-import { judgeConditions, type CitationSources } from './requested-conditions.js'
+import { judgeConditions, type CitationSources, type ConditionGuardFacts } from './requested-conditions.js'
 import { StepRecordAccumulator, type RecordedAction, type RecordedActionOutcome } from './step-record.js'
 import { EvidenceRecorder, collapseAnnotation, persistAriaEvidence, projectLegacyTrace } from './evidence.js'
 import type { RecordSubActionInput } from './evidence.js'
@@ -659,7 +659,12 @@ export async function executeStep(
   ): Promise<string | StepResult> {
     if (!ports.verifier) return ''
     const action: Action = lastAction ?? { type: 'delay', ms: 0 }
-    const judge = (output: VerificationResult, sources: CitationSources, imageAttached: boolean) => {
+    const judge = (
+      output: VerificationResult,
+      sources: CitationSources,
+      imageAttached: boolean,
+      guards?: ConditionGuardFacts,
+    ) => {
       const judged = judgeConditions({
         stepText: stepInstruction,
         output,
@@ -667,6 +672,7 @@ export async function executeStep(
         mask: recordMask,
         imageAttached,
         ending,
+        ...(guards !== undefined ? { guards } : {}),
       })
       recorder.recordConditionVerdicts(judged.evidence)
       return judged.reason
@@ -723,10 +729,12 @@ export async function executeStep(
     }
     const abortAfterVerify = checkAbort()
     if (abortAfterVerify) return abortAfterVerify
+    const imageAttached = gate.attachImage && screenshot !== undefined
     return judge(
       verification,
       buildVerifierCitationSources(record.startScreen, finalState, action, accumulatedEvidence, record),
-      gate.attachImage && screenshot !== undefined,
+      imageAttached,
+      { finalElements: finalState.elements, platform: finalState.platform, record, imageAttached },
     )
   }
 
@@ -2166,6 +2174,12 @@ export async function executeStep(
         imageAttached: gate.attachImage && verifyScreenshot !== undefined,
         ending: 'completion',
         plannerReasoning: reasoning,
+        guards: {
+          finalElements: afterState.elements,
+          platform: afterState.platform,
+          record,
+          imageAttached: gate.attachImage && verifyScreenshot !== undefined,
+        },
       })
       recorder.recordConditionVerdicts(judged.evidence)
       verifierReasoning = judged.pass ? verifyResult.verification.reasoning : judged.reason
