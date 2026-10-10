@@ -6726,6 +6726,36 @@
       "file": "packages/runner/src/compound/__tests__/439-assert-compare.test.ts",
       "fullName": "C439-ASSERT-COMPARE network lt never passes",
       "origin": "439 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-replay.test.ts",
+      "fullName": "C439-REPLAY a cache hit replays without planning and is re-verified",
+      "origin": "439 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-replay.test.ts",
+      "fullName": "C439-REPLAY a hit whose verdict is unproven is not a pass and is not re-cached",
+      "origin": "439 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-replay.test.ts",
+      "fullName": "C439-REPLAY the cached outcome never decides the verdict",
+      "origin": "439 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-replay.test.ts",
+      "fullName": "C439-REPLAY the cache is written only after a computed pass",
+      "origin": "439 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-replay.test.ts",
+      "fullName": "C439-REPLAY procedure replay re-verifies each replayed step",
+      "origin": "439 D-15"
     }
   ]
 }

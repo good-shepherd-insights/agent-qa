@@ -391,8 +391,8 @@ describe('foldCacheStatus', () => {
     expect(foldCacheStatus([true, false, true])).toBe('miss')
   })
 
-  it('empty step ⇒ hit vacuously', () => {
-    expect(foldCacheStatus([])).toBe('hit')
+  it('empty step ⇒ miss', () => {
+    expect(foldCacheStatus([])).toBe('miss')
   })
 })
 

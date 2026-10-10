@@ -141,8 +141,8 @@ function makeChannel1ServedBrief(input: {
 // ---------------------------------------------------------------------------
 
 export function foldCacheStatus(subActionCacheFlags: boolean[]): StepEvidence['cacheStatus'] {
-  // Empty step (no sub-actions cached against) has no miss ⇒ 'hit' vacuously.
-  return subActionCacheFlags.every(flag => flag) ? 'hit' : 'miss'
+  // 439 D-15: a step with no sub-actions replayed nothing from the cache, so it is a miss.
+  return subActionCacheFlags.length > 0 && subActionCacheFlags.every(flag => flag) ? 'hit' : 'miss'
 }
 
 // ---------------------------------------------------------------------------
