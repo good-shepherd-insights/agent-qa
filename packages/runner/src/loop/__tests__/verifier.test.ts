@@ -22,6 +22,24 @@ const before: ScreenState = makeScreenState()
 const after: ScreenState = makeScreenState({ url: 'https://example.test/after' })
 const action: Action = { type: 'click', ref: asRef('e2') }
 
+// 2026-10-11 (439-01): the model's structured output is per-condition (D-07, D-10).
+function metOutput(reasoning: string) {
+  return {
+    conditions: [{
+      quote: 'log in',
+      verdict: 'met',
+      needs: 'none',
+      controlRef: '',
+      file: { name: '', match: 'none', text: '' },
+      citations: [{ source: 'final-screen', quote: 'button "Log in"' }],
+      reasoning,
+    }],
+    dialogs: [],
+    isAppError: false,
+    reasoning,
+  }
+}
+
 describe('LLMVerifier', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -31,14 +49,15 @@ describe('LLMVerifier', () => {
     const { generateText } = await import('ai')
     const mockGenerateText = vi.mocked(generateText)
     mockGenerateText.mockResolvedValueOnce({
-      output: { success: true, reasoning: 'The login form submitted and the dashboard is shown', isAppError: false },
+      output: metOutput('The login form submitted and the dashboard is shown'),
       usage: { inputTokens: 120, outputTokens: 30 },
     } as any)
 
     const verifier = new LLMVerifier({} as any, makeFakeTokenAccounting())
     const result = await verifier.verify('log in', before, after, action)
 
-    expect(result.verification.success).toBe(true)
+    expect(result.verification.conditions.map((condition) => condition.verdict)).toEqual(['met'])
+    expect(result.verification.verifierError).toBeUndefined()
     expect(result.verification.reasoning).toContain('dashboard')
     expect(result.verification.isAppError).toBe(false)
     expect(result.tokenUsage).toEqual({ promptTokens: 120, completionTokens: 30, totalTokens: 150 })
@@ -52,7 +71,8 @@ describe('LLMVerifier', () => {
     const verifier = new LLMVerifier({} as any, makeFakeTokenAccounting())
     const result = await verifier.verify('log in', before, after, action)
 
-    expect(result.verification.success).toBe(false)
+    expect(result.verification.conditions).toEqual([])
+    expect(result.verification.verifierError).toBe('Overloaded')
     expect(result.verification.isAppError).toBe(false)
     expect(result.verification.reasoning).toContain('Verification failed')
     expect(result.verification.reasoning).toContain('Overloaded')
@@ -81,7 +101,8 @@ describe('LLMVerifier', () => {
     const verifier = new LLMVerifier({} as any, makeFakeTokenAccounting())
     const result = await verifier.verify('log in', before, after, action)
 
-    expect(result.verification.success).toBe(false)
+    expect(result.verification.conditions).toEqual([])
+    expect(result.verification.verifierError).toBeDefined()
     expect(result.verification.reasoning).toContain('Verification failed')
   })
 
@@ -91,7 +112,7 @@ describe('LLMVerifier', () => {
     const { generateText } = await import('ai')
     const mockGenerateText = vi.mocked(generateText)
     mockGenerateText.mockResolvedValueOnce({
-      output: { success: true, reasoning: 'The dashboard is shown', isAppError: false },
+      output: metOutput('The dashboard is shown'),
       usage: { inputTokens: 120, outputTokens: 30 },
     } as any)
 

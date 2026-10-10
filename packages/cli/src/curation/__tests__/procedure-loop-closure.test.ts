@@ -25,11 +25,13 @@ import { createModel } from '@vostride/agent-qa-model'
 import type { ModelProfile, ResolvedModelAuth } from '@vostride/agent-qa-model'
 import {
   executeStep,
+  scriptedVerification,
   SecretStore,
   type LoopPorts,
   type Planner,
   type PlatformAdapter,
   type StepContext,
+  type Verifier,
 } from '@vostride/agent-qa-runner'
 import {
   HANDOFF_FILE,
@@ -958,24 +960,14 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
       },
     }
     let verificationCalls = 0
-    const verifier = {
-      async verify() {
+    const verifier: Verifier = {
+      async verify(step, _before, after, action) {
         verificationCalls += 1
-        return verificationCalls === 1
-          ? {
-              verification: {
-                success: false,
-                reasoning: 'The stored sign-in action did not complete the flow',
-                isAppError: false,
-              },
-            }
-          : {
-              verification: {
-                success: true,
-                reasoning: 'Live recovery completed the flow',
-                isAppError: false,
-              },
-            }
+        const pass = verificationCalls !== 1
+        const reasoning = pass
+          ? 'Live recovery completed the flow'
+          : 'The stored sign-in action did not complete the flow'
+        return { verification: scriptedVerification({ step, after, action, pass, reasoning }) }
       },
     }
     const inertModel = {} as StepContext['plannerModel']

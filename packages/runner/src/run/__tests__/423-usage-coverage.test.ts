@@ -139,6 +139,15 @@ interface ScriptedCall {
   failure?: string
   middlewareRetry?: true
 }
+// 2026-10-11 (439-01): the verifier's structured output is per-condition (D-07, D-10).
+const MET_TEXT = JSON.stringify({
+  conditions: [{
+    quote: 'Click Log in', verdict: 'met', needs: 'none', controlRef: '',
+    file: { name: '', match: 'none', text: '' },
+    citations: [{ source: 'final-screen', quote: 'button "Log in"' }], reasoning: 'synthetic',
+  }],
+  dialogs: [], isAppError: false, reasoning: 'synthetic',
+})
 function sdkFixture(rows: ScriptedCall[]) {
   const script = [...rows]
   const raw = (observation?: StepModelObservation): V3Model => ({
@@ -160,7 +169,7 @@ function sdkFixture(rows: ScriptedCall[]) {
         content: row.tool ? [{ type: 'tool-call', toolCallId: 'synthetic-call', toolName: 'web_click',
           input: JSON.stringify({ ref: 'e2', reasoning: 'synthetic', confidence: 1,
             stepComplete: true, doesActionAdvanceUsTowardsGoal: true }) }]
-          : [{ type: 'text', text: row.text ?? '{"success":true,"reasoning":"synthetic","isAppError":false}' }],
+          : [{ type: 'text', text: row.text ?? MET_TEXT }],
         finishReason: { unified: row.tool ? 'tool-calls' : 'stop', raw: 'stop' },
         usage: { inputTokens: { total: 100, noCache: 60, cacheRead: 40, cacheWrite: 0 },
           outputTokens: { total: 10, text: 10, reasoning: 0 } }, warnings: [],
@@ -190,7 +199,7 @@ test('USAGE-RETRY-FAILURE: verifier clamp and middleware retries count every dis
   const f = sdkFixture([{ failure: 'maximum context length' }, { report, middlewareRetry: true }])
   const screen = makeScreenState()
   const result = await f.scope.verifier!.verify('Click Log in', screen, screen, { type: 'click', ref: asRef('e2') })
-  expect(result.verification.success).toBe(true)
+  expect(result.verification.conditions.map((condition) => condition.verdict)).toEqual(['met'])
   expect(f.accounting.degradeCalls).toHaveLength(1)
   expect(f.accounting.recordUsageCalls).toHaveLength(1)
   expect(f.scope.finish()).toMatchObject({ started: 3, failed: 2, succeeded: 1 })
@@ -335,7 +344,7 @@ test('USAGE-ISOLATION: duplicate and late terminals cannot mutate masked detache
 
 test('USAGE-HEALING: actual planner and verifier retain failed-action replanning decisions', async () => {
   const f = sdkFixture([{ report, tool: true },
-    { report, text: '{"success":false,"reasoning":"retry","isAppError":false}' },
+    { report, text: '{"conditions":[],"dialogs":[],"isAppError":false,"reasoning":"retry"}' },
     { report, tool: true }, { report }])
   const planner = new LLMPlanner(f.scope.plannerModel, 'web', undefined, undefined, makeFakeTokenAccounting())
   const config: MemberRunConfig = {

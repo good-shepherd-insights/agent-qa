@@ -5,9 +5,11 @@ import type { LoopPorts } from '../ports.js'
 import { executeStep } from '../index.js'
 import { buildAgentScreenState, type LooseElement } from './screen-fixtures.js'
 import { makeActionPlan, makeStepContext, makeVerifier, makePlanner } from './loop-harness.js'
-import type { ActionPlan, Planner, StepContext, VerificationResult, Verifier } from '../types.js'
+import type { ActionPlan, Planner, StepContext, Verifier } from '../types.js'
+import type { ScriptedVerdict } from '../../testing/condition-verdicts.js'
 import { readIdempotentNoopMeta } from '../../compound/metadata.js'
 import { buildVerificationPrompt, composeTurnMessages } from '../prompts.js'
+import { scriptedVerification } from '../../testing/condition-verdicts.js'
 import { APP_OBSERVED_DATA_CLOSE, APP_OBSERVED_DATA_OPEN } from '@vostride/agent-qa-safety'
 import type { MaskingContext, OperationEvidence } from '@vostride/agent-qa-schema'
 
@@ -181,7 +183,7 @@ function capturingPlanner(plans: ActionPlan[], failureContexts: (string | undefi
 }
 
 interface RunOptions {
-  verifier?: VerificationResult[]
+  verifier?: ScriptedVerdict[]
   abortSignal?: AbortSignal
   planner?: Planner
 }
@@ -234,7 +236,9 @@ describe('C437-NO-INPUT', () => {
     expect(calls).toHaveLength(0)
     expect(failureContexts).toHaveLength(2)
     const replanContext = failureContexts[1] ?? ''
-    expect(replanContext).toContain('did not accomplish the goal: The switch still reads off')
+    expect(replanContext).toContain(
+      'did not accomplish the goal: Not met: "Turn dark theme on" (The switch still reads off)',
+    )
     expect(replanContext).not.toContain('failed:')
   })
 
@@ -283,7 +287,8 @@ function capturingVerifier(captured: VerifyArgs[]): Verifier {
   return {
     async verify(...args: VerifyArgs) {
       captured.push(args)
-      return { verification: { success: true, reasoning: 'Step completed', isAppError: false } }
+      const [step, , after, action] = args
+      return { verification: scriptedVerification({ step, after, action, pass: true, reasoning: 'Step completed' }) }
     },
   }
 }
@@ -425,6 +430,6 @@ describe('C437-NO-INPUT', () => {
     const history = contexts[1].subActionHistory ?? []
     expect(history).toHaveLength(1)
     expect(history[0].result).toBe('no-input')
-    expect(history[0].verifierRejection).toBe('The switch still reads off')
+    expect(history[0].verifierRejection).toBe('Not met: "Turn dark theme on" (The switch still reads off)')
   })
 })

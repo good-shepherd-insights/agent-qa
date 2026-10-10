@@ -883,7 +883,17 @@ export async function startStubModelServer(
           {
             role: 'assistant',
             content: JSON.stringify({
-              success: true,
+              // 2026-10-11 (439-01): the verification lane answers per condition (D-07, D-10).
+              conditions: [{
+                quote: POPULATED_BUTTON_LABEL,
+                verdict: 'met',
+                needs: 'none',
+                controlRef: '',
+                file: { name: '', match: 'none', text: '' },
+                citations: [{ source: 'action', quote: 'Action taken' }],
+                reasoning: 'The notice state changed.',
+              }],
+              dialogs: [],
               reasoning: `The "${POPULATED_BUTTON_LABEL}" button was clicked and the notice state changed.`,
               isAppError: false,
               // The judge/extractor lanes share this arm; their schemas are supersets of the

@@ -18,7 +18,7 @@
 // scripts/gate/inputs/register.json; a skip is never a pass.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { executeStep } from '@vostride/agent-qa-runner'
+import { executeStep, scriptedVerification } from '@vostride/agent-qa-runner'
 import type {
   Action,
   ActionPlan,
@@ -138,9 +138,10 @@ async function runStep(
     },
   }
   const verifier: Verifier = {
-    async verify(_step, _before, after) {
+    async verify(step, _before, after, action) {
       const pass = check(after)
-      return { verification: { success: pass, reasoning: pass ? 'requested outcome seen' : 'requested outcome absent', isAppError: false } }
+      const reasoning = pass ? 'requested outcome seen' : 'requested outcome absent'
+      return { verification: scriptedVerification({ step, after, action, pass, reasoning }) }
     },
   }
   const context: StepContext = {

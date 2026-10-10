@@ -13,6 +13,7 @@ import { SecretRedactor, SecretStore } from '../secrets.js'
 import { projectLegacyTrace } from '../evidence.js'
 import { createTimeoutAbortReason } from '../abort.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
+import { scriptedVerification } from '../../testing/condition-verdicts.js'
 import {
   makeActionPlan,
   makeAdapter,
@@ -195,7 +196,9 @@ describe('executeStep — ported v1 scenarios', () => {
     // duplicated here. This suite now only holds the neutral completion invariant: a normal
     // completing action reaches the verifier.
     it('a completing action + stepComplete calls the verifier', async () => {
-      const verifySpy = vi.fn().mockResolvedValue({ verification: { success: true, reasoning: 'confirmed', isAppError: false } })
+      const verifySpy = vi.fn(async (step: string, _before: ScreenState, after: ScreenState, action: Action) => ({
+        verification: scriptedVerification({ step, after, action, pass: true, reasoning: 'confirmed' }),
+      }))
       const verifier: Verifier = { verify: verifySpy }
       const planner = makePlanner([makeActionPlan({ action: { type: 'click', ref: 'e2' }, stepComplete: true })])
       const result = await executeStep('Verify button', ports({ adapter: makeAdapter({ observeResults: [makeScreenState(), makeScreenState()] }), planner, verifier }), makeStepContext())

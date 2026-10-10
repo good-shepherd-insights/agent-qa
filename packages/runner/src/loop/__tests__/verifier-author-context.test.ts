@@ -4,9 +4,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { generateText } from 'ai'
 import { asRef } from '@vostride/agent-qa-schema'
+import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { Action } from '../../platform.js'
 import type { Verifier } from '../types.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
+import { scriptedVerification } from '../../testing/condition-verdicts.js'
 import {
   buildContextTier,
   buildVerificationPrompt,
@@ -130,7 +132,7 @@ describe('LLMVerifier — author context (P2)', () => {
   beforeEach(() => {
     vi.mocked(generateText).mockReset()
     vi.mocked(generateText).mockResolvedValue({
-      output: { success: true, reasoning: 'ok', isAppError: false },
+      output: { conditions: [], dialogs: [], isAppError: false, reasoning: 'ok' },
       usage: { inputTokens: 1, outputTokens: 1 },
     } as any)
   })
@@ -164,9 +166,9 @@ describe('LLMVerifier — author context (P2)', () => {
 
 describe('executeStep — verifier author context wiring (P2)', () => {
   async function ninthArgFor(context: { testContext?: string; suiteContext?: string }): Promise<unknown[]> {
-    const verify = vi.fn().mockResolvedValue({
-      verification: { success: true, reasoning: 'done', isAppError: false },
-    })
+    const verify = vi.fn(async (step: string, _before: ScreenState, after: ScreenState, act: Action) => ({
+      verification: scriptedVerification({ step, after, action: act, pass: true, reasoning: 'done' }),
+    }))
     const verifier: Verifier = { verify }
     const result = await executeStep(
       'Click the Log in button',

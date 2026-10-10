@@ -18,7 +18,9 @@ import { createTimeoutAbortReason } from '../abort.js'
 import { executeStep } from '../index.js'
 import type { LoopPorts } from '../ports.js'
 import type { StepLimitMeter } from '../step-limits.js'
-import type { ActionPlan, Planner, VerificationResult, Verifier } from '../types.js'
+import type { ActionPlan, Planner, Verifier } from '../types.js'
+import { scriptedVerification, toVerificationResult } from '../../testing/condition-verdicts.js'
+import type { ScriptedVerdict } from '../../testing/condition-verdicts.js'
 import { noCautions, servedBrief } from './fixtures/served-trace.js'
 import { makeActionPlan, makeAdapter, makeStepContext } from './loop-harness.js'
 
@@ -53,13 +55,13 @@ function countingAdapter(result: ActionResult = { success: true }): PlatformAdap
   }
 }
 
-function scriptedVerifier(results: VerificationResult[]): Verifier & { calls: number } {
+function scriptedVerifier(results: ScriptedVerdict[]): Verifier & { calls: number } {
   const verifier = {
     calls: 0,
-    async verify() {
-      const verification = results[Math.min(verifier.calls, results.length - 1)]
+    async verify(step: string, _before: ScreenState, after: ScreenState, action: Action) {
+      const verdict = results[Math.min(verifier.calls, results.length - 1)]
       verifier.calls++
-      return { verification }
+      return { verification: toVerificationResult(verdict, { step, after, action }) }
     },
   }
   return verifier
@@ -139,7 +141,9 @@ describe('C436-STEP-LIMITS', () => {
     expect(adapter.executed).toHaveLength(3)
     expect(verifier.calls).toBe(3)
     const stop = result.evidence?.limitStop
-    expect(stop?.lastVerifierRejection).toBe(masking.mask('Saved banner absent for hunter2-secret'))
+    expect(stop?.lastVerifierRejection).toBe(
+      `Not met: "Save the form" (${masking.mask('Saved banner absent for hunter2-secret')})`,
+    )
     expect(stop?.lastPlannerReasoning).toBe(masking.mask('Third try with hunter2-secret'))
     expect(stop?.lastVerifierRejection).not.toContain('hunter2-secret')
     expect(stop?.lastPlannerReasoning).not.toContain('hunter2-secret')
@@ -204,8 +208,8 @@ describe('C436-STEP-LIMITS', () => {
 })
 
 const UNKNOWN_REF = 'Unknown ref "e9". Available refs: e1, e2'
-const REJECT: VerificationResult = { success: false, reasoning: 'Not done yet', isAppError: false }
-const ACCEPT: VerificationResult = { success: true, reasoning: 'Done', isAppError: false }
+const REJECT: ScriptedVerdict = { success: false, reasoning: 'Not done yet', isAppError: false }
+const ACCEPT: ScriptedVerdict = { success: true, reasoning: 'Done', isAppError: false }
 const CACHED_LOGIN: CachedPlanValue = {
   plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
   groundedLocator: [{ role: 'button', name: 'Log in' }],
@@ -234,9 +238,9 @@ function judgingVerifier(): Verifier & { verifyCalls: number; judgeCalls: number
   const verifier = {
     verifyCalls: 0,
     judgeCalls: 0,
-    async verify() {
+    async verify(step: string, _before: ScreenState, after: ScreenState, action: Action) {
       verifier.verifyCalls++
-      return { verification: REJECT }
+      return { verification: toVerificationResult(REJECT, { step, after, action }) }
     },
     async judgeClaim() {
       verifier.judgeCalls++
@@ -585,10 +589,11 @@ function bulkTask(): { adapter: PlatformAdapter & { executed: Action[] }; planne
   }
   const verifier = {
     calls: 0,
-    async verify(_step: string, _before: ScreenState, after: ScreenState) {
+    async verify(step: string, _before: ScreenState, after: ScreenState) {
       verifier.calls++
       const done = after.elements.every((el) => el.state.checked === true)
-      return { verification: { success: done, reasoning: done ? 'Every row is marked' : 'Rows remain', isAppError: false } }
+      const reasoning = done ? 'Every row is marked' : 'Rows remain'
+      return { verification: scriptedVerification({ step, after, pass: done, reasoning }) }
     },
   }
   return { adapter, planner, verifier }

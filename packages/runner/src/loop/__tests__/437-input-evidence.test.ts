@@ -7,6 +7,7 @@ import { buildAgentScreenState } from './screen-fixtures.js'
 import { makeActionPlan, makeStepContext, makePlanner } from './loop-harness.js'
 import type { ActionPlan, Planner, StepContext, Verifier } from '../types.js'
 import { buildVerificationPrompt, composeTurnMessages } from '../prompts.js'
+import { scriptedVerification } from '../../testing/condition-verdicts.js'
 
 const FIELD = buildAgentScreenState({
   url: 'https://x.test/form',
@@ -37,7 +38,8 @@ function capturingVerifier(captured: VerifyArgs[]): Verifier {
   return {
     async verify(...args: VerifyArgs) {
       captured.push(args)
-      return { verification: { success: true, reasoning: 'Step completed', isAppError: false } }
+      const [step, , after, action] = args
+      return { verification: scriptedVerification({ step, after, action, pass: true, reasoning: 'Step completed' }) }
     },
   }
 }

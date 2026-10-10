@@ -9,7 +9,7 @@
 // search ends only when the visibility probe sees the target or maxSwipes is used.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { executeStep } from '@vostride/agent-qa-runner'
+import { executeStep, scriptedVerification } from '@vostride/agent-qa-runner'
 import type {
   Action,
   ActionPlan,
@@ -62,9 +62,10 @@ async function scrollStep(adapter: PlatformAdapter, target: string): Promise<Run
   }
   const planner: Planner = { async plan() { return { plan } } }
   const verifier: Verifier = {
-    async verify(_step, _before, after) {
+    async verify(step, _before, after, action) {
       const pass = onScreen(after, FAR_ROW)
-      return { verification: { success: pass, reasoning: pass ? `${FAR_ROW} is on screen` : `${FAR_ROW} is not on screen`, isAppError: false } }
+      const reasoning = pass ? `${FAR_ROW} is on screen` : `${FAR_ROW} is not on screen`
+      return { verification: scriptedVerification({ step, after, action, pass, reasoning }) }
     },
   }
   const context: StepContext = {

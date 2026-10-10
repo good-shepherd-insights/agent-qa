@@ -112,7 +112,10 @@ beforeEach(() => {
         : { role: 'assistant', content: JSON.stringify(extracting
             ? { value: 'captured', reasoning: 'Read from the screen' }
             : judging ? { verdict: true, rationale: 'The button is visible' }
-            : { success: true, reasoning: 'Button clicked', isAppError: false }) } }],
+            : { conditions: [{ quote: 'Click', verdict: 'met', needs: 'none', controlRef: '',
+                file: { name: '', match: 'none', text: '' },
+                citations: [{ source: 'action', quote: 'Action taken' }], reasoning: 'Button clicked' }],
+              dialogs: [], isAppError: false, reasoning: 'Button clicked' }) } }],
       usage: { prompt_tokens: 100, completion_tokens: 7,
         ...(boundary.omitCache ? {} : { prompt_tokens_details: { cached_tokens: 30 } }) },
     }), { status: 200, headers: { 'content-type': 'application/json' } })

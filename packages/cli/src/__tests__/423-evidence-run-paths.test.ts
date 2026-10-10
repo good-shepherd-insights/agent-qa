@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { generateRunId, generateSuiteId, generateTestId } from '@vostride/agent-qa-ids'
-import { SecretRedactor, SecretStore, createRunEventBus, createMemberEventSink, executeStep, makeScreenState } from '@vostride/agent-qa-runner'
+import { SecretRedactor, SecretStore, createRunEventBus, createMemberEventSink, executeStep, makeScreenState, scriptedVerification } from '@vostride/agent-qa-runner'
 import type { EvidenceArtifactStorePort } from '@vostride/agent-qa-runner'
 import { buildRunMaskingContext, createRunInvocationCore } from '@vostride/agent-qa-agent-local'
 import { FsEvidenceArtifactStore, slugBranch } from '@vostride/agent-qa-runner-local'
@@ -274,9 +274,9 @@ async function ariaReadback(mode: 'two' | 'empty' | 'missing' | 'mobile' | 'chil
       reasoning: 'record child', action: { type: 'wait' }, confidence: 1,
       stepComplete: true, stepFailed: false,
     } } } },
-    verifier: { async verify() { return { verification: {
-      success: verification++ > 0, reasoning: 'fixture verdict', isAppError: false,
-    } } } },
+    verifier: { async verify(step, _before, after, action) { return { verification: scriptedVerification({
+      step, after, action, pass: verification++ > 0, reasoning: 'fixture verdict',
+    }) } } },
     masking, evidenceArtifacts: store, events: sink,
   }
   let result: StepResult | undefined

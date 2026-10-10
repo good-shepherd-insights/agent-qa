@@ -21,6 +21,7 @@ import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { PlatformAdapter, Action, ActionResult } from '../../platform.js'
 import type { LoopPorts } from '../ports.js'
 import type { Verifier, VerifyResult, ActionPlan } from '../types.js'
+import { scriptedVerification } from '../../testing/condition-verdicts.js'
 import type { ActionPlanCache } from '../../cache/port.js'
 
 import { executeStep } from '../index.js'
@@ -92,9 +93,9 @@ function makeJudgeVerifier(judgment: { verdict: boolean; rationale: string } = {
   const v: JudgeVerifier = {
     judgeClaimCalls: 0,
     verifyCalls: 0,
-    async verify(): Promise<VerifyResult> {
+    async verify(step, _before, after, action): Promise<VerifyResult> {
       v.verifyCalls++
-      return { verification: { success: true, reasoning: 'ok', isAppError: false } }
+      return { verification: scriptedVerification({ step, after, action, pass: true, reasoning: 'ok' }) }
     },
     async judgeClaim() {
       v.judgeClaimCalls++

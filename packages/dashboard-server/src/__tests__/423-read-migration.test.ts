@@ -112,8 +112,14 @@ async function usageRun(options: { retry?: boolean; omitCache?: boolean; unscope
             : judging ? { verdict: true, rationale: 'Visible' }
             // A passing assertAI is confirmed by the step verifier (quick 261004-0hc), so only the
             // first verifier call, after the click, rejects.
-            : verifierCalls === 1 ? { success: false, reasoning: 'Confirm with an assertion', isAppError: false }
-            : { success: true, reasoning: 'Log in is visible', isAppError: false }) } }],
+            : verifierCalls === 1 ? { conditions: [{ quote: 'Click and verify Log in', verdict: 'not-met',
+                needs: 'none', controlRef: '', file: { name: '', match: 'none', text: '' }, citations: [],
+                reasoning: 'Confirm with an assertion' }], dialogs: [], isAppError: false,
+              reasoning: 'Confirm with an assertion' }
+            : { conditions: [{ quote: 'Click and verify Log in', verdict: 'met', needs: 'none', controlRef: '',
+                file: { name: '', match: 'none', text: '' },
+                citations: [{ source: 'action', quote: 'Action taken' }], reasoning: 'Log in is visible' }],
+              dialogs: [], isAppError: false, reasoning: 'Log in is visible' }) } }],
       usage: { prompt_tokens: 100, completion_tokens: 7,
         ...(options.omitCache ? {} : { prompt_tokens_details: { cached_tokens: 30 } }) },
     }), { status: 200, headers: { 'content-type': 'application/json' } })

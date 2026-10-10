@@ -106,7 +106,20 @@ describe('C436-MODEL-CALLS', () => {
       }
       verificationCalls++
       return {
-        output: { success: true, reasoning: 'The account page is shown', isAppError: false },
+        output: {
+          conditions: [{
+            quote: STEP,
+            verdict: 'met',
+            needs: 'none',
+            controlRef: '',
+            file: { name: '', match: 'none', text: '' },
+            citations: [{ source: 'final-screen', quote: 'heading "Welcome back"' }],
+            reasoning: 'The account page is shown',
+          }],
+          dialogs: [],
+          isAppError: false,
+          reasoning: 'The account page is shown',
+        },
         usage: USAGE,
       } as never
     })

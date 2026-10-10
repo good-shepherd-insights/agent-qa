@@ -19,6 +19,7 @@ import { buildScreenState, type InterimNode } from '../../screen-builder.js'
 import { executeStep } from '../index.js'
 import type { ActionPlan, Planner, StepContext } from '../types.js'
 import { makeStepContext } from './loop-harness.js'
+import { scriptedVerification } from '../../testing/condition-verdicts.js'
 import { servedBrief, servedCautions } from './fixtures/served-trace.js'
 
 // Every node gets bounds so its ref is in the refMap and the committed-ref lane grounds it.
@@ -502,9 +503,9 @@ describe('C438-HEAL-RECORD', () => {
   it('the verifier of a healed click reads the action against the fresh observation', async () => {
     const calls: Array<{ before: ScreenState; action: Action }> = []
     const verifier = {
-      async verify(_step: string, before: ScreenState, _after: ScreenState, action: Action) {
+      async verify(step: string, before: ScreenState, after: ScreenState, action: Action) {
         calls.push({ before, action })
-        return { verification: { success: true, reasoning: 'accepted', isAppError: false } }
+        return { verification: scriptedVerification({ step, after, action, pass: true, reasoning: 'accepted' }) }
       },
     }
     const { result } = await runSave(SAVE_FRESH, [BINDING_LOST_TO_REF, { success: true }], {

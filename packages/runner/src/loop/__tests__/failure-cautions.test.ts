@@ -15,7 +15,8 @@ import type { LoopPorts } from '../ports.js'
 import { createRecordLedger, type RecordLedger } from '../record-ledger.js'
 import { executeStep } from '../index.js'
 import { buildVolatileTier } from '../prompts.js'
-import type { ActionPlan, Planner, StepContext, VerificationResult } from '../types.js'
+import type { ActionPlan, Planner, StepContext } from '../types.js'
+import type { ScriptedVerdict } from '../../testing/condition-verdicts.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import {
   makeActionPlan,
@@ -112,7 +113,7 @@ function ports(input: {
   reader: KnowledgeHintReader
   executeResults?: Array<{ success: boolean; error?: string }>
   observeResults?: ScreenState[]
-  verifierResults?: VerificationResult[]
+  verifierResults?: ScriptedVerdict[]
   recordLedger?: RecordLedger
   budgets?: typeof DEFAULT_BUDGETS
 }): LoopPorts {

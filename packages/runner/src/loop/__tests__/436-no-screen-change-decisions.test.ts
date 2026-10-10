@@ -6,6 +6,7 @@ import { asRef, screenIdentityHash } from '@vostride/agent-qa-schema'
 import type { ElementInfo, ScreenState } from '@vostride/agent-qa-schema'
 import type { Action, ActionResult, PlatformAdapter } from '../../platform.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
+import { scriptedVerification } from '../../testing/condition-verdicts.js'
 import { executeStep } from '../index.js'
 import type { LoopPorts } from '../ports.js'
 import type { ActionPlan, Planner, Verifier } from '../types.js'
@@ -89,10 +90,16 @@ function scriptedPlanner(plans: ActionPlan[], trace: Trace): Planner {
 
 function passingVerifier(trace: Trace): Verifier {
   return {
-    async verify() {
+    async verify(step, _before, after, action) {
       trace.events.push('verify')
       return {
-        verification: { success: true, reasoning: 'Requested outcome observed', isAppError: false },
+        verification: scriptedVerification({
+          step,
+          after,
+          action,
+          pass: true,
+          reasoning: 'Requested outcome observed',
+        }),
       }
     },
   }

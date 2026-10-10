@@ -24,6 +24,7 @@ import type { ScreenState, WorkingMemoryEntry } from '@vostride/agent-qa-schema'
 import type { PlatformAdapter, Action, ActionResult } from '../../platform.js'
 import type { LoopPorts, WorkingMemoryPort } from '../ports.js'
 import type { Verifier, VerifyResult } from '../types.js'
+import { scriptedVerification } from '../../testing/condition-verdicts.js'
 import type { ActionPlanCache } from '../../cache/port.js'
 import { executeStep } from '../index.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
@@ -102,8 +103,8 @@ function makeJudgeVerifier(opts?: {
   return {
     judgeClaimCalls,
     extractDataCalls,
-    async verify() {
-      return opts?.verify ?? { verification: { success: true, reasoning: 'ok', isAppError: false } }
+    async verify(step, _before, after, action) {
+      return opts?.verify ?? { verification: scriptedVerification({ step, after, action, pass: true, reasoning: 'ok' }) }
     },
     async judgeClaim(claim, _screen, o) {
       judgeClaimCalls.push({ claim, opts: o })

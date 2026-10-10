@@ -25,6 +25,7 @@ import { executeStep } from '../index.js'
 import type { LoopPorts, ProcedureFlowCarry } from '../ports.js'
 import type { ActionPlan, Planner, StepContext, Verifier } from '../types.js'
 import { makeActionPlan, makeStepContext, makeVerifier } from './loop-harness.js'
+import { scriptedVerification } from '../../testing/condition-verdicts.js'
 import { noCautions, servedBrief, servedCautions } from './fixtures/served-trace.js'
 
 const FORM_ROUTE = 'http://127.0.0.1:8931/form.html'
@@ -418,9 +419,9 @@ describe('cross-step flow carry (F-381-51-1 · D-09/D-10/D-11)', () => {
     const planner = capturingPlanner([makeActionPlan()])
     let verifies = 0
     const verifier: Verifier = {
-      async verify() {
+      async verify(step, _before, after, action) {
         verifies++
-        return { verification: { success: true, reasoning: 'accepted', isAppError: false } }
+        return { verification: scriptedVerification({ step, after, action, pass: true, reasoning: 'accepted' }) }
       },
     }
     const sharedPorts = (): LoopPorts => ports({

@@ -5,7 +5,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { PlatformAdapter, ActionResult } from '../../platform.js'
-import type { ActionPlan, PlanResult, Planner, StepContext, VerifyResult, Verifier } from '../types.js'
+import type { ActionPlan, PlanResult, Planner, StepContext, VerificationResult, VerifyResult, Verifier } from '../types.js'
+import { scriptedVerification } from '../../testing/condition-verdicts.js'
 import type { StepResult } from '../../result.js'
 import { executeStep } from '../index.js'
 import { buildAgentScreenState } from './screen-fixtures.js'
@@ -96,12 +97,24 @@ function makeMessageRowVerifier(observeCount: () => number): RecordingVerifier {
     async verify(...args: unknown[]): Promise<VerifyResult> {
       v.calls.push(args)
       v.observesAtCall.push(observeCount())
-      return hasMessageRow(verifyCall(args).after)
-        ? { verification: { success: true, reasoning: 'The message was sent and the composer is clear', isAppError: false } }
-        : { verification: { success: false, reasoning: 'The text is still in the composer and no new message appears', isAppError: false } }
+      const call = verifyCall(args)
+      return hasMessageRow(call.after)
+        ? { verification: passed(args, 'The message was sent and the composer is clear') }
+        : {
+            verification: scriptedVerification({
+              step: call.step,
+              pass: false,
+              reasoning: 'The text is still in the composer and no new message appears',
+            }),
+          }
     },
   }
   return v
+}
+
+function passed(args: unknown[], reasoning: string): VerificationResult {
+  const call = verifyCall(args)
+  return scriptedVerification({ step: call.step, after: call.after, pass: true, reasoning })
 }
 
 function verifyCall(args: unknown[]): { step: string; before: ScreenState; after: ScreenState; authorContext: unknown } {
@@ -219,8 +232,8 @@ describe('verifier AFTER observation settles with a 500 ms interval (P6, L3)', (
         return { success: true }
       },
     }
-    const verify = vi.fn(async (..._args: unknown[]): Promise<VerifyResult> => ({
-      verification: { success: true, reasoning: 'done', isAppError: false },
+    const verify = vi.fn(async (...args: unknown[]): Promise<VerifyResult> => ({
+      verification: passed(args, 'done'),
     }))
     const observesAtVerify: number[] = []
     const verifier: Verifier = {
@@ -254,8 +267,8 @@ describe('verifier author context carries the step position (P2, L2)', () => {
   })
 
   async function ninthArgFor(overrides: Partial<StepContext>): Promise<unknown> {
-    const verify = vi.fn(async (..._args: unknown[]): Promise<VerifyResult> => ({
-      verification: { success: true, reasoning: 'done', isAppError: false },
+    const verify = vi.fn(async (...args: unknown[]): Promise<VerifyResult> => ({
+      verification: passed(args, 'done'),
     }))
     const result = await driveWithFakeClock<StepResult>(executeStep(
       'Click the Log in button',

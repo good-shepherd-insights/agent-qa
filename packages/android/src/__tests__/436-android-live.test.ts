@@ -9,7 +9,7 @@
 // answers true while the list moved and more remains, and false at the list's end.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { executeStep } from '@vostride/agent-qa-runner'
+import { executeStep, scriptedVerification } from '@vostride/agent-qa-runner'
 import type {
   Action,
   ActionPlan,
@@ -81,10 +81,11 @@ async function runStep(
     },
   }
   const verifier: Verifier = {
-    async verify(_step, _before, after, _action, _shot, _signal, _note, _predicate, _author, evidence) {
+    async verify(step, _before, after, action, _shot, _signal, _note, _predicate, _author, evidence) {
       verifierEvidence.push(evidence)
       const pass = check(after)
-      return { verification: { success: pass, reasoning: pass ? 'requested outcome seen' : 'requested outcome absent', isAppError: false } }
+      const reasoning = pass ? 'requested outcome seen' : 'requested outcome absent'
+      return { verification: scriptedVerification({ step, after, action, pass, reasoning }) }
     },
   }
   const context: StepContext = {

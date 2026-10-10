@@ -11,6 +11,7 @@ import type {
 } from '@vostride/agent-qa-schema'
 import type { Action, ActionResult, PlatformAdapter } from '../../platform.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
+import { scriptedVerification } from '../../testing/condition-verdicts.js'
 import {
   CLIPBOARD_TEXT_LIMIT,
   CLIPBOARD_TRUNCATION_MARKER,
@@ -49,8 +50,10 @@ function scriptedPlanner(plans: ActionPlan[], contexts: StepContext[]): Planner 
 }
 
 const passingVerifier: Verifier = {
-  async verify() {
-    return { verification: { success: true, reasoning: 'Requested outcome observed', isAppError: false } }
+  async verify(step, _before, after, action) {
+    return {
+      verification: scriptedVerification({ step, after, action, pass: true, reasoning: 'Requested outcome observed' }),
+    }
   },
 }
 
@@ -190,15 +193,13 @@ const SECOND: DownloadEvidence = {
 
 function recordingVerifier(calls: unknown[][], pass: boolean): Verifier {
   return {
-    async verify(...args: unknown[]) {
+    async verify(...args: Parameters<Verifier['verify']>) {
       calls.push(args)
-      return {
-        verification: pass
-          ? { success: true, reasoning: 'Requested outcome observed', isAppError: false }
-          : { success: false, reasoning: 'The requested download is not evidenced', isAppError: false },
-      }
+      const [step, , after, action] = args
+      const reasoning = pass ? 'Requested outcome observed' : 'The requested download is not evidenced'
+      return { verification: scriptedVerification({ step, after, action, pass, reasoning }) }
     },
-  } as Verifier
+  }
 }
 
 function withSupport(adapter: PlatformAdapter, support: PlatformAdapter['operationCaptureSupport']): PlatformAdapter {

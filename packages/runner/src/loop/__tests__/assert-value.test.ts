@@ -23,6 +23,8 @@ import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { PlatformAdapter, Action, ActionResult } from '../../platform.js'
 import type { LoopPorts } from '../ports.js'
 import type { ActionPlan, PlanResult, Planner, StepContext, Verifier } from '../types.js'
+import { scriptedVerification, toVerificationResult } from '../../testing/condition-verdicts.js'
+import type { ScriptedVerdict } from '../../testing/condition-verdicts.js'
 import { executeStep } from '../index.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import { makeStepContext, makePlanner, makeActionPlan } from './loop-harness.js'
@@ -69,9 +71,9 @@ interface ShortCircuitVerifier extends Verifier {
 function makeShortCircuitVerifier(judgment: { verdict: boolean; rationale: string } = { verdict: true, rationale: 'ok' }): ShortCircuitVerifier {
   const v: ShortCircuitVerifier = {
     verifyCalls: 0,
-    async verify() {
+    async verify(step, _before, after, action) {
       v.verifyCalls++
-      return { verification: { success: true, reasoning: 'ok', isAppError: false } }
+      return { verification: scriptedVerification({ step, after, action, pass: true, reasoning: 'ok' }) }
     },
     async judgeClaim() {
       return judgment
@@ -88,11 +90,11 @@ interface ScriptedVerifier extends Verifier {
   extractData(query: string, screen: ScreenState, opts?: Record<string, unknown>): Promise<Record<string, unknown>>
 }
 
-type Verification = { success: boolean; reasoning: string; isAppError: boolean }
+type Verification = ScriptedVerdict
 
 function makeScriptedVerifier(script: {
   judgment?: { verdict: boolean; rationale: string }
-  verification?: Verification
+  verdict?: Verification
   verifications?: Verification[]
   extracted?: Record<string, unknown>
 }): ScriptedVerifier {
@@ -100,10 +102,12 @@ function makeScriptedVerifier(script: {
     verifyArgs: [],
     judgeClaimCalls: 0,
     extractCalls: 0,
-    async verify(...args: unknown[]) {
+    async verify(...args: Parameters<Verifier['verify']>) {
       v.verifyArgs.push(args)
+      const [step, , after, action] = args
       const scripted = script.verifications?.[Math.min(v.verifyArgs.length - 1, script.verifications.length - 1)]
-      return { verification: scripted ?? script.verification ?? { success: true, reasoning: 'ok', isAppError: false } }
+      const verdict = scripted ?? script.verdict ?? { success: true, reasoning: 'ok', isAppError: false }
+      return { verification: toVerificationResult(verdict, { step, after, action }) }
     },
     async judgeClaim() {
       v.judgeClaimCalls++
@@ -217,7 +221,7 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
     const adapter = readingAdapter(makeScreenState(), { success: true })
     const verifier = makeScriptedVerifier({
       judgment: { verdict: true, rationale: 'the page shows the #caturday hashtag' },
-      verification: { success: false, reasoning: 'The final screen is Safari, not Bluesky', isAppError: false },
+      verdict: { success: false, reasoning: 'The final screen is Safari, not Bluesky', isAppError: false },
     })
     const assertTurn = makeActionPlan({
       action: {
@@ -256,7 +260,7 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
     const adapter = readingAdapter(makeScreenState(), { success: true })
     const verifier = makeScriptedVerifier({
       judgment: { verdict: true, rationale: 'the page shows the #caturday hashtag' },
-      verification: { success: true, reasoning: 'Bluesky shows the #caturday results', isAppError: false },
+      verdict: { success: true, reasoning: 'Bluesky shows the #caturday results', isAppError: false },
     })
     const plan = makeActionPlan({
       action: { type: 'assertAI', claim: 'Bluesky shows the #caturday results', mode: 'multimodal', effort: 'medium', consensus: 1 },
@@ -302,7 +306,7 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
     const adapter = readingAdapter(makeScreenState(), { success: true })
     const verifier = makeScriptedVerifier({
       extracted: { title: 'Home' },
-      verification: { success: true, reasoning: 'The page title is visible', isAppError: false },
+      verdict: { success: true, reasoning: 'The page title is visible', isAppError: false },
     })
     const plan = makeActionPlan({
       action: { type: 'extractAI', query: 'the page title' },
@@ -327,7 +331,7 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
     const adapter = readingAdapter(makeScreenState(), { success: true })
     const verifier = makeScriptedVerifier({
       extracted: {},
-      verification: { success: false, reasoning: 'No title is visible', isAppError: false },
+      verdict: { success: false, reasoning: 'No title is visible', isAppError: false },
     })
     const extractTurn = makeActionPlan({ action: { type: 'extractAI', query: 'the page title' }, stepComplete: true })
     const bail = makeActionPlan({ action: { type: 'reportValue', value: 'n/a' }, stepComplete: false, stepFailed: true })
@@ -347,7 +351,7 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
     const adapter = readingAdapter(makeScreenState(), { success: true })
     const verifier = makeScriptedVerifier({
       judgment: { verdict: true, rationale: 'the header is present' },
-      verification: { success: false, reasoning: 'The header is not visible', isAppError: false },
+      verdict: { success: false, reasoning: 'The header is not visible', isAppError: false },
     })
     const plan = makeActionPlan({
       action: { type: 'assertAI', claim: 'the header is present', mode: 'multimodal', effort: 'medium', consensus: 1 },
@@ -399,7 +403,7 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
     const adapter = readingAdapter(makeScreenState(), { success: true })
     const verifier = makeScriptedVerifier({
       judgment: { verdict: true, rationale: 'the error is shown' },
-      verification: { success: true, reasoning: 'The login was refused as the test expects', isAppError: false },
+      verdict: { success: true, reasoning: 'The login was refused as the test expects', isAppError: false },
     })
     const plan = makeActionPlan({
       action: { type: 'assertAI', claim: "An 'Incorrect password' error is shown", mode: 'multimodal', effort: 'medium', consensus: 1 },
@@ -420,7 +424,7 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
     const adapter = readingAdapter(makeScreenState(), { success: true })
     const verifier = makeScriptedVerifier({
       judgment: { verdict: true, rationale: 'the error is shown' },
-      verification: { success: false, reasoning: 'The server returned HTTP 500', isAppError: true },
+      verdict: { success: false, reasoning: 'The server returned HTTP 500', isAppError: true },
     })
     const plan = makeActionPlan({
       action: { type: 'assertAI', claim: "An 'Incorrect password' error is shown", mode: 'multimodal', effort: 'medium', consensus: 1 },

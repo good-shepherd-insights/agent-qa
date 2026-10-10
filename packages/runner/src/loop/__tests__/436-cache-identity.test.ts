@@ -17,6 +17,7 @@ import type { EvidenceArtifactStorePort, LoopPorts } from '../ports.js'
 import type { ActionPlan, Planner, PlanResult, Verifier } from '../types.js'
 import { executeStep } from '../index.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
+import { scriptedVerification } from '../../testing/condition-verdicts.js'
 import { makeActionPlan, makeStepContext, makeVerifier } from './loop-harness.js'
 
 const STEP = 'Sign in with the demo email'
@@ -269,14 +270,16 @@ describe('C436-CACHE-IDENTITY', () => {
     ])
     let verifies = 0
     const verifier: Verifier = {
-      async verify() {
+      async verify(step, _before, after, action) {
         verifies++
         return {
-          verification: {
-            success: false,
+          verification: scriptedVerification({
+            step,
+            after,
+            action,
+            pass: false,
             reasoning: 'The account page is not shown',
-            isAppError: false,
-          },
+          }),
         }
       },
     }
@@ -313,14 +316,16 @@ describe('C436-CACHE-IDENTITY', () => {
     }
     const verified: (Buffer | undefined)[] = []
     const verifier: Verifier = {
-      async verify(_step, _before, _after, _action, screenshot) {
+      async verify(step, _before, after, action, screenshot) {
         verified.push(screenshot)
         return {
-          verification: {
-            success: true,
+          verification: scriptedVerification({
+            step,
+            after,
+            action,
+            pass: true,
             reasoning: 'The account page is shown',
-            isAppError: false,
-          },
+          }),
         }
       },
     }
