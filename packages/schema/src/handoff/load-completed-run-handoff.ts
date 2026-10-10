@@ -17,6 +17,13 @@ import { canonicalJson } from '../determinism/canonical-json'
 import { sha256hex } from '../determinism/sha256'
 import { screenStateHash } from '../determinism/screen-hash'
 import type { StepEvidence } from './step-evidence'
+import {
+  CITATION_SOURCES,
+  CONDITION_ENDINGS,
+  CONDITION_GUARDS,
+  CONDITION_NEEDS,
+  CONDITION_VERDICTS,
+} from './condition-evidence'
 
 /**
  * Thrown when a stored handoff declares a `schemaVersion` this build cannot consume:
@@ -423,6 +430,64 @@ function hasCompleteRetrievalRungShape(value: unknown): boolean {
   return RecordedRetrievalRungSchema.safeParse(value).success
 }
 
+function isOneOf(values: readonly string[], value: unknown): boolean {
+  return typeof value === 'string' && values.includes(value)
+}
+
+function hasCompleteConditionRecordShape(value: unknown): boolean {
+  if (!isNonArrayObject(value)) return false
+  const file = value.file
+  return (
+    typeof value.quote === 'string' &&
+    typeof value.reason === 'string' &&
+    isOneOf(CONDITION_VERDICTS, value.verdict) &&
+    (!('judged' in value) || isOneOf(CONDITION_VERDICTS, value.judged)) &&
+    (!('guard' in value) || isOneOf(CONDITION_GUARDS, value.guard)) &&
+    (!('needs' in value) || isOneOf(CONDITION_NEEDS, value.needs)) &&
+    Array.isArray(value.citations) &&
+    value.citations.every(
+      (citation) =>
+        isNonArrayObject(citation) &&
+        isOneOf(CITATION_SOURCES, citation.source) &&
+        typeof citation.quote === 'string' &&
+        (typeof citation.found === 'boolean' || citation.found === 'unchecked'),
+    ) &&
+    (!('file' in value) ||
+      (isNonArrayObject(file) &&
+        isOneOf(['match', 'differs'], file.name) &&
+        isOneOf(['match', 'differs', 'unverified'], file.content) &&
+        (!('firstDifference' in file) || typeof file.firstDifference === 'string')))
+  )
+}
+
+/**
+ * Validates a present `conditionVerdicts` (439 D-07) by hand: the block is a TypeScript DTO with
+ * no runtime schema, and every reader (the router, the root-cause classifier, analyze-run, the
+ * evidence diet) walks its conditions, verdicts and dialogs through `stepOutcomeUnproven`.
+ *
+ * Present-implies-valid, and absence stays legal: a pre-439 run has no block, and neither does a
+ * step that ended before any verifier judgment. Presence is admitted only in consumer-traversable
+ * form, with every verdict, guard, need, citation source and dialog account one of its declared
+ * literals, so no reader meets a value it has no reading for. The handoff version stays 7.
+ */
+function hasCompleteConditionVerdictsShape(value: unknown): boolean {
+  if (!isNonArrayObject(value)) return false
+  const openDialogs = value.openDialogs
+  return (
+    isOneOf(CONDITION_ENDINGS, value.ending) &&
+    Array.isArray(value.conditions) &&
+    value.conditions.every(hasCompleteConditionRecordShape) &&
+    (!('openDialogs' in value) ||
+      (Array.isArray(openDialogs) &&
+        openDialogs.every(
+          (dialog) =>
+            isNonArrayObject(dialog) &&
+            typeof dialog.name === 'string' &&
+            isOneOf(['bears-on-condition', 'unrelated', 'unaccounted'], dialog.account),
+        )))
+  )
+}
+
 function hasCompleteStepShape(value: unknown): boolean {
   if (!isNonArrayObject(value)) return false
 
@@ -448,7 +513,9 @@ function hasCompleteStepShape(value: unknown): boolean {
       hasCompleteInterpolatedVariablesShape(value.interpolatedVariables)) &&
     (!('retrievalTrace' in value) ||
       hasCompleteRetrievalTraceShape(value.retrievalTrace)) &&
-    (!('retrievalRung' in value) || hasCompleteRetrievalRungShape(value.retrievalRung))
+    (!('retrievalRung' in value) || hasCompleteRetrievalRungShape(value.retrievalRung)) &&
+    (!('conditionVerdicts' in value) ||
+      hasCompleteConditionVerdictsShape(value.conditionVerdicts))
   )
 }
 

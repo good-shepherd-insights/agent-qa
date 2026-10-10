@@ -17,6 +17,11 @@
 //      about the application, and repairing it could iterate a dead control into a passing test
 //      (436 D-14). Evaluated before rule 2, so a verdictSource on another step never makes it
 //      definitive; a limit is never a mechanics signal.
+//   1c. SOME step the verifier left unproven (`stepOutcomeUnproven`: a condition unverified or
+//      inconclusive, none not met) and carrying no mechanics signal -> `indefinitive-failure` ->
+//      STOP. Nothing says the application failed, and repairing it would rewrite an unproven claim
+//      into a passing one (439 D-07, after 436 D-14's limit stop). An infeasible step keeps its
+//      termination as its primary reason (439 D-08) and routes by rule 3.
 //   2. SOME step is a CLEAN DEFINITIVE ASSERTION-FAIL — its verifier said no, a `verdictSource`
 //      records which path produced that verdict, and that step carries no mechanics signal of
 //      its own. Then:
@@ -66,6 +71,7 @@
 // disposition implies — and the derivation here is named for the question it answers so the two
 // can coexist until plan 06 makes one call the other.
 
+import { stepOutcomeUnproven } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   DraftRef,
@@ -235,6 +241,16 @@ export function stepLimitStopped(step: StepEvidence): boolean {
   return step.limitStop !== undefined
 }
 
+/** A step the verifier left unverified or inconclusive, with nothing not met (439 D-07). */
+export function stepUnproven(step: StepEvidence): boolean {
+  return stepOutcomeUnproven(step)
+}
+
+/** Rule 1c's step: unproven, and no mechanics signal of its own to route it to repair. */
+function unprovenWithoutMechanics(step: StepEvidence): boolean {
+  return stepUnproven(step) && stepMechanics(step).length === 0
+}
+
 /** Every mechanics signal in the member: the whole step scan, then the member-level outcome. */
 function scanMechanics(member: PerTestOutcome): readonly MechanicsSignal[] {
   const signals: MechanicsSignal[] = []
@@ -294,6 +310,7 @@ export function classifyFailureEvidence(
   const failed = !NON_FAILING_OUTCOMES.includes(member.outcome) || member.steps.some(isFailedVerdict)
   if (!failed) return 'no-failure'
   if (member.steps.some(stepLimitStopped)) return 'indefinitive-failure'
+  if (member.steps.some(unprovenWithoutMechanics)) return 'indefinitive-failure'
 
   const mechanics = scanMechanics(member)
   if (firstCleanDefinitiveFail(member) !== undefined) {
@@ -431,10 +448,12 @@ export function routeRepairOrStop(
   }
 
   // The stop points at the step a limit stopped when there is one (that is why it stopped), then
-  // at the step whose CLAIM failed, and otherwise at the first step the verifier rejected — never
+  // at the step the verifier left unproven, then at the step whose CLAIM failed, and otherwise at
+  // the first step the verifier rejected — never
   // at a step chosen because it carried a mechanics signal, which would name a symptom of the run
   // rather than the application behaviour.
   const point = member.steps.find(stepLimitStopped)
+    ?? member.steps.find(unprovenWithoutMechanics)
     ?? firstCleanDefinitiveFail(member)
     ?? failingStep
   return {

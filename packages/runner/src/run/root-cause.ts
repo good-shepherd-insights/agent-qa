@@ -14,6 +14,9 @@
 //                     evidence carries limitStop is 'unknown', confidence 0, with the limit
 //                     reason as rationale. Never environment, timeout or app_bug, and no class
 //                     is added; analyze-run excludes these members from model authorship.
+//      unproven     — right after the limit stop (439 D-07): a failing step the verifier left
+//                     unverified or inconclusive (stepOutcomeUnproven) is 'unknown', confidence
+//                     0, with the step's reason as rationale. Never an application class.
 //   3. flake        — final status 'passed' with retryCount > 0 (member-runner retry loop)
 //   4. unknown      — any other failure; confidence 0, the safe Noop default M4's
 //                     analyze-run later supersedes via producer keying (D-03)
@@ -24,6 +27,7 @@
 // empty, memoryMisdirectionRuledOut true (a deterministic classifier never attributes to
 // memory), producer 'deterministic-classifier'.
 
+import { stepOutcomeUnproven } from '@vostride/agent-qa-schema'
 import type { MemberTestOutcome, Verdict } from '@vostride/agent-qa-schema'
 import type { TestResult } from '../result.js'
 import { isTestTimeoutMessage } from './verdict.js'
@@ -137,6 +141,36 @@ function limitStoppedSteps(result: TestResult): { index: number; reason: string 
   return stopped
 }
 
+/** Failing steps the verifier left unproven (439 D-07), with the step's reason. */
+function unprovenSteps(result: TestResult): { index: number; reason: string }[] {
+  const unproven: { index: number; reason: string }[] = []
+  result.steps.forEach((s, i) => {
+    if (s.status === 'failed' && s.evidence !== undefined && stepOutcomeUnproven(s.evidence)) {
+      unproven.push({ index: i, reason: s.error ?? s.evidence.verifierVerdict.reasoning })
+    }
+  })
+  return unproven
+}
+
+function unknownFromSteps(
+  steps: readonly { index: number; reason: string }[],
+  testIndex: number,
+): Verdict {
+  return {
+    class: 'unknown',
+    producer: 'deterministic-classifier',
+    confidence: 0,
+    evidence: {
+      citedSteps: steps.map(({ index }) => index),
+      citedAnchors: [],
+      citedArtifacts: [],
+      rationale: steps[0]?.reason ?? UNKNOWN_SIGNAL_RATIONALE,
+    },
+    memoryMisdirectionRuledOut: true,
+    perTest: testIndex,
+  }
+}
+
 function matchToken(texts: readonly string[], tokens: readonly string[]): { token: string; text: string } | undefined {
   for (const text of texts) {
     for (const token of tokens) {
@@ -200,21 +234,10 @@ export function classifyRootCause(input: RootCauseInput): Verdict | undefined {
   }
 
   const limitStopped = limitStoppedSteps(result)
-  if (limitStopped.length > 0) {
-    return {
-      class: 'unknown',
-      producer: 'deterministic-classifier',
-      confidence: 0,
-      evidence: {
-        citedSteps: limitStopped.map(({ index }) => index),
-        citedAnchors: [],
-        citedArtifacts: [],
-        rationale: limitStopped[0]?.reason ?? UNKNOWN_SIGNAL_RATIONALE,
-      },
-      memoryMisdirectionRuledOut: true,
-      perTest: testIndex,
-    }
-  }
+  if (limitStopped.length > 0) return unknownFromSteps(limitStopped, testIndex)
+
+  const unproven = unprovenSteps(result)
+  if (unproven.length > 0) return unknownFromSteps(unproven, testIndex)
 
   const texts = failureErrorTexts(result)
   const connect = matchToken(texts, CONNECT_ERROR_TOKENS)

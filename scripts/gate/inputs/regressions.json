@@ -6288,6 +6288,132 @@
       "file": "packages/runner/src/loop/__tests__/439-checks-loop.test.ts",
       "fullName": "C439-CHECKS-LOOP the verifier's own admission refuses its met verdict",
       "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/439-key-sets.test.ts",
+      "fullName": "C439-KEY-SETS a condition record carries exactly its eight members",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/439-key-sets.test.ts",
+      "fullName": "C439-KEY-SETS the block carries exactly ending, conditions and openDialogs",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/439-key-sets.test.ts",
+      "fullName": "C439-KEY-SETS a condition verdict is exactly met, not-met, unverified or inconclusive",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/439-key-sets.test.ts",
+      "fullName": "C439-KEY-SETS the handoff schema version is still 7",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/439-key-sets.test.ts",
+      "fullName": "C439-KEY-SETS a handoff whose step carries a well-formed block loads",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/439-key-sets.test.ts",
+      "fullName": "C439-KEY-SETS a block whose conditions are not an array is refused",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/439-key-sets.test.ts",
+      "fullName": "C439-KEY-SETS a block with an unknown verdict literal is refused",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/439-key-sets.test.ts",
+      "fullName": "C439-KEY-SETS a citation whose found is 'maybe' is refused",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/439-key-sets.test.ts",
+      "fullName": "C439-KEY-SETS a handoff with no block loads unchanged",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/439-unproven-routing.test.ts",
+      "fullName": "C439-ROUTER-UNPROVEN an unproven step with no mechanics routes to stop as indefinitive-failure",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/439-unproven-routing.test.ts",
+      "fullName": "C439-ROUTER-UNPROVEN an unproven step beats a verdictSource on the same step",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/439-unproven-routing.test.ts",
+      "fullName": "C439-ROUTER-UNPROVEN an unproven step is never repaired because another step carries a mechanics signal",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/439-unproven-routing.test.ts",
+      "fullName": "C439-ROUTER-UNPROVEN a not-met block with a verdictSource keeps today's clean-definitive-assertion-fail",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/439-unproven-routing.test.ts",
+      "fullName": "C439-ROUTER-UNPROVEN an infeasible step with unverified conditions keeps routing to repair by its termination",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/439-unproven-routing.test.ts",
+      "fullName": "C439-ROUTER-UNPROVEN a member timeout whose step block ended in timeout keeps its mechanics route",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/439-unproven-routing.test.ts",
+      "fullName": "C439-ROUTER-UNPROVEN a limit-stopped step still takes rule 1b",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/run/__tests__/439-root-cause.test.ts",
+      "fullName": "C439-ROOT-CAUSE an unproven failed step is unknown with its reason as rationale",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/run/__tests__/439-root-cause.test.ts",
+      "fullName": "C439-ROOT-CAUSE an unproven step without an error cites the verifier verdict's reasoning",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/run/__tests__/439-root-cause.test.ts",
+      "fullName": "C439-ROOT-CAUSE an unproven step is never classed environment by the error-token scans",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/run/__tests__/439-root-cause.test.ts",
+      "fullName": "C439-ROOT-CAUSE a not-met-only block falls through to today's classification",
+      "origin": "439 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/run/__tests__/439-root-cause.test.ts",
+      "fullName": "C439-ROOT-CAUSE a limit stop keeps its own branch",
+      "origin": "439 D-07"
     }
   ]
 }
