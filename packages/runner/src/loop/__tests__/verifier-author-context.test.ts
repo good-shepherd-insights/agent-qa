@@ -1,6 +1,7 @@
 // P2: the step verifier sees the test author's suite/test context, in the per-call turn, with
 // the exact text the planner's context tier carries. Without context the prompt bytes are
-// unchanged (pinned literal captured from prompts.ts at agent-qa 14d504bca).
+// unchanged (pinned literal captured from prompts.ts at agent-qa 14d504bca; 439-03 moved the
+// screenshot-analysis paragraph into a turn that has an image, D-19).
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { generateText } from 'ai'
 import { asRef } from '@vostride/agent-qa-schema'
@@ -54,7 +55,8 @@ Current page: https://example.test/after
 - textbox "Email" [ref=e1] @(20,120 350x44)
 - button "Log in" [ref=e2] @(20,200 350x44)
 
-A screenshot of the AFTER state is attached for visual verification.`
+A screenshot of the AFTER state is attached for visual verification.
+Analyze the attached screenshot for visual cues the ARIA tree cannot capture: colors, layout, images, visual indicators, error states. When the screenshot and ARIA tree conflict, visual evidence takes precedence. For quantity claims, only confirm what you can count in the screenshot.`
 
 const before = makeScreenState()
 const after = makeScreenState({ url: 'https://example.test/after' })

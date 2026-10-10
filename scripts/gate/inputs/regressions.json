@@ -1546,7 +1546,7 @@
     {
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/progress-prompts.test.ts",
-      "fullName": "C436-PROMPT Rules 19 and 23 are byte-unchanged",
+      "fullName": "C436-PROMPT Rule 23 is byte-unchanged",
       "origin": "436 D-26"
     },
     {
@@ -6474,6 +6474,30 @@
       "file": "packages/runner/src/loop/__tests__/439-step-record.test.ts",
       "fullName": "C439-STEP-RECORD the start screen is the step's first settled observation",
       "origin": "439 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/progress-prompts.test.ts",
+      "fullName": "C439-PROMPT Rule 19 is the 439 text",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-verifier-prompt.test.ts",
+      "fullName": "C439-VERIFIER-PROMPT the stable tier states the per-condition contract",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-verifier-prompt.test.ts",
+      "fullName": "C439-VERIFIER-PROMPT the screenshot paragraph rides only a turn with an image",
+      "origin": "439 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-verifier-prompt.test.ts",
+      "fullName": "C439-VERIFIER-PROMPT the real verifier sends the stable tier as its system message",
+      "origin": "439 D-11"
     }
   ]
 }

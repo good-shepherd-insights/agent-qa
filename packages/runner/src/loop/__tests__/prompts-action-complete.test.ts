@@ -3,16 +3,17 @@ import { describe, it, expect } from 'vitest'
 import { buildSystemPrompt } from '../prompts.js'
 
 function getActionCompletionRule(systemPrompt: string): string {
-  const match = systemPrompt.match(/\d+\. ACTION STEP COMPLETION:[\s\S]*?(?=\n\d+\. |\n\n Call the tool|$)/)
+  const match = systemPrompt.match(/\d+\. COMPLETION NEEDS ITS OUTCOME IN EVIDENCE:[\s\S]*?(?=\n\d+\. |\n\n Call the tool|$)/)
   return match?.[0] ?? ''
 }
 
-describe('ACTION-COMPLETE-01 — action step completion', () => {
+// 2026-10-11 (439-03): Rule 19 asks for the requested outcome in evidence (D-01, D-11, D-18).
+describe('ACTION-COMPLETE-01 — completion needs its outcome in evidence', () => {
   const systemPrompt = buildSystemPrompt()
   const actionCompletionRule = getActionCompletionRule(systemPrompt)
 
-  it('buildSystemPrompt contains ACTION STEP COMPLETION guidance', () => {
-    expect(actionCompletionRule).toContain('ACTION STEP COMPLETION')
+  it('buildSystemPrompt contains the completion-needs-evidence rule', () => {
+    expect(actionCompletionRule).toContain('COMPLETION NEEDS ITS OUTCOME IN EVIDENCE')
   })
 
   it('lists pure action verbs by surface: click, tap, select, fill', () => {
@@ -22,18 +23,18 @@ describe('ACTION-COMPLETE-01 — action step completion', () => {
     expect(actionCompletionRule).toContain('fill')
   })
 
-  it('instructs to set stepComplete immediately', () => {
-    expect(actionCompletionRule).toContain('stepComplete: true immediately')
+  it('sets stepComplete only when the requested outcome is in evidence', () => {
+    expect(actionCompletionRule).toContain('stepComplete: true only when the requested outcome is in evidence')
+    expect(actionCompletionRule).not.toContain('stepComplete: true immediately')
   })
 
-  it('mentions downloads, external links, new tabs as no-visible-change scenarios', () => {
-    expect(actionCompletionRule).toContain('download')
-    expect(actionCompletionRule).toContain('external link')
-    expect(actionCompletionRule).toContain('new tab')
+  it('names the outcome of a navigation control and of an effect control', () => {
+    expect(actionCompletionRule).toContain('a tab, a link or a menu')
+    expect(actionCompletionRule).toContain('a completed download or the exact copied value')
+    expect(actionCompletionRule).toContain('after a reload or reopen within this step')
   })
 
-  it('distinguishes single-action steps from multi-sub-goal steps', () => {
-    expect(actionCompletionRule).toContain('SINGLE-ACTION steps only')
+  it('distinguishes multi-sub-goal steps', () => {
     expect(actionCompletionRule).toContain('multiple sub-goals')
   })
 

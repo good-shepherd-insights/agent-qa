@@ -152,22 +152,23 @@ describe('QA mindset prompt rules', () => {
       expect(systemPrompt).toContain('QA MINDSET')
     })
 
-    it('verifier stable tier requires visual evidence for quantity claims (D-11 byte-stable prose)', () => {
-      // The screenshot-analysis prose is fixed every call → it lives in the verifier
-      // stable tier (D-11), no longer produced per-call by buildVerificationPrompt.
-      const stable = stableText(buildVerifierStableTier())
-      expect(stable).toContain('visual evidence')
-      expect(stable).toContain('takes precedence')
-      expect(stable).toContain('only confirm what you can count')
+    it('a verification turn with a screenshot requires visual evidence for quantity claims (439 D-19)', () => {
+      // 2026-10-11 (439-03): the screenshot-analysis prose rides only a turn that has an image.
+      const state = buildAgentScreenState({ tree: 'button "Go"', elements: [], url: '', timestamp: 0 })
+      const action = { type: 'click' as const, ref: asRef('e1') }
+      const turn = buildVerificationPrompt('Go', state, state, action, true)
+      expect(turn).toContain('visual evidence')
+      expect(turn).toContain('takes precedence')
+      expect(turn).toContain('only confirm what you can count')
+      expect(stableText(buildVerifierStableTier())).not.toContain('only confirm what you can count')
     })
 
-    it('verifier stable tier teaches negative evidence approach (D-11 byte-stable prose)', () => {
-      // The verification-approach prose is fixed every call → verifier stable tier.
+    it('verifier stable tier keeps the absence-of-change rule and states the per-condition contract (439 D-11)', () => {
       const stable = stableText(buildVerifierStableTier())
-      expect(stable).toContain('NEGATIVE evidence')
       expect(stable).toContain('Absence of visible screen change is NOT evidence of failure')
-      expect(stable).toContain('For every other step')
-      expect(stable).toContain('verification/assertion steps')
+      expect(stable).toContain('Requested conditions:')
+      expect(stable).not.toContain('NEGATIVE evidence')
+      expect(stable).not.toContain('For every other step')
     })
 
     it('buildVerificationPrompt enriches action with element context', () => {

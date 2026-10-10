@@ -1,8 +1,9 @@
 // C436-PROMPT (D-26, HARN-01): the planner prompt judges outcomes, not screen changes. The
 // stagnation and cycle-break blocks cannot render, the progress rules are gone, Rule 22 is the
-// outcome-evidence rule, Rule 13 allows requested repetition, and Rules 19 (web) and 23 are
-// byte-identical to agent-qa 5e3e932a2. Rules 10 and 17 were re-pinned once by 438 (D-01, D-14):
-// C438-PROMPT holds their 438 text; their 5e3e932a2 bytes stay below for the record.
+// outcome-evidence rule, Rule 13 allows requested repetition, and Rule 23 is byte-identical to
+// agent-qa 5e3e932a2. Rules 10 and 17 were re-pinned once by 438 (D-01, D-14) and Rule 19 once by
+// 439 (D-11): C438-PROMPT and C439-PROMPT hold their new text; the 5e3e932a2 bytes stay below for
+// the record.
 import { describe, it, expect } from 'vitest'
 import type { ModelMessage } from 'ai'
 import type { ScreenState } from '@vostride/agent-qa-schema'
@@ -174,10 +175,8 @@ describe('C436-PROMPT', () => {
     }
   })
 
-  it('Rules 19 and 23 are byte-unchanged', () => {
-    for (const n of [19, 23]) {
-      expect(rule(n, 'web')).toBe(PINNED_RULES_5E3E932A2[n])
-    }
+  it('Rule 23 is byte-unchanged', () => {
+    expect(rule(23, 'web')).toBe(PINNED_RULES_5E3E932A2[23])
   })
 
   it('the bulk-completion predicate still renders only in the turn, never the system tiers', () => {
@@ -196,6 +195,29 @@ describe('C436-PROMPT', () => {
     const turn = renderTurn(composeTurnMessages(context, makeScreen()))
     expect(turn).not.toContain('Do NOT repeat')
     expect(turn).not.toContain('no visible change')
+  })
+})
+
+describe('C439-PROMPT', () => {
+  it('Rule 19 is the 439 text', () => {
+    for (const platform of PLATFORMS) {
+      const rule19 = rule(19, platform)
+      expect(rule19.startsWith('19. COMPLETION NEEDS ITS OUTCOME IN EVIDENCE:')).toBe(true)
+      expect(rule19).toContain(
+        'Set stepComplete: true only when the requested outcome is in evidence, and name that evidence in your reasoning.',
+      )
+      expect(rule19).toContain(
+        'A setting or value that must be saved or kept is proven only by re-reading it after a reload or reopen within this step.',
+      )
+      expect(rule19).toContain('The same placeholder, such as <EMAIL_0>, is the same value wherever it appears.')
+      expect(rule19).toContain('For a click on a tab, a link or a menu, the outcome is the click landing on its target.')
+      expect(rule19).toContain('No visible change is not failure.')
+      expect(rule19).toContain('complete the action sub-goal and move to the next per Rule 13')
+      expect(rule19).not.toContain('set stepComplete: true immediately')
+      expect(rule19).not.toContain('Do NOT retry expecting a visible screen change')
+    }
+    expect(rule(19, 'web')).toContain('a single action such as "click", "select", "scroll to", or "fill"')
+    expect(rule(19, 'ios')).toContain('multiple sub-goals ("tap X and then verify Y")')
   })
 })
 
