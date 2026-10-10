@@ -2532,3 +2532,6 @@ recorded with the phase's planning record, not in this file. So no docs-only com
 measured SHA from the final SHA, unlike 438-14's run, which measured `5876686db` before the commit
 that added its gate subsection. After 438-21's pre-gate red, `C438-IDENTICAL-CONTROLS`' `afterEach`
 got the 261002-tmo 120 s hook budget (owner-delegated, as for `5876686db`) before the record run.
+The first record run, at `a14de0976`, was red on one non-listed cell, `SUITE-BROWSER-MEDIA`'s
+free-playhead read (1-minute load 71), and that read was made deterministic before the record run
+was taken again.

@@ -104,6 +104,35 @@ async function dragSuite(page: Page, durations?: number[]) {
   return rows
 }
 
+function memberSha(index: number) {
+  const recording = detail.members[index]?.recording
+  return recording?.state === 'present' ? recording.ref.sha : 'missing'
+}
+// A click on a new member's source can start more than one seek. The recorder keeps the
+// position of the first `seeked` on that source after which no further seek starts.
+async function armSettledSeek(page: Page, sha: string) {
+  await page.evaluate(sha => {
+    const recorder = window as unknown as { settledSeek?: Promise<number> }
+    recorder.settledSeek = new Promise<number>(resolve => {
+      const settled = (event: Event) => {
+        const media = event.target as HTMLMediaElement
+        if (!media.currentSrc.includes(sha)) return
+        const position = media.currentTime
+        // Capture runs before the player's own `seeked` listener; look once dispatch is over.
+        setTimeout(() => {
+          if (media.seeking || !media.currentSrc.includes(sha)) return
+          document.removeEventListener('seeked', settled, true)
+          resolve(position)
+        }, 0)
+      }
+      document.addEventListener('seeked', settled, true)
+    })
+  }, sha)
+}
+async function settledSeek(page: Page) {
+  return page.evaluate(() => (window as unknown as { settledSeek: Promise<number> }).settledSeek)
+}
+
 async function clickMarker(page: Page, ordinal: number) {
   const marker = page.locator(`[data-timeline-marker="${ordinal}"]`)
   if (await marker.count()) { await marker.click(); return }
@@ -424,29 +453,12 @@ it('SUITE-BROWSER-MEDIA: real progress, marker details, local seeks and continue
     // 2026-10-10 (quick 261010-11a): on member 1's new source the player first seeks to the
     // selected marker's offset and applies the click's own seek from that seek's `seeked`. A
     // read at an arbitrary moment could land between the two (0.33-0.43 s drift under load), so
-    // the recorder keeps the position of the first `seeked` on that source after which no
-    // further seek starts: the click's settled seek.
-    await page.evaluate(sha => {
-      const recorder = window as unknown as { clickSeek?: Promise<number> }
-      recorder.clickSeek = new Promise<number>(resolve => {
-        const settled = (event: Event) => {
-          const media = event.target as HTMLMediaElement
-          if (!media.currentSrc.includes(sha)) return
-          const position = media.currentTime
-          // Capture runs before the player's own `seeked` listener; look once dispatch is over.
-          setTimeout(() => {
-            if (media.seeking || !media.currentSrc.includes(sha)) return
-            document.removeEventListener('seeked', settled, true)
-            resolve(position)
-          }, 0)
-        }
-        document.addEventListener('seeked', settled, true)
-      })
-    }, detail.members[1]!.recording!.state === 'present' ? detail.members[1]!.recording!.ref.sha : 'missing')
+    // the position is read at the click's settled seek.
+    await armSettledSeek(page, memberSha(1))
     await page.mouse.click(bounds.x + bounds.width * target / durations.reduce((sum, value) => sum + value, 0), bounds.y + 2)
     await mediaReady(page)
-    await expect.poll(() => page.locator('video').getAttribute('src')).toContain(detail.members[1]!.recording!.state === 'present' ? detail.members[1]!.recording!.ref.sha : 'missing')
-    const local = await page.evaluate(() => (window as unknown as { clickSeek: Promise<number> }).clickSeek)
+    await expect.poll(() => page.locator('video').getAttribute('src')).toContain(memberSha(1))
+    const local = await settledSeek(page)
     expect(Math.abs(local - expectedLocal)).toBeLessThan(0.15)
     await page.getByRole('slider').press('Home')
     await mediaReady(page)
@@ -606,9 +618,22 @@ it('SUITE-BROWSER-MEDIA: real progress, marker details, local seeks and continue
         await capture(page, `endpoint-${width}-${ordinal}`)
       }
       const rail = (await page.locator('[data-timeline-track]').boundingBox())!
+      const freeMember = (await page.locator('[data-timeline-member-span]').evaluateAll(elements => elements.map(element => {
+        const style = (element as HTMLElement).style
+        return { start: parseFloat(style.left) / 100, width: parseFloat(style.width) / 100 }
+      }))).findIndex(span => 0.5 >= span.start && 0.5 < span.start + span.width)
+      // 2026-10-10 (438 record gate, load 71): this click has the same transient. The marker-offset
+      // seek paints the playhead as that marker's circle until the click's own seek lands, so two
+      // reads that straddled the commit saw a free attribute, then a transparent pill. Read the
+      // playhead once, whole, after the click's settled seek.
+      await armSettledSeek(page, memberSha(freeMember))
       await page.mouse.click(rail.x + rail.width * 0.5, rail.y + 2)
-      expect(await page.getByRole('slider').getAttribute('data-playhead-circle')).toBeNull()
-      expect(await page.getByRole('slider').evaluate(element => getComputedStyle(element).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)')
+      await settledSeek(page)
+      await expect.poll(() => page.getByRole('slider').evaluate(element => ({
+        left: Math.round(parseFloat((element as HTMLElement).style.left)),
+        circle: element.getAttribute('data-playhead-circle'),
+        transparent: getComputedStyle(element).backgroundColor === 'rgba(0, 0, 0, 0)',
+      }))).toEqual({ left: 50, circle: null, transparent: false })
       await capture(page, `free-playhead-${width}`)
     }
     observations.media = { durations, stored, tail, target, local, rates, samples, cueTimes, continuation: true }
