@@ -55,12 +55,13 @@ function appendText(node: InterimNode, text: string | undefined): void {
  * Parse a Playwright ARIA snapshot into platform-neutral runner interim nodes.
  *
  * Emits nodes in document order with role/name/attributes and a `parentIndex`
- * derived from indentation depth (nearest SURVIVING ancestor — RESEARCH Pitfall
- * #7). A line whose role is not kept never becomes a node: its quoted name and inline
- * text fold into the nearest kept ancestor's `text` (438 D-02, the row text), and a
- * kept content line's own inline text becomes its `text`. Playwright ai-mode `[ref=eN]` annotations are captured into an
- * index-aligned `nativeRefs` array (adapter-private native handles) and are never
- * written into the node. Accepts both ai-mode (annotated) and default-mode
+ * derived from indentation depth: the nearest kept entry among the line's true
+ * ancestors; a dropped line still bounds its subtree (438 gap round, CR-02). A line
+ * whose role is not kept never becomes a node: its quoted name and inline text fold
+ * into the nearest kept entry among the line's true ancestors (438 D-02, the row
+ * text), and a kept content line's own inline text becomes its `text`. Playwright
+ * ai-mode `[ref=eN]` annotations are captured into an index-aligned `nativeRefs`
+ * array (adapter-private native handles) and are never written into the node. Accepts both ai-mode (annotated) and default-mode
  * (unannotated) snapshot text.
  *
  * No ref minting and no tree rendering happen here — the shared runner builder
@@ -73,8 +74,8 @@ export function parseAriaSnapshot(ariaTree: string): {
   const lines = ariaTree.split('\n')
   const nodes: InterimNode[] = []
   const nativeRefs: (string | undefined)[] = []
-  // Stack of surviving ancestors: { depth, index in the FILTERED nodes array }.
-  const ancestors: Array<{ depth: number; index: number }> = []
+  // Every matched line's depth; `index` (into the FILTERED nodes array) only on kept lines.
+  const ancestors: Array<{ depth: number; index?: number }> = []
 
   for (const line of lines) {
     const match = line.match(LINE_PATTERN) || line.match(QUOTED_LINE_PATTERN)
@@ -87,27 +88,27 @@ export function parseAriaSnapshot(ariaTree: string): {
     const leadingSpaces = line.length - line.trimStart().length
     const depth = Math.floor(leadingSpaces / 2)
 
-    if (!INTERACTIVE_ROLES.has(roleLower) && !CONTENT_ROLES.has(roleLower)) {
-      let keptAncestor: number | undefined
-      for (let k = ancestors.length - 1; k >= 0; k--) {
-        if (ancestors[k].depth < depth) {
-          keptAncestor = ancestors[k].index
-          break
-        }
+    while (ancestors.length > 0 && ancestors[ancestors.length - 1].depth >= depth) {
+      ancestors.pop()
+    }
+    let keptAncestor: number | undefined
+    for (let k = ancestors.length - 1; k >= 0; k--) {
+      if (ancestors[k].index !== undefined) {
+        keptAncestor = ancestors[k].index
+        break
       }
+    }
+
+    if (!INTERACTIVE_ROLES.has(roleLower) && !CONTENT_ROLES.has(roleLower)) {
       if (keptAncestor !== undefined) {
         appendText(nodes[keptAncestor], name)
         appendText(nodes[keptAncestor], inlineText(suffix))
       }
+      ancestors.push({ depth })
       continue
     }
 
-    // parentIndex points at the nearest SURVIVING ancestor (strictly shallower
-    // depth); skipped structural rows collapse away.
-    while (ancestors.length > 0 && ancestors[ancestors.length - 1].depth >= depth) {
-      ancestors.pop()
-    }
-    const parentIndex = ancestors.length > 0 ? ancestors[ancestors.length - 1].index : undefined
+    const parentIndex = keptAncestor
 
     // Capture the adapter-private native ref (ai-mode) — never copied into the node.
     const refMatch = suffix?.match(REF_ANNOTATION)
