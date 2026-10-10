@@ -18,6 +18,16 @@ import {
 import { createModel } from '@vostride/agent-qa-model'
 import type { ModelProfile, ResolvedModelAuth } from '@vostride/agent-qa-model'
 import {
+  buildScreenState,
+  executeStep,
+  type Action as RunnerAction,
+  type ActionPlan,
+  type ActionResult,
+  type InterimNode,
+  type PlatformAdapter,
+  type StepContext,
+} from '@vostride/agent-qa-runner'
+import {
   createMaskingContext,
   defaultGuardrailPolicyInput,
   loadGuardrailPolicy,
@@ -1646,5 +1656,232 @@ describe('C438-PROCEDURE-WRITE', () => {
     )
 
     expect(outcome).toEqual({ kind: 'fallback-required', reason: 'malformed' })
+  })
+})
+
+// C438-HEALED-BODY (438 D-08, D-11; CR-03): a passing two-step test whose first step was healed
+// after the page shifted is projected and authored into a procedure body that names the elements
+// the healed input was sent to. The evidence comes from two real `executeStep` runs, not a
+// hand-built fixture, so the pair curation reads is the pair the loop recorded.
+describe('C438-HEALED-BODY', () => {
+  const HEALED_PAGE = 'https://shop.example/editor'
+
+  function healedScreen(nodes: InterimNode[]): ScreenState {
+    return buildScreenState({
+      platform: 'android',
+      url: HEALED_PAGE,
+      nodes: nodes.map((node, i) => ({
+        bounds: { x: 0, y: i * 60, width: 400, height: 50 },
+        ...node,
+      })),
+      viewport: { width: 400, height: 800 },
+      scroll: { offsetX: 0, offsetY: 0, contentWidth: 400, contentHeight: 800 },
+      coordSpace: 'viewport',
+      timestamp: 0,
+    }).state
+  }
+
+  function shiftingAdapter(
+    prior: ScreenState,
+    fresh: ScreenState,
+    results: ActionResult[],
+  ): PlatformAdapter & { executed: RunnerAction[] } {
+    const executed: RunnerAction[] = []
+    return {
+      executed,
+      platform: 'android',
+      async setup() {},
+      async cleanup() {},
+      async observe() {
+        return executed.length === 0 ? prior : fresh
+      },
+      async execute(action: RunnerAction) {
+        const result = results[Math.min(executed.length, results.length - 1)]!
+        executed.push(action)
+        return result
+      },
+    }
+  }
+
+  function bindingLost(ref: string): ActionResult {
+    return {
+      success: false,
+      error: `binding-lost: ref ${ref} — the observed element is no longer on the page; nothing was sent`,
+      metadata: { binding: { outcome: 'binding-lost', ref, inputSent: false } },
+    }
+  }
+
+  function scripted(action: ActionPlan['action']) {
+    const turns: ActionPlan[] = [
+      { reasoning: 'scripted', action, confidence: 0.9, stepComplete: true, stepFailed: false },
+      {
+        reasoning: 'giving up',
+        action: { type: 'delay', ms: 0 },
+        confidence: 0.9,
+        stepComplete: false,
+        stepFailed: true,
+      },
+    ]
+    let calls = 0
+    return {
+      async plan() {
+        return { plan: turns[Math.min(calls++, turns.length - 1)]! }
+      },
+    }
+  }
+
+  const stepContext = (stepInstruction: string): StepContext => ({
+    stepInstruction,
+    testName: 'editor::healed-step',
+    previousSteps: [],
+    plannerModel: {} as StepContext['plannerModel'],
+    verifierModel: {} as StepContext['verifierModel'],
+  })
+
+  const loopLimits = { maxActions: 10, maxPlanningTurns: 10, previousStepCount: 0 }
+
+  async function healedRun(input: {
+    prior: InterimNode[]
+    fresh: InterimNode[]
+    action: ActionPlan['action']
+    lostRef: string
+  }) {
+    const prior = healedScreen(input.prior)
+    const fresh = healedScreen(input.fresh)
+    const healed = shiftingAdapter(prior, fresh, [bindingLost(input.lostRef), { success: true }])
+    const step0 = await executeStep(
+      'Use the healed control',
+      { adapter: healed, planner: scripted(input.action), plannerConfig: loopLimits },
+      stepContext('Use the healed control'),
+    )
+    const done = healedScreen([{ role: 'button', name: 'Done' }])
+    const plain = shiftingAdapter(done, done, [{ success: true }])
+    const step1 = await executeStep(
+      'Click Done',
+      {
+        adapter: plain,
+        planner: scripted({ type: 'click', ref: 'e1', target: { role: 'button', name: 'Done' } }),
+        plannerConfig: loopLimits,
+      },
+      stepContext('Click Done'),
+    )
+    expect(step0.status).toBe('passed')
+    expect(step1.status).toBe('passed')
+    const run: CompletedRunHandoff = {
+      schemaVersion: 3,
+      runId: asRunId('r-healed-body'),
+      scope: { tier: 'product', key: 'storefront' },
+      buildOrdinal: 42,
+      executionContext: 'local-interactive',
+      aggregateVerdict: 'passed',
+      configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
+      startedAt: 1_750_000_000_000,
+      endedAt: 1_750_000_001_000,
+      tests: [{
+        testId: 'editor::healed-step',
+        testName: 'Use a healed control then finish',
+        testIndex: 0,
+        outcome: 'passed',
+        steps: [
+          { ...step0.evidence!, stepIndex: 0 },
+          { ...step1.evidence!, stepIndex: 1 },
+        ],
+        filePath: 'editor.spec.yaml',
+      }],
+    }
+    const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
+    const [target] = projectCurationCandidates(run, policy).filter(
+      (row) => row.kind === 'procedure',
+    )
+    const seed = parseProcedureTrajectorySeed(target!.bodySeed)
+    if (seed === undefined) throw new Error('expected a parseable healed seed')
+    return { healed, fresh, seed }
+  }
+
+  async function authoredBody(seed: ProcedureTrajectorySeed) {
+    const proposal = JSON.stringify({
+      candidates: [{
+        flowName: seed.flowName,
+        stepSpan: [0, 1],
+        parameters: [],
+        successAssertion: 'The editor is finished',
+      }],
+    })
+    const job = procedureJob({
+      bodySeed: canonicalJson(seed),
+      anchors: [
+        { t: 'flow', name: seed.flowName },
+        { t: 'page', route: HEALED_PAGE },
+      ],
+      secretFlagged: false,
+      captureReceipt: { regions: [], interactions: [], omissions: [], redactions: [] },
+    })
+    const outcome = await author([proposal])(job, [])
+    if (outcome.kind !== 'authored') throw new Error(`expected authored outcome, got ${outcome.kind}`)
+    return parseProcedureBody(addBundles(outcome.deltas)[0]!.body)
+  }
+
+  it('a healed click\'s procedure body names the clicked element', async () => {
+    const { healed, fresh, seed } = await healedRun({
+      prior: [
+        { role: 'button', name: 'Delete' },
+        { role: 'button', name: 'Save' },
+        { role: 'button', name: 'Cancel' },
+      ],
+      fresh: [
+        { role: 'button', name: 'Banner' },
+        { role: 'button', name: 'Delete' },
+        { role: 'button', name: 'Save' },
+        { role: 'button', name: 'Cancel' },
+      ],
+      action: { type: 'click', ref: 'e2', target: { role: 'button', name: 'Save' } },
+      lostRef: 'e2',
+    })
+
+    expect(healed.executed).toEqual([
+      { type: 'click', ref: 'e2' },
+      { type: 'click', ref: 'e3' },
+    ])
+    const freshSave = fresh.elements.find((element) => element.name === 'Save')!
+    const save = { role: 'button', nameNormalized: freshSave.nameNormalized, name: 'Save' }
+    expect(seed.steps[0]?.action?.targets).toEqual({ ref: { ref: 'e3', ...save } })
+
+    const payload = await authoredBody(seed)
+    expect(payload?.steps[0]?.action.targets).toEqual({ ref: save })
+    expect(payload?.steps[0]?.guard.target).toEqual(save)
+  })
+
+  it('a healed drag\'s procedure body names the dragged element and the drop target', async () => {
+    const { seed } = await healedRun({
+      prior: [
+        { role: 'button', name: 'Card' },
+        { role: 'button', name: 'Drop A' },
+      ],
+      fresh: [
+        { role: 'button', name: 'Banner' },
+        { role: 'button', name: 'Card' },
+        { role: 'button', name: 'Promo' },
+        { role: 'button', name: 'Drop A' },
+      ],
+      action: {
+        type: 'drag',
+        fromRef: 'e1',
+        fromTarget: { role: 'button', name: 'Card' },
+        toRef: 'e2',
+        toTarget: { role: 'button', name: 'Drop A' },
+      },
+      lostRef: 'e2',
+    })
+
+    const seedTargets = seed.steps[0]?.action?.targets ?? {}
+    expect(Object.keys(seedTargets).sort()).toEqual(['fromRef', 'toRef'])
+    expect(seedTargets['fromRef']?.name).toBe('Card')
+    expect(seedTargets['toRef']?.name).toBe('Drop A')
+
+    const payload = await authoredBody(seed)
+    const targets = payload?.steps[0]?.action.targets ?? {}
+    expect(Object.keys(targets).sort()).toEqual(['fromRef', 'toRef'])
+    expect(targets['fromRef']).toMatchObject({ role: 'button', name: 'Card' })
+    expect(targets['toRef']).toMatchObject({ role: 'button', name: 'Drop A' })
   })
 })

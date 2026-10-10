@@ -309,3 +309,109 @@ describe('C438-HEAL-EVIDENCE', () => {
     expect(row).toBe(priorRow.slice(0, 200))
   })
 })
+
+// C438-HEAL-RECORD (438 D-08, D-11; CR-03): a heal that re-dispatches sends refs taken from the
+// heal's fresh observation, so the sub-action is recorded against that observation (re-stamped
+// with the planner call's capture stamp): every recorded ref names, in the recorded stateBefore,
+// the element the input was sent to. A heal that sends nothing keeps the pre-heal pairing.
+describe('C438-HEAL-RECORD', () => {
+  const SAVE_PRIOR = screenOf([
+    { role: 'button', name: 'Delete' },
+    { role: 'button', name: 'Save' },
+    { role: 'button', name: 'Cancel' },
+  ])
+  // One element is inserted ahead, so the fresh "Save" sits at the prior "Cancel"'s ref.
+  const SAVE_FRESH = screenOf([
+    { role: 'button', name: 'Banner' },
+    { role: 'button', name: 'Delete' },
+    { role: 'button', name: 'Save' },
+    { role: 'button', name: 'Cancel' },
+  ])
+  const clickSave: ActionPlan['action'] = {
+    type: 'click',
+    ref: 'e2',
+    target: { role: 'button', name: 'Save' },
+  }
+
+  function nameAt(state: ScreenState | undefined, ref: unknown): string | undefined {
+    return state?.elements.find((element) => element.ref === ref)?.name
+  }
+
+  async function runSave(
+    fresh: ScreenState,
+    results: ActionResult[],
+    ports: Record<string, unknown> = {},
+    withScreenshot = false,
+  ) {
+    const a = adapter(SAVE_PRIOR, fresh, results)
+    if (withScreenshot) a.screenshot = async () => Buffer.from('png')
+    const result = await executeStep(
+      'Click Save',
+      {
+        adapter: a,
+        planner: scriptedPlanner([plan(clickSave), GIVE_UP]),
+        plannerConfig: limits(10, 10),
+        ...ports,
+      },
+      makeStepContext(),
+    )
+    return { a, result }
+  }
+
+  it('a healed click is recorded against the fresh observation it was sent to', async () => {
+    const { a, result } = await runSave(SAVE_FRESH, [BINDING_LOST_TO_REF, { success: true }])
+
+    expect(a.executed).toEqual([
+      { type: 'click', ref: 'e2' },
+      { type: 'click', ref: 'e3' },
+    ])
+    expect(result.status).toBe('passed')
+    const recorded = result.evidence?.subActions.at(-1)
+    expect(recorded?.plannedAction).toEqual({ type: 'click', ref: 'e3' })
+    expect(nameAt(recorded?.stateBefore, 'e3')).toBe('Save')
+  })
+
+  it('a healed drag is recorded against the fresh observation on both lanes', async () => {
+    const { result } = await runDrag(PRIOR, FRESH, BINDING_LOST_TO_REF)
+
+    expect(result.status).toBe('passed')
+    const recorded = result.evidence?.subActions.at(-1)
+    const action = recorded?.plannedAction as unknown as Record<string, unknown>
+    expect(nameAt(recorded?.stateBefore, action['fromRef'])).toBe('Card')
+    expect(nameAt(recorded?.stateBefore, action['toRef'])).toBe('Drop A')
+  })
+
+  it('a healed sub-action is recorded against the fresh observation with the planner call\'s capture stamp', async () => {
+    const { result } = await runSave(
+      SAVE_FRESH,
+      [BINDING_LOST_TO_REF, { success: true }],
+      {},
+      true,
+    )
+
+    const recorded = result.evidence?.subActions.at(-1)
+    expect(nameAt(recorded?.stateBefore, 'e3')).toBe('Save')
+    expect(recorded?.stateBefore.metadata).toMatchObject({
+      captureMode: 'full',
+      imageWidth: 400,
+      imageHeight: 800,
+    })
+  })
+
+  it('a heal that sends nothing is recorded against the pre-heal observation', async () => {
+    const fresh = screenOf([
+      { role: 'button', name: 'Banner' },
+      { role: 'button', name: 'Save' },
+      { role: 'button', name: 'Save' },
+      { role: 'button', name: 'Cancel' },
+    ])
+    const { a, result } = await runSave(fresh, [BINDING_LOST_TO_REF, { success: true }])
+
+    expect(a.executed).toHaveLength(1)
+    expect(metadataOf(result, 'binding')).toMatchObject({ heal: 'not-unique' })
+    const recorded = result.evidence?.subActions[0]
+    expect(recorded?.plannedAction).toEqual({ type: 'click', ref: 'e2' })
+    expect(nameAt(recorded?.stateBefore, 'e2')).toBe('Save')
+    expect(recorded?.stateBefore).toEqual(expect.objectContaining({ elements: SAVE_PRIOR.elements }))
+  })
+})
