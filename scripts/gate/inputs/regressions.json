@@ -4755,6 +4755,18 @@
     },
     {
       "runner": "vitest",
+      "file": "packages/runner/src/__tests__/screen-builder.test.ts",
+      "fullName": "C438-ROW-TREE a row text that closes its quote cannot forge a tree line",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/__tests__/screen-builder.test.ts",
+      "fullName": "C438-ROW-TREE a backslash in row text renders escaped",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
       "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
       "fullName": "C438-ROW-TEXT the row containers are row, listitem, article and treeitem",
       "origin": "438 D-02"
@@ -4863,6 +4875,24 @@
     },
     {
       "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT a row container is its own row: a listitem's row is its own text and descendants",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT a cell with no row container above it is its own row",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT the judge refuses a listitem stated with another row's words",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
       "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
       "fullName": "C438-JUDGE button vs textbox is a role-kind contradiction",
       "origin": "438 D-03"
@@ -4956,6 +4986,30 @@
       "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
       "fullName": "C438-JUDGE renderTargetMismatch caps each name at 80 characters",
       "origin": "438 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE \"Invoice 947\" vs \"Invoice 947 due 2026-10-31\" agrees (every stated number is observed)",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE \"Pay $1234.50\" vs \"Pay $1,234.50\" agrees (a thousands separator is ignored)",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE \"Pay $1,234.50\" vs \"Pay $1,235.50\" is a name-number contradiction",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE \"Rows 1,2\" vs \"Rows 12\" is a name-number contradiction (only a thousands separator is ignored)",
+      "origin": "438 D-03"
     },
     {
       "runner": "vitest",
@@ -5747,6 +5801,24 @@
       "runner": "vitest",
       "file": "packages/web/src/__tests__/438-stated-target.test.ts",
       "fullName": "C438-STATED-ROW an abbreviated row still agrees",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-STATED-TARGET \"Pay $1234.50\" stated against \"Pay $1,234.50\" is clicked",
+      "origin": "438 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-STATED-ROW a listitem ref stated with another row's words is refused",
+      "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-STATED-ROW a listitem ref stated with its own row words is clicked",
       "origin": "438 D-02"
     },
     {
