@@ -12,10 +12,13 @@
 //     and no stated name word is one of them. A nameless element never contradicts on name.
 //   - name-number: both names carry numbers and a stated number is absent from the element's name
 //     ("Invoice 947" stated, "Invoice 946" found) — the shared word "Invoice" alone would let it
-//     pass. A thousands separator is ignored ("$1,234.50" equals "$1234.50"), and extra numbers
-//     in the element's name never refuse (438 gap round, WR-03, within D-03).
+//     pass. Extra numbers in the element's name never refuse (438 gap round, WR-03, within D-03).
 //   - row: a row was stated, the element's row is known (row-text.ts) and the stated row words
 //     are not in it. An empty stated row is not stated; an unknown row never contradicts.
+// All three read words and numbers through wordTokens (row-text.ts), so they read digit groups
+// the same way: a group split by `,`, `_`, U+202F or U+00A0 is one number ("1,234" equals
+// "1234", "$1,234.50" equals "$1234.50"), while a dot and a plain space never group (438 gap
+// round 2, WR-11, completing WR-03 within D-03).
 // A paraphrase that shares a word ("Log in" for "Sign in") agrees; exact equality is never
 // required. A refusal names both identities and never picks a substitute element.
 //
@@ -73,12 +76,9 @@ export type StatedTargetJudgement =
     }
 
 const NUMBER_TOKEN = /^\p{N}+$/u
-const THOUSANDS_SEPARATOR = /(?<=\p{N})[,_](?=\p{N}{3}(?!\p{N}))/gu
 
 function numberTokens(text: string | undefined): string[] {
-  if (text === undefined) return []
-  const ungrouped = text.normalize('NFKC').replace(THOUSANDS_SEPARATOR, '')
-  return wordTokens(ungrouped).filter((word) => NUMBER_TOKEN.test(word))
+  return wordTokens(text).filter((word) => NUMBER_TOKEN.test(word))
 }
 
 function numbersDiffer(stated: string, observed: string): boolean {

@@ -20,6 +20,12 @@
 // Containment compares word tokens after NFKC and lowercasing. Each stated word must equal a row
 // word or be a prefix (two or more characters) of a non-number row word; a number must match a row
 // number exactly: 'Elm St' is in '7 Elm Street, Springfield', '7' is not in '17 Elm Street'.
+// A digit group split by `,`, `_`, U+202F or U+00A0 between a digit and exactly three digits (no
+// further digit) is one number in every rule that reads these tokens: '1,234' equals '1234' (438
+// gap round 2, WR-11, within D-03). U+00A0 and U+202F are read before NFKC, which would turn them
+// into a plain space; `,` and `_` after it, so a full-width comma groups too. A dot is a decimal
+// point and a plain space a separator, never grouping; `1.234,50`-style grouping is not
+// normalized (ambiguous with decimals, recorded open).
 //
 // M2 injection boundary: row text is opaque comparison data only — never interpolated into a
 // selector or an instruction, never evaluated, never used to search for an element.
@@ -35,12 +41,19 @@ const FALLBACK_CONTAINER_ROLE = 'cell'
 const NOT_LETTER_OR_DIGIT = /[^\p{L}\p{N}]+/u
 const NUMBER_TOKEN = /^\p{N}+$/u
 const MIN_PREFIX_LENGTH = 2
+const NO_BREAK_GROUP_SEPARATOR = /(?<=\p{N})[\u00A0\u202F](?=\p{N}{3}(?!\p{N}))/gu
+const GROUP_SEPARATOR = /(?<=\p{N})[,_](?=\p{N}{3}(?!\p{N}))/gu
 
-/** Word tokens of a text: NFKC, lowercased, split on every run that is not a letter or digit. */
+/**
+ * Word tokens of a text: digit groups joined, NFKC, lowercased, split on every run that is not a
+ * letter or digit.
+ */
 export function wordTokens(text: string | undefined): string[] {
   if (text === undefined) return []
   return text
+    .replace(NO_BREAK_GROUP_SEPARATOR, '')
     .normalize('NFKC')
+    .replace(GROUP_SEPARATOR, '')
     .toLowerCase()
     .split(NOT_LETTER_OR_DIGIT)
     .filter((word) => word.length > 0)
