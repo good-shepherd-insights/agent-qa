@@ -6096,6 +6096,54 @@
       "file": "packages/web/src/__tests__/439-computed-pass.test.ts",
       "fullName": "C439-COMPUTED-PASS a screenshot citation counts only when an image was attached",
       "origin": "439 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-JUDGE a quote differing only in whitespace and line breaks is found",
+      "origin": "439 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-JUDGE a masked placeholder in a quote matches the clear value in the record",
+      "origin": "439 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-JUDGE a quote under three non-space characters never counts",
+      "origin": "439 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-JUDGE a citation found in another part records where it was found",
+      "origin": "439 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-JUDGE a verifier error is unverified, never a pass",
+      "origin": "439 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-JUDGE the real verifier falls back to no conditions when the model call fails",
+      "origin": "439 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-JUDGE not-met, unverified and inconclusive each block the pass and the reason lists them in that order",
+      "origin": "439 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-JUDGE stepOutcomeUnproven reads only verifier endings",
+      "origin": "439 D-07"
     }
   ]
 }
