@@ -48,6 +48,11 @@ const SIGN_IN_PAGE = `<!doctype html><html><body>
   ${EVENT_LOG}
 </body></html>`
 
+const PAY_PAGE = `<!doctype html><html><body>
+  <button id="pay" type="button">Pay $1,234.50</button>
+  ${EVENT_LOG}
+</body></html>`
+
 const ADDRESSES_PAGE = `<!doctype html><html><head><script>window.__clicks = []</script></head><body>
   <ul>
     <li>
@@ -268,6 +273,34 @@ describe('C438-STATED-TARGET', () => {
       inputSent: false,
     })
     expect(refusal?.['reasons']).toContain('name-number')
+  }, 60_000)
+
+  it('"Pay $1234.50" stated against "Pay $1,234.50" is clicked', async () => {
+    const web = await open(PAY_PAGE)
+    const planner = scriptedPlanner([
+      (screen) => act(
+        {
+          type: 'click',
+          ref: refFor(screen, 'button', 'Pay $1,234.50'),
+          target: { role: 'button', name: 'Pay $1234.50' },
+        },
+        true,
+        'Pay $1234.50',
+      ),
+      () => giveUp('The payment could not be made'),
+    ])
+    const run = await runScriptedStep({
+      adapter: web,
+      instruction: 'Pay $1234.50',
+      planner,
+      verifier: passes,
+      plannerConfig: LIMITS,
+    })
+
+    expect(run.result.status).toBe('passed')
+    expect(run.executed).toHaveLength(1)
+    expect(clicks(await events(web))).toEqual([{ id: 'pay', type: 'click' }])
+    expect(refusalOf(run)).toBeUndefined()
   }, 60_000)
 
   it('a paraphrase is not a contradiction', async () => {

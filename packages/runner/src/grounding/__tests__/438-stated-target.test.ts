@@ -93,6 +93,32 @@ describe('C438-JUDGE', () => {
     expect(reasons({ role: 'button', name: 'Cart' }, element('button', 'Cart (3)'))).toEqual([])
   })
 
+  it('"Invoice 947" vs "Invoice 947 due 2026-10-31" agrees (every stated number is observed)', () => {
+    const observed = element('link', 'Invoice 947 due 2026-10-31')
+    expect(reasons({ role: 'link', name: 'Invoice 947' }, observed)).toEqual([])
+  })
+
+  it('"Pay $1234.50" vs "Pay $1,234.50" agrees (a thousands separator is ignored)', () => {
+    expect(
+      reasons({ role: 'button', name: 'Pay $1234.50' }, element('button', 'Pay $1,234.50')),
+    ).toEqual([])
+    expect(
+      reasons({ role: 'button', name: 'Pay $1234.50' }, element('button', 'Pay $1，234.50')),
+    ).toEqual([])
+  })
+
+  it('"Pay $1,234.50" vs "Pay $1,235.50" is a name-number contradiction', () => {
+    expect(
+      reasons({ role: 'button', name: 'Pay $1,234.50' }, element('button', 'Pay $1,235.50')),
+    ).toEqual(['name-number'])
+  })
+
+  it('"Rows 1,2" vs "Rows 12" is a name-number contradiction (only a thousands separator is ignored)', () => {
+    expect(reasons({ role: 'button', name: 'Rows 1,2' }, element('button', 'Rows 12'))).toEqual([
+      'name-number',
+    ])
+  })
+
   it('a full-width "Ｓｕｂｍｉｔ" agrees with "Submit"', () => {
     const observed = element('button', 'Submit')
     expect(reasons({ role: 'button', name: 'Ｓｕｂｍｉｔ' }, observed)).toEqual([])
