@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { maskedMarker, type RunDetailProjection } from '@vostride/agent-qa-schema'
 import { DashboardDatabase } from '@vostride/agent-qa-dashboard'
 import type { Page } from 'playwright-core'
-import { afterAll, beforeAll, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { recordingFixture, capture, type RecordingFixture } from './recording-dom-fixture.js'
 import { cleanupTempRoots } from './spawned-chat.js'
 
@@ -131,6 +131,22 @@ async function armSettledSeek(page: Page, sha: string) {
 }
 async function settledSeek(page: Page) {
   return page.evaluate(() => (window as unknown as { settledSeek: Promise<number> }).settledSeek)
+}
+const SETTLED_SEEK_TIMEOUT_MS = 10_000
+
+type MemberSpan = { member: number; start: number; width: number }
+async function memberSpans(page: Page): Promise<MemberSpan[]> {
+  return page.locator('[data-timeline-member-span]').evaluateAll(elements => elements.map(element => {
+    const style = (element as HTMLElement).style
+    return {
+      member: Number(element.getAttribute('data-timeline-member-span')),
+      start: parseFloat(style.left) / 100,
+      width: parseFloat(style.width) / 100,
+    }
+  }))
+}
+function freeMemberAt(spans: readonly MemberSpan[], fraction: number) {
+  return spans.findIndex(span => fraction >= span.start && fraction < span.start + span.width)
 }
 
 async function clickMarker(page: Page, ordinal: number) {
@@ -618,10 +634,7 @@ it('SUITE-BROWSER-MEDIA: real progress, marker details, local seeks and continue
         await capture(page, `endpoint-${width}-${ordinal}`)
       }
       const rail = (await page.locator('[data-timeline-track]').boundingBox())!
-      const freeMember = (await page.locator('[data-timeline-member-span]').evaluateAll(elements => elements.map(element => {
-        const style = (element as HTMLElement).style
-        return { start: parseFloat(style.left) / 100, width: parseFloat(style.width) / 100 }
-      }))).findIndex(span => 0.5 >= span.start && 0.5 < span.start + span.width)
+      const freeMember = freeMemberAt(await memberSpans(page), 0.5)
       // 2026-10-10 (438 record gate, load 71): this click has the same transient. The marker-offset
       // seek paints the playhead as that marker's circle until the click's own seek lands, so two
       // reads that straddled the commit saw a free attribute, then a transparent pill. Read the
@@ -703,3 +716,28 @@ it('SUITE-BROWSER-GAPS: dense actions remain individually reachable and missing 
     observations.gaps = { denseChoices: true, missingContinuationStopped: true, historicalCompletionOffsetNoOverlay: true }
   } finally { await page.close() }
 }, 120_000)
+
+describe('C438-SETTLED-SEEK', () => {
+  it("a settled-seek wait that sees no seek on the member's source fails with a message within its bound", async () => {
+    const page = await fixture.browser.newPage()
+    try {
+      await armSettledSeek(page, 'no-media-uses-this-source')
+      const started = Date.now()
+      const failure = await settledSeek(page).then(() => undefined, (error: unknown) => error)
+      const elapsed = Date.now() - started
+      expect(failure).toBeInstanceOf(Error)
+      expect((failure as Error).message).toMatch(/no settled seek/)
+      expect((failure as Error).message).toContain('no-media-uses-this-source')
+      expect((failure as Error).message).toContain(`within ${SETTLED_SEEK_TIMEOUT_MS} ms`)
+      expect(elapsed).toBeLessThan(SETTLED_SEEK_TIMEOUT_MS + 5_000)
+    } finally { await page.close() }
+  }, 30_000)
+
+  it('the free-playhead member is read from its data-timeline-member-span attribute, not its DOM position', () => {
+    expect(freeMemberAt([{ member: 1, start: 0, width: 0.4 }, { member: 0, start: 0.4, width: 0.6 }], 0.5)).toBe(0)
+  })
+
+  it('a point no member spans fails with a message', () => {
+    expect(() => freeMemberAt([{ member: 0, start: 0, width: 0.4 }], 0.5)).toThrow(/no timeline member spans 0.5/)
+  })
+})
