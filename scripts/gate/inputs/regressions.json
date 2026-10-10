@@ -6048,6 +6048,24 @@
       "file": "packages/web/src/__tests__/438-stated-target.test.ts",
       "fullName": "C438-STATED-ROW a row stated \"Invoice 1234\" against \"Invoice 1,234\" is clicked",
       "origin": "438 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/424-suite-player-dom.test.ts",
+      "fullName": "C438-SETTLED-SEEK a settled-seek wait that sees no seek on the member's source fails with a message within its bound",
+      "origin": "434 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/424-suite-player-dom.test.ts",
+      "fullName": "C438-SETTLED-SEEK the free-playhead member is read from its data-timeline-member-span attribute, not its DOM position",
+      "origin": "434 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/424-suite-player-dom.test.ts",
+      "fullName": "C438-SETTLED-SEEK a point no member spans fails with a message",
+      "origin": "434 D-20"
     }
   ]
 }
