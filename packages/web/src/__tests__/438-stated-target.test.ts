@@ -68,6 +68,23 @@ const ADDRESSES_PAGE = `<!doctype html><html><head><script>window.__clicks = []<
   </ul>
 </body></html>`
 
+const CLICKABLE_ROWS_PAGE = `<!doctype html><html><head><script>window.__clicks = []</script></head><body>
+  <ul>
+    <li onclick="window.__clicks.push('7 Elm Street, Springfield')">
+      <p><strong>Work</strong></p>
+      <p>7 Elm Street, Springfield</p>
+    </li>
+    <li onclick="window.__clicks.push('1 Home Street, Springfield')">
+      <p><strong>Home</strong></p>
+      <p>1 Home Street, Springfield</p>
+    </li>
+    <li onclick="window.__clicks.push('9 Oak Road, Springfield')">
+      <p><strong>Old</strong></p>
+      <p>9 Oak Road, Springfield</p>
+    </li>
+  </ul>
+</body></html>`
+
 const LONE_EDIT_PAGE = `<!doctype html><html><head><script>window.__clicks = []</script></head><body>
   <button type="button" onclick="window.__clicks.push('lone')">Edit label</button>
 </body></html>`
@@ -431,6 +448,59 @@ describe('C438-STATED-ROW', () => {
     expect(run.result.status).toBe('passed')
     expect(run.executed).toHaveLength(1)
     expect(await addressClicks(web)).toEqual(['7 Elm Street, Springfield'])
+    expect(refusalOf(run)).toBeUndefined()
+  }, 60_000)
+
+  async function runRowClick(target: { role: string; name: string; row?: string }) {
+    const web = await open(CLICKABLE_ROWS_PAGE)
+    const planner = scriptedPlanner([
+      (screen) => {
+        const row = screen.elements.find(
+          (element) => element.role === 'listitem' && element.text?.includes('1 Home Street'),
+        )
+        if (row === undefined) throw new Error('no listitem with the text 1 Home Street')
+        return act({ type: 'click', ref: row.ref, target }, true, 'Open the address')
+      },
+      () => giveUp('The address could not be opened'),
+    ])
+    const run = await runScriptedStep({
+      adapter: web,
+      instruction: 'Open the 7 Elm Street address',
+      planner,
+      verifier: passes,
+      plannerConfig: LIMITS,
+    })
+    return { web, run }
+  }
+
+  it("a listitem ref stated with another row's words is refused", async () => {
+    const { web, run } = await runRowClick({
+      role: 'listitem',
+      name: 'Address',
+      row: '7 Elm Street',
+    })
+
+    expect(run.executed).toHaveLength(0)
+    expect(await addressClicks(web)).toEqual([])
+    expect(refusalOf(run)).toMatchObject({
+      kind: 'target-mismatch',
+      lane: 'ref',
+      path: 'live',
+      reasons: ['row'],
+      inputSent: false,
+    })
+  }, 60_000)
+
+  it('a listitem ref stated with its own row words is clicked', async () => {
+    const { web, run } = await runRowClick({
+      role: 'listitem',
+      name: 'Address',
+      row: '1 Home Street',
+    })
+
+    expect(run.result.status).toBe('passed')
+    expect(run.executed).toHaveLength(1)
+    expect(await addressClicks(web)).toEqual(['1 Home Street, Springfield'])
     expect(refusalOf(run)).toBeUndefined()
   }, 60_000)
 })

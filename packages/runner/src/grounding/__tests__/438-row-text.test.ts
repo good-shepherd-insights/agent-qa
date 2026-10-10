@@ -175,4 +175,28 @@ describe('C438-ROW-TEXT', () => {
       observedRow: 'Work 7 Elm Street, Springfield Edit label',
     })
   })
+
+  it("a row container is its own row: a listitem's row is its own text and descendants", () => {
+    const elements = elementsOf([
+      { role: 'listitem', text: 'Home 1 Home Street' },
+      { role: 'button', name: 'Edit label', parentIndex: 0 },
+    ])
+    expect(rowTextOf(elements[0], elements)).toBe('Home 1 Home Street Edit label')
+  })
+
+  it('a cell with no row container above it is its own row', () => {
+    const elements = elementsOf([{ role: 'cell', name: 'Address', text: '7 Elm Street' }])
+    expect(rowTextOf(elements[0], elements)).toBe('Address 7 Elm Street')
+  })
+
+  it("the judge refuses a listitem stated with another row's words", () => {
+    const elements = elementsOf(ADDRESSES)
+    const judgement = judgeStatedTarget(
+      { role: 'listitem', name: 'Address', row: '7 Elm Street' },
+      elements[2],
+      elements,
+    )
+    expect(judgement).toMatchObject({ verdict: 'contradicts', reasons: ['row'] })
+    expect(judgement.observedRow).toContain('1 Home Street')
+  })
 })
