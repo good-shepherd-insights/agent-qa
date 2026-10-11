@@ -5,10 +5,12 @@ import {
   CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION,
   DRAFT_STABILITY_RUNS_N,
   DraftReceiptSchema,
+  NO_RUNS_FAN_OUT_BOUND,
 } from '@vostride/agent-qa-schema'
 import type { DraftReceipt, FunctionCaller } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
+import { REQUEST_WINS_INSTRUCTION } from '../../authoring/brief-blocks.js'
 import { runDocument } from '../../authoring/__tests__/evidence-fixtures.js'
 import type { MemberFixture } from '../../authoring/__tests__/evidence-fixtures.js'
 import { AUTHORING_REFINE_AGENT_CONTEXT } from '../../authoring/refine.js'
@@ -167,6 +169,7 @@ function publicPathHost(options: {
 }) {
   const counts = { model: 0, verify: 0 }
   const published: string[] = []
+  const requests: { readonly system?: string; readonly prompt: string }[] = []
   let staged: ParsedDraftLike | undefined
 
   const stagedDraft = (): ParsedDraftLike => {
@@ -179,6 +182,7 @@ function publicPathHost(options: {
       modelId: 'fixture:440-public-path',
       generate(request) {
         counts.model += 1
+        requests.push(request)
         if ((request.system ?? '').includes(AUTHORING_REFINE_AGENT_CONTEXT)) {
           return Promise.resolve({ text: '{"thoughts":"","patches":[]}' })
         }
@@ -266,6 +270,7 @@ function publicPathHost(options: {
   return {
     counts,
     published,
+    requests,
     async write(intent: string): Promise<Record<string, unknown>> {
       return await invokeFunction(
         registry,
@@ -357,6 +362,166 @@ describe('C440-PUBLIC-PATH', () => {
       written: null,
       published: 0,
       statedValueRefusal: null,
+    })
+  })
+})
+
+// 2026-10-12 (440-02, D-02/D-05/D-09): the compile check's behaviours through the public op.
+const CASE_CHANGED_DOCUMENT = `name: Confirm the products page shows the Kitchen appliances heading
+test-id: t_amber-cotton-ledger-marble-quartz-signal-timber-violet-walnut-yellow
+target: automation-exercise
+steps:
+  - Open the Automation Exercise home page
+  - Click the " products" link
+  - Verify the products page says "Kitchen appliances"
+`
+
+const SALE_REQUEST =
+  'open the products page and check the "Sale" banner shows $20 and "Kitchen Appliances"'
+
+const SALE_ONLY_DOCUMENT = `name: Confirm the products page shows the Sale banner
+test-id: t_amber-cotton-ledger-marble-quartz-signal-timber-violet-walnut-yellow
+target: automation-exercise
+steps:
+  - Open the Automation Exercise home page
+  - Click the " products" link
+  - Verify the products page shows the "Sale" banner
+`
+
+const REWORDED_DOCUMENT = `name: Confirm the products page lists its items under All Products
+test-id: t_amber-cotton-ledger-marble-quartz-signal-timber-violet-walnut-yellow
+target: automation-exercise
+steps:
+  - Sign in to Automation Exercise as the test user
+  - Go to the Automation Exercise landing page
+  - Follow the products link in the header
+  - Verify the products page heading reads "All Products"
+  - Verify the products page lists at least one item
+`
+
+const VAGUE_REQUEST = 'test the products page'
+
+function stepsOf(document: string): readonly string[] {
+  return stagedDraftOf(document).steps
+}
+
+describe('C440-VALUE-COMPILE', () => {
+  it('a case-changed value is refused at compile', async () => {
+    const host = publicPathHost({ document: CASE_CHANGED_DOCUMENT, runs: 'pass' })
+    const output = await host.write(HISTORICAL_REQUEST)
+
+    expect({
+      outcome: output['outcome'],
+      statedValueRefusal: output['statedValueRefusal'] ?? null,
+      verifyCalls: host.counts.verify,
+      published: host.published.length,
+    }).toEqual({
+      outcome: 'refused',
+      statedValueRefusal: { stage: 'compile', missingValues: ['Kitchen Appliances'] },
+      verifyCalls: 0,
+      published: 0,
+    })
+  })
+
+  it("the refusal names every missing value in the request's order and nothing from the draft", async () => {
+    const host = publicPathHost({ document: SALE_ONLY_DOCUMENT, runs: 'pass' })
+    const output = await host.write(SALE_REQUEST)
+    const refusal = output['statedValueRefusal'] as
+      { readonly missingValues: readonly string[] } | undefined
+    const serialized = JSON.stringify(refusal)
+
+    expect(refusal?.missingValues).toEqual(['$20', 'Kitchen Appliances'])
+    expect(refusal?.missingValues.every((value) => SALE_REQUEST.includes(value))).toBe(true)
+    expect(stepsOf(SALE_ONLY_DOCUMENT).filter((step) => serialized.includes(step))).toEqual([])
+  })
+
+  it("a compile refusal carries the compiled draft's ref and no receipt", async () => {
+    const host = publicPathHost({ document: HISTORICAL_DOCUMENT, runs: 'pass' })
+    const output = await host.write(HISTORICAL_REQUEST)
+    const draftRef = output['draftRef'] as { readonly testName?: unknown } | undefined
+    const fanOut = output['fanOut'] as
+      { readonly consumedTotal?: unknown; readonly previewed?: unknown } | undefined
+
+    expect({
+      testName: draftRef?.testName,
+      hasReceipt: 'receipt' in output,
+      consumedTotal: fanOut?.consumedTotal,
+      previewed: fanOut?.previewed,
+    }).toEqual({
+      testName: stagedDraftOf(HISTORICAL_DOCUMENT).testName,
+      hasReceipt: false,
+      consumedTotal: 0,
+      previewed: NO_RUNS_FAN_OUT_BOUND,
+    })
+  })
+
+  it('reworded unquoted words, added steps and added checks are kept', async () => {
+    const host = publicPathHost({ document: REWORDED_DOCUMENT, runs: 'pass' })
+    const output = await host.write(FAITHFUL_TRUE_REQUEST)
+
+    expect({
+      outcome: output['outcome'],
+      statedValueRefusal: output['statedValueRefusal'] ?? null,
+      written: writtenKind(output),
+      published: host.published.length,
+    }).toEqual({ outcome: 'drafted', statedValueRefusal: null, written: 'written', published: 1 })
+  })
+
+  it('a vague request is never refused', async () => {
+    const host = publicPathHost({ document: HISTORICAL_DOCUMENT, runs: 'pass' })
+    const output = await host.write(VAGUE_REQUEST)
+
+    expect({
+      outcome: output['outcome'],
+      statedValueRefusal: output['statedValueRefusal'] ?? null,
+      written: writtenKind(output),
+      published: host.published.length,
+    }).toEqual({ outcome: 'drafted', statedValueRefusal: null, written: 'written', published: 1 })
+  })
+
+  it('no model call is added', async () => {
+    const refused = publicPathHost({ document: HISTORICAL_DOCUMENT, runs: 'pass' })
+    const kept = publicPathHost({ document: HISTORICAL_DOCUMENT, runs: 'pass' })
+    const refusedOutput = await refused.write(HISTORICAL_REQUEST)
+    const keptOutput = await kept.write(FAITHFUL_TRUE_REQUEST)
+
+    expect({
+      refused: [refusedOutput['outcome'], refused.counts.model],
+      kept: [keptOutput['outcome'], kept.counts.model],
+    }).toEqual({ refused: ['refused', 1], kept: ['drafted', 2] })
+  })
+})
+
+describe('C440-PROMPTS', () => {
+  it('the compile prompt puts the request over project knowledge', async () => {
+    const host = publicPathHost({ document: HISTORICAL_DOCUMENT, runs: 'pass' })
+    await host.write(HISTORICAL_REQUEST)
+    const compile = host.requests[0]
+
+    expect(compile?.system).toContain(REQUEST_WINS_INSTRUCTION)
+    expect(compile?.system).toContain(`${REQUEST_WINS_INSTRUCTION}\n\n## Test document format`)
+    expect(compile?.prompt).toContain(`## Intent\n\n${HISTORICAL_REQUEST}\n\n## Scope`)
+  })
+
+  it('the compile block titles are unchanged', async () => {
+    const host = publicPathHost({ document: HISTORICAL_DOCUMENT, runs: 'pass' })
+    await host.write(HISTORICAL_REQUEST)
+    const compile = host.requests[0]
+    const titles = (text: string | undefined): readonly string[] =>
+      (text ?? '')
+        .split('\n')
+        .filter((line) => line.startsWith('## '))
+        .map((line) => line.slice(3))
+
+    expect({ system: titles(compile?.system), prompt: titles(compile?.prompt) }).toEqual({
+      system: ['Role', 'Test document format', 'Procedures'],
+      prompt: [
+        'Intent',
+        'Scope',
+        'Configured targets',
+        'What this project knows',
+        'Exemplar tests',
+      ],
     })
   })
 })
