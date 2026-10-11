@@ -61,6 +61,7 @@ import type {
   DraftReceipt,
   DraftRef,
   FanOutBound,
+  AuthoringDraftWriteOutput,
   FanOutReport,
   ScopeKey,
   WrittenTestReceipt,
@@ -69,6 +70,7 @@ import type {
 import {
   CONFIGURED_TARGETS_BLOCK_TITLE,
   PROCEDURE_BY_REFERENCE_INSTRUCTION,
+  REQUEST_WINS_INSTRUCTION,
   TEST_DOCUMENT_FORMAT_BLOCK_TITLE,
   TEST_DOCUMENT_FORMAT_INSTRUCTION,
   configuredTargetsBlockBody,
@@ -87,6 +89,7 @@ import { refineDraft } from './refine.js'
 import type { RefinementOutcome } from './refine.js'
 import { REPAIR_ITERATION_CAP, repairDraft } from './repair.js'
 import type { RepairAbandonment, RepairOutcome } from './repair.js'
+import { extractStatedValues, missingStatedValues } from './stated-values.js'
 import {
   AuthoringRouterUnroutableError,
   routeRepairOrStop,
@@ -146,7 +149,12 @@ export type AuthoringLoopOutcome =
       readonly receipt: DraftReceipt
       readonly written: WrittenTestReceipt
     }
-  | { readonly kind: 'refused'; readonly draftRef?: DraftRef; readonly receipt?: DraftReceipt }
+  | {
+      readonly kind: 'refused'
+      readonly draftRef?: DraftRef
+      readonly receipt?: DraftReceipt
+      readonly statedValueRefusal?: NonNullable<AuthoringDraftWriteOutput['statedValueRefusal']>
+    }
   | {
       readonly kind: 'repaired'
       readonly draftRef: DraftRef
@@ -254,8 +262,9 @@ export interface AuthoringLoopResult {
   /**
    * What stage 3's one refinement round did (D-18).
    *
-   * ABSENT exactly when stage 3 was never entered — a stage-2 refusal — and present on every
-   * invocation that compiled anything, including the ones where the round changed nothing. The
+   * ABSENT exactly when the round never ran — a stage-2 refusal, or a compile refusal for a lost
+   * stated value — and present on every other invocation, including the ones where the round
+   * changed nothing. The
    * distinction the field exists to keep is between a round that found nothing (`no-op`) and one
    * whose emission could not be used (`not-applied`): both leave the draft alone, and only one of
    * them is the loop working as designed.
@@ -555,7 +564,8 @@ async function compileDraft(
         title: 'Role',
         body: 'You author agent-qa test documents. Emit ONE complete YAML test document and '
           + 'nothing else — no prose, no fences, no partial edit. Steps are natural language, one '
-          + 'per line, and at least one of them must assert concrete expected content.',
+          + 'per line, and at least one of them must assert concrete expected content. '
+          + REQUEST_WINS_INSTRUCTION,
       },
       // The document schema, on the same placement argument and for WINDOWS 111's reason: a brief
       // serving no exemplars must still teach the format. See the constant's own header.
@@ -940,8 +950,26 @@ export async function runAuthoringLoop(
     }
   }
 
+  const statedValues = extractStatedValues(input.intent)
+
   stages.push('compile')
   const compiled = await compileDraft(input, brief, deps.shelf, deps.read)
+  // 2026-10-12 (440-02, D-05): a compiled draft that loses a stated value is refused before refine,
+  // with no retry and no run spent.
+  const missing = missingStatedValues(statedValues, compiled.steps)
+  if (missing.length > 0) {
+    return {
+      outcome: {
+        kind: 'refused',
+        draftRef: draftRefOf(compiled),
+        statedValueRefusal: { stage: 'compile', missingValues: [...missing] },
+      },
+      stages,
+      dedup,
+      sideCounters: [],
+      fanOut: buildFanOutReport({ previewed: NO_RUNS_FAN_OUT_BOUND, runs: [] }),
+    }
+  }
   // THE ROUND IS UNCONDITIONAL AND IT IS INSIDE STAGE 3 (D-18). Unconditional: there is no `if`
   // above this line and no argument that could turn it off — see `refine.ts` for why a trigger
   // heuristic is the thing D-18 rules out rather than the thing it configures. Inside stage 3

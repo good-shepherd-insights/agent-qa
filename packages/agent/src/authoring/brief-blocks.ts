@@ -34,6 +34,12 @@ export const PROCEDURE_BY_REFERENCE_INSTRUCTION =
   + 'invent a special syntax: the test file stays plain prose, and the flow is recognised when the '
   + 'test runs. A step that matches no listed flow is simply written as you would write any other.'
 
+// 2026-10-12 (440-02, D-04): appended to the compile and refine `Role` bodies.
+export const REQUEST_WINS_INSTRUCTION =
+  'The request\'s stated subject, values and checks win over what this project knows: use '
+  + 'project knowledge only to decide how to reach them, never to replace them, and keep every '
+  + 'quoted string, number, price and date from the request word for word.'
+
 /** The title of the stable block {@link TEST_DOCUMENT_FORMAT_INSTRUCTION} renders under. */
 export const TEST_DOCUMENT_FORMAT_BLOCK_TITLE = 'Test document format'
 

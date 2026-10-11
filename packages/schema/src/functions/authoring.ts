@@ -176,6 +176,19 @@ export const AuthoringDedupRefusalSchema = z.object({
 
 export type AuthoringDedupRefusal = z.infer<typeof AuthoringDedupRefusalSchema>
 
+export const AUTHORING_STATED_VALUE_STAGES = ['compile', 'keep'] as const
+
+export type AuthoringStatedValueStage = (typeof AUTHORING_STATED_VALUE_STAGES)[number]
+
+// 2026-10-12 (440-02, D-09): names the stage and the request's own missing values, never draft or
+// model text.
+export const AuthoringStatedValueRefusalSchema = z.object({
+  stage: z.enum(AUTHORING_STATED_VALUE_STAGES),
+  missingValues: z.array(z.string().min(1)).min(1),
+}).strict()
+
+export type AuthoringStatedValueRefusal = z.infer<typeof AuthoringStatedValueRefusalSchema>
+
 /**
  * The three classes the stop arm may carry — one definitive, two ambiguous (411 D-06).
  *
@@ -380,6 +393,7 @@ export const AuthoringDraftWriteOutputSchema = z.object({
    * for why this one payload arm exists where the paragraph above rules the others out.
    */
   refusal: AuthoringDedupRefusalSchema.optional(),
+  statedValueRefusal: AuthoringStatedValueRefusalSchema.optional(),
   /**
    * Present exactly on a `stopped` invocation (411 D-05): the gate run's verdict, the router's
    * reading and the evidence coordinates — never a proposal of any class. Same rule as `refusal`:
@@ -420,6 +434,28 @@ export const AuthoringDraftWriteOutputSchema = z.object({
       code: 'custom',
       path: ['written', 'disposition'],
       message: 'the written-test receipt carries the disposition of the receipt beside it',
+    })
+  }
+  if (output.statedValueRefusal !== undefined && output.outcome !== 'refused') {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['statedValueRefusal'],
+      message: 'the stated-value refusal is present only on a refused invocation',
+    })
+  }
+  if (output.statedValueRefusal !== undefined && output.refusal !== undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['statedValueRefusal'],
+      message: 'the stated-value refusal never rides beside the duplicate refusal',
+    })
+  }
+  if (output.outcome === 'refused' && output.statedValueRefusal === undefined
+    && output.refusal === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['refusal'],
+      message: 'a refused invocation carries the duplicate refusal or the stated-value refusal',
     })
   }
 })

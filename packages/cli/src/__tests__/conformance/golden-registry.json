@@ -101,7 +101,7 @@
       "classifies": true,
       "id": "authoring.draft.write",
       "inputSchemaDigest": "2d98bde1d977b1e9928d3613fa0fa97b7e3d765a6e9b1c43bf23214e8adf03ed",
-      "outputSchemaDigest": "aaca3f5b3cd4fcc52cf378a1940c8a05ab87e5cdd3ed2ddd6b81d609b7c26f59",
+      "outputSchemaDigest": "e1135af5ea79166ad904a1137c80e8e5cfda2fa6fc3abe110a2de2811e045fea",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_write_test"

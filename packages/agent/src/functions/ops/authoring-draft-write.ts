@@ -214,6 +214,14 @@ export const authoringDraftWriteSpec: FunctionSpec<
     const report = FanOutReportSchema.safeParse(output.fanOut)
     const spent = report.success ? ` — ${renderFanOutReport(report.data)}` : ''
     if (output.outcome === 'refused') {
+      const stated = output.statedValueRefusal
+      if (stated !== undefined) {
+        const values = stated.missingValues.map((value) => JSON.stringify(value)).join(', ')
+        return {
+          status: 'refused',
+          outcome: `stated-values-missing:${stated.stage} ${values}${spent}`,
+        }
+      }
       const matched = output.refusal?.matchedRef
       const named = matched === undefined ? 'duplicate' : `duplicate-of:${matched}`
       return { status: 'refused', outcome: `${named}${spent}` }
@@ -317,6 +325,14 @@ export const authoringDraftWriteSpec: FunctionSpec<
       ...(outcome.kind === 'stopped' ? { stop: projectStop(outcome) } : {}),
       ...(outcome.kind === 'drafted' || outcome.kind === 'repaired'
         ? { written: outcome.written }
+        : {}),
+      ...(outcome.kind === 'refused' && outcome.statedValueRefusal !== undefined
+        ? {
+          statedValueRefusal: {
+            stage: outcome.statedValueRefusal.stage,
+            missingValues: [...outcome.statedValueRefusal.missingValues],
+          },
+        }
         : {}),
       ...(dedup.kind === 'duplicate'
         ? {
