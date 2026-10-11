@@ -1659,7 +1659,8 @@ describe('authoring.draft.write end to end through the composition root', () => 
       const result = (await invokeFunction(
         host.registry,
         AUTHORING_DRAFT_WRITE_FUNCTION_ID,
-        { intent: `${INTENT} (${index})`, scope: SCOPE },
+        // 2026-10-12 (440-01, D-03): a letter suffix, because a number would be a stated value.
+        { intent: `${INTENT} (${String.fromCharCode(97 + index)})`, scope: SCOPE },
         HUMAN,
       )) as AuthoringDraftWriteOutput
       expect(result.outcome).toBe('drafted')
