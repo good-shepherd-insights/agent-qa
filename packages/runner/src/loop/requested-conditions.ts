@@ -14,9 +14,10 @@
 // is negated on that word, or holds "nothing happened", "nothing changed", "no effect" or
 // "did nothing" when the quote carries one of EFFECT_VERBS. A negation about another object with
 // the same verb ("the old value was not saved" on "Save the new value") is refused: the safe
-// direction. An unchanged screen is not an admission: "nothing changed on the page", "nothing
-// happened visually" and "the screen did not change" are skipped. An admission in another
-// language is not caught.
+// direction. An unchanged screen is not an admission: "nothing changed on the page." or "nothing
+// happened on screen, but …", "nothing happened visually" and "the screen did not change" are
+// skipped; "the theme on the page did not change", "nothing changed in the display name field" and
+// "did nothing on the page" are not. An admission in another language is not caught.
 
 import type {
   CitationSource,
@@ -123,10 +124,12 @@ const TOKEN_PATTERN = new RegExp(`${PLACEHOLDER_TOKEN}|[\\p{L}\\p{N}]+`, 'gu')
 const NEGATED_PARTICIPLE =
   /\b(?:has|have|had|is|are|was|were)\s*(?:not|n['’]t)\s+(?:yet\s+)?(?:been\s+)?([a-z]+)\b|\bnot\s+yet\s+(?:been\s+)?([a-z]+)\b|\b(?:did|does)\s*(?:not|n['’]t)\s+([a-z]+)\b|\bnever\s+([a-z]+)\b|\bfailed\s+to\s+([a-z]+)\b/gi
 const NOTHING_HAPPENED = /\bnothing\s+(?:happened|changed)\b|\bno\s+effect\b|\bdid\s+nothing\b/gi
-// 439 CR-02: an unchanged screen is a description of the page, not an admission; the effect may
-// still be proven by operation evidence or a re-read.
-const ABOUT_THE_SCREEN = /^\s*(?:(?:on|in)\s+(?:the\s+)?(?:screen|page|ui|display)\b|visually\b)/i
-const SCREEN_SUBJECT = /\b(?:screen|page|ui|display)\s*$/i
+// 439 CR-02, CR-04: an unchanged screen is a description of the page, not an admission; the effect
+// may still be proven by operation evidence or a re-read. Only a whole screen phrase qualifies: it
+// ends the text, a sentence or a "but" clause, and a negated change has the screen as its subject.
+const ABOUT_THE_SCREEN =
+  /^\s*(?:(?:on|in)\s+(?:the\s+)?(?:screen|page|ui|display)\s*(?:$|[.;]|,?\s*but\b)|visually\b)/i
+const SCREEN_SUBJECT = /(?:^|[.;,]\s*|\bbut\s+)(?:the\s+)?(?:screen|page|ui|display)\s*$/i
 
 function collapse(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
@@ -262,10 +265,12 @@ function screenUnchanged(text: string, negated: { stem: string; at: number }): b
   return negated.stem === CHANGE_STEM && SCREEN_SUBJECT.test(text.slice(0, negated.at))
 }
 
+// "did nothing" and "no effect" are about the action, never the screen.
 function nothingHappened(reasoning: string): string | undefined {
   for (const match of reasoning.matchAll(NOTHING_HAPPENED)) {
     const after = reasoning.slice(match.index + match[0].length)
-    if (!ABOUT_THE_SCREEN.test(after)) return match[0]
+    const aboutScreen = /^nothing/i.test(match[0]) && ABOUT_THE_SCREEN.test(after)
+    if (!aboutScreen) return match[0]
   }
   return undefined
 }

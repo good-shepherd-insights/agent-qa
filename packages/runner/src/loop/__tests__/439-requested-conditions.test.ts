@@ -359,12 +359,22 @@ describe('C439-PHRASES', () => {
   })
 
   it.each([
-    ['Clicked Pay and nothing happened', 'Click Pay', 'nothing happened'],
-    ['The button did nothing', 'Click Save', 'did nothing'],
-    ['Clicking Send had no effect', 'Click Send', 'no effect'],
-    ['The file was not downloaded', 'Click Download CSV', 'was not downloaded'],
-    ['It was not saved', 'Change the theme and save', 'was not saved'],
+    ['Nothing changed on the page; clicked Pay and nothing happened', 'Click Pay', 'nothing happened'],
+    ['Nothing happened on screen; the button did nothing', 'Click Save', 'did nothing'],
+    ['Nothing changed visually, but clicking Send had no effect', 'Click Send', 'no effect'],
+    ['The screen did not change and the file was not downloaded', 'Click Download CSV', 'was not downloaded'],
+    ['The page did not change, but it was not saved', 'Change the theme and save', 'was not saved'],
   ])('still refused beside an unchanged screen: %s on %s', (reasoning, quote, phrase) => {
+    expect(admitsNotDone(reasoning, quote)).toBe(phrase)
+  })
+
+  it.each([
+    ['The theme on the page did not change', 'Change the theme and save', 'did not change'],
+    ['Nothing changed in the display name field', 'Change the display name and save', 'Nothing changed'],
+    ['Nothing changed on the page, the row is still listed', 'Delete the first row', 'Nothing changed'],
+    ['did nothing on the page', 'Click Save', 'did nothing'],
+    ['nothing happened on screen and the order was not placed', 'Place the order', 'was not placed'],
+  ])('refused although it mentions the screen: %s on %s', (reasoning, quote, phrase) => {
     expect(admitsNotDone(reasoning, quote)).toBe(phrase)
   })
 
