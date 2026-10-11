@@ -2970,3 +2970,212 @@ subsection changes only this file, which no test reads.
 
 **Toolchain:** node 24.15.0 · pnpm 10.6.1 · turbo 2.9.7 · Chromium 149.0.7827.55 (revision 1228) ·
 macOS (Darwin 27.0.0, arm64, 12 CPUs).
+
+## 2026-10-12 — Phase 440: Authoring intent (V2-EXEC-02)
+
+This section appends to the register and rewrites no earlier section. Phase 440 removed the paths
+that let an authored test lose a value the user stated: refine's input carried only the scope, so
+its prompt never held the request; compile's only post-check was the config target name; the final
+write published without looking at the request; and the op's caller line read every refusal as a
+duplicate. In their place, one plain-code check with no model call lists the request's quoted
+strings, numbers, prices and dates, and compile, refine, repair and keep each require the draft's
+steps to carry every one of them word for word. A loss is refused at compile, dropped at refine,
+fenced at repair and refused at keep; nothing that lost a stated value is written. It kept the
+draft-keyed retrieval, the single refinement round, the router, dedup, the saved receipt and the
+abandonment kinds. The section follows the 2026-10-11 Phase 439 shape. Dated 2026-10-12; written by
+440-06.
+
+### The ruling
+
+> V2-EXEC-02: The authoring compile, refine, keep and repair paths preserve the values the user
+> stated (amended 2026-10-12, reconciliation 24).
+>
+> - **The prompts.** Compile and refine put the user's stated subject, values and checks over
+>   project knowledge, and refine receives the request.
+> - **The check.** One plain-code check, with no model call, requires every quoted string, number,
+>   price and date in the request to appear word for word in the draft. A draft or patch that loses
+>   one is refused, dropped or fenced, naming the missing values, and is never written. A green run
+>   of a test that lost a stated value is not success.
+> - **Not enforced.** An unquoted subject swap, or a dropped check with no stated value.
+> - The historical "Kitchen Appliances" → "All Products" substitution (made at compile, with no
+>   repair) is reproduced on a local fixture. It is closed by a regression through the public
+>   authoring path (MCP `agent_qa_write_test` or `fn authoring.draft.write`).
+> - If the defect no longer reproduces, it is reported as a regression test, never as a freshly
+>   reproduced defect.
+
+From `.planning/REQUIREMENTS.md`. The owner picked the recommended option on every question asked
+("please keep the phase quick", 2026-10-11), then shrank the phase ("Let's shrink it", 2026-10-12)
+after the Phase 441 discussion found the first plans adding a guardrail scan. Reconciliation 24
+records the shrink, and `.planning/phases/440-authoring-intent/440-CONTEXT.md`'s amendment block
+holds the decisions as amended:
+
+- D-01 (a model judge with coverage and citation checks) is replaced by D-03 alone;
+- D-02 anything may change except a stated value: steps and checks may be added and unquoted words
+  reworded, and a vague request is never refused;
+- D-03 a stated value is a quoted string, a number, a price or a date, and it must appear word for
+  word in the draft's steps, case kept, with only whitespace runs tidied;
+- D-04 compile and refine each get one line: the request's stated subject, values and checks win
+  over project knowledge;
+- D-05 a compile draft that lost a stated value is refused before any run, with no retry;
+- D-06 refine receives the request; a patch that loses a stated value is dropped and the compiled
+  draft goes on; the retrieval query stays the draft's words;
+- D-07 a repair patch that loses a stated value is fenced and counts as one of the 3 tries; the
+  existing abandonment kinds stay;
+- D-08 keep checks the exact draft right before it is written, with no verdict cache;
+- D-09 the outcome stays `refused`, with one optional field naming the stage and the missing values;
+- D-12 both skill copies gain one line: show the missing values, stop, never reword the request;
+- D-13 "reproduced" means the public-path cell run once on the pre-fix code with a scripted model;
+- D-14 every case goes through `invokeFunction('authoring.draft.write')` with a fake shelf;
+- D-15 acceptance is model-free cells in 434's named-cell list;
+- D-17 the records owed: this section, the phase record and the folded todo.
+
+D-10 (change records), D-11 (the intent map) and D-16 (the live-model run) were dropped.
+
+**This file names retired shapes literally**, as the 2026-09-02 section explains for the whole
+register. `DELETION-INVENTORY.md` sits outside every census region.
+
+### What was removed
+
+Baseline `288e41d4a11188eb6aa78d24598be3532d8b5c6e` (`version-0.2`, the parent of 440's first
+agent-qa commit `354f53996`). Code-closing HEAD `7b9f0ed1001ab87275dd7db440a2f8792b0f8f9e`. `git
+diff --shortstat 288e41d4a..7b9f0ed10`: 24 files changed, 1,846 insertions, 50 deletions; no file
+deleted. 11 commits, every one signed. The gate list commit `34af72b54` follows it and adds the 71
+`C440-` entries.
+
+- **Refine's request-free input (the implicit exclusion of the request).** `refineDraft(draft,
+  input: { readonly scope: ScopeKey }, deps)` took only the scope, so the request could not reach
+  the refine prompt, which showed the draft and the project knowledge and nothing else. The
+  header's "WHY THE QUERY IS THE DRAFT AND NOT THE INTENT" argued for the retrieval query; the prompt
+  inherited the exclusion without a reason of its own. The input is now `{ scope, intent }`: the
+  request is the prompt's first context block, titled `Intent`, and the `Role` body ends with
+  `REQUEST_WINS_INSTRUCTION`. `draftRetrievalQuery(draft)` is still the retrieval query and
+  `REFINEMENT_ROUNDS = 1` is unchanged; the header gained one dated line saying so. After
+  `applyPatches` stages a draft, a patch that loses a stated value answers `not-applied` with
+  `statedValuesMissingReason(missing)`, and the compiled draft goes on (440-04 `cdb3103d5`,
+  `da67b9b80`). `C440-REFINE-REQUEST`, `C440-PROMPTS`, `C440-VALUE-REFINE`.
+- **Compile's target-name-only post-check.** `compileDraft`'s only check of what the model wrote
+  was that the config `target` is a configured name. That check stays. `runAuthoringLoop` now
+  extracts the stated values once (`extractStatedValues(input.intent)`, in the new
+  `agent/src/authoring/stated-values.ts`, 440-01 `6e85d2043`) and checks the compiled draft's steps
+  before refine runs. A loss returns `refused` with `statedValueRefusal: { stage: 'compile',
+  missingValues }`, the compiled draft's `draftRef`, no receipt and zero runs, and is not retried.
+  The compile `Role` body ends with `REQUEST_WINS_INSTRUCTION` (440-02 `5be11c28a`).
+  `C440-PUBLIC-PATH`, `C440-VALUE-COMPILE`, `C440-PROMPTS`, `C440-STATED-VALUES`,
+  `C440-FALSE-REFUSAL`.
+- **The unchecked final write.** `writeFinalDraft(draft, receipt, shelf)` published every
+  disposition except `rejected` without looking at the request. `writeFinalDraft(draft, receipt,
+  shelf, statedValues)` now checks the exact draft it is about to write and answers `{
+  missingValues }` instead of publishing. It still holds the only `.publish(` in `loop.ts`.
+  `routeAfterVerify` takes the values as a required fourth parameter, and all three write sites
+  (keep-eligible and proposal-only, draft mode's `unverified`, a repaired draft's final receipt)
+  answer `refused` with `stage: 'keep'`, the checked draft's ref, its receipt and the runs already
+  spent (440-05 `b699a26cf`). `C440-VALUE-KEEP`.
+- **Repair's request-blind patch.** `repairDraft` never saw the request; only the identity and
+  passing-prefix fences and the credential screen looked at a patch. `RepairDeps.statedValues` is
+  now required, and `fencePatchAgainstStatedValues` runs after the `unparsable` check and before the
+  unchanged credential screen. A patch that loses a value starts no run, spends one of
+  `REPAIR_ITERATION_CAP`'s 3 tries, does not advance the candidate, and the next prompt names the
+  missing values (440-05 `7b9f0ed10`). `C440-VALUE-REPAIR`.
+- **`classify` reading every refusal as a duplicate.** The op's caller line answered every
+  `refused` output `duplicate` or `duplicate-of:<ref>`. A refused output carrying
+  `statedValueRefusal` now answers `stated-values-missing:<stage> "<value>", …` with the spent
+  suffix, ahead of the duplicate branch (440-02 `5be11c28a`). `C440-REFUSAL-FIELD`.
+- **The output schema's digest.** `AuthoringDraftWriteOutputSchema` gained the optional
+  `statedValueRefusal` (strict: exactly `stage` and a non-empty `missingValues`) and three rules: it
+  rides only on `refused`, never beside the duplicate `refusal`, and a `refused` output carries one
+  of the two. The golden's `authoring.draft.write` `outputSchemaDigest` moved from `aaca3f5b…7c26f59`
+  to `e1135af5…2e045fea`; its input digest and the capability catalog did not move. Both schema
+  barrels export the four names (440-02 `5be11c28a`, 440-03 `e2136fb28`). `C440-REFUSAL-FIELD`.
+- **One re-spelled intent.** agent-local's twelve-draft cell ended its intents `(0)` to `(11)`,
+  numbers its drafts never carried. They now end `(a)` to `(l)`; the title, count and assertions are
+  unchanged (440-01 `b79e69d7e`). `C432-TEST-WRITE-DISPOSITION: twelve drafts are twelve written
+  files, and none waits to be accepted`.
+
+No byte-pinned prompt test moved: the refine prompt has no title pin, and the compile block titles
+are pinned unchanged by `C440-PROMPTS the compile block titles are unchanged`.
+
+### What was RETAINED, and why
+
+| Item | Why kept | What pins it |
+|---|---|---|
+| `draftRetrievalQuery(draft)` as refine's retrieval query | the request was already retrieved against at stage 1 (394 D-18); `spec/v2/test-authoring.md` §5's draft-as-query refinement is unchanged (D-06) | `C440-REFINE-REQUEST the refine retrieval query is still the draft's words, not the request` |
+| `REFINEMENT_ROUNDS = 1` and the unconditional round | D-06 keeps the round's shape; the check only decides whether a patch is applied | `C440-VALUE-REFINE a no-op round makes no change and needs no check` |
+| the router's rules | the model never routes; a faithful draft the app disagrees with stops on rule 2 and writes nothing (411 D-10) | `C440-PUBLIC-PATH a faithful draft the app disagrees with stops on rule 2 and writes nothing` |
+| dedup (`dedup.ts`) and the duplicate `refusal` payload | not this phase | `C440-REFUSAL-FIELD the refusal never rides beside a duplicate refusal` |
+| `DraftReceiptSchema`, the verify op's input and the saved receipt | D-11 was dropped, so nothing new is saved and no outside caller can supply a "faithful" claim | the golden: only `authoring.draft.write`'s output digest moved |
+| the edit op (`authoring.draft.edit`) | it carries no request to check against | not pinned by a 440 cell |
+| the funnel's reading of persisted receipts, and its side counters | no side counter was added (440-01 decision 6) | not pinned by a 440 cell |
+| the abandonment kinds `exhausted` and `prefix-regressed` | D-07 as amended: a value-refused try is an ordinary spent try | `C440-VALUE-REPAIR running out after value refusals keeps the existing abandonment kinds`; `loop.test-d.ts` unchanged |
+| `screenDraftForCredentials` (after refine in `loop.ts`, after the patch in `repair.ts`) and the registry's required audit-sink stub | Phase 441 removes both (reconciliation 23); 440 adds no new caller of the scan | the existing `repair-credential-screen.test.ts` cells |
+| compile's target-name check | unrelated to the request's values | the existing compile cells |
+| the agent barrel `agent/src/index.ts` and the tool envelope | no agent tool and no barrel export was added | `validate:arch`'s barrel lint; `validate:tools` (14, unchanged) |
+
+### What degrades, stated plainly
+
+- **What is not enforced** (reconciliation 24): an unquoted subject swap, and a dropped or narrowed
+  check that carries no stated value. The prompt line makes them less likely; nothing refuses them.
+- **A vague request is never refused**, whatever the draft says.
+- **A quoted value found only outside the steps is refused.** Only the steps are searched, never the
+  test name, `context` or `target`, so a quoted target name that no step mentions is refused.
+- **The match is exact.** A case change, a singular or plural, a trimmed value, or a number spelled
+  differently (`10` against `10.00`) is a loss. Canonical Unicode is tidied (NFC) and compatibility
+  forms are not, so a full-width digit does not match its ASCII form.
+- **Extraction is conservative.** A month-name date needs a capital first letter, so `march 3`
+  states only `3`; a number in a URL or a host and port states nothing; a single quote opens only at
+  the start or after whitespace, `(` or `[`, so an apostrophe inside a word never opens a value.
+- **A compile refusal leaves the compiled draft staged on the shelf**, like every compiled draft;
+  the refusal carries its `draftRef`.
+- **The compile and refine prompts' bytes changed**: both `Role` bodies end with the request-wins
+  sentence, and the refine prompt gained the `Intent` block. No model call was added.
+
+### Persisted values that keep reading
+
+None changed. The op's output, where `statedValueRefusal` lives, is not persisted. The saved
+`DraftReceipt`, the written test file, the handoff schema and every abandonment kind are unchanged,
+so every reader of persisted history reads what it read at `288e41d4a`.
+
+### Accepted risks
+
+- **A keep refusal after a persisted keep-eligible receipt.** Verify saves the `DraftReceipt` before
+  keep runs, and the funnel counts persisted dispositions. A draft refused at keep would still count
+  as kept. Compile, refine and repair check the same values first, so this happens only if an
+  earlier check were bypassed. No side counter was added (440-RESEARCH Pitfall 4).
+- **The skill line is text.** `C440-SKILL` pins the words in both copies, not whether a coding agent
+  obeys them.
+
+### The instruments that notice a return
+
+- **The 434 gate** (`pnpm run gate:local`) must execute and pass all 71 listed `C440-` cells, each
+  with its `440 D-NN` origin in `scripts/gate/inputs/regressions.json`: `C440-PUBLIC-PATH` 4,
+  `C440-STATED-VALUES` 22, `C440-FALSE-REFUSAL` 4, `C440-VALUE-COMPILE` 6, `C440-PROMPTS` 3,
+  `C440-REFUSAL-FIELD` 8, `C440-SKILL` 3, `C440-REFINE-REQUEST` 2, `C440-VALUE-REFINE` 6,
+  `C440-VALUE-KEEP` 6, `C440-VALUE-REPAIR` 7. A refine prompt without the request, an unchecked
+  compile, refine patch, repair patch or final write, or a refusal read as a duplicate reds there.
+  440-06 ran every file holding a `C440-` cell with the JSON reporter: 71 `C440-` full names found,
+  every one passed and listed.
+- **`C440-VALUE-KEEP the keep check is the only door to publishing`** reads `loop.ts` and pins one
+  `.publish(` inside `writeFinalDraft`, after its `missingStatedValues(` call.
+- **The conformance golden** reds on any change to the output schema that is not regenerated.
+- No arch census and no mutation driver was added.
+
+### Not observed, stated as such
+
+- **No live model ran.** Every cell uses a scripted model that answers by `agent_context`. Whether a
+  live model still makes the historical substitution was to be a live-model data point (D-16), which
+  reconciliation 24 dropped.
+- **No real browser ran.** Gate runs are a fake shelf returning a passing or a clean-failing result
+  (`agent/src/authoring/__tests__/evidence-fixtures.ts`); D-14's real-Chromium spike was dropped.
+- **The MCP door end to end** (`agent_qa_write_test`) is deferred; its output shape is proven by the
+  golden, and Phase 446 tests the host recipes against the staged artifact.
+
+### Reconciliation
+
+Reconciliation 24 (2026-10-12) in `.planning/REQUIREMENTS.md` amended V2-EXEC-02 before the replan,
+and `spec/v2/release-readiness.md` was amended the same day. What was built matches it, so no new
+reconciliation was needed.
+
+### Gate
+
+The record gate runs on the commit that adds this section, which is Phase 440's final agent-qa SHA.
+Its legs, counts and verdict are recorded in `.planning/phases/440-authoring-intent/440-RECORD.md`
+§ Gate rather than quoted here, so no agent-qa commit follows the gate run.
