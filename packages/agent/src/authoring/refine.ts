@@ -19,6 +19,7 @@
 // concrete flow, a page, an element, a phrase that matches a caution nobody thought to ask for. So
 // this round asks the question the intent could not, which is what makes it a round rather than a
 // retry.
+// 2026-10-12 (440, D-06): the prompt carries the request too; only the retrieval query stays the draft's words.
 //
 // WHY A FAILED REFINEMENT DOES NOT FAIL THE INVOCATION. What arrives is a model emission, and the
 // three ways it can be unusable — not a patch set at all, a patch set the fence or the applier
@@ -31,7 +32,7 @@
 import { TestEditPatchSetSchema } from '@vostride/agent-qa-schema'
 import type { ScopeKey, TestEditPatchSet } from '@vostride/agent-qa-schema'
 
-import { exemplarBlockBody, knowledgeBlockBody } from './brief-blocks.js'
+import { exemplarBlockBody, knowledgeBlockBody, REQUEST_WINS_INSTRUCTION } from './brief-blocks.js'
 import type {
   AuthoringReadPortLike,
   DraftShelfPortLike,
@@ -155,7 +156,7 @@ function parsePatchSet(text: string): { patchSet: TestEditPatchSet } | { reason:
  */
 export async function refineDraft(
   draft: ParsedDraftLike,
-  input: { readonly scope: ScopeKey },
+  input: { readonly scope: ScopeKey; readonly intent: string },
   deps: RefineDraftDeps,
 ): Promise<RefinementOutcome> {
   const brief = await deps.read.getAuthoringBrief(draftRetrievalQuery(draft), input.scope)
@@ -170,10 +171,12 @@ export async function refineDraft(
           + 'patch is an RFC-6902 op with "op" one of add/remove/replace, a JSON Pointer "path", '
           + 'and for add/replace a string "value". Only /steps, /name and /context may be '
           + 'addressed. Emit an EMPTY patches array when the knowledge below adds nothing — that '
-          + 'is a correct answer, and inventing a change to look useful is not.',
+          + 'is a correct answer, and inventing a change to look useful is not. '
+          + REQUEST_WINS_INSTRUCTION,
       },
     ],
     context: [
+      { title: 'Intent', body: input.intent },
       { title: 'The draft as it stands', body: draftBlockBody(draft) },
       { title: 'What this project knows about these steps', body: knowledgeBlockBody(brief) },
     ],

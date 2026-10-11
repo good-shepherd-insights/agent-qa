@@ -145,7 +145,7 @@ async function runRound(
   harnessed: Harness,
 ): Promise<RefinementOutcome> {
   const { refineDraft } = await import('../refine.js')
-  return await refineDraft(DRAFT, { scope: SCOPE }, harnessed.deps)
+  return await refineDraft(DRAFT, { scope: SCOPE, intent: INTENT }, harnessed.deps)
 }
 
 describe('the refinement round is unconditional', () => {
@@ -316,5 +316,38 @@ describe('a refinement that cannot be used leaves the compiled draft standing', 
     if (outcome.kind !== 'not-applied') throw new Error('unreachable')
     expect(outcome.reason).toBe('steps must have at least one entry')
     expect(outcome.draft).toBe(DRAFT)
+  })
+})
+
+describe('C440-REFINE-REQUEST', () => {
+  it('the refine prompt carries the request as its first context block', async () => {
+    const bench = harness({ emission: patchSetEmission([]) })
+
+    await runRound(bench)
+
+    const prompt = bench.prompts[0]?.prompt ?? ''
+    expect(prompt.startsWith(`## Intent\n\n${INTENT}\n\n`)).toBe(true)
+    expect(prompt.indexOf('## Intent')).toBeLessThan(prompt.indexOf('## The draft as it stands'))
+  })
+
+  it("the refine retrieval query is still the draft's words, not the request", async () => {
+    const { draftRetrievalQuery } = await import('../refine.js')
+    const bench = harness({ emission: patchSetEmission([]) })
+
+    await runRound(bench)
+
+    expect(bench.briefQueries).toEqual([draftRetrievalQuery(DRAFT)])
+    expect(bench.briefQueries[0]).not.toContain(INTENT)
+  })
+})
+
+describe('C440-PROMPTS', () => {
+  it('the refine prompt puts the request over project knowledge', async () => {
+    const { REQUEST_WINS_INSTRUCTION } = await import('../brief-blocks.js')
+    const bench = harness({ emission: patchSetEmission([]) })
+
+    await runRound(bench)
+
+    expect(bench.prompts[0]?.system).toContain(REQUEST_WINS_INSTRUCTION)
   })
 })
