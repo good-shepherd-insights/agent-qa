@@ -2936,3 +2936,37 @@ interaction may be satisfied by evidence of that interaction" so that a click on
 requests its effect. D-04 reads V2-EXEC-01's "current, direct evidence" to include a download or the
 latest app clipboard write from an earlier step of the same test, labelled with its step and action.
 Both are recorded in `.planning/REQUIREMENTS.md` by 439-08 as reconciliations 21 and 22.
+
+### Gate at the time of writing (2026-10-11)
+
+Run by 439-08 from `agent-qa/` with `pnpm run gate:local -- --out <dir>`, at turbo's default
+concurrency (434 D-20). The gate clones the committed SHA into a fresh temporary directory, installs
+with the frozen lockfile and runs every leg there. It ran on
+`741a7b2506d36470843ca98549cd53964c8240f5`. That commit is this section without this subsection,
+on top of the code-closing HEAD `08fa97c11`; no gate input changed in this plan, because every
+`C439-` cell was already listed. The source tree was clean (`sourceDirty: false`). The run lasted
+10 min 3 s (00:41:39Z to 00:51:42Z on 2026-10-11 UTC). The 1-minute load was 1.6 at the start, and
+the 1- and 5-minute loads were 5.0 and 17.4 at the end. It is the phase's first and only gate run;
+it was green on its first run.
+
+| Leg | Observed | Exit |
+|---|---|---|
+| clone, install | fresh clone at the SHA; `pnpm install --frozen-lockfile` | 0, 0 |
+| turbo build and typecheck | 46/46 tasks | **0** |
+| turbo test | 46/46 tasks; 23,993 passed, 0 failed, 56 skipped, every skip a registered entry | **0** |
+| `validate:skills`, `validate:agents`, `validate:publish` | 4, 24 and 22 checks | **0** |
+| `validate:tools` | 14 passed, the same 14 as at `5099723ed`, so no agent tool was added | **0** |
+| `validate:arch` | 538 passed (532 at `5099723ed`, plus the 4 `C439-CENSUS` and 2 `C439-VISION-GATE` cells) | **0** |
+| `validate:safety`, `validate:431-discovery-imports`, `lint:namespace` | 9 passed; 885 imports; 3,098 files | **0** |
+| node-test, conformance selftest, conformance | 153 passed; 4; 50 | **0** |
+| audit (`pnpm audit --prod --json`) | 493 prod dependencies: critical 0, high 0, moderate 5, low 1. pnpm 10.6.1 exits 1 on any advisory, and the gate judges the JSON metadata (434's owner decision) | 1, judged pass |
+| regressions | **1194 of 1194 listed cells executed and passed**: 434's 43, Phase 436's 459, Phase 437's 262, Phase 438's 247 and Phase 439's 183 | — |
+| register | 55 entries, 56 skips matched, 0 stale, 0 unlisted, 0 conditional entries run | — |
+
+Verdict: `gate green: 0 finding(s)`, `record: true`, exit **0**. Before the gate, `pnpm build`,
+`pnpm typecheck` (0 `error TS`), `validate:arch` (538), `validate:tools` (14), `validate:skills` and
+`validate:publish` each exited 0 in the working tree at the same SHA. The commit that adds this
+subsection changes only this file, which no test reads.
+
+**Toolchain:** node 24.15.0 · pnpm 10.6.1 · turbo 2.9.7 · Chromium 149.0.7827.55 (revision 1228) ·
+macOS (Darwin 27.0.0, arm64, 12 CPUs).
