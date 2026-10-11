@@ -14,10 +14,12 @@
 // is negated on that word, or holds "nothing happened", "nothing changed", "no effect" or
 // "did nothing" when the quote carries one of EFFECT_VERBS. A negation about another object with
 // the same verb ("the old value was not saved" on "Save the new value") is refused: the safe
-// direction. An unchanged screen is not an admission: "nothing changed on the page." or "nothing
-// happened on screen, but …", "nothing happened visually" and "the screen did not change" are
-// skipped; "the theme on the page did not change", "nothing changed in the display name field" and
-// "did nothing on the page" are not. An admission in another language is not caught.
+// direction. How the sentence is worded never excuses a phrase. Only the no-change phrases
+// ("nothing changed", "nothing happened", a negated "change") are excused, and only when the met
+// condition has a found citation that proves the effect on its own: a completed download or
+// clipboard write of this step, a passed read, or the final screen after a reload or reopen that
+// follows the step's last change (439 CR-02, CR-05). Any other negated quote word, "did nothing"
+// and "no effect" are always refused. An admission in another language is not caught.
 
 import type {
   CitationSource,
@@ -38,10 +40,11 @@ import {
   applyPersistenceGuard,
   applyVisualGuard,
   openDialogsOn,
+  reopenedAfterLastChange,
   type CheckedCitation,
   type SavedFile,
 } from './condition-guards.js'
-import type { VerifierStepRecord } from './step-record.js'
+import { renderEffectProof, type VerifierStepRecord } from './step-record.js'
 import type { ConditionJudgment, VerificationResult } from './types.js'
 
 /** The rendered parts of the verification request a citation can point at. */
@@ -105,7 +108,7 @@ export const STOP_WORDS: ReadonlySet<string> = new Set(
 /** Verbs whose quote makes "nothing happened" and its kin an admission. */
 export const EFFECT_VERBS: readonly string[] = (
   'submit save send pay delete export download create add place apply confirm upload copy ' +
-  'remove update buy publish post archive order book'
+  'remove update buy publish post archive order book change set rename enable disable toggle turn'
 ).split(' ')
 
 const IRREGULAR_STEMS: Readonly<Record<string, string>> = {
@@ -124,12 +127,6 @@ const TOKEN_PATTERN = new RegExp(`${PLACEHOLDER_TOKEN}|[\\p{L}\\p{N}]+`, 'gu')
 const NEGATED_PARTICIPLE =
   /\b(?:has|have|had|is|are|was|were)\s*(?:not|n['’]t)\s+(?:yet\s+)?(?:been\s+)?([a-z]+)\b|\bnot\s+yet\s+(?:been\s+)?([a-z]+)\b|\b(?:did|does)\s*(?:not|n['’]t)\s+([a-z]+)\b|\bnever\s+([a-z]+)\b|\bfailed\s+to\s+([a-z]+)\b/gi
 const NOTHING_HAPPENED = /\bnothing\s+(?:happened|changed)\b|\bno\s+effect\b|\bdid\s+nothing\b/gi
-// 439 CR-02, CR-04: an unchanged screen is a description of the page, not an admission; the effect
-// may still be proven by operation evidence or a re-read. Only a whole screen phrase qualifies: it
-// ends the text, a sentence or a "but" clause, and a negated change has the screen as its subject.
-const ABOUT_THE_SCREEN =
-  /^\s*(?:(?:on|in)\s+(?:the\s+)?(?:screen|page|ui|display)\s*(?:$|[.;]|,?\s*but\b)|visually\b)/i
-const SCREEN_SUBJECT = /(?:^|[.;,]\s*|\bbut\s+)(?:the\s+)?(?:screen|page|ui|display)\s*$/i
 
 function collapse(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
@@ -250,27 +247,34 @@ export function stemWord(word: string): string {
   return stem
 }
 
-function negatedStems(text: string): { phrase: string; stem: string; at: number }[] {
-  const found: { phrase: string; stem: string; at: number }[] = []
+interface NegatedStem {
+  phrase: string
+  stem: string
+  /** "failed to …" admits the attempt failed; it never only describes an unchanged state. */
+  failed: boolean
+}
+
+function negatedStems(text: string): NegatedStem[] {
+  const found: NegatedStem[] = []
   for (const match of text.matchAll(NEGATED_PARTICIPLE)) {
     const word = match.slice(1).find((group) => group !== undefined)
-    if (word !== undefined) found.push({ phrase: match[0], stem: stemWord(word), at: match.index })
+    if (word !== undefined) {
+      found.push({ phrase: match[0], stem: stemWord(word), failed: match[5] !== undefined })
+    }
   }
   return found
 }
 
 const CHANGE_STEM = stemWord('change')
 
-function screenUnchanged(text: string, negated: { stem: string; at: number }): boolean {
-  return negated.stem === CHANGE_STEM && SCREEN_SUBJECT.test(text.slice(0, negated.at))
+function noChange(negated: NegatedStem): boolean {
+  return negated.stem === CHANGE_STEM && !negated.failed
 }
 
-// "did nothing" and "no effect" are about the action, never the screen.
-function nothingHappened(reasoning: string): string | undefined {
+// "did nothing" and "no effect" are about the action: no proof excuses them.
+function nothingHappened(reasoning: string, effectProven: boolean): string | undefined {
   for (const match of reasoning.matchAll(NOTHING_HAPPENED)) {
-    const after = reasoning.slice(match.index + match[0].length)
-    const aboutScreen = /^nothing/i.test(match[0]) && ABOUT_THE_SCREEN.test(after)
-    if (!aboutScreen) return match[0]
+    if (!(effectProven && /^nothing/i.test(match[0]))) return match[0]
   }
   return undefined
 }
@@ -278,10 +282,14 @@ function nothingHappened(reasoning: string): string | undefined {
 const EFFECT_STEMS = new Set(EFFECT_VERBS.map(stemWord))
 
 /**
- * The phrase in `reasoning` that admits the quote's action did not happen, or undefined. English
- * only; see the module header for the patterns and their limits.
+ * The phrase in `reasoning` that admits the quote's action did not happen, or undefined. A
+ * no-change phrase is excused only when `effectProven`. English only; see the module header.
  */
-export function admitsNotDone(reasoning: string, quote: string): string | undefined {
+export function admitsNotDone(
+  reasoning: string,
+  quote: string,
+  effectProven = false,
+): string | undefined {
   const quoteStems = new Set(
     tokenize(quote)
       .map((token) => token.key)
@@ -290,11 +298,11 @@ export function admitsNotDone(reasoning: string, quote: string): string | undefi
   )
   for (const negated of negatedStems(quote)) quoteStems.delete(negated.stem)
   for (const negated of negatedStems(reasoning)) {
-    if (quoteStems.has(negated.stem) && !screenUnchanged(reasoning, negated)) {
+    if (quoteStems.has(negated.stem) && !(effectProven && noChange(negated))) {
       return collapse(negated.phrase)
     }
   }
-  const nothing = nothingHappened(reasoning)
+  const nothing = nothingHappened(reasoning, effectProven)
   if (nothing !== undefined && [...quoteStems].some((stem) => EFFECT_STEMS.has(stem))) {
     return collapse(nothing)
   }
@@ -306,6 +314,19 @@ interface JudgeContext {
   haystacks: Record<keyof CitationSources, Haystack>
   plannerReasoning: string
   guards: ConditionGuardFacts
+  /** The citable lines that prove an effect on their own (renderEffectProof). */
+  proof: readonly Haystack[]
+  /** A reload or reopen followed the step's last change, so the final screen is a re-read. */
+  reopened: boolean
+}
+
+function provesEffect(citation: ConditionCitation, written: string, context: JudgeContext): boolean {
+  if (citation.found !== true) return false
+  if (citation.source === 'final-screen') return context.reopened
+  if (citation.source !== 'action' && citation.source !== 'read') return false
+  const raw = collapse(written)
+  const quote = collapse(context.input.mask(raw))
+  return context.proof.some((line) => line.masked.includes(quote) || line.raw.includes(raw))
 }
 
 function judgeOne(
@@ -318,7 +339,8 @@ function judgeOne(
   const quote = bound(maskedQuote, QUOTE_MAX)
   const reasoning = collapse(input.mask(judgment.reasoning ?? ''))
   const reason = bound(reasoning, REASON_MAX)
-  const checked = (Array.isArray(judgment.citations) ? judgment.citations : []).map((citation) =>
+  const written = Array.isArray(judgment.citations) ? judgment.citations : []
+  const checked = written.map((citation) =>
     checkCitation(citation, haystacks, input.mask, input.imageAttached),
   )
   const citations = checked.slice(0, RECORDED_CITATIONS_MAX)
@@ -342,8 +364,11 @@ function judgeOne(
   if (!checked.some((citation) => citation.found !== false)) {
     return changed('unverified', 'citation-missing', GUARD_REASONS['citation-missing']!)
   }
+  const effectProven = checked.some((citation, i) =>
+    provesEffect(citation, written[i]?.quote ?? '', context),
+  )
   for (const source of [reasoning, context.plannerReasoning]) {
-    const phrase = source === '' ? undefined : admitsNotDone(source, maskedQuote)
+    const phrase = source === '' ? undefined : admitsNotDone(source, maskedQuote, effectProven)
     if (phrase !== undefined) {
       return changed('not-met', 'admits-not-done', `The reasoning says "${phrase}"`)
     }
@@ -400,7 +425,13 @@ export function judgeConditions(input: JudgeConditionsInput): ConditionJudgeResu
       judgments.map((judgment) => tokenize(input.mask(judgment.quote ?? ''))),
     )
     const plannerReasoning = collapse(input.mask(input.plannerReasoning ?? ''))
-    const context: JudgeContext = { input, haystacks, plannerReasoning, guards: guardFacts(input) }
+    const guards = guardFacts(input)
+    const proof = (guards.record !== undefined ? renderEffectProof(guards.record) : []).map((line) => {
+      const raw = collapse(line)
+      return { raw, masked: collapse(input.mask(raw)) }
+    })
+    const reopened = reopenedAfterLastChange(guards.record)
+    const context: JudgeContext = { input, haystacks, plannerReasoning, guards, proof, reopened }
     conditions = judgments.map((judgment, i) =>
       judgeOne(judgment, coverage.inStep[i] ?? false, context),
     )

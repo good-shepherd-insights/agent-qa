@@ -13,6 +13,7 @@ import type {
 } from '@vostride/agent-qa-schema'
 import type { Action } from '../../platform.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
+import { buildVerifierCitationSources } from '../prompts.js'
 import {
   admitsNotDone,
   coverConditions,
@@ -21,6 +22,7 @@ import {
   tokenize,
 } from '../requested-conditions.js'
 import type { CitationSources, JudgeConditionsInput } from '../requested-conditions.js'
+import type { RecordedAction, VerifierStepRecord } from '../step-record.js'
 import type { ConditionJudgment, VerificationResult } from '../types.js'
 import { LLMVerifier } from '../verifier.js'
 import { makeFakeTokenAccounting } from './loop-harness.js'
@@ -78,6 +80,57 @@ function block(
   verdicts: ConditionRecord['verdict'][],
 ): { conditionVerdicts: ConditionVerdictsEvidence } {
   return { conditionVerdicts: { ending, conditions: verdicts.map(record) } }
+}
+
+const START = makeScreenState({ url: 'https://x/orders', tree: '- heading "Orders" [ref=e1]' })
+const ROW_FINAL = makeScreenState({ url: 'https://x/orders', tree: '- row "Order 1001" [ref=e5]' })
+const DARK_FINAL = makeScreenState({ url: 'https://x/settings', tree: '- radio "Dark" [checked] [ref=e4]' })
+
+function stepRecord(actions: Omit<RecordedAction, 'index'>[]): VerifierStepRecord {
+  return { startScreen: START, actions: actions.map((entry, i) => ({ index: i + 1, ...entry })), reads: [], carried: [] }
+}
+
+const DOWNLOAD_RECORD = stepRecord([
+  {
+    action: { type: 'click', ref: asRef('e2') },
+    element: { role: 'button', name: 'Download CSV' },
+    outcome: 'success',
+    operationEvidence: {
+      downloads: [{ suggestedFilename: 'orders.csv', extension: '.csv', size: 120, sha256: '0a1b', state: 'completed' }],
+    },
+  },
+])
+
+const THEME_RECORD = stepRecord([
+  { action: { type: 'click', ref: asRef('e4') }, element: { role: 'radio', name: 'Dark' }, outcome: 'success' },
+  { action: { type: 'click', ref: asRef('e5') }, element: { role: 'button', name: 'Save' }, outcome: 'success' },
+  { action: { type: 'navigate', to: 'reload' } as Action, outcome: 'success' },
+])
+
+const CLICK_RECORD = stepRecord([
+  { action: { type: 'click', ref: asRef('e3') }, element: { role: 'button', name: 'Go' }, outcome: 'success' },
+])
+
+function judgeRecord(
+  step: string,
+  recorded: VerifierStepRecord,
+  citation: { source: CitationSource; quote: string },
+  reasoning: string,
+  options: { final?: ReturnType<typeof makeScreenState>; needs?: ConditionJudgment['needs'] } = {},
+) {
+  const final = options.final ?? ROW_FINAL
+  const last = recorded.actions[recorded.actions.length - 1]!.action
+  return judgeConditions({
+    stepText: step,
+    output: output([
+      judgment('met', [citation], { quote: step, reasoning, needs: options.needs ?? 'none' }),
+    ]),
+    sources: buildVerifierCitationSources(recorded.startScreen, final, last, undefined, recorded),
+    mask: identity,
+    imageAttached: false,
+    ending: 'completion',
+    guards: { finalElements: final.elements, platform: final.platform, record: recorded, imageAttached: false },
+  })
 }
 
 describe('C439-JUDGE', () => {
@@ -354,18 +407,19 @@ describe('C439-PHRASES', () => {
     ['Nothing changed visually, the clipboard holds the link', 'Copy the order link'],
     ['nothing happened on screen, but after the reload the value is kept', 'Click Save'],
     ['The screen did not change; the background save completed and the reload shows it', 'Change the theme and save'],
-  ])('an unchanged screen is not an admission: %s on %s', (reasoning, quote) => {
-    expect(admitsNotDone(reasoning, quote)).toBeUndefined()
+  ])('an unchanged screen is not an admission when the effect is proven: %s on %s', (reasoning, quote) => {
+    expect(admitsNotDone(reasoning, quote, true)).toBeUndefined()
+    expect(admitsNotDone(reasoning, quote, false)).toBeDefined()
   })
 
   it.each([
-    ['Nothing changed on the page; clicked Pay and nothing happened', 'Click Pay', 'nothing happened'],
+    ['Nothing changed on the page; the order was not paid', 'Click Pay', 'was not paid'],
     ['Nothing happened on screen; the button did nothing', 'Click Save', 'did nothing'],
     ['Nothing changed visually, but clicking Send had no effect', 'Click Send', 'no effect'],
-    ['The screen did not change and the file was not downloaded', 'Click Download CSV', 'was not downloaded'],
+    ['The screen did not change and the file was not downloaded', 'Change the format and download CSV', 'was not downloaded'],
     ['The page did not change, but it was not saved', 'Change the theme and save', 'was not saved'],
   ])('still refused beside an unchanged screen: %s on %s', (reasoning, quote, phrase) => {
-    expect(admitsNotDone(reasoning, quote)).toBe(phrase)
+    expect(admitsNotDone(reasoning, quote, true)).toBe(phrase)
   })
 
   it.each([
@@ -390,8 +444,63 @@ describe('C439-PHRASES', () => {
       ]),
       sources: sources({ action: '1. click on ref="e2" → success\naction 1: Download "orders.csv" (.csv): completed' }),
       plannerReasoning: 'nothing happened on screen, but the download completed',
+      guards: {
+        finalElements: [],
+        platform: 'web',
+        imageAttached: false,
+        record: { actions: [DOWNLOAD_RECORD.actions[0]!], reads: [] },
+      },
     })
 
+    expect(result.evidence.conditions[0]).toMatchObject({ verdict: 'met' })
+    expect(result.pass).toBe(true)
+  })
+
+  it.each([
+    ['Nothing changed on the page, the download of orders.csv completed', 'Click Download CSV'],
+    ['Although nothing changed on screen, orders.csv was downloaded', 'Click Download CSV'],
+  ])('a proven download stays met end to end: %s on %s', (reasoning, step) => {
+    const result = judgeRecord(step, DOWNLOAD_RECORD, { source: 'action', quote: 'Download "orders.csv" (.csv): completed' }, reasoning)
+    expect(result.evidence.conditions[0]).toMatchObject({ verdict: 'met' })
+    expect(result.pass).toBe(true)
+  })
+
+  it('a saved theme re-read after the reload stays met end to end', () => {
+    const result = judgeRecord(
+      'Change the theme to dark and save',
+      THEME_RECORD,
+      { source: 'final-screen', quote: 'radio "Dark" [checked]' },
+      'Although the page did not change, the reload shows the dark theme',
+      { final: DARK_FINAL, needs: 'persistence' },
+    )
+    expect(result.evidence.conditions[0]).toMatchObject({ verdict: 'met' })
+    expect(result.pass).toBe(true)
+  })
+
+  it.each([
+    ['Nothing changed visually, the row is still listed', 'Delete the first row', 'Nothing changed'],
+    ['Nothing changed visually in the display name field', 'Change the display name', 'Nothing changed'],
+    ['Nothing changed', 'Change the display name', 'Nothing changed'],
+    ['The UI did not change', 'Change the UI theme to dark', 'did not change'],
+    ['Nothing happened on the page.', 'Click Pay', 'Nothing happened'],
+  ])('refused end to end without proof of the effect: %s on %s', (reasoning, step, phrase) => {
+    const result = judgeRecord(step, CLICK_RECORD, { source: 'final-screen', quote: 'row "Order 1001"' }, reasoning)
+    expect(result.evidence.conditions[0]!.citations[0]?.found).toBe(true)
+    expect(result.evidence.conditions[0]).toMatchObject({
+      verdict: 'not-met',
+      guard: 'admits-not-done',
+      reason: `The reasoning says "${phrase}"`,
+    })
+    expect(result.pass).toBe(false)
+  })
+
+  it('an assertion-only step is not refused for an unchanged page', () => {
+    const result = judgeRecord(
+      'Verify the first row is listed',
+      CLICK_RECORD,
+      { source: 'final-screen', quote: 'row "Order 1001"' },
+      'Nothing changed on the page, the first row is listed',
+    )
     expect(result.evidence.conditions[0]).toMatchObject({ verdict: 'met' })
     expect(result.pass).toBe(true)
   })

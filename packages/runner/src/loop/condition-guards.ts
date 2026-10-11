@@ -325,6 +325,20 @@ function isReopen(action: Action): boolean {
 export const NO_REREAD_REASON =
   'no re-read after a reload or reopen following the last change; a "Saved" message is the app\'s claim'
 
+/** Whether the step reloaded or reopened after its last state-changing action (439 D-18). */
+export function reopenedAfterLastChange(stepRecord: GuardRecord | undefined): boolean {
+  const actions = stepRecord?.actions ?? []
+  let lastChange = 0
+  for (const entry of actions) {
+    if (entry.outcome !== 'refused' && isStateChangingAction(entry.action)) {
+      lastChange = Math.max(lastChange, entry.index)
+    }
+  }
+  return actions.some(
+    (entry) => entry.index > lastChange && entry.outcome === 'success' && isReopen(entry.action),
+  )
+}
+
 /**
  * A met persistence condition holds only when the step reloaded or reopened after its last
  * state-changing action and the condition cites the final screen (439 D-18).
@@ -336,17 +350,9 @@ export function applyPersistenceGuard(
   stepRecord: GuardRecord | undefined,
 ): ConditionRecord {
   if (record.verdict !== 'met' || judgment.needs !== 'persistence') return record
-  const actions = stepRecord?.actions ?? []
-  let lastChange = 0
-  for (const entry of actions) {
-    if (entry.outcome !== 'refused' && isStateChangingAction(entry.action)) {
-      lastChange = Math.max(lastChange, entry.index)
-    }
+  if (!reopenedAfterLastChange(stepRecord)) {
+    return demote(record, 'unverified', 'no-reload', NO_REREAD_REASON)
   }
-  const reopened = actions.some(
-    (entry) => entry.index > lastChange && entry.outcome === 'success' && isReopen(entry.action),
-  )
-  if (!reopened) return demote(record, 'unverified', 'no-reload', NO_REREAD_REASON)
   if (!cited.some((citation) => citation.found === true && citation.source === 'final-screen')) {
     return demote(
       record,
