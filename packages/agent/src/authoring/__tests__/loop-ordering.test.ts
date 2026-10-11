@@ -21,6 +21,9 @@
 // logs are asserted against each other. A self-report that claimed `compile` before `dedup` while
 // the deps fired the other way fails the second cell even if it satisfies the first.
 
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
 import {
   DRAFT_STABILITY_RUNS_N,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
@@ -666,7 +669,7 @@ describe('EDGE-09: exactly the non-rejected final dispositions are written (432 
       const host = writerShelf()
       const receipt = scriptedReceipt(row.disposition, row.gates, row.runs)
 
-      const routed = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps)
+      const routed = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps, [])
 
       expect(routed.outcome.kind).toBe('drafted')
       // One write, of the shelf copy, to the loop's own target recipe, claiming the target absent.
@@ -687,7 +690,7 @@ describe('EDGE-09: exactly the non-rejected final dispositions are written (432 
 
     // A rejected receipt ROUTES; with no run evidence the router refuses by name. Either way the
     // writer is never reached.
-    const outcome = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps)
+    const outcome = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps, [])
       .then(() => undefined, (error: unknown) => error)
 
     expect(outcome).toBeInstanceOf(AuthoringLoopUnroutableEvidenceError)
@@ -704,7 +707,7 @@ describe('EDGE-09: exactly the non-rejected final dispositions are written (432 
       }))
       const receipt = scriptedReceipt('keep-eligible', ALL_PASS, { requested: 3, completed: 3 })
 
-      const routed = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps)
+      const routed = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps, [])
 
       expect(host.requests).toHaveLength(1)
       const answer = routed.outcome.kind === 'drafted' ? routed.outcome.written : undefined
@@ -752,7 +755,7 @@ describe('C261003-CPV-DRAFT-KEEP-GATES: a draft-mode draft a keep-gate rejected 
     const host = writerShelf()
     const receipt = draftModeReceipt({ ...ALL_PASS, executesDefinitive: false })
 
-    const outcome = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps)
+    const outcome = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps, [])
       .then((routed) => routed, (error: unknown) => error)
 
     expect(receipt.disposition).toBe('rejected')
@@ -776,7 +779,7 @@ describe('C261003-CPV-DRAFT-KEEP-GATES: a draft-mode draft a keep-gate rejected 
       const gates = { ...ALL_PASS, falsifiableAssertion: false }
       const receipt = draftModeReceipt(gates, runId)
 
-      const routed = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps)
+      const routed = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps, [])
 
       expect(host.requests).toEqual([])
       expect(routed.outcome.kind).toBe('drafted')
@@ -788,4 +791,167 @@ describe('C261003-CPV-DRAFT-KEEP-GATES: a draft-mode draft a keep-gate rejected 
       })
       expect(WrittenTestReceiptSchema.safeParse(answer).success).toBe(true)
     })
+})
+
+// 2026-10-12 (440-05, D-08): the keep check is driven directly, since compile, refine and repair
+// already hold the values on the normal path. STAGED_DRAFT's steps carry `alice` and `Local Form`.
+describe('C440-VALUE-KEEP', () => {
+  const GATE_RUN_IDS = ['r_keep-gate-0', 'r_keep-gate-1', 'r_keep-gate-2'] as const
+
+  function keepEligibleReceipt(): DraftReceipt {
+    return {
+      ...scriptedReceipt('keep-eligible', ALL_PASS, { requested: 3, completed: 3 }),
+      gateRuns: GATE_RUN_IDS.map((runId) => ({
+        runId,
+        memberOutcome: 'passed' as const,
+        definitive: true,
+        healed: false,
+      })),
+    }
+  }
+
+  function unverifiedReceipt(): DraftReceipt {
+    return scriptedReceipt(
+      'unverified',
+      { ...ALL_PASS, stableVerdict: false },
+      { requested: 1, completed: 1 },
+    )
+  }
+
+  it('a keep-eligible draft that lost a stated value is refused at keep and never published',
+    async () => {
+      const host = writerShelf()
+      const receipt = keepEligibleReceipt()
+
+      const routed = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps, ['Sign In'])
+
+      expect(routed.outcome).toEqual({
+        kind: 'refused',
+        draftRef: {
+          filePath: STAGED_DRAFT.filePath,
+          testId: STAGED_DRAFT.testId,
+          testName: STAGED_DRAFT.testName,
+          contentDigest: STAGED_DRAFT.contentDigest,
+        },
+        receipt,
+        statedValueRefusal: { stage: 'keep', missingValues: ['Sign In'] },
+      })
+      expect(host.requests).toEqual([])
+      expect(routed.fanOut.consumedTotal).toBe(receipt.gateRuns.length)
+      expect(routed.fanOut.consumedTotal).toBe(GATE_RUN_IDS.length)
+    })
+
+  it('a keep-eligible draft that carries every stated value is written', async () => {
+    const host = writerShelf()
+    const receipt = keepEligibleReceipt()
+
+    const routed = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps, ['Local Form', 'alice'])
+
+    expect(routed.outcome.kind).toBe('drafted')
+    expect(host.requests).toEqual([{ draftPath: STAGED_PATH, targetPath: FINAL_TARGET }])
+    expect(routed.outcome.kind === 'drafted' ? routed.outcome.written.file.kind : undefined)
+      .toBe('written')
+  })
+
+  it("draft mode's unverified draft is checked before it is written", async () => {
+    const refusedHost = writerShelf()
+    const refused = await routeAfterVerify(
+      STAGED_DRAFT,
+      unverifiedReceipt(),
+      refusedHost.deps,
+      ['alice', 'Sign In'],
+    )
+    expect(refused.outcome.kind).toBe('refused')
+    expect(refused.outcome.kind === 'refused' ? refused.outcome.statedValueRefusal : undefined)
+      .toEqual({ stage: 'keep', missingValues: ['Sign In'] })
+    expect(refusedHost.requests).toEqual([])
+
+    const writtenHost = writerShelf()
+    const written = await routeAfterVerify(
+      STAGED_DRAFT,
+      unverifiedReceipt(),
+      writtenHost.deps,
+      ['alice', 'Local Form'],
+    )
+    expect(written.outcome.kind).toBe('drafted')
+    expect(written.outcome.kind === 'drafted' ? written.outcome.written.disposition : undefined)
+      .toBe('unverified')
+    expect(writtenHost.requests).toEqual([{ draftPath: STAGED_PATH, targetPath: FINAL_TARGET }])
+  })
+
+  it('a case-changed value is refused at keep', async () => {
+    const host = writerShelf()
+
+    const routed = await routeAfterVerify(
+      STAGED_DRAFT,
+      keepEligibleReceipt(),
+      host.deps,
+      ['local form'],
+    )
+
+    expect(routed.outcome.kind === 'refused' ? routed.outcome.statedValueRefusal : undefined)
+      .toEqual({ stage: 'keep', missingValues: ['local form'] })
+    expect(host.requests).toEqual([])
+  })
+
+  it('a rejected draft is never checked and never written', async () => {
+    const runId = 'r_keep-rejected-passed'
+    const document = runDocument(runId, [{
+      filePath: STAGED_DRAFT.filePath,
+      testName: STAGED_DRAFT.testName,
+      outcome: 'passed',
+      steps: ACCEPT_CONTROL_SUBACTIONS,
+    }])
+    const host = writerShelf(undefined, {
+      start: () => Promise.reject(new Error('stage 5 starts no run')),
+      get: (id: string) => Promise.resolve(id === runId ? document : undefined),
+    })
+    const gates = { ...ALL_PASS, falsifiableAssertion: false }
+    const ONE_RUN = { requested: 1, completed: 1 } as const
+    const receipt: DraftReceipt = {
+      ...scriptedReceipt(
+        computeDraftDisposition({
+          gates,
+          stabilityRunsRequested: ONE_RUN.requested,
+          stabilityRunsCompleted: ONE_RUN.completed,
+        }),
+        gates,
+        ONE_RUN,
+      ),
+      gateRuns: [{ runId, memberOutcome: 'passed', definitive: true, healed: false }],
+    }
+
+    const routed = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps, ['Sign In'])
+
+    expect(receipt.disposition).toBe('rejected')
+    expect(host.requests).toEqual([])
+    expect(routed.outcome.kind).toBe('drafted')
+    expect(routed.outcome).not.toHaveProperty('statedValueRefusal')
+    expect(routed.outcome.kind === 'drafted' ? routed.outcome.written : undefined).toEqual({
+      file: { kind: 'not-written', targetPath: FINAL_TARGET, reason: 'rejected' },
+      disposition: 'rejected',
+      gates,
+    })
+  })
+
+  it('the keep check is the only door to publishing', () => {
+    const lines = readFileSync(fileURLToPath(new URL('../loop.ts', import.meta.url)), 'utf8')
+      .split('\n')
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+    const publishLines = lines.flatMap((line, index) => (line.includes('.publish(') ? [index] : []))
+    expect(publishLines).toHaveLength(1)
+
+    const start = lines.findIndex((line) => line.startsWith('async function writeFinalDraft('))
+    const end = lines.findIndex((line, index) => index > start && line === '}')
+    const publishAt = publishLines[0] as number
+    expect(start).toBeGreaterThanOrEqual(0)
+    expect(publishAt).toBeGreaterThan(start)
+    expect(publishAt).toBeLessThan(end)
+
+    const checkAt = lines.findIndex(
+      (line, index) => index > start && index < end && line.includes('missingStatedValues('),
+    )
+    expect(checkAt).toBeGreaterThan(start)
+    expect(checkAt).toBeLessThan(publishAt)
+  })
 })

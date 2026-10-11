@@ -521,18 +521,46 @@ async function writeFinalDraft(
   draft: ParsedDraftLike,
   receipt: DraftReceipt,
   shelf: DraftShelfPortLike,
-): Promise<WrittenTestReceipt> {
+  statedValues: readonly string[],
+): Promise<FinalWrite> {
   const gates = draftGateBooleans(receipt.gates)
   const targetPath = authoredSuiteTargetPath(draft.filePath, draft.testName)
   if (!writesFinalDraft(receipt.disposition)) {
     return {
-      file: { kind: 'not-written', targetPath, reason: 'rejected' },
-      disposition: receipt.disposition,
-      gates,
+      written: {
+        file: { kind: 'not-written', targetPath, reason: 'rejected' },
+        disposition: receipt.disposition,
+        gates,
+      },
     }
   }
+  // 2026-10-12 (440-05, D-08): the exact draft about to be written is checked here, the only door
+  // to publish, so no route can write a draft that lost a stated value.
+  const missingValues = missingStatedValues(statedValues, draft.steps)
+  if (missingValues.length > 0) return { missingValues }
   const file = await shelf.publish({ draftPath: draft.filePath, targetPath })
-  return { file, disposition: receipt.disposition, gates }
+  return { written: { file, disposition: receipt.disposition, gates } }
+}
+
+type FinalWrite =
+  | { readonly written: WrittenTestReceipt }
+  | { readonly missingValues: readonly string[] }
+
+function keepRefusal(
+  draftRef: DraftRef,
+  receipt: DraftReceipt,
+  missingValues: readonly string[],
+  fanOut: FanOutReport,
+): AuthoringLoopRouting {
+  return {
+    outcome: {
+      kind: 'refused',
+      draftRef,
+      receipt,
+      statedValueRefusal: { stage: 'keep', missingValues: [...missingValues] },
+    },
+    fanOut,
+  }
 }
 
 /**
@@ -776,6 +804,7 @@ export async function routeAfterVerify(
   draft: ParsedDraftLike,
   receipt: DraftReceipt,
   deps: AuthoringLoopDeps,
+  statedValues: readonly string[],
   previewed: FanOutBound = NO_RUNS_FAN_OUT_BOUND,
   /**
    * The suite the draft proposes to JOIN, threaded to repair's final stability gate (394-19).
@@ -794,15 +823,10 @@ export async function routeAfterVerify(
   const gateRuns = await consumedGateRuns(receipt, deps.shelf.runs)
 
   if (writesFinalDraft(receipt.disposition)) {
-    return {
-      outcome: {
-        kind: 'drafted',
-        draftRef,
-        receipt,
-        written: await writeFinalDraft(draft, receipt, deps.shelf),
-      },
-      fanOut: buildFanOutReport({ previewed, runs: gateRuns }),
-    }
+    const fanOut = buildFanOutReport({ previewed, runs: gateRuns })
+    const final = await writeFinalDraft(draft, receipt, deps.shelf, statedValues)
+    if ('missingValues' in final) return keepRefusal(draftRef, receipt, final.missingValues, fanOut)
+    return { outcome: { kind: 'drafted', draftRef, receipt, written: final.written }, fanOut }
   }
 
   const handoff = await routingHandoff(receipt, deps.shelf.runs)
@@ -817,15 +841,12 @@ export async function routeAfterVerify(
     // answer is the draft, not written, with the gates that rejected it. Draft mode reaches this
     // since rule 1 rejects on gates 1, 3 and 4, and a missing run record still refuses by name.
     if (error.signalClass === 'no-failure') {
-      return {
-        outcome: {
-          kind: 'drafted',
-          draftRef,
-          receipt,
-          written: await writeFinalDraft(draft, receipt, deps.shelf),
-        },
-        fanOut: buildFanOutReport({ previewed, runs: gateRuns }),
+      const fanOut = buildFanOutReport({ previewed, runs: gateRuns })
+      const final = await writeFinalDraft(draft, receipt, deps.shelf, statedValues)
+      if ('missingValues' in final) {
+        return keepRefusal(draftRef, receipt, final.missingValues, fanOut)
       }
+      return { outcome: { kind: 'drafted', draftRef, receipt, written: final.written }, fanOut }
     }
     throw new AuthoringLoopUnroutableEvidenceError(receipt.disposition, error)
   }
@@ -871,14 +892,18 @@ export async function routeAfterVerify(
       previewed,
       runs: [...gateRuns, ...probes, ...finalGateRuns],
     })
+    // The repaired draft's FINAL receipt decides, exactly as a first-pass one does: a final
+    // stability gate that rejects it leaves it on the shelf, reported as not written.
+    const final = await writeFinalDraft(repaired.draft, repaired.receipt, deps.shelf, statedValues)
+    if ('missingValues' in final) {
+      return keepRefusal(repairedRef, repaired.receipt, final.missingValues, fanOut)
+    }
     return {
       outcome: {
         kind: 'repaired',
         draftRef: repairedRef,
         receipt: repaired.receipt,
-        // The repaired draft's FINAL receipt decides, exactly as a first-pass one does: a final
-        // stability gate that rejects it leaves it on the shelf, reported as not written.
-        written: await writeFinalDraft(repaired.draft, repaired.receipt, deps.shelf),
+        written: final.written,
         repairIterations: repaired.iterations,
       },
       fanOut,
@@ -990,7 +1015,14 @@ export async function runAuthoringLoop(
   // 2026-10-01 (432-19, D-15): the dispatch runs directly. The optional dispatch-grant scope that
   // used to wrap stages 4-6 is deleted; no host bound it after 432-18 and nothing asks for an
   // approval a gate run could collect.
-  return await runAuthoringLoopDispatch(input, deps, { stages, previewed, dedup, draft, refinement })
+  return await runAuthoringLoopDispatch(input, deps, {
+    stages,
+    previewed,
+    dedup,
+    draft,
+    refinement,
+    statedValues,
+  })
 }
 
 /**
@@ -1010,9 +1042,10 @@ async function runAuthoringLoopDispatch(
     readonly dedup: DedupScreening
     readonly draft: ParsedDraftLike
     readonly refinement: RefinementOutcome
+    readonly statedValues: readonly string[]
   },
 ): Promise<AuthoringLoopResult> {
-  const { stages, previewed, dedup, draft, refinement } = carried
+  const { stages, previewed, dedup, draft, refinement, statedValues } = carried
 
   stages.push('verify')
   // WHERE THE FINAL WRITE WILL PUT IT, computed ONCE for the whole invocation through the SAME
@@ -1036,7 +1069,14 @@ async function runAuthoringLoopDispatch(
   })
 
   stages.push('route')
-  const routed = await routeAfterVerify(draft, receipt, deps, previewed, targetSuitePath)
+  const routed = await routeAfterVerify(
+    draft,
+    receipt,
+    deps,
+    statedValues,
+    previewed,
+    targetSuitePath,
+  )
 
   stages.push('compound')
 

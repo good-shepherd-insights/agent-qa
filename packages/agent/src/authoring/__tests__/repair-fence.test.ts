@@ -822,7 +822,7 @@ describe('stage 5: the app-broken branch cannot reach repair', () => {
         configuredTargetNames: () => { throw new Error('stage 5 serves no target vocabulary') },
       },
       shelf: bench.deps.shelf as never,
-    })
+    }, [])
 
     expect(outcome.kind).toBe('stopped')
     // MEASURED, not described: no probe was started and no patch was ever asked for. A stop
@@ -849,7 +849,7 @@ describe('stage 5: the app-broken branch cannot reach repair', () => {
         configuredTargetNames: () => { throw new Error('stage 5 serves no target vocabulary') },
       },
       shelf: bench.deps.shelf as never,
-    })
+    }, [])
 
     expect(outcome.kind === 'stopped' && outcome.route.signalClass)
       .toBe('clean-definitive-assertion-fail')
