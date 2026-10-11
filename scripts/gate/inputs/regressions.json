@@ -6501,6 +6501,12 @@
     },
     {
       "runner": "vitest",
+      "file": "packages/agent/src/jobs/__tests__/439-unproven-analysis.test.ts",
+      "fullName": "C439-UNPROVEN-ANALYSIS a saved-file difference never reaches the analyze-run pack or prompt",
+      "origin": "439 D-17"
+    },
+    {
+      "runner": "vitest",
       "file": "packages/cli/src/__tests__/reporters/439-unproven-reason.test.ts",
       "fullName": "C439-UNPROVEN-REASON the reason text reaches JUnit and the console verbatim",
       "origin": "439 D-09"
@@ -6534,6 +6540,42 @@
       "file": "packages/runner/src/loop/__tests__/439-step-record.test.ts",
       "fullName": "C439-STEP-RECORD the start screen is the step's first settled observation",
       "origin": "439 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-citation-evidence.test.ts",
+      "fullName": "C439-CITATION-EVIDENCE a failed assertValue's expected value is not citable",
+      "origin": "439 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-citation-evidence.test.ts",
+      "fullName": "C439-CITATION-EVIDENCE an assertAI claim judged false is not citable",
+      "origin": "439 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-citation-evidence.test.ts",
+      "fullName": "C439-CITATION-EVIDENCE the planner's unverified claim and extraction query on an action line are not citable",
+      "origin": "439 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-citation-evidence.test.ts",
+      "fullName": "C439-CITATION-EVIDENCE a typed value is not citable from the action line",
+      "origin": "439 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-citation-evidence.test.ts",
+      "fullName": "C439-CITATION-EVIDENCE a passed read stays citable",
+      "origin": "439 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-citation-evidence.test.ts",
+      "fullName": "C439-CITATION-EVIDENCE the verifier prompt still shows the full record",
+      "origin": "439 D-10"
     },
     {
       "runner": "vitest",
