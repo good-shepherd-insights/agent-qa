@@ -111,6 +111,54 @@ const CLICK_RECORD = stepRecord([
   { action: { type: 'click', ref: asRef('e3') }, element: { role: 'button', name: 'Go' }, outcome: 'success' },
 ])
 
+const PROFILE_FINAL = makeScreenState({
+  url: 'https://x/profile',
+  tree: '- heading "Profile" [ref=e1]\n- textbox "Display name": Alex [ref=e2]',
+})
+const LIGHT_FINAL = makeScreenState({
+  url: 'https://x/settings',
+  tree: '- heading "Settings" [ref=e1]\n- radio "Light" [checked] [ref=e4]',
+})
+
+const DEAD_SAVE_RECORD = stepRecord([
+  {
+    action: { type: 'fill', ref: asRef('e2'), text: 'Sam', clearMode: 'replace', submit: false },
+    element: { role: 'textbox', name: 'Display name' },
+    outcome: 'success',
+  },
+  { action: { type: 'click', ref: asRef('e3') }, element: { role: 'button', name: 'Save' }, outcome: 'success' },
+  { action: { type: 'navigate', to: 'reload' } as Action, outcome: 'success' },
+])
+
+const SAVE_READ_RECORD: VerifierStepRecord = {
+  ...stepRecord([
+    { action: { type: 'click', ref: asRef('e3') }, element: { role: 'button', name: 'Save' }, outcome: 'success' },
+    {
+      action: { type: 'assertValue', source: 'title', op: 'equals', expected: 'Settings' } as never,
+      outcome: 'success',
+    },
+  ]),
+  reads: [
+    {
+      index: 2,
+      kind: 'assertValue',
+      text: 'title equals "Settings": passed',
+      assert: { source: 'title', op: 'equals', expected: 'Settings', passed: true },
+    },
+  ],
+}
+
+const SAVE_DOWNLOAD_RECORD = stepRecord([
+  {
+    action: { type: 'click', ref: asRef('e3') },
+    element: { role: 'button', name: 'Save' },
+    outcome: 'success',
+    operationEvidence: {
+      downloads: [{ suggestedFilename: 'orders.csv', extension: '.csv', size: 120, sha256: '0a1b', state: 'completed' }],
+    },
+  },
+])
+
 function judgeRecord(
   step: string,
   recorded: VerifierStepRecord,
@@ -407,19 +455,18 @@ describe('C439-PHRASES', () => {
     ['Nothing changed visually, the clipboard holds the link', 'Copy the order link'],
     ['nothing happened on screen, but after the reload the value is kept', 'Click Save'],
     ['The screen did not change; the background save completed and the reload shows it', 'Change the theme and save'],
-  ])('an unchanged screen is not an admission when the effect is proven: %s on %s', (reasoning, quote) => {
-    expect(admitsNotDone(reasoning, quote, true)).toBeUndefined()
-    expect(admitsNotDone(reasoning, quote, false)).toBeDefined()
+  ])('known limitation: a proven effect described as an unchanged page is refused: %s on %s', (reasoning, quote) => {
+    expect(admitsNotDone(reasoning, quote)).toBeDefined()
   })
 
   it.each([
     ['Nothing changed on the page; the order was not paid', 'Click Pay', 'was not paid'],
-    ['Nothing happened on screen; the button did nothing', 'Click Save', 'did nothing'],
-    ['Nothing changed visually, but clicking Send had no effect', 'Click Send', 'no effect'],
-    ['The screen did not change and the file was not downloaded', 'Change the format and download CSV', 'was not downloaded'],
-    ['The page did not change, but it was not saved', 'Change the theme and save', 'was not saved'],
+    ['Nothing happened on screen; the button did nothing', 'Click Save', 'Nothing happened'],
+    ['Nothing changed visually, but clicking Send had no effect', 'Click Send', 'Nothing changed'],
+    ['The screen did not change and the file was not downloaded', 'Change the format and download CSV', 'did not change'],
+    ['The page did not change, but it was not saved', 'Change the theme and save', 'did not change'],
   ])('still refused beside an unchanged screen: %s on %s', (reasoning, quote, phrase) => {
-    expect(admitsNotDone(reasoning, quote, true)).toBe(phrase)
+    expect(admitsNotDone(reasoning, quote)).toBe(phrase)
   })
 
   it.each([
@@ -432,7 +479,7 @@ describe('C439-PHRASES', () => {
     expect(admitsNotDone(reasoning, quote)).toBe(phrase)
   })
 
-  it('a proven download described as an unchanged page stays met', () => {
+  it('known limitation: a proven effect described as an unchanged page is refused: a proven download', () => {
     const step = 'Click Download CSV'
     const result = judge({
       stepText: step,
@@ -452,20 +499,28 @@ describe('C439-PHRASES', () => {
       },
     })
 
-    expect(result.evidence.conditions[0]).toMatchObject({ verdict: 'met' })
-    expect(result.pass).toBe(true)
+    expect(result.evidence.conditions[0]).toMatchObject({
+      verdict: 'not-met',
+      guard: 'admits-not-done',
+      reason: 'The reasoning says "Nothing changed"',
+    })
+    expect(result.pass).toBe(false)
   })
 
   it.each([
-    ['Nothing changed on the page, the download of orders.csv completed', 'Click Download CSV'],
-    ['Although nothing changed on screen, orders.csv was downloaded', 'Click Download CSV'],
-  ])('a proven download stays met end to end: %s on %s', (reasoning, step) => {
+    ['Nothing changed on the page, the download of orders.csv completed', 'Click Download CSV', 'Nothing changed'],
+    ['Although nothing changed on screen, orders.csv was downloaded', 'Click Download CSV', 'nothing changed'],
+  ])('known limitation: a proven effect described as an unchanged page is refused end to end: %s on %s', (reasoning, step, phrase) => {
     const result = judgeRecord(step, DOWNLOAD_RECORD, { source: 'action', quote: 'Download "orders.csv" (.csv): completed' }, reasoning)
-    expect(result.evidence.conditions[0]).toMatchObject({ verdict: 'met' })
-    expect(result.pass).toBe(true)
+    expect(result.evidence.conditions[0]).toMatchObject({
+      verdict: 'not-met',
+      guard: 'admits-not-done',
+      reason: `The reasoning says "${phrase}"`,
+    })
+    expect(result.pass).toBe(false)
   })
 
-  it('a saved theme re-read after the reload stays met end to end', () => {
+  it('known limitation: a proven effect described as an unchanged page is refused: a saved theme re-read after the reload', () => {
     const result = judgeRecord(
       'Change the theme to dark and save',
       THEME_RECORD,
@@ -473,8 +528,12 @@ describe('C439-PHRASES', () => {
       'Although the page did not change, the reload shows the dark theme',
       { final: DARK_FINAL, needs: 'persistence' },
     )
-    expect(result.evidence.conditions[0]).toMatchObject({ verdict: 'met' })
-    expect(result.pass).toBe(true)
+    expect(result.evidence.conditions[0]).toMatchObject({
+      verdict: 'not-met',
+      guard: 'admits-not-done',
+      reason: 'The reasoning says "did not change"',
+    })
+    expect(result.pass).toBe(false)
   })
 
   it.each([
@@ -503,6 +562,54 @@ describe('C439-PHRASES', () => {
     )
     expect(result.evidence.conditions[0]).toMatchObject({ verdict: 'met' })
     expect(result.pass).toBe(true)
+  })
+
+  it.each([
+    ['The display name did not change; the Profile heading shows after the reload', 'persistence', 'did not change'],
+    ['The display name did not change; the Profile heading shows after the reload', 'none', 'did not change'],
+    ['Nothing changed in the display name field after Save', 'persistence', 'Nothing changed'],
+    ['Nothing changed in the display name field after Save', 'none', 'Nothing changed'],
+  ] as const)('a dead save after a reload is refused: %s (needs %s)', (reasoning, needs, phrase) => {
+    const result = judgeRecord(
+      'Change the display name to Sam and save',
+      DEAD_SAVE_RECORD,
+      { source: 'final-screen', quote: 'heading "Profile"' },
+      reasoning,
+      { final: PROFILE_FINAL, needs },
+    )
+    expect(result.evidence.conditions[0]!.citations[0]?.found).toBe(true)
+    expect(result.evidence.conditions[0]).toMatchObject({
+      verdict: 'not-met',
+      guard: 'admits-not-done',
+      reason: `The reasoning says "${phrase}"`,
+    })
+    expect(result.pass).toBe(false)
+  })
+
+  it('a dead theme save after a reload is refused: The theme did not change after Save', () => {
+    const result = judgeRecord(
+      'Change the theme to dark and save',
+      THEME_RECORD,
+      { source: 'final-screen', quote: 'heading "Settings"' },
+      'The theme did not change after Save',
+      { final: LIGHT_FINAL, needs: 'persistence' },
+    )
+    expect(result.evidence.conditions[0]).toMatchObject({ verdict: 'not-met', guard: 'admits-not-done' })
+    expect(result.pass).toBe(false)
+  })
+
+  it.each([
+    ['an unrelated passed read', SAVE_READ_RECORD, { source: 'read', quote: 'title equals "Settings": passed' }, 'Nothing happened after clicking Save', 'Nothing happened'],
+    ['a download line', SAVE_DOWNLOAD_RECORD, { source: 'action', quote: 'Download "orders.csv" (.csv): completed' }, 'Nothing changed after clicking Save', 'Nothing changed'],
+  ] as const)('a dead save citing %s is refused', (_label, recorded, citation, reasoning, phrase) => {
+    const result = judgeRecord('Click Save', recorded, citation, reasoning)
+    expect(result.evidence.conditions[0]!.citations[0]?.found).toBe(true)
+    expect(result.evidence.conditions[0]).toMatchObject({
+      verdict: 'not-met',
+      guard: 'admits-not-done',
+      reason: `The reasoning says "${phrase}"`,
+    })
+    expect(result.pass).toBe(false)
   })
 
   it('stemWord folds the inflections the check compares', () => {

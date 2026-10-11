@@ -207,23 +207,6 @@ function citationReadLine(read: RecordedRead): string {
   return readLine(read)
 }
 
-/**
- * 439 D-11: the citable lines that prove an effect on their own, as the citation view renders them:
- * a completed download, a clipboard write and a passed read of this step.
- */
-export function renderEffectProof(record: Pick<VerifierStepRecord, 'actions' | 'reads'>): string[] {
-  const evidence = record.actions.flatMap((entry) => {
-    const operation = entry.operationEvidence
-    if (operation === undefined) return []
-    const downloads = (operation.downloads ?? []).filter((download) => download.state === 'completed')
-    return evidenceLines({ ...entry, operationEvidence: { downloads, clipboard: operation.clipboard ?? [] } })
-  })
-  const passed = record.reads.filter((read) =>
-    read.kind === 'assertValue' ? read.assert?.passed === true : read.kind === 'assertAI' && read.judged === true,
-  )
-  return [...evidence, ...passed.map(citationReadLine)]
-}
-
 /** The record as the verifier turn shows it, one string per part. */
 export function renderStepRecord(record: VerifierStepRecord): RenderedStepRecord {
   return renderRecord(record, PROMPT_VIEW)
