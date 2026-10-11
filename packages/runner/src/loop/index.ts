@@ -25,6 +25,7 @@ import type {
   CacheMissReason,
   ClipboardEvidence,
   CompoundInputCount,
+  DownloadEvidence,
   InputEvidence,
   LimitStopEvidence,
   OperationCaptureAvailability,
@@ -104,6 +105,7 @@ import {
   renderOperationEvidence,
 } from './prompts.js'
 import { judgeConditions, type CitationSources, type ConditionGuardFacts } from './requested-conditions.js'
+import type { SavedFile } from './condition-guards.js'
 import { StepRecordAccumulator, type RecordedAction, type RecordedActionOutcome } from './step-record.js'
 import { EvidenceRecorder, collapseAnnotation, persistAriaEvidence, projectLegacyTrace } from './evidence.js'
 import type { RecordSubActionInput } from './evidence.js'
@@ -295,6 +297,12 @@ export async function executeStep(
   for (const item of carriedItems(ports.carriedArtifacts)) {
     stepRecord.addCarried({ stepNumber: item.stepNumber, actionIndex: item.actionIndex, text: recordMask(item.text) })
   }
+  // 439 D-17: bytes are read only for this step's completed downloads and this test's carried ones.
+  const savedFiles = (actions: readonly RecordedAction[]): SavedFile[] =>
+    savedFileCandidates(actions, ports.carriedArtifacts).map((download) => ({
+      name: download.suggestedFilename,
+      bytes: download.sha256 !== undefined ? ports.adapter.readDownloadBytes?.(download.sha256) : undefined,
+    }))
   // D-17: one ledger object lives where turns live. A bound object is shared with Channel-2 tool
   // closures; otherwise this step-local instance still accounts for the frozen Channel-1 brief.
   const recordLedger = ports.recordLedger ?? createRecordLedger({
@@ -734,7 +742,13 @@ export async function executeStep(
       verification,
       buildVerifierCitationSources(record.startScreen, finalState, action, accumulatedEvidence, record),
       imageAttached,
-      { finalElements: finalState.elements, platform: finalState.platform, record, imageAttached },
+      {
+        finalElements: finalState.elements,
+        platform: finalState.platform,
+        record,
+        imageAttached,
+        ...(needsSavedFile(verification) ? { files: savedFiles(record.actions) } : {}),
+      },
     )
   }
 
@@ -2180,6 +2194,7 @@ export async function executeStep(
           platform: afterState.platform,
           record,
           imageAttached: gate.attachImage && verifyScreenshot !== undefined,
+          ...(needsSavedFile(verifyResult.verification) ? { files: savedFiles(record.actions) } : {}),
         },
       })
       recorder.recordConditionVerdicts(judged.evidence)
@@ -3216,6 +3231,20 @@ function carriedItems(cell: CarriedArtifacts | undefined): { stepNumber: number;
     })
   }
   return items
+}
+
+// 439 D-17: this step's completed downloads, then the carried ones, most recent first.
+function savedFileCandidates(
+  actions: readonly RecordedAction[],
+  carried: CarriedArtifacts | undefined,
+): DownloadEvidence[] {
+  const own = actions.flatMap((action) => action.operationEvidence?.downloads ?? [])
+  const earlier = (carried?.downloads ?? []).map((entry) => entry.evidence)
+  return [...own.reverse(), ...earlier.reverse()].filter((download) => download.state === 'completed')
+}
+
+function needsSavedFile(output: VerificationResult): boolean {
+  return Array.isArray(output.conditions) && output.conditions.some((condition) => condition.needs === 'file')
 }
 
 // 439 D-04: only a completed download is evidence it happened; the clipboard keeps the latest write.

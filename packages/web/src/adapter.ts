@@ -794,6 +794,11 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     return all.filter(e => e.url.includes(urlPattern))
   }
 
+  /** 439 D-04: a completed download's bytes held in memory, by its sha256. */
+  readDownloadBytes(sha256: string): Uint8Array | undefined {
+    return this.operationCapture?.readDownloadBytes(sha256)
+  }
+
   peekNetworkLogs(urlPattern?: string): NetworkLogEntry[] {
     const all: NetworkLogEntry[] = []
     for (const buffers of this.pageLogBuffers.values()) {

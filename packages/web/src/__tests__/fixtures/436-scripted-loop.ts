@@ -9,6 +9,8 @@ import type {
   ActionPlan,
   ActionPlanCache,
   CachedPlanValue,
+  CarriedArtifacts,
+  ConditionJudgment,
   ExecuteOptions,
   LoopPorts,
   PlannerConfig,
@@ -18,9 +20,17 @@ import type {
   StepContext,
   StepResult,
   Verifier,
+  VerifierStepRecord,
   VerifyResult,
 } from '@vostride/agent-qa-runner'
-import type { CacheKey, OperationEvidence, Ref, ScreenState } from '@vostride/agent-qa-schema'
+import type {
+  CacheKey,
+  CitationSource,
+  ConditionVerdict,
+  OperationEvidence,
+  Ref,
+  ScreenState,
+} from '@vostride/agent-qa-schema'
 
 /** The ref of the nth element with this role and accessible name, or a thrown error. */
 export function refFor(screen: ScreenState, role: string, name: string, nth = 0): Ref {
@@ -77,11 +87,22 @@ export interface VerifierInput {
   after: ScreenState
   action: Action
   operationEvidence?: OperationEvidence
+  /** 439 D-03: the step record the loop handed the verifier. */
+  record?: VerifierStepRecord
 }
 
+/**
+ * `{ pass, reason }` maps through scriptedVerification. Given `citations`, `needs`, `file` or
+ * `verdict` (439-07), the check is one condition quoting the whole step with those fields; its
+ * verdict is `verdict`, else met on pass and not-met otherwise.
+ */
 export interface VerifierVerdict {
   pass: boolean
   reason: string
+  verdict?: ConditionVerdict
+  citations?: { source: CitationSource; quote: string }[]
+  needs?: ConditionJudgment['needs']
+  file?: ConditionJudgment['file']
 }
 
 export interface ScriptedVerifier extends Verifier {
@@ -95,13 +116,38 @@ export function scriptedVerifier(check: (input: VerifierInput) => VerifierVerdic
     get calls() { return inputs.length },
     get inputs() { return inputs },
     async verify(
-      step, before, after, action, _screenshot, _signal, _note, _predicate, _author, operationEvidence,
+      step, before, after, action, _screenshot, _signal, _note, _predicate, _author, operationEvidence, record,
     ): Promise<VerifyResult> {
-      const input: VerifierInput = { step, before, after, action, ...(operationEvidence ? { operationEvidence } : {}) }
+      const input: VerifierInput = {
+        step,
+        before,
+        after,
+        action,
+        ...(operationEvidence ? { operationEvidence } : {}),
+        ...(record ? { record } : {}),
+      }
       inputs.push(input)
       const verdict = check(input)
+      const shaped = verdict.citations !== undefined || verdict.needs !== undefined
+        || verdict.file !== undefined || verdict.verdict !== undefined
+      if (!shaped) {
+        return {
+          verification: scriptedVerification({ step, after, action, pass: verdict.pass, reasoning: verdict.reason }),
+        }
+      }
+      const base = scriptedVerification({ step, after, action, pass: verdict.pass, reasoning: verdict.reason })
+      const condition = base.conditions[0]!
       return {
-        verification: scriptedVerification({ step, after, action, pass: verdict.pass, reasoning: verdict.reason }),
+        verification: {
+          ...base,
+          conditions: [{
+            ...condition,
+            verdict: verdict.verdict ?? (verdict.pass ? 'met' : 'not-met'),
+            ...(verdict.citations !== undefined ? { citations: verdict.citations } : {}),
+            ...(verdict.needs !== undefined ? { needs: verdict.needs } : {}),
+            ...(verdict.file !== undefined ? { file: verdict.file } : {}),
+          }],
+        },
       }
     },
   }
@@ -168,6 +214,9 @@ export async function runScriptedStep(options: {
   stepTimeout?: number
   abortSignal?: AbortSignal
   visionGate?: LoopPorts['visionGate']
+  /** 439 D-04: the test's carry cell, shared by its steps. */
+  carriedArtifacts?: CarriedArtifacts
+  stepNumber?: number
 }): Promise<ScriptedStepRun> {
   const executed: Action[] = []
   const ports: LoopPorts = {
@@ -179,11 +228,13 @@ export async function runScriptedStep(options: {
     ...(options.stepTimeout !== undefined ? { stepTimeout: options.stepTimeout } : {}),
     ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
     ...(options.visionGate ? { visionGate: options.visionGate } : {}),
+    ...(options.carriedArtifacts ? { carriedArtifacts: options.carriedArtifacts } : {}),
   }
   const context: StepContext = {
     stepInstruction: options.instruction,
     testName: '436 outcome evidence',
     previousSteps: [],
+    ...(options.stepNumber !== undefined ? { stepNumber: options.stepNumber } : {}),
     plannerModel: {} as StepContext['plannerModel'],
     verifierModel: {} as StepContext['verifierModel'],
   }

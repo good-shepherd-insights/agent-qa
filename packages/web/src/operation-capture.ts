@@ -35,6 +35,9 @@
 // time left, so a slow export is recorded on its click (WR-21); subframes and popups keep the cap.
 // With no step deadline the main frame waits up to half DOWNLOAD_COMPLETION_CAP_MS (60 s). A
 // capture armed without an acting page caps every navigation.
+// 2026-10-11 (439-07): a completed download's bytes are also kept in memory, keyed by sha256, when
+// the file is at most DOWNLOAD_HOLD_FILE_CAP; the hold keeps at most DOWNLOAD_HOLD_TOTAL_CAP,
+// evicting the oldest first, and dispose() clears it (D-04). The file is still deleted.
 
 import { createHash } from 'node:crypto'
 import { extname } from 'node:path'
@@ -52,6 +55,10 @@ export const NAVIGATION_SETTLE_MS = 250
 export const DOWNLOAD_COMPLETION_CAP_MS = 120_000
 /** The longest the start window stays open for subframe and popup navigations; never more than half the action's time left. */
 export const NAVIGATION_WINDOW_CAP_MS = 5_000
+/** The largest downloaded file whose bytes are held in memory (439 D-04). */
+export const DOWNLOAD_HOLD_FILE_CAP = 1024 * 1024
+/** The most downloaded bytes held at once; the oldest files are evicted first. */
+export const DOWNLOAD_HOLD_TOTAL_CAP = 8 * 1024 * 1024
 
 /** The web actions that can start a download; see isDownloadActivation for tab and fill. */
 export const DOWNLOAD_ACTIVATION_ACTIONS: ReadonlySet<string> = new Set([
@@ -279,6 +286,9 @@ export class OperationCapture {
   private downloads: TrackedDownload[] = []
   /** Downloads that started while no start window was open, kept for the next action. */
   private held: Download[] = []
+  /** Completed downloads' bytes by sha256, oldest first; memory only (439 D-04). */
+  private readonly heldBytes = new Map<string, Uint8Array>()
+  private heldByteTotal = 0
   private readonly pendingNavigations = new Map<Request, PendingNavigation>()
   private clipboardWrites: PendingClipboardWrite[] = []
   private armed = false
@@ -616,8 +626,31 @@ export class OperationCapture {
     }
   }
 
-  /** Cancels and deletes every held download, then closes the read-back probe context. */
+  /** The bytes of a completed download with this sha256 while the hold keeps them. */
+  readDownloadBytes(sha256: string): Uint8Array | undefined {
+    return this.heldBytes.get(sha256)
+  }
+
+  private holdBytes(sha256: string, bytes: Uint8Array): void {
+    if (bytes.length > DOWNLOAD_HOLD_FILE_CAP) return
+    const previous = this.heldBytes.get(sha256)
+    if (previous !== undefined) {
+      this.heldBytes.delete(sha256)
+      this.heldByteTotal -= previous.length
+    }
+    this.heldBytes.set(sha256, bytes)
+    this.heldByteTotal += bytes.length
+    for (const [key, value] of this.heldBytes) {
+      if (this.heldByteTotal <= DOWNLOAD_HOLD_TOTAL_CAP) break
+      this.heldBytes.delete(key)
+      this.heldByteTotal -= value.length
+    }
+  }
+
+  /** Cancels and deletes every held download, clears the held bytes, then closes the read-back probe context. */
   async dispose(): Promise<void> {
+    this.heldBytes.clear()
+    this.heldByteTotal = 0
     const held = this.held
     this.held = []
     for (const download of held) {
@@ -697,7 +730,8 @@ export class OperationCapture {
       return { ...base, state: outcome === 'canceled' ? 'canceled' : 'failed', failure: outcome }
     }
     try {
-      const { size, sha256 } = await digest(download)
+      const { size, sha256, bytes } = await digest(download)
+      if (bytes !== undefined) this.holdBytes(sha256, bytes)
       return { ...base, size, sha256, state: 'completed' }
     } catch (error) {
       return { ...base, state: 'failed', failure: error instanceof Error ? error.message : String(error) }
@@ -719,14 +753,19 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | unde
   }
 }
 
-async function digest(download: Download): Promise<{ size: number; sha256: string }> {
+// Hashes the stream and tees it into memory while the running size stays within the file cap.
+async function digest(download: Download): Promise<{ size: number; sha256: string; bytes?: Uint8Array }> {
   const stream = await download.createReadStream()
   const hash = createHash('sha256')
   let size = 0
+  let chunks: Buffer[] | undefined = []
   for await (const chunk of stream) {
     const bytes = chunk as Buffer
     size += bytes.length
     hash.update(bytes)
+    if (size > DOWNLOAD_HOLD_FILE_CAP) chunks = undefined
+    else chunks?.push(bytes)
   }
-  return { size, sha256: hash.digest('hex') }
+  const sha256 = hash.digest('hex')
+  return chunks === undefined ? { size, sha256 } : { size, sha256, bytes: new Uint8Array(Buffer.concat(chunks)) }
 }

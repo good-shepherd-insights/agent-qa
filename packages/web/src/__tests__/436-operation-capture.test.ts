@@ -26,6 +26,8 @@ import { WebPlatformAdapter } from '../adapter.js'
 import {
   CLIPBOARD_BINDING,
   DOWNLOAD_ACTIVATION_ACTIONS,
+  DOWNLOAD_HOLD_FILE_CAP,
+  DOWNLOAD_HOLD_TOTAL_CAP,
   DOWNLOAD_START_GRACE_MS,
   NAVIGATION_WINDOW_CAP_MS,
   READ_BACK_TIMEOUT_MS,
@@ -382,6 +384,18 @@ const WINDOW_CROSS_PAGE = `<!DOCTYPE html>
 
 const INSECURE_ORIGIN = 'http://fixture.test'
 
+// 439 D-04: nine files of exactly the per-file cap, so the ninth evicts the first.
+const HOLD_FILES = DOWNLOAD_HOLD_TOTAL_CAP / DOWNLOAD_HOLD_FILE_CAP + 1
+const holdFile = (n: number): Buffer => Buffer.alloc(DOWNLOAD_HOLD_FILE_CAP, n)
+const HOLD_PAGE = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>hold</title></head>
+<body>
+  <h1>Hold</h1>
+  ${Array.from({ length: HOLD_FILES }, (_, i) => `<a href="/files/hold/${String(i + 1)}">File ${String(i + 1)}</a>`).join('\n  ')}
+</body>
+</html>
+`
+
 let server: Server
 let baseUrl: string
 const openSlowResponses = new Set<import('node:http').ServerResponse>()
@@ -396,6 +410,15 @@ beforeAll(async () => {
     if (url.startsWith('/hang')) {
       openSlowResponses.add(res)
       res.on('close', () => openSlowResponses.delete(res))
+      return
+    }
+    const hold = /^\/files\/hold\/(\d+)$/.exec(url)
+    if (hold !== null) {
+      res.writeHead(200, {
+        'Content-Type': 'application/octet-stream',
+        'Content-Disposition': `attachment; filename="hold-${hold[1]!}.bin"`,
+      })
+      res.end(holdFile(Number(hold[1])))
       return
     }
     if (url === '/files/data') {
@@ -476,6 +499,7 @@ beforeAll(async () => {
       '/readback': READBACK_PAGE,
       '/arming': ARMING_PAGE,
       '/held': HELD_PAGE,
+      '/hold': HOLD_PAGE,
       '/headed': HEADED_PAGE,
       '/oracle': ORACLE_PAGE,
       '/oracle-frames': ORACLE_FRAMES_PAGE,
@@ -675,6 +699,43 @@ async function expectFilesGone(files: string[], count: number): Promise<void> {
     }
   }
 }
+
+describe('C439-DOWNLOAD-HOLD', () => {
+  it('the capture keeps bytes only in memory, returns them by sha256, evicts the oldest past 8 MiB and returns nothing after dispose', async () => {
+    const web = await open(undefined, undefined, 'hold')
+    const capture = (web as unknown as { operationCapture: OperationCapture }).operationCapture
+    const paths: Promise<string>[] = []
+    web.getPage()!.on('download', (download: Download) => { paths.push(download.path()) })
+    const digests: string[] = []
+    for (let n = 1; n <= HOLD_FILES; n++) {
+      const ref = await refFor(web, 'link', `File ${String(n)}`)
+      const result = await web.execute({ type: 'click', ref })
+      const [download] = downloadsOf(result) ?? []
+      expect(download).toMatchObject({ state: 'completed', size: DOWNLOAD_HOLD_FILE_CAP })
+      expect(Object.keys(download ?? {}).sort()).toEqual(['extension', 'sha256', 'size', 'state', 'suggestedFilename'])
+      digests.push(download!.sha256!)
+      if (n === 1) expect(Buffer.from(web.readDownloadBytes(digests[0]!)!).equals(holdFile(1))).toBe(true)
+    }
+
+    expect(new Set(digests).size).toBe(HOLD_FILES)
+    expect(web.readDownloadBytes(digests[0]!)).toBeUndefined()
+    for (let n = 2; n <= HOLD_FILES; n++) {
+      expect(Buffer.from(web.readDownloadBytes(digests[n - 1]!)!).equals(holdFile(n))).toBe(true)
+    }
+    expect(web.readDownloadBytes('0'.repeat(64))).toBeUndefined()
+    expect(paths).toHaveLength(HOLD_FILES)
+    for (const path of paths) {
+      const written = await path
+      expect(existsSync(written)).toBe(false)
+      expect(JSON.stringify(capture)).not.toContain(written)
+    }
+
+    await web.cleanup()
+    adapter = undefined
+    for (const digest of digests) expect(capture.readDownloadBytes(digest)).toBeUndefined()
+    expect(web.readDownloadBytes(digests[1]!)).toBeUndefined()
+  }, 120_000)
+})
 
 describe('C436-DOWNLOAD-DEADLINE', () => {
   const limits: PlannerConfig = { maxActions: 5, maxPlanningTurns: 5, previousStepCount: 0 }

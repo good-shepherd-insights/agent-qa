@@ -13,7 +13,8 @@
 // of an earlier false claim. Persistence: met only with a reload or reopen after the step's last
 // state-changing action and a citation from the final screen. Visual: a condition tagged visual,
 // or one citing an assertAI judgment made in 'visual' mode, is inconclusive when no image was
-// attached.
+// attached. File: a condition that needs a saved file is compared with the first download named
+// exactly as expected, this step's own before carried ones, most recent first (D-17).
 
 import type {
   CitationSource,
@@ -24,6 +25,7 @@ import type {
   OpenDialogAccount,
   Platform,
 } from '@vostride/agent-qa-schema'
+import { compareSavedFile } from '../compound/file-compare.js'
 import type { Action } from '../platform.js'
 import { readLine, type RecordedAction, type RecordedRead } from './step-record.js'
 import type { ConditionJudgment, DialogAccount } from './types.js'
@@ -386,4 +388,60 @@ export function applyVisualGuard(
   )
   if (judgment.needs !== 'visual' && !visualRead) return record
   return demote(record, 'inconclusive', 'visual-text-only', VISUAL_TEXT_ONLY_REASON)
+}
+
+/** A completed download a file condition may name: its recorded (masked) name and held bytes. */
+export interface SavedFile {
+  name: string
+  /** Undefined when the adapter holds no bytes for it. */
+  bytes: Uint8Array | undefined
+}
+
+export const NO_SAVED_FILE_REASON =
+  'no completed download in this step or carried from an earlier step'
+
+/**
+ * A met condition that needs a saved file holds only when a download named exactly as expected
+ * has the expected content ('none' checks the name only). Candidates are this step's downloads,
+ * then carried ones, most recent first. The reason names only the line of the first difference;
+ * `file.firstDifference` holds the masked, windowed lines (439 D-17).
+ */
+export function applyFileGuard(
+  record: ConditionRecord,
+  judgment: ConditionJudgment,
+  files: readonly SavedFile[] | undefined,
+  mask: (value: string) => string,
+): ConditionRecord {
+  if (record.verdict !== 'met' || judgment.needs !== 'file') return record
+  const expected = judgment.file
+  if (files === undefined || files.length === 0) {
+    return demote(record, 'unverified', 'file', NO_SAVED_FILE_REASON)
+  }
+  if (expected === undefined || typeof expected.name !== 'string' || expected.name.trim() === '') {
+    return demote(record, 'unverified', 'file', 'no file name was stated')
+  }
+  const wanted = mask(expected.name)
+  const file = files.find(
+    (candidate) => candidate.name === expected.name || candidate.name === wanted,
+  )
+  if (file === undefined) {
+    const found = [...new Set(files.map((candidate) => mask(candidate.name)))].join(', ')
+    return {
+      ...demote(record, 'not-met', 'file', `no download named ${wanted}; found ${found}`),
+      file: { name: 'differs', content: 'unverified' },
+    }
+  }
+  const compared = compareSavedFile({ expected, name: file.name, bytes: file.bytes, mask })
+  const { line, ...check } = compared
+  if (expected.match === 'none' || check.content === 'match') return { ...record, file: check }
+  if (check.content === 'differs') {
+    return {
+      ...demote(record, 'not-met', 'file', `file content differs at line ${String(line ?? 1)}`),
+      file: check,
+    }
+  }
+  const why = file.bytes === undefined
+    ? 'the file\'s bytes are not held (over the hold cap or evicted)'
+    : 'the file is not UTF-8 text'
+  return { ...demote(record, 'unverified', 'file', why), file: check }
 }

@@ -29,12 +29,14 @@ import type {
 } from '@vostride/agent-qa-schema'
 import {
   applyDialogGuard,
+  applyFileGuard,
   applyLimitGuard,
   applyNarrowedGuard,
   applyPersistenceGuard,
   applyVisualGuard,
   openDialogsOn,
   type CheckedCitation,
+  type SavedFile,
 } from './condition-guards.js'
 import type { VerifierStepRecord } from './step-record.js'
 import type { ConditionJudgment, VerificationResult } from './types.js'
@@ -60,6 +62,8 @@ export interface ConditionGuardFacts {
   platform: Platform
   record?: Pick<VerifierStepRecord, 'actions' | 'reads'>
   imageAttached: boolean
+  /** 439 D-17: this step's completed downloads, then carried ones, most recent first. */
+  files?: readonly SavedFile[]
 }
 
 export interface ConditionJudgeResult {
@@ -323,11 +327,19 @@ function judgeOne(
     quote: judgment.citations[i]?.quote ?? '',
     found: citation.found,
   }))
-  const { finalElements, record, imageAttached } = context.guards
+  const { finalElements, record, imageAttached, files } = context.guards
   let guardedRecord = applyLimitGuard(met, judgment, finalElements, input.mask)
   guardedRecord = applyNarrowedGuard(guardedRecord, cited, record, input.mask)
   guardedRecord = applyPersistenceGuard(guardedRecord, judgment, cited, record)
-  return applyVisualGuard(guardedRecord, judgment, cited, record, imageAttached, input.mask)
+  guardedRecord = applyVisualGuard(
+    guardedRecord,
+    judgment,
+    cited,
+    record,
+    imageAttached,
+    input.mask,
+  )
+  return applyFileGuard(guardedRecord, judgment, files, input.mask)
 }
 
 /**

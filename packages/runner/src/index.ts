@@ -49,6 +49,8 @@ export type { StatedTarget, StatedTargets } from './grounding/index.js'
 // Pure, provider-neutral compound helpers the three adapters ride (Phase 359 · D-02).
 // Adapter packages import these via the runner barrel (352 buildScreenState precedent).
 export * from './compound/index.js'
+export { compareSavedFile, FILE_DIFFERENCE_WINDOW } from './compound/file-compare.js'
+export type { SavedFileComparison, SavedFileExpectation } from './compound/file-compare.js'
 
 export { makeScreenState, makeInterimNodes } from './testing/screen-fixtures.js'
 export type { InterimFixture, InterimFixtureKind } from './testing/screen-fixtures.js'

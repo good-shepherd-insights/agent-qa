@@ -121,6 +121,11 @@ export interface PlatformAdapter<P extends Platform = Platform> {
   drainNetworkLogs?(urlPattern?: string): NetworkLogEntry[]
   /** 439 D-14: the undrained network log, read without consuming it; the step-end drain still sees it. */
   peekNetworkLogs?(urlPattern?: string): NetworkLogEntry[]
+  /**
+   * 439 D-04: the bytes of a completed download with this sha256, held in memory and bounded by
+   * the adapter; undefined when the adapter holds none (over its cap, evicted, or disposed).
+   */
+  readDownloadBytes?(sha256: string): Uint8Array | undefined
 }
 
 export function assertNever(value: never): never {

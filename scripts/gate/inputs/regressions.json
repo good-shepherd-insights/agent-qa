@@ -7014,6 +7014,48 @@
       "file": "packages/arch/src/__tests__/439-verifier-binding-census.test.ts",
       "fullName": "C439-VISION-GATE the live editor resolves its gate from its model and binds it on its ports",
       "origin": "439 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-saved-file.test.ts",
+      "fullName": "C439-SAVED-FILE a later step finds the exact line in the earlier step's download",
+      "origin": "439 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-saved-file.test.ts",
+      "fullName": "C439-SAVED-FILE two rows merged into one line differ",
+      "origin": "439 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-saved-file.test.ts",
+      "fullName": "C439-SAVED-FILE another name or extension differs",
+      "origin": "439 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-saved-file.test.ts",
+      "fullName": "C439-SAVED-FILE a file over the hold cap is unverified",
+      "origin": "439 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-saved-file.test.ts",
+      "fullName": "C439-SAVED-FILE a file that is not UTF-8 text is unverified",
+      "origin": "439 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-saved-file.test.ts",
+      "fullName": "C439-SAVED-FILE the file's text reaches no prompt and only its bounded difference reaches the handoff",
+      "origin": "439 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
+      "fullName": "C439-DOWNLOAD-HOLD the capture keeps bytes only in memory, returns them by sha256, evicts the oldest past 8 MiB and returns nothing after dispose",
+      "origin": "439 D-04"
     }
   ]
 }
