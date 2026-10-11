@@ -6268,31 +6268,31 @@
     {
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
-      "fullName": "C439-PHRASES an unchanged screen is not an admission: Nothing changed on the page, but the operation evidence shows orders.csv completed on Click Download CSV",
+      "fullName": "C439-PHRASES an unchanged screen is not an admission when the effect is proven: Nothing changed on the page, but the operation evidence shows orders.csv completed on Click Download CSV",
       "origin": "439 D-11"
     },
     {
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
-      "fullName": "C439-PHRASES an unchanged screen is not an admission: Nothing changed visually, the clipboard holds the link on Copy the order link",
+      "fullName": "C439-PHRASES an unchanged screen is not an admission when the effect is proven: Nothing changed visually, the clipboard holds the link on Copy the order link",
       "origin": "439 D-11"
     },
     {
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
-      "fullName": "C439-PHRASES an unchanged screen is not an admission: nothing happened on screen, but after the reload the value is kept on Click Save",
+      "fullName": "C439-PHRASES an unchanged screen is not an admission when the effect is proven: nothing happened on screen, but after the reload the value is kept on Click Save",
       "origin": "439 D-11"
     },
     {
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
-      "fullName": "C439-PHRASES an unchanged screen is not an admission: The screen did not change; the background save completed and the reload shows it on Change the theme and save",
+      "fullName": "C439-PHRASES an unchanged screen is not an admission when the effect is proven: The screen did not change; the background save completed and the reload shows it on Change the theme and save",
       "origin": "439 D-11"
     },
     {
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
-      "fullName": "C439-PHRASES still refused beside an unchanged screen: Nothing changed on the page; clicked Pay and nothing happened on Click Pay",
+      "fullName": "C439-PHRASES still refused beside an unchanged screen: Nothing changed on the page; the order was not paid on Click Pay",
       "origin": "439 D-11"
     },
     {
@@ -6310,7 +6310,7 @@
     {
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
-      "fullName": "C439-PHRASES still refused beside an unchanged screen: The screen did not change and the file was not downloaded on Click Download CSV",
+      "fullName": "C439-PHRASES still refused beside an unchanged screen: The screen did not change and the file was not downloaded on Change the format and download CSV",
       "origin": "439 D-11"
     },
     {
@@ -6353,6 +6353,60 @@
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
       "fullName": "C439-PHRASES a proven download described as an unchanged page stays met",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES a proven download stays met end to end: Nothing changed on the page, the download of orders.csv completed on Click Download CSV",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES a proven download stays met end to end: Although nothing changed on screen, orders.csv was downloaded on Click Download CSV",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES a saved theme re-read after the reload stays met end to end",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES refused end to end without proof of the effect: Nothing changed visually, the row is still listed on Delete the first row",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES refused end to end without proof of the effect: Nothing changed visually in the display name field on Change the display name",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES refused end to end without proof of the effect: Nothing changed on Change the display name",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES refused end to end without proof of the effect: The UI did not change on Change the UI theme to dark",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES refused end to end without proof of the effect: Nothing happened on the page. on Click Pay",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES an assertion-only step is not refused for an unchanged page",
       "origin": "439 D-11"
     },
     {
@@ -6629,6 +6683,12 @@
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/439-citation-evidence.test.ts",
       "fullName": "C439-CITATION-EVIDENCE the verifier prompt still shows the full record",
+      "origin": "439 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-citation-evidence.test.ts",
+      "fullName": "C439-CITATION-EVIDENCE the verifier prompt shows a failed action's error and a false assertAI's rationale, the citation sources neither",
       "origin": "439 D-10"
     },
     {
