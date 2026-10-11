@@ -29,6 +29,10 @@ metadata:
      writes it unless a keep-gate rejected it. Its `written` receipt names the file it wrote, or why
      none was written, with the draft's disposition and the four keep-gate results: that is how well
      the written test was verified.
+     - If it answers `refused` with `statedValueRefusal`, the draft lost a value the request stated
+       (a quoted string, number, price or date): show the user its `stage` and each of its
+       `missingValues`, and stop. Never reword the request to get past the check; asking again in
+       their own words is the user's call.
    - An edit to a test: `agent_qa_refine_test`.
    - A new hook or another configuration change: `agent_qa_change_config`, which writes the change
      and answers the files and fields it changed.

@@ -293,3 +293,32 @@ describe('the agent-qa-knowledge skill', () => {
     expect(files.sort()).toEqual(['SKILL.md', 'agents/openai.yaml', 'references/knowledge-reads.md'])
   })
 })
+
+// 2026-10-12 (440-03, D-12): after a stated-value refusal the agent shows what was lost and stops.
+describe('C440-SKILL', () => {
+  const sourceCopy = path.join(SOURCE_SKILLS_DIR, 'agent-qa-authoring', 'SKILL.md')
+  const packagedCopy = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../../skills/agent-qa-authoring/SKILL.md',
+  )
+  const copies = [sourceCopy, packagedCopy]
+
+  it('both authoring skill copies are byte-identical', () => {
+    expect(readFileSync(packagedCopy).equals(readFileSync(sourceCopy))).toBe(true)
+  })
+
+  it('the authoring skill says to show the stage and the missing values and stop', () => {
+    for (const copy of copies) {
+      const body = readFileSync(copy, 'utf8')
+      expect(body, copy).toContain('statedValueRefusal')
+      expect(body, copy).toContain('missingValues')
+      expect(body, copy).toContain('and stop')
+    }
+  })
+
+  it('the authoring skill says never to reword the request', () => {
+    for (const copy of copies) {
+      expect(readFileSync(copy, 'utf8'), copy).toContain('Never reword the request')
+    }
+  })
+})
