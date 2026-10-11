@@ -2680,3 +2680,259 @@ unchanged.
 The round's record gate run measures agent-qa HEAD after this subsection lands, and its result is
 recorded with the phase's planning record, not in this file, as in round 1. So no docs-only commit
 separates the measured SHA from the final SHA.
+
+## 2026-10-11 — Phase 439: Requested-outcome proof (V2-EXEC-01)
+
+This section appends to the register and rewrites no earlier section. Phase 439 removed every path
+that let a step pass on something other than evidence that what it asked for happened: the
+assertValue short-circuit, the verifier's default-pass rule and its presumption of success, the
+web `waitFor` that reported success on timeout, the old Rule 19 that set `stepComplete`
+immediately after a pure action, the assertValue network read that consumed the log, and the
+call-free limit stop. In their place, the verifier lists the step's requested conditions, each
+quoting the step and citing evidence; the runner checks every quote and citation, applies its own
+guards and computes the pass; and every ending that is not a pass is judged and names what is
+unproven. It kept every reader of persisted history and one verifier-less test seam. The section
+follows the 2026-10-09 Phase 438 shape. Dated 2026-10-11; written by 439-08.
+
+### The ruling
+
+> V2-EXEC-01: A step, whether action or assertion, passes only on current, direct evidence that
+> every requested condition holds (AUTO-12 applied to ordinary action steps).
+
+From `.planning/REQUIREMENTS.md`. The owner picked the recommended option on every question asked
+("do whatever is recommended but keep the phase faster"); the recommended defaults applied to the
+questions left unasked were listed at the final check and accepted. They are recorded as
+D-01..D-24 in `.planning/phases/439-requested-outcome-proof/439-CONTEXT.md`:
+
+- D-01 a control's purpose counts: a click on an effect control (Submit, Save, Send, Pay, Delete,
+  Export, Download) needs its effect in evidence; a tab, link or menu passes once the click lands;
+- D-02 the verifier splits the step into conditions, each quoting the step, and the runner checks
+  that the quotes cover every word of the step that is not a stop word;
+- D-03 the verifier judges from the whole step's record: every action with its outcome and
+  operation evidence, every value read, and the settled start and final screens; never the
+  planner's reasoning, and never the author's context as evidence;
+- D-04 completed downloads and the latest app clipboard write carry to later steps of the same
+  test, labelled with their step and action; screens and earlier reads never carry; the bytes are
+  held in memory, bounded, and never written to artifacts;
+- D-05 a negative screen condition is met by its absence where it would appear; an app-side
+  negative needs the app's own evidence;
+- D-06 a masked value is judged by its placeholder;
+- D-07 a step that is not proven ends `failed`, with typed per-condition verdicts (met, not met,
+  unverified, inconclusive) and no new status anywhere;
+- D-08 the verifier judges every ending that is not a pass (give-up, infeasible, limit stop), once,
+  recorded but not debited; timeout, abort and cancel stay call-free;
+- D-09 the reason names what is not proven;
+- D-10 each met condition cites evidence the runner can find; the runner computes the pass;
+- D-11 a pass whose own reasoning admits the action did not happen is refused, and Rule 19 is
+  rewritten;
+- D-12 every completion goes through the verifier, and a census proves every production door binds
+  one;
+- D-13 web `waitFor` fails on timeout;
+- D-14 `assertValue` passes only on a real read;
+- D-15 replay re-verifies live, and nothing marks a verdict as replayed;
+- D-16 the runner itself checks open dialogs, real limits and narrowed re-checks;
+- D-17 a saved file is checked by the runner by exact name and content, and its text never enters
+  a prompt;
+- D-18 a save is proven by a re-read after a reload or reopen;
+- D-19 a visual condition judged without an image is inconclusive, and vision follows the model;
+- D-20 acceptance is model-free paired regressions in agent-qa, in 434's named-cell list;
+- D-21 the records owed: this section, two REQUIREMENTS reconciliations and the phase record;
+- D-22 to D-24 one external live measurement on the final SHA, which gates nothing, and its report.
+
+D-20 keeps agent-qa free of fixtures (437 D-19): every page is a small HTML string in its test
+file, loaded in real headless Chromium, or a loopback `node:http` server defined in the same file
+where a reload must see persisted state.
+
+### How this inventory is measured
+
+| Instrument | What it claims | Where |
+|---|---|---|
+| the census | `C439-CENSUS`: `executeStep` runs only in the member runner and the live editor, each binding a verifier; the member-run input requires one; both CLI scope-consumer factories build `new LLMVerifier(`; every production `runMemberTest(` takes a config from `buildMemberRunConfig`; and the composition files never name the injected executor. With `C439-UNIVERSE-FLOORS` and `C439-SELF-MATCH`. Needles are two halves joined at run time, and comments are blanked by the lexer the 432 to 438 censuses share. 4 cells, in `validate:arch`. | `packages/arch/src/__tests__/439-verifier-binding-census.test.ts` (439-04 `f7c1b1889`) |
+| the vision gate census | `C439-VISION-GATE`: both CLI gates resolve vision with `visionFromConfig(configured, capabilities)`, and the live editor resolves its gate from its model and binds it on its ports. 2 cells, in `validate:arch`, in the same file. | the same file (439-06 `fca42e543`) |
+| the runtime key sets | `C439-KEY-SETS`: a condition record carries exactly its eight members, the block exactly ending, conditions and openDialogs, a verdict exactly the four literals; the handoff schema version is still 7; a well-formed block loads, three malformed blocks are refused, and a handoff with no block loads unchanged. 9 cells. | `packages/schema/src/__tests__/439-key-sets.test.ts` (439-02 `a760a23cb`) |
+| the behaviour cells | 183 model-free cells by name in the 434 gate's regression list, each with the `439 D-NN` decision it proves, in the schema, runner, web, agent, model, CLI and arch packages, the census and key-set cells above included. 31 families: `C439-COMPUTED-PASS` 5, `C439-JUDGE` 8, `C439-COVERAGE` 7, `C439-PHRASES` 13, `C439-CHECKS-LOOP` 4, `C439-KEY-SETS` 9, `C439-ROUTER-UNPROVEN` 7, `C439-ROOT-CAUSE` 6, `C439-UNPROVEN-ANALYSIS` 4, `C439-UNPROVEN-REASON` 1, `C439-STEP-RECORD` 5, `C439-PROMPT` 1, `C439-VERIFIER-PROMPT` 3, `C439-ENDINGS` 7, `C439-ASSERT-EVIDENCE` 3, `C439-CENSUS` 4, `C439-WAITS-AND-READS` 6, `C439-FARM-WAITS` 3, `C439-ASSERT-COMPARE` 14, `C439-REPLAY` 5, `C439-CARRY` 4, `C439-CARRY-MEMBER` 1, `C439-AUTO12` 12, `C439-GUARDS` 18, `C439-VISION` 4, `C439-CONFIGURED-VISION` 2, `C439-VISION-GATE` 2, `C439-SAVED-FILE` 6, `C439-DOWNLOAD-HOLD` 1, `C439-FILE-COMPARE` 12, `C439-JUDGED-CASES` 6. 439-08 ran every file holding a `C439-` cell with the JSON reporter: 183 `C439-` full names found, every one listed, none listed and missing. | `scripts/gate/inputs/regressions.json` (439-01 to 439-07, each in the commit that adds the cell) |
+
+No live-model cell was added. Whether a live model splits, quotes and cites as the new contract
+asks, and how often it now ends unverified, is the external live measurement's question (D-22).
+
+**This file names retired shapes literally**, as the 2026-09-02 section explains for the whole
+register. `DELETION-INVENTORY.md` sits outside every census region.
+
+### What was removed
+
+Baseline `5099723ed2c8dd658d80197d311187e0fb4cf98e` (`version-0.2`, the parent of 439's first
+agent-qa commit `b86d5152b`). Code-closing HEAD `08fa97c1176ec77bc503b6c673b55dd060672335`, the
+last commit before this section. `git diff --shortstat 5099723ed..08fa97c11`: 109 files changed,
+9,819 insertions, 464 deletions; no file deleted. 21 commits, every one signed.
+
+- **The verifier's final `success` boolean.** `VerificationResultSchema` (`runner/src/loop/
+  verifier.ts`) returned `{ success, reasoning, isAppError }`, and the loop took `success` as the
+  step's verdict. It is now `{ conditions, dialogs, isAppError, reasoning }` with no overall success
+  member: each condition carries its quote, verdict, needs, citations and reasoning, and
+  `judgeConditions` (`runner/src/loop/requested-conditions.ts`) computes the pass. A met condition
+  whose citation the runner cannot find in what the verifier was given is unverified; an empty list
+  never passes; the model-error fallback is `conditions: []` with `verifierError`, never a pass
+  (439-01 `b86d5152b`, `99218e612`). `C439-COMPUTED-PASS`, `C439-JUDGE`.
+- **The verifier's default-pass rule and its presumption of success.** The stable tier
+  (`buildVerifierStableTier`, `runner/src/loop/prompts.ts`) said "If the action targeted a valid
+  element and no error or contradicting state is visible, the goal is likely accomplished", and for
+  every non-assertion step "return success unless an error appears or the AFTER screen positively
+  shows that outcome did not happen … Outcomes that later steps perform are not required." Both are
+  gone. The tier now states the per-condition contract in twelve sentences under "Requested
+  conditions:" and keeps HARN's rule that no visible change is not failure and a change is not
+  success (2,693 characters before, 4,389 after; 439-03 `24a7fdc18`). `C439-VERIFIER-PROMPT the
+  stable tier states the per-condition contract`.
+- **The verifier's last-action window.** The verifier saw the step text, the last action and the
+  screens just before and after it, with input evidence only when notable. It now sees one bounded
+  record of the whole step: every action with its outcome, acted element, masked error and
+  operation evidence, every read, carried lines from earlier steps, and the settled start and
+  final screens (`runner/src/loop/step-record.ts`; at most 40 action lines, 300 characters a line
+  and 50 entries a list; 439-03 `cce36be59`). `C439-STEP-RECORD`.
+- **The assertValue short-circuit.** A passing `assertValue` with `stepComplete` ended the step as
+  passed with no verifier call (`executeStep` return path 3, verdict source `'assert-value'`, its
+  own cache write and two `finish` returns). The block, its `readAssertValueOutcomeMeta` read and
+  its loop import are gone; a passing read is now a cited line of the record, so a step that asks
+  for two things cannot pass on one check (439-04 `f7c1b1889`). `C439-ASSERT-EVIDENCE two requested
+  things cannot pass on one check`, `C439-ASSERT-EVIDENCE a passing read is cited evidence for its
+  own condition`.
+- **The "8 surviving return paths" header.** `executeStep`'s header comment read "The 8 surviving
+  return paths (v1 had 9; the exec-fail-limit path is deleted, D-10)", listing "3. assertValue +
+  complete → passed | failed (comparator short-circuit, no verify)" and "6. no-verifier +
+  stepComplete → passed (trust the planner)". It now reads "The return paths", lists today's eight,
+  and labels the no-verifier path a test seam proven unreachable from production (439-04
+  `f7c1b1889`). `C439-CENSUS executeStep runs only behind a bound verifier`.
+- **The call-free limit stop and the unjudged give-up** (436 D-13's "no model call is made at
+  exhaustion"). A planner give-up, an infeasible declaration and both limit stops ended without a
+  verifier call, so a bare "N/A" could be the only explanation. Each now settles once, makes one
+  recorded and undebited verifier call over the step's record, records the per-condition block and
+  appends what is unproven after its own reason (`Step failed: <reasoning> — <unproven>`,
+  `Step declared infeasible: <reason> — <unproven>`, `<limit reason> — <unproven>`). An ending never
+  becomes a pass, even with every condition met (439-04 `e232d777d`). `C439-ENDINGS`.
+- **The old Rule 19 text.** "19. ACTION STEP COMPLETION: When the step instruction is a pure action
+  … set stepComplete: true immediately. Do NOT retry expecting a visible screen change. … This rule
+  applies to SINGLE-ACTION steps only." It is now "19. COMPLETION NEEDS ITS OUTCOME IN EVIDENCE":
+  claim completion only when the requested outcome is in evidence and name it; a neutral control's
+  outcome is the landed click, an effect control's is the effect; a kept value is proven only by a
+  re-read after a reload or reopen; the same placeholder is the same value. Rules 20 to 23 are
+  unchanged (439-03 `24a7fdc18`). `C439-PROMPT Rule 19 is the 439 text`, `C436-PROMPT Rule 23 is
+  byte-unchanged`.
+- **The web `waitFor` timeout success, on both web adapters.** `web/src/adapter.ts` and
+  `web/src/farm-adapter.ts` caught the timeout with "Best-effort — condition never satisfied; let
+  the loop re-observe." and returned `{ success: true }`. They now return a failure in the mobile
+  adapters' words (`waitFor: text "<text>" did not appear within <ms>ms.`, `… was still present
+  after <ms>ms.`, `waitFor: selector "<selector>" did not appear within <ms>ms.`), which reaches the
+  next planning turn (439-05 `49047ed61`). `C439-WAITS-AND-READS a text that never appears fails the
+  wait and the planner sees why`, `C439-FARM-WAITS a wait whose condition never holds fails and
+  names what it waited for`.
+- **The assertValue network drain.** Both web adapters' `assertValue { source: 'network' }` read
+  called `drainNetworkLogs()`, which consumed the entries the step-end evidence should have
+  received. It now calls `peekNetworkLogs()`, which leaves the drain index alone, and passes only on
+  a matching entry (439-05 `49047ed61`). `C439-WAITS-AND-READS a network assertion reads without
+  consuming`, `C439-FARM-WAITS a network assertion peeks at the log and leaves it for the step-end
+  drain`.
+- **The comparator's passes on an unread value.** `compareAssertValue`
+  (`runner/src/compound/assert-value.ts`) let `isNull`, `isDefined` and `notEquals` pass on an
+  undefined actual, and coerced `null` to the string `'null'`. An undefined actual now fails every
+  op, `null` passes `isNull` only, a network read passes only `isDefined`, `contains` or `equals` on
+  a matching entry, and `source: 'expr-result'` is refused before dispatch (439-05 `49047ed61`).
+  `C439-ASSERT-COMPARE`, `C439-WAITS-AND-READS expr-result reads nothing and fails`.
+- **An empty step folded to a cache `hit`.** `foldCacheStatus([])` returned `'hit'` vacuously; it is
+  now `'miss'` (439-05 `8f70676c7`). That is the fold behind the vacuous `hit` the Phase 438
+  section lists as retained. `runner/src/loop/__tests__/evidence.test.ts` (`empty step ⇒ miss`, not
+  a listed cell).
+- **The CLI's `vision ?? true`.** Both CLI gates (`cli/src/commands/run.ts`) used
+  `plannerCfg.vision ?? true`, and the live editor bound no vision gate. All three now resolve with
+  `visionFromConfig(configured, capabilities)` (439-06 `fca42e543`). `C439-VISION-GATE`,
+  `C439-CONFIGURED-VISION`.
+- **The screenshot instruction on a text-only turn.** "Analyze the attached screenshot for visual
+  cues …" sat in the stable tier for every model; it now rides only a turn that carries an image
+  (439-03 `24a7fdc18`). `C439-VERIFIER-PROMPT the screenshot paragraph rides only a turn with an
+  image`.
+
+### What was RETAINED, and why
+
+| Item | Why kept | What pins it |
+|---|---|---|
+| the no-verifier completion branch in `executeStep` | a test seam: unit tests drive the loop without a verifier; no production door reaches it | `C439-CENSUS executeStep runs only behind a bound verifier`, `C439-CENSUS the member-run input requires a verifier` |
+| `VerdictSource 'assert-value'` (`schema/src/handoff/verb-evidence.ts`) | no new run writes it; old handoffs carry it, and the authoring router and eval fixtures still read it | the router's existing cells (`agent/src/authoring/__tests__/router.test.ts`) |
+| `readAssertValueOutcomeMeta` in `runner/src/compound/metadata.ts` | the loop no longer imports it; tests still read the outcome meta it parses | not pinned by a 439 cell |
+| `LimitStopEvidence.requestedOutcome: 'unverified'` (`schema/src/handoff/limit-evidence.ts`) | its field and value stay; the per-condition block sits beside it (D-08 supersedes 436 D-13's call-free stop, not its record) | `C439-ENDINGS an action-limit stop observes, then is judged` |
+| the setVariable short-circuit | the runner sets the variable itself, so there is no outcome to verify (D-12) | `C439-ASSERT-EVIDENCE setVariable with stepComplete stays call-free` |
+| Android and iOS network assertions unavailable | D-14 changes the web reads only | not pinned by a 439 cell |
+| replay without a planning call, and no replay marker | a cache hit and procedure replay keep going through the verifier on a fresh observation, so `eval-and-core-types.md`'s "marked as replayed" is owed only if hit-side verification is ever skipped (D-15) | `C439-REPLAY` |
+| the tool envelope and `toolSchemaDigest`, `screenIdentityHash` and the cache keys | the new vocabulary is in the verifier's structured output and the handoff, not in the planner's tools | `validate:tools` (14, unchanged) |
+
+### What degrades, stated plainly
+
+- **Verifier calls per step go up.** One more call at every give-up, infeasible declaration and
+  limit stop (D-08), and one at every step that a passing `assertValue` used to end (D-12). Each
+  ending also spends one 500 ms settle when a verifier is bound.
+- **A step whose conditions leave a word of the step uncovered, or reword it, is unverified**, and
+  a pass whose own or the planner's reasoning admits the action did not happen is not met. The
+  admission list is English-only, and a same-verb negation about another object is refused too.
+- **A web `waitFor` that times out is now a failure** the planner sees and re-plans on.
+- **`assertValue { source: 'expr-result' }` is refused**, an `expr` evaluating to `undefined` no
+  longer satisfies `isNull`, and `equals "null"` no longer passes on a null read.
+- **A save is not proven by "Saved".** A persistence condition needs a reload or reopen after the
+  last state-changing action and a final-screen citation.
+- **Screens with an open dialog re-partition the cache.** The web observation now keeps `dialog`
+  and `alertdialog`, so `screenIdentityHash` changes on those screens and refs after the dialog
+  shift by one; a dialog's child text folds into the dialog node.
+- **Unknown models default to text-only where the config leaves `vision` unset.** This holds in the
+  live editor. On the CLI the model config schema defaults `vision` to true, as
+  `spec/v2/model-and-runtime-config.md` says, so an unknown model still gets screenshots there
+  unless its config says `vision: false`; whether D-19's fallback should also apply on the CLI is
+  an open owner decision.
+- **A condition that only a picture can settle, judged without an image, is inconclusive**, and the
+  step cannot pass.
+- **The verifier turn's bytes changed**: the record replaces the action line and the before/after
+  pair, and a "Controls with reported limits:" block appears when a final-screen control reports a
+  min or max.
+
+### Persisted values that keep reading
+
+| Persisted value | Disposition | Evidence |
+|---|---|---|
+| handoff schema version 7 with the new optional `StepEvidence.conditionVerdicts` (`schema/src/handoff/condition-evidence.ts`) | **Written by new runs, optional to readers.** `CURRENT_HANDOFF_SCHEMA_VERSION` stays 7; the loader admits the block only in traversable form and a handoff without it loads unchanged. The router, root-cause classifier, analyze-run and the evidence diet read an unproven step as a typed non-pass. | `C439-KEY-SETS`, `C439-ROUTER-UNPROVEN`, `C439-ROOT-CAUSE`, `C439-UNPROVEN-ANALYSIS` |
+| `LimitStopEvidence.requestedOutcome: 'unverified'` | **Read and still written**, with the per-condition block beside it. | `C439-ENDINGS an action-limit stop observes, then is judged` |
+| `verifierVerdict.pass` | **Still a boolean**, now carrying the runner's computed result; the strict dashboard schema reads it unchanged. | `C439-COMPUTED-PASS` |
+| the `'assert-value'` verdict source in old handoffs | **Read, never written.** | the router's existing cells |
+
+### Accepted risks
+
+- **The phrase check is English-only** and refuses a same-verb negation about another object
+  (T-439-09). Its patterns are documented in `requested-conditions.ts`'s header.
+- **A met condition passes on one found citation** even when another of its citations is found
+  nowhere, so a total citing a read page and an unread page passes. Whether every read citation
+  must be found is an owner decision, recorded open in the phase's `deferred-items.md`.
+- **CRLF equals LF and one leading BOM is ignored** by the saved-file comparator (RESEARCH A5), so
+  a CRLF-only defect passes. Recorded for the owner.
+
+### The instruments that notice a return
+
+- **`pnpm run validate:arch`** runs the 439 census after the 438 file. A new production door that
+  runs a step without a verifier, a member-run input with an optional verifier, a consumer factory
+  that builds none, or a vision gate that does not go through `visionFromConfig` reds by name on
+  the commit that adds it.
+- **The 434 gate** (`pnpm run gate:local`) must execute and pass all 183 listed 439 cells: a
+  default-pass verifier, a short-circuited assertValue, a timeout `waitFor` success, a draining
+  network read, an unjudged ending or a Rule 19 that completes on dispatch reds there. No mutation
+  driver was added.
+
+### Not observed, stated as such
+
+- **No live model ran in agent-qa.** Every cell uses a scripted planner and a scripted or fake
+  verifier, so whether a live model splits a step, quotes it and cites evidence as asked, and judges
+  totals, positions and dead submits correctly, is measured by an external live measurement on the
+  final SHA (D-22), which agent-qa never reads; it gates nothing.
+- **No mobile device ran.** Android and iOS dialog and limit detection are unit cells on inline page
+  sources.
+- **The live editor's vision gate** is pinned by census, not exercised in a live session.
+
+### Reconciliation
+
+D-01 reads `spec/v2/harness-action-outcomes.md` § Decision's "an instruction that requests only an
+interaction may be satisfied by evidence of that interaction" so that a click on an effect control
+requests its effect. D-04 reads V2-EXEC-01's "current, direct evidence" to include a download or the
+latest app clipboard write from an earlier step of the same test, labelled with its step and action.
+Both are recorded in `.planning/REQUIREMENTS.md` by 439-08 as reconciliations 21 and 22.
