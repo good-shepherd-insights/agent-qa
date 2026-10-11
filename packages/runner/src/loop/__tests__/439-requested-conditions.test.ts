@@ -349,6 +349,43 @@ describe('C439-PHRASES', () => {
     expect(admitsNotDone(reasoning, quote)).toBeUndefined()
   })
 
+  it.each([
+    ['Nothing changed on the page, but the operation evidence shows orders.csv completed', 'Click Download CSV'],
+    ['Nothing changed visually, the clipboard holds the link', 'Copy the order link'],
+    ['nothing happened on screen, but after the reload the value is kept', 'Click Save'],
+    ['The screen did not change; the background save completed and the reload shows it', 'Change the theme and save'],
+  ])('an unchanged screen is not an admission: %s on %s', (reasoning, quote) => {
+    expect(admitsNotDone(reasoning, quote)).toBeUndefined()
+  })
+
+  it.each([
+    ['Clicked Pay and nothing happened', 'Click Pay', 'nothing happened'],
+    ['The button did nothing', 'Click Save', 'did nothing'],
+    ['Clicking Send had no effect', 'Click Send', 'no effect'],
+    ['The file was not downloaded', 'Click Download CSV', 'was not downloaded'],
+    ['It was not saved', 'Change the theme and save', 'was not saved'],
+  ])('still refused beside an unchanged screen: %s on %s', (reasoning, quote, phrase) => {
+    expect(admitsNotDone(reasoning, quote)).toBe(phrase)
+  })
+
+  it('a proven download described as an unchanged page stays met', () => {
+    const step = 'Click Download CSV'
+    const result = judge({
+      stepText: step,
+      output: output([
+        judgment('met', [{ source: 'action', quote: 'Download "orders.csv" (.csv): completed' }], {
+          quote: step,
+          reasoning: 'Nothing changed on the page, but the operation evidence shows orders.csv completed',
+        }),
+      ]),
+      sources: sources({ action: '1. click on ref="e2" → success\naction 1: Download "orders.csv" (.csv): completed' }),
+      plannerReasoning: 'nothing happened on screen, but the download completed',
+    })
+
+    expect(result.evidence.conditions[0]).toMatchObject({ verdict: 'met' })
+    expect(result.pass).toBe(true)
+  })
+
   it('stemWord folds the inflections the check compares', () => {
     const pairs: [string, string][] = [
       ['submitted', 'submit'],

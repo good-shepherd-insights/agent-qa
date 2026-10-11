@@ -14,7 +14,9 @@
 // is negated on that word, or holds "nothing happened", "nothing changed", "no effect" or
 // "did nothing" when the quote carries one of EFFECT_VERBS. A negation about another object with
 // the same verb ("the old value was not saved" on "Save the new value") is refused: the safe
-// direction. An admission in another language is not caught.
+// direction. An unchanged screen is not an admission: "nothing changed on the page", "nothing
+// happened visually" and "the screen did not change" are skipped. An admission in another
+// language is not caught.
 
 import type {
   CitationSource,
@@ -120,7 +122,11 @@ const PLACEHOLDER_TOKEN = String.raw`<[A-Z]+_[0-9]+>|\[secret:\w+\]|\{\{secret:\
 const TOKEN_PATTERN = new RegExp(`${PLACEHOLDER_TOKEN}|[\\p{L}\\p{N}]+`, 'gu')
 const NEGATED_PARTICIPLE =
   /\b(?:has|have|had|is|are|was|were)\s*(?:not|n['’]t)\s+(?:yet\s+)?(?:been\s+)?([a-z]+)\b|\bnot\s+yet\s+(?:been\s+)?([a-z]+)\b|\b(?:did|does)\s*(?:not|n['’]t)\s+([a-z]+)\b|\bnever\s+([a-z]+)\b|\bfailed\s+to\s+([a-z]+)\b/gi
-const NOTHING_HAPPENED = /\bnothing\s+(?:happened|changed)\b|\bno\s+effect\b|\bdid\s+nothing\b/i
+const NOTHING_HAPPENED = /\bnothing\s+(?:happened|changed)\b|\bno\s+effect\b|\bdid\s+nothing\b/gi
+// 439 CR-02: an unchanged screen is a description of the page, not an admission; the effect may
+// still be proven by operation evidence or a re-read.
+const ABOUT_THE_SCREEN = /^\s*(?:(?:on|in)\s+(?:the\s+)?(?:screen|page|ui|display)\b|visually\b)/i
+const SCREEN_SUBJECT = /\b(?:screen|page|ui|display)\s*$/i
 
 function collapse(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
@@ -241,13 +247,27 @@ export function stemWord(word: string): string {
   return stem
 }
 
-function negatedStems(text: string): { phrase: string; stem: string }[] {
-  const found: { phrase: string; stem: string }[] = []
+function negatedStems(text: string): { phrase: string; stem: string; at: number }[] {
+  const found: { phrase: string; stem: string; at: number }[] = []
   for (const match of text.matchAll(NEGATED_PARTICIPLE)) {
     const word = match.slice(1).find((group) => group !== undefined)
-    if (word !== undefined) found.push({ phrase: match[0], stem: stemWord(word) })
+    if (word !== undefined) found.push({ phrase: match[0], stem: stemWord(word), at: match.index })
   }
   return found
+}
+
+const CHANGE_STEM = stemWord('change')
+
+function screenUnchanged(text: string, negated: { stem: string; at: number }): boolean {
+  return negated.stem === CHANGE_STEM && SCREEN_SUBJECT.test(text.slice(0, negated.at))
+}
+
+function nothingHappened(reasoning: string): string | undefined {
+  for (const match of reasoning.matchAll(NOTHING_HAPPENED)) {
+    const after = reasoning.slice(match.index + match[0].length)
+    if (!ABOUT_THE_SCREEN.test(after)) return match[0]
+  }
+  return undefined
 }
 
 const EFFECT_STEMS = new Set(EFFECT_VERBS.map(stemWord))
@@ -265,11 +285,13 @@ export function admitsNotDone(reasoning: string, quote: string): string | undefi
   )
   for (const negated of negatedStems(quote)) quoteStems.delete(negated.stem)
   for (const negated of negatedStems(reasoning)) {
-    if (quoteStems.has(negated.stem)) return collapse(negated.phrase)
+    if (quoteStems.has(negated.stem) && !screenUnchanged(reasoning, negated)) {
+      return collapse(negated.phrase)
+    }
   }
-  const nothing = NOTHING_HAPPENED.exec(reasoning)
-  if (nothing !== null && [...quoteStems].some((stem) => EFFECT_STEMS.has(stem))) {
-    return collapse(nothing[0])
+  const nothing = nothingHappened(reasoning)
+  if (nothing !== undefined && [...quoteStems].some((stem) => EFFECT_STEMS.has(stem))) {
+    return collapse(nothing)
   }
   return undefined
 }

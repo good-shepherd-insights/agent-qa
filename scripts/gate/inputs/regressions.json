@@ -6267,6 +6267,66 @@
     },
     {
       "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES an unchanged screen is not an admission: Nothing changed on the page, but the operation evidence shows orders.csv completed on Click Download CSV",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES an unchanged screen is not an admission: Nothing changed visually, the clipboard holds the link on Copy the order link",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES an unchanged screen is not an admission: nothing happened on screen, but after the reload the value is kept on Click Save",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES an unchanged screen is not an admission: The screen did not change; the background save completed and the reload shows it on Change the theme and save",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES still refused beside an unchanged screen: Clicked Pay and nothing happened on Click Pay",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES still refused beside an unchanged screen: The button did nothing on Click Save",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES still refused beside an unchanged screen: Clicking Send had no effect on Click Send",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES still refused beside an unchanged screen: The file was not downloaded on Click Download CSV",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES still refused beside an unchanged screen: It was not saved on Change the theme and save",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES a proven download described as an unchanged page stays met",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/439-checks-loop.test.ts",
       "fullName": "C439-CHECKS-LOOP a two-part step judged on one part does not pass",
       "origin": "439 D-02"
