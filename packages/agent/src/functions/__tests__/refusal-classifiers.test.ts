@@ -21,6 +21,7 @@ import {
   AuthoringDraftWriteOutputSchema,
   ConfigChangeOutputSchema,
   KnowledgeChangeOutputSchema,
+  NO_RUNS_FAN_OUT_BOUND,
   buildFanOutReport,
   computeFanOutBound,
   renderFanOutReport,
@@ -295,6 +296,57 @@ describe('399.1 D-01/D-02 — authoring.draft.write folds its dedup refusal', ()
     expect(verdict?.status).toBe('executed')
     expect(verdict?.outcome).toContain('signs in with a one-time code')
     expect(verdict?.outcome).toContain(renderFanOutReport(happyFanOut))
+  })
+})
+
+// 2026-10-12 (440-03, D-09): a stated-value refusal is its own line, ahead of the duplicate one.
+
+const noRunsFanOut = buildFanOutReport({ previewed: NO_RUNS_FAN_OUT_BOUND, runs: [] })
+
+const authoringCompileRefused: AuthoringDraftWriteOutput = AuthoringDraftWriteOutputSchema.parse({
+  outcome: 'refused',
+  draftRef: {
+    filePath: 'tests/authored/kitchen.spec.ts',
+    testId: 'draft_0002',
+    testName: 'filters the catalogue by category',
+    contentDigest: 'sha256:9a1e',
+  },
+  statedValueRefusal: { stage: 'compile', missingValues: ['Kitchen Appliances', '$49.99'] },
+  fanOut: noRunsFanOut,
+})
+
+const authoringKeepRefused: AuthoringDraftWriteOutput = AuthoringDraftWriteOutputSchema.parse({
+  outcome: 'refused',
+  draftRef: {
+    filePath: 'tests/authored/kitchen.spec.ts',
+    testId: 'draft_0003',
+    testName: 'filters the catalogue by category',
+    contentDigest: 'sha256:7b3c',
+  },
+  statedValueRefusal: { stage: 'keep', missingValues: ['Kitchen Appliances'] },
+  fanOut: happyFanOut,
+})
+
+describe('C440-REFUSAL-FIELD', () => {
+  it('a stated-value refusal folds to refused, naming its stage and values, never a duplicate', () => {
+    const verdict = authoringDraftWriteSpec.classify?.(authoringCompileRefused)
+    expect(verdict?.status).toBe('refused')
+    expect(verdict?.outcome.startsWith('stated-values-missing:compile "Kitchen Appliances"')).toBe(
+      true,
+    )
+    expect(verdict?.outcome).toContain('"Kitchen Appliances", "$49.99"')
+    expect(verdict?.outcome).toContain(renderFanOutReport(noRunsFanOut))
+    expect(verdict?.outcome).not.toContain('duplicate')
+  })
+
+  it('a keep refusal names the keep stage', () => {
+    const verdict = authoringDraftWriteSpec.classify?.(authoringKeepRefused)
+    expect(verdict?.status).toBe('refused')
+    expect(verdict?.outcome.startsWith('stated-values-missing:keep "Kitchen Appliances"')).toBe(
+      true,
+    )
+    expect(verdict?.outcome).toContain(renderFanOutReport(happyFanOut))
+    expect(verdict?.outcome).not.toContain('duplicate')
   })
 })
 

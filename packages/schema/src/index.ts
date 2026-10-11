@@ -1167,6 +1167,9 @@ export {
   // 394 D-04: the stage-2 dedup refusal's payload and its two named continuations.
   AUTHORING_DEDUP_CONTINUATIONS,
   AuthoringDedupRefusalSchema,
+  // 440 D-09: the stated-value refusal's payload and its two stages.
+  AUTHORING_STATED_VALUE_STAGES,
+  AuthoringStatedValueRefusalSchema,
   // 411 D-05..D-08: the stop payload a `stopped` invocation reports its verdict on.
   AUTHORING_REPAIR_ABANDONMENTS,
   AUTHORING_STOP_SIGNAL_CLASSES,
@@ -1254,6 +1257,8 @@ export type {
   AuthoringLoopOutcomeKind,
   AuthoringDedupContinuation,
   AuthoringDedupRefusal,
+  AuthoringStatedValueRefusal,
+  AuthoringStatedValueStage,
   AuthoringRepairAbandonment,
   AuthoringStop,
   AuthoringStopFailurePoint,
