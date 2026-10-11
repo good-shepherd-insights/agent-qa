@@ -30,6 +30,7 @@
 // `router.test-d.ts` beside the router's own pins.
 
 import {
+  AUTHORING_REPAIR_ABANDONMENTS,
   CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION,
   DRAFT_STABILITY_RUNS_N,
   DraftReceiptSchema,
@@ -215,6 +216,7 @@ interface Harness {
   readonly promptsSeen: string[]
   readonly startInputs: RunsStartInput[]
   readonly appliedSets: TestEditPatchSet[]
+  readonly appliedDrafts: ParsedDraftLike[]
   readonly verifyCalls: number[]
   readonly receipt: DraftReceipt
 }
@@ -310,10 +312,12 @@ function harness(
   script: ProbeScript,
   /** Runs already on record, addressed by id — what stage 5's routing handoff reads. */
   preloaded: Readonly<Record<string, readonly MemberFixture[]>> = {},
+  statedValues: readonly string[] = [],
 ): Harness {
   const promptsSeen: string[] = []
   const startInputs: RunsStartInput[] = []
   const appliedSets: TestEditPatchSet[] = []
+  const appliedDrafts: ParsedDraftLike[] = []
   const verifyCalls: number[] = []
   const documents = new Map<string, CompletedRunHandoff | undefined>(
     Object.entries(preloaded).map(([runId, members]) => [runId, runDocument(runId, members)]),
@@ -378,6 +382,7 @@ function harness(
     write: () => Promise.resolve({ kind: 'unparsable', reason: 'unused' } as DraftStageOutcome),
     applyPatches(draft: ParsedDraftLike, set: TestEditPatchSet): Promise<DraftStageOutcome> {
       appliedSets.push(set)
+      appliedDrafts.push(draft)
       return Promise.resolve({ kind: 'staged', draft: applyPatchesToDraft(draft, set) })
     },
     verifyDraft(input: { draftPath: string; draftMode?: true }): Promise<DraftReceipt> {
@@ -388,10 +393,11 @@ function harness(
   }
 
   return {
-    deps: { draft: DRAFT, handoff: BEST_PRIOR_RUN, shelf, runs },
+    deps: { draft: DRAFT, handoff: BEST_PRIOR_RUN, shelf, runs, statedValues },
     promptsSeen,
     startInputs,
     appliedSets,
+    appliedDrafts,
     verifyCalls,
     receipt: FINAL_RECEIPT,
   }
@@ -858,4 +864,128 @@ describe('stage 5: the app-broken branch cannot reach repair', () => {
     // survives on this arm, which is the key set rather than a value (411 D-05).
     expect(Object.keys(outcome).sort()).toEqual(['draftRef', 'kind', 'receipt', 'route'])
   })
+})
+
+// 2026-10-12 (440-05, D-07): a repair patch that loses a stated value is fenced beside the identity
+// fence, before anything runs, and spends the try. DRAFT's step 3 carries "Saved".
+const LOSES_SAVED = patchSet('reword the banner check', [
+  { op: 'replace', path: '/steps/3', value: 'Verify the confirmation banner says "Done"' },
+])
+
+const LOWERCASES_SAVED = patchSet('reword the banner check', [
+  { op: 'replace', path: '/steps/3', value: 'Verify the confirmation banner says "saved"' },
+])
+
+describe('C440-VALUE-REPAIR', () => {
+  it('a repair patch that loses a stated value is refused before any run and spends the try',
+    async () => {
+      const { repairDraft, REPAIR_ITERATION_CAP } = await loadRepair()
+      const bench = harness([emit(LOSES_SAVED)], { probes: [] }, {}, ['Saved'])
+
+      const outcome = await repairDraft(repairRoute(), bench.deps as never)
+
+      expect(outcome.kind).toBe('abandoned')
+      expect(outcome.kind === 'abandoned' && outcome.abandonment.kind).toBe('exhausted')
+      expect(outcome.iterations).toBe(REPAIR_ITERATION_CAP)
+      expect(outcome.iterations).toBe(3)
+      expect(bench.startInputs).toHaveLength(0)
+      expect(bench.verifyCalls).toEqual([])
+    }, ADVERSARIAL_CELL_TIMEOUT_MS)
+
+  it('a repair patch that keeps every stated value is probed', async () => {
+    const { repairDraft } = await loadRepair()
+    const bench = harness([emit(OUTSIDE_PREFIX)], { probes: [passingProbe()] }, {}, [
+      'alice',
+      'Saved',
+    ])
+
+    const outcome = await repairDraft(repairRoute(), bench.deps as never)
+
+    expect(outcome.kind).toBe('repaired')
+    expect(bench.startInputs).toHaveLength(1)
+  })
+
+  it('the next try is told which stated value the refused patch dropped', async () => {
+    const { repairDraft } = await loadRepair()
+    const bench = harness(
+      [emit(LOSES_SAVED), emit(OUTSIDE_PREFIX)],
+      { probes: [passingProbe()] },
+      {},
+      ['Saved'],
+    )
+
+    const outcome = await repairDraft(repairRoute(), bench.deps as never)
+
+    const second = bench.promptsSeen[1] ?? ''
+    const title = 'Why the previous attempt was not kept'
+    expect(second).toContain(title)
+    expect(second.slice(second.indexOf(title))).toContain(
+      'the request\'s stated values are missing: "Saved"',
+    )
+    expect(outcome.kind).toBe('repaired')
+    expect(outcome.iterations).toBe(2)
+    expect(bench.startInputs).toHaveLength(1)
+  })
+
+  it('a value-refused try counts toward the cap like any fenced patch', async () => {
+    const { repairDraft } = await loadRepair()
+    const bench = harness(
+      [emit(LOSES_SAVED), emit(LOSES_SAVED), emit(OUTSIDE_PREFIX)],
+      { probes: [passingProbe()] },
+      {},
+      ['Saved'],
+    )
+
+    const outcome = await repairDraft(repairRoute(), bench.deps as never)
+
+    expect(outcome.kind).toBe('repaired')
+    expect(outcome.iterations).toBe(3)
+    expect(bench.startInputs).toHaveLength(1)
+  }, ADVERSARIAL_CELL_TIMEOUT_MS)
+
+  it('a case-changed value in a repair patch is refused', async () => {
+    const { fencePatchAgainstStatedValues, repairDraft } = await loadRepair()
+
+    const violation = fencePatchAgainstStatedValues(
+      applyPatchesToDraft(DRAFT, LOWERCASES_SAVED),
+      ['Saved'],
+    )
+    expect(violation?.name).toBe('RepairStatedValueViolationError')
+    expect(violation?.missingValues).toEqual(['Saved'])
+    expect(fencePatchAgainstStatedValues(DRAFT, ['Saved'])).toBeNull()
+
+    const bench = harness([emit(LOWERCASES_SAVED)], { probes: [] }, {}, ['Saved'])
+    const outcome = await repairDraft(repairRoute(), bench.deps as never)
+    expect(outcome.kind).toBe('abandoned')
+    expect(bench.startInputs).toEqual([])
+  }, ADVERSARIAL_CELL_TIMEOUT_MS)
+
+  it('the candidate is not advanced past a refused patch', async () => {
+    const { repairDraft } = await loadRepair()
+    const bench = harness(
+      [emit(LOSES_SAVED), emit(OUTSIDE_PREFIX)],
+      { probes: [passingProbe()] },
+      {},
+      ['Saved'],
+    )
+
+    await repairDraft(repairRoute(), bench.deps as never)
+
+    expect(bench.appliedDrafts).toHaveLength(2)
+    expect(bench.appliedDrafts[1]).toBe(bench.appliedDrafts[0])
+    expect(bench.appliedDrafts[1]?.contentDigest).toBe(DRAFT.contentDigest)
+    expect(bench.appliedDrafts[1]?.steps[3]).toBe('Verify the confirmation banner says "Saved"')
+  })
+
+  it('running out after value refusals keeps the existing abandonment kinds', async () => {
+    const { repairDraft } = await loadRepair()
+    const bench = harness([emit(LOSES_SAVED)], { probes: [] }, {}, ['Saved'])
+
+    const outcome = await repairDraft(repairRoute(), bench.deps as never)
+
+    expect(outcome.kind === 'abandoned' && outcome.abandonment.kind).toBe('exhausted')
+    expect(outcome.kind === 'abandoned' && outcome.abandonment.error.name)
+      .toBe('RepairExhaustedError')
+    expect([...AUTHORING_REPAIR_ABANDONMENTS]).toEqual(['exhausted', 'prefix-regressed'])
+  }, ADVERSARIAL_CELL_TIMEOUT_MS)
 })

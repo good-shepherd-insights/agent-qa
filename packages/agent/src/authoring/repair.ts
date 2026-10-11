@@ -65,6 +65,7 @@ import type {
 import { DraftSecretRefusedError, screenDraftForCredentials } from './loop.js'
 import type { DraftRunPortLike, DraftShelfPortLike, ParsedDraftLike } from './ports.js'
 import type { RepairRoute } from './router.js'
+import { missingStatedValues, statedValuesMissingReason } from './stated-values.js'
 import { buildTieredPrompt } from '../prompt/tiered-prompt-builder.js'
 
 /**
@@ -240,6 +241,8 @@ export interface RepairDeps {
    * would be a second answer to a question the invocation already answered.
    */
   readonly targetSuitePath?: string
+  // 2026-10-12 (440-05, D-07): the request's stated values, which no repair patch may lose.
+  readonly statedValues: readonly string[]
 }
 
 // ---- the prefix ------------------------------------------------------------------------------
@@ -381,6 +384,25 @@ export function fencePatchAgainstDraftIdentity(
     }
   }
   return null
+}
+
+// 2026-10-12 (440-05, D-07): returned rather than thrown, so the caller counts it against K.
+export class RepairStatedValueViolationError extends Error {
+  constructor(readonly missingValues: readonly string[]) {
+    super(
+      `repair: ${statedValuesMissingReason(missingValues)}; `
+        + 'the whole patch set is refused before anything runs',
+    )
+    this.name = 'RepairStatedValueViolationError'
+  }
+}
+
+export function fencePatchAgainstStatedValues(
+  draft: ParsedDraftLike,
+  statedValues: readonly string[],
+): RepairStatedValueViolationError | null {
+  const missing = missingStatedValues(statedValues, draft.steps)
+  return missing.length > 0 ? new RepairStatedValueViolationError(missing) : null
 }
 
 /**
@@ -588,6 +610,13 @@ export async function repairDraft(route: RepairRoute, deps: RepairDeps): Promise
     const staged = await deps.shelf.applyPatches(candidate, parsed)
     if (staged.kind === 'unparsable') {
       lastRefusal = `the patched document did not parse: ${staged.reason}`
+      continue
+    }
+
+    // 2026-10-12 (440-05, D-07): the try is spent, nothing runs and `candidate` stays put.
+    const valueViolation = fencePatchAgainstStatedValues(staged.draft, deps.statedValues)
+    if (valueViolation !== null) {
+      lastRefusal = valueViolation.message
       continue
     }
 

@@ -870,6 +870,7 @@ export async function routeAfterVerify(
     handoff: handoff as CompletedRunHandoff,
     shelf: deps.shelf,
     runs: deps.shelf.runs,
+    statedValues,
     ...(receipt.sessionRef === undefined ? {} : { sessionRef: receipt.sessionRef }),
     // The repaired candidate joins the SAME suite the draft proposed to join, so the final
     // stability gate reads the same target — one source for the whole invocation.

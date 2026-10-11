@@ -237,6 +237,7 @@ async function repairCarrying(
     draft: REPAIR_DRAFT,
     handoff: BEST_PRIOR_RUN,
     runs,
+    statedValues: [],
     ...(carried.sessionRef === undefined ? {} : { sessionRef: carried.sessionRef }),
     ...(carried.targetSuitePath === undefined
       ? {}

@@ -245,7 +245,13 @@ function harness(emissions: readonly string[], probes: readonly ProbeVerdict[]):
   }
 
   return {
-    deps: { draft: DRAFT, handoff: BEST_PRIOR_RUN, shelf, runs } as Parameters<typeof repairDraft>[1],
+    deps: {
+      draft: DRAFT,
+      handoff: BEST_PRIOR_RUN,
+      shelf,
+      runs,
+      statedValues: [],
+    } as Parameters<typeof repairDraft>[1],
     prompts,
     startInputs,
     verifiedPaths,

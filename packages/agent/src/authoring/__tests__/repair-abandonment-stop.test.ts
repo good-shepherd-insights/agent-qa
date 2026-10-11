@@ -356,6 +356,7 @@ describe('the fixture reaches the paths it claims to', () => {
     const outcome = await repairDraft(route, {
       draft: DRAFT,
       handoff,
+      statedValues: [],
       shelf: {
         model: () => Promise.resolve({
           modelId: 'fixture:repair-abandonment',
