@@ -6268,25 +6268,25 @@
     {
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
-      "fullName": "C439-PHRASES an unchanged screen is not an admission when the effect is proven: Nothing changed on the page, but the operation evidence shows orders.csv completed on Click Download CSV",
+      "fullName": "C439-PHRASES known limitation: a proven effect described as an unchanged page is refused: Nothing changed on the page, but the operation evidence shows orders.csv completed on Click Download CSV",
       "origin": "439 D-11"
     },
     {
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
-      "fullName": "C439-PHRASES an unchanged screen is not an admission when the effect is proven: Nothing changed visually, the clipboard holds the link on Copy the order link",
+      "fullName": "C439-PHRASES known limitation: a proven effect described as an unchanged page is refused: Nothing changed visually, the clipboard holds the link on Copy the order link",
       "origin": "439 D-11"
     },
     {
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
-      "fullName": "C439-PHRASES an unchanged screen is not an admission when the effect is proven: nothing happened on screen, but after the reload the value is kept on Click Save",
+      "fullName": "C439-PHRASES known limitation: a proven effect described as an unchanged page is refused: nothing happened on screen, but after the reload the value is kept on Click Save",
       "origin": "439 D-11"
     },
     {
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
-      "fullName": "C439-PHRASES an unchanged screen is not an admission when the effect is proven: The screen did not change; the background save completed and the reload shows it on Change the theme and save",
+      "fullName": "C439-PHRASES known limitation: a proven effect described as an unchanged page is refused: The screen did not change; the background save completed and the reload shows it on Change the theme and save",
       "origin": "439 D-11"
     },
     {
@@ -6352,25 +6352,25 @@
     {
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
-      "fullName": "C439-PHRASES a proven download described as an unchanged page stays met",
+      "fullName": "C439-PHRASES known limitation: a proven effect described as an unchanged page is refused: a proven download",
       "origin": "439 D-11"
     },
     {
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
-      "fullName": "C439-PHRASES a proven download stays met end to end: Nothing changed on the page, the download of orders.csv completed on Click Download CSV",
+      "fullName": "C439-PHRASES known limitation: a proven effect described as an unchanged page is refused end to end: Nothing changed on the page, the download of orders.csv completed on Click Download CSV",
       "origin": "439 D-11"
     },
     {
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
-      "fullName": "C439-PHRASES a proven download stays met end to end: Although nothing changed on screen, orders.csv was downloaded on Click Download CSV",
+      "fullName": "C439-PHRASES known limitation: a proven effect described as an unchanged page is refused end to end: Although nothing changed on screen, orders.csv was downloaded on Click Download CSV",
       "origin": "439 D-11"
     },
     {
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
-      "fullName": "C439-PHRASES a saved theme re-read after the reload stays met end to end",
+      "fullName": "C439-PHRASES known limitation: a proven effect described as an unchanged page is refused: a saved theme re-read after the reload",
       "origin": "439 D-11"
     },
     {
@@ -6407,6 +6407,48 @@
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
       "fullName": "C439-PHRASES an assertion-only step is not refused for an unchanged page",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES a dead save after a reload is refused: The display name did not change; the Profile heading shows after the reload (needs persistence)",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES a dead save after a reload is refused: The display name did not change; the Profile heading shows after the reload (needs none)",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES a dead save after a reload is refused: Nothing changed in the display name field after Save (needs persistence)",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES a dead save after a reload is refused: Nothing changed in the display name field after Save (needs none)",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES a dead theme save after a reload is refused: The theme did not change after Save",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES a dead save citing an unrelated passed read is refused",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES a dead save citing a download line is refused",
       "origin": "439 D-11"
     },
     {
