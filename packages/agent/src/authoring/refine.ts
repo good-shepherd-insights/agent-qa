@@ -38,6 +38,11 @@ import type {
   DraftShelfPortLike,
   ParsedDraftLike,
 } from './ports.js'
+import {
+  extractStatedValues,
+  missingStatedValues,
+  statedValuesMissingReason,
+} from './stated-values.js'
 import { buildTieredPrompt } from '../prompt/tiered-prompt-builder.js'
 
 /**
@@ -210,6 +215,13 @@ export async function refineDraft(
     return { kind: 'not-applied', draft, reason: (error as Error).message }
   }
   if (staged.kind === 'unparsable') return { kind: 'not-applied', draft, reason: staged.reason }
+
+  // 2026-10-12 (440-04, D-06): a patch that loses a stated value is dropped; the compiled draft
+  // already passed the same check at compile.
+  const missing = missingStatedValues(extractStatedValues(input.intent), staged.draft.steps)
+  if (missing.length > 0) {
+    return { kind: 'not-applied', draft, reason: statedValuesMissingReason(missing) }
+  }
 
   return {
     kind: 'refined',

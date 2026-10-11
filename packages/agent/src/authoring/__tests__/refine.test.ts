@@ -141,11 +141,9 @@ function patchSetEmission(patches: TestEditPatchSet['patches'], thoughts = 'cons
   return JSON.stringify({ thoughts, patches })
 }
 
-async function runRound(
-  harnessed: Harness,
-): Promise<RefinementOutcome> {
+async function runRound(harnessed: Harness, intent: string = INTENT): Promise<RefinementOutcome> {
   const { refineDraft } = await import('../refine.js')
-  return await refineDraft(DRAFT, { scope: SCOPE, intent: INTENT }, harnessed.deps)
+  return await refineDraft(DRAFT, { scope: SCOPE, intent }, harnessed.deps)
 }
 
 describe('the refinement round is unconditional', () => {
@@ -349,5 +347,102 @@ describe('C440-PROMPTS', () => {
     await runRound(bench)
 
     expect(bench.prompts[0]?.system).toContain(REQUEST_WINS_INSTRUCTION)
+  })
+})
+
+describe('C440-VALUE-REFINE', () => {
+  const STATED = 'check the banner says "confirmation banner"'
+  const LOSING_STEP = 'Verify the success notice is visible'
+  const losingPatch = patchSetEmission([{ op: 'replace', path: '/steps/3', value: LOSING_STEP }])
+
+  function stagesStep3(step: string): DraftShelfPortLike['applyPatches'] {
+    return () =>
+      Promise.resolve({
+        kind: 'staged' as const,
+        draft: {
+          ...DRAFT,
+          contentDigest: 'refined-digest',
+          steps: [...DRAFT.steps.slice(0, 3), step],
+        },
+      })
+  }
+
+  it('a refine patch that loses a stated value is not applied and the compiled draft goes on', async () => {
+    const { statedValuesMissingReason } = await import('../stated-values.js')
+    const bench = harness({ emission: losingPatch, apply: stagesStep3(LOSING_STEP) })
+
+    const outcome = await runRound(bench, STATED)
+
+    expect(outcome.kind).toBe('not-applied')
+    if (outcome.kind !== 'not-applied') throw new Error('unreachable')
+    expect(outcome.reason).toBe(statedValuesMissingReason(['confirmation banner']))
+    expect(outcome.draft).toBe(DRAFT)
+    expect(bench.prompts).toHaveLength(1)
+  })
+
+  it('a refine patch that keeps every stated value is applied', async () => {
+    const bench = harness({
+      emission: patchSetEmission([
+        { op: 'add', path: '/steps/4', value: 'Verify the receipt id is shown' },
+      ]),
+    })
+
+    const outcome = await runRound(bench, STATED)
+
+    expect(outcome.kind).toBe('refined')
+    expect(outcome.draft.contentDigest).toBe('refined-digest')
+    expect(outcome.draft.steps).toContain('Verify the confirmation banner is visible')
+    expect(bench.prompts).toHaveLength(1)
+  })
+
+  it('a case change in a refine patch is not applied', async () => {
+    const bench = harness({
+      emission: patchSetEmission([
+        { op: 'replace', path: '/steps/3', value: 'Verify the Confirmation banner is visible' },
+      ]),
+      apply: stagesStep3('Verify the Confirmation banner is visible'),
+    })
+
+    const outcome = await runRound(bench, STATED)
+
+    expect(outcome.kind).toBe('not-applied')
+    expect(outcome.draft).toBe(DRAFT)
+    expect(bench.prompts).toHaveLength(1)
+  })
+
+  it('a vague request never drops a refine patch', async () => {
+    const bench = harness({ emission: losingPatch, apply: stagesStep3(LOSING_STEP) })
+
+    const outcome = await runRound(bench, INTENT)
+
+    expect(outcome.kind).toBe('refined')
+    expect(outcome.draft.steps).toContain(LOSING_STEP)
+    expect(bench.prompts).toHaveLength(1)
+  })
+
+  it('a no-op round makes no change and needs no check', async () => {
+    const bench = harness({ emission: patchSetEmission([]) })
+
+    const outcome = await runRound(bench, STATED)
+
+    expect(outcome.kind).toBe('no-op')
+    expect(outcome.draft).toBe(DRAFT)
+    expect(bench.applied).toEqual([])
+    expect(bench.prompts).toHaveLength(1)
+  })
+
+  it('the check adds no model call', async () => {
+    const dropped = harness({ emission: losingPatch, apply: stagesStep3(LOSING_STEP) })
+    const kept = harness({
+      emission: patchSetEmission([
+        { op: 'add', path: '/steps/4', value: 'Verify the receipt id is shown' },
+      ]),
+    })
+
+    await runRound(dropped, STATED)
+    await runRound(kept, STATED)
+
+    expect(dropped.prompts).toHaveLength(1)
+    expect(kept.prompts).toHaveLength(1)
   })
 })
