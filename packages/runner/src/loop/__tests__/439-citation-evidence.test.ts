@@ -135,7 +135,7 @@ describe('C439-CITATION-EVIDENCE', () => {
     const step = 'Place the order'
     expectNotCitable(judge(CLAIM_RECORD, step, [{ source: 'read', quote: 'The order was placed' }]))
     expectNotCitable(judge(CLAIM_RECORD, step, [{ source: 'action', quote: 'The order was placed' }]))
-    expectCitable(judge(CLAIM_RECORD, step, [{ source: 'read', quote: 'the cart still lists two items' }]))
+    expectNotCitable(judge(CLAIM_RECORD, step, [{ source: 'read', quote: 'the cart still lists two items' }]))
   })
 
   it("the planner's unverified claim and extraction query on an action line are not citable", () => {
@@ -162,6 +162,57 @@ describe('C439-CITATION-EVIDENCE', () => {
     )
     expectCitable(judge(passed, 'Place the order', [{ source: 'read', quote: 'Order placed #42' }]))
     expectCitable(judge(passed, 'Place the order', [{ source: 'read', quote: 'contains "Order placed": passed' }]))
+  })
+
+  it("a failed waitFor's expected text is not citable", () => {
+    const waited = record([
+      action(1, { action: { type: 'click', ref: 'e3' } as Action, element: { role: 'button', name: 'Place order' }, outcome: 'success' }),
+      action(2, {
+        action: { type: 'waitFor', on: 'text', text: 'Order confirmed' } as unknown as Action,
+        outcome: 'failure',
+        error: 'waitFor: text "Order confirmed" did not appear within 5000ms.',
+      }),
+    ])
+    expectNotCitable(judge(waited, 'Place the order', [{ source: 'action', quote: 'Order confirmed' }]))
+  })
+
+  it("a failed navigate's URL in its error is not citable", () => {
+    const navigated = record([
+      action(1, {
+        action: { type: 'navigate', to: 'url', url: 'https://x/orders/confirmed' } as Action,
+        outcome: 'failure',
+        error: 'page.goto: net::ERR_CONNECTION_REFUSED at https://x/orders/confirmed',
+      }),
+    ])
+    expectNotCitable(judge(navigated, 'Open the orders page', [{ source: 'action', quote: 'https://x/orders/confirmed' }]))
+  })
+
+  it("a target-mismatch refusal's stated target is not citable", () => {
+    const refused = record([
+      action(1, {
+        action: { type: 'click', ref: 'e3' } as Action,
+        element: { role: 'button', name: 'Cancel' },
+        outcome: 'refused',
+        error: 'target-mismatch: click e3 is button "Cancel", but the stated target is button "Submit order" (name differs). No input was sent.',
+      }),
+    ])
+    expectNotCitable(judge(refused, 'Submit order', [{ source: 'action', quote: 'Submit order' }]))
+  })
+
+  it('an assertAI rationale that restates the claim is not citable', () => {
+    const restated = record(
+      [
+        action(1, {
+          action: ASSERT_CLAIM,
+          outcome: 'failure',
+          error: 'Claim "The order was placed" judged false: No "Order placed" confirmation is visible — re-observe the screen or declare the step failed via stepFailed.',
+        }),
+      ],
+      [{ ...FALSE_CLAIM_READ, text: '"The order was placed" (text): judged false: No "Order placed" confirmation is visible' }],
+    )
+    const step = 'Place the order'
+    expectNotCitable(judge(restated, step, [{ source: 'read', quote: 'No "Order placed" confirmation is visible' }]))
+    expectNotCitable(judge(restated, step, [{ source: 'read', quote: 'Order placed' }]))
   })
 
   it('the verifier prompt still shows the full record', () => {

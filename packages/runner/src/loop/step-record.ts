@@ -111,7 +111,7 @@ function capList(lines: string[], noun: string): string[] {
 
 interface RecordView {
   describe: (action: Action) => string
-  /** Whether an action's error text is shown (a judged claim's error repeats the claim). */
+  /** Whether an action's error text is shown (an error echoes the planner's arguments). */
   showsError: (action: Action) => boolean
   read: (read: RecordedRead) => string
 }
@@ -123,11 +123,10 @@ const PROMPT_VIEW: RecordView = {
 }
 
 // 439 D-10: what the planner wrote (a claim, a query, a typed or expected value) is never citable.
-const PLANNER_AUTHORED_ERRORS: ReadonlySet<string> = new Set(['assertAI', 'extractAI'])
-
+// An error is the runner's or adapter's report on the planner's request and echoes its arguments.
 const CITATION_VIEW: RecordView = {
   describe: (action) => `${action.type}${fieldOf(action)}`,
-  showsError: (action) => !PLANNER_AUTHORED_ERRORS.has(action.type),
+  showsError: () => false,
   read: citationReadLine,
 }
 
@@ -201,10 +200,9 @@ function citationReadLine(read: RecordedRead): string {
       return readLine({ ...read, text })
     }
   }
+  // The judge's rationale is model prose that often restates the claim, not observed text.
   if (read.kind === 'assertAI' && read.judged === false) {
-    const claimed = `"${read.claim ?? ''}"${read.mode !== undefined ? ` (${read.mode})` : ''}: `
-    const text = read.text.startsWith(claimed) ? read.text.slice(claimed.length) : 'judged false'
-    return readLine({ ...read, text })
+    return readLine({ ...read, text: 'judged false' })
   }
   return readLine(read)
 }
