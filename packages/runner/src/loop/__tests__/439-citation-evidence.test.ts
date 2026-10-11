@@ -226,4 +226,27 @@ describe('C439-CITATION-EVIDENCE', () => {
     expect(prompt).toContain(`planner's unverified claim: "The order was placed"`)
     expect(prompt).toContain('with text="Sam Taylor"')
   })
+
+  it("the verifier prompt shows a failed action's error and a false assertAI's rationale, the citation sources neither", () => {
+    const error = 'text "Order confirmed" did not appear'
+    const rationale = 'the cart still lists two items'
+    const failed = record(
+      [
+        action(1, {
+          action: { type: 'waitFor', on: 'text', text: 'Order confirmed' } as unknown as Action,
+          outcome: 'failure',
+          error: `waitFor: ${error} within 5000ms.`,
+        }),
+        { ...CLAIM_RECORD.actions[0]!, index: 2 },
+      ],
+      [{ ...FALSE_CLAIM_READ, index: 2 }],
+    )
+    const last = failed.actions[failed.actions.length - 1]!.action
+    const prompt = buildVerificationPrompt('Place the order', START, FINAL, last, false, undefined, undefined, undefined, undefined, failed)
+    expect(prompt).toContain(error)
+    expect(prompt).toContain(`judged false: ${rationale}`)
+    const sources = Object.values(buildVerifierCitationSources(START, FINAL, last, undefined, failed)).join('\n')
+    expect(sources).not.toContain(error)
+    expect(sources).not.toContain(rationale)
+  })
 })
