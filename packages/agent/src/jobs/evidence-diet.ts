@@ -173,7 +173,20 @@ function quoteStep(step: StepEvidence, role: 'failing' | 'neighbor'): EvidenceSt
     ...(step.assertOutcome === undefined ? {} : { assertOutcome: step.assertOutcome }),
     ...(step.termination === undefined ? {} : { termination: step.termination }),
     ...(step.limitStop === undefined ? {} : { limitStop: step.limitStop }),
-    ...(step.conditionVerdicts === undefined ? {} : { conditionVerdicts: step.conditionVerdicts }),
+    ...(step.conditionVerdicts === undefined
+      ? {}
+      : { conditionVerdicts: withoutFileText(step.conditionVerdicts) }),
+  }
+}
+
+/** A saved file's text never enters a prompt (439 D-17, 436 D-20): keep only its verdicts. */
+function withoutFileText(block: ConditionVerdictsEvidence): ConditionVerdictsEvidence {
+  return {
+    ...block,
+    conditions: block.conditions.map(({ file, ...condition }) => ({
+      ...condition,
+      ...(file === undefined ? {} : { file: { name: file.name, content: file.content } }),
+    })),
   }
 }
 

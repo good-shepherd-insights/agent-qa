@@ -1,7 +1,8 @@
 // C439-UNPROVEN-ANALYSIS (439 D-07): analyze-run never asks a model to label a test whose failing
 // step the verifier left unproven; its floor verdict (the runner classifier's 'unknown' with the
 // step's reason) passes through byte-identical. A not-met-only block stays eligible as today.
-// The evidence diet quotes the step's conditionVerdicts block.
+// The evidence diet quotes the step's conditionVerdicts block, without a saved file's difference
+// text (439 D-17, 436 D-20).
 
 import { canonicalJson, sha256hex } from '@vostride/agent-qa-schema'
 import type {
@@ -72,6 +73,48 @@ function judgedHandoff(verdict: ConditionVerdict, failureCount = 2): CompletedRu
           },
     )
     return { ...test, steps, rootCause: floorVerdict(steps[0] as StepEvidence, test.testIndex) }
+  })
+  return { ...base, tests }
+}
+
+const SAVED_FILE_DIFFERENCE = 'line 2: expected «a,1» found «SECRETLINE»'
+
+function savedFileBlock(): ConditionVerdictsEvidence {
+  return {
+    ending: 'give-up',
+    conditions: [
+      {
+        quote: 'the export holds the order',
+        verdict: 'not-met',
+        needs: 'file',
+        reason: 'the saved file differs at line 2',
+        citations: [{ source: 'action', quote: 'Download "orders.csv"', found: true }],
+        file: { name: 'match', content: 'differs', firstDifference: SAVED_FILE_DIFFERENCE },
+      },
+    ],
+  }
+}
+
+/** Member 0's failing step and its neighbour both carry a saved-file difference. */
+function savedFileHandoff(): CompletedRunHandoff {
+  const base = buildSyntheticHandoff({
+    runId: 'run-439-saved-file',
+    failureCount: 2,
+    passingStepsAfter: 1,
+  })
+  const tests = base.tests.map((test) => {
+    if (test.testIndex !== 0) return test
+    const steps = test.steps.map((step) =>
+      step.verifierVerdict.pass
+        ? { ...step, conditionVerdicts: savedFileBlock() }
+        : {
+            ...step,
+            verifierVerdict: { pass: false, reasoning: UNPROVEN_ERROR },
+            conditionVerdicts: savedFileBlock(),
+          },
+    )
+    const failing = steps.find((step) => !step.verifierVerdict.pass) as StepEvidence
+    return { ...test, steps, rootCause: floorVerdict(failing, test.testIndex) }
   })
   return { ...base, tests }
 }
@@ -215,5 +258,33 @@ describe('C439-UNPROVEN-ANALYSIS', () => {
     const plainFailing = plain?.steps.find((quote) => quote.role === 'failing')
     expect(plainFailing).toBeDefined()
     expect(plainFailing !== undefined && 'conditionVerdicts' in plainFailing).toBe(false)
+  })
+
+  it('a saved-file difference never reaches the analyze-run pack or prompt', async () => {
+    const handoff = savedFileHandoff()
+    const packs = buildEvidencePacks(handoff, [0, 1], () => undefined)
+    const quotes = packs[0]?.steps ?? []
+    expect(quotes.map((quote) => quote.role).sort()).toEqual(['failing', 'neighbor'])
+    for (const quote of quotes) {
+      const condition = quote.conditionVerdicts?.conditions[0]
+      expect(condition?.verdict).toBe('not-met')
+      expect(condition?.reason).toBe('the saved file differs at line 2')
+      expect(condition?.file).toEqual({ name: 'match', content: 'differs' })
+    }
+
+    const { requests, run } = harness(handoff, [
+      JSON.stringify({ tests: [authoredEntry(0), authoredEntry(1)] }),
+    ])
+    await run()
+    expect(requests).toHaveLength(1)
+    const prompt = (requests[0] as JobModelRequest).prompt
+    expect(prompt).toContain('stepped failure 0')
+    expect(prompt).toContain('the saved file differs at line 2')
+
+    for (const text of [canonicalJson(packs), prompt]) {
+      expect(text).not.toContain('SECRETLINE')
+      expect(text).not.toContain('expected «')
+      expect(text).not.toContain('firstDifference')
+    }
   })
 })
