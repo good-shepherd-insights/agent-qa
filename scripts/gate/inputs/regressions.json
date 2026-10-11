@@ -6292,31 +6292,61 @@
     {
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
-      "fullName": "C439-PHRASES still refused beside an unchanged screen: Clicked Pay and nothing happened on Click Pay",
+      "fullName": "C439-PHRASES still refused beside an unchanged screen: Nothing changed on the page; clicked Pay and nothing happened on Click Pay",
       "origin": "439 D-11"
     },
     {
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
-      "fullName": "C439-PHRASES still refused beside an unchanged screen: The button did nothing on Click Save",
+      "fullName": "C439-PHRASES still refused beside an unchanged screen: Nothing happened on screen; the button did nothing on Click Save",
       "origin": "439 D-11"
     },
     {
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
-      "fullName": "C439-PHRASES still refused beside an unchanged screen: Clicking Send had no effect on Click Send",
+      "fullName": "C439-PHRASES still refused beside an unchanged screen: Nothing changed visually, but clicking Send had no effect on Click Send",
       "origin": "439 D-11"
     },
     {
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
-      "fullName": "C439-PHRASES still refused beside an unchanged screen: The file was not downloaded on Click Download CSV",
+      "fullName": "C439-PHRASES still refused beside an unchanged screen: The screen did not change and the file was not downloaded on Click Download CSV",
       "origin": "439 D-11"
     },
     {
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
-      "fullName": "C439-PHRASES still refused beside an unchanged screen: It was not saved on Change the theme and save",
+      "fullName": "C439-PHRASES still refused beside an unchanged screen: The page did not change, but it was not saved on Change the theme and save",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES refused although it mentions the screen: The theme on the page did not change on Change the theme and save",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES refused although it mentions the screen: Nothing changed in the display name field on Change the display name and save",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES refused although it mentions the screen: Nothing changed on the page, the row is still listed on Delete the first row",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES refused although it mentions the screen: did nothing on the page on Click Save",
+      "origin": "439 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-requested-conditions.test.ts",
+      "fullName": "C439-PHRASES refused although it mentions the screen: nothing happened on screen and the order was not placed on Place the order",
       "origin": "439 D-11"
     },
     {
@@ -6569,6 +6599,30 @@
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/439-citation-evidence.test.ts",
       "fullName": "C439-CITATION-EVIDENCE a passed read stays citable",
+      "origin": "439 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-citation-evidence.test.ts",
+      "fullName": "C439-CITATION-EVIDENCE a failed waitFor's expected text is not citable",
+      "origin": "439 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-citation-evidence.test.ts",
+      "fullName": "C439-CITATION-EVIDENCE a failed navigate's URL in its error is not citable",
+      "origin": "439 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-citation-evidence.test.ts",
+      "fullName": "C439-CITATION-EVIDENCE a target-mismatch refusal's stated target is not citable",
+      "origin": "439 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/439-citation-evidence.test.ts",
+      "fullName": "C439-CITATION-EVIDENCE an assertAI rationale that restates the claim is not citable",
       "origin": "439 D-10"
     },
     {
