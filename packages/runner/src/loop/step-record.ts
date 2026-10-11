@@ -109,10 +109,33 @@ function capList(lines: string[], noun: string): string[] {
   return [...lines.slice(0, RECORD_LIST_CAP), `… ${omitted} more ${noun} omitted …`]
 }
 
-function actionLine(entry: RecordedAction): string {
-  const error = entry.error !== undefined && entry.error.length > 0 ? `: ${entry.error}` : ''
+interface RecordView {
+  describe: (action: Action) => string
+  /** Whether an action's error text is shown (a judged claim's error repeats the claim). */
+  showsError: (action: Action) => boolean
+  read: (read: RecordedRead) => string
+}
+
+const PROMPT_VIEW: RecordView = {
+  describe: verifierActionDescription,
+  showsError: () => true,
+  read: readLine,
+}
+
+// 439 D-10: what the planner wrote (a claim, a query, a typed or expected value) is never citable.
+const PLANNER_AUTHORED_ERRORS: ReadonlySet<string> = new Set(['assertAI', 'extractAI'])
+
+const CITATION_VIEW: RecordView = {
+  describe: (action) => `${action.type}${fieldOf(action)}`,
+  showsError: (action) => !PLANNER_AUTHORED_ERRORS.has(action.type),
+  read: citationReadLine,
+}
+
+function actionLine(entry: RecordedAction, view: RecordView): string {
+  const shown = entry.error !== undefined && entry.error.length > 0 && view.showsError(entry.action)
+  const error = shown ? `: ${entry.error}` : ''
   const element = entry.element ? ` (${entry.element.role} "${entry.element.name}")` : ''
-  const description = `${verifierActionDescription(entry.action)}${element}`
+  const description = `${view.describe(entry.action)}${element}`
   return capLine(`${entry.index}. ${description} → ${entry.outcome}${error}`)
 }
 
@@ -146,14 +169,15 @@ function evidenceLines(entry: RecordedAction): string[] {
   return lines.map((line) => capLine(`action ${entry.index}: ${line}`))
 }
 
-function actionLines(actions: RecordedAction[]): string[] {
-  if (actions.length <= RECORD_ACTION_LINE_CAP) return actions.map(actionLine)
+function actionLines(actions: RecordedAction[], view: RecordView): string[] {
+  const line = (entry: RecordedAction) => actionLine(entry, view)
+  if (actions.length <= RECORD_ACTION_LINE_CAP) return actions.map(line)
   const tail = RECORD_ACTION_LINE_CAP - RECORD_HEAD_ACTIONS
   const omitted = actions.length - RECORD_ACTION_LINE_CAP
   return [
-    ...actions.slice(0, RECORD_HEAD_ACTIONS).map(actionLine),
+    ...actions.slice(0, RECORD_HEAD_ACTIONS).map(line),
     `… ${omitted} actions omitted …`,
-    ...actions.slice(actions.length - tail).map(actionLine),
+    ...actions.slice(actions.length - tail).map(line),
   ]
 }
 
@@ -162,15 +186,47 @@ export function readLine(read: RecordedRead): string {
   return capLine(`read ${read.index}: ${read.kind} ${read.text}`)
 }
 
-/** The record as the verifier turn and the citation sources show it, one string per part. */
+// Only an expected value the read itself shows (a passed equals or contains) is observed text.
+const OBSERVED_EXPECTED_OPS: ReadonlySet<string> = new Set(['equals', 'contains'])
+
+/** One read as the 'read' citation source holds it: the planner's expectation or claim removed. */
+function citationReadLine(read: RecordedRead): string {
+  if (read.kind === 'assertValue' && read.assert?.expected !== undefined) {
+    const { source, op, expected, passed } = read.assert
+    if (!(passed && OBSERVED_EXPECTED_OPS.has(op))) {
+      const asked = `${source} ${op} "${expected}"`
+      const text = read.text.startsWith(asked)
+        ? `${source} ${op}${read.text.slice(asked.length)}`
+        : `${source} ${op}: ${passed ? 'passed' : 'failed'}`
+      return readLine({ ...read, text })
+    }
+  }
+  if (read.kind === 'assertAI' && read.judged === false) {
+    const claimed = `"${read.claim ?? ''}"${read.mode !== undefined ? ` (${read.mode})` : ''}: `
+    const text = read.text.startsWith(claimed) ? read.text.slice(claimed.length) : 'judged false'
+    return readLine({ ...read, text })
+  }
+  return readLine(read)
+}
+
+/** The record as the verifier turn shows it, one string per part. */
 export function renderStepRecord(record: VerifierStepRecord): RenderedStepRecord {
+  return renderRecord(record, PROMPT_VIEW)
+}
+
+/** The record as the citation sources hold it: only what the app or the runner observed (D-10). */
+export function renderCitationRecord(record: VerifierStepRecord): RenderedStepRecord {
+  return renderRecord(record, CITATION_VIEW)
+}
+
+function renderRecord(record: VerifierStepRecord, view: RecordView): RenderedStepRecord {
   const evidence = record.actions.flatMap(evidenceLines)
-  const reads = record.reads.map(readLine)
+  const reads = record.reads.map(view.read)
   const carried = record.carried.map((line) =>
     capLine(`carried from step ${line.stepNumber}, action ${line.actionIndex}: ${line.text}`),
   )
   return {
-    actions: actionLines(record.actions).join('\n'),
+    actions: actionLines(record.actions, view).join('\n'),
     operationEvidence: capList(evidence, 'operation evidence lines').join('\n'),
     reads: capList(reads, 'reads').join('\n'),
     carried: capList(carried, 'carried items').join('\n'),

@@ -20,7 +20,7 @@ import type { Action } from '../platform.js'
 import type { StepContext, AssertionInput, ExtractorInput, VerifierAuthorContext } from './types.js'
 import type { CitationSources } from './requested-conditions.js'
 import { renderControlLimits } from './condition-guards.js'
-import { renderStepRecord, type VerifierStepRecord } from './step-record.js'
+import { renderCitationRecord, renderStepRecord, type VerifierStepRecord } from './step-record.js'
 import { defaultRegistry } from '../tools/index.js'
 
 type PromptPlatform = 'web' | 'android' | 'ios'
@@ -877,7 +877,8 @@ function verifierActionLine(action: Action, beforeState: ScreenState): string {
 
 /**
  * 439 D-10: the parts of the verification request a citation can point at, rendered with the same
- * helpers `buildVerificationPrompt` uses, so a quote copied from the request is found here.
+ * helpers `buildVerificationPrompt` uses, so a quote copied from the request is found here. The
+ * record's parts leave out what the planner wrote (claims, queries, typed and expected values).
  */
 export function buildVerifierCitationSources(
   beforeState: ScreenState,
@@ -887,7 +888,7 @@ export function buildVerifierCitationSources(
   record?: VerifierStepRecord,
 ): CitationSources {
   if (record !== undefined) {
-    const rendered = renderStepRecord(record)
+    const rendered = renderCitationRecord(record)
     const limits = renderControlLimits(afterState.elements)
     return {
       'start-screen': truncateScreenState(record.startScreen),
