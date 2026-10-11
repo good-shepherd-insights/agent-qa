@@ -7422,6 +7422,432 @@
       "file": "packages/web/src/__tests__/439-judged-cases.test.ts",
       "fullName": "C439-JUDGED-CASES an unchanged-page download or copy without its effect does not pass",
       "origin": "439 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
+      "fullName": "C440-PUBLIC-PATH the clean-failing fixture routes to a clean definitive assertion failure",
+      "origin": "440 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
+      "fullName": "C440-PUBLIC-PATH the historical substitution is refused at compile with no run spent and nothing written",
+      "origin": "440 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
+      "fullName": "C440-PUBLIC-PATH a faithful draft of what the page shows is kept and written",
+      "origin": "440 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
+      "fullName": "C440-PUBLIC-PATH a faithful draft the app disagrees with stops on rule 2 and writes nothing",
+      "origin": "440 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a double-quoted string is one stated value, kept as typed",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES curly double quotes and word-bounded single quotes delimit a stated value",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES an apostrophe inside a word opens no quote",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES numbers, prices, percentages and numeric dates are one value each",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a month-name date is one value",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a digit glued to a letter is not a stated value",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a number in a URL or a host and port is not a stated value",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a number inside a quoted value is not listed again",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a value stated twice is listed once, in order of first appearance",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES an empty or unclosed quote states nothing",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES whitespace runs inside a quoted value are tidied",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a value present word for word in a step is carried",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES the historical substitution loses its value",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a case change is missing",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a singular, plural or trimmed value is missing",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a number is missing inside a longer number",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES whitespace and canonical Unicode are tidied, compatibility forms are not",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES numbers are compared as text",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES only steps are searched",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES missing values keep the request's order",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a long adversarial request is checked in linear time",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES the module is pure",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-FALSE-REFUSAL reworded unquoted words are kept",
+      "origin": "440 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-FALSE-REFUSAL added steps and added checks are kept",
+      "origin": "440 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-FALSE-REFUSAL a vague request is kept whatever the draft says",
+      "origin": "440 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-FALSE-REFUSAL a value inside a longer step phrase is kept",
+      "origin": "440 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
+      "fullName": "C440-VALUE-COMPILE a case-changed value is refused at compile",
+      "origin": "440 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
+      "fullName": "C440-VALUE-COMPILE the refusal names every missing value in the request's order and nothing from the draft",
+      "origin": "440 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
+      "fullName": "C440-VALUE-COMPILE a compile refusal carries the compiled draft's ref and no receipt",
+      "origin": "440 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
+      "fullName": "C440-VALUE-COMPILE reworded unquoted words, added steps and added checks are kept",
+      "origin": "440 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
+      "fullName": "C440-VALUE-COMPILE a vague request is never refused",
+      "origin": "440 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
+      "fullName": "C440-VALUE-COMPILE no model call is added",
+      "origin": "440 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
+      "fullName": "C440-PROMPTS the compile prompt puts the request over project knowledge",
+      "origin": "440 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
+      "fullName": "C440-PROMPTS the compile block titles are unchanged",
+      "origin": "440 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/refine.test.ts",
+      "fullName": "C440-PROMPTS the refine prompt puts the request over project knowledge",
+      "origin": "440 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/440-key-sets.test.ts",
+      "fullName": "C440-REFUSAL-FIELD the refusal carries exactly stage and missingValues",
+      "origin": "440 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/440-key-sets.test.ts",
+      "fullName": "C440-REFUSAL-FIELD the stage is exactly compile or keep",
+      "origin": "440 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/440-key-sets.test.ts",
+      "fullName": "C440-REFUSAL-FIELD a refusal with no missing value or an unknown key is rejected",
+      "origin": "440 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/440-key-sets.test.ts",
+      "fullName": "C440-REFUSAL-FIELD the refusal is accepted only on a refused outcome",
+      "origin": "440 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/440-key-sets.test.ts",
+      "fullName": "C440-REFUSAL-FIELD the refusal never rides beside a duplicate refusal",
+      "origin": "440 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/440-key-sets.test.ts",
+      "fullName": "C440-REFUSAL-FIELD a refused outcome carries exactly one reason",
+      "origin": "440 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/refusal-classifiers.test.ts",
+      "fullName": "C440-REFUSAL-FIELD a stated-value refusal folds to refused, naming its stage and values, never a duplicate",
+      "origin": "440 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/refusal-classifiers.test.ts",
+      "fullName": "C440-REFUSAL-FIELD a keep refusal names the keep stage",
+      "origin": "440 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/skills.test.ts",
+      "fullName": "C440-SKILL both authoring skill copies are byte-identical",
+      "origin": "440 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/skills.test.ts",
+      "fullName": "C440-SKILL the authoring skill says to show the stage and the missing values and stop",
+      "origin": "440 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/skills.test.ts",
+      "fullName": "C440-SKILL the authoring skill says never to reword the request",
+      "origin": "440 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/refine.test.ts",
+      "fullName": "C440-REFINE-REQUEST the refine prompt carries the request as its first context block",
+      "origin": "440 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/refine.test.ts",
+      "fullName": "C440-REFINE-REQUEST the refine retrieval query is still the draft's words, not the request",
+      "origin": "440 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/refine.test.ts",
+      "fullName": "C440-VALUE-REFINE a refine patch that loses a stated value is not applied and the compiled draft goes on",
+      "origin": "440 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/refine.test.ts",
+      "fullName": "C440-VALUE-REFINE a refine patch that keeps every stated value is applied",
+      "origin": "440 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/refine.test.ts",
+      "fullName": "C440-VALUE-REFINE a case change in a refine patch is not applied",
+      "origin": "440 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/refine.test.ts",
+      "fullName": "C440-VALUE-REFINE a vague request never drops a refine patch",
+      "origin": "440 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/refine.test.ts",
+      "fullName": "C440-VALUE-REFINE a no-op round makes no change and needs no check",
+      "origin": "440 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/refine.test.ts",
+      "fullName": "C440-VALUE-REFINE the check adds no model call",
+      "origin": "440 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/loop-ordering.test.ts",
+      "fullName": "C440-VALUE-KEEP a keep-eligible draft that lost a stated value is refused at keep and never published",
+      "origin": "440 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/loop-ordering.test.ts",
+      "fullName": "C440-VALUE-KEEP a keep-eligible draft that carries every stated value is written",
+      "origin": "440 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/loop-ordering.test.ts",
+      "fullName": "C440-VALUE-KEEP draft mode's unverified draft is checked before it is written",
+      "origin": "440 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/loop-ordering.test.ts",
+      "fullName": "C440-VALUE-KEEP a case-changed value is refused at keep",
+      "origin": "440 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/loop-ordering.test.ts",
+      "fullName": "C440-VALUE-KEEP a rejected draft is never checked and never written",
+      "origin": "440 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/loop-ordering.test.ts",
+      "fullName": "C440-VALUE-KEEP the keep check is the only door to publishing",
+      "origin": "440 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/repair-fence.test.ts",
+      "fullName": "C440-VALUE-REPAIR a repair patch that loses a stated value is refused before any run and spends the try",
+      "origin": "440 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/repair-fence.test.ts",
+      "fullName": "C440-VALUE-REPAIR a repair patch that keeps every stated value is probed",
+      "origin": "440 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/repair-fence.test.ts",
+      "fullName": "C440-VALUE-REPAIR the next try is told which stated value the refused patch dropped",
+      "origin": "440 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/repair-fence.test.ts",
+      "fullName": "C440-VALUE-REPAIR a value-refused try counts toward the cap like any fenced patch",
+      "origin": "440 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/repair-fence.test.ts",
+      "fullName": "C440-VALUE-REPAIR a case-changed value in a repair patch is refused",
+      "origin": "440 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/repair-fence.test.ts",
+      "fullName": "C440-VALUE-REPAIR the candidate is not advanced past a refused patch",
+      "origin": "440 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/repair-fence.test.ts",
+      "fullName": "C440-VALUE-REPAIR running out after value refusals keeps the existing abandonment kinds",
+      "origin": "440 D-07"
     }
   ]
 }
