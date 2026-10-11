@@ -5,6 +5,8 @@
 // planner planned (no loop-initiated retry).
 
 import { createHash } from 'node:crypto'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 import { screenIdentityHash } from '@vostride/agent-qa-schema'
 import type { DownloadEvidence } from '@vostride/agent-qa-schema'
@@ -35,13 +37,54 @@ const ORDERS_DOWNLOAD: DownloadEvidence = {
 
 let pages: OutcomePages | undefined
 let adapter: WebPlatformAdapter | undefined
+let drafts: DraftServer | undefined
 
 afterEach(async () => {
   await adapter?.cleanup()
   adapter = undefined
   await pages?.close()
   pages = undefined
+  await drafts?.close()
+  drafts = undefined
 }, 60_000)
+
+interface DraftServer {
+  url: string
+  saved: string[]
+  close(): Promise<void>
+}
+
+// 2026-10-11 (439-07): the background save is re-read after a reload (D-18), so its page is served
+// here and renders what the server kept; "Save draft" still changes nothing on the page.
+async function draftServer(): Promise<DraftServer> {
+  const saved: string[] = []
+  const server = createServer((request, response) => {
+    if (request.method === 'POST' && request.url === '/api/save') {
+      let body = ''
+      request.on('data', (chunk: Buffer) => { body += chunk.toString() })
+      request.on('end', () => {
+        saved.push(body)
+        response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+        response.end(JSON.stringify({ saved: saved.length }))
+      })
+      return
+    }
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+    response.end(`<!doctype html><html><body><main>
+  <h1>Draft</h1>
+  <h2>${saved.length > 0 ? `Saved draft: ${saved.at(-1)!}` : 'No saved draft'}</h2>
+  <label>Draft <input id="draft" value="Quarterly report draft"></label>
+  <button type="button" onclick="fetch('/api/save', { method: 'POST', body: document.getElementById('draft').value })">Save draft</button>
+</main></body></html>`)
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const { port } = server.address() as AddressInfo
+  return {
+    url: `http://localhost:${String(port)}/draft`,
+    saved,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  }
+}
 
 async function open(path: string): Promise<{ web: WebPlatformAdapter; site: OutcomePages }> {
   const site = await startOutcomePages()
@@ -87,7 +130,11 @@ function downloadsCheck(expected: number) {
       && d.extension === '.csv'
       && d.sha256 === ORDERS_SHA256)
     return matching.length === expected && downloads.length === expected
-      ? { pass: true, reason: `orders.csv was downloaded ${String(expected)} time(s) with the served digest` }
+      ? {
+          pass: true,
+          reason: `orders.csv was downloaded ${String(expected)} time(s) with the served digest`,
+          citations: [{ source: 'action', quote: 'Download "orders.csv" (.csv): completed' }],
+        }
       : { pass: false, reason: 'orders.csv was not downloaded' }
   }
 }
@@ -108,6 +155,9 @@ describe('C436-OUTCOME-EVIDENCE', () => {
     expect(verifier.calls).toBe(1)
     expect(verifier.inputs[0].operationEvidence?.downloads).toEqual([ORDERS_DOWNLOAD])
     expect(run.result.evidence!.subActions[0].operationEvidence?.downloads).toEqual([ORDERS_DOWNLOAD])
+    expect(run.result.evidence!.conditionVerdicts!.conditions[0]!.citations).toEqual([
+      { source: 'action', quote: 'Download "orders.csv" (.csv): completed', found: true },
+    ])
     sameIdentity(run.result, 0)
     expectOutcomeOnly(run, liveActions(planner))
   }, 60_000)
@@ -196,10 +246,15 @@ describe('C436-OUTCOME-EVIDENCE', () => {
     const clipboardCheck = (input: VerifierInput): VerifierVerdict => {
       const writes = input.operationEvidence?.clipboard ?? []
       return writes.some((w) => w.text === 'ORDER-4471' && w.readBack === 'matched')
-        ? { pass: true, reason: 'ORDER-4471 was copied and read back' }
+        ? {
+            pass: true,
+            reason: 'ORDER-4471 was copied and read back',
+            citations: [{ source: 'action', quote: COPIED_LINE }],
+          }
         : { pass: false, reason: 'the order number was not copied' }
     }
     const COPIED = [{ source: 'writeText', text: 'ORDER-4471', truncated: false, readBack: 'matched' }]
+    const COPIED_LINE = 'Clipboard write (writeText): "ORDER-4471", read back matched'
 
     it('live', async () => {
       const { web } = await open('/clipboard')
@@ -211,6 +266,9 @@ describe('C436-OUTCOME-EVIDENCE', () => {
       expect(run.result.status).toBe('passed')
       expect(verifier.inputs[0].operationEvidence?.clipboard).toEqual(COPIED)
       expect(run.result.evidence!.subActions[0].operationEvidence?.clipboard).toEqual(COPIED)
+      expect(run.result.evidence!.conditionVerdicts!.conditions[0]!.citations).toEqual([
+        { source: 'action', quote: COPIED_LINE, found: true },
+      ])
       sameIdentity(run.result, 0)
       expectOutcomeOnly(run, liveActions(planner))
     }, 60_000)
@@ -251,18 +309,39 @@ describe('C436-OUTCOME-EVIDENCE', () => {
       : { pass: false, reason: 'The draft was not saved' }
 
   it('a background save on an unchanged page passes on the persisted state', async () => {
-    const { web, site } = await open('/save')
+    const { web } = await open('/save')
+    const server = await draftServer()
+    drafts = server
+    await web.getPage()!.goto(server.url)
     const planner = scriptedPlanner([
-      (screen) => act({ type: 'click', ref: refFor(screen, 'button', 'Save draft') }, true, 'Save the draft'),
+      (screen) => act({ type: 'click', ref: refFor(screen, 'button', 'Save draft') }, false, 'Save the draft'),
+      () => act({ type: 'navigate', to: 'reload' }, true, 'Reload to re-read the saved draft'),
     ])
-    const verifier = scriptedVerifier(saveCheck(site))
+    const reread = 'heading "Saved draft: Quarterly report draft"'
+    const verifier = scriptedVerifier((input): VerifierVerdict =>
+      input.after.tree.includes(reread)
+        ? {
+            pass: true,
+            reason: 'After the reload the page shows the saved draft',
+            needs: 'persistence',
+            citations: [{ source: 'final-screen', quote: reread }],
+          }
+        : { pass: false, reason: 'The draft was not saved' })
 
     const run = await runScriptedStep({ adapter: web, instruction: SAVE_STEP, planner, verifier, plannerConfig: LIMITS })
 
     expect(run.result.status).toBe('passed')
-    expect(site.state.saved).toEqual(['Quarterly report draft'])
+    expect(server.saved).toEqual(['Quarterly report draft'])
     expect(run.result.evidence!.subActions[0].operationEvidence).toBeUndefined()
-    sameIdentity(run.result, 0)
+    expect(run.result.evidence!.conditionVerdicts!.conditions[0]).toMatchObject({
+      verdict: 'met',
+      needs: 'persistence',
+      citations: [{ source: 'final-screen', quote: reread, found: true }],
+    })
+    const [save, reload] = run.result.evidence!.subActions
+    expect(screenIdentityHash(reload!.stateBefore), 'the save left the page unchanged').toBe(
+      screenIdentityHash(save!.stateBefore),
+    )
     expectOutcomeOnly(run, liveActions(planner))
   }, 60_000)
 

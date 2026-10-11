@@ -7056,6 +7056,114 @@
       "file": "packages/web/src/__tests__/436-operation-capture.test.ts",
       "fullName": "C439-DOWNLOAD-HOLD the capture keeps bytes only in memory, returns them by sha256, evicts the oldest past 8 MiB and returns nothing after dispose",
       "origin": "439 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-file-compare.test.ts",
+      "fullName": "C439-FILE-COMPARE an exact match passes and any other character differs",
+      "origin": "439 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-file-compare.test.ts",
+      "fullName": "C439-FILE-COMPARE lines match when each expected line is a whole file line, in order",
+      "origin": "439 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-file-compare.test.ts",
+      "fullName": "C439-FILE-COMPARE a tab, a double space, a blank line and a trailing separator each matter",
+      "origin": "439 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-file-compare.test.ts",
+      "fullName": "C439-FILE-COMPARE CRLF and LF are one line break",
+      "origin": "439 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-file-compare.test.ts",
+      "fullName": "C439-FILE-COMPARE one leading byte-order mark is ignored",
+      "origin": "439 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-file-compare.test.ts",
+      "fullName": "C439-FILE-COMPARE two rows merged into one line differ, and so does a single-newline merge",
+      "origin": "439 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-file-compare.test.ts",
+      "fullName": "C439-FILE-COMPARE the same lines out of order differ for 'lines'",
+      "origin": "439 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-file-compare.test.ts",
+      "fullName": "C439-FILE-COMPARE the name is case-sensitive and includes the extension",
+      "origin": "439 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-file-compare.test.ts",
+      "fullName": "C439-FILE-COMPARE an empty expected text matches only a zero-byte file",
+      "origin": "439 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-file-compare.test.ts",
+      "fullName": "C439-FILE-COMPARE bytes that are not held or not UTF-8 leave the content unverified",
+      "origin": "439 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-file-compare.test.ts",
+      "fullName": "C439-FILE-COMPARE an email in the differing line is masked in the first difference",
+      "origin": "439 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/439-file-compare.test.ts",
+      "fullName": "C439-FILE-COMPARE each side of the first difference is at most 80 characters",
+      "origin": "439 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-judged-cases.test.ts",
+      "fullName": "C439-JUDGED-CASES a total over all pages passes when every page was read",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-judged-cases.test.ts",
+      "fullName": "C439-JUDGED-CASES a total citing a page the step never read is unverified",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-judged-cases.test.ts",
+      "fullName": "C439-JUDGED-CASES a created item at its destination and position passes on the final screen",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-judged-cases.test.ts",
+      "fullName": "C439-JUDGED-CASES the same item in the wrong position does not pass",
+      "origin": "439 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-judged-cases.test.ts",
+      "fullName": "C439-JUDGED-CASES a dead submit never passes",
+      "origin": "439 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/439-judged-cases.test.ts",
+      "fullName": "C439-JUDGED-CASES an unchanged-page download or copy without its effect does not pass",
+      "origin": "439 D-18"
     }
   ]
 }
