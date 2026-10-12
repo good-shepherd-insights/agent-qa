@@ -3637,3 +3637,103 @@ number or demands a list or label number), as set out in `440-RECORD.md` § Gap 
 The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
 verdict are recorded in `.planning/phases/440-authoring-intent/440-RECORD.md` § Gap closure round
 3 rather than quoted here, so no agent-qa commit follows it.
+
+### Gap closure round 4 (440-15), 2026-10-12
+
+This subsection appends to the Phase 440 section and rewrites none of it, rounds 1 to 3's
+subsections included; written by 440-15. It follows
+`.planning/phases/440-authoring-intent/440-REVIEW.md` § Gap closure round 3 re-review (agent-qa
+`5442d42a1..fe15e1371`). That re-review's WR-12 is a month-name date that `bd2d9a200` protected and
+later rounds dropped, outside the round-3 stop rule's class. On 2026-10-12 the owner answered two
+questions (`440-UAT.md`, the comment above the newest gap), verbatim. To WR-12, "Fix in a
+micro-round (Recommended)": "One plan: a bounded month-name look-behind (prototype passes all 68 cells), plus the missing IN-06 pinning cell, then the record gate again. Cost on the safe side: '1. pick the month March 2. pay' would be refused. About 45-60 min."
+To entry F, "Accept as a limitation (Recommended)": "Record F as owner-accepted on 2026-10-12, alongside the Safe-side residues G and its step twin (IN-07). The phase closes with no open regression."
+Every commit below is in agent-qa on `version-0.2` and signed; every cell is listed in
+`scripts/gate/inputs/regressions.json` with its `440 D-NN` origin (gate-listed in `b7b5da040`).
+No listed cell was re-spelled: every earlier 440 cell passes unedited, and both test files' diffs
+from `fe15e1371` add lines only. The only product file that changed is
+`agent/src/authoring/stated-values.ts`; its three exports and their signatures did not.
+
+**What was removed**
+
+- **A month-name date's day read as a list marker** (WR-12). `blankListMarkers` runs over the
+  whole request before the date scan, so a `2.` right after `Oct ` that continued the open list
+  run, or confirmed a held start, was blanked, and `MONTH_NAME_DATE` no longer saw the date.
+  `1. check the badge shows: 1. Then check the date is Oct 2. Then check out` stated
+  `["1","Oct 2"]` at `bd2d9a200` and `5442d42a1` and `["1"]` at `fe15e1371`, as did the
+  `October 2` form (`["1","October 2"]`, then `["1"]`), so a draft saying `Oct 3` was kept and
+  written. The open-run form `1. open the calendar\n2. check the date shows Oct 3. Then click Next`
+  and the lowercase held form `Check the badge shows: 1. then check the date is Oct 2. then pay`
+  have lost the date since round 1 (`2edfe953a`): `["1","2","Oct 3"]` and `["1","Oct 2"]` at
+  `bd2d9a200`, `[]` at `5442d42a1` and `fe15e1371`. Now a module-level `MONTH_BEFORE`, built from
+  the same month names the date scan uses (a month name with no letter or digit before it, then one
+  space, then the end of the slice), is tested in `blankListMarkers` on the 12 characters before
+  every token that is not an `(N)` token, right after the token is read and before the run start,
+  the open-run and the held-candidate tests. A token right after a month name and a space neither
+  starts, continues nor confirms a run and is never blanked, so the date scan sees the date whole.
+  The four requests state `["1","Oct 2"]`, `["1","October 2"]`, `["Oct 3"]` and `["1","Oct 2"]`.
+  A line-start marker after a line that ends in a month name stays a marker, because the slice
+  then ends in a line break, not a space. 440-15 `c36718fca`. Cells:
+  - `C440-STATED-VALUES a month-name date is a stated value even where the next list marker would go, and an item that ends in a month name before the next marker is the known boundary`
+  - `C440-STATED-VALUES a long request of month-name days where the next list marker would go is checked in linear time` (a control)
+  - `C440-VALUE-COMPILE a month-name date where the next list marker would go is refused at compile when the draft changes it` (through `invokeFunction('authoring.draft.write')`)
+
+**What was RETAINED, and why**
+
+| Item | Why kept | Where recorded |
+|---|---|---|
+| the step pass, unchanged | `STEP_LABEL` blanks only digits that directly follow the word `Step` and one space, so no month name can directly precede a step label's digits; `blankStepLabels` has no diff from `fe15e1371` | `C440-STATED-VALUES a month-name date is a stated value even where the next list marker would go, and an item that ends in a month name before the next marker is the known boundary` (its step-labelled row); every earlier step cell, unedited |
+| the open-run-first order of tests and the at-once reset (G9) | round 3's rules; the reset was unpinned (IN-06) and is now pinned in each pass | `C440-STATED-VALUES an at-once 1 clears the held candidate in the list pass and in the step pass, so a stale held 1 is never confirmed by a later stated 2` |
+| WR-02 and WR-04 | accepted by the owner as limitations (2026-10-12, "Fix false refusals (Recommended)"); not touched by this round | `440-REVIEW.md`; `440-RECORD.md` § Gap closure round 1 |
+| IN-01 to IN-05 (IN-05: nested outline numbers such as `1.1` inside a numbered request are still stated values) | outside the round's scope; left `open` | `440-REVIEW.md`; `440-REVIEW-DISPOSITION.md` |
+| the three exports `extractStatedValues`, `missingStatedValues` and `statedValuesMissingReason`, and their signatures | the fix is inside extraction; matching and every caller are unchanged | `C440-STATED-VALUES the module is pure`; the callers' existing `C440-` cells |
+| the skill bullet in both `agent-qa-authoring` copies, the output schema, its conformance golden and the abandonment kinds | the refusal's shape and the repair cap do not change; `packages/schema`, `packages/cli` and `skills` have no diff from `bd2d9a200` | the `C440-SKILL` and `C440-REFUSAL-FIELD` cells; the golden |
+| `loop.ts`, `refine.ts`, `repair.ts` and the op | the round changes what is extracted, not where it is checked; no diff from `bd2d9a200` | `git -C agent-qa diff --quiet bd2d9a200 HEAD -- …` (440-15's scope check) |
+
+**What degrades, stated plainly**
+
+- **An inline item that ends in a month name right before the next marker** (WR-12's cost, a false
+  refusal on the Safe side). `1. pick the month March 2. pay` states `["March 2"]`, where
+  `fe15e1371` stated nothing, so a faithful draft that does not repeat `March 2` is refused. Pinned
+  by `C440-STATED-VALUES a month-name date is a stated value even where the next list marker would go, and an item that ends in a month name before the next marker is the known boundary`.
+  The same cell pins the other side: `1. pick the month March\n2. pay`, with the marker at a line
+  start, states nothing. Owner-accepted 2026-10-12 ("Fix in a micro-round (Recommended)").
+  The same cost with a following marker: `1. pick the month March 2. pay 3. check out` states
+  `["March 2","3"]`, because the skipped day does not advance the run; the owner's option text
+  names only the first input, and the same cell pins this one.
+- **A step list restarted at Step 1 inside an open step list's first item** (IN-07, the step twin
+  of round 3's entry G). `Step 1: open the shop. Step 1: add items Step 2: pay` and
+  `Step 1. Step 1. Step 2.` each state `["1"]`, where `5442d42a1` stated nothing. Pinned by
+  `C440-STATED-VALUES a step list restarted at Step 1 inside the first item of an open step list states its 1, the step twin of a list restarted at 1`.
+  The list form on the other side is entry G's `1) open the shop. 1) add items 2) pay`, pinned by
+  `C440-STATED-VALUES a held 1 inside a numbered item never takes over the item list, so the next item number neither confirms it nor becomes a stated value`.
+  Covered by the owner's 'Safe side' decision of 2026-10-12; not named individually. The owner's
+  round-4 answer refers to it as G's step twin.
+- 2026-10-12 (440-15): round 3's seventh entry above, entry F (a number read as the next marker or
+  label of a run after a held start, `1. check the badge shows: 1. Then set it to 2. Then check out`
+  states `1`), is now Owner-accepted 2026-10-12 ("Accept as a limitation (Recommended)"). Its label
+  there, "a regression against 5442d42a1 introduced by round 3, not covered by an owner decision",
+  is superseded by this note without editing it. Its pinning cell is unchanged.
+- Rounds 1 to 3's own degradations, WR-02's and WR-04's cases and entries A to E and G among them,
+  are unchanged. Round 1's G1 item 5 (a number written where the next list marker would go is read
+  as that marker) no longer applies to a number right after a month name and a space.
+
+**The instruments that notice a return**
+
+- The 434 gate's regression list grew from 1359 to 1364 cells, all from 440-15:
+  `C440-STATED-VALUES` 4 and `C440-VALUE-COMPILE` 1. 127 cells now carry a `440` origin:
+  `440 D-03` 52 and `440 D-05` 16, the other origins unchanged.
+- Removing the look-behind reds the WR-12 value cell and
+  `C440-VALUE-COMPILE a month-name date where the next list marker would go is refused at compile when the draft changes it`
+  (440-15's failing-first run at `fe15e1371`).
+- Removing the at-once reset from the list pass or from the step pass reds
+  `C440-STATED-VALUES an at-once 1 clears the held candidate in the list pass and in the step pass, so a stale held 1 is never confirmed by a later stated 2`
+  (440-15's two mutant runs, each reddening that cell alone).
+- A change to the restarted step list's output reds the IN-07 pin.
+- A scan that is no longer linear reds the new linear-time cell.
+
+**Gate**
+
+The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
+verdict are recorded in `.planning/phases/440-authoring-intent/440-RECORD.md` § Gap closure round
+4 rather than quoted here, so no agent-qa commit follows it.
