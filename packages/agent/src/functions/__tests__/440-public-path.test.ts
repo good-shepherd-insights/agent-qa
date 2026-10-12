@@ -533,6 +533,7 @@ const PARENTHESIZED_REQUEST = '(1) open the products page\n(2) check it says "Al
 const PARENTHESIZED_INLINE_REQUEST = '(1) open the products page (2) check it says "All Products"'
 const NUMBERED_COUNT_REQUEST =
   '1. open the products page\n2. check it lists 12 items and says "All Products"'
+const STEP_REQUEST = 'Step 1: open the products page. Step 2: check it says "All Products"'
 
 describe('C440-VALUE-COMPILE', () => {
   it('a numbered request with a faithful draft is kept and written', async () => {
@@ -578,5 +579,17 @@ describe('C440-VALUE-COMPILE', () => {
       verifyCalls: 0,
       published: 0,
     })
+  })
+
+  it('a step-labelled request with a faithful draft is kept and written', async () => {
+    const host = publicPathHost({ document: HISTORICAL_DOCUMENT, runs: 'pass' })
+    const output = await host.write(STEP_REQUEST)
+
+    expect({
+      outcome: output['outcome'],
+      statedValueRefusal: output['statedValueRefusal'] ?? null,
+      written: writtenKind(output),
+      published: host.published.length,
+    }).toEqual({ outcome: 'drafted', statedValueRefusal: null, written: 'written', published: 1 })
   })
 })

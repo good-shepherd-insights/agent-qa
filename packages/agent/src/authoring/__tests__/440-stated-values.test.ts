@@ -317,6 +317,18 @@ describe('C440-FALSE-REFUSAL', () => {
       '$20',
     ])
   })
+
+  it('a step-labelled request states no step number', async () => {
+    const { extractStatedValues } = await load()
+    expect(
+      extractStatedValues(
+        'Step 1: open the products page. Step 2: check the heading says "All Products"',
+      ),
+    ).toEqual(['All Products'])
+    expect(extractStatedValues('Step 1 - open the shop Step 2 - add 2 items')).toEqual(['2'])
+    expect(extractStatedValues('step 1 – open the shop step 2 — add 2 items')).toEqual(['2'])
+    expect(extractStatedValues('Step 1) open the shop. Step 2. add 2 items')).toEqual(['2'])
+  })
 })
 
 describe('C440-STATED-VALUES', () => {
@@ -378,5 +390,28 @@ describe('C440-STATED-VALUES', () => {
     expect(extractStatedValues('1. set the quantity to 2, then check the cart')).toEqual(['2'])
     expect(extractStatedValues('1. set the quantity to 2) then check the cart')).toEqual(['2'])
     expect(extractStatedValues('1. open the shop and set the quantity to 2.')).toEqual(['2'])
+  })
+
+  it('a step number with no label delimiter is a stated value', async () => {
+    const { extractStatedValues } = await load()
+    expect(extractStatedValues('check step 2 of the wizard is shown')).toEqual(['2'])
+    expect(extractStatedValues('check Step 2 of 3 is shown')).toEqual(['2', '3'])
+    expect(extractStatedValues('check Step 1.5: the label')).toEqual(['1.5'])
+    expect(extractStatedValues('check the heading says "Step 2: Payment"')).toEqual([
+      'Step 2: Payment',
+    ])
+  })
+
+  it('a long run of list markers and step labels is checked in linear time', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    for (const unit of ['1. 2. 3. ', 'Step 1: ', '\n1.\n', '1) a ', '(1) (2) (3) ']) {
+      const request = unit.repeat(Math.ceil(200_000 / unit.length)).slice(0, 200_000)
+      expect(request).toHaveLength(200_000)
+
+      const started = performance.now()
+      const values = extractStatedValues(request)
+      missingStatedValues([...values, '1'], [request])
+      expect(performance.now() - started).toBeLessThan(2000)
+    }
   })
 })

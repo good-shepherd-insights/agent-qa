@@ -18,6 +18,7 @@ const DAY = '\\d{1,2}(?:st|nd|rd|th)?'
 const MONTH_NAME_DATE =
   `(?<![\\p{L}\\p{N}])(?:${MONTH} ${DAY}(?:,? \\d{4})?|${DAY} ${MONTH}(?: \\d{4})?)` +
   '(?![\\p{L}\\p{N}])'
+const STEP_LABEL = '(?<![\\p{L}\\p{N}])(?:Step|step|STEP) ([0-9]+)(?=[:)]|\\.(?:\\s|$)| [-–—])'
 
 const HOST_AND_PORT = /^[A-Za-z][A-Za-z0-9.-]*:\d+(?:\/\S*)?[.,;!?)\]]*$/
 const LEADING_LETTER_OR_NUMBER = /^[\p{L}\p{N}]/u
@@ -76,6 +77,12 @@ function isSpace(char: string | undefined): boolean {
   return char === ' ' || char === '\n'
 }
 
+function blankStepLabels(segment: string): string {
+  return segment.replace(new RegExp(STEP_LABEL, 'gu'), (label: string, digits: string) => {
+    return label.slice(0, label.length - digits.length) + ' '.repeat(digits.length)
+  })
+}
+
 function listRunStartsAt(text: string, index: number, atTextStart: boolean): boolean {
   if (atTextStart && (index === 0 || (index === 1 && isSpace(text[0])))) return true
   const before = text[index - 1]
@@ -128,7 +135,7 @@ function blankListMarkers(segment: string, run: ListRun, atTextStart: boolean): 
 
 function unquotedValues(segment: string, run: ListRun, atTextStart: boolean): string[] {
   const found: { readonly at: number; readonly value: string }[] = []
-  let text = blankListMarkers(segment, run, atTextStart)
+  let text = blankListMarkers(blankStepLabels(segment), run, atTextStart)
     .replaceAll('\n', ' ')
     .split(' ')
     .map((chunk) => (isAddress(chunk) ? ' '.repeat(chunk.length) : chunk))
