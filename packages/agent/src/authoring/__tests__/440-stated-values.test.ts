@@ -964,4 +964,26 @@ describe('C440-STATED-VALUES', () => {
       expect(performance.now() - started).toBeLessThan(2000)
     }
   })
+
+  it('an at-once 1 clears the held candidate in the list pass and in the step pass, so a stale held 1 is never confirmed by a later stated 2', async () => {
+    const { extractStatedValues } = await load()
+    expect(
+      extractStatedValues(
+        'Check the badge: 1. then add one\n1) open the cart 2) close it\ncheck it shows 2. then pay',
+      ),
+    ).toEqual(['1', '2'])
+    expect(
+      extractStatedValues(
+        'Check the title: Step 1. then click\nStep 1: open it Step 2: close it\ncheck it shows Step 2. then pay',
+      ),
+    ).toEqual(['1', '2'])
+  })
+
+  it('a step list restarted at Step 1 inside the first item of an open step list states its 1, the step twin of a list restarted at 1', async () => {
+    const { extractStatedValues } = await load()
+    expect(extractStatedValues('Step 1: open the shop. Step 1: add items Step 2: pay')).toEqual([
+      '1',
+    ])
+    expect(extractStatedValues('Step 1. Step 1. Step 2.')).toEqual(['1'])
+  })
 })
