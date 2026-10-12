@@ -174,6 +174,7 @@ function blankStepLabels(text: string, chars: string[]): void {
 // 2026-10-12 (440-11, WR-08): a run starting after a colon or a sentence end waits for its 2, and
 // two numbers that each end a sentence wait for a 3.
 // 2026-10-12 (440-13, WR-11): the open run and the held candidate are kept apart, so a held 1 inside an item never takes over its list.
+// 2026-10-12 (440-13, WR-10): a held 1) or (1) gets the sentence guard too.
 function blankListMarkers(text: string, chars: string[]): void {
   const open: Run = { next: 0, delimiter: '', pending: [], sentenceLike: false }
   const held: Run = { next: 0, delimiter: '', pending: [], sentenceLike: false }
@@ -212,7 +213,7 @@ function blankListMarkers(text: string, chars: string[]): void {
       held.next = 2
       held.delimiter = delimiter
       held.pending = [span]
-      held.sentenceLike = delimiter === '.' && endsSentence(text, tokenEnd)
+      held.sentenceLike = endsSentence(text, tokenEnd)
     } else if (delimiter === open.delimiter && digits === String(open.next)) {
       blank(chars, span)
       open.next += 1

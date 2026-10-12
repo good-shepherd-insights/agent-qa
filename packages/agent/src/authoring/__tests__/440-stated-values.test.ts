@@ -768,6 +768,107 @@ describe('C440-STATED-VALUES', () => {
       extractStatedValues('Step 1. Check the title shows: Step 1. Then click Next. Step 2. Click Pay.'),
     ).toEqual(['1'])
   })
+
+  it('a held 1) or (1) run whose markers are each followed by a capital letter is a stated value until its third marker follows, and a capitalized two-item paren list is the known boundary', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    expect(
+      extractStatedValues(
+        'Check the badge shows: 1) Then add one more and check it shows 2) Then check out',
+      ),
+    ).toEqual(['1', '2'])
+    const request =
+      'Check the badge says: (1) Then add one more and check it says (2) Then check out'
+    expect(extractStatedValues(request)).toEqual(['1', '2'])
+    expect(
+      missingStatedValues(extractStatedValues(request), [
+        'Verify the badge says (0)',
+        'Add one more',
+        'Check out',
+      ]),
+    ).toEqual(['1', '2'])
+    expect(extractStatedValues('Checkout test: 1) Open the shop 2) Add 2 items')).toEqual([
+      '1',
+      '2',
+    ])
+    expect(extractStatedValues('Checkout test: (1) Open the shop (2) Add 2 items')).toEqual([
+      '1',
+      '2',
+    ])
+  })
+
+  it('a capital then lowercase pair, three capitalized sentences, a lowercase paren pair and a number read as the next marker or label of a run after a held start are the known leftovers', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    const capitalThenLowercase = extractStatedValues(
+      'Check the badge shows: 1. Then set the quantity to 2. then check the cart',
+    )
+    expect(capitalThenLowercase).toEqual([])
+    expect(
+      missingStatedValues(capitalThenLowercase, ['Verify the badge shows 0', 'Check the cart']),
+    ).toEqual([])
+    expect(
+      extractStatedValues(
+        'check the title shows: Step 1. Then click Next and check it shows Step 2. then click Pay',
+      ),
+    ).toEqual([])
+    expect(
+      extractStatedValues('Check Quantity: 1. Then set it to 2. Then set it to 3. Then check the total'),
+    ).toEqual([])
+    expect(
+      extractStatedValues(
+        'check the title shows: Step 1. Then click Next. It shows Step 2. Then click Pay. It shows Step 3. Then pay',
+      ),
+    ).toEqual([])
+    expect(
+      extractStatedValues('Check the badge says: (1) and after adding check it says (2) items'),
+    ).toEqual([])
+    expect(
+      extractStatedValues(
+        'Check the badge shows: 1) then add one more and check it shows 2) then check out',
+      ),
+    ).toEqual([])
+    expect(
+      extractStatedValues('1. check the badge shows: 1. Then set it to 2. Then check out'),
+    ).toEqual(['1'])
+    expect(
+      extractStatedValues(
+        '1. open the cart\n2. check the badge shows: 1. Then set it to 3. Then check out',
+      ),
+    ).toEqual(['1'])
+    expect(
+      extractStatedValues('1. check the badge shows: 1) Then set it to 2. Then check out'),
+    ).toEqual(['1'])
+    expect(
+      extractStatedValues(
+        '1. check the badge shows: 1. then add one\n2. check the badge shows: 2. then check out',
+      ),
+    ).toEqual([])
+    expect(
+      extractStatedValues(
+        'Step 1. Check the heading shows: Step 1 - Cart. Then go on to Step 2. Then pay',
+      ),
+    ).toEqual(['1'])
+    expect(extractStatedValues('test: Step 1. Step 2 - Step 3.')).toEqual([])
+  })
+
+  it('a long request of held step headings, nested held starts and held paren runs is checked in linear time', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    const units = [
+      ': Step 1. Then Step 2. Then ',
+      '1. x: 1. Then\n2. y: 2. Then\n',
+      ': 1) Then 2) Then ',
+      ': (1) Then (2) Then ',
+      'Step 1: a: Step 1. B\nStep 2: c\n',
+    ]
+    for (const unit of units) {
+      const request = unit.repeat(Math.ceil(200_000 / unit.length)).slice(0, 200_000)
+      expect(request).toHaveLength(200_000)
+
+      const started = performance.now()
+      const values = extractStatedValues(request)
+      missingStatedValues([...values, '1'], [request])
+      expect(performance.now() - started).toBeLessThan(2000)
+    }
+  })
 })
 
 describe('C440-FALSE-REFUSAL', () => {
@@ -784,5 +885,16 @@ describe('C440-FALSE-REFUSAL', () => {
     expect(
       extractStatedValues('Checkout test: Step 1: Open the shop Step 2: add 2 items'),
     ).toEqual(['2'])
+  })
+
+  it('a held 1) or (1) list states no list number once its third marker follows or its items start lowercase', async () => {
+    const { extractStatedValues } = await load()
+    expect(
+      extractStatedValues('Checkout test: 1) Open the shop 2) Add 2 items 3) Check the cart'),
+    ).toEqual(['2'])
+    expect(
+      extractStatedValues('Checkout test: (1) Open the shop (2) Add 2 items (3) Check the cart'),
+    ).toEqual(['2'])
+    expect(extractStatedValues('Test the cart. 1) open the shop 2) add 2 items')).toEqual(['2'])
   })
 })
