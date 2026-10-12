@@ -3295,3 +3295,177 @@ signatures did not.
 The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
 verdict are recorded in `.planning/phases/440-authoring-intent/440-RECORD.md` § Gap closure round
 1 rather than quoted here, so no agent-qa commit follows it.
+
+### Gap closure round 2 (440-10 to 440-12), 2026-10-12
+
+This subsection appends to the Phase 440 section and rewrites none of it, round 1's subsection
+included; written by 440-12. It follows `.planning/phases/440-authoring-intent/440-VERIFICATION.md`
+(`gaps_found`, 80 of 83) and `440-REVIEW.md` § Gap closure round 1 re-review. That re-review's
+WR-05 to WR-08 are regressions round 1 introduced in what the check protects: values that
+`bd2d9a200` extracted and protected, and that round 1's rules dropped, so a draft changing them was
+kept and written. The owner's standing instruction was "Fix false refusals (Recommended)"
+(`440-UAT.md`), with only WR-02 and WR-04 accepted as limitations. After round-2 planning, on
+2026-10-12, the owner chose "Safe side (Recommended)" for the ambiguous list and step cases
+(`.planning/phases/440-authoring-intent/440-11-PLAN.md` § Owner decision): when unsure, a number is
+read as a value, so a draft that changes it is refused, never written. Every commit below is in
+agent-qa on `version-0.2` and signed; every cell is listed in `scripts/gate/inputs/regressions.json`
+with its `440 D-NN` origin (gate-listed in `90b278360`). No listed cell was re-spelled: every
+earlier 440 cell passes unedited, and both test files' diffs from `2edfe953a` add lines only. The
+only product file that changed is `agent/src/authoring/stated-values.ts`; its three exports and
+their signatures did not.
+
+**What was removed**
+
+- **A single quote refusing to open before any digits glued to a letter** (WR-06). Round 1's rule
+  for `'90s` also matched ordinary quoted values, so `search for '4K' and check the first result
+  title says '3D Movies'` went from `["4K","3D Movies"]` at `bd2d9a200` to `[]`, `'1st Place'`,
+  `'2FA'` and `‘5G Plans’` were lost the same way, and a draft saying `'8K'` was kept and written.
+  Now (G4) a single quote refuses to open only before a decade: one digit, `0` and `s`, not
+  followed by a letter, a number or a closing single quote (`DECADE_ELISION`). `'80s` and `'70s`
+  open nothing; `'4K'`, `'3D Movies'`, `'2FA'`, `'1st Place'`, `‘5G Plans’`, a closed `'90s'`,
+  `'95s'` and `'15s timeout'` are values. Round 1's digit-run helper and its letter-only pattern
+  are deleted. 440-10 `61bba5f44`. Cells:
+  - `C440-STATED-VALUES a single-quoted value that starts with digits glued to a letter is a stated value`
+  - `C440-STATED-VALUES only a two-digit decade after a single quote opens no quoted value, and a quoted value that starts with one is the known leftover`
+  - `C440-VALUE-COMPILE a single-quoted value that starts with digits glued to a letter is refused at compile when the draft loses it`
+- **A bracketed group with one colon read as an IPv6 host** (WR-07). Round 1's `BRACKETED_IPV6`
+  needed only one colon between hex digits, so `check the slot [10:30] is shown` went from
+  `["10:30"]` to `[]`, `[16:9]` the same way, and a draft saying `[11:45]` was kept and written.
+  Now (G5) a bracketed group is an IPv6 host only when it is hex digits, dots and colons and holds
+  `::` or at least six colons (`holdsIpv6Groups`). `[16:9]`, `[10:30]`, `[Bed:2]` and
+  `[10:30:45]` are values; `[::1]:3000`, `[fe80::1]`, `[2001:db8::1]:443`,
+  `[2001:db8:0:0:0:0:0:1]:443/cart` and `[::ffff:192.0.2.1]:8080` state nothing. 440-10
+  `ed92b6e28`. Cells (the linear-time cell covers G4's and G5's shapes):
+  - `C440-STATED-VALUES a bracketed time or ratio is a stated value`
+  - `C440-STATED-VALUES a long request of decade elisions, digit-led quotes and bracketed colons is checked in linear time`
+  - `C440-FALSE-REFUSAL a bracketed IPv6 host in compressed or full form states nothing`
+  - `C440-VALUE-COMPILE a bracketed time is refused at compile when the draft loses it`
+- **An unconfirmed list run after `:`, `.`, `!` or `?`** (WR-08). Round 1 started a run at any
+  `1.`, `1)` or `(1)` after one of these and a space, with no second marker, so the stated value
+  itself was blanked and a later `2.` with it: `check the badge shows: 1. Then click checkout` went
+  from `["1"]` to `[]`, `Check Quantity: 1. Then set it to 2. Then check Total: $40.` from
+  `["1","2","$40"]` to `["$40"]`, and a draft saying `0` was kept and written. Now (G6) such a run
+  is held until its `2` with the same delimiter follows; when the held `1.` and that `2.` both end
+  a sentence (the next word starts with a capital letter), the run waits for its `3.`. A held `1`
+  that is never confirmed stays a stated value. The pass runs over the whole request with quoted
+  values masked, so a `2` after a quoted item confirms the run. Runs at the request start or a line
+  start still start at once. 440-11 `6d4d51872`. Cells:
+  - `C440-STATED-VALUES a number stated after a colon or a sentence end is a stated value when no list follows it`
+  - `C440-STATED-VALUES a list after a colon or a sentence starts only when its 2 follows, and a lowercase sentence stating 1 and then 2 is the known leftover`
+  - `C440-FALSE-REFUSAL a list after a colon or a sentence states no list number once its next marker follows, across a quoted value too`
+  - `C440-VALUE-COMPILE a lone 1 stated after a colon is refused at compile when the draft loses it`
+- **A step label anywhere in a sentence** (WR-05). Round 1 blanked the digits of any `step N`
+  followed by `:`, `)`, a spaced dash, or `.` before whitespace or the end, wherever it sat, so
+  `check the wizard is on step 2. Then click Next` went from `["2"]` to `[]`, as did `says Step 2:
+  Payment`, `shows step 2.` and `go to step 3)`, and a draft saying step 3 was kept and written.
+  Now (G7) a step label counts like a list marker, over the same masked request: `Step 1` starts a
+  run only at a run start (at once at the request or a line start, held until its `Step 2` after a
+  colon or a sentence), and a later label continues the run only as its next number, with the
+  run's delimiter or from a run start. Any other `step N` is ordinary text, so its number is a
+  stated value. 440-11 `451e79ee8`. Cells (the linear-time cell covers G6's and G7's shapes):
+  - `C440-STATED-VALUES a step number stated mid-sentence is a stated value`
+  - `C440-STATED-VALUES a step label counts only from the start of the request, a line, a colon or a sentence, and a step number where the next label would go is the known leftover`
+  - `C440-STATED-VALUES a long request of held list starts and step labels is checked in linear time`
+  - `C440-FALSE-REFUSAL a step-labelled list after a colon, a sentence or a line break states no step number`
+  - `C440-VALUE-COMPILE a step number stated mid-sentence is refused at compile when the draft loses it`
+
+**What was RETAINED, and why**
+
+| Item | Why kept | Where recorded |
+|---|---|---|
+| WR-02: backticks, guillemets, `„…“`, corner brackets and a curly opener closed by a straight quote are not read as quotes | accepted by the owner as a limitation (2026-10-12, "Fix false refusals (Recommended)"); not touched by this round | `440-REVIEW.md` WR-02; `440-RECORD.md` § Gap closure round 1 |
+| WR-04: a minus before a currency symbol is dropped; a value starting or ending with punctuation skips that edge's glued-to-a-word check; `_` is not a word character | accepted by the owner, as above; not touched by this round | `440-REVIEW.md` WR-04; `440-RECORD.md` § Gap closure round 1 |
+| IN-01 to IN-05 (IN-05: nested outline numbers such as `1.1` inside a numbered request are still stated values) | outside the round's scope; left `open` | `440-REVIEW.md`; `440-REVIEW-DISPOSITION.md` |
+| the three exports `extractStatedValues`, `missingStatedValues` and `statedValuesMissingReason`, and their signatures | the fixes are inside extraction; matching and every caller are unchanged | `C440-STATED-VALUES the module is pure`; the callers' existing `C440-` cells |
+| the skill bullet in both `agent-qa-authoring` copies, the output schema, its conformance golden and the abandonment kinds | the refusal's shape and the repair cap do not change; `packages/schema`, `packages/cli` and `skills` have no diff from `bd2d9a200` | the `C440-SKILL` and `C440-REFUSAL-FIELD` cells; the golden; `C440-VALUE-REPAIR running out after value refusals keeps the existing abandonment kinds` |
+| `loop.ts`, `refine.ts`, `repair.ts` and the op | the round changes what is extracted, not where it is checked; no diff from `bd2d9a200` | `git -C agent-qa diff --quiet bd2d9a200 HEAD -- …` (440-10 and 440-11 scope checks) |
+| round 1's rules this round did not narrow: list runs and step runs at the request start and at line starts, the inch mark, `'n'`, IPv4 addresses and the parenthesized host | not among the re-review's findings; their round-1 cells pass unedited | `C440-FALSE-REFUSAL a numbered list written inline states no list number`, `C440-FALSE-REFUSAL a numbered list written one item per line states no list number`, `C440-FALSE-REFUSAL a step-labelled request states no step number`, `C440-FALSE-REFUSAL an inch mark opens no quoted value`, `C440-FALSE-REFUSAL an in-word apostrophe opens no quoted value`, `C440-FALSE-REFUSAL an IP address, with or without a port and path, states nothing`, `C440-FALSE-REFUSAL a host and port in parentheses states nothing` |
+
+**What degrades, stated plainly**
+
+The owner accepted this round's trade-off on 2026-10-12 by answering "Safe side (Recommended)"
+(`440-11-PLAN.md` § Owner decision). Each residue below cannot be removed without either losing a
+protected value or undoing a false-refusal fix, because its input has the same shape as a pinned
+input on the other side of the rule. Each carries its acceptance wording.
+
+- **`'30s ad'`: a single-quoted value that starts with a decade and goes on past it** (G4 item 4,
+  a value loss). `check the '30s ad' banner` states nothing, so a draft saying `'40s ad'` is not
+  refused. Pinned by `C440-STATED-VALUES only a two-digit decade after a single quote opens no quoted value, and a quoted value that starts with one is the known leftover`.
+  Same shape as `check the '90s collection and the users' cart`, which `C440-FALSE-REFUSAL an in-word apostrophe opens no quoted value`
+  pins as stating nothing. Owner-accepted 2026-10-12 ("Safe side (Recommended)").
+- **`[12::30]`: a bracketed group of hex digits and dots that holds `::`** (G5 item 4, a value
+  loss). It states nothing. No cell pins it, although the owner's option text calls the leftovers
+  pinned. Same shape as the compressed IPv6 hosts `[::1]:3000` and `[fe80::1]`, which
+  `C440-FALSE-REFUSAL a bracketed IPv6 host and port states nothing` and
+  `C440-FALSE-REFUSAL a bracketed IPv6 host in compressed or full form states nothing` pin as
+  stating nothing. Owner-accepted 2026-10-12 ("Safe side (Recommended)").
+- **A one-item list after a colon** (G6 item 5, a false refusal). `Checkout test: 1. open the shop`
+  states `1`, so a faithful draft without it is refused. Pinned by `C440-STATED-VALUES a list after a colon or a sentence starts only when its 2 follows, and a lowercase sentence stating 1 and then 2 is the known leftover`.
+  Same shape as `check the badge shows: 1. Then click checkout`, pinned as a value by
+  `C440-STATED-VALUES a number stated after a colon or a sentence end is a stated value when no list follows it`.
+  Owner-accepted 2026-10-12 ("Safe side (Recommended)").
+- **A two-item list after a colon whose items each start with a capital letter** (G6 item 5, a
+  false refusal). `Checkout test: 1. Open the shop 2. Add 2 items` states `1` and `2`. Pinned by the
+  same cell. Same shape as `Check Quantity: 1. Then set it to 2. Then check Total: $40.`, pinned as
+  values by the same value cell. Owner-accepted 2026-10-12 ("Safe side (Recommended)").
+- **The same one-item and two-capitalized-item lists after a sentence end (`.`, `!` or `?`) instead
+  of a colon** (G6 item 5, a false refusal). G6 treats the four start characters the same, so these
+  behave as the colon forms do; the rule is pinned through the colon forms in the cell above, and
+  no cell pins the sentence-end inputs themselves. Same shape as `Is the count right? 1. Then click`,
+  pinned as a value by `C440-STATED-VALUES a number stated after a colon or a sentence end is a stated value when no list follows it`.
+  Covered by the owner's 'Safe side' decision of 2026-10-12; not named individually.
+- **A lowercase sentence after a colon or a sentence end that states `1.` and later `2.`** (G6
+  item 5, a value loss). `Check quantity: 1. then set it to 2. then check the cart` states nothing,
+  so a draft without the numbers is not refused. Pinned by `C440-STATED-VALUES a list after a colon or a sentence starts only when its 2 follows, and a lowercase sentence stating 1 and then 2 is the known leftover`.
+  Same shape as round 1's `Test the cart. 1. add 2 items 2. check the total is $20` in
+  `C440-FALSE-REFUSAL a numbered list after a colon or a sentence states no list number`.
+  Owner-accepted 2026-10-12 ("Safe side (Recommended)").
+- **A step list that starts mid-sentence** (G7 item 4, a false refusal). `Test the wizard Step 1:
+  open it Step 2: click Next` states `1` and `2`. Pinned by `C440-STATED-VALUES a step label counts only from the start of the request, a line, a colon or a sentence, and a step number where the next label would go is the known leftover`.
+  Same shape as `check the wizard heading says Step 2: Payment`, pinned as a value by
+  `C440-STATED-VALUES a step number stated mid-sentence is a stated value`. Owner-accepted
+  2026-10-12 ("Safe side (Recommended)").
+- **A mid-sentence label that switches delimiter** (G7 item 4, a false refusal). `Step 1: open the
+  shop Step 2. add items` states `2`. Pinned by the same step cell. Same shape as `check the wizard
+  is on step 2. Then click Next`, pinned as a value by `C440-STATED-VALUES a step number stated mid-sentence is a stated value`.
+  Covered by the owner's 'Safe side' decision of 2026-10-12; not named individually.
+- **A one-label step list after a colon or a sentence** (G7 item 2, a false refusal). `Checkout
+  test: Step 1: open the shop` states `1`: the label is held and never confirmed. No cell pins this
+  input; 440-11's spot check confirmed it, and the held, never-confirmed `Step 1` is pinned by
+  `check the title shows: Step 1. Then click Next` in `C440-STATED-VALUES a step number stated mid-sentence is a stated value`.
+  Same shape as that value. Covered by the owner's 'Safe side' decision of 2026-10-12; not named
+  individually.
+- **A `Step N` written where the next label would go** (G7 item 4, a value loss). Inside an open
+  step run, `Step 1: click Next. Step 2: check the wizard shows Step 3: Payment` states nothing, so
+  a draft saying `Step 4: Payment` is not refused. Pinned by `C440-STATED-VALUES a step label counts only from the start of the request, a line, a colon or a sentence, and a step number where the next label would go is the known leftover`.
+  Same shape as a mid-sentence next label such as `Step 1 - open the shop Step 2 - add 2 items` in
+  `C440-FALSE-REFUSAL a step-labelled request states no step number`. Owner-accepted 2026-10-12
+  ("Safe side (Recommended)").
+- Round 1's subsection above still describes round 1's rules for list runs after `:`, `.`, `!` or
+  `?`, step labels, the digit-led elision and the bracketed host. This subsection supersedes those
+  descriptions without editing them. Round 1's own degradations, WR-02's and WR-04's cases among
+  them, are unchanged.
+
+**The instruments that notice a return**
+
+- The 434 gate's regression list grew from 1334 to 1350 cells: `C440-FALSE-REFUSAL` 3 (1 from
+  440-10, 2 from 440-11), `C440-STATED-VALUES` 9 (4 and 5) and `C440-VALUE-COMPILE` 4 (2 and 2,
+  through `invokeFunction('authoring.draft.write')`). 113 cells now carry a `440` origin: `440 D-02`
+  18, `440 D-03` 42 and `440 D-05` 14, the other origins unchanged.
+- A return of round 1's digit-led elision reds `… starts with digits glued to a letter is a stated
+  value` and its public-path compile cell; a decade test that widens or narrows reds one side of
+  the decade cell, and the `'90s` side also reds 440-08's in-word apostrophe cell. A one-colon
+  bracketed host reds the bracketed-time cell and `a bracketed time is refused at compile …`; a lost
+  IPv6 exemption reds both bracketed-IPv6 `C440-FALSE-REFUSAL` cells. An unconfirmed mid-line run
+  reds the number-after-a-colon cell and `a lone 1 stated after a colon is refused at compile …`; a
+  run never confirmed reds the round-2 list `C440-FALSE-REFUSAL` cell and round 1's list cells. A
+  step label read anywhere again reds the mid-sentence step cell and its compile cell; a step run
+  never confirmed reds the round-2 step `C440-FALSE-REFUSAL` cell and round 1's step cells. A fix
+  or widening of a pinned leftover reds its known-leftover cell on one side or the other. A scan
+  that is no longer linear reds the two new linear-time cells.
+
+**Gate**
+
+The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
+verdict are recorded in `.planning/phases/440-authoring-intent/440-RECORD.md` § Gap closure round
+2 rather than quoted here, so no agent-qa commit follows it.
