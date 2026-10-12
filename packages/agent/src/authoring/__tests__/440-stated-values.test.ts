@@ -898,3 +898,70 @@ describe('C440-FALSE-REFUSAL', () => {
     expect(extractStatedValues('Test the cart. 1) open the shop 2) add 2 items')).toEqual(['2'])
   })
 })
+
+// 2026-10-12 (440-15, D-02/D-03; WR-12, IN-06, IN-07): month-name dates beside list runs, the at-once reset in both passes and the step twin of a restarted list.
+describe('C440-STATED-VALUES', () => {
+  it('a month-name date is a stated value even where the next list marker would go, and an item that ends in a month name before the next marker is the known boundary', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    const heldStart = '1. check the badge shows: 1. Then check the date is Oct 2. Then check out'
+    expect(extractStatedValues(heldStart)).toEqual(['1', 'Oct 2'])
+    expect(
+      extractStatedValues(
+        '1. check the badge shows: 1. Then check the delivery date says October 2. Then pay',
+      ),
+    ).toEqual(['1', 'October 2'])
+    const openRun = '1. open the calendar\n2. check the date shows Oct 3. Then click Next'
+    expect(extractStatedValues(openRun)).toEqual(['Oct 3'])
+    expect(
+      extractStatedValues(
+        '1. open the calendar\n2. check the date shows Oct 3. Then click Next\n3. close it',
+      ),
+    ).toEqual(['Oct 3'])
+    expect(
+      extractStatedValues('Check the badge shows: 1. then check the date is Oct 2. then pay'),
+    ).toEqual(['1', 'Oct 2'])
+    expect(
+      missingStatedValues(extractStatedValues(heldStart), [
+        'Verify the badge shows 1',
+        'Verify the date is Oct 3',
+        'Check out',
+      ]),
+    ).toEqual(['Oct 2'])
+    expect(
+      missingStatedValues(extractStatedValues(openRun), [
+        'Open the calendar',
+        'Verify the date shows Oct 4',
+        'Click Next',
+      ]),
+    ).toEqual(['Oct 3'])
+    expect(
+      extractStatedValues(
+        'Step 1: open the calendar\nStep 2: check the date shows Oct 3. Then click Next',
+      ),
+    ).toEqual(['Oct 3'])
+    expect(extractStatedValues('1. pick the month March\n2. pay')).toEqual([])
+    expect(extractStatedValues('1. pick the month March 2. pay')).toEqual(['March 2'])
+    expect(extractStatedValues('1. pick the month March 2. pay 3. check out')).toEqual([
+      'March 2',
+      '3',
+    ])
+  })
+
+  it('a long request of month-name days where the next list marker would go is checked in linear time', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    const units = [
+      '1. pick Oct 2. Then ',
+      'x: 1. then the date is Sept. 2. then ',
+      '1. a March\n2. b September 3. c\n',
+    ]
+    for (const unit of units) {
+      const request = unit.repeat(Math.ceil(200_000 / unit.length)).slice(0, 200_000)
+      expect(request).toHaveLength(200_000)
+
+      const started = performance.now()
+      const values = extractStatedValues(request)
+      missingStatedValues([...values, '1'], [request])
+      expect(performance.now() - started).toBeLessThan(2000)
+    }
+  })
+})

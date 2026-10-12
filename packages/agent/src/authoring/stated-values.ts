@@ -24,6 +24,7 @@ const MONTH_NAME_DATE =
   '(?![\\p{L}\\p{N}])'
 const STEP_LABEL =
   '(?<![\\p{L}\\p{N}])(?:Step|step|STEP) ([0-9]+)(?=([:)]|\\.(?=\\s|$)| [-–—]))'
+const MONTH_BEFORE = new RegExp(`(?<![\\p{L}\\p{N}])${MONTH} $`, 'u')
 
 const HOST_AND_PORT = /^[A-Za-z][A-Za-z0-9.-]*:\d+(?:\/\S*)?[.,;!?)\]]*$/
 const IPV4_ADDRESS = /^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?(?:\/\S*)?[.,;!?)\]]*$/
@@ -175,6 +176,7 @@ function blankStepLabels(text: string, chars: string[]): void {
 // two numbers that each end a sentence wait for a 3.
 // 2026-10-12 (440-13, WR-11): the open run and the held candidate are kept apart, so a held 1 inside an item never takes over its list.
 // 2026-10-12 (440-13, WR-10): a held 1) or (1) gets the sentence guard too.
+// 2026-10-12 (440-15, WR-12): a number right after a month name is that date's day, never a list marker.
 function blankListMarkers(text: string, chars: string[]): void {
   const open: Run = { next: 0, delimiter: '', pending: [], sentenceLike: false }
   const held: Run = { next: 0, delimiter: '', pending: [], sentenceLike: false }
@@ -202,6 +204,7 @@ function blankListMarkers(text: string, chars: string[]): void {
     const span = { start: index, end: tokenEnd }
     const start = digits === '1' ? runStartAt(text, index) : undefined
     index = tokenEnd
+    if (!opens && MONTH_BEFORE.test(text.slice(Math.max(0, span.start - 12), span.start))) continue
     if (start === 'at-once') {
       open.next = 2
       open.delimiter = delimiter

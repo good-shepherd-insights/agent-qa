@@ -700,3 +700,45 @@ describe('C440-VALUE-COMPILE', () => {
     })
   })
 })
+
+// 2026-10-12 (440-15, D-05; WR-12): a month-name date beside a list run is refused again through the public op.
+const DATE_IN_LIST_REQUEST =
+  '1. open the products page\n2. check the delivery date shows Oct 3. Then check it says "All Products"'
+const DATE_AFTER_HELD_START_REQUEST =
+  '1. open the products page and check the badge shows: 1. Then check the delivery date shows Oct 2. Then check it says "All Products"'
+
+const CHANGED_DATE_DOCUMENT = `name: Confirm the products page shows the delivery date and the All Products heading
+test-id: t_amber-cotton-ledger-marble-quartz-signal-timber-violet-walnut-yellow
+target: automation-exercise
+steps:
+  - Open the Automation Exercise home page
+  - Click the " products" link
+  - Verify the badge shows 1
+  - Verify the delivery date shows Oct 4
+  - Verify the products page says "All Products"
+`
+
+describe('C440-VALUE-COMPILE', () => {
+  it('a month-name date where the next list marker would go is refused at compile when the draft changes it', async () => {
+    const cases = [
+      [DATE_IN_LIST_REQUEST, ['Oct 3']],
+      [DATE_AFTER_HELD_START_REQUEST, ['Oct 2']],
+    ] as const
+    for (const [request, missingValues] of cases) {
+      const host = publicPathHost({ document: CHANGED_DATE_DOCUMENT, runs: 'pass' })
+      const output = await host.write(request)
+
+      expect({
+        outcome: output['outcome'],
+        statedValueRefusal: output['statedValueRefusal'] ?? null,
+        verifyCalls: host.counts.verify,
+        published: host.published.length,
+      }).toEqual({
+        outcome: 'refused',
+        statedValueRefusal: { stage: 'compile', missingValues },
+        verifyCalls: 0,
+        published: 0,
+      })
+    }
+  })
+})
