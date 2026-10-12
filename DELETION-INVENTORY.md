@@ -3469,3 +3469,171 @@ input on the other side of the rule. Each carries its acceptance wording.
 The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
 verdict are recorded in `.planning/phases/440-authoring-intent/440-RECORD.md` § Gap closure round
 2 rather than quoted here, so no agent-qa commit follows it.
+
+### Gap closure round 3 (440-13 to 440-14), 2026-10-12
+
+This subsection appends to the Phase 440 section and rewrites none of it, rounds 1 and 2's
+subsections included; written by 440-14. It follows
+`.planning/phases/440-authoring-intent/440-REVIEW.md` § Gap closure round 2 re-review (agent-qa
+`2edfe953a..5442d42a1`). That re-review's WR-09 to WR-11 are values that `bd2d9a200` protected
+and `5442d42a1` dropped, so a draft changing them was kept and written. On 2026-10-12 the owner
+chose "Final round 3 (Recommended)" for the phase's final gap round (`440-UAT.md`, the comment
+above the three newest gaps), verbatim:
+"Fix WR-09 (sentence guard for steps), WR-11 (track the open list and the held candidate separately) and the (1)/1) guard from WR-10. Fixes for WR-09 and WR-11 are already prototyped and pass all 59 existing behaviour cells. Record the remaining same-shape cases under Safe side. Stop rule: later findings in this class get recorded, not another round. About 1 hour."
+Every commit below is in agent-qa on `version-0.2` and signed; every cell is listed in
+`scripts/gate/inputs/regressions.json` with its `440 D-NN` origin (gate-listed in `866390365`).
+No listed cell was re-spelled: every earlier 440 cell passes unedited, and both test files' diffs
+from `5442d42a1` add lines only. The only product file that changed is
+`agent/src/authoring/stated-values.ts`; its three exports and their signatures did not.
+
+**What was removed**
+
+- **A held step run without a sentence guard** (WR-09). Round 2's step pass (G7) never set or
+  read the held run's sentence guard, so a held `Step 1` after a colon or a sentence was confirmed
+  by any later `Step 2` with the same delimiter: `check the title shows: Step 1. Then click Next and check it shows Step 2. Then click Pay`
+  went from `["1","2"]` at `bd2d9a200` to `[]` at `5442d42a1`, as did
+  `Check the heading: Step 1: Welcome. Click Next. Check the heading: Step 2: Payment.` and
+  `Check the progress says: Step 1 - Cart. Then click Next and check it says Step 2 - Payment`,
+  and a draft saying `Step 3` was kept and written. Now (G8) each label works out once whether its
+  heading ends a sentence (its delimiter followed by a space or a line break and a capital letter).
+  A held `Step 1` and its `Step 2` that each do wait for `Step 3`, which blanks all three; a held
+  label never confirmed stays a stated value. At-once runs are unchanged. 440-13 `2b692f82b`.
+  Cells:
+  - `C440-STATED-VALUES a held step label and its next label that each end a sentence are stated values until a third label follows, and a capitalized two-label step list is the known boundary`
+  - `C440-FALSE-REFUSAL a held step list states no step number once its third label follows or its labels do not each end a sentence`
+  - `C440-VALUE-COMPILE a step number stated in a held step heading is refused at compile when the draft loses it`
+- **One run per pass, so a held candidate overwrote the open run** (WR-11). Round 2 kept one run
+  in each blanking pass, and a held start overwrote it even inside a list that had started at
+  once. `1. check the badge shows: 1. Then add another item\n2. check the badge shows: 2. Then check out`
+  went from `["1","2"]` at `bd2d9a200` to `["2"]` (the outer `2.` confirmed the held `1`);
+  `1. open the cart\n2. check the badge shows: 1. Then add another item\n3. check the total says $40`
+  stated the outer item number `3` (`["1","3","$40"]`); and
+  `Step 1: open the cart\nStep 2: check the title shows: Step 1. Then click Next\nStep 3: click Pay`
+  stated `["1","3"]`, a false refusal that `2edfe953a` did not have. Now (G9) `blankListMarkers`
+  and `blankStepLabels` each keep an open run and a held candidate: an at-once `1` sets the open
+  run and clears the held one, a held `1` sets only the held one, a token that continues the open
+  run is tested first, and only then does a token that continues the held one go through the
+  sentence guard. The three requests state `["1","2"]`, `["1","$40"]` and `["1"]`. 440-13
+  `af58bbf31`. Cells:
+  - `C440-STATED-VALUES a held 1 inside a numbered item never takes over the item list, so the next item number neither confirms it nor becomes a stated value`
+  - `C440-STATED-VALUES a held step label inside a step-labelled item never takes over the item steps, so the next item label is not a stated value`
+- **The held-run sentence guard limited to `.`** (WR-10). Round 2's G6 guard applied only to a
+  held `1.`, so a capitalized `1) … 2)` or `(1) … (2)` pair was read as a list:
+  `Check the badge shows: 1) Then add one more and check it shows 2) Then check out` went from
+  `["1","2"]` at `bd2d9a200` to `[]`. Now (G10) a held start records the guard for every
+  delimiter, so a held `1)` or `(1)` and its next marker that are each followed by a space and a
+  capital letter wait for the third marker, as a held `1.` does;
+  `Check the badge says: (1) Then add one more and check it says (2) Then check out` states
+  `["1","2"]`. 440-13 `d1ec9072d`. Cells (the linear-time cell covers G8's, G9's and G10's
+  shapes; the leftovers cell pins every value the round still leaves unprotected):
+  - `C440-STATED-VALUES a held 1) or (1) run whose markers are each followed by a capital letter is a stated value until its third marker follows, and a capitalized two-item paren list is the known boundary`
+  - `C440-STATED-VALUES a capital then lowercase pair, three capitalized sentences, a lowercase paren pair and a number read as the next marker or label of a run after a held start are the known leftovers`
+  - `C440-STATED-VALUES a long request of held step headings, nested held starts and held paren runs is checked in linear time`
+  - `C440-FALSE-REFUSAL a held 1) or (1) list states no list number once its third marker follows or its items start lowercase`
+
+**What was RETAINED, and why**
+
+| Item | Why kept | Where recorded |
+|---|---|---|
+| WR-02: backticks, guillemets, `„…“`, corner brackets and a curly opener closed by a straight quote are not read as quotes | accepted by the owner as a limitation (2026-10-12, "Fix false refusals (Recommended)"); not touched by this round | `440-REVIEW.md` WR-02; `440-RECORD.md` § Gap closure round 1 |
+| WR-04: a minus before a currency symbol is dropped; a value starting or ending with punctuation skips that edge's glued-to-a-word check; `_` is not a word character | accepted by the owner, as above; not touched by this round | `440-REVIEW.md` WR-04; `440-RECORD.md` § Gap closure round 1 |
+| IN-01 to IN-05 (IN-05: nested outline numbers such as `1.1` inside a numbered request are still stated values) | outside the round's scope; left `open` | `440-REVIEW.md`; `440-REVIEW-DISPOSITION.md` |
+| the three exports `extractStatedValues`, `missingStatedValues` and `statedValuesMissingReason`, and their signatures | the fixes are inside extraction; matching and every caller are unchanged | `C440-STATED-VALUES the module is pure`; the callers' existing `C440-` cells |
+| the skill bullet in both `agent-qa-authoring` copies, the output schema, its conformance golden and the abandonment kinds | the refusal's shape and the repair cap do not change; `packages/schema`, `packages/cli` and `skills` have no diff from `bd2d9a200` | the `C440-SKILL` and `C440-REFUSAL-FIELD` cells; the golden; `C440-VALUE-REPAIR running out after value refusals keeps the existing abandonment kinds` |
+| `loop.ts`, `refine.ts`, `repair.ts` and the op | the round changes what is extracted, not where it is checked; no diff from `bd2d9a200` | `git -C agent-qa diff --quiet bd2d9a200 HEAD -- …` (440-13's scope check) |
+| rounds 1 and 2's rules this round did not narrow: list and step runs that start at once at the request start or a line start, G7's label position for step labels, the quote rules (the inch mark, `'n'`, the decade elision) and the address rules (IPv4, the parenthesized host, the IPv6 shape test) | not among the re-review's findings; their cells pass unedited | `C440-FALSE-REFUSAL a numbered list written inline states no list number`, `C440-FALSE-REFUSAL a numbered list written one item per line states no list number`, `C440-FALSE-REFUSAL a step-labelled request states no step number`, `C440-STATED-VALUES a step number stated mid-sentence is a stated value`, `C440-FALSE-REFUSAL an in-word apostrophe opens no quoted value`, `C440-STATED-VALUES only a two-digit decade after a single quote opens no quoted value, and a quoted value that starts with one is the known leftover`, `C440-FALSE-REFUSAL an IP address, with or without a port and path, states nothing`, `C440-FALSE-REFUSAL a host and port in parentheses states nothing`, `C440-FALSE-REFUSAL a bracketed IPv6 host in compressed or full form states nothing` |
+
+**What degrades, stated plainly**
+
+The owner's answers of 2026-10-12, "Safe side (Recommended)" (`440-11-PLAN.md` § Owner decision)
+and "Final round 3 (Recommended)" ("Record the remaining same-shape cases under Safe side"), cover
+the first six entries below, none of them named individually. Each cannot be removed without
+either losing a protected value or undoing a false-refusal fix, because its input has the same
+shape as a pinned input on the other side of the rule. The seventh entry is covered by neither
+decision.
+
+- **The capital-then-lowercase pair, list and step forms** (G11, a value loss).
+  `Check the badge shows: 1. Then set the quantity to 2. then check the cart` and
+  `check the title shows: Step 1. Then click Next and check it shows Step 2. then click Pay` state
+  nothing, so a draft saying the badge shows `0` is not refused. Pinned by
+  `C440-STATED-VALUES a capital then lowercase pair, three capitalized sentences, a lowercase paren pair and a number read as the next marker or label of a run after a held start are the known leftovers`.
+  Same shape as round 2's `Test the cart. 1. Add 2 items 2. check the total`, pinned as a list by
+  `C440-FALSE-REFUSAL a list after a colon or a sentence states no list number once its next marker follows, across a quoted value too`.
+  Covered by the owner's 'Safe side' decision of 2026-10-12; not named individually.
+- **Three capitalized sentences, list and step forms** (G11, a value loss).
+  `Check Quantity: 1. Then set it to 2. Then set it to 3. Then check the total` and
+  `check the title shows: Step 1. Then click Next. It shows Step 2. Then click Pay. It shows Step 3. Then pay`
+  state nothing. Pinned by the same leftovers cell. Same shape as round 2's
+  `Checkout test: 1. Open the shop 2. Add 2 items 3. Check the cart` (the same round-2
+  `C440-FALSE-REFUSAL` cell) and this round's `Test the wizard. Step 1. Open it. Step 2. Click Next. Step 3. Pay.`
+  in `C440-FALSE-REFUSAL a held step list states no step number once its third label follows or its labels do not each end a sentence`.
+  Covered by the owner's 'Safe side' decision of 2026-10-12; not named individually.
+- **The lowercase paren pair, `(N)` and `)` forms** (G11, a value loss).
+  `Check the badge says: (1) and after adding check it says (2) items` and
+  `Check the badge shows: 1) then add one more and check it shows 2) then check out` state nothing.
+  Pinned by the same leftovers cell. Same shape as round 1's
+  `Checkout test: (1) open the shop (2) add 2 items`, pinned as a list by
+  `C440-FALSE-REFUSAL a list numbered in parentheses states no list number`, and round 2's
+  `Checkout test: 1) open the shop 2) add 2 items`. `440-UAT.md`'s WR-10 truth names the first
+  input as stating `["1","2"]`; under "the same guard as `1.` runs" it is this lowercase pair, and
+  stating `["1","2"]` would need an edit to round 1's pinned cell, which round 3's scope forbids.
+  The capitalized paren pair is the one the guard protects.
+  Covered by the owner's 'Safe side' decision of 2026-10-12; not named individually.
+- **A capitalized two-label step list after a colon or a sentence** (G8 item 3, a false refusal
+  that WR-09's guard brings in). `Checkout test: Step 1: Open the shop Step 2: Add 2 items` and
+  `Test the wizard. Step 1. Open it. Step 2. Click Next.` state `1` and `2`. Pinned by
+  `C440-STATED-VALUES a held step label and its next label that each end a sentence are stated values until a third label follows, and a capitalized two-label step list is the known boundary`.
+  Same shape as `Check the heading: Step 1: Welcome. Click Next. Check the heading: Step 2: Payment.`,
+  pinned as values by the same cell; the step twin of round 2's owner-accepted two-capitalized-item
+  list after a colon. Covered by the owner's 'Safe side' decision of 2026-10-12; not named
+  individually.
+- **A capitalized two-item `1)` or `(1)` list after a colon or a sentence** (G10 item 2, a false
+  refusal that WR-10's guard brings in). `Checkout test: 1) Open the shop 2) Add 2 items` and
+  `Checkout test: (1) Open the shop (2) Add 2 items` state `1` and `2`. Pinned by
+  `C440-STATED-VALUES a held 1) or (1) run whose markers are each followed by a capital letter is a stated value until its third marker follows, and a capitalized two-item paren list is the known boundary`.
+  Same shape as `Check the badge shows: 1) Then add one more and check it shows 2) Then check out`,
+  pinned as values by the same cell; the paren twin of round 2's owner-accepted
+  two-capitalized-item list. Covered by the owner's 'Safe side' decision of 2026-10-12; not named
+  individually.
+- **A list restarted at 1 inside an open list's first item** (G9, a false refusal that WR-11's
+  split brings in). `1) open the shop. 1) add items 2) pay` states `1`, where `5442d42a1` stated
+  nothing. Pinned by
+  `C440-STATED-VALUES a held 1 inside a numbered item never takes over the item list, so the next item number neither confirms it nor becomes a stated value`.
+  Same shape as that cell's `1. check the badge shows: 1. Then add another item\n2. check the badge shows: 2. Then check out`,
+  whose held `1` is a value. Covered by the owner's 'Safe side' decision of 2026-10-12; not named
+  individually.
+- **A number read as the next marker or label of a run after a held start** (G9 item 3, a value loss), a regression against 5442d42a1 introduced by round 3, not covered by an owner decision: `1. check the badge shows: 1. Then set it to 2. Then check out` states `1` where `5442d42a1` stated `1`, `2`; `1. open the cart\n2. check the badge shows: 1. Then set it to 3. Then check out` `1` (was `1`, `3`); `1. check the badge shows: 1) Then set it to 2. Then check out` `1` (was `1`, `2`); `1. check the badge shows: 1. then add one\n2. check the badge shows: 2. then check out` nothing (was `2`); `Step 1. Check the heading shows: Step 1 - Cart. Then go on to Step 2. Then pay` `1` (was `1`, `2`); `test: Step 1. Step 2 - Step 3.` nothing (was `3`). Pinned by `C440-STATED-VALUES a capital then lowercase pair, three capitalized sentences, a lowercase paren pair and a number read as the next marker or label of a run after a held start are the known leftovers`; read as an item number the dropped token is WR-11's fix, and the held-first order of tests was rejected because it newly refuses a nested step list's label (`Step 1: check the title shows: Step 1. Then click Next\nStep 2: Click Pay` would state `1` and `2`). It is surfaced for the owner in `440-RECORD.md` § Gap closure round 3 § Regression against 5442d42a1, is not a ledger row, and gets no further fix round.
+- Round 2's subsection above still describes G6 and G7 as built in round 2 (one run per pass, a
+  sentence guard for held `1.` runs only, none for held step runs). This subsection supersedes
+  those descriptions without editing them. Rounds 1 and 2's own degradations, WR-02's and WR-04's
+  cases among them, are unchanged.
+
+**Stop rule**
+
+The owner's "Stop rule: later findings in this class get recorded, not another round." closes this
+class (a list marker, step label or held-run shape for which `extractStatedValues` drops a stated
+number or demands a list or label number), as set out in `440-RECORD.md` § Gap closure round 3
+§ Stop rule.
+
+**The instruments that notice a return**
+
+- The 434 gate's regression list grew from 1350 to 1359 cells, all from 440-13:
+  `C440-FALSE-REFUSAL` 2, `C440-STATED-VALUES` 6 and `C440-VALUE-COMPILE` 1 (through
+  `invokeFunction('authoring.draft.write')`). 122 cells now carry a `440` origin: `440 D-02` 20,
+  `440 D-03` 48 and `440 D-05` 15, the other origins unchanged.
+- A step pass without the sentence guard again reds the held step heading value cell and
+  `a step number stated in a held step heading is refused at compile …`; a guard that also holds a
+  third label reds the held step list `C440-FALSE-REFUSAL` cell. A return to one run per pass reds
+  the two nested held-start cells (the outer `2.` confirming the held `1`, the outer `3` or
+  `Step 3` refused); the held-first order of tests reds the nested step cell and the leftovers
+  cell. A `.`-only guard again reds the paren value cell; a paren guard that also holds lowercase
+  or three-marker runs reds the paren `C440-FALSE-REFUSAL` cell and round 1's
+  `C440-FALSE-REFUSAL a list numbered in parentheses states no list number`. A fix or widening of
+  a known leftover, the seventh entry's inputs among them, reds the leftovers cell on one side or the other.
+  A scan that is no longer linear reds the new linear-time cell.
+
+**Gate**
+
+The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
+verdict are recorded in `.planning/phases/440-authoring-intent/440-RECORD.md` § Gap closure round
+3 rather than quoted here, so no agent-qa commit follows it.
