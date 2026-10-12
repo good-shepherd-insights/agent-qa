@@ -3179,3 +3179,119 @@ reconciliation was needed.
 The record gate runs on the commit that adds this section, which is Phase 440's final agent-qa SHA.
 Its legs, counts and verdict are recorded in `.planning/phases/440-authoring-intent/440-RECORD.md`
 § Gate rather than quoted here, so no agent-qa commit follows the gate run.
+
+### Gap closure round 1 (440-07 to 440-09), 2026-10-12
+
+This subsection appends to the Phase 440 section and rewrites none of it; written by 440-09. The
+owner chose "Fix false refusals (Recommended)" on 2026-10-12
+(`.planning/phases/440-authoring-intent/440-UAT.md` tests 1 and 2). The round covers three findings
+of the phase's code review (`440-REVIEW.md`): CR-01, WR-01 and WR-03. The owner accepted WR-02 and
+WR-04 as limitations, and IN-01 to IN-04 are left open. Every commit below is in agent-qa on
+`version-0.2` and signed; every cell is listed in `scripts/gate/inputs/regressions.json` with its
+`440 D-NN` origin (gate-listed in `996719eba`). No listed cell was re-spelled: every earlier 440
+cell passes unedited, and both test files' diffs from `bd2d9a200` add lines only. The only product
+file that changed is `agent/src/authoring/stated-values.ts`; its three exports and their
+signatures did not.
+
+**What was removed**
+
+- **Every unquoted digit run read as a stated number, list markers and step labels included**
+  (CR-01). `extractStatedValues` collapsed line breaks into spaces and then read every unquoted
+  number, so `1. open the shop 2. click the "Add to cart" button 3. check the cart` with a faithful
+  draft was refused at compile with `missingValues ["1","2","3"]`, and `Step 1: … Step 2: …` the
+  same way. Now a line break survives the whitespace collapse until the marker scan has seen it,
+  and outside quotes two rules blank digits before the number scan (G1). A list run of `1.`, `1)`
+  or `(1)` markers starts at `1` at the start of the request, after a line break, or after `:`,
+  `.`, `!` or `?` and one space, and continues only by the exact next number with the same
+  delimiter. A step label is `Step N` followed by `:`, `)`, `.` and whitespace, or a spaced dash. A
+  number, price or quoted value inside an item is still stated. 440-07 `dc040d8df`, `ffb1bf9ec`.
+  Cells:
+  - `C440-FALSE-REFUSAL a numbered list written inline states no list number`
+  - `C440-FALSE-REFUSAL a numbered list written one item per line states no list number`
+  - `C440-FALSE-REFUSAL a list numbered with closing parentheses states no list number`
+  - `C440-FALSE-REFUSAL a list numbered in parentheses states no list number`
+  - `C440-FALSE-REFUSAL a numbered list after a colon or a sentence states no list number`
+  - `C440-FALSE-REFUSAL a step-labelled request states no step number`
+  - `C440-STATED-VALUES a number, price or quoted value inside a list item is still a stated value`
+  - `C440-STATED-VALUES a list marker inside a quoted value is kept as typed`
+  - `C440-STATED-VALUES a list starts only at 1, at the start of the request, a line, a colon or a sentence`
+  - `C440-STATED-VALUES a number written where the next list marker would go is read as that marker, the known leftover`
+  - `C440-STATED-VALUES a step number with no label delimiter is a stated value`
+  - `C440-STATED-VALUES a long run of list markers and step labels is checked in linear time`
+  - `C440-VALUE-COMPILE a numbered request with a faithful draft is kept and written`
+  - `C440-VALUE-COMPILE a request numbered in parentheses with a faithful draft is kept and written`
+  - `C440-VALUE-COMPILE a number stated inside a numbered item is still refused at compile when the draft loses it`
+  - `C440-VALUE-COMPILE a step-labelled request with a faithful draft is kept and written`
+- **A straight double quote opening anywhere, and single quotes opening at `'90s` and pairing on
+  `'n'`** (WR-01). A straight `"` had no boundary rule, so `check the 15" laptop shows "In Stock"`
+  demanded `laptop shows` and left `In Stock` unprotected, and `'90s` or `rock 'n' roll` paired
+  with a later quote. Now (G2) a straight double quote opens only when no Unicode letter or number
+  is right before it, a single quote followed by ASCII digits glued to a letter opens nothing, and
+  a single-quoted `n` is ordinary text. 440-08 `9419ba1e1`. Cells:
+  - `C440-FALSE-REFUSAL an inch mark opens no quoted value`
+  - `C440-FALSE-REFUSAL an in-word apostrophe opens no quoted value`
+  - `C440-STATED-VALUES a quoted value next to an inch mark stays protected`
+  - `C440-STATED-VALUES a straight double quote opens after anything but a letter or number`
+  - `C440-STATED-VALUES a single-quoted value that starts with a number or is one capital letter is still a value`
+- **Only a hostname-led host and port being an address** (WR-03). `isAddress` exempted a chunk
+  containing `://`, starting `www.`, or shaped as a hostname-led host and port, so
+  `192.168.1.10`, `127.0.0.1:3000/products`, `[::1]:3000` and `(localhost:3000)` were demanded.
+  Now (G3) a dotted IPv4 address with an optional port, path and trailing punctuation, a bracketed
+  IPv6 host with an optional port and path, and any address form behind one leading `(` are
+  addresses. 440-08 `6ca03cdd6`. Cells:
+  - `C440-FALSE-REFUSAL an IP address, with or without a port and path, states nothing`
+  - `C440-FALSE-REFUSAL a bracketed IPv6 host and port states nothing`
+  - `C440-FALSE-REFUSAL a host and port in parentheses states nothing`
+  - `C440-STATED-VALUES a number shaped like part of an address is still a stated value`
+  - `C440-STATED-VALUES a long request of inch marks, apostrophes and addresses is checked in linear time`
+
+**What was RETAINED, and why**
+
+| Item | Why kept | Where recorded |
+|---|---|---|
+| WR-02: backticks, guillemets, `„…“`, corner brackets and a curly opener closed by a straight quote are not read as quotes | accepted by the owner as a limitation (2026-10-12, "Fix false refusals (Recommended)") | `440-REVIEW.md` WR-02; `440-RECORD.md` § Gap closure round 1 |
+| WR-04: a minus before a currency symbol is dropped; a value starting or ending with punctuation skips that edge's glued-to-a-word check; `_` is not a word character | accepted by the owner, as above | `440-REVIEW.md` WR-04; `440-RECORD.md` § Gap closure round 1 |
+| IN-01 to IN-04 | outside the round's scope; left `open` | `440-REVIEW.md`; `440-REVIEW-DISPOSITION.md` |
+| the three exports `extractStatedValues`, `missingStatedValues` and `statedValuesMissingReason`, and their signatures | the fixes are inside extraction; matching and every caller are unchanged | `C440-STATED-VALUES the module is pure`; the callers' existing `C440-` cells |
+| the skill bullet in both `agent-qa-authoring` copies | UAT test 3 passed against it on 2026-10-12 | the `C440-SKILL` cells; `440-UAT.md` test 3 |
+| the output schema, its conformance golden and the abandonment kinds | the refusal's shape and the repair cap do not change; `packages/schema`, `packages/cli` and `skills` have no diff from `bd2d9a200` | the `C440-REFUSAL-FIELD` cells; the golden; `C440-VALUE-REPAIR running out after value refusals keeps the existing abandonment kinds` |
+| `loop.ts`, `refine.ts`, `repair.ts` and the op | the round changes what is extracted, not where it is checked | no diff from `bd2d9a200` |
+
+**What degrades, stated plainly**
+
+- **A number written where the next list marker would go is read as that marker** (G1 item 5).
+  Inside an open run, `1. set the quantity to 2. Then check the cart` and `(1) set the quantity to
+  (2) then check the cart` state nothing, so a draft without `2` is not refused. It stops there: a
+  `2,`, a `2)` in a `.` run and a final `2.` still state `2`. Pinned by:
+  - `C440-STATED-VALUES a number written where the next list marker would go is read as that marker, the known leftover`
+- **A list that starts at a number other than 1 is still read as numbers**: `3. open the shop 4.
+  click the cart` states 3 and 4. Lists numbered `1.`, `1)` and `(1)` are covered.
+- **A double quote glued to a word on both sides states nothing** (G2 item 4): `size"M"`.
+- **A leading elision other than `'n'` can still pair with a later quote** (G2 item 4): `'til the
+  'Sale'` pairs as it did before.
+- **A four-part dotted number reads as an IPv4 address and states nothing** (G3 item 4): `1.2.3.4`.
+- **A parenthesized letter-led host and port states nothing**: `(Total:3)`, as `Total:3` already
+  did at `bd2d9a200` (observed by 440-08).
+- **WR-02's and WR-04's cases.** A value quoted only in backticks, guillemets, `„…“`, corner
+  brackets or a curly-open straight-close pair is not extracted and so not protected. `-$5` is read
+  as `$5`; a value that starts or ends with punctuation is carried inside a longer word on that edge
+  (`-5` by `10-5`, `$5` by `US$5`); and `Sale` is carried by `Sale_2`.
+
+**The instruments that notice a return**
+
+- The 434 gate's regression list grew from 1308 to 1334 cells: `C440-FALSE-REFUSAL` 11 (6 from
+  440-07, 5 from 440-08), `C440-STATED-VALUES` 11 (6 and 5) and `C440-VALUE-COMPILE` 4 (440-07,
+  through `invokeFunction('authoring.draft.write')`). 97 cells now carry a `440` origin: `440 D-02`
+  15, `440 D-03` 33 and `440 D-05` 10, the other origins unchanged.
+- List markers or step labels demanded again red the `C440-FALSE-REFUSAL` list and step cells and
+  the three public-path `kept and written` cells. An in-item number no longer demanded, an inch
+  mark opening a quote again, or a non-address number exempted red the controls named above
+  (`… is still refused at compile when the draft loses it`, `… stays protected`, `… is still a
+  stated value`). An address demanded again reds the three address cells. A scan that is no longer
+  linear reds the two linear-time cells.
+
+**Gate**
+
+The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
+verdict are recorded in `.planning/phases/440-authoring-intent/440-RECORD.md` § Gap closure round
+1 rather than quoted here, so no agent-qa commit follows it.
