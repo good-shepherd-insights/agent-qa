@@ -8004,6 +8004,102 @@
       "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
       "fullName": "C440-VALUE-COMPILE a step-labelled request with a faithful draft is kept and written",
       "origin": "440 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a single-quoted value that starts with digits glued to a letter is a stated value",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES only a two-digit decade after a single quote opens no quoted value, and a quoted value that starts with one is the known leftover",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a bracketed time or ratio is a stated value",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a long request of decade elisions, digit-led quotes and bracketed colons is checked in linear time",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-FALSE-REFUSAL a bracketed IPv6 host in compressed or full form states nothing",
+      "origin": "440 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a number stated after a colon or a sentence end is a stated value when no list follows it",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a list after a colon or a sentence starts only when its 2 follows, and a lowercase sentence stating 1 and then 2 is the known leftover",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a step number stated mid-sentence is a stated value",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a step label counts only from the start of the request, a line, a colon or a sentence, and a step number where the next label would go is the known leftover",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a long request of held list starts and step labels is checked in linear time",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-FALSE-REFUSAL a list after a colon or a sentence states no list number once its next marker follows, across a quoted value too",
+      "origin": "440 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-FALSE-REFUSAL a step-labelled list after a colon, a sentence or a line break states no step number",
+      "origin": "440 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
+      "fullName": "C440-VALUE-COMPILE a single-quoted value that starts with digits glued to a letter is refused at compile when the draft loses it",
+      "origin": "440 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
+      "fullName": "C440-VALUE-COMPILE a bracketed time is refused at compile when the draft loses it",
+      "origin": "440 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
+      "fullName": "C440-VALUE-COMPILE a lone 1 stated after a colon is refused at compile when the draft loses it",
+      "origin": "440 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
+      "fullName": "C440-VALUE-COMPILE a step number stated mid-sentence is refused at compile when the draft loses it",
+      "origin": "440 D-05"
     }
   ]
 }
