@@ -8100,6 +8100,60 @@
       "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
       "fullName": "C440-VALUE-COMPILE a step number stated mid-sentence is refused at compile when the draft loses it",
       "origin": "440 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a held step label and its next label that each end a sentence are stated values until a third label follows, and a capitalized two-label step list is the known boundary",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a held 1 inside a numbered item never takes over the item list, so the next item number neither confirms it nor becomes a stated value",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a held step label inside a step-labelled item never takes over the item steps, so the next item label is not a stated value",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a held 1) or (1) run whose markers are each followed by a capital letter is a stated value until its third marker follows, and a capitalized two-item paren list is the known boundary",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a capital then lowercase pair, three capitalized sentences, a lowercase paren pair and a number read as the next marker or label of a run after a held start are the known leftovers",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a long request of held step headings, nested held starts and held paren runs is checked in linear time",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-FALSE-REFUSAL a held step list states no step number once its third label follows or its labels do not each end a sentence",
+      "origin": "440 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-FALSE-REFUSAL a held 1) or (1) list states no list number once its third marker follows or its items start lowercase",
+      "origin": "440 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
+      "fullName": "C440-VALUE-COMPILE a step number stated in a held step heading is refused at compile when the draft loses it",
+      "origin": "440 D-05"
     }
   ]
 }
