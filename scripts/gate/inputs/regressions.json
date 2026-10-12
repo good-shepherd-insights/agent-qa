@@ -8184,6 +8184,18 @@
       "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
       "fullName": "C440-VALUE-COMPILE a month-name date where the next list marker would go is refused at compile when the draft changes it",
       "origin": "440 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a month-name day where a held run would start or take its next number clears the held run, so a later 2 never confirms a stale held 1, and a list after a colon whose first item states that day is the known boundary",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
+      "fullName": "C440-VALUE-COMPILE a stated badge number beside a month-name date is refused at compile when the draft changes it",
+      "origin": "440 D-05"
     }
   ]
 }
