@@ -122,8 +122,10 @@ function endsSentence(text: string, tokenEnd: number): boolean {
 // 2026-10-12 (440-11, WR-05): a step label counts like a list marker, from a run start and by the
 // next number.
 // 2026-10-12 (440-13, WR-09): a held step label and its next label that each end a sentence wait for a third, as list markers do.
+// 2026-10-12 (440-13, WR-11): the open run and the held candidate are kept apart, so a held 1 inside an item never takes over its list.
 function blankStepLabels(text: string, chars: string[]): void {
-  const run: Run = { next: 0, delimiter: '', pending: [], sentenceLike: false }
+  const open: Run = { next: 0, delimiter: '', pending: [], sentenceLike: false }
+  const held: Run = { next: 0, delimiter: '', pending: [], sentenceLike: false }
   for (const match of text.matchAll(new RegExp(STEP_LABEL, 'gu'))) {
     const digits = match[1] ?? ''
     const mark = match[2] ?? ''
@@ -132,27 +134,37 @@ function blankStepLabels(text: string, chars: string[]): void {
     const span = { start: end - digits.length, end }
     const start = runStartAt(text, match.index)
     const headingEnds = endsSentence(text, end + mark.length)
-    if (digits === '1' && start !== undefined) {
-      run.next = 2
-      run.delimiter = delimiter
-      run.pending = start === 'pending' ? [span] : []
-      run.sentenceLike = start === 'pending' && headingEnds
-      if (start === 'at-once') blank(chars, span)
-    } else if (
+    const continues = (run: Run) =>
       run.next >= 2 &&
       digits === String(run.next) &&
       (delimiter === run.delimiter || start !== undefined)
-    ) {
-      if (run.pending.length === 1 && run.sentenceLike && headingEnds) {
-        run.pending.push(span)
-        run.next += 1
+    if (digits === '1' && start === 'at-once') {
+      open.next = 2
+      open.delimiter = delimiter
+      blank(chars, span)
+      held.next = 0
+      held.pending = []
+    } else if (digits === '1' && start === 'pending') {
+      held.next = 2
+      held.delimiter = delimiter
+      held.pending = [span]
+      held.sentenceLike = headingEnds
+    } else if (continues(open)) {
+      blank(chars, span)
+      open.next += 1
+      open.delimiter = delimiter
+    } else if (continues(held)) {
+      held.next += 1
+      if (held.pending.length === 1 && held.sentenceLike && headingEnds) {
+        held.pending.push(span)
         continue
       }
-      for (const held of run.pending) blank(chars, held)
-      run.pending = []
+      for (const waiting of held.pending) blank(chars, waiting)
       blank(chars, span)
-      run.next += 1
-      run.delimiter = delimiter
+      open.next = held.next
+      open.delimiter = delimiter
+      held.next = 0
+      held.pending = []
     }
   }
 }
@@ -161,8 +173,10 @@ function blankStepLabels(text: string, chars: string[]): void {
 // next number with the same delimiter continues it.
 // 2026-10-12 (440-11, WR-08): a run starting after a colon or a sentence end waits for its 2, and
 // two numbers that each end a sentence wait for a 3.
+// 2026-10-12 (440-13, WR-11): the open run and the held candidate are kept apart, so a held 1 inside an item never takes over its list.
 function blankListMarkers(text: string, chars: string[]): void {
-  const run: Run = { next: 0, delimiter: '', pending: [], sentenceLike: false }
+  const open: Run = { next: 0, delimiter: '', pending: [], sentenceLike: false }
+  const held: Run = { next: 0, delimiter: '', pending: [], sentenceLike: false }
   let index = 0
   while (index < text.length) {
     const tokenStarts = index === 0 || isSpace(text[index - 1])
@@ -187,21 +201,34 @@ function blankListMarkers(text: string, chars: string[]): void {
     const span = { start: index, end: tokenEnd }
     const start = digits === '1' ? runStartAt(text, index) : undefined
     index = tokenEnd
-    if (start !== undefined) {
-      run.next = 2
-      run.delimiter = delimiter
-      run.pending = start === 'pending' ? [span] : []
-      run.sentenceLike = start === 'pending' && delimiter === '.' && endsSentence(text, tokenEnd)
-      if (start === 'at-once') blank(chars, span)
-    } else if (delimiter === run.delimiter && digits === String(run.next)) {
-      run.next += 1
-      if (run.pending.length === 1 && run.sentenceLike && endsSentence(text, tokenEnd)) {
-        run.pending.push(span)
+    if (start === 'at-once') {
+      open.next = 2
+      open.delimiter = delimiter
+      blank(chars, span)
+      held.next = 0
+      held.delimiter = ''
+      held.pending = []
+    } else if (start === 'pending') {
+      held.next = 2
+      held.delimiter = delimiter
+      held.pending = [span]
+      held.sentenceLike = delimiter === '.' && endsSentence(text, tokenEnd)
+    } else if (delimiter === open.delimiter && digits === String(open.next)) {
+      blank(chars, span)
+      open.next += 1
+    } else if (delimiter === held.delimiter && digits === String(held.next)) {
+      held.next += 1
+      if (held.pending.length === 1 && held.sentenceLike && endsSentence(text, tokenEnd)) {
+        held.pending.push(span)
         continue
       }
-      for (const held of run.pending) blank(chars, held)
-      run.pending = []
+      for (const waiting of held.pending) blank(chars, waiting)
       blank(chars, span)
+      open.next = held.next
+      open.delimiter = delimiter
+      held.next = 0
+      held.delimiter = ''
+      held.pending = []
     }
   }
 }

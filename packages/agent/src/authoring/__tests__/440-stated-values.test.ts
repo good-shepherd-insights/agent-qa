@@ -729,6 +729,45 @@ describe('C440-STATED-VALUES', () => {
       '2',
     ])
   })
+
+  it('a held 1 inside a numbered item never takes over the item list, so the next item number neither confirms it nor becomes a stated value', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    const request =
+      '1. check the badge shows: 1. Then add another item\n2. check the badge shows: 2. Then check out'
+    expect(extractStatedValues(request)).toEqual(['1', '2'])
+    expect(
+      extractStatedValues(
+        '1. open the cart\n2. check the badge shows: 1. Then add another item\n3. check the total says $40',
+      ),
+    ).toEqual(['1', '$40'])
+    expect(extractStatedValues('1) open the shop. 1) add items 2) pay')).toEqual(['1'])
+    expect(
+      extractStatedValues('1. check the badge shows: 1. Then add another item\n2. Check out'),
+    ).toEqual(['1'])
+    expect(
+      missingStatedValues(extractStatedValues(request), ['Verify the badge shows 0', 'Check out']),
+    ).toEqual(['1', '2'])
+  })
+
+  it('a held step label inside a step-labelled item never takes over the item steps, so the next item label is not a stated value', async () => {
+    const { extractStatedValues } = await load()
+    expect(
+      extractStatedValues(
+        'Step 1: open the cart\nStep 2: check the title shows: Step 1. Then click Next\nStep 3: click Pay',
+      ),
+    ).toEqual(['1'])
+    expect(
+      extractStatedValues(
+        'Step 1: open the cart\nStep 2: check the title shows: Step 1. Then click Next and it shows Step 2. Then\nStep 3: click Pay',
+      ),
+    ).toEqual(['1', '2'])
+    expect(
+      extractStatedValues('Step 1: check the title shows: Step 1. Then click Next\nStep 2: Click Pay'),
+    ).toEqual(['1'])
+    expect(
+      extractStatedValues('Step 1. Check the title shows: Step 1. Then click Next. Step 2. Click Pay.'),
+    ).toEqual(['1'])
+  })
 })
 
 describe('C440-FALSE-REFUSAL', () => {
