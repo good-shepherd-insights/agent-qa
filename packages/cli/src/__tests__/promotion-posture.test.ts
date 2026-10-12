@@ -84,13 +84,12 @@ afterEach(() => {
 })
 
 describe('buildPromotionPostureResolver', () => {
-  it.each([false, true])('421 preserves panel facts with a missing floor or ready posture (floor: %s)', async hasFloor => {
+  it.each([false, true])('421 preserves panel facts with a foreign-profile floor or ready posture (floor: %s)', async hasFloor => {
     const panelConfig = config.replace('use:\n', `    - name: judge-a\n      provider: openai-compatible\n      baseURL: http://127.0.0.1:1/v1\n      model: claude-fixture\n    - name: judge-b\n      provider: openai-compatible\n      baseURL: http://127.0.0.1:1/v1\n      model: gpt-judge\nuse:\n`)
       + '\neval:\n  judges: [judge-b, judge-a]\n  judgeAllowSameFamily: true\n'
-    const f = fixture({ config: panelConfig })
+    const f = fixture({ config: panelConfig, floor: true })
     const identity = await resolveGateProfileIdentity(await resolveEvalSession({ configPath: f.configPath, keyOnly: true }))
     if (hasFloor) {
-      mkdirSync(join(f.committedRoot, 'reports/noise-floor'), { recursive: true })
       writeFileSync(join(f.committedRoot, 'reports/noise-floor', floorName), JSON.stringify({ ...floor, profileKey: identity.profileKey }))
     }
     const result = await build(f.configPath)
@@ -281,12 +280,13 @@ describe('buildPromotionPostureResolver', () => {
   })
 
   it('417 binds the production port with a floor and still holds a present broken root', async () => {
-    for (const hasFloor of [true, false]) {
-      const f = fixture({ floor: hasFloor })
+    for (const intact of [true, false]) {
+      const f = fixture({ floor: true })
+      if (!intact) writeFileSync(join(f.committedRoot, 'reports/noise-floor', floorName), '{ invalid')
       const result = await build(f.configPath, createReplayGatePortForHost({ configPath: f.configPath, agentQaRoot: join(f.dir, '.agent-qa') }))
-      expect(result?.kind).toBe(hasFloor ? 'ready' : 'unavailable')
-      if (hasFloor) expect(result.host.replayGateAvailable).toBe(true)
-      expect(result.resolve(candidate)).toMatchObject({ kind: hasFloor ? 'resolved' : 'unavailable', replayGateAvailable: true })
+      expect(result?.kind).toBe(intact ? 'ready' : 'unavailable')
+      if (intact) expect(result.host.replayGateAvailable).toBe(true)
+      expect(result.resolve(candidate)).toMatchObject({ kind: intact ? 'resolved' : 'unavailable', replayGateAvailable: true })
     }
   })
 
@@ -302,8 +302,26 @@ describe('buildPromotionPostureResolver', () => {
     expect(await build(f.configPath)).toEqual({ kind: 'no-eval-root', committedRoot: f.committedRoot })
   })
 
-  it('D-12 present root without a measured floor is unavailable with the exact profile refusal', async () => {
-    const f = fixture()
+  it('D-12 present root without any noise-floor artefact takes the floor without reading invalid config', async () => {
+    const f = fixture({ config: 'broken: [yaml' })
+    expect(await build(f.configPath)).toEqual({ kind: 'no-noise-floor', committedRoot: f.committedRoot })
+    mkdirSync(join(f.committedRoot, 'reports/noise-floor'), { recursive: true })
+    writeFileSync(join(f.committedRoot, 'reports/noise-floor/README.md'), 'not measured yet\n')
+    const result = await build(f.configPath)
+    expect(result).toEqual({ kind: 'no-noise-floor', committedRoot: f.committedRoot })
+    const warn = vi.fn()
+    expect(subject!.promotionPostureResolverForHost(result, warn)?.(candidate)).toBeUndefined()
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it.each(['foreign-profile', 'legacy-path'] as const)('D-12 present root with only a %s floor is unavailable with the exact profile refusal', async shape => {
+    const f = fixture({ floor: shape === 'foreign-profile' })
+    if (shape === 'foreign-profile') {
+      writeFileSync(join(f.committedRoot, 'reports/noise-floor', floorName), JSON.stringify({ ...floor, profileKey: 'foreign-profile' }))
+    } else {
+      mkdirSync(join(f.committedRoot, 'reports'))
+      writeFileSync(join(f.committedRoot, 'reports/noise-floor.json'), JSON.stringify(floor))
+    }
     const result = await build(f.configPath)
     expect(result?.kind).toBe('unavailable')
     expect(result.refusals).toEqual([`noise-floor: no artefact for profile ${floor.profileKey}`])
@@ -334,7 +352,7 @@ describe('buildPromotionPostureResolver', () => {
   })
 
   it('D-12 unresolvable identity is unavailable rather than the floor', async () => {
-    const f = fixture({ config: `${workspace}\nuse:\n  mobile:\n    appState: preserve\neval: {}\n` })
+    const f = fixture({ floor: true, config: `${workspace}\nuse:\n  mobile:\n    appState: preserve\neval: {}\n` })
     const result = await build(f.configPath)
     expect(result?.kind).toBe('unavailable')
     expect(result.refusals.join('\n')).toContain('use.llm is not set')
@@ -439,16 +457,20 @@ describe('buildPromotionPostureResolver', () => {
     expect(result.resolve(candidate)).toMatchObject({ kind: 'unavailable' })
   })
 
-  it('refuses a newly present root until an absent-root host prepares fresh posture', async () => {
-    const f = fixture({ root: false })
+  it.each([false, true])('keeps a floorless drain on the floor until a noise floor appears and needs fresh posture (root: %s)', async rootPresent => {
+    const f = fixture({ root: rootPresent })
     const result = await build(f.configPath)
+    expect(result).toEqual({ kind: rootPresent ? 'no-noise-floor' : 'no-eval-root', committedRoot: f.committedRoot })
     const warn = vi.fn()
     const resolvePosture = subject!.promotionPostureResolverForHost(result, warn)
     expect(resolvePosture?.(candidate)).toBeUndefined()
-    mkdirSync(f.committedRoot)
+    mkdirSync(join(f.committedRoot, 'reports/noise-floor'), { recursive: true })
+    expect(resolvePosture?.(candidate)).toBeUndefined()
+    writeFileSync(join(f.committedRoot, 'reports/noise-floor', floorName), JSON.stringify(floor))
     const posture = resolvePosture?.(candidate)
-    expect(posture).toMatchObject({ kind: 'unavailable', replayGateAvailable: false })
-    expect(warn).toHaveBeenCalledWith(`curation: ${candidate.id} posture unavailable: ${posture.refusals.join('; ')}`)
+    expect(posture).toEqual({ kind: 'unavailable', replayGateAvailable: false,
+      refusals: [`${f.committedRoot}: noise floor appeared after posture preparation; retry with fresh posture`] })
+    expect(warn).toHaveBeenCalledExactlyOnceWith(`curation: ${candidate.id} posture unavailable: ${posture.refusals.join('; ')}`)
     rmSync(f.committedRoot, { recursive: true })
     expect(resolvePosture?.(candidate)).toBeUndefined()
   })

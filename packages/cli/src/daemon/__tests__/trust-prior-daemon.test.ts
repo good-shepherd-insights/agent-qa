@@ -106,8 +106,7 @@ it('keeps one daemon prior snapshot across two drains, review composition and ma
     expect(first.runMaintenanceTail.mock.calls[0]![0].priors).toBe(first.input.resolveTrustPriors?.())
     expect(first.authorFactory).toHaveBeenCalledTimes(1)
     expect(readLabelCalibration).toHaveBeenCalledTimes(1)
-    expect(first.errors).toHaveLength(2)
-    for (const error of first.errors) expect(error).toMatch(/^curation: posture unavailable: noise-floor:/)
+    expect(first.errors).toEqual([])
   } finally { await first.stop() }
   const second = await start(f)
   try { expect(second.input.resolveTrustPriors?.()).toEqual(artifact(f.project, 0.25).priors); expect(readLabelCalibration).toHaveBeenCalledTimes(2) }

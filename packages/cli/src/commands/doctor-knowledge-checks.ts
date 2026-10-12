@@ -499,6 +499,9 @@ function createLearningAvailabilityCheck(context: KnowledgeCheckContext): Doctor
       if (learning.kind === 'no-eval-root') {
         return { status: 'warn', message: `deterministic-verdict-floor — no eval root at ${displayPath(learning.committedRoot)}` }
       }
+      if (learning.kind === 'no-noise-floor') {
+        return { status: 'warn', message: `deterministic-verdict-floor — eval root at ${displayPath(learning.committedRoot)} has no noise floor yet` }
+      }
       if (learning.kind === 'unavailable') {
         const panel = learning.judge?.panelSize === undefined ? '' : `; judge ${judgeLabelOf(learning.judge)}`
         return { status: 'fail', message: `posture-unavailable — ${learningRefusalLabel(learning.refusals[0])}${panel}` }

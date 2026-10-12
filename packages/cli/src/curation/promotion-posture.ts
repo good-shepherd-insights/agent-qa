@@ -1,5 +1,5 @@
-import { existsSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { existsSync, readdirSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import type { ReplayGatePort } from '@vostride/agent-qa-agent'
 import type { LocalCurationCapabilities } from '@vostride/agent-qa-agent-local'
 import type { JudgeCapabilityInput } from '../eval-session-composition.js'
@@ -35,8 +35,20 @@ type ResolveAtBuildOrdinal = (
 
 export type PromotionPostureResolution =
   | { kind: 'no-eval-root'; committedRoot: string }
+  | { kind: 'no-noise-floor'; committedRoot: string }
   | { kind: 'unavailable'; committedRoot: string; refusals: readonly string[]; judge?: PromotionJudgePosture; resolve: ResolvePromotionPosture }
   | { kind: 'ready'; committedRoot: string; host: PromotionPostureHostFacts; resolve: ResolveAtBuildOrdinal }
+
+// Mirrors the layout listNoiseFloorArtefacts reads. Any JSON there, even one it refuses, keeps
+// the root on the measured path, so a broken or foreign-profile floor still holds.
+function hasNoiseFloorArtefacts(committedRoot: string): boolean {
+  if (existsSync(join(committedRoot, 'reports', 'noise-floor.json'))) return true
+  try {
+    return readdirSync(join(committedRoot, 'reports', 'noise-floor')).some(name => name.endsWith('.json'))
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ENOENT'
+  }
+}
 
 /** Prepare before each operation or drain; candidate reads stay synchronous under authority. */
 export async function buildPromotionPostureResolver(input: {
@@ -53,6 +65,9 @@ export async function buildPromotionPostureResolver(input: {
   const committedRoot = resolve(dirname(resolve(configPath)), 'agent-qa-eval')
   const agentQaRoot = input.agentQaRoot ?? resolve(dirname(resolve(configPath)), '.agent-qa')
   if (!existsSync(committedRoot)) return { kind: 'no-eval-root', committedRoot }
+  // Amends 416 D-12: a mark seeds this root before any floor is measured. With no floor
+  // artefact no gate is configured, so it takes the absent-root floor without reading config.
+  if (!hasNoiseFloorArtefacts(committedRoot)) return { kind: 'no-noise-floor', committedRoot }
   const replayGateAvailable = replayGate !== undefined
   let panelJudge: PromotionJudgePosture | undefined
   const unavailable = (refusals: readonly string[]): UnavailablePromotionGatePosture => ({
@@ -223,12 +238,12 @@ export function promotionPostureResolverForHost(
     warn?.(`curation: posture unavailable: ${resolution.refusals.join('; ')}`)
   }
   return candidate => {
-    // Identity preparation is async, so a root that appears mid-drain must wait
-    // for the next preparation boundary instead of borrowing the absent-root floor.
-    const posture = resolution.kind === 'no-eval-root'
-      ? existsSync(resolution.committedRoot)
+    // Identity preparation is async, so a noise floor that appears mid-drain must wait
+    // for the next preparation boundary instead of borrowing the floorless posture.
+    const posture = resolution.kind === 'no-eval-root' || resolution.kind === 'no-noise-floor'
+      ? hasNoiseFloorArtefacts(resolution.committedRoot)
         ? { kind: 'unavailable' as const, replayGateAvailable: false,
-          refusals: [`${resolution.committedRoot}: eval root appeared after posture preparation; retry with fresh posture`] }
+          refusals: [`${resolution.committedRoot}: noise floor appeared after posture preparation; retry with fresh posture`] }
         : undefined
       : resolution.kind === 'ready' ? resolution.resolve(candidate,
         product === undefined || product === candidate.product ? currentBuildOrdinal : undefined,

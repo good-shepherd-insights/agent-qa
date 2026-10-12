@@ -468,7 +468,9 @@ describe('daemon curation serving tracer', () => {
       const prepare = composed!.resolvePromotionPosture!
       expect((await prepare())?.(candidate)).toBeUndefined()
       const committedRoot = join(paths.root, 'agent-qa-eval')
-      mkdirSync(committedRoot)
+      mkdirSync(join(committedRoot, 'reports/noise-floor'), { recursive: true })
+      expect((await prepare())?.(candidate)).toBeUndefined()
+      writeFileSync(join(committedRoot, 'reports/noise-floor/any-profile.json'), '{}')
       expect((await prepare())?.(candidate)).toMatchObject({ kind: 'unavailable' })
       rmSync(committedRoot, { recursive: true })
       expect((await prepare())?.(candidate)).toBeUndefined()

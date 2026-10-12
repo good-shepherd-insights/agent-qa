@@ -146,6 +146,14 @@ async function exercisePort(port: ReplayGatePort) {
   expect(globalThis.fetch).not.toHaveBeenCalled()
 }
 
+// A floor measured for another profile holds the root as unavailable; an empty root is floorless.
+function writeForeignFloor() {
+  mkdirSync(join(root, 'agent-qa-eval/reports/noise-floor'), { recursive: true })
+  writeFileSync(join(root, 'agent-qa-eval/reports/noise-floor/foreign.json'), JSON.stringify({
+    ...writeGate1Fixture(join(root, 'floor-fixture')).artefact, profileKey: 'foreign-profile',
+  }))
+}
+
 function capturePosture() {
   const ports: ReplayGatePort[] = []
   const shared = vi.spyOn(bridge, 'createReplayGatePortForHost')
@@ -315,6 +323,8 @@ describe('421 production panel host paths', () => {
       writeFileSync(join(root, 'agent-qa-eval/reports/noise-floor/fixture.json'), JSON.stringify({
         ...fixture.artefact, profileKey: identity.profileKey,
       }))
+    } else {
+      writeForeignFloor()
     }
     const proof = capturePosture()
     const checks = createKnowledgeChecks({ configPath, config: { knowledge: { dir: 'agent-qa-knowledge' } },
@@ -336,6 +346,7 @@ describe('421 production panel host paths', () => {
     { ids: ['deepseek-r1-distill-llama', 'llama-fixture'], families: 'deepseek,llama, llama' },
   ])('doctor keeps unknown and lineage member disclosures complete: %j', async ({ ids, families }) => {
     writeConfig(ids)
+    writeForeignFloor()
     const checks = createKnowledgeChecks({ configPath, config: { knowledge: { dir: 'agent-qa-knowledge' } },
       probes: { classifyIndexFace: () => ({ source: 'scan', reason: 'absent', detail: 'fixture', filePresent: false }),
         resolveEmbedderCapability: async () => ({ kind: 'deferred', reason: 'load-failure' }),

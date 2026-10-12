@@ -720,11 +720,23 @@ describe('knowledge maintenance commands', () => {
 
   it('passes present-root refusal posture into the drain and discloses its identity error', async () => {
     const workspace = fixtureWorkspace(roots)
-    mkdirSync(join(dirname(workspace.configPath), 'agent-qa-eval'))
+    const floorDir = join(dirname(workspace.configPath), 'agent-qa-eval/reports/noise-floor')
+    mkdirSync(floorDir, { recursive: true })
+    writeFileSync(join(floorDir, 'any-profile.json'), '{}')
     const result = await invoke(workspace, ['drain'])
     expect(result.stderr).toContain('curation: posture unavailable:')
     expect(result.stderr).toContain('use.llm is not set')
     expect(commandHarness.drainInputs[0].resolvePromotionPosture).toBeTypeOf('function')
+  })
+
+  it('drains a present root with no noise floor on the floor without a posture warning', async () => {
+    const workspace = fixtureWorkspace(roots)
+    mkdirSync(join(dirname(workspace.configPath), 'agent-qa-eval'))
+    const result = await invoke(workspace, ['drain'])
+    expect(result.stderr).not.toContain('posture unavailable')
+    const resolvePosture = commandHarness.drainInputs[0].resolvePromotionPosture as ResolvePromotionPosture
+    expect(resolvePosture({ id: 'floorless-candidate', product: PRODUCT, scope: { tier: 'product', key: PRODUCT },
+      provenance: { runIds: [], receiptDigests: [], capturedAtOrdinals: [] } })).toBeUndefined()
   })
 
   it('cleans a stale daemon registration and falls back to the same inline drain', async () => {

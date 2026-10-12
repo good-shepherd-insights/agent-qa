@@ -370,6 +370,15 @@ describe('createKnowledgeChecks', () => {
     expect(learning).toEqual({ status: 'warn', message: `deterministic-verdict-floor — no eval root at ${relative(process.cwd(), committedRoot)}` + PRIOR_SUFFIX + CIRCULARITY_SUFFIX })
   })
 
+  it('warns Learning mode when a present eval root has no noise floor yet, keeping the root-present disclosure', async () => {
+    const project = makeProject()
+    const committedRoot = join(project.projectRoot, 'agent-qa-eval')
+    const { learning } = await runChecks(project, baseProbes({
+      buildPromotionPosture: async () => ({ kind: 'no-noise-floor', committedRoot }),
+    }))
+    expect(learning).toEqual({ status: 'warn', message: `deterministic-verdict-floor — eval root at ${relative(process.cwd(), committedRoot)} has no noise floor yet` + PRIOR_SUFFIX + ADVERSARIAL_SUFFIX })
+  })
+
   it('discloses bound circularity backing without probing an absent eval root', async () => {
     const project = makeProject()
     const evalComposition = await import('../eval-session-composition.js')
