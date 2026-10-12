@@ -8154,6 +8154,36 @@
       "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
       "fullName": "C440-VALUE-COMPILE a step number stated in a held step heading is refused at compile when the draft loses it",
       "origin": "440 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a month-name date is a stated value even where the next list marker would go, and an item that ends in a month name before the next marker is the known boundary",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a long request of month-name days where the next list marker would go is checked in linear time",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES an at-once 1 clears the held candidate in the list pass and in the step pass, so a stale held 1 is never confirmed by a later stated 2",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a step list restarted at Step 1 inside the first item of an open step list states its 1, the step twin of a list restarted at 1",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
+      "fullName": "C440-VALUE-COMPILE a month-name date where the next list marker would go is refused at compile when the draft changes it",
+      "origin": "440 D-05"
     }
   ]
 }
