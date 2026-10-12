@@ -514,3 +514,32 @@ describe('C440-STATED-VALUES', () => {
     }
   })
 })
+
+// 2026-10-12 (440-10, D-02/D-03; WR-06, WR-07): a digit-led quoted value and a bracketed time are stated values again.
+describe('C440-STATED-VALUES', () => {
+  it('a single-quoted value that starts with digits glued to a letter is a stated value', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    expect(
+      extractStatedValues("search for '4K' and check the first result title says '3D Movies'"),
+    ).toEqual(['4K', '3D Movies'])
+    expect(extractStatedValues("check the '4K' badge and the '2FA' toggle")).toEqual(['4K', '2FA'])
+    expect(extractStatedValues("check the '1st Place' ribbon")).toEqual(['1st Place'])
+    expect(extractStatedValues('check the ‘5G Plans’ tab')).toEqual(['5G Plans'])
+    expect(
+      missingStatedValues(extractStatedValues("check the '4K' badge"), [
+        "Verify the '8K' badge is shown",
+      ]),
+    ).toEqual(['4K'])
+  })
+
+  it('only a two-digit decade after a single quote opens no quoted value, and a quoted value that starts with one is the known leftover', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    expect(extractStatedValues("check the '80s and the '70s collections")).toEqual([])
+    expect(extractStatedValues("check the '90s' playlist")).toEqual(['90s'])
+    expect(extractStatedValues("check the '95s' label")).toEqual(['95s'])
+    expect(extractStatedValues("check the '15s timeout' label")).toEqual(['15s timeout'])
+    const leftover = extractStatedValues("check the '30s ad' banner")
+    expect(leftover).toEqual([])
+    expect(missingStatedValues(leftover, ["Verify the '40s ad' banner is shown"])).toEqual([])
+  })
+})

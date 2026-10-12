@@ -23,7 +23,7 @@ const STEP_LABEL = '(?<![\\p{L}\\p{N}])(?:Step|step|STEP) ([0-9]+)(?=[:)]|\\.(?:
 const HOST_AND_PORT = /^[A-Za-z][A-Za-z0-9.-]*:\d+(?:\/\S*)?[.,;!?)\]]*$/
 const IPV4_ADDRESS = /^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?(?:\/\S*)?[.,;!?)\]]*$/
 const BRACKETED_IPV6 = /^\[[0-9A-Fa-f.]*:[0-9A-Fa-f.:]*\](?::\d+)?(?:\/\S*)?[.,;!?)\]]*$/
-const LEADING_LETTER = /^\p{L}/u
+const DECADE_ELISION = /^\d0s(?![\p{L}\p{N}'’])/u
 const LEADING_LETTER_OR_NUMBER = /^[\p{L}\p{N}]/u
 const TRAILING_LETTER_OR_NUMBER = /[\p{L}\p{N}]$/u
 
@@ -47,13 +47,8 @@ function letterOrNumberAt(text: string, index: number): boolean {
   return LEADING_LETTER_OR_NUMBER.test(text.slice(index, index + 2))
 }
 
-function digitsGluedToLetter(text: string, from: number): boolean {
-  let end = from
-  while (isDigit(text[end])) end += 1
-  return end > from && LEADING_LETTER.test(text.slice(end, end + 2))
-}
-
 // 2026-10-12 (440-08, WR-01): an inch mark (`15"`) and a leading elision (`'90s`) open no quote.
+// 2026-10-12 (440-10, WR-06): only a decade such as `'90s` is an elision, so `'4K'` is a value.
 function openerAt(text: string, index: number): QuoteKind | undefined {
   const char = text[index]
   if (char === '"') return letterOrNumberBefore(text, index) ? undefined : 'double'
@@ -61,7 +56,7 @@ function openerAt(text: string, index: number): QuoteKind | undefined {
   if (char !== "'" && char !== '‘') return undefined
   const before = text[index - 1]
   if (before !== undefined && !SINGLE_QUOTE_OPENS_AFTER.includes(before)) return undefined
-  return digitsGluedToLetter(text, index + 1) ? undefined : 'single'
+  return DECADE_ELISION.test(text.slice(index + 1, index + 5)) ? undefined : 'single'
 }
 
 function closerOf(text: string, kind: QuoteKind, from: number): number {
