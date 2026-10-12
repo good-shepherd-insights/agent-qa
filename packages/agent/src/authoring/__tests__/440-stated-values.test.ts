@@ -618,6 +618,58 @@ describe('C440-STATED-VALUES', () => {
       [],
     )
   })
+
+  it('a step number stated mid-sentence is a stated value', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    expect(extractStatedValues('check the wizard is on step 2. Then click Next')).toEqual(['2'])
+    expect(extractStatedValues('check the wizard heading says Step 2: Payment')).toEqual(['2'])
+    expect(extractStatedValues('check the progress bar shows step 2.')).toEqual(['2'])
+    expect(extractStatedValues('go to step 3) and click Next')).toEqual(['3'])
+    expect(extractStatedValues('check the title shows: Step 1. Then click Next')).toEqual(['1'])
+    expect(
+      extractStatedValues('Step 1: click Next. Step 2: check the progress bar shows step 3.'),
+    ).toEqual(['3'])
+    expect(
+      missingStatedValues(extractStatedValues('check the wizard is on step 2. Then click Next'), [
+        'Verify the wizard is on step 3',
+        'Click Next',
+      ]),
+    ).toEqual(['2'])
+  })
+
+  it('a step label counts only from the start of the request, a line, a colon or a sentence, and a step number where the next label would go is the known leftover', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    expect(extractStatedValues('Test the wizard Step 1: open it Step 2: click Next')).toEqual([
+      '1',
+      '2',
+    ])
+    expect(extractStatedValues('Step 1: open the shop Step 2. add items')).toEqual(['2'])
+    const leftover = extractStatedValues(
+      'Step 1: click Next. Step 2: check the wizard shows Step 3: Payment',
+    )
+    expect(leftover).toEqual([])
+    expect(missingStatedValues(leftover, ['Verify the wizard shows Step 4: Payment'])).toEqual([])
+  })
+
+  it('a long request of held list starts and step labels is checked in linear time', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    const units = [
+      ': 1. Then 2. Then ',
+      ': 1. x ',
+      '. Step 1: x ',
+      ': 1. "a" 2. ',
+      ': Step 1: "a" Step 2: ',
+    ]
+    for (const unit of units) {
+      const request = unit.repeat(Math.ceil(200_000 / unit.length)).slice(0, 200_000)
+      expect(request).toHaveLength(200_000)
+
+      const started = performance.now()
+      const values = extractStatedValues(request)
+      missingStatedValues([...values, '1'], [request])
+      expect(performance.now() - started).toBeLessThan(2000)
+    }
+  })
 })
 
 describe('C440-FALSE-REFUSAL', () => {
@@ -631,5 +683,16 @@ describe('C440-FALSE-REFUSAL', () => {
     ).toEqual(['2'])
     expect(extractStatedValues('Test the cart. 1. Add 2 items 2. check the total')).toEqual(['2'])
     expect(extractStatedValues('Checkout test: 1) open the shop 2) add 2 items')).toEqual(['2'])
+  })
+
+  it('a step-labelled list after a colon, a sentence or a line break states no step number', async () => {
+    const { extractStatedValues } = await load()
+    expect(
+      extractStatedValues('Checkout test: Step 1: open the shop Step 2: add 2 items'),
+    ).toEqual(['2'])
+    expect(
+      extractStatedValues('Test the wizard. Step 1: click "Next" Step 2: check the cart'),
+    ).toEqual(['Next'])
+    expect(extractStatedValues('Step 1: open the shop\nStep 2. add 2 items')).toEqual(['2'])
   })
 })

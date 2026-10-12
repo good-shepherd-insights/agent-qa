@@ -22,7 +22,8 @@ const DAY = '\\d{1,2}(?:st|nd|rd|th)?'
 const MONTH_NAME_DATE =
   `(?<![\\p{L}\\p{N}])(?:${MONTH} ${DAY}(?:,? \\d{4})?|${DAY} ${MONTH}(?: \\d{4})?)` +
   '(?![\\p{L}\\p{N}])'
-const STEP_LABEL = '(?<![\\p{L}\\p{N}])(?:Step|step|STEP) ([0-9]+)(?=[:)]|\\.(?:\\s|$)| [-–—])'
+const STEP_LABEL =
+  '(?<![\\p{L}\\p{N}])(?:Step|step|STEP) ([0-9]+)(?=([:)]|\\.(?=\\s|$)| [-–—]))'
 
 const HOST_AND_PORT = /^[A-Za-z][A-Za-z0-9.-]*:\d+(?:\/\S*)?[.,;!?)\]]*$/
 const IPV4_ADDRESS = /^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?(?:\/\S*)?[.,;!?)\]]*$/
@@ -118,11 +119,33 @@ function endsSentence(text: string, tokenEnd: number): boolean {
   return isSpace(text[tokenEnd]) && LEADING_UPPERCASE.test(text.slice(tokenEnd + 1, tokenEnd + 3))
 }
 
+// 2026-10-12 (440-11, WR-05): a step label counts like a list marker, from a run start and by the
+// next number.
 function blankStepLabels(text: string, chars: string[]): void {
+  const run: Run = { next: 0, delimiter: '', pending: [], sentenceLike: false }
   for (const match of text.matchAll(new RegExp(STEP_LABEL, 'gu'))) {
     const digits = match[1] ?? ''
+    const mark = match[2] ?? ''
+    const delimiter = mark.startsWith(' ') ? '-' : mark
     const end = match.index + match[0].length
-    blank(chars, { start: end - digits.length, end })
+    const span = { start: end - digits.length, end }
+    const start = runStartAt(text, match.index)
+    if (digits === '1' && start !== undefined) {
+      run.next = 2
+      run.delimiter = delimiter
+      run.pending = start === 'pending' ? [span] : []
+      if (start === 'at-once') blank(chars, span)
+    } else if (
+      run.next >= 2 &&
+      digits === String(run.next) &&
+      (delimiter === run.delimiter || start !== undefined)
+    ) {
+      for (const held of run.pending) blank(chars, held)
+      run.pending = []
+      blank(chars, span)
+      run.next += 1
+      run.delimiter = delimiter
+    }
   }
 }
 
