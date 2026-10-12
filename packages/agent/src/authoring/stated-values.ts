@@ -2,11 +2,14 @@
 // linear and model-free, because the request is untrusted text from any caller.
 
 type QuoteKind = 'double' | 'curly' | 'single'
+type ListRun = { next: number; delimiter: string }
 
 const CURRENCY_SYMBOLS = '$€£¥₹'
 const NUMBER_SEPARATORS = '.,:/-'
-const SINGLE_QUOTE_OPENS_AFTER = ' (['
-const SINGLE_QUOTE_CLOSES_BEFORE = ' .,;:!?)]'
+const SINGLE_QUOTE_OPENS_AFTER = ' ([\n'
+const SINGLE_QUOTE_CLOSES_BEFORE = ' .,;:!?)]\n'
+const LINE_BREAKS = '\n\r  '
+const LIST_RUN_STARTS_AFTER = ':.!?'
 
 const MONTH =
   '(?:January|February|March|April|May|June|July|August|September|October|November|December' +
@@ -65,9 +68,68 @@ function isAddress(chunk: string): boolean {
   return chunk.includes('://') || chunk.startsWith('www.') || HOST_AND_PORT.test(chunk)
 }
 
-function unquotedValues(segment: string): string[] {
+function collapsedSpace(space: string): string {
+  return [...space].some((char) => LINE_BREAKS.includes(char)) ? '\n' : ' '
+}
+
+function isSpace(char: string | undefined): boolean {
+  return char === ' ' || char === '\n'
+}
+
+function listRunStartsAt(text: string, index: number, atTextStart: boolean): boolean {
+  if (atTextStart && (index === 0 || (index === 1 && isSpace(text[0])))) return true
+  const before = text[index - 1]
+  if (before === '\n') return true
+  return before === ' ' && LIST_RUN_STARTS_AFTER.includes(text[index - 2] ?? ' ')
+}
+
+// 2026-10-12 (440-07, CR-01): a list counts from 1 at a line, sentence or colon start, and each
+// next number with the same delimiter continues it.
+function blankListMarkers(segment: string, run: ListRun, atTextStart: boolean): string {
+  const pieces: string[] = []
+  let cursor = 0
+  let index = 0
+  while (index < segment.length) {
+    const tokenStarts = index === 0 ? atTextStart : isSpace(segment[index - 1])
+    const opens = segment[index] === '('
+    const digitsStart = opens ? index + 1 : index
+    let end = digitsStart
+    while (tokenStarts && isDigit(segment[end])) end += 1
+    if (end === digitsStart) {
+      index += 1
+      continue
+    }
+    const closer = segment[end]
+    let delimiter: string | undefined
+    if (opens) delimiter = closer === ')' ? '()' : undefined
+    else if (closer === '.' || closer === ')') delimiter = closer
+    const tokenEnd = end + 1
+    if (delimiter === undefined || !isSpace(segment[tokenEnd])) {
+      index = end
+      continue
+    }
+    const digits = segment.slice(digitsStart, end)
+    if (digits === '1' && listRunStartsAt(segment, index, atTextStart)) {
+      run.next = 2
+      run.delimiter = delimiter
+    } else if (delimiter === run.delimiter && digits === String(run.next)) {
+      run.next += 1
+    } else {
+      index = tokenEnd
+      continue
+    }
+    pieces.push(segment.slice(cursor, index), ' '.repeat(tokenEnd - index))
+    cursor = tokenEnd
+    index = tokenEnd
+  }
+  pieces.push(segment.slice(cursor))
+  return pieces.join('')
+}
+
+function unquotedValues(segment: string, run: ListRun, atTextStart: boolean): string[] {
   const found: { readonly at: number; readonly value: string }[] = []
-  let text = segment
+  let text = blankListMarkers(segment, run, atTextStart)
+    .replaceAll('\n', ' ')
     .split(' ')
     .map((chunk) => (isAddress(chunk) ? ' '.repeat(chunk.length) : chunk))
     .join(' ')
@@ -116,7 +178,8 @@ function unquotedValues(segment: string): string[] {
 }
 
 export function extractStatedValues(request: string): readonly string[] {
-  const text = request.normalize('NFC').replace(/\s+/g, ' ')
+  const text = request.normalize('NFC').replace(/\s+/g, collapsedSpace)
+  const run: ListRun = { next: 0, delimiter: '' }
   const values: string[] = []
   const seen = new Set<string>()
   const add = (value: string) => {
@@ -136,7 +199,8 @@ export function extractStatedValues(request: string): readonly string[] {
       if (close === -1) {
         unclosed.add(kind)
       } else {
-        for (const value of unquotedValues(text.slice(segmentStart, index))) add(value)
+        const segment = text.slice(segmentStart, index)
+        for (const value of unquotedValues(segment, run, segmentStart === 0)) add(value)
         add(tidy(text.slice(index + 1, close)))
         index = close + 1
         segmentStart = index
@@ -145,7 +209,7 @@ export function extractStatedValues(request: string): readonly string[] {
     }
     index += 1
   }
-  for (const value of unquotedValues(text.slice(segmentStart))) add(value)
+  for (const value of unquotedValues(text.slice(segmentStart), run, segmentStart === 0)) add(value)
   return values
 }
 

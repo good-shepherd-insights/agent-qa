@@ -247,3 +247,136 @@ describe('C440-FALSE-REFUSAL', () => {
     ).toEqual([])
   })
 })
+
+// 2026-10-12 (440-07, D-02/D-03; CR-01): list markers are not stated values.
+describe('C440-FALSE-REFUSAL', () => {
+  it('a numbered list written inline states no list number', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    const values = extractStatedValues(
+      '1. open the shop 2. click the "Add to cart" button 3. check the cart',
+    )
+    expect(values).toEqual(['Add to cart'])
+    expect(
+      missingStatedValues(values, [
+        'Open the shop',
+        'Click the "Add to cart" button',
+        'Verify the cart is shown',
+      ]),
+    ).toEqual([])
+  })
+
+  it('a numbered list written one item per line states no list number', async () => {
+    const { extractStatedValues } = await load()
+    expect(
+      extractStatedValues(
+        '1. open the products page\n2. click the first product\n3. check the "Add to cart" button is shown',
+      ),
+    ).toEqual(['Add to cart'])
+    expect(extractStatedValues('1. open the shop\r\n2. add 3 items\r\n3. check the cart')).toEqual([
+      '3',
+    ])
+    expect(extractStatedValues('Test checkout\n1. open the shop\n2. add 2 items')).toEqual(['2'])
+  })
+
+  it('a list numbered with closing parentheses states no list number', async () => {
+    const { extractStatedValues } = await load()
+    expect(
+      extractStatedValues('1) open the shop 2) add 2 items 3) check the total is $20'),
+    ).toEqual(['2', '$20'])
+    expect(
+      extractStatedValues('1) open the shop\n2) add 2 items\n3) check the total is $20'),
+    ).toEqual(['2', '$20'])
+  })
+
+  it('a list numbered in parentheses states no list number', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    const values = extractStatedValues(
+      '(1) open the shop (2) click the "Add to cart" button (3) check the cart',
+    )
+    expect(values).toEqual(['Add to cart'])
+    expect(
+      missingStatedValues(values, [
+        'Open the shop',
+        'Click the "Add to cart" button',
+        'Verify the cart is shown',
+      ]),
+    ).toEqual([])
+    expect(
+      extractStatedValues('(1) open the shop\n(2) add 2 items\n(3) check the total is $20'),
+    ).toEqual(['2', '$20'])
+    expect(extractStatedValues('Checkout test: (1) open the shop (2) add 2 items')).toEqual(['2'])
+  })
+
+  it('a numbered list after a colon or a sentence states no list number', async () => {
+    const { extractStatedValues } = await load()
+    expect(
+      extractStatedValues('Checkout test: 1. open the shop 2. add 2 items 3. check "Add to cart"'),
+    ).toEqual(['2', 'Add to cart'])
+    expect(extractStatedValues('Test the cart. 1. add 2 items 2. check the total is $20')).toEqual([
+      '2',
+      '$20',
+    ])
+  })
+})
+
+describe('C440-STATED-VALUES', () => {
+  it('a number, price or quoted value inside a list item is still a stated value', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    const values = extractStatedValues('1. open the shop 2. add 2 items 3. check the total is $20')
+    expect(values).toEqual(['2', '$20'])
+    expect(
+      missingStatedValues(values, [
+        'Open the shop',
+        'Add items to the cart',
+        'Verify the total is shown',
+      ]),
+    ).toEqual(['2', '$20'])
+    expect(
+      missingStatedValues(extractStatedValues('1. open the shop 2. click "Add to cart"'), [
+        'Open the shop',
+        'Click the cart button',
+      ]),
+    ).toEqual(['Add to cart'])
+  })
+
+  it('a list marker inside a quoted value is kept as typed', async () => {
+    const { extractStatedValues } = await load()
+    expect(
+      extractStatedValues('1. check the heading says "Step 1: Cart" 2. click "2. Next"'),
+    ).toEqual(['Step 1: Cart', '2. Next'])
+    expect(extractStatedValues('(1) check the heading says "(2) Payment"')).toEqual(['(2) Payment'])
+  })
+
+  it('a list starts only at 1, at the start of the request, a line, a colon or a sentence', async () => {
+    const { extractStatedValues } = await load()
+    expect(extractStatedValues('3. open the shop 4. click the cart')).toEqual(['3', '4'])
+    expect(extractStatedValues('1 open the shop 2 click the cart')).toEqual(['1', '2'])
+    expect(extractStatedValues('set the quantity to 2. Then check the cart')).toEqual(['2'])
+    expect(extractStatedValues('Set the quantity to 1. Then set it to 2. Check the cart')).toEqual([
+      '1',
+      '2',
+    ])
+    expect(extractStatedValues('1. set the quantity to 3. 2. check the cart shows 3')).toEqual([
+      '3',
+    ])
+    expect(extractStatedValues('(3) open the shop (4) click the cart')).toEqual(['3', '4'])
+    expect(extractStatedValues('check the cart shows (1) item')).toEqual(['1'])
+    expect(extractStatedValues('(1) open the shop (2) check the total (3000) is shown')).toEqual([
+      '3000',
+    ])
+    expect(extractStatedValues('1. open the shop (2) add 3 items')).toEqual(['2', '3'])
+  })
+
+  it('a number written where the next list marker would go is read as that marker, the known leftover', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    const values = extractStatedValues('1. set the quantity to 2. Then check the cart')
+    expect(values).toEqual([])
+    expect(missingStatedValues(values, ['Set the quantity', 'Verify the cart is shown'])).toEqual(
+      [],
+    )
+    expect(extractStatedValues('(1) set the quantity to (2) then check the cart')).toEqual([])
+    expect(extractStatedValues('1. set the quantity to 2, then check the cart')).toEqual(['2'])
+    expect(extractStatedValues('1. set the quantity to 2) then check the cart')).toEqual(['2'])
+    expect(extractStatedValues('1. open the shop and set the quantity to 2.')).toEqual(['2'])
+  })
+})

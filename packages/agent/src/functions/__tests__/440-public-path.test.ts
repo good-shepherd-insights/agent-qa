@@ -525,3 +525,58 @@ describe('C440-PROMPTS', () => {
     })
   })
 })
+
+// 2026-10-12 (440-07, D-02/D-05; CR-01): a numbered request through the public op.
+const NUMBERED_REQUEST = '1. open the products page\n2. check it says "All Products"'
+const NUMBERED_INLINE_REQUEST = '1. open the products page 2. check it says "All Products"'
+const PARENTHESIZED_REQUEST = '(1) open the products page\n(2) check it says "All Products"'
+const PARENTHESIZED_INLINE_REQUEST = '(1) open the products page (2) check it says "All Products"'
+const NUMBERED_COUNT_REQUEST =
+  '1. open the products page\n2. check it lists 12 items and says "All Products"'
+
+describe('C440-VALUE-COMPILE', () => {
+  it('a numbered request with a faithful draft is kept and written', async () => {
+    for (const request of [NUMBERED_REQUEST, NUMBERED_INLINE_REQUEST]) {
+      const host = publicPathHost({ document: HISTORICAL_DOCUMENT, runs: 'pass' })
+      const output = await host.write(request)
+
+      expect({
+        outcome: output['outcome'],
+        statedValueRefusal: output['statedValueRefusal'] ?? null,
+        written: writtenKind(output),
+        published: host.published.length,
+      }).toEqual({ outcome: 'drafted', statedValueRefusal: null, written: 'written', published: 1 })
+    }
+  })
+
+  it('a request numbered in parentheses with a faithful draft is kept and written', async () => {
+    for (const request of [PARENTHESIZED_REQUEST, PARENTHESIZED_INLINE_REQUEST]) {
+      const host = publicPathHost({ document: HISTORICAL_DOCUMENT, runs: 'pass' })
+      const output = await host.write(request)
+
+      expect({
+        outcome: output['outcome'],
+        statedValueRefusal: output['statedValueRefusal'] ?? null,
+        written: writtenKind(output),
+        published: host.published.length,
+      }).toEqual({ outcome: 'drafted', statedValueRefusal: null, written: 'written', published: 1 })
+    }
+  })
+
+  it('a number stated inside a numbered item is still refused at compile when the draft loses it', async () => {
+    const host = publicPathHost({ document: HISTORICAL_DOCUMENT, runs: 'pass' })
+    const output = await host.write(NUMBERED_COUNT_REQUEST)
+
+    expect({
+      outcome: output['outcome'],
+      statedValueRefusal: output['statedValueRefusal'] ?? null,
+      verifyCalls: host.counts.verify,
+      published: host.published.length,
+    }).toEqual({
+      outcome: 'refused',
+      statedValueRefusal: { stage: 'compile', missingValues: ['12'] },
+      verifyCalls: 0,
+      published: 0,
+    })
+  })
+})
