@@ -2,7 +2,10 @@
 // linear and model-free, because the request is untrusted text from any caller.
 
 type QuoteKind = 'double' | 'curly' | 'single'
-type ListRun = { next: number; delimiter: string }
+type Span = { readonly start: number; readonly end: number }
+type Run = { next: number; delimiter: string; pending: Span[]; sentenceLike: boolean }
+type Part = { readonly start: number; readonly end: number; readonly quoted?: string }
+type RunStart = 'at-once' | 'pending'
 
 const CURRENCY_SYMBOLS = '$€£¥₹'
 const NUMBER_SEPARATORS = '.,:/-'
@@ -10,6 +13,7 @@ const SINGLE_QUOTE_OPENS_AFTER = ' ([\n'
 const SINGLE_QUOTE_CLOSES_BEFORE = ' .,;:!?)]\n'
 const LINE_BREAKS = '\n\r  '
 const LIST_RUN_STARTS_AFTER = ':.!?'
+const QUOTE_MASK = '"'
 
 const MONTH =
   '(?:January|February|March|April|May|June|July|August|September|October|November|December' +
@@ -24,6 +28,7 @@ const HOST_AND_PORT = /^[A-Za-z][A-Za-z0-9.-]*:\d+(?:\/\S*)?[.,;!?)\]]*$/
 const IPV4_ADDRESS = /^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?(?:\/\S*)?[.,;!?)\]]*$/
 const BRACKETED_IPV6 = /^\[[0-9A-Fa-f.:]+\](?::\d+)?(?:\/\S*)?[.,;!?)\]]*$/
 const DECADE_ELISION = /^\d0s(?![\p{L}\p{N}'’])/u
+const LEADING_UPPERCASE = /^\p{Lu}/u
 const LEADING_LETTER_OR_NUMBER = /^[\p{L}\p{N}]/u
 const TRAILING_LETTER_OR_NUMBER = /[\p{L}\p{N}]$/u
 
@@ -97,65 +102,82 @@ function isSpace(char: string | undefined): boolean {
   return char === ' ' || char === '\n'
 }
 
-function blankStepLabels(segment: string): string {
-  return segment.replace(new RegExp(STEP_LABEL, 'gu'), (label: string, digits: string) => {
-    return label.slice(0, label.length - digits.length) + ' '.repeat(digits.length)
-  })
+function blank(chars: string[], span: Span): void {
+  for (let index = span.start; index < span.end; index += 1) chars[index] = ' '
 }
 
-function listRunStartsAt(text: string, index: number, atTextStart: boolean): boolean {
-  if (atTextStart && (index === 0 || (index === 1 && isSpace(text[0])))) return true
+function runStartAt(text: string, index: number): RunStart | undefined {
+  if (index === 0 || (index === 1 && isSpace(text[0]))) return 'at-once'
   const before = text[index - 1]
-  if (before === '\n') return true
-  return before === ' ' && LIST_RUN_STARTS_AFTER.includes(text[index - 2] ?? ' ')
+  if (before === '\n') return 'at-once'
+  if (before === ' ' && LIST_RUN_STARTS_AFTER.includes(text[index - 2] ?? ' ')) return 'pending'
+  return undefined
+}
+
+function endsSentence(text: string, tokenEnd: number): boolean {
+  return isSpace(text[tokenEnd]) && LEADING_UPPERCASE.test(text.slice(tokenEnd + 1, tokenEnd + 3))
+}
+
+function blankStepLabels(text: string, chars: string[]): void {
+  for (const match of text.matchAll(new RegExp(STEP_LABEL, 'gu'))) {
+    const digits = match[1] ?? ''
+    const end = match.index + match[0].length
+    blank(chars, { start: end - digits.length, end })
+  }
 }
 
 // 2026-10-12 (440-07, CR-01): a list counts from 1 at a line, sentence or colon start, and each
 // next number with the same delimiter continues it.
-function blankListMarkers(segment: string, run: ListRun, atTextStart: boolean): string {
-  const pieces: string[] = []
-  let cursor = 0
+// 2026-10-12 (440-11, WR-08): a run starting after a colon or a sentence end waits for its 2, and
+// two numbers that each end a sentence wait for a 3.
+function blankListMarkers(text: string, chars: string[]): void {
+  const run: Run = { next: 0, delimiter: '', pending: [], sentenceLike: false }
   let index = 0
-  while (index < segment.length) {
-    const tokenStarts = index === 0 ? atTextStart : isSpace(segment[index - 1])
-    const opens = segment[index] === '('
+  while (index < text.length) {
+    const tokenStarts = index === 0 || isSpace(text[index - 1])
+    const opens = text[index] === '('
     const digitsStart = opens ? index + 1 : index
     let end = digitsStart
-    while (tokenStarts && isDigit(segment[end])) end += 1
+    while (tokenStarts && isDigit(text[end])) end += 1
     if (end === digitsStart) {
       index += 1
       continue
     }
-    const closer = segment[end]
+    const closer = text[end]
     let delimiter: string | undefined
     if (opens) delimiter = closer === ')' ? '()' : undefined
     else if (closer === '.' || closer === ')') delimiter = closer
     const tokenEnd = end + 1
-    if (delimiter === undefined || !isSpace(segment[tokenEnd])) {
+    if (delimiter === undefined || !isSpace(text[tokenEnd])) {
       index = end
       continue
     }
-    const digits = segment.slice(digitsStart, end)
-    if (digits === '1' && listRunStartsAt(segment, index, atTextStart)) {
+    const digits = text.slice(digitsStart, end)
+    const span = { start: index, end: tokenEnd }
+    const start = digits === '1' ? runStartAt(text, index) : undefined
+    index = tokenEnd
+    if (start !== undefined) {
       run.next = 2
       run.delimiter = delimiter
+      run.pending = start === 'pending' ? [span] : []
+      run.sentenceLike = start === 'pending' && delimiter === '.' && endsSentence(text, tokenEnd)
+      if (start === 'at-once') blank(chars, span)
     } else if (delimiter === run.delimiter && digits === String(run.next)) {
       run.next += 1
-    } else {
-      index = tokenEnd
-      continue
+      if (run.pending.length === 1 && run.sentenceLike && endsSentence(text, tokenEnd)) {
+        run.pending.push(span)
+        continue
+      }
+      for (const held of run.pending) blank(chars, held)
+      run.pending = []
+      blank(chars, span)
     }
-    pieces.push(segment.slice(cursor, index), ' '.repeat(tokenEnd - index))
-    cursor = tokenEnd
-    index = tokenEnd
   }
-  pieces.push(segment.slice(cursor))
-  return pieces.join('')
 }
 
-function unquotedValues(segment: string, run: ListRun, atTextStart: boolean): string[] {
+function unquotedValues(segment: string): string[] {
   const found: { readonly at: number; readonly value: string }[] = []
-  let text = blankListMarkers(blankStepLabels(segment), run, atTextStart)
+  let text = segment
     .replaceAll('\n', ' ')
     .split(' ')
     .map((chunk) => (isAddress(chunk) ? ' '.repeat(chunk.length) : chunk))
@@ -206,14 +228,7 @@ function unquotedValues(segment: string, run: ListRun, atTextStart: boolean): st
 
 export function extractStatedValues(request: string): readonly string[] {
   const text = request.normalize('NFC').replace(/\s+/g, collapsedSpace)
-  const run: ListRun = { next: 0, delimiter: '' }
-  const values: string[] = []
-  const seen = new Set<string>()
-  const add = (value: string) => {
-    if (value === '' || seen.has(value)) return
-    seen.add(value)
-    values.push(value)
-  }
+  const parts: Part[] = []
   // An opener with no closer has none at any later index either, so its kind stops searching.
   const unclosed = new Set<QuoteKind>()
 
@@ -228,9 +243,8 @@ export function extractStatedValues(request: string): readonly string[] {
       } else if (kind === 'single' && close === index + 2 && text[index + 1] === 'n') {
         // 2026-10-12 (440-08, WR-01): `rock 'n' roll` is text, not a quoted `n`.
       } else {
-        const segment = text.slice(segmentStart, index)
-        for (const value of unquotedValues(segment, run, segmentStart === 0)) add(value)
-        add(tidy(text.slice(index + 1, close)))
+        parts.push({ start: segmentStart, end: index })
+        parts.push({ start: index, end: close + 1, quoted: tidy(text.slice(index + 1, close)) })
         index = close + 1
         segmentStart = index
         continue
@@ -238,7 +252,31 @@ export function extractStatedValues(request: string): readonly string[] {
     }
     index += 1
   }
-  for (const value of unquotedValues(text.slice(segmentStart), run, segmentStart === 0)) add(value)
+  parts.push({ start: segmentStart, end: text.length })
+
+  // 2026-10-12 (440-11, WR-08): runs are read over the whole request with quoted values masked, so
+  // a list is confirmed across a quoted value and no marker is read inside one.
+  const masked = parts
+    .map(({ start, end, quoted }) =>
+      quoted === undefined ? text.slice(start, end) : QUOTE_MASK.repeat(end - start),
+    )
+    .join('')
+  const chars = masked.split('')
+  blankStepLabels(masked, chars)
+  blankListMarkers(chars.join(''), chars)
+  const blanked = chars.join('')
+
+  const values: string[] = []
+  const seen = new Set<string>()
+  const add = (value: string) => {
+    if (value === '' || seen.has(value)) return
+    seen.add(value)
+    values.push(value)
+  }
+  for (const { start, end, quoted } of parts) {
+    if (quoted !== undefined) add(quoted)
+    else for (const value of unquotedValues(blanked.slice(start, end))) add(value)
+  }
   return values
 }
 

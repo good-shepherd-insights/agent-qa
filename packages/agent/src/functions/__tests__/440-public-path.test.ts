@@ -635,3 +635,26 @@ describe('C440-VALUE-COMPILE', () => {
     })
   })
 })
+
+// 2026-10-12 (440-11, D-05; WR-08, WR-05): a lone 1 and a mid-sentence step number are refused again through the public op.
+const COLON_ONE_REQUEST =
+  'open the products page and check the badge shows: 1. Then check it says "All Products"'
+
+describe('C440-VALUE-COMPILE', () => {
+  it('a lone 1 stated after a colon is refused at compile when the draft loses it', async () => {
+    const host = publicPathHost({ document: HISTORICAL_DOCUMENT, runs: 'pass' })
+    const output = await host.write(COLON_ONE_REQUEST)
+
+    expect({
+      outcome: output['outcome'],
+      statedValueRefusal: output['statedValueRefusal'] ?? null,
+      verifyCalls: host.counts.verify,
+      published: host.published.length,
+    }).toEqual({
+      outcome: 'refused',
+      statedValueRefusal: { stage: 'compile', missingValues: ['1'] },
+      verifyCalls: 0,
+      published: 0,
+    })
+  })
+})

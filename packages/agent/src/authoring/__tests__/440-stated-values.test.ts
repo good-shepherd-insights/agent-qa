@@ -585,3 +585,51 @@ describe('C440-FALSE-REFUSAL', () => {
     expect(extractStatedValues('open [::ffff:192.0.2.1]:8080 and check 2 items')).toEqual(['2'])
   })
 })
+
+// 2026-10-12 (440-11, D-02/D-03; WR-08, WR-05): a run that starts mid-line waits for its 2, and a step label counts only in label position.
+describe('C440-STATED-VALUES', () => {
+  it('a number stated after a colon or a sentence end is a stated value when no list follows it', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    expect(extractStatedValues('check the badge shows: 1. Then click checkout')).toEqual(['1'])
+    expect(
+      extractStatedValues('Check Quantity: 1. Then set it to 2. Then check Total: $40.'),
+    ).toEqual(['1', '2', '$40'])
+    expect(extractStatedValues('Is the count right? 1. Then click')).toEqual(['1'])
+    expect(extractStatedValues('check the badge shows: 1) then click checkout')).toEqual(['1'])
+    expect(extractStatedValues('check the cart says: (1) item')).toEqual(['1'])
+    expect(
+      missingStatedValues(extractStatedValues('check the badge shows: 1. Then click checkout'), [
+        'Verify the badge shows 0',
+        'Click checkout',
+      ]),
+    ).toEqual(['1'])
+  })
+
+  it('a list after a colon or a sentence starts only when its 2 follows, and a lowercase sentence stating 1 and then 2 is the known leftover', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    expect(extractStatedValues('Checkout test: 1. open the shop')).toEqual(['1'])
+    expect(extractStatedValues('Checkout test: 1. Open the shop 2. Add 2 items')).toEqual([
+      '1',
+      '2',
+    ])
+    const leftover = extractStatedValues('Check quantity: 1. then set it to 2. then check the cart')
+    expect(leftover).toEqual([])
+    expect(missingStatedValues(leftover, ['Set the quantity', 'Verify the cart is shown'])).toEqual(
+      [],
+    )
+  })
+})
+
+describe('C440-FALSE-REFUSAL', () => {
+  it('a list after a colon or a sentence states no list number once its next marker follows, across a quoted value too', async () => {
+    const { extractStatedValues } = await load()
+    expect(extractStatedValues('Checkout test: 1. click "Add to cart" 2. open the cart')).toEqual([
+      'Add to cart',
+    ])
+    expect(
+      extractStatedValues('Checkout test: 1. Open the shop 2. Add 2 items 3. Check the cart'),
+    ).toEqual(['2'])
+    expect(extractStatedValues('Test the cart. 1. Add 2 items 2. check the total')).toEqual(['2'])
+    expect(extractStatedValues('Checkout test: 1) open the shop 2) add 2 items')).toEqual(['2'])
+  })
+})
