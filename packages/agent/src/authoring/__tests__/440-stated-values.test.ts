@@ -415,3 +415,57 @@ describe('C440-STATED-VALUES', () => {
     }
   })
 })
+
+// 2026-10-12 (440-08, D-02/D-03; WR-01, WR-03): inch marks, in-word apostrophes and addresses state nothing.
+describe('C440-FALSE-REFUSAL', () => {
+  it('an inch mark opens no quoted value', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    const values = extractStatedValues('check the 15" laptop and the 13" laptop are listed')
+    expect(values).toEqual(['15', '13'])
+    expect(
+      missingStatedValues(values, ['Verify the 15-inch and the 13-inch laptops are listed']),
+    ).toEqual([])
+  })
+
+  it('an in-word apostrophe opens no quoted value', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    expect(extractStatedValues("check the '90s collection shows the 'Sale' banner")).toEqual([
+      'Sale',
+    ])
+    expect(extractStatedValues("check the '90s collection and the users' cart")).toEqual([])
+    const values = extractStatedValues('check the rock \'n\' roll page says "Top Hits"')
+    expect(values).toEqual(['Top Hits'])
+    expect(missingStatedValues(values, ['Verify the rock and roll page says "Top Hits"'])).toEqual(
+      [],
+    )
+  })
+})
+
+describe('C440-STATED-VALUES', () => {
+  it('a quoted value next to an inch mark stays protected', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    const values = extractStatedValues('check the 15" laptop shows "In Stock"')
+    expect(values).toEqual(['15', 'In Stock'])
+    expect(missingStatedValues(values, ['Verify the 15-inch laptop shows "Out of Stock"'])).toEqual(
+      ['In Stock'],
+    )
+    expect(extractStatedValues('check the 5\'10" model and the "Sale" banner')).toEqual([
+      '5',
+      '10',
+      'Sale',
+    ])
+  })
+
+  it('a straight double quote opens after anything but a letter or number', async () => {
+    const { extractStatedValues } = await load()
+    expect(extractStatedValues('check it says:"Sale"')).toEqual(['Sale'])
+    expect(extractStatedValues('check it says ("Sale")')).toEqual(['Sale'])
+  })
+
+  it('a single-quoted value that starts with a number or is one capital letter is still a value', async () => {
+    const { extractStatedValues } = await load()
+    expect(extractStatedValues("check the '2024 Sale' banner")).toEqual(['2024 Sale'])
+    expect(extractStatedValues("check the '20% off' badge")).toEqual(['20% off'])
+    expect(extractStatedValues("check size 'M' is selected")).toEqual(['M'])
+  })
+})

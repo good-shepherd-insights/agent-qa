@@ -21,6 +21,7 @@ const MONTH_NAME_DATE =
 const STEP_LABEL = '(?<![\\p{L}\\p{N}])(?:Step|step|STEP) ([0-9]+)(?=[:)]|\\.(?:\\s|$)| [-–—])'
 
 const HOST_AND_PORT = /^[A-Za-z][A-Za-z0-9.-]*:\d+(?:\/\S*)?[.,;!?)\]]*$/
+const LEADING_LETTER = /^\p{L}/u
 const LEADING_LETTER_OR_NUMBER = /^[\p{L}\p{N}]/u
 const TRAILING_LETTER_OR_NUMBER = /[\p{L}\p{N}]$/u
 
@@ -44,13 +45,21 @@ function letterOrNumberAt(text: string, index: number): boolean {
   return LEADING_LETTER_OR_NUMBER.test(text.slice(index, index + 2))
 }
 
+function digitsGluedToLetter(text: string, from: number): boolean {
+  let end = from
+  while (isDigit(text[end])) end += 1
+  return end > from && LEADING_LETTER.test(text.slice(end, end + 2))
+}
+
+// 2026-10-12 (440-08, WR-01): an inch mark (`15"`) and a leading elision (`'90s`) open no quote.
 function openerAt(text: string, index: number): QuoteKind | undefined {
   const char = text[index]
-  if (char === '"') return 'double'
+  if (char === '"') return letterOrNumberBefore(text, index) ? undefined : 'double'
   if (char === '“') return 'curly'
   if (char !== "'" && char !== '‘') return undefined
   const before = text[index - 1]
-  return before === undefined || SINGLE_QUOTE_OPENS_AFTER.includes(before) ? 'single' : undefined
+  if (before !== undefined && !SINGLE_QUOTE_OPENS_AFTER.includes(before)) return undefined
+  return digitsGluedToLetter(text, index + 1) ? undefined : 'single'
 }
 
 function closerOf(text: string, kind: QuoteKind, from: number): number {
@@ -205,6 +214,8 @@ export function extractStatedValues(request: string): readonly string[] {
       const close = closerOf(text, kind, index + 1)
       if (close === -1) {
         unclosed.add(kind)
+      } else if (kind === 'single' && close === index + 2 && text[index + 1] === 'n') {
+        // 2026-10-12 (440-08, WR-01): `rock 'n' roll` is text, not a quoted `n`.
       } else {
         const segment = text.slice(segmentStart, index)
         for (const value of unquotedValues(segment, run, segmentStart === 0)) add(value)
