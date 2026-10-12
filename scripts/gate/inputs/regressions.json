@@ -7848,6 +7848,162 @@
       "file": "packages/agent/src/authoring/__tests__/repair-fence.test.ts",
       "fullName": "C440-VALUE-REPAIR running out after value refusals keeps the existing abandonment kinds",
       "origin": "440 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-FALSE-REFUSAL a numbered list written inline states no list number",
+      "origin": "440 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-FALSE-REFUSAL a numbered list written one item per line states no list number",
+      "origin": "440 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-FALSE-REFUSAL a list numbered with closing parentheses states no list number",
+      "origin": "440 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-FALSE-REFUSAL a list numbered in parentheses states no list number",
+      "origin": "440 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-FALSE-REFUSAL a numbered list after a colon or a sentence states no list number",
+      "origin": "440 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-FALSE-REFUSAL a step-labelled request states no step number",
+      "origin": "440 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a number, price or quoted value inside a list item is still a stated value",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a list marker inside a quoted value is kept as typed",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a list starts only at 1, at the start of the request, a line, a colon or a sentence",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a number written where the next list marker would go is read as that marker, the known leftover",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a step number with no label delimiter is a stated value",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a long run of list markers and step labels is checked in linear time",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-FALSE-REFUSAL an inch mark opens no quoted value",
+      "origin": "440 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-FALSE-REFUSAL an in-word apostrophe opens no quoted value",
+      "origin": "440 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-FALSE-REFUSAL an IP address, with or without a port and path, states nothing",
+      "origin": "440 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-FALSE-REFUSAL a bracketed IPv6 host and port states nothing",
+      "origin": "440 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-FALSE-REFUSAL a host and port in parentheses states nothing",
+      "origin": "440 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a quoted value next to an inch mark stays protected",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a straight double quote opens after anything but a letter or number",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a single-quoted value that starts with a number or is one capital letter is still a value",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a number shaped like part of an address is still a stated value",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/440-stated-values.test.ts",
+      "fullName": "C440-STATED-VALUES a long request of inch marks, apostrophes and addresses is checked in linear time",
+      "origin": "440 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
+      "fullName": "C440-VALUE-COMPILE a numbered request with a faithful draft is kept and written",
+      "origin": "440 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
+      "fullName": "C440-VALUE-COMPILE a request numbered in parentheses with a faithful draft is kept and written",
+      "origin": "440 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
+      "fullName": "C440-VALUE-COMPILE a number stated inside a numbered item is still refused at compile when the draft loses it",
+      "origin": "440 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
+      "fullName": "C440-VALUE-COMPILE a step-labelled request with a faithful draft is kept and written",
+      "origin": "440 D-05"
     }
   ]
 }
