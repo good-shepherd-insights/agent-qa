@@ -542,4 +542,46 @@ describe('C440-STATED-VALUES', () => {
     expect(leftover).toEqual([])
     expect(missingStatedValues(leftover, ["Verify the '40s ad' banner is shown"])).toEqual([])
   })
+
+  it('a bracketed time or ratio is a stated value', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    expect(extractStatedValues('check the aspect ratio shows [16:9]')).toEqual(['16:9'])
+    expect(extractStatedValues('check the slot [10:30] is shown')).toEqual(['10:30'])
+    expect(extractStatedValues('check the room [Bed:2] is listed')).toEqual(['2'])
+    expect(extractStatedValues('check the timer shows [10:30:45]')).toEqual(['10:30:45'])
+    expect(
+      missingStatedValues(extractStatedValues('check the slot [10:30] is shown'), [
+        'Verify the slot [11:45] is shown',
+      ]),
+    ).toEqual(['10:30'])
+  })
+
+  it('a long request of decade elisions, digit-led quotes and bracketed colons is checked in linear time', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    const units = ["'90s ", '[1:2:3:4:5:6:7] ', "'4K' ", '[10:30] ']
+    const requests = units.map((unit) =>
+      unit.repeat(Math.ceil(200_000 / unit.length)).slice(0, 200_000),
+    )
+    requests.push(`[${':'.repeat(199_999)}`, `[${'1:'.repeat(99_999)}1`)
+    for (const request of requests) {
+      expect(request).toHaveLength(200_000)
+
+      const started = performance.now()
+      const values = extractStatedValues(request)
+      missingStatedValues([...values, '1'], [request])
+      expect(performance.now() - started).toBeLessThan(2000)
+    }
+  })
+})
+
+describe('C440-FALSE-REFUSAL', () => {
+  it('a bracketed IPv6 host in compressed or full form states nothing', async () => {
+    const { extractStatedValues } = await load()
+    expect(extractStatedValues('open [fe80::1] and check 2 items')).toEqual(['2'])
+    expect(extractStatedValues('open [2001:db8::1]:443 and check 2 items')).toEqual(['2'])
+    expect(extractStatedValues('open [2001:db8:0:0:0:0:0:1]:443/cart and check 2 items')).toEqual([
+      '2',
+    ])
+    expect(extractStatedValues('open [::ffff:192.0.2.1]:8080 and check 2 items')).toEqual(['2'])
+  })
 })

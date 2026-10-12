@@ -595,7 +595,10 @@ describe('C440-VALUE-COMPILE', () => {
 })
 
 // 2026-10-12 (440-10, D-05; WR-06, WR-07): a value round 1 stopped protecting is refused again through the public op.
-const DIGIT_QUOTED_REQUEST = `open the products page, check the '4K' badge and check it says "All Products"`
+const DIGIT_QUOTED_REQUEST =
+  `open the products page, check the '4K' badge and check it says "All Products"`
+const BRACKETED_TIME_REQUEST =
+  'open the products page, check the slot [10:30] and check it says "All Products"'
 
 describe('C440-VALUE-COMPILE', () => {
   it('a single-quoted value that starts with digits glued to a letter is refused at compile when the draft loses it', async () => {
@@ -610,6 +613,23 @@ describe('C440-VALUE-COMPILE', () => {
     }).toEqual({
       outcome: 'refused',
       statedValueRefusal: { stage: 'compile', missingValues: ['4K'] },
+      verifyCalls: 0,
+      published: 0,
+    })
+  })
+
+  it('a bracketed time is refused at compile when the draft loses it', async () => {
+    const host = publicPathHost({ document: HISTORICAL_DOCUMENT, runs: 'pass' })
+    const output = await host.write(BRACKETED_TIME_REQUEST)
+
+    expect({
+      outcome: output['outcome'],
+      statedValueRefusal: output['statedValueRefusal'] ?? null,
+      verifyCalls: host.counts.verify,
+      published: host.published.length,
+    }).toEqual({
+      outcome: 'refused',
+      statedValueRefusal: { stage: 'compile', missingValues: ['10:30'] },
       verifyCalls: 0,
       published: 0,
     })

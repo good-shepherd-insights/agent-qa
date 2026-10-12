@@ -22,7 +22,7 @@ const STEP_LABEL = '(?<![\\p{L}\\p{N}])(?:Step|step|STEP) ([0-9]+)(?=[:)]|\\.(?:
 
 const HOST_AND_PORT = /^[A-Za-z][A-Za-z0-9.-]*:\d+(?:\/\S*)?[.,;!?)\]]*$/
 const IPV4_ADDRESS = /^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?(?:\/\S*)?[.,;!?)\]]*$/
-const BRACKETED_IPV6 = /^\[[0-9A-Fa-f.]*:[0-9A-Fa-f.:]*\](?::\d+)?(?:\/\S*)?[.,;!?)\]]*$/
+const BRACKETED_IPV6 = /^\[[0-9A-Fa-f.:]+\](?::\d+)?(?:\/\S*)?[.,;!?)\]]*$/
 const DECADE_ELISION = /^\d0s(?![\p{L}\p{N}'’])/u
 const LEADING_LETTER_OR_NUMBER = /^[\p{L}\p{N}]/u
 const TRAILING_LETTER_OR_NUMBER = /[\p{L}\p{N}]$/u
@@ -71,6 +71,12 @@ function closerOf(text: string, kind: QuoteKind, from: number): number {
   return -1
 }
 
+// 2026-10-12 (440-10, WR-07): an IPv6 literal holds `::` or at least six colons, so a bracketed
+// time or ratio is a value.
+function holdsIpv6Groups(inside: string): boolean {
+  return inside.includes('::') || inside.split(':').length > 6
+}
+
 // 2026-10-12 (440-08, WR-03): an IP or bracketed IPv6 host, with or without a port, states nothing.
 function isAddress(chunk: string): boolean {
   const bare = chunk.startsWith('(') ? chunk.slice(1) : chunk
@@ -79,7 +85,7 @@ function isAddress(chunk: string): boolean {
     bare.startsWith('www.') ||
     HOST_AND_PORT.test(bare) ||
     IPV4_ADDRESS.test(bare) ||
-    BRACKETED_IPV6.test(bare)
+    (BRACKETED_IPV6.test(bare) && holdsIpv6Groups(bare.slice(1, bare.indexOf(']'))))
   )
 }
 
