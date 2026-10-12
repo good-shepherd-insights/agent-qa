@@ -987,3 +987,43 @@ describe('C440-STATED-VALUES', () => {
     expect(extractStatedValues('Step 1. Step 1. Step 2.')).toEqual(['1'])
   })
 })
+
+// 2026-10-12 (440-16, D-03; the round-4 regression): a month-name day at a held start or the held next number clears the held run.
+describe('C440-STATED-VALUES', () => {
+  it('a month-name day where a held run would start or take its next number clears the held run, so a later 2 never confirms a stale held 1, and a list after a colon whose first item states that day is the known boundary', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    const dayAtNext =
+      'Check the badge shows: 1. Then check the date is Oct 2. Then set it to 2. then pay'
+    const dayAtStart =
+      'Check the counter: 1) Then set the delivery date to Oct. 1. Then check the counter shows 2) and pay'
+    expect(extractStatedValues(dayAtNext)).toEqual(['1', 'Oct 2', '2'])
+    expect(extractStatedValues(dayAtStart)).toEqual(['1', 'Oct. 1', '2'])
+    expect(
+      missingStatedValues(extractStatedValues(dayAtNext), [
+        'Verify the badge shows 0',
+        'Verify the date is Oct 2',
+        'Set the quantity to 5',
+        'Click pay',
+      ]),
+    ).toEqual(['1'])
+    expect(
+      missingStatedValues(extractStatedValues(dayAtStart), [
+        'Verify the counter shows 1',
+        'Set the delivery date to Oct. 1',
+        'Verify the counter shows 7',
+        'Click pay',
+      ]),
+    ).toEqual(['2'])
+    expect(
+      missingStatedValues(extractStatedValues(dayAtNext), [
+        'Verify the badge shows 1',
+        'Verify the date is Oct 2',
+        'Set the quantity to 2',
+        'Click pay',
+      ]),
+    ).toEqual([])
+    expect(
+      extractStatedValues('Checkout test: 1. pick the delivery date Oct 2. then 2. pay'),
+    ).toEqual(['1', 'Oct 2', '2'])
+  })
+})

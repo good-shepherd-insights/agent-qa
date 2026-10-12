@@ -177,6 +177,7 @@ function blankStepLabels(text: string, chars: string[]): void {
 // 2026-10-12 (440-13, WR-11): the open run and the held candidate are kept apart, so a held 1 inside an item never takes over its list.
 // 2026-10-12 (440-13, WR-10): a held 1) or (1) gets the sentence guard too.
 // 2026-10-12 (440-15, WR-12): a number right after a month name is that date's day, never a list marker.
+// 2026-10-12 (440-16, round-4 regression): a skipped day at the held start or next clears it.
 function blankListMarkers(text: string, chars: string[]): void {
   const open: Run = { next: 0, delimiter: '', pending: [], sentenceLike: false }
   const held: Run = { next: 0, delimiter: '', pending: [], sentenceLike: false }
@@ -204,7 +205,16 @@ function blankListMarkers(text: string, chars: string[]): void {
     const span = { start: index, end: tokenEnd }
     const start = digits === '1' ? runStartAt(text, index) : undefined
     index = tokenEnd
-    if (!opens && MONTH_BEFORE.test(text.slice(Math.max(0, span.start - 12), span.start))) continue
+    if (!opens && MONTH_BEFORE.test(text.slice(Math.max(0, span.start - 12), span.start))) {
+      const heldNext =
+        held.next >= 2 && delimiter === held.delimiter && digits === String(held.next)
+      if (start === 'pending' || heldNext) {
+        held.next = 0
+        held.delimiter = ''
+        held.pending = []
+      }
+      continue
+    }
     if (start === 'at-once') {
       open.next = 2
       open.delimiter = delimiter

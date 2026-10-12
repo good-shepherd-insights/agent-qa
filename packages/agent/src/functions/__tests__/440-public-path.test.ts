@@ -742,3 +742,38 @@ describe('C440-VALUE-COMPILE', () => {
     }
   })
 })
+
+// 2026-10-12 (440-16, D-05; the round-4 regression): a stated badge number beside a month-name date is refused again through the public op.
+const HELD_START_BESIDE_DATE_REQUEST =
+  'Check the badge shows: 1. Then check the delivery date is Oct 2. Then set it to 2. then check it says "All Products"'
+
+const CHANGED_BADGE_DOCUMENT = `name: Confirm the products page shows the badge, the delivery date and the All Products heading
+test-id: t_amber-cotton-ledger-marble-quartz-signal-timber-violet-walnut-yellow
+target: automation-exercise
+steps:
+  - Open the Automation Exercise home page
+  - Click the " products" link
+  - Verify the badge shows 0
+  - Verify the delivery date is Oct 2
+  - Set the quantity to 2
+  - Verify the products page says "All Products"
+`
+
+describe('C440-VALUE-COMPILE', () => {
+  it('a stated badge number beside a month-name date is refused at compile when the draft changes it', async () => {
+    const host = publicPathHost({ document: CHANGED_BADGE_DOCUMENT, runs: 'pass' })
+    const output = await host.write(HELD_START_BESIDE_DATE_REQUEST)
+
+    expect({
+      outcome: output['outcome'],
+      statedValueRefusal: output['statedValueRefusal'] ?? null,
+      verifyCalls: host.counts.verify,
+      published: host.published.length,
+    }).toEqual({
+      outcome: 'refused',
+      statedValueRefusal: { stage: 'compile', missingValues: ['1'] },
+      verifyCalls: 0,
+      published: 0,
+    })
+  })
+})
