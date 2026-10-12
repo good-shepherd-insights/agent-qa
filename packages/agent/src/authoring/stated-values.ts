@@ -21,6 +21,8 @@ const MONTH_NAME_DATE =
 const STEP_LABEL = '(?<![\\p{L}\\p{N}])(?:Step|step|STEP) ([0-9]+)(?=[:)]|\\.(?:\\s|$)| [-–—])'
 
 const HOST_AND_PORT = /^[A-Za-z][A-Za-z0-9.-]*:\d+(?:\/\S*)?[.,;!?)\]]*$/
+const IPV4_ADDRESS = /^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?(?:\/\S*)?[.,;!?)\]]*$/
+const BRACKETED_IPV6 = /^\[[0-9A-Fa-f.]*:[0-9A-Fa-f.:]*\](?::\d+)?(?:\/\S*)?[.,;!?)\]]*$/
 const LEADING_LETTER = /^\p{L}/u
 const LEADING_LETTER_OR_NUMBER = /^[\p{L}\p{N}]/u
 const TRAILING_LETTER_OR_NUMBER = /[\p{L}\p{N}]$/u
@@ -74,8 +76,16 @@ function closerOf(text: string, kind: QuoteKind, from: number): number {
   return -1
 }
 
+// 2026-10-12 (440-08, WR-03): an IP or bracketed IPv6 host, with or without a port, states nothing.
 function isAddress(chunk: string): boolean {
-  return chunk.includes('://') || chunk.startsWith('www.') || HOST_AND_PORT.test(chunk)
+  const bare = chunk.startsWith('(') ? chunk.slice(1) : chunk
+  return (
+    bare.includes('://') ||
+    bare.startsWith('www.') ||
+    HOST_AND_PORT.test(bare) ||
+    IPV4_ADDRESS.test(bare) ||
+    BRACKETED_IPV6.test(bare)
+  )
 }
 
 function collapsedSpace(space: string): string {

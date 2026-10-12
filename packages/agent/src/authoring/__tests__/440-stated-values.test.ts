@@ -439,6 +439,25 @@ describe('C440-FALSE-REFUSAL', () => {
       [],
     )
   })
+
+  it('an IP address, with or without a port and path, states nothing', async () => {
+    const { extractStatedValues } = await load()
+    expect(extractStatedValues('open 192.168.1.10 and check it')).toEqual([])
+    expect(extractStatedValues('go to 127.0.0.1:3000/products and check 3 items')).toEqual(['3'])
+    expect(extractStatedValues('open 192.168.1.10. Then check 4 items')).toEqual(['4'])
+  })
+
+  it('a bracketed IPv6 host and port states nothing', async () => {
+    const { extractStatedValues } = await load()
+    expect(extractStatedValues('open the site at [::1]:3000 and check it')).toEqual([])
+    expect(extractStatedValues('open [::1]:3000/cart and check 2 items')).toEqual(['2'])
+  })
+
+  it('a host and port in parentheses states nothing', async () => {
+    const { extractStatedValues } = await load()
+    expect(extractStatedValues('open the app (localhost:3000) and check 2 items')).toEqual(['2'])
+    expect(extractStatedValues('open the app (127.0.0.1:3000) and check 2 items')).toEqual(['2'])
+  })
 })
 
 describe('C440-STATED-VALUES', () => {
@@ -467,5 +486,31 @@ describe('C440-STATED-VALUES', () => {
     expect(extractStatedValues("check the '2024 Sale' banner")).toEqual(['2024 Sale'])
     expect(extractStatedValues("check the '20% off' badge")).toEqual(['20% off'])
     expect(extractStatedValues("check size 'M' is selected")).toEqual(['M'])
+  })
+
+  it('a number shaped like part of an address is still a stated value', async () => {
+    const { extractStatedValues } = await load()
+    expect(extractStatedValues('book it (10:30) for 2 people')).toEqual(['10:30', '2'])
+    expect(extractStatedValues('check the 16:9 player')).toEqual(['16:9'])
+    expect(extractStatedValues('check version 1.2.3 is shown')).toEqual(['1.2.3'])
+    expect(extractStatedValues('check the date 12.10.2026')).toEqual(['12.10.2026'])
+    expect(extractStatedValues('check footnote [2] and (3000)')).toEqual(['2', '3000'])
+  })
+
+  it('a long request of inch marks, apostrophes and addresses is checked in linear time', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    const units = ['15" ', "a 'n' ", '[::1]:', '(127.0.0.1:3000 ', "'1a "]
+    const requests = units.map((unit) =>
+      unit.repeat(Math.ceil(200_000 / unit.length)).slice(0, 200_000),
+    )
+    requests.push(`'${'1'.repeat(199_998)}a`)
+    for (const request of requests) {
+      expect(request).toHaveLength(200_000)
+
+      const started = performance.now()
+      const values = extractStatedValues(request)
+      missingStatedValues([...values, '1'], [request])
+      expect(performance.now() - started).toBeLessThan(2000)
+    }
   })
 })
