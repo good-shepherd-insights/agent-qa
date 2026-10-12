@@ -677,3 +677,26 @@ describe('C440-VALUE-COMPILE', () => {
     })
   })
 })
+
+// 2026-10-12 (440-13, D-05; WR-09): a held step heading's numbers are refused again through the public op.
+const HELD_STEP_HEADING_REQUEST =
+  'open the products page, check the title shows: Step 1. Then click Next and check it shows Step 2. Then check it says "All Products"'
+
+describe('C440-VALUE-COMPILE', () => {
+  it('a step number stated in a held step heading is refused at compile when the draft loses it', async () => {
+    const host = publicPathHost({ document: HISTORICAL_DOCUMENT, runs: 'pass' })
+    const output = await host.write(HELD_STEP_HEADING_REQUEST)
+
+    expect({
+      outcome: output['outcome'],
+      statedValueRefusal: output['statedValueRefusal'] ?? null,
+      verifyCalls: host.counts.verify,
+      published: host.published.length,
+    }).toEqual({
+      outcome: 'refused',
+      statedValueRefusal: { stage: 'compile', missingValues: ['1', '2'] },
+      verifyCalls: 0,
+      published: 0,
+    })
+  })
+})

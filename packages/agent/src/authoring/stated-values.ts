@@ -121,6 +121,7 @@ function endsSentence(text: string, tokenEnd: number): boolean {
 
 // 2026-10-12 (440-11, WR-05): a step label counts like a list marker, from a run start and by the
 // next number.
+// 2026-10-12 (440-13, WR-09): a held step label and its next label that each end a sentence wait for a third, as list markers do.
 function blankStepLabels(text: string, chars: string[]): void {
   const run: Run = { next: 0, delimiter: '', pending: [], sentenceLike: false }
   for (const match of text.matchAll(new RegExp(STEP_LABEL, 'gu'))) {
@@ -130,16 +131,23 @@ function blankStepLabels(text: string, chars: string[]): void {
     const end = match.index + match[0].length
     const span = { start: end - digits.length, end }
     const start = runStartAt(text, match.index)
+    const headingEnds = endsSentence(text, end + mark.length)
     if (digits === '1' && start !== undefined) {
       run.next = 2
       run.delimiter = delimiter
       run.pending = start === 'pending' ? [span] : []
+      run.sentenceLike = start === 'pending' && headingEnds
       if (start === 'at-once') blank(chars, span)
     } else if (
       run.next >= 2 &&
       digits === String(run.next) &&
       (delimiter === run.delimiter || start !== undefined)
     ) {
+      if (run.pending.length === 1 && run.sentenceLike && headingEnds) {
+        run.pending.push(span)
+        run.next += 1
+        continue
+      }
       for (const held of run.pending) blank(chars, held)
       run.pending = []
       blank(chars, span)

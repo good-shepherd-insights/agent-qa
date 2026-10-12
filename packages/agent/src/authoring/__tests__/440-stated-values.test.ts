@@ -696,3 +696,54 @@ describe('C440-FALSE-REFUSAL', () => {
     expect(extractStatedValues('Step 1: open the shop\nStep 2. add 2 items')).toEqual(['2'])
   })
 })
+
+// 2026-10-12 (440-13, D-02/D-03; WR-09, WR-11, WR-10): held step headings, nested held starts and held paren runs.
+describe('C440-STATED-VALUES', () => {
+  it('a held step label and its next label that each end a sentence are stated values until a third label follows, and a capitalized two-label step list is the known boundary', async () => {
+    const { extractStatedValues, missingStatedValues } = await load()
+    const request =
+      'check the title shows: Step 1. Then click Next and check it shows Step 2. Then click Pay'
+    expect(extractStatedValues(request)).toEqual(['1', '2'])
+    expect(
+      extractStatedValues(
+        'Check the heading: Step 1: Welcome. Click Next. Check the heading: Step 2: Payment.',
+      ),
+    ).toEqual(['1', '2'])
+    expect(
+      extractStatedValues(
+        'Check the progress says: Step 1 - Cart. Then click Next and check it says Step 2 - Payment',
+      ),
+    ).toEqual(['1', '2'])
+    expect(
+      missingStatedValues(extractStatedValues(request), [
+        'Verify the title shows Step 3',
+        'Click Next',
+        'Click Pay',
+      ]),
+    ).toEqual(['1', '2'])
+    expect(
+      extractStatedValues('Checkout test: Step 1: Open the shop Step 2: Add 2 items'),
+    ).toEqual(['1', '2'])
+    expect(extractStatedValues('Test the wizard. Step 1. Open it. Step 2. Click Next.')).toEqual([
+      '1',
+      '2',
+    ])
+  })
+})
+
+describe('C440-FALSE-REFUSAL', () => {
+  it('a held step list states no step number once its third label follows or its labels do not each end a sentence', async () => {
+    const { extractStatedValues } = await load()
+    expect(
+      extractStatedValues('Test the wizard. Step 1. Open it. Step 2. Click Next. Step 3. Pay.'),
+    ).toEqual([])
+    expect(
+      extractStatedValues(
+        'Checkout test: Step 1: Open the shop Step 2: Add 2 items Step 3: Check the cart',
+      ),
+    ).toEqual(['2'])
+    expect(
+      extractStatedValues('Checkout test: Step 1: Open the shop Step 2: add 2 items'),
+    ).toEqual(['2'])
+  })
+})
