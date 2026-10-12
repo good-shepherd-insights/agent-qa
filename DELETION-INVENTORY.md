@@ -3737,3 +3737,77 @@ from `fe15e1371` add lines only. The only product file that changed is
 The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
 verdict are recorded in `.planning/phases/440-authoring-intent/440-RECORD.md` § Gap closure round
 4 rather than quoted here, so no agent-qa commit follows it.
+
+### Gap closure round 5 (440-16), 2026-10-12
+
+This subsection appends to the Phase 440 section and rewrites none of it, rounds 1 to 4's
+subsections included; written by 440-16. It follows
+`.planning/phases/440-authoring-intent/440-VERIFICATION.md` (re-verification after round 4, agent-qa
+`35077bf21`), whose one gap is a value loss that round 4 brought in. On 2026-10-12 the owner
+answered (`440-UAT.md`, the comment above the newest gap), verbatim,
+"Narrow fix, then close (Recommended)": "One small plan: clear the held run when the month-name skip fires on a held-start or next-number token, add cells for both inputs, record gate, record and gitlink. Then re-verify and complete the phase. About 45 min."
+Every commit below is in agent-qa on `version-0.2` and signed; every cell is listed in
+`scripts/gate/inputs/regressions.json` with its `440 D-NN` origin. No listed cell was re-spelled:
+every earlier 440 cell passes unedited, and both test files' diffs from `35077bf21` add lines only.
+The only product file that changed is `agent/src/authoring/stated-values.ts`; its three exports and
+their signatures did not.
+
+**What was removed**
+
+- **A stale held `1` confirmed past a skipped month-name day** (the round-4 regression). Round 4's
+  skip left the held run alone, so when the skipped day would have started a held run or taken its
+  next number, an earlier held `1` stayed armed and a later bare `2.` or `2)` confirmed it and
+  blanked both. `Check the badge shows: 1. Then check the date is Oct 2. Then set it to 2. then pay`
+  stated `["1","Oct 2","2"]` at `bd2d9a200`, `5442d42a1` and `fe15e1371` and `["Oct 2"]` at
+  `35077bf21`; `Check the counter: 1) Then set the delivery date to Oct. 1. Then check the counter shows 2) and pay`
+  stated `["1","Oct. 1","2"]` at the first three and `["Oct. 1"]` at `35077bf21` (measured on
+  scratch copies of each SHA's module). So a draft saying the badge shows `0` was written green.
+  Now, where round 4's skip fires in `blankListMarkers`, a token that would start a held run, or
+  that has the held run's next number and delimiter, clears the held run before the skip; the
+  skipped token is still never blanked and still neither starts, continues nor confirms a run, and
+  the open run is untouched. Both requests state their `fe15e1371` values again. 440-16
+  `825e2b430`. Cells:
+  - `C440-STATED-VALUES a month-name day where a held run would start or take its next number clears the held run, so a later 2 never confirms a stale held 1, and a list after a colon whose first item states that day is the known boundary`
+  - `C440-VALUE-COMPILE a stated badge number beside a month-name date is refused at compile when the draft changes it` (through `invokeFunction('authoring.draft.write')`)
+
+**What was RETAINED, and why**
+
+| Item | Why kept | Where recorded |
+|---|---|---|
+| round 4's look-behind (`MONTH_BEFORE`, its 12-character slice, its `(N)` exclusion) and its skip | a skipped day is still never blanked and still not a run start, continuation or confirmation; the open run is untouched; only the held run is cleared | `C440-STATED-VALUES a month-name date is a stated value even where the next list marker would go, and an item that ends in a month name before the next marker is the known boundary`, unedited |
+| the step pass, unchanged | round 4's skip exists only in the list pass; `blankStepLabels` has no diff from `35077bf21` | every earlier step cell, unedited |
+| WR-02 and WR-04 | accepted by the owner as limitations; not touched by this round | `440-REVIEW.md`; `440-RECORD.md` § Gap closure round 1 |
+| IN-01 to IN-05 and IN-08 | outside the round's scope; left `open` | `440-REVIEW.md`; `440-REVIEW-DISPOSITION.md` |
+| the three exports and their signatures | the fix is inside extraction | `C440-STATED-VALUES the module is pure`; the callers' existing `C440-` cells |
+| the skill bullet in both `agent-qa-authoring` copies, the output schema, its conformance golden and the abandonment kinds | the refusal's shape does not change; `packages/schema`, `packages/cli` and `skills` have no diff from `bd2d9a200` | the `C440-SKILL` and `C440-REFUSAL-FIELD` cells; the golden |
+| `loop.ts`, `refine.ts`, `repair.ts` and the op | no diff from `bd2d9a200` | `git -C agent-qa diff --quiet bd2d9a200 HEAD -- …` (440-16's scope check) |
+
+**What degrades, stated plainly**
+
+- **A list after a colon whose first item states a month-name date at the list's next number,
+  before its real `2.`** (the fix's cost, a false refusal on the Safe side).
+  `Checkout test: 1. pick the delivery date Oct 2. then 2. pay` states `["1","Oct 2","2"]`, as at
+  `bd2d9a200`; it stated `["2"]` at `5442d42a1` and `fe15e1371` and `["Oct 2"]` at `35077bf21`. So
+  a faithful draft that keeps `Oct 2` but not the list's `1` is refused. It is the same shape,
+  token for token, as the gap input the owner chose to protect, which the same cell pins on the
+  other side. Pinned by the last row of
+  `C440-STATED-VALUES a month-name day where a held run would start or take its next number clears the held run, so a later 2 never confirms a stale held 1, and a list after a colon whose first item states that day is the known boundary`.
+  Covered by the owner's 'Safe side' decision of 2026-10-12; not named individually.
+- Rounds 1 to 4's own degradations are unchanged, round 4's WR-12 cost, entry F, IN-07 and entries
+  A to E and G among them.
+
+**The instruments that notice a return**
+
+- The 434 gate's regression list grew from 1364 to 1366 cells, both from 440-16:
+  `C440-STATED-VALUES` 1 and `C440-VALUE-COMPILE` 1. 129 cells now carry a `440` origin:
+  `440 D-03` 53 and `440 D-05` 17, the other origins unchanged.
+- Removing the clear reds both new cells (440-16's failing-first run at `35077bf21`).
+- Removing either clause of the clear reds the new value cell alone, on that clause's row: without
+  the held-start clause on the paren row, without the next-number clause on the dot row (440-16's
+  two mutant runs).
+
+**Gate**
+
+The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
+verdict are recorded in `.planning/phases/440-authoring-intent/440-RECORD.md` § Gap closure round
+5 rather than quoted here, so no agent-qa commit follows it.
