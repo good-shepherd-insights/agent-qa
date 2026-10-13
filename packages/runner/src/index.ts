@@ -362,6 +362,7 @@ export {
   resolveSecretTemplatesInValue,
   redactSecretValue,
   containsRedactedSecretMarker,
+  literalSecretMarkerRefusal,
 } from './loop/secrets.js'
 export type { SecretTemplate, SecretFileMetadata } from './loop/secrets.js'
 

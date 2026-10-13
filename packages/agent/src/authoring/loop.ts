@@ -44,6 +44,7 @@ import {
   loadGuardrailPolicy,
   scan,
 } from '@vostride/agent-qa-safety'
+import { literalSecretMarkerRefusal } from '@vostride/agent-qa-runner'
 import {
   DRAFT_STABILITY_RUNS_N,
   authoredSuiteTargetPath,
@@ -331,6 +332,34 @@ export class AuthoringDraftUnconfiguredTargetError extends Error {
         + `${configuredTargets.join(', ')}`,
     )
     this.name = 'AuthoringDraftUnconfiguredTargetError'
+  }
+}
+
+export class DraftSecretMarkerRefusedError extends Error {
+  constructor(
+    readonly location: string,
+    refusal: string,
+    readonly stepIndex?: number,
+  ) {
+    super(`${location}: ${refusal}`)
+    this.name = 'DraftSecretMarkerRefusedError'
+  }
+}
+
+export function refuseLiteralSecretMarkers(draft: {
+  readonly testName: string
+  readonly steps: readonly string[]
+  readonly context?: string
+}): void {
+  const locations: readonly { text: string; label: string; stepIndex?: number }[] = [
+    { text: draft.testName, label: 'the test name' },
+    ...(draft.context === undefined ? [] : [{ text: draft.context, label: 'the test context' }]),
+    ...draft.steps.map((text, index) => ({ text, label: `step ${index + 1}`, stepIndex: index })),
+  ]
+  for (const location of locations) {
+    const refusal = literalSecretMarkerRefusal(location.text)
+    if (refusal === undefined) continue
+    throw new DraftSecretMarkerRefusedError(location.label, refusal, location.stepIndex)
   }
 }
 
@@ -1005,13 +1034,8 @@ export async function runAuthoringLoop(
   const refinement = await refineDraft(compiled, input, deps)
   const draft = refinement.draft
 
-  // T-394-43, AND IT SITS HERE FOR A MEASURED REASON — see `screenDraftForCredentials`. It is after
-  // the refinement round so a credential D-18's patches introduced is screened as well as one the
-  // compile wrote, and before stage 4 so no gate run types the value into a live application and no
-  // receipt records it on disk. Nothing has been proposed at this point and nothing will be: the
-  // throw ends the invocation with no receipt, no envelope and no human asked. THIS SITE DOES NOT
-  // COVER REPAIR — `repairDraft` screens each patched candidate at its own site, per iteration.
-  screenDraftForCredentials(draft)
+  // 2026-10-14 (441-03, D-10): a draft that would type a literal [secret:NAME] ends here.
+  refuseLiteralSecretMarkers(draft)
 
   // 2026-10-01 (432-19, D-15): the dispatch runs directly. The optional dispatch-grant scope that
   // used to wrap stages 4-6 is deleted; no host bound it after 432-18 and nothing asks for an
