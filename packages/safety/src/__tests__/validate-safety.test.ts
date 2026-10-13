@@ -8,8 +8,8 @@ import { GuardrailConfigError } from '../guardrail/policy-loader'
 // SAFE-03 release gate (D-04). This is the closing enforcement conformance gate,
 // wired into the release plan beside validate:tools/validate:arch. It carries three
 // per-check-tailored detections:
-//   (a) STRUCTURAL — the safety egress seam is pinned last in model's MIDDLEWARE chain
-//       and spread last in the createModel composition (T-350-14).
+//   (a) STRUCTURAL — createModel's per-call middleware array ends with ...MIDDLEWARE and
+//       then createMaskingMiddleware(mask), with createModel's own MaskFn (441 D-06, E7).
 //   (b) BEHAVIORAL — the first-party registrar fails closed on bad guardrail config
 //       (T-350-15, GUARD-04 hoisted to the release gate).
 //   (c) STATIC import firewall — no LLM-context builder imports the audit surface
@@ -44,11 +44,13 @@ function stripComments(source: string): string {
 }
 
 function matchBracket(source: string, openIndex: number): number {
+  const open = source[openIndex]
+  const close = open === '(' ? ')' : ']'
   let depth = 0
   for (let index = openIndex; index < source.length; index += 1) {
     const char = source[index]
-    if (char === '[') depth += 1
-    else if (char === ']') {
+    if (char === open) depth += 1
+    else if (char === close) {
       depth -= 1
       if (depth === 0) return index
     }
@@ -80,78 +82,36 @@ function splitTopLevelEntries(inner: string): string[] {
 // Assert presence AND position; tolerate formatting-only edits; never merely check
 // that the identifier appears somewhere (RESEARCH Pitfall 5).
 function findSeamStructuralOffenders(rawSource: string, label: string): string[] {
-  const offenders: string[] = []
   const source = stripComments(rawSource)
   const rule = (name: string, detail: string) => `${label} | ${name} | ${detail}`
 
-  const importRe =
-    /import\s*\{[^}]*\bregisterFirstPartySafetyHooks\b[^}]*\}\s*from\s*['"]@vostride\/agent-qa-safety['"]/
-  if (!importRe.test(source)) {
-    offenders.push(
-      rule(
-        'registrar-import',
-        'missing import of registerFirstPartySafetyHooks from @vostride/agent-qa-safety',
-      ),
-    )
+  const signature = /export\s+function\s+createModel\s*\(/.exec(source)
+  if (!signature) return [rule('create-model', 'export function createModel( not found')]
+  const paramsOpen = signature.index + signature[0].length - 1
+  const paramsClose = matchBracket(source, paramsOpen)
+  const params = splitTopLevelEntries(source.slice(paramsOpen + 1, paramsClose))
+  const maskParam = params
+    .map(param => /^(\w+)\s*:\s*MaskFn$/.exec(param)?.[1])
+    .find(name => name !== undefined)
+  if (maskParam === undefined) {
+    return [rule('mask-parameter', 'createModel must take a required MaskFn parameter')]
   }
 
-  const declMatch = /const\s+MIDDLEWARE\b[^=]*=\s*\[/.exec(source)
-  if (!declMatch) {
-    offenders.push(rule('middleware-array', 'MIDDLEWARE array literal not found'))
-  } else {
-    const openIndex = declMatch.index + declMatch[0].length - 1
-    const closeIndex = matchBracket(source, openIndex)
-    const entries = splitTopLevelEntries(source.slice(openIndex + 1, closeIndex))
-    const last = entries.at(-1) ?? ''
-    if (!(last.includes('registerFirstPartySafetyHooks') && last.includes('.middleware'))) {
-      offenders.push(
-        rule(
-          'safety-seam-last',
-          'the last MIDDLEWARE entry must be registerFirstPartySafetyHooks().middleware',
-        ),
-      )
-    }
+  const declaration = /const\s+middleware\s*=\s*\[/.exec(source.slice(paramsOpen))
+  if (!declaration) {
+    return [rule('composition-array', 'the createModel per-call middleware array not found')]
   }
-
-  const spreadIndex = source.indexOf('...MIDDLEWARE')
-  if (spreadIndex === -1) {
-    offenders.push(
-      rule('composition-spread', '...MIDDLEWARE spread not found in the createModel composition'),
-    )
-  } else {
-    let openIndex = -1
-    let depth = 0
-    for (let index = spreadIndex; index >= 0; index -= 1) {
-      const char = source[index]
-      if (char === ']') depth += 1
-      else if (char === '[') {
-        if (depth === 0) {
-          openIndex = index
-          break
-        }
-        depth -= 1
-      }
-    }
-    if (openIndex === -1) {
-      offenders.push(
-        rule('composition-spread', 'enclosing createModel composition array literal not found'),
-      )
-    } else {
-      const closeIndex = matchBracket(source, openIndex)
-      const entries = splitTopLevelEntries(source.slice(openIndex + 1, closeIndex))
-      const last = entries.at(-1) ?? ''
-      if (!last.startsWith('...MIDDLEWARE')) {
-        offenders.push(
-          rule(
-            'composition-spread-last',
-            'the createModel composition must spread ...MIDDLEWARE as its final element',
-          ),
-        )
-      }
-    }
+  const openIndex = paramsOpen + declaration.index + declaration[0].length - 1
+  const entries = splitTopLevelEntries(source.slice(openIndex + 1, matchBracket(source, openIndex)))
+  const expected = `createMaskingMiddleware(${maskParam})`
+  const last = entries.at(-1) ?? ''
+  if (last.replace(/\s+/g, '') !== expected) {
+    return [rule('masking-last', `the last per-call element must be ${expected}, found ${last}`)]
   }
-
-  return offenders
+  if (entries.at(-2) !== '...MIDDLEWARE') {
+    return [rule('spread-before-masking', `...MIDDLEWARE must come immediately before ${expected}`)]
+  }
+  return []
 }
 
 // Held-out fixtures (synthetic mini-sources) — these are what give the gate teeth.
