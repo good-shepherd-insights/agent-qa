@@ -1,32 +1,7 @@
-// The repair path's credential screen, `context` inside the screen's domain, and the evidence a
-// repair iteration past the first is actually shown (Phase 394, gap round 1 · WTST-04 · T-394-43).
-//
-// WHY THIS FILE EXISTS AND `secret-guardrail.test.ts` DOES NOT COVER IT. That file measures the
-// gate on the LOOP's path: compile, refine, screen, verify. It cannot see the two holes the phase
-// verification found, and both are holes of REACH rather than of detection:
-//
-//   1. `loop.ts`'s doc block claims verbatim that a credential "introduced by a repair patch" is
-//      caught. No call site existed after `repair.ts`'s `applyPatches`. A repair patch's value is
-//      model-emitted text that a probe run TYPES INTO A LIVE APPLICATION and that `verifyDraft`
-//      then persists verbatim in `DraftReceipt.stepTable[].stepText`. The detector was never
-//      wrong; it was never asked.
-//   2. `context` is one of the three `EDITABLE_POINTER_ROOTS`, and `ParsedDraftLike` carried no
-//      such field at all — so the gate was blind to it by TYPE SHAPE, not by a missed line in a
-//      locations array. A cell that only added a context string to a draft literal would not even
-//      compile before the fix, which is exactly the RED this file was committed as.
-//
-// THE FAKE SHELF REMINTS `filePath` ON EVERY APPLY, and that single fidelity choice is what makes
-// the third property measurable at all. `local-agent-host.ts`'s `stageDraft` mints the shelf path
-// FROM THE CONTENT DIGEST, so every patched candidate lives at a new path. `repair-fence.test.ts`'s
-// applier keeps the path fixed — correct for what that file measures (step positions), and the
-// reason its five cells cannot see that `draftMember(candidate, handoff)` stops joining the moment
-// the candidate advances. A fake that cannot reproduce the host's identity churn cannot fail on a
-// defect made of it.
-//
-// EVERY CELL NAMES ITS FAMILY IN ITS OWN TITLE (`repair-screen`, `context-screen`,
-// `iteration-2-evidence`) because the phase's mutation driver (since removed) grepped vitest's printed
-// cell names, and a differential that has to match on a substring of prose is a differential that
-// reds on the next reword.
+// 2026-10-14 (441-03, D-10): repair and `authoring.draft.edit` refuse a draft that would type a
+// literal [secret:NAME], as the loop does. Pitfall 5: the repair-evidence and fixture-reality cells
+// this file carried for the deleted credential screen stay here. The fake shelf remints `filePath`
+// on every apply, as the host does, which is what makes the candidate's path measurable.
 
 import { TestEditPatchSetSchema } from '@vostride/agent-qa-schema'
 import type {
@@ -36,15 +11,12 @@ import type {
   RunsStartInput,
   TestEditPatchSet,
 } from '@vostride/agent-qa-schema'
-import { defaultGuardrailPolicyInput, loadGuardrailPolicy, scan } from '@vostride/agent-qa-safety'
+import { literalSecretMarkerRefusal } from '@vostride/agent-qa-runner'
 import { describe, expect, it } from 'vitest'
 
 import { memberOutcome, runDocument } from './evidence-fixtures.js'
 import type { MemberFixture } from './evidence-fixtures.js'
-import {
-  DraftSecretRefusedError,
-  screenDraftForCredentials,
-} from '../loop.js'
+import { DraftSecretMarkerRefusedError } from '../loop.js'
 import { REPAIR_ITERATION_CAP, repairDraft } from '../repair.js'
 import { routeRepairOrStop } from '../router.js'
 import type { RepairRoute } from '../router.js'
@@ -55,13 +27,10 @@ import {
 } from '../../functions/ops/authoring-draft-edit.js'
 import type { DraftEvaluationPort, FunctionDeps } from '../../functions/spec.js'
 
-// ---- the planted literal ------------------------------------------------------------------------
-//
-// ONE family, taken from `secret-guardrail.test.ts`'s corpus and PROVEN to fire below rather than
-// assumed to. A fixture that fired nothing would make every refusal cell in this file pass for the
-// reason the gate exists to rule out.
-const PLANTED_LITERAL = 'AKIAIOSFODNN7EXAMPLE'
-const PLANTED_FAMILY = 'awsKey'
+const PLANTED_MARKER = '[secret:PW]'
+const MARKER_SENTENCE =
+  'This action contains the masked placeholder [secret:PW]; it would type the placeholder text. '
+  + 'Use {{secret:PW}} to type the secret.'
 
 const SHELF_DIR = 'tests/.agent-qa-drafts'
 
@@ -112,13 +81,18 @@ function repairRoute(): RepairRoute {
 
 // ---- the patch corpus, produced through the shipped schema --------------------------------------
 
-/** A patch planting the credential into an UNPROTECTED step — the fence has no answer to it. */
-const CREDENTIAL_PATCH: TestEditPatchSet = TestEditPatchSetSchema.parse({
+/** A patch planting the placeholder into an UNPROTECTED step — the fence has no answer to it. */
+const MARKER_PATCH: TestEditPatchSet = TestEditPatchSetSchema.parse({
   thoughts: 'the submit control needs the key',
-  patches: [{ op: 'replace', path: '/steps/3', value: `Verify the banner shows ${PLANTED_LITERAL}` }],
+  patches: [{ op: 'replace', path: '/steps/3', value: `Verify the banner shows ${PLANTED_MARKER}` }],
 })
 
-/** The same shape carrying nothing a detector fires on — this file's admit direction. */
+const CONTEXT_MARKER_PATCH: TestEditPatchSet = TestEditPatchSetSchema.parse({
+  thoughts: 'record the operator password',
+  patches: [{ op: 'replace', path: '/context', value: `Sign in as the operator using ${PLANTED_MARKER}` }],
+})
+
+/** The same shape carrying no placeholder — this file's admit direction. */
 const CLEAN_PATCH: TestEditPatchSet = TestEditPatchSetSchema.parse({
   thoughts: 'wait for the banner',
   patches: [{ op: 'replace', path: '/steps/3', value: 'Verify the confirmation banner is visible' }],
@@ -160,8 +134,10 @@ const FINAL_RECEIPT = {
  */
 function applyToSteps(draft: ParsedDraftLike, set: TestEditPatchSet): ParsedDraftLike {
   const steps = [...draft.steps]
+  let context = draft.context
   for (const op of set.patches) {
     const segments = op.path.split('/').slice(1)
+    if (segments[0] === 'context' && op.op !== 'remove') context = op.value as string
     if (segments[0] !== 'steps') continue
     const index = Number(segments[1])
     if (!Number.isInteger(index)) continue
@@ -170,7 +146,13 @@ function applyToSteps(draft: ParsedDraftLike, set: TestEditPatchSet): ParsedDraf
     if (op.op === 'remove') steps.splice(index, 1)
   }
   const contentDigest = `${draft.contentDigest}+${set.patches.length}`
-  return { ...draft, steps, contentDigest, filePath: `${SHELF_DIR}/${contentDigest}.yaml` }
+  return {
+    ...draft,
+    steps,
+    ...(context === undefined ? {} : { context }),
+    contentDigest,
+    filePath: `${SHELF_DIR}/${contentDigest}.yaml`,
+  }
 }
 
 /** How the scripted probe answers: the member either still fails at step 2, or passes. */
@@ -273,13 +255,12 @@ function blockBody(prompt: string, titlePrefix: string): string | undefined {
 // ---- integrity cells: these never depend on the fix and stay GREEN in the RED record ------------
 
 describe('the fixtures this file measures with are real', () => {
-  it('the planted literal really fires the credential family it names', () => {
-    const fired = scan(PLANTED_LITERAL, loadGuardrailPolicy(defaultGuardrailPolicyInput)).fired
-    expect(fired.map((entry) => entry.detector)).toContain(PLANTED_FAMILY)
+  it('the planted placeholder is a literal secret marker', () => {
+    expect(literalSecretMarkerRefusal(PLANTED_MARKER)).toBe(MARKER_SENTENCE)
   })
 
   it('every patch in the corpus is one the shipped schema accepts', () => {
-    for (const [name, set] of [['credential', CREDENTIAL_PATCH], ['clean', CLEAN_PATCH]] as const) {
+    for (const [name, set] of [['marker', MARKER_PATCH], ['clean', CLEAN_PATCH]] as const) {
       expect(TestEditPatchSetSchema.safeParse(set).success, name).toBe(true)
     }
   })
@@ -301,47 +282,115 @@ describe('the fixtures this file measures with are real', () => {
   })
 })
 
-// ---- the repair-path screen ---------------------------------------------------------------------
+const RUN_BLOCK_TITLE = 'What happened in run r_best-prior'
+const CANDIDATE_BLOCK_TITLE = 'The draft as it stands'
+const REFUSAL_BLOCK_TITLE = 'Why the previous attempt was not kept'
 
-describe('a repair patch carrying a credential never reaches a run or a receipt', () => {
-  it('repair-screen refuses a credential-carrying patch by name and starts no probe', async () => {
-    // The probe is scripted PASSING, so an unscreened credential draft would be verified into a
-    // persisted receipt. The forbidden implementation is the maximally bad one, on purpose.
-    const bench = harness([emit(CREDENTIAL_PATCH)], ['passing', 'passing', 'passing'])
+const EDIT_TARGET: ParsedDraftLike = {
+  testId: 't_committed-checkout',
+  filePath: 'tests/checkout.yaml',
+  testName: 'Checkout with a coupon',
+  target: 'checkout',
+  steps: ['Open the cart', 'Verify the total is 0.00'],
+  contentDigest: 'digest-committed',
+}
+
+async function editThrough(
+  patches: readonly { op: 'replace'; path: string; value: string }[],
+): Promise<{ readonly settled: unknown; readonly published: string[] }> {
+  const published: string[] = []
+  let staged: ParsedDraftLike = {
+    ...EDIT_TARGET,
+    filePath: `${SHELF_DIR}/digest-edited.yaml`,
+    contentDigest: 'digest-edited',
+  }
+  const shelf = {
+    model: () => Promise.resolve({
+      modelId: 'fixture:edit',
+      generate: () => Promise.resolve({
+        text: JSON.stringify({ thoughts: 'apply the request', patches }),
+      }),
+    }),
+    write: () => Promise.reject(new Error('an edit never emits a whole document')),
+    applyPatches: (_draft: ParsedDraftLike, set: TestEditPatchSet) => {
+      staged = applyToSteps({ ...staged, steps: EDIT_TARGET.steps }, set)
+      return Promise.resolve({ kind: 'staged' as const, draft: staged })
+    },
+    runs: {
+      start: () => { throw new Error('authoring.draft.edit must start ZERO runs') },
+      get: () => { throw new Error('authoring.draft.edit reads no runs') },
+    },
+    verifyDraft: () => { throw new Error('authoring.draft.edit re-runs no gates') },
+    publish: (request: { targetPath: string }) => {
+      published.push(request.targetPath)
+      return Promise.resolve({
+        kind: 'written' as const,
+        filePath: request.targetPath,
+        contentDigest: staged.contentDigest,
+      })
+    },
+  }
+  const draftEvaluation: DraftEvaluationPort = {
+    resolveDraft: () => Promise.resolve({ kind: 'parsed' as const, draft: EDIT_TARGET }),
+    openEvaluation: () => Promise.reject(new Error('an edit opens no evaluation')),
+  }
+  const deps = {
+    entities: {
+      resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),
+      get: () => Promise.resolve(undefined),
+    },
+    draftShelf: shelf,
+    draftEvaluation,
+  } as unknown as FunctionDeps
+
+  const settled = await authoringDraftEditSpec
+    .invoke(
+      { testRef: `${EDIT_TARGET.filePath}::${EDIT_TARGET.testName}`, intent: 'apply the request' },
+      deps,
+    )
+    .then((output) => output, (error: unknown) => error)
+  return { settled, published }
+}
+
+describe('C441-DRAFT-MARKER', () => {
+  it('a repair patch that writes a masked placeholder spends the iteration and starts no probe', async () => {
+    const bench = harness([emit(MARKER_PATCH), emit(CLEAN_PATCH)], ['passing'])
 
     const outcome = await repairDraft(repairRoute(), bench.deps)
 
-    // NOTHING RAN. Not "a run that was later discarded" — the child process never started, so the
-    // value was never typed into an application.
+    // One probe: the clean patch of iteration 2. The placeholder patch of iteration 1 started none.
+    expect(bench.startInputs).toHaveLength(1)
+    expect(outcome.kind).toBe('repaired')
+    expect(outcome.iterations).toBe(2)
+    expect(blockBody(bench.prompts[1] ?? '', REFUSAL_BLOCK_TITLE))
+      .toBe(`step 4: ${MARKER_SENTENCE}`)
+    // The candidate did not advance: iteration 2 patched the original draft, at a path minted from
+    // the original digest, and its candidate block holds no placeholder.
+    expect(blockBody(bench.prompts[1] ?? '', CANDIDATE_BLOCK_TITLE)).not.toContain(PLANTED_MARKER)
+    expect(bench.stagedDrafts[1]?.contentDigest).toBe(`${DRAFT.contentDigest}+1`)
+    expect(bench.verifiedPaths).toEqual([bench.stagedDrafts[1]?.filePath])
+  })
+
+  it('a repair loop of placeholder patches exits through the exhausted arm with no receipt', async () => {
+    const bench = harness([emit(MARKER_PATCH)], ['passing', 'passing', 'passing'])
+
+    const outcome = await repairDraft(repairRoute(), bench.deps)
+
     expect(bench.startInputs).toEqual([])
     expect(outcome.kind).toBe('abandoned')
     if (outcome.kind !== 'abandoned') throw new Error('unreachable')
     expect(outcome.abandonment.kind).toBe('exhausted')
-    // BY NAME: the family and the place, and never the value.
-    expect(outcome.abandonment.error.message).toContain(PLANTED_FAMILY)
-    expect(outcome.abandonment.error.message).not.toContain(PLANTED_LITERAL)
-  })
-
-  it('repair-screen spends the iteration and mints no receipt', async () => {
-    const bench = harness([emit(CREDENTIAL_PATCH)], ['passing', 'passing', 'passing'])
-
-    const outcome = await repairDraft(repairRoute(), bench.deps)
-
-    // SPENT, not free: a refusal that did not consume an iteration would let a model that keeps
-    // planting credentials run forever.
+    expect(outcome.abandonment.error.message).toContain(MARKER_SENTENCE)
     expect(outcome.iterations).toBe(REPAIR_ITERATION_CAP)
     expect(bench.prompts).toHaveLength(REPAIR_ITERATION_CAP)
     expect(outcome.probeRunIds).toEqual([])
-    // The receipt is the durable half of the disclosure: `stepTable[].stepText` is verbatim.
     expect(bench.verifiedPaths).toEqual([])
-    // …and the poisoned draft never became the candidate the next iteration edits from.
     for (const prompt of bench.prompts) {
-      expect(prompt).not.toContain(PLANTED_LITERAL)
+      expect(blockBody(prompt, CANDIDATE_BLOCK_TITLE)).not.toContain(PLANTED_MARKER)
     }
   })
 
-  it('repair-screen leaves a clean patch on the path it was already on', async () => {
-    // THE ADMIT DIRECTION. A screen that refused everything would pass every cell above.
+  it('a clean repair patch stays on its path', async () => {
     const bench = harness([emit(CLEAN_PATCH)], ['passing'])
 
     const outcome = await repairDraft(repairRoute(), bench.deps)
@@ -351,108 +400,43 @@ describe('a repair patch carrying a credential never reaches a run or a receipt'
     expect(bench.verifiedPaths).toEqual([bench.stagedDrafts[0]?.filePath])
     expect(outcome.iterations).toBe(1)
   })
-})
 
-// ---- `context` inside the screen's domain --------------------------------------------------------
+  it('the context root is checked at repair and through authoring.draft.edit', async () => {
+    const bench = harness([emit(CONTEXT_MARKER_PATCH), emit(CLEAN_PATCH)], ['passing'])
 
-describe('the context root is inside the gate the doc block claims covers the draft', () => {
-  it('context-screen refuses a credential planted in the draft context', () => {
-    // A LITERAL, not a spread: `context` must be a field `ParsedDraftLike` DECLARES. Before the
-    // fix this line does not typecheck, which is the type-shape half of the hole.
-    const planted: ParsedDraftLike = {
-      testId: DRAFT.testId,
-      filePath: DRAFT.filePath,
-      testName: DRAFT.testName,
-      target: DRAFT.target,
-      steps: DRAFT.steps,
-      contentDigest: DRAFT.contentDigest,
-      context: `Sign in as the operator using ${PLANTED_LITERAL}`,
-    }
+    const outcome = await repairDraft(repairRoute(), bench.deps)
 
-    let caught: DraftSecretRefusedError | undefined
-    try {
-      screenDraftForCredentials(planted)
-    } catch (error) {
-      caught = error as DraftSecretRefusedError
-    }
+    expect(outcome.kind).toBe('repaired')
+    expect(bench.startInputs).toHaveLength(1)
+    expect(blockBody(bench.prompts[1] ?? '', REFUSAL_BLOCK_TITLE))
+      .toBe(`the test context: ${MARKER_SENTENCE}`)
 
-    expect(caught).toBeInstanceOf(DraftSecretRefusedError)
-    expect(caught?.family).toBe(PLANTED_FAMILY)
-    expect(caught?.location).toContain('context')
-    // Not a step: the location must not borrow a step's label and mislead the reader to a line
-    // that holds nothing.
-    expect(caught?.stepIndex).toBeUndefined()
-    expect(caught?.message).not.toContain(PLANTED_LITERAL)
-  })
-
-  it('context-screen refuses a context-planted credential through authoring.draft.edit', async () => {
-    // THE WIDENED DOMAIN REACHES THE SECOND PRODUCER with no second change at that op: the edit
-    // path calls the same screen on the re-parsed draft.
-    const target: ParsedDraftLike = {
-      testId: 't_committed-checkout',
-      filePath: 'tests/checkout.yaml',
-      testName: 'Checkout with a coupon',
-      target: 'checkout',
-      steps: ['Open the cart', 'Verify the total is 0.00'],
-      contentDigest: 'digest-committed',
-    }
-    const patches = [{ op: 'replace', path: '/context', value: `key ${PLANTED_LITERAL}` }]
-
-    const shelf = {
-      model: () => Promise.resolve({
-        modelId: 'fixture:edit',
-        generate: () => Promise.resolve({
-          text: JSON.stringify({ thoughts: 'record the key', patches }),
-        }),
-      }),
-      write: () => Promise.reject(new Error('an edit never emits a whole document')),
-      applyPatches: () => Promise.resolve({
-        kind: 'staged' as const,
-        draft: {
-          ...target,
-          filePath: `${SHELF_DIR}/digest-edited.yaml`,
-          contentDigest: 'digest-edited',
-          context: `key ${PLANTED_LITERAL}`,
-        },
-      }),
-      runs: {
-        start: () => { throw new Error('authoring.draft.edit must start ZERO runs') },
-        get: () => { throw new Error('authoring.draft.edit reads no runs') },
-      },
-      verifyDraft: () => { throw new Error('authoring.draft.edit re-runs no gates') },
-      publish: () => { throw new Error('a draft carrying a credential is never written') },
-    }
-    const draftEvaluation: DraftEvaluationPort = {
-      resolveDraft: () => Promise.resolve({ kind: 'parsed' as const, draft: target }),
-      openEvaluation: () => Promise.reject(new Error('an edit opens no evaluation')),
-    }
-    const deps = {
-      entities: {
-        resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),
-        get: () => Promise.resolve(undefined),
-      },
-      draftShelf: shelf,
-      draftEvaluation,
-    } as unknown as FunctionDeps
-
-    const refusal = await authoringDraftEditSpec
-      .invoke(
-        { testRef: `${target.filePath}::${target.testName}`, intent: 'record the operator key' },
-        deps,
-      )
-      .then(() => undefined, (error: unknown) => error)
+    const edit = await editThrough([
+      { op: 'replace', path: '/context', value: `key ${PLANTED_MARKER}` },
+    ])
 
     expect(AUTHORING_DRAFT_EDIT_FUNCTION_ID).toBe('authoring.draft.edit')
-    expect(refusal).toBeInstanceOf(DraftSecretRefusedError)
-    expect((refusal as DraftSecretRefusedError).location).toContain('context')
-    expect((refusal as Error).message).not.toContain(PLANTED_LITERAL)
+    expect(edit.settled).toBeInstanceOf(DraftSecretMarkerRefusedError)
+    expect((edit.settled as DraftSecretMarkerRefusedError).location).toBe('the test context')
+    expect((edit.settled as DraftSecretMarkerRefusedError).stepIndex).toBeUndefined()
+    expect((edit.settled as Error).message).toBe(`the test context: ${MARKER_SENTENCE}`)
+    expect(edit.published).toEqual([])
+  })
+
+  it('authoring.draft.edit accepts the template form and a card number', async () => {
+    for (const value of [
+      'Type {{secret:PW}} into Password',
+      'Type "4242 4242 4242 4242" into the Card number field',
+    ]) {
+      const edit = await editThrough([{ op: 'replace', path: '/steps/1', value }])
+
+      expect(edit.settled, value).not.toBeInstanceOf(Error)
+      expect(edit.published, value).toEqual([EDIT_TARGET.filePath])
+    }
   })
 })
 
 // ---- the evidence a repair iteration past the first is shown -------------------------------------
-
-const RUN_BLOCK_TITLE = 'What happened in run r_best-prior'
-const CANDIDATE_BLOCK_TITLE = 'The draft as it stands'
 
 describe('every repair iteration is shown the trace and the a11y coordinates', () => {
   it('iteration-2-evidence carries the trace and the a11y coordinates at the failure point', async () => {
