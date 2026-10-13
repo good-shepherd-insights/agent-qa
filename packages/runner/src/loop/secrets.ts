@@ -195,6 +195,29 @@ export function containsRedactedSecretMarker(value: unknown): boolean {
   return false
 }
 
+const LITERAL_SECRET_MARKER_RE = /\[secret:(\w+)\]/
+
+export function literalSecretMarkerRefusal(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    const name = LITERAL_SECRET_MARKER_RE.exec(value)?.[1]
+    return name === undefined
+      ? undefined
+      : `This action contains the masked placeholder [secret:${name}]; it would type the ` +
+          `placeholder text. Use {{secret:${name}}} to type the secret.`
+  }
+  if (isBufferLike(value)) return undefined
+  const items = Array.isArray(value)
+    ? value
+    : typeof value === 'object' && value !== null
+      ? Object.values(value as Record<string, unknown>)
+      : []
+  for (const item of items) {
+    const refusal = literalSecretMarkerRefusal(item)
+    if (refusal !== undefined) return refusal
+  }
+  return undefined
+}
+
 function isBufferLike(value: unknown): value is Buffer {
   return typeof Buffer !== 'undefined' && Buffer.isBuffer(value)
 }

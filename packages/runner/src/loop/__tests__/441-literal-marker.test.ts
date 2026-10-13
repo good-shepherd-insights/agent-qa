@@ -33,7 +33,7 @@ async function runOne(action: Record<string, unknown> & { type: string }) {
   const secretStore = new SecretStore({ PASSWORD, TOKEN })
   const ports: LoopPorts = {
     adapter: recordingAdapter(calls),
-    planner: makePlanner([makeActionPlan({ action: action as Action, stepComplete: true })]),
+    planner: makePlanner([makeActionPlan({ action, stepComplete: true })]),
     verifier: makeVerifier(),
     plannerConfig: { maxActions: 2, maxPlanningTurns: 2, previousStepCount: 0 },
     secretStore,

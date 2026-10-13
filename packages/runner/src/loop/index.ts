@@ -93,6 +93,7 @@ import type {
 import { PlanningLimitReachedError, PlanningTurnError } from './planner.js'
 import { withAbort, getTimeoutAbortReason } from './abort.js'
 import {
+  literalSecretMarkerRefusal,
   redactSecretValue,
   resolveSecretTemplatesInValue,
 } from './secrets.js'
@@ -805,6 +806,9 @@ export async function executeStep(
   const executeResolvedAction = async (
     toExecute: Action,
   ): Promise<{ result: ActionResult; error?: string }> => {
+    // 2026-10-14 (441-01, D-10): a literal [secret:NAME] would type the placeholder text itself.
+    const refusal = literalSecretMarkerRefusal(toExecute)
+    if (refusal !== undefined) return { result: { success: false, error: refusal }, error: refusal }
     let result: ActionResult
     try {
       // Template resolution stays INSIDE the try (T-353-08): a MissingSecretError is caught

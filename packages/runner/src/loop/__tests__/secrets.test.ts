@@ -7,6 +7,7 @@ import {
   redactSecretValue,
   resolveSecretTemplatesInValue,
   containsRedactedSecretMarker,
+  literalSecretMarkerRefusal,
 } from '../secrets.js'
 
 describe('findSecretTemplates', () => {
@@ -182,5 +183,27 @@ describe('C441-REDACTOR', () => {
       expect(redactor.redactString(text)).toBe(text)
     }
     expect(redactor.redactString('Ab/c d caf\u00e9')).toBe('[secret:token] [secret:accent]')
+  })
+})
+
+describe('C441-DISPATCH-REFUSAL', () => {
+  it('only a bracketed secret name is a literal marker', () => {
+    for (const text of ['[secret:]', '[secret:a-b]', '{{secret:A}}', 'plain text']) {
+      expect(literalSecretMarkerRefusal(text)).toBeUndefined()
+    }
+  })
+
+  it('the first marker in walk order names the refusal', () => {
+    const action = {
+      type: 'fill',
+      target: { role: 'textbox', name: 'Email [secret:EMAIL]' },
+      text: '[secret:PASSWORD]',
+      extra: ['[secret:LATER]'],
+    }
+    expect(literalSecretMarkerRefusal(action)).toBe(
+      'This action contains the masked placeholder [secret:EMAIL]; it would type the placeholder ' +
+        'text. Use {{secret:EMAIL}} to type the secret.',
+    )
+    expect(literalSecretMarkerRefusal({ type: 'fill', text: '{{secret:EMAIL}}' })).toBeUndefined()
   })
 })
