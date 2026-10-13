@@ -8,6 +8,7 @@ import type { RedactedEnvVar } from '@vostride/agent-qa-schema'
 import { createMaskingContext } from '@vostride/agent-qa-safety'
 
 import { buildCacheableStepInput } from '../key.js'
+import { redactSecretValue, SecretRedactor, SecretStore } from '../../loop/secrets.js'
 
 const SECRET = 'sk-live-abcdef0123456789'
 const ENV_SALT = 'salt'
@@ -74,5 +75,36 @@ describe('runtime cache-key masking floor (CACHE-01 / MASK-FUT-01)', () => {
 
     expect(maskedA.stepText).toBe(maskedB.stepText)
     expect(computeCacheKey(maskedA)).toBe(computeCacheKey(maskedB))
+  })
+})
+
+describe('C441-RUN-RECORDS', () => {
+  it('the cache key folds the masked step text', () => {
+    const redactor = new SecretRedactor(new SecretStore({ API_TOKEN: SECRET }))
+    const mask = (text: string) => redactSecretValue(text, redactor)
+    const keyed = (stepText: string, withMask = true) => {
+      const args = {
+        platform: 'web' as const,
+        suiteConfigDigest: 'suite-digest',
+        testConfigDigest: 'test-digest',
+        stepText,
+        stepIndex: 0,
+        testIndex: 0,
+        envVars: redactedEnvVars(),
+        envSalt: ENV_SALT,
+        screenIdentityHash: 'screen-hash',
+        ...(withMask ? { mask } : {}),
+      }
+      return buildCacheableStepInput(args)
+    }
+
+    const rawForm = keyed(`call API with ${SECRET}`)
+    const markerForm = keyed('call API with [secret:API_TOKEN]')
+    expect(rawForm.stepText).toBe('call API with [secret:API_TOKEN]')
+    expect(computeCacheKey(rawForm)).toBe(computeCacheKey(markerForm))
+
+    const undeclared = keyed('log in as qa@example.com')
+    expect(undeclared.stepText).toBe('log in as qa@example.com')
+    expect(computeCacheKey(undeclared)).toBe(computeCacheKey(keyed('log in as qa@example.com', false)))
   })
 })
