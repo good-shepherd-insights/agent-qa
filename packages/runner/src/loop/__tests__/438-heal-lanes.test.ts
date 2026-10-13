@@ -6,7 +6,7 @@
 // loop's settle needs two equal reads, so the page changes when the first action is attempted).
 //
 // C438-HEAL-EVIDENCE (438 D-05; WR-01): the heal's grounding block passes role, name and row
-// through secret redaction then masking, like the live block, and caps the prior row text at the
+// through the declared-secret mask, like the live block, and caps the prior row text at the
 // refusal block's observed-row cap.
 import { describe, expect, it } from 'vitest'
 import { vi } from 'vitest'
@@ -17,6 +17,7 @@ import type { StepResult } from '../../result.js'
 import { rowTextOf } from '../../grounding/row-text.js'
 import { buildScreenState, type InterimNode } from '../../screen-builder.js'
 import { executeStep } from '../index.js'
+import { SecretRedactor, SecretStore } from '../secrets.js'
 import type { ActionPlan, Planner, StepContext, Verifier } from '../types.js'
 import { renderStepRecord, type VerifierStepRecord } from '../step-record.js'
 import { makeStepContext } from './loop-harness.js'
@@ -318,11 +319,7 @@ async function runClickHeal(rowText: string, ports: Record<string, unknown> = {}
 describe('C438-HEAL-EVIDENCE', () => {
   it('the heal grounding block is masked like the live block', async () => {
     const { a, result } = await runClickHeal(`Order 12 ${MASKED}`, {
-      secretRedactor: { redactString: (value: string) => value.split(SECRET).join('[SECRET]') },
-      masking: {
-        mask: (value: string) => value.split(MASKED).join('[MASKED]'),
-        unmask: (value: string) => value,
-      },
+      secretRedactor: new SecretRedactor(new SecretStore({ PAY_LABEL: SECRET, ROW_WORD: MASKED })),
     })
 
     expect(a.executed).toHaveLength(2)
@@ -333,8 +330,8 @@ describe('C438-HEAL-EVIDENCE', () => {
       outcome: 'resolved',
       resolvedRef: 'e3',
     })
-    expect(grounding?.descriptor.name).toBe('Pay [SECRET] [MASKED]')
-    expect(grounding?.descriptor.row).toContain('[MASKED]')
+    expect(grounding?.descriptor.name).toBe('Pay [secret:PAY_LABEL] [secret:ROW_WORD]')
+    expect(grounding?.descriptor.row).toContain('[secret:ROW_WORD]')
     const recorded = JSON.stringify(grounding)
     expect(recorded).not.toContain(SECRET)
     expect(recorded).not.toContain(MASKED)

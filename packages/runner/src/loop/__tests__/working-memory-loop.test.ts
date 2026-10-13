@@ -11,8 +11,10 @@ import { describe, it, expect } from 'vitest'
 import type { ScreenState, MaskingContext } from '@vostride/agent-qa-schema'
 import type { PlatformAdapter, Action, ActionResult } from '../../platform.js'
 import type { LoopPorts } from '../ports.js'
-import type { Planner, PlanResult, StepContext } from '../types.js'
+import type { Planner, PlanResult, StepContext, Verifier } from '../types.js'
+import type { VerifierStepRecord } from '../step-record.js'
 import { executeStep } from '../index.js'
+import { SecretRedactor, SecretStore } from '../secrets.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import { makeActionPlan, makeStepContext, makeVerifier } from './loop-harness.js'
 
@@ -41,11 +43,7 @@ function makeWmPort(log: string[]): FakeWmPort & { stored: unknown[] } {
   }
 }
 
-// Identity-plus-marker masking so the snapshot's mask() application is provable.
-const fakeMasking = {
-  mask: (text: string) => `MASKED(${text})`,
-  unmask: (text: string) => text,
-} as unknown as MaskingContext
+const otpRedactor = new SecretRedactor(new SecretStore({ OTP_CODE: '4821' }))
 
 function loggingAdapter(log: string[], observeResults: ScreenState[]): PlatformAdapter {
   let observeCall = 0
@@ -130,13 +128,13 @@ describe('working-memory loop lifecycle (WM-01)', () => {
     }
     const result = await executeStep(
       'Capture and snapshot',
-      ports({ adapter: loggingAdapter(log, [makeScreenState(), makeScreenState()]), planner, verifier: makeVerifier(), workingMemory: wm, masking: fakeMasking } as never),
+      ports({ adapter: loggingAdapter(log, [makeScreenState(), makeScreenState()]), planner, verifier: makeVerifier(), workingMemory: wm, secretRedactor: otpRedactor } as never),
       makeStepContext(),
     )
     expect(result.status).toBe('passed')
     const snapshot = (result.evidence as { workingMemory?: { value: string }[] } | undefined)?.workingMemory
     expect(Array.isArray(snapshot)).toBe(true)
-    expect(snapshot?.some((e) => e.value === 'MASKED(4821)')).toBe(true)
+    expect(snapshot?.some((e) => e.value === '[secret:OTP_CODE]')).toBe(true)
   })
 
   it('runs unchanged with no workingMemory port bound — snapshot absent (optional-port idiom)', async () => {
@@ -150,5 +148,93 @@ describe('working-memory loop lifecycle (WM-01)', () => {
     expect(result.status).toBe('passed')
     expect((result.evidence as { workingMemory?: unknown } | undefined)?.workingMemory).toBeUndefined()
     expect(log).not.toContain('capture')
+  })
+})
+
+const PW = 'Hunter-42-zz'
+const EMAIL = 'qa@example.com'
+const MARKER = '[secret:PW_441]'
+
+function pageWithDeclaredValue(): ScreenState {
+  const screen = makeScreenState()
+  const elements = screen.elements.map((element) =>
+    element.ref === 'e2' ? { ...element, name: `Sign in ${PW} as ${EMAIL}` } : element,
+  )
+  return { ...screen, elements, tree: `${screen.tree}\n- text "${PW} for ${EMAIL}"` }
+}
+
+async function runDeclaredValueStep(extra: Partial<LoopPorts> = {}) {
+  const log: string[] = []
+  const wm = makeWmPort(log)
+  const planner: Planner = {
+    async plan(): Promise<PlanResult> {
+      return {
+        plan: makeActionPlan({
+          reasoning: `The page shows ${PW} for ${EMAIL}; signing in`,
+          action: { type: 'click', ref: 'e2' },
+          remember: [{ key: 'login', value: `${PW} / ${EMAIL}`, kind: 'extracted-value', provenance: 'observation' }],
+          stepComplete: true,
+        } as never),
+      }
+    },
+  }
+  let record: VerifierStepRecord | undefined
+  const base = makeVerifier()
+  const verifier: Verifier = {
+    async verify(...args: Parameters<Verifier['verify']>) {
+      record = args[10]
+      return base.verify(...args)
+    },
+  }
+  const result = await executeStep(
+    'Sign in with the saved password',
+    ports({
+      adapter: loggingAdapter(log, [pageWithDeclaredValue(), pageWithDeclaredValue()]),
+      planner,
+      verifier,
+      workingMemory: wm,
+      secretRedactor: new SecretRedactor(new SecretStore({ PW_441: PW })),
+      carriedArtifacts: {
+        downloads: [{
+          stepNumber: 1,
+          actionIndex: 1,
+          evidence: { suggestedFilename: `${PW}-${EMAIL}.csv`, extension: '.csv', size: 3, sha256: 'a'.repeat(64), state: 'completed' },
+        }],
+      },
+      ...extra,
+    } as never),
+    makeStepContext({ stepNumber: 2 } as never),
+  )
+  const recordLines = record === undefined
+    ? ''
+    : JSON.stringify({ actions: record.actions, reads: record.reads, carried: record.carried })
+  return { result, recordLines, record }
+}
+
+describe('C441-RUN-RECORDS', () => {
+  it('the loop records a declared value by name and leaves undeclared values', async () => {
+    const { result, recordLines, record } = await runDeclaredValueStep()
+    expect(result.status).toBe('passed')
+    const sub = result.evidence?.subActions[0]
+    expect(sub?.plan).toBe(`The page shows ${MARKER} for ${EMAIL}; signing in`)
+    const memory = JSON.stringify(result.evidence?.workingMemory)
+    expect(memory).toContain(`${MARKER} / ${EMAIL}`)
+    expect(memory).not.toContain(PW)
+    expect(record?.actions[0]?.element?.name).toBe(`Sign in ${MARKER} as ${EMAIL}`)
+    expect(record?.carried[0]?.text).toContain(`${MARKER}-${EMAIL}.csv`)
+    expect(recordLines).not.toContain(PW)
+  })
+
+  it('a masking context on the ports is no longer read', async () => {
+    const masking = {
+      mask: (text: string) => text.split(EMAIL).join('<EMAIL_0>'),
+      unmask: (text: string) => text,
+    } as unknown as MaskingContext
+    const { result, recordLines } = await runDeclaredValueStep({ masking } as never)
+    expect(result.status).toBe('passed')
+    expect(result.evidence?.subActions[0]?.plan).toContain(EMAIL)
+    expect(JSON.stringify(result.evidence?.workingMemory)).toContain(EMAIL)
+    expect(recordLines).toContain(EMAIL)
+    expect(JSON.stringify(result.evidence)).not.toContain('<EMAIL_0>')
   })
 })

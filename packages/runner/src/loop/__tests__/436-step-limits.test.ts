@@ -1,7 +1,6 @@
 // HARN-02 / 436 D-01, D-07, D-10..D-13: a step execution runs under a monotonic action limit and
 // stops honestly, with a typed limit block, when the limit refuses the next dispatch.
 import { describe, expect, it } from 'vitest'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 import {
   asRecordId,
   DEFAULT_PLANNER_LIMITS,
@@ -17,6 +16,7 @@ import { makeScreenState } from '../../testing/screen-fixtures.js'
 import { createTimeoutAbortReason } from '../abort.js'
 import { executeStep } from '../index.js'
 import { formatUnprovenReason } from '../requested-conditions.js'
+import { SecretRedactor, SecretStore } from '../secrets.js'
 import type { LoopPorts } from '../ports.js'
 import type { StepLimitMeter } from '../step-limits.js'
 import type { ActionPlan, Planner, Verifier } from '../types.js'
@@ -124,8 +124,7 @@ describe('C436-STEP-LIMITS', () => {
   })
 
   it("the limit block carries the last verifier rejection and the planner's last reasoning", async () => {
-    const masking = createMaskingContext()
-    masking.register('hunter2-secret')
+    const secretRedactor = new SecretRedactor(new SecretStore({ FORM_SECRET: 'hunter2-secret' }))
     const adapter = countingAdapter()
     const planner = scriptedPlanner([
       makeActionPlan({ reasoning: 'First try with hunter2-secret', stepComplete: true }),
@@ -137,7 +136,7 @@ describe('C436-STEP-LIMITS', () => {
       { success: false, reasoning: 'Saved banner absent (2)', isAppError: false },
       { success: false, reasoning: 'Saved banner absent for hunter2-secret', isAppError: false },
     ])
-    const result = await executeStep('Save the form', ports({ adapter, planner, verifier, masking, plannerConfig: limits(3) }), makeStepContext())
+    const result = await executeStep('Save the form', ports({ adapter, planner, verifier, secretRedactor, plannerConfig: limits(3) }), makeStepContext())
     expect(result.status).toBe('failed')
     expect(adapter.executed).toHaveLength(3)
     // Three rejected completions, then the stop's own judgment (439 D-08).
@@ -145,9 +144,9 @@ describe('C436-STEP-LIMITS', () => {
     expect(result.evidence?.conditionVerdicts?.ending).toBe('limit-stop')
     const stop = result.evidence?.limitStop
     expect(stop?.lastVerifierRejection).toBe(
-      `Not met: "Save the form" (${masking.mask('Saved banner absent for hunter2-secret')})`,
+      'Not met: "Save the form" (Saved banner absent for [secret:FORM_SECRET])',
     )
-    expect(stop?.lastPlannerReasoning).toBe(masking.mask('Third try with hunter2-secret'))
+    expect(stop?.lastPlannerReasoning).toBe('Third try with [secret:FORM_SECRET]')
     expect(stop?.lastVerifierRejection).not.toContain('hunter2-secret')
     expect(stop?.lastPlannerReasoning).not.toContain('hunter2-secret')
     expect(result.evidence?.verdictSource).toBeUndefined()

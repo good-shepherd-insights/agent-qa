@@ -23,6 +23,7 @@ import type { LoopEventEmitPort, LoopPorts } from '../ports.js'
 import { buildVerificationPrompt, composeTurnMessages, renderOperationEvidence } from '../prompts.js'
 import { renderStepRecord, type VerifierStepRecord } from '../step-record.js'
 import type { ActionPlan, Planner, StepContext, Verifier } from '../types.js'
+import { SecretRedactor, SecretStore } from '../secrets.js'
 import { makeActionPlan, makeAdapter, makeStepContext } from './loop-harness.js'
 
 const REPORT: DownloadEvidence = {
@@ -33,10 +34,7 @@ const REPORT: DownloadEvidence = {
   state: 'completed',
 }
 
-const masking = {
-  mask: (text: string) => text.replaceAll('secret', '[MASKED]'),
-  unmask: (text: string) => text,
-}
+const secretRedactor = new SecretRedactor(new SecretStore({ MASKED_WORD: 'secret' }))
 
 function scriptedPlanner(plans: ActionPlan[], contexts: StepContext[]): Planner {
   let call = 0
@@ -66,7 +64,7 @@ function recordingEvents(recorded: SubActionEvidence[]): LoopEventEmitPort {
 }
 
 function ports(overrides: Partial<LoopPorts> & Pick<LoopPorts, 'adapter' | 'planner'>): LoopPorts {
-  return { plannerConfig: { maxActions: 20, maxPlanningTurns: 20, previousStepCount: 0 }, masking, ...overrides }
+  return { plannerConfig: { maxActions: 20, maxPlanningTurns: 20, previousStepCount: 0 }, secretRedactor, ...overrides }
 }
 
 function twoClicks(): ActionPlan[] {
@@ -107,11 +105,11 @@ describe('C436-OPERATION-EVIDENCE', () => {
     expect(status).toBe('passed')
     const [first, second] = evidence.subActions
     expect(first!.operationEvidence).toEqual({
-      downloads: [{ ...REPORT, suggestedFilename: 'report-[MASKED].csv' }],
+      downloads: [{ ...REPORT, suggestedFilename: 'report-[secret:MASKED_WORD].csv' }],
     })
     expect(first!.result.metadata).toEqual({ keep: 'me' })
     expect(second).not.toHaveProperty('operationEvidence')
-    expect(emitted[0]!.operationEvidence?.downloads?.[0]?.suggestedFilename).toBe('report-[MASKED].csv')
+    expect(emitted[0]!.operationEvidence?.downloads?.[0]?.suggestedFilename).toBe('report-[secret:MASKED_WORD].csv')
     expect(emitted[0]!.result.metadata).not.toHaveProperty('download')
     expect(JSON.stringify(evidence)).not.toContain('report-secret')
   })
@@ -128,7 +126,7 @@ describe('C436-OPERATION-EVIDENCE', () => {
     expect(history).toHaveLength(1)
     expect(history[0]!.evidence).toBe([
       APP_OBSERVED_DATA_OPEN,
-      `Download "report-[MASKED].csv" (.csv): completed, 18 bytes, sha256 ${'a'.repeat(64)}`,
+      `Download "report-[secret:MASKED_WORD].csv" (.csv): completed, 18 bytes, sha256 ${'a'.repeat(64)}`,
       APP_OBSERVED_DATA_CLOSE,
     ].join('\n'))
 
@@ -234,11 +232,11 @@ describe('C436-OPERATION-EVIDENCE verifier input and availability', () => {
     expect(result.status).toBe('passed')
     expect(calls).toHaveLength(1)
     expect(calls[0]![9]).toEqual({
-      downloads: [{ ...REPORT, suggestedFilename: 'report-[MASKED].csv' }, SECOND],
+      downloads: [{ ...REPORT, suggestedFilename: 'report-[secret:MASKED_WORD].csv' }, SECOND],
     })
     const record = calls[0]![10] as VerifierStepRecord
     expect(renderStepRecord(record).operationEvidence.split('\n')).toEqual([
-      `action 1: ${renderOperationEvidence({ downloads: [{ ...REPORT, suggestedFilename: 'report-[MASKED].csv' }] })}`,
+      `action 1: ${renderOperationEvidence({ downloads: [{ ...REPORT, suggestedFilename: 'report-[secret:MASKED_WORD].csv' }] })}`,
       `action 2: ${renderOperationEvidence({ downloads: [SECOND] })}`,
     ])
   })
@@ -341,7 +339,7 @@ describe('C436-CLIPBOARD-CAPTURE loop recording', () => {
       makeStepContext({ stepInstruction: 'Copy the order number' }),
     )
 
-    const masked = LONG.replaceAll('secret', '[MASKED]')
+    const masked = LONG.replaceAll('secret', '[secret:MASKED_WORD]')
     const expected = [
       {
         source: 'writeText',
@@ -351,7 +349,7 @@ describe('C436-CLIPBOARD-CAPTURE loop recording', () => {
       },
       {
         source: 'copy-event',
-        text: 'a'.repeat(CLIPBOARD_TEXT_LIMIT - 3) + '[MA' + CLIPBOARD_TRUNCATION_MARKER,
+        text: 'a'.repeat(CLIPBOARD_TEXT_LIMIT - 3) + '[se' + CLIPBOARD_TRUNCATION_MARKER,
         truncated: true,
         readBack: 'mismatched',
       },
@@ -367,8 +365,9 @@ describe('C436-CLIPBOARD-CAPTURE loop recording', () => {
     const history = contexts[1]!.subActionHistory![0]!.evidence!
     expect(history).toContain(`Clipboard write (writeText): "${expected[0]!.text}" (truncated), read back matched`)
     for (const recorded of [result.evidence, emitted, history]) {
-      expect(JSON.stringify(recorded)).not.toContain('secret')
-      expect(JSON.stringify(recorded)).not.toContain('sec')
+      const outsideMarkers = JSON.stringify(recorded).replaceAll('[secret:MASKED_WORD]', '')
+      expect(outsideMarkers).not.toContain('secret')
+      expect(outsideMarkers).not.toContain('sec')
     }
   })
 
@@ -378,7 +377,7 @@ describe('C436-CLIPBOARD-CAPTURE loop recording', () => {
       metadata: { clipboard: [{ source: 'write', text: 'ORDER-4471 secret', readBack: 'matched' }], keep: 'me' },
     })
     expect(evidence.subActions[0]!.operationEvidence).toEqual({
-      clipboard: [{ source: 'write', text: 'ORDER-4471 [MASKED]', truncated: false, readBack: 'matched' }],
+      clipboard: [{ source: 'write', text: 'ORDER-4471 [secret:MASKED_WORD]', truncated: false, readBack: 'matched' }],
     })
     expect(evidence.subActions[0]!.result.metadata).toEqual({ keep: 'me' })
   })
@@ -394,14 +393,14 @@ describe('C436-CLIPBOARD-CAPTURE loop recording', () => {
 
     const [first, second] = evidence.subActions
     expect(first!.operationEvidence).toEqual({
-      downloads: [{ ...REPORT, suggestedFilename: 'report-[MASKED].csv' }],
+      downloads: [{ ...REPORT, suggestedFilename: 'report-[secret:MASKED_WORD].csv' }],
       clipboard: [{ source: 'writeText', text: 'ORDER-4471', truncated: false, readBack: 'matched' }],
     })
     expect(first!.result).not.toHaveProperty('metadata')
     expect(second).not.toHaveProperty('operationEvidence')
     expect(contexts[1]!.subActionHistory![0]!.evidence).toBe([
       APP_OBSERVED_DATA_OPEN,
-      `Download "report-[MASKED].csv" (.csv): completed, 18 bytes, sha256 ${'a'.repeat(64)}`,
+      `Download "report-[secret:MASKED_WORD].csv" (.csv): completed, 18 bytes, sha256 ${'a'.repeat(64)}`,
       'Clipboard write (writeText): "ORDER-4471", read back matched',
       APP_OBSERVED_DATA_CLOSE,
     ].join('\n'))
@@ -463,7 +462,7 @@ describe('C436-DOWNLOAD-LATE', () => {
       makeStepContext({ stepInstruction: 'Export the report' }),
     )
 
-    const masked = { ...LATE, suggestedFilename: 'late-[MASKED].csv' }
+    const masked = { ...LATE, suggestedFilename: 'late-[secret:MASKED_WORD].csv' }
     expect(result.status).toBe('passed')
     expect(result.evidence!.subActions[1]!.operationEvidence).toEqual({ downloads: [masked] })
     expect(result.evidence!.subActions[0]).not.toHaveProperty('operationEvidence')
@@ -472,7 +471,7 @@ describe('C436-DOWNLOAD-LATE', () => {
     expect(history[0]).not.toHaveProperty('evidence')
     expect(history[1]!.evidence).toBe([
       APP_OBSERVED_DATA_OPEN,
-      `Download "late-[MASKED].csv" (.csv): completed, 7 bytes, sha256 ${'c'.repeat(64)}, ${LATE_NOTE}`,
+      `Download "late-[secret:MASKED_WORD].csv" (.csv): completed, 7 bytes, sha256 ${'c'.repeat(64)}, ${LATE_NOTE}`,
       APP_OBSERVED_DATA_CLOSE,
     ].join('\n'))
 
@@ -482,7 +481,7 @@ describe('C436-DOWNLOAD-LATE', () => {
     const screen = makeScreenState()
     const prompt = buildVerificationPrompt('Export the report', screen, screen, { type: 'click', ref: 'e1' } as Action,
       false, undefined, undefined, undefined, verifierEvidence, calls[0]![10] as VerifierStepRecord)
-    expect(prompt).toContain(`action 2: Download "late-[MASKED].csv" (.csv): completed, 7 bytes, sha256 ${'c'.repeat(64)}, ${LATE_NOTE}`)
+    expect(prompt).toContain(`action 2: Download "late-[secret:MASKED_WORD].csv" (.csv): completed, 7 bytes, sha256 ${'c'.repeat(64)}, ${LATE_NOTE}`)
   })
 
   it('a late download keeps its marker through the reader', () => {

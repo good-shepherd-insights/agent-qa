@@ -12,7 +12,8 @@ import { buildVerificationPrompt, composeTurnMessages } from '../prompts.js'
 import type { VerifierStepRecord } from '../step-record.js'
 import { scriptedVerification } from '../../testing/condition-verdicts.js'
 import { APP_OBSERVED_DATA_CLOSE, APP_OBSERVED_DATA_OPEN } from '@vostride/agent-qa-safety'
-import type { MaskingContext, OperationEvidence } from '@vostride/agent-qa-schema'
+import type { OperationEvidence } from '@vostride/agent-qa-schema'
+import { SecretRedactor, SecretStore } from '../secrets.js'
 
 const ROW_BOUNDS = { x: 0, y: 400, width: 1280, height: 160 }
 const ROW_CENTRE = { x: 640, y: 480 }
@@ -297,7 +298,7 @@ function capturingVerifier(captured: VerifyArgs[]): Verifier {
 async function runCaptured(
   observation: ScreenState,
   action: Record<string, unknown> & { type: string },
-  masking?: MaskingContext,
+  secretRedactor?: SecretRedactor,
 ) {
   const calls: Action[] = []
   const captured: VerifyArgs[] = []
@@ -306,7 +307,7 @@ async function runCaptured(
     planner: makePlanner([makeActionPlan({ action, stepComplete: true })]),
     verifier: capturingVerifier(captured),
     plannerConfig: { maxActions: 4, maxPlanningTurns: 4, previousStepCount: 0 },
-    ...(masking ? { masking } : {}),
+    ...(secretRedactor ? { secretRedactor } : {}),
   }
   const result = await executeStep('Turn dark theme on', ports, makeStepContext())
   return { calls, captured, result }
@@ -372,18 +373,15 @@ describe('C437-NO-INPUT', () => {
 
   it('a picker no-op masks its currentState', async () => {
     const picker = screenWith({ role: 'combobox', name: 'Plan', value: 'Secret Option' })
-    const masking: MaskingContext = {
-      mask: (text) => text.replaceAll('Secret Option', '***'),
-      unmask: (text) => text,
-    }
+    const secretRedactor = new SecretRedactor(new SecretStore({ PLAN_OPTION: 'Secret Option' }))
     const { calls, result } = await runCaptured(
       picker,
       { type: 'pickerSelect', ref: 'e1', value: 'Secret Option' },
-      masking,
+      secretRedactor,
     )
     expect(calls).toHaveLength(0)
     const entry = result.evidence?.subActions[0]?.operationEvidence?.input?.[0]
-    expect(entry?.currentState).toBe('***')
+    expect(entry?.currentState).toBe('[secret:PLAN_OPTION]')
     expect(entry?.inputSent).toBe(false)
   })
 })

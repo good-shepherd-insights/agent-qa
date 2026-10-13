@@ -285,7 +285,6 @@ export async function executeStep(
     toolSchemaDigest: ports.toolSchemaDigest,
     retrievalRung,
   })
-  const maskValue = ports.masking?.mask ?? ((value: string) => value)
   context.subActionHistory = []
   // 436 D-23: what this platform can capture, recorded once per step; unsupported never invents.
   recorder.recordOperationCapture(operationCaptureAvailability(ports.adapter.operationCaptureSupport))
@@ -293,7 +292,7 @@ export async function executeStep(
   const stepOperationEvidence: OperationEvidence = {}
   // 439 D-03: everything the step did and read, for the verifier; never the planner's reasoning.
   const stepRecord = new StepRecordAccumulator()
-  const recordMask = (value: string) => maskValue(redactSecretValue(value, ports.secretRedactor))
+  const recordMask = (value: string) => redactSecretValue(value, ports.secretRedactor)
   // 439 D-04: what earlier steps of this test downloaded or copied, labelled by its producer.
   for (const item of carriedItems(ports.carriedArtifacts)) {
     stepRecord.addCarried({ stepNumber: item.stepNumber, actionIndex: item.actionIndex, text: recordMask(item.text) })
@@ -583,18 +582,18 @@ export async function executeStep(
       pendingCautions = undefined
     }
     // WM-01 masked snapshot (Pitfall 7 boundary 3): the whole served set snapshots into
-    // StepEvidence.workingMemory with values masked (ports.masking.mask — identity pre-362),
+    // StepEvidence.workingMemory with declared values masked (441 D-06),
     // BESIDE the brief. Unbound port ⇒ no snapshot (optional-port idiom).
     if (ports.workingMemory) {
       recorder.recordWorkingMemory(
-        ports.workingMemory.entries().map((entry) => ({ ...entry, value: maskValue(entry.value) })),
+        ports.workingMemory.entries().map((entry) => ({ ...entry, value: recordMask(entry.value) })),
       )
     }
     recorder.recordLimitUsage(meter.snapshot(
       compoundInputs.filter((input) => input.subActionIndex < recorder.subActionCount),
     ))
     // 381-41 (G-381-3): the step's {{env:NAME}} provenance pairs ride to the recorder
-    // VERBATIM — deliberately NOT through maskValue (bound at line ~209), unlike the
+    // VERBATIM — deliberately NOT through recordMask, unlike the
     // workingMemory snapshot above. Masking would transform email-valued and
     // credential-named bindings here while `plannedAction` and `stepInstruction` stayed
     // raw, so the emit fold's exact-string match would miss and replay would stay
@@ -767,8 +766,8 @@ export async function executeStep(
       used,
       reason,
       requestedOutcome: 'unverified',
-      ...(lastVerifierRejection !== undefined ? { lastVerifierRejection: maskValue(lastVerifierRejection) } : {}),
-      ...(lastPlannerReasoning !== undefined ? { lastPlannerReasoning: maskValue(lastPlannerReasoning) } : {}),
+      ...(lastVerifierRejection !== undefined ? { lastVerifierRejection: recordMask(lastVerifierRejection) } : {}),
+      ...(lastPlannerReasoning !== undefined ? { lastPlannerReasoning: recordMask(lastPlannerReasoning) } : {}),
     })
     return failure(withUnproven(reason, judged))
   }
@@ -1053,7 +1052,7 @@ export async function executeStep(
               procedureHintStaged = {
                 procedureId: match.id,
                 anchors: [match.flowAnchor],
-                block: renderProcedureHintBlock(match, payload, undefined, maskValue),
+                block: renderProcedureHintBlock(match, payload, undefined, recordMask),
                 demotion: body === undefined
                   ? 'body-unreadable'
                   : payload === undefined
@@ -1069,7 +1068,7 @@ export async function executeStep(
             procedureHintStaged = {
               procedureId: match.id,
               anchors: [match.flowAnchor],
-              block: renderProcedureHintBlock(match, payload, undefined, maskValue),
+              block: renderProcedureHintBlock(match, payload, undefined, recordMask),
             }
           }
         }
@@ -1165,7 +1164,7 @@ export async function executeStep(
         procedureHintStaged = {
           procedureId: replayState.match.id,
           anchors: [replayState.match.flowAnchor],
-          block: renderProcedureGuardMissRecoveryBlock(recovery, maskValue),
+          block: renderProcedureGuardMissRecoveryBlock(recovery, recordMask),
         }
       }
     }
@@ -1395,8 +1394,8 @@ export async function executeStep(
         if (planError instanceof PlanningTurnError) {
           recorder.recordPlanningFailure({
             reason: planError.reason,
-            message: maskValue(planError.message),
-            exchanges: maskToolExchanges(planError.exchanges, maskValue),
+            message: recordMask(planError.message),
+            exchanges: maskToolExchanges(planError.exchanges, recordMask),
             ...(planError.callRecord !== undefined ? { callRecord: planError.callRecord } : {}),
           })
         }
@@ -1423,7 +1422,7 @@ export async function executeStep(
     const liveDecisionEvidence: LiveDecisionEvidence | undefined = (cached || procedureReplayed)
       ? undefined
       : {
-          exchanges: maskToolExchanges(planResult!.exchanges ?? [], maskValue),
+          exchanges: maskToolExchanges(planResult!.exchanges ?? [], recordMask),
           ...(planResult!.callRecord !== undefined ? { callRecord: planResult!.callRecord } : {}),
         }
 
@@ -1520,7 +1519,7 @@ export async function executeStep(
       screenState.elements,
       gateAttempts,
       statedTargets,
-      (value) => maskValue(redactSecretValue(value, ports.secretRedactor)),
+      recordMask,
     )
 
     // Persist the completing decision's plan into the per-key cache as a descriptor-only
@@ -1595,8 +1594,7 @@ export async function executeStep(
     // D-04/D-05: the stated target is judged against each lane's element before the debit; a
     // clear contradiction sends nothing, substitutes nothing and is not debited.
     const targetRefusal = gateForcedError === undefined && statedTargets !== undefined
-      ? judgeStatedTargets(statedTargets, normalizedAction, screenState.elements,
-          (value) => maskValue(redactSecretValue(value, ports.secretRedactor)))
+      ? judgeStatedTargets(statedTargets, normalizedAction, screenState.elements, recordMask)
       : undefined
     if (gateForcedError === undefined && targetRefusal === undefined) meter.tryDebitAction()
     // D-14: judged pre-dispatch on the settled `screenState` only (never a live probe, Pitfall 10).
@@ -1609,9 +1607,7 @@ export async function executeStep(
     // decide here — no second pre-adapter decision site. Helper logic lives in the Plan 08/09
     // compound + verifier modules; only the branch decisions live here.
     const dispatchVerb = normalizedAction.type
-    // MASK-FUT-01 boundary (identity pre-362): value-bearing evidence is masked BEFORE record,
-    // the recordWorkingMemory idiom. `action` is already secret-redacted at this point, so this
-    // is the additional masking layer, not the secret guard.
+    // Value-bearing evidence is masked before record through recordMask (441 D-06, D-11).
     if (gateForcedError !== undefined) {
       execResult = { success: false, error: gateForcedError }
       execError = gateForcedError
@@ -1627,7 +1623,7 @@ export async function executeStep(
       // adapter.execute. The answer surfaces on metadata.reportedValue and lands masked-before-
       // record in StepEvidence.reportedValue. reportValue is NON-terminal (D-02): the plan-field
       // envelope (stepComplete/stepFailed) stays the sole termination mechanism.
-      const reportedValue = maskValue(String((action as { value?: unknown }).value ?? ''))
+      const reportedValue = recordMask(String((action as { value?: unknown }).value ?? ''))
       execResult = mintReportedValue({ value: reportedValue })
       execError = undefined
       recorder.recordReportedValue({ value: reportedValue })
@@ -1644,7 +1640,7 @@ export async function executeStep(
       const uv = readUniqueValueMeta(minted)
       if (uv) {
         ports.workingMemory?.capture(
-          [{ key: prefix, value: maskValue(uv.value), kind: 'extracted-value', provenance: 'toolResult', stepIndex: actionIndex }],
+          [{ key: prefix, value: recordMask(uv.value), kind: 'extracted-value', provenance: 'toolResult', stepIndex: actionIndex }],
           { step: actionIndex },
         )
       }
@@ -1667,14 +1663,14 @@ export async function executeStep(
       if (typeof av.consensus === 'number') requested.consensus = av.consensus
       if (typeof av.video === 'boolean') requested.video = av.video
       if (av.effort === 'low' || av.effort === 'medium' || av.effort === 'high') requested.effort = av.effort
-      recorder.recordAiJudgment({ verb: 'assertAI', verdict: judgment.verdict, rationale: maskValue(rationale), requested })
+      recorder.recordAiJudgment({ verb: 'assertAI', verdict: judgment.verdict, rationale: recordMask(rationale), requested })
       const judgedClaim = recordMask(claim)
       const mode = typeof (action as { mode?: unknown }).mode === 'string'
         ? (action as { mode: string }).mode
         : undefined
       stepRecord.addRead({
         kind: 'assertAI',
-        text: `"${judgedClaim}"${mode !== undefined ? ` (${mode})` : ''}: judged ${judgment.verdict ? 'true' : 'false'}: ${maskValue(rationale)}`,
+        text: `"${judgedClaim}"${mode !== undefined ? ` (${mode})` : ''}: judged ${judgment.verdict ? 'true' : 'false'}: ${recordMask(rationale)}`,
         claim: judgedClaim,
         judged: judgment.verdict,
         ...(mode !== undefined ? { mode } : {}),
@@ -1702,7 +1698,7 @@ export async function executeStep(
       )
       const entries: WorkingMemoryEntry[] = Object.entries(extracted).map(([key, value]) => ({
         key,
-        value: maskValue(redactSecretValue(String(value), ports.secretRedactor)),
+        value: recordMask(String(value)),
         kind: 'extracted-value',
         provenance: 'toolResult',
         stepIndex: actionIndex,
@@ -1878,8 +1874,7 @@ export async function executeStep(
         throw err
       }
       const freshElements = freshState.elements
-      const scrub = (value: string) => maskValue(redactSecretValue(value, ports.secretRedactor))
-      const heal = regroundFailedRef(action, screenState.elements, freshElements, scrub)
+      const heal = regroundFailedRef(action, screenState.elements, freshElements, recordMask)
       if (heal?.kind === 'resolved') {
         grounding = grounding?.stated !== undefined
           ? { ...heal.grounding, stated: grounding.stated }
@@ -1888,7 +1883,7 @@ export async function executeStep(
         for (const lane of heal.lanes) {
           const stated = statedTargets?.[lane.field]
           if (stated === undefined) continue
-          healRefusal = judgeLane(lane.field, 'heal', stated, lane.element, freshElements, scrub)
+          healRefusal = judgeLane(lane.field, 'heal', stated, lane.element, freshElements, recordMask)
           if (healRefusal !== undefined) break
         }
         if (healRefusal !== undefined) {
@@ -1936,7 +1931,7 @@ export async function executeStep(
     // removed from the recorded and emitted result, so only the typed, masked evidence persists
     // (D-16), and the planner's history carries it as app-observed data. 437 D-05: the input
     // evidence is derived from the result's metadata, which keeps its own keys.
-    const taken = takeOperationEvidence(execResult, maskValue, action.type)
+    const taken = takeOperationEvidence(execResult, recordMask, action.type)
     execResult = taken.result
     const operationEvidence = taken.evidence
     const decisionEvidence: DecisionEvidence | undefined = operationEvidence !== undefined
@@ -2066,7 +2061,7 @@ export async function executeStep(
             `Guarded replay execution failed at procedure step `
               + `${pendingProcedureReplay.procedureStepIndex + 1} `
               + `("${pendingProcedureReplay.instruction}"): ${execError}`,
-            maskValue,
+            recordMask,
           ),
         }
       }
@@ -2189,7 +2184,7 @@ export async function executeStep(
           accumulatedEvidence,
           record,
         ),
-        mask: (value) => maskValue(redactSecretValue(value, ports.secretRedactor)),
+        mask: recordMask,
         imageAttached: gate.attachImage && verifyScreenshot !== undefined,
         ending: 'completion',
         plannerReasoning: reasoning,
@@ -2262,7 +2257,7 @@ export async function executeStep(
             `Guarded replay verifier rejected procedure step `
               + `${advancedProcedureStepIndex + 1} ("${rejectedStep.instruction}"): `
               + verifierReasoning,
-            maskValue,
+            recordMask,
           ),
         }
       }
@@ -2943,7 +2938,7 @@ function describeFlowAnchor(anchor: Anchor): string {
  * the parsed body's instruction outline, and parameter NAMES/types — never values, never
  * raw step actions as commands. This is the ordinary hint/body-read/execution/verifier
  * renderer; guard misses use the closed structural recovery renderer above. Masked through
- * the run masking context, then DATA-wrapped via the safety package's delimiters so the
+ * the declared-secret mask, then DATA-wrapped via the safety package's delimiters so the
  * whole span reads as untrusted app-observed data under the hypotheses frame.
  */
 function renderProcedureHintBlock(
@@ -3051,7 +3046,7 @@ function carriesStatedTarget(action: Action): boolean {
 type TargetRefusal = { message: string; block: TargetRefusalMeta }
 
 // D-05: the first lane whose stated target clearly contradicts the element its ref names. Both
-// identities are scrubbed (secret redaction, then masking) before they reach the block or message.
+// identities are scrubbed (declared-secret redaction) before they reach the block or message.
 function judgeStatedTargets(
   statedTargets: StatedTargets,
   action: Action,

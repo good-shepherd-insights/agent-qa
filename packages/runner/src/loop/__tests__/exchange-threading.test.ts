@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { asRef } from '@vostride/agent-qa-schema'
 import type {
   Action as SchemaAction,
-  MaskingContext,
   ModelCallRecord,
   ToolExchangeEvidence,
 } from '@vostride/agent-qa-schema'
@@ -13,21 +12,20 @@ import { EvidenceRecorder } from '../evidence.js'
 import { executeStep } from '../index.js'
 import { maskToolExchanges } from '../mask-exchanges.js'
 import { PlanningTurnError } from '../planner.js'
+import { SecretRedactor, SecretStore } from '../secrets.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import { makeActionPlan, makeAdapter, makeStepContext } from './loop-harness.js'
 
 const RAW_SECRET = 'sk-live-registered-secret'
-const MASKED_SECRET = '<SECRET_0>'
+const MASKED_SECRET = '[secret:ACCOUNT_TOKEN]'
 const CLICK_ACTION: SchemaAction = { type: 'click', ref: asRef('e2') }
 const CALL_RECORD: ModelCallRecord = {
   resolvedModelId: 'resolved-planner-model',
   effectiveSampling: { temperature: 0 },
 }
 
-const masking: MaskingContext = {
-  mask: (text) => text.split(RAW_SECRET).join(MASKED_SECRET),
-  unmask: (text) => text,
-}
+const secretRedactor = new SecretRedactor(new SecretStore({ ACCOUNT_TOKEN: RAW_SECRET }))
+const mask = (text: string) => secretRedactor.redactString(text)
 
 function exchangeWithSecret(): ToolExchangeEvidence {
   return {
@@ -53,7 +51,7 @@ describe('maskToolExchanges', () => {
   it('masks nested string leaves while preserving structure, scalar values, and tool identifiers', () => {
     const source = [exchangeWithSecret()]
 
-    const masked = maskToolExchanges(source, masking.mask)
+    const masked = maskToolExchanges(source, mask)
 
     expect(masked).toEqual([
       {
@@ -78,7 +76,7 @@ describe('maskToolExchanges', () => {
 describe('EvidenceRecorder exchange fields', () => {
   it('copies present exchanges and call records onto SubActionEvidence', () => {
     const recorder = new EvidenceRecorder()
-    const exchanges = maskToolExchanges([exchangeWithSecret()], masking.mask)
+    const exchanges = maskToolExchanges([exchangeWithSecret()], mask)
     recorder.recordSubAction({
       plan: 'click log in',
       plannedAction: CLICK_ACTION,
@@ -111,7 +109,7 @@ describe('EvidenceRecorder exchange fields', () => {
 
   it('records planning failures conditionally on finalized StepEvidence', () => {
     const recorder = new EvidenceRecorder()
-    const exchanges = maskToolExchanges([exchangeWithSecret()], masking.mask)
+    const exchanges = maskToolExchanges([exchangeWithSecret()], mask)
     recorder.recordPlanningFailure({
       reason: 'no_action_tool_called',
       message: 'Planning turn failed after a re-prompt.',
@@ -135,7 +133,7 @@ describe('EvidenceRecorder exchange fields', () => {
       plannedAction: CLICK_ACTION,
       stateBefore: makeScreenState(),
       result: { success: true },
-      exchanges: maskToolExchanges([exchangeWithSecret()], masking.mask),
+      exchanges: maskToolExchanges([exchangeWithSecret()], mask),
     })
 
     const serialized = JSON.stringify(finalize(recorder))
@@ -159,12 +157,12 @@ describe('executeStep exchange threading', () => {
 
     const result = await executeStep(
       'Click Log in',
-      ports({ adapter: makeAdapter(), planner, masking }),
+      ports({ adapter: makeAdapter(), planner, secretRedactor }),
       makeStepContext(),
     )
 
     const subAction = result.evidence?.subActions[0]
-    expect(subAction?.exchanges).toEqual(maskToolExchanges([exchangeWithSecret()], masking.mask))
+    expect(subAction?.exchanges).toEqual(maskToolExchanges([exchangeWithSecret()], mask))
     expect(subAction?.callRecord).toEqual(CALL_RECORD)
     expect(JSON.stringify(result.evidence)).not.toContain(RAW_SECRET)
   })
@@ -183,7 +181,7 @@ describe('executeStep exchange threading', () => {
 
     const result = await executeStep(
       'Click Log in',
-      ports({ adapter: makeAdapter(), planner, masking }),
+      ports({ adapter: makeAdapter(), planner, secretRedactor }),
       makeStepContext(),
     )
 
@@ -192,7 +190,7 @@ describe('executeStep exchange threading', () => {
       reason: 'no_action_tool_called',
       message:
         'Planning turn failed (no_action_tool_called): Model produced no action tool call after a re-prompt.',
-      exchanges: maskToolExchanges([exchangeWithSecret()], masking.mask),
+      exchanges: maskToolExchanges([exchangeWithSecret()], mask),
       callRecord: CALL_RECORD,
     })
     expect(JSON.stringify(result.evidence)).not.toContain(RAW_SECRET)
@@ -219,7 +217,7 @@ describe('executeStep exchange threading', () => {
 
     const result = await executeStep(
       'Click Log in',
-      ports({ adapter: makeAdapter(), planner, cache, masking }),
+      ports({ adapter: makeAdapter(), planner, cache, secretRedactor }),
       makeStepContext(),
     )
 

@@ -1,7 +1,7 @@
 // C438-STATED-TARGET-LOOP (438 D-01, D-04, D-05): the planner's stated target reaches the loop's
 // pre-dispatch check from a real planning turn (`ai.generateText` mocked, the real LLMPlanner and
 // gate run), on the descriptor lane and per drag lane, and a refusal sends nothing, is not debited
-// as an action, and records both identities only after redaction and masking.
+// as an action, and records both identities only after the declared-secret mask.
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { asRef, readTargetRefusalMeta } from '@vostride/agent-qa-schema'
 import type { ScreenState } from '@vostride/agent-qa-schema'
@@ -10,6 +10,7 @@ import type { StepResult } from '../../result.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import { executeStep } from '../index.js'
 import { LLMPlanner } from '../planner.js'
+import { SecretRedactor, SecretStore } from '../secrets.js'
 import type { LoopPorts } from '../ports.js'
 import type { ActionPlan, Planner, StepContext } from '../types.js'
 import { makeFakeTokenAccounting, makeStepContext } from './loop-harness.js'
@@ -250,16 +251,15 @@ describe('C438-STATED-TARGET-LOOP', () => {
         },
       ]),
       plannerConfig: limits(10, 10),
-      secretRedactor: { redactString: (value) => value.split(secret).join('[SECRET]') },
-      masking: { mask: (value) => value.split(masked).join('[MASKED]'), unmask: (value) => value },
+      secretRedactor: new SecretRedactor(new SecretStore({ FIELD_LABEL: secret, FIELD_WORD: masked })),
     }
     const result = await executeStep('Open the secret label', ports, makeStepContext())
 
     expect(a.executed).toHaveLength(0)
     const block = refusal(result)
     expect(block).toMatchObject({
-      stated: { role: 'button', name: 'Open [SECRET] [MASKED]' },
-      observed: { role: 'textbox', name: '[SECRET] [MASKED]' },
+      stated: { role: 'button', name: 'Open [secret:FIELD_LABEL] [secret:FIELD_WORD]' },
+      observed: { role: 'textbox', name: '[secret:FIELD_LABEL] [secret:FIELD_WORD]' },
       inputSent: false,
     })
     const error = result.evidence!.subActions[0].result.error ?? ''
@@ -372,19 +372,15 @@ describe('C438-STATED-TARGET-LOOP', () => {
           plan({ type: 'click', ref: 'e2', target: { role: 'button', name } }),
         ]),
         plannerConfig: limits(10, 10),
-        secretRedactor: { redactString: (value) => value.split(secret).join('[SECRET]') },
-        masking: {
-          mask: (value) => value.split(masked).join('[MASKED]'),
-          unmask: (value) => value,
-        },
+        secretRedactor: new SecretRedactor(new SecretStore({ FIELD_LABEL: secret, FIELD_WORD: masked })),
       },
       makeStepContext(),
     )
 
     expect(a.executed).toHaveLength(1)
     const grounding = result.evidence?.subActions[0]?.grounding
-    expect(grounding?.stated?.name).toBe('Pay [SECRET] [MASKED]')
-    expect(grounding?.descriptor.name).toBe('Pay [SECRET] [MASKED]')
+    expect(grounding?.stated?.name).toBe('Pay [secret:FIELD_LABEL] [secret:FIELD_WORD]')
+    expect(grounding?.descriptor.name).toBe('Pay [secret:FIELD_LABEL] [secret:FIELD_WORD]')
     const recorded = JSON.stringify(grounding)
     expect(recorded).not.toContain(secret)
     expect(recorded).not.toContain(masked)

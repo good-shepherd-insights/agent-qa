@@ -34,7 +34,7 @@ import { buildVolatileTier } from '../prompts.js'
 import type { RecordLedger } from '../record-ledger.js'
 import type { LoopPorts, ProcedureFlowCarry, WorkingMemoryPort } from '../ports.js'
 import type { ActionPlan, Planner, StepContext } from '../types.js'
-import { SecretStore } from '../secrets.js'
+import { SecretRedactor, SecretStore } from '../secrets.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import { makeActionPlan, makeAdapter, makeStepContext, makeVerifier } from './loop-harness.js'
 import { noCautions, servedBrief, servedCautions } from './fixtures/served-trace.js'
@@ -1231,10 +1231,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
         recordLedger: ledgerSpy.ledger,
         workingMemory: makeWorkingMemory([{ key: 'MEM_NAME', value: 'MEMORY_RAW_38155' }]),
         secretStore: new SecretStore({ SECRET_NAME: 'SECRET_RAW_38155' }),
-        masking: {
-          mask: (value) => value.replaceAll('mask-me-missing', 'MASKED_DESCRIPTOR_38155'),
-          unmask: (value) => value,
-        },
+        secretRedactor: new SecretRedactor(new SecretStore({ DESCRIPTOR_38155: 'mask-me-missing' })),
       }),
       context({
         variables: { VAR_NAME: 'VARIABLE_RAW_38155' },
@@ -1245,7 +1242,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(result.status).toBe('passed')
     expect(planner.calls).toHaveLength(1)
     const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
-    expect(learned).toContain('name=MASKED_DESCRIPTOR_38155')
+    expect(learned).toContain('name=[secret:DESCRIPTOR_38155]')
     expect(learned).not.toContain('mask-me-missing')
     expect(learned).toContain('text <- parameter VAR_NAME (string, required)')
     expect(learned).toContain('clickDelay <- parameter MEM_NAME (number, optional)')
