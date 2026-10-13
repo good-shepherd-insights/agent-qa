@@ -22,6 +22,7 @@ import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { PlatformAdapter, Action, ActionResult } from '../../platform.js'
 import type { LoopPorts } from '../ports.js'
 import type { ActionPlan, PlanResult, Planner, StepContext, Verifier } from '../types.js'
+import type { VerifierStepRecord } from '../step-record.js'
 import { scriptedVerification, toVerificationResult } from '../../testing/condition-verdicts.js'
 import type { ScriptedVerdict } from '../../testing/condition-verdicts.js'
 import { executeStep } from '../index.js'
@@ -518,5 +519,111 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
     expect(JSON.stringify(result.evidence)).not.toContain('supersecret')
     const outcome = readAssertValueOutcomeMeta(subs(result)[0]?.result) as { passed?: boolean } | undefined
     expect(outcome).toBeDefined()
+    expect(JSON.stringify(outcome)).not.toContain('supersecret')
+  })
+})
+
+describe('C441-RUN-RECORDS', () => {
+  const PW = 'Hunter-42-zz'
+  const EMAIL = 'qa@example.com'
+
+  function declared(values: Record<string, string>) {
+    const secretStore = new SecretStore(values)
+    return { secretStore, secretRedactor: new SecretRedactor(secretStore) }
+  }
+
+  async function runAssert(
+    secrets: Record<string, string>,
+    read: ActionResult,
+    action: Record<string, unknown>,
+  ) {
+    const verifier = makeScriptedVerifier({})
+    const bail = makeActionPlan({ action: { type: 'reportValue', value: 'n/a' }, stepComplete: false, stepFailed: true })
+    const plan = makeActionPlan({ action: { type: 'assertValue', ...action } as never, stepComplete: true })
+    const result = await executeStep(
+      'Assert the stored value',
+      ports({
+        adapter: readingAdapter(makeScreenState(), read),
+        planner: makePlanner([plan, bail]),
+        verifier,
+        ...declared(secrets),
+        plannerConfig: cfg,
+      }),
+      makeStepContext(),
+    )
+    const outcome = (result.evidence as { assertOutcome?: { expected?: string; actual?: string | null } } | undefined)
+      ?.assertOutcome
+    const record = verifier.verifyArgs[0]?.[10] as VerifierStepRecord | undefined
+    return { result, outcome, meta: readAssertValueOutcomeMeta(subs(result)[0]?.result), record }
+  }
+
+  function recorded(result: Awaited<ReturnType<typeof executeStep>>): string[] {
+    return [JSON.stringify(result.evidence), ...subs(result).map((sub) => JSON.stringify(sub.result))]
+  }
+
+  it('an assertValue on a declared value records its marker in the outcome and the step result', async () => {
+    const { result, outcome, meta } = await runAssert(
+      { PW_441: PW },
+      { success: true, data: `${PW} for ${EMAIL}` },
+      { source: 'storage', op: 'contains', expected: '{{secret:PW_441}}' },
+    )
+    expect(result.status).toBe('passed')
+    expect(outcome?.expected).toBe('[secret:PW_441]')
+    expect(outcome?.actual).toBe(`[secret:PW_441] for ${EMAIL}`)
+    expect(meta?.expected).toBe('[secret:PW_441]')
+    expect(meta?.actual).toBe(`[secret:PW_441] for ${EMAIL}`)
+    for (const text of recorded(result)) expect(text).not.toContain(PW)
+    expect(JSON.stringify(result.evidence)).toContain(EMAIL)
+  })
+
+  it('an assertValue is judged on the raw read', async () => {
+    const { result, outcome, meta } = await runAssert(
+      { PW_441: PW },
+      { success: true, data: PW },
+      { source: 'storage', op: 'contains', expected: 'Hunter' },
+    )
+    expect(result.status).toBe('passed')
+    expect(outcome?.expected).toBe('Hunter')
+    expect(outcome?.actual).toBe('[secret:PW_441]')
+    expect(meta?.actual).toBe('[secret:PW_441]')
+    for (const text of recorded(result)) expect(text).not.toContain(PW)
+  })
+
+  it('a network read is judged per raw entry and recorded masked', async () => {
+    const log = [
+      { url: 'https://example.test/api/session', method: 'GET', headers: { authorization: `Bearer ${PW}` } },
+      { url: 'https://example.test/api/login', method: 'POST', body: `password=${PW}&user=${EMAIL}` },
+    ]
+    const { result, outcome, meta } = await runAssert(
+      { PW_441: PW },
+      { success: true, data: log },
+      { source: 'network', op: 'contains', expected: '{{secret:PW_441}}' },
+    )
+    expect(result.status).toBe('passed')
+    expect(outcome?.actual).toContain('[secret:PW_441]')
+    expect(outcome?.actual).toContain(EMAIL)
+    expect(meta?.actual).toBe(outcome?.actual)
+    for (const text of recorded(result)) expect(text).not.toContain(PW)
+  })
+
+  it('a declared value with a quote or backslash in a storage map is recorded by name, never in its JSON-escaped form', async () => {
+    const value = 'Hun"ter\\42'
+    const escaped = JSON.stringify(value).slice(1, -1)
+    const escapedTwice = JSON.stringify(escaped).slice(1, -1)
+    const { result, outcome, meta, record } = await runAssert(
+      { PW_QUOTE_441: value },
+      { success: true, data: { token: value, user: EMAIL } },
+      { source: 'storage', op: 'contains', expected: EMAIL },
+    )
+    const expectedActual = '{"token":"[secret:PW_QUOTE_441]","user":"qa@example.com"}'
+    expect(result.status).toBe('passed')
+    expect(outcome?.actual).toBe(expectedActual)
+    expect(meta?.actual).toBe(expectedActual)
+    expect(record?.reads[0]?.text).toContain(`(read "${expectedActual}")`)
+    for (const text of recorded(result)) {
+      expect(text).not.toContain(value)
+      expect(text).not.toContain(escaped)
+      expect(text).not.toContain(escapedTwice)
+    }
   })
 })
