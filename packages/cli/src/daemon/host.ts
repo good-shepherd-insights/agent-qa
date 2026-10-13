@@ -2253,6 +2253,11 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       },
     })
     localAgent = operations.composeLocalAgent({
+      // 2026-10-14 (441-55, D-06): a host with no config path (test hosts only) declares nothing.
+      mask: input.configPath === undefined
+        ? (text: string) => text
+        : (await import('../composition/declared-secrets.js'))
+          .createDeclaredSecretMask(input.configPath).mask,
       ...(feedback === undefined ? {} : { feedback }),
       ...(input.configPath === undefined ? {} : {
         readMaskingSources: (await import('../composition/local-agent-host.js'))
@@ -2278,12 +2283,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       // handed in is the lease this process already owns — the 387-08 D-18 idiom — because a
       // holder that re-acquires is told `held` by itself and has nobody to delegate to.
       postRun: {
-        // UF-388-01 / D-11: this process holds no per-run MaskingContext by construction, so
-        // a fold it ran would reach the candidate projection with an inactive masker and the
-        // prose redaction would degrade to a pass-through over step text that carries exact
-        // env-bound values verbatim. Declaring the unmasked posture makes the kind this
-        // binding serves unclaimable for this host, and the fold is deferred to a leg that
-        // folds with a masker ACTIVE — a masker, not necessarily the folded run's (T-388-30).
+        // 2026-10-14 (441-55, 441-01 decision 10): the daemon's posture is unchanged.
         candidateProse: 'no-masker',
         ...misdirectionPostureCapability({ agentQaRoot: input.agentQaRoot }),
         curateRun: async ({ runId: curatedRunId, deadlineMs }) => {

@@ -1,30 +1,6 @@
 // `clause_result` is MASKED AT REST, measured on the bytes of a real session file (399.1-05).
-//
-// THE CLAIM AND WHY IT IS BINDING. 399.1's D-05 minted `results[]` — the channel carrying what each
-// op actually RETURNED — and left its persistence form to Claude's discretion under one guard: it
-// "must not reintroduce cleartext concerns D-10 adjudicates". The phase's own adjudication,
-// `.planning/phases/399.1-chat-render-contract/399.1-ADJUDICATION-transcript-cleartext.md`
-// § "The load-bearing corollary for D-05", makes that guard concrete: op results can carry
-// credentials (that is the entire premise of D-04's mandatory `unmaskForHumanOutput` seam on the
-// render path), so persisting an UNMASKED `results[]` entry into `.agent-qa/sessions/chat-*.jsonl`
-// would mint a SECOND unadjudicated cleartext sink in the very file the adjudication names — and
-// would convert an inherited 392 posture gap into a 399.1 DEFECT.
-//
-// WHY THIS FILE AND NOT A UNIT TEST NEXT TO THE ENGINE. The claim is about BYTES AT REST. An
-// in-memory assertion over the event object cannot see a seam that unmasks on the way to the file,
-// nor one that serialises through anything but the object it was handed; only reading the file the
-// adapter wrote can. The engine-side count/verbatim cells live in
-// `packages/agent/src/chat/__tests__/turn-engine-compound.test.ts`; this file owns the disk.
-//
-// THE NAMED RED DIRECTION, and it is exactly the defect the adjudication forbids: replace the
-// append's `payload` with `unmaskForHumanOutput(ctx, …)` — the seam "helpfully" restoring the
-// original for the record — and the absence assertion below reds on the planted credential.
-//
-// AND THE ANTI-VACUITY CONTROL. Asserting a string is absent from a file proves nothing if the
-// string was never in the system. So the placeholder is minted by the REAL masking context over a
-// planted credential, the file is asserted to CARRY the placeholder, and unmasking the file's own
-// bytes through that context is asserted to RECOVER the credential — which is what makes the
-// absence a masking fact rather than a fixture that carried no secret.
+// 2026-10-14 (441-55, D-06): the payload is masked by an explicit declared mask, never an ambient
+// context, and nothing restores the value (D-07).
 
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -32,13 +8,13 @@ import { join } from 'node:path'
 
 import {
   CHAT_RESOLVER_TABLE,
-  createMaskingContext,
   createTurnEngine,
   deterministicOverrideStrategy,
   splitClauses,
-  unmaskForHumanOutput,
 } from '@vostride/agent-qa-agent'
-import type { FunctionCaller } from '@vostride/agent-qa-schema'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
+import { maskPayloadStrings } from '@vostride/agent-qa-schema'
+import type { FunctionCaller, MaskFn } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { CHAT_SESSIONS_SUBDIR, createJsonlSessionLog } from '../jsonl-session-log.js'
@@ -46,14 +22,8 @@ import { CHAT_SESSIONS_SUBDIR, createJsonlSessionLog } from '../jsonl-session-lo
 const NOW = '2026-08-20T00:00:00.000Z'
 const QUARANTINE_LIST = 'quarantine.list'
 
-/**
- * The credential a person's project holds and an op's result can carry back.
- *
- * A SHAPE THE SCANNER'S OWN CORPUS USES, so nothing about this cell depends on a value chosen to
- * be conveniently unique — the assertion is about where the bytes go, not about what they look
- * like.
- */
 const PLANTED_CREDENTIAL = 'sk-live-399105-Wq7zR2mKpX4nT8vB'
+const MARKER = '[secret:PLANTED_399105]'
 
 const HUMAN: FunctionCaller = { origin: 'human', surface: 'cli' } as unknown as FunctionCaller
 
@@ -70,19 +40,16 @@ describe('clause_result persists the MASKED payload, on the real file (399.1-05)
 
   it('writes the PLACEHOLDER and never the credential — and the placeholder really stands for it',
     async () => {
-      // THE MASKING CONTEXT IS THE SHIPPED ONE, and the payload below is what a function layer
-      // hands back through this seam: already masked, because `unmaskForHumanOutput` belongs at
-      // each SURFACE's emit and nothing between the op and this log may restore an original.
-      const ctx = createMaskingContext()
-      ctx.register(PLANTED_CREDENTIAL)
-      const maskedPayload = JSON.parse(
-        ctx.mask(JSON.stringify({ entries: [{ id: 'P-1', token: PLANTED_CREDENTIAL }] })),
+      const mask: MaskFn = (text) => new SecretRedactor(
+        SecretStore.fromEnvContent(`PLANTED_399105=${PLANTED_CREDENTIAL}\n`),
+      ).redactString(text)
+      const maskedPayload = maskPayloadStrings(
+        { entries: [{ id: 'P-1', token: PLANTED_CREDENTIAL }] }, mask,
       ) as unknown
 
-      // THE MASK ACTUALLY FIRED. Without this line a context that silently declined to register
-      // (too short a value, a category rule) would make every assertion below vacuously true.
+      // THE MASK ACTUALLY FIRED, so the absence below is not vacuous.
       expect(JSON.stringify(maskedPayload)).not.toContain(PLANTED_CREDENTIAL)
-      expect(JSON.stringify(maskedPayload)).toContain('<SECRET_0>')
+      expect(JSON.stringify(maskedPayload)).toContain(MARKER)
 
       const sessionLog = createJsonlSessionLog({
         root,
@@ -134,11 +101,10 @@ describe('clause_result persists the MASKED payload, on the real file (399.1-05)
       // merely on the line under test, because a leak on the receipt line is the same leak.
       expect(bytes).not.toContain(PLANTED_CREDENTIAL)
 
-      // AND THE CONTROL THAT MAKES THE ABSENCE MEAN SOMETHING. The placeholder is on the disk, and
-      // unmasking the file's own bytes through the context that minted it recovers the credential
-      // — so what was persisted genuinely STANDS FOR the secret rather than never having held one.
-      expect(bytes).toContain('<SECRET_0>')
-      expect(unmaskForHumanOutput(ctx, bytes)).toContain(PLANTED_CREDENTIAL)
+      // THE PLACEHOLDER STANDS FOR THE CREDENTIAL: it names the declared secret, and the same mask
+      // over the raw value yields exactly it.
+      expect(bytes).toContain(MARKER)
+      expect(mask(PLANTED_CREDENTIAL)).toBe(MARKER)
     })
 
   it('replays: a log carrying clause_result reopens clean, with the event in the history',
