@@ -155,32 +155,55 @@ function findSeamStructuralOffenders(rawSource: string, label: string): string[]
 }
 
 // Held-out fixtures (synthetic mini-sources) — these are what give the gate teeth.
-const FIXTURE_MISSING_SEAM = [
-  "import { registerFirstPartySafetyHooks } from '@vostride/agent-qa-safety'",
-  'const MIDDLEWARE: LanguageModelMiddleware[] = [',
-  '  retryMiddleware(),',
-  '  repairMiddleware(),',
-  ']',
-  'const middleware = [capabilityUpdateMiddleware(profile), ...MIDDLEWARE]',
-].join('\n')
+function registryFixture(middleware: string[]): string {
+  return [
+    'const MIDDLEWARE: LanguageModelMiddleware[] = [retryMiddleware(), dropEmptyMessagesMiddleware()]',
+    'export function createModel(',
+    '  profile: ModelProfile,',
+    '  auth: ResolvedModelAuth,',
+    '  mask: MaskFn,',
+    '  overrides: ModelProviderOverrides = {},',
+    '): LanguageModelV3 {',
+    '  const middleware = [',
+    ...middleware.map(entry => `    ${entry},`),
+    '  ]',
+    '  return wrap(middleware)',
+    '}',
+  ].join('\n')
+}
 
-const FIXTURE_REORDERED_SEAM = [
-  "import { registerFirstPartySafetyHooks } from '@vostride/agent-qa-safety'",
-  'const MIDDLEWARE: LanguageModelMiddleware[] = [',
-  '  registerFirstPartySafetyHooks().middleware,',
-  '  retryMiddleware(),',
-  ']',
-  'const middleware = [capabilityUpdateMiddleware(profile), ...MIDDLEWARE]',
-].join('\n')
+const FIXTURE_MISSING_MASKING = registryFixture([
+  'capabilityUpdateMiddleware(profile)',
+  '...MIDDLEWARE',
+])
 
-const FIXTURE_SPREAD_NOT_LAST = [
-  "import { registerFirstPartySafetyHooks } from '@vostride/agent-qa-safety'",
-  'const MIDDLEWARE: LanguageModelMiddleware[] = [',
-  '  retryMiddleware(),',
-  '  registerFirstPartySafetyHooks().middleware,',
-  ']',
-  'const middleware = [...MIDDLEWARE, capabilityUpdateMiddleware(profile)]',
-].join('\n')
+const FIXTURE_REORDERED_MASKING = registryFixture([
+  'createMaskingMiddleware(mask)',
+  'capabilityUpdateMiddleware(profile)',
+  '...MIDDLEWARE',
+])
+
+const FIXTURE_SPREAD_AFTER_MASKING = registryFixture([
+  'capabilityUpdateMiddleware(profile)',
+  'createMaskingMiddleware(mask)',
+  '...MIDDLEWARE',
+])
+
+const FIXTURE_ELEMENT_BETWEEN = registryFixture([
+  'capabilityUpdateMiddleware(profile)',
+  '...MIDDLEWARE',
+  'dropEmptyMessagesMiddleware()',
+  'createMaskingMiddleware(mask)',
+])
+
+const FIXTURE_FOREIGN_MASK = registryFixture([
+  'capabilityUpdateMiddleware(profile)',
+  '...MIDDLEWARE',
+  'createMaskingMiddleware((text) => text)',
+])
+
+const MASKING_LAST =
+  'fixture | masking-last | the last per-call element must be createMaskingMiddleware(mask), found'
 
 describe('SAFE-03 (a) structural seam pinning', () => {
   it('reports zero structural offenders against the real model registry source', () => {
@@ -189,21 +212,33 @@ describe('SAFE-03 (a) structural seam pinning', () => {
     )
   })
 
-  it('rejects a held-out fixture whose MIDDLEWARE array omits the registrar seam', () => {
-    expect(findSeamStructuralOffenders(FIXTURE_MISSING_SEAM, 'fixture')).toEqual([
-      'fixture | safety-seam-last | the last MIDDLEWARE entry must be registerFirstPartySafetyHooks().middleware',
+  it('rejects a held-out fixture whose createModel array omits the masking middleware', () => {
+    expect(findSeamStructuralOffenders(FIXTURE_MISSING_MASKING, 'fixture')).toEqual([
+      `${MASKING_LAST} ...MIDDLEWARE`,
     ])
   })
 
-  it('rejects a held-out fixture with the registrar seam reordered out of last position', () => {
-    expect(findSeamStructuralOffenders(FIXTURE_REORDERED_SEAM, 'fixture')).toEqual([
-      'fixture | safety-seam-last | the last MIDDLEWARE entry must be registerFirstPartySafetyHooks().middleware',
+  it('rejects a held-out fixture with the masking middleware reordered out of last position', () => {
+    expect(findSeamStructuralOffenders(FIXTURE_REORDERED_MASKING, 'fixture')).toEqual([
+      `${MASKING_LAST} ...MIDDLEWARE`,
     ])
   })
 
-  it('rejects a held-out fixture whose composition spreads ...MIDDLEWARE before another element', () => {
-    expect(findSeamStructuralOffenders(FIXTURE_SPREAD_NOT_LAST, 'fixture')).toEqual([
-      'fixture | composition-spread-last | the createModel composition must spread ...MIDDLEWARE as its final element',
+  it('rejects a held-out fixture whose composition spreads ...MIDDLEWARE after the masking middleware', () => {
+    expect(findSeamStructuralOffenders(FIXTURE_SPREAD_AFTER_MASKING, 'fixture')).toEqual([
+      `${MASKING_LAST} ...MIDDLEWARE`,
+    ])
+  })
+
+  it('rejects a held-out fixture with another element between ...MIDDLEWARE and the masking middleware', () => {
+    expect(findSeamStructuralOffenders(FIXTURE_ELEMENT_BETWEEN, 'fixture')).toEqual([
+      'fixture | spread-before-masking | ...MIDDLEWARE must come immediately before createMaskingMiddleware(mask)',
+    ])
+  })
+
+  it("rejects a held-out fixture whose masking middleware is not given createModel's mask", () => {
+    expect(findSeamStructuralOffenders(FIXTURE_FOREIGN_MASK, 'fixture')).toEqual([
+      `${MASKING_LAST} createMaskingMiddleware((text) => text)`,
     ])
   })
 })
