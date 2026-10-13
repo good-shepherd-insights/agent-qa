@@ -813,6 +813,7 @@ describe('authoring.draft.write end to end through the composition root', () => 
     readonly confirm?: ConfirmPort
   }): LocalAgentHost {
     const host = composeLocalAgent({
+      mask: (text) => text,
       agentQaRoot,
       mintQuarantineIdentityPath: (filePath: string) => filePath,
       config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },

@@ -158,6 +158,7 @@ function fixture(): Fixture {
   const configPath = join(agentQaRoot, 'agent-qa.config.yaml')
   const openHost = (): LocalAgentHost => {
     const host = composeLocalAgent({
+      mask: (text) => text,
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot,
       config: TEST_CONFIG,
@@ -241,6 +242,7 @@ async function readDurableState(agentQaRoot: string): Promise<{
   rows: { id: string; kind: string; status: string; claimedAt: unknown }[]
 }> {
   const host = composeLocalAgent({
+    mask: (text) => text,
     mintQuarantineIdentityPath: MINT_IDENTITY,
     agentQaRoot,
     config: TEST_CONFIG,

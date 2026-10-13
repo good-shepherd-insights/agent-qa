@@ -3,16 +3,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
-import {
-  createMaskingContext,
-  setActiveMaskingContextResolver,
-  unmaskForHumanOutput,
-} from '@vostride/agent-qa-safety'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { asRef, asRunId } from '@vostride/agent-qa-schema'
 import type {
   AgentAskResult,
   ChatSessionEvent,
   MarkReceipt,
+  MaskFn,
   RunsMarkInput,
 } from '@vostride/agent-qa-schema'
 import { expect, it, vi } from 'vitest'
@@ -23,12 +20,12 @@ import { composeLocalAgent } from '../compose-local-agent.js'
 it.each([true, false])('projects real mark chat with active masking=%s and preserves canonical bytes', async active => {
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-chat-mark-masking-'))
   const canary = 'T41916-canary-note-not-a-real-credential'
-  const ctx = createMaskingContext()
-  ctx.register(canary)
-  const placeholder = ctx.mask(canary)
-  expect(placeholder).not.toBe(canary)
+  // 2026-10-14 (441-55, D-06): the composition's explicit mask, declared or the identity.
+  const declared = new SecretRedactor(SecretStore.fromEnvContent(`CANARY_441=${canary}\n`))
+  const mask: MaskFn = active ? (text) => declared.redactString(text) : (text) => text
+  const placeholder = '[secret:CANARY_441]'
+  expect(declared.redactString(canary)).toBe(placeholder)
   const projectedNote = active ? placeholder : canary
-  setActiveMaskingContextResolver(() => active ? ctx : undefined)
   const input: RunsMarkInput = { runId: asRunId('audit-run'), kind: 'false-fail', note: canary,
     correctedExpectation: `Expect ${canary}`,
     correctedAction: { type: 'fill', ref: asRef('e1'), text: canary, clearMode: 'replace', submit: false },
@@ -48,6 +45,7 @@ it.each([true, false])('projects real mark chat with active masking=%s and prese
   const model = vi.fn(() => { throw new Error('deterministic chat must not resolve a model') })
   const confirm = vi.fn(() => true)
   const host = composeLocalAgent({
+    mask,
     agentQaRoot: root,
     mintQuarantineIdentityPath: path => path,
     config: { getMasked: async () => ({ schemaVersion: 1, configPath: 'agent-qa.config.yaml', entries: [] }) },
@@ -82,7 +80,7 @@ it.each([true, false])('projects real mark chat with active masking=%s and prese
     } }])
     if (active) expect.soft(JSON.stringify(result)).not.toContain(canary)
     else expect(JSON.stringify(result)).toContain(canary)
-    expect(JSON.parse(unmaskForHumanOutput(ctx, JSON.stringify(result.results[0]?.payload))))
+    expect(JSON.parse(JSON.stringify(result.results[0]?.payload).replaceAll(placeholder, canary)))
       .toEqual({ kind: 'marked', receipt: canonical })
 
     const bytes = readFileSync(join(root, CHAT_SESSIONS_SUBDIR, `${result.sessionId}.jsonl`), 'utf8')
@@ -96,7 +94,6 @@ it.each([true, false])('projects real mark chat with active masking=%s and prese
     })
     if (active) expect.soft(bytes).not.toContain(canary)
     expect.soft(bytes).toContain(projectedNote)
-    expect(unmaskForHumanOutput(ctx, bytes)).toContain(canary)
 
     const reader = createJsonlSessionLog({ root, now: () => new Date().toISOString(),
       model: () => 'unbound', toolsetHash: () => 'unused' })
@@ -116,7 +113,6 @@ it.each([true, false])('projects real mark chat with active masking=%s and prese
     expect(model).not.toHaveBeenCalled()
   } finally {
     await host.close()
-    setActiveMaskingContextResolver(() => undefined)
     rmSync(root, { recursive: true, force: true })
   }
 })

@@ -92,6 +92,7 @@ function temporaryRoot(label: string): string {
 
 function localHost(agentQaRoot: string, knowledgeRoot: string): LocalAgentHost {
   const host = composeLocalAgent({
+    mask: (text) => text,
     mintQuarantineIdentityPath: MINT_IDENTITY,
     agentQaRoot,
     config: TEST_CONFIG,

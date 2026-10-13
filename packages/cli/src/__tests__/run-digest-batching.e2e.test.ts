@@ -208,6 +208,7 @@ function fixture(): Fixture {
           now: () => clock.value,
           composeHost: () => {
             const host = composeLocalAgent({
+              mask: (text) => text,
               mintQuarantineIdentityPath: MINT_IDENTITY,
               agentQaRoot,
               config: TEST_CONFIG,
@@ -273,6 +274,7 @@ let ordinal = 40
  */
 function composeCold(f: Fixture): LocalAgentHost {
   return composeLocalAgent({
+    mask: (text) => text,
     mintQuarantineIdentityPath: MINT_IDENTITY,
     agentQaRoot: f.agentQaRoot,
     config: TEST_CONFIG,

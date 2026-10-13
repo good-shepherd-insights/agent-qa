@@ -362,6 +362,7 @@ describe('authoring.draft.verify end to end through the composition root', () =>
     readonly authoring?: DraftAuthoringPort
   }): LocalAgentHost {
     const host = composeLocalAgent({
+      mask: (text) => text,
       agentQaRoot,
       mintQuarantineIdentityPath: MINT_IDENTITY,
       config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },

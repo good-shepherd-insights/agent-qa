@@ -178,6 +178,7 @@ describe('postRunCapabilities binds persistAnalysis on the D-09 path law (T-389-
     writeFileSync(join(runDir, HANDOFF_FILE), `${JSON.stringify(handoff)}\n`, 'utf8')
 
     const host = composeLocalAgent({
+      mask: (text) => text,
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot,
       config: TEST_CONFIG,

@@ -349,6 +349,7 @@ function withIndex<T>(target: Side, read: (db: ReturnType<typeof openIndexWriter
 
 function openTargetHost(target: Side): LocalAgentHost {
   const host = composeLocalAgent({
+    mask: (text) => text,
     mintQuarantineIdentityPath: MINT_IDENTITY,
     agentQaRoot: target.agentQaRoot,
     config: TEST_CONFIG,
@@ -411,6 +412,7 @@ async function runStepOver(
 /** Every `analyze-run` row this side's queue holds, read through a SECOND composition. */
 async function analyzeRunRows(target: Side): Promise<Record<string, unknown>[]> {
   const host = composeLocalAgent({
+    mask: (text) => text,
     mintQuarantineIdentityPath: MINT_IDENTITY,
     agentQaRoot: target.agentQaRoot,
     config: TEST_CONFIG,

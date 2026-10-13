@@ -566,6 +566,7 @@ describe('the third stage runs after the fold and reads back real receipts (422 
       replayGate: sharedGate(root, { leaseId: 'lease-pump', epoch: 5 }),
     })
     const host = composeLocalAgent({
+      mask: (text) => text,
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot,
       config: TEST_CONFIG,

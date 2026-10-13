@@ -157,6 +157,7 @@ describe('composeLocalAgent (D-15)', () => {
     } = {},
   ): LocalAgentHost {
     return composeLocalAgent({
+      mask: (text) => text,
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot,
       config: {
@@ -932,6 +933,7 @@ describe('composeLocalAgent (D-15)', () => {
       overrides: Partial<ComposeLocalAgentInput> = {},
     ): ComposeLocalAgentInput {
       return {
+        mask: (text) => text,
         agentQaRoot,
         mintQuarantineIdentityPath: MINT_IDENTITY,
         config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },

@@ -40,7 +40,7 @@ afterEach(() => { rmSync(root, { recursive: true, force: true }) })
 
 describe('neutral host prior passthrough', () => {
   it('composed host passes the snapshot to inspect, list, show, candidate and review', async () => {
-    const host = composeLocalAgent({ agentQaRoot: root, knowledgeRoot: () => root,
+    const host = composeLocalAgent({ mask: (text) => text, agentQaRoot: root, knowledgeRoot: () => root,
       mintQuarantineIdentityPath: path => path, config: { getMasked: vi.fn() }, model: vi.fn(),
       resolveTrustPriors,
     })

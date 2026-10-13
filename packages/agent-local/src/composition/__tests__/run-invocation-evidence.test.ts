@@ -133,6 +133,7 @@ function coreExecution(
 
 function compose(runExecution: RunExecutionPort): LocalAgentHost {
   const host = composeLocalAgent({
+    mask: (text) => text,
     mintQuarantineIdentityPath: (filePath: string) => filePath,
     agentQaRoot,
     config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },

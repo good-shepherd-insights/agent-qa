@@ -212,6 +212,7 @@ describe('the per-run digest, over the composed host (PROP-04 / D-16 / D-18)', (
 
   function compose(feedbackReads?: FeedbackReadsPort): LocalAgentHost {
     const composed = composeLocalAgent({
+      mask: (text) => text,
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot,
       config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },

@@ -190,6 +190,7 @@ describe('423 curation tail snapshot', () => {
     // curateCompletedRun over the real drain; nothing here hands it a snapshot.
     const composeHost = (input?: PostRunTailHostInput): never => {
       const host = composeLocalAgent({
+        mask: (text: string) => text,
         mintQuarantineIdentityPath: (filePath: string) => filePath,
         agentQaRoot: root, config: TEST_CONFIG, knowledgeRoot: () => knowledge,
         model: () => ({ modelId: 'test:427-04-zero-effect', generate: async () => ({ text: 'not an author payload' }) }),

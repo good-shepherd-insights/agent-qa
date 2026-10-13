@@ -129,6 +129,7 @@ describe('the composed compound turn: complete, or loud (CHAT-01 / D-10 / D-11 /
     } = {},
   ): LocalAgentHost {
     const composed = composeLocalAgent({
+      mask: (text) => text,
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot,
       config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },

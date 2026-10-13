@@ -132,6 +132,7 @@ async function openHost(
 ): Promise<DeferralHarness> {
   const curateCalls: { runId: string; executionContext: unknown }[] = []
   const host = composeLocalAgent({
+    mask: (text) => text,
     mintQuarantineIdentityPath: MINT_IDENTITY,
     agentQaRoot,
     config: TEST_CONFIG,
@@ -278,6 +279,7 @@ describe('curation claim deferral by candidate-prose posture (G-388-2 / UF-388-0
     // curate-memory row to `done` and publishes `bundle-committed`, a receipt no fold earned.
     // Excluding the kind is what stops that host from minting one.
     const host = composeLocalAgent({
+      mask: (text) => text,
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot: freshRoot(),
       config: TEST_CONFIG,

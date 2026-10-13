@@ -100,6 +100,7 @@ const rows: RunDetailRows = {
 
 function host(sources?: () => Promise<unknown>) {
   return composeLocalAgent({
+    mask: (text) => text,
     agentQaRoot: join(root, '.agent-qa'),
     mintQuarantineIdentityPath: (path) => path,
     config: { getMasked: async () => ({ schemaVersion: 1, configPath: 'agent-qa.config.yaml', entries: [] }) },

@@ -83,6 +83,7 @@ describe('composeLocalAgent job-store lifecycle (WR-03)', () => {
     let modelCalls = 0
     const closeStore = vi.spyOn(DatabaseSync.prototype, 'close')
     const host = composeLocalAgent({
+      mask: (text) => text,
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot: root,
       config: TEST_CONFIG,
@@ -121,6 +122,7 @@ describe('composeLocalAgent job-store lifecycle (WR-03)', () => {
     let modelCalls = 0
     const closeStore = vi.spyOn(DatabaseSync.prototype, 'close')
     const host = composeLocalAgent({
+      mask: (text) => text,
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot: root,
       config: TEST_CONFIG,

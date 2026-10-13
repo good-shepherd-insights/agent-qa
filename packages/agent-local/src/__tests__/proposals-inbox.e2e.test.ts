@@ -92,6 +92,7 @@ describe('C432-PROPOSAL-FILES-UNREAD: the composed host leaves pre-432 proposal 
 
   function compose(nowIso?: () => string): LocalAgentHost {
     const composed = composeLocalAgent({
+      mask: (text) => text,
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot,
       config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },

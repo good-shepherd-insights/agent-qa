@@ -959,6 +959,7 @@ describe('the expiry lapse: what one lapsed deadline buys (D-11)', () => {
 
     let sentenceNow = NOW
     const host = composeLocalAgent({
+      mask: (text) => text,
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot: env.agentQaRoot,
       clock: { now: () => sentenceNow },

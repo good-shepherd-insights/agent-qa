@@ -472,6 +472,7 @@ describe('authoring reaches the production boundary on both chains (432-04, D-18
     readonly model?: () => JobModelCapability
   }): LocalAgentHost {
     const host = composeLocalAgent({
+      mask: (text) => text,
       agentQaRoot,
       mintQuarantineIdentityPath: (filePath: string) => filePath,
       config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },

@@ -795,6 +795,7 @@ describe('425 D-20 — the chain-terminal line a real snapshot-bearing run print
     const info = vi.fn<(message: string) => void>()
     const warn = vi.fn<(message: string) => void>()
     const composeChainHost = (): never => composeLocalAgent({
+      mask: (text) => text,
       mintQuarantineIdentityPath: (filePath: string) => filePath,
       agentQaRoot: root,
       config: CHAIN_CONFIG,
@@ -907,6 +908,7 @@ describe('425 D-20 — the chain-terminal line a real snapshot-bearing run print
     const hostsOpened: { close: () => Promise<void> }[] = []
     const openChainHost = (input?: { readonly curateRun?: unknown }): never => {
       const host = composeLocalAgent({
+        mask: (text: string) => text,
         mintQuarantineIdentityPath: (filePath: string) => filePath,
         agentQaRoot: root,
         config: CHAIN_CONFIG,

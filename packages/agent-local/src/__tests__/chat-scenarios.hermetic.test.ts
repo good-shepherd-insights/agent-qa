@@ -325,6 +325,7 @@ describe('the hermetic lane: the frozen deterministic corpus over the real compo
       },
     }
     const host = composeLocalAgent({
+      mask: (text) => text,
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot,
       config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },

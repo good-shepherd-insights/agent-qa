@@ -114,6 +114,7 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
     } = {},
   ): LocalAgentHost {
     const composed = composeLocalAgent({
+      mask: (text) => text,
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot,
       config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },

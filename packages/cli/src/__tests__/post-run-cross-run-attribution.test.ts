@@ -222,6 +222,7 @@ function fixture(behaviour: {
           now: () => clock.value,
           composeHost: () => {
             const host = composeLocalAgent({
+              mask: (text) => text,
               mintQuarantineIdentityPath: MINT_IDENTITY,
               agentQaRoot,
               config: TEST_CONFIG,
@@ -288,6 +289,7 @@ async function stepEnqueue(agentQaRoot: string, runId: string): Promise<void> {
     configPath: join(agentQaRoot, 'agent-qa.config.yaml'),
     composeHost: () => {
       const host = composeLocalAgent({
+        mask: (text) => text,
         mintQuarantineIdentityPath: MINT_IDENTITY,
         agentQaRoot,
         config: TEST_CONFIG,
@@ -306,6 +308,7 @@ async function readStatusThroughTheOp(
   runId: string,
 ): Promise<PostProcessingStatus> {
   const host = composeLocalAgent({
+    mask: (text) => text,
     mintQuarantineIdentityPath: MINT_IDENTITY,
     agentQaRoot,
     config: TEST_CONFIG,

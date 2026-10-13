@@ -205,6 +205,7 @@ async function createHarness(options?: {
   const curateCalls: { runId: string; executionContext: unknown }[] = []
   const stageCalls: unknown[] = []
   const host = composeLocalAgent({
+    mask: (text) => text,
     mintQuarantineIdentityPath: MINT_IDENTITY,
     agentQaRoot,
     config: TEST_CONFIG,

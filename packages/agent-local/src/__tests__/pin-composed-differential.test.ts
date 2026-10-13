@@ -105,6 +105,7 @@ describe('D-21 retired: a typed /pin reaches nothing through the composed stack 
     mkdirSync(agentQaRoot, { recursive: true })
     tripwire = plannerTripwire()
     host = composeLocalAgent({
+      mask: (text) => text,
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot,
       config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },

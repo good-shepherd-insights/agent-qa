@@ -103,6 +103,7 @@ describe('two sessions, overlapping turns, two intact files (CHAT-05 / CR-01)', 
   /** ONE composition, which is the whole point: the defect is adapter state shared across sessions. */
   function compose(): LocalAgentHost {
     const composed = composeLocalAgent({
+      mask: (text) => text,
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot,
       config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },
@@ -290,6 +291,7 @@ describe('a typed /pin reaches no conversation (W-03; /pin retired 432-13)', () 
 
   function compose(): LocalAgentHost {
     const composed = composeLocalAgent({
+      mask: (text) => text,
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot,
       config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },
@@ -479,6 +481,7 @@ describe('the planner reads the conversation of the session it is planning FOR (
 
   function compose(chatModel: ChatLanguageModel): LocalAgentHost {
     const composed = composeLocalAgent({
+      mask: (text) => text,
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot,
       config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },

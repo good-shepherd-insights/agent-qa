@@ -1740,8 +1740,8 @@ export const UNCLAIMABLE_BY_PROSE_POSTURE: Record<CandidateProsePosture, readonl
   })
 
 export interface ComposeLocalAgentInput {
-  // 2026-10-14 (441-06): the declared-secret mask for the chat projections; required in 441-55.
-  readonly mask?: MaskFn
+  // 2026-10-14 (441-55, D-06): the declared-secret mask for the chat projections.
+  readonly mask: MaskFn
   /** Current host sources for cold snapshot reads. Undefined means no masking authority. */
   readonly readMaskingSources?: () => Promise<{
     readonly secretsContent: string
@@ -2682,11 +2682,7 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
   if (input.chatModel !== undefined) chatModelsByName.set(composedChatModelName, input.chatModel)
 
   // 2026-10-14 (441-06, D-06): session events, op results and turn results carry the declared mask.
-  const maskChatProjection = <T>(value: T): T => {
-    if (input.mask !== undefined) return maskPayloadStrings(value, input.mask)
-    const context = getActiveMaskingContext()
-    return context === undefined ? value : maskPayloadStrings(value, text => context.mask(text))
-  }
+  const maskChatProjection = <T>(value: T): T => maskPayloadStrings(value, input.mask)
 
   const chatSessionLog = createJsonlSessionLog({
     root: input.agentQaRoot,

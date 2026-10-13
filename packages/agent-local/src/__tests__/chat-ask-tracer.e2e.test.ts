@@ -89,6 +89,7 @@ describe('the 392 tracer: agent-qa ask "/fn quarantine.list", end to end over th
 
   function compose(): LocalAgentHost {
     const composed = composeLocalAgent({
+      mask: (text) => text,
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot,
       config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },

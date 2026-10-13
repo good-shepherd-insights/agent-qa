@@ -105,6 +105,7 @@ describe('the entity spine through composeLocalAgent (387-01)', () => {
 
   function compose(): LocalAgentHost {
     return composeLocalAgent({
+      mask: (text) => text,
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot,
       config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },

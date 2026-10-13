@@ -550,6 +550,7 @@ describe('a repeated daemon drain spends nothing it already spent (422 D-14/D-15
       replayGate: sharedGate(join(root, '..'), () => DAEMON_LEASE),
     })
     const host = composeLocalAgent({
+      mask: (text) => text,
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot: root,
       config: TEST_CONFIG,

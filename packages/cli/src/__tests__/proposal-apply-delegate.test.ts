@@ -94,6 +94,7 @@ function host(
   extra: Partial<Parameters<typeof composeLocalAgent>[0]> = {},
 ): LocalAgentHost {
   const composed = composeLocalAgent({
+    mask: (text) => text,
     mintQuarantineIdentityPath: MINT_IDENTITY,
     agentQaRoot: where.agentQaRoot,
     config: CONFIG,

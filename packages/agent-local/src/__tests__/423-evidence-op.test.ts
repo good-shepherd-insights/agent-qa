@@ -45,7 +45,8 @@ function fixture(populated = true) {
     }], subActions: [] }
   const read = vi.fn(async (id: string) => populated && id === runId ? rows : undefined)
   const forbidden = vi.fn(() => { throw new Error('Evidence reads cannot author or load configuration') })
-  const input = { agentQaRoot: root, knowledgeRoot: () => join(temporary, 'knowledge'),
+  const input = { mask: (text: string) => text, agentQaRoot: root,
+    knowledgeRoot: () => join(temporary, 'knowledge'),
     config: { getMasked: forbidden }, model: forbidden, mintQuarantineIdentityPath: (path: string) => path,
     resolveExecutionContext: () => 'local-headless' as const }
   const host = composeLocalAgent({ ...input, runDetail: { read } })

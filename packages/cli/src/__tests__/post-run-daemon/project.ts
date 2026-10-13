@@ -213,6 +213,7 @@ export async function runRealTail(input: {
 /** A composition over the same root the daemon serves — the second, socket-free reader. */
 export function openProjectHost(agentQaRoot: string, knowledgeRoot: string): LocalAgentHost {
   return composeLocalAgent({
+    mask: (text) => text,
     mintQuarantineIdentityPath: MINT_IDENTITY,
     agentQaRoot,
     config: TEST_CONFIG,

@@ -205,6 +205,7 @@ function fixture(): Fixture {
 
   const composeTestHost = (): LocalAgentHost => {
     const host = composeLocalAgent({
+      mask: (text) => text,
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot,
       config: TEST_CONFIG,

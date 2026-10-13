@@ -76,6 +76,7 @@ function snapshot(runId: string, evidenceTokens = [sha256hex('first-event'), sha
 async function publish(p: ReturnType<typeof project>, completed?: CurationSnapshot) {
   await resolveConfig({ configPath: p.configPath, loadAuthPlugins: false })
   const writer = composeLocalAgent({
+    mask: (text) => text,
     agentQaRoot: p.agentQaRoot,
     mintQuarantineIdentityPath: path => path,
     config: { getMasked: async () => ({ schemaVersion: 1, configPath: p.configPath, entries: [] }) },

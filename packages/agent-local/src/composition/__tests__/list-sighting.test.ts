@@ -113,6 +113,7 @@ describe('D-01: a list verb sights every entity it surfaces (387-06)', () => {
 
   function compose(): LocalAgentHost {
     return composeLocalAgent({
+      mask: (text) => text,
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot,
       config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },

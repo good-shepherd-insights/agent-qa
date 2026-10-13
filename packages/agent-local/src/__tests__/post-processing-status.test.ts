@@ -166,6 +166,7 @@ function createHarness(existingRoot?: string, postRun?: {
   const agentQaRoot = existingRoot ?? mkdtempSync(join(tmpdir(), 'agent-qa-pp-status-'))
   if (existingRoot === undefined) roots.push(agentQaRoot)
   const host = composeLocalAgent({
+    mask: (text) => text,
     mintQuarantineIdentityPath: MINT_IDENTITY,
     agentQaRoot,
     config: TEST_CONFIG,
@@ -686,6 +687,7 @@ describe('chip truth is read from durable rows (ANLZ-05, D-14)', () => {
     const agentQaRoot = mkdtempSync(join(tmpdir(), 'agent-qa-pp-status-'))
     roots.push(agentQaRoot)
     const host = composeLocalAgent({
+      mask: (text) => text,
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot,
       config: TEST_CONFIG,
@@ -803,6 +805,7 @@ describe('a row another build wrote still reads, through the op (D-01, Pitfall 7
 
       // A COLD host — nothing of the process that wrote the rows survives into this read.
       const cold = composeLocalAgent({
+        mask: (text) => text,
         mintQuarantineIdentityPath: MINT_IDENTITY,
         agentQaRoot: harness.agentQaRoot,
         config: TEST_CONFIG,
