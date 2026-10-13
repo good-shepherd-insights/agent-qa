@@ -12,12 +12,6 @@ export {
   stripReservedAuthStateHookEnv,
   buildAuthStateHookEnv,
 } from './auth-env.js'
-export {
-  AUTH_STATE_REDACTION_MARKER,
-  redactAuthStateString,
-  redactAuthStateValue,
-} from './redaction.js'
-export type { AuthStateRedactionContext } from './redaction.js'
 export { runHooks, resolveSecretEnv } from './orchestrator.js'
 export type {
   HookOrchestrationResult,

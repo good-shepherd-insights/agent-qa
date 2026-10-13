@@ -58,7 +58,6 @@ import {
 // driving them is that a reader written in this file would be a second containment rule.
 import { createEvidenceBlobReader, runSafetyScope } from '@vostride/agent-qa-agent-local'
 import { FsEvidenceArtifactStore, slugBranch } from '@vostride/agent-qa-runner-local'
-import { AUTH_STATE_REDACTION_MARKER } from '@vostride/agent-qa-core'
 import {
   RunsMarkPreviewResultSchema,
   RunsMarksHistoryResultSchema,
@@ -719,7 +718,7 @@ describe('423-21 feedback reads on both HTTP doors (D-18)', () => {
       expect((await answer.json() as { error: string }).error).toBe('agent_host_unavailable')
     }
 
-    // The local human door restores, then sanitizes restored auth state; the bearer door stays masked.
+    // The local human door restores; the bearer door stays masked.
     const history = RunsMarksHistoryResultSchema.parse(expected)
     if (history.kind !== 'history') throw new Error('expected a history result')
     const withNote = (note: string) => ({ ...history, entries: history.entries.map((entry, index) => index === 0 ? { ...entry, note } : entry) })
@@ -728,8 +727,7 @@ describe('423-21 feedback reads on both HTTP doors (D-18)', () => {
     const human = await fetch(`${restoring.local}/marks`)
     expect(human.status).toBe(200)
     const humanRaw = await human.text()
-    expect(JSON.parse(humanRaw)).toEqual(withNote(AUTH_STATE_REDACTION_MARKER))
-    expect(humanRaw).not.toContain(FEEDBACK_AUTH_TOKEN)
+    expect(JSON.parse(humanRaw)).toEqual(withNote(FEEDBACK_AUTH_STATE))
     expect(restoring.restored.length).toBeGreaterThan(0)
     expect(new Set(restoring.restored)).toEqual(new Set([RUN_ID]))
     restoring.restored.length = 0
@@ -814,8 +812,7 @@ describe('423-21 feedback reads on both HTTP doors (D-18)', () => {
     expect(human.status).toBe(200)
     const humanRaw = await human.text()
     expect(JSON.parse(humanRaw)).toMatchObject({ groundTruth: [{ recordedVerdict: { reasoning: 'near restored-note-value' },
-      correctedExpectation: AUTH_STATE_REDACTION_MARKER }] })
-    expect(humanRaw).not.toContain(FEEDBACK_AUTH_TOKEN)
+      correctedExpectation: FEEDBACK_AUTH_STATE }] })
     restoring.restored.length = 0
     const machine = await postJson(`${restoring.remote}/mark-preview`, previewInput(), restoring.headers)
     expect(await machine.json()).toEqual(placeholderBody)

@@ -22,7 +22,6 @@ import {
   startServer,
 } from '@vostride/agent-qa-dashboard'
 import { generateRunId } from '@vostride/agent-qa-ids'
-import { AUTH_STATE_REDACTION_MARKER } from '@vostride/agent-qa-core'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
 import { setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
 import {
@@ -143,16 +142,15 @@ describe('423 guarded human read', () => {
   beforeAll(async () => { fixture = await startFixture() })
   afterAll(async () => { await fixture?.close() })
 
-  it('HTTP-EVIDENCE-HUMAN restores allowed evidence then sanitizes auth state while raw SHA bytes stay masked', async () => {
+  it('HTTP-EVIDENCE-HUMAN restores evidence while raw SHA bytes stay masked', async () => {
     const url = `${fixture.origin}/api/runs/${fixture.runId}`
     const response = await fetch(`${url}/evidence?kind=console&testIndex=0&stepIndex=0`)
     expect(response.status).toBe(200)
     const raw = await response.text()
     const body = JSON.parse(raw)
     expect(body).toMatchObject({ outcome: 'ready', document: { records: [
-      { text: ALLOWED }, { text: AUTH_STATE_REDACTION_MARKER },
+      { text: ALLOWED }, { text: AUTH_STATE },
     ] } })
-    expect(raw).not.toContain(AUTH_TOKEN)
     expect(raw).not.toContain(fixture.authPlaceholder)
     const artifact = await fetch(`${url}/artifacts/${fixture.evidenceRef.sha}`)
     expect(await artifact.text()).toBe(JSON.stringify(fixture.evidenceDocument))
@@ -172,15 +170,14 @@ describe('423 guarded human read', () => {
     expect(JSON.stringify(fixture.db.readRunDetailRows(fixture.runId))).not.toContain(AUTH_TOKEN)
   })
 
-  it('C423-HUMAN-DETAIL-SANITIZED: T-405-38 restores then sanitizes durable HTTP output', async () => {
+  it('C423-HUMAN-DETAIL-SANITIZED: T-405-38 restores durable HTTP output', async () => {
     // Prove the synthetic sidecar restores the auth shape, independently of the response.
     expect(fixture.unmask(fixture.authPlaceholder, { runId: fixture.runId })).toBe(AUTH_STATE)
     const response = await fetch(`${fixture.origin}/api/runs/${fixture.runId}/detail`)
     expect(response.status).toBe(200)
     const raw = await response.text()
     const body = JSON.parse(raw) as RunDetailProjection
-    expect.soft(raw, 'restored cookie material must be removed after the seam').not.toContain(AUTH_TOKEN)
-    expect.soft(body.steps[0]?.error).toBe(AUTH_STATE_REDACTION_MARKER)
+    expect.soft(body.steps[0]?.error).toBe(AUTH_STATE)
     expect.soft(raw).not.toContain(fixture.authPlaceholder)
     expect.soft(body.steps[0]?.stepText, 'allowed quoted text must survive JSON serialization').toBe(ALLOWED)
     expect.soft(body.steps[1]?.stepText).toBe(`Normal text [secret] ${maskedMarker('email')} ${maskedMarker('secret')}`)
@@ -279,9 +276,8 @@ describe('423 rendered run-detail sinks', () => {
     const copied = await page.evaluate(() => (window as unknown as { copied: string }).copied)
     expect.soft(JSON.parse(copied)).toEqual({
       [DISPLAY_KEY]: DISPLAY_VALUE, nested: DISPLAY_NESTED,
-      normal: 'Readable normal value', auth: AUTH_STATE_REDACTION_MARKER,
+      normal: 'Readable normal value', auth: AUTH_STATE,
     })
-    expect.soft(copied).not.toContain(AUTH_TOKEN)
     expect.soft(copied).not.toMatch(/<SECRET_|<EMAIL_|␟masked:/u)
     const rows = page.getByRole('dialog').locator('tr')
     const normal = rows.filter({ hasText: 'Readable normal value' })
@@ -299,7 +295,7 @@ describe('423 rendered run-detail sinks', () => {
     expect(await page.title()).not.toContain(AUTH_TOKEN)
   })
 
-  it('SINK-DOM: drawer values, keys and accessible attributes never expose markers or credentials', async () => {
+  it('SINK-DOM: drawer values, keys and accessible attributes never expose markers, and a stored auth-state value shows as written', async () => {
     const dialog = page.getByRole('dialog')
     const text = await dialog.innerText()
     expect.soft(text).toContain('Readable normal value')
@@ -307,11 +303,10 @@ describe('423 rendered run-detail sinks', () => {
     expect.soft(text).toContain(EMAIL_LABEL)
     expect.soft(text).toContain('[secret]')
     expect.soft(text).not.toMatch(/<SECRET_|<EMAIL_|␟masked:/u)
-    expect.soft(text).not.toContain(AUTH_TOKEN)
+    expect.soft(text).toContain(AUTH_STATE)
     const attrs = await dialog.evaluate((element) => Array.from(element.querySelectorAll('*'))
       .flatMap((node) => Array.from(node.attributes).map((attribute) => attribute.value)).join('\n'))
     expect.soft(attrs).not.toMatch(/<SECRET_|<EMAIL_|␟masked:/u)
-    expect.soft(attrs).not.toContain(AUTH_TOKEN)
     expect.soft(await dialog.getByRole('button', { name: `Copy ${DISPLAY_KEY} value`, exact: true }).count()).toBe(1)
   })
 })

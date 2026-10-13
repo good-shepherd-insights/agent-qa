@@ -81,7 +81,7 @@ import {
 import { createConnectInFlight, registerLlmConnectRoute } from './llm-connect-route.js'
 import type { PostProcessingRelay } from '../execution/post-processing-relay.js'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
-import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NameSlugSchema, TimeoutConfigSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString } from '@vostride/agent-qa-core'
+import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NameSlugSchema, TimeoutConfigSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString } from '@vostride/agent-qa-core'
 import { SecretStore, SecretRedactor } from '@vostride/agent-qa-runner'
 import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
 import type { ResolvedWorkspacePaths, RunAttributes, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
@@ -1243,7 +1243,7 @@ function sanitizeSecretsFileMetadata(value: unknown): unknown {
 }
 
 function sanitizeArtifactPayloadForResponse(payload: RunArtifactRow['payload']): RunArtifactRow['payload'] {
-  const sanitized = redactAuthStateValue(sanitizeSecretTemplates(payload))
+  const sanitized = sanitizeSecretTemplates(payload)
   if (!isRecord(sanitized)) return payload
   // G-401-18-CR01: the SEVENTH door. `JobQueue.enqueue` writes the caller's `metadata` object into
   // `run_artifacts.payload.metadata` as well as `runs.metadata`, and this response is what serves
@@ -1266,10 +1266,6 @@ function sanitizeArtifactForResponse(artifact: RunArtifactRow | null): RunArtifa
     ...artifact,
     payload: sanitizeArtifactPayloadForResponse(artifact.payload),
   }
-}
-
-function sanitizeAuthStateForResponse<T>(value: T): T {
-  return redactAuthStateValue(value)
 }
 
 async function normalizeDashboardWorkspacePath(
@@ -2214,16 +2210,11 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
               run,
               { runId: String((run as { id?: unknown }).id ?? '') },
             ))
-          // AND THEN THE AUTH-STATE REDACTOR, IN THAT ORDER (RESEARCH Pitfall 7, T-405-38). The
-          // seam can put back a value the masker reduced, and an auth-state-shaped one of those is
-          // exactly what `redactAuthStateValue` exists to hide — so it runs AFTER, never before.
-          // This arm had no redactor before this plan because nothing here could be cleartext;
-          // the seam is what makes it necessary.
-          jsonNoCors(res, sanitizeAuthStateForResponse({
+          jsonNoCors(res, {
             runs: humanRuns,
             total: filtered.length,
             targets: targetOptions,
-          }))
+          })
         })
         .catch(() => jsonNoCors(res, { error: 'Failed to list runs' }, 500))
       return
@@ -2287,12 +2278,9 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         artifact: sanitizeArtifactForResponse(bundle.artifact),
         missingSections: getArtifactMissingSections(bundle.artifact),
       }
-      // Seam BEFORE the redactor (Pitfall 7, T-405-38) — see the runs-list arm.
-      jsonNoCors(res, sanitizeAuthStateForResponse(
-        deps.agentHost === undefined
-          ? artifactBody
-          : unmaskTreeForDisplay(deps.agentHost, artifactBody, { runId }),
-      ))
+      jsonNoCors(res, deps.agentHost === undefined
+        ? artifactBody
+        : unmaskTreeForDisplay(deps.agentHost, artifactBody, { runId }))
       return
     }
 
@@ -2328,12 +2316,10 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
       // against that one id, carrying `test_index`/`step_index` to say where in the run they ran.
       const logs = db.getExecutionLogs({ runId: id, stepId, type })
       // Execution logs are a human read (D-09): hook stdout and step errors are written masked and
-      // are read by a person looking for what went wrong. Seam BEFORE the redactor (Pitfall 7).
-      jsonNoCors(res, sanitizeAuthStateForResponse(
-        deps.agentHost === undefined
-          ? { logs }
-          : unmaskTreeForDisplay(deps.agentHost, { logs }, { runId: id }),
-      ))
+      // are read by a person looking for what went wrong.
+      jsonNoCors(res, deps.agentHost === undefined
+        ? { logs }
+        : unmaskTreeForDisplay(deps.agentHost, { logs }, { runId: id }))
       return
     }
 
@@ -2760,12 +2746,10 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
       // through `runs.detail`.
       //
       // 405-10 (D-09): and the one row it does answer with is a human read, so it crosses the
-      // display seam BEFORE the auth-state redactor (Pitfall 7) on the runs-list arm's reasoning.
-      jsonNoCors(res, sanitizeAuthStateForResponse(
-        deps.agentHost === undefined
-          ? { run }
-          : unmaskTreeForDisplay(deps.agentHost, { run }, { runId: id }),
-      ))
+      // display seam on the runs-list arm's reasoning.
+      jsonNoCors(res, deps.agentHost === undefined
+        ? { run }
+        : unmaskTreeForDisplay(deps.agentHost, { run }, { runId: id }))
       return
     }
 
@@ -4588,7 +4572,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
               (result as { networkLogs?: Array<{ url: string; method: string; status: number; startTime: number; endTime: number }> }).networkLogs,
             )
 
-            json(res, sanitizeAuthStateForResponse({
+            json(res, {
               success: result.success,
               status: result.success ? 'passed' : 'failed',
               executedAt: new Date().toISOString(),
@@ -4606,9 +4590,9 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
                 networkLogsAvailable: networkLogs.length > 0,
                 networkLogs,
               },
-            } satisfies import('../hooks/hook-registry-types.js').HookRunResponse))
+            } satisfies import('../hooks/hook-registry-types.js').HookRunResponse)
           } catch (err: unknown) {
-            json(res, sanitizeAuthStateForResponse({ error: err instanceof Error ? err.message : 'Failed to run hook' }), 500)
+            json(res, { error: err instanceof Error ? err.message : 'Failed to run hook' }, 500)
           }
         })
         .catch(() => json(res, { error: 'Invalid request body' }, 400))

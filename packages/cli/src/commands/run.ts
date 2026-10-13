@@ -5,7 +5,7 @@ import { resolve as resolvePath } from 'node:path'
 import { Command, InvalidArgumentError } from 'commander'
 import pc from 'picocolors'
 import { resolveConfig, mergeWithTestConfig, mergeUseBlocks, formatConfigDebug, loadEnvOverrides } from '../config.js'
-import { ATTR_RUNNER, ATTR_TRIGGER, AUTH_STATE_SCHEMA_VERSION, buildInternalRunAttributes, DEFAULT_AGENT_QA_ARTIFACTS_DIR, DEFAULT_AGENT_QA_CACHE_DIR, formatRunAttributesBlock, generateRunId, isCanonicalRunId, mergeRunAttributes, MobileSetupError, normalizeAuthStateUse, parseRunAttrFlags, redactAuthStateValue, resolveAuthStateForRun, resolveAuthStatePaths, resolveKnowledgeRoot, resolveMobileRunConfig, validateTrustedRunAttributes } from '@vostride/agent-qa-core'
+import { ATTR_RUNNER, ATTR_TRIGGER, AUTH_STATE_SCHEMA_VERSION, buildInternalRunAttributes, DEFAULT_AGENT_QA_ARTIFACTS_DIR, DEFAULT_AGENT_QA_CACHE_DIR, formatRunAttributesBlock, generateRunId, isCanonicalRunId, mergeRunAttributes, MobileSetupError, normalizeAuthStateUse, parseRunAttrFlags, resolveAuthStateForRun, resolveAuthStatePaths, resolveKnowledgeRoot, resolveMobileRunConfig, validateTrustedRunAttributes } from '@vostride/agent-qa-core'
 import { discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, resolveWorkspacePaths, workspaceRelativeIdentityPath } from '@vostride/agent-qa-core'
 import type { AgentQaConfig, AuthStateMetadata, MemberLogScope, NormalizedAuthStateUse, ResolvedAuthStateForRun, ResolvedAuthStatePaths, ResolvedMobileRunConfig, ResolvedWorkspacePaths, RunAttributes, RunAttributeRunner, RunAttributeTrigger, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
 import { createModel, createTokenAccounting, resolveCapabilities, resolveVisionConfig, resolveVisionGate, visionFromConfig } from '@vostride/agent-qa-model'
@@ -22,10 +22,10 @@ import type {
   QuarantineAppliedEntry,
   RunSession,
 } from '@vostride/agent-qa-schema'
-import type { SecretStore, SecretRedactor, HookDefinition, NonActionToolMap, SandboxRunnerOptions } from '@vostride/agent-qa-runner'
+import type { SecretStore, SecretRedactor, SecretRedactorPort, HookDefinition, NonActionToolMap, SandboxRunnerOptions } from '@vostride/agent-qa-runner'
 import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
 import type { TestResult, PlatformAdapter, PlatformConfig } from '@vostride/agent-qa-runner'
-import { WorkingMemoryStore, runMemberTest, createStepModelScope, memberStepText } from '@vostride/agent-qa-runner'
+import { WorkingMemoryStore, runMemberTest, createStepModelScope, memberStepText, redactSecretValue } from '@vostride/agent-qa-runner'
 import { createCliStepModelScopeFactory } from '../composition/step-model-scope.js'
 import type { CliStepModelScopeOptions } from '../composition/step-model-scope.js'
 import type { RunMemberDescriptor, ConfigDigests, MemberTestRunContext, MemberTestExecutor, StepModelScopeFactory } from '@vostride/agent-qa-runner'
@@ -1464,8 +1464,9 @@ function buildRunArtifactContext(input: {
   timeouts: Record<string, unknown>
   cache: Record<string, unknown>
   source: Record<string, unknown>
+  secretRedactor?: SecretRedactorPort
 }): { artifact: Record<string, unknown> & { kind: 'test' } } {
-  return redactAuthStateValue({
+  return redactSecretValue({
     artifact: {
       kind: input.kind,
       config: {
@@ -3053,6 +3054,7 @@ export async function produceSuiteRunMembers(
         loadStatus: 'loaded',
         members: suiteMembers,
       },
+      secretRedactor: variableContext?.secretRedactor,
     })
 
     const suiteConfig: RunSuiteConfig = {
@@ -4309,6 +4311,7 @@ export async function produceDirectRunMembers(
           resolvedDefinition: testDef,
           loadStatus: 'loaded',
         },
+        secretRedactor: runtimeSecrets.secretRedactor,
       })
       // 433-29 (G-433-5, F-433-15): this member's test as written and effective config, masked
       // with the run's own context, for every door's dashboard ingest. No mask, no snapshot.
@@ -4756,6 +4759,7 @@ export function createRunCommand(): Command {
     )
     .action(async (patterns: string[], opts: RunOptions, command: Command) => {
       let _crashDb: any
+      let _crashSecretRedactor: SecretRedactor | undefined
       // 433-35 (G-433-11): the run this invocation started, so a framework error names the id it recorded.
       let _startedRunId: string | undefined
 
@@ -4856,6 +4860,7 @@ export function createRunCommand(): Command {
           userRunAttributes,
           inheritedRunAttributes,
         } = inputs
+        _crashSecretRedactor = runtimeSecrets.secretRedactor
         let discoveredTestFiles: string[] = [...inputs.discovered.tests]
         const discoveredSuiteFiles: string[] = [...inputs.discovered.suites]
 
@@ -4998,7 +5003,7 @@ export function createRunCommand(): Command {
             dashboardDb.insertRunArtifact({
               runId: artifactRunId,
               kind: 'test',
-              payload: redactAuthStateValue({
+              payload: redactSecretValue({
                 config: {
                   rawConfigContent: configContent,
                   parsedConfig: config,
@@ -5029,7 +5034,7 @@ export function createRunCommand(): Command {
                   message: error.message,
                   details: error,
                 })),
-              }),
+              }, runtimeSecrets.secretRedactor),
             })
             dashboardDb.finalizeRunArtifact(artifactRunId)
             dashboardDb.close()
@@ -5372,7 +5377,7 @@ export function createRunCommand(): Command {
                 status: finalStatus,
                 duration: run.startedAt ? Date.now() - new Date(run.startedAt).getTime() : 0,
                 endedAt: new Date().toISOString(),
-                failureSummary: isBrowserClose ? 'Browser closed by user' : redactAuthStateValue(formattedError.failureSummary),
+                failureSummary: isBrowserClose ? 'Browser closed by user' : redactSecretValue(formattedError.failureSummary, _crashSecretRedactor),
               })
               try {
                 const artifact = _crashDb.getRunArtifact(run.id)
@@ -5385,7 +5390,7 @@ export function createRunCommand(): Command {
                     errors: [{
                       code: isBrowserClose ? 'browser-disconnect' : 'process-close',
                       phase: 'process-close',
-                      message: isBrowserClose ? 'Browser closed by user' : redactAuthStateValue(formattedError.failureSummary),
+                      message: isBrowserClose ? 'Browser closed by user' : redactSecretValue(formattedError.failureSummary, _crashSecretRedactor),
                     }],
                   })
                 }

@@ -658,8 +658,8 @@ describe('API Routes', () => {
     })
   })
 
-  describe('auth-state redaction for run APIs', () => {
-    it('sanitizes artifacts, logs, execution logs, and steps at response boundaries', async () => {
+  describe('auth state in run APIs', () => {
+    it('serves the artifact, execution logs and run row with stored auth-state values as written', async () => {
       const { artifactsDir, db: actualDb } = await createDashboardWorkspace()
       const runId = actualDb.insertRun({
         name: 'Auth redaction run',
@@ -702,30 +702,26 @@ describe('API Routes', () => {
       })
       router = createRouter(actualDb)
 
-      // 405-07 (D-03/D-02): the log page and the step list were two of the five doors this cell
-      // drove; both are deleted with the tables they answered from, and the two step-level carriers
-      // of a secret (`capturedVariables`, `variableSnapshot`) are columns on a table that no longer
-      // exists. THE CLAIM IS UNCHANGED on the doors that survive — the artifact payload, the hook
-      // log's stdout/stderr/variables, and the run row itself.
-      const responses = await Promise.all([
+      // 2026-10-14 (441-05, D-13): no auth-state redactor; a stored value is served as written.
+      const [runRes, artifactRes, logsRes] = await Promise.all([
         invokeRoute(`/api/runs/${runId}`),
         invokeRoute(`/api/runs/${runId}/artifact`),
         invokeRoute(`/api/runs/${runId}/execution-logs`),
       ])
 
-      for (const res of responses) {
-        expect(res.status).toBe(200)
-        expect(res.body).not.toContain('demo-acc')
-        expect(res.body).not.toContain(storagePath)
-        expect(res.body).not.toContain('/workspace/.agent-qa-auth-state/storage-state.json')
-        expect(res.body).not.toContain(AUTH_STATE_COOKIE_SECRET)
-        expect(res.body).not.toContain(AUTH_STATE_LOCAL_STORAGE_SECRET)
-        expect(res.body).not.toContain(AUTH_STATE_INDEXED_DB_SECRET)
-        expect(res.body).not.toContain('hook-session-token')
-      }
-      // NON-VACUITY: at least one of the surviving doors must actually carry the redaction marker,
-      // or the `not.toContain`s above are green because the bodies are empty.
-      expect(responses.map((res) => res.body).join('')).toContain('[auth state redacted]')
+      expect(runRes.status).toBe(200)
+      expect(JSON.parse(runRes.body).run.name).toBe('Auth redaction run')
+      expect(artifactRes.status).toBe(200)
+      const payload = JSON.parse(artifactRes.body).artifact.payload
+      expect(payload.config.rawConfigContent).toBe('use:\n  authState: demo-acc\n')
+      expect(payload.config.effectiveConfig).toEqual({ use: { authState: 'demo-acc' } })
+      expect(payload.runtime).toEqual({ storageStatePath: storagePath, storageState: AUTH_STATE_PAYLOAD })
+      expect(logsRes.status).toBe(200)
+      expect(JSON.parse(logsRes.body).logs[0]).toMatchObject({
+        stdout: '/workspace/.agent-qa-auth-state/storage-state.json',
+        stderr: storageJson,
+        variables: { SESSION_TOKEN: 'hook-session-token', SAFE_VALUE: 'visible' },
+      })
 
       actualDb.close()
     })

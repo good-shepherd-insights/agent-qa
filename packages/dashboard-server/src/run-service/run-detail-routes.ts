@@ -16,7 +16,6 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
-import { redactAuthStateValue as sanitizeAuthStateForResponse } from '@vostride/agent-qa-core'
 import {
   RunsArtifactInputSchema,
   RunsDetailInputSchema,
@@ -207,7 +206,7 @@ export function serveRunEvidenceRead(
     parsed.data, deps.host.caller).then(result => {
     const body = RunsEvidenceResultSchema.parse(result)
     respondJson(res, 200, deps.boundary === 'human'
-      ? sanitizeAuthStateForResponse(unmaskTreeForDisplay(deps.host, body, { runId: deps.runId }))
+      ? unmaskTreeForDisplay(deps.host, body, { runId: deps.runId })
       : body)
   }).catch((error: unknown) => {
     const refusal = refusalFor(error)
@@ -217,8 +216,8 @@ export function serveRunEvidenceRead(
 
 /**
  * Answer one feedback read's typed result. Its outcomes, refusals included, are the op's result
- * and travel as 200; only thrown classes map to status codes. The human door restores and then
- * sanitizes restored auth state; every other door answers the op's masked body.
+ * and travel as 200; only thrown classes map to status codes. The human door restores; every
+ * other door answers the op's masked body.
  */
 function respondFeedbackRead(
   res: ServerResponse,
@@ -230,7 +229,7 @@ function respondFeedbackRead(
   void deps.host.invokeFunction(deps.host.registry, functionId, input, deps.host.caller).then(result => {
     const body = parse(result)
     respondJson(res, 200, deps.boundary === 'human'
-      ? sanitizeAuthStateForResponse(unmaskTreeForDisplay(deps.host, body, { runId: deps.runId }))
+      ? unmaskTreeForDisplay(deps.host, body, { runId: deps.runId })
       : body)
   }).catch((error: unknown) => {
     const refusal = refusalFor(error)
@@ -345,11 +344,7 @@ export function serveRunDetailRead(
         res,
         200,
         deps.boundary === 'human'
-          // The display seam can restore an entire auth-state JSON string. Sanitize last,
-          // just like the other human run reads, so restoration cannot bypass redaction.
-          ? sanitizeAuthStateForResponse(
-            unmaskTreeForDisplay(deps.host, outcome.body, { runId: deps.runId }),
-          )
+          ? unmaskTreeForDisplay(deps.host, outcome.body, { runId: deps.runId })
           : outcome.body,
       )
     },

@@ -7,7 +7,7 @@
 // the `fn` dispatch (the registry under the CLI's own caller, which is what `agent-qa fn` invokes),
 // the MCP protocol door built by the shipped factory over the same registry, the authed remote HTTP
 // door and the local human HTTP door. Machine doors must agree byte for byte; the human door may
-// differ only by restoring an allowed placeholder and sanitizing restored auth state.
+// differ only by restoring placeholders.
 //
 // THE MCP HALF IS THE MAPPING'S OWN WORD. A projected read answers `tools/call` with the registry
 // result; an unprojected read has no door at all and its recorded `UNPROJECTED_OPS` reason classifies
@@ -38,7 +38,6 @@ import {
   writeMaskingDigests,
   type LocalAgentHost,
 } from '@vostride/agent-qa-agent-local'
-import { AUTH_STATE_REDACTION_MARKER } from '@vostride/agent-qa-core'
 import {
   createDashboardRunDetailReader,
   createRunServiceRoutes,
@@ -537,13 +536,13 @@ function mcpArgumentsFor(opId: string, input: Record<string, unknown>): Record<s
   return discriminant === undefined ? input : { [discriminant]: opId, ...input }
 }
 
-/** What the human door shows for a machine answer: allowed text restored, restored auth state sanitized. */
+/** What the human door shows for a machine answer: every placeholder restored. */
 function humanViewOf(machine: unknown, scene: DurableScene | FeedbackScene, restores: boolean): unknown {
   if (!restores || !('allowedPlaceholder' in scene)) return machine
   const escaped = (text: string) => JSON.stringify(text).slice(1, -1)
   return JSON.parse(JSON.stringify(machine)
     .replaceAll(escaped(scene.allowedPlaceholder), escaped(ALLOWED))
-    .replaceAll(escaped(scene.authPlaceholder), escaped(AUTH_STATE_REDACTION_MARKER)))
+    .replaceAll(escaped(scene.authPlaceholder), escaped(AUTH_STATE)))
 }
 
 describe('423-38 all-door read contracts (D-04/D-18)', () => {
@@ -602,7 +601,7 @@ describe('423-38 all-door read contracts (D-04/D-18)', () => {
         expect(await doors.mcp(plausible, input)).toMatchObject({ door: 'absent' })
       }
 
-      // HTTP: the authed remote door answers the same bytes; the local human door restores then sanitizes.
+      // HTTP: the authed remote door answers the same bytes; the local human door restores.
       const path = scenario.http.path(input)
       const body = scenario.http.method === 'POST' ? input : undefined
       if (scenario.http.machine) {
@@ -638,11 +637,10 @@ describe('423-38 all-door read contracts (D-04/D-18)', () => {
     const humanKnowledge = await doors.human('GET', `/${durableScene.runId}/knowledge`)
     for (const raw of [humanDetail.raw, humanEvidence.raw, humanKnowledge.raw]) {
       expect(raw).toContain(ALLOWED)
-      expect(raw).not.toContain(AUTH_TOKEN)
       expect(raw).not.toContain(durableScene.authPlaceholder)
       expect(raw).not.toContain(durableScene.allowedPlaceholder)
     }
-    expect(humanEvidence.body).toMatchObject({ document: { records: [{ text: ALLOWED }, { text: AUTH_STATE_REDACTION_MARKER }] } })
+    expect(humanEvidence.body).toMatchObject({ document: { records: [{ text: ALLOWED }, { text: AUTH_STATE }] } })
     // The durable bytes stay masked whatever a door displayed.
     expect(JSON.stringify(durableScene.db.readRunDetailRows(durableScene.runId))).not.toContain(AUTH_TOKEN)
 

@@ -351,7 +351,6 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => {
     ...user,
     ...internal,
   })),
-  redactAuthStateValue: vi.fn((value: unknown) => value),
   formatRunAttributesBlock: vi.fn((attributes: Record<string, string>) => {
     const order = ([key]: [string, string]) => key === 'agent-qa.trigger'
       ? [0, 0, key]
