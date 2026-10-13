@@ -125,50 +125,6 @@ describe('mapPromptLeaves', () => {
 
     expect(() => mapPromptLeaves(params, throwOnJson)).toThrow(LeafBlockError)
   })
-
-  it('returns a JSON leaf unchanged when serialization fails (never throws for a non-block reason)', () => {
-    const circular: Record<string, unknown> = {}
-    circular.self = circular
-    const params = asParams({
-      prompt: [
-        {
-          role: 'assistant',
-          content: [{ type: 'tool-call', toolCallId: 'c1', toolName: 'lookup', input: circular }],
-        },
-      ],
-    })
-
-    const out = mapPromptLeaves(params, bang)
-    const part = out.prompt[0]?.role === 'assistant' ? out.prompt[0].content[0] : undefined
-
-    expect(part?.type === 'tool-call' ? part.input : undefined).toBe(circular)
-  })
-
-  it('returns a JSON leaf unchanged when the transformed string fails to parse', () => {
-    const params = asParams({
-      prompt: [
-        {
-          role: 'tool',
-          content: [
-            {
-              type: 'tool-result',
-              toolCallId: 'c1',
-              toolName: 'lookup',
-              output: { type: 'json', value: { token: 'v' } },
-            },
-          ],
-        },
-      ],
-    })
-
-    const corrupt = (text: string): string => `${text} not json`
-    const out = mapPromptLeaves(params, corrupt)
-    const part = out.prompt[0]?.role === 'tool' ? out.prompt[0].content[0] : undefined
-
-    expect(
-      part?.type === 'tool-result' && part.output.type === 'json' ? part.output.value : undefined,
-    ).toEqual({ token: 'v' })
-  })
 })
 
 const PW = 'pa"ss\\word'

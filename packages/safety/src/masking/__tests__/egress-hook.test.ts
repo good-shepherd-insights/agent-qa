@@ -87,7 +87,7 @@ describe('createMaskingProviderRequestHook', () => {
     expect(JSON.stringify(part.input)).not.toContain(SECRET)
   })
 
-  it('masks user file part string fields while leaving media type unchanged', () => {
+  it('masks the user file part filename while leaving data and media type unchanged', () => {
     const ctx = createMaskingContext()
     ctx.register(SECRET)
     const hook = createMaskingProviderRequestHook(() => ctx)
@@ -118,7 +118,7 @@ describe('createMaskingProviderRequestHook', () => {
     }
 
     expectMasked(part.filename ?? '')
-    expectMasked(part.data)
+    expect(part.data).toBe(`https://example.test/image.png?token=${SECRET}`)
     expect(part.mediaType).toBe('image/png')
   })
 

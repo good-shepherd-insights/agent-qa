@@ -153,7 +153,7 @@ describe('createGuardrailProviderRequestHook', () => {
             {
               type: 'file',
               filename: `report-${BEARER}.txt`,
-              data: `file body ${BEARER}`,
+              data: 'ZmlsZSBib2R5',
               mediaType: 'text/plain',
             },
           ],
@@ -278,7 +278,7 @@ describe('guardrail egress hook leaf parity with masking walker', () => {
     expect(expectUserText(transformed)).toBe('user <REDACTED:bearer>')
   })
 
-  it('redacts user file filenames and string data', () => {
+  it('redacts user file filenames and leaves string data unchanged', () => {
     const transformed = transform({
       prompt: [
         {
@@ -302,7 +302,7 @@ describe('guardrail egress hook leaf parity with masking walker', () => {
     }
 
     expect(part.filename).toBe('file <REDACTED:bearer>')
-    expect(part.data).toBe('body <REDACTED:bearer>')
+    expect(part.data).toBe(`body ${BEARER}`)
   })
 
   it('leaves user file binary data untouched', () => {
@@ -362,7 +362,7 @@ describe('guardrail egress hook leaf parity with masking walker', () => {
     expect(part.text).toBe('reason <REDACTED:bearer>')
   })
 
-  it('redacts assistant file filenames and string data', () => {
+  it('redacts assistant file filenames and leaves string data unchanged', () => {
     const transformed = transform({
       prompt: [
         {
@@ -388,7 +388,7 @@ describe('guardrail egress hook leaf parity with masking walker', () => {
     }
 
     expect(part.filename).toBe('assistant file <REDACTED:bearer>')
-    expect(part.data).toBe('assistant data <REDACTED:bearer>')
+    expect(part.data).toBe(`assistant data ${BEARER}`)
   })
 
   it('redacts assistant tool-call JSON input', () => {
@@ -582,7 +582,7 @@ describe('guardrail egress hook leaf parity with masking walker', () => {
     expect(nested.text).toBe('content <REDACTED:bearer>')
   })
 
-  it('redacts tool-result content file-data filename and data', () => {
+  it('redacts tool-result content file-data filename and leaves data unchanged', () => {
     const transformed = transform({
       prompt: [
         {
@@ -615,10 +615,10 @@ describe('guardrail egress hook leaf parity with masking walker', () => {
     }
 
     expect(nested.filename).toBe('<REDACTED:bearer>')
-    expect(nested.data).toBe('<REDACTED:bearer>')
+    expect(nested.data).toBe(BEARER)
   })
 
-  it('redacts tool-result content image-data data', () => {
+  it('leaves tool-result content image-data data unchanged', () => {
     const transformed = transform({
       prompt: [
         {
@@ -650,7 +650,7 @@ describe('guardrail egress hook leaf parity with masking walker', () => {
       throw new Error('expected nested image-data content')
     }
 
-    expect(nested.data).toBe('<REDACTED:apiKey>')
+    expect(nested.data).toBe(API_KEY)
   })
 
   it('redacts tool-result content file-url URLs', () => {

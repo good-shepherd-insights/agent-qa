@@ -12,14 +12,8 @@ type FileContentPart = Extract<UserContentPart | AssistantContentPart, { type: '
 type ToolResultOutput = Extract<AssistantContentPart, { type: 'tool-result' }>['output']
 type ToolResultContentPart = Extract<ToolResultOutput, { type: 'content' }>['value'][number]
 
-// The single place the AI-SDK V3 prompt tree is walked. Both egress hooks (masking,
-// guardrail) delegate here so a new prompt part type is handled in one place. `fn` MAY
-// throw (guardrail's block closure): the walker never catches it, so a block propagates
-// out through the .map() chain and halts egress.
-export function mapPromptLeaves(
-  params: ProviderRequestParams,
-  fn: LeafFn,
-): ProviderRequestParams {
+// The one AI-SDK V3 prompt walker; binary file and image data never reach `fn` (441 D-21).
+export function mapPromptLeaves(params: ProviderRequestParams, fn: LeafFn): ProviderRequestParams {
   // Only params.prompt is run content. Top-level headers carry provider auth, while
   // stopSequences, tools, responseFormat, and providerOptions are caller/transport config
   // outside egress scope.
@@ -90,7 +84,6 @@ function mapFilePart(part: FileContentPart, fn: LeafFn): FileContentPart {
   return {
     ...part,
     ...(part.filename === undefined ? {} : { filename: fn(part.filename) }),
-    data: typeof part.data === 'string' ? fn(part.data) : part.data,
   }
 }
 
@@ -114,10 +107,7 @@ function mapToolResultOutput(output: ToolResultOutput, fn: LeafFn): ToolResultOu
   return output
 }
 
-function mapToolResultContentPart(
-  part: ToolResultContentPart,
-  fn: LeafFn,
-): ToolResultContentPart {
+function mapToolResultContentPart(part: ToolResultContentPart, fn: LeafFn): ToolResultContentPart {
   switch (part.type) {
     case 'text':
       return { ...part, text: fn(part.text) }
@@ -125,10 +115,9 @@ function mapToolResultContentPart(
       return {
         ...part,
         ...(part.filename === undefined ? {} : { filename: fn(part.filename) }),
-        data: fn(part.data),
       }
     case 'image-data':
-      return { ...part, data: fn(part.data) }
+      return part
     case 'file-url':
     case 'image-url':
       return { ...part, url: fn(part.url) }
@@ -140,28 +129,19 @@ function mapToolResultContentPart(
   return part
 }
 
-// The one load-bearing edge (D-03): fn is called OUTSIDE the try/catch so a thrown
-// GuardrailBlockError propagates and halts egress — a block on a JSON-shaped leaf is never
-// swallowed. Masking's fn never throws, so masking behavior is unchanged. Any serialize or
-// parse failure returns the leaf unchanged (never throws for a non-block reason).
-function mapJsonLike<T>(input: T, fn: LeafFn): T {
-  let serialized: string | undefined
-
-  try {
-    serialized = JSON.stringify(input)
-  } catch {
-    return input
+function mapJsonLike<T>(value: T, fn: LeafFn): T {
+  if (typeof value === 'string') return fn(value) as T
+  if (Array.isArray(value)) return value.map((item) => mapJsonLike(item, fn)) as T
+  if (isPlainObject(value)) {
+    const result: Record<string, unknown> = {}
+    for (const [key, item] of Object.entries(value)) result[key] = mapJsonLike(item, fn)
+    return result as T
   }
+  return value
+}
 
-  if (serialized === undefined) {
-    return input
-  }
-
-  const mapped = fn(serialized)
-
-  try {
-    return JSON.parse(mapped) as T
-  } catch {
-    return input
-  }
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null) return false
+  const proto = Object.getPrototypeOf(value)
+  return proto === Object.prototype || proto === null
 }
