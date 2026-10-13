@@ -427,7 +427,7 @@ describe('LiveSession', () => {
     )
     expect(JSON.stringify(result)).not.toContain('raw-secret-sentinel')
     expect(JSON.stringify(messages)).not.toContain('raw-secret-sentinel')
-    expect(result.error).toContain('[secret]')
+    expect(result.error).toContain('[secret:loginPassword]')
   })
 
   it('executeStepCommand redacts auth-state shaped live payloads', async () => {

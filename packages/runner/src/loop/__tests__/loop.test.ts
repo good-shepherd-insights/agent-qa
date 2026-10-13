@@ -583,7 +583,7 @@ describe('executeStep — pre-record secret redaction (Phase 366 D-02)', () => {
 
     expect(result.status).toBe('passed')
     const planned = result.evidence?.subActions[0]?.plannedAction
-    expect(planned).toMatchObject({ type: 'fill', text: '[secret]' })
+    expect(planned).toMatchObject({ type: 'fill', text: '[secret:TOKEN]' })
     expect(JSON.stringify(result.evidence)).not.toContain(rawSecret)
   })
 
@@ -605,7 +605,7 @@ describe('executeStep — pre-record secret redaction (Phase 366 D-02)', () => {
 
     expect(result.status).toBe('passed')
     const planned = result.evidence?.subActions[0]?.plannedAction
-    expect(planned).toMatchObject({ type: 'paste', value: '[secret]' })
+    expect(planned).toMatchObject({ type: 'paste', value: '[secret:TOKEN]' })
     expect(JSON.stringify(result.evidence)).not.toContain(rawSecret)
   })
 })

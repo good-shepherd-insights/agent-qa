@@ -497,9 +497,9 @@ describe('DockerHookExecutor.execute', () => {
 
     expect(result.success).toBe(false)
     expect(JSON.stringify(result)).not.toContain('runtime-secret')
-    expect(result.stdout).toContain('[secret]')
-    expect(result.stderr).toContain('[secret]')
-    expect(result.error).toContain('[secret]')
+    expect(result.stdout).toContain('[secret:API_KEY]')
+    expect(result.stderr).toContain('[secret:API_KEY]')
+    expect(result.error).toContain('[secret:API_KEY]')
     expect(result.variables).toEqual({ SAFE: 'value' })
   })
 

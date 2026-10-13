@@ -2,8 +2,8 @@
 // CRITICAL: provider-neutral + storage-neutral. No node:* imports, no fs/sharp,
 // no model/core/adapter package imports. Moved byte-equivalently from
 // core/src/agent/secrets.ts — this is the cache-poisoning guard (Information-
-// disclosure control): the `[secret:*]` marker regex, redaction, and template
-// resolution must not change behavior. `parseEnvFile` is inlined locally (was the
+// disclosure control): the `[secret:*]` marker regex and template resolution must
+// not change behavior. `parseEnvFile` is inlined locally (was the
 // module's only cross-package import) to keep runner self-contained and pure.
 
 import type { SecretRedactorPort, SecretResolver } from './ports.js'
@@ -47,8 +47,9 @@ function escapeRegExp(value: string): string {
 
 // Inlined from core variables.ts:parseEnvFile — pure string parsing, kept local so
 // the runner secret store has no cross-package import (storageNeutral).
-function parseSecretEnvFile(content: string): Record<string, string> {
-  const result: Record<string, string> = {}
+// 2026-10-14 (441-01, D-03): an ordered list, because an object would put integer-like names first.
+function parseSecretEnvFile(content: string): Array<[string, string]> {
+  const result = new Map<string, string>()
   for (const rawLine of content.split('\n')) {
     const line = rawLine.trim()
     if (!line || line.startsWith('#')) continue
@@ -59,16 +60,16 @@ function parseSecretEnvFile(content: string): Record<string, string> {
     if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
       value = value.slice(1, -1)
     }
-    result[key] = value
+    result.set(key, value)
   }
-  return result
+  return [...result]
 }
 
 export class SecretStore implements SecretResolver {
   private storage = new Map<string, string>()
 
-  constructor(secrets: Record<string, string> = {}) {
-    for (const [name, value] of Object.entries(secrets)) {
+  constructor(secrets: Record<string, string> | ReadonlyArray<readonly [string, string]> = {}) {
+    for (const [name, value] of Array.isArray(secrets) ? secrets : Object.entries(secrets)) {
       this.set(name, value)
     }
   }
@@ -199,21 +200,32 @@ function isBufferLike(value: unknown): value is Buffer {
 }
 
 export class SecretRedactor implements SecretRedactorPort {
-  private valuePatterns: Array<{ re: RegExp; marker: string }> = []
+  private readonly pattern: RegExp
+  private readonly nameByValue = new Map<string, string>()
 
-  constructor(private readonly store: SecretStore, private readonly genericMarker = '[secret]') {
-    store.forEachSecret((_name, value) => {
-      if (value.length === 0) return
-      this.valuePatterns.push({ re: new RegExp(escapeRegExp(value), 'g'), marker: genericMarker })
+  constructor(private readonly store: SecretStore) {
+    const entries: Array<[string, string]> = []
+    store.forEachSecret((name, value) => {
+      if (value.length > 0) entries.push([name, value])
     })
+    entries.sort((a, b) => b[1].length - a[1].length)
+    for (const [name, value] of entries) {
+      if (!this.nameByValue.has(value)) this.nameByValue.set(value, name)
+    }
+    const alternatives = [String.raw`\{\{secret:(\w+)\}\}`, String.raw`(\[secret:\w+\])`]
+    for (const value of this.nameByValue.keys()) alternatives.push(escapeRegExp(value))
+    this.pattern = new RegExp(alternatives.join('|'), 'g')
   }
 
   redactString(value: string): string {
-    let redacted = value.replace(SECRET_TEMPLATE_RE, (_match, name: string) => `[secret:${name}]`)
-    for (const pattern of this.valuePatterns) {
-      redacted = redacted.replace(pattern.re, pattern.marker)
-    }
-    return redacted
+    return value.replace(
+      this.pattern,
+      (match: string, templateName: string | undefined, marker: string | undefined) => {
+        if (templateName !== undefined) return `[secret:${templateName}]`
+        if (marker !== undefined) return marker
+        return `[secret:${this.nameByValue.get(match)}]`
+      },
+    )
   }
 
   redactValue(value: unknown): unknown {

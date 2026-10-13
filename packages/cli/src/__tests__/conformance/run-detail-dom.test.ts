@@ -37,17 +37,17 @@
 //       lane criterion 2 is about, and cells (2a)/(2d) are its acceptance.
 //
 //   (B) A value DECLARED in the project's `SecretStore`. The runner builds a `SecretRedactor` from
-//       that store and rewrites the value to a generic `[secret]` marker INSIDE THE LOOP, at
+//       that store and rewrites the value to its named `[secret:<name>]` marker INSIDE THE LOOP, at
 //       `plan: reasoning`, before any evidence is recorded. By the time the bus projection masks
 //       anything there is no value left to mask, so no placeholder is ever minted and the seam has
-//       nothing to match a digest against. The page renders an IRREVERSIBLE `[secret]` where a
-//       value belongs.
+//       nothing to match a digest against. The page renders an IRREVERSIBLE `[secret:<name>]`
+//       where a value belongs.
 //
 // Criterion 2 as CONTEXT.md D-11 phrases it — "the rebuilt page never renders a masked placeholder
 // where a value belongs" — is TRUE for lane (A) and NOT TRUE for lane (B), and a cell that only
 // ever exercised (A) would let a reader believe it held for both. So cell (2e) measures lane (B)
 // as it actually is: the declared value is absent from the page (which is the at-rest claim
-// holding) and the generic marker is what a person sees. That is the honest floor, it is the
+// holding) and the named marker is what a person sees. That is the honest floor, it is the
 // evidence WINDOWS #286 asks the verifier to rule on, and it is deliberately NOT written as a
 // failure — the behaviour is correct for a redactor; what is unsettled is whether criterion 2 was
 // ever meant to range over it.
@@ -75,6 +75,7 @@ import {
   POPULATED_DECLARED_SECRET_VALUE,
   POPULATED_EMAIL,
   POPULATED_RUN_ANCHORED_BUILDS,
+  POPULATED_SECRET_NAME,
   POPULATED_SECRET_VALUE,
   RUN_BUDGET_MS,
   drivePopulatedRun,
@@ -180,22 +181,7 @@ function publishedSectionLabel(key: string): string {
 
 const REASONING_SECTION_LABEL = publishedSectionLabel('reasoning')
 
-/**
- * The generic marker the runner's own redactor leaves where a DECLARED secret stood.
- *
- * READ OUT OF THE PRODUCER rather than typed here, and the producer is `SecretRedactor`'s own
- * `genericMarker` default in the runner loop — the one this run's `SecretStore` construction uses.
- * A redactor that changed its marker then reds cell (2e) with a sentence naming the change, instead
- * of leaving it asserting a string nothing produces any more.
- */
-function publishedRedactionMarker(): string {
-  const source = readFileSync(join(PACKAGES_ROOT, 'runner', 'src', 'loop', 'secrets.ts'), 'utf8')
-  const entry = /genericMarker\s*=\s*'([^']*)'/u.exec(source)
-  if (entry === null) {
-    throw new Error("`SecretRedactor` no longer defaults `genericMarker` to a single-quoted literal")
-  }
-  return entry[1] as string
-}
+const DECLARED_SECRET_MARKER = `[secret:${POPULATED_SECRET_NAME}]`
 
 /** A fresh, non-global copy of the placeholder pattern — `PLACEHOLDER_PATTERN` carries `lastIndex`. */
 const placeholderRe = (): RegExp => new RegExp(PLACEHOLDER_PATTERN.source, 'u')
@@ -955,15 +941,15 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
     // unrelated strings and both go on passing about nothing in particular.
     expect(
       observed.planText,
-      'the restored value and the declared lane\'s generic marker are not in the same recorded '
+      'the restored value and the declared lane\'s named marker are not in the same recorded '
       + 'sentence, so cells (2a) and (2e) are no longer contrasting two lanes of one string. The '
       + `fixture plants both in the planner's reasoning.${context()}`,
     ).toContain(POPULATED_SECRET_VALUE)
     expect(
       observed.planText,
-      'the same sentence no longer carries the declared lane\'s generic marker — see the message '
+      'the same sentence no longer carries the declared lane\'s named marker — see the message '
       + `on cell (2e), which owns that fact.${context()}`,
-    ).toContain(publishedRedactionMarker())
+    ).toContain(DECLARED_SECRET_MARKER)
   })
 
   it('(2b) the masked side holds: neither planted value is in the SSE frames, the log or the database', () => {
@@ -1045,9 +1031,9 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
     ).toEqual([])
   })
 
-  it('(2e) the DECLARED-secret lane is irreversible: the value is absent and a generic marker is what a person sees (WINDOWS #286)', () => {
+  it('(2e) the DECLARED-secret lane is irreversible: the value is absent and its named marker is what a person sees (WINDOWS #286)', () => {
     const observed = firstVisit()
-    const marker = publishedRedactionMarker()
+    const marker = DECLARED_SECRET_MARKER
 
     // The at-rest half of criterion 2 HOLDS for this lane, and this is where that is stated on the
     // page rather than only in the log: the declared value is nowhere a person can read it.
@@ -1058,14 +1044,14 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
     ).toBe(false)
 
     // And the half that does NOT hold, measured rather than argued. The redactor rewrote the value
-    // to a generic marker inside the loop, before any evidence existed, so no placeholder was ever
+    // to its named marker inside the loop, before any evidence existed, so no placeholder was ever
     // minted and the display seam has no digest to match. What a person sees where a value belongs
     // is this marker, and no restart, config or key can turn it back. Recorded as WINDOWS #286 for
     // the verifier to rule on: criterion 2's "never renders a masked placeholder where a value
     // belongs" is satisfiable for the name-seeded lane and unsatisfiable for this one.
     expect(
       observed.planText,
-      'the declared step credential no longer resolves to the redactor\'s generic marker in the '
+      'the declared step credential no longer resolves to the redactor\'s named marker in the '
       + 'planner\'s recorded reasoning. Either the redaction lane changed — in which case WINDOWS '
       + '#286 must be re-measured, because the two-lane finding it records is what this cell holds '
       + `— or the reasoning stopped carrying the credential at all.${context()}`,

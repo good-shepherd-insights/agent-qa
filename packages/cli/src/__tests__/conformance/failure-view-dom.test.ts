@@ -1187,7 +1187,8 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
     expect(
       page.bodyText.includes(POPULATED_DECLARED_SECRET_VALUE),
       'the DECLARED step secret is visible on the page. The runner\'s `SecretRedactor` rewrites it '
-      + 'to `[secret]` before anything is recorded, so it can never legitimately be restored here.'
+      + 'to `[secret:<name>]` before anything is recorded, so it can never legitimately be restored '
+      + 'here.'
       + `${context()}`,
     ).toBe(false)
 

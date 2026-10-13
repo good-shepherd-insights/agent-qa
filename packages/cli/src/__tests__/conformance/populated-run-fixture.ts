@@ -41,9 +41,9 @@
 //
 //   (1) A DECLARED secret in the project's secrets file, referenced from the step text with the
 //       runner's own `{{secret:NAME}}` syntax. The runner builds a `SecretRedactor` from that
-//       store and rewrites the value to a generic `[secret]` marker BEFORE anything is recorded.
-//       So a declared secret proves the at-rest claim (it is never in clear) and can never
-//       produce a `<SECRET_n>` placeholder — the redactor consumes it first. Measured, not
+//       store and rewrites the value to its named `[secret:NAME]` marker BEFORE anything is
+//       recorded. So a declared secret proves the at-rest claim (it is never in clear) and can
+//       never produce a `<SECRET_n>` placeholder — the redactor consumes it first. Measured, not
 //       assumed: the redaction happens in the loop, the masking happens at bus projection, and
 //       the loop runs first.
 //
@@ -128,8 +128,8 @@ export const POPULATED_SECRET_NAME = 'POPULATED_STEP_SECRET'
  * The DECLARED secret's value: the runner's own redaction lane, distinct from the masking lane.
  *
  * A SECOND VALUE RATHER THAN THE SAME ONE, and the header states why: a value in the runner's
- * secret store is rewritten to `[secret]` before it is recorded, so sharing one value between the
- * two channels would silently delete the `<SECRET_n>` the page exists to render.
+ * secret store is rewritten to `[secret:<name>]` before it is recorded, so sharing one value
+ * between the two channels would silently delete the `<SECRET_n>` the page exists to render.
  */
 export const POPULATED_DECLARED_SECRET_VALUE = 'zz-405-declared-secret-3c8e1f60'
 

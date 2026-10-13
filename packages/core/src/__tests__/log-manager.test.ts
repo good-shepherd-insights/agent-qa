@@ -188,8 +188,8 @@ describe('LogManager', () => {
     lm.log('info', 'runner', 'using raw-secret-sentinel', { token: 'raw-secret-sentinel' })
 
     expect(JSON.stringify(lm.getBuffer())).not.toContain('raw-secret-sentinel')
-    expect(lm.getBuffer()[0].message).toContain('[secret]')
-    expect(lm.getBuffer()[0].data).toEqual({ token: '[secret]' })
+    expect(lm.getBuffer()[0].message).toContain('[secret:API_KEY]')
+    expect(lm.getBuffer()[0].data).toEqual({ token: '[secret:API_KEY]' })
     expect(stderrSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('')).not.toContain('raw-secret-sentinel')
     expect(stdoutSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('')).not.toContain('raw-secret-sentinel')
   })

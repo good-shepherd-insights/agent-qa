@@ -140,7 +140,7 @@ describe('auth-state redaction', () => {
       secretRedactor: new SecretRedactor(secretStore),
     })
 
-    expect(redacted.message).toBe('using [secret]')
+    expect(redacted.message).toBe('using [secret:API_KEY]')
     expect(redacted.variables.ACCESS_TOKEN).toBe(AUTH_STATE_REDACTION_MARKER)
     expect(redacted.variables.csrf).toBe(AUTH_STATE_REDACTION_MARKER)
     expect(redacted.variables.visible).toBe('not-sensitive')

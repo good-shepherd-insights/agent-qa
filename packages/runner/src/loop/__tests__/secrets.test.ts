@@ -26,7 +26,7 @@ describe('redactSecretValue', () => {
       { note: 'entered hunter2', nested: ['hunter2'] },
       redactor,
     )
-    expect(redacted).toEqual({ note: 'entered [secret]', nested: ['[secret]'] })
+    expect(redacted).toEqual({ note: 'entered [secret:password]', nested: ['[secret:password]'] })
   })
 
   it('rewrites {{secret:name}} templates to [secret:name] markers', () => {
@@ -103,12 +103,11 @@ describe('prompt/mechanism round trip (G-381-5 contract)', () => {
 
   it('negative — the bound value never appears in redacted model-bound text', () => {
     // Value-pattern masking re-pinned on this fixture (T-381-106): teaching the
-    // mechanism must not widen disclosure. Even if the raw value leaks into a
-    // result or error string, model-bound text shows the generic marker.
+    // mechanism must not widen disclosure.
     const leaked = `the field now contains ${BOUND_VALUE}`
     const redacted = redactor.redactString(leaked)
     expect(redacted).not.toContain(BOUND_VALUE)
-    expect(redacted).toBe('the field now contains [secret]')
+    expect(redacted).toBe('the field now contains [secret:loginPassword]')
 
     // ...and the redacted step text never carries the value either.
     expect(redactor.redactString(stepText)).not.toContain(BOUND_VALUE)
@@ -121,5 +120,67 @@ describe('prompt/mechanism round trip (G-381-5 contract)', () => {
     expect(() =>
       resolveSecretTemplatesInValue({ value: '{{secret:neverBound}}' }, store),
     ).toThrow(MissingSecretError)
+  })
+})
+
+describe('C441-REDACTOR', () => {
+  const redactorFor = (content: string) => new SecretRedactor(SecretStore.fromEnvContent(content))
+
+  it('a raw declared value becomes its named marker', () => {
+    const redactor = new SecretRedactor(new SecretStore({ password: 'hunter2' }))
+    expect(redactor.redactString('pw hunter2')).toBe('pw [secret:password]')
+  })
+
+  it('a one-character and a three-character value are masked', () => {
+    const redactor = redactorFor('one=Z\nthree=q^7')
+    expect(redactor.redactString('Zebra q^7 and Z again q^7')).toBe(
+      '[secret:one]ebra [secret:three] and [secret:one] again [secret:three]',
+    )
+  })
+
+  it('the longest value wins when one value holds another', () => {
+    const redactor = redactorFor('short=cde\napi_key=abcdef')
+    expect(redactor.redactString('xabcdefx')).toBe('x[secret:api_key]x')
+    expect(redactor.redactString('cde')).toBe('[secret:short]')
+  })
+
+  it('masking twice changes nothing', () => {
+    const redactor = redactorFor('api=api\napi_key=zzzz')
+    const text = 'api zzzz {{secret:api_key}} [secret:api] apix'
+    const once = redactor.redactString(text)
+    expect(once).toBe('[secret:api] [secret:api_key] [secret:api_key] [secret:api] [secret:api]x')
+    expect(redactor.redactString(once)).toBe(once)
+    expect(once).toContain('[secret:api_key]')
+  })
+
+  it('touching values mask as two markers', () => {
+    const redactor = redactorFor('a=AAA\nb=BBB')
+    expect(redactor.redactString('AAABBB')).toBe('[secret:a][secret:b]')
+  })
+
+  it('two names sharing one value take the first-declared name', () => {
+    const redactor = redactorFor('first=same\nsecond=same')
+    for (let call = 0; call < 3; call += 1) {
+      expect(redactor.redactString('the same value')).toBe('the [secret:first] value')
+    }
+    expect(redactorFor('b=same\n1=same').redactString('same')).toBe('[secret:b]')
+  })
+
+  it('an empty value is skipped and a whitespace-only value is masked', () => {
+    expect(redactorFor('blank=').redactString('nothing to hide here')).toBe('nothing to hide here')
+    expect(redactorFor('space=" "').redactString('a b')).toBe('a[secret:space]b')
+  })
+
+  it('an empty store still names templates and masks nothing else', () => {
+    const redactor = new SecretRedactor(SecretStore.empty())
+    expect(redactor.redactString('{{secret:x}} and q^7')).toBe('[secret:x] and q^7')
+  })
+
+  it('encoded and case-changed forms are not masked', () => {
+    const redactor = new SecretRedactor(new SecretStore({ token: 'Ab/c d', accent: 'caf\u00e9' }))
+    for (const text of ['ab/c d', 'Ab%2Fc%20d', 'Ab\\/c d', btoa('Ab/c d'), 'cafe\u0301']) {
+      expect(redactor.redactString(text)).toBe(text)
+    }
+    expect(redactor.redactString('Ab/c d caf\u00e9')).toBe('[secret:token] [secret:accent]')
   })
 })
