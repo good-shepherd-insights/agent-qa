@@ -8,7 +8,7 @@
 import { relevantEnvDigest } from '@vostride/agent-qa-schema'
 import type {
   CacheableStepInput,
-  MaskingContext,
+  MaskFn,
   Platform,
   RedactedEnvVar,
 } from '@vostride/agent-qa-schema'
@@ -21,14 +21,9 @@ import type {
  */
 export const CACHE_ENV_DIGEST_SALT = 'agent-qa/cache/env-digest/v1'
 
-const IDENTITY_MASK: MaskingContext = {
-  mask: (text) => text,
-  unmask: (text) => text,
-}
-
 export interface BuildCacheableStepInputArgs {
-  /** Injected masking context; degrades to an identity mask when unbound (D-05). */
-  masking?: MaskingContext
+  /** The declared-secret mask (441 D-06); the identity when unbound. */
+  mask?: MaskFn
   platform: Platform
   suiteConfigDigest: string
   testConfigDigest: string
@@ -53,8 +48,7 @@ export interface BuildCacheableStepInputArgs {
 export function buildCacheableStepInput(
   args: BuildCacheableStepInputArgs,
 ): CacheableStepInput {
-  const masking = args.masking ?? IDENTITY_MASK
-  const maskedStepText = masking.mask(args.stepText)
+  const maskedStepText = args.mask === undefined ? args.stepText : args.mask(args.stepText)
 
   return {
     platform: args.platform,

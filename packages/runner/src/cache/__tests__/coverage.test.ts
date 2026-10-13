@@ -14,14 +14,15 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   ElementInfo,
+  MaskFn,
   RedactedEnvVar,
   ScreenState,
 } from '@vostride/agent-qa-schema'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 
 import type { Action } from '../../platform.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import { settle } from '../../loop/settle.js'
+import { redactSecretValue, SecretRedactor, SecretStore } from '../../loop/secrets.js'
 
 import { buildCacheableStepInput } from '../key.js'
 import { buildCachedPlanValue, toGroundedLocator } from '../value.js'
@@ -36,9 +37,9 @@ function envVars(name = 'API_KEY'): RedactedEnvVar[] {
   return [{ name, present: true, kind: 'string', lengthBucket: 4 }]
 }
 
-function keyInput(stepText: string, masking?: ReturnType<typeof createMaskingContext>, branch = 'main') {
+function keyInput(stepText: string, mask?: MaskFn, branch = 'main') {
   return buildCacheableStepInput({
-    masking,
+    mask,
     platform: 'web',
     suiteConfigDigest: 'suite',
     testConfigDigest: 'test',
@@ -79,11 +80,10 @@ function scriptedObserve(states: ScreenState[]) {
 
 describe('CACHE roll-call — one green proof per phase acceptance criterion (356)', () => {
   it('CACHE-01: mask() is applied before hashing — the masked key differs from the raw key and the filename carries no secret', () => {
-    const ctx = createMaskingContext()
-    ctx.register(SECRET)
+    const redactor = new SecretRedactor(new SecretStore({ API_TOKEN: SECRET }))
     const stepText = `call API with ${SECRET}`
 
-    const masked = keyInput(stepText, ctx)
+    const masked = keyInput(stepText, (text) => redactSecretValue(text, redactor))
     const raw = keyInput(stepText)
 
     // Masked step text — and therefore the derived key/filename — carry no raw secret.

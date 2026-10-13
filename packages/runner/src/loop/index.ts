@@ -1171,7 +1171,7 @@ export async function executeStep(
 
     if (!procedureReplayed && cacheActive) {
       cacheKey = computeCacheKey(buildCacheableStepInput({
-        masking: ports.masking,
+        mask: recordMask,
         platform: screenState.platform,
         // D-20 (Plan 361-08): key the cache on the real digests the CLI mints when present, so
         // cache identity and the future handoff identity share ONE mint (Pitfall 1 — they cannot
