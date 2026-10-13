@@ -141,7 +141,16 @@
 
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -689,6 +698,34 @@ describe('F · the controls, and the bound they measure', () => {
       // leaving it to prose. A credential a person actually holds is declared, or shaped, or
       // written into a file the scan reads.
       expect(masking!.mask(OPAQUE_HEADER_PLANT)).toBe(OPAQUE_HEADER_PLANT)
+    })
+  })
+})
+
+describe('C441-MCP-DIFF', () => {
+  it('a declared secret in a config-change diff reaches MCP as its named marker', async () => {
+    await client?.close().catch(() => {})
+    await handler?.close().catch(() => {})
+    await host?.close().catch(() => {})
+    masking?.dispose()
+    rmSync(root, { recursive: true, force: true })
+    await openWorkspace(configWithOpaqueHeaderCredential())
+    // 2026-10-14 (441-07, D-24): the plant needs no YAML quoting; D-03 masks raw values only.
+    appendFileSync(join(root, '.env.secrets.local'), `X_CLIENT_AUTH_441=${OPAQUE_HEADER_PLANT}\n`)
+
+    await headless(async () => {
+      const answer = await call('agent_qa_change_config', {
+        action: 'config.field.set',
+        path: 'registry.llms.1.model',
+        value: 'claude-4.8-sonnet',
+      })
+      const outcome = answer.structuredContent as { outcome?: string; shownDiff?: string }
+      expect(outcome.outcome, rendered(answer)).toBe('applied')
+      expect(outcome.shownDiff).toContain('[secret:X_CLIENT_AUTH_441]')
+      const diff = outcome.shownDiff ?? ''
+      expect(leakedWindow(diff, OPAQUE_HEADER_PLANT), 'the diff carried the plant').toBeUndefined()
+      expect(leakedWindow(wire(), OPAQUE_HEADER_PLANT), 'a recorded frame carried the plant')
+        .toBeUndefined()
     })
   })
 })
