@@ -70,7 +70,7 @@ async function runGenerate(
 }
 
 describe('debugLoggingMiddleware — enabled', () => {
-  it('logs the request SHAPE (model id, message + tool counts, maxOutputTokens key) with secrets redacted', async () => {
+  it('logs the request SHAPE (model id, message + tool counts, maxOutputTokens key) shape only', async () => {
     const lines: string[] = []
     const middleware = debugLoggingMiddleware({ enabled: true, sink: (line) => lines.push(line) })
 
@@ -89,7 +89,7 @@ describe('debugLoggingMiddleware — enabled', () => {
     }
   })
 
-  it('logs a provider APICallError statusCode + responseBody, then re-throws the SAME error unchanged', async () => {
+  it('logs a provider APICallError statusCode and responseBody length, then re-throws the SAME error unchanged', async () => {
     const lines: string[] = []
     const middleware = debugLoggingMiddleware({ enabled: true, sink: (line) => lines.push(line) })
     const apiError = makeApiCallError()
@@ -98,10 +98,10 @@ describe('debugLoggingMiddleware — enabled', () => {
       runGenerate(middleware, async () => { throw apiError }, paramsWithSecret()),
     ).rejects.toBe(apiError)
 
-    const errorLine = lines.find((line) => line.includes('400'))
+    const errorLine = lines.find((line) => line.includes('statusCode=400'))
     expect(errorLine).toBeDefined()
-    expect(errorLine).toContain('400')
-    expect(errorLine).toContain('Unsupported parameter: max_output_tokens')
+    expect(errorLine).toContain('responseBodyLength=')
+    expect(errorLine).not.toContain('Unsupported parameter: max_output_tokens')
   })
 
   it('does not log the response body on a successful call (shape-only surface)', async () => {
@@ -113,6 +113,81 @@ describe('debugLoggingMiddleware — enabled', () => {
     // Exactly one line: the request shape. No response/error line on success.
     expect(lines).toHaveLength(1)
     expect(lines[0]).toContain('request')
+  })
+})
+
+describe('C441-DEBUG-LOG', () => {
+  const keyBody =
+    '{"error":{"message":"Incorrect API key provided: sk-abc123def456","type":"invalid_request_error","code":"invalid_api_key"}}'
+
+  function keyError(url = 'https://api.openai.com/v1/chat/completions'): APICallError {
+    return new APICallError({
+      message: 'Incorrect API key provided: sk-abc123def456',
+      url,
+      requestBodyValues: {},
+      statusCode: 401,
+      responseHeaders: { 'x-request-id': 'req-1' },
+      responseBody: keyBody,
+      isRetryable: false,
+      data: JSON.parse(keyBody),
+    })
+  }
+
+  async function linesFor(error: unknown, params = paramsWithSecret()): Promise<string[]> {
+    const lines: string[] = []
+    const middleware = debugLoggingMiddleware({ enabled: true, sink: (line) => lines.push(line) })
+    await expect(runGenerate(middleware, async () => { throw error }, params)).rejects.toBe(error)
+    return lines
+  }
+
+  it('the debug log prints no request header', async () => {
+    const params = {
+      ...paramsWithSecret(),
+      headers: { Authorization: 'Bearer K-HEADER-1' },
+    } as LanguageModelV3CallOptions
+    const lines: string[] = []
+    const middleware = debugLoggingMiddleware({ enabled: true, sink: (line) => lines.push(line) })
+
+    await runGenerate(middleware, async () => OK_RESULT, params)
+
+    expect(lines[0]).toContain('[agent-qa:llm] request')
+    expect(lines[0]).not.toContain('K-HEADER-1')
+  })
+
+  it('the debug log prints a provider error URL without its query', async () => {
+    const lines = await linesFor(keyError('https://gen.example/v1/models/x:generate?key=K-QUERY-2#frag'))
+
+    const errorLine = lines.find((line) => line.includes('provider-error'))
+    expect(errorLine).toContain('url=https://gen.example/v1/models/x:generate')
+    for (const line of lines) {
+      expect(line).not.toContain('K-QUERY-2')
+      expect(line).not.toContain('frag')
+    }
+  })
+
+  it('a key-shaped value in a provider body or message is not printed', async () => {
+    const lines = await linesFor(keyError())
+
+    const errorLine = lines.find((line) => line.includes('provider-error'))
+    expect(errorLine).toContain('responseBodyLength=')
+    expect(errorLine).toContain('type=invalid_request_error')
+    expect(errorLine).toContain('code=invalid_api_key')
+    for (const line of lines) expect(line).not.toContain('sk-abc123def456')
+
+    const plainLines = await linesFor(new Error('boom sk-abc123def456'))
+    expect(plainLines.find((line) => line.includes('provider-error'))).toContain('messageLength=')
+    for (const line of plainLines) expect(line).not.toContain('sk-abc123def456')
+  })
+
+  it('the provider error keeps its structured fields', async () => {
+    const lines = await linesFor(keyError())
+
+    const errorLine = lines.find((line) => line.includes('provider-error'))
+    expect(errorLine).toContain('statusCode=401')
+    expect(errorLine).toContain('isRetryable=false')
+    expect(errorLine).toContain('responseHeaders=[x-request-id]')
+    expect(errorLine).toContain('AI_APICallError')
+    for (const line of lines) expect(line).not.toContain('req-1')
   })
 })
 
