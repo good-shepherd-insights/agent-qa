@@ -78,7 +78,7 @@ test('VARIABLE-MASK-NAMES-COMPOSED: sensitive env names seed the actual live mas
     BASE_URL: { value: safeUrl, source: 'env' },
     [`name-${masking.mask(ambient)}`]: { value: masking.mask(ambient), source: 'inline' },
     [`name-${masking.mask(late)}`]: { value: masking.mask(late), source: 'inline' },
-    '[secret]': { value: '[secret]', source: 'inline' },
+    '[secret:declared]': { value: '[secret:declared]', source: 'inline' },
   })
   for (const value of [ambient, declared, late]) expect(JSON.stringify(snapshot)).not.toContain(value)
   expect(f.terminals[0].evidence?.variables).toEqual({ kind: 'variables', state: 'present', counts: { count: 5 } })
