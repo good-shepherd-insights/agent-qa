@@ -893,6 +893,7 @@ const runDir = join(TMP_ROOT, RUNS_SUBDIR, slugBranch(RUN_ID))
 interface MaskedSurface {
   name: string
   render: () => string | Promise<string>
+  payloadFree?: true
 }
 
 const MASKED_SURFACES: MaskedSurface[] = [
@@ -956,7 +957,9 @@ const MASKED_SURFACES: MaskedSurface[] = [
   },
   {
     // debug log — the RUNX-04 middleware error surface, driven through the REAL middleware.
+    // 2026-10-14 (441-36, D-28): it prints the provider body as a length, so no payload reaches it.
     name: 'machine:debug-log',
+    payloadFree: true,
     render: async () => {
       const lines: string[] = []
       const middleware = debugLoggingMiddleware({ enabled: true, sink: (line) => void lines.push(line) })
@@ -976,6 +979,7 @@ const MASKED_SURFACES: MaskedSurface[] = [
       } catch {
         // the middleware re-throws after logging — expected
       }
+      expect(lines.join('\n')).toContain('responseBodyLength=')
       return lines.join('\n')
     },
   },
@@ -1103,7 +1107,7 @@ describe('SEAM-05 unmask boundary roll-call — MASKED side keeps placeholders (
     'masked surface %s keeps placeholders and leaks no original',
     async (_name, surface) => {
       const output = await surface.render()
-      expect(output).toMatch(PLACEHOLDER)
+      if (!surface.payloadFree) expect(output).toMatch(PLACEHOLDER)
       for (const original of ALL_ORIGINALS) {
         expect(output).not.toContain(original)
       }

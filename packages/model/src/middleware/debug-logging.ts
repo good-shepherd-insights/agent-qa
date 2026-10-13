@@ -5,16 +5,10 @@ import type {
   LanguageModelV3Prompt,
 } from '@ai-sdk/provider'
 
-// RUNX-04. A PERMANENT, flag-gated request/response debug surface — the clean version of the
-// throwaway APICallError.responseBody capture that revealed RUNX-01's live 400
-// (`{"detail":"Unsupported parameter: max_output_tokens"}`). When enabled it logs, per model
-// call: (a) the outgoing request SHAPE (model id, message roles/count, tool count, param keys
-// incl. `maxOutputTokens`) — never raw message content — and (b) on a provider failure, the
-// duck-typed `@ai-sdk/provider` APICallError fields (`statusCode`, `url`, `responseBody`, a
-// compact `requestBodyValues` shape) — then RE-THROWS the original error unchanged. A success
-// is logged shape-only (no response body). When disabled (the default) it is a pure passthrough:
-// no wrapGenerate/wrapStream, zero sink calls, byte-identical behavior. Every emitted line runs
-// through a secret redactor (T-365-02) so an apiKey / bearer / `sk-` token can never leak.
+// RUNX-04. Flag-gated (AGENT_QA_DEBUG_LLM) debug surface: per model call it logs the request
+// shape and, on a provider failure, the error's structured fields, then re-throws the error
+// unchanged. Disabled, it is a pure passthrough.
+// 2026-10-14 (441-36, D-28): a line carries no header value, query string or provider free text.
 
 export interface DebugLoggingOptions {
   /** Force enable/disable. When omitted, resolves from the `AGENT_QA_DEBUG_LLM` env flag. */
@@ -25,27 +19,6 @@ export interface DebugLoggingOptions {
 
 const REQUEST_PREFIX = '[agent-qa:llm] request'
 const ERROR_PREFIX = '[agent-qa:llm] provider-error'
-
-// Secret redaction (defense-in-depth). The shape line never prints message content or param
-// VALUES, but every emitted line — including a provider `responseBody`/`requestBodyValues` that
-// may echo a secret — is run through these patterns before it reaches the sink.
-const SECRET_PATTERNS: readonly RegExp[] = [
-  /\bsk-[A-Za-z0-9_-]{6,}/g, // OpenAI-style keys (incl. sk-proj-…)
-  /\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, // bearer tokens
-  /\b(api[_-]?key|authorization|auth[_-]?token|access[_-]?token|refresh[_-]?token|secret|password)\b(["']?\s*[:=]\s*["']?)[^\s"',}]+/gi,
-]
-
-const REDACTED = '[redacted]'
-
-function redact(value: string): string {
-  let out = value
-  for (const pattern of SECRET_PATTERNS) {
-    out = out.replace(pattern, (match, key: string | undefined, sep: string | undefined) =>
-      key !== undefined && sep !== undefined ? `${key}${sep}${REDACTED}` : REDACTED,
-    )
-  }
-  return out
-}
 
 function isEnvEnabled(): boolean {
   const raw = typeof process !== 'undefined' ? process.env?.AGENT_QA_DEBUG_LLM : undefined
@@ -96,28 +69,60 @@ function compactRequestBodyValues(value: unknown): string | undefined {
   return parts.length > 0 ? `{${parts.join(',')}}` : undefined
 }
 
+function originAndPath(url: unknown): string | undefined {
+  if (typeof url !== 'string') return undefined
+  try {
+    const parsed = new URL(url)
+    return `${parsed.origin}${parsed.pathname}`
+  } catch {
+    return undefined
+  }
+}
+
+function stringField(record: unknown, key: string): string | undefined {
+  if (record === null || typeof record !== 'object') return undefined
+  const value = (record as Record<string, unknown>)[key]
+  return typeof value === 'string' ? value : undefined
+}
+
 function providerErrorLine(err: unknown): string {
-  const e = err as {
+  const e = (err ?? {}) as {
+    name?: unknown
     statusCode?: unknown
+    isRetryable?: unknown
     url?: unknown
+    responseHeaders?: unknown
     responseBody?: unknown
     requestBodyValues?: unknown
+    data?: unknown
     message?: unknown
   }
-  const statusCode = typeof e?.statusCode === 'number' ? e.statusCode : undefined
-  const url = typeof e?.url === 'string' ? e.url : undefined
-  const responseBody = typeof e?.responseBody === 'string' ? e.responseBody : undefined
-  const request = compactRequestBodyValues(e?.requestBodyValues)
+  const statusCode = typeof e.statusCode === 'number' ? e.statusCode : undefined
+  const url = originAndPath(e.url)
+  const responseBody = typeof e.responseBody === 'string' ? e.responseBody : undefined
+  const request = compactRequestBodyValues(e.requestBodyValues)
+  const nested = e.data !== null && typeof e.data === 'object'
+    ? (e.data as Record<string, unknown>).error
+    : undefined
+  const type = stringField(nested, 'type') ?? stringField(e.data, 'type')
+  const code = stringField(nested, 'code') ?? stringField(e.data, 'code')
+  const headerNames = e.responseHeaders !== null && typeof e.responseHeaders === 'object'
+    ? Object.keys(e.responseHeaders)
+    : undefined
 
   const parts = [ERROR_PREFIX]
   if (statusCode !== undefined) parts.push(`statusCode=${statusCode}`)
+  if (typeof e.name === 'string') parts.push(`name=${e.name}`)
+  if (typeof e.isRetryable === 'boolean') parts.push(`isRetryable=${e.isRetryable}`)
   if (url !== undefined) parts.push(`url=${url}`)
-  if (responseBody !== undefined) parts.push(`responseBody=${responseBody}`)
+  if (type !== undefined) parts.push(`type=${type}`)
+  if (code !== undefined) parts.push(`code=${code}`)
+  if (headerNames !== undefined) parts.push(`responseHeaders=[${headerNames.join(',')}]`)
+  if (responseBody !== undefined) parts.push(`responseBodyLength=${responseBody.length}`)
   if (request !== undefined) parts.push(`request=${request}`)
-  // A non-provider error (no duck-typed fields) still gets its message surfaced.
   if (statusCode === undefined && responseBody === undefined) {
-    const message = e?.message !== undefined ? String(e.message) : String(err)
-    parts.push(`message=${message}`)
+    const message = e.message !== undefined ? String(e.message) : String(err)
+    parts.push(`messageLength=${message.length}`)
   }
   return parts.join(' ')
 }
@@ -132,7 +137,7 @@ export function debugLoggingMiddleware(options: DebugLoggingOptions = {}): Langu
   }
 
   const sink = options.sink ?? ((line: string) => { process.stderr.write(`${line}\n`) })
-  const emit = (line: string): void => { sink(redact(line)) }
+  const emit = (line: string): void => { sink(line) }
 
   return {
     specificationVersion: 'v3',
