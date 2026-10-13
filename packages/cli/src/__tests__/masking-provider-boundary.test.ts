@@ -84,6 +84,7 @@ function createCapturingModel(): {
       auth: { mode: 'none' },
     },
     noneAuth,
+    (text) => text,
     { languageModels: { 'override-model': stub } },
   )
   return { captured: () => captured, model }

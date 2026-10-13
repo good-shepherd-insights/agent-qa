@@ -26,7 +26,7 @@ describe('safety egress middleware', () => {
         },
       },
     }
-    const model = createModel(modelProfile, noneAuth, {
+    const model = createModel(modelProfile, noneAuth, (text) => text, {
       languageModels: {
         'override-model': stubModel({
           async doGenerate(params) {

@@ -344,7 +344,8 @@ function checkLLMConnection(config: Record<string, unknown> | null): DoctorCheck
         }
         const { generateText } = await import('ai')
         const { profile, auth: modelAuth } = toModelProfileAndAuth(llm, auth as any)
-        const testModel = createModel(profile, modelAuth)
+        // 2026-10-12 (441-04, D-06): fixed probe text, nothing to mask.
+        const testModel = createModel(profile, modelAuth, (text) => text)
         const controller = new AbortController()
         const timeout = setTimeout(() => controller.abort(), 10000)
         try {

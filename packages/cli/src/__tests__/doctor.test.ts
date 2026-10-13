@@ -593,6 +593,7 @@ use:
         auth: { mode: 'none' },
       }),
       { kind: 'none' },
+      expect.any(Function),
     )
     expect(mockGetCredential).not.toHaveBeenCalled()
   })
@@ -633,6 +634,7 @@ use:
         auth: { mode: 'bearer-token' },
       }),
       { kind: 'bearer-token', token: 'bearer-planner' },
+      expect.any(Function),
     )
   })
 
@@ -682,6 +684,7 @@ use:
         auth: { mode: 'subscription', plugin: 'openai-subscription' },
       }),
       { kind: 'auth-fetch', fetch: authFetch, modelAdapter: 'openai-responses' },
+      expect.any(Function),
     )
   })
 

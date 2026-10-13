@@ -989,6 +989,7 @@ describe('LiveSession', () => {
     expect(mockCreateModel).toHaveBeenCalledWith(
       expect.not.objectContaining({ vision: expect.anything() }),
       { kind: 'none' },
+      expect.any(Function),
     )
   })
 

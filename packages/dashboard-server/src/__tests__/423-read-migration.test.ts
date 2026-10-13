@@ -129,7 +129,7 @@ async function usageRun(options: { retry?: boolean; omitCache?: boolean; unscope
     provider: 'openai-compatible', model: 'gpt-4o', baseURL: 'https://usage-fixture.invalid/v1',
     auth: { mode: 'none' },
   }
-  const model = createModel(profile, { kind: 'none' })
+  const model = createModel(profile, { kind: 'none' }, text => masking.mask(text))
   const accounting = createTokenAccounting({ getCapabilities: () => profile.capabilities! })
   const consumers = (models: { plannerModel: typeof model; verifierModel: typeof model }) => ({
     planner: new LLMPlanner(models.plannerModel, 'web', undefined, undefined, accounting),
@@ -150,8 +150,8 @@ async function usageRun(options: { retry?: boolean; omitCache?: boolean; unscope
       ...(options.unscoped ? {} : { stepModelScope: { runId, create: key => {
         scope = createStepModelScope({ key,
           models: {
-            planner: { model, bind: observer => createModel(profile, { kind: 'none' }, {}, observer) },
-            verifier: { model, bind: observer => createModel(profile, { kind: 'none' }, {}, observer) },
+            planner: { model, bind: observer => createModel(profile, { kind: 'none' }, text => masking.mask(text), {}, observer) },
+            verifier: { model, bind: observer => createModel(profile, { kind: 'none' }, text => masking.mask(text), {}, observer) },
           },
           profiles: { planner: { provider: profile.provider, modelId: profile.model },
             verifier: { provider: profile.provider, modelId: profile.model } },

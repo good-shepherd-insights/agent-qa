@@ -525,6 +525,7 @@ describe('auth provider mode contract', () => {
         auth: { mode: 'none' },
       }),
       { kind: 'none' },
+      expect.any(Function),
     )
     expect(mockGenerateText).toHaveBeenCalled()
   })
@@ -750,6 +751,7 @@ describe('auth test', () => {
         auth: { mode: 'bearer-token' },
       }),
       { kind: 'bearer-token', token: 'bearer-default' },
+      expect.any(Function),
     )
   })
 
@@ -795,6 +797,7 @@ describe('auth test', () => {
         auth: { mode: 'api-key' },
       }),
       { kind: 'api-key', apiKey: 'test-key' },
+      expect.any(Function),
     )
   })
 })

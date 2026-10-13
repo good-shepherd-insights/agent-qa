@@ -1,10 +1,12 @@
 import { dirname, resolve as resolvePath } from 'node:path'
 import { createModel, createTokenAccounting, getProviderOptions, resolveCapabilities, resolveVisionGate } from '@vostride/agent-qa-model'
 import { generateText } from 'ai'
+import { createDeclaredSecretMask } from './composition/declared-secrets.js'
 import { DEFAULT_ANTHROPIC_MODEL } from './model-defaults.js'
 import { loadProviderPluginsForRawConfig } from './provider-plugins.js'
 
 import type { ChatLanguageModel, JobModelCapability } from '@vostride/agent-qa-agent'
+import type { MaskFn } from '@vostride/agent-qa-schema'
 import type { ModelAuthDeclaration, ModelProfile, ResolvedModelAuth, TokenAccounting } from '@vostride/agent-qa-model'
 
 export { loadProviderPluginsForRawConfig }
@@ -242,9 +244,10 @@ export interface JobModelCapabilityDeps {
 export function buildJobModelCapability(
   profile: ModelProfile,
   auth: ResolvedModelAuth,
+  mask: MaskFn,
   deps: JobModelCapabilityDeps = {},
 ): JobModelCapability {
-  const model = (deps.createModelImpl ?? createModel)(profile, auth)
+  const model = (deps.createModelImpl ?? createModel)(profile, auth, mask)
   const accounting = (deps.createTokenAccountingImpl ?? createTokenAccounting)({
     getCapabilities: () => (deps.resolveCapabilitiesImpl ?? resolveCapabilities)(profile),
   })
@@ -358,7 +361,7 @@ export async function resolveCliJobModel(
   const { config } = await resolveNamedConfig(undefined, configPath)
   const resolved = await resolveModelAuth(config.name, config)
   const { profile, auth } = toModelProfileAndAuth(config, resolved)
-  return buildJobModelCapability(profile, auth, deps)
+  return buildJobModelCapability(profile, auth, createDeclaredSecretMask(configPath).mask, deps)
 }
 
 /**
@@ -397,6 +400,7 @@ export async function resolveCliChatCapabilities(
   configPath: string,
   deps: JobModelCapabilityDeps = {},
 ): Promise<CliChatCapabilities | undefined> {
+  const { mask } = createDeclaredSecretMask(configPath)
   const build = async (configName?: string): Promise<{
     model: ChatLanguageModel
     accounting: TokenAccounting
@@ -405,7 +409,7 @@ export async function resolveCliChatCapabilities(
     const resolved = await resolveModelAuth(config.name, config)
     const { profile, auth } = toModelProfileAndAuth(config, resolved)
     return {
-      model: (deps.createModelImpl ?? createModel)(profile, auth),
+      model: (deps.createModelImpl ?? createModel)(profile, auth, mask),
       accounting: (deps.createTokenAccountingImpl ?? createTokenAccounting)({
         getCapabilities: () => (deps.resolveCapabilitiesImpl ?? resolveCapabilities)(profile),
       }),

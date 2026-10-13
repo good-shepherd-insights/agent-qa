@@ -32,6 +32,7 @@ import {
 } from '@vostride/agent-qa-runner-local'
 import {
   defaultGuardrailPolicyInput,
+  getActiveMaskingContext,
   loadGuardrailPolicy,
   type AuditSink,
 } from '@vostride/agent-qa-safety'
@@ -784,7 +785,12 @@ export async function curateCompletedRun(
               kind: 'fallback-required' as const,
               reason: 'no-model' as const,
             })
-          : operations.buildCuratorAuthor(input.modelDeps))
+          // 2026-10-14 (441-04, D-06): the author runs inside this tail's safety scope; 441-10
+          // replaces this with the tail's explicit mask.
+          : operations.buildCuratorAuthor({
+              ...input.modelDeps,
+              mask: (text) => getActiveMaskingContext()?.mask(text) ?? text,
+            }))
       const drain = await operations.drainQueue({
         sourceRunId: String(input.handoff.runId),
         observationIds: (canaries.details ?? []).flatMap(row => row.candidateId === undefined

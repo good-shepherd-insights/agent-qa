@@ -64,7 +64,7 @@ import type {
 } from '@vostride/agent-qa-model'
 import { LLMPlanner, buildTools, defaultRegistry } from '@vostride/agent-qa-runner'
 import type { DeclaredModelProfile, ScreenState } from '@vostride/agent-qa-schema'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
+import { createMaskingContext, getActiveMaskingContext } from '@vostride/agent-qa-safety'
 import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
 
 import { bindJudgePanel, bindJudgePort } from './judge-binding.js'
@@ -313,7 +313,9 @@ export async function runCassetteReplay(
   // The ONLY createModel call site and the ONLY egress path. The handle is shared across samples
   // (RESEARCH A3); per-sample freshness is confined to accounting + planner + exchange server.
   // D-11: computeReplayProfileFingerprintFor must read these same resolved profile values.
-  const model = createModel(profileCopy, input.auth, input.modelOverrides ?? {}, input.modelCallObservation)
+  // 2026-10-14 (441-04, D-06): the registrar's masking hook, made explicit; 441-11 replaces it.
+  const mask = (text: string) => getActiveMaskingContext()?.mask(text) ?? text
+  const model = createModel(profileCopy, input.auth, mask, input.modelOverrides ?? {}, input.modelCallObservation)
   const replayedModel = { provider: input.profile.provider, modelId: input.profile.model }
 
   const plannerFactory: ReplayPlannerFactory = {

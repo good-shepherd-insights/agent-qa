@@ -8,8 +8,8 @@ import {
 
 import type { LanguageModelMiddleware } from 'ai'
 import type { LanguageModelV3, LanguageModelV3StreamPart, ProviderV3 } from '@ai-sdk/provider'
-import type { ModelProfile } from '@vostride/agent-qa-schema'
-import { registerFirstPartySafetyHooks } from '@vostride/agent-qa-safety'
+import type { MaskFn, ModelProfile } from '@vostride/agent-qa-schema'
+import { createMaskingMiddleware, registerFirstPartySafetyHooks } from '@vostride/agent-qa-safety'
 
 import { deriveTransport } from './auth.js'
 import type { ResolvedModelAuth } from './auth.js'
@@ -32,14 +32,9 @@ import { providerCallReport } from './provider-call-report.js'
 import type { ModelCallEvent, ModelCallObservation, ModelCallReportOrigin } from './provider-call-report.js'
 export type { ModelCallObservation } from './provider-call-report.js'
 
-// D-06 order: retry is outermost on response/errors; repair sees text after SDK
-// extraction; request transforms normalize schema, derive examples, serialize, then
-// the safety egress seam sees fully transformed params closest to the provider wire.
-// The safety entry is registrar-derived (D-01: the first-party registrar is the
-// single composition point — model consumes it, never composes it). It MUST stay the
-// last element of MIDDLEWARE so the mask+guardrail seam remains innermost/closest to
-// the provider wire; this pinned-last placement is structurally enforced by
-// validate:safety (plan 350-05's SAFE-03(a)).
+// Retry is outermost; repair sees text after SDK extraction; request transforms normalize,
+// derive examples and serialize. createModel appends the declared-secret masking middleware
+// after this array, so it is the last transform before the wire (validate:safety (a)).
 const MIDDLEWARE: LanguageModelMiddleware[] = [
   retryMiddleware(),
   repairMiddleware(),
@@ -47,14 +42,9 @@ const MIDDLEWARE: LanguageModelMiddleware[] = [
   toolSchemaMiddleware,
   deriveExamplesMiddleware(),
   addToolInputExamplesMiddleware(),
-  // RUNX-04: flag-gated request/response debug logging (env AGENT_QA_DEBUG_LLM). Sits near the
-  // wire so it observes the fully-transformed request shape and catches the provider's raw
-  // APICallError first (statusCode/responseBody), then re-throws unchanged. Passthrough when the
-  // flag is off. Immediately before dropEmpty + the pinned-last safety seam.
+  // RUNX-04: flag-gated debug logging (AGENT_QA_DEBUG_LLM); catches the raw APICallError first.
   debugLoggingMiddleware(),
-  // RUNX-01 defense-in-depth: strip empty-content messages just before the wire. Sits
-  // immediately BEFORE the pinned-last safety seam (which must stay the final element,
-  // structurally enforced by validate:safety).
+  // RUNX-01: strip empty-content messages just before the wire.
   dropEmptyMessagesMiddleware(),
   registerFirstPartySafetyHooks().middleware,
 ]
@@ -68,6 +58,7 @@ export interface ModelProviderOverrides {
 export function createModel(
   profile: ModelProfile,
   auth: ResolvedModelAuth,
+  mask: MaskFn,
   overrides: ModelProviderOverrides = {},
   observation: ModelCallObservation = {},
 ): LanguageModelV3 {
@@ -124,9 +115,9 @@ export function createModel(
         start()
         try {
           const result = await doGenerate()
-          // Reporting, including the live masker, cannot replace a provider outcome.
+          // Reporting, including the mask, cannot replace a provider outcome.
           try {
-            observe({ kind: 'success', report: providerCallReport(result, origin) })
+            observe({ kind: 'success', report: providerCallReport(result, origin, mask) })
           } catch {
             observe({ kind: 'success', report: {} })
           }
@@ -169,7 +160,7 @@ export function createModel(
                     try {
                       observe({ kind: 'success', report: providerCallReport({
                         usage: part.usage, response: { modelId },
-                      }, origin) })
+                      }, origin, mask) })
                     } catch {
                       observe({ kind: 'success', report: {} })
                     }
@@ -193,14 +184,14 @@ export function createModel(
       },
     },
   })
-  // The provider-scoped strip is prepended into the per-model array (never appended to
-  // MIDDLEWARE) so the safety seam stays the pinned-LAST element (validate:safety).
+  // The masking middleware must stay last (validate:safety (a)).
   const middleware = [
     capabilityUpdateMiddleware(profile),
     ...(descriptor.unsupportedParams?.length
       ? [stripUnsupportedParamsMiddleware(descriptor.unsupportedParams)]
       : []),
     ...MIDDLEWARE,
+    createMaskingMiddleware(mask),
   ]
   const registry = createProviderRegistry(
     { [profile.provider]: observedProvider },

@@ -926,7 +926,7 @@ export class LiveSession {
       maxOutputTokens: capabilities.maxOutput,
     }
     this.modelProfiles = { planner: plannerDeclared, verifier: verifierDeclared }
-    this.model = createModel(profile, auth)
+    this.model = createModel(profile, auth, (text) => this.secretRedactor?.redactString(text) ?? text)
     // Both roles share this.model here, but hold separate accounting instances per role so
     // each owns its own cache anchor (D-11); the D-04 lazy thunk re-reads `profile` per call.
     const plannerAccounting = createTokenAccounting({ getCapabilities: () => resolveCapabilities(profile) })

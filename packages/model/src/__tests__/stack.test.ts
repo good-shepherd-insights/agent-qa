@@ -34,7 +34,7 @@ function stackModel(onGenerate: (params: LanguageModelV3CallOptions) => void) {
 }
 
 function createOverrideModel(provider: ModelProviderId, fake = stackModel(() => {})) {
-  return createModel(profile(provider), noneAuth, {
+  return createModel(profile(provider), noneAuth, (text) => text, {
     languageModels: {
       'override-model': fake,
     },

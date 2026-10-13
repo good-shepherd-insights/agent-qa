@@ -142,6 +142,7 @@ describe('buildCuratorAuthor prompt and model boundary (CUR-01/CUR-05/SAFE-03)',
     const author = buildCuratorAuthor({
       profile: resolvedProfile,
       auth: noAuth,
+      mask: (text) => text,
       createModelImpl(seenProfile) {
         capturedProfile = seenProfile
         return scriptedModel(['{"kind":"Noop","citedAliases":[]}'], (options) => {
@@ -176,6 +177,7 @@ describe('buildCuratorAuthor prompt and model boundary (CUR-01/CUR-05/SAFE-03)',
     const author = buildCuratorAuthor({
       profile: profile(),
       auth: noAuth,
+      mask: (text) => text,
       createModelImpl: () =>
         scriptedModel(['{"kind":"Noop","citedAliases":[]}'], (options) => {
           captured = options
@@ -210,6 +212,7 @@ describe('buildCuratorAuthor prompt and model boundary (CUR-01/CUR-05/SAFE-03)',
         },
       }),
       auth: noAuth,
+      mask: (text) => text,
       createModelImpl: () => model,
     })
 
@@ -225,6 +228,7 @@ describe('buildCuratorAuthor prompt and model boundary (CUR-01/CUR-05/SAFE-03)',
     const author = buildCuratorAuthor({
       profile: profile(),
       auth: noAuth,
+      mask: (text) => text,
       createModelImpl: () =>
         scriptedModel(['{"kind":"Noop","citedAliases":[]}'], (options) => {
           captured = options
@@ -260,6 +264,7 @@ describe('buildCuratorAuthor prompt and model boundary (CUR-01/CUR-05/SAFE-03)',
     const author = buildCuratorAuthor({
       profile: profile(),
       auth: noAuth,
+      mask: (text) => text,
       createModelImpl: () => model,
     })
 
@@ -273,6 +278,7 @@ describe('buildCuratorAuthor prompt and model boundary (CUR-01/CUR-05/SAFE-03)',
     const author = buildCuratorAuthor({
       profile: profile(),
       auth: noAuth,
+      mask: (text) => text,
       createModelImpl() {
         throw new Error('unknown provider')
       },
@@ -293,6 +299,7 @@ describe('buildCuratorAuthor parse, repair, retry, and alias boundary (CUR-01)',
     const author = buildCuratorAuthor({
       profile: resolvedProfile,
       auth: noAuth,
+      mask: (text) => text,
       createModelImpl: () =>
         scriptedModel([
           JSON.stringify({
@@ -352,6 +359,7 @@ describe('buildCuratorAuthor parse, repair, retry, and alias boundary (CUR-01)',
     const author = buildCuratorAuthor({
       profile: profile(),
       auth: noAuth,
+      mask: (text) => text,
       createModelImpl: () => scriptedModel([output]),
     })
 
@@ -368,6 +376,7 @@ describe('buildCuratorAuthor parse, repair, retry, and alias boundary (CUR-01)',
     const author = buildCuratorAuthor({
       profile: profile(),
       auth: noAuth,
+      mask: (text) => text,
       createModelImpl: () =>
         scriptedModel(['{"kind":"Noop","citedAliases":[],']),
     })
@@ -385,6 +394,7 @@ describe('buildCuratorAuthor parse, repair, retry, and alias boundary (CUR-01)',
     const author = buildCuratorAuthor({
       profile: profile(),
       auth: noAuth,
+      mask: (text) => text,
       createModelImpl: () =>
         scriptedModel([
           JSON.stringify({
@@ -427,6 +437,7 @@ describe('buildCuratorAuthor parse, repair, retry, and alias boundary (CUR-01)',
     const author = buildCuratorAuthor({
       profile: profile(),
       auth: noAuth,
+      mask: (text) => text,
       createModelImpl: () =>
         scriptedModel(
           Array.from({ length: CURATOR_RETRY_CAP + 1 }, () => malformed),
@@ -453,6 +464,7 @@ describe('buildCuratorAuthor parse, repair, retry, and alias boundary (CUR-01)',
     const author = buildCuratorAuthor({
       profile: profile(),
       auth: noAuth,
+      mask: (text) => text,
       createModelImpl: () =>
         scriptedModel(
           Array.from(

@@ -20,6 +20,7 @@ import type {
 } from '@vostride/agent-qa-eval'
 import { createPanelIdentity } from '@vostride/agent-qa-eval'
 import { createModel } from '@vostride/agent-qa-model'
+import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
 import type {
   ModelCallObservation,
   ModelProfile,
@@ -71,7 +72,9 @@ export function bindJudgePort(input: JudgeBindingInput): JudgePort {
       : {}),
   }
   // The ONLY createModel call site for the judge leg and its ONLY egress path (JUDGE-03).
-  const model = createModel(profileCopy, input.auth, input.modelOverrides ?? {}, input.modelCallObservation)
+  // 2026-10-14 (441-04, D-06): the registrar's masking hook, made explicit; 441-11 replaces it.
+  const mask = (text: string) => getActiveMaskingContext()?.mask(text) ?? text
+  const model = createModel(profileCopy, input.auth, mask, input.modelOverrides ?? {}, input.modelCallObservation)
 
   return {
     judgeModelId: input.profile.model,

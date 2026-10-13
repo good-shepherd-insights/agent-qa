@@ -1,5 +1,5 @@
 import type { LanguageModelV3CallOptions } from '@ai-sdk/provider'
-import type { ModelProfile } from '@vostride/agent-qa-schema'
+import type { MaskFn, ModelProfile } from '@vostride/agent-qa-schema'
 import {
   createMaskingContext,
   setActiveMaskingContextResolver,
@@ -7,6 +7,7 @@ import {
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type { ResolvedModelAuth } from '../auth.js'
+import type { ModelCallEvent } from '../provider-call-report.js'
 import { createModel } from '../registry.js'
 import { stubGenerateResult, stubModel } from './stub-model.js'
 
@@ -95,12 +96,64 @@ describe('masking egress middleware', () => {
   })
 })
 
-function createCapturingModel(): {
+describe('C441-EGRESS', () => {
+  const declaredMask: MaskFn = (text) => text.replaceAll('q^7', '[secret:SHORT]')
+
+  it('createModel masks a prompt with the mask it was given, after every other middleware', async () => {
+    const seen: string[] = []
+    const { captured, model } = createCapturingModel((text) => {
+      seen.push(text)
+      return declaredMask(text)
+    })
+
+    await model.doGenerate({
+      prompt: [
+        { role: 'system', content: '   ' },
+        { role: 'user', content: [{ type: 'text', text: 'type q^7 now' }] },
+      ],
+    })
+
+    expect(captured()?.prompt).toHaveLength(1)
+    expect(capturedUserText(captured())).toBe('type [secret:SHORT] now')
+    expect(seen).toEqual(['type q^7 now'])
+  })
+
+  it('a model built with the identity mask sends text unchanged', async () => {
+    const { captured, model } = createCapturingModel((text) => text)
+
+    await model.doGenerate(promptRequest('type q^7 now'))
+
+    expect(capturedUserText(captured())).toBe('type q^7 now')
+  })
+
+  it('respondingModelId is masked with the injected mask', async () => {
+    const events: ModelCallEvent[] = []
+    const model = createModel({ ...baseModelProfile }, noneAuth, declaredMask, {
+      providerReportOrigin: 'openai-chat',
+      languageModels: {
+        'override-model': stubModel({
+          async doGenerate() {
+            return { ...stubGenerateResult(), response: { modelId: 'model-q^7' } }
+          },
+        }),
+      },
+    }, { onCall: event => { events.push(event) } })
+
+    await model.doGenerate(promptRequest('hello'))
+
+    const success = events.find(event => event.kind === 'success')
+    expect(success).toEqual({ kind: 'success', report: expect.objectContaining({
+      respondingModelId: 'model-[secret:SHORT]',
+    }) })
+  })
+})
+
+function createCapturingModel(mask: MaskFn = (text) => text): {
   captured: () => LanguageModelV3CallOptions | undefined
   model: ReturnType<typeof createModel>
 } {
   let captured: LanguageModelV3CallOptions | undefined
-  const model = createModel({ ...baseModelProfile }, noneAuth, {
+  const model = createModel({ ...baseModelProfile }, noneAuth, mask, {
     languageModels: {
       'override-model': stubModel({
         async doGenerate(params) {

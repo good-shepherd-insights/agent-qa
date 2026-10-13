@@ -49,7 +49,7 @@ describe('capability resolution network boundary', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
     const modelProfile = profile()
     const overflow = overflowError()
-    const model = createModel(modelProfile, noneAuth, {
+    const model = createModel(modelProfile, noneAuth, (text) => text, {
       languageModels: {
         'override-model': stubModel({
           async generate() {

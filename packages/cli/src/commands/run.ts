@@ -2927,8 +2927,16 @@ export async function produceSuiteRunMembers(
     process.env.AGENT_QA_LLM_MODEL = plannerCfg.model
     process.env.AGENT_QA_LLM_PROVIDER = plannerCfg.provider
 
-    const plannerModel = createModel(plannerProfile, plannerAuth)
-    const verifierModel = createModel(verifierProfile, verifierAuth)
+    const suiteSecretRedactor = variableContext?.secretRedactor
+    const suiteMask = (text: string): string => {
+      // 2026-10-14 (441-04, D-06): a suite run without its redactor never reaches a provider.
+      if (suiteSecretRedactor === undefined) {
+        throw new Error('This suite run has no secrets redactor; the model request was not sent.')
+      }
+      return suiteSecretRedactor.redactString(text)
+    }
+    const plannerModel = createModel(plannerProfile, plannerAuth, suiteMask)
+    const verifierModel = createModel(verifierProfile, verifierAuth, suiteMask)
     // D-04 lazy thunk: resolveCapabilities re-reads the profile per call so a mid-run
     // overflow-driven window shrink is picked up on the next turn. Separate instances per
     // role (planner vs verifier) so each owns its own cache anchor (D-11).
@@ -4212,8 +4220,9 @@ export async function produceDirectRunMembers(
       if (effectiveLogLevel === 'debug') {
         console.log(pc.dim(`  Model: ${plannerCfg.model} (${plannerCfg.provider})`))
       }
-      const plannerModel = createModel(plannerProfile, plannerAuth)
-      const verifierModel = createModel(verifierProfile, verifierAuth)
+      const runMask = (text: string) => runtimeSecrets.secretRedactor.redactString(text)
+      const plannerModel = createModel(plannerProfile, plannerAuth, runMask)
+      const verifierModel = createModel(verifierProfile, verifierAuth, runMask)
       // D-04 lazy thunk + role-separated accounting instances (see suite-level site).
       const plannerAccounting = createTokenAccounting({ getCapabilities: () => resolveCapabilities(plannerProfile) })
       const verifierAccounting = createTokenAccounting({ getCapabilities: () => resolveCapabilities(verifierProfile) })

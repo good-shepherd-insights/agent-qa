@@ -34,6 +34,7 @@ describe('gateway decline', () => {
           auth: { mode: 'none' },
         },
         { kind: 'none' },
+        (text) => text,
       )
 
       expect(model.specificationVersion).toBe('v3')

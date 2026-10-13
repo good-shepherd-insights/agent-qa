@@ -28,6 +28,7 @@ import type {
   BundleDraft,
   CurationAuthorship,
   Delta,
+  MaskFn,
   ProcedureBodyPayload,
   ProcedureGuardTarget,
   ProcedureJsonValue,
@@ -53,6 +54,7 @@ export interface BuildCuratorAuthorDependencies {
   /** The run's already-resolved registry profile. It is reused verbatim (D-03). */
   profile: ModelProfile
   auth: ResolvedModelAuth
+  mask: MaskFn
   createModelImpl?: typeof createModel
   resolveCapabilitiesImpl?: typeof resolveCapabilities
   createTokenAccountingImpl?: typeof createTokenAccounting
@@ -1212,7 +1214,7 @@ export function buildCuratorAuthor(deps: BuildCuratorAuthorDependencies): Curato
 
   let model: ReturnType<typeof createModel>
   try {
-    model = createModelImpl(deps.profile, deps.auth)
+    model = createModelImpl(deps.profile, deps.auth, deps.mask)
   } catch {
     return async () => ({ kind: 'fallback-required', reason: 'no-model' })
   }

@@ -4369,7 +4369,8 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
 
           try {
             const { profile, auth } = toModelProfileAndAuth(llmConfig, resolvedAuth)
-            const model = createModel(profile, auth)
+            // 2026-10-12 (441-04, D-06): fixed probe text, nothing to mask.
+            const model = createModel(profile, auth, (text) => text)
             const connectionTimeoutMs = llmConnectionTestTimeoutMs(llmConfig)
 
             const controller = new AbortController()

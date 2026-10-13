@@ -1330,6 +1330,7 @@ describe('run command — reduced flag surface and target resolution', () => {
         auth: { mode: 'api-key' },
       }),
       { kind: 'api-key', apiKey: 'test-key' },
+      expect.any(Function),
     )
     expect(mockCreateModel).toHaveBeenNthCalledWith(
       2,
@@ -1341,6 +1342,7 @@ describe('run command — reduced flag surface and target resolution', () => {
         auth: { mode: 'api-key' },
       }),
       { kind: 'api-key', apiKey: 'test-key' },
+      expect.any(Function),
     )
     // 355-07 supplies role-separated accounting ports. 366-07 adds each role's declared
     // model profile and preserves that exact DTO reference through member-run recording.

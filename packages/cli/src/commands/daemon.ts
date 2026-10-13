@@ -16,6 +16,7 @@ import { Command } from 'commander'
 import pc from 'picocolors'
 
 import { composeAnalyticsHost } from '../composition/analytics-host.js'
+import { createDeclaredSecretMask } from '../composition/declared-secrets.js'
 import { createMaskedConfigReader } from '../composition/local-agent-host.js'
 import { resolveConfig, resolveConfiguredKnowledgeRoot } from '../config.js'
 import { buildCuratorAuthor } from '../curation/curator-author.js'
@@ -94,7 +95,10 @@ const DEFAULT_DEPS: DaemonCommandDeps = {
 async function resolveDaemonCuratorAuthor(configPath: string): Promise<CuratorAuthor> {
   const { config } = await resolveNamedConfig(undefined, configPath)
   const resolved = await resolveModelAuth(config.name, config)
-  return buildCuratorAuthor(toModelProfileAndAuth(config, resolved))
+  return buildCuratorAuthor({
+    ...toModelProfileAndAuth(config, resolved),
+    mask: createDeclaredSecretMask(configPath).mask,
+  })
 }
 
 function configPathFor(command: Command): string {

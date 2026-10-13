@@ -40,14 +40,14 @@ function deps(overrides: Record<string, unknown> = {}) {
 describe('buildJobModelCapability', () => {
   it('names the model by the profile it was built from', () => {
     const { injected } = deps()
-    expect(buildJobModelCapability(PROFILE, AUTH, injected).modelId)
+    expect(buildJobModelCapability(PROFILE, AUTH, (text) => text, injected).modelId)
       .toBe('openai-compatible:gpt-4.1-mini')
   })
 
   it('calls the provider with the request the queue handed in, and returns its text', async () => {
     const { handle, generateTextImpl, injected } = deps()
 
-    const answer = await buildJobModelCapability(PROFILE, AUTH, injected)
+    const answer = await buildJobModelCapability(PROFILE, AUTH, (text) => text, injected)
       .generate({ system: 'you summarise runs', prompt: 'summarise run_1' })
 
     expect(answer).toEqual({ text: 'the provider answer' })
@@ -68,15 +68,15 @@ describe('buildJobModelCapability', () => {
   it('omits the system turn entirely when the request carries none', async () => {
     const { generateTextImpl, injected } = deps()
 
-    await buildJobModelCapability(PROFILE, AUTH, injected).generate({ prompt: 'no system turn' })
+    await buildJobModelCapability(PROFILE, AUTH, (text) => text, injected).generate({ prompt: 'no system turn' })
 
     expect(generateTextImpl.mock.calls[0]?.[0]).not.toHaveProperty('system')
   })
 
   it('builds the provider handle from the profile and auth it was given', () => {
     const { injected } = deps()
-    buildJobModelCapability(PROFILE, AUTH, injected)
+    buildJobModelCapability(PROFILE, AUTH, (text) => text, injected)
     expect((injected as { createModelImpl: ReturnType<typeof vi.fn> }).createModelImpl)
-      .toHaveBeenCalledWith(PROFILE, AUTH)
+      .toHaveBeenCalledWith(PROFILE, AUTH, expect.any(Function))
   })
 })

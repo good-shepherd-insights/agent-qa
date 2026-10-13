@@ -162,7 +162,8 @@ async function probe(
   timeoutMs: number,
 ): Promise<void> {
   const { profile, auth: modelAuth } = toModelProfileAndAuth(llmConfig, auth)
-  const model = createModel(profile, modelAuth)
+  // 2026-10-12 (441-04, D-06): fixed probe text, nothing to mask.
+  const model = createModel(profile, modelAuth, (text) => text)
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
   try {

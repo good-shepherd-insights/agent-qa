@@ -161,6 +161,7 @@ describe('createModel', () => {
       }
     })
     const model = createModel(overrideProfile(), noneAuth,
+      (text) => text,
       { languageModels: { 'override-model': raw } }, { onProviderCall })
 
     await model.doGenerate({ prompt: promptWithUserText('hello') })
@@ -174,8 +175,8 @@ describe('createModel', () => {
     const providerCall = vi.fn()
     const raw = fakeLanguageModel(providerCall)
     vi.spyOn(getProvider('openai-compatible')!, 'adapter').mockReturnValue(raw)
-    const observed = createModel(overrideProfile(), noneAuth, {}, { onProviderCall })
-    const ordinary = createModel(overrideProfile(), noneAuth)
+    const observed = createModel(overrideProfile(), noneAuth, (text) => text, {}, { onProviderCall })
+    const ordinary = createModel(overrideProfile(), noneAuth, (text) => text)
     const params: LanguageModelV3CallOptions = { prompt: promptWithUserText('hello') }
     expect(await observed.doGenerate(params)).toEqual(await ordinary.doGenerate(params))
     expect(providerCall).toHaveBeenCalledTimes(2)
@@ -188,6 +189,7 @@ describe('createModel', () => {
     const onProviderCall = () => { throw new Error('observation failed') }
     const raw = fakeLanguageModel(() => {})
     const model = createModel(overrideProfile(), noneAuth,
+      (text) => text,
       { languageModels: { 'override-model': raw } }, { onProviderCall })
     expect((await model.doGenerate({ prompt: [] })).finishReason.unified).toBe('stop')
     const failure = apiError('provider failure')
@@ -209,6 +211,7 @@ describe('createModel', () => {
       return stream.call(this, params)
     }
     const model = createModel(overrideProfile(), noneAuth,
+      (text) => text,
       { languageModels: { 'override-model': raw } }, { onProviderCall })
     await model.doGenerate({ prompt: [] })
     const result = await model.doStream({ prompt: [] })
@@ -220,6 +223,7 @@ describe('createModel', () => {
     const onProviderCall = vi.fn()
     const providerCall = vi.fn()
     const model = createModel(overrideProfile(), noneAuth,
+      (text) => text,
       { languageModels: { 'override-model': fakeLanguageModel(providerCall) } },
       { onProviderCall })
     await expect(model.doGenerate({ prompt: promptWithUserText(AWS_KEY) }))
@@ -232,6 +236,7 @@ describe('createModel', () => {
     const onProviderCall = vi.fn()
     const failure = apiError('permanent failure')
     const model = createModel(overrideProfile(), noneAuth,
+      (text) => text,
       { languageModels: { 'override-model': fakeLanguageModel(() => { throw failure }) } },
       { onProviderCall })
     await expect(model.doGenerate({ prompt: [] })).rejects.toBe(failure)
@@ -271,7 +276,7 @@ describe('createModel', () => {
     ]
 
     for (const testCase of cases) {
-      const model = createModel(profile(testCase), noneAuth)
+      const model = createModel(profile(testCase), noneAuth, (text) => text)
 
       expect(model.specificationVersion).toBe('v3')
       expect(model.provider).toBe(testCase.expectedProvider)
@@ -286,7 +291,7 @@ describe('createModel', () => {
       auth: { mode: 'none' },
     }
 
-    expect(() => createModel(invalidProfile, noneAuth)).toThrow(
+    expect(() => createModel(invalidProfile, noneAuth, (text) => text)).toThrow(
       /Unknown provider "unknown-provider".*openai-compatible.*gemini/,
     )
   })
@@ -301,6 +306,7 @@ describe('createModel', () => {
         auth: { mode: 'none' },
       },
       noneAuth,
+      (text) => text,
       {
         languageModels: {
           'override-model': fakeLanguageModel((params) => {
@@ -349,7 +355,7 @@ describe('createModel', () => {
     })
     const expected = resolveCapabilities(autoProfile)
 
-    createModel(autoProfile, noneAuth)
+    createModel(autoProfile, noneAuth, (text) => text)
 
     expect(autoProfile.capabilities).toEqual(expected)
 
@@ -371,7 +377,7 @@ describe('createModel', () => {
     })
     declaredProfile.capabilities = declared
 
-    createModel(declaredProfile, noneAuth)
+    createModel(declaredProfile, noneAuth, (text) => text)
 
     expect(declaredProfile.capabilities).toBe(declared)
   })
@@ -387,7 +393,7 @@ describe('createModel', () => {
     const overflow = apiError(
       "This model's maximum context length is 32768 tokens. However, you requested 40000 tokens",
     )
-    const model = createModel(modelProfile, noneAuth, {
+    const model = createModel(modelProfile, noneAuth, (text) => text, {
       languageModels: {
         'override-model': {
           ...fakeLanguageModel(() => {
@@ -415,7 +421,7 @@ describe('createModel', () => {
       setActiveMaskingContextResolver(() => maskingContext)
 
       let captured: LanguageModelV3CallOptions | undefined
-      const model = createModel(overrideProfile(), noneAuth, {
+      const model = createModel(overrideProfile(), noneAuth, (text) => text, {
         languageModels: {
           'override-model': fakeLanguageModel((params) => {
             captured = params
@@ -436,7 +442,7 @@ describe('createModel', () => {
 
     it('blocks an unmasked block-shape prompt before the provider call', async () => {
       let providerCalled = false
-      const model = createModel(overrideProfile(), noneAuth, {
+      const model = createModel(overrideProfile(), noneAuth, (text) => text, {
         languageModels: {
           'override-model': fakeLanguageModel(() => {
             providerCalled = true
@@ -451,7 +457,7 @@ describe('createModel', () => {
     })
 
     it('scans the streaming path instead of passing provider streams through raw', async () => {
-      const model = createModel(overrideProfile(), noneAuth, {
+      const model = createModel(overrideProfile(), noneAuth, (text) => text, {
         languageModels: {
           'override-model': fakeLanguageModel(() => undefined, [
             textDelta(`prefix ${AWS_KEY.slice(0, 8)}`),

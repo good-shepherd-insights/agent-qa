@@ -21,7 +21,7 @@ vi.mock('@vostride/agent-qa-model', async original => {
   const actual = await original<typeof import('@vostride/agent-qa-model')>()
   return { ...actual, createModel: (...args: Parameters<typeof actual.createModel>) => {
     boundary.binds++
-    return actual.createModel(args[0], args[1], boundary.overrides, args[3])
+    return actual.createModel(args[0], args[1], args[2], boundary.overrides, args[4])
   } }
 })
 vi.mock('@vostride/agent-qa-eval', async original => {

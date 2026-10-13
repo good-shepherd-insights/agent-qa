@@ -311,6 +311,7 @@ describe('production injection-safety author and commit path (SAFE-03)', () => {
       const author = buildCuratorAuthor({
         profile: profile(),
         auth: noAuth,
+        mask: (text) => text,
         createModelImpl: () => scriptedModel(output, calls),
       })
 

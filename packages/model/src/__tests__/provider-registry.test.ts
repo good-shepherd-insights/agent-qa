@@ -134,7 +134,7 @@ describe('provider registry', () => {
       authModes: ['api-key'],
     }))
 
-    const model = createModel(profile('my-gateway'), noneAuth)
+    const model = createModel(profile('my-gateway'), noneAuth, (text) => text)
 
     expect(model.provider).toBe('my-gateway')
     expect(model.modelId).toBe('m')
@@ -149,14 +149,14 @@ describe('provider registry', () => {
       authModes: ['api-key'],
     }))
 
-    const model = createModel(profile('gemini'), noneAuth)
+    const model = createModel(profile('gemini'), noneAuth, (text) => text)
 
     expect(model.provider).toBe('gemini.override')
     expect(model.modelId).toBe('m')
   })
 
   it('preserves the supported-providers error for truly unknown provider ids', () => {
-    expect(() => createModel(profile('unknown-provider'), noneAuth)).toThrow(
+    expect(() => createModel(profile('unknown-provider'), noneAuth, (text) => text)).toThrow(
       /Unknown provider "unknown-provider".*openai-compatible.*gemini/,
     )
   })
@@ -180,7 +180,7 @@ describe('provider registry', () => {
 
     registerProvider(descriptor)
 
-    const model = createModel(profile('composing-gateway', 'composed-model'), noneAuth)
+    const model = createModel(profile('composing-gateway', 'composed-model'), noneAuth, (text) => text)
 
     expect(model.provider).toBe('openai.chat')
     expect(model.modelId).toBe('composed-model')

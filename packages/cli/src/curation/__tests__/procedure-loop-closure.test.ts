@@ -343,6 +343,7 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     const extractionAuthor = buildCuratorAuthor({
       profile: scriptedProfile(),
       auth: noAuth,
+      mask: (text) => text,
       createModelImpl: () => alwaysModel(wholeFlowProposal),
     })
     fixtureAuthor = async (job, neighbors) =>
@@ -420,6 +421,7 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     const extractionAuthor = buildCuratorAuthor({
       profile: scriptedProfile(),
       auth: noAuth,
+      mask: (text) => text,
       createModelImpl: () => alwaysModel(input.proposal),
     })
     const isolatedAuthor: CuratorAuthor = async (job, neighbors) =>

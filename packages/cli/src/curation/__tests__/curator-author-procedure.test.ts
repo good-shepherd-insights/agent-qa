@@ -660,6 +660,7 @@ function author(outputs: string[]) {
   return buildCuratorAuthor({
     profile: profile(),
     auth: noAuth,
+    mask: (text) => text,
     createModelImpl: () => scriptedModel(outputs),
   })
 }
@@ -671,6 +672,7 @@ function capturingAuthor(outputs: string[]) {
     author: buildCuratorAuthor({
       profile: profile(),
       auth: noAuth,
+      mask: (text) => text,
       createModelImpl: () => captured.model,
     }),
   }

@@ -1,7 +1,7 @@
 import { generateText } from 'ai'
 import { APICallError } from '@ai-sdk/provider'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ModelProfile } from '@vostride/agent-qa-schema'
+import type { MaskFn, ModelProfile } from '@vostride/agent-qa-schema'
 import { createMaskingContext, GuardrailBlockError, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
 import { createModel } from '../registry.js'
 import { stubGenerateResult, stubModel } from './stub-model.js'
@@ -50,7 +50,7 @@ function body(provider: Transport, cache?: number, model: string | undefined = '
   }
 }
 
-function transportModel(provider: Transport, cache?: number, model?: string) {
+function transportModel(provider: Transport, cache?: number, model?: string, mask: MaskFn = (text) => text) {
   const events: Event[] = []
   const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(
     JSON.stringify(body(provider, cache, model)), { headers: { 'content-type': 'application/json' } },
@@ -60,7 +60,7 @@ function transportModel(provider: Transport, cache?: number, model?: string) {
   const raw = createModel(profile(provider), provider.endsWith('subscription')
     ? { kind: 'auth-fetch', modelAdapter: provider.startsWith('openai')
       ? 'openai-responses' : 'anthropic-messages', fetch }
-    : { kind: 'none' }, {}, observation)
+    : { kind: 'none' }, mask, {}, observation)
   return { raw, events, fetch, observation }
 }
 
@@ -111,7 +111,7 @@ it('MODEL-SDK-FALLBACK and CUSTOM-UNKNOWN reject normalized custom facts', async
   result.usage.inputTokens.total = 100
   result.usage.outputTokens.total = 7
   const observation = { onProviderCall: vi.fn(), onCall: (event: Event) => events.push(event) }
-  const raw = createModel(profile('openai-compatible'), { kind: 'none' }, {
+  const raw = createModel(profile('openai-compatible'), { kind: 'none' }, (text) => text, {
     languageModels: { [declared]: stubModel({ modelId: declared, generate: async () => result }) },
   }, observation)
   const generated = await generateText({ model: raw, prompt: 'hello', maxRetries: 0 })
@@ -133,7 +133,7 @@ function custom(result = stubGenerateResult(), origin?: ModelCallReportOrigin,
   onCall?: (event: ModelCallEvent) => void) {
   const events: ModelCallEvent[] = []
   const base = stubModel({ provider: 'openai.chat', modelId: declared, generate: async () => result })
-  const model = createModel(profile('openai-compatible'), { kind: 'none' }, {
+  const model = createModel(profile('openai-compatible'), { kind: 'none' }, (text) => text, {
     languageModels: { [declared]: base }, providerReportOrigin: origin,
   }, { onCall: event => { events.push(event); onCall?.(event) } })
   return { base, model, events }
@@ -267,8 +267,7 @@ it('OBSERVER-NONINTERFERENCE stream success preserves chunks and reports complet
 it('MODEL-REPORTED crosses the live masking context before observation', async () => {
   const masking = createMaskingContext()
   masking.register('private-model-name')
-  const { raw, events } = transportModel('openai-compatible', 0, 'private-model-name')
-  setActiveMaskingContextResolver(() => masking)
+  const { raw, events } = transportModel('openai-compatible', 0, 'private-model-name', (text) => masking.mask(text))
   await raw.doGenerate({ prompt: [] })
   expect(events[1]?.report?.respondingModelId).toBe('<SECRET_0>')
   expect(JSON.stringify(events)).not.toContain('private-model-name')

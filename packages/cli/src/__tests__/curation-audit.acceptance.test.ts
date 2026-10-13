@@ -222,7 +222,7 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
         }),
         buildCuratorAuthor: (deps) => buildCuratorAuthor({
           ...deps,
-          createModelImpl: (seenProfile, auth) => createModel(seenProfile, auth, {
+          createModelImpl: (seenProfile, auth, mask) => createModel(seenProfile, auth, mask, {
             languageModels: {
               [seenProfile.model]: scriptedModel(modelCalls),
             },

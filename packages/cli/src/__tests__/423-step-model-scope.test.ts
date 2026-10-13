@@ -27,7 +27,7 @@ const boundary = vi.hoisted(() => ({
 vi.mock('@vostride/agent-qa-model', async importOriginal => {
   const real = await importOriginal<typeof import('@vostride/agent-qa-model')>()
   return { ...real, createModel: (...args: Parameters<typeof real.createModel>) => {
-    if (args[3]?.onCall) boundary.observations.push(args[3] as StepModelObservation)
+    if (args[4]?.onCall) boundary.observations.push(args[4] as StepModelObservation)
     return real.createModel(...args)
   } }
 })

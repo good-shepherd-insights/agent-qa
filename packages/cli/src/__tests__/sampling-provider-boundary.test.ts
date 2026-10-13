@@ -66,6 +66,7 @@ function createCapturingModel(): {
       auth: { mode: 'none' },
     },
     noneAuth,
+    (text) => text,
     { languageModels: { 'sampling-boundary-stub': stub } },
   )
 

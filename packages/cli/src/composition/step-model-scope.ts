@@ -27,11 +27,11 @@ export function createCliStepModelScopeFactory(options: CliStepModelScopeOptions
     models: {
       planner: {
         model: options.planner.model,
-        bind: observation => options.ports.createModel(options.planner.profile, options.planner.auth, {}, observation),
+        bind: observation => options.ports.createModel(options.planner.profile, options.planner.auth, options.mask, {}, observation),
       },
       verifier: {
         model: options.verifier.model,
-        bind: observation => options.ports.createModel(options.verifier.profile, options.verifier.auth, {}, observation),
+        bind: observation => options.ports.createModel(options.verifier.profile, options.verifier.auth, options.mask, {}, observation),
       },
     },
     profiles: {

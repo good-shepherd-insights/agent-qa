@@ -414,7 +414,8 @@ export function createAuthCommand(): Command {
         let model: ReturnType<typeof createModel>
         try {
           const { profile, auth: modelAuth } = toModelProfileAndAuth(planner, auth as any)
-          model = createModel(profile, modelAuth)
+          // 2026-10-12 (441-04, D-06): fixed probe text, nothing to mask.
+          model = createModel(profile, modelAuth, (text) => text)
         } catch (err: unknown) {
           console.log(pc.red(err instanceof Error ? err.message : String(err)))
           process.exitCode = 1

@@ -1,24 +1,34 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { afterAll, describe, it, expect, vi, beforeEach } from 'vitest'
 
-vi.mock('@vostride/agent-qa-core', () => ({
+// 2026-10-14 (441-04): the declared-secret loader reads core's workspace paths and the real
+// config merge, so both mocks keep the original module beside the stubbed functions.
+vi.mock('@vostride/agent-qa-core', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   getCredential: vi.fn(),
   resolveLLMAuth: vi.fn(),
   writeAuth: vi.fn(() => Promise.resolve()),
 }))
 
-vi.mock('../config.js', () => ({
+vi.mock('../config.js', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   loadConfigFile: vi.fn(),
 }))
 
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { getCredential, resolveLLMAuth } from '@vostride/agent-qa-core'
+import { generateText as sdkGenerateText } from 'ai'
+import { MockLanguageModelV3 } from 'ai/test'
 import { createModel } from '@vostride/agent-qa-model'
 import { loadConfigFile } from '../config.js'
 import {
   applyResolvedAuthToModelConfig,
   buildAnalysisTokenBudget,
   buildJobModelCapability,
+  resolveCliChatCapabilities,
+  resolveCliJobModel,
   resolveLLMModels,
   resolveCredentials,
   resolveModelAuth,
@@ -325,7 +335,7 @@ describe('buildAnalysisTokenBudget (389-06, D-01/386 D-15)', () => {
     const { resolveCalls, deps } = visionDeps(false)
 
     const budget = buildAnalysisTokenBudget(JOB_PROFILE, deps)
-    buildJobModelCapability(JOB_PROFILE, NONE_AUTH, deps)
+    buildJobModelCapability(JOB_PROFILE, NONE_AUTH, (text) => text, deps)
 
     // One source of truth: both builders consulted the capability resolver with the
     // IDENTICAL profile object — no second config, no re-spelled ceiling.
@@ -345,13 +355,13 @@ describe('buildJobModelCapability vision (389-06, D-02/L9/v46)', () => {
   const IMAGE_B = new Uint8Array([4, 5, 6])
 
   it('surfaces vision from the same resolveCapabilities the accounting consults', () => {
-    expect(buildJobModelCapability(JOB_PROFILE, NONE_AUTH, visionDeps(true).deps).vision).toBe(true)
-    expect(buildJobModelCapability(JOB_PROFILE, NONE_AUTH, visionDeps(false).deps).vision).toBe(false)
+    expect(buildJobModelCapability(JOB_PROFILE, NONE_AUTH, (text) => text, visionDeps(true).deps).vision).toBe(true)
+    expect(buildJobModelCapability(JOB_PROFILE, NONE_AUTH, (text) => text, visionDeps(false).deps).vision).toBe(false)
   })
 
   it('attaches image parts through the messages form when the gate allows (D-02)', async () => {
     const { calls, deps } = visionDeps(true)
-    const capability = buildJobModelCapability(JOB_PROFILE, NONE_AUTH, deps)
+    const capability = buildJobModelCapability(JOB_PROFILE, NONE_AUTH, (text) => text, deps)
 
     await capability.generate({ system: 'sys', prompt: 'explain', images: [IMAGE_A, IMAGE_B] })
 
@@ -376,7 +386,7 @@ describe('buildJobModelCapability vision (389-06, D-02/L9/v46)', () => {
 
   it('strips images to the byte-identical text call against a text-only model (L9)', async () => {
     const { calls, deps } = visionDeps(false)
-    const capability = buildJobModelCapability(JOB_PROFILE, NONE_AUTH, deps)
+    const capability = buildJobModelCapability(JOB_PROFILE, NONE_AUTH, (text) => text, deps)
 
     await capability.generate({ prompt: 'explain', images: [IMAGE_A] })
     await capability.generate({ prompt: 'explain' })
@@ -391,7 +401,7 @@ describe('buildJobModelCapability vision (389-06, D-02/L9/v46)', () => {
 
   it('keeps text-only requests byte-identical to the pre-vision call shape', async () => {
     const { calls, deps } = visionDeps(true)
-    const capability = buildJobModelCapability(JOB_PROFILE, NONE_AUTH, deps)
+    const capability = buildJobModelCapability(JOB_PROFILE, NONE_AUTH, (text) => text, deps)
 
     await capability.generate({ system: 'sys', prompt: 'explain' })
 
@@ -415,8 +425,8 @@ describe('the daemon egress mechanism (388 CR-02, verified parity)', () => {
     const secret = 'sk-live-abcdef0123456789'
     let captured: { prompt?: { role: string; content: { type: string; text?: string }[] }[] } | undefined
 
-    const capturingCreateModel: typeof createModel = (profile, auth) =>
-      createModel(profile, auth, {
+    const capturingCreateModel: typeof createModel = (profile, auth, mask) =>
+      createModel(profile, auth, mask, {
         languageModels: {
           'job-model': {
             specificationVersion: 'v3',
@@ -445,6 +455,7 @@ describe('the daemon egress mechanism (388 CR-02, verified parity)', () => {
     const capability = buildJobModelCapability(
       { ...JOB_PROFILE, baseURL: 'http://localhost:11434/v1' },
       NONE_AUTH,
+      (text) => text,
       { createModelImpl: capturingCreateModel },
     )
 
@@ -470,5 +481,94 @@ describe('the daemon egress mechanism (388 CR-02, verified parity)', () => {
       'utf8',
     )
     expect(source).toContain('resolveCliAnalysisTokenBudget')
+  })
+})
+
+describe('C441-EGRESS', () => {
+  const roots: string[] = []
+
+  afterAll(() => {
+    for (const root of roots) rmSync(root, { recursive: true, force: true })
+  })
+
+  function declaredProject(): string {
+    const root = mkdtempSync(join(tmpdir(), 'agent-qa-441-egress-'))
+    roots.push(root)
+    const llm = {
+      name: 'planner',
+      provider: 'openai-compatible',
+      model: 'egress-model',
+      baseURL: 'http://localhost:11434/v1',
+    }
+    const configPath = join(root, 'agent-qa.config.yaml')
+    writeFileSync(configPath, [
+      'workspace:',
+      "  testMatch: ['tests/**/*.yaml']",
+      "  suiteMatch: ['suites/**/*.yaml']",
+      '  hooksFile: hooks.yaml',
+      '  envFile: .env.local',
+      '  secretsFile: .secrets.local',
+      'registry:',
+      '  llms:',
+      `    - name: ${llm.name}`,
+      `      provider: ${llm.provider}`,
+      `      model: ${llm.model}`,
+      `      baseURL: ${llm.baseURL}`,
+      'use:',
+      '  llm: planner',
+      '',
+    ].join('\n'))
+    writeFileSync(join(root, 'hooks.yaml'), '')
+    writeFileSync(join(root, '.env.local'), '')
+    writeFileSync(join(root, '.secrets.local'), 'SHORT=q^7\n')
+    mockLoadConfigFile.mockResolvedValue({ registry: { llms: [llm] }, use: { llm: 'planner' } })
+    mockResolveLLMAuth.mockResolvedValue({ kind: 'unauthenticated' } as never)
+    return configPath
+  }
+
+  function recordingImpl() {
+    const recorder = new MockLanguageModelV3({
+      doGenerate: {
+        content: [{ type: 'text', text: 'ok' }],
+        finishReason: { unified: 'stop', raw: 'stop' },
+        usage: {
+          inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+          outputTokens: { total: 1, text: 1, reasoning: 0 },
+        },
+        warnings: [],
+      },
+    })
+    const createModelImpl: typeof createModel = (profile, auth, mask) =>
+      createModel(profile, auth, mask, { languageModels: { [profile.model]: recorder } })
+    const sentUserText = () => JSON.stringify(
+      recorder.doGenerateCalls[0]?.prompt.filter(message => message.role === 'user'),
+    )
+    return { createModelImpl, sentUserText }
+  }
+
+  it('the chat model sends a declared value as its named marker', async () => {
+    const configPath = declaredProject()
+    const { createModelImpl, sentUserText } = recordingImpl()
+
+    const capabilities = await resolveCliChatCapabilities(configPath, { createModelImpl })
+    expect(capabilities).toBeDefined()
+    await sdkGenerateText({
+      model: capabilities!.model as Parameters<typeof sdkGenerateText>[0]['model'],
+      messages: [{ role: 'user', content: 'Type q^7 into the code field.' }],
+    })
+
+    expect(sentUserText()).toContain('Type [secret:SHORT] into the code field.')
+    expect(sentUserText()).not.toContain('q^7')
+  })
+
+  it('the job model masks with the same loader', async () => {
+    const configPath = declaredProject()
+    const { createModelImpl, sentUserText } = recordingImpl()
+
+    const capability = await resolveCliJobModel(configPath, { createModelImpl })
+    await capability.generate({ prompt: 'Type q^7 into the code field.' })
+
+    expect(sentUserText()).toContain('Type [secret:SHORT] into the code field.')
+    expect(sentUserText()).not.toContain('q^7')
   })
 })

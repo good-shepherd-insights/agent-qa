@@ -1,5 +1,5 @@
 import type { LanguageModelV3GenerateResult, LanguageModelV3Usage } from '@ai-sdk/provider'
-import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
+import type { MaskFn } from '@vostride/agent-qa-schema'
 
 /** Neutral facts for one completed provider dispatch. Missing facts are omitted. */
 export interface ModelCallReport {
@@ -50,6 +50,7 @@ function object(value: unknown): Record<string, unknown> | undefined {
 export function providerCallReport(
   result: Pick<LanguageModelV3GenerateResult, 'usage' | 'response'>,
   origin: ModelCallReportOrigin | undefined,
+  mask: MaskFn,
 ): ModelCallReport {
   const inputTokens = count(result.usage.inputTokens.total)
   const outputTokens = count(result.usage.outputTokens.total)
@@ -59,7 +60,7 @@ export function providerCallReport(
   const modelId = origin === undefined ? undefined : result.response?.modelId
     ?? (origin === 'gemini' ? object(result.response?.body)?.modelVersion : undefined)
   const respondingModelId = typeof modelId === 'string' && modelId.length > 0
-    ? (getActiveMaskingContext()?.mask(modelId) ?? modelId) : undefined
+    ? mask(modelId) : undefined
   return {
     ...(inputTokens === undefined ? {} : { inputTokens }),
     ...(outputTokens === undefined ? {} : { outputTokens }),

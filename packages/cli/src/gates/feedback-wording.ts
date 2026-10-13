@@ -47,13 +47,16 @@ export async function wordImprovementPlan(input: WordingInput): Promise<Improvem
     const resolved = toModelProfileAndAuth(selected.planner, auth)
     const profileCopy = { ...resolved.profile,
       ...(resolved.profile.capabilities === undefined ? {} : { capabilities: { ...resolved.profile.capabilities } }) }
-    maskingContext = await input.maskingContextFactory()
+    const wordingContext = await input.maskingContextFactory()
+    maskingContext = wordingContext
     const controller = new AbortController()
     const expired = new Promise<never>((_resolve, reject) => {
       timeout = setTimeout(() => { controller.abort(); reject(new Error('Wording timed out')) }, WORDING_TIMEOUT_MS)
     })
     return await runSafetyScope({ maskingContext, auditSink: new JsonlAuditSink(input.auditDir), executionContext: input.executionContext }, async () => {
-      const model = input.createModelForTest ? input.createModelForTest(profileCopy, resolved.auth) : createModel(profileCopy, resolved.auth)
+      // 2026-10-14 (441-04, D-06): transitional; 441-11 replaces it with the declared mask.
+      const mask = (text: string) => wordingContext.mask(text)
+      const model = (input.createModelForTest ?? createModel)(profileCopy, resolved.auth, mask)
       const bundle = floor.kind === 'knowledge' ? floor.deltas.flatMap(delta => delta.kind === 'Supersede' ? [delta.newBundle] : delta.kind === 'Add' ? [delta.bundle] : [])[0] : undefined
       const prose = floor.kind === 'test-edit' ? { intent: floor.intent } : { summary: bundle?.summary, body: bundle?.body }
       const response = await Promise.race([generateText({ model, maxOutputTokens: WORDING_MAX_OUTPUT_TOKENS,

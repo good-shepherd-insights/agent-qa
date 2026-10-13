@@ -117,7 +117,8 @@ export function createAdversarialProbeAuthor(
           auditSink: new JsonlAuditSink(input.auditDir),
           executionContext: input.executionContext,
         }, async () => {
-          const model = create(profile, author.auth)
+          // 2026-10-14 (441-04, D-06): transitional; 441-11 replaces it with the declared mask.
+          const model = create(profile, author.auth, (text) => maskingContext.mask(text))
           const prompt = renderAdversarialProbePrompt(request)
           const result = await generate({
             model,

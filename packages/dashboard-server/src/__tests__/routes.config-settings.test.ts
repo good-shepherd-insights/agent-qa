@@ -1823,6 +1823,7 @@ describe('dashboard LLM auth and test routes', () => {
         },
       }),
       { kind: 'api-key', apiKey: 'sk-anthropic' },
+      expect.any(Function),
     )
 
     mockCreateModel.mockClear()
@@ -1924,6 +1925,7 @@ describe('dashboard LLM auth and test routes', () => {
         baseURL: 'https://anthropic-proxy.example/messages',
       }),
       { kind: 'bearer-token', token: 'bearer-remote' },
+      expect.any(Function),
     )
   })
 

@@ -126,7 +126,7 @@ function captureProfile(provider: ModelProviderId): ModelProfile {
 
 async function captureMaxOutputTokens(provider: ModelProviderId): Promise<number | undefined> {
   let captured: LanguageModelV3CallOptions | undefined
-  const model = createModel(captureProfile(provider), noneAuth, {
+  const model = createModel(captureProfile(provider), noneAuth, (text) => text, {
     languageModels: { 'capture-model': captureModel((params) => { captured = params }) },
   })
   await generateText({

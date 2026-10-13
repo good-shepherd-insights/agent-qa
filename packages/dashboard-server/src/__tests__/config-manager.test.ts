@@ -816,6 +816,7 @@ describe('dashboard compatible auth routes', () => {
         baseURL: 'https://openrouter.ai/api/v1',
       }),
       { kind: 'none' },
+      expect.any(Function),
     )
   })
 
@@ -853,6 +854,7 @@ describe('dashboard compatible auth routes', () => {
         baseURL: 'https://openrouter.ai/api/v1',
       }),
       { kind: 'none' },
+      expect.any(Function),
     )
   })
 
@@ -945,6 +947,7 @@ describe('dashboard compatible auth routes', () => {
         baseURL: 'https://openrouter.ai/api/v1',
       }),
       { kind: 'none' },
+      expect.any(Function),
     )
   })
 })
