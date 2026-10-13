@@ -2,8 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { LOG_LEVEL_PRIORITY } from './types.js'
 import type { LogLevel, LogSource, LogEntry, LogStorage, ScopedLogger } from './types.js'
 import { formatLogEntry } from './cli-formatter.js'
-import { type SecretRedactor } from '@vostride/agent-qa-runner'
-import { redactAuthStateValue } from '../auth-state/redaction.js'
+import { redactSecretValue, type SecretRedactor } from '@vostride/agent-qa-runner'
 
 /**
  * One member's run-id binding, held in async context rather than on the manager (WINDOWS #233).
@@ -104,8 +103,8 @@ export class LogManager {
       runId: scope ? scope.runId : this.runId,
       level,
       source,
-      message: redactAuthStateValue(message, { secretRedactor: this.redactor }),
-      data: redactAuthStateValue(data ?? {}, { secretRedactor: this.redactor }),
+      message: redactSecretValue(message, this.redactor),
+      data: redactSecretValue(data ?? {}, this.redactor),
       timestamp: new Date().toISOString(),
     }
     this.buffer.push(entry)

@@ -193,29 +193,56 @@ describe('LogManager', () => {
     expect(stderrSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('')).not.toContain('raw-secret-sentinel')
     expect(stdoutSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('')).not.toContain('raw-secret-sentinel')
   })
+})
 
-  it('redacts auth-state payloads and selected names before buffering and emission', () => {
-    const lm = new LogManager({ runId: 'run-1', displayLevel: 'info', ndjson: true })
+describe('C441-HOOK-OUTPUT', () => {
+  let stderrSpy: any
+  let stdoutSpy: any
+
+  beforeEach(() => {
+    stderrSpy = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    stdoutSpy = vi.spyOn(process.stdout, 'write').mockReturnValue(true)
+  })
+
+  afterEach(() => {
+    stderrSpy.mockRestore()
+    stdoutSpy.mockRestore()
+  })
+
+  it('log entries mask a declared value and keep everything else', () => {
+    const lm = new LogManager({
+      runId: 'run-1',
+      displayLevel: 'info',
+      ndjson: true,
+      redactor: new SecretRedactor(new SecretStore({ SHORT: 'q^7' })),
+    })
     const storageState = JSON.stringify({
-      cookies: [{ name: 'sid', value: 'auth-cookie-secret' }],
-      origins: [{ origin: 'https://example.com', localStorage: [{ name: 'token', value: 'auth-local-secret' }] }],
+      cookies: [{ name: 'sid', value: 'auth-cookie-value' }],
+      origins: [{ origin: 'https://example.com', localStorage: [{ name: 'token', value: 'auth-local-value' }] }],
     })
 
-    lm.log('info', 'runner', storageState, {
+    lm.log('info', 'runner', `pw=q^7 ${storageState}`, {
+      pw: 'q^7',
+      cookie: 'c1',
+      token: 't1',
       use: { authState: 'demo-acc' },
       storageStatePath: '/tmp/auth/storage-state.json',
-      ACCESS_TOKEN: 'hook-token',
     })
 
-    const serialized = JSON.stringify(lm.getBuffer())
-    expect(serialized).toContain('[auth state redacted]')
-    expect(serialized).not.toContain('auth-cookie-secret')
-    expect(serialized).not.toContain('auth-local-secret')
-    expect(serialized).not.toContain('demo-acc')
-    expect(serialized).not.toContain('/tmp/auth/storage-state.json')
-    expect(serialized).not.toContain('hook-token')
-    expect(stderrSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('')).not.toContain('auth-cookie-secret')
-    expect(stdoutSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('')).not.toContain('auth-cookie-secret')
+    const [entry] = lm.getBuffer()
+    expect(entry.message).toBe(`pw=[secret:SHORT] ${storageState}`)
+    expect(entry.data).toEqual({
+      pw: '[secret:SHORT]',
+      cookie: 'c1',
+      token: 't1',
+      use: { authState: 'demo-acc' },
+      storageStatePath: '/tmp/auth/storage-state.json',
+    })
+    const emitted = [...stderrSpy.mock.calls, ...stdoutSpy.mock.calls]
+      .map((c: unknown[]) => String(c[0]))
+      .join('')
+    expect(emitted).not.toContain('q^7')
+    expect(emitted).toContain('auth-cookie-value')
   })
 })
 

@@ -29,7 +29,7 @@ import {
   AUTH_STATE_HOOK_WORKSPACE_DIR,
   buildAuthStateHookEnv,
   stripReservedAuthStateHookEnv,
-  redactAuthStateValue,
+  redactSecretValue,
 } from '@vostride/agent-qa-runner'
 
 const DEFAULT_DOCKER_BIN = 'docker'
@@ -110,14 +110,8 @@ export class DockerHookExecutor implements HookExecutorPort {
         // Hook did not write .env file -- no variables to extract
       }
       variables = stripReservedAuthStateHookEnv(filterSecretVariables(variables, opts.secretEnv))
-      const redactedStdout = redactAuthStateValue(stdout, {
-        secretRedactor: opts.secretRedactor,
-        authState: opts.authState,
-      })
-      const redactedStderr = redactAuthStateValue(stderr, {
-        secretRedactor: opts.secretRedactor,
-        authState: opts.authState,
-      })
+      const redactedStdout = redactSecretValue(stdout, opts.secretRedactor)
+      const redactedStderr = redactSecretValue(stderr, opts.secretRedactor)
       const output = redactedStdout.trim()
 
       return {
@@ -128,10 +122,7 @@ export class DockerHookExecutor implements HookExecutorPort {
         stderr: redactedStderr,
         duration: Date.now() - start,
         error: exitCode !== 0
-          ? redactAuthStateValue(`Hook exited with code ${exitCode}: ${stderr}`, {
-              secretRedactor: opts.secretRedactor,
-              authState: opts.authState,
-            })
+          ? redactSecretValue(`Hook exited with code ${exitCode}: ${stderr}`, opts.secretRedactor)
           : undefined,
       }
     } catch (err) {
@@ -142,10 +133,7 @@ export class DockerHookExecutor implements HookExecutorPort {
         stdout: '',
         stderr: '',
         duration: Date.now() - start,
-        error: redactAuthStateValue((err as Error).message, {
-          secretRedactor: opts.secretRedactor,
-          authState: opts.authState,
-        }),
+        error: redactSecretValue((err as Error).message, opts.secretRedactor),
       }
     } finally {
       if (workDir) {

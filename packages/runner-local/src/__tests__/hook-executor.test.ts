@@ -402,50 +402,6 @@ describe('DockerHookExecutor.execute', () => {
     expect(result.variables).toEqual({ SAFE: 'value' })
   })
 
-  it('redacts active auth-state hook paths, env JSON, and storage-state payloads from hook output', async () => {
-    const storageStateJson = JSON.stringify({
-      cookies: [{ name: 'sid', value: 'hook-cookie-secret' }],
-      origins: [{ origin: 'https://example.com', localStorage: [{ name: 'token', value: 'hook-local-secret' }] }],
-    })
-    mockExecFile.mockImplementation((_cmd: any, args: any, _o: any, cb: any) => {
-      if (typeof _o === 'function') cb = _o
-      if (Array.isArray(args) && args[0] === 'run') {
-        cb(
-          Object.assign(new Error('exit'), { code: 1 }),
-          [
-            '/workspace/.agent-qa-auth-state/storage-state.json',
-            storageStateJson,
-          ].join('\n'),
-          'AGENT_QA_AUTH_STATE_JSON={"name":"admin","storageStatePath":"/workspace/.agent-qa-auth-state/storage-state.json"}',
-        )
-      } else {
-        cb(null, '', '')
-      }
-      return {} as any
-    })
-    mockReadFile.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
-
-    const result = await run(makeHook(), {
-      authState: {
-        version: 1,
-        kind: 'web',
-        targetName: 'staging-web',
-        stateName: 'admin',
-        capturedAt: '2026-05-17T00:00:00.000Z',
-        storageStatePath: '/internal/auth/staging-web/admin.json',
-      },
-    })
-
-    const serialized = JSON.stringify(result)
-    expect(result.success).toBe(false)
-    expect(serialized).toContain('[auth state redacted]')
-    expect(serialized).not.toContain('/workspace/.agent-qa-auth-state/storage-state.json')
-    expect(serialized).not.toContain('/internal/auth/staging-web/admin.json')
-    expect(serialized).not.toContain('hook-cookie-secret')
-    expect(serialized).not.toContain('hook-local-secret')
-    expect(serialized).not.toContain('AGENT_QA_AUTH_STATE_JSON')
-  })
-
   it('overlays secret values over normal env vars in the docker container', async () => {
     let dockerArgs: string[] = []
     mockExecFile.mockImplementation((_cmd: any, args: any, _o: any, cb: any) => {
@@ -548,5 +504,70 @@ describe('DockerHookExecutor.execute', () => {
     const result = await run(makeHook({ timeout: 1000 }))
     expect(result.success).toBe(false)
     expect(result.error).toContain('exited with code 124')
+  })
+})
+
+describe('C441-HOOK-OUTPUT', () => {
+  const authState = {
+    version: 1 as const,
+    kind: 'web' as const,
+    targetName: 'staging-web',
+    stateName: 'admin',
+    capturedAt: '2026-05-17T00:00:00.000Z',
+    storageStatePath: '/internal/auth/staging-web/admin.json',
+  }
+
+  function hookPrints(stdout: string, stderr: string, exitCode: number) {
+    mockExecFile.mockImplementation((_cmd: any, args: any, _o: any, cb: any) => {
+      if (typeof _o === 'function') cb = _o
+      if (Array.isArray(args) && args[0] === 'run') {
+        cb(exitCode === 0 ? null : Object.assign(new Error('exit'), { code: exitCode }), stdout, stderr)
+      } else {
+        cb(null, '', '')
+      }
+      return {} as any
+    })
+    mockReadFile.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
+  }
+
+  it('hook output masks a declared value by name', async () => {
+    hookPrints('pw=q^7\n', 'pw=q^7', 1)
+
+    const result = await run(makeHook(), {
+      secretRedactor: new SecretRedactor(new SecretStore({ SHORT: 'q^7' })),
+      authState,
+    })
+
+    expect(result.success).toBe(false)
+    expect(JSON.stringify(result)).not.toContain('q^7')
+    expect(result.stdout).toBe('pw=[secret:SHORT]\n')
+    expect(result.output).toBe('pw=[secret:SHORT]')
+    expect(result.error).toBe('Hook exited with code 1: pw=[secret:SHORT]')
+  })
+
+  it('hook output keeps an undeclared auth-state value and auth-like keys', async () => {
+    const storageStateJson = JSON.stringify({
+      cookies: [{ name: 'sid', value: 'hook-cookie-value' }],
+      origins: [{ origin: 'https://example.com', localStorage: [{ name: 'token', value: 'hook-local-value' }] }],
+    })
+    const stdout = [
+      'cookie hook-cookie-value',
+      'token=abc',
+      'Authorization: Bearer xyz',
+      '/workspace/.agent-qa-auth-state/storage-state.json',
+      storageStateJson,
+    ].join('\n')
+    const stderr = 'AGENT_QA_AUTH_STATE_JSON={"name":"admin","storageStatePath":"/workspace/.agent-qa-auth-state/storage-state.json"}'
+    hookPrints(stdout, stderr, 1)
+
+    const result = await run(makeHook(), {
+      secretRedactor: new SecretRedactor(new SecretStore({ SHORT: 'q^7' })),
+      authState,
+    })
+
+    expect(result.stdout).toBe(stdout)
+    expect(result.output).toBe(stdout)
+    expect(result.stderr).toBe(stderr)
+    expect(result.error).toBe(`Hook exited with code 1: ${stderr}`)
   })
 })

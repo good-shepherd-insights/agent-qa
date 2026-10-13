@@ -104,7 +104,6 @@ vi.mock('@vostride/agent-qa-core', () => ({
   LLMPlanner: vi.fn().mockImplementation(function () { return { plan: vi.fn() } }),
   LLMVerifier: vi.fn().mockImplementation(function () { return { verify: vi.fn() } }),
   redactSecretValue: vi.fn((value: unknown) => value),
-  redactAuthStateValue: vi.fn((value: unknown) => value),
   parseHookInline: () => mockParseHookInline(),
   stripHookInline: (text: string) => mockStripHookInline(text),
   runHooks: (...args: unknown[]) => mockRunHooks(...args),

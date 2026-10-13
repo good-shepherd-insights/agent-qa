@@ -7,7 +7,6 @@ import {
   SuiteDefinitionSchema,
   TestDefinitionSchema,
   readAuthStateMetadata,
-  redactAuthStateValue,
   resolveAuthStatePaths,
   writeAuthStateFiles,
 } from '@vostride/agent-qa-core'
@@ -19,6 +18,7 @@ import {
   LLMPlanner,
   LLMVerifier,
   resolveSecretTemplatesInValue,
+  redactSecretValue,
   runHooks,
   resolveSecretEnv,
   parseHookInline,
@@ -560,7 +560,7 @@ export class LiveSession {
   }
 
   private redact<T>(value: T): T {
-    return redactAuthStateValue(value, { secretRedactor: this.secretRedactor })
+    return redactSecretValue(value, this.secretRedactor)
   }
 
   private resolveSecrets<T>(value: T): T {
