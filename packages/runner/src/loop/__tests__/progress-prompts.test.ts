@@ -1,9 +1,8 @@
 // C436-PROMPT (D-26, HARN-01): the planner prompt judges outcomes, not screen changes. The
 // stagnation and cycle-break blocks cannot render, the progress rules are gone, Rule 22 is the
-// outcome-evidence rule, Rule 13 allows requested repetition, and Rule 23 is byte-identical to
-// agent-qa 5e3e932a2. Rules 10 and 17 were re-pinned once by 438 (D-01, D-14) and Rule 19 once by
-// 439 (D-11): C438-PROMPT and C439-PROMPT hold their new text; the 5e3e932a2 bytes stay below for
-// the record.
+// outcome-evidence rule and Rule 13 allows requested repetition. Rules 10 and 17 were re-pinned
+// once by 438 (D-01, D-14), Rule 19 once by 439 (D-11) and Rule 23 once by 441 (D-10): the
+// 5e3e932a2 bytes stay below for the record.
 import { describe, it, expect } from 'vitest'
 import type { ModelMessage } from 'ai'
 import type { ScreenState } from '@vostride/agent-qa-schema'
@@ -27,6 +26,10 @@ const PINNED_RULES_5E3E932A2: Record<number, string> = {
   23:
     "23. SECRET PLACEHOLDERS — the value EXISTS and is bound at dispatch: A step may reference a secret in one of two forms: the template form {{secret:NAME}}, or its redacted display form [secret:NAME] (what you see once model-bound text has been masked). Both mean the same thing: a concrete value for NAME EXISTS and is already bound in this run's secret store. It is hidden from you deliberately, for security — it is NOT missing, NOT unavailable, and NOT a gap you must fill in.\n   TO USE IT: emit the template form {{secret:NAME}} VERBATIM as the action value (e.g. as the value of a fill action). The harness substitutes the real value at dispatch — after you plan, before the action reaches the app. Passing the placeholder through IS the correct, complete action.\n   NEVER declare the step infeasible, skip it, guess, or invent a stand-in because the literal is not visible to you — a hidden secret is not an impossible objective. stepFailed with failureKind \"infeasible\" (Rule 12) stays reserved for genuinely impossible objectives.\n   NEVER attempt to read, print, echo, assert on, or otherwise reveal the concrete secret value. You never need to see it to use it.",
 }
+
+const RULE_23_441 =
+  '23. SECRETS: [secret:NAME] is a declared secret whose value exists but is hidden from you. ' +
+  'To type it, use {{secret:NAME}} verbatim as the action value, never [secret:NAME].'
 
 // Copied from buildSystemPrompt('web') after the 438 rewrite of Rules 10 and 17.
 const PINNED_RULES_438: Record<number, string> = {
@@ -163,7 +166,7 @@ describe('C436-PROMPT', () => {
       expect(rule22).toContain('Repetition is fine when the step asks for it')
       expect(rule22).toContain('after the action and one reasonable alternative')
       expect(rule22).toContain('set stepFailed and name the missing outcome')
-      expect(rule(23, platform).startsWith('23. SECRET PLACEHOLDERS')).toBe(true)
+      expect(rule(23, platform).startsWith('23. SECRETS:')).toBe(true)
     }
   })
 
@@ -175,8 +178,8 @@ describe('C436-PROMPT', () => {
     }
   })
 
-  it('Rule 23 is byte-unchanged', () => {
-    expect(rule(23, 'web')).toBe(PINNED_RULES_5E3E932A2[23])
+  it('Rule 23 is the 441 one-line secrets rule', () => {
+    for (const platform of PLATFORMS) expect(rule(23, platform)).toBe(RULE_23_441)
   })
 
   it('the bulk-completion predicate still renders only in the turn, never the system tiers', () => {
@@ -209,7 +212,6 @@ describe('C439-PROMPT', () => {
       expect(rule19).toContain(
         'A setting or value that must be saved or kept is proven only by re-reading it after a reload or reopen within this step.',
       )
-      expect(rule19).toContain('The same placeholder, such as <EMAIL_0>, is the same value wherever it appears.')
       expect(rule19).toContain('For a click on a tab, a link or a menu, the outcome is the click landing on its target.')
       expect(rule19).toContain('No visible change is not failure.')
       expect(rule19).toContain('complete the action sub-goal and move to the next per Rule 13')

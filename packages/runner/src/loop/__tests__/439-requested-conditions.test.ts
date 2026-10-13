@@ -4,7 +4,6 @@
 // C439-PHRASES (D-11) pin the coverage and phrase checks.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { asRef, stepOutcomeUnproven } from '@vostride/agent-qa-schema'
 import type {
   CitationSource,
@@ -25,6 +24,7 @@ import type { CitationSources, JudgeConditionsInput } from '../requested-conditi
 import type { RecordedAction, VerifierStepRecord } from '../step-record.js'
 import type { ConditionJudgment, VerificationResult } from '../types.js'
 import { LLMVerifier } from '../verifier.js'
+import { SecretRedactor, SecretStore } from '../secrets.js'
 import { makeFakeTokenAccounting } from './loop-harness.js'
 
 vi.mock('ai', async (importActual) => {
@@ -34,6 +34,8 @@ vi.mock('ai', async (importActual) => {
 
 const STEP = 'Send the message'
 const identity = (value: string) => value
+const signInRedactor = new SecretRedactor(new SecretStore({ SIGNIN_EMAIL: 'sam.taylor@example.test' }))
+const maskSignIn = (value: string) => signInRedactor.redactString(value)
 
 function sources(parts: Partial<CitationSources> = {}): CitationSources {
   return { 'start-screen': '', 'final-screen': '', action: '', read: '', carried: '', ...parts }
@@ -201,14 +203,13 @@ describe('C439-JUDGE', () => {
   })
 
   it('a masked placeholder in a quote matches the clear value in the record', () => {
-    const masking = createMaskingContext()
-    const placeholder = masking.mask('sam.taylor@example.test')
-    expect(placeholder).not.toContain('@')
+    const placeholder = maskSignIn('sam.taylor@example.test')
+    expect(placeholder).toBe('[secret:SIGNIN_EMAIL]')
 
     const result = judge({
       output: output([judgment('met', [{ source: 'final-screen', quote: `Signed in as ${placeholder}` }])]),
       sources: sources({ 'final-screen': '- text "Signed in as sam.taylor@example.test" [ref=e2]' }),
-      mask: masking.mask,
+      mask: maskSignIn,
     })
 
     expect(result.pass).toBe(true)
@@ -295,7 +296,6 @@ describe('C439-JUDGE', () => {
   })
 
   it('not-met, unverified and inconclusive each block the pass and the reason lists them in that order', () => {
-    const masking = createMaskingContext()
     const long = `The receipt was sent to sam.taylor@example.test ${'and more words '.repeat(30)}`
     const result = judge({
       output: output([
@@ -303,7 +303,7 @@ describe('C439-JUDGE', () => {
         judgment('not-met', [], { quote: 'Send', reasoning: 'The Send button is still enabled' }),
         judgment('inconclusive', [], { quote: 'Send the message', reasoning: 'Colour needs an image' }),
       ]),
-      mask: masking.mask,
+      mask: maskSignIn,
     })
 
     expect(result.pass).toBe(false)
@@ -315,7 +315,7 @@ describe('C439-JUDGE', () => {
     expect(inconclusive).toBeGreaterThan(unverified)
     expect(result.reason).toContain('"Send" (The Send button is still enabled)')
     expect(result.reason).not.toContain('sam.taylor@example.test')
-    expect(result.reason).toContain(masking.mask('sam.taylor@example.test'))
+    expect(result.reason).toContain('[secret:SIGNIN_EMAIL]')
     for (const condition of result.evidence.conditions) {
       expect(condition.reason.length).toBeLessThanOrEqual(200)
     }
@@ -360,10 +360,9 @@ describe('C439-COVERAGE', () => {
   })
 
   it('a placeholder token in the step is covered by a quote holding it', () => {
-    const masking = createMaskingContext()
-    const step = masking.mask('Sign in as sam.taylor@example.test')
-    const placeholder = masking.mask('sam.taylor@example.test')
-    expect(placeholder).toMatch(/^<EMAIL_\d+>$/)
+    const step = maskSignIn('Sign in as sam.taylor@example.test')
+    const placeholder = maskSignIn('sam.taylor@example.test')
+    expect(placeholder).toBe('[secret:SIGNIN_EMAIL]')
     expect(tokenize(step).map((token) => token.text)).toContain(placeholder)
     expect(uncoveredWords(step, ['Sign in'])).toEqual([placeholder])
     expect(uncoveredWords(step, [`Sign in as ${placeholder}`])).toEqual([])
@@ -376,7 +375,7 @@ describe('C439-COVERAGE', () => {
         }),
       ]),
       sources: sources({ 'final-screen': '- heading "Welcome" [ref=e1]' }),
-      mask: masking.mask,
+      mask: maskSignIn,
     })
     expect(result.pass).toBe(true)
   })

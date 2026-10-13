@@ -118,7 +118,7 @@ const IRREGULAR_STEMS: Readonly<Record<string, string>> = {
   kept: 'keep',
 }
 
-const PLACEHOLDER_TOKEN = String.raw`<[A-Z]+_[0-9]+>|\[secret:\w+\]|\{\{secret:\w+\}\}`
+const PLACEHOLDER_TOKEN = String.raw`\[secret:\w+\]|\{\{secret:\w+\}\}`
 const TOKEN_PATTERN = new RegExp(`${PLACEHOLDER_TOKEN}|[\\p{L}\\p{N}]+`, 'gu')
 const NEGATED_PARTICIPLE =
   /\b(?:has|have|had|is|are|was|were)\s*(?:not|n['’]t)\s+(?:yet\s+)?(?:been\s+)?([a-z]+)\b|\bnot\s+yet\s+(?:been\s+)?([a-z]+)\b|\b(?:did|does)\s*(?:not|n['’]t)\s+([a-z]+)\b|\bnever\s+([a-z]+)\b|\bfailed\s+to\s+([a-z]+)\b/gi
@@ -185,8 +185,8 @@ export interface StepToken {
 }
 
 /**
- * Runs of Unicode letters or digits after NFKC, compared lowercased; a masking placeholder
- * (`<EMAIL_0>`, `[secret:name]`, `{{secret:name}}`) is one token.
+ * Runs of Unicode letters or digits after NFKC, compared lowercased; a secret placeholder
+ * (`[secret:name]`, `{{secret:name}}`) is one token.
  */
 export function tokenize(value: string): StepToken[] {
   const tokens: StepToken[] = []

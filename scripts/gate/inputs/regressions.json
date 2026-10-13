@@ -1546,7 +1546,7 @@
     {
       "runner": "vitest",
       "file": "packages/runner/src/loop/__tests__/progress-prompts.test.ts",
-      "fullName": "C436-PROMPT Rule 23 is byte-unchanged",
+      "fullName": "C436-PROMPT Rule 23 is the 441 one-line secrets rule",
       "origin": "436 D-26"
     },
     {

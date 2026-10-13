@@ -64,14 +64,8 @@ describe('containsRedactedSecretMarker', () => {
   })
 })
 
-// G-381-5 drift guard (Phase 381, Plan 44). The planner system prompt's Rule 23
-// SECRET PLACEHOLDERS makes a two-part promise to the model:
-//   (a) what you see is `[secret:NAME]` — the value exists but is masked;
-//   (b) emit `{{secret:NAME}}` verbatim as the action value and the harness
-//       substitutes the real value at dispatch (loop/index.ts executeResolvedAction).
-// Both halves are pinned here on one fixture so the prompt can never overpromise:
-// if a future change breaks either half, this fails loudly instead of the rule
-// silently becoming a lie and the planner regressing to infeasible declarations.
+// G-381-5 drift guard (Phase 381, Plan 44): Rule 23 says [secret:NAME] is a hidden declared value
+// and {{secret:NAME}} types it; both halves are pinned on one fixture so the rule cannot overpromise.
 describe('prompt/mechanism round trip (G-381-5 contract)', () => {
   const SECRET_NAME = 'loginPassword'
   const BOUND_VALUE = 'hunter2-correct-horse'
