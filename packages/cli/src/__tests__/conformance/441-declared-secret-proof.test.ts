@@ -27,11 +27,16 @@ const LONG_MARKER = '[secret:LONG_441]'
 const RAW = [SHORT, LONG] as const
 const MARKERS = [SHORT_MARKER, LONG_MARKER] as const
 const SECRETS_FILE = '.env.secrets.local'
+const NOT_FOUND_HINT = 'Create the file before running tests. It may be empty, but it must exist.'
+
+function echoOf(text: string): string {
+  return `/fn knowledge.record.show ${JSON.stringify({ recordId: text })}`
+}
 
 const FREE_FORM_UTTERANCE = `keep ${SHORT} and ${LONG} in mind`
-const ECHO_UTTERANCE = `/fn knowledge.record.show ${JSON.stringify({ recordId: `${SHORT} ${LONG}` })}`
+const ECHO_UTTERANCE = echoOf(`${SHORT} ${LONG}`)
 
-// D-21 media, the runs/<id>/blobs/ image documents, and the D-18 JSON paths blanked in handoff.json.
+// D-21 media, runs/<id>/blobs/ image documents, and the D-18 JSON paths blanked in handoff.json.
 const EXCLUDED = {
   mediaExtensions: ['.png', '.jpg', '.jpeg', '.webp', '.webm', '.mp4', '.zip'],
   blobDirectory: /(^|\/)runs\/[^/]+\/blobs\//u,
@@ -70,7 +75,8 @@ function filesUnder(root: string): string[] {
 function sqliteText(path: string): string {
   const db = new DatabaseSync(path, { readOnly: true })
   try {
-    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all() as { name: string }[]
     const cells: string[] = []
     for (const { name } of tables) {
       for (const row of db.prepare(`SELECT * FROM "${name.replaceAll('"', '""')}"`).all()) {
@@ -147,13 +153,15 @@ type PresenceClass = 'user_message' | 'clause_receipt'
 function presence(agentQaRoot: string, marker: string): Record<PresenceClass, boolean> {
   const events = sessionEvents(agentQaRoot)
   const holds = (kind: PresenceClass): boolean =>
-    events.filter((event) => event.kind === kind).some((event) => JSON.stringify(event).includes(marker))
+    events.filter((event) => event.kind === kind)
+      .some((event) => JSON.stringify(event).includes(marker))
   return { user_message: holds('user_message'), clause_receipt: holds('clause_receipt') }
 }
 
 function transcript(outcome: CliRunOutcome | SpawnOutcome): string {
   const code = 'status' in outcome ? outcome.status : outcome.code
-  return `exit ${String(code)}\n--- stdout ---\n${outcome.stdout}\n--- stderr ---\n${outcome.stderr}`
+  return `exit ${String(code)}\n--- stdout ---\n${outcome.stdout}\n`
+    + `--- stderr ---\n${outcome.stderr}`
 }
 
 function declare(root: string): string {
@@ -168,7 +176,7 @@ interface ChatModelStub {
   close(): Promise<void>
 }
 
-// Answers every chat-completions request 200 with prose and no tool call, recording each body whole.
+// Answers every chat-completions request 200 with prose and no tool call; records bodies whole.
 async function startChatModelStub(): Promise<ChatModelStub> {
   const requests: { status: number; fullBody: string }[] = []
   const server = createServer((req, res) => {
@@ -188,14 +196,20 @@ async function startChatModelStub(): Promise<ChatModelStub> {
         object: 'chat.completion',
         created: 0,
         model: 'stub-441',
-        choices: [{ index: 0, message: { role: 'assistant', content: 'Noted.' }, finish_reason: 'stop' }],
+        choices: [{
+          index: 0,
+          message: { role: 'assistant', content: 'Noted.' },
+          finish_reason: 'stop',
+        }],
         usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
       }))
     })
   })
   await new Promise<void>((settle) => { server.listen(0, '127.0.0.1', settle) })
   const address = server.address()
-  if (address === null || typeof address === 'string') throw new TypeError('the chat stub bound no port')
+  if (address === null || typeof address === 'string') {
+    throw new TypeError('the chat stub bound no port')
+  }
   return {
     baseUrl: `http://127.0.0.1:${String(address.port)}/v1`,
     requests,
@@ -213,7 +227,9 @@ function pointChatModelAt(project: RecordedDoorProject, baseUrl: string): void {
 
 function wholeBodies(requests: readonly RecordedStubRequest[]): string[] {
   return requests.map((request) => {
-    if (request.fullBody === undefined) throw new Error('the stub recorded a request without its whole body')
+    if (request.fullBody === undefined) {
+      throw new Error('the stub recorded a request without its whole body')
+    }
     return request.fullBody
   })
 }
@@ -231,13 +247,16 @@ describe('C441-PROOF', () => {
       expect(freeForm.stderr, transcript(freeForm)).toContain('Ask error [fail-closed]')
 
       for (const body of wholeBodies(project.model.requests)) {
-        for (const value of RAW) expect(body.includes(value), `a model request carried ${value}`).toBe(false)
+        for (const value of RAW) {
+          expect(body.includes(value), `a model request carried ${value}`).toBe(false)
+        }
       }
 
       const events = sessionEvents(project.agentQaRoot)
       expect(events.filter((event) => event.kind === 'user_message')).toHaveLength(2)
       for (const marker of MARKERS) {
-        expect(presence(project.agentQaRoot, marker), marker).toEqual({ user_message: true, clause_receipt: true })
+        expect(presence(project.agentQaRoot, marker), marker)
+          .toEqual({ user_message: true, clause_receipt: true })
       }
 
       const stdout = `${freeForm.stdout}\n${echo.stdout}`
@@ -263,7 +282,7 @@ describe('C441-PROOF', () => {
 
       expect(outcome.status, transcript(outcome)).toBe(1)
       expect(outcome.stderr).toContain(`Error: Secrets file not found: ${secretsPath}`)
-      expect(outcome.stderr).toContain('Create the file before running tests. It may be empty, but it must exist.')
+      expect(outcome.stderr).toContain(NOT_FOUND_HINT)
       expect(project.model.requests).toEqual([])
       expect(existsSync(join(project.agentQaRoot, 'sessions'))).toBe(false)
     } finally {
@@ -271,7 +290,8 @@ describe('C441-PROOF', () => {
     }
   }, CELL_BUDGET_MS)
 
-  it('chat masks both declared values in every model request, the transcript and the terminal', async () => {
+  it('chat masks both declared values in every model request, the transcript and the terminal',
+    async () => {
     const project = await recordedDoorProject('441-chat', { fullBodies: true })
     const stub = await startChatModelStub()
     try {
@@ -288,12 +308,15 @@ describe('C441-PROOF', () => {
       expect(stub.requests.length, transcript(outcome)).toBeGreaterThan(0)
       const bodies = stub.requests.map((request) => request.fullBody)
       for (const body of bodies) {
-        for (const value of RAW) expect(body.includes(value), `a model request carried ${value}`).toBe(false)
+        for (const value of RAW) {
+          expect(body.includes(value), `a model request carried ${value}`).toBe(false)
+        }
       }
       for (const marker of MARKERS) expect(bodies.join('\n'), marker).toContain(marker)
 
       for (const marker of MARKERS) {
-        expect(presence(project.agentQaRoot, marker), marker).toEqual({ user_message: true, clause_receipt: true })
+        expect(presence(project.agentQaRoot, marker), marker)
+          .toEqual({ user_message: true, clause_receipt: true })
       }
 
       for (const marker of MARKERS) expect(outcome.stdout, marker).toContain(marker)
@@ -320,7 +343,7 @@ describe('C441-PROOF', () => {
 
       expect(outcome.code, transcript(outcome)).toBe(1)
       expect(outcome.stderr).toContain(`Error: Secrets file not found: ${secretsPath}`)
-      expect(outcome.stderr).toContain('Create the file before running tests. It may be empty, but it must exist.')
+      expect(outcome.stderr).toContain(NOT_FOUND_HINT)
       expect(stub.requests).toEqual([])
       expect(project.model.requests).toEqual([])
       expect(existsSync(join(project.agentQaRoot, 'sessions'))).toBe(false)
@@ -344,12 +367,9 @@ const TWIN_VALUES = [
 const TWIN_TEXT = TWIN_VALUES.join(' | ')
 const TWIN_ENV = { AGENT_QA_X_PASSWORD: 'pw-env-441' }
 
-function echoOf(text: string): string {
-  return `/fn knowledge.record.show ${JSON.stringify({ recordId: text })}`
-}
-
 function sessionKinds(agentQaRoot: string, kind: string): string {
-  return sessionEvents(agentQaRoot).filter((event) => event.kind === kind).map((event) => JSON.stringify(event)).join('\n')
+  return sessionEvents(agentQaRoot).filter((event) => event.kind === kind)
+    .map((event) => JSON.stringify(event)).join('\n')
 }
 
 function twinProject(project: RecordedDoorProject, secrets: string): void {
@@ -399,7 +419,9 @@ describe('C441-NOTHING-ELSE', () => {
         expect(askMessages, value).toContain(value)
         expect(askReceipts, value).toContain(value)
         expect(ask.stdout, value).toContain(value)
-        for (const request of stub.requests.slice(beforeAsk)) expect(request.fullBody, value).toContain(value)
+        for (const request of stub.requests.slice(beforeAsk)) {
+          expect(request.fullBody, value).toContain(value)
+        }
       }
 
       expect(project.model.requests).toEqual([])
@@ -410,7 +432,8 @@ describe('C441-NOTHING-ELSE', () => {
     }
   }, CELL_BUDGET_MS)
 
-  it('an empty secrets file changes nothing, and encoded or case-changed forms of a declared value are not masked', async () => {
+  it('an empty secrets file changes nothing, and encoded or case-changed forms of a declared value '
+    + 'are not masked', async () => {
     const project = await recordedDoorProject('441-twin-forms', { fullBodies: true })
     const stub = await startChatModelStub()
     try {
@@ -445,7 +468,8 @@ describe('C441-NOTHING-ELSE', () => {
 
       const askForms = await spawnCliRun(project, ['ask', echoOf(forms)])
       expect(askForms.status, transcript(askForms)).toBe(0)
-      const askSession = sessionEvents(project.agentQaRoot).map((event) => JSON.stringify(event)).join('\n')
+      const askSession = sessionEvents(project.agentQaRoot)
+        .map((event) => JSON.stringify(event)).join('\n')
       expect(askSession).toContain('Q^7')
       expect(askSession).toContain('q%5E7')
       expect(askSession).toContain(SHORT_MARKER)

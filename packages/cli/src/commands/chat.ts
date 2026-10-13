@@ -21,9 +21,7 @@
 // and no three-answer decision prompt. The REPL reads only the lines a person types. A refused
 // clause prints its refusal sentence beside its receipt (432-42, D-18).
 //
-// EVERYTHING PRINTED CROSSES THE MASKER. A turn result is composed from op results, and an op
-// result is exactly the kind of value a masked configuration read can put a credential into
-// (T-392-29). The dispose is in a `finally` for `fn.ts`'s reason.
+// EVERYTHING PRINTED CROSSES THE DECLARED MASK, and nothing restores it (441 D-07).
 //
 // NO MODEL IS BUILT HERE, and the arch rollcall pins that (CHAT-06). Whatever model a turn uses is
 // resolved by the composition; a chat surface constructing its own client would be a model egress
@@ -36,14 +34,12 @@ import {
   AGENT_ASK_FUNCTION_ID,
   CHAT_HELP_ENTRIES,
   composeBanner,
-  createMaskingContext,
   foldFunctionResult,
   invokeFunction,
-  unmaskForHumanOutput,
 } from '@vostride/agent-qa-agent'
 import { listSessions } from '@vostride/agent-qa-agent-local'
 import type { ChatSessionListing, LocalAgentHost } from '@vostride/agent-qa-agent-local'
-import type { AgentAskResult } from '@vostride/agent-qa-schema'
+import type { AgentAskResult, MaskFn } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import pc from 'picocolors'
 
@@ -55,6 +51,10 @@ import { loadCapabilityCatalog } from '../capability-catalog/loader.js'
 import { readAnalyticsPrivacyDeclaration, resolveConfig } from '../config.js'
 import { analyticsEvent, composeAnalyticsHost } from '../composition/analytics-host.js'
 import type { CliAnalyticsHost } from '../composition/analytics-host.js'
+import {
+  createDeclaredSecretMask,
+  DeclaredSecretsUnavailableError,
+} from '../composition/declared-secrets.js'
 import {
   CLI_FUNCTION_CALLER,
   composeCliLocalAgent,
@@ -160,7 +160,7 @@ function renderTurn(result: AgentAskResult): string {
   if (result.receipts.length > 0) lines.push(...result.receipts.map(receiptLine))
   // 399.1 (D-04/D-05): what the ops RETURNED, between the receipts that say they ran and the
   // prose the planner wrote. The order is the order the facts were established, and the payload
-  // is rendered whole — this surface's masked write is the one place it is unmasked.
+  // is rendered whole.
   lines.push(...renderClauseResults(result.results, result.receipts.length))
   if (result.answer !== undefined) lines.push(result.answer)
   if (result.status === 'fail_closed') {
@@ -200,15 +200,35 @@ function renderListing(listing: ChatSessionListing): string {
   return lines.join('\n')
 }
 
-function reportError(error: unknown): void {
-  if (error instanceof ChatCommandError) {
-    console.error(pc.red(`Chat error [${error.code}]: ${error.message}`))
-  } else if (error instanceof Error) {
-    console.error(pc.red(`Chat error [${error.name}]: ${error.message}`))
-  } else {
-    console.error(pc.red(`Chat error: ${String(error)}`))
-  }
+function printUnavailable(error: DeclaredSecretsUnavailableError): void {
+  const [first, ...rest] = error.lines
+  if (first !== undefined) console.error(pc.red(first))
+  for (const line of rest) console.error(pc.dim(line))
+}
+
+function reportError(error: unknown, mask?: MaskFn): void {
   process.exitCode = 1
+  if (error instanceof DeclaredSecretsUnavailableError) {
+    printUnavailable(error)
+    return
+  }
+  const line = error instanceof ChatCommandError
+    ? `Chat error [${error.code}]: ${error.message}`
+    : error instanceof Error
+      ? `Chat error [${error.name}]: ${error.message}`
+      : `Chat error: ${String(error)}`
+  // A refusal raised before the loader exists has nothing to mask with.
+  let shown = line
+  if (mask !== undefined) {
+    try {
+      shown = mask(line)
+    } catch (maskError) {
+      if (!(maskError instanceof DeclaredSecretsUnavailableError)) throw maskError
+      printUnavailable(maskError)
+      return
+    }
+  }
+  console.error(pc.red(shown))
 }
 
 /**
@@ -252,15 +272,9 @@ function resolveSessionId(
   return latest.sessionId
 }
 
-/** Everything a surface prints goes through the masker (`fn.ts:143-150`). */
-function emitHuman(text: string): void {
+function emitHuman(mask: MaskFn, text: string): void {
   if (text === '') return
-  const maskingContext = createMaskingContext()
-  try {
-    console.log(unmaskForHumanOutput(maskingContext, text))
-  } finally {
-    maskingContext.dispose()
-  }
+  console.log(mask(text))
 }
 
 export function createChatCommand(deps: ChatCommandDeps = {}): Command {
@@ -280,12 +294,19 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
       let turnCount = 0
       let functionCallCount = 0
       let endReason: 'exit' | 'interrupt' | 'error' | 'unknown' = 'exit'
+      let mask: MaskFn | undefined
       try {
+        const declaredSecrets = createDeclaredSecretMask(composition.configPath)
+        // E3: refuse before any host or model when the secrets file cannot be read.
+        declaredSecrets.redactor()
+        const print = declaredSecrets.mask
+        mask = print
+
         if (options.list === true) {
           // A READ that exits. Composing a host here would create the runtime root — and a
           // project that has never opened chat would acquire a sessions directory by asking
           // whether it had any (the `jobs()` laziness rule, applied to a listing).
-          emitHuman(renderListing(listSessions(composition.agentQaRoot)))
+          emitHuman(print, renderListing(listSessions(composition.agentQaRoot)))
           return
         }
 
@@ -354,6 +375,7 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
 
         host = composeCliLocalAgent({
           ...composition,
+          declaredSecrets,
           // 398-10: the explain counter hooks bind against this port inside the composition root.
           analytics,
           ...(chatModel === undefined
@@ -377,18 +399,9 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
           // UNCONDITIONAL, INCLUDING UNDER PIPED STDIN. A scripted session is still a transcript
           // somebody reads, and it is the surface the live lane greps; suppressing the render for
           // non-TTY would make the one automatable reading of this clause unavailable.
-          //
-          // THROUGH THE MASKER, on this file's own law twenty lines up: everything printed crosses
-          // it. The bytes here already passed the construction scan (D-12), so this is the second
-          // of two independent passes rather than the only one.
           chatPresent: (text: string) => {
             const stream = deps.output ?? process.stdout
-            const maskingContext = createMaskingContext()
-            try {
-              stream.write(`${unmaskForHumanOutput(maskingContext, text)}\n`)
-            } finally {
-              maskingContext.dispose()
-            }
+            stream.write(`${declaredSecrets.mask(text)}\n`)
           },
         })
         const chat = host.chat
@@ -424,7 +437,7 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
           },
           CLI_FUNCTION_CALLER,
         )
-        if (banner !== undefined) emitHuman(banner)
+        if (banner !== undefined) emitHuman(print, banner)
 
         // 398 plan 09, D-01/SC-1: the ONE catalog, loaded ONCE, feeding both discovery features.
         // It is loaded here rather than lazily because the loader FAILS LOUD — a missing artifact
@@ -450,7 +463,7 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
         // row's own description, which is the op's declared summary.
         const starters = buildStarterPrompts(catalog.rows, CHAT_HELP_ENTRIES)
         if (starters.length > 0) {
-          emitHuman([pc.dim('Try one of these, or just ask:'), ...starters].join('\n'))
+          emitHuman(print, [pc.dim('Try one of these, or just ask:'), ...starters].join('\n'))
         }
 
         // Readline CLOSES when its input ends, which for a scripted stdin happens while a turn is
@@ -463,7 +476,7 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
         })
 
         let announced = sessionId !== undefined
-        if (announced) emitHuman(pc.dim(`session ${String(sessionId)}`))
+        if (announced) emitHuman(print, pc.dim(`session ${String(sessionId)}`))
 
         if (!promptClosed) prompt.prompt()
         for await (const line of prompt) {
@@ -500,10 +513,10 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
             activeSessionId = result.sessionId
             if (!announced) {
               // Printed ONCE, and printed at all because it is what `--session` takes (D-17).
-              emitHuman(pc.dim(`session ${result.sessionId}`))
+              emitHuman(print, pc.dim(`session ${result.sessionId}`))
               announced = true
             }
-            emitHuman(renderTurn(result))
+            emitHuman(print, renderTurn(result))
           } catch (error) {
             // A refused or failed TURN ends the turn, never the conversation. The person is still
             // here and their next line is still a request; exiting on a refusal would make one
@@ -517,7 +530,7 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
               duration_ms: Date.now() - turnStartedAt,
               errored: true,
             }))
-            reportError(error)
+            reportError(error, print)
             process.exitCode = undefined
           }
 
@@ -535,7 +548,7 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
         prompt.close()
       } catch (error) {
         endReason = 'error'
-        reportError(error)
+        reportError(error, mask)
       } finally {
         // ONE session event per invocation that opened a conversation, emitted where the host is
         // closed so it cannot be missed by a path that returns early. A `--list` never reaches

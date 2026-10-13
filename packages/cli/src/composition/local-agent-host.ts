@@ -643,7 +643,7 @@ export interface ComposeCliLocalAgentInput {
   chatReconcile?: ComposeLocalAgentInput['chatReconcile']
   /** The configuration file this invocation resolves against. */
   configPath: string
-  // 2026-10-14 (441-06, D-08): one loader per command, shared with its emitters; default reads configPath.
+  // 2026-10-14 (441-06, D-08): the command's one loader, shared with its emitters.
   declaredSecrets?: DeclaredSecretMask
   /**
    * The invocation's composed analytics, when this host has any (398-10, D-11/D-18).

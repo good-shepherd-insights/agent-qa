@@ -77,6 +77,8 @@ function fixtureProject(
     })}\n`,
     'utf8',
   )
+  // 2026-10-14 (441-06, E3): chat refuses a project whose secrets file is missing.
+  writeFileSync(join(dir, '.env.secrets.local'), '', 'utf8')
   return { dir, configPath }
 }
 
@@ -123,6 +125,7 @@ function invalidConfigDeclaringPrivacy(
     })}\n`,
     'utf8',
   )
+  writeFileSync(join(dir, '.env.secrets.local'), '', 'utf8')
   return { dir, configPath }
 }
 
@@ -260,17 +263,8 @@ describe('the chat composition root honours analytics.privacy (398-14, D-19)', (
     expect(host?.transportKind).toBe('posthog')
   })
 
-  it('still opens a session in a directory with NO config file (the tolerant read cannot refuse)', async () => {
-    const { configPath } = fixtureProject(roots, { withConfig: false })
-    const recorder = recordingCompose()
-
-    const result = await runChat(configPath, ['/quit'], { composeAnalytics: recorder.compose })
-
-    // T-398-32: refusing a surface over its telemetry configuration would be refusing the
-    // capability over the telemetry. An unresolvable config is a real posture, not a failure.
-    expect(recorder.hosts).toHaveLength(1)
-    expect(result.exitCode === undefined || result.exitCode === 0).toBe(true)
-  })
+  // 2026-10-14 (441-06, E3): `still opens a session in a directory with NO config file` is
+  // deleted with its subject; chat refuses at start when no secrets file can be read.
 
   // ── Finding F-1 / review CR-01 (Phase 398 gap round) ──────────────────────────────────────
   //
@@ -320,12 +314,11 @@ describe('the chat composition root honours analytics.privacy (398-14, D-19)', (
 
     const result = await runChat(configPath, ['/quit'], { composeAnalytics: recorder.compose })
 
-    // A document we cannot read MIGHT carry the declaration. The cost of opting out is lost
-    // telemetry; the cost of the other choice is transmitting against a declaration that may be
-    // sitting right there. For a privacy control the doubt resolves toward the user.
-    expect(recorder.hosts).toHaveLength(1)
-    expect(recorder.hosts[0]?.optOutReasons).toContain('config-privacy')
-    expect(result.exitCode === undefined || result.exitCode === 0).toBe(true)
+    // A document we cannot read MIGHT carry the declaration, so the doubt resolves toward the user.
+    // 2026-10-14 (441-06, E3): the secrets declaration cannot be read either, so chat refuses at
+    // start and composes no analytics host at all: nothing can be transmitted.
+    expect(recorder.hosts).toHaveLength(0)
+    expect(result.exitCode).toBe(1)
   })
 })
 
