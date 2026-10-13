@@ -107,7 +107,7 @@ steps:
  * the same hazard `TEST_DOCUMENT_FORMAT_EXAMPLE` is composed in rather than retyped to avoid. The
  * first draft of this block claimed four keys were all a document may carry, and the cost was
  * specific: `context` is one of the three `EDITABLE_POINTER_ROOTS` and the root `ParsedDraftLike`
- * was widened for in 394-15 so `screenDraftForCredentials` could scan it — and a stage forbidden to
+ * was widened for in 394-15 so the draft check could read it — and a stage forbidden to
  * emit it could never populate it. The accepted set is `name`, `test-id`, `target`, `steps`,
  * `context`, `use`, `meta`, `setup`, `teardown`, and the schema is `.strict()`, which is the half
  * of the old closing claim that was always true.

@@ -89,7 +89,9 @@ const MARKER_PATCH: TestEditPatchSet = TestEditPatchSetSchema.parse({
 
 const CONTEXT_MARKER_PATCH: TestEditPatchSet = TestEditPatchSetSchema.parse({
   thoughts: 'record the operator password',
-  patches: [{ op: 'replace', path: '/context', value: `Sign in as the operator using ${PLANTED_MARKER}` }],
+  patches: [
+    { op: 'replace', path: '/context', value: `Sign in as the operator using ${PLANTED_MARKER}` },
+  ],
 })
 
 /** The same shape carrying no placeholder — this file's admit direction. */

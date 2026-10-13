@@ -322,7 +322,7 @@ describe('a zero-exemplar scope compiles a document the SHIPPED parser accepts',
 
   it('reaches ParsedDraftLike.context from stage 3 — the root the gate scans (WR-06)', async () => {
     // THE CLAIM, AND WHY IT IS MADE HERE. `ParsedDraftLike.context` was widened into the shape in
-    // 394-15 so `screenDraftForCredentials` could scan it, and nothing on the compile path had
+    // 394-15 so the draft check could read it, and nothing on the compile path had
     // ever populated it: the format block told stage 3 that four keys were all a document may
     // carry. This cell is that root's first end-to-end reachability proof, and it is a fact about
     // the SHIPPED parser — `agent-local`'s shelf is a fake that reads `name` and `steps` and would

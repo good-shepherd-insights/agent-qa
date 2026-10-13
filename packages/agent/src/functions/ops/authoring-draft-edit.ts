@@ -59,7 +59,7 @@ import type {
 
 import { bindEntityNames } from '../../authoring/entity-binding.js'
 import type { EntityBinding } from '../../authoring/entity-binding.js'
-import { screenDraftForCredentials } from '../../authoring/loop.js'
+import { refuseLiteralSecretMarkers } from '../../authoring/loop.js'
 import { buildTieredPrompt } from '../../prompt/tiered-prompt-builder.js'
 import { FunctionNotBoundError } from '../spec.js'
 import type { ClauseVerdict, FunctionSpec } from '../spec.js'
@@ -299,11 +299,8 @@ export const authoringDraftEditSpec: FunctionSpec<
     const staged = await shelf.applyPatches(resolution.draft, parsed.data)
     if (staged.kind === 'unparsable') throw new EditResultUnparsableError(staged.reason)
 
-    // 6. THE SAME CREDENTIAL GATE THE LOOP RUNS (394-10, T-394-43). This op is the SECOND writer of
-    //    an authored test (432 D-06), so a gate that ran only on the loop's path would leave the
-    //    write path reachable by the shorter route. A model asked to "add the API key" is exactly how a
-    //    literal arrives here.
-    screenDraftForCredentials(staged.draft)
+    // 6. 2026-10-14 (441-03, D-10): the loop's literal-marker check, before anything is written.
+    refuseLiteralSecretMarkers(staged.draft)
 
     const stagedRef = {
       filePath: staged.draft.filePath,
@@ -313,7 +310,7 @@ export const authoringDraftEditSpec: FunctionSpec<
     }
 
     // 7. THE WRITE (432 D-06/D-07), over the file this op read, and only if it still holds exactly
-    //    the bytes it read. The parser, the patch schema, the region fence and the credential screen
+    //    the bytes it read. The parser, the patch schema, the region fence and the marker check
     //    above have all passed by now; the writer adds the workspace boundary and the digest guard.
     const written = await shelf.publish({
       draftPath: staged.draft.filePath,
