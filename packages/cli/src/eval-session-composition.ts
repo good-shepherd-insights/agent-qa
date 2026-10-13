@@ -191,6 +191,7 @@ import type {
 import type { AgentQaConfig } from '@vostride/agent-qa-core'
 import { loadConfigFile, resolveConfig } from './config.js'
 import { listTargets, resolveTarget } from './targets.js'
+import { hasNoiseFloorArtefacts } from './curation/promotion-posture.js'
 export { renderCensusMarkdown }
 import { renderEvalReportMarkdown } from './eval-report-render.js'
 import {
@@ -1169,13 +1170,16 @@ export type MisdirectionRootPostureRead =
  * declaration is all there is. A root that EXISTS and cannot be read has identical (empty)
  * evidence and the opposite meaning: it is an unbacked gated posture that earns no exemption.
  * `readCanaryCorpusDigest`'s arms map onto these one for one, and the mapping is total so a
- * broken root can never be folded into an absent one.
+ * broken gated root can never be folded into an absent one.
  */
 export async function readMisdirectionRootPosture(
   session: EvalSession,
 ): Promise<MisdirectionRootPostureRead> {
   const digest = readCanaryCorpusDigest(session)
-  if (digest.kind === 'no-eval-root') return { kind: 'no-eval-root' }
+  // Amends 422 D-19: a mark seeds this root before any floor is measured. With no floor
+  // artefact no gate is configured, so it reads as absent, as the promotion posture does.
+  const floorless = !hasNoiseFloorArtefacts(resolve(session.configDir, 'agent-qa-eval'))
+  if (digest.kind === 'no-eval-root' || floorless) return { kind: 'no-eval-root' }
   // A closed word, not `digest.reason`: that string is an `lstat`/read error message and it
   // lands in the durable `misdirection-posture.json`. See MISDIRECTION_ROOT_UNREADABLE.
   if (digest.kind !== 'digest') return { kind: 'broken-eval-root', reason: 'eval-root-unreadable' }

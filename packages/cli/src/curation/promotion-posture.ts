@@ -41,7 +41,7 @@ export type PromotionPostureResolution =
 
 // Mirrors the layout listNoiseFloorArtefacts reads. Any JSON there, even one it refuses, keeps
 // the root on the measured path, so a broken or foreign-profile floor still holds.
-function hasNoiseFloorArtefacts(committedRoot: string): boolean {
+export function hasNoiseFloorArtefacts(committedRoot: string): boolean {
   if (existsSync(join(committedRoot, 'reports', 'noise-floor.json'))) return true
   try {
     return readdirSync(join(committedRoot, 'reports', 'noise-floor')).some(name => name.endsWith('.json'))
