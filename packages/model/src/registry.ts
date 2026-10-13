@@ -9,7 +9,7 @@ import {
 import type { LanguageModelMiddleware } from 'ai'
 import type { LanguageModelV3, LanguageModelV3StreamPart, ProviderV3 } from '@ai-sdk/provider'
 import type { MaskFn, ModelProfile } from '@vostride/agent-qa-schema'
-import { createMaskingMiddleware, registerFirstPartySafetyHooks } from '@vostride/agent-qa-safety'
+import { createMaskingMiddleware } from '@vostride/agent-qa-safety'
 
 import { deriveTransport } from './auth.js'
 import type { ResolvedModelAuth } from './auth.js'
@@ -32,9 +32,8 @@ import { providerCallReport } from './provider-call-report.js'
 import type { ModelCallEvent, ModelCallObservation, ModelCallReportOrigin } from './provider-call-report.js'
 export type { ModelCallObservation } from './provider-call-report.js'
 
-// Retry is outermost; repair sees text after SDK extraction; request transforms normalize,
-// derive examples and serialize. createModel appends the declared-secret masking middleware
-// after this array, so it is the last transform before the wire (validate:safety (a)).
+// The per-call array createModel builds ends with the declared-secret mask after this array,
+// so it is the last transform before the wire (validate:safety (a)).
 const MIDDLEWARE: LanguageModelMiddleware[] = [
   retryMiddleware(),
   repairMiddleware(),
@@ -46,7 +45,6 @@ const MIDDLEWARE: LanguageModelMiddleware[] = [
   debugLoggingMiddleware(),
   // RUNX-01: strip empty-content messages just before the wire.
   dropEmptyMessagesMiddleware(),
-  registerFirstPartySafetyHooks().middleware,
 ]
 
 export interface ModelProviderOverrides {

@@ -1,5 +1,5 @@
 // The conversation-scoped token-accounting instance (CTXB-03, D-01/D-02/D-04/D-07/D-12).
-// Closure-state factory (createMaskingContext precedent): options in, closure-captured anchor
+// Closure-state factory: options in, closure-captured anchor
 // state, an object of methods out. Provider-neutral: operates only on AI SDK `ModelMessage[]`.
 
 import type { ModelMessage } from 'ai'

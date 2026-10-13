@@ -51,13 +51,13 @@ vi.mock('@vostride/agent-qa-runner', async importOriginal => {
 })
 vi.mock('@vostride/agent-qa-safety', async importOriginal => {
   const real = await importOriginal<typeof import('@vostride/agent-qa-safety')>()
-  return { ...real, registerFirstPartySafetyHooks: (...args: Parameters<typeof real.registerFirstPartySafetyHooks>) => {
-    const hooks = real.registerFirstPartySafetyHooks(...args)
-    const transform = hooks.middleware.transformParams!
-    return { ...hooks, middleware: { ...hooks.middleware, transformParams: (...params: Parameters<typeof transform>) => {
+  return { ...real, createMaskingMiddleware: (...args: Parameters<typeof real.createMaskingMiddleware>) => {
+    const middleware = real.createMaskingMiddleware(...args)
+    const transform = middleware.transformParams!
+    return { ...middleware, transformParams: (...params: Parameters<typeof transform>) => {
       boundary.safety()
       return transform(...params)
-    } } }
+    } }
   } }
 })
 vi.mock('../llm-utils.js', async importOriginal => ({

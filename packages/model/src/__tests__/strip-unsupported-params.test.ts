@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { LanguageModelV3, LanguageModelV3CallOptions } from '@ai-sdk/provider'
 import type { ModelProfile, ModelProviderId } from '@vostride/agent-qa-schema'
-import { setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
 
 import { overrideStore } from '../capability/override-store.js'
 import { stripUnsupportedParamsMiddleware } from '../middleware/strip-unsupported-params.js'
@@ -140,7 +139,6 @@ async function captureMaxOutputTokens(provider: ModelProviderId): Promise<number
 describe('createModel egress strip (auth-free capture proof)', () => {
   beforeEach(() => {
     overrideStore.clear()
-    setActiveMaskingContextResolver(() => undefined)
   })
 
   it('strips maxOutputTokens on the wire for openai-subscription (codex Responses 400 fix)', async () => {

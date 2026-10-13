@@ -232,7 +232,7 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
     }
   }
 
-  it('writes a guardrail row for the audited createModel call inside runCurationTail', async () => {
+  it('curates through the tail\'s createModel call once and writes its receipt', async () => {
     const modelCalls = vi.fn<(options: CallOptions) => void>()
     const sink = new JsonlAuditSink(agentQaRoot)
 
@@ -246,19 +246,6 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
     if (loaded.kind !== 'loaded') throw new Error('expected one curated audit bundle')
     expect(loaded.bundle.events).toContainEqual(
       expect.objectContaining({ curationJobId: finalizedCandidateId }),
-    )
-    const auditFile = join(agentQaRoot, 'guardrail_audit.jsonl')
-    expect(existsSync(auditFile)).toBe(true)
-    const rows = readFileSync(auditFile, 'utf8')
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line) as Record<string, unknown>)
-    expect(rows).toContainEqual(
-      expect.objectContaining({
-        channel: 'request',
-        action: 'redact',
-        detector: 'bearer',
-      }),
     )
     const receipt = JSON.parse(readFileSync(join(
       agentQaRoot,

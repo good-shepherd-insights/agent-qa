@@ -4,11 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { LanguageModelV3, LanguageModelV3CallOptions } from '@ai-sdk/provider'
 import type { ModelCapabilities, ModelProfile, ModelProviderId } from '@vostride/agent-qa-schema'
-import {
-  createMaskingContext,
-  GuardrailBlockError,
-  setActiveMaskingContextResolver,
-} from '@vostride/agent-qa-safety'
 
 import { capabilityKey, overrideStore } from '../capability/override-store.js'
 import { resolveCapabilities } from '../capability/resolve.js'
@@ -25,8 +20,6 @@ interface RegistryCase {
 }
 
 const noneAuth: ResolvedModelAuth = { kind: 'none' }
-const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
-const BEARER = 'Bearer abcdefghijklmno12345'
 
 type StreamPart = Awaited<ReturnType<LanguageModelV3['doStream']>>['stream'] extends ReadableStream<
   infer Part
@@ -107,17 +100,6 @@ function promptWithUserText(text: string): LanguageModelV3CallOptions['prompt'] 
   ] as LanguageModelV3CallOptions['prompt']
 }
 
-function capturedUserText(params: LanguageModelV3CallOptions | undefined): string {
-  const message = params?.prompt[0]
-  const part = message?.role === 'user' ? message.content[0] : undefined
-
-  if (!part || part.type !== 'text') {
-    throw new Error('expected a transformed user text prompt part')
-  }
-
-  return part.text
-}
-
 function textDelta(delta: string): StreamPart {
   return { type: 'text-delta', id: 'text-1', delta } as StreamPart
 }
@@ -142,7 +124,6 @@ describe('createModel', () => {
   afterEach(() => vi.restoreAllMocks())
   beforeEach(() => {
     overrideStore.clear()
-    setActiveMaskingContextResolver(() => undefined)
   })
 
   it('observes actual provider attempts beneath retries, without receiving provider data', async () => {
@@ -217,19 +198,6 @@ describe('createModel', () => {
     const result = await model.doStream({ prompt: [] })
     expect(await collectStreamText(result.stream)).toBe('streamed')
     expect(onProviderCall).toHaveBeenCalledTimes(2)
-  })
-
-  it('does not count a safety refusal before the provider', async () => {
-    const onProviderCall = vi.fn()
-    const providerCall = vi.fn()
-    const model = createModel(overrideProfile(), noneAuth,
-      (text) => text,
-      { languageModels: { 'override-model': fakeLanguageModel(providerCall) } },
-      { onProviderCall })
-    await expect(model.doGenerate({ prompt: promptWithUserText(AWS_KEY) }))
-      .rejects.toBeInstanceOf(GuardrailBlockError)
-    expect(providerCall).not.toHaveBeenCalled()
-    expect(onProviderCall).not.toHaveBeenCalled()
   })
 
   it('observes a failed invocation and preserves the original error', async () => {
@@ -412,66 +380,5 @@ describe('createModel', () => {
 
     expect(calls).toBe(1)
     expect(overrideStore.get(capabilityKey(modelProfile.provider, modelProfile.model))).toBe(32768)
-  })
-
-  describe('safety egress middleware', () => {
-    it('runs the guardrail after masking on provider request params', async () => {
-      const maskingContext = createMaskingContext()
-      maskingContext.register(AWS_KEY)
-      setActiveMaskingContextResolver(() => maskingContext)
-
-      let captured: LanguageModelV3CallOptions | undefined
-      const model = createModel(overrideProfile(), noneAuth, (text) => text, {
-        languageModels: {
-          'override-model': fakeLanguageModel((params) => {
-            captured = params
-          }),
-        },
-      })
-
-      await model.doGenerate({
-        prompt: promptWithUserText(`masked ${AWS_KEY}; residual ${BEARER}`),
-      })
-
-      const text = capturedUserText(captured)
-      expect(text).toContain('<SECRET_0>')
-      expect(text).toContain('<REDACTED:bearer>')
-      expect(text).not.toContain(AWS_KEY)
-      expect(text).not.toContain(BEARER)
-    })
-
-    it('blocks an unmasked block-shape prompt before the provider call', async () => {
-      let providerCalled = false
-      const model = createModel(overrideProfile(), noneAuth, (text) => text, {
-        languageModels: {
-          'override-model': fakeLanguageModel(() => {
-            providerCalled = true
-          }),
-        },
-      })
-
-      await expect(
-        model.doGenerate({ prompt: promptWithUserText(`send ${AWS_KEY}`) }),
-      ).rejects.toBeInstanceOf(GuardrailBlockError)
-      expect(providerCalled).toBe(false)
-    })
-
-    it('scans the streaming path instead of passing provider streams through raw', async () => {
-      const model = createModel(overrideProfile(), noneAuth, (text) => text, {
-        languageModels: {
-          'override-model': fakeLanguageModel(() => undefined, [
-            textDelta(`prefix ${AWS_KEY.slice(0, 8)}`),
-            textDelta(`${AWS_KEY.slice(8)} suffix`),
-          ]),
-        },
-      })
-
-      const result = await model.doStream({ prompt: [] })
-      const output = await collectStreamText(result.stream)
-
-      expect(output).toBe('prefix <REDACTED:awsKey> suffix')
-      expect(output).not.toContain(AWS_KEY)
-      expect(output).not.toContain(AWS_KEY.slice(0, 8))
-    })
   })
 })

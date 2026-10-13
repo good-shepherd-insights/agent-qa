@@ -131,14 +131,6 @@ describe('panel replay at the sanctioned model boundary', () => {
       expect(text).toContain('<SECRET_')
       expect(text).toContain(`${JUDGE_CONFIG.promptTemplate.frameBegin}\n${hostile}`)
     }
-    expect(result.audit.length).toBeGreaterThan(0)
-    const repeated = await run({ members: ids.slice(0, size).map(id => ({ profile: familyStubProfile(id), auth: noneAuth,
-      modelOverrides: { languageModels: capturingStub(() => judgeGenerateResult('equivalent', 'high'), id).languageModels },
-    })) }, true)
-    const rows = (audit: typeof result.audit) => audit.map(({ ts: _ts, ...row }) => row)
-    expect(rows(repeated.audit)).toEqual(rows(result.audit))
-    const noJudge = await run(undefined, true)
-    expect(result.audit.length).toBeGreaterThan(noJudge.audit.length)
   })
 
   it('refuses the whole ineligible panel without binding any member', async () => {

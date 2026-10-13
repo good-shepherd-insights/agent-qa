@@ -10,12 +10,11 @@
 // baseURL; the stub serves every call).
 //
 // Proven: temperature 0 on every replayed request; masked observation content (raw sentinel absent,
-// placeholder present); the guardrail backstop firing on a reconstructed raw secret inside
-// runSafetyScope; an empty-but-structured ServedBrief preserving truncation-only coverage without
+// placeholder present); an empty-but-structured ServedBrief preserving truncation-only coverage without
 // learned tiers; an evidence-incomplete bundle refused before any planner invocation (doGenerate
 // count 0); and the production system tier + action tool slice present at the boundary.
 
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -41,9 +40,6 @@ import {
 // An obviously-synthetic email: the empty-seeded MaskingContext auto-masks emails, so this reaches
 // the boundary as an <EMAIL_n> placeholder (D-06). Never a live secret (T-368-15).
 const EMAIL_SENTINEL = 'replay-sentinel-user@masked.example'
-// A reconstructed raw bearer secret: masking auto-detects only emails, so this reaches the guardrail
-// detectors, fires 'bearer', and lands an audit row — the D-06 raw-leak backstop.
-const BEARER_SENTINEL = 'Bearer sk-replay-abcdefgh12345'
 
 describe('RPLY-02 captured provider-boundary proof (runCassetteReplay, D-05/D-06)', () => {
   const tempRoots: string[] = []
@@ -104,29 +100,6 @@ describe('RPLY-02 captured provider-boundary proof (runCassetteReplay, D-05/D-06
     const serialized = JSON.stringify(stub.captured[0])
     expect(serialized).toContain('<EMAIL_')
     expect(serialized).not.toContain(EMAIL_SENTINEL)
-  })
-
-  it('fires the guardrail backstop on a reconstructed raw secret inside runSafetyScope', async () => {
-    // A raw bearer token in the recorded step text is scanned by the guardrail on every replayed
-    // prompt; it fires 'bearer' and the replay-scoped JsonlAuditSink records the row under the
-    // replay output dir (T-368-12) — the D-06 raw-leak backstop.
-    const handoff = makeReplayHandoff({ stepText: `Authenticate with ${BEARER_SENTINEL} then click Continue` })
-    const bundle = extractStoreLoad(handoff, memArtifacts(), await tempRoot('replay-b-guard-'))
-    const stub = capturingStub(() => actionGenerateResult('web'))
-    const replayDir = await tempRoot('replay-b-guard-audit-')
-
-    await runCassetteReplay({
-      cassette: bundle.cassette,
-      artifacts: bundle.artifacts,
-      profile: stubProfile(),
-      auth: noneAuth,
-      modelOverrides: { languageModels: stub.languageModels },
-      replayOutputBaseDir: replayDir,
-    })
-
-    const auditPath = join(replayDir, 'guardrail_audit.jsonl')
-    expect(existsSync(auditPath)).toBe(true)
-    expect(readFileSync(auditPath, 'utf8')).toContain('bearer')
   })
 
   it('preserves truncation-only coverage for an empty ServedBrief without inventing learned tiers', async () => {

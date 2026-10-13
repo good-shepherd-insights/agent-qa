@@ -1,10 +1,6 @@
-import type { LanguageModelV3CallOptions } from '@ai-sdk/provider'
+import type { LanguageModelV3CallOptions, LanguageModelV3StreamPart } from '@ai-sdk/provider'
 import type { MaskFn, ModelProfile } from '@vostride/agent-qa-schema'
-import {
-  createMaskingContext,
-  setActiveMaskingContextResolver,
-} from '@vostride/agent-qa-safety'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import type { ResolvedModelAuth } from '../auth.js'
 import type { ModelCallEvent } from '../provider-call-report.js'
@@ -12,7 +8,6 @@ import { createModel } from '../registry.js'
 import { stubGenerateResult, stubModel } from './stub-model.js'
 
 const noneAuth: ResolvedModelAuth = { kind: 'none' }
-const secret = 'sk-live-abcdef0123456789'
 
 const baseModelProfile: ModelProfile = {
   provider: 'openai-compatible',
@@ -20,81 +15,6 @@ const baseModelProfile: ModelProfile = {
   baseURL: 'http://localhost:11434/v1',
   auth: { mode: 'none' },
 }
-
-afterEach(() => {
-  setActiveMaskingContextResolver(() => undefined)
-})
-
-describe('masking egress middleware', () => {
-  it('masks active-context prompt secrets at the captured provider boundary', async () => {
-    const ctx = createMaskingContext()
-    ctx.register(secret)
-    // The ALS adapter itself is proven in 345-03. This test installs the
-    // resolver directly to prove createModel egress reaches the masking hook.
-    setActiveMaskingContextResolver(() => ctx)
-
-    const { captured, model } = createCapturingModel()
-
-    await model.doGenerate(promptRequest(`use ${secret}`))
-
-    const text = capturedUserText(captured())
-    expect(text).toContain('<SECRET_0>')
-    expect(text).not.toContain(secret)
-  })
-
-  it('redacts residual guardrail secret shapes when no masking context is active', async () => {
-    const { captured, model } = createCapturingModel()
-    const request = promptRequest(`use ${secret}`)
-
-    await model.doGenerate(request)
-
-    const text = capturedUserText(captured())
-    expect(text).toBe('use <REDACTED:apiKey>')
-    expect(text).not.toContain(secret)
-  })
-
-  it('masks planner-shaped and verifier-shaped createModel results', async () => {
-    const ctx = createMaskingContext()
-    ctx.register(secret)
-    setActiveMaskingContextResolver(() => ctx)
-
-    const planner = createCapturingModel()
-    const verifier = createCapturingModel()
-
-    await planner.model.doGenerate(promptRequest(`planner uses ${secret}`))
-    await verifier.model.doGenerate(promptRequest(`verifier uses ${secret}`))
-
-    for (const captured of [planner.captured(), verifier.captured()]) {
-      const text = capturedUserText(captured)
-      expect(text).toContain('<SECRET_0>')
-      expect(text).not.toContain(secret)
-    }
-
-    // Curator reuses plannerModel (cli/src/commands/run.ts:2623), so it rides
-    // the same createModel seam and needs no separate model fixture here.
-  })
-
-  it('masks egress for any createModel consumer, covering variable-extractor and asserter', async () => {
-    const ctx = createMaskingContext()
-    ctx.register(secret)
-    setActiveMaskingContextResolver(() => ctx)
-
-    const { captured, model } = createCapturingModel()
-
-    await model.doGenerate(promptRequest(`consumer uses ${secret}`))
-
-    const text = capturedUserText(captured())
-    expect(text).toContain('<SECRET_0>')
-    expect(text).not.toContain(secret)
-
-    // The removed role markers named live LLM-egress consumers:
-    // packages/runner/src/loop/llm-variable-extractor.ts (LLMVariableExtractor, moved
-    // in Phase 363 D-07) and packages/runner/src/loop/asserter.ts (LLMAssertionEvaluator,
-    // wired via createAsserter). Both take a createModel-built LanguageModel, so
-    // CONTEXT D-05's 2026-07-02 correction makes the unbypassable-last masking
-    // middleware the structural proof; the old pending markers were a gap.
-  })
-})
 
 describe('C441-EGRESS', () => {
   const declaredMask: MaskFn = (text) => text.replaceAll('q^7', '[secret:SHORT]')
@@ -146,6 +66,58 @@ describe('C441-EGRESS', () => {
       respondingModelId: 'model-[secret:SHORT]',
     }) })
   })
+
+  it('no detector blocks or redacts a model request', async () => {
+    const nothingDeclared: MaskFn = (text) => text
+    const credentialShaped =
+      'card 4242 4242 4242 4242, Bearer abc123def456ghi789, AKIAIOSFODNN7EXAMPLE, qa@example.com'
+    const request = promptRequest(credentialShaped)
+    const seen: LanguageModelV3CallOptions[] = []
+    const model = createModel({ ...baseModelProfile }, noneAuth, nothingDeclared, {
+      languageModels: {
+        'override-model': stubModel({
+          async doGenerate(params) {
+            seen.push(params)
+            return stubGenerateResult()
+          },
+          async doStream(params) {
+            seen.push(params)
+            return { stream: streamOf([]) }
+          },
+        }),
+      },
+    })
+
+    await model.doGenerate(request)
+    const streamed = await model.doStream(request)
+    await collectText(streamed.stream)
+
+    expect(seen).toHaveLength(2)
+    for (const params of seen) {
+      expect(JSON.stringify(params.prompt)).toBe(JSON.stringify(request.prompt))
+    }
+  })
+
+  it('a stream reaches the caller unscanned', async () => {
+    const model = createModel({ ...baseModelProfile }, noneAuth, (text) => text, {
+      languageModels: {
+        'override-model': stubModel({
+          async doStream() {
+            return {
+              stream: streamOf([
+                { type: 'text-delta', id: 't1', delta: 'card 4242 4242 ' },
+                { type: 'text-delta', id: 't1', delta: '4242 4242 end' },
+              ]),
+            }
+          },
+        }),
+      },
+    })
+
+    const result = await model.doStream(promptRequest('hello'))
+
+    expect(await collectText(result.stream)).toBe('card 4242 4242 4242 4242 end')
+  })
 })
 
 function createCapturingModel(mask: MaskFn = (text) => text): {
@@ -192,4 +164,28 @@ function capturedUserText(captured: LanguageModelV3CallOptions | undefined): str
   if (part?.type !== 'text') throw new Error('expected captured text part')
 
   return part.text
+}
+
+function streamOf(deltas: LanguageModelV3StreamPart[]): ReadableStream<LanguageModelV3StreamPart> {
+  const parts: LanguageModelV3StreamPart[] = [
+    { type: 'stream-start', warnings: [] },
+    { type: 'text-start', id: 't1' },
+    ...deltas,
+    { type: 'text-end', id: 't1' },
+    { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage: stubGenerateResult().usage },
+  ]
+  return new ReadableStream({
+    start(controller) {
+      for (const part of parts) controller.enqueue(part)
+      controller.close()
+    },
+  })
+}
+
+async function collectText(stream: ReadableStream<LanguageModelV3StreamPart>): Promise<string> {
+  let text = ''
+  for await (const part of stream) {
+    if (part.type === 'text-delta') text += part.delta
+  }
+  return text
 }

@@ -2,7 +2,6 @@ import { generateText } from 'ai'
 import { APICallError } from '@ai-sdk/provider'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { MaskFn, ModelProfile } from '@vostride/agent-qa-schema'
-import { createMaskingContext, GuardrailBlockError, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
 import { createModel } from '../registry.js'
 import { stubGenerateResult, stubModel } from './stub-model.js'
 import { MODEL_CALL_EVENT_KINDS, MODEL_CALL_REPORT_ORIGINS } from '../index.js'
@@ -64,7 +63,7 @@ function transportModel(provider: Transport, cache?: number, model?: string, mas
   return { raw, events, fetch, observation }
 }
 
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); setActiveMaskingContextResolver(() => undefined) })
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 describe.each(transports)('423 usage authority: %s', (provider) => {
   it.each([
@@ -117,16 +116,6 @@ it('MODEL-SDK-FALLBACK and CUSTOM-UNKNOWN reject normalized custom facts', async
   const generated = await generateText({ model: raw, prompt: 'hello', maxRetries: 0 })
   expect(generated.response.modelId).toBe(declared)
   expect(events).toEqual([{ kind: 'start' }, { kind: 'success', report: { inputTokens: 100, outputTokens: 7 } }])
-})
-
-it('PRE-DISPATCH-REFUSAL does not start or complete an observed call', async () => {
-  const { raw, events, fetch, observation } = transportModel('openai-compatible')
-  await expect(raw.doGenerate({ prompt: [{ role: 'user', content: [
-    { type: 'text', text: 'AKIAIOSFODNN7EXAMPLE' },
-  ] }] })).rejects.toBeInstanceOf(GuardrailBlockError)
-  expect(events).toEqual([])
-  expect(fetch).not.toHaveBeenCalled()
-  expect(observation.onProviderCall).not.toHaveBeenCalled()
 })
 
 function custom(result = stubGenerateResult(), origin?: ModelCallReportOrigin,
@@ -265,10 +254,9 @@ it('OBSERVER-NONINTERFERENCE stream success preserves chunks and reports complet
 })
 
 it('MODEL-REPORTED crosses the live masking context before observation', async () => {
-  const masking = createMaskingContext()
-  masking.register('private-model-name')
-  const { raw, events } = transportModel('openai-compatible', 0, 'private-model-name', (text) => masking.mask(text))
+  const mask: MaskFn = (text) => text.replaceAll('private-model-name', '[secret:MODEL_NAME]')
+  const { raw, events } = transportModel('openai-compatible', 0, 'private-model-name', mask)
   await raw.doGenerate({ prompt: [] })
-  expect(events[1]?.report?.respondingModelId).toBe('<SECRET_0>')
+  expect(events[1]?.report?.respondingModelId).toBe('[secret:MODEL_NAME]')
   expect(JSON.stringify(events)).not.toContain('private-model-name')
 })

@@ -22,6 +22,7 @@ import { getCredential, resolveLLMAuth } from '@vostride/agent-qa-core'
 import { generateText as sdkGenerateText } from 'ai'
 import { MockLanguageModelV3 } from 'ai/test'
 import { createModel } from '@vostride/agent-qa-model'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { loadConfigFile } from '../config.js'
 import {
   applyResolvedAuthToModelConfig,
@@ -418,11 +419,9 @@ describe('buildJobModelCapability vision (389-06, D-02/L9/v46)', () => {
 
 describe('the daemon egress mechanism (388 CR-02, verified parity)', () => {
   it("passes createModel's pinned-last masking seam with NO active scope — the daemon posture", async () => {
-    // The daemon pumps outside any runSafetyScope. What protects its author egress is that
-    // the masking seam lives INSIDE createModel's middleware chain (pinned last), which
-    // both hosts reach through this same builder — with no active masking context the
-    // residual guardrail redaction still fires at the provider boundary.
+    // The daemon pumps outside any scope; the seam is the declared mask the job capability takes.
     const secret = 'sk-live-abcdef0123456789'
+    const redactor = new SecretRedactor(SecretStore.fromEnvContent(`DAEMON_KEY_441=${secret}`))
     let captured: { prompt?: { role: string; content: { type: string; text?: string }[] }[] } | undefined
 
     const capturingCreateModel: typeof createModel = (profile, auth, mask) =>
@@ -455,7 +454,7 @@ describe('the daemon egress mechanism (388 CR-02, verified parity)', () => {
     const capability = buildJobModelCapability(
       { ...JOB_PROFILE, baseURL: 'http://localhost:11434/v1' },
       NONE_AUTH,
-      (text) => text,
+      (text) => redactor.redactString(text),
       { createModelImpl: capturingCreateModel },
     )
 
@@ -464,7 +463,7 @@ describe('the daemon egress mechanism (388 CR-02, verified parity)', () => {
     const text = captured?.prompt
       ?.find((message) => message.role === 'user')
       ?.content.find((part) => part.type === 'text')?.text
-    expect(text).toContain('<REDACTED:apiKey>')
+    expect(text).toContain('[secret:DAEMON_KEY_441]')
     expect(text).not.toContain(secret)
   })
 

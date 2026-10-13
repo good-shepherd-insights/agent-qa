@@ -357,15 +357,8 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
     expect(outcome.agreement.k).toBe(3)
   })
 
-  it('lands guardrail audit rows under the replay output dir and disposes the masking context', async () => {
-    const handoff = makeLocalV2Handoff()
-    // A raw bearer token in the recorded step text is scanned by the guardrail detectors on every
-    // replayed prompt (empty-seeded masking only auto-masks emails, so the token reaches the
-    // guardrail) — it fires 'bearer' with a redact action and the replay-scoped JsonlAuditSink
-    // records the row under the replay output dir (T-368-12 / T-368-13).
-    handoff.tests[0]!.steps[0]!.stepText =
-      'Authenticate with Bearer sk-replay-abcdefgh12345 then click Continue'
-    const { cassette, artifacts } = extractLeaf(handoff)
+  it('disposes the replay\'s masking context once', async () => {
+    const { cassette, artifacts } = extractLeaf(makeLocalV2Handoff())
     const stub = capturingStub(() => actionGenerateResult())
     const replayDir = await tempRoot('replay-comp-audit-')
 
@@ -378,9 +371,6 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
       replayOutputBaseDir: replayDir,
     })
 
-    const auditPath = join(replayDir, 'guardrail_audit.jsonl')
-    expect(existsSync(auditPath)).toBe(true)
-    expect(readFileSync(auditPath, 'utf8')).toContain('bearer')
     expect(safetyHooks.disposeCalls).toBe(1)
   })
 
@@ -737,13 +727,6 @@ function leafDecisionScore(record: ScoreRecord): DecisionScore {
   return entry.score
 }
 
-/** Guardrail audit rows landed under a replay output dir (0 when the file never materialized). */
-function guardrailRowCount(replayDir: string): number {
-  const path = join(replayDir, 'guardrail_audit.jsonl')
-  if (!existsSync(path)) return 0
-  return readFileSync(path, 'utf8').split('\n').filter(Boolean).length
-}
-
 describe('runCassetteReplay — tier-4 judge leg (370-07, JUDGE-01/03/04)', () => {
   const tempRoots: string[] = []
 
@@ -904,34 +887,6 @@ describe('runCassetteReplay — tier-4 judge leg (370-07, JUDGE-01/03/04)', () =
     for (const captured of judgeStub.captured) {
       expect(captured.temperature).toBe(0)
     }
-  })
-
-  it('carries the ALS bundle over judge egress: judge-run audit rows strictly exceed the paired no-judge run (JUDGE-03)', async () => {
-    // The bearer sentinel rides the recorded step text, so BOTH the replayed planner prompt and
-    // every judge prompt carry it — the guardrail detector fires wherever the scope covers.
-    const stepText = 'Authenticate with Bearer sk-replay-abcdefgh12345 then fill the checkout note'
-    const baseline = await runMidBandReplay({ stepText })
-
-    const judgeStub = keyedCapturingStub(
-      () => judgeGenerateResult('equivalent', 'high'),
-      JUDGE_MODEL_ID,
-    )
-    const judged = await runMidBandReplay({
-      stepText,
-      judge: {
-        profile: familyStubProfile(JUDGE_MODEL_ID),
-        auth: noneAuth,
-        modelOverrides: { languageModels: judgeStub.languageModels },
-      },
-    })
-
-    expect(judgeStub.captured).toHaveLength(2)
-    const baselineRows = guardrailRowCount(baseline.replayDir)
-    const judgedRows = guardrailRowCount(judged.replayDir)
-    // Paired-run comparison: the only difference between the runs is the 2-call judge egress,
-    // so the strict row delta is attributable to the judge scope carrying the audit sink.
-    expect(baselineRows).toBeGreaterThan(0)
-    expect(judgedRows).toBeGreaterThan(baselineRows)
   })
 
   it('persists exactly ONE adjudicated score.json with the replay record beside it (D-05, Pitfall 2)', async () => {
