@@ -1,17 +1,23 @@
-// G-381-5 (Phase 381, Plan 44): the planner secret-fill contract.
-//
-// Live evidence: in 3 of 7 attempts (UAT runs 3/5/8) the planner declared a
-// secret-bearing step infeasible ("the requested value is a secret placeholder
-// whose concrete value is not provided") even though the secret store had the
-// name bound every time. Root cause: the shipped system prompt contained NO
-// mention of secret placeholders at all — the contract was never taught.
-//
-// These tests pin the taught contract's five elements. The mechanism half (that
-// the contract is true of the shipped code) is pinned in secrets.test.ts.
+// G-381-5 (Phase 381, Plan 44): the planner is taught the secret-fill contract. 2026-10-14
+// (441-01, D-10, D-16): the contract is one line; the mechanism half is pinned in secrets.test.ts
+// and 441-literal-marker.test.ts.
 import { describe, it, expect } from 'vitest'
-import { buildSystemPrompt } from '../prompts.js'
+import { buildSystemPrompt, buildVerifierStableTier } from '../prompts.js'
+import { tokenize } from '../requested-conditions.js'
 
 const PLATFORMS = ['web', 'android', 'ios', undefined] as const
+
+const SECRETS_RULE =
+  '23. SECRETS: [secret:NAME] is a declared secret whose value exists but is hidden from you. ' +
+  'To type it, use {{secret:NAME}} verbatim as the action value, never [secret:NAME].'
+
+const NUMBERED_PLACEHOLDER = /<[A-Z]+_[0-9]+>/
+
+function rule23(platform: (typeof PLATFORMS)[number]): string {
+  const prompt = buildSystemPrompt(platform)
+  const block = prompt.slice(prompt.indexOf('Rules:\n'), prompt.indexOf('\n\nCall the tool'))
+  return block.slice(block.indexOf('\n23. ') + 1)
+}
 
 describe('secret placeholder prompt contract (G-381-5)', () => {
   for (const platform of PLATFORMS) {
@@ -21,55 +27,59 @@ describe('secret placeholder prompt contract (G-381-5)', () => {
       const prompt = buildSystemPrompt(platform)
 
       it('carries a numbered SECRET PLACEHOLDER rule', () => {
-        expect(prompt).toContain('SECRET PLACEHOLDER')
-        expect(prompt).toMatch(/\d+\. SECRET PLACEHOLDERS/)
+        expect(prompt).toMatch(/^23\. SECRETS: /m)
       })
 
-      // Contract element 1: what the two placeholder forms look like in step text.
       it('names both placeholder forms — template and redacted display marker', () => {
         expect(prompt).toContain('{{secret:NAME}}')
         expect(prompt).toContain('[secret:NAME]')
       })
 
-      // Contract element 2: the value exists and is bound — hidden, not missing.
       it('states the value exists and is deliberately hidden, not missing', () => {
-        expect(prompt).toContain('EXISTS')
-        expect(prompt).toContain('NOT missing')
+        expect(prompt).toContain('whose value exists but is hidden from you')
       })
 
-      // Contract element 3: emit the template verbatim; harness substitutes at dispatch.
-      it('states the harness substitutes the value at dispatch', () => {
-        expect(prompt).toContain('VERBATIM')
-        expect(prompt).toContain('substitutes the real value at dispatch')
-      })
-
-      // Contract element 4: never declare infeasible for a hidden literal; the
-      // infeasible terminal stays reserved for genuinely impossible objectives.
-      it('forbids declaring infeasible because the literal is not visible', () => {
-        expect(prompt).toContain('NEVER declare the step infeasible')
-        expect(prompt).toContain('a hidden secret is not an impossible objective')
-        expect(prompt).toContain('reserved for genuinely impossible objectives')
-      })
-
-      // Contract element 5: names-not-values discipline (T-381-106).
-      it('forbids reading, printing, or verifying the concrete value', () => {
-        expect(prompt).toMatch(/NEVER attempt to read, print, echo, assert on/)
-      })
-
-      // T-381-106: the rule teaches the mechanism, never a value. No fixture
-      // secret literal may leak into the prompt via the rule prose.
+      // T-381-106: the rule teaches the mechanism, never a value.
       it('does not disclose or request any concrete secret value', () => {
         expect(prompt).not.toMatch(/secret value is\s+\S/i)
         expect(prompt).not.toContain('ask the user for the secret')
       })
     })
   }
+})
 
-  it('cross-references the existing infeasible terminal rather than redefining it', () => {
-    const prompt = buildSystemPrompt('web')
-    // Rule 12's IMPOSSIBLE OBJECTIVE arm owns failureKind "infeasible"; the new
-    // rule narrows it, it does not introduce a second terminal.
-    expect(prompt).toContain('failureKind "infeasible"')
-    expect(prompt).toContain('Rule 12')
+describe('C441-PROMPTS', () => {
+  it('Rule 23 is one line that names both forms and how to type a secret', () => {
+    for (const platform of PLATFORMS) {
+      const rule = rule23(platform)
+      expect(rule).not.toContain('\n')
+      expect(rule).toBe(SECRETS_RULE)
+      expect(rule).toContain('{{secret:NAME}}')
+      expect(rule).toContain('[secret:NAME]')
+      const secretLines = buildSystemPrompt(platform)
+        .split('\n')
+        .filter((line) => /secret/i.test(line))
+      expect(secretLines).toEqual([SECRETS_RULE])
+    }
+  })
+
+  it('no prompt names a numbered placeholder', () => {
+    for (const platform of PLATFORMS) {
+      expect(buildSystemPrompt(platform).match(NUMBERED_PLACEHOLDER)?.[0]).toBeUndefined()
+    }
+    expect(buildVerifierStableTier().match(NUMBERED_PLACEHOLDER)?.[0]).toBeUndefined()
+  })
+
+  it('the requested-conditions tokenizer keeps the two secret forms as single tokens', () => {
+    const texts = (value: string) => tokenize(value).map((token) => token.text)
+    expect(texts('Sign in as [secret:EMAIL] then {{secret:PW}}')).toEqual([
+      'Sign',
+      'in',
+      'as',
+      '[secret:EMAIL]',
+      'then',
+      '{{secret:PW}}',
+    ])
+    expect(texts('Sign in as <EMAIL_0>')).toEqual(['Sign', 'in', 'as', 'EMAIL', '0'])
   })
 })
