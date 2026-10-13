@@ -454,10 +454,11 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
       expect({ specifier, present: source.includes(`'${specifier}`) })
         .toEqual({ specifier, present: false })
     }
-    // The masking idiom, with dispose in a finally — a turn result is composed from op results,
-    // and an op result is exactly the kind of value a masked config read can put a credential into.
-    expect(source).toContain('createMaskingContext')
-    expect(source).toContain('finally')
+    // 2026-10-14 (441-06, D-07): printed text crosses the declared mask and nothing restores it.
+    expect(source).toContain('declaredSecrets.mask')
+    for (const restore of ['unmaskForHumanOutput', 'createMaskingContext']) {
+      expect({ restore, present: source.includes(restore) }).toEqual({ restore, present: false })
+    }
   })
 
   it('renders the fan-out cost verbatim off `outcome` — the sentence a person approved', () => {
