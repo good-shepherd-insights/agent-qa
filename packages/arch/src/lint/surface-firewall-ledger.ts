@@ -203,6 +203,20 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     reason: 'config and suite validation reads resolved config directly; joins the config action class',
   },
   {
+    // 2026-10-14 (Phase 441 plan 02, D-01/E3): the one host loader for workspace.secretsFile, shared
+    // with `agent-qa run`; it resolves the path as the run does and builds the run's SecretRedactor.
+    file: 'packages/cli/src/composition/declared-secrets.ts',
+    specifier: '@vostride/agent-qa-core',
+    clearedBy: '395',
+    reason: 'the declared-secrets loader resolves the workspace secrets path directly; joins the typed config action class with local-agent-host.ts',
+  },
+  {
+    file: 'packages/cli/src/composition/declared-secrets.ts',
+    specifier: '@vostride/agent-qa-runner',
+    clearedBy: '395',
+    reason: 'the declared-secrets loader builds the one masking function (SecretRedactor) the run uses; joins the typed config action class with local-agent-host.ts',
+  },
+  {
     // 2026-07-29 (Phase 385 plan 09, D-15): four of this file's five entries are GONE, not moved.
     // The reader, runner, runner-local and safety-local leaks left with the registry assembly that
     // caused them, which now lives in composeLocalAgent(). What survives is config resolution — a

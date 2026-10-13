@@ -1,3 +1,4 @@
+export { createMaskingMiddleware } from './egress/masking-middleware'
 export { createProviderRequestMiddleware } from './egress/provider-request-middleware'
 export {
   assertCommittedEgressSafe,

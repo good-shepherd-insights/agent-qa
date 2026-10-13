@@ -55,6 +55,7 @@ import type { runInProcessCliRun as RunInProcessCliRun } from '../composition/in
 // It lives in a leaf module rather than in `in-process-run-execution.ts` because that module
 // imports this one's producers — see `cli-run-input-error.ts`'s header.
 import { CliRunInputError } from '../composition/cli-run-input-error.js'
+import { DeclaredSecretsUnavailableError, readDeclaredSecrets } from '../composition/declared-secrets.js'
 import {
   buildMemberRunConfig,
   buildRunPorts,
@@ -1072,60 +1073,38 @@ function buildHooksArtifact(hooks?: Map<string, HookDefinition>): Array<{ id: st
   }))
 }
 
+function secretsRefusal(err: DeclaredSecretsUnavailableError): CliRunInputError {
+  const [first = '', ...rest] = err.lines
+  return new CliRunInputError([pc.red(first), ...rest.map((line) => pc.dim(line))], 1)
+}
+
 async function loadRuntimeSecrets(input: {
   config: AgentQaConfig
   configDir: string
   secretsFilePath?: string
-  readFileSync: typeof import('node:fs').readFileSync
-  existsSync: typeof import('node:fs').existsSync
 }): Promise<RuntimeSecretsContext> {
   const configuredSecretsFile = (input.config as any).workspace?.secretsFile
   if (typeof configuredSecretsFile !== 'string' || configuredSecretsFile.trim().length === 0) {
-    throw new CliRunInputError(
-      [pc.red('Error: workspace.secretsFile is required. Run `agent-qa init` or set it in agent-qa.config.yaml.')],
-      1,
-    )
+    throw secretsRefusal(DeclaredSecretsUnavailableError.required())
   }
 
   const secretsPath = input.secretsFilePath ?? resolvePath(input.configDir, configuredSecretsFile)
-  if (!input.existsSync(secretsPath)) {
-    throw new CliRunInputError(
-      [
-        pc.red(`Error: Secrets file not found: ${secretsPath}`),
-        pc.dim('Create the file before running tests. It may be empty, but it must exist.'),
-      ],
-      1,
-    )
-  }
-
-  let secretsContent: string
+  let secretStore: SecretStore
   try {
-    secretsContent = input.readFileSync(secretsPath, 'utf-8')
-  } catch {
-    throw new CliRunInputError(
-      [
-        pc.red(`Error: Secrets file could not be read: ${secretsPath}`),
-        pc.dim('Check the path and file permissions before running tests.'),
-      ],
-      1,
-    )
-  }
-
-  try {
-    const { SecretStore, SecretRedactor } = await import('@vostride/agent-qa-runner')
-    const secretStore = SecretStore.fromEnvContent(secretsContent)
-    return {
-      secretStore,
-      secretRedactor: new SecretRedactor(secretStore),
-      secretsFileMetadata: {
-        path: secretsPath,
-        status: 'loaded',
-        count: secretStore.count(),
-      },
-    }
+    secretStore = readDeclaredSecrets(secretsPath)
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    throw new CliRunInputError([pc.red(`Error: Secrets file is invalid: ${message}`)], 1)
+    if (err instanceof DeclaredSecretsUnavailableError) throw secretsRefusal(err)
+    throw err
+  }
+  const { SecretRedactor } = await import('@vostride/agent-qa-runner')
+  return {
+    secretStore,
+    secretRedactor: new SecretRedactor(secretStore),
+    secretsFileMetadata: {
+      path: secretsPath,
+      status: 'loaded',
+      count: secretStore.count(),
+    },
   }
 }
 
@@ -1297,8 +1276,6 @@ export async function resolveRunInvocationInputs(
     config,
     configDir,
     secretsFilePath: workspacePaths.secretsFile.absolutePath,
-    readFileSync,
-    existsSync,
   })
 
   let envFileVars: Record<string, string> = {}

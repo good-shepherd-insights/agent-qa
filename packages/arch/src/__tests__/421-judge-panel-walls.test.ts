@@ -64,7 +64,10 @@ describe('421 judge panel walls', () => {
     // packages/cli/src/run-session-composition.ts -> @vostride/agent-qa-safety-local, whose only
     // import (the readline confirm default) was deleted with the presentation confirm contract.
     // Nothing was added; the digest was recomputed from that ledger.
-    expect(digest(read('packages/arch/src/lint/surface-firewall-ledger.ts'))).toBe('689d8f8bb3b0a404ec238aa24e2e015eb0d90c65d8525cb9a40824b1da768fcd')
+    // Re-blessed 2026-10-14 (Phase 441 plan 02, D-01/E3): two pairs for the declared-secrets loader,
+    // packages/cli/src/composition/declared-secrets.ts -> core and -> runner. No judge-panel or
+    // eval-local edge was added; the digest was recomputed from that ledger.
+    expect(digest(read('packages/arch/src/lint/surface-firewall-ledger.ts'))).toBe('443d78e2e6160ef598c754c4ba70ccbd1abddc14485675bbe7eaf4c265ae6afc')
     for (const text of ["import { loadJudgeCalibrationEvidence as data } from '@vostride/agent-qa-eval-local'",
       "const data = await import('@vostride/agent-qa-eval-local')"]) {
       const hits = calibrationImports({ file: 'packages/cli/src/judge-new.ts', text })
