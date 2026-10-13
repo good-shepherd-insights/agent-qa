@@ -41,6 +41,8 @@ export interface RecordedDoorOptions {
   readonly allowProduction?: boolean
   /** Give the test one bash setup hook that exits 0. */
   readonly setupHook?: boolean
+  // 2026-10-14 (441-06): forwarded to the stub model as `fullBodies`.
+  readonly fullBodies?: boolean
 }
 
 export interface RecordedDoorProject extends PopulatedRunProject {
@@ -78,7 +80,7 @@ export async function recordedDoorProject(label: string, opts: RecordedDoorOptio
   const target = await startTargetPageServer()
   let model: StubModelServer | undefined
   try {
-    model = await startStubModelServer()
+    model = await startStubModelServer(opts.fullBodies === true ? { fullBodies: true } : {})
     const project = populatedRunFixtureProject(label, { modelBaseUrl: model.baseUrl, targetUrl: target.url })
 
     const config = JSON.parse(readFileSync(project.configPath, 'utf8')) as Record<string, any>

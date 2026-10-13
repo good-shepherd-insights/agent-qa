@@ -238,6 +238,8 @@ export function fixtureProject(
     'utf8',
   )
   mkdirSync(join(root, '.agent-qa'), { recursive: true })
+  // 2026-10-14 (441-06, E3): ask and chat refuse a project whose secrets file is missing.
+  writeFileSync(join(root, '.env.secrets.local'), '', 'utf8')
   return { root, configPath }
 }
 
@@ -317,10 +319,11 @@ export async function driveChatSpawned(
   root: string,
   configPath: string,
   utterance: string = CHAT_ANCHOR_UTTERANCE,
+  extraEnv: Readonly<Record<string, string>> = {},
 ): Promise<SpawnOutcome> {
   const child = spawn(process.execPath, [CLI_ENTRY, '--config', configPath, 'chat'], {
     cwd: root,
-    env: hermeticEnv(root),
+    env: { ...hermeticEnv(root), ...extraEnv },
     stdio: ['pipe', 'pipe', 'pipe'],
   })
   let stdout = ''

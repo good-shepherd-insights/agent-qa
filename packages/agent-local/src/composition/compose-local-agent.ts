@@ -221,6 +221,7 @@ import type {
   GateReceiptRecordOutcome,
   KnowledgeChangeOutput,
   KnowledgeChangeVerb,
+  MaskFn,
   PromotionOutcome,
   RecordId,
   ResolvePromotionPosture,
@@ -1739,6 +1740,8 @@ export const UNCLAIMABLE_BY_PROSE_POSTURE: Record<CandidateProsePosture, readonl
   })
 
 export interface ComposeLocalAgentInput {
+  // 2026-10-14 (441-06): the declared-secret mask for the chat projections; required in 441-55.
+  readonly mask?: MaskFn
   /** Current host sources for cold snapshot reads. Undefined means no masking authority. */
   readonly readMaskingSources?: () => Promise<{
     readonly secretsContent: string
@@ -2678,10 +2681,9 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
   const chatModelsByName = new Map<string, ChatLanguageModel>()
   if (input.chatModel !== undefined) chatModelsByName.set(composedChatModelName, input.chatModel)
 
-  // Chat is a projection boundary: operation inputs and canonical records retain authored
-  // bytes, while answers and session events carry the active context's reversible markers.
-  // Resolve at use time because a host can bind a different masking scope for each turn.
+  // 2026-10-14 (441-06, D-06): session events, op results and turn results carry the declared mask.
   const maskChatProjection = <T>(value: T): T => {
+    if (input.mask !== undefined) return maskPayloadStrings(value, input.mask)
     const context = getActiveMaskingContext()
     return context === undefined ? value : maskPayloadStrings(value, text => context.mask(text))
   }
@@ -2845,7 +2847,6 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     //
     // invokeFunction validates canonical output; it does not promise masking. Classify those
     // original bytes before projecting the answer into results[] and the durable clause_result.
-    // Human surfaces alone restore markers with unmaskForHumanOutput.
     invoke: async (functionId, invokeInput, caller) => {
       if (composedRegistry === undefined) {
         throw new TypeError('a chat turn ran before its registry finished composing')

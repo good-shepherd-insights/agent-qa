@@ -13,7 +13,7 @@
 // Every fixture lives in a temporary directory: the mark fixture, the in-process run fixture and
 // the config file each cell writes to.
 
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { PassThrough, Readable } from 'node:stream'
 
@@ -133,6 +133,8 @@ async function agentQa(configPath: string, args: readonly string[]): Promise<Pri
 function markProject(): ReturnType<typeof markFixture> {
   const fixture = markFixture()
   roots.push(fixture.root)
+  // 2026-10-14 (441-06, E3): ask and chat refuse a project whose secrets file is missing.
+  writeFileSync(join(fixture.root, '.env.secrets.local'), '', 'utf8')
   return fixture
 }
 

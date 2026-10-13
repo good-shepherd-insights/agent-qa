@@ -186,6 +186,8 @@ beforeEach(() => {
   // COMMITTED, never merely written: the scaffold re-reads the committed set at proposal time
   // (CFGM-04), so a dirty fixture would measure D-05's two-commit road instead of this one.
   writeFileSync(configPath, ZERO_TARGET_CONFIG)
+  // 2026-10-14 (441-06, E3): ask refuses a project whose secrets file is missing.
+  writeFileSync(join(root, '.env.secrets.local'), '')
   git('add', '--', '.gitignore', 'README.md', CONFIG_FILE)
   git('commit', '--quiet', '-m', 'the project configures a model and no targets')
 })

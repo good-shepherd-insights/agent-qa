@@ -199,6 +199,7 @@ import type { InProcessCliRunExecutionOptions } from './in-process-run-execution
 // what its `takeLease` thunk answered. Erased at emit, so no runtime edge is added.
 import type { CurationWriterAuthority } from '../curation/curation-tail.js'
 import { buildMaskedResolvedConfig } from './masked-config.js'
+import { createDeclaredSecretMask, type DeclaredSecretMask } from './declared-secrets.js'
 
 /**
  * The CLI's caller record.
@@ -642,6 +643,8 @@ export interface ComposeCliLocalAgentInput {
   chatReconcile?: ComposeLocalAgentInput['chatReconcile']
   /** The configuration file this invocation resolves against. */
   configPath: string
+  // 2026-10-14 (441-06, D-08): one loader per command, shared with its emitters; default reads configPath.
+  declaredSecrets?: DeclaredSecretMask
   /**
    * The invocation's composed analytics, when this host has any (398-10, D-11/D-18).
    *
@@ -2060,7 +2063,9 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
         }
       : undefined)
 
+  const declaredSecrets = input.declaredSecrets ?? createDeclaredSecretMask(input.configPath)
   const host = composeLocalAgent({
+    mask: declaredSecrets.mask,
     readMaskingSources: createColdReadMaskingSources(input.configPath, () => {
       const bridgeSecrets = input.runBridge?.maskingSecrets?.()
       return [

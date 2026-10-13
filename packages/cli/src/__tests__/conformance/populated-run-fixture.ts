@@ -421,6 +421,8 @@ export interface RecordedStubRequest {
    * a failure message is megabytes of noise around the sentence that matters.
    */
   readonly body: string
+  // 2026-10-14 (441-06, D-22): the whole body, recorded only under `fullBodies`.
+  readonly fullBody?: string
 }
 
 const MAX_RECORDED_BODY_CHARS = 4_000
@@ -786,6 +788,8 @@ export interface StubModelServerOptions {
    * and the failure view has an authored sentence to render.
    */
   readonly analysisOutcome?: 'floor' | 'authored'
+  // 2026-10-14 (441-06, D-22): record each request's whole body beside the bounded one.
+  readonly fullBodies?: boolean
 }
 
 export async function startStubModelServer(
@@ -815,6 +819,7 @@ export async function startStubModelServer(
           status,
           ...(grounding === undefined ? {} : { grounding }),
           body: raw.slice(0, MAX_RECORDED_BODY_CHARS),
+          ...(options.fullBodies === true ? { fullBody: raw } : {}),
         })
       }
       const refuse = (why: string): void => {

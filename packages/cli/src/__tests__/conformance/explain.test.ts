@@ -652,6 +652,7 @@ describe('the grounded explain answer rides the turn a person reads (398-13, D-2
       })}\n`,
       'utf8',
     )
+    writeFileSync(join(root, '.env.secrets.local'), '', 'utf8')
 
     const { composeCliLocalAgent, CLI_FUNCTION_CALLER } =
       await import('../../composition/local-agent-host.js')

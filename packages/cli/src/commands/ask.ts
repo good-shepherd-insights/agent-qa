@@ -16,23 +16,22 @@
 // clause runs once, at a terminal and in CI alike, and the receipt says what it did.
 //
 // IT STILL SHOWS WHAT A TURN RENDERS MID-TURN (395-22 · CR-03 · CFGM-05). This command binds
-// `chatPresent` on `process.stdout` — through the masker, unconditional — so a scaffold or a
+// `chatPresent` on `process.stdout` — through the declared mask, unconditional — so a scaffold or a
 // fan-out report a turn produces is in the transcript beside the receipts, exactly as the REPL
 // prints it. And where a proposal cannot be displayed at all, the route refuses before dispatch
 // (`turn-engine.ts`'s displayability precondition).
 
 import { dirname, resolve } from 'node:path'
 
-import {
-  AGENT_ASK_FUNCTION_ID,
-  createMaskingContext,
-  invokeFunction,
-  unmaskForHumanOutput,
-} from '@vostride/agent-qa-agent'
-import type { AgentAskResult } from '@vostride/agent-qa-schema'
+import { AGENT_ASK_FUNCTION_ID, invokeFunction } from '@vostride/agent-qa-agent'
+import type { AgentAskResult, MaskFn } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import pc from 'picocolors'
 
+import {
+  createDeclaredSecretMask,
+  DeclaredSecretsUnavailableError,
+} from '../composition/declared-secrets.js'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../composition/local-agent-host.js'
 import { receiptLine } from './receipt-line.js'
 import { renderClauseResults } from './result-render.js'
@@ -85,56 +84,47 @@ function renderTurn(result: AgentAskResult): string {
   return lines.join('\n')
 }
 
-/**
- * Everything a surface prints goes through the masker (`fn.ts:143-150`).
- *
- * The turn result is composed from op results, and an op result is exactly the kind of value a
- * masked config read can put a credential into. Printing it raw would be a disclosure boundary
- * this file does not own.
- */
-function emitHuman(text: string): void {
-  const maskingContext = createMaskingContext()
-  try {
-    console.log(unmaskForHumanOutput(maskingContext, text))
-  } finally {
-    maskingContext.dispose()
+// 2026-10-14 (441-06, D-07): everything this file prints is masked and never restored.
+function emitHuman(mask: MaskFn, text: string): void {
+  console.log(mask(text))
+}
+
+// 395-22 · D-14: the mid-turn render, on stdout and unconditional (piped stdin included).
+function chatPresentThrough(mask: MaskFn): (text: string) => void {
+  return (text) => {
+    process.stdout.write(`${mask(text)}\n`)
   }
 }
 
-/**
- * The mid-turn render (395-22 · D-14).
- *
- * `chat.ts`'s binder, adapted to a surface that owns no stream of its own. Three properties and
- * they are all load-bearing:
- *
- *   THE STREAM — `process.stdout`, beside the receipts this command prints.
- *
- *   UNCONDITIONAL, INCLUDING UNDER PIPED STDIN. A scripted `ask` is still a transcript somebody
- *   reads, and it is the surface the live lane greps; suppressing the render for non-TTY would make
- *   the one automatable reading of this clause unavailable.
- *
- *   THROUGH THE MASKER, on `emitHuman`'s law above: everything this file prints crosses it. The
- *   bytes here already passed the construction scan (D-12), so this is the second of two
- *   independent passes rather than the only one.
- */
-function chatPresent(text: string): void {
-  const maskingContext = createMaskingContext()
-  try {
-    process.stdout.write(`${unmaskForHumanOutput(maskingContext, text)}\n`)
-  } finally {
-    maskingContext.dispose()
-  }
+function printUnavailable(error: DeclaredSecretsUnavailableError): void {
+  const [first, ...rest] = error.lines
+  if (first !== undefined) console.error(pc.red(first))
+  for (const line of rest) console.error(pc.dim(line))
 }
 
-function reportError(error: unknown): void {
-  if (error instanceof AskCommandError) {
-    console.error(pc.red(`Ask error [${error.code}]: ${error.message}`))
-  } else if (error instanceof Error) {
-    console.error(pc.red(`Ask error [${error.name}]: ${error.message}`))
-  } else {
-    console.error(pc.red(`Ask error: ${String(error)}`))
-  }
+function reportError(error: unknown, mask?: MaskFn): void {
   process.exitCode = 1
+  if (error instanceof DeclaredSecretsUnavailableError) {
+    printUnavailable(error)
+    return
+  }
+  const line = error instanceof AskCommandError
+    ? `Ask error [${error.code}]: ${error.message}`
+    : error instanceof Error
+      ? `Ask error [${error.name}]: ${error.message}`
+      : `Ask error: ${String(error)}`
+  // A refusal raised before the loader exists has nothing to mask with.
+  let shown = line
+  if (mask !== undefined) {
+    try {
+      shown = mask(line)
+    } catch (maskError) {
+      if (!(maskError instanceof DeclaredSecretsUnavailableError)) throw maskError
+      printUnavailable(maskError)
+      return
+    }
+  }
+  console.error(pc.red(shown))
 }
 
 export function createAskCommand(): Command {
@@ -148,6 +138,7 @@ export function createAskCommand(): Command {
         options: { session?: string },
         command: Command,
       ) => {
+        let mask: MaskFn | undefined
         try {
           const utterance = (message ?? []).join(' ').trim()
           if (utterance === '') {
@@ -155,7 +146,15 @@ export function createAskCommand(): Command {
           }
 
           const composition = compositionInput(command)
-          const { registry } = composeCliLocalAgent({ ...composition, chatPresent })
+          const declaredSecrets = createDeclaredSecretMask(composition.configPath)
+          // E3: refuse before a host is composed when the secrets file cannot be read.
+          declaredSecrets.redactor()
+          mask = declaredSecrets.mask
+          const { registry } = composeCliLocalAgent({
+            ...composition,
+            declaredSecrets,
+            chatPresent: chatPresentThrough(mask),
+          })
           const result = (await invokeFunction(
             registry,
             AGENT_ASK_FUNCTION_ID,
@@ -165,7 +164,7 @@ export function createAskCommand(): Command {
             CLI_FUNCTION_CALLER,
           )) as AgentAskResult
 
-          emitHuman(renderTurn(result))
+          emitHuman(mask, renderTurn(result))
 
           // A scripted `ask` whose request was not carried out must not look like success to the
           // shell that called it. Both non-success statuses raise, so the exit code and the
@@ -200,7 +199,7 @@ export function createAskCommand(): Command {
             )
           }
         } catch (error) {
-          reportError(error)
+          reportError(error, mask)
         }
       },
     )
