@@ -40,11 +40,11 @@
  * upper-case word that is also ordinary English. A bare word-bounded match is case-sensitive so the
  * lower-case English word never matches, and the upper-case debugging token has no word boundary
  * before its last three letters — which is exactly what a plain substring match cannot express, and
- * why that one needle alone is a `RegExp`. One residue survives that: three English upper-case
- * spellings measured in files outside this milestone, two after `CALLER ` and one after `A `. A
- * negative lookbehind for those two prefixes excludes them, carried verbatim from 410, and the
- * negative-control cell below pins that behaviour so the lookbehind can neither silently widen nor
- * silently swallow a real occurrence.
+ * why the kind needle is a `RegExp` (the short-ID prefix is one for the same reason). One residue
+ * survives that: three English upper-case spellings measured in files outside this milestone, two
+ * after `CALLER ` and one after `A `. A negative lookbehind for those two prefixes excludes them,
+ * carried verbatim from 410, and the negative-control cell below pins that behaviour so the
+ * lookbehind can neither silently widen nor silently swallow a real occurrence.
  *
  * THE BY-NAME CONTROL IS POSITIVE, NEVER A FILTER. CLSR-01 excludes three sites from the quoted
  * status literal, and the exclusion is MEASURED rather than documented: production scope stays a
@@ -108,6 +108,10 @@ interface NeedleEntry {
  */
 const KIND_NEEDLE = new RegExp('(?<!CALLER |A )\\bB' + 'UG\\b')
 
+// 2026-10-14 (441-36): word-bounded like the kind needle, so the debugging token's hyphenated
+// test-area name is not a hit.
+const SHORT_ID_NEEDLE = new RegExp('\\bB' + 'UG-')
+
 /** Two needles too long to sit inside a one-line table entry at the repo's print width. */
 const SUCCESSORS_NEEDLE = 'ANALYZE_RUN_PRODUCED_' + 'SUCCESSORS'
 const CHAIN_KINDS_NEEDLE = 'POST_RUN_CHAIN_' + 'KINDS'
@@ -137,7 +141,7 @@ const FORBIDDEN: NeedleEntry[] = [
   { label: 'the third id brand' + "'s cast helper", needle: 'asIssue' + 'Id', clsr01: true },
   { label: 'the second delta vocabulary' + "'s module", needle: 'issue-' + 'delta' },
   { label: 'the retired entity kind', needle: KIND_NEEDLE, clsr01: true },
-  { label: 'the retired short-ID prefix', needle: 'B' + 'UG-', clsr01: true },
+  { label: 'the retired short-ID prefix', needle: SHORT_ID_NEEDLE, clsr01: true },
   { label: 'the retired URI scheme', needle: 'agentqa://' + 'bug', clsr01: true },
   { label: 'the retired resolution reason', needle: 'reserved-' + 'kind', clsr01: true },
   { label: 'the retired mint refusal', needle: 'BugAddressing' + 'NotAvailable', clsr01: true },
@@ -362,13 +366,13 @@ describe('the issue-slot needle set is gone from every package src, tests includ
 
   // The known-positive control. Every needle is planted in a synthetic source and must be found —
   // otherwise a typo'd needle reports zero hits forever and the census measures nothing. The
-  // RegExp entry and the quoted-literal entries are planted from halves too, so no whole token
+  // RegExp entries and the quoted-literal entries are planted from halves too, so no whole token
   // exists anywhere but in memory. Line numbers are 1-based, so the planted line is line 2 of 3.
   it('finds every planted needle — the known-positive control for the extractor', () => {
     for (const { label, needle } of EVERY_NEEDLE) {
       const body =
         needle instanceof RegExp
-          ? 'const planted = ' + "'" + 'B' + 'UG' + "'"
+          ? 'const planted = ' + "'" + 'B' + 'UG-1' + "'"
           : needle.startsWith("'")
             ? 'const planted = ' + needle
             : `const planted = '${needle}'`
