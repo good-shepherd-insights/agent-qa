@@ -129,7 +129,7 @@ import {
 } from '../compound/metadata.js'
 import type { ClipboardWriteMeta } from '../compound/metadata.js'
 import { mintReportedValue, mintUniqueValue, defaultUniqueValueGenerator } from '../compound/dispatch-mint.js'
-import { compareAssertValue } from '../compound/assert-value.js'
+import { compareAssertValue, type AssertValueResult } from '../compound/assert-value.js'
 import { createRecordLedger } from './record-ledger.js'
 import { StepLimitMeter } from './step-limits.js'
 
@@ -804,11 +804,13 @@ export async function executeStep(
   // superseded here (the v1 onPhase-only posture ends per SEAM-03); runToolResult is unchanged.
   const executeResolvedAction = async (
     toExecute: Action,
-  ): Promise<{ result: ActionResult; error?: string }> => {
+    options: { keepRawData?: boolean } = {},
+  ): Promise<{ result: ActionResult; error?: string; rawData?: unknown }> => {
     // 2026-10-14 (441-01, D-10): a literal [secret:NAME] would type the placeholder text itself.
     const refusal = literalSecretMarkerRefusal(toExecute)
     if (refusal !== undefined) return { result: { success: false, error: refusal }, error: refusal }
     let result: ActionResult
+    let rawData: unknown
     try {
       // Template resolution stays INSIDE the try (T-353-08): a MissingSecretError is caught
       // and surfaced as a redacted execError — the action never reaches the adapter.
@@ -856,6 +858,7 @@ export async function executeStep(
           ...(ports.abortSignal ? { abortSignal: ports.abortSignal } : {}),
         }
         const executed = await withAbort(ports.adapter.execute(actionToExecute, executeOptions), ports.abortSignal)
+        if (options.keepRawData) rawData = executed.data
         let recordingAnnotation: RecordingAnnotationWitness | undefined
         try { recordingAnnotation = finishAnnotation?.() } catch { /* Withhold an unproven interval. */ }
         result = redactSecretValue({ ...executed,
@@ -868,7 +871,7 @@ export async function executeStep(
       return { result: { success: false, error }, error }
     }
     const error = !result.success ? (result.error ?? 'Action failed') : undefined
-    return { result, error }
+    return options.keepRawData ? { result, error, rawData } : { result, error }
   }
 
   for (let actionIndex = 0; ; actionIndex++) {
@@ -1723,55 +1726,52 @@ export async function executeStep(
       // returns the raw source value in data, or a §7.1 source-unavailable error), then apply the
       // pure comparator and mint the outcome. A failing comparison is an honest §7.1 failure the
       // planner mediates; a passing one is a read the verifier may cite (439 D-12).
-      const read = await executeResolvedAction(normalizedAction)
+      // 2026-10-13 (441-09, D-06): judged on the raw read, recorded through the declared mask.
+      const read = await executeResolvedAction(normalizedAction, { keepRawData: true })
       if (!read.result.success) {
         execResult = read.result
         execError = read.error
       } else {
         const av = action as { source?: unknown; expr?: unknown; op?: unknown; expected?: unknown }
         const source = typeof av.source === 'string' ? av.source : (av.expr !== undefined ? 'expr-result' : 'unknown')
-        const rawActual = read.result.data
-        // Object reads (storage map, network log array) stringify as JSON so `contains`
-        // has something honest to match — String() would collapse them to [object Object].
-        // 439 D-14: a network read is judged per entry, and an empty log is unread.
-        const entries = source === 'network' && Array.isArray(rawActual)
-          ? rawActual.map((entry) => JSON.stringify(entry))
+        const plannedExpected = (normalizedAction as { expected?: unknown }).expected
+        const expected = typeof plannedExpected === 'string'
+          ? resolveSecretTemplatesInValue(plannedExpected, ports.secretStore)
           : undefined
-        const actual = rawActual === undefined || entries?.length === 0
-          ? undefined
-          : rawActual === null ? null
-            : typeof rawActual === 'object' ? JSON.stringify(rawActual) : String(rawActual)
-        const expected = typeof av.expected === 'string' ? av.expected : undefined
+        const judged = assertValueReadText(source, read.rawData)
         const outcome = compareAssertValue({
-          source, op: av.op as AssertValueOp, expected, actual, ...(entries !== undefined ? { entries } : {}),
+          source, op: av.op as AssertValueOp, expected, actual: judged.actual,
+          ...(judged.entries !== undefined ? { entries: judged.entries } : {}),
         })
-        recorder.recordAssertOutcome({
+        const maskedActual = assertValueReadText(source, redactSecretValue(read.rawData, ports.secretRedactor)).actual
+        const recordedActual = typeof maskedActual === 'string' ? recordMask(maskedActual) : maskedActual
+        const recordedOutcome: AssertValueResult = {
           source: outcome.source,
           op: outcome.op,
           passed: outcome.passed,
-          ...(outcome.expected !== undefined ? { expected: outcome.expected } : {}),
-          ...(outcome.actual !== undefined ? { actual: outcome.actual } : {}),
-        })
-        const assertExpected = outcome.expected !== undefined ? recordMask(outcome.expected) : undefined
-        const assertActual = typeof outcome.actual === 'string'
-          ? ` (read "${recordMask(outcome.actual)}")`
-          : outcome.actual === null ? ' (read null)' : ''
+          ...(outcome.expected !== undefined ? { expected: recordMask(outcome.expected) } : {}),
+          ...(recordedActual !== undefined ? { actual: recordedActual } : {}),
+        }
+        recorder.recordAssertOutcome(recordedOutcome)
+        const assertActual = typeof recordedOutcome.actual === 'string'
+          ? ` (read "${recordedOutcome.actual}")`
+          : recordedOutcome.actual === null ? ' (read null)' : ''
         stepRecord.addRead({
           kind: 'assertValue',
-          text: `${outcome.source} ${outcome.op}${assertExpected !== undefined ? ` "${assertExpected}"` : ''}: ${outcome.passed ? 'passed' : 'failed'}${assertActual}`,
+          text: `${recordedOutcome.source} ${recordedOutcome.op}${recordedOutcome.expected !== undefined ? ` "${recordedOutcome.expected}"` : ''}: ${recordedOutcome.passed ? 'passed' : 'failed'}${assertActual}`,
           assert: {
-            source: outcome.source,
-            op: outcome.op,
-            ...(assertExpected !== undefined ? { expected: assertExpected } : {}),
-            passed: outcome.passed,
+            source: recordedOutcome.source,
+            op: recordedOutcome.op,
+            ...(recordedOutcome.expected !== undefined ? { expected: recordedOutcome.expected } : {}),
+            passed: recordedOutcome.passed,
           },
         })
-        if (outcome.passed) {
-          execResult = { success: true, metadata: { assertValueOutcome: outcome } }
+        if (recordedOutcome.passed) {
+          execResult = { success: true, metadata: { assertValueOutcome: recordedOutcome } }
           execError = undefined
         } else {
-          const failMsg = `assertValue on source "${source}" (${outcome.op}) did not hold — re-observe or declare the step failed via stepFailed.`
-          execResult = { success: false, error: failMsg, metadata: { assertValueOutcome: outcome } }
+          const failMsg = `assertValue on source "${source}" (${recordedOutcome.op}) did not hold — re-observe or declare the step failed via stepFailed.`
+          execResult = { success: false, error: failMsg, metadata: { assertValueOutcome: recordedOutcome } }
           execError = failMsg
         }
       }
@@ -3213,6 +3213,19 @@ function operationCaptureAvailability(
   const clipboard = support?.clipboard ? 'available' : 'unavailable'
   if (download === 'available' && clipboard === 'available') return { download, clipboard }
   return { download, clipboard, reason: support?.reason ?? 'platform' }
+}
+
+// Object reads (storage map, network log array) stringify as JSON so `contains` has something honest
+// to match. 439 D-14: a network read is judged per entry, and an empty log is unread.
+function assertValueReadText(source: string, value: unknown): { actual?: string | null; entries?: string[] } {
+  const entries = source === 'network' && Array.isArray(value)
+    ? value.map((entry) => JSON.stringify(entry))
+    : undefined
+  const actual = value === undefined || entries?.length === 0
+    ? undefined
+    : value === null ? null
+      : typeof value === 'object' ? JSON.stringify(value) : String(value)
+  return { ...(actual !== undefined ? { actual } : {}), ...(entries !== undefined ? { entries } : {}) }
 }
 
 function carriedItems(cell: CarriedArtifacts | undefined): { stepNumber: number; actionIndex: number; text: string }[] {
