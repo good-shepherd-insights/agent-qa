@@ -6,7 +6,7 @@ import * as construct from '../construct.js'
 
 // RE-SPELLED 2026-10-01 (432-17, D-05/D-10). The three `applyablePayload` cells measured the one
 // funnel every config apply passed through: a blocked record refused by name, the refusal quoting
-// nothing the scan found, an applyable payload passed through unchanged. The apply ops, the stored
+// nothing of the record, an applyable payload passed through unchanged. The apply ops, the stored
 // payloads and the funnel are deleted with the inbox; a blocked change is answered in its own call
 // and kept nowhere (C432-CONFIG-BLOCKED-NO-WRITE below). The claim that survives is the absence.
 describe('applyablePayload — the funnel every config apply passes through', () => {
@@ -33,15 +33,10 @@ describe('C432-CONFIG-BLOCKED-NO-WRITE: the direct answer names no record', () =
 
     const report = {
       outcome: 'blocked',
-      summaryLine: 'set registry.providers.farm.accessKey — blocked: the proposed change would write a secret',
-      blockedReason: 'guardrail-hit',
+      summaryLine: 'set use.parallel — blocked: the resulting configuration is not valid',
+      blockedReason: 'schema-fail',
       paths: ['agent-qa.config.yaml'],
-      scanFindings: [{
-        path: 'agent-qa.config.yaml',
-        field: 'registry.providers.farm.accessKey',
-        detector: 'generic-secret-shape',
-        redactedFingerprint: 'sha256:9f86…0a08',
-      }],
+      validationIssues: ['agent-qa.config.yaml: use.parallel: expected boolean, received string'],
     }
     expect(contract.safeParse(report).success).toBe(true)
     expect(contract.safeParse({ ...report, proposalId: 'prop-1' }).success).toBe(false)

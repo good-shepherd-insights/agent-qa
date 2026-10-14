@@ -76,7 +76,7 @@ export const configHookAddSpec: FunctionSpec<ConfigHookAddInput, ConfigChangeOut
     }
     return await addConfigHook(
       { action: CONFIG_HOOK_ADD_FUNCTION_ID, ...input },
-      { configFiles, configValidate, configScan, configWrite },
+      { configFiles, configValidate, configWrite },
     )
   },
 }

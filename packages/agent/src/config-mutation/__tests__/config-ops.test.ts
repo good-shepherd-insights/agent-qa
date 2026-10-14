@@ -7,9 +7,9 @@
 //
 // WHAT IS REAL HERE AND WHAT IS A DOUBLE. The OPS are real and are driven through `invoke` with
 // composed deps — never through a hand-built proposal literal, because a literal proposal is a
-// fixture asserting that somebody typed it correctly. The diff primitive, the classifier and the
-// construction scan are production's. The three doubles are the host facts this package may not
-// touch: bytes on disk, the yaml edit, and the store.
+// fixture asserting that somebody typed it correctly. The diff primitive and the classifier are
+// production's. The three doubles are the host facts this package may not touch: bytes on disk, the
+// yaml edit, and the store. Since 441 D-15 nothing in a config change is scanned for secrets.
 //
 // THE YAML DOUBLE USES THE REAL `yaml` LIBRARY, WITH THE SHIPPED PORT'S CALLS. 395-04's blocked
 // suite could get away with a line-level fake because `config.field.set` addresses one leaf; four of
@@ -31,13 +31,12 @@
 //   config.target.edit   — THE NOT-FOUND, and the FIXED-PATH classifier pair: one path, two values,
 //                          two different answers. A classifier ranged over paths passes every other
 //                          op's cells and fails this one.
-//   config.auth.set      — THE INPUT REFUSAL (D-11) and the ZERO STORE DELTA. Its sibling
-//                          `config.field.set` FILES a blocked record for a secret; this op files
-//                          nothing, so a pipeline that treated the two the same fails here and
-//                          nowhere else.
+//   config.auth.set      — THE INPUT REFUSAL (D-11) and the ZERO STORE DELTA. A value that is not
+//                          a reference of its kind is refused on the input, before anything is
+//                          constructed, and nothing is written.
 //   config.hook.add      — A SECOND FILE. It writes the hooks file and not the config yaml, so a
-//                          pipeline that validated, diffed or scanned "the config" fails here while
-//                          passing every other describe.
+//                          pipeline that validated or diffed "the config" fails here while passing
+//                          every other describe.
 
 import { createHash } from 'node:crypto'
 
@@ -47,8 +46,6 @@ import type {
   ConfigChangeOutput,
   FunctionCaller,
 } from '@vostride/agent-qa-schema'
-import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
-import type { MaskingSeedSources } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 import { Document as YamlDocument, isMap, isScalar, isSeq, parseDocument } from 'yaml'
 
@@ -147,7 +144,6 @@ interface Harness {
   readonly written: Written[]
   /** A file's text as the direct writer left it. */
   text: (path: string) => string | undefined
-  scans: () => number
 }
 
 /** The config transaction's field operations, applied with the real yaml calls it makes. */
@@ -166,7 +162,7 @@ function applyFieldChanges(input: Uint8Array | undefined, changes: readonly Conf
 }
 
 /**
- * The three host doubles, the REAL scan and the REAL yaml calls the shipped port makes.
+ * The three host doubles and the REAL yaml calls the shipped port makes.
  *
  * THE VALIDATOR IS NOT A CONSTANT `{ ok: true }`. It reads the candidate bytes it was handed and
  * refuses any member containing {@link INVALID_MARKER}, and it RECORDS what it was given. That turns
@@ -178,7 +174,6 @@ function applyFieldChanges(input: Uint8Array | undefined, changes: readonly Conf
 function harness(options: {
   readonly config?: string | null
   readonly hooks?: string | undefined
-  readonly seeds?: MaskingSeedSources
   /** What the direct writer answers for whole files; published in full when absent. */
   readonly publish?: (paths: readonly string[]) => ConfigFilePublishOutcome
   /** What the direct writer answers for field changes; applied to the config file when absent. */
@@ -192,7 +187,6 @@ function harness(options: {
   const filed: Filed[] = []
   const validated: Validated[] = []
   const written: Written[] = []
-  let scanCount = 0
 
   const documentFor = (input?: Uint8Array): YamlDocument =>
     input === undefined ? new YamlDocument({}) : parseDocument(utf8Decode(input))
@@ -277,10 +271,10 @@ function harness(options: {
         return Promise.resolve({ proposalId: `prop-${filed.length}` })
       },
     },
+    // The ops' dependency guard still names the scan port; nothing may call it.
     configScan: {
-      scan: (parts: Parameters<typeof scanConstructedArtifact>[0]) => {
-        scanCount += 1
-        return scanConstructedArtifact(parts, options.seeds ?? {})
+      scan: () => {
+        throw new Error('a config change must not be scanned')
       },
     },
     // 432-11: the direct writer. It records what it was handed and answers as the host port does;
@@ -347,7 +341,6 @@ function harness(options: {
       const content = bytes.get(path)
       return content === undefined ? undefined : utf8Decode(content)
     },
-    scans: () => scanCount,
   }
 }
 
@@ -486,7 +479,6 @@ describe('config.target.create — a create is never an upsert (CFGM-01 adjacenc
     // overwrote, or that answered a blocked report for a request that is simply wrong.
     expect(test.filed).toHaveLength(0)
     expect(test.written).toHaveLength(0)
-    expect(test.scans()).toBe(0)
   })
 
   it('writes the house-style block and leaves every existing comment standing', async () => {
@@ -678,41 +670,10 @@ describe('config.auth.set — refs only, refused on the INPUT (D-11, ratified as
     expect(answer.crossBoundaryReasons).toEqual(['secret-adjacent-field'])
   })
 
-  it('THE EDGE: a recognised credential is REFUSED on the input, and nothing is filed', async () => {
-    const secret = 'AKIAQWERTYUIOPASDFGH'
-    const test = harness()
-    // 2026-10-02 (quick 261002-ctr): carried in `pluginPackage` (was `authStateName`, deleted).
-    const answer = await call(test, 'config.auth.set', {
-      target: 'shop',
-      pluginPackage: secret,
-    })
-
-    expect(answer.outcome).toBe('refused')
-    if (answer.outcome !== 'refused') throw new Error('unreachable')
-    expect(answer.reason).toBe('refs-only')
-    // NAMED, so the person is told what they pasted rather than only that it was wrong.
-    expect(answer.detail).toContain('awsKey')
-    expect(answer.detail).toContain('pluginPackage')
-    expect(answer.detail).toContain('workspace.envFile')
-
-    // ZERO STORE AND WRITE DELTA. The refusal is decided on the input, before anything is
-    // constructed, so the scan of a candidate never ran and nothing was written.
-    expect(test.filed).toHaveLength(0)
-    expect(test.written).toHaveLength(0)
-
-    // THE ABSENCE, WINDOWED — and it is not vacuous, because the line below proves this codebase's
-    // summary channel really does print values it is given.
-    expect(configFieldSetSummaryLine('plugins.auth', secret)).toContain(secret)
-    for (const window of windows(secret)) expect(answer.detail).not.toContain(window)
-  })
-
-  it('THE EDGE: a value NO detector names is refused STRUCTURALLY, by what a reference IS', async () => {
-    // A base64-shaped token. The cell PROVES the detector half is silent on it first — so what
-    // refuses it below is the positive shape rule and nothing else. This is the answer to the
-    // door-enumeration failure mode: the rule names nothing it refuses, so a credential family
-    // nobody has listed is refused on the day it is invented.
+  it('THE EDGE: a value that is not a reference is refused STRUCTURALLY, by what a reference IS', async () => {
+    // A base64-shaped token. What refuses it is the positive shape rule and nothing else: the rule
+    // names nothing it refuses (441 D-15/D-23 — no detector, no key-name rule).
     const unnamed = 'Zm9vYmFyYmF6cXV4Cg'
-    expect(scanConstructedArtifact([{ label: 'probe', text: unnamed }], {}).findings).toEqual([])
 
     const test = harness()
     // 2026-10-02 (quick 261002-ctr): carried in `pluginPackage` (was `authStateName`, deleted).
@@ -721,7 +682,14 @@ describe('config.auth.set — refs only, refused on the INPUT (D-11, ratified as
     if (answer.outcome !== 'refused') throw new Error('unreachable')
     expect(answer.reason).toBe('refs-only')
     expect(answer.detail).toContain('plugin-package')
+    expect(answer.detail).toContain('pluginPackage')
+    expect(answer.detail).toContain('workspace.secretsFile')
+    // ZERO STORE AND WRITE DELTA, and the value is not quoted back: the line below proves this
+    // codebase's summary channel really does print values it is given.
     expect(test.filed).toHaveLength(0)
+    expect(test.written).toHaveLength(0)
+    expect(configFieldSetSummaryLine('plugins.auth', unnamed)).toContain(unnamed)
+    for (const window of windows(unnamed)) expect(answer.detail).not.toContain(window)
 
     // THE GUARD REJECTS SOMETHING ITS OWN ASSUMPTION ADMITS, in the other direction: a legal
     // reference passes, so the rule is not "refuse everything".
@@ -732,35 +700,6 @@ describe('config.auth.set — refs only, refused on the INPUT (D-11, ratified as
     })
     expect(proposed.outcome).toBe('applied')
   })
-
-  it('KNOWN BOUND: a credential that is ALSO a legal reference, unnamed and unseeded, is admitted',
-    async () => {
-      // THE HONEST RESIDUE, recorded as a passing cell rather than left unsaid. `hunter2` is a real
-      // password and a legal package name (2026-10-02, quick 261002-ctr: the cell used the deleted
-      // auth-state field); no detector names it and nobody seeded it, so both gates admit it and it
-      // is written as a reference. The bound is a property of the design:
-      // a rule that admits by SHAPE cannot see inside a value that has the right shape.
-      const password = 'hunter2'
-      const admitted = harness()
-      const answer = await call(admitted, 'config.auth.set', {
-        target: 'shop',
-        pluginPackage: password,
-      })
-      expect(answer.outcome).toBe('applied')
-
-      // AND THE PAIRED HALF, which is the structural answer and the reason the seeded gate exists:
-      // seed the SAME value and it is refused with no new pattern written anywhere.
-      const seeded = harness({ seeds: { env: { APP_PASSWORD: password } } })
-      const refused = await call(seeded, 'config.auth.set', {
-        target: 'shop',
-        pluginPackage: password,
-      })
-      expect(refused.outcome).toBe('refused')
-      if (refused.outcome !== 'refused') throw new Error('unreachable')
-      expect(refused.reason).toBe('refs-only')
-      expect(refused.detail).toContain('seeded-secret')
-      for (const window of windows(password)) expect(refused.detail).not.toContain(window)
-    })
 
   it('refuses a binding for a target nobody configured, and names the ones that exist', async () => {
     const test = harness()
@@ -774,7 +713,7 @@ describe('config.auth.set — refs only, refused on the INPUT (D-11, ratified as
     expect(answer.candidates).toEqual(['shop'])
   })
 
-  it('refuses an env-var name by saying where it belongs, AFTER the secret check', async () => {
+  it('refuses an env-var name by saying where it belongs, AFTER the reference check', async () => {
     const test = harness()
     const answer = await call(test, 'config.auth.set', {
       target: 'shop',
@@ -783,18 +722,17 @@ describe('config.auth.set — refs only, refused on the INPUT (D-11, ratified as
     expect(answer.outcome).toBe('refused')
     if (answer.outcome !== 'refused') throw new Error('unreachable')
     expect(answer.reason).toBe('unsupported-reference')
-    expect(answer.detail).toContain('workspace.envFile')
+    expect(answer.detail).toContain('the environment it runs in')
+    expect(answer.detail).not.toContain('workspace.envFile')
 
-    // PRECEDENCE, and it is the pipeline's own: a value that is both unwritable AND credential-shaped
-    // is reported as a credential, because that is the fact the person needs. A refusal ordered the
-    // other way would tell somebody who pasted an AWS key that the field is unsupported.
+    // PRECEDENCE: a value that is not shaped like a variable name is answered as refs-only first.
     const both = harness()
-    const secretly = await call(both, 'config.auth.set', {
+    const misshapen = await call(both, 'config.auth.set', {
       target: 'shop',
-      envVarName: 'AKIAQWERTYUIOPASDFGH',
+      envVarName: 'sk-PROBE-1234567890',
     })
-    if (secretly.outcome !== 'refused') throw new Error('unreachable')
-    expect(secretly.reason).toBe('refs-only')
+    if (misshapen.outcome !== 'refused') throw new Error('unreachable')
+    expect(misshapen.reason).toBe('refs-only')
   })
 })
 
@@ -943,31 +881,6 @@ describe('the config action class is CLOSED, and the registry is where that is l
       }
       expect(declaration?.risk.readOnly, id).toBe(false)
     }
-  })
-
-  it('every config op refuses by name when no scan is bound (CFGM-02, fail closed)', async () => {
-    // THE ABSENCE MUST REFUSE, for all four new ops and not only for the one 395-04 measured. A
-    // guardrail that quietly stops existing when one composition line is missing is the permissive
-    // direction a security control may not fail in.
-    const test = harness()
-    const { configScan: _dropped, ...withoutScan } = test.deps as unknown as Record<string, unknown>
-    const registry = createFunctionRegistry({
-      deps: withoutScan as unknown as FunctionDeps,
-      auditSink: { appendGuardrailAudit() {} },
-    })
-
-    const samples: readonly [string, unknown][] = [
-      ['config.field.set', { path: 'use.parallel', value: true }],
-      ['config.target.create', { name: 'basket', platform: 'web', url: 'https://basket.example.com' }],
-      ['config.target.edit', { name: 'shop', changes: { url: 'https://shop.example.com/x' } }],
-      ['config.auth.set', { target: 'shop', pluginPackage: '@acme/auth' }],
-      ['config.hook.add', { name: 'Seed', runtime: 'node', file: 'scripts/seed.mjs' }],
-    ]
-    for (const [id, input] of samples) {
-      await expect(invokeFunction(registry, id, input, CALLER), id).rejects.toThrow(/not bound/i)
-    }
-    expect(test.filed).toHaveLength(0)
-    expect(test.written).toHaveLength(0)
   })
 
   it('every config op names the direct writer as its binding and refuses by name without it', async () => {
@@ -1175,7 +1088,7 @@ describe('C432-CONFIG-SIX-OPS: auth, hook and scaffold write in the call as well
       expect(test.filed).toHaveLength(0)
     })
 
-  it('C432-CONFIG-SIX-OPS: config.auth.set refuses a credential before anything is written', async () => {
+  it('C432-CONFIG-SIX-OPS: config.auth.set refuses a value that is not a reference before anything is written', async () => {
     const test = harness()
     const answer = await change(test, 'config.auth.set', {
       target: 'shop',

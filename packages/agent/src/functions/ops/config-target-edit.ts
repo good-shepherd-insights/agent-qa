@@ -67,7 +67,7 @@ export const configTargetEditSpec: FunctionSpec<ConfigTargetEditInput, ConfigCha
     }
     return await editConfigTarget(
       { action: CONFIG_TARGET_EDIT_FUNCTION_ID, ...input },
-      { configFiles, configValidate, configScan, configWrite },
+      { configFiles, configValidate, configWrite },
     )
   },
 }

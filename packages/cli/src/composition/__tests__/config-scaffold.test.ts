@@ -91,7 +91,6 @@ import type {
   ConfigChangeOutput,
   FunctionCaller,
 } from '@vostride/agent-qa-schema'
-import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { parseDocument, parse as parseYaml } from 'yaml'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -241,10 +240,12 @@ function registryFor(options: { readonly confirm?: boolean } = {}) {
     scaffoldContent: createScaffoldContentPort(),
     // 432-11: THE REAL DIRECT WRITER the scaffold publishes through.
     configWrite: createConfigWritePort(configPath),
-    // The REAL scan with an EMPTY seed set, on `config-apply.test.ts`'s stated reasoning: the
-    // function is production's, the seeds are not, because a cell whose verdict depends on the
-    // developer's exported variables measures the machine.
-    configScan: { scan: (parts) => scanConstructedArtifact(parts, {}) },
+    // 441 D-15: the ops' dependency guard still names the scan port; nothing may call it.
+    configScan: {
+      scan: () => {
+        throw new Error('a config change must not be scanned')
+      },
+    },
   }
 
   return createFunctionRegistry({
@@ -1066,7 +1067,11 @@ function directRegistry() {
     },
     configFiles: createConfigFilesPort(configPath),
     configValidate: createConfigValidatePort(),
-    configScan: { scan: (parts: Parameters<typeof scanConstructedArtifact>[0]) => scanConstructedArtifact(parts, {}) },
+    configScan: {
+      scan: () => {
+        throw new Error('a config change must not be scanned')
+      },
+    },
     scaffoldContent: createScaffoldContentPort(),
     configWrite: (host as Record<string, unknown>).createConfigWritePort === undefined
       ? undefined

@@ -41,16 +41,7 @@
 //   (S6) one diff, three     — a scaffold that published file by file in separate calls. CFGM-05's
 //        files                 sentence is ONE diff; since 432-11 it is one publication of all
 //                              three files, and the cell counts the direct writer's calls.
-//   (S7) unbound scan        — a propose op that constructed anyway with no scan bound. The
-//                              permissive direction a security control may not fail in — and this
-//                              op is the sharpest case, because D-12 says the scan reads WHOLE NEW
-//                              FILES here and every byte of this proposal is a new file.
-//   (S8) the scan RAN over   — a scan wired to the diff's changed lines only. The cell asserts a
-//        whole files           scanned part EQUAL to the file's whole decoded content — no `@@`
-//                              header, no `+` prefixes — which a hunk-only parts list can never
-//                              produce. Its integrity half asserts the hunk-shaped parts are there
-//                              too, so the equality is not passing against a scan that stopped
-//                              rendering diffs.
+//   (S7, S8) deleted 2026-10-14 (441 D-15): their subject was the construction scan.
 //   (S9) unrenderable        — 395-02's refusal escaping as a fault instead of being answered as
 //                              data. The scaffold is the one op that folds bytes it did not author
 //                              into a file it proposes, so it is the one that must answer it.
@@ -67,7 +58,6 @@ import { isMap, isScalar, parseDocument } from 'yaml'
 
 import { utf8Decode, utf8Encode } from '@vostride/agent-qa-schema'
 import type { ConfigChangeOutput } from '@vostride/agent-qa-schema'
-import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
 import { scaffoldConfigProject } from '../construct.js'
@@ -148,12 +138,11 @@ interface RenderedCall {
 interface Harness {
   readonly published: Published[]
   readonly rendered: RenderedCall[]
-  readonly scanned: string[]
   readonly deps: ConstructConfigScaffoldDeps
 }
 
 /**
- * The host doubles, with the REAL scan and the REAL renderer behind them.
+ * The host doubles, with the REAL renderer behind them.
  *
  * `configFiles.read` ANSWERS AN EMPTY WORKSPACE BY DEFAULT — three enumerated members, none with
  * bytes — which is exactly what `enumerateConfigFileSet` answers for a project that has no config
@@ -165,7 +154,6 @@ function harness(options: {
   readonly gitignoreBytes?: Uint8Array
   readonly content?: (input: { targetName: string; baseUrl: string; existingGitignore?: Uint8Array }) =>
     readonly { path: string; bytes: Uint8Array }[]
-  readonly scan?: boolean
   readonly readThrows?: boolean
   readonly validation?:
     | { ok: false; issues: readonly { path: string; message: string }[] }
@@ -173,7 +161,6 @@ function harness(options: {
 } = {}): Harness {
   const published: Published[] = []
   const rendered: RenderedCall[] = []
-  const scanned: string[] = []
 
   const defaultContent = (input: { targetName: string; baseUrl: string }) => [
     {
@@ -190,7 +177,6 @@ function harness(options: {
   return {
     published,
     rendered,
-    scanned,
     deps: {
       configFiles: {
         read: () => {
@@ -253,12 +239,6 @@ function harness(options: {
             })),
           })
           return Promise.resolve({ kind: 'published' as const, written: files.map((file) => file.path) })
-        },
-      },
-      configScan: {
-        scan: (parts) => {
-          for (const part of parts) scanned.push(part.text)
-          return scanConstructedArtifact(parts, {})
         },
       },
       scaffoldContent: {
@@ -476,39 +456,5 @@ describe('the scaffold is one diff, published whole, over the whole set (CFGM-05
     const reasons = answer.outcome === 'applied' ? answer.crossBoundaryReasons : []
     expect(reasons).toContain('new-origin')
     expect(reasons).toContain('hook-added')
-  })
-
-  it('(S8) scans the WHOLE new files, not the diff\'s changed lines (D-12)', async () => {
-    const test = harness()
-    await scaffold(test, 'booking.com')
-
-    // THE WHOLE FILE ARRIVED AS ITS OWN PART, not merely as hunk lines. The comparison is against
-    // the EXACT bytes the content port answered — decoded, verbatim, with no `@@` header and no
-    // `+` prefixes — so a pipeline that scanned only the rendered hunks produces no part equal to
-    // this string and the cell reds. Produced, not literal: the expected text is read back out of
-    // the double's own answer rather than typed here.
-    const emitted = utf8Decode(
-      (await test.deps.scaffoldContent.render({
-        targetName: 'booking-com',
-        baseUrl: 'https://booking.com',
-      })).find((file) => file.path === CONFIG_FILE)?.bytes as Uint8Array,
-    )
-    expect(emitted).toContain('url: https://booking.com')
-    expect(test.scanned).toContain(emitted)
-    // The integrity half: the hunk-shaped parts are there TOO, so `toContain` above is not passing
-    // against a scan that stopped rendering diffs altogether.
-    expect(test.scanned.some((part) => part.includes('@@ -0,0'))).toBe(true)
-  })
-
-  it('(S7) cannot construct at all when no scan is bound', async () => {
-    const test = harness()
-    const { configScan: _dropped, ...withoutScan } = test.deps
-    await expect(
-      scaffoldConfigProject(
-        { action: ACTION, domain: 'booking.com' },
-        withoutScan as ConstructConfigScaffoldDeps,
-      ),
-    ).rejects.toThrow()
-    expect(test.published).toHaveLength(0)
   })
 })

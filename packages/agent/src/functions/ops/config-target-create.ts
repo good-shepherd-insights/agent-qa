@@ -73,7 +73,7 @@ export const configTargetCreateSpec: FunctionSpec<ConfigTargetCreateInput, Confi
     }
     return await createConfigTarget(
       { action: CONFIG_TARGET_CREATE_FUNCTION_ID, ...input },
-      { configFiles, configValidate, configScan, configWrite },
+      { configFiles, configValidate, configWrite },
     )
   },
 }

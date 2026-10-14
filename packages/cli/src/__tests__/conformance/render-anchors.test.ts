@@ -34,11 +34,11 @@
 // 432-11 D-05: the answer used to be read off the proposal record the drive filed; the config op now
 // writes in the call and files nothing, so the child's own clause_result is the record.
 //
-// NO CREDENTIAL, REAL OR OTHERWISE. The guardrail cell plants a SYNTHETIC value with an `sk-PROBE-`
-// prefix and a body of zeroes — enough for the detector to fire, and nothing that exists anywhere.
-// The blocked record it produces carries a fingerprint and never the value, which is the blocked
-// arm's own design; nothing in this file prints the planted string, and the child's environment is
-// constructed rather than inherited so no ambient provider credential can reach it.
+// NO CREDENTIAL, REAL OR OTHERWISE. 2026-10-14 (441-18, D-15): config changes are not scanned, so
+// the guardrail arm these cells once drove is gone. The refusal arm they drive instead is the
+// reference field's refs-only refusal, over a SYNTHETIC value that is not shaped like a variable
+// name. The child's environment is constructed rather than inherited so no ambient provider
+// credential can reach it.
 //
 // THE INSTRUMENT IS IMPORTED, NEVER RE-ROLLED. `spawned-chat.ts` owns the driver, the hermetic
 // environment, the fixture recipe and the freshness guard — see its header for why a second copy of
@@ -49,7 +49,11 @@ import { join, relative } from 'node:path'
 
 import { Client } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
-import { AGENT_ASK_FUNCTION_ID, CONFIG_FIELD_SET_FUNCTION_ID } from '@vostride/agent-qa-agent'
+import {
+  AGENT_ASK_FUNCTION_ID,
+  CONFIG_AUTH_SET_FUNCTION_ID,
+  CONFIG_FIELD_SET_FUNCTION_ID,
+} from '@vostride/agent-qa-agent'
 import { maskedToolResult } from '@vostride/agent-qa-mcp'
 import { ConfigChangeOutputSchema } from '@vostride/agent-qa-schema'
 import type { ConfigChangeOutput } from '@vostride/agent-qa-schema'
@@ -78,26 +82,13 @@ afterEach(() => {
 
 // ---- The three inputs, and why each one is the input it is --------------------------------------
 
-/**
- * A synthetic credential: enough shape for the `apiKey` detector, and a value nowhere in existence.
- *
- * The probe that measured this defect used exactly this prefix. A real key would make the cell a
- * secret-bearing artifact in a public repository, and a value the detector did not recognise would
- * make the guardrail cell silently become a second success cell.
- */
-const PLANTED_SECRET = 'sk-PROBE-0000000000000000000000000000'
+/** A synthetic value that is not shaped like an environment variable's name. */
+const NOT_A_REFERENCE = 'sk-PROBE-0000000000000000000000000000'
 
 /** A real `z.string()` key on `UseSchema`, so the success cell's control is genuinely a success. */
 const SETTABLE_PATH = 'use.buildTag'
 
-/**
- * A path that is NOT a key on `UseSchema`, so whole-config validation refuses the result.
- *
- * ITS VALUE IS BENIGN, AND THAT IS LOAD-BEARING (RESEARCH Pitfall 6, measured by the probe's own
- * first attempt). The secret scan runs BEFORE validation, so an invalid path carrying a credential
- * lands `guardrail-hit` rather than `schema-fail` — and the differential silently loses a cell,
- * because two of its three arms then measure the same road in.
- */
+/** A path that is NOT a key on `UseSchema`, so whole-config validation refuses the result. */
 const UNSETTABLE_PATH = 'use.authState'
 
 const BENIGN_VALUE = 'anchor-build-tag-v1'
@@ -105,6 +96,15 @@ const BENIGN_VALUE = 'anchor-build-tag-v1'
 function utteranceFor(path: string, value: string): string {
   return `/fn ${CONFIG_FIELD_SET_FUNCTION_ID} ${JSON.stringify({ path, value })}`
 }
+
+/** The refs-only refusal arm: `config.auth.set` with a value that is not a reference. */
+const REFS_ONLY_DRIVE = {
+  opId: CONFIG_AUTH_SET_FUNCTION_ID,
+  utterance: `/fn ${CONFIG_AUTH_SET_FUNCTION_ID} ${JSON.stringify({
+    target: 'web',
+    envVarName: NOT_A_REFERENCE,
+  })}`,
+} as const
 
 /**
  * The bytes a string OCCUPIES inside a pretty-printed JSON payload.
@@ -146,10 +146,10 @@ interface RenderReading {
  * `undefined` quietly reaching a `toContain`. Nothing is filed any more (432-11), and the drive's
  * runtime root is asserted to hold no proposal record.
  */
-function changeAnswer(root: string): ConfigChangeOutput {
+function changeAnswer(root: string, opId: string = CONFIG_FIELD_SET_FUNCTION_ID): ConfigChangeOutput {
   expect(existsSync(join(root, '.agent-qa', 'proposals')), 'the drive filed a proposal record')
     .toBe(false)
-  const result = childClauseResult(root, CONFIG_FIELD_SET_FUNCTION_ID)
+  const result = childClauseResult(root, opId)
   const parsed = ConfigChangeOutputSchema.safeParse(result.payload)
   expect(
     parsed.success ? [] : parsed.error.issues.map((issue) => issue.path.join('.')),
@@ -168,6 +168,10 @@ function changeAnswer(root: string): ConfigChangeOutput {
  * cell's failure message.
  */
 async function driveFieldSet(label: string, path: string, value: string): Promise<RenderReading> {
+  return await driveChange(label, CONFIG_FIELD_SET_FUNCTION_ID, utteranceFor(path, value))
+}
+
+async function driveChange(label: string, opId: string, utterance: string): Promise<RenderReading> {
   expect(buildFreshness(), REBUILD_INSTRUCTION).toEqual({ missing: [], stale: [] })
   expect(
     existsSync(CLI_ENTRY),
@@ -175,7 +179,6 @@ async function driveFieldSet(label: string, path: string, value: string): Promis
   ).toBe(true)
 
   const fixture = fixtureProject(`399-1-render-${label}`)
-  const utterance = utteranceFor(path, value)
   const outcome = await driveChatSpawned(fixture.root, fixture.configPath, utterance)
 
   expect(
@@ -205,7 +208,7 @@ async function driveFieldSet(label: string, path: string, value: string): Promis
       outcome.stdout.lastIndexOf('\n', markerIndex) + 1,
       lineEnd === -1 ? undefined : lineEnd,
     ),
-    answer: changeAnswer(fixture.root),
+    answer: changeAnswer(fixture.root, opId),
     stdout: outcome.stdout,
     stderr: outcome.stderr,
   }
@@ -231,37 +234,8 @@ function withheld(label: string, reading: RenderReading): string {
 // ---- The anchors --------------------------------------------------------------------------------
 
 describe('the chat render anchors (399.1, G-399-2)', () => {
-  it('prints the guardrail refusal and its findings when a mutation would write a secret',
-    async () => {
-      // THE PHASE'S LEADING CELL. A security control refused, and this asks whether the person was
-      // told. The two facts searched for are the ones a person needs to act: WHY it was refused,
-      // and WHAT the scan found — both read off the record this drive just filed.
-      const reading = await driveFieldSet('guardrail', SETTABLE_PATH, PLANTED_SECRET)
-
-      expect(reading.answer.outcome, 'the guardrail cell did not reach the blocked arm')
-        .toBe('blocked')
-      if (reading.answer.outcome !== 'blocked') return
-
-      expect(reading.answer.blockedReason, 'the guardrail cell reached the wrong blocked road')
-        .toBe('guardrail-hit')
-      expect(reading.slice, withheld('guardrail', reading))
-        .toContain(asRendered(reading.answer.blockedReason))
-
-      const findings = reading.answer.scanFindings ?? []
-      expect(findings.length, 'the blocked answer carried no scan findings to look for').toBeGreaterThan(0)
-      for (const finding of findings) {
-        expect(reading.slice, withheld('guardrail', reading)).toContain(asRendered(finding.detector))
-        expect(reading.slice, withheld('guardrail', reading)).toContain(asRendered(finding.path))
-      }
-
-      // THE VALUE ITSELF IS NEVER PRINTED, and the same slice proves it: the blocked arm carries a
-      // fingerprint by design, so a render that leaked the planted secret would be this phase
-      // trading one disclosure defect for a worse one.
-      expect(
-        reading.slice.includes(PLANTED_SECRET),
-        'the rendered payload carried the planted secret itself rather than its fingerprint',
-      ).toBe(false)
-    }, 180_000)
+  // 2026-10-14 (441-18, D-15): 'prints the guardrail refusal and its findings when a mutation would
+  // write a secret' is deleted with the construction scan it measured.
 
   it('prints the validation refusal and the validator\'s own words when the result is invalid',
     async () => {
@@ -271,13 +245,8 @@ describe('the chat render anchors (399.1, G-399-2)', () => {
         .toBe('blocked')
       if (reading.answer.outcome !== 'blocked') return
 
-      // The benign value is what keeps these two arms apart: the scan runs first, so a credential
-      // here would have landed `guardrail-hit` and this cell would be measuring the one above.
-      expect(
-        reading.answer.blockedReason,
-        'the schema-fail cell landed on the scan road instead of the validation road — see '
-        + 'UNSETTABLE_PATH above for why its value must stay benign',
-      ).toBe('schema-fail')
+      expect(reading.answer.blockedReason, 'the schema-fail cell reached the wrong blocked road')
+        .toBe('schema-fail')
       expect(reading.slice, withheld('schema-fail', reading))
         .toContain(asRendered(reading.answer.blockedReason))
 
@@ -373,18 +342,20 @@ describe('the chat render anchors (399.1, G-399-2)', () => {
       // WHY IT WAS MISSED, structurally rather than by oversight: `receipt-line.ts` renders
       // `  <status>  <op>  <clause>`, so the status word PRECEDES the clause the marker is and a
       // strict post-marker slice CANNOT carry it. `receiptLine` above reads the marker's own line.
-      const guardrail = await driveFieldSet('verdict-guardrail', SETTABLE_PATH, PLANTED_SECRET)
+      // 2026-10-14 (441-18, D-15): the guardrail arm is replaced by the refs-only refusal.
+      const refused = await driveChange(
+        'verdict-refs-only', REFS_ONLY_DRIVE.opId, REFS_ONLY_DRIVE.utterance)
       const schemaFail = await driveFieldSet('verdict-schema-fail', UNSETTABLE_PATH, BENIGN_VALUE)
       const proposed = await driveFieldSet('verdict-proposed', SETTABLE_PATH, BENIGN_VALUE)
 
-      // NON-VACUITY FIRST: the three drives really reached the two blocked arms and the applied
-      // one. Without this, a fixture that landed three identical arms would satisfy every pin below
-      // while measuring one arm three times.
+      // NON-VACUITY FIRST: the three drives really reached the refused arm, the blocked arm and the
+      // applied one. Without this, a fixture that landed three identical arms would satisfy every
+      // pin below while measuring one arm three times.
       expect(
-        [guardrail, schemaFail, proposed].map((reading) => reading.answer.outcome),
-        'the three drives did not reach two blocked arms and the applied arm, so the verdict '
+        [refused, schemaFail, proposed].map((reading) => reading.answer.outcome),
+        'the three drives did not reach the refused, blocked and applied arms, so the verdict '
         + 'words below would be pinning whatever this fixture happened to produce',
-      ).toEqual(['blocked', 'blocked', 'applied'])
+      ).toEqual(['refused', 'blocked', 'applied'])
 
       // D-01's decision, arm by arm. `blocked` is `refused` because the CONTROL WORKED and nothing
       // happened; `applyable` is `executed` because a proposal really was filed. The success arm is
@@ -392,9 +363,9 @@ describe('the chat render anchors (399.1, G-399-2)', () => {
       // against a build that answered `refused` for everything — which would destroy every real
       // verdict in the product — so both directions are one cell's business.
       expect(
-        verdictWord(guardrail),
-        'a guardrail declined to write a secret into the config and the receipt does not read '
-        + `\`refused\`. the line the person read: ${JSON.stringify(guardrail.receiptLine)}`,
+        verdictWord(refused),
+        'a reference field refused a value that is not a reference and the receipt does not read '
+        + `\`refused\`. the line the person read: ${JSON.stringify(refused.receiptLine)}`,
       ).toBe('refused')
       expect(
         verdictWord(schemaFail),
@@ -423,7 +394,8 @@ describe('the chat render anchors (399.1, G-399-2)', () => {
       // one its name claims — and a drive that reached the wrong op would red for the wrong reason.
       expect(buildFreshness(), REBUILD_INSTRUCTION).toEqual({ missing: [], stale: [] })
       const fixture = fixtureProject('399-1-09-nested')
-      const inner = utteranceFor(SETTABLE_PATH, PLANTED_SECRET)
+      // 2026-10-14 (441-18, D-15): the inner refusal is the refs-only one, the guardrail being gone.
+      const inner = REFS_ONLY_DRIVE.utterance
       const outer = `/fn ${AGENT_ASK_FUNCTION_ID} ${JSON.stringify({ message: inner })}`
       const outcome = await driveChatSpawned(fixture.root, fixture.configPath, outer)
 
@@ -472,15 +444,13 @@ describe('the chat render anchors (399.1, G-399-2)', () => {
           JSON.stringify(slice.slice(0, 900))}; child stderr: ${
           JSON.stringify(outcome.stderr.trim().slice(0, 300))}`,
       ).toContain('"status": "refused"')
-      expect(slice, 'the inner refusal did not name the guardrail that fired').toContain(
-        'guardrail-hit',
-      )
+      expect(slice, 'the inner refusal did not name its reason').toContain('refs-only')
 
       // THE CLAIM. One layer up, the word a person reads must still be the one its own receipts
       // support — success is the one claim a fold may never default to (D-03's asymmetry, D-12).
       expect(
         receiptLine.trim().split(/\s+/u)[0] ?? '',
-        'an inner turn whose only clause was REFUSED by a credential guardrail is reported as a '
+        'an inner turn whose only clause was REFUSED is reported as a '
         + `success one composition layer up. the line the person read: ${
           JSON.stringify(receiptLine)}`,
       ).toBe('refused')
@@ -502,11 +472,13 @@ describe('the chat render anchors (399.1, G-399-2)', () => {
     // ITS OWN NON-VACUITY, both ways: the three drives are asserted to have reached three different
     // filed outcomes first, so "the payloads differ" is a fact about this run rather than an
     // assumption, and three identical renderings of three identical payloads could not pass here.
-    const guardrail = await driveFieldSet('distinct-guardrail', SETTABLE_PATH, PLANTED_SECRET)
+    // 2026-10-14 (441-18, D-15): the guardrail arm is replaced by the refs-only refusal.
+    const refused = await driveChange(
+      'distinct-refs-only', REFS_ONLY_DRIVE.opId, REFS_ONLY_DRIVE.utterance)
     const schemaFail = await driveFieldSet('distinct-schema-fail', UNSETTABLE_PATH, BENIGN_VALUE)
     const success = await driveFieldSet('distinct-success', SETTABLE_PATH, BENIGN_VALUE)
 
-    const filedOutcomes = [guardrail, schemaFail, success].map((reading) =>
+    const filedOutcomes = [refused, schemaFail, success].map((reading) =>
       reading.answer.outcome === 'blocked'
         ? `${reading.answer.outcome}/${reading.answer.blockedReason}`
         : reading.answer.outcome,
@@ -518,7 +490,7 @@ describe('the chat render anchors (399.1, G-399-2)', () => {
     ).toBe(3)
 
     const readings: readonly { readonly label: string; readonly slice: string }[] = [
-      { label: 'guardrail-hit', slice: guardrail.slice },
+      { label: 'refs-only', slice: refused.slice },
       { label: 'schema-fail', slice: schemaFail.slice },
       { label: 'applied', slice: success.slice },
     ]
@@ -528,7 +500,7 @@ describe('the chat render anchors (399.1, G-399-2)', () => {
         expect(
           left.slice,
           `a ${left.label} mutation and a ${right.label} mutation render IDENTICALLY on this `
-          + 'terminal — a person cannot tell a refused security control from a completed change. '
+          + 'terminal — a person cannot tell a refused change from a completed one. '
           + `both printed: ${JSON.stringify(left.slice.slice(0, 600))}`,
         ).not.toBe(right.slice)
       }

@@ -40,7 +40,6 @@ import type {
   ConfigChangeOutput,
   FunctionCaller,
 } from '@vostride/agent-qa-schema'
-import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
 import { Command } from 'commander'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -128,11 +127,12 @@ function registry() {
     // THE TWO PRODUCTION PORTS THIS FILE IS ABOUT.
     configFiles: createConfigFilesPort(configPath),
     configValidate: createConfigValidatePort(),
-    // The REAL scan with an EMPTY seed set, on `config-apply.test.ts`'s stated reasoning: the
-    // function is production's and the seeds are not, because a cell whose verdict depends on
-    // whether a developer exported a token is a cell that measures the machine.
-    configScan: { scan: (parts: Parameters<typeof scanConstructedArtifact>[0]) =>
-      scanConstructedArtifact(parts, {}) },
+    // 441 D-15: the ops' dependency guard still names the scan port; nothing may call it.
+    configScan: {
+      scan: () => {
+        throw new Error('a config change must not be scanned')
+      },
+    },
     // 432-11: THE REAL DIRECT WRITER, over the real workspace.
     configWrite: createConfigWritePort(configPath),
     // Nothing should reach the store any more; it is still bound so a filing would be seen.

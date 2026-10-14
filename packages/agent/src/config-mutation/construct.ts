@@ -19,65 +19,37 @@
 //      the point a person can review it, which is CFGM-01's whole subject.
 //   3. RENDER the diff and take the digests, through the ONE schema primitive (D-17). Construction
 //      and apply call the same export; that is the whole of the CR-02 mitigation.
-//   4. SCAN the rendered artifact AND THE WHOLE CANDIDATE SET (CFGM-02, D-09/D-12 · 395-10). Every
-//      byte step (5) will read is read here first; non-empty findings mint a BLOCKED record and the
-//      diff bytes are discarded — they never enter the store, so no later render can leak them.
-//   5. VALIDATE THE WHOLE CANDIDATE SET. CFGM-01 is explicit that validation runs BEFORE the
-//      proposal exists, so a mutation that breaks the config never becomes something a person can
+//   4. VALIDATE THE WHOLE CANDIDATE SET. CFGM-01 is explicit that validation runs BEFORE the
+//      change exists, so a mutation that breaks the config never becomes something a person can
 //      accept. It validates the ENTIRE candidate rather than the changed field, because D-03 removed
 //      the settable-field whitelist deliberately — the guards here are whole-input by construction
 //      or they are door enumeration — and since 395-05 the whole input is the whole FILE SET, not
 //      the config yaml alone: `config.hook.add` changes only the hooks file, and a validator that
-//      never saw it would have declared valid the one artifact that proposal wrote.
-//   6. CLASSIFY cross-boundary-ness from the actual VALUES (D-02), through `computeCrossBoundary`.
-//   7. PUBLISH through the direct writer and answer what it wrote (432-11).
+//      never saw it would have declared valid the one artifact that change wrote.
+//   5. CLASSIFY cross-boundary-ness from the actual VALUES (D-02), through `computeCrossBoundary`.
+//   6. PUBLISH through the direct writer and answer what it wrote (432-11).
 //
-// SIX OPS, ONE PIPELINE, AND THE SPLIT BETWEEN THEM IS THE POINT (395-05, D-01). Steps 3 to 7 are
-// `checkConfigCandidate` plus `publishConfigChange` and every action reaches them: what a `config.target.create` and a
-// `config.field.set` do differently is which bytes they hand it, never what happens to those bytes
-// afterwards. A per-action pipeline would be five places for the scan to be forgotten. What the ops
-// DO own is steps 1 and 2 plus their own REQUEST refusals — a create against a name that exists, an
-// edit against one that does not — because those are facts about the ask rather than about the
-// resulting configuration, and the two dispositions are deliberately different answers (see
-// `CONFIG_CHANGE_REFUSAL_REASONS`).
+// NO SECRET SCAN (2026-10-14, 441 D-15/D-23). A config change is not scanned for secrets and is
+// never blocked for what a value looks like: a value in a config field is the author's own text.
+// What a change shows — its diff, a validator's words — reaches people and models through the
+// declared-secret mask each door applies to what it shows.
 //
-// WHY THE SCAN RUNS BEFORE VALIDATION, WHICH IS 395-04's ONE REORDERING OF 395-01's SEQUENCE. Both
-// orders satisfy CFGM-01 — validation still runs before any applyable proposal exists — and this one
-// closes a disclosure channel the other leaves open. A whole-config validator reports issues IN THE
-// VALIDATOR'S OWN WORDS, and those words are derived from the candidate bytes; a refusal that
-// quoted the offending value would put a secret into `validationIssues`, and the refusal is handed to
-// the caller's receipt and transcript. (2026-10-03: until 432-11 the blocked record was also persisted;
-// nothing is kept now.)
+// SIX OPS, ONE PIPELINE, AND THE SPLIT BETWEEN THEM IS THE POINT (395-05, D-01). Steps 3 to 6 are
+// `checkConfigCandidate` plus `publishConfigChange` and every action reaches them: what a
+// `config.target.create` and a `config.field.set` do differently is which bytes they hand it, never
+// what happens to those bytes afterwards. What the ops DO own is steps 1 and 2 plus their own
+// REQUEST refusals — a create against a name that exists, an edit against one that does not —
+// because those are facts about the ask rather than about the resulting configuration, and the two
+// dispositions are deliberately different answers (see `CONFIG_CHANGE_REFUSAL_REASONS`).
 //
-// AND WHY ORDER ALONE WAS NOT ENOUGH (395-10 · GAP 1 / CR-01). The ordering above was correct and
-// bought nothing on the schema-fail road for a year of this phase's life, because the two steps
-// RANGED DIFFERENT INPUTS: step (4) read the rendered diff, step (5) is handed the whole candidate
-// set. A secret in a set member the proposal never touched was therefore validated without ever
-// being scanned, and the validator's words carried it to three surfaces — measured end to end on
-// the shipped CLI. The fix is a containment, not a sequence, and it is what the invariant below now
-// rests on:
-//
-//   RANGE(step 4) ⊇ RANGE(step 5). Every candidate member with bytes is scanned WHOLE before the
-//   validator is handed the candidate set. See `scanParts`.
-//
-// That containment is what makes the one sentence true rather than aspirational: NOTHING THIS
-// PIPELINE PERSISTS IS UNSCANNED. It bounds at the detectors' own coverage and nowhere else — a
-// value no detector and no seed recognises can still be interpolated into a validator's message,
-// exactly as it can be written into a diff, which is one uniform bound across both roads rather
-// than a second hole on this one.
-//
-// ONE POSTURE, TWO REASONS (CFGM-01 · D-10). A validation failure and a guardrail hit arrive by
-// different roads and mean different things to a person, but they produce the same artifact — a
-// record naming what was found and carrying no payload to apply. Both are answered as one refusal,
-// with nothing written or kept, and `blockedReason` is what tells them apart. (2026-10-03: until
-// 432-11 both were filed in the proposal inbox, which is deleted.)
+// A validation failure is answered as a refusal carrying its report, with nothing written or kept.
 //
 // NOTHING HERE COMMITS. The direct writer publishes files and runs no git; a person reviews and
 // reverts the change with their own tools (D-07).
 //
-// PURE OVER PORTS. Every host fact — bytes, the yaml edit, the document's shape, the scan's seeds,
-// validation, the store — arrives as a dependency, so the pipeline is drivable end to end with no
-// filesystem and no git, and the composed case in `cli` drives it with the real ones.
+// PURE OVER PORTS. Every host fact — bytes, the yaml edit, the document's shape, validation, the
+// writer — arrives as a dependency, so the pipeline is drivable end to end with no filesystem and
+// no git, and the composed case in `cli` drives it with the real ones.
 
 import {
   CONFIG_SET_GITIGNORE,
@@ -99,12 +71,10 @@ import type {
   ConfigChangeFile,
   ConfigProjectScaffoldInput,
   ConfigReferenceKind,
-  ConfigScanFinding,
   ConfigTargetCreateInput,
   ConfigTargetEditInput,
   CrossBoundaryReason,
 } from '@vostride/agent-qa-schema'
-import type { ConstructionScanPart } from '@vostride/agent-qa-safety'
 
 import { computeCrossBoundary } from './cross-boundary.js'
 import type { CrossBoundaryFieldEdit } from './cross-boundary.js'
@@ -117,7 +87,6 @@ import type {
   ConfigFileSet,
   ConfigFilesPortLike,
   ConfigScaffoldContentPortLike,
-  ConfigScanPortLike,
   ConfigStructuredValue,
   ConfigValidatePortLike,
   ConfigWritePortLike,
@@ -140,19 +109,12 @@ export interface ConstructConfigFieldSetInput {
 }
 
 /**
- * What the six config operations need (432-11 D-05/D-07): the files, the validator, the scan and
- * the direct writer that publishes the change in the call.
+ * What the six config operations need (432-11 D-05/D-07): the files, the validator and the direct
+ * writer that publishes the change in the call.
  */
 export interface ConstructConfigChangeDeps {
   readonly configFiles: ConfigFilesPortLike
   readonly configValidate: ConfigValidatePortLike
-  /**
-   * REQUIRED, not optional, and the difference is CFGM-02. A composition that cannot scan cannot
-   * safely construct: the alternative to refusing here is a pipeline that writes a change with no
-   * guardrail in front of it whenever a host forgot one line of wiring, which is precisely the
-   * silent-permissive direction a security control may not fail in.
-   */
-  readonly configScan: ConfigScanPortLike
   readonly configWrite: ConfigWritePortLike
 }
 
@@ -208,14 +170,7 @@ export function configFieldSetSummaryLine(path: string, value: ConfigFieldValue)
 }
 
 /**
- * The BLOCKED record's line, and the value is deliberately not in it.
- *
- * THE APPLYABLE LINE ABOVE CANNOT BE REUSED HERE, and this is the sharpest edge in the file. That
- * one prints the value — which is correct for a change that passed the scan, and a disclosure for
- * one that did not: a `guardrail-hit` is reached precisely when the artifact carries a secret, and
- * the most likely place for that secret is the value somebody just tried to set. A blocked refusal is
- * returned and rendered, so a summary line built from the value would put the secret on the caller's
- * screen on the way to refusing it — the leak the block exists to prevent, one field to the left.
+ * The BLOCKED record's line: what was attempted and why it was refused, naming the subject only.
  *
  * IT TAKES A SUBJECT RATHER THAN A PATH (395-05), because five ops answer blocked refusals and only
  * one of them addresses a config path. What every subject has in common is that it is a REFERENCE —
@@ -226,7 +181,7 @@ export function configBlockedSummaryLine(subject: string, detail: string): strin
 }
 
 /**
- * Construct, scan, validate and write a `config.field.set` change in the call (432-11).
+ * Construct, validate and write a `config.field.set` change in the call (432-11).
  *
  * ANSWERS A TYPED RESULT for every ordinary outcome rather than throwing. `blocked` is a refusal
  * carrying the report, with nothing written or kept; `no-change` is a set of a value the config
@@ -438,7 +393,7 @@ export async function setConfigAuth(
   // D-11 FIRST, OVER EVERY SUPPLIED REFERENCE, BEFORE THE DOCUMENT IS TOUCHED. `target` is not in
   // this list because it is never written: a credential arriving there resolves against the registry
   // and produces `target-not-found`, which discloses nothing and says something true.
-  const refusal = refuseNonReferences(deps, input.action, [
+  const refusal = refuseNonReferences([
     ...(input.pluginPackage === undefined
       ? []
       : [{ field: 'pluginPackage', kind: 'plugin-package' as const, value: input.pluginPackage }]),
@@ -464,18 +419,16 @@ export async function setConfigAuth(
     }
   }
 
-  // AFTER THE SECRET CHECK, DELIBERATELY. A value that is both credential-shaped and unwritable is
-  // reported as a credential, because that is the fact the person needs; the same precedence the
-  // pipeline takes when a guardrail hit and a schema failure both apply.
+  // AFTER THE REFERENCE CHECK, DELIBERATELY. A value that is not shaped like a variable name is
+  // answered as refs-only first, because that is the fact the person needs.
   if (input.envVarName !== undefined) {
     return {
       outcome: 'refused',
       reason: 'unsupported-reference',
       detail:
         'this configuration schema has no field that records an environment variable\'s name: an '
-        + 'auth plugin declaration is a package or a path and nothing else. The variable belongs in '
-        + `the environment file the configuration names at ${ENV_FILE_CONFIG_PATH}, where the `
-        + 'plugin already reads it, and no config change is needed to point at it.',
+        + 'auth plugin declaration is a package or a path and nothing else. The plugin reads the '
+        + 'variable from the environment it runs in, and no config change is needed to point at it.',
     }
   }
 
@@ -529,7 +482,7 @@ export async function setConfigAuth(
  * string, reach a person's repository, and be refused at the next run rather than at the proposal.
  *
  * THE APPEND IS PAST THE END OF WHAT THE DOCUMENT REPORTS, and a project with no hooks file at all
- * gets one created — which is the whole-new-file case the scan already handles, arriving before
+ * gets one created — which is the whole-new-file case publication already handles, arriving before
  * 395-08's scaffold needs it.
  */
 export async function addConfigHook(
@@ -760,59 +713,19 @@ export async function scaffoldConfigProject(
  */
 const DEFAULT_HOOK_TIMEOUT = '30s'
 
-/** Where the environment values a plugin reads are declared. Named by refusals, never written. */
-const ENV_FILE_CONFIG_PATH = 'workspace.envFile'
-
 /**
  * D-11's refusal, fired on the INPUT and before anything is mutated (395-05).
  *
- * THE FAILURE IS THE VALUE ARRIVING, NOT THE VALUE BEING WRITTEN. D-11 ratified `set_auth` as
- * refs-only as LAW, and a law about what the configuration may hold is enforced too late if it is
- * enforced on the rendered artifact: by then the credential has been through a yaml serialiser, a
- * diff renderer and a digest, and the honest disposition for a proposal that carries one is a
- * refusal rather than a filed record a person has to go and delete. So this runs first, and the
- * answer is `refused` — NOTHING is filed, which is the difference from `config.field.set`, where any
- * path may legitimately hold any value and a secret is a blocked RECORD.
+ * SCHEMA VALIDATION OF A REFERENCE FIELD, NOT SECRET DETECTION (441 D-15/D-23).
+ * `isLegalConfigReference` states what a reference IS and refuses the complement, so the rule names
+ * nothing it refuses: no detector, no key-name rule and no credential shape.
  *
- * TWO GATES, AND THE FIRST ONE NAMES NOTHING IT REFUSES.
- *
- *   The DETECTOR half runs first: it is the shared engine `packages/safety` owns, so a value it
- *   recognises can be named ("this is an AWS key"), which is the most useful thing a person can be
- *   told. It also carries the SEEDED half — a value the masker already knows is refused with no
- *   pattern naming its family at all, which is the only one of these gates that generalises to
- *   credential families nobody has thought of.
- *
- *   The SHAPE half runs second, and it is the structural one: `isLegalConfigReference` states what a
- *   reference IS and refuses the complement. A rule that can only refuse what it can NAME cannot be
- *   driven to zero by naming more things — so the rule below names nothing it refuses.
- *
- * NEITHER DETAIL QUOTES THE VALUE. The field is named, the law is named, and where the value belongs
- * is named; the value itself appears nowhere, because a refusal that echoed it would be the same
- * disclosure one field to the left that `configBlockedSummaryLine` exists to close.
+ * THE DETAIL DOES NOT QUOTE THE VALUE. The field is named, the law is named, and where a secret
+ * belongs is named.
  */
 function refuseNonReferences(
-  deps: { readonly configScan: ConfigScanPortLike },
-  action: string,
   entries: readonly { field: string; kind: ConfigReferenceKind; value: string }[],
 ): ConfigChangeOutput | undefined {
-  if (entries.length === 0) return undefined
-
-  const report = deps.configScan.scan(entries.map((entry) => ({
-    label: action,
-    field: entry.field,
-    text: entry.value,
-  })))
-  const finding = report.findings[0]
-  if (finding !== undefined) {
-    return {
-      outcome: 'refused',
-      reason: 'refs-only',
-      detail:
-        `the value supplied for ${finding.field ?? 'this field'} was recognised as a secret `
-        + `(${finding.detector}). ${REFS_ONLY_LAW}`,
-    }
-  }
-
   for (const entry of entries) {
     if (isLegalConfigReference(entry.kind, entry.value)) continue
     return {
@@ -831,19 +744,18 @@ function refuseNonReferences(
 const REFS_ONLY_LAW =
   'This configuration records REFERENCES only — the name of an auth state, of a plugin package, of '
   + 'an environment variable — and never a credential, which is what keeps the committed '
-  + 'configuration safe to read. Put the secret in the environment file the configuration names at '
-  + 'workspace.envFile (or the secrets file at workspace.secretsFile) and pass its NAME here.'
+  + 'configuration safe to read. Put the secret in '
+  + 'the secrets file the configuration names at workspace.secretsFile and pass its NAME here.'
 
 /** What the blocked report says, before it is answered as a refusal. */
 interface BlockedReport {
   readonly blockedReason: ConfigBlockedReason
   readonly detail: string
   readonly paths: readonly string[]
-  readonly scanFindings?: readonly ConfigScanFinding[]
   readonly validationIssues?: readonly string[]
 }
 
-/** A candidate that passed the scan and validation, with everything publication and filing need. */
+/** A candidate that passed validation, with everything publication needs. */
 interface CheckedCandidate {
   readonly rendered: ConfigDiffChanged
   readonly files: readonly (ConfigChangeFile & { readonly bytes: Uint8Array })[]
@@ -857,17 +769,17 @@ type CandidateCheck =
   | { readonly kind: 'ready'; readonly checked: CheckedCandidate }
 
 /**
- * Steps 3 to 6, for every action (395-05): render, scan, validate, classify.
+ * Steps 3 to 5, for every action (395-05): render, validate, classify.
  *
  * WHAT ARRIVES IS A CANDIDATE SET, NOT A FILE. `renderConfigDiff` is handed exactly the members
  * whose bytes differ, so a change's `files` list is a statement about what changed rather than
  * about which files were considered — and the digests recorded per file are the ones publication
- * re-checks. Step 7 is the caller's: the six config operations publish (432-11).
+ * re-checks. Step 6 is the caller's: the six config operations publish (432-11).
  */
 async function checkConfigCandidate(
   plan: ConfigMutationPlan,
   set: ConfigFileSet,
-  deps: { readonly configScan: ConfigScanPortLike; readonly configValidate: ConfigValidatePortLike },
+  deps: { readonly configValidate: ConfigValidatePortLike },
 ): Promise<CandidateCheck> {
   const committed = new Map(set.files.map((file) => [file.path, file]))
   const diffInput: ConfigDiffFileInput[] = []
@@ -894,52 +806,9 @@ async function checkConfigCandidate(
   if (rendered.outcome === 'unchanged') return { kind: 'no-change' }
 
   const digestsByPath = new Map(rendered.perFileDigests.map((digest) => [digest.path, digest]))
-  const wholeFiles = rendered.changes
-    .filter((change) => change.changeKind === 'add')
-    .map((change) => ({
-      path: change.path,
-      bytes: plan.candidate.find((member) => member.path === change.path)?.bytes,
-    }))
 
-  // (4) CFGM-02, BEFORE ANYTHING SURFACES AND BEFORE ANYTHING IS WRITTEN, AND OVER EVERYTHING STEP
-  // (5) WILL READ. The candidate set is handed in beside the rendered artifact — see `scanParts`.
-  const scanned = deps.configScan.scan(scanParts(rendered.changes, wholeFiles, plan.candidate))
-  if (scanned.findings.length > 0) {
-    // D-12: was this already in the person's repository? Asked by scanning the COMMITTED bytes with
-    // the same function, so "pre-existing" is a measurement rather than an inference from diff
-    // syntax. The answer changes only the sentence a person reads — the block is unconditional,
-    // because CFGM-02 is scored on what RENDERS and not on who authored the bytes.
-    const preExisting = deps.configScan.scan(
-      set.files.flatMap((file) =>
-        file.bytes === undefined ? [] : [{ label: file.path, text: utf8Decode(file.bytes) }]),
-    ).findings
-    const preExistingPrints = new Set(preExisting.map((finding) => finding.redactedFingerprint))
-    const carriedOver = scanned.findings.some(
-      (finding) => preExistingPrints.has(finding.redactedFingerprint),
-    )
-    const paths = [...new Set(scanned.findings.map((finding) => finding.label))]
-
-    return {
-      kind: 'blocked',
-      report: {
-        blockedReason: 'guardrail-hit',
-        // NAMING A FILE IS NOT QUOTING A VALUE. The blocked line's rule is "what was attempted,
-        // never what was found", and D-12 asks for one more fact than that: a person whose block
-        // is caused by bytes they committed months ago needs to be told so, or they will keep
-        // re-trying an edit that was never the problem.
-        detail: carriedOver
-          ? `your configuration already carries a secret at ${paths.join(', ')}`
-          : `the proposed change would write a secret into ${paths.join(', ')}`,
-        paths: paths.length > 0 ? paths : diffInput.map((file) => file.path),
-        scanFindings: dedupeFindings(scanned.findings.map(toSchemaFinding)),
-      },
-    }
-  }
-
-  // (5) CFGM-01: the WHOLE candidate SET — and every member of it was scanned WHOLE at step (4),
-  // which is the property that makes the validator's own words safe to answer. It is a statement
-  // about RANGE and not about order (395-10): the same set object is handed to both steps, so the
-  // validator cannot read a byte the scan did not.
+  // (4) CFGM-01: the WHOLE candidate SET. The validator's own words are answered as they are; each
+  // door masks the declared values in what it shows.
   const validation = await deps.configValidate.validate({
     configFile: set.configFile,
     hooksFile: set.hooksFile,
@@ -980,7 +849,7 @@ async function checkConfigCandidate(
     }
   })
 
-  // (6) D-02, PER VALUE. The classifier compares the value each edit wrote against the one it
+  // (5) D-02, PER VALUE. The classifier compares the value each edit wrote against the one it
   // replaced, and reads the pinned file set from the PORT'S OWN enumeration rather than a second
   // list — `set.files` is what `enumerateConfigFileSet` answered for this workspace, so the
   // out-of-set rule and the writer's scope cannot disagree about which files are config.
@@ -1003,7 +872,7 @@ async function checkConfigCandidate(
 }
 
 /**
- * Step 7 for the six config operations: publish in the call (432-11 D-05/D-07).
+ * Step 6 for the six config operations: publish in the call (432-11 D-05/D-07).
  *
  * A BLOCKED CHANGE IS ANSWERED AND NOTHING IS KEPT. The report carries no diff and no content, and
  * nothing reaches a store or the writer. A clean change goes to the direct writer: field changes
@@ -1069,7 +938,6 @@ function blockedAnswer(plan: ConfigMutationPlan, report: BlockedReport): ConfigC
     summaryLine: configBlockedSummaryLine(plan.subject, report.detail),
     blockedReason: report.blockedReason,
     paths: [...report.paths],
-    ...(report.scanFindings === undefined ? {} : { scanFindings: [...report.scanFindings] }),
     ...(report.validationIssues === undefined
       ? {}
       : { validationIssues: [...report.validationIssues] }),
@@ -1162,59 +1030,6 @@ function interruptedAnswer(
   }
 }
 
-/**
- * The artifact as it would be surfaced, cut into the sections a finding can be attributed to (D-12).
- *
- * CONTEXT LINES ARE IN, AND THAT IS THE WHOLE POINT. A hunk's lines are the rendered section
- * including its unchanged context, so a secret a human committed months ago and which sits three
- * lines above this change is INSIDE this text. A parts list built from the added lines alone would
- * pass an artifact that displays a secret — the most natural implementation there is, and the one
- * the phase's scan mutation driver (since removed) applied to prove these cells discriminate.
- *
- * A CREATED FILE GETS ITS WHOLE CONTENT AS WELL. The scaffold case (395-08) surfaces whole new files
- * rather than diffs, and a proposal that creates the config — or the hooks file, which
- * `config.hook.add` does on a project that has none — from nothing is that case arriving early.
- *
- * AND EVERY CANDIDATE MEMBER GETS ITS WHOLE CONTENT (395-10 · GAP 1 / CR-01). This is the RANGE
- * half, and it is a different property from the two above rather than more of them. Both of those
- * widen the scan within the artifact this proposal RENDERS; this one widens it to the artifact step
- * (5) READS. The two used to differ, and the difference was a disclosure channel that was measured
- * end to end on the shipped CLI: a secret sitting in a committed set member the proposal never
- * touched — a `hooks.yaml` nobody was editing — appeared in no hunk and in no added file, so the
- * scan returned clean; the validator was then handed that member in full, could not parse it, and
- * quoted the offending source line into `validationIssues`, which is persisted and rendered. Order
- * did not help: 395-04 had already ordered the scan before the validator, correctly, and it bought
- * nothing on that road because the two steps ranged different inputs. So the rule this function now
- * implements is a containment rather than a sequence — Range(scan) ⊇ Range(validate) — and the
- * pipeline's stated invariant is true only while it holds.
- *
- * MEMBERS ARRIVE WHOLE AND UNDEDUPLICATED against the two lists above. A member that is also an
- * added file is scanned twice, which costs a pass over bytes already in memory and produces
- * duplicate findings that `dedupeFindings` collapses on their own key. The alternative — computing
- * which member each earlier part already covered — would be a second, weaker statement of the same
- * containment, and one that could go wrong quietly. This one cannot: every member with bytes is
- * here.
- */
-function scanParts(
-  changes: readonly { path: string; hunks: readonly { header: string; lines: readonly string[] }[] }[],
-  wholeFiles: readonly { path: string; bytes?: Uint8Array }[],
-  candidate: readonly ConfigFileBytes[],
-): ConstructionScanPart[] {
-  const parts: ConstructionScanPart[] = changes.map((change) => ({
-    label: change.path,
-    text: change.hunks.map((hunk) => [hunk.header, ...hunk.lines].join('\n')).join('\n'),
-  }))
-  for (const file of wholeFiles) {
-    if (file.bytes === undefined) continue
-    parts.push({ label: file.path, text: utf8Decode(file.bytes) })
-  }
-  for (const member of candidate) {
-    if (member.bytes === undefined) continue
-    parts.push({ label: member.path, text: utf8Decode(member.bytes) })
-  }
-  return parts
-}
-
 /** The config yaml, or the one refusal a set that cannot see its own config file deserves. */
 function requireConfigFile(set: ConfigFileSet): ConfigFileBytes {
   const target = set.files.find((file) => file.path === set.configFile)
@@ -1290,48 +1105,6 @@ function factsFor(
   path: string,
 ): { present: boolean; keys?: readonly string[]; length?: number } {
   return facts.find((fact) => fact.path === path) ?? { present: false }
-}
-
-/**
- * The safety report's vocabulary onto the schema's, which is ONE RENAME and no reshaping.
- *
- * `label` becomes `path` because the two packages name the same fact for two audiences: safety's
- * committed-egress vocabulary calls the section a label, and a person is told which FILE to go look
- * at. `redactedFingerprint` crosses unchanged — it is the field that makes a finding comparable
- * without being readable.
- */
-function toSchemaFinding(finding: {
-  label: string
-  field?: string
-  detector: string
-  redactedFingerprint: string
-}): ConfigScanFinding {
-  return {
-    path: finding.label,
-    ...(finding.field === undefined ? {} : { field: finding.field }),
-    detector: finding.detector,
-    redactedFingerprint: finding.redactedFingerprint,
-  }
-}
-
-/**
- * One finding per (file, field, detector, value), because a created file is scanned twice on purpose.
- *
- * The diff section of an `add` and the whole new file are the same bytes seen two ways — both are
- * scanned because 395-08's scaffold parts have no diff framing at all — and a record that listed the
- * same secret twice would make a person hunt for a second occurrence that does not exist.
- */
-function dedupeFindings(findings: readonly ConfigScanFinding[]): ConfigScanFinding[] {
-  const seen = new Set<string>()
-  const kept: ConfigScanFinding[] = []
-  for (const finding of findings) {
-    const key = [finding.path, finding.field ?? '', finding.detector, finding.redactedFingerprint]
-      .join(' ')
-    if (seen.has(key)) continue
-    seen.add(key)
-    kept.push(finding)
-  }
-  return kept
 }
 
 function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {

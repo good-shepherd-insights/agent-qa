@@ -39,7 +39,6 @@ import type {
   ConfigChangeOutput,
   FunctionCaller,
 } from '@vostride/agent-qa-schema'
-import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
@@ -178,14 +177,12 @@ function registryFor() {
     // THE REAL THREE, over the real workspace and the real repository.
     configFiles: createConfigFilesPort(configPath),
     configValidate: createConfigValidatePort(),
-    // 395-04: the REAL scan, with an EMPTY seed set. The function is production's; the seeds are
-    // not, and the difference is deliberate — `composeLocalAgent` seeds from `sensitiveEnvSlice`,
-    // which reads the environment this suite happens to run in, and a cell whose verdict depends on
-    // whether the developer exported a token is a cell that measures the machine. The pattern half
-    // still runs over every artifact below, so a secret-shaped value in any of these fixtures would
-    // block here. The SEEDED half is measured where it belongs, in `config-blocked-renders.test.ts`,
-    // which sets the variable it depends on.
-    configScan: { scan: (parts) => scanConstructedArtifact(parts, {}) },
+    // 441 D-15: the ops' dependency guard still names the scan port; nothing may call it.
+    configScan: {
+      scan: () => {
+        throw new Error('a config change must not be scanned')
+      },
+    },
     // 432-11: the direct writer the config operations publish through.
     configWrite: createConfigWritePort(configPath),
   }

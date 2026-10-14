@@ -40,18 +40,18 @@
 // |      `agent_qa_get_config`                             | get` is in `UNPROJECTED_OPS` — no     |
 // |                                                        | whole-config render exists on this    |
 // |                                                        | surface at all. The residual config-  |
-// |                                                        | bytes channel is the propose diff,    |
-// |                                                        | re-derived in group E.                |
-// | (M1) a URL-userinfo credential never returned          | RE-DERIVED as E1/E3: a credential-    |
-// |                                                        | shaped value anywhere in the file     |
-// |                                                        | blocks the proposal, so no diff of    |
-// |                                                        | that file reaches the wire.           |
-// | (M1) a `providerHeaders` credential never returned     | RE-DERIVED as E3 for a credential-    |
-// |                                                        | SHAPED value (v1's own plant), and    |
-// |                                                        | its BOUND measured in F2 for an       |
-// |                                                        | opaque one — see the bound note.      |
+// |                                                        | bytes channel is the change diff,     |
+// |                                                        | masked by declaration (C441-MCP-DIFF).|
+// | (M1) a URL-userinfo credential never returned          | RETIRED 2026-10-14 (441 D-15): config |
+// |                                                        | changes are not scanned; a declared   |
+// |                                                        | value in a diff is masked             |
+// |                                                        | (C441-MCP-DIFF).                      |
+// | (M1) a `providerHeaders` credential never returned     | RE-DERIVED as C441-MCP-DIFF for a     |
+// |                                                        | declared value, and its BOUND         |
+// |                                                        | measured in F2 for an undeclared      |
+// |                                                        | one — see the bound note.             |
 // | (M1) the partial-mask tail is gone, not shortened      | RE-DERIVED as the windowing rule      |
-// |                                                        | itself: groups B, C, D, E.            |
+// |                                                        | itself: groups B, C, D.               |
 // | (M1) `<redacted>` occurs three times — something WAS   | RE-DERIVED as A2 + B1's integrity     |
 // |      redacted                                          | halves (the marker is present where   |
 // |                                                        | the plant was).                       |
@@ -64,14 +64,13 @@
 // |-------------------------------------------------------|---------------------------------------|
 // | (P0) every plant is really in the fixture              | RE-DERIVED as A1.                     |
 // | (P0) the ancestor plants are NOT credential-shaped, so | RE-DERIVED IN A NEW VOCABULARY as A2: |
-// |      the name arm is what carries the cell             | the new surface's arms are the run    |
-// | (P0) the auth-mix plant IS credential-shaped           | masker's SEED set and the scan's      |
-// | (P0) the auth redactor's early return really fires     | DETECTOR families, and A2/E1/E2 pin   |
-// |                                                        | each arm by name. The v1 arms belong  |
-// |                                                        | to `maskSensitive`, deleted with the  |
-// |                                                        | v1 server.                            |
+// |      the name arm is what carries the cell             | the new surface's one arm is the      |
+// | (P0) the auth-mix plant IS credential-shaped           | masker's DECLARED set, and A2 pins    |
+// | (P0) the auth redactor's early return really fires     | it. The v1 arms belong to             |
+// |                                                        | `maskSensitive`, deleted with the v1  |
+// |                                                        | server.                               |
 // | (P1) every plant counts ZERO on BOTH shipped artefacts | HALF RE-DERIVED, HALF RETIRED, said   |
-// |      (`config show` AND `agent_qa_get_config`)         | plainly: the MCP half is groups B-E;  |
+// |      (`config show` AND `agent_qa_get_config`)         | plainly: the MCP half is groups B-D;  |
 // |                                                        | the CLI half lives in `packages/cli/  |
 // |                                                        | src/composition/__tests__/masked-     |
 // |                                                        | config.test.ts`. The cross-surface    |
@@ -93,15 +92,10 @@
 // |                                                        | own suite owns it.                    |
 //
 // ─────────────────────────────────────────────────────────────────────────────────────────────
-// THE BOUND, STATED BECAUSE IT IS MEASURED (F2) — the door-enumeration bound every detector road
-// has. The seeded arm knows the values it was TOLD about; the shape arm knows the families it can
-// recognise; the name arm knows the key names it enumerates. A value that is none of those three is
-// missed, and F2 drives exactly such a value all the way to the wire rather than describing it.
-// The mitigation is the PAIRING, not any one arm: a credential a person would actually hold is
-// either declared in the secrets file (B, D), or shaped like one (E1), or written into a config
-// file, where the construction scan refuses the whole proposal (E3). Widening the shared credential
-// NAME census is not done here: it is 395's predicate, it decides what `config show` prints, and it
-// is pinned leaf-by-leaf by another suite. 397 adjudicates it; this file files the measurement.
+// THE BOUND, STATED BECAUSE IT IS MEASURED (F2). The masker knows the values declared in the secrets
+// file and nothing else (441 D-01). A value that is not declared is not masked, and F2 drives exactly
+// such a value all the way to the wire rather than describing it. A credential a person wants hidden
+// is declared in the secrets file (B, D, C441-MCP-DIFF).
 //
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // WHAT THIS FILE FOUND — the defect RESEARCH Pitfall 9 named before anyone had driven the channel.
@@ -132,9 +126,8 @@
 //          the masker; environment arm intact          masker`, (B1), (D1) — and the environment
 //                                                      arm's cells GREEN in the same run
 //
-// C5's cross-arm green is the measurement that makes A2 a claim about two mechanisms: tearing the
-// declared-token seeding reds only the declared-token cells, and the config-write group — which the
-// ENVIRONMENT seed carries — stays green beside it.
+// C5's cross-arm green was measured while an environment seed arm still existed; 441-07 and 441-18
+// deleted that arm and the config-write group it carried.
 //
 // That driver's neutered self-test (since removed) exited 1 with
 // `C1: the suite stayed green under the mutation`, which is what proved the harness could fail.
@@ -143,11 +136,9 @@ import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import {
   appendFileSync,
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -169,15 +160,11 @@ import { composeCliLocalAgent } from '../composition/local-agent-host.js'
 // which is what stops a single mechanism from carrying every cell.
 
 // 2026-10-14 (441-07, D-01): the masker reads only the secrets file, where the three plants below
-// are declared. Their environment variables stay set because group E's scan still reads them.
-const ENV_VAR = 'AGENT_QA_396_06_FIXTURE_TOKEN'
+// are declared. 441-18 (D-15): the environment plants that fed the construction scan's seed arm,
+// and the credential-shaped config plant its pattern arm caught, are deleted with the scan.
 const ENV_PLANT = 'qeb4t7zmv1x8s3d0g5j2n9'
 
-const TOKEN_VAR = 'AGENT_QA_396_06_FIXTURE_CRED_SECRET'
 const TOKEN_PLANT = 'wnk9j2p6r4y7c1f8h3l5b0'
-
-/** Credential-SHAPED, so the construction scan's pattern arm can recognise it with no seed. */
-const CONFIG_PLANT = 'sk-ant-api03-396zzsixCONFIGFIXTUREONLYnotarealkeyPP'
 
 /**
  * A credential whose value happens to be a VALID PROPOSAL ID, so it survives the SDK's input
@@ -189,7 +176,6 @@ const CONFIG_PLANT = 'sk-ant-api03-396zzsixCONFIGFIXTUREONLYnotarealkeyPP'
  * severing the success-path `maskText` left the whole suite green. A corpus whose absence cells all
  * live on one channel is a corpus that has measured one channel.
  */
-const ECHO_VAR = 'AGENT_QA_396_06_FIXTURE_ECHO_TOKEN'
 const ECHO_PLANT = 'prop_qxr7t2mv9s4d1g8j5n3b6'
 
 /** Declared to nothing and shaped like nothing. The hostile control's value (F1). */
@@ -260,17 +246,6 @@ function configWithOpaqueHeaderCredential(): string {
       baseURL: https://api.example.com
       providerHeaders:
         X-Client-Auth: ${OPAQUE_HEADER_PLANT}
-`,
-  )
-}
-
-/** The same file with a CREDENTIAL-SHAPED value in the URL userinfo — v1's own plant, verbatim. */
-function configWithShapedCredential(): string {
-  return seededConfig(
-    `    - name: headers
-      provider: anthropic-compatible
-      model: claude-4.7-sonnet
-      baseURL: https://user:${CONFIG_PLANT}@api.example.com
 `,
   )
 }
@@ -348,11 +323,6 @@ async function openWorkspace(configBody: string): Promise<void> {
   git('add', '--', '.gitignore', CONFIG_FILE)
   git('commit', '--quiet', '-m', 'seed')
 
-  // Group E's construction scan still reads these from the real `process.env`; the masker does not.
-  process.env[ENV_VAR] = ENV_PLANT
-  process.env[TOKEN_VAR] = TOKEN_PLANT
-  process.env[ECHO_VAR] = ECHO_PLANT
-
   // THE PRODUCTION MASKER — the function the `mcp` command itself calls, shared with the host as the
   // command shares it. A suite that built its own masker here would be asserting that ITS masker
   // works, which is true and worthless.
@@ -392,9 +362,6 @@ afterEach(async () => {
   handler = undefined
   host = undefined
   masking = undefined
-  delete process.env[ENV_VAR]
-  delete process.env[TOKEN_VAR]
-  delete process.env[ECHO_VAR]
   rmSync(root, { recursive: true, force: true })
 })
 
@@ -415,12 +382,11 @@ describe('A · the plants are what the ledger says they are (the non-vacuity gat
       // The fingerprints are computed here with `node:crypto` and pinned as literals. A plant edited
       // without its fingerprint being re-derived fails HERE, before any absence cell can pass for
       // the wrong reason.
-      expect(fingerprintOutsideTheCodebase(CONFIG_PLANT)).toBe('936e79cc3223137d')
       expect(fingerprintOutsideTheCodebase(ENV_PLANT)).toBe('db3186baa5885bf6')
 
       // And the plants are pairwise distinct in every eight-character window, so no cell below can
       // pass or fail on another plant's bytes.
-      const plants = [ENV_PLANT, TOKEN_PLANT, CONFIG_PLANT, UNSEEDED_PLANT, OPAQUE_HEADER_PLANT]
+      const plants = [ENV_PLANT, TOKEN_PLANT, UNSEEDED_PLANT, OPAQUE_HEADER_PLANT]
       for (const [at, plant] of plants.entries()) {
         for (const [other, second] of plants.entries()) {
           if (at === other) continue
@@ -437,7 +403,6 @@ describe('A · the plants are what the ledger says they are (the non-vacuity gat
 
     // 2026-10-14 (441-07, D-01): a value only the environment holds, under a credential-named
     // variable, is not a declared secret and is not hidden.
-    expect(process.env[ENV_VAR]).toBe(ENV_PLANT)
     process.env['AGENT_QA_441_07_ENV_ONLY_TOKEN'] = UNSEEDED_PLANT
     try {
       expect(masking!.mask(UNSEEDED_PLANT), 'an environment-only value was masked')
@@ -567,94 +532,9 @@ describe('D · the direct change answer renders the caller\'s target, and masks 
     })
 })
 
-describe('E · the config-write channel refuses to carry a credential at all', () => {
-  it('(E1) a credential-SHAPED value is blocked by the pattern arm, and the wire carries a '
-    + 'fingerprint instead of the value', async () => {
-    await headless(async () => {
-      const answer = await call('agent_qa_change_config', {
-        action: 'config.field.set',
-        path: 'workspace.hooksFile',
-        value: CONFIG_PLANT,
-      })
-
-      const outcome = answer.structuredContent as {
-        outcome?: string
-        blockedReason?: string
-        scanFindings?: readonly { detector?: string; redactedFingerprint?: string }[]
-      }
-      expect(outcome.outcome, rendered(answer)).toBe('blocked')
-      expect(outcome.blockedReason).toBe('guardrail-hit')
-      // BY NAME. Asserting the arm rather than the verdict is what stops E1 and E2 from being one
-      // measurement: they must be caught by DIFFERENT mechanisms or the pairing proves nothing.
-      expect(outcome.scanFindings?.map((finding) => finding.detector)).toEqual(['apiKey'])
-
-      // THE INTEGRITY CELL. The fingerprint the pipeline published equals the one this file
-      // computes with `node:crypto` — so the pipeline held exactly these bytes, and published none
-      // of them.
-      expect(outcome.scanFindings?.[0]?.redactedFingerprint)
-        .toBe(fingerprintOutsideTheCodebase(CONFIG_PLANT))
-      expect(leakedWindow(wire(), CONFIG_PLANT), 'the blocked payload carried the value')
-        .toBeUndefined()
-    })
-  })
-
-  it('(E2) a value the environment SEEDED is blocked by the seed arm — a different mechanism',
-    async () => {
-      await headless(async () => {
-        const answer = await call('agent_qa_change_config', {
-          action: 'config.field.set',
-          path: 'workspace.hooksFile',
-          value: ENV_PLANT,
-        })
-
-        const outcome = answer.structuredContent as {
-          outcome?: string
-          scanFindings?: readonly { detector?: string; redactedFingerprint?: string }[]
-        }
-        expect(outcome.outcome, rendered(answer)).toBe('blocked')
-        expect(outcome.scanFindings?.map((finding) => finding.detector)).toEqual(['seeded-secret'])
-        expect(outcome.scanFindings?.[0]?.redactedFingerprint)
-          .toBe(fingerprintOutsideTheCodebase(ENV_PLANT))
-        expect(leakedWindow(wire(), ENV_PLANT)).toBeUndefined()
-      })
-    })
-
-  it('(E3) a config that ALREADY carries a credential-shaped value yields no diff at all — v1\'s '
-    + 'URL-userinfo plant, re-derived', async () => {
-    // Re-opened over a different fixture: the credential is in the file BEFORE the caller asks for
-    // anything, which is the arrangement v1's masking suite had.
-    await client?.close().catch(() => {})
-    await handler?.close().catch(() => {})
-    await host?.close().catch(() => {})
-    rmSync(root, { recursive: true, force: true })
-    await openWorkspace(configWithShapedCredential())
-
-    await headless(async () => {
-      expect(readFileSync(configPath, 'utf8'), 'the fixture lost its plant')
-        .toContain(CONFIG_PLANT)
-
-      const answer = await call('agent_qa_change_config', {
-        action: 'config.field.set',
-        path: 'registry.llms.0.model',
-        value: 'gpt-5.7-terra',
-      })
-
-      const outcome = answer.structuredContent as {
-        outcome?: string
-        shownDiff?: string
-        scanFindings?: readonly { detector?: string; redactedFingerprint?: string }[]
-      }
-      // NO PROPOSAL, THEREFORE NO DIFF. The v1 suite asserted that the whole-config render did not
-      // print this value; the new surface has no whole-config render, and the one place config
-      // bytes could still reach a caller is a diff — which is never produced.
-      expect(outcome.outcome, rendered(answer)).toBe('blocked')
-      expect(outcome.shownDiff).toBeUndefined()
-      expect(outcome.scanFindings?.[0]?.redactedFingerprint)
-        .toBe(fingerprintOutsideTheCodebase(CONFIG_PLANT))
-      expect(leakedWindow(wire(), CONFIG_PLANT)).toBeUndefined()
-    })
-  })
-})
+// 2026-10-14 (441-18, D-15): group E (the config-write construction scan) is deleted with the scan.
+// A config change is not scanned; a declared value in its diff reaches the wire as its marker
+// (C441-MCP-DIFF below).
 
 describe('F · the controls, and the bound they measure', () => {
   it('(F1) HOSTILE CONTROL: an UNSEEDED value travels the same channel verbatim, and the helper '
@@ -700,10 +580,8 @@ describe('F · the controls, and the bound they measure', () => {
       expect(leakedWindow(outcome.shownDiff ?? '', OPAQUE_HEADER_PLANT), 'the bound closed — '
         + 'update this cell and the ledger, and tell 397').toBeDefined()
 
-      // AND THE PAIRING THAT BOUNDS THE BOUND. The same key with a value any arm recognises does
-      // not get here: E1/E2/E3 are that measurement, and this line names the relation rather than
-      // leaving it to prose. A credential a person actually holds is declared, or shaped, or
-      // written into a file the scan reads.
+      // AND WHAT BOUNDS THE BOUND: a value declared in the secrets file reaches the wire as its
+      // marker (C441-MCP-DIFF). This one is not declared, so it is not masked.
       expect(masking!.mask(OPAQUE_HEADER_PLANT)).toBe(OPAQUE_HEADER_PLANT)
     })
   })
@@ -736,6 +614,24 @@ describe('C441-MCP-DIFF', () => {
   })
 })
 
+describe('C441-CONFIG-SCAN', () => {
+  it('C441-CONFIG-SCAN a credential-shaped value written through the composed host is applied and '
+    + 'the file holds it', async () => {
+    const probe = 'sk-PROBE-1234567890'
+    await headless(async () => {
+      const answer = await call('agent_qa_change_config', {
+        action: 'config.field.set',
+        path: 'use.buildTag',
+        value: probe,
+      })
+      const outcome = answer.structuredContent as { outcome?: string; shownDiff?: string }
+      expect(outcome.outcome, rendered(answer)).toBe('applied')
+      expect(outcome.shownDiff).toContain(probe)
+      expect(readFileSync(configPath, 'utf8')).toContain(`buildTag: ${probe}`)
+    })
+  })
+})
+
 describe('G · redaction lands on credentials, not on the config (v1 M2 / P2 re-derived)', () => {
   it('(G1) the credential-free members of the same payloads survive verbatim', async () => {
     await headless(async () => {
@@ -759,51 +655,6 @@ describe('G · redaction lands on credentials, not on the config (v1 M2 / P2 re-
 
       // And the response is not wholesale opaque — v1's (P2) last assertion, re-derived.
       expect(JSON.stringify(outcome).length).toBeGreaterThan(200)
-    })
-  })
-})
-
-describe('H · nothing persisted carries a planted byte', () => {
-  it('(H1) no proposal record on disk contains a window of any plant', async () => {
-    await headless(async () => {
-      const configBefore = readFileSync(configPath, 'utf8')
-      const answers = [
-        await call('agent_qa_change_config', {
-          action: 'config.field.set',
-          path: 'workspace.hooksFile',
-          value: CONFIG_PLANT,
-        }),
-        await call('agent_qa_change_config', {
-          action: 'config.field.set',
-          path: 'workspace.hooksFile',
-          value: ENV_PLANT,
-        }),
-      ]
-      // The integrity half: both calls really reached the guardrail and were blocked, so the
-      // absences below are about two refusals that saw the plants, not about calls that did nothing.
-      for (const answer of answers) {
-        expect((answer.structuredContent as { outcome?: string }).outcome, rendered(answer))
-          .toBe('blocked')
-      }
-
-      // 432-11 D-05: a blocked change is answered and never kept. No proposal record exists, the
-      // config is byte-for-byte what it was, and nothing under the runtime root carries a plant.
-      expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
-      expect(readFileSync(configPath, 'utf8')).toBe(configBefore)
-      const persisted: string[] = []
-      const walk = (dir: string): void => {
-        for (const entry of readdirSync(dir, { withFileTypes: true })) {
-          const full = join(dir, entry.name)
-          if (entry.isDirectory()) walk(full)
-          else persisted.push(readFileSync(full, 'utf8'))
-        }
-      }
-      walk(agentQaRoot)
-      for (const body of [...persisted, readFileSync(configPath, 'utf8')]) {
-        for (const plant of [ENV_PLANT, TOKEN_PLANT, CONFIG_PLANT]) {
-          expect(leakedWindow(body, plant), `persisted ${plant}`).toBeUndefined()
-        }
-      }
     })
   })
 })

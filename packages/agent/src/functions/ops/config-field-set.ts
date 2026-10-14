@@ -73,7 +73,7 @@ export const configFieldSetSpec: FunctionSpec<ConfigFieldSetInput, ConfigChangeO
     }
     return await changeConfigField(
       { action: CONFIG_FIELD_SET_FUNCTION_ID, path: input.path, value: input.value },
-      { configFiles, configValidate, configScan, configWrite },
+      { configFiles, configValidate, configWrite },
     )
   },
 }

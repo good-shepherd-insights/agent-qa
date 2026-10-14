@@ -84,7 +84,7 @@ export const configAuthSetSpec: FunctionSpec<ConfigAuthSetInput, ConfigChangeOut
     }
     return await setConfigAuth(
       { action: CONFIG_AUTH_SET_FUNCTION_ID, ...input },
-      { configFiles, configValidate, configScan, configWrite },
+      { configFiles, configValidate, configWrite },
     )
   },
 }

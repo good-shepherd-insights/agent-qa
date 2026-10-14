@@ -57,16 +57,6 @@ import { classifyBodies, executableSource, scanFile, scanText } from './op-sourc
 // 2026-10-01, 432-17 D-05/D-09: `config.undo.propose` and the proposal union it alone still answered
 // are deleted, and with them the fixtures parsed through that union.
 
-const directBlockedByGuardrail: ConfigChangeOutput = ConfigChangeOutputSchema.parse({
-  outcome: 'blocked',
-  summaryLine: 'set use.buildTag — blocked: the proposed change would write a secret',
-  blockedReason: 'guardrail-hit',
-  paths: ['agent-qa.config.yaml'],
-  scanFindings: [
-    { path: 'agent-qa.config.yaml', detector: 'apiKey', redactedFingerprint: '6a8bb9dac7013904' },
-  ],
-})
-
 const directBlockedBySchema: ConfigChangeOutput = ConfigChangeOutputSchema.parse({
   outcome: 'blocked',
   summaryLine: 'set use.authState — blocked: the resulting configuration is invalid',
@@ -180,16 +170,7 @@ describe('399.1 D-01/D-02 — the config-mutation family folds its own refusal a
     }
   })
 
-  it('folds the guardrail block to refused, carrying the guardrail’s own reason', () => {
-    for (const spec of CONFIG_CHANGE_OPS) {
-      expect(spec.classify?.(directBlockedByGuardrail as never), spec.id)
-        .toEqual({ status: 'refused', outcome: 'guardrail-hit' })
-    }
-  })
-
   it('folds the validation block to refused, and says which road it came in by', () => {
-    // The two blocked reasons must not collapse: a person cannot tell a refused security control
-    // from an invalid config if both render the same word (the G-399-2 three-outcome reading).
     for (const spec of CONFIG_CHANGE_OPS) {
       expect(spec.classify?.(directBlockedBySchema as never), spec.id)
         .toEqual({ status: 'refused', outcome: 'schema-fail' })
@@ -394,8 +375,8 @@ describe('399.1 D-03 — the fail-closed wrapper, driven', () => {
   it('still reports the real verdict for a result it CAN read — the guard is not a blanket', () => {
     // The discrimination control. Without it the two cells above would pass against a wrapper that
     // answered `unclassifiable-result` for everything.
-    expect(foldFunctionResult(registry, configFieldSetSpec.id, directBlockedByGuardrail).verdict)
-      .toEqual({ status: 'refused', outcome: 'guardrail-hit' })
+    expect(foldFunctionResult(registry, configFieldSetSpec.id, directBlockedBySchema).verdict)
+      .toEqual({ status: 'refused', outcome: 'schema-fail' })
   })
 })
 

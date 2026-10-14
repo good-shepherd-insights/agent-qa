@@ -88,7 +88,7 @@ export const configProjectScaffoldSpec: FunctionSpec<
     }
     return await scaffoldConfigProject(
       { action: CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID, domain: input.domain },
-      { configFiles, configValidate, configScan, configWrite, scaffoldContent },
+      { configFiles, configValidate, configWrite, scaffoldContent },
     )
   },
 }

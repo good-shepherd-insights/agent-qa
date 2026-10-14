@@ -41,7 +41,6 @@ import type {
   ConfigChangeOutput,
   FunctionCaller,
 } from '@vostride/agent-qa-schema'
-import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { createFnCommand } from '../../commands/fn.js'
@@ -191,10 +190,12 @@ function registryFor(overrides: Partial<FunctionDeps> = {}) {
     },
     configFiles: createConfigFilesPort(configPath),
     configValidate: createConfigValidatePort(),
-    // The REAL scan with EMPTY seeds, on `config-apply.test.ts`'s stated reasoning: the function is
-    // production's, the seeds are not, and a cell whose verdict depends on whether the developer
-    // exported a token is a cell that measures the machine.
-    configScan: { scan: (parts) => scanConstructedArtifact(parts, {}) },
+    // 441 D-15: the ops' dependency guard still names the scan port; nothing may call it.
+    configScan: {
+      scan: () => {
+        throw new Error('a config change must not be scanned')
+      },
+    },
     // 432-16 (D-07): no config apply port and no undo source — the production host binds neither.
     // 432-11: the direct writer the config operations publish through.
     configWrite: createConfigWritePort(configPath),

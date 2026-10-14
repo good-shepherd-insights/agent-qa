@@ -114,19 +114,18 @@ async function runAsk(configPath: string, args: string[]): Promise<InvocationRes
  */
 const UNROUTABLE_PROSE = 'zzqq flibberwock zorptastic'
 
-/**
- * A synthetic credential: enough shape for the `apiKey` detector, and a value nowhere in existence.
- *
- * The same value `render-anchors.test.ts` plants, and for the same two reasons — a real key would
- * make this file a secret-bearing artifact, and a value the detector did not recognise would turn
- * the refusal control silently into a second success cell.
- */
-const PLANTED_SECRET = 'sk-PROBE-0000000000000000000000000000'
+/** A value that is not shaped like an environment variable's name. */
+const NOT_A_REFERENCE = 'sk-PROBE-0000000000000000000000000000'
 
-/** One clause whose op reaches its capability and DECLINES: the guardrail arm, not a failure. */
-const REFUSED_CLAUSE = `/fn config.field.set ${JSON.stringify({
-  path: 'use.buildTag',
-  value: PLANTED_SECRET,
+/**
+ * One clause whose op reaches its capability and DECLINES: the refs-only arm, not a failure.
+ *
+ * 2026-10-14 (441 D-15): re-aimed from the deleted construction-scan block to the reference
+ * field's shape refusal, which is decided on the input before anything is read past the set.
+ */
+const REFUSED_CLAUSE = `/fn config.auth.set ${JSON.stringify({
+  target: 'web',
+  envVarName: NOT_A_REFERENCE,
 })}`
 
 /**
@@ -280,7 +279,7 @@ describe('agent-qa ask (the one-shot chat verb)', () => {
 
   it('a refused-only turn keeps the success exit (D-12, door parity with fn)', async () => {
     // A D-12 POSTURE CONTROL, GREEN BEFORE AND AFTER THE FIX. D-11 stops on FAILURE and D-02 ruled
-    // a refusal is not one: the guardrail worked, the op ran and answered, and the verifier measured
+    // a refusal is not one: the op ran and answered a refusal, and the verifier measured
     // the `fn` door exiting 0 on this identical payload. E2E-02 clause 2 makes door DISAGREEMENT the
     // defect class, so moving this door's exit unilaterally would mint a parity break inside the
     // phase that exists to close one. The refusal is surfaced where a person and a script actually
@@ -288,9 +287,9 @@ describe('agent-qa ask (the one-shot chat verb)', () => {
     const configPath = fixtureWorkspace(roots)
     const result = await runAsk(configPath, [REFUSED_CLAUSE])
 
-    // NON-VACUITY: the guardrail actually fired, rather than the mutation quietly succeeding.
+    // NON-VACUITY: the refusal actually fired, rather than the mutation quietly succeeding.
     expect(result.stdout).toContain('refused')
-    expect(result.stdout).toContain('guardrail-hit')
+    expect(result.stdout).toContain('refs-only')
 
     expect(result.exitCode).toBeUndefined()
   })
@@ -357,13 +356,13 @@ describe('agent-qa ask on the shipped binary: one receipt word, one exit code (3
   it('keeps the success exit on a refused-only turn (D-12 posture)', async () => {
     const outcome = await spawnAsk('refused', REFUSED_CLAUSE)
 
-    // NON-VACUITY: the guardrail fired on the shipped binary too.
+    // NON-VACUITY: the refusal fired on the shipped binary too.
     expect(
       outcome.stdout,
-      `the shipped binary did not print the guardrail refusal. stdout: ${
+      `the shipped binary did not print the refs-only refusal. stdout: ${
         JSON.stringify(outcome.stdout.slice(0, 900))}`,
     ).toContain('refused')
-    expect(outcome.stdout).toContain('guardrail-hit')
+    expect(outcome.stdout).toContain('refs-only')
 
     expect(outcome.code).toBe(0)
   }, 180_000)

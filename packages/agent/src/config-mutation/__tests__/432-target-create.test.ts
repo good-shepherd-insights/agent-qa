@@ -18,7 +18,6 @@ import {
   ConfigTargetCreateInputSchema,
 } from '@vostride/agent-qa-schema'
 import type { ConfigChange, ConfigChangeOutput } from '@vostride/agent-qa-schema'
-import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 import { Document as YamlDocument, isMap, isScalar, isSeq, parse as parseYaml, parseDocument } from 'yaml'
 
@@ -148,7 +147,6 @@ function harness(options: { readonly config?: string } = {}): Harness {
           return Promise.resolve({ kind: 'published' as const, written: files.map((file) => file.path) })
         },
       },
-      configScan: { scan: (parts) => scanConstructedArtifact(parts, {}) },
       scaffoldContent: {
         render: (input) => {
           rendered.push({ targetName: input.targetName, baseUrl: input.baseUrl })

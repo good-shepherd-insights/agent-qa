@@ -1,121 +1,33 @@
-// The BLOCKED posture, end to end through the real pipeline (Phase 395-04, CFGM-01/02 · D-09/D-10/
-// D-12).
+// The BLOCKED posture, end to end through the real pipeline (Phase 395-04, CFGM-01 · D-09/D-10).
 //
-// 2026-09-30, 432-11 D-05: a blocked change is ANSWERED and nothing is kept. The cells below that
-// once read the filed record read the answer itself, and assert that nothing reached the store or
-// the direct writer. The report's contents — which road, which file, which fingerprint, and never
-// a window of the value — are the same claims as before.
+// 2026-09-30, 432-11 D-05: a blocked change is ANSWERED and nothing is kept. The cells below read
+// the answer itself, and assert that nothing reached the store or the direct writer.
 //
-// THE SCAN AND THE DIFF PRIMITIVE ARE THE PRODUCTION ONES. `scanConstructedArtifact` is imported
-// from `packages/safety` and `renderConfigDiff` from `packages/schema`; the doubles are the three
-// host facts this layer may not touch — bytes on disk, the yaml edit, and the store. That split is
-// the point: what is measured here is the PIPELINE's order and its dispositions, over the same
-// scanner and the same renderer production runs.
+// 2026-10-14, 441 D-15/D-23: a config change is not scanned for secrets. The one blocked road left
+// is a change whose resulting configuration does not validate; a credential-shaped value is the
+// author's own text and is written (C441-CONFIG-SCAN below). The cells whose subject was the scan
+// are deleted.
 //
-// THE SEED SET IS EMPTY IN THIS FILE, DELIBERATELY. `composeLocalAgent` seeds from
-// `sensitiveEnvSlice(process.env)`, which is the environment this suite happens to run in; a cell
-// whose verdict depended on whether a developer exported a token would measure the machine. Every
-// planted secret below is caught by the PATTERN half, which needs no seeds. The SEEDED half and the
-// binding that supplies it are measured where they belong, in `cli`'s composed renders file, which
-// sets the variable it depends on.
-//
-// WHAT MAKES EACH CELL RED — the acceptance bar is the implementation it must fail on:
-//
-//   (1) schema-fail       — a refusal that carried no report. The cell asserts the validator's
-//                           issues reach the answer, and that nothing is filed or written.
-//   (2) guardrail-hit     — the scan call site removed, or its findings ignored. This is the cell
-//                           the phase's scan mutation driver (since removed) redded on purpose.
-//   (3) non-disclosure    — a blocked record built from the applyable one (diff bytes retained), a
-//                           finding carrying a prefix of its value, or a scan that never ran. The
-//                           three halves fail independently: the WINDOWED absence, the externally
-//                           computed fingerprint, and the summary line.
-//   (4) the summary line  — `configFieldSetSummaryLine` reused for the blocked arm. That function
-//                           prints the VALUE, and the value is what the guardrail just refused, so
-//                           the leak would move one field to the left. The cell proves the channel
-//                           can carry it before asserting it does not.
-//   (5) context line      — A SCAN NARROWED TO THE CHANGED LINES. The planted secret sits on a
-//                           CONTEXT line of the rendered diff — asserted, in the cell, against the
-//                           real renderer — so a scan reading only `+`/`-` lines returns clean and
-//                           this cell fails. It is the D-12 claim and the one 395-03 measured.
-//   (6) two reasons       — a pipeline that collapsed both roads into one indistinguishable
-//                           "blocked". Each half asserts the OTHER report is absent, so a record
-//                           carrying both would fail too. The precedence half reds on a validator
-//                           whose words persist for a secret-bearing value.
-//   (7) crossBoundary     — 395-01/02's `false, []` stub left in place.
-//   (8) not-applyable     — an accept that threw instead of answering, or one that reached the
-//                           apply route with a blocked payload.
-//   (9) unbound scan      — a propose op that constructed anyway when no scan was bound. The
-//                           permissive direction a security control may not fail in.
-//  (10) the scan RAN      — every absence above passing because nothing was ever scanned. The
-//                           invocation count is what makes the rest of this file non-vacuous.
-//  (11) the RANGE         — 395-10, GAP 1 / CR-01. A scan whose input is the DIFF while the
-//                           validator's input is the whole candidate set. The planted secret sits
-//                           in a set member no hunk and no added file contains, so a diff-ranged
-//                           scan returns clean and the validator — the only step that reads those
-//                           bytes — is handed them. The cell asserts the block AND that the
-//                           validator was never invoked, so it reds on the pre-395-10 pipeline
-//                           (which answered `proposed`) and on any "fix" that merely re-worded the
-//                           validator's output after letting it read unscanned bytes.
+// THE DIFF PRIMITIVE IS THE PRODUCTION ONE. `renderConfigDiff` is imported from `packages/schema`;
+// the doubles are the host facts this layer may not touch — bytes on disk, the yaml edit, and the
+// writer.
 
-import {
-  renderConfigDiff,
-  utf8Decode,
-  utf8Encode,
-} from '@vostride/agent-qa-schema'
-import type {
-  ConfigChangeOutput,
-} from '@vostride/agent-qa-schema'
-import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
+import { utf8Decode, utf8Encode } from '@vostride/agent-qa-schema'
+import type { ConfigChangeOutput } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
 import { configFieldSetSpec } from '../../functions/ops/config-field-set.js'
-import { FunctionNotBoundError } from '../../functions/spec.js'
 import type { FunctionDeps } from '../../functions/spec.js'
 import * as construct from '../construct.js'
 import {
   changeConfigField,
   configFieldSetSummaryLine,
+  setConfigAuth,
 } from '../construct.js'
 import type { ConstructConfigChangeDeps } from '../construct.js'
 import type { ConfigFieldValue } from '../ports.js'
 
 const CONFIG_FILE = 'agent-qa.config.yaml'
-
-/**
- * An AWS access key by shape, matched by the `awsKey` detector with no seeding at all.
- *
- * A SHAPED VALUE RATHER THAN A SEEDED ONE, because this file's seed set is empty on purpose (see the
- * header). 395-03 records that `email` and `injectionShape` are excluded from the construction scan
- * by decision, so an email fixture here would produce a clean scan and a green cell measuring
- * nothing.
- */
-const PLANTED = 'AKIAQWERTYUIOPASDFGH'
-
-/**
- * A SECOND, DIFFERENT secret for the pre-existing case, so the two cells cannot pass on each other's
- * fixture.
- */
-const COMMITTED_SECRET = 'AKIAZZZZZZZZZZZZZZZZ'
-
-/**
- * The fingerprints, computed OUTSIDE this codebase — `hashlib.sha256(value).hexdigest()[:16]`.
- *
- * A cell whose expectation came from calling `sha256hex16` could not tell a correct recipe from a
- * consistently wrong one. Matching these means the report demonstrably observed those exact bytes
- * and chose not to carry them, which is what turns an absence assertion into evidence.
- */
-const PLANTED_FINGERPRINT = 'a93e68f8176af0b0'
-const COMMITTED_FINGERPRINT = '295cfae3fd0324ea'
-
-/**
- * A THIRD secret, living only in the hooks member — the file cell (11)'s proposal never touches.
- *
- * DISTINCT FROM THE OTHER TWO so the range cell cannot pass on either of their fixtures, and shaped
- * rather than seeded for this file's own reason (the seed set here is empty on purpose).
- */
-const HOOKS_SECRET = 'AKIAHHHHHHHHHHHHHHHH'
-const HOOKS_FINGERPRINT = 'd41c346bc8d1849c'
-
 const HOOKS_FILE = 'hooks.yaml'
 
 const CLEAN_CONFIG = `# agent-qa Configuration
@@ -133,19 +45,19 @@ use:
   parallel: false
 `
 
-/**
- * A config a HUMAN committed, carrying a secret three lines above the field this suite edits.
- *
- * THE DISTANCE IS LOAD-BEARING and is asserted rather than assumed: `DIFF_CONTEXT_LINES` is 3, so
- * `farmAccessKey` lands on a CONTEXT line of the hunk that renders the `step` edit. Cell (5) proves
- * that against the real renderer before it asserts the block, which is what makes it discriminate a
- * D-12 scan from a diff-narrowed one.
- */
-const CONFIG_WITH_COMMITTED_SECRET = `# agent-qa Configuration
+/** A credential-shaped probe: the author's own text, which a config change writes as given. */
+const PROBE = 'sk-PROBE-1234567890'
+
+const BUILD_TAG_CONFIG = `${CLEAN_CONFIG}  buildTag: v1.0.0\n`
+
+/** A bearer-shaped string a person already committed, three lines above the field edited below. */
+const COMMITTED_BEARER = 'Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJwcm9iZSJ9.c2lnbmF0dXJlLXByb2Jl'
+
+const CONFIG_WITH_COMMITTED_BEARER = `# agent-qa Configuration
 workspace:
   hooksFile: hooks.yaml
 registry:
-  farmAccessKey: ${COMMITTED_SECRET}
+  farmAuthorization: ${COMMITTED_BEARER}
 use:
   timeout:
     step: 30s
@@ -158,20 +70,10 @@ interface Harness {
   readonly filed: unknown[]
   /** Every call the direct writer received. */
   readonly written: unknown[]
-  /** How many times the scan was actually called — the non-vacuity counter for every absence. */
-  scans: () => number
-  /**
-   * How many times the VALIDATOR was called (395-10).
-   *
-   * The range claim's other half. "The scan reads everything the validator reads" is provable in
-   * one direction by the block; this counter proves the other — that on a guardrail hit the
-   * validator was never handed the candidate at all, so no words of its can exist to persist.
-   */
-  validations: () => number
 }
 
 /**
- * The three host doubles and the REAL scan.
+ * The three host doubles.
  *
  * `setField` is a line-level fake: it finds the last path segment as a key and replaces its value,
  * answering the previous scalar beside the new bytes exactly as the shipped yaml port does. It is a
@@ -180,29 +82,16 @@ interface Harness {
  */
 function harness(options: {
   readonly config: string
-  /** The committed hooks member's bytes. Absent means the file is not there, as the port answers. */
-  readonly hooks?: string
-  /**
-   * 395-10: the port's failure arm carries { path, message } PAIRS, so the double does too.
-   *
-   * A DESIGNED COMPILE BREAK rather than a rewritten claim. Every cell below asserts the same thing
-   * it asserted before — that the validator's words reach the record and the guardrail's do not —
-   * over a shape that now also says WHICH FILE each issue is about (WR-11).
-   */
   readonly validation?:
     | { ok: false; issues: readonly { path: string; message: string }[] }
     | { ok: true }
 }): Harness {
   const filed: unknown[] = []
   const written: unknown[] = []
-  let scanCount = 0
-  let validateCount = 0
 
   return {
     filed,
     written,
-    scans: () => scanCount,
-    validations: () => validateCount,
     deps: {
       configFiles: {
         read: () => Promise.resolve({
@@ -210,18 +99,14 @@ function harness(options: {
           hooksFile: HOOKS_FILE,
           files: [
             { path: CONFIG_FILE, bytes: utf8Encode(options.config) },
-            options.hooks === undefined
-              ? { path: HOOKS_FILE }
-              : { path: HOOKS_FILE, bytes: utf8Encode(options.hooks) },
+            { path: HOOKS_FILE },
             { path: '.gitignore' },
           ],
         }),
-        // 395-05 widened the port with a structural probe. `config.field.set` never asks one — it
-        // addresses a path directly and has no collision or not-found posture — so this double
-        // THROWS rather than answering, and a pipeline that started probing on this op's behalf
-        // would fail here by name instead of quietly passing on a fabricated answer.
+        // `config.field.set` never inspects the document, and `config.auth.set` refuses a
+        // non-reference before it does, so this double THROWS rather than answering.
         inspect: () => {
-          throw new Error('config.field.set must not inspect the document')
+          throw new Error('this construction must not inspect the document')
         },
         mintHookId: () => {
           throw new Error('config.field.set must not mint a hook id')
@@ -244,10 +129,7 @@ function harness(options: {
         },
       },
       configValidate: {
-        validate: () => {
-          validateCount += 1
-          return Promise.resolve(options.validation ?? { ok: true })
-        },
+        validate: () => Promise.resolve(options.validation ?? { ok: true }),
       },
       configWrite: {
         applyFields: (request) => {
@@ -264,12 +146,6 @@ function harness(options: {
           return Promise.resolve({ kind: 'published' as const, written: [CONFIG_FILE] })
         },
       },
-      configScan: {
-        scan: (parts) => {
-          scanCount += 1
-          return scanConstructedArtifact(parts, {})
-        },
-      },
     },
   }
 }
@@ -284,14 +160,7 @@ async function propose(
   )
 }
 
-/** Every 8-character window of a secret — a PARTIAL disclosure is the tempting middle ground. */
-function windows(secret: string): string[] {
-  const out: string[] = []
-  for (let index = 0; index + 8 <= secret.length; index++) out.push(secret.slice(index, index + 8))
-  return out
-}
-
-describe('the blocked posture: one posture, two reasons (CFGM-01 · D-10)', () => {
+describe('the blocked posture (CFGM-01 · D-10)', () => {
   it('(1) answers BLOCKED when the whole config no longer validates, and keeps nothing', async () => {
     const test = harness({
       config: CLEAN_CONFIG,
@@ -311,144 +180,26 @@ describe('the blocked posture: one posture, two reasons (CFGM-01 · D-10)', () =
     expect(answer.validationIssues)
       .toEqual([`${CONFIG_FILE}: use.parallel: expected boolean, received string`])
     expect(answer.paths).toEqual([CONFIG_FILE])
-    // The two reasons are kept apart in the answer.
-    expect(answer.scanFindings).toBeUndefined()
     // 432-11: NOTHING IS KEPT OR WRITTEN. The report is the answer.
     expect(test.filed).toHaveLength(0)
     expect(test.written).toHaveLength(0)
   })
 
-  it('(2) answers BLOCKED when the change would write a secret, and keeps nothing', async () => {
-    const test = harness({ config: CLEAN_CONFIG })
-
-    const answer = await propose(test, { path: 'envFile', value: PLANTED })
-
-    expect(answer.outcome).toBe('blocked')
-    if (answer.outcome !== 'blocked') throw new Error('unreachable')
-    expect(answer.blockedReason).toBe('guardrail-hit')
-    expect(answer.scanFindings?.map((finding) => finding.path)).toEqual([CONFIG_FILE])
-    expect(answer.scanFindings?.[0]?.detector).toBe('awsKey')
-    expect(answer.validationIssues).toBeUndefined()
-    expect(test.filed).toHaveLength(0)
-    expect(test.written).toHaveLength(0)
-  })
-
-  it('(3) the blocked answer carries no diff, no content, and no window of the secret', async () => {
-    const test = harness({ config: CLEAN_CONFIG })
-    const payload = await propose(test, { path: 'envFile', value: PLANTED })
-
-    if (payload.outcome !== 'blocked') throw new Error('expected a blocked answer')
-    const serialized = JSON.stringify(payload)
-
-    // THE INTEGRITY HALF FIRST, so the absence below is a fact about a channel that demonstrably
-    // observed the value rather than about one that never had it. This fingerprint was computed
-    // outside this codebase.
-    expect(payload.scanFindings?.[0]?.redactedFingerprint).toBe(PLANTED_FINGERPRINT)
-    expect(serialized).toContain(PLANTED_FINGERPRINT)
-
-    // THE ABSENCE, WINDOWED — a partial disclosure fails too.
-    for (const window of windows(PLANTED)) expect(serialized).not.toContain(window)
-
-    // STRUCTURAL, not incidental: there are no fields for these on a blocked answer at all.
-    expect(serialized).not.toContain('shownDiff')
-    expect(serialized).not.toContain('newContentBase64')
-    expect(test.filed).toHaveLength(0)
-  })
-
-  it('(4) the blocked summary line drops the value the applyable one would print', async () => {
-    const test = harness({ config: CLEAN_CONFIG })
-    const payload = await propose(test, { path: 'envFile', value: PLANTED })
-    if (payload.outcome !== 'blocked') throw new Error('expected a blocked answer')
-
-    // THE CHANNEL CAN CARRY IT. The applyable line — the one this pipeline writes for a change that
-    // passed — really does print the value, which is correct for a change nobody refused. That is
-    // what makes the assertion below a fact about this line rather than about summary lines.
-    expect(configFieldSetSummaryLine('envFile', PLANTED)).toContain(PLANTED)
-
-    expect(payload.summaryLine).not.toContain(PLANTED)
-    for (const window of windows(PLANTED)) expect(payload.summaryLine).not.toContain(window)
-    // It still says what was ATTEMPTED, or the inbox row says nothing a person can act on.
-    expect(payload.summaryLine).toContain('envFile')
-  })
-
-  it('(5) D-12: a secret on a CONTEXT line blocks, and is named as already committed', async () => {
-    // THE NON-VACUITY PROOF, FIRST AND AGAINST THE REAL RENDERER. If the planted secret rendered on
-    // a `+` or `-` line, the cell below would pass under a scan narrowed to the changed lines —
-    // i.e. green under the very implementation D-12 forbids. It renders on a CONTEXT line, and this
-    // is the assertion that says so.
-    const before = utf8Encode(CONFIG_WITH_COMMITTED_SECRET)
-    const after = utf8Encode(CONFIG_WITH_COMMITTED_SECRET.replace('step: 30s', 'step: 45s'))
-    const rendered = renderConfigDiff([{ path: CONFIG_FILE, oldBytes: before, newBytes: after }])
-    if (rendered.outcome !== 'changed') throw new Error('the fixture edit rendered no diff')
-    const secretLines = utf8Decode(rendered.diffBytes)
-      .split('\n')
-      .filter((line) => line.includes(COMMITTED_SECRET))
-    expect(secretLines).toHaveLength(1)
-    expect(secretLines[0]?.startsWith('+')).toBe(false)
-    expect(secretLines[0]?.startsWith('-')).toBe(false)
-
-    const test = harness({ config: CONFIG_WITH_COMMITTED_SECRET })
-    const answer = await propose(test, { path: 'step', value: '45s' })
-
-    expect(answer.outcome).toBe('blocked')
-    if (answer.outcome !== 'blocked') throw new Error('unreachable')
-    expect(answer.blockedReason).toBe('guardrail-hit')
-    // NAMED AS A FINDING IN THE EXISTING CONFIG. A person told only "blocked" would keep re-trying
-    // an edit that was never the problem.
-    expect(answer.summaryLine).toContain('already carries a secret')
-    expect(answer.summaryLine).toContain(CONFIG_FILE)
-    expect(answer.scanFindings?.[0]?.redactedFingerprint).toBe(COMMITTED_FINGERPRINT)
-    expect(JSON.stringify(answer)).not.toContain(COMMITTED_SECRET.slice(0, 8))
-    expect(test.filed).toHaveLength(0)
-  })
-
-  it('(5b) a secret the change itself introduces is NOT described as already committed', () => {
-    // The two D-12 sentences are decided by a MEASUREMENT — the committed bytes are scanned — so
-    // this cell reds on a pipeline that hard-codes either sentence, which is the cheapest way to
-    // make (5) pass without answering the question it asks.
-    return propose(harness({ config: CLEAN_CONFIG }), { path: 'envFile', value: PLANTED })
-      .then((answer) => {
-        if (answer.outcome !== 'blocked') throw new Error('unreachable')
-        expect(answer.summaryLine).toContain('would write a secret')
-        expect(answer.summaryLine).not.toContain('already carries')
+  it('(4) the blocked summary line names the subject and drops the value the applyable one would print',
+    async () => {
+      const test = harness({
+        config: CLEAN_CONFIG,
+        validation: { ok: false, issues: [{ path: CONFIG_FILE, message: 'use.parallel: not a boolean' }] },
       })
-  })
+      const payload = await propose(test, { path: 'parallel', value: 'yes please' })
+      if (payload.outcome !== 'blocked') throw new Error('expected a blocked answer')
 
-  it('(6) the two reasons are told apart, and the guardrail wins when both apply', async () => {
-    const schemaFail = harness({
-      config: CLEAN_CONFIG,
-      validation: {
-        ok: false,
-        issues: [{ path: CONFIG_FILE, message: 'use.parallel: expected boolean, received string' }],
-      },
+      // THE CHANNEL CAN CARRY IT: the applyable line prints the value.
+      expect(configFieldSetSummaryLine('parallel', 'yes please')).toContain('yes please')
+
+      expect(payload.summaryLine).not.toContain('yes please')
+      expect(payload.summaryLine).toContain('parallel')
     })
-    const guardrail = harness({ config: CLEAN_CONFIG })
-
-    const first = await propose(schemaFail, { path: 'parallel', value: 'yes please' })
-    const second = await propose(guardrail, { path: 'envFile', value: PLANTED })
-    if (first.outcome !== 'blocked' || second.outcome !== 'blocked') throw new Error('unreachable')
-
-    // NAMED, not merely different: each reason is asserted by its own word AND by the report the
-    // other one cannot have. A predicate that collapsed the two would fail on both halves.
-    expect(first.blockedReason).toBe('schema-fail')
-    expect(first.validationIssues?.length).toBeGreaterThan(0)
-    expect(first.scanFindings).toBeUndefined()
-    expect(second.blockedReason).toBe('guardrail-hit')
-    expect(second.scanFindings?.length).toBeGreaterThan(0)
-    expect(second.validationIssues).toBeUndefined()
-
-    // PRECEDENCE, AND WHY THE PIPELINE SCANS BEFORE IT VALIDATES: a validator reports issues in its
-    // own words over the candidate bytes, so a refusal quoting the offending value would persist a
-    // secret inside a blocked record. Scanning first means the words never get written.
-    const both = harness({
-      config: CLEAN_CONFIG,
-      validation: { ok: false, issues: [{ path: CONFIG_FILE, message: `envFile: ${PLANTED} is not a path` }] },
-    })
-    const answer = await propose(both, { path: 'envFile', value: PLANTED })
-    if (answer.outcome !== 'blocked') throw new Error('unreachable')
-    expect(answer.blockedReason).toBe('guardrail-hit')
-    expect(JSON.stringify(answer)).not.toContain(PLANTED.slice(0, 8))
-  })
 
   it('(7) a clean change is written, and carries the classifier\'s per-value verdict', async () => {
     const innocuous = harness({ config: CLEAN_CONFIG })
@@ -473,85 +224,18 @@ describe('the blocked posture: one posture, two reasons (CFGM-01 · D-10)', () =
     expect(unflagged.crossBoundaryReasons).toEqual([])
   })
 
-  // RE-SPELLED 2026-10-01 (432-17, D-05): this cell accepted a stored blocked proposal through
-  // `proposals.accept` and pinned the `applyablePayload` funnel one layer down. Nothing is filed any
-  // more (C432-CONFIG-BLOCKED-NO-WRITE below), the accept op is deleted with the inbox, and so is the
-  // funnel that guarded an apply port no host binds. What remains is the absence of both.
+  // RE-SPELLED 2026-10-01 (432-17, D-05): nothing is filed any more, the accept op is deleted with
+  // the inbox, and so is the funnel that guarded an apply port no host binds.
   it('(8) no blocked record can be accepted: there is no apply funnel and no accept op', () => {
     expect('applyablePayload' in construct).toBe(false)
     expect('BlockedConfigProposalError' in construct).toBe(false)
   })
-
-  it('(9) a composition with no scan bound cannot change the config at all', async () => {
-    const test = harness({ config: CLEAN_CONFIG })
-    const deps = {
-      configFiles: test.deps.configFiles,
-      configValidate: test.deps.configValidate,
-      configWrite: test.deps.configWrite,
-    } as unknown as FunctionDeps
-
-    await expect(configFieldSetSpec.invoke({ path: 'use.timeout.step', value: '45s' }, deps))
-      .rejects.toThrow(FunctionNotBoundError)
-    expect(test.written).toHaveLength(0)
-  })
-
-  it('(10) the scan really runs on every construction — the counter behind every absence', async () => {
-    const clean = harness({ config: CLEAN_CONFIG })
-    await propose(clean, { path: 'use.timeout.step', value: '45s' })
-    expect(clean.scans()).toBe(1)
-
-    // A hit costs a SECOND call: the D-12 question "was this already committed?" is answered by
-    // scanning the committed bytes, which is a measurement rather than an inference from diff
-    // syntax. A pipeline that guessed would show one call here.
-    const hit = harness({ config: CLEAN_CONFIG })
-    await propose(hit, { path: 'envFile', value: PLANTED })
-    expect(hit.scans()).toBe(2)
-  })
-
-  it('(11) a secret in an UNCHANGED member blocks, and the validator never sees the candidate',
-    async () => {
-      const hooks = `# project hooks
-hooks:
-  - name: deploy
-    token: ${HOOKS_SECRET}
-`
-      // THE RANGE PROOF, FIRST AND AGAINST THE REAL RENDERER. The edit is to the config file; the
-      // secret is in the hooks file, which this proposal does not touch. It is therefore in no hunk
-      // and in no added file — the rendered artifact does not contain it at all. A scan ranged over
-      // the DIFF cannot see it however wide its context window is, which is what makes this cell a
-      // measurement of RANGE rather than another measurement of the context-line property (5).
-      const before = utf8Encode(CLEAN_CONFIG)
-      const after = utf8Encode(CLEAN_CONFIG.replace('step: 30s', 'step: 45s'))
-      const rendered = renderConfigDiff([{ path: CONFIG_FILE, oldBytes: before, newBytes: after }])
-      if (rendered.outcome !== 'changed') throw new Error('the fixture edit rendered no diff')
-      expect(utf8Decode(rendered.diffBytes)).not.toContain(HOOKS_SECRET)
-
-      const test = harness({ config: CLEAN_CONFIG, hooks })
-      const answer = await propose(test, { path: 'step', value: '45s' })
-
-      expect(answer.outcome).toBe('blocked')
-      if (answer.outcome !== 'blocked') throw new Error('unreachable')
-      expect(answer.blockedReason).toBe('guardrail-hit')
-      // The bytes are committed, so it is the D-12 existing-config sentence, and it names the file
-      // the person has to go and fix rather than the one they were editing.
-      expect(answer.summaryLine).toContain('already carries a secret')
-      expect(answer.summaryLine).toContain(HOOKS_FILE)
-      expect(answer.scanFindings?.[0]?.path).toBe(HOOKS_FILE)
-      expect(answer.scanFindings?.[0]?.redactedFingerprint).toBe(HOOKS_FINGERPRINT)
-
-      // THE OTHER HALF OF THE RANGE CLAIM: the validator was never handed the candidate. A pipeline
-      // that scanned wide but still validated first — or that validated and then re-worded what it
-      // got back — would fail here even with every assertion above passing.
-      expect(test.validations()).toBe(0)
-      expect(JSON.stringify(answer)).not.toContain(HOOKS_SECRET.slice(0, 8))
-      expect(test.filed).toHaveLength(0)
-    })
 })
 
 // ---- 432-11 D-05/D-07: a blocked construction is an answer, never a record -------------------
 //
-// C432-CONFIG-BLOCKED-NO-WRITE  both blocked roads answer a typed refusal with the same report,
-//                               and nothing reaches the proposal store or the direct writer.
+// C432-CONFIG-BLOCKED-NO-WRITE  a blocked change answers a typed refusal with its report, and
+//                               nothing reaches the proposal store or the direct writer.
 // C432-CONFIG-APPLIED-OUTPUT    a clean change is written in the call, and the answer names the
 //                               files and fields it changed, validated by the direct contract.
 
@@ -561,6 +245,12 @@ function directHarness(options: Parameters<typeof harness>[0]) {
   const writes: unknown[] = []
   const deps = {
     ...test.deps,
+    // The op's dependency guard still names the scan port; nothing may call it.
+    configScan: {
+      scan: () => {
+        throw new Error('a config change must not be scanned')
+      },
+    },
     configWrite: {
       applyFields: (request: unknown) => {
         writes.push(request)
@@ -600,37 +290,6 @@ describe('C432-CONFIG-BLOCKED-NO-WRITE: a blocked change is refused in the call 
         paths: [CONFIG_FILE],
         validationIssues: [`${CONFIG_FILE}: use.parallel: expected boolean, received string`],
       })
-      expect(test.filed).toEqual([])
-      expect(writes).toEqual([])
-    })
-
-  it('C432-CONFIG-BLOCKED-NO-WRITE: guardrail-hit answers the fingerprint only, files nothing, writes nothing',
-    async () => {
-      const { test, deps, writes } = directHarness({ config: CLEAN_CONFIG })
-
-      const answer = await configFieldSetSpec.invoke({ path: 'envFile', value: PLANTED }, deps)
-
-      expect(answer).toMatchObject({ outcome: 'blocked', blockedReason: 'guardrail-hit' })
-      expect(answer).not.toHaveProperty('proposalId')
-      const serialized = JSON.stringify(answer)
-      expect(serialized).toContain(PLANTED_FINGERPRINT)
-      for (const window of windows(PLANTED)) expect(serialized).not.toContain(window)
-      expect(test.filed).toEqual([])
-      expect(writes).toEqual([])
-      expect(test.scans()).toBe(2)
-    })
-
-  it('C432-CONFIG-BLOCKED-NO-WRITE: a secret in an unchanged member blocks before validation, still with no record',
-    async () => {
-      const { test, deps, writes } = directHarness({
-        config: CLEAN_CONFIG,
-        hooks: `hooks:\n  - name: deploy\n    token: ${HOOKS_SECRET}\n`,
-      })
-
-      const answer = await configFieldSetSpec.invoke({ path: 'step', value: '45s' }, deps)
-
-      expect(answer).toMatchObject({ outcome: 'blocked', blockedReason: 'guardrail-hit', paths: [HOOKS_FILE] })
-      expect(test.validations()).toBe(0)
       expect(test.filed).toEqual([])
       expect(writes).toEqual([])
     })
@@ -676,5 +335,62 @@ describe('C432-CONFIG-APPLIED-OUTPUT: the answer is what was written', () => {
 
       const answer = await configFieldSetSpec.invoke({ path: 'use.timeout.step', value: '45s' }, renamed)
       expect(answer).toMatchObject({ outcome: 'applied', files: ['sub/agent-qa.config.yaml'] })
+    })
+})
+
+// ---- 441 D-15/D-04/D-23: no config change is scanned for secrets ---------------------------------
+//
+// C441-CONFIG-SCAN  a credential-shaped value is written, a config that already carries one still
+//                   yields its diff, and a reference field refuses only what is not a reference of
+//                   its kind, pointing at the secrets file.
+
+describe('C441-CONFIG-SCAN', () => {
+  it('C441-CONFIG-SCAN a credential-shaped value in a free-text field is written', async () => {
+    const { test, deps, writes } = directHarness({ config: BUILD_TAG_CONFIG })
+
+    const answer = await configFieldSetSpec.invoke({ path: 'use.buildTag', value: PROBE }, deps)
+
+    expect(answer).toMatchObject({
+      outcome: 'applied',
+      files: [CONFIG_FILE],
+      fields: ['use.buildTag'],
+    })
+    expect((answer as { shownDiff?: string }).shownDiff).toContain(`+  buildTag: ${PROBE}`)
+    expect(writes).toEqual([
+      { changes: [{ op: 'set', path: ['use', 'buildTag'], value: PROBE }] },
+    ])
+    expect(test.filed).toEqual([])
+  })
+
+  it('C441-CONFIG-SCAN a config that already carries a credential-shaped value still yields its diff',
+    async () => {
+      const test = harness({ config: CONFIG_WITH_COMMITTED_BEARER })
+
+      const answer = await propose(test, { path: 'step', value: '45s' })
+
+      expect(answer.outcome).toBe('applied')
+      if (answer.outcome !== 'applied') throw new Error('unreachable')
+      expect(answer.shownDiff).toContain('+    step: 45s')
+      expect(answer.shownDiff).toContain(COMMITTED_BEARER)
+      expect(test.written).toHaveLength(1)
+    })
+
+  it('C441-CONFIG-SCAN a reference field still refuses a value that is not a reference, naming the secrets file',
+    async () => {
+      const test = harness({ config: CLEAN_CONFIG })
+
+      const answer = await setConfigAuth(
+        { action: 'config.auth.set', target: 'shop', envVarName: PROBE },
+        test.deps,
+      )
+
+      expect(answer).toMatchObject({ outcome: 'refused', reason: 'refs-only' })
+      if (answer.outcome !== 'refused') throw new Error('unreachable')
+      expect(answer.detail).toContain('envVarName')
+      expect(answer.detail)
+        .toContain('Put the secret in the secrets file the configuration names at workspace.secretsFile')
+      expect(answer.detail).not.toContain('workspace.envFile')
+      expect(answer.detail).not.toContain(PROBE)
+      expect(test.written).toHaveLength(0)
     })
 })
