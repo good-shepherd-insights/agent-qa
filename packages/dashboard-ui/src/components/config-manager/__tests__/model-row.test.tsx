@@ -9,7 +9,6 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { MemoryRouter, Route, Routes } from 'react-router'
-import { CONFIG_MASK_PLACEHOLDER } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ModelList } from '@/components/config-manager/model-list'
@@ -98,13 +97,15 @@ const LLMS = [
 // The credential-status read carries no secret; SECRET is what a leak would look like.
 const SECRET = 'sk-live-never-in-the-page'
 const HEADER_SECRET = 'org-header-secret'
+// The server shows a declared header value as its marker (441-21, D-29).
+const HEADER_MARKER = '[secret:PW_441]'
 
 const PROXY = {
   name: 'claude-proxy',
   provider: 'anthropic-compatible',
   model: 'claude-sonnet-4-20250514',
   baseURL: 'https://proxy.example/anthropic',
-  providerHeaders: { 'X-Org': CONFIG_MASK_PLACEHOLDER },
+  providerHeaders: { 'X-Org': HEADER_MARKER },
 }
 
 function credentials(): AuthCredentialInfo[] {
@@ -644,7 +645,7 @@ describe('ModelRow key and settings (429-24 Task 2)', () => {
 
     const proxy = await openModel('claude-proxy')
     const secret = field(proxy, 'registry.llms[].providerHeaders.*')
-    expect(secret?.textContent).toContain(CONFIG_MASK_PLACEHOLDER)
+    expect(secret?.textContent).toContain(HEADER_MARKER)
     const name = inputIn(proxy, 'registry.llms[].providerHeaders')
     expect(name?.value).toBe('X-Org')
     await type(name, 'X-Team')
@@ -668,7 +669,10 @@ describe('ModelRow key and settings (429-24 Task 2)', () => {
 
     await click(buttonNamed(row('claude-proxy'), SAVE_HEADER_LABEL))
     expect(writes()[5]).toEqual([[{ op: 'set', path: [...headers, 'X-Trace'], value: 'trace-secret' }]])
-    expect(container!.innerHTML).not.toContain('trace-secret')
+    // 441-40 (D-29): the landed write is mirrored as written; the editor has no path-class mask.
+    const traceValue = row('claude-proxy')!.querySelector('[data-model-header="X-Trace"] [data-secret-field] code')
+    expect(traceValue?.textContent).toBe('trace-secret')
+    expect(JSON.stringify(localStorage)).not.toContain('trace-secret')
   })
 
   it('NAME-AND-PROVIDER-FIXED: the open row states the name and connection as fixed facts and offers no input for them', async () => {
@@ -712,7 +716,7 @@ describe('ModelRow header rename (429-47 Task 1 · deferred 429-24)', () => {
 
     expect(writes()).toEqual([[[{ op: 'move', from: [...HEADERS, 'X-Org'], path: [...HEADERS, 'X-Team'] }]]])
     expect(headerNames()).toEqual(['X-Team'])
-    expect(field(row('claude-proxy'), 'registry.llms[].providerHeaders.*')?.textContent).toContain(CONFIG_MASK_PLACEHOLDER)
+    expect(field(row('claude-proxy'), 'registry.llms[].providerHeaders.*')?.textContent).toContain(HEADER_MARKER)
     expect(inputIn(row('claude-proxy'), 'registry.llms[].providerHeaders')?.value).toBe('X-Team')
     expect(container!.innerHTML).not.toContain(HEADER_SECRET)
   })
@@ -838,7 +842,7 @@ describe('The model modal\'s claims on a saved row (429-30 Task 1)', () => {
     const panel = await openModel('claude-proxy')
     const headers = panel?.querySelector('[data-model-headers]')
     expect(headers?.querySelector('legend')?.textContent).toBe(ADD_FLOW_FIELD_LABELS.headers)
-    expect(field(panel, 'registry.llms[].providerHeaders.*')?.textContent).toContain(CONFIG_MASK_PLACEHOLDER)
+    expect(field(panel, 'registry.llms[].providerHeaders.*')?.textContent).toContain(HEADER_MARKER)
     expect(field(panel, 'registry.llms[].vision')?.querySelector('[role="switch"]')?.getAttribute('aria-checked')).toBe('false')
     expect(inputIn(panel, 'registry.llms[].contextWindow')?.value).toBe('200k')
     expect(panel?.textContent).not.toContain('Provider Headers (optional)')
@@ -902,5 +906,24 @@ describe('The model modal\'s claims on a saved row (429-30 Task 1)', () => {
     expect(row('router')!.textContent).not.toContain('123')
     expect(row('router')!.textContent).not.toMatch(/\d\s*ms\b/)
     expect(row('router')!.textContent).not.toContain('Connection successful')
+  })
+})
+
+// 441-40 (D-29): a header shown as its declared marker is left out of the connection test, so the
+// server sends the saved value (routes.llm-test-saved-headers MASK-HEADER-NEVER-SENT).
+describe('C441-CONFIG', () => {
+  it('the model row does not resend a header shown as a marker', async () => {
+    const proxy = { ...PROXY, providerHeaders: { 'X-Org': HEADER_MARKER, 'X-Trace': 't-1' } }
+    vi.mocked(fetchConfig).mockResolvedValue(answer(modelsConfig([...LLMS, proxy])) as never)
+    await mount()
+    const panel = await openModel('claude-proxy')
+    await click(buttonNamed(panel, TEST_CONNECTION_LABEL))
+
+    expect(testLLMConnection).toHaveBeenCalledTimes(1)
+    const request = vi.mocked(testLLMConnection).mock.calls[0][0]
+    expect(request).toMatchObject({ configName: 'claude-proxy', provider: 'anthropic-compatible' })
+    expect(request.providerHeaders).toEqual({ 'X-Trace': 't-1' })
+    expect(JSON.stringify(request)).not.toContain('[secret:')
+    expect(writes()).toHaveLength(0)
   })
 })

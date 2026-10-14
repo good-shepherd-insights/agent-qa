@@ -11,7 +11,7 @@
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type RefObject } from "react"
 import { ChevronRight, CircleAlert, CircleCheck, LoaderCircle, LogOut, Plus, Trash2, TriangleAlert } from "lucide-react"
-import { CONFIG_MASK_PLACEHOLDER, type ConfigChange, type ConfigPathSegment } from "@vostride/agent-qa-schema"
+import type { ConfigChange, ConfigPathSegment } from "@vostride/agent-qa-schema"
 
 import { ConfigField, type ConfigFieldTarget } from "@/components/config-manager/config-field"
 import { ConnectionLine } from "@/components/config-manager/connection-line"
@@ -153,10 +153,12 @@ function lineForError(error: unknown): TestLine {
   return { state: "failed", sentence: message ?? providerErrorSentence("network_error", "") }
 }
 
-// Header values come back masked from the config read; a masked value would only be sent as text.
+const DECLARED_MARKER_OPENER = "[secret:"
+
+// A header shown holding a declared marker is left out, so the server sends its saved value.
 function sendableHeaders(headers: Record<string, string> | undefined): Record<string, string> | undefined {
   if (headers === undefined) return undefined
-  const kept = Object.entries(headers).filter(([, value]) => value !== CONFIG_MASK_PLACEHOLDER)
+  const kept = Object.entries(headers).filter(([, value]) => !value.includes(DECLARED_MARKER_OPENER))
   return kept.length > 0 ? Object.fromEntries(kept) : undefined
 }
 

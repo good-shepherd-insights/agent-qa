@@ -253,7 +253,8 @@ describe('SecretValue (429-19 Task 1)', () => {
     expect(hook!.status.state).toBe('saved')
   })
 
-  it('SAVE-VALUE-EXPLICIT: typing writes nothing; Save value writes one set at the path and the page shows the mask again', async () => {
+  // 441-40 (D-29): the landed write is mirrored as written; the editor has no path-class mask.
+  it('SAVE-VALUE-EXPLICIT: typing writes nothing; Save value writes one set at the path and the page shows the value as written', async () => {
     await mount()
 
     await replaceAndType('Access key', TYPED)
@@ -272,11 +273,11 @@ describe('SecretValue (429-19 Task 1)', () => {
     ])
     expect(hook!.status.state).toBe('saved')
     expect(passwordIn(groups()[0])).toBeNull()
-    expect(groups()[0]!.querySelector('code')?.textContent).toBe(MASK)
-    expect(container!.textContent).not.toContain(TYPED)
+    expect(groups()[0]!.querySelector('code')?.textContent).toBe(TYPED)
+    expect(groups()[1]!.querySelector('code')?.textContent).toBe(MASK)
     expect(inputValues()).not.toContain(TYPED)
     expect(storedText()).not.toContain(TYPED)
-    expect(JSON.stringify(hook!.load.kind === 'ready' ? hook!.load.answer.config : null)).not.toContain(TYPED)
+    expect(fetchConfig).toHaveBeenCalledTimes(1)
   })
 
   it('SAVE-VALUE-FAILURE-KEEPS-TYPED: a failed Save value keeps the typed value in the input and fails the status', async () => {

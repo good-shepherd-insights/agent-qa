@@ -8,7 +8,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ConfigManager } from '../config/index.js'
 import { createRouter } from '../server/routes.js'
-import { CONFIG_MASK_PLACEHOLDER } from '@vostride/agent-qa-schema'
 import { createModel } from '@vostride/agent-qa-model'
 import { generateText } from 'ai'
 
@@ -215,19 +214,22 @@ describe('POST /api/llm/test with a saved model\'s headers', () => {
     }
   })
 
-  it('MASK-HEADER-NEVER-SENT: a body header carrying the mask placeholder is dropped, never sent as text', async () => {
+  // 441-40 (D-29): the model row leaves out a header it showed as `[secret:<name>]`, so its request
+  // carries only the others and the saved value is the one sent.
+  it('MASK-HEADER-NEVER-SENT: a header the row showed as a marker is left out, and the saved value is sent', async () => {
     const res = await testConnection({
-      configName: 'draft-proxy',
+      configName: 'proxy',
       provider: 'anthropic-compatible',
       model: 'claude-proxy',
       baseURL: SAVED_BASE_URL,
-      providerHeaders: { 'X-Org': CONFIG_MASK_PLACEHOLDER, 'X-Trace': 't-3' },
+      providerHeaders: { 'X-Trace': 't-3' },
     })
 
     expect(res.status).toBe(200)
     const headers = sentHeaders()
-    expect(headers).toEqual({ 'X-Trace': 't-3' })
-    expect(JSON.stringify(headers)).not.toContain(CONFIG_MASK_PLACEHOLDER)
+    expect(headers).toEqual({ 'X-Org': SAVED_HEADER_SECRET, 'X-Trace': 't-3' })
+    expect(JSON.stringify(headers)).not.toContain('[secret:')
+    expect(res.body).not.toContain(SAVED_HEADER_SECRET)
   })
 
   it('SAVED-HEADER-NEVER-ECHOED: a provider error echoing a saved header value answers [redacted] in its place', async () => {

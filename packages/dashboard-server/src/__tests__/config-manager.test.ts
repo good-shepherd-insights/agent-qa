@@ -97,7 +97,6 @@ vi.mock('ai', () => ({
 }))
 
 import { createHash } from 'node:crypto'
-import { CONFIG_MASK_PLACEHOLDER } from '@vostride/agent-qa-schema'
 import { ConfigManager } from '../config/config-manager.js'
 import { createRouter } from '../server/routes.js'
 import { chmod, lstat, mkdir, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
@@ -700,34 +699,6 @@ describe('ConfigManager broken files, missing files and the mask guard (429-05)'
     expect((parseYaml(text) as { use: { timeout: unknown } }).use.timeout)
       .toEqual({ step: '30s', test: '10m', navigation: '10s' })
     expect(text).not.toMatch(/^use\.timeout:/m)
-  })
-
-  it('MASK-NEVER-WRITTEN-BACK: no write path puts the mask placeholder into the file', async () => {
-    await writeFile(configPath, writeConfig(WRITE_BASE_LINES, WRITE_MODELS_LINES, WRITE_USE_LINES))
-    const before = await readFile(configPath)
-    const maskedProviders = { browserstack: { username: 'owner', accessKey: CONFIG_MASK_PLACEHOLDER } }
-
-    const outcomes = [
-      await manager.applyChanges([
-        { op: 'set', path: ['registry', 'llms', { name: 'gpt-5.6' }, 'baseURL'], value: CONFIG_MASK_PLACEHOLDER },
-      ]),
-      await manager.applyChanges([
-        { op: 'set', path: ['registry', 'providers'], value: maskedProviders },
-      ]),
-      await manager.applyChanges([
-        {
-          // 432-22: re-spelled from the deleted MCP token list onto the one named array left.
-          op: 'append',
-          path: ['registry', 'llms'],
-          value: { name: 'ci', provider: 'gemini', model: 'gemini-2.5-flash', providerHeaders: { 'X-Team': CONFIG_MASK_PLACEHOLDER } },
-        },
-      ]),
-    ]
-
-    for (const outcome of outcomes) {
-      expect(outcome).toEqual({ kind: 'refused', error: 'mask_written_back' })
-    }
-    expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
   })
 })
 

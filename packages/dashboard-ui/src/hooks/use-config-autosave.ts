@@ -3,7 +3,9 @@
 // One hook the whole page shares, because Radix unmounts inactive tab panels: a draft kept in a
 // section component would vanish on a tab change. The pure machine in lib/config-autosave.ts
 // decides what the status may say; this hook owns the effects: settle timers, the one write in
-// flight, browser-storage drafts (never a secret) and the loaded config.
+// flight, browser-storage drafts and the loaded config. A landed write is mirrored as written, and
+// only the fields a person changed are sent, so a value shown through the declared mask is never
+// written back (441-40, D-29).
 
 import {
   createContext,
@@ -17,12 +19,7 @@ import {
   type Dispatch,
   type ReactNode,
 } from "react"
-import {
-  CONFIG_MASK_PLACEHOLDER,
-  classifyConfigPath,
-  type ConfigChange,
-  type ConfigPathSegment,
-} from "@vostride/agent-qa-schema"
+import type { ConfigChange, ConfigPathSegment } from "@vostride/agent-qa-schema"
 
 import {
   applyConfigChanges,
@@ -186,32 +183,8 @@ export function configFieldControlId(fieldKey: string): string {
   return `config-field-${encodeURIComponent(fieldKey).replace(/%/g, "_")}`
 }
 
-function classifiedPath(segments: readonly ConfigPathSegment[]): (string | number)[] {
-  return segments.map((segment) => (typeof segment === "object" ? 0 : segment))
-}
-
-function isSecretPath(segments: readonly ConfigPathSegment[]): boolean {
-  return classifyConfigPath(classifiedPath(segments)) === "secret"
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
-/** A written value as the server would serve it back: every secret leaf is the mask, never the typed text. */
-function maskedLikeServer(value: unknown, path: (string | number)[]): unknown {
-  if (Array.isArray(value)) return value.map((item, index) => maskedLikeServer(item, [...path, index]))
-  if (isRecord(value)) {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, maskedLikeServer(item, [...path, key])]))
-  }
-  if (value === null || value === undefined) return value
-  return classifyConfigPath(path) === "secret" ? CONFIG_MASK_PLACEHOLDER : value
-}
-
-function mirroredChange(change: ConfigChange): ConfigChange {
-  if (change.op === "unset" || change.op === "move" || change.op === "expect") return change
-  const path = classifiedPath(change.path)
-  return { ...change, value: maskedLikeServer(change.value, change.op === "append" ? [...path, 0] : path) }
 }
 
 function childAt(node: unknown, segment: ConfigPathSegment): { found: boolean; value: unknown; index?: number } {
@@ -291,7 +264,7 @@ function isStorableRaw(raw: unknown): raw is StoredDraft["raw"] {
   return typeof raw === "string" || typeof raw === "number" || typeof raw === "boolean"
 }
 
-/** The normalizeProductTourState idiom: anything off-shape, secret or equal to the file is dropped. */
+/** The normalizeProductTourState idiom: anything off-shape or equal to the file is dropped. */
 function normalizeStoredDraft(key: string, value: unknown, config: unknown): StoredDraft | undefined {
   if (!isRecord(value)) return undefined
   const { segments, tab, raw, error } = value
@@ -300,7 +273,6 @@ function normalizeStoredDraft(key: string, value: unknown, config: unknown): Sto
   if (typeof tab !== "string" || !(CONFIG_TABS as readonly string[]).includes(tab)) return undefined
   if (!isStorableRaw(raw)) return undefined
   if (error !== undefined && typeof error !== "string") return undefined
-  if (isSecretPath(segments)) return undefined
   if (sameAsFile(raw, valueAt(config, segments))) return undefined
   return { segments, tab: tab as ConfigTab, raw, ...(error === undefined ? {} : { error }) }
 }
@@ -327,7 +299,7 @@ function writeStoredDrafts(storageKey: string, state: HookState): void {
   for (const key of draftFieldKeys(state.machine)) {
     const location = state.locations[key]
     const field = state.machine.fields[key]
-    if (!location || !field || isSecretPath(location.segments) || !isStorableRaw(field.raw)) continue
+    if (!location || !field || !isStorableRaw(field.raw)) continue
     drafts[key] = {
       segments: [...location.segments],
       tab: location.tab,
@@ -421,7 +393,6 @@ function patchConfig(
   for (const change of changes) {
     if (change.op === "expect") continue
     if (change.op === "move") {
-      // Both ends share a class (429-52), so a masked value stays the mask it already is here.
       const moving = lookup(next, change.from)
       if (!moving.found || !applyAt(next, { op: "unset", path: change.from })) return undefined
       if (!applyAt(next, { op: "set", path: change.path, value: moving.value })) return undefined
@@ -539,7 +510,7 @@ function createEngine(host: EngineHost) {
 
   function applyLanded(changes: readonly ConfigChange[]): boolean {
     if (!answer) return false
-    const config = patchConfig(answer.config, changes.map(mirroredChange))
+    const config = patchConfig(answer.config, changes)
     if (!config) {
       // The landed write could not be mirrored here, so the next poll re-reads it.
       revision = undefined

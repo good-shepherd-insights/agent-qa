@@ -24,7 +24,6 @@ import { tryParseRequestUrl } from './request-url.js'
 import type { AgentHost } from '../chat/host.js'
 import {
   classifyProviderError,
-  CONFIG_MASK_PLACEHOLDER,
   extractProviderError,
   LlmCredentialMoveRequestSchema,
   parseHandleParam,
@@ -200,15 +199,14 @@ async function savedHeadersFor(
   return kept
 }
 
-// Body headers override their saved namesake (HTTP names compare case-insensitively); a body value
-// that is the mask placeholder is dropped, so the literal mask is never sent.
+// Body headers override their saved namesake (HTTP names compare case-insensitively). The model row
+// leaves out a header it showed as a marker, so the saved value is the one sent.
 function mergeTestHeaders(
   saved: Record<string, string>,
   body: Record<string, unknown>,
 ): { headers: Record<string, unknown>; savedValues: string[] } {
   const headers: Record<string, unknown> = { ...saved }
   for (const [name, value] of Object.entries(body)) {
-    if (value === CONFIG_MASK_PLACEHOLDER) continue
     for (const key of Object.keys(headers)) {
       if (key.toLowerCase() === name.toLowerCase()) delete headers[key]
     }

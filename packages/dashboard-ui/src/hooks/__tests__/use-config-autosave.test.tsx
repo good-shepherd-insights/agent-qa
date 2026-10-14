@@ -3,12 +3,7 @@
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import {
-  CONFIG_MASK_PLACEHOLDER,
-  classifyConfigPath,
-  type ConfigChange,
-  type ConfigPathSegment,
-} from "@vostride/agent-qa-schema"
+import type { ConfigChange } from "@vostride/agent-qa-schema"
 
 import { ApiError, applyConfigChanges, fetchConfig, fetchConfigRevision, undoConfigAction } from "@/lib/api"
 import { FIELD_CHANGED_TEXT, REVISION_POLL_MS, SETTLE_DELAY_MS, UNDO_WINDOW_MS, undoLine } from "@/lib/config-copy"
@@ -54,10 +49,6 @@ const testTimeout: ConfigFieldRef = { segments: ["use", "timeout", "test"], tab:
 const farmKey: ConfigFieldRef = { segments: ["registry", "providers", "farm", "accessKey"], tab: "targets" }
 const maxActions: ConfigFieldRef = { segments: ["use", "planner", "maxActions"], tab: "models" }
 const previousStepCount: ConfigFieldRef = { segments: ["use", "planner", "previousStepCount"], tab: "models" }
-const modelHeader: ConfigFieldRef = {
-  segments: ["registry", "llms", { name: "primary" }, "providerHeaders", "Authorization"],
-  tab: "models",
-}
 
 const DURATION = /^\d+(ms|s|m|h)$/
 function durationParse(raw: string): ConfigFieldParse {
@@ -140,10 +131,6 @@ function storedText(): string {
     parts.push(key, localStorage.getItem(key) ?? "")
   }
   return parts.join("\n")
-}
-
-function classOf(segments: readonly ConfigPathSegment[]) {
-  return classifyConfigPath(segments.map((segment) => (typeof segment === "object" ? 0 : segment)))
 }
 
 let visibility: DocumentVisibilityState = "visible"
@@ -304,45 +291,6 @@ describe("useConfigAutosave settle, write, drafts and retry (429-16 Task 1)", ()
     expect(hook!.status.state).toBe("failed")
     expect(hook!.stateOf(headless)).toBe("draft")
     expect(hook!.valueOf(headless)).toBe(false)
-  })
-
-  it("SECRET-NEVER-IN-STORAGE: drafts on secret-class paths never reach browser storage", async () => {
-    vi.mocked(applyConfigChanges).mockRejectedValueOnce(new TypeError("Failed to fetch"))
-    await mount()
-    await run((h) => {
-      h.edit(modelHeader, "Bearer sk-live-999", { valid: true, value: "Bearer sk-live-999" })
-      h.settle(modelHeader)
-    })
-    await run((h) => h.edit(farmKey, "AKIA-SECRET-123", { valid: false, error: "Too short." }))
-    await run((h) => h.edit(step, "soon", durationParse("soon")))
-
-    expect(hook!.stateOf(modelHeader)).toBe("draft")
-    expect(hook!.stateOf(farmKey)).toBe("draft")
-    expect(hook!.stateOf(step)).toBe("draft")
-
-    const text = storedText()
-    expect(text).toContain("soon")
-    expect(text).not.toContain("sk-live-999")
-    expect(text).not.toContain("AKIA-SECRET-123")
-    expect(text).not.toContain("accessKey")
-    expect(text).not.toContain("providerHeaders")
-    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY)!) as Record<string, { segments: ConfigPathSegment[] }>
-    for (const entry of Object.values(stored)) {
-      expect(classOf(entry.segments)).not.toBe("secret")
-    }
-  })
-
-  it("SECRET-NEVER-IN-STORAGE: a secret draft planted in storage is dropped on load", async () => {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        [JSON.stringify(farmKey.segments)]: { segments: farmKey.segments, tab: "targets", raw: "AKIA-PLANTED" },
-      }),
-    )
-    await mount()
-    expect(hook!.stateOf(farmKey)).toBe("clean")
-    expect(hook!.valueOf(farmKey)).toBe("••••••••")
-    expect(storedText()).not.toContain("AKIA-PLANTED")
   })
 
   it("RETRY-WHILE-SAVING-NO-DOUBLE-WRITE: Retry during a write starts nothing; later settles join the next write", async () => {
@@ -726,7 +674,7 @@ describe("useConfigAutosave landed-write mirror for the new ops (429-45 Task 2)"
               name: "proxy",
               provider: "openai-compatible",
               model: "gpt-4.1",
-              providerHeaders: { "X-Org": CONFIG_MASK_PLACEHOLDER },
+              providerHeaders: { "X-Org": "[secret:PW_441]" },
             },
           ],
         },
@@ -744,7 +692,7 @@ describe("useConfigAutosave landed-write mirror for the new ops (429-45 Task 2)"
     expect(
       await landExplicit([{ op: "move", from: [...headers, "X-Org"], path: [...headers, "X-Team"] }]),
     ).toBe(true)
-    expect(hook!.valueOf(proxyHeader("X-Team"))).toBe(CONFIG_MASK_PLACEHOLDER)
+    expect(hook!.valueOf(proxyHeader("X-Team"))).toBe("[secret:PW_441]")
     expect(hook!.valueOf(proxyHeader("X-Org"))).toBeUndefined()
     expect(JSON.stringify(loadedConfig())).not.toContain("X-Org")
 
@@ -961,5 +909,54 @@ describe("useConfigAutosave a Retry with nothing to send (429-53 · WR-06)", () 
     expect(seenStatuses.slice(mark)).not.toContain("saved")
     expect(writeCalls()).toHaveLength(1)
     expect(vi.mocked(fetchConfig).mock.calls.length).toBeGreaterThan(readsBefore)
+  })
+})
+
+// 441-40 (D-29): the editor has no masks of its own. A field the server showed through the declared
+// mask is never sent unless the person edits it, and a landed write is mirrored as written.
+describe("C441-CONFIG", () => {
+  const MARKER = "[secret:PW_441]"
+  const buildTag: ConfigFieldRef = { segments: ["use", "buildTag"], tab: "execution" }
+  const workers: ConfigFieldRef = { segments: ["use", "workers"], tab: "execution" }
+
+  it("the editor does not write back a field it showed masked", async () => {
+    vi.mocked(fetchConfig).mockResolvedValue(
+      answer({ ...baseConfig, use: { ...baseConfig.use, buildTag: MARKER, workers: 2 } }) as never,
+    )
+    await mount()
+    expect(hook!.valueOf(buildTag)).toBe(MARKER)
+
+    await run((h) => {
+      h.edit(workers, 4, { valid: true, value: 4 })
+      h.settle(workers)
+    })
+
+    expect(writeCalls()).toEqual([[{ op: "set", path: ["use", "workers"], value: 4 }]])
+    expect(hook!.valueOf(workers)).toBe(4)
+    expect(hook!.valueOf(buildTag)).toBe(MARKER)
+
+    await run((h) => {
+      h.edit(step, "45s", durationParse("45s"))
+      h.settle(step)
+    })
+
+    expect(writeCalls()).toHaveLength(2)
+    expect(writeCalls()[1]).toEqual([{ op: "set", path: ["use", "timeout", "step"], value: "45s" }])
+    expect(JSON.stringify(writeCalls())).not.toContain("[secret:")
+    expect(JSON.stringify(writeCalls())).not.toContain("buildTag")
+    expect(fetchConfig).toHaveBeenCalledTimes(1)
+  })
+
+  it("a landed write shows the value as written, whatever its path", async () => {
+    await mount()
+    let landed = false
+    await act(async () => {
+      landed = await hook!.runExplicit([{ op: "set", path: [...farmKey.segments], value: "AKIA-NEW-1" }])
+    })
+    await flush()
+
+    expect(landed).toBe(true)
+    expect(hook!.valueOf(farmKey)).toBe("AKIA-NEW-1")
+    expect(fetchConfig).toHaveBeenCalledTimes(1)
   })
 })

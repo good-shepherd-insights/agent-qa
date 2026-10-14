@@ -9,7 +9,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConfigManager } from '../config/index.js'
 import { createRouter } from '../server/routes.js'
 import {
-  CONFIG_MASK_PLACEHOLDER,
   PROVIDER_ERROR_CLASSES,
   providerErrorSentence,
   type ProviderErrorClass,
@@ -979,20 +978,6 @@ describe('settings writes through PATCH /api/config (429-32)', () => {
     expect(issues.map((issue) => `${dotted(issue)}: ${issue.message}`)).toContain(
       'registry.devices.iosSimulator.match.serial: Match field "serial" is not valid for ios local transport. Allowed: udid, bundleId, automationName, platformVersion',
     )
-  })
-
-  it('MASK-NEVER-WRITTEN-BACK: a settings save carrying the mask placeholder is refused and writes nothing', async () => {
-    const { configPath } = await useSettingsWorkspace()
-    const before = await readFile(configPath)
-
-    const res = await patchConfig([
-      set(['services', 'logging', 'level'], 'warn'),
-      set(['registry', 'providers', 'browserstack'], { username: 'owner', accessKey: CONFIG_MASK_PLACEHOLDER }),
-    ])
-
-    expect(res.status).toBe(422)
-    expect(JSON.parse(res.body)).toEqual({ error: 'mask_written_back' })
-    expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
   })
 })
 

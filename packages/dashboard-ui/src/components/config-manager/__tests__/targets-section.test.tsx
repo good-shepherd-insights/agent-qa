@@ -360,7 +360,8 @@ describe('TargetsSection and DevicesSection (429-22 Task 1)', () => {
       [[{ op: 'set', path: ['registry', 'devices', 'iosLocal', 'match', 'bundleId'], value: 'device-secret' }]],
     ])
     expect(deviceRow('iosLocal')!.querySelectorAll('[data-secret-field]')).toHaveLength(2)
-    expect(container!.textContent).not.toContain('device-secret')
+    // 441-40 (D-29): the landed write is mirrored as written.
+    expect(container!.textContent).toContain('device-secret')
   })
 
   it('ADD-ROW-DRAFT-UNTIL-VALID: Add target opens an inline draft row that writes nothing until it is valid, then one set of the whole target', async () => {

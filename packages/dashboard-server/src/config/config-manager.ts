@@ -15,7 +15,6 @@ import {
 } from 'yaml'
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
 import {
-  CONFIG_MASK_PLACEHOLDER,
   CONFIG_NAMED_ARRAYS,
   CONFIG_REVISION_ABSENT,
   type ConfigChange,
@@ -76,18 +75,6 @@ export type MaskedConfigOutcome =
     fileIssues: ConfigWriteIssue[]
   }
   | { kind: 'file_invalid'; message: string; revision: string }
-
-export const MASK_WRITTEN_BACK = 'mask_written_back'
-
-/** True when any string anywhere in the value is the mask placeholder the server hands the page. */
-export function carriesMaskPlaceholder(value: unknown): boolean {
-  if (typeof value === 'string') return value === CONFIG_MASK_PLACEHOLDER
-  if (Array.isArray(value)) return value.some(carriesMaskPlaceholder)
-  if (typeof value === 'object' && value !== null) {
-    return Object.values(value as Record<string, unknown>).some(carriesMaskPlaceholder)
-  }
-  return false
-}
 
 // 2026-09-30, 432-07 D-05 (EDGE-12): one write queue per resolved config path, shared by every
 // ConfigManager and direct writer in this process, so the dashboard and a co-hosted writer never
@@ -282,9 +269,6 @@ export class ConfigManager {
     changes: readonly ConfigChange[],
     capturePriors: boolean,
   ): Promise<ApplyChangesOutcome> {
-    if (changes.some((change) => change.op !== 'unset' && change.op !== 'move' && carriesMaskPlaceholder(change.value))) {
-      return { kind: 'refused', error: MASK_WRITTEN_BACK }
-    }
     let doc: Document
     // 429-37 CR-01: the revision of the bytes this write merges onto, so the page can tell when an
     // outside edit it never read was absorbed.

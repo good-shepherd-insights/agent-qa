@@ -211,7 +211,8 @@ describe('ProvidersSection (429-19 Task 2)', () => {
     const row = farmRow('browserstack')!
     expect(row.querySelectorAll('[data-secret-field]')).toHaveLength(3)
     expect(inputLabelled(row, DEVICE_FARM_FIELD_LABELS.value)).toBeNull()
-    expect(container!.textContent).not.toContain(TYPED)
+    // 441-40 (D-29): the landed write is mirrored as written.
+    expect(container!.textContent).toContain(TYPED)
     expect(document.activeElement).toBe(buttonIn(row, ADD_SETTING_LABEL))
 
     await click(buttonIn(row, ADD_SETTING_LABEL))
@@ -242,8 +243,7 @@ describe('ProvidersSection (429-19 Task 2)', () => {
       [[{ op: 'set', path: ['registry', 'providers', 'lambdatest'], value: { accessKey: TYPED } }]],
     ])
     expect(container!.querySelector('[data-device-farm-draft]')).toBeNull()
-    expect(farmRow('lambdatest')?.querySelector('[data-secret-field] code')?.textContent).toBe(MASK)
-    expect(container!.textContent).not.toContain(TYPED)
+    expect(farmRow('lambdatest')?.querySelector('[data-secret-field] code')?.textContent).toBe(TYPED)
   })
 
   it('DEVICE-FARM-DELETE-UNDO: delete removes the row at once, writes an undoable unset and Undo restores it', async () => {

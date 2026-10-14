@@ -28,7 +28,6 @@ import { join } from 'node:path'
 
 import type { FunctionDeps } from '@vostride/agent-qa-agent'
 import * as dashboard from '@vostride/agent-qa-dashboard'
-import { CONFIG_MASK_PLACEHOLDER } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import * as host from '../local-agent-host.js'
@@ -414,9 +413,6 @@ describe('C432-CONFIG-DIRECT: whole-file publications are checked, atomic and tr
     expect(await port.applyFields({
       changes: [{ op: 'set', path: ['registry', 'llms', { name: 'absent' }, 'model'], value: 'x' }],
     })).toEqual({ kind: 'refused', file: CONFIG_FILE, error: 'path_not_found' })
-    expect(await port.applyFields({
-      changes: [{ op: 'set', path: ['workspace', 'secretsFile'], value: CONFIG_MASK_PLACEHOLDER }],
-    })).toMatchObject({ kind: 'refused', error: 'mask_written_back' })
     expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG)
     expect(tempFiles(root)).toEqual([])
   })
