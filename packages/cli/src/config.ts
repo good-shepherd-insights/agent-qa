@@ -10,7 +10,7 @@ import {
   yamlParseFailureMessage,
 } from '@vostride/agent-qa-core'
 import type { AgentQaConfig } from '@vostride/agent-qa-core'
-import { isCredentialEntry } from '@vostride/agent-qa-agent'
+import type { MaskFn } from '@vostride/agent-qa-schema'
 
 const ENV_MAPPING: Record<string, string> = {
   AGENT_QA_DASHBOARD_PORT: 'services.dashboard.port',
@@ -222,46 +222,9 @@ export function mergeUseBlocks(
   ) as Record<string, unknown>
 }
 
-/**
- * ROWS FOR `formatConfigDebug`, AND AN ARRAY IS NOT A LEAF (395-23 · F-03-R4a).
- *
- * WHAT THIS USED TO DO AND WHY IT LEAKED. Both branches tested `!Array.isArray(value)` before
- * recursing, so an array-valued subtree became ONE row whose value is `JSON.stringify(theArray)` —
- * every byte of every element, printed by the ordinary render of a healthy file. `isCredentialEntry`
- * answers `false` for a non-string, so that row failed both arms of the one predicate and printed
- * verbatim: `registry.llms[0].baseURL` and `registry.llms[0].providerHeaders['X-Client-Auth']`
- * reached a person's terminal at exit 0 on all three callers of this function. That is not an exotic
- * shape here — `RegistrySchema.llms` is `z.array(...)`, which is precisely where this product's
- * provider credentials live.
- *
- * SO THE ROW PRODUCER DECOMPOSES CONTAINERS, rather than the predicate learning to read one shape of
- * container. A credential can only be redacted at a row, so the fix belongs where rows are made:
- * every scalar in the tree becomes its own row, arrays under a bracket-indexed segment
- * (`registry.llms[0].baseURL`) and objects under a dotted one, and the redaction in the row loop
- * then asks its one question about a string, exactly as it does for every scalar leaf.
- *
- * AN EMPTY ARRAY STAYS A LEAF, deliberately: it carries no bytes to hide, and dropping the row would
- * delete a key a person's config actually declares from a command whose whole job is saying which
- * keys resolve from where. It renders as `[]`.
- *
- * ORDERING IS UNCHANGED because the caller sorts: indexed segments are ordinary characters to
- * `Array.prototype.sort`, so rows land deterministically.
- *
- * AND AN ALIAS CYCLE IS A BOUNDED MARKER, NOT A CRASH (395-27 · WR-03). YAML anchors make an object
- * graph, not a tree: `cycle: &anchor\n  child: *anchor` parses to a node that contains itself, this
- * recursion had no termination condition for it, and the `RangeError` escaped `showAction`'s `try`
- * (which wraps only the load) into Node's DEFAULT PRINTER — the printer 395-16 exists to keep config
- * content away from. The object arm always had that exposure; the array arm above widened the input
- * class that reaches it.
- *
- * THE GUARD IS PATH-SCOPED, NOT VISITED-SCOPED, AND THE DIFFERENCE IS THE WHOLE POINT. Remembering
- * every container ever SEEN cannot tell a cycle from a REPEAT: one anchor referenced twice as
- * siblings is an ordinary config — it is what anchors are FOR — and a visited-set marks the second
- * copy circular and blanks a subtree that was never cyclic, which is a correctness regression
- * wearing a guard's clothes. `ancestors` is the chain from the root to this node's PARENT; it grows
- * on the way down and is released as the recursion unwinds, so a container is circular exactly when
- * it contains ITSELF. (W10-control) reds under the visited-set variant and (W10) does not.
- */
+// Every scalar is its own row (`registry.llms[0].baseURL`); an empty array stays a `[]` leaf.
+// The cycle guard is path-scoped, so a repeated YAML alias renders in full and only a node that
+// contains itself becomes `<circular>` (395-27 · WR-03).
 const CIRCULAR_MARKER = '<circular>'
 
 function flattenObject(
@@ -298,13 +261,12 @@ function flattenObject(
 
 type ConfigSource = 'global config' | 'test yaml' | 'cli flag'
 
-/** What a person sees where a credential's value would have been. */
-const CREDENTIAL_REDACTION = '<redacted>'
-
+// 2026-10-15 (441-20, D-29): values print as written, through the caller's declared-secret mask.
 export function formatConfigDebug(
   globalConfig: unknown,
   testConfig: unknown,
   flagOverrides: Record<string, unknown>,
+  mask: MaskFn,
 ): string {
   const layers: { flat: Record<string, unknown>; label: ConfigSource }[] = [
     { flat: flattenObject(globalConfig), label: 'global config' },
@@ -331,13 +293,7 @@ export function formatConfigDebug(
       }
     }
     const valStr = typeof mergedFlat[key] === 'string' ? mergedFlat[key] : JSON.stringify(mergedFlat[key])
-    // THE REDACTION LIVES HERE, IN THE ROW LOOP, NOT AT A CALL SITE (395-20 · F-03). This function
-    // has THREE person-facing callers — `config show` (commands/config.ts) and the two `--debug`
-    // config tables on the run road (commands/run.ts:2783 and :2913). Redacting inside `showAction`
-    // would have closed the road the verifier happened to drive and left the other two printing the
-    // same values: the sibling-input law applied to the render itself.
-    const rendered = isCredentialEntry(key, mergedFlat[key]) ? CREDENTIAL_REDACTION : valStr
-    rows.push({ key, value: rendered, source })
+    rows.push({ key, value: mask(String(valStr)), source })
   }
 
   if (rows.length === 0) return pc.dim('  (no config values)')

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { loadConfigFile, loadRequiredConfigFile, loadEnvOverrides, mergeConfigs, mergeWithTestConfig, mergeUseBlocks, resolveConfig } from '../config.js'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
+import { formatConfigDebug, loadConfigFile, loadRequiredConfigFile, loadEnvOverrides, mergeConfigs, mergeWithTestConfig, mergeUseBlocks, resolveConfig } from '../config.js'
 import { readFile, writeFile, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -383,33 +384,102 @@ describe('resolveConfig', () => {
   })
 })
 
-describe('config command', () => {
-  it.each([
-    'openai.apiKey',
-    'registry.llms.0.authToken',
-    'registry.providers.browserstack.accessKey',
-    'openai.apikey',
-    'credentials.secret',
-    'credentials.password',
-  ])('rejects credential-like key %s and routes users to auth set', async (key) => {
+describe('C441-CONFIG', () => {
+  async function runConfigCommand(
+    dir: string,
+    args: string[],
+  ): Promise<{ output: string; exitCode: number }> {
     const cwd = process.cwd()
-    const dir = join(TMP_DIR, key.replace(/[^a-z0-9]+/gi, '-'))
+    const exitCodeBefore = process.exitCode
+    process.exitCode = undefined
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-
     try {
-      await mkdir(dir, { recursive: true })
       process.chdir(dir)
       const { createConfigCommand } = await import('../commands/config.js')
-      await createConfigCommand().parseAsync(['node', 'config', 'set', key, 'sk-test'], { from: 'node' })
-
-      const output = errorSpy.mock.calls.map((call) => call.join(' ')).join('\n')
-      expect(output).toContain('Credential values are not written by config set.')
-      expect(output).toContain('agent-qa auth set --config <name> --type api-key|bearer-token')
-      expect(output).not.toContain('sk-test')
-      await expect(readFile(join(dir, 'agent-qa.config.yaml'), 'utf-8')).rejects.toMatchObject({ code: 'ENOENT' })
+      await createConfigCommand().parseAsync(['node', 'config', ...args], { from: 'node' })
+      const output = [...logSpy.mock.calls, ...errorSpy.mock.calls]
+        .map((call) => call.join(' '))
+        .join('\n')
+      return { output, exitCode: Number(process.exitCode ?? 0) }
     } finally {
       process.chdir(cwd)
+      process.exitCode = exitCodeBefore
+      logSpy.mockRestore()
       errorSpy.mockRestore()
     }
+  }
+
+  it('config show prints an undeclared credential-named value as written and a declared value as its marker', async () => {
+    const dir = join(TMP_DIR, 'show-441')
+    await mkdir(dir, { recursive: true })
+    const config = makeValidConfig({
+      registry: {
+        llms: [{
+          name: 'default',
+          provider: 'openai-compatible',
+          model: 'gpt-4o',
+          baseURL: 'https://api.openai.com/v1',
+          providerHeaders: { 'X-Api-Key': 'plain-441-value' },
+        }],
+      },
+    })
+    ;(config.use as Record<string, unknown>).buildTag = 'Hunter-42-zz'
+    await writeFile(join(dir, 'agent-qa.config.yaml'), JSON.stringify(config))
+    await writeFile(join(dir, '.env.secrets.local'), 'PW_441=Hunter-42-zz\n')
+
+    const { output, exitCode } = await runConfigCommand(dir, ['show'])
+
+    expect(output).toContain('registry.llms[0].providerHeaders.X-Api-Key')
+    expect(output).toContain('plain-441-value')
+    expect(output).toContain('[secret:PW_441]')
+    expect(output).not.toContain('Hunter-42-zz')
+    expect(output).not.toContain('<redacted>')
+    expect(exitCode).toBe(0)
+  })
+
+  it('config show refuses at start when the secrets file cannot be read', async () => {
+    const dir = join(TMP_DIR, 'show-refuse-441')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'agent-qa.config.yaml'), JSON.stringify(makeValidConfig()))
+
+    const { output, exitCode } = await runConfigCommand(dir, ['show'])
+
+    expect(output).toContain('Secrets file not found')
+    expect(output).not.toContain('Resolved Configuration')
+    expect(exitCode).toBe(1)
+  })
+
+  it('config set writes a credential-named key and a credential-shaped value', async () => {
+    const dir = join(TMP_DIR, 'set-441')
+    await mkdir(dir, { recursive: true })
+
+    const named = await runConfigCommand(dir, ['set', 'apiToken', 'sk-test-441'])
+    const shaped = await runConfigCommand(dir, ['set', 'use.buildTag', 'AKIAIOSFODNN7EXAMPLE'])
+
+    expect(named.exitCode).toBe(0)
+    expect(shaped.exitCode).toBe(0)
+    const written = await readFile(join(dir, 'agent-qa.config.yaml'), 'utf-8')
+    expect(written).toContain('apiToken: sk-test-441')
+    expect(written).toContain('buildTag: AKIAIOSFODNN7EXAMPLE')
+  })
+
+  it("the --debug table masks with the run's declared secrets", () => {
+    const redactor = new SecretRedactor(SecretStore.fromEnvContent('PW_441=Hunter-42-zz\n'))
+    process.env.AGENT_QA_CACHE_DIR = 'sk-env-only-441-cache'
+    const globalConfig = mergeConfigs(makeValidConfig(), loadEnvOverrides(), {})
+
+    const table = formatConfigDebug(
+      globalConfig,
+      { buildTag: 'Hunter-42-zz' },
+      {},
+      (text) => redactor.redactString(text),
+    )
+
+    expect(table).toContain('[secret:PW_441]')
+    expect(table).not.toContain('Hunter-42-zz')
+    expect(table).toContain('services.cache.dir')
+    expect(table).toContain('sk-env-only-441-cache')
+    expect(table).not.toContain('<redacted>')
   })
 })

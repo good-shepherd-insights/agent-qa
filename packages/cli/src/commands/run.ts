@@ -3968,7 +3968,7 @@ export async function produceDirectRunMembers(
 
     if (opts.configDebug) {
       console.log(pc.bold(`\nConfig for: ${test.name}`))
-      console.log(formatConfigDebug(config, test.use, testFlagOverrides))
+      console.log(formatConfigDebug(config, test.use, testFlagOverrides, singleRunMask))
       console.log()
     }
 
@@ -4963,7 +4963,12 @@ export function createRunCommand(): Command {
             console.log(`  ${pc.green('●')} ${test.name}`)
             if (opts.configDebug) {
               console.log(pc.bold(`\n  Config for: ${test.name}`))
-              console.log(formatConfigDebug(config, test.use, flagOverrides))
+              console.log(formatConfigDebug(
+                config,
+                test.use,
+                flagOverrides,
+                (text) => runtimeSecrets.secretRedactor.redactString(text),
+              ))
               console.log()
             }
           }

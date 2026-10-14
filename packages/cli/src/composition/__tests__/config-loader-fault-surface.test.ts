@@ -57,7 +57,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { inspect } from 'node:util'
 
-import { invokeFunction, isCredentialEntry } from '@vostride/agent-qa-agent'
+import { invokeFunction } from '@vostride/agent-qa-agent'
 import {
   auditWorkspaceHookReferenceMigration,
   formatDiagnostics,
@@ -192,6 +192,11 @@ function seedConfig(text: string): void {
   writeFileSync(configPath, text)
   git('add', '--', CONFIG_FILE)
   git('commit', '--quiet', '-m', 'the project configures itself')
+}
+
+// 2026-10-15 (441-20): `config show` refuses at start without the declared secrets file.
+function seedSecretsFile(): void {
+  writeFileSync(join(root, '.env.secrets.local'), '')
 }
 
 /**
@@ -904,88 +909,9 @@ describe('the ENOENT arms are byte-identical (395-14 · T-395-41)', () => {
   })
 })
 
-// A HEALTHY CONFIG'S OWN CREDENTIALS, ON THE TWO SHIPPED COMMANDS THAT TOUCH THEM (395-20 · F-03).
-//
-// EVERYTHING ABOVE THIS LINE IS ABOUT A FAULT. F-01's whole mechanism is a parse error republishing
-// bytes it had no business quoting. F-03 is the opposite shape and that is why no cell above could
-// see it: the config PARSES, the command SUCCEEDS, and the credential is printed by the ordinary
-// render of a healthy file. The verifier drove it and filed all three measurements:
-//
-//   1. `agent-qa config show` prints `apiToken` and `llm.apiKey` verbatim, exit 0.
-//   2. The predicate that was supposed to stop it has a hole: `isSensitiveKey('apiToken')` is
-//      FALSE — the private set held `token`/`authtoken`/`accesstoken`/`bearertoken`/`refreshtoken`/
-//      `apikey` but not the normalized form of the review's own fixture key.
-//   3. So `agent-qa config set apiToken sk-…` was ACCEPTED AND WRITTEN into the committed yaml.
-//      The product wrote the credential its own refusal exists to keep out, and then printed it
-//      back.
-//
-// THE CLOSURE IS ONE PREDICATE APPLIED TWICE. `isCredentialEntry` is exported from ONE place —
-// `@vostride/agent-qa-agent`'s `config-mutation/credential-entry.ts`, which is where the surface
-// firewall allows the value arm to reach the guardrail detectors — and it is imported by BOTH the
-// render (`formatConfigDebug`'s row loop) and the write (`setAction`) — the
-// two-sided contract pin law (388/390/392): a render-side redaction without a write-side refusal,
-// or the reverse, is one-sided hardening and a regression generator. The read and the write of this
-// very surface had already drifted apart exactly that way, which is finding 3.
-//
-// AND IT IS A COMPOSITION, NOT A LONGER LIST. Widening the key-name set closes `apiToken` and
-// nothing else; the next unlisted name reopens F-03 unchanged. 393's door-enumeration finding is
-// that a rule which can only refuse what it can NAME cannot be driven to zero by naming more
-// things. So the predicate's second arm reads the VALUE through the guardrail detector families
-// this phase already ships for SC-2 — and (K3) is the acceptance for it: a credential under
-// `deployment.rolloutTag`, a key name in no list anywhere, caught by shape.
-//
-// WHAT MAKES EACH CELL RED:
-//
-//  (K1) show, the CR-01 fixture — the render printing a known credential key's value. Reds if the
-//                                 redaction leaves `formatConfigDebug`'s row loop.
-//  (K3-show) show, unlisted key  — the render printing a credential under a name no list carries.
-//                                 Reds if the value arm is dropped, INCLUDING if it is replaced by
-//                                 a longer key list.
-//  (K3-name) the by-construction — the unlisted key's NAME does not trigger the predicate while its
-//                                 VALUE does. This is what makes (K3-show) non-vacuous: without it,
-//                                 (K3-show) could be passing because someone quietly added
-//                                 `rollouttag` to the name set.
-//  (K2) set, the predicate hole  — the write accepting the exact key the verifier wrote. Reds if
-//                                 the widened name arm is lost.
-//  (K3-set) set, unlisted key    — the write accepting a credential-shaped value under any name.
-//  (K4a)(K4b)(K4c) the controls  — over-redaction and the designed no-break: ordinary values still
-//                                 render verbatim and still write, and the pre-existing
-//                                 `llm.apiKey` refusal keeps its sentence.
-
-/** The two values the CR-01 fixture plants, fixture-owned and fresh (the verifier's shape). */
-const PLANTED_SHOW_TOKEN = 'sk-ant-api03-395twentySHOWTOKENFIXTUREONLYnotarealkey'
-const PLANTED_SHOW_NESTED = 'sk-ant-api03-395twentyNESTEDKEYFIXTUREONLYnotarealkey'
-
-/**
- * The door-enumeration case: a credential under a key name that is in NO credential list.
- *
- * `deployment.rolloutTag` is an ordinary-sounding leaf a person could plausibly have, and its
- * normalized last segment (`rollouttag`) is not a member of the predicate's name set — (K3-name)
- * asserts that rather than trusting this comment, because a cell that passes only because its key
- * was added to the list measures nothing about the class.
- */
-const UNLISTED_KEY_PATH = 'deployment.rolloutTag'
-const PLANTED_UNLISTED = 'sk-ant-api03-395twentyUNLISTEDKEYFIXTUREONLYnotarealkey'
-
-/** The value (K2) tries to write under the key the verifier proved was accepted. */
-const PLANTED_WRITE = 'sk-ant-api03-395twentyWRITEFIXTUREONLYnotarealkey'
-
-/** The marker the render puts where a credential's value would be — a person-facing string. */
-const REDACTION_MARKER = '<redacted>'
-
-/** The healthy config the verifier reproduced CR-01 on: two credentials, nothing malformed. */
-const SHOW_LEAK_CONFIG = `${WELL_FORMED_CONFIG}
-# pasted in from the provider dashboard months ago
-apiToken: ${PLANTED_SHOW_TOKEN}
-llm:
-  apiKey: ${PLANTED_SHOW_NESTED}
-`
-
-/** The same healthy shape, one credential, under a name no list knows. */
-const UNLISTED_LEAK_CONFIG = `${WELL_FORMED_CONFIG}
-deployment:
-  rolloutTag: ${PLANTED_UNLISTED}
-`
+// A HEALTHY CONFIG ON THE TWO SHIPPED CONFIG VERBS (395-20 · F-03). Since 441-20 (D-29) config
+// output has no masks of its own: values render and write as the person wrote them, and only a
+// declared secret is masked (C441-CONFIG in `__tests__/config.test.ts`).
 
 /** The control values: the ordinary things a config carries, none of them credential-shaped. */
 const CONTROL_TARGET_NAME = 'my-app-staging'
@@ -1015,100 +941,7 @@ function runShippedCli(...args: string[]): { status: number | null; combined: st
   return { status: run.status, combined: `${run.stdout ?? ''}${run.stderr ?? ''}` }
 }
 
-describe('a healthy config\'s credentials are neither printed nor written (395-20 · F-03)', () => {
-  it('(K1) the SHIPPED `agent-qa config show` redacts both credentials and still lists both keys',
-    () => {
-      seedConfig(SHOW_LEAK_CONFIG)
-
-      const { status, combined } = runShippedCli('config', 'show')
-
-      // THE DISCLOSURE ASSERTIONS FIRST — this is the verifier's own reproduction, and on pre-fix
-      // HEAD each of these counted 1.
-      expect(
-        occurrences(combined, PLANTED_SHOW_TOKEN),
-        `config show printed the top-level credential:\n${combined}`,
-      ).toBe(0)
-      expect(
-        occurrences(combined, PLANTED_SHOW_NESTED),
-        `config show printed the nested credential:\n${combined}`,
-      ).toBe(0)
-
-      // AND IT IS STILL THE COMMAND IT WAS. Redaction that removed the rows would make `config
-      // show` useless for the thing people run it for — knowing which keys resolve from where.
-      expect(combined, `config show dropped the key names:\n${combined}`).toContain('apiToken')
-      expect(combined, `config show dropped the key names:\n${combined}`).toContain('llm.apiKey')
-      expect(occurrences(combined, REDACTION_MARKER), `the marker is missing:\n${combined}`).toBe(2)
-      expect(status, `config show must stay a success:\n${combined}`).toBe(0)
-    })
-
-  it('(K3-show) `config show` redacts a credential under a key name NO list carries', () => {
-    seedConfig(UNLISTED_LEAK_CONFIG)
-
-    const { status, combined } = runShippedCli('config', 'show')
-
-    // THE DOOR-ENUMERATION ACCEPTANCE. If this passes because `rollouttag` was added to the name
-    // set, the cell is vacuous — (K3-name) is what forbids that reading.
-    expect(
-      occurrences(combined, PLANTED_UNLISTED),
-      `config show printed a credential under an unlisted key:\n${combined}`,
-    ).toBe(0)
-    expect(combined, `the key should still be listed:\n${combined}`).toContain(UNLISTED_KEY_PATH)
-    expect(occurrences(combined, REDACTION_MARKER), `the marker is missing:\n${combined}`).toBe(1)
-    expect(status, `config show must stay a success:\n${combined}`).toBe(0)
-  })
-
-  it('(K3-name) the unlisted key is caught by its VALUE\'s shape, never by its NAME', () => {
-    // WHAT MAKES (K3) NON-VACUOUS, asserted rather than commented. A key list can only refuse what
-    // it can NAME (393), so the cheapest way to make (K3-show)/(K3-set) pass is to add
-    // `rollouttag` to the name set — and then the cells would prove nothing about a credential
-    // under the NEXT unlisted name. These two lines forbid that reading: under this key an
-    // ordinary value is ordinary, and only the credential-shaped value fires.
-    expect(
-      isCredentialEntry(UNLISTED_KEY_PATH, 'v2026.08.15-rollout'),
-      'the chosen key name must NOT be a member of the credential name set',
-    ).toBe(false)
-    expect(
-      isCredentialEntry(UNLISTED_KEY_PATH, PLANTED_UNLISTED),
-      'the value arm must catch a credential-shaped value under that same key',
-    ).toBe(true)
-  })
-
-  it('(K2) the SHIPPED `config set apiToken <secret>` is refused and the yaml is byte-unchanged',
-    () => {
-      seedConfig(WELL_FORMED_CONFIG)
-      const before = readFileSync(configPath, 'utf8')
-
-      const { status, combined } = runShippedCli('config', 'set', 'apiToken', PLANTED_WRITE)
-
-      // THE VERIFIER'S OWN MEASUREMENT, INVERTED. Pre-fix this printed
-      // `✓ apiToken = sk-… saved to agent-qa.config.yaml` and the value was in the committed file.
-      const after = readFileSync(configPath, 'utf8')
-      expect(after, `config set wrote to the committed yaml:\n${after}`).toBe(before)
-      expect(occurrences(after, PLANTED_WRITE), `the yaml carries the credential:\n${after}`).toBe(0)
-      expect(occurrences(combined, 'not written by config set'), `no refusal was taken:\n${combined}`)
-        .toBe(1)
-      // 395-24 · WR-02: a refused write is a failed command. Moved together with (K3-set) and the
-      // pre-existing arm — (K4c) is the cell that pins the three as one relation.
-      expect(status, `a refusal must be visible to a script:\n${combined}`).toBe(1)
-    })
-
-  it('(K3-set) a credential-shaped value under a key name NO list carries is refused too', () => {
-    seedConfig(WELL_FORMED_CONFIG)
-    const before = readFileSync(configPath, 'utf8')
-
-    const { status, combined } = runShippedCli('config', 'set', UNLISTED_KEY_PATH, PLANTED_UNLISTED)
-
-    // THE WRITE SIDE OF THE DOOR-ENUMERATION ACCEPTANCE. Nothing about this key's NAME says
-    // credential; the refusal has to come from the value's shape or not at all.
-    const after = readFileSync(configPath, 'utf8')
-    expect(after, `config set wrote to the committed yaml:\n${after}`).toBe(before)
-    expect(occurrences(after, PLANTED_UNLISTED), `the yaml carries the credential:\n${after}`).toBe(0)
-    expect(occurrences(combined, 'not written by config set'), `no refusal was taken:\n${combined}`)
-      .toBe(1)
-    // 395-24 · WR-02, moved with its siblings — see (K4c) for the relation.
-    expect(status, `a refusal must be visible to a script:\n${combined}`).toBe(1)
-  })
-
+describe('a healthy config\'s values are shown and written as they are (395-20 · F-03)', () => {
   it('(K4a) an ordinary value still WRITES and still says so — the no-over-redaction control', () => {
     seedConfig(WELL_FORMED_CONFIG)
 
@@ -1123,66 +956,15 @@ describe('a healthy config\'s credentials are neither printed nor written (395-2
 
   it('(K4b) base URLs, target names and ports still render VERBATIM at show', () => {
     seedConfig(CONTROL_CONFIG)
+    seedSecretsFile()
 
     const { status, combined } = runShippedCli('config', 'show')
 
-    // THE OVER-REDACTION CONTROL, on the three value kinds a config is mostly made of. A value arm
-    // tuned by broadening rather than by naming its families would swallow these, and `config show`
-    // would stop being worth running.
-    expect(combined, `the base URL was redacted:\n${combined}`).toContain(CONTROL_BASE_URL)
-    expect(combined, `the target name was redacted:\n${combined}`).toContain(CONTROL_TARGET_NAME)
-    expect(combined, `the port was redacted:\n${combined}`).toContain(CONTROL_PORT)
-    expect(occurrences(combined, REDACTION_MARKER), `nothing here is a credential:\n${combined}`)
-      .toBe(0)
+    expect(combined, `the base URL was not shown:\n${combined}`).toContain(CONTROL_BASE_URL)
+    expect(combined, `the target name was not shown:\n${combined}`).toContain(CONTROL_TARGET_NAME)
+    expect(combined, `the port was not shown:\n${combined}`).toContain(CONTROL_PORT)
     expect(status).toBe(0)
   })
-
-  it('(K4c) the pre-existing llm.apiKey refusal keeps its sentence, and all three arms exit 1',
-    () => {
-      // THE ROUND THIS CELL'S OWN NOTE ANTICIPATED (395-24 · WR-02). It used to pin the relation
-      // among the three arms against a CONSTANT it labelled "the measured pre-existing refusal
-      // status (395-20)" — exit 0 — with a note that a later round moves all three together. This
-      // is that round, and the constant moves, not the relation: a refusal that exits 0 is a
-      // SECURITY ACTION INVISIBLE TO ANY SCRIPT. `agent-qa config set apiToken $SECRET && echo ok`
-      // printed `ok` while the write had been refused; CI could not tell a refused credential write
-      // from a successful one. The three arms still exit ALIKE — that is what the cell has always
-      // been for — and what they exit is now 1.
-      seedConfig(WELL_FORMED_CONFIG)
-      const before = readFileSync(configPath, 'utf8')
-
-      // THE DESIGNED NO-BREAK. `sk-test` is deliberately too short for the apiKey family's `sk-`
-      // shape (asserted below), so this drive fires the NAME arm — the same arm, with the same
-      // three lines, that shipped before this plan.
-      const existing = runShippedCli('config', 'set', 'llm.apiKey', 'sk-test')
-      expect(isCredentialEntry('someOrdinaryKey', 'sk-test'), 'the control value must not be shaped')
-        .toBe(false)
-      expect(existing.combined).toContain('Credential values are not written by config set.')
-      expect(existing.combined).toContain(
-        'Use agent-qa auth set --config <name> --type api-key|bearer-token for compatible or Gemini configs.',
-      )
-      expect(existing.combined).toContain(
-        'Use plugins.auth plus the dashboard auth flow for subscription configs.',
-      )
-
-      const nameArm = runShippedCli('config', 'set', 'apiToken', PLANTED_WRITE)
-      const valueArm = runShippedCli('config', 'set', UNLISTED_KEY_PATH, PLANTED_UNLISTED)
-
-      // THE RELATION FIRST, STILL. Whatever a refusal exits, every arm exits it — a guard hardened
-      // on the member a reviewer happened to drive while its sibling stays open is this project's
-      // recurring failure mode (388/390/392/395-18).
-      expect(nameArm.status, 'the widened name arm must exit as the pre-existing refusal does')
-        .toBe(existing.status)
-      expect(valueArm.status, 'the value-shape arm must exit as the pre-existing refusal does')
-        .toBe(existing.status)
-      // AND THE CONSTANT, NOW THAT IT IS DEFENSIBLE: a refused write is a failed command.
-      expect(existing.status, 'a credential-write refusal is a non-zero exit (395-24 · WR-02)').toBe(1)
-
-      // EACH ARM WRITES NOTHING, CHECKED PER-ARM RATHER THAN ONCE AT THE END. A single trailing
-      // comparison passes if one arm writes and a later one restores.
-      expect(readFileSync(configPath, 'utf8'), 'no refusal may write').toBe(before)
-      expect(occurrences(readFileSync(configPath, 'utf8'), PLANTED_WRITE)).toBe(0)
-      expect(occurrences(readFileSync(configPath, 'utf8'), PLANTED_UNLISTED)).toBe(0)
-    })
 })
 
 // THE FLAG THE PERSON TYPED, ON THE CONFIG VERBS (395-24 · WR-03).
@@ -1230,6 +1012,7 @@ describe('the config verbs read and write the file --config names (395-24 · WR-
 
   it('(W3-show) `--config staging.yaml config show` renders the row only STAGING carries', () => {
     seedConfig(WELL_FORMED_CONFIG)
+    seedSecretsFile()
     writeFileSync(
       join(root, 'staging.yaml'),
       `${WELL_FORMED_CONFIG}${STAGING_ONLY_KEY}: ${STAGING_ONLY_VALUE}\n`,
@@ -1404,38 +1187,7 @@ describe('the config verbs report their faults instead of crashing (395-27 · WR
   })
 })
 
-// A CONTAINER IS NOT A HIDING PLACE ON THE RENDER ROAD (395-23 · F-03-R4a).
-//
-// WHAT THE CELLS ABOVE COULD NOT SEE, AND WHY. Every (K1)/(K3-show) fixture plants its credential at
-// a SCALAR LEAF — `apiToken`, `llm.apiKey`, `deployment.rolloutTag`. The corpus was blind by
-// CONTAINER SHAPE, not by key name and not by value shape: `flattenObject`
-// (`cli/src/config.ts:202-217`) tested `!Array.isArray(value)` before recursing, so an array-valued
-// subtree went to the `else` branch WHOLE and became one row whose value is `JSON.stringify(theArray)`
-// — and `isCredentialEntry` returned `false` for any non-string, so that row failed both arms of the
-// one predicate and printed verbatim.
-//
-// AND IT IS NOT AN EXOTIC SHAPE HERE. `RegistrySchema.llms` is `z.array(NamedLLMConfigSchema)` —
-// an array is exactly where this product's provider credentials LIVE. `baseURL` is a free
-// `z.string()` (a URL-userinfo credential passes schema validation), `SENSITIVE_HEADER_TERMS` does
-// not carry `x-client-auth` (a header credential passes too), and `showAction` reads
-// `loadConfigFile`, the UNVALIDATED file, so no schema guard runs on this road regardless. The
-// verifier reproduced all of it on the shipped binary at exit 0 (395-VERIFICATION CR-01).
-//
-// TWO FIXES, DELIBERATELY DISJOINT, AND EACH CELL MEASURES ONE OF THEM:
-//
-//  (K5) the container leak    — the render road. Reds if `flattenObject` stops recursing arrays: the
-//                               array becomes one leaf row again and both planted tokens print.
-//  (K6) the container control — the over-redaction half, in the (K4a)/(K4b) family. The guard must
-//                               decompose the array, not blacken it: an array member that is not a
-//                               credential still renders VERBATIM. Green pre-fix too (the whole
-//                               array printed, so the members were visible), which is exactly why
-//                               its pre-fix reading is recorded — post-fix it is a comparison, not
-//                               an assumption.
-//  (K7, in the agent package) — the predicate's own non-string arm. NOT here, and NOT redundant:
-//                               once (K5)'s recursion lands, the render never hands the predicate a
-//                               container at all, so the two halves red on disjoint cells. That
-//                               disjointness IS the independence proof, and the MCP masker is the
-//                               product-surface road that reaches the predicate with a container.
+// AN ARRAY SUBTREE RENDERS ONE ROW PER MEMBER (395-23 · F-03-R4a), each value as written.
 
 /** The container fixture's own values — fresh, fixture-owned, never the verifier's own strings. */
 const PLANTED_ARRAY_URLINFO = 'sk-ant-api03-395twentythreeURLUSERINFOFIXTUREONLYnotarealkey'
@@ -1450,15 +1202,7 @@ const WELL_FORMED_LLM_ENTRY = `    - name: judge
       provider: openai-subscription
       model: gpt-5.6-terra`
 
-/**
- * The healthy config CR-01 was reproduced on: credentials nested INSIDE `registry.llms[]`, one in a
- * URL's userinfo and one under a header key `SENSITIVE_HEADER_TERMS` does not carry.
- *
- * DERIVED from `WELL_FORMED_CONFIG` for `CONTROL_CONFIG`'s reason — a second hand-kept config drifts
- * and then the fixture measures the drift. (K5) asserts the substitution actually happened, because
- * a silently-no-op `.replace` would leave a fixture with no credential in it and a cell that passes
- * by measuring nothing.
- */
+/** Values nested inside `registry.llms[]`, derived from `WELL_FORMED_CONFIG`. */
 const ARRAY_LEAK_CONFIG = WELL_FORMED_CONFIG.replace(
   WELL_FORMED_LLM_ENTRY,
   `    - name: ${CONTAINER_LLM_NAME}
@@ -1471,80 +1215,20 @@ const ARRAY_LEAK_CONFIG = WELL_FORMED_CONFIG.replace(
 )
 
 describe('credentials nested in an array subtree (395-23 · F-03-R4a)', () => {
-  it('(K5) the SHIPPED `config show` prints ZERO bytes of a credential inside registry.llms[]',
-    () => {
-      // THE FIXTURE IS REAL, ASSERTED. If the derivation above ever stops matching, this cell would
-      // seed a credential-free config and pass for the wrong reason.
-      expect(ARRAY_LEAK_CONFIG, 'the container fixture must differ from the plain well-formed one')
-        .not.toBe(WELL_FORMED_CONFIG)
-      expect(occurrences(ARRAY_LEAK_CONFIG, PLANTED_ARRAY_URLINFO), 'the URL credential was planted')
-        .toBe(1)
-      expect(occurrences(ARRAY_LEAK_CONFIG, PLANTED_ARRAY_HEADER), 'the header credential was planted')
-        .toBe(1)
-
-      seedConfig(ARRAY_LEAK_CONFIG)
-      const container = runShippedCli('config', 'show')
-
-      // THE VERIFIER'S OWN READING, INVERTED. Pre-fix each of these counted 1, on the whole combined
-      // stdout+stderr of the shipped binary — no stream filter, no line filter.
-      expect(
-        occurrences(container.combined, PLANTED_ARRAY_URLINFO),
-        `config show printed the URL-userinfo credential:\n${container.combined}`,
-      ).toBe(0)
-      expect(
-        occurrences(container.combined, PLANTED_ARRAY_HEADER),
-        `config show printed the providerHeaders credential:\n${container.combined}`,
-      ).toBe(0)
-
-      // AND THE ROWS ARE STILL THERE. Exactly the two credential-bearing leaves are marked; a guard
-      // that blackened the whole container would count 1 here and red (K6) beside it.
-      expect(
-        occurrences(container.combined, REDACTION_MARKER),
-        `the container credential rows are not marked:\n${container.combined}`,
-      ).toBe(2)
-
-      // EXIT PARITY WITH (K1), MEASURED RATHER THAN ASSUMED — the same relation (K4c) asserts for
-      // the write arms. `config show` over a healthy file is a success on both fixtures or neither.
-      seedConfig(SHOW_LEAK_CONFIG)
-      const scalar = runShippedCli('config', 'show')
-      expect(container.status, `the container road must exit as (K1)'s does:\n${container.combined}`)
-        .toBe(scalar.status)
-      expect(scalar.status, 'the measured (K1) status').toBe(0)
-    })
-
-  it('(K5-idx) an INDEXED container keeps the name it had — the regression (K5)\'s fix would mint',
-    () => {
-      // WHAT DECOMPOSING A CONTAINER COSTS IF NOBODY PAYS IT. Before (K5)'s fix an array was ONE row
-      // keyed by its own name, so `credentials: [...]` was redacted by the NAME arm — accidentally,
-      // but really. Recursion renames that row `credentials[0]`, whose normalized last segment is
-      // `credentials0`, a member of no set: the fix would have turned a redacted row into a printed
-      // one. Half a fix mints a regression (388/390/392), so the ONE predicate strips a trailing
-      // index before it asks its name question — a container's element is still the container.
-      expect(
-        isCredentialEntry('credentials[0]', 'an-opaque-value-no-detector-knows'),
-        'an indexed element of a credential-named container is still credential-bearing',
-      ).toBe(true)
-      // AND THE CONTROL: the index is stripped, the NAME still has to be one. `registry.llms[0]` is
-      // not a credential name, so an ordinary element stays ordinary — this is what forbids reading
-      // the line above as "anything indexed is a secret".
-      expect(
-        isCredentialEntry('registry.llms[0]', 'an-opaque-value-no-detector-knows'),
-        'an indexed element of an ordinary container is still ordinary',
-      ).toBe(false)
-    })
-
   it('(K6) non-credential members of that same array still render VERBATIM', () => {
+    expect(ARRAY_LEAK_CONFIG, 'the container fixture must differ from the plain well-formed one')
+      .not.toBe(WELL_FORMED_CONFIG)
     seedConfig(ARRAY_LEAK_CONFIG)
+    seedSecretsFile()
 
     const { status, combined } = runShippedCli('config', 'show')
 
-    // THE OVER-REDACTION CONTROL FOR CONTAINERS. The cheapest way to make (K5) pass is to redact the
-    // whole array row, which would make `config show` useless for the thing people run it for. These
-    // two members sit in the SAME array element as both planted credentials.
-    expect(combined, `the array member's name was redacted:\n${combined}`)
+    expect(combined, `the array member's name was not shown:\n${combined}`)
       .toContain(CONTAINER_LLM_NAME)
-    expect(combined, `a credential-free URL-shaped member was redacted:\n${combined}`)
+    expect(combined, `a URL-shaped member was not shown:\n${combined}`)
       .toContain(CONTAINER_CLEAN_URL)
+    expect(combined, 'each array member is its own row')
+      .toContain('registry.llms[0].providerHeaders.X-Client-Auth')
     expect(status, 'config show must stay a success').toBe(0)
   })
 })
@@ -1591,8 +1275,7 @@ const CYCLE_SIBLING_VALUE = 'cycle-sibling-fixtureonly-395-27'
  * A REAL object cycle after parsing: the anchor is aliased from INSIDE itself.
  *
  * Derived from the shipped-schema-accepted body for `CONTROL_CONFIG`'s reason, and asserted cyclic
- * BY IDENTITY in the cell below before any behavioural claim rests on it — (K5)'s discipline for a
- * derived fixture, applied to a structural property instead of a substitution.
+ * BY IDENTITY in the cell below before any behavioural claim rests on it.
  */
 const CYCLIC_ALIAS_CONFIG = `${WELL_FORMED_CONFIG}
 cycleHolder: &loop
@@ -1635,6 +1318,7 @@ describe('a cyclic config is bounded output and a repeated one is not (395-27 ·
       .toBeTypeOf('object')
 
     seedConfig(CYCLIC_ALIAS_CONFIG)
+    seedSecretsFile()
     const cyclic = runShippedCli('config', 'show')
 
     // THE CRASH IS GONE, ASSERTED AT THE SURFACE A PERSON READS.
@@ -1668,7 +1352,7 @@ describe('a cyclic config is bounded output and a repeated one is not (395-27 ·
       `config show produced unbounded output (${cyclic.combined.length} bytes)`,
     ).toBeLessThan(8_000)
 
-    // EXIT PARITY WITH THE HEALTHY ROAD, MEASURED RATHER THAN ASSUMED — (K5)'s relation.
+    // EXIT PARITY WITH THE HEALTHY ROAD, MEASURED RATHER THAN ASSUMED.
     seedConfig(WELL_FORMED_CONFIG)
     const healthy = runShippedCli('config', 'show')
     expect(cyclic.status, `the cyclic road must exit as the healthy one does:\n${cyclic.combined}`)
@@ -1687,6 +1371,7 @@ describe('a cyclic config is bounded output and a repeated one is not (395-27 ·
       .toBe(REPEATED_ALIAS_LABEL)
 
     seedConfig(REPEATED_ALIAS_CONFIG)
+    seedSecretsFile()
     const { status, combined } = runShippedCli('config', 'show')
 
     // THREE ROWS, THREE COPIES OF THE VALUE. Under a visited-set guard this counts 1 and the two

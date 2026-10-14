@@ -1,10 +1,15 @@
 import { Command } from 'commander'
 import pc from 'picocolors'
 import { parseDocument, Document } from 'yaml'
+import { existsSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
-import { isCredentialEntry } from '@vostride/agent-qa-agent'
+import type { MaskFn } from '@vostride/agent-qa-schema'
 
+import {
+  createDeclaredSecretMask,
+  DeclaredSecretsUnavailableError,
+} from '../composition/declared-secrets.js'
 import {
   ConfigFileNotFoundError,
   ConfigFileNotYamlError,
@@ -59,43 +64,17 @@ function rootConfigPath(command: Command): { readonly path: string; readonly exp
   }
 }
 
-/**
- * THE OTHER REPORT-NOT-CRASH SEAM (395-27 · WR-01), a SIBLING of `refuseCredentialWrite` and
- * deliberately not routed through it.
- *
- * The seam below carries three credential-specific sentences — the refusal plus two lines telling
- * the person which auth verb to use instead — and a filesystem fault has nothing to do with any of
- * them. Sharing the function would mean either printing auth advice at someone whose problem is a
- * typo in a directory name, or parameterizing those sentences away and leaving the credential seam
- * a shell. So: two reporters, one shape, and the shape is what matters — a fault the person can act
- * on, and a NON-ZERO exit, because `agent-qa config set x y && echo ok` printing `ok` after a write
- * that did not happen is the same invisible-to-automation failure 395-24 · WR-02 closed.
- *
- * ONLY THE ERROR'S `code`, NEVER THE ERROR. Node's own message interpolates the RESOLVED ABSOLUTE
- * path (`open '/var/folders/…/sub/staging.yaml'`) and its default printer appends the internal
- * frame list; the path rendered here is the one the person TYPED and nothing else (WR-07).
- */
+// A filesystem fault reports its `code` and the path as typed, and exits non-zero (395-27 · WR-01).
 function reportConfigFileFailure(verb: 'read' | 'write', configPath: string, err: unknown): void {
   const code = (err as NodeJS.ErrnoException).code ?? `${verb} failed`
   console.error(pc.red(`Could not ${verb} ${configPath}: ${code}`))
   process.exitCode = 1
 }
 
-/**
- * THE ONE REFUSAL SEAM (395-24 · WR-02). Every credential-write refusal in this file leaves through
- * here, and it leaves NON-ZERO.
- *
- * A refusal that exits 0 is a security action invisible to automation:
- * `agent-qa config set apiToken "$SECRET" && echo ok` printed `ok` while the write had been refused,
- * and no CI step could distinguish a refused credential write from a successful ordinary one. The
- * arms are routed through one function rather than each setting `process.exitCode` beside its own
- * `console.error`, because a guard applied per-arm is exactly how this project has left a sibling
- * open three rounds running — (K4c) pins the three arms as a relation for the same reason.
- */
-function refuseCredentialWrite(reason: string): void {
-  console.error(pc.red(reason))
-  console.error('Use agent-qa auth set --config <name> --type api-key|bearer-token for compatible or Gemini configs.')
-  console.error('Use plugins.auth plus the dashboard auth flow for subscription configs.')
+function printUnavailable(error: DeclaredSecretsUnavailableError): void {
+  const [first, ...rest] = error.lines
+  if (first !== undefined) console.error(pc.red(first))
+  for (const line of rest) console.error(pc.dim(line))
   process.exitCode = 1
 }
 
@@ -127,32 +106,9 @@ async function getValue(key: string, providedValue: string | undefined): Promise
 }
 
 async function setAction(key: string, value: string | undefined, command: Command): Promise<void> {
-  // THE NAME ARM, ON THE ONE PREDICATE (395-20 · F-03). This file used to own a private
-  // `SENSITIVE_KEYS` set, and that private set was the defect: it lacked `apitoken`, so
-  // `config set apiToken sk-…` was accepted and written into the committed yaml — and the render
-  // side, which had no predicate at all, then printed the value back. There is now ONE answer to
-  // "is this a credential", imported by both sides, so they cannot drift apart again.
-  //
-  // STILL BEFORE `getValue`, deliberately: a key that says credential is refused without ever
-  // prompting for or reading the secret, exactly as it did before.
-  if (isCredentialEntry(key, undefined)) {
-    refuseCredentialWrite('Credential values are not written by config set.')
-    return
-  }
-
   const resolved = await getValue(key, value)
   if (!resolved) {
     console.error(pc.red('No value provided.'))
-    return
-  }
-
-  // THE VALUE ARM, and the reason this fix is a composition rather than a longer list. A key-name
-  // set can only refuse what it can NAME (393): widening it closes `apiToken` and reopens under the
-  // next name nobody listed. This second arm asks what the VALUE looks like, through the same
-  // guardrail detector families the proposal scan uses, so a credential pasted under any key at all
-  // is refused here. It sits after `getValue` because the value can arrive from stdin or a prompt.
-  if (isCredentialEntry(key, resolved)) {
-    refuseCredentialWrite('That value is shaped like a credential, and credential values are not written by config set.')
     return
   }
 
@@ -234,10 +190,23 @@ async function showAction(command: Command): Promise<void> {
     }
     throw err
   }
+  // 2026-10-15 (441-20, D-01): a project with no config file declares no secrets file to mask.
+  let mask: MaskFn = (text) => text
+  if (explicit || existsSync(configPath)) {
+    const declaredSecrets = createDeclaredSecretMask(configPath)
+    try {
+      declaredSecrets.redactor()
+    } catch (err: unknown) {
+      if (!(err instanceof DeclaredSecretsUnavailableError)) throw err
+      printUnavailable(err)
+      return
+    }
+    mask = declaredSecrets.mask
+  }
   const envOverrides = loadEnvOverrides()
   // Merge env into file config (3-layer: file+env is the global config)
   const globalConfig = mergeConfigs(fileConfig, envOverrides, {})
-  const table = formatConfigDebug(globalConfig, {}, {})
+  const table = formatConfigDebug(globalConfig, {}, {}, mask)
   console.log(pc.bold('\nResolved Configuration:\n'))
   console.log(table)
   console.log()
