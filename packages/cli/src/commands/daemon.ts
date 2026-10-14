@@ -183,7 +183,11 @@ export function createDaemonCommand(deps: DaemonCommandDeps = DEFAULT_DEPS): Com
         // process, so it composes eagerly — unlike `run`, there is no early-returning path here for
         // a lazy composition to protect, and the host it is handed to emits from the moment it
         // starts dispatching work.
-        const analytics = await composeAnalyticsHost({ surface: 'daemon', config })
+        const analytics = await composeAnalyticsHost({
+          surface: 'daemon',
+          config,
+          maskingContext: { mask: createDeclaredSecretMask(configPath).mask },
+        })
         const exitCode = await deps.runHost({
           analytics,
           agentQaRoot: resolve(configDir, '.agent-qa'),

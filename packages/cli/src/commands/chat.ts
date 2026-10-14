@@ -361,6 +361,7 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
         analytics = await (deps.composeAnalytics ?? composeAnalyticsHost)({
           surface: 'chat',
           ...(analyticsConfig === undefined ? {} : { config: analyticsConfig }),
+          maskingContext: { mask: declaredSecrets.mask },
         })
 
         // CHAT-06, and the one place in this file that reaches a provider resolution — once, when

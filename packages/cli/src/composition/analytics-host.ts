@@ -100,16 +100,7 @@ export interface ComposeAnalyticsHostInput {
   config?: AnalyticsOptOutConfig
   /** This host's environment slice. Defaults to `process.env`; passed in so a cell can drive it. */
   env?: Readonly<Record<string, string | undefined>>
-  /**
-   * The run/session masking context, when the host already has one AT COMPOSITION TIME.
-   *
-   * Most do not: a run's masking context is seeded from that run's secret store and captured auth
-   * state, which do not exist when the command's composition root runs. `bindMaskingContext` on the
-   * returned host is how the seam learns about it later — see the note there.
-   *
-   * Either way the host never masks an event itself. That would be a second masking site, and the
-   * package's send seam exists so there is exactly one.
-   */
+  /** The project's declared-secret mask; the transport's send seam applies it, never the host. */
   maskingContext?: AnalyticsMaskingContext
   /** Cell seam: replaces the transport on the opted-IN arm only (the package's own rule). */
   transportOverride?: AnalyticsTransport
@@ -141,16 +132,8 @@ export interface CliAnalyticsHost {
   readonly optOutReasons: readonly AnalyticsOptOutReason[]
   readonly transportKind: AnalyticsTransportKind
   /**
-   * Point the send seam at this invocation's masking context, once it exists.
-   *
-   * THE SEAM IS INSTALLED AT COMPOSITION AND ONLY ITS TARGET MOVES. The transport is handed a
-   * forwarding context whose `mask` reads whatever is bound at CALL time, so an event emitted
-   * before anything is bound passes through unmasked (there is nothing seeded to mask it with) and
-   * every event after is masked by the run's real context. The alternative — composing analytics
-   * late enough to have the masker — would put the opt-out decision after the work it governs.
-   *
-   * Binding twice replaces the target rather than layering: a process has one live run masking
-   * context at a time, and two would be two answers to "what is a secret here".
+   * The host binds the declared mask at composition; a run may rebind to its own once its secrets
+   * are read. Binding replaces the target, and the seam reads it at send time.
    */
   bindMaskingContext(context: AnalyticsMaskingContext): void
   flush(): Promise<void>
@@ -175,7 +158,7 @@ export async function composeAnalyticsHost(
     env: input.env ?? process.env,
     ...(input.config === undefined ? {} : { config: input.config }),
     // The forwarding seam — see `bindMaskingContext`. Always supplied, so the send path's masking
-    // call exists from the first event whether or not anything has been seeded yet.
+    // call exists from the first event whether or not a mask has been bound yet.
     maskingContext: { mask: (text) => masking?.mask(text) ?? text },
     ...(input.transportOverride === undefined ? {} : { transportOverride: input.transportOverride }),
     ...(input.projectKey === undefined ? {} : { projectKey: input.projectKey }),

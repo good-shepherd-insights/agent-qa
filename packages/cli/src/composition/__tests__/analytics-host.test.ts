@@ -11,8 +11,9 @@
 //      resolve an identity — and persist one — on its way to a transport that sends nothing. The
 //      zero-network differential cannot see this, because nothing goes near a socket.
 
-import { describe, expect, it, vi } from 'vitest'
-import { readFileSync, readdirSync } from 'node:fs'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { getAgentQaVersion } from '@vostride/agent-qa-core'
@@ -22,8 +23,15 @@ import {
   CLI_ANALYTICS_AGENT_QA_VERSION,
   composeAnalyticsHost,
 } from '../analytics-host.js'
+import type { CliAnalyticsHost } from '../analytics-host.js'
+import { createDeclaredSecretMask } from '../declared-secrets.js'
 import { createPosthogTransport } from '@vostride/agent-qa-analytics'
-import type { AnalyticsCapturePayload, AnalyticsTransport } from '@vostride/agent-qa-analytics'
+import type {
+  AgentQaAnalyticsEvent,
+  AnalyticsCapturePayload,
+  AnalyticsMaskingContext,
+  AnalyticsTransport,
+} from '@vostride/agent-qa-analytics'
 
 function recordingTransport(): AnalyticsTransport & { readonly sent: AnalyticsCapturePayload[] } {
   const sent: AnalyticsCapturePayload[] = []
@@ -425,5 +433,129 @@ describe('the composition-root census (398-14, D-19 · ANLY-01)', () => {
       + 'telemetry loss is the accepted failure direction and a drain awaited in a signal handler '
       + 'would unbound Ctrl+C.',
     ).toBeGreaterThanOrEqual(3)
+  })
+})
+
+interface SentEvent {
+  readonly distinctId: string
+  readonly event: string
+  readonly properties: Record<string, unknown>
+}
+
+const c441Roots: string[] = []
+
+afterAll(() => {
+  for (const root of c441Roots) rmSync(root, { recursive: true, force: true })
+})
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
+
+function declaringProject(secrets: string): string {
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-441-analytics-'))
+  c441Roots.push(root)
+  const configPath = join(root, 'agent-qa.config.yaml')
+  writeFileSync(
+    configPath,
+    [
+      'workspace:',
+      "  testMatch: ['tests/**/*.yaml']",
+      "  suiteMatch: ['suites/**/*.yaml']",
+      '  hooksFile: hooks.yaml',
+      '  envFile: .env.local',
+      '  secretsFile: .secrets.local',
+      '',
+    ].join('\n'),
+  )
+  writeFileSync(join(root, 'hooks.yaml'), '')
+  writeFileSync(join(root, '.env.local'), '')
+  writeFileSync(join(root, '.secrets.local'), secrets)
+  return configPath
+}
+
+function fakeClient(sent: SentEvent[]) {
+  return {
+    capture: (input: SentEvent) => sent.push(input),
+    flush: () => {},
+    shutdown: () => {},
+  }
+}
+
+async function shippedSendPath(
+  maskingContext: AnalyticsMaskingContext,
+): Promise<{ host: CliAnalyticsHost; sent: SentEvent[] }> {
+  const sent: SentEvent[] = []
+  const host = await composeAnalyticsHost({
+    surface: 'chat',
+    env: {},
+    maskingContext,
+    projectKey: 'phc_test_key',
+    posthogTransportFactory: (options) =>
+      createPosthogTransport({ ...options, client: fakeClient(sent) }),
+    resolveIdentity: async () => ({ distinctId: 'u_c441', runtimeContext: 'user' as const }),
+  })
+  return { host, sent }
+}
+
+function eventCarrying(host: CliAnalyticsHost, text: string): AgentQaAnalyticsEvent {
+  const event = analyticsEvent(host, 'agent-qa.explain.answered', { cited_row_count: 1 })
+  return {
+    ...event,
+    properties: { ...event.properties, planted_text: `before ${text} after` },
+  } as AgentQaAnalyticsEvent
+}
+
+describe('C441-ANALYTICS', () => {
+  it('a declared value in an analytics property leaves as its named marker', async () => {
+    const configPath = declaringProject('SHORT_441=q^7\n')
+    const { host, sent } = await shippedSendPath({ mask: createDeclaredSecretMask(configPath).mask })
+    const event = eventCarrying(host, 'q^7')
+
+    host.port.capture(event)
+    await host.flush()
+
+    expect(sent).toHaveLength(1)
+    expect(sent[0]?.event).toBe('agent-qa.explain.answered')
+    expect(Object.keys(sent[0]!.properties).sort()).toEqual(Object.keys(event.properties).sort())
+    expect(sent[0]?.properties.planted_text).toBe('before [secret:SHORT_441] after')
+    expect(JSON.stringify(sent)).not.toContain('q^7')
+  })
+
+  it('an environment-only value is not masked in an analytics payload', async () => {
+    vi.stubEnv('AGENT_QA_X_PASSWORD', 'env-only-value-441')
+    const configPath = declaringProject('SHORT_441=q^7\n')
+    const { host, sent } = await shippedSendPath({ mask: createDeclaredSecretMask(configPath).mask })
+
+    host.port.capture(eventCarrying(host, process.env.AGENT_QA_X_PASSWORD!))
+    await host.flush()
+
+    expect(sent).toHaveLength(1)
+    expect(sent[0]?.properties.planted_text).toBe('before env-only-value-441 after')
+  })
+
+  it('a mask that throws drops the event', async () => {
+    const throwing: AnalyticsMaskingContext = {
+      mask: () => {
+        throw new Error('secrets file became unreadable')
+      },
+    }
+    const { host, sent } = await shippedSendPath(throwing)
+
+    expect(() => host.port.capture(eventCarrying(host, 'anything'))).not.toThrow()
+    await host.flush()
+    expect(sent).toEqual([])
+
+    const direct: SentEvent[] = []
+    const transport = createPosthogTransport({
+      projectKey: 'phc_test_key',
+      host: 'https://example.invalid',
+      maskingContext: throwing,
+      client: fakeClient(direct),
+    })
+    expect(() =>
+      transport.capture({ distinctId: 'u_c441', event: eventCarrying(host, 'anything') }),
+    ).not.toThrow()
+    expect(direct).toEqual([])
   })
 })

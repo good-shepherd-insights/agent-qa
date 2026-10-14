@@ -73,13 +73,7 @@ export interface PosthogTransportOptions {
    * difference between measuring the product and measuring the fixture.
    */
   readonly fetch?: PostHogOptions['fetch']
-  /**
-   * The seeded masking context the send seam applies (D-19, plan 06).
-   *
-   * Absent means no masking, and that is the honest default rather than a hole: the closed union
-   * already makes a free-text field unrepresentable, so masking here is depth behind that wall, and
-   * a context nobody seeded would mask nothing anyway. The composition root binds the real one.
-   */
+  /** The host's declared-secret mask, applied at the send seam. Absent means no masking. */
   readonly maskingContext?: AnalyticsMaskingContext
   /** An already-constructed client, for tests that need to observe construction itself. */
   readonly client?: PosthogAnalyticsClient
@@ -107,7 +101,13 @@ class PosthogTransport implements AnalyticsTransport {
    * is a boolean this file writes — there is no caller string in it to mask.
    */
   capture(payload: AnalyticsCapturePayload): void {
-    const masked = maskEventForSend(payload, this.maskingContext)
+    let masked: AnalyticsCapturePayload
+    try {
+      masked = maskEventForSend(payload, this.maskingContext)
+    } catch {
+      // 2026-10-14 (441-08, E3): a mask that cannot run drops the event; it is never sent unmasked.
+      return
+    }
     const properties: Record<string, unknown> = { ...masked.event.properties }
     if (masked.isInternal === true) {
       properties.$set = { is_internal: true }
