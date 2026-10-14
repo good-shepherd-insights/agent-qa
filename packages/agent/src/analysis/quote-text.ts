@@ -14,11 +14,10 @@
 // mirrors what the built-in strips — CSI (including SGR), OSC, the two-byte escape forms and
 // the remaining C0/C1 control characters — as pure ECMAScript regexes with no import at all.
 //
-// WHAT THIS IS NOT. It is not a masker. A masked marker (`maskedMarker`, fenced by U+241F
-// SYMBOL FOR UNIT SEPARATOR — a PICTURE of a control character, not one) and a `<SECRET_n>`
-// placeholder are ordinary printable text here and cross byte-identical; masking stays the
-// display seam's job (405 D-09/D-10). Sanitization also happens at RENDER time only, never at
-// authorship: `validateGroundingQuote` still checks the quote against the raw artifact bytes,
+// WHAT THIS IS NOT. It is not a masker. A declared `[secret:<name>]` marker and an old
+// `<SECRET_n>` placeholder are ordinary printable text here and cross byte-identical; masking
+// happens before anything is recorded (441 D-28). Sanitization also happens at RENDER time only,
+// never at authorship: `validateGroundingQuote` still checks the quote against the raw artifact bytes,
 // so a display rule can never reject a verdict that honestly quoted what was captured.
 
 /**

@@ -5,14 +5,13 @@
 // unreadable on the CLI, in chat and on the run page alike. These cells pin what the strip
 // removes (control sequences, whitespace runs) and, just as load-bearing, what it must NOT
 // touch: every non-control word survives in order, an already-clean quote is returned
-// byte-identical, and a masked marker or a `<SECRET_n>` placeholder crosses untouched
-// because masking is the display seam's job and never this function's.
+// byte-identical, and a declared `[secret:<name>]` marker or a `<SECRET_n>` placeholder crosses
+// untouched because masking happens before anything is recorded, never in this function.
 //
 // Control characters are spelled through `\u00xx` escapes, never as literal bytes: a raw ESC
 // in a source file is invisible in review, which is the one thing a cell about invisible
 // bytes must not be.
 
-import { MASKED_MARKER_DELIMITER, maskedMarker } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
 import { sanitizeQuoteText } from '../quote-text.js'
@@ -66,14 +65,12 @@ describe('sanitizeQuoteText — control sequences out, whitespace collapsed (D-1
     expect(sanitizeQuoteText(clean)).toBe(clean)
   })
 
-  it('leaves a masked marker byte-identical — masking is the display seam, never this', () => {
-    const marker = maskedMarker('secret')
+  it('leaves a declared [secret:<name>] marker byte-identical — masking is never this function', () => {
+    const marker = '[secret:PW_441]'
     const sanitized = sanitizeQuoteText(`token ${marker} rejected${ESC}[0m`)
 
     expect(sanitized).toContain(marker)
     expect(sanitized).toBe(`token ${marker} rejected`)
-    // The fence survives at BOTH ends: a marker split in half is a marker no chip parser finds.
-    expect(sanitized.split(MASKED_MARKER_DELIMITER)).toHaveLength(3)
   })
 
   it('passes a <SECRET_n> placeholder through verbatim', () => {
