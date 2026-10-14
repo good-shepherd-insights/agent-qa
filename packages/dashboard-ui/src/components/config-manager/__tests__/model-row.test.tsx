@@ -24,7 +24,6 @@ import {
   fetchConfigRevision,
   fetchLLMProviders,
   pollPluginAuthResult,
-  revealConfigValue,
   saveCredential,
   startPluginAuth,
   testLLMConnection,
@@ -71,7 +70,6 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   testLLMConnection: vi.fn(),
   deleteAuthCredential: vi.fn(),
   saveCredential: vi.fn(),
-  revealConfigValue: vi.fn(),
   startPluginAuth: vi.fn(),
   pollPluginAuthResult: vi.fn(),
   exchangePluginAuthCode: vi.fn(),
@@ -300,7 +298,6 @@ beforeEach(() => {
   vi.mocked(testLLMConnection).mockResolvedValue({ success: true })
   vi.mocked(deleteAuthCredential).mockResolvedValue({ deleted: true, undo: undoTicket('undo-credential') } as never)
   vi.mocked(saveCredential).mockResolvedValue({ saved: true, created: false } as never)
-  vi.mocked(revealConfigValue).mockResolvedValue({ value: HEADER_SECRET } as never)
 })
 
 afterEach(async () => {
@@ -653,7 +650,6 @@ describe('ModelRow key and settings (429-24 Task 2)', () => {
     await type(name, 'X-Team')
     await waitPastSettle()
     const headers = ['registry', 'llms', { name: 'claude-proxy' }, 'providerHeaders']
-    expect(revealConfigValue).not.toHaveBeenCalled()
     expect(writes()[4]).toEqual([[{ op: 'move', from: [...headers, 'X-Org'], path: [...headers, 'X-Team'] }]])
     expect(container!.innerHTML).not.toContain(HEADER_SECRET)
     expect(Array.from(row('claude-proxy')!.querySelectorAll('[data-model-header]')).map((item) => item.getAttribute('data-model-header'))).toEqual(['X-Team'])
@@ -714,7 +710,6 @@ describe('ModelRow header rename (429-47 Task 1 · deferred 429-24)', () => {
     await type(inputIn(proxy, 'registry.llms[].providerHeaders'), 'X-Team')
     await waitPastSettle()
 
-    expect(revealConfigValue).not.toHaveBeenCalled()
     expect(writes()).toEqual([[[{ op: 'move', from: [...HEADERS, 'X-Org'], path: [...HEADERS, 'X-Team'] }]]])
     expect(headerNames()).toEqual(['X-Team'])
     expect(field(row('claude-proxy'), 'registry.llms[].providerHeaders.*')?.textContent).toContain(CONFIG_MASK_PLACEHOLDER)
@@ -730,7 +725,6 @@ describe('ModelRow header rename (429-47 Task 1 · deferred 429-24)', () => {
     await type(inputIn(proxy, 'registry.llms[].providerHeaders'), 'X-Team')
     await waitPastSettle()
 
-    expect(revealConfigValue).not.toHaveBeenCalled()
     expect(writes()).toEqual([[[{ op: 'move', from: [...HEADERS, 'X-Org'], path: [...HEADERS, 'X-Team'] }]]])
     expect(inputIn(row('claude-proxy'), 'registry.llms[].providerHeaders')?.value).toBe('X-Org')
     expect(headerNames()).toEqual(['X-Org'])

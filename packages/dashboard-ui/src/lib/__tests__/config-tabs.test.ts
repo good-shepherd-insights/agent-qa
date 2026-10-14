@@ -20,7 +20,6 @@ import {
   LEGACY_CONFIG_LINKS,
   LEGACY_CONFIG_PAIRS,
   MODEL_STATUSES,
-  REVEAL_STATES,
   SAVE_STATES,
   TEST_RESULTS,
   configTabPath,
@@ -242,9 +241,5 @@ describe('the UI closed sets (429-12 Task 1)', () => {
       'change-db-path',
       'change-artifacts-dir',
     ])
-  })
-
-  it('C429-REVEAL-STATES-EXACT', () => {
-    expect(REVEAL_STATES).toEqual(['masked', 'loading', 'revealed', 'failed'])
   })
 })

@@ -2,8 +2,8 @@
 
 // DEVICE FARMS AS PER-KEY SECRET ROWS (429-19 Task 2 · D-08, D-09, D-23, D-24 · UI-SPEC S8, E8).
 //
-// registry.providers is secret wholesale, so every farm setting is a SecretValue: masked, revealed
-// per click, replaced explicitly. Adding a setting or a farm is an explicit write; deleting a farm
+// registry.providers is secret wholesale, so every farm setting is a SecretValue: shown as the
+// server sent it, replaced explicitly. Adding a setting or a farm is an explicit write; deleting a farm
 // acts at once and offers Undo. No value is ever held editable in masked form.
 
 import { act } from 'react'
@@ -24,7 +24,6 @@ import {
   deleteActionName,
   deviceFarmSettingLabel,
   replaceValueName,
-  showValueName,
   undoLine,
 } from '@/lib/config-copy'
 
@@ -34,7 +33,6 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchConfigRevision: vi.fn(),
   applyConfigChanges: vi.fn(),
   undoConfigAction: vi.fn(),
-  revealConfigValue: vi.fn(),
 }))
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -175,12 +173,12 @@ describe('ProvidersSection (429-19 Task 2)', () => {
     expect(secrets).toHaveLength(2)
     for (const secret of secrets) {
       expect(secret.getAttribute('data-field-path')).toBe('registry.providers.*.*')
-      expect(secret.getAttribute('data-reveal-state')).toBe('masked')
       expect(secret.querySelector('code')?.textContent).toBe(MASK)
+      expect(secret.querySelectorAll('button')).toHaveLength(1)
     }
     expect(browserstack!.textContent).toContain('accessKey')
     expect(browserstack!.textContent).toContain('region')
-    expect(buttonIn(browserstack, showValueName(deviceFarmSettingLabel('browserstack', 'accessKey')))).not.toBeNull()
+    expect(buttonIn(browserstack, replaceValueName(deviceFarmSettingLabel('browserstack', 'accessKey')))).not.toBeNull()
     expect(buttonIn(browserstack, replaceValueName(deviceFarmSettingLabel('browserstack', 'region')))).not.toBeNull()
     expect(saucelabs!.querySelectorAll('[data-secret-field]')).toHaveLength(1)
     expect(container!.querySelectorAll('input')).toHaveLength(0)

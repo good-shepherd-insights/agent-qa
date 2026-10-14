@@ -1,14 +1,12 @@
 export type { PlatformBase, TimeoutConfig } from './base'
 export { platformBase, platformBaseShape, timeoutConfigSchema } from './base'
-// 2026-09-26, 429-01 D-19: the field-merge write DTO PATCH /api/config parses; 429-04 D-09/D-24
-// adds the reveal and Undo DTOs beside it.
+// 2026-09-26, 429-01 D-19: the field-merge write DTO PATCH /api/config parses; 429-04 D-24 adds
+// the Undo DTOs beside it.
 export type {
   ConfigActionRefusal,
   ConfigChange,
   ConfigNamedArray,
   ConfigPathSegment,
-  ConfigRevealRequest,
-  ConfigRevealResult,
   ConfigUndoRequest,
   ConfigUndoResult,
   ConfigWriteIssue,

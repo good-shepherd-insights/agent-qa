@@ -485,24 +485,30 @@ describe('Config tabs, links, geometry, masking and names on the shipped bundle 
     const opened = await h.page(DESKTOP)
     const { page } = opened
     const leaks: string[] = []
+    const reveals: string[] = []
     for (const tab of TABS) {
       await openTab(h, page, tab)
       const html = await page.evaluate(() => document.documentElement.outerHTML)
       for (const [kind, sentinel] of Object.entries({ auth: SENTINELS.auth, farm: SENTINELS.farm })) if (html.includes(sentinel)) leaks.push(`${tab}: ${kind}`)
+      // 441-49 (D-29): no control on the page can reveal a value.
+      const controls = await page.locator('button[aria-label^="Show "], button[aria-label^="Hide "], [data-reveal-state]').count()
+      if (controls > 0) reveals.push(`${tab}: ${String(controls)}`)
     }
     expect(leaks, 'an auth.json or declared value reached the page').toEqual([])
+    expect(reveals, 'a reveal control is on the config page').toEqual([])
 
     const view = page.locator('[data-config-file-view]')
     await view.waitFor({ timeout: 10_000 })
     const lines = await view.locator('li[data-line]').evaluateAll((items) => items.map((item) => ({
       text: (item.textContent ?? '').trim(),
       masking: item.getAttribute('data-masking-class'),
+      controls: item.querySelectorAll('button').length,
     })))
     const lineWith = (fragment: string) => lines.find((line) => line.text.includes(fragment))
-    expect(lineWith(`port: ${MCP_PORT}`), JSON.stringify(lines)).toEqual({ text: `port: ${MCP_PORT}`, masking: 'plain' })
+    expect(lineWith(`port: ${MCP_PORT}`), JSON.stringify(lines)).toEqual({ text: `port: ${MCP_PORT}`, masking: null, controls: 0 })
     // 441-21 (D-29): no line is classed by path; an undeclared value or comment reads as written and
-    // the farm key, declared in the secrets file, as its marker.
-    expect(lines.filter((line) => line.masking !== 'plain'), JSON.stringify(lines)).toEqual([])
+    // the farm key, declared in the secrets file, as its marker. 441-49: no line carries a control.
+    expect(lines.filter((line) => line.masking !== null || line.controls !== 0), JSON.stringify(lines)).toEqual([])
     expect(lineWith('x-org-route:')?.text).toBe(`x-org-route: ${SENTINELS.header}`)
     expect(lineWith('accessKey:')?.text).toBe(`accessKey: [secret:FARM_KEY] # was ${COMMENT_SENTINELS.trailing}`)
     expect(lineWith('# x-api-key:')?.text).toBe(`# x-api-key: ${COMMENT_SENTINELS.above}`)

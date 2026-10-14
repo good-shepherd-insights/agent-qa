@@ -143,12 +143,6 @@ export const CONFIG_REVISION_ABSENT = 'absent'
 
 // 2026-09-26, 429-04 D-24: the server-side Undo.
 
-// 2026-10-13 (441-49, D-29): read only by the page's reveal; 441-49-2 deletes it.
-export type ConfigRevealRequest = { path: z.infer<typeof ConfigPathSchema> }
-
-// 2026-10-13 (441-49, D-29): read only by the page's reveal; 441-49-2 deletes it.
-export type ConfigRevealResult = { value: string }
-
 export const ConfigUndoRequestSchema = z.object({
   token: z.string().min(1),
 }).strict()

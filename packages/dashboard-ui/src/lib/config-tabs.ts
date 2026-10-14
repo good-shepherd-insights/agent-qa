@@ -262,15 +262,6 @@ export const EXPLICIT_ACTION_KINDS = [
   'change-artifacts-dir',
 ] as const satisfies readonly ExplicitActionKind[]
 
-export type RevealState = 'masked' | 'loading' | 'revealed' | 'failed'
-// prettier-ignore
-export const REVEAL_STATES = [
-  'masked',
-  'loading',
-  'revealed',
-  'failed',
-] as const satisfies readonly RevealState[]
-
 export type LegacyConfigLink =
   | { kind: 'none' }
   | { kind: 'mapped'; tab: ConfigTab; section: ConfigSectionId }

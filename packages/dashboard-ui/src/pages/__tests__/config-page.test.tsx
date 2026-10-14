@@ -19,7 +19,6 @@ import {
   fetchConfigRevision,
   fetchLLMProviders,
   pollPluginAuthResult,
-  revealConfigValue,
   saveCredential,
   startPluginAuth,
   testLLMConnection,
@@ -82,7 +81,7 @@ import {
   SUITE_MATCH_REQUIRED_ERROR,
   TEST_MATCH_REQUIRED_ERROR,
   attributeValueLabel,
-  showValueName,
+  replaceValueName,
   undoLine,
 } from '@/lib/config-copy'
 import { CONFIG_DRAFTS_STORAGE_PREFIX, configFieldControlId, configFieldKeyOf } from '@/hooks/use-config-autosave'
@@ -207,7 +206,6 @@ vi.mock('@/lib/api', () => ({
   deleteAuthCredential: vi.fn(),
   connectLLM: vi.fn(),
   moveCredential: vi.fn(),
-  revealConfigValue: vi.fn().mockResolvedValue({ value: '.secrets.local' }),
 }))
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
@@ -1097,28 +1095,19 @@ describe('ConfigPage task tabs shell', () => {
     expect(API_EXPORTS).not.toContain('updateSettings')
   })
 
-  it('SECRETS-FILE-MASKED-WITH-EYE: the secrets file shows the server\'s masked text with a Show button, and never an editable input', async () => {
+  it('SECRETS-FILE-SHOWN-AS-SENT: the secrets file shows the server\'s text with no reveal control, and never an editable input', async () => {
     vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
-      config: { ...sampleConfig, workspace: { ...sampleConfig.workspace, secretsFile: '[masked]' } },
+      config: { ...sampleConfig, workspace: { ...sampleConfig.workspace, secretsFile: '[secret:SECRETS_PATH]' } },
     }) as never)
     await renderAt('/config/project?section=files')
 
     const secret = section('files')!.querySelector('[data-secret-field][data-field-path="workspace.secretsFile"]') as HTMLElement | null
     expect(secret).not.toBeNull()
-    expect(secret!.getAttribute('data-reveal-state')).toBe('masked')
-    expect(secret!.querySelector('code')?.textContent).toBe('[masked]')
+    expect(secret!.querySelector('code')?.textContent).toBe('[secret:SECRETS_PATH]')
     expect(secret!.querySelector('input')).toBeNull()
-    const show = Array.from(secret!.querySelectorAll('button')).find(
-      (button) => button.getAttribute('aria-label') === showValueName(FILES_FIELD_LABELS.secretsFile),
-    )
-    expect(show).toBeDefined()
-
-    await act(async () => {
-      show!.click()
-    })
-    await flushRender()
-    expect(revealConfigValue).toHaveBeenCalledWith(['workspace', 'secretsFile'])
-    expect(secret!.querySelector('code')?.textContent).toBe('.secrets.local')
+    expect(Array.from(secret!.querySelectorAll('button')).map((button) => button.getAttribute('aria-label'))).toEqual([
+      replaceValueName(FILES_FIELD_LABELS.secretsFile),
+    ])
     expect(applyConfigChanges).not.toHaveBeenCalled()
   })
 
@@ -1748,7 +1737,7 @@ describe('ConfigPage task tabs shell', () => {
     const rows = Array.from(scope.querySelectorAll('[data-pass-rate-attribute]')).map((row) => row.getAttribute('data-pass-rate-attribute'))
     expect(rows).toEqual(['git.branch', 'user.email'])
     expect(Array.from(scope.querySelectorAll('button')).some(
-      (button) => button.getAttribute('aria-label') === showValueName(attributeValueLabel('git.branch')),
+      (button) => button.getAttribute('aria-label') === replaceValueName(attributeValueLabel('git.branch')),
     )).toBe(true)
 
     const privacy = fieldControl<HTMLButtonElement>(PRIVACY_SEGMENTS)
@@ -2221,7 +2210,6 @@ describe('ConfigPage task tabs shell', () => {
     expect(row).not.toBeNull()
     const secret = row!.querySelector('[data-secret-field]')
     expect(secret?.getAttribute('data-field-path')).toBe('registry.providers.*.*')
-    expect(secret?.getAttribute('data-reveal-state')).toBe('masked')
     expect(row!.textContent).toContain('apiBase')
     expect(farms.querySelector('textarea')).toBeNull()
     expect(sectionButton('device-farms', 'Edit')).toBeNull()

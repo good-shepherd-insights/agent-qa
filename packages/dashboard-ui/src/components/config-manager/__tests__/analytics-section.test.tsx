@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AnalyticsSection } from '@/components/config-manager/analytics-section'
 import { ConfigAutosaveProvider, useConfigAutosave, type ConfigAutosave } from '@/hooks/use-config-autosave'
-import { applyConfigChanges, fetchConfig, fetchConfigRevision, revealConfigValue } from '@/lib/api'
+import { applyConfigChanges, fetchConfig, fetchConfigRevision } from '@/lib/api'
 import {
   ADD_ATTRIBUTE_LABEL,
   ATTRIBUTE_FIELD_LABELS,
@@ -25,7 +25,6 @@ import {
   attributeValueLabel,
   removeAttributeName,
   replaceValueName,
-  showValueName,
 } from '@/lib/config-copy'
 
 vi.mock('@/lib/api', async (importOriginal) => ({
@@ -34,7 +33,6 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchConfigRevision: vi.fn(),
   applyConfigChanges: vi.fn(),
   undoConfigAction: vi.fn(),
-  revealConfigValue: vi.fn(),
 }))
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -154,7 +152,6 @@ beforeEach(() => {
   vi.mocked(fetchConfig).mockResolvedValue(answer(twoAttributes) as never)
   vi.mocked(fetchConfigRevision).mockResolvedValue({ revision: 'rev-1' })
   vi.mocked(applyConfigChanges).mockResolvedValue({ revision: 'rev-2' } as never)
-  vi.mocked(revealConfigValue).mockResolvedValue({ value: 'main' } as never)
 })
 
 afterEach(async () => {
@@ -181,20 +178,13 @@ describe('AnalyticsSection (429-21 Task 2)', () => {
     expect(branchSecret?.getAttribute('data-field-path')).toBe('analytics.passRateScope.attributes.*')
     expect(teamSecret?.getAttribute('data-field-path')).toBe('analytics.passRateScope.attributes.*.regex')
     for (const secret of [branchSecret, teamSecret]) {
-      expect(secret?.getAttribute('data-reveal-state')).toBe('masked')
       expect(secret?.querySelector('code')?.textContent).toBe(MASK)
+      expect(secret?.querySelectorAll('button')).toHaveLength(1)
     }
     expect(team!.textContent).toContain(ATTRIBUTE_PATTERN_TAG)
     expect(branch!.textContent).not.toContain(ATTRIBUTE_PATTERN_TAG)
     expect(buttonIn(branch, replaceValueName(attributeValueLabel('git.branch')))).not.toBeNull()
     expect(container!.querySelectorAll('input[type="text"], input[type="password"], textarea')).toHaveLength(0)
-
-    await click(buttonIn(branch, showValueName(attributeValueLabel('git.branch'))))
-    expect(revealConfigValue).toHaveBeenLastCalledWith([...ATTRIBUTES, 'git.branch'])
-    expect(branch!.querySelector('[data-secret-field] code')?.textContent).toBe('main')
-
-    await click(buttonIn(team, showValueName(attributeValueLabel('team'))))
-    expect(revealConfigValue).toHaveBeenLastCalledWith([...ATTRIBUTES, 'team', 'regex'])
     expect(applyConfigChanges).not.toHaveBeenCalled()
   })
 

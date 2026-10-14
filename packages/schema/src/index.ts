@@ -62,8 +62,6 @@ export type {
   ConfigLeafPattern,
   ConfigNamedArray,
   ConfigPathSegment,
-  ConfigRevealRequest,
-  ConfigRevealResult,
   ConfigUndoRequest,
   ConfigUndoResult,
   // 2026-09-27, 429-44 WR-01

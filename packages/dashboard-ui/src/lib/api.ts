@@ -17,15 +17,11 @@ import type {
   RunsMarkPreviewResult,
   RunsMarksHistoryResult,
   ConfigChange,
-  ConfigPathSegment,
-  ConfigRevealRequest,
-  ConfigRevealResult,
   ConfigUndoRequest,
   ConfigUndoResult,
   ConfigWriteIssue,
   ConfigWriteRequest,
   ConfigWriteResult,
-  MaskingClass,
   LlmConnectRequest,
   LlmConnectResult,
   LlmCredentialMoveRequest,
@@ -1221,12 +1217,10 @@ export interface ConfigResponse {
   config: Record<string, unknown>
 }
 
-/** One line of the masked config file; `path` names the secret the line holds. */
+/** One line of the config file, as the declared mask shows it. */
 export interface ConfigFileLine {
   n: number
   text: string
-  class?: Exclude<MaskingClass, 'plain'>
-  path?: ConfigPathSegment[]
 }
 
 /** GET /api/config (429 D-22): the masked config, the file's revision and its lines. */
@@ -1283,12 +1277,6 @@ export async function applyConfigChanges(
 
 export async function fetchConfigRevision(): Promise<{ revision: string }> {
   return request('/api/config/revision')
-}
-
-/** One secret value in the config file, unmasked, for one explicit click (429 D-09). */
-export async function revealConfigValue(path: ConfigPathSegment[]): Promise<ConfigRevealResult> {
-  const body: ConfigRevealRequest = { path }
-  return postJson('/api/config/reveal', body)
 }
 
 export async function undoConfigAction(token: string): Promise<ConfigUndoResult> {

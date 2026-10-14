@@ -17,7 +17,6 @@ import {
   LEGACY_CONFIG_LINKS,
   LEGACY_CONFIG_PAIRS,
   MODEL_STATUSES,
-  REVEAL_STATES,
   SAVE_STATES,
   TEST_RESULTS,
   resolveLegacyConfigLink,
@@ -28,7 +27,6 @@ import {
   type FieldState,
   type LegacyConfigPair,
   type ModelStatus,
-  type RevealState,
   type SaveState,
   type TestResult,
 } from '../config-tabs'
@@ -169,12 +167,4 @@ test('C429-EXPLICIT-ACTION-KINDS-EXACT', () => {
   expectTypeOf<(typeof EXPLICIT_ACTION_KINDS)[number]>().toEqualTypeOf<Expected>()
   expectTypeOf<Exclude<ExplicitActionKind, (typeof EXPLICIT_ACTION_KINDS)[number]>>().toEqualTypeOf<never>()
   expectTypeOf<Exclude<(typeof EXPLICIT_ACTION_KINDS)[number], ExplicitActionKind>>().toEqualTypeOf<never>()
-})
-
-test('C429-REVEAL-STATES-EXACT', () => {
-  type Expected = 'masked' | 'loading' | 'revealed' | 'failed'
-  expectTypeOf<RevealState>().toEqualTypeOf<Expected>()
-  expectTypeOf<(typeof REVEAL_STATES)[number]>().toEqualTypeOf<Expected>()
-  expectTypeOf<Exclude<RevealState, (typeof REVEAL_STATES)[number]>>().toEqualTypeOf<never>()
-  expectTypeOf<Exclude<(typeof REVEAL_STATES)[number], RevealState>>().toEqualTypeOf<never>()
 })

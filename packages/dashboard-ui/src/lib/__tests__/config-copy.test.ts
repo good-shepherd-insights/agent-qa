@@ -53,8 +53,6 @@ function functionOutputs(): string[] {
     copy.connectedSavedText('gpt'),
     copy.applyActionName('knowledge folder'),
     copy.keepPathName('knowledge folder'),
-    copy.showValueName('Authorization'),
-    copy.hideValueName('Authorization'),
     copy.replaceValueName('Authorization'),
     copy.saveValueName('Authorization'),
     copy.keepValueName('Authorization'),

@@ -853,14 +853,6 @@ export const COPY_STATUS_WORDS = {
   failed: "Couldn't copy",
 } as const satisfies Record<'copied' | 'failed', string>
 
-export function showValueName(label: string): string {
-  return `Show ${label}`
-}
-
-export function hideValueName(label: string): string {
-  return `Hide ${label}`
-}
-
 export const REPLACE_VALUE_LABEL = 'Replace value'
 export const SAVE_VALUE_LABEL = 'Save value'
 export const KEEP_CURRENT_VALUE_LABEL = 'Keep current value'
@@ -888,11 +880,10 @@ export const DEVICE_FARM_FIELD_LABELS = {
   value: 'Value',
 } as const satisfies Record<string, string>
 
-/** A farm setting's accessible label, so each eye and Replace value names its own farm and key. */
+/** A farm setting's accessible label, so each Replace value names its own farm and key. */
 export function deviceFarmSettingLabel(farm: string, key: string): string {
   return `${farm} ${key}`
 }
-export const REVEAL_FAILED_TEXT = "Couldn't show this value. Try again."
 
 export const TOUR_LLM_SETUP_BODY =
   "A run needs a model. Add one: choose how you connect, and it's tested and saved as soon as it works."

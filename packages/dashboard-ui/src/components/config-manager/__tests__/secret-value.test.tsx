@@ -1,11 +1,10 @@
 // @vitest-environment jsdom
 
-// ONE SECRET VALUE (429-19 Task 1 · D-09, D-17 · UI-SPEC S8, E11).
+// ONE SECRET VALUE (429-19 Task 1 · D-17 · UI-SPEC S8, E11).
 //
-// A secret shows the server's mask, reveals one value per explicit click, re-masks as soon as
-// attention leaves, and is edited only by replacing it: the masked text is never an input value,
-// so a mask can never be written back. These cells mount the real autosave hook over a mocked
-// write route and a mocked reveal read.
+// A secret shows the server's text verbatim, already through the declared mask, offers no reveal
+// (441-49, D-29), and is edited only by replacing it: the shown text is never an input value, so a
+// mask can never be written back. These cells mount the real autosave hook over a mocked write route.
 
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -19,16 +18,8 @@ import {
   useConfigAutosaveContext,
   type ConfigAutosave,
 } from '@/hooks/use-config-autosave'
-import { applyConfigChanges, fetchConfig, fetchConfigRevision, revealConfigValue } from '@/lib/api'
-import {
-  REVEAL_FAILED_TEXT,
-  SETTLE_DELAY_MS,
-  hideValueName,
-  keepValueName,
-  replaceValueName,
-  saveValueName,
-  showValueName,
-} from '@/lib/config-copy'
+import { applyConfigChanges, fetchConfig, fetchConfigRevision } from '@/lib/api'
+import { SETTLE_DELAY_MS, keepValueName, replaceValueName, saveValueName } from '@/lib/config-copy'
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
@@ -36,14 +27,12 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchConfigRevision: vi.fn(),
   applyConfigChanges: vi.fn(),
   undoConfigAction: vi.fn(),
-  revealConfigValue: vi.fn(),
 }))
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const CONFIG_PATH = '/work/agent-qa.config.yaml'
 const MASK = '[masked]'
-const REVEALED = 'AKIA-revealed-7Q2'
 const TYPED = 'typed-new-secret-9X4'
 
 const accessKey = {
@@ -64,13 +53,12 @@ function answer(config: Record<string, unknown>) {
 }
 
 let hook: ConfigAutosave | undefined
-let showFields = true
 
 function Harness({ children }: { children: ReactNode }) {
   const autosave = useConfigAutosave()
   hook = autosave
   if (autosave.load.kind !== 'ready') return null
-  return <ConfigAutosaveProvider value={autosave}>{showFields ? children : null}</ConfigAutosaveProvider>
+  return <ConfigAutosaveProvider value={autosave}>{children}</ConfigAutosaveProvider>
 }
 
 function Secrets() {
@@ -80,9 +68,6 @@ function Secrets() {
     <div>
       <SecretValue field={accessKey} label="Access key" maskedText={maskedAt(accessKey.segments)} />
       <SecretValue field={region} label="Region" maskedText={maskedAt(region.segments)} />
-      <button type="button" data-outside>
-        Elsewhere
-      </button>
     </div>
   )
 }
@@ -96,7 +81,10 @@ async function flush() {
   })
 }
 
-async function render() {
+async function mount() {
+  container = document.createElement('div')
+  document.body.appendChild(container)
+  root = createRoot(container)
   await act(async () => {
     root!.render(
       <Harness>
@@ -105,13 +93,6 @@ async function render() {
     )
   })
   await flush()
-}
-
-async function mount() {
-  container = document.createElement('div')
-  document.body.appendChild(container)
-  root = createRoot(container)
-  await render()
 }
 
 async function unmount() {
@@ -133,10 +114,6 @@ function buttonNamed(name: string) {
   return buttons.find((button) => button.getAttribute('aria-label') === name) ?? null
 }
 
-function eyeOf(label: string) {
-  return buttonNamed(showValueName(label)) ?? buttonNamed(hideValueName(label))
-}
-
 async function click(element: HTMLElement | null) {
   expect(element).not.toBeNull()
   await act(async () => {
@@ -154,11 +131,6 @@ function setValue(input: HTMLInputElement, value: string) {
 
 function passwordIn(group: HTMLElement | undefined) {
   return (group?.querySelector('input[type="password"]') ?? null) as HTMLInputElement | null
-}
-
-async function reveal(label: string) {
-  vi.mocked(revealConfigValue).mockResolvedValueOnce({ value: REVEALED })
-  await click(eyeOf(label))
 }
 
 async function replaceAndType(label: string, value: string) {
@@ -197,7 +169,6 @@ function inputValues() {
 beforeEach(() => {
   vi.useFakeTimers()
   localStorage.clear()
-  showFields = true
   vi.mocked(fetchConfig).mockResolvedValue(answer(maskedConfig) as never)
   vi.mocked(fetchConfigRevision).mockResolvedValue({ revision: 'rev-1' })
   vi.mocked(applyConfigChanges).mockResolvedValue({ revision: 'rev-2' } as never)
@@ -211,135 +182,45 @@ afterEach(async () => {
   localStorage.clear()
 })
 
-describe('SecretValue (429-19 Task 1)', () => {
-  it('REVEAL-ON-CLICK-ONLY: mounting, focusing and hovering fetch nothing; one click fetches the one value by its segment path', async () => {
+describe('C441-CONFIG', () => {
+  it("the secret field shows the server's text and offers no reveal", async () => {
+    vi.mocked(fetchConfig).mockResolvedValue(answer({
+      registry: { providers: { browserstack: { accessKey: '[secret:BS_KEY]', region: 'eu-west' } } },
+    }) as never)
+    const network = vi.spyOn(globalThis, 'fetch')
     await mount()
-
-    const [first] = groups()
-    expect(first).toBeDefined()
-    expect(first!.getAttribute('data-field-path')).toBe(accessKey.pattern)
-    expect(first!.getAttribute('data-reveal-state')).toBe('masked')
-    expect(first!.querySelector('code')?.textContent).toBe(MASK)
-
-    const eye = eyeOf('Access key')
-    expect(eye).not.toBeNull()
-    expect(eye!.getAttribute('aria-label')).toBe(showValueName('Access key'))
-    expect(eye!.getAttribute('aria-pressed')).toBe('false')
-    await act(async () => {
-      eye!.focus()
-      first!.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
-      first!.dispatchEvent(new PointerEvent('pointerenter'))
-      eye!.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
-    })
-    await flush()
-    expect(revealConfigValue).not.toHaveBeenCalled()
-
-    await reveal('Access key')
-
-    expect(revealConfigValue).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(revealConfigValue).mock.calls[0]![0]).toEqual(accessKey.segments)
-    expect(first!.getAttribute('data-reveal-state')).toBe('revealed')
-    expect(first!.querySelector('code')?.textContent).toBe(REVEALED)
-    expect(first!.querySelector('code')?.className).toContain('wrap-anywhere')
-    const hide = eyeOf('Access key')!
-    expect(hide.getAttribute('aria-label')).toBe(hideValueName('Access key'))
-    expect(hide.getAttribute('aria-pressed')).toBe('true')
-
-    await click(hide)
-    expect(first!.getAttribute('data-reveal-state')).toBe('masked')
-    expect(first!.querySelector('code')?.textContent).toBe(MASK)
-    expect(revealConfigValue).toHaveBeenCalledTimes(1)
-  })
-
-  it('REVEAL-ONE-VALUE: revealing one value leaves its neighbour masked and unfetched', async () => {
-    await mount()
-
-    await reveal('Access key')
+    const reads = vi.mocked(fetchConfig).mock.calls.length
 
     const [first, second] = groups()
-    expect(first!.getAttribute('data-reveal-state')).toBe('revealed')
-    expect(second!.getAttribute('data-reveal-state')).toBe('masked')
-    expect(second!.querySelector('code')?.textContent).toBe(MASK)
-    expect(eyeOf('Region')!.getAttribute('aria-pressed')).toBe('false')
-    expect(revealConfigValue).toHaveBeenCalledTimes(1)
-    for (const call of vi.mocked(revealConfigValue).mock.calls) {
-      expect(call[0]).not.toEqual(region.segments)
+    expect(first!.getAttribute('data-field-path')).toBe(accessKey.pattern)
+    expect(first!.querySelector('code')?.textContent).toBe('[secret:BS_KEY]')
+    expect(first!.querySelector('code')?.className).toContain('wrap-anywhere')
+    expect(second!.querySelector('code')?.textContent).toBe('eu-west')
+    for (const group of [first!, second!]) {
+      expect(Array.from(group.querySelectorAll('button')).map((button) => button.textContent?.trim())).toEqual(['Replace value'])
+      expect(group.querySelector('[aria-pressed]')).toBeNull()
+      await act(async () => {
+        group.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+        group.querySelector('button')!.focus()
+      })
+      await flush()
     }
+    expect(network).not.toHaveBeenCalled()
+    expect(vi.mocked(fetchConfig).mock.calls.length).toBe(reads)
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+
+    await replaceAndType('Access key', TYPED)
+    await click(buttonNamed(saveValueName('Access key')))
+    expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
+      [[{ op: 'set', path: accessKey.segments, value: TYPED }]],
+    ])
+    expect(network).not.toHaveBeenCalled()
   })
+})
 
-  it('REMASK-ON-BLUR-TAB-HIDE: a revealed value re-masks when focus leaves its group, on unmount, on pagehide and on a hidden page', async () => {
-    await mount()
-    const outside = container!.querySelector('[data-outside]') as HTMLButtonElement
-
-    await reveal('Access key')
-    await act(async () => {
-      buttonNamed(replaceValueName('Access key'))!.focus()
-    })
-    await flush()
-    expect(groups()[0]!.getAttribute('data-reveal-state')).toBe('revealed')
-    await act(async () => {
-      outside.focus()
-    })
-    await flush()
-    expect(groups()[0]!.getAttribute('data-reveal-state')).toBe('masked')
-    expect(container!.textContent).not.toContain(REVEALED)
-
-    await reveal('Access key')
-    expect(container!.textContent).toContain(REVEALED)
-    showFields = false
-    await render()
-    showFields = true
-    await render()
-    expect(groups()[0]!.getAttribute('data-reveal-state')).toBe('masked')
-    expect(container!.textContent).not.toContain(REVEALED)
-
-    await reveal('Access key')
-    await act(async () => {
-      window.dispatchEvent(new Event('pagehide'))
-    })
-    await flush()
-    expect(groups()[0]!.getAttribute('data-reveal-state')).toBe('masked')
-    expect(container!.textContent).not.toContain(REVEALED)
-
-    await reveal('Access key')
-    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
-    await act(async () => {
-      document.dispatchEvent(new Event('visibilitychange'))
-    })
-    await flush()
-    visibility.mockRestore()
-    expect(groups()[0]!.getAttribute('data-reveal-state')).toBe('masked')
-    expect(container!.textContent).not.toContain(REVEALED)
-  })
-
-  it('REVEALED-NEVER-ELSEWHERE: a revealed value reaches no storage, URL, console or other element', async () => {
-    const logs = (['log', 'info', 'warn', 'error', 'debug'] as const).map((method) =>
-      vi.spyOn(console, method).mockImplementation(() => {}),
-    )
-    await mount()
-
-    await reveal('Access key')
-
-    expect(groups()[0]!.querySelector('code')?.textContent).toBe(REVEALED)
-    expect(storedText()).not.toContain(REVEALED)
-    expect(window.location.href).not.toContain(REVEALED)
-    for (const spy of logs) {
-      expect(JSON.stringify(spy.mock.calls)).not.toContain(REVEALED)
-    }
-    const holders = Array.from(document.body.querySelectorAll('*')).filter(
-      (element) => element.children.length === 0 && element.textContent?.includes(REVEALED),
-    )
-    expect(holders).toHaveLength(1)
-    expect(holders[0]!.tagName).toBe('CODE')
-    expect(inputValues()).not.toContain(REVEALED)
-    expect(hook!.valueOf({ segments: accessKey.segments, tab: 'targets' })).toBe(MASK)
-    expect(hook!.draftTabs.size).toBe(0)
-    expect(hook!.status.state).toBe('idle')
-  })
-
+describe('SecretValue (429-19 Task 1)', () => {
   it('REPLACE-VALUE-EMPTY-INPUT: Replace value shows an empty password input beside Save value and Keep current value, never the mask', async () => {
     await mount()
-    await reveal('Access key')
 
     const replace = buttonNamed(replaceValueName('Access key'))
     expect(replace?.textContent?.trim()).toBe('Replace value')
@@ -351,30 +232,13 @@ describe('SecretValue (429-19 Task 1)', () => {
     expect(input!.value).not.toBe(MASK)
     expect(input!.getAttribute('autocomplete')).toBe('off')
     expect(inputValues()).not.toContain(MASK)
-    expect(inputValues()).not.toContain(REVEALED)
-    expect(container!.textContent).not.toContain(REVEALED)
     expect(buttonNamed(saveValueName('Access key'))?.textContent?.trim()).toBe('Save value')
     expect(buttonNamed(keepValueName('Access key'))?.textContent?.trim()).toBe('Keep current value')
     expect(passwordIn(groups()[1])).toBeNull()
   })
 
-  it('REVEAL-LOADING: the eye shows a loader while its one value is fetched, and Save value shows Saving… in the status', async () => {
+  it('SAVE-VALUE-SAVING: Save value shows Saving… in the status until the write lands', async () => {
     await mount()
-    const pending = deferred<{ value: string }>()
-    vi.mocked(revealConfigValue).mockReturnValueOnce(pending.promise)
-
-    await click(eyeOf('Access key'))
-
-    expect(groups()[0]!.getAttribute('data-reveal-state')).toBe('loading')
-    expect(eyeOf('Access key')!.querySelector('svg')?.getAttribute('class')).toContain('lucide-loader-circle')
-    expect(groups()[0]!.querySelector('code')?.textContent).toBe(MASK)
-
-    await act(async () => {
-      pending.resolve({ value: REVEALED })
-    })
-    await flush()
-    expect(groups()[0]!.getAttribute('data-reveal-state')).toBe('revealed')
-    expect(eyeOf('Access key')!.querySelector('svg')?.getAttribute('class')).toContain('lucide-eye-off')
 
     const write = deferred<{ revision: string }>()
     vi.mocked(applyConfigChanges).mockReturnValueOnce(write.promise as never)
@@ -387,23 +251,6 @@ describe('SecretValue (429-19 Task 1)', () => {
     })
     await flush()
     expect(hook!.status.state).toBe('saved')
-  })
-
-  it('REVEAL-FAILED-STAYS-MASKED: a refused reveal says so and keeps the mask', async () => {
-    await mount()
-    vi.mocked(revealConfigValue).mockRejectedValueOnce(new Error('reveal_not_found'))
-
-    await click(eyeOf('Access key'))
-
-    const [first] = groups()
-    expect(first!.getAttribute('data-reveal-state')).toBe('failed')
-    expect(first!.querySelector('code')?.textContent).toBe(MASK)
-    expect(eyeOf('Access key')!.getAttribute('aria-pressed')).toBe('false')
-    expect(container!.textContent).toContain(REVEAL_FAILED_TEXT)
-
-    await reveal('Access key')
-    expect(first!.getAttribute('data-reveal-state')).toBe('revealed')
-    expect(container!.textContent).not.toContain(REVEAL_FAILED_TEXT)
   })
 
   it('SAVE-VALUE-EXPLICIT: typing writes nothing; Save value writes one set at the path and the page shows the mask again', async () => {

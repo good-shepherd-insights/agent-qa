@@ -37,7 +37,7 @@ import {
   TARGET_URL_REQUIRED_ERROR,
   deleteActionName,
   deviceMatchSettingLabel,
-  showValueName,
+  replaceValueName,
   undoLine,
 } from '@/lib/config-copy'
 
@@ -47,7 +47,6 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchConfigRevision: vi.fn(),
   applyConfigChanges: vi.fn(),
   undoConfigAction: vi.fn(),
-  revealConfigValue: vi.fn(),
 }))
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -335,10 +334,10 @@ describe('TargetsSection and DevicesSection (429-22 Task 1)', () => {
     const row = deviceRow('iosLocal')!
     const secret = row.querySelector('[data-secret-field]') as HTMLElement | null
     expect(secret?.getAttribute('data-field-path')).toBe('registry.devices.*.match.*')
-    expect(secret?.getAttribute('data-reveal-state')).toBe('masked')
     expect(secret?.querySelector('code')?.textContent).toBe(MASK)
+    expect(secret?.querySelectorAll('button')).toHaveLength(1)
     expect(row.querySelector('dt')?.textContent).toBe('udid')
-    expect(buttonIn(row, showValueName(deviceMatchSettingLabel('iosLocal', 'udid')))).not.toBeNull()
+    expect(buttonIn(row, replaceValueName(deviceMatchSettingLabel('iosLocal', 'udid')))).not.toBeNull()
     expect(row.querySelector('input[type="password"], textarea, pre')).toBeNull()
 
     await click(buttonIn(row, ADD_SETTING_LABEL))

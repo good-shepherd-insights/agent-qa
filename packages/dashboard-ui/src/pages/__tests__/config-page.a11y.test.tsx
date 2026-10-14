@@ -146,7 +146,6 @@ vi.mock('@/lib/api', () => ({
   pollPluginAuthResult: vi.fn().mockResolvedValue({ status: 'pending' }),
   exchangePluginAuthCode: vi.fn(),
   deleteAuthCredential: vi.fn(),
-  revealConfigValue: vi.fn().mockResolvedValue({ value: '.env.secrets.local' }),
 }))
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
