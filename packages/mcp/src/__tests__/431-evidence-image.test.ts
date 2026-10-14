@@ -20,7 +20,6 @@ import { createMcpHandler } from '@modelcontextprotocol/server'
 import type { CallToolResult } from '@modelcontextprotocol/server'
 import {
   createFunctionRegistry,
-  createMaskingContext,
   invokeFunction,
   type CreateFunctionRegistryOptions,
   type FunctionDeps,
@@ -307,6 +306,12 @@ describe('IMAGE-RANGE-REFUSAL', () => {
   })
 })
 
+// 2026-10-14 (441-14, D-12): mcp depends on no package that exports `SecretRedactor`, so this
+// stand-in makes its raw, exact replacement of one declared value.
+function standInMask(name: string, value: string): (text: string) => string {
+  return (text) => text.split(value).join(`[secret:${name}]`)
+}
+
 describe('IMAGE-MASK-WITHHOLD (T-431-10)', () => {
   it('(a) a masking refusal withholds the image and every byte', async () => {
     // The PNG is 70 bytes, so a masker that hides the spelling `70` cannot mask `byteLength` in
@@ -320,19 +325,16 @@ describe('IMAGE-MASK-WITHHOLD (T-431-10)', () => {
   })
 
   it('(b) masking that altered the encoded bytes withholds the image and the altered result', async () => {
-    const context = createMaskingContext()
     const planted = PNG_BASE64.slice(20, 36)
-    context.register(planted)
-    try {
-      const result = await fetchArtifact(await connect(registryOver(blobsOf({ [RUN]: [PNG] })), (text) => context.mask(text)), PNG)
+    const result = await fetchArtifact(
+      await connect(registryOver(blobsOf({ [RUN]: [PNG] })), standInMask('IMAGE_441', planted)),
+      PNG,
+    )
 
-      expect(result.isError).toBe(true)
-      expect(texts(result).join('\n')).toMatch(/^artifact-image-withheld: /)
-      expectNoBytes(result, PNG)
-      expect(JSON.stringify(result)).not.toContain(planted)
-    } finally {
-      context.dispose()
-    }
+    expect(result.isError).toBe(true)
+    expect(texts(result).join('\n')).toMatch(/^artifact-image-withheld: /)
+    expectNoBytes(result, PNG)
+    expect(JSON.stringify(result)).not.toContain(planted)
   })
 
   for (const [label, bytes] of [
@@ -364,9 +366,7 @@ const ALPHA = `r_${ALPHA_SECRET}`
 const BETA = `r_${BETA_SECRET}`
 
 function maskerFor(secret: string): { readonly mask: (text: string) => string; readonly dispose: () => void } {
-  const context = createMaskingContext()
-  context.register(secret)
-  return { mask: (text) => context.mask(text), dispose: () => context.dispose() }
+  return { mask: standInMask('RUN_441', secret), dispose: () => undefined }
 }
 
 describe('EVIDENCE-ISOLATION (EDGE-18)', () => {

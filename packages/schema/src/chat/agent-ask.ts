@@ -40,9 +40,9 @@ export const ClauseReceiptSchema = z.object({
  *
  * THE PAYLOAD IS MASKED, AND THAT IS A CONTRACT RATHER THAN AN OBSERVATION (D-04/D-05, and the
  * 2026-08-20 D-10 adjudication's binding corollary). It carries the value the function layer
- * returned, placeholder-masked, and every path this contract travels — the prompt, the cache, the
- * session event log, any `agent.ask` client — keeps it that way. `unmaskForHumanOutput` runs at ONE
- * seam and it is each surface's own emit. An unmasked value here would put op-result credentials
+ * returned, masked, and every path this contract travels — the prompt, the cache, the session event
+ * log, any `agent.ask` client — keeps it that way. Each surface prints what the declared mask
+ * produced, and nothing restores a value. An unmasked value here would put op-result credentials
  * into a persisted trail, minting a new instance of a cleartext-at-rest class that has already been
  * named.
  */

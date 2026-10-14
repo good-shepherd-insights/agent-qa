@@ -456,7 +456,7 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
     }
     // 2026-10-14 (441-06, D-07): printed text crosses the declared mask and nothing restores it.
     expect(source).toContain('declaredSecrets.mask')
-    for (const restore of ['unmaskForHumanOutput', 'createMaskingContext']) {
+    for (const restore of ['unmask', 'createMaskingContext']) {
       expect({ restore, present: source.includes(restore) }).toEqual({ restore, present: false })
     }
   })
@@ -524,20 +524,17 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
         .toEqual({ file, renders: true })
     }
 
-    // COMMENTS STRIPPED, on `parity.test.ts`'s precedent and for its reason: the module's header
-    // NAMES `unmaskForHumanOutput` in order to say where the boundary lives instead, and a sweep
-    // over raw source would read that explanation as the violation. Measured: it did, first run.
-    // The claim is about the module's BODY, so the body is what is searched.
+    // COMMENTS STRIPPED, on `parity.test.ts`'s precedent: the module's header says in prose where
+    // the boundary lives, and the claim is about the module's BODY, so the body is what is searched.
     const shared = readFileSync(join(commands, 'result-render.ts'), 'utf8')
       .replaceAll(/\/\*[\s\S]*?\*\//gu, '')
       .replaceAll(/^\s*\/\/.*$/gmu, '')
-    // THE BOUNDARY IS NOT HERE (criterion 3). Unmasking belongs at each surface's own emit, and a
-    // shared render that unmasked for itself would hand its caller a cleartext string with no
-    // masker in sight. Asserted as SOURCE because the module is pure — no test input can
-    // distinguish "did not unmask" from "had nothing to unmask".
+    // THE BOUNDARY IS NOT HERE (criterion 3). Masking belongs at each surface's own emit, and
+    // nothing restores a value anywhere. Asserted as SOURCE because the module is pure — no test
+    // input can distinguish "did not unmask" from "had nothing to unmask".
     expect(shared).not.toContain('unmask')
-    // Nor does it print. The surfaces own their streams; a render with a print site inside would be
-    // a disclosure boundary with none of `unmaskForHumanOutput`'s cover.
+    // Nor does it print. The surfaces own their streams; a render with a print site inside would
+    // print outside the surface's declared mask.
     expect(shared).not.toContain('console.')
     expect(shared).not.toContain('process.stdout')
     // The non-vacuity guard on all of the above: the module renders the WHOLE payload rather than

@@ -13,26 +13,21 @@
 // the composition edge every host shares (see agent-local's build-ordinals module) rather than
 // through a package this surface may not name.
 //
-// The masking helpers here are the agent barrel's re-exports, so the IMPORT ROUTE is
-// firewall-correct for all three verbs and needs no direct dependency on the safety package.
-// What they do today is nothing: each verb builds a fresh masking context and registers
-// nothing in it, and unmasking an empty context is the identity function.
+// 2026-10-14 (441-14, D-07): every verb prints through the declared mask its invocation reads from
+// `workspace.secretsFile`, and nothing restores a value.
 // Gate output additionally crosses the committed-text safety check before either
 // renderer runs. Producer masks and receipt digests are preserved, never regenerated.
 
 import { dirname, resolve } from 'node:path'
 
-import {
-  createMaskingContext,
-  invokeFunction,
-  unmaskForHumanOutput,
-} from '@vostride/agent-qa-agent'
+import { invokeFunction } from '@vostride/agent-qa-agent'
 import { resolveBuildTag } from '@vostride/agent-qa-agent-local'
 import {
   guardInspectRecordView,
   guardRecordChange,
   InspectFilterSchema,
   KnowledgeGatesListResultSchema,
+  maskPayloadStrings,
 } from '@vostride/agent-qa-schema'
 import type {
   BriefWhyResult,
@@ -43,12 +38,18 @@ import type {
   KnowledgeRecordShowResult,
   KnowledgeRecordsDiffOutput,
   KnowledgeRecordsInspectOutput,
+  MaskFn,
   RecordChange,
 } from '@vostride/agent-qa-schema'
 import { Command, InvalidArgumentError } from 'commander'
 import pc from 'picocolors'
 import { z } from 'zod'
 
+import {
+  createDeclaredSecretMask,
+  DeclaredSecretsUnavailableError,
+  type DeclaredSecretMask,
+} from '../composition/declared-secrets.js'
 import {
   CLI_FUNCTION_CALLER,
   composeCliLocalAgent,
@@ -144,6 +145,16 @@ function functionLayerInput(command: Command): { agentQaRoot: string; configPath
   return { agentQaRoot: resolve(dirname(configPath), '.agent-qa'), configPath }
 }
 
+/** The composition input with the invocation's declared mask, refusing at start (E3) without one. */
+function declaredReadInput(
+  command: Command,
+): { agentQaRoot: string; configPath: string; declaredSecrets: DeclaredSecretMask } {
+  const composition = functionLayerInput(command)
+  const declaredSecrets = createDeclaredSecretMask(composition.configPath)
+  declaredSecrets.redactor()
+  return { ...composition, declaredSecrets }
+}
+
 function validationMessage(issues: readonly { path: PropertyKey[]; message: string }[]): string {
   return issues
     .map((issue) => {
@@ -210,17 +221,14 @@ function resolvedDiffOrdinal(
   return ordinal
 }
 
-function emitJson(value: unknown): void {
-  console.log(JSON.stringify(value, null, 2))
+// 2026-10-14 (441-14, D-07): everything this file prints is masked and never restored; JSON is
+// masked leaf by leaf before it is serialized.
+function emitJson(mask: MaskFn, value: unknown): void {
+  console.log(JSON.stringify(maskPayloadStrings(value, mask), null, 2))
 }
 
-function emitHuman(maskedText: string): void {
-  const maskingContext = createMaskingContext()
-  try {
-    console.log(unmaskForHumanOutput(maskingContext, maskedText))
-  } finally {
-    maskingContext.dispose()
-  }
+function emitHuman(mask: MaskFn, text: string): void {
+  console.log(mask(text))
 }
 
 function formatInspectRecord(record: InspectRecordView): string {
@@ -412,22 +420,48 @@ function parseStepIndex(value: string): number {
 
 type KnowledgeReadAction = 'inspect' | 'diff' | 'bundles' | 'gates' | 'show' | 'brief-why'
 
-function reportError(action: KnowledgeReadAction, error: unknown): void {
-  if (error instanceof KnowledgeReadCommandError) {
-    console.error(pc.red(`Knowledge ${action} error [${error.code}]: ${error.message}`))
-  } else {
-    const hint = error instanceof Error && error.name === 'AmbiguousStepAddressError'
-      ? ' Pass --test <testId> to choose one.'
-      : ''
-    console.error(pc.red(
-      `Knowledge ${action} error: ${error instanceof Error ? error.message : String(error)}${hint}`,
-    ))
-  }
-  process.exitCode = 1
+function printUnavailable(error: DeclaredSecretsUnavailableError): void {
+  const [first, ...rest] = error.lines
+  if (first !== undefined) console.error(pc.red(first))
+  for (const line of rest) console.error(pc.dim(line))
 }
 
-function reportMissing(action: KnowledgeReadAction, message: string): void {
-  console.error(pc.red(`Knowledge ${action} error [not-found]: ${message}`))
+// A refusal raised before the loader exists has nothing to mask with.
+function printErrorLine(line: string, mask: MaskFn | undefined): void {
+  let shown = line
+  if (mask !== undefined) {
+    try {
+      shown = mask(line)
+    } catch (maskError) {
+      if (!(maskError instanceof DeclaredSecretsUnavailableError)) throw maskError
+      printUnavailable(maskError)
+      return
+    }
+  }
+  console.error(pc.red(shown))
+}
+
+function reportError(action: KnowledgeReadAction, error: unknown, mask: MaskFn | undefined): void {
+  process.exitCode = 1
+  if (error instanceof DeclaredSecretsUnavailableError) {
+    printUnavailable(error)
+    return
+  }
+  if (error instanceof KnowledgeReadCommandError) {
+    printErrorLine(`Knowledge ${action} error [${error.code}]: ${error.message}`, mask)
+    return
+  }
+  const hint = error instanceof Error && error.name === 'AmbiguousStepAddressError'
+    ? ' Pass --test <testId> to choose one.'
+    : ''
+  printErrorLine(
+    `Knowledge ${action} error: ${error instanceof Error ? error.message : String(error)}${hint}`,
+    mask,
+  )
+}
+
+function reportMissing(action: KnowledgeReadAction, message: string, mask: MaskFn): void {
+  printErrorLine(`Knowledge ${action} error [not-found]: ${message}`, mask)
   process.exitCode = 1
 }
 
@@ -448,7 +482,10 @@ export function registerKnowledgeReadCommands(command: Command): void {
     .option('--unresolved', 'show only unresolved unknown records')
     .option('--json', 'output schema-validated masked JSON')
     .action(async (options: InspectOptions, inspectCommand: Command) => {
+      let mask: MaskFn | undefined
       try {
+        const input = declaredReadInput(inspectCommand)
+        mask = input.declaredSecrets.mask
         // The filter is parsed here because the operator BOUNDARY is this file's job: a bad
         // `--status` is a mistake about a flag, and reporting it as a contract violation from
         // inside the layer would name a field the operator never typed. Everything past the
@@ -456,7 +493,7 @@ export function registerKnowledgeReadCommands(command: Command): void {
         // belongs to the capability.
         const filter = inspectFilter(options)
         const result = await invokeFunction(
-          composeCliLocalAgent(functionLayerInput(inspectCommand)).registry,
+          composeCliLocalAgent(input).registry,
           KNOWLEDGE_RECORDS_INSPECT_ID,
           { filter },
           CLI_FUNCTION_CALLER,
@@ -464,12 +501,12 @@ export function registerKnowledgeReadCommands(command: Command): void {
         const records = result.records.map(guardInspectRecordView)
 
         if (options.json === true) {
-          emitJson(records)
+          emitJson(mask, records)
           return
         }
-        emitHuman(renderInspect(records))
+        emitHuman(mask, renderInspect(records))
       } catch (error) {
-        reportError('inspect', error)
+        reportError('inspect', error, mask)
       }
     })
 
@@ -480,8 +517,10 @@ export function registerKnowledgeReadCommands(command: Command): void {
     .option('--product <p>', 'product used to resolve a build tag')
     .option('--json', 'output schema-validated masked JSON')
     .action(async (ref: string, options: DiffOptions, diffCommand: Command) => {
+      let mask: MaskFn | undefined
       try {
-        const composition = functionLayerInput(diffCommand)
+        const composition = declaredReadInput(diffCommand)
+        mask = composition.declaredSecrets.mask
         const ordinal = resolvedDiffOrdinal(ref, options.product, composition.agentQaRoot)
         const result = await invokeFunction(
           composeCliLocalAgent(composition).registry,
@@ -492,12 +531,12 @@ export function registerKnowledgeReadCommands(command: Command): void {
         const changes = result.changes.map(guardRecordChange)
 
         if (options.json === true) {
-          emitJson(changes)
+          emitJson(mask, changes)
           return
         }
-        emitHuman(renderDiff(changes, ordinal))
+        emitHuman(mask, renderDiff(changes, ordinal))
       } catch (error) {
-        reportError('diff', error)
+        reportError('diff', error, mask)
       }
     })
 
@@ -506,20 +545,23 @@ export function registerKnowledgeReadCommands(command: Command): void {
     .description('Print a record\'s gate-and-promotion history through the agent function layer')
     .option('--json', 'output schema-validated masked JSON')
     .action(async (id: string, options: BundlesOptions, cmd: Command) => {
+      let mask: MaskFn | undefined
       try {
+        const input = declaredReadInput(cmd)
+        mask = input.declaredSecrets.mask
         const dto = KnowledgeGatesListResultSchema.parse(await invokeFunction(
-          composeCliLocalAgent(functionLayerInput(cmd)).registry,
+          composeCliLocalAgent(input).registry,
           KNOWLEDGE_GATES_LIST_ID,
           { recordId: id },
           CLI_FUNCTION_CALLER,
         ))
         if (options.json === true) {
-          emitJson(dto)
+          emitJson(mask, dto)
           return
         }
-        emitHuman(renderGates(dto))
+        emitHuman(mask, renderGates(dto))
       } catch (error) {
-        reportError('gates', error)
+        reportError('gates', error, mask)
       }
     })
 
@@ -528,20 +570,27 @@ export function registerKnowledgeReadCommands(command: Command): void {
     .description('Show one knowledge record with the provenance that justifies it')
     .option('--json', 'print the knowledge.record.show result unchanged')
     .action(async (recordId: string, options: BundlesOptions, cmd: Command) => {
+      let mask: MaskFn | undefined
       try {
+        const input = declaredReadInput(cmd)
+        mask = input.declaredSecrets.mask
         const dto = await invokeFunction(
-          composeCliLocalAgent(functionLayerInput(cmd)).registry,
+          composeCliLocalAgent(input).registry,
           KNOWLEDGE_RECORD_SHOW_ID,
           { recordId },
           CLI_FUNCTION_CALLER,
         ) as KnowledgeRecordShowResult
-        if (options.json === true) emitJson(dto)
-        else emitHuman(renderRecordShow(dto))
+        if (options.json === true) emitJson(mask, dto)
+        else emitHuman(mask, renderRecordShow(dto))
         if (dto.kind === 'not-found') {
-          reportMissing('show', `no committed record ${recordId}; list record ids with agent-qa knowledge inspect`)
+          reportMissing(
+            'show',
+            `no committed record ${recordId}; list record ids with agent-qa knowledge inspect`,
+            mask,
+          )
         }
       } catch (error) {
-        reportError('show', error)
+        reportError('show', error, mask)
       }
     })
 
@@ -553,9 +602,12 @@ export function registerKnowledgeReadCommands(command: Command): void {
     .option('--record <recordId>', 'narrow the trace to one record')
     .option('--json', 'print the knowledge.brief.why result unchanged')
     .action(async (runId: string, options: BriefWhyOptions, cmd: Command) => {
+      let mask: MaskFn | undefined
       try {
+        const input = declaredReadInput(cmd)
+        mask = input.declaredSecrets.mask
         const dto = await invokeFunction(
-          composeCliLocalAgent(functionLayerInput(cmd)).registry,
+          composeCliLocalAgent(input).registry,
           KNOWLEDGE_BRIEF_WHY_ID,
           {
             runId,
@@ -565,17 +617,21 @@ export function registerKnowledgeReadCommands(command: Command): void {
           },
           CLI_FUNCTION_CALLER,
         ) as BriefWhyResult
-        if (options.json === true) emitJson(dto)
-        else emitHuman(renderBriefWhy(dto, runId, options))
+        if (options.json === true) emitJson(mask, dto)
+        else emitHuman(mask, renderBriefWhy(dto, runId, options))
         if (dto.kind === 'no-trace' && dto.reason === 'artifact-missing') {
-          reportMissing('brief-why', `no completed run ${runId} is recorded; run agent-qa runs list to see run ids`)
+          reportMissing(
+            'brief-why',
+            `no completed run ${runId} is recorded; run agent-qa runs list to see run ids`,
+            mask,
+          )
         } else if (dto.kind === 'no-trace' && dto.reason === 'step-not-found') {
           reportMissing('brief-why', `run ${runId} has no step ${String(options.step)}`
             + `${options.test === undefined ? '' : ` in test ${options.test}`}; run agent-qa runs overview ${runId}`
-            + ' to see its test ids and steps')
+            + ' to see its test ids and steps', mask)
         }
       } catch (error) {
-        reportError('brief-why', error)
+        reportError('brief-why', error, mask)
       }
     })
 
@@ -588,24 +644,27 @@ export function registerKnowledgeReadCommands(command: Command): void {
     .description('List committed knowledge bundles through the agent function layer')
     .option('--json', 'output schema-validated masked JSON')
     .action(async (options: BundlesOptions, bundlesCommand: Command) => {
+      let mask: MaskFn | undefined
       try {
+        const input = declaredReadInput(bundlesCommand)
+        mask = input.declaredSecrets.mask
         // Everything behind this call — enumerating the store, folding trust, ordering the
         // rows, crossing the policy gate, writing the audit row — belongs to the capability.
         // This verb supplies a caller record and a project root, and renders the result.
         const rows = await invokeFunction(
-          composeCliLocalAgent(functionLayerInput(bundlesCommand)).registry,
+          composeCliLocalAgent(input).registry,
           KNOWLEDGE_BUNDLES_LIST_ID,
           {},
           CLI_FUNCTION_CALLER,
         ) as readonly KnowledgeBundleSummary[]
 
         if (options.json === true) {
-          emitJson(rows)
+          emitJson(mask, rows)
           return
         }
-        emitHuman(renderBundles(rows))
+        emitHuman(mask, renderBundles(rows))
       } catch (error) {
-        reportError('bundles', error)
+        reportError('bundles', error, mask)
       }
     })
 }

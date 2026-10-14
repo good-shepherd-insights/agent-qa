@@ -45,7 +45,6 @@ import {
   RUNS_MARK_PREVIEW_FUNCTION_ID,
   RUNS_MARKS_HISTORY_FUNCTION_ID,
   createFunctionRegistry,
-  createMaskingContext,
   invokeFunction,
   type CreateFunctionRegistryOptions,
   type FunctionDeps,
@@ -56,7 +55,11 @@ import {
 // `validate:arch` walks `src` with `__tests__` excluded and reconciles only runtime
 // `dependencies`, so the production edges these packages forbid stay forbidden. The point of
 // driving them is that a reader written in this file would be a second containment rule.
-import { createEvidenceBlobReader, runSafetyScope } from '@vostride/agent-qa-agent-local'
+import {
+  buildRunMaskingContext,
+  createEvidenceBlobReader,
+  runSafetyScope,
+} from '@vostride/agent-qa-agent-local'
 import { FsEvidenceArtifactStore, slugBranch } from '@vostride/agent-qa-runner-local'
 import {
   RunsMarkPreviewResultSchema,
@@ -425,7 +428,7 @@ const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x4
 // answers masking-unavailable, so the doors would never reach the recorded evidence.
 const coldEvidenceReadScope: NonNullable<CreateFunctionRegistryOptions['withReadScope']> = (functionId, invoke) =>
   functionId === RUNS_EVIDENCE_FUNCTION_ID
-    ? runSafetyScope({ maskingContext: createMaskingContext() }, invoke)
+    ? runSafetyScope({ maskingContext: buildRunMaskingContext({ env: {} }) }, invoke)
     : invoke()
 
 async function serveEvidence() {

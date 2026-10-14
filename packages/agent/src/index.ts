@@ -555,31 +555,6 @@ export type {
 export { clusterVerdicts } from './analysis/cluster.js'
 export type { AnalysisCluster, AnalysisClusterMember } from './analysis/cluster.js'
 
-// The human display boundary (v48 masking discipline): surfaces render function-layer
-// results as prose, and prose is the sole unmasking surface.
-//
-// What that boundary does TODAY, stated before the reason it is published. It is a no-op.
-// The two CLI surfaces this phase built — `renderStream` and `emitHuman`, in
-// packages/cli/src/commands/fn.ts:107-146 — each construct a FRESH masking context and
-// register nothing in it, and the only `.register(` call in non-test CLI source is in
-// commands/run.ts:949, on an unrelated path. An empty context has nothing to substitute
-// back, so unmasking is currently the identity function on every surface built here and
-// disposing it clears nothing. Wiring a run-scoped context into human rendering is Phase
-// 386's, with its daemon and live surfaces.
-//
-// The helpers are published now because 386's wiring must not have to widen the firewall to
-// happen. The FUNC-02 surface allow-list is exactly {agent, schema} and D-01 forbids new
-// code from ever joining the legacy ledger, so a surface reaching the safety package
-// directly would be a firewall violation with no legal repair; re-exporting the two helpers
-// here is what keeps that later wiring an ordinary, non-breaking change. This is research
-// Open Question 1, resolved as Pitfall 4 option (a) — STAGED, not currently load-bearing.
-//
-// They are safe to publish on this barrel precisely because they are NOT dispatch: neither
-// one can resolve, gate, or run a capability, so re-exporting them opens no path around
-// `invokeFunction` (T-384-01). Both belong to the pinned export set the plan-07 barrel
-// assertion freezes.
-export { createMaskingContext, unmaskForHumanOutput } from '@vostride/agent-qa-safety'
-
 // 385 JOBQ-01/JOBQ-02 — the agent job queue: its store port, its per-kind registry, and the
 // pumpable engine over both.
 //

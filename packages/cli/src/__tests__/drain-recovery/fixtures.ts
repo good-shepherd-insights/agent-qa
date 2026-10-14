@@ -38,6 +38,7 @@ export function writeWorkspaceConfig(root: string, knowledgeDir = 'agent-qa-know
     }, null, 2)}\n`,
     'utf8',
   )
+  writeFileSync(join(root, '.env.secrets.local'), '', 'utf8')
   return configPath
 }
 

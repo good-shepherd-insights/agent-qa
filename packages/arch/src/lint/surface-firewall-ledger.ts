@@ -381,12 +381,6 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     reason: 'provider plugin loading over resolved config; joins the config action class',
   },
   {
-    file: 'packages/cli/src/reporters/console-reporter.ts',
-    specifier: '@vostride/agent-qa-safety',
-    clearedBy: '386',
-    reason: 'the run reporter crosses the display boundary directly; relocates with the run-session composition root',
-  },
-  {
     file: 'packages/cli/src/run-session-composition.ts',
     specifier: '@vostride/agent-qa-safety',
     clearedBy: '386',

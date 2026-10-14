@@ -19,9 +19,9 @@
 // a failure the function layer's refusal NAME, for a fan-out the report's own sentence — so what
 // this adds to the line is the same class of fact the line already carried, not a result body.
 //
-// NO PRINT SITE LIVES HERE. This returns a string; each surface emits it through the masker it
-// already owns (`ask`'s `emitHuman`, chat's own masked write). A render that printed for itself
-// would be a disclosure boundary with none of `unmaskForHumanOutput`'s cover.
+// NO PRINT SITE LIVES HERE. This returns a string; each surface's emit masks it with the declared
+// secrets (`ask`'s `emitHuman`, chat's own masked write). A render that printed for itself would
+// print outside that mask.
 
 import type { ClauseReceipt, ClauseReceiptStatus } from '@vostride/agent-qa-schema'
 import pc from 'picocolors'

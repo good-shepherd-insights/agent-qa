@@ -106,6 +106,7 @@ function fixtureWorkspace(roots: string[]): FixtureWorkspace {
     }, null, 2)}\n`,
     'utf8',
   )
+  writeFileSync(join(root, '.env.secrets.local'), '', 'utf8')
   return {
     root,
     configPath,
@@ -398,15 +399,11 @@ describe('knowledge-read.ts source shape (what plan 06 will enforce)', () => {
     // The extractor is live against THIS file, not just the synthetic control.
     expect(specifiers.length).toBeGreaterThan(4)
     expect(specifiers).toContain('@vostride/agent-qa-agent')
-    // The whole claim: the display-boundary helpers now arrive through the agent barrel,
-    // so the exemplar file crosses the display boundary without a direct safety dependency.
+    // The whole claim: the exemplar file has no direct safety dependency. 2026-10-14 (441-14,
+    // D-12): its only agent-barrel binding is `invokeFunction`; the declared mask is the CLI's own.
     expect(specifiers.filter((specifier) => specifier.includes('agent-qa-safety'))).toEqual([])
     expect(importedBindings(source, (s) => s === '@vostride/agent-qa-agent'))
-      .toEqual(expect.arrayContaining([
-        'createMaskingContext',
-        'invokeFunction',
-        'unmaskForHumanOutput',
-      ]))
+      .toEqual(['invokeFunction'])
   })
 
   it('takes every verb in the file from invokeFunction and from no data package', () => {

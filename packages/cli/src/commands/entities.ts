@@ -13,20 +13,23 @@
 
 import { dirname, resolve } from 'node:path'
 
-import {
-  createMaskingContext,
-  invokeFunction,
-  unmaskForHumanOutput,
-} from '@vostride/agent-qa-agent'
+import { invokeFunction } from '@vostride/agent-qa-agent'
+import { maskPayloadStrings } from '@vostride/agent-qa-schema'
 import type {
   ActionRef,
   EntityCard,
   EntityCardResolution,
   KeyFact,
+  MaskFn,
 } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import pc from 'picocolors'
 
+import {
+  createDeclaredSecretMask,
+  DeclaredSecretsUnavailableError,
+  type DeclaredSecretMask,
+} from '../composition/declared-secrets.js'
 import {
   CLI_FUNCTION_CALLER,
   composeCliLocalAgent,
@@ -74,17 +77,21 @@ function compositionInput(command: Command): { agentQaRoot: string; configPath: 
   return { agentQaRoot: resolve(dirname(configPath), '.agent-qa'), configPath }
 }
 
-function emitJson(value: unknown): void {
-  console.log(JSON.stringify(value, null, 2))
+/** The invocation's declared mask, refusing at start (E3) when the secrets file cannot be read. */
+function declaredSecretsFor(command: Command): DeclaredSecretMask {
+  const declaredSecrets = createDeclaredSecretMask(compositionInput(command).configPath)
+  declaredSecrets.redactor()
+  return declaredSecrets
 }
 
-function emitHuman(maskedText: string): void {
-  const maskingContext = createMaskingContext()
-  try {
-    console.log(unmaskForHumanOutput(maskingContext, maskedText))
-  } finally {
-    maskingContext.dispose()
-  }
+// 2026-10-14 (441-14, D-07): everything this file prints is masked and never restored; JSON is
+// masked leaf by leaf before it is serialized.
+function emitJson(mask: MaskFn, value: unknown): void {
+  console.log(JSON.stringify(maskPayloadStrings(value, mask), null, 2))
+}
+
+function emitHuman(mask: MaskFn, text: string): void {
+  console.log(mask(text))
 }
 
 /**
@@ -97,6 +104,7 @@ function emitHuman(maskedText: string): void {
 async function invokeEntityOp(
   command: Command,
   options: EntitiesOptions,
+  declaredSecrets: DeclaredSecretMask,
   functionId: string,
   ref: string,
 ): Promise<unknown> {
@@ -115,7 +123,7 @@ async function invokeEntityOp(
     })
   }
   return invokeFunction(
-    composeCliLocalAgent(composition).registry,
+    composeCliLocalAgent({ ...composition, declaredSecrets }).registry,
     functionId,
     { ref },
     CLI_FUNCTION_CALLER,
@@ -191,15 +199,35 @@ function renderResolution(resolution: EntityCardResolution): string {
   }
 }
 
-function reportError(action: 'resolve' | 'get', error: unknown): void {
-  if (error instanceof EntitiesCommandError) {
-    console.error(pc.red(`Entities ${action} error [${error.code}]: ${error.message}`))
-  } else if (error instanceof Error) {
-    console.error(pc.red(`Entities ${action} error [${error.name}]: ${error.message}`))
-  } else {
-    console.error(pc.red(`Entities ${action} error: ${String(error)}`))
-  }
+function printUnavailable(error: DeclaredSecretsUnavailableError): void {
+  const [first, ...rest] = error.lines
+  if (first !== undefined) console.error(pc.red(first))
+  for (const line of rest) console.error(pc.dim(line))
+}
+
+function reportError(action: 'resolve' | 'get', error: unknown, mask: MaskFn | undefined): void {
   process.exitCode = 1
+  if (error instanceof DeclaredSecretsUnavailableError) {
+    printUnavailable(error)
+    return
+  }
+  const line = error instanceof EntitiesCommandError
+    ? `Entities ${action} error [${error.code}]: ${error.message}`
+    : error instanceof Error
+      ? `Entities ${action} error [${error.name}]: ${error.message}`
+      : `Entities ${action} error: ${String(error)}`
+  // A refusal raised before the loader exists has nothing to mask with.
+  let shown = line
+  if (mask !== undefined) {
+    try {
+      shown = mask(line)
+    } catch (maskError) {
+      if (!(maskError instanceof DeclaredSecretsUnavailableError)) throw maskError
+      printUnavailable(maskError)
+      return
+    }
+  }
+  console.error(pc.red(shown))
 }
 
 function requireRef(ref: string | undefined, what: string): string {
@@ -220,21 +248,25 @@ export function createEntitiesCommand(): Command {
     .option('--json', 'emit machine-readable masked JSON')
     .option('--via-daemon', 'dispatch through the project daemon instead of in-process')
     .action(async (ref: string | undefined, options: EntitiesOptions, resolveCommand: Command) => {
+      let mask: MaskFn | undefined
       try {
+        const declaredSecrets = declaredSecretsFor(resolveCommand)
+        mask = declaredSecrets.mask
         const result = await invokeEntityOp(
           resolveCommand,
           options,
+          declaredSecrets,
           ENTITIES_RESOLVE_ID,
           requireRef(ref, 'a reference to resolve'),
         ) as EntityCardResolution
 
         if (options.json === true) {
-          emitJson(result)
+          emitJson(mask, result)
           return
         }
-        emitHuman(renderResolution(result))
+        emitHuman(mask, renderResolution(result))
       } catch (error) {
-        reportError('resolve', error)
+        reportError('resolve', error, mask)
       }
     })
 
@@ -245,21 +277,25 @@ export function createEntitiesCommand(): Command {
     .option('--json', 'emit machine-readable masked JSON')
     .option('--via-daemon', 'dispatch through the project daemon instead of in-process')
     .action(async (id: string | undefined, options: EntitiesOptions, getCommand: Command) => {
+      let mask: MaskFn | undefined
       try {
+        const declaredSecrets = declaredSecretsFor(getCommand)
+        mask = declaredSecrets.mask
         const card = await invokeEntityOp(
           getCommand,
           options,
+          declaredSecrets,
           ENTITIES_GET_ID,
           requireRef(id, 'an exact entity address'),
         ) as EntityCard
 
         if (options.json === true) {
-          emitJson(card)
+          emitJson(mask, card)
           return
         }
-        emitHuman(renderCard(card))
+        emitHuman(mask, renderCard(card))
       } catch (error) {
-        reportError('get', error)
+        reportError('get', error, mask)
       }
     })
 

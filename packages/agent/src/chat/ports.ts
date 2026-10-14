@@ -243,11 +243,10 @@ export type ChatInvokeBinding = (
  */
 export interface ChatInvokeAnswer {
   /**
-   * The op's own result, placeholder-masked as the function layer returned it.
+   * The op's own result, masked as the function layer returned it.
    *
-   * NEVER UNMASKED ON THIS PATH. It reaches `results[]` on the turn contract, the session log and
-   * every `agent.ask` client in this form; `unmaskForHumanOutput` runs at each surface's emit and
-   * nowhere else.
+   * NEVER RESTORED ON THIS PATH. It reaches `results[]` on the turn contract, the session log and
+   * every `agent.ask` client in this form; each surface's emit masks with the declared secrets.
    */
   readonly payload: unknown
   /**

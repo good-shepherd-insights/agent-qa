@@ -758,8 +758,8 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
     // actually get back" unanswerable from the record — which is the same hole 399's UAT rejected
     // on the render surface, one file down.
     //
-    // AND WHY IT IS MASKED. `results[]` carries the function layer's placeholder-masked payload and
-    // NOTHING unmasks on the way here (`unmaskForHumanOutput` belongs at each surface's emit).
+    // AND WHY IT IS MASKED. `results[]` carries the function layer's masked payload and NOTHING
+    // restores a value on the way here (each surface's emit masks with the declared secrets).
     // Persisting anything else would mint a SECOND unadjudicated cleartext sink in the very file
     // the 399.1 adjudication names — see
     // `.planning/phases/399.1-chat-render-contract/399.1-ADJUDICATION-transcript-cleartext.md`

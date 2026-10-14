@@ -1,9 +1,9 @@
 // THE ESCAPE CLASSES THE ONE-MASKED-SERIALIZATION FIX COULD NOT SEE (CR-01, 2026-08-16).
 //
 // WHAT THIS FILE MEASURES, and why it did not exist before. `masked-result.ts` serialized the op
-// output with `JSON.stringify` and then handed the SERIALIZED DOCUMENT to `maskText`. The shipped
-// masker (`createMaskingContext().mask`, `packages/safety/src/masking/context.ts`) is a LITERAL
-// substring replacement — `out.split(value).join(placeholder)`. `JSON.stringify` escapes `"` to
+// output with `JSON.stringify` and then handed the SERIALIZED DOCUMENT to `maskText`. The declared
+// mask (`SecretRedactor`) is a raw, exact replacement of each declared value with
+// `[secret:<name>]`. `JSON.stringify` escapes `"` to
 // `\"`, `\` to `\\`, and every C0 control character to `\n`/`\t`/`\uXXXX`. So for any registered
 // credential containing one of those bytes, the raw value DOES NOT OCCUR in the document the
 // masker scans, the masker matches nothing, and the credential reaches the caller verbatim.
@@ -19,24 +19,22 @@
 // verbatim on both channels, including a `*_CREDENTIALS`-style JSON blob. This file is the
 // standing corpus for that class.
 //
-// THE MASKER HERE IS THE SHIPPED ONE. `createMaskingContext` is re-exported by
-// `@vostride/agent-qa-agent` and is the exact primitive `buildRunMaskingContext` constructs and
-// seeds — a masker built here by hand would be asserting that THIS file's masker works, which is
-// true and worthless. What this file does not exercise is the SEEDING (env slice, declared bearer
-// token); `packages/cli/src/__tests__/mcp-credential-surface.test.ts` owns that arm end to end,
-// which is why the plants below are registered directly and named as such.
+// THE MASKER HERE IS A STAND-IN WITH THE SHIPPED REPLACEMENT. 2026-10-14 (441-14, D-12): mcp
+// depends on no package that exports `SecretRedactor`, which MCP receives injected (441-07), so
+// `standInMask` replaces each declared plant raw and exactly, longest first, with
+// `[secret:<name>]` — `SecretRedactor`'s replacement. The declaration arm end to end belongs to
+// `packages/cli/src/__tests__/mcp-credential-surface.test.ts`.
 //
 // ASSERTED ON THE TWO WIRE FIELDS. `content[].text` and `structuredContent` are the fields the SDK
 // puts on the transport; nothing here reads an internal object. Absence is WINDOWED at eight
 // characters, the rule the credential-surface suite established: a cell that asks only whether the
 // WHOLE value is present is satisfied by a partial mask, which is a disclosure budget nobody set.
 //
-// EVERY ABSENCE IS PAIRED WITH A CONTROL. (X0) proves the plants are registered and that a
+// EVERY ABSENCE IS PAIRED WITH A CONTROL. (X0) proves the plants are declared and that a
 // plain value IS masked, so a green absence cell is not a dead channel; (X8) drives an
 // UNREGISTERED value down the same path and requires the helper to FIND it.
 
 import type { CallToolResult } from '@modelcontextprotocol/server'
-import { createMaskingContext } from '@vostride/agent-qa-agent'
 import { describe, expect, it } from 'vitest'
 
 import { maskedToolResult } from '../masked-result.js'
@@ -83,13 +81,24 @@ function leakedWindow(haystack: string, plant: string, size = 8): string | undef
   return undefined
 }
 
-/** The shipped masker, seeded with every plant this file cares about except the control. */
+function standInMask(declared: readonly (readonly [string, string])[]): (text: string) => string {
+  const longestFirst = [...declared].sort(([, a], [, b]) => b.length - a.length)
+  return (text) => longestFirst.reduce(
+    (out, [name, value]) => out.split(value).join(`[secret:${name}]`),
+    text,
+  )
+}
+
+/** The declared mask over every plant this file cares about except the control. */
 function seededMasker(): { mask: (text: string) => string; dispose: () => void } {
-  const context = createMaskingContext()
-  for (const value of [CLEAN_PLANT, QUOTE_PLANT, BACKSLASH_PLANT, CONTROL_PLANT, BLOB_PLANT]) {
-    context.register(value)
-  }
-  return { mask: (text: string) => context.mask(text), dispose: () => context.dispose() }
+  const mask = standInMask([
+    ['CLEAN_441', CLEAN_PLANT],
+    ['QUOTE_441', QUOTE_PLANT],
+    ['BACKSLASH_441', BACKSLASH_PLANT],
+    ['CONTROL_441', CONTROL_PLANT],
+    ['BLOB_441', BLOB_PLANT],
+  ])
+  return { mask, dispose: () => undefined }
 }
 
 /**
@@ -115,8 +124,8 @@ describe('X · the escape classes reach neither channel (CR-01)', () => {
     () => {
       const masker = seededMasker()
       try {
-        // The seed half. Handed the RAW value, the shipped masker recognises every plant — so a
-        // leak below is the serialization's doing and not an unseeded masker's.
+        // The seed half. Handed the RAW value, the masker recognises every plant — so a leak below
+        // is the serialization's doing and not an undeclared value's.
         for (const [name, plant] of [['plain', CLEAN_PLANT] as const, ...ESCAPE_PLANTS]) {
           expect(masker.mask(plant), `the masker does not hold the ${name} plant`).not.toBe(plant)
         }
@@ -210,14 +219,12 @@ describe('X · the escape classes reach neither channel (CR-01)', () => {
       // all rather than serving the digits. (Before this fix the same input produced a masked
       // document that was no longer valid JSON, and the module withheld for that reason; the
       // posture is preserved, its cause is now named.)
-      const context = createMaskingContext()
-      context.register('867530912345')
-      const result = maskedToolResult({ pin: 867_530_912_345 }, (text) => context.mask(text))
+      const pinMask = standInMask([['PIN_441', '867530912345']])
+      const result = maskedToolResult({ pin: 867_530_912_345 }, pinMask)
 
       expect(result.isError).toBe(true)
       expect(renderedText(result)).toContain('withheld')
       expect(leakedWindow(renderedText(result), '867530912345')).toBeUndefined()
-      context.dispose()
     } finally {
       masker.dispose()
     }

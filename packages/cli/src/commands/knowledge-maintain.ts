@@ -23,10 +23,6 @@ import { buildPromotionPostureResolver, promotionPostureResolverForHost, renderP
 import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
 
 import {
-  createMaskingContext,
-  unmaskForHumanOutput,
-} from '@vostride/agent-qa-agent'
-import {
   BuildOrdinalReservationError,
   LOCAL_CURATION_CAPABILITIES,
   latestBuildOrdinal,
@@ -45,10 +41,15 @@ import type {
   RollbackReport,
   WriterLeaseAuthority,
 } from '@vostride/agent-qa-agent-local'
-import { asRecordId } from '@vostride/agent-qa-schema'
-import type { OriginClass } from '@vostride/agent-qa-schema'
+import { asRecordId, maskPayloadStrings } from '@vostride/agent-qa-schema'
+import type { MaskFn, OriginClass } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import pc from 'picocolors'
+
+import {
+  createDeclaredSecretMask,
+  DeclaredSecretsUnavailableError,
+} from '../composition/declared-secrets.js'
 
 import { resolveConfig, resolveConfiguredKnowledgeRoot } from '../config.js'
 import {
@@ -249,18 +250,51 @@ async function resolveKnowledgePaths(command: Command): Promise<KnowledgePaths> 
   }
 }
 
-function emitJson(value: unknown): void {
-  console.log(JSON.stringify(value, null, 2))
+/**
+ * The declared mask for this invocation, read once at start (E3): a secrets file that cannot be
+ * read refuses the command before anything else runs.
+ */
+function declaredMaskFor(command: Command): MaskFn {
+  const configPath = resolve(globalOptions(command).config ?? 'agent-qa.config.yaml')
+  const declaredSecrets = createDeclaredSecretMask(configPath)
+  declaredSecrets.redactor()
+  return declaredSecrets.mask
 }
 
-function emitHuman(maskedText: string, stream: OutputStream = 'stdout'): void {
-  const maskingContext = createMaskingContext()
+// 2026-10-14 (441-14, D-07): everything this file prints is masked and never restored; JSON is
+// masked leaf by leaf before it is serialized.
+function emitJson(mask: MaskFn, value: unknown): void {
+  console.log(JSON.stringify(maskPayloadStrings(value, mask), null, 2))
+}
+
+function emitHuman(mask: MaskFn, text: string, stream: OutputStream = 'stdout'): void {
+  const rendered = `${mask(text)}\n`
+  if (stream === 'stderr') process.stderr.write(rendered)
+  else process.stdout.write(rendered)
+}
+
+function printUnavailable(error: DeclaredSecretsUnavailableError): void {
+  const [first, ...rest] = error.lines
+  if (first !== undefined) console.error(pc.red(first))
+  for (const line of rest) console.error(pc.dim(line))
+}
+
+// A refusal raised before the loader exists has nothing to mask with.
+function reportErrorLine(line: string, error: unknown, mask: MaskFn | undefined): void {
+  process.exitCode = 1
+  if (error instanceof DeclaredSecretsUnavailableError) {
+    printUnavailable(error)
+    return
+  }
+  if (mask === undefined) {
+    process.stderr.write(`${pc.red(line)}\n`)
+    return
+  }
   try {
-    const rendered = `${unmaskForHumanOutput(maskingContext, maskedText)}\n`
-    if (stream === 'stderr') process.stderr.write(rendered)
-    else process.stdout.write(rendered)
-  } finally {
-    maskingContext.dispose()
+    emitHuman(mask, pc.red(line), 'stderr')
+  } catch (maskError) {
+    if (!(maskError instanceof DeclaredSecretsUnavailableError)) throw maskError
+    printUnavailable(maskError)
   }
 }
 
@@ -400,6 +434,7 @@ async function drainInline(
   paths: KnowledgePaths,
   options: DrainOptions,
   trustPriors: ReturnType<typeof trustPriorsForHost>,
+  mask: MaskFn,
 ): Promise<void> {
   const resolveTrustPriors = trustPriors.resolve
   const posture = await buildPromotionPostureResolver({ configPath: paths.configPath,
@@ -409,7 +444,10 @@ async function drainInline(
     lowerTrustShares: LOCAL_CURATION_CAPABILITIES.readLowerTrustShares,
     currentBuildOrdinal: product => latestBuildOrdinal({ root: paths.runtimeRoot, product }),
   })
-  const resolvePromotionPosture = promotionPostureResolverForHost(posture, message => emitHuman(message, 'stderr'))
+  const resolvePromotionPosture = promotionPostureResolverForHost(
+    posture,
+    message => emitHuman(mask, message, 'stderr'),
+  )
   const seenCandidateIds = new Set<string>()
   let inlineAuthority: { leaseId: string; epoch: number } | undefined
   const report = await drainQueue({
@@ -436,25 +474,25 @@ async function drainInline(
   const remaining = remainingTotal(remainingWork)
   recordInlineDrainSession(paths, report, remaining, seenCandidateIds, inlineAuthority)
   if (options.json === true) {
-    emitJson({ ...report, remaining, remainingWork, ...strandedJsonField(options) })
+    emitJson(mask, { ...report, remaining, remainingWork, ...strandedJsonField(options) })
   } else if (report.kind === 'drained') {
-    emitHuman([
+    emitHuman(mask, [
       pc.green(pc.bold('Knowledge curation queue drained inline')),
       `  ${renderRemainingDisposition(remainingWork)}`,
     ].join('\n'))
   } else if (report.kind === 'handed-off') {
-    emitHuman([
+    emitHuman(mask, [
       pc.yellow(pc.bold(`Knowledge curation queue handed to pid ${report.holder.pid}`)),
       `  ${renderRemainingDisposition(remainingWork)}`,
     ].join('\n'))
   } else {
-    emitHuman([
+    emitHuman(mask, [
       pc.red(pc.bold('Knowledge curation queue drain aborted')),
       `  ${renderRemainingDisposition(remainingWork)}`,
     ].join('\n'))
   }
   if (options.json !== true) {
-    for (const entry of report.promotions ?? []) emitHuman(renderPromotionLine(entry))
+    for (const entry of report.promotions ?? []) emitHuman(mask, renderPromotionLine(entry))
   }
   if (
     report.kind !== 'drained'
@@ -467,6 +505,7 @@ async function drainInline(
 export async function drainViaDaemon(
   paths: KnowledgePaths,
   options: DrainOptions,
+  mask: MaskFn,
   timing: DaemonDrainTiming = DEFAULT_DAEMON_DRAIN_TIMING,
 ): Promise<void> {
   const startedAtMs = Date.now()
@@ -483,7 +522,7 @@ export async function drainViaDaemon(
     const remainingWork = countRemainingCurationWork(paths.knowledgeRoot)
     const remaining = remainingTotal(remainingWork)
     if (options.json !== true && remaining !== lastHumanRemaining) {
-      emitHuman(`Knowledge curation queue drain: ${renderRemainingDisposition(remainingWork)}`)
+      emitHuman(mask, `Knowledge curation queue drain: ${renderRemainingDisposition(remainingWork)}`)
       lastHumanRemaining = remaining
     }
 
@@ -500,7 +539,7 @@ export async function drainViaDaemon(
         || receipt.remainingAfter > 0
       ) {
         if (options.json === true) {
-          emitJson({
+          emitJson(mask, {
             mode: 'daemon',
             timedOut: false,
             sessionId: receipt.sessionId,
@@ -511,6 +550,7 @@ export async function drainViaDaemon(
           })
         }
         emitHuman(
+          mask,
           pc.red(
             `knowledge drain: daemon session ${receipt.sessionId} ended unresolved: `
             + `${renderRemainingDisposition(remainingWork)}; `
@@ -523,7 +563,7 @@ export async function drainViaDaemon(
       }
       if (receipt.remainingAfter === 0 && remaining === 0) {
         if (options.json === true) {
-          emitJson({
+          emitJson(mask, {
             mode: 'daemon',
             timedOut: false,
             sessionId: receipt.sessionId,
@@ -540,7 +580,7 @@ export async function drainViaDaemon(
     const remainingBudgetMs = deadlineMs - Date.now()
     if (remainingBudgetMs <= 0) {
       if (options.json === true) {
-        emitJson({
+        emitJson(mask, {
           mode: 'daemon',
           timedOut: true,
           unresponsive: true,
@@ -550,6 +590,7 @@ export async function drainViaDaemon(
         })
       }
       emitHuman(
+        mask,
         pc.red(
           `knowledge drain: daemon unresponsive; timed out at deadline with `
           + renderRemainingDisposition(remainingWork),
@@ -601,6 +642,7 @@ function removeClassifiedDrainRegistration(
 function reclaimDrainRecoveredSocket(
   paths: KnowledgePaths,
   classified: RecoverableDaemonRegistration,
+  mask: MaskFn,
 ): void {
   const socketPath = classified.registration.socketPath
   let socketRemoved = false
@@ -611,6 +653,7 @@ function reclaimDrainRecoveredSocket(
     )
   } catch (error) {
     emitHuman(
+      mask,
       pc.yellow(`knowledge drain: stale socket cleanup failed (${socketPath}): `
         + errorMessage(error)),
       'stderr',
@@ -663,10 +706,11 @@ function strandedHumanSuffix(options: DrainOptions): string {
  * `--json` mode, and the operator is told either way. Bytes parked under a name nobody reads are
  * the thing that has to be pointed at, whichever route the router finally took.
  */
-function reportStrandedQuarantine(options: DrainOptions): void {
+function reportStrandedQuarantine(options: DrainOptions, mask: MaskFn): void {
   const stranded = strandedQuarantine(options)
   if (stranded.length === 0) return
   emitHuman(
+    mask,
     pc.yellow(
       `knowledge drain: a registration removal attempt was contended${strandedHumanSuffix(options)}`,
     ),
@@ -693,19 +737,21 @@ function collectStrandedQuarantine(
 function refuseDrainRouting(
   outcome: ClassifyDaemonRegistrationOutcome,
   options: DrainOptions,
+  mask: MaskFn,
 ): outcome is Extract<
   ClassifyDaemonRegistrationOutcome,
   { kind: 'malformed' | 'unreachable-lease-fresh' }
 > {
   if (outcome.kind === 'malformed') {
     if (options.json === true) {
-      emitJson({
+      emitJson(mask, {
         mode: 'refused',
         reason: 'registration-malformed',
         ...strandedJsonField(options),
       })
     }
     emitHuman(
+      mask,
       pc.red(
         'knowledge drain: refusal [registration-malformed]: the daemon registration cannot be '
         + 'parsed, so no drain mode can be chosen from it; inspect .agent-qa/daemon.json'
@@ -725,7 +771,7 @@ function refuseDrainRouting(
      */
     const holder = outcome.holder
     if (options.json === true) {
-      emitJson({
+      emitJson(mask, {
         mode: 'refused',
         reason: 'writer-lease-held',
         ...(holder === undefined ? { lease: outcome.lease } : { holder }),
@@ -740,6 +786,7 @@ function refuseDrainRouting(
       : `held by pid ${holder.pid}, lease ${holder.leaseId}, epoch ${holder.epoch}, `
         + `last renewed ${Math.max(0, Date.now() - holder.heartbeatAtMs)}ms ago`
     emitHuman(
+      mask,
       pc.red(
         `knowledge drain: refusal [writer-lease-held]: writer lease is ${heldDetail}; `
         + `the registered daemon (pid ${outcome.registration.pid}) did not answer its identity `
@@ -765,15 +812,16 @@ async function routeDrain(
   paths: KnowledgePaths,
   options: DrainOptions,
   trustPriors: ReturnType<typeof trustPriorsForHost>,
+  mask: MaskFn,
 ): Promise<void> {
   const classified = await classifyDrainHost(paths)
   if (classified.kind === 'live-confirmed') {
-    await drainViaDaemon(paths, options)
+    await drainViaDaemon(paths, options, mask)
     return
   }
-  if (refuseDrainRouting(classified, options)) return
+  if (refuseDrainRouting(classified, options, mask)) return
   if (classified.kind === 'absent') {
-    await drainInline(paths, options, trustPriors)
+    await drainInline(paths, options, trustPriors, mask)
     return
   }
 
@@ -796,24 +844,25 @@ async function routeDrain(
     const reclassified = await classifyDrainHost(paths)
     if (reclassified.kind === 'live-confirmed') {
       const delegated = routed()
-      reportStrandedQuarantine(delegated)
-      await drainViaDaemon(paths, delegated)
+      reportStrandedQuarantine(delegated, mask)
+      await drainViaDaemon(paths, delegated, mask)
       return
     }
-    if (refuseDrainRouting(reclassified, routed())) return
+    if (refuseDrainRouting(reclassified, routed(), mask)) return
     const retry = reclassified.kind === 'absent'
       ? undefined
       : removeClassifiedDrainRegistration(paths, reclassified)
     collectStrandedQuarantine(stranded, retry)
     if (retry !== undefined && retry.kind !== 'removed') {
       if (options.json === true) {
-        emitJson({
+        emitJson(mask, {
           mode: 'refused',
           reason: 'registration-contended',
           ...strandedJsonField(routed()),
         })
       }
       emitHuman(
+        mask,
         pc.red(
           'knowledge drain: refusal [registration-contended]: the daemon registration changed '
           + 'twice while it was being classified; rerun the command'
@@ -825,29 +874,31 @@ async function routeDrain(
       return
     }
     if (retry !== undefined) {
-      reclaimDrainRecoveredSocket(paths, reclassified as RecoverableDaemonRegistration)
+      reclaimDrainRecoveredSocket(paths, reclassified as RecoverableDaemonRegistration, mask)
     }
   } else {
-    reclaimDrainRecoveredSocket(paths, classified)
+    reclaimDrainRecoveredSocket(paths, classified, mask)
   }
   const inline = routed()
-  reportStrandedQuarantine(inline)
-  await drainInline(paths, inline, trustPriors)
+  reportStrandedQuarantine(inline, mask)
+  await drainInline(paths, inline, trustPriors, mask)
 }
 
-function reportDrainError(error: unknown): void {
-  emitHuman(pc.red(`knowledge drain: error: ${errorMessage(error)}`), 'stderr')
-  process.exitCode = 1
+function reportDrainError(error: unknown, mask: MaskFn | undefined): void {
+  reportErrorLine(`knowledge drain: error: ${errorMessage(error)}`, error, mask)
 }
 
-function reportError(verb: 'rebuild-index' | 'rollback' | 'purge', error: unknown): void {
+function reportError(
+  verb: 'rebuild-index' | 'rollback' | 'purge',
+  error: unknown,
+  mask: MaskFn | undefined,
+): void {
   const message = error instanceof KnowledgeMaintainCommandError
     ? `knowledge ${verb}: error [${error.code}]: ${error.message}`
     : error instanceof BuildOrdinalReservationError
       ? `knowledge ${verb}: error [${error.code}]: ${error.message}`
       : `knowledge ${verb}: error: ${errorMessage(error)}`
-  emitHuman(pc.red(message), 'stderr')
-  process.exitCode = 1
+  reportErrorLine(message, error, mask)
 }
 
 function renderLeaseRefusal(
@@ -863,16 +914,18 @@ function renderLeaseRefusal(
 async function withWriterLease<T>(
   verb: 'rebuild-index' | 'rollback' | 'purge',
   knowledgeRoot: string,
+  mask: MaskFn,
   operation: (writerAuthority: WriterLeaseAuthority) => Promise<T> | T,
 ): Promise<LeaseRunOutcome<T>> {
   const lease = acquireWriterLease(knowledgeRoot)
   if (lease.kind === 'held') {
-    emitHuman(renderLeaseRefusal(verb, lease.holder), 'stderr')
+    emitHuman(mask, renderLeaseRefusal(verb, lease.holder), 'stderr')
     process.exitCode = 1
     return { kind: 'refused' }
   }
   if (lease.kind === 'refused') {
     emitHuman(
+      mask,
       pc.red(`knowledge ${verb}: refusal [${lease.reason}]: ${lease.error.message}`),
       'stderr',
     )
@@ -1190,19 +1243,21 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
       + '  agent job queue  durable background agent jobs in .agent-qa/agent-jobs.db\n',
     )
     .action(async (options: DrainOptions, drainCommand: Command) => {
+      let mask: MaskFn | undefined
       try {
+        mask = declaredMaskFor(drainCommand)
         const paths = await resolveKnowledgePaths(drainCommand)
         if (options.status === true) {
           const status = drainStatus(paths)
-          if (options.json === true) emitJson(status)
-          else emitHuman(renderDrainStatus(status))
+          if (options.json === true) emitJson(mask, status)
+          else emitHuman(mask, renderDrainStatus(status))
           return
         }
 
         const trustPriors = trustPriorsForHost({ configPath: paths.configPath })
-        await routeDrain(paths, options, trustPriors)
+        await routeDrain(paths, options, trustPriors, mask)
       } catch (error) {
-        reportDrainError(error)
+        reportDrainError(error, mask)
       }
     })
 
@@ -1211,17 +1266,19 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
     .description('Rebuild derived knowledge index projections')
     .option('--json', 'output the typed RebuildReport as masked JSON')
     .action(async (options: RebuildOptions, rebuildCommand: Command) => {
+      let mask: MaskFn | undefined
       try {
+        mask = declaredMaskFor(rebuildCommand)
         const paths = await resolveKnowledgePaths(rebuildCommand)
         const trustPriors = trustPriorsForHost({ configPath: paths.configPath })
-        const result = await withWriterLease('rebuild-index', paths.knowledgeRoot, (writerAuthority) => (
+        const result = await withWriterLease('rebuild-index', paths.knowledgeRoot, mask, (writerAuthority) => (
           rebuildIndex({ knowledgeRoot: paths.knowledgeRoot, writerAuthority, priors: trustPriors.resolve() })
         ))
         if (result.kind === 'refused') return
-        if (options.json === true) emitJson(result.value)
-        else emitHuman(renderRebuildReport(result.value))
+        if (options.json === true) emitJson(mask, result.value)
+        else emitHuman(mask, renderRebuildReport(result.value))
       } catch (error) {
-        reportError('rebuild-index', error)
+        reportError('rebuild-index', error, mask)
       }
     })
 
@@ -1235,7 +1292,9 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
     .option('--origin-class <class>', 'campaign origin: user|agent-verified|agent-observed|import')
     .option('--json', 'output the typed RollbackReport as masked JSON')
     .action(async (options: RollbackOptions, rollbackCommand: Command) => {
+      let mask: MaskFn | undefined
       try {
+        mask = declaredMaskFor(rollbackCommand)
         const selector = rollbackSelector(options)
         const paths = await resolveKnowledgePaths(rollbackCommand)
         // Running the command is the intent (Phase 432 D-14). The preview is still resolved and
@@ -1243,11 +1302,12 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
         const previewInput = rollbackInput(selector, paths, 0)
         const previewAffected = resolveRollbackAffectedSet(previewInput)
         const previewFingerprint = rollbackPreviewFingerprint(previewAffected)
-        emitHuman(renderRollbackPreview(previewAffected), previewStream(options.json === true))
+        emitHuman(mask, renderRollbackPreview(previewAffected), previewStream(options.json === true))
 
         const leaseResult = await withWriterLease(
           'rollback',
           paths.knowledgeRoot,
+          mask,
           async (writerAuthority): Promise<RollbackExecutionOutcome> => {
             const affected = resolveRollbackAffectedSet(previewInput)
             assertPreviewUnchanged(
@@ -1270,10 +1330,10 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
           },
         )
         if (leaseResult.kind === 'refused') return
-        if (options.json === true) emitJson(leaseResult.value.report)
-        else emitHuman(renderRollbackReport(leaseResult.value.report))
+        if (options.json === true) emitJson(mask, leaseResult.value.report)
+        else emitHuman(mask, renderRollbackReport(leaseResult.value.report))
       } catch (error) {
-        reportError('rollback', error)
+        reportError('rollback', error, mask)
       }
     })
 
@@ -1283,7 +1343,10 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
     .argument('<record-id>', 'record id to purge')
     .option('--json', 'output the typed PurgeReceipt as masked JSON')
     .action(async (recordIdValue: string, options: PurgeOptions, purgeCommand: Command) => {
+      let mask: MaskFn | undefined
       try {
+        const purgeMask = declaredMaskFor(purgeCommand)
+        mask = purgeMask
         const recordId = asRecordId(recordIdValue)
         const paths = await resolveKnowledgePaths(purgeCommand)
         // The explicit record id is the whole selection (Phase 432 D-14): no repeated id, no
@@ -1293,11 +1356,12 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
           recordId,
         })
         const previewFingerprint = purgeAffectedSetFingerprint(preview)
-        emitHuman(renderPurgePreview(preview), previewStream(options.json === true))
+        emitHuman(mask, renderPurgePreview(preview), previewStream(options.json === true))
 
         const leaseResult = await withWriterLease(
           'purge',
           paths.knowledgeRoot,
+          mask,
           async (writerAuthority): Promise<PurgeExecutionOutcome> => {
             const underLeaseAffectedSet = resolvePurgeAffectedSet({
               knowledgeRoot: paths.knowledgeRoot,
@@ -1330,6 +1394,7 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
                 return { kind: 'completed', receipt: outcome.receipt, alreadyPurged: true }
               case 'egress-blocked':
                 emitHuman(
+                  purgeMask,
                   pc.red([
                     'knowledge purge: refusal [egress-blocked]: receipt failed committed egress',
                     ...outcome.detections.map((detection) => (
@@ -1342,6 +1407,7 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
                 return { kind: 'failed' }
               case 'not-found':
                 emitHuman(
+                  purgeMask,
                   pc.red(`knowledge purge: error [not-found]: record ${recordId} was not found`),
                   'stderr',
                 )
@@ -1351,15 +1417,16 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
           },
         )
         if (leaseResult.kind === 'refused' || leaseResult.value.kind !== 'completed') return
-        if (options.json === true) emitJson(leaseResult.value.receipt)
+        if (options.json === true) emitJson(mask, leaseResult.value.receipt)
         else emitHuman(
+          mask,
           renderPurgeReceipt(
             leaseResult.value.receipt,
             leaseResult.value.alreadyPurged,
           ),
         )
       } catch (error) {
-        reportError('purge', error)
+        reportError('purge', error, mask)
       }
     })
 }

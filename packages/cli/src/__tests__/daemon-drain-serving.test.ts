@@ -765,6 +765,7 @@ describe('daemon curation serving tracer', () => {
             auditBaseDir: paths.agentQaRoot,
           },
           {},
+          (text) => text,
           { waitTimeoutMs: 250, pollMs: 10 },
         )
         const elapsedMs = Date.now() - startedAtMs

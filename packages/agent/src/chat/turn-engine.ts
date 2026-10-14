@@ -943,8 +943,8 @@ async function runTurnThrough(
         }
         // WHAT THE OP PRODUCED, ON THE CHANNEL D-05 GAVE IT. One entry per clause that ran, in
         // execution order, carrying the payload EXACTLY as the function layer returned it —
-        // placeholder-masked. Nothing unmasks here: this value reaches the session log and every
-        // `agent.ask` client, and `unmaskForHumanOutput` belongs at each surface's emit.
+        // masked. Nothing restores a value here: this value reaches the session log and every
+        // `agent.ask` client, and each surface's emit masks with the declared secrets.
         //
         results.push({ functionId: step.functionId, payload: answered.payload })
         // AND INTO THE RECORD, MASKED (399.1-05, D-05's persistence discretion resolved).
@@ -958,8 +958,8 @@ async function runTurnThrough(
         // a reader nothing; the result is the turn's own territory and it is kept as filed.
         //
         // AND WHY NOTHING UNMASKS ON THE WAY. This is a DURABLE path. `answered.payload` is the
-        // function layer's placeholder-masked value and it is written exactly as it rode
-        // `results[]` — `unmaskForHumanOutput` belongs at each surface's emit and nowhere near a
+        // function layer's masked value and it is written exactly as it rode `results[]` — each
+        // surface's emit masks with the declared secrets, and nothing restores a value into a
         // file. An unmasked entry here would mint a SECOND cleartext sink in
         // `.agent-qa/sessions/chat-*.jsonl`, which is the class
         // `.planning/phases/399.1-chat-render-contract/399.1-ADJUDICATION-transcript-cleartext.md`

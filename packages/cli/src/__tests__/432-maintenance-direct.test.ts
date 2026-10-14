@@ -129,6 +129,7 @@ function workspaceFixture(
     use: { mobile: { appState: 'preserve' } },
   }, null, 2)}\n`, 'utf8')
   writeFileSync(join(runtimeRoot, 'build-ordinals.json'), `${JSON.stringify(ordinals)}\n`, 'utf8')
+  writeFileSync(join(root, '.env.secrets.local'), '', 'utf8')
   return { root, configPath, knowledgeRoot: join(root, 'agent-qa-knowledge'), runtimeRoot }
 }
 

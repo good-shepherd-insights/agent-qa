@@ -8,10 +8,9 @@
 // out of `@vostride/agent-qa-safety`. The waiver ledger exists for exactly that edge, and its own
 // first rule is that it only ever SHRINKS: "New surface code can never join it; a leak in a file
 // written after 2026-07-28 is fixed, not waived." So it is fixed. The function layer already
-// depends on safety, already re-exports safety primitives to its consumers
-// (`createMaskingContext`, `unmaskForHumanOutput`), and already owns the config-mutation class
-// whose construction scan asks this same question at proposal time — which makes this module's
-// neighbours the right ones rather than merely the permitted ones.
+// depends on safety, and already owns the config-mutation class whose construction scan asks this
+// same question at proposal time — which makes this module's neighbours the right ones rather than
+// merely the permitted ones.
 
 import { findDetectorMatches } from '@vostride/agent-qa-safety'
 import type { GuardrailDetectorFamily } from '@vostride/agent-qa-schema'

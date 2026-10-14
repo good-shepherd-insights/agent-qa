@@ -36,7 +36,12 @@ import * as registration from '../../daemon/registration.js'
 
 const roots: string[] = []
 afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
-function fixture() { const f = markFixture(); roots.push(f.root); return f }
+function fixture() {
+  const f = markFixture()
+  roots.push(f.root)
+  writeFileSync(join(f.root, '.env.secrets.local'), '')
+  return f
+}
 function artifact(root: string, precision = 0.75) {
   const report = calibrateLabels({ snapshot: { entries: [], labelsById: new Map(), cassettesById: new Map(), blobPresentById: new Map() }, marks: [] })
   const body = { ...report, schemaVersion: 1, evidenceDigest: sha256hex('tail fixture'), targetRevisions: [],

@@ -66,6 +66,7 @@ function fixtureWorkspace(roots: string[]): FixtureWorkspace {
     }, null, 2)}\n`,
     'utf8',
   )
+  writeFileSync(join(root, '.env.secrets.local'), '', 'utf8')
   return {
     root,
     configPath,

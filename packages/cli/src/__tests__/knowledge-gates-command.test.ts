@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { stripVTControlCharacters } from 'node:util'
-import { createMaskingContext, invokeFunction } from '@vostride/agent-qa-agent'
+import { invokeFunction } from '@vostride/agent-qa-agent'
 import {
   appendGateReceipt,
   appendPromotionReceipt,
@@ -12,6 +12,7 @@ import {
   verifyBundleIntegrity,
   type BundleStoreConfig,
 } from '@vostride/agent-qa-knowledge-local'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { canonicalJson, KnowledgeGatesListResultSchema, stampReceiptDigest } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -44,6 +45,7 @@ describe('agent-qa knowledge gates', () => {
       knowledge: { dir: 'agent-qa-knowledge', commitArtifacts: 'none' },
       use: { mobile: { appState: 'preserve' } },
     }) + '\n')
+    writeFileSync(join(root, '.env.secrets.local'), '')
     const config: BundleStoreConfig = {
       knowledgeRoot: join(root, 'agent-qa-knowledge'), productKey: 'shop',
       auditBaseDir: join(root, '.agent-qa'), commitArtifacts: 'none',
@@ -189,41 +191,35 @@ describe('agent-qa knowledge gates', () => {
     const { config, configPath, id, dir } = fixture()
     const rawSecret = 'AKIAIOSFODNN7EXAMPLE'
     const rawEmail = 'receipt-auditor@example.invalid'
-    const masking = createMaskingContext()
-    try {
-      masking.register(rawSecret)
-      const maskedProducer = masking.mask(`review ${rawSecret} by ${rawEmail}`)
-      expect(maskedProducer).toBe('review <SECRET_0> by <EMAIL_0>')
-      // The live context really can recover both values: preservation below is not
-      // a no-secret assertion over a fixture that never contained sensitive text.
-      expect(masking.unmask(maskedProducer)).toBe(`review ${rawSecret} by ${rawEmail}`)
-      const promotion = stampReceiptDigest({
-        schemaVersion: 1, kind: 'promotion', candidateId: id,
-        promotionPath: 'deterministic-verdict-floor', citedReceiptDigests: [],
-        producedAtOrdinal: 6, producedBy: { opId: maskedProducer },
-      })
-      const gate = stampReceiptDigest({
-        schemaVersion: 1, gate: 3, verdict: 'pass', candidateId: id,
-        producedAtOrdinal: 7, producedBy: { jobId: maskedProducer },
-        runId: masking.mask(rawSecret), stepId: masking.mask(rawEmail), mark: 'confirmed-bug',
-      })
-      const { receiptDigest: _digest, ...promotionInput } = promotion
-      expect(appendPromotionReceipt(config, id, promotionInput)).toEqual({ kind: 'appended' })
-      expect(appendGateReceipt(config, id, gate)).toEqual({ kind: 'appended' })
-      expect(readGateReceipts(dir, id)).toEqual([promotion, gate])
-      const output = await invoke(configPath, [id, '--json'])
-      const dto = KnowledgeGatesListResultSchema.parse(JSON.parse(output))
-      expect(dto).toMatchObject({ kind: 'found', lines: [promotion, gate], standing: [gate] })
-      expect(output).toContain('<SECRET_0>')
-      expect(output).toContain('<EMAIL_0>')
-      for (const raw of [rawSecret, rawEmail]) {
-        expect(output).not.toContain(raw)
-        expect(readFileSync(join(dir, 'evidence/gates.jsonl'), 'utf8')).not.toContain(raw)
-      }
-      expect(verifyBundleIntegrity(dir).ok).toBe(true)
-    } finally {
-      masking.dispose()
+    // 2026-10-14 (441-14, D-07): the producer masks both values as declared secrets.
+    const redactor = new SecretRedactor(new SecretStore({ AWS_441: rawSecret, EMAIL_441: rawEmail }))
+    const mask = (text: string): string => redactor.redactString(text)
+    const maskedProducer = mask(`review ${rawSecret} by ${rawEmail}`)
+    expect(maskedProducer).toBe('review [secret:AWS_441] by [secret:EMAIL_441]')
+    const promotion = stampReceiptDigest({
+      schemaVersion: 1, kind: 'promotion', candidateId: id,
+      promotionPath: 'deterministic-verdict-floor', citedReceiptDigests: [],
+      producedAtOrdinal: 6, producedBy: { opId: maskedProducer },
+    })
+    const gate = stampReceiptDigest({
+      schemaVersion: 1, gate: 3, verdict: 'pass', candidateId: id,
+      producedAtOrdinal: 7, producedBy: { jobId: maskedProducer },
+      runId: mask(rawSecret), stepId: mask(rawEmail), mark: 'confirmed-bug',
+    })
+    const { receiptDigest: _digest, ...promotionInput } = promotion
+    expect(appendPromotionReceipt(config, id, promotionInput)).toEqual({ kind: 'appended' })
+    expect(appendGateReceipt(config, id, gate)).toEqual({ kind: 'appended' })
+    expect(readGateReceipts(dir, id)).toEqual([promotion, gate])
+    const output = await invoke(configPath, [id, '--json'])
+    const dto = KnowledgeGatesListResultSchema.parse(JSON.parse(output))
+    expect(dto).toMatchObject({ kind: 'found', lines: [promotion, gate], standing: [gate] })
+    expect(output).toContain('[secret:AWS_441]')
+    expect(output).toContain('[secret:EMAIL_441]')
+    for (const raw of [rawSecret, rawEmail]) {
+      expect(output).not.toContain(raw)
+      expect(readFileSync(join(dir, 'evidence/gates.jsonl'), 'utf8')).not.toContain(raw)
     }
+    expect(verifyBundleIntegrity(dir).ok).toBe(true)
   })
 
   it('renders schema-valid history, standing and the live verdict over real bundles', async () => {

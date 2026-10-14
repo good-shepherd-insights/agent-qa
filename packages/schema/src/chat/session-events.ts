@@ -171,8 +171,8 @@ export interface ChatClauseReceiptEvent extends ChatSessionEventBase<'clause_rec
  * because "this file is read by surfaces that render it directly, so a field that could carry a
  * secret would need a masking boundary at every one of them". That sentence is the REASON, and it
  * is satisfied here by the boundary being crossed BEFORE the bytes arrive rather than at each
- * reader: what rides this field is the function layer's placeholder-masked payload, and nothing
- * between the op and this line unmasks. `unmaskForHumanOutput` belongs at each surface's EMIT.
+ * reader: what rides this field is the function layer's masked payload, and nothing between the op
+ * and this line restores a value. Each surface prints what the declared mask produced.
  *
  * VERBATIM-MASKED, NOT A DIGEST — the discretion D-05 left open, resolved. A digest would satisfy
  * the disclosure guard trivially and would also make the record unable to answer the question the

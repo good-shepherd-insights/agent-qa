@@ -25,11 +25,9 @@
 // full result" — and never silent. There is no size cap in this phase and no knob for one; 386
 // D-15's pinned-constants law says no knob ships before evidence says what to set it to.
 //
-// NO PRINT SITE LIVES HERE, and no masking either. This returns strings; each surface emits them
-// through the masker it already owns (`ask`'s `emitHuman`, chat's own masked write), which is where
-// `unmaskForHumanOutput` belongs and the only place it may run. A render that printed for itself
-// would be a disclosure boundary with none of that cover, and a render that unmasked for itself
-// would put cleartext into whatever a caller did with the returned string.
+// NO PRINT SITE LIVES HERE, and no masking either. This returns strings; each surface's emit masks
+// them with the declared secrets (`ask`'s `emitHuman`, chat's own masked write). A render that
+// printed for itself would print outside that mask.
 
 import { RunDetailProjectionSchema } from '@vostride/agent-qa-schema'
 import type { ClauseResult, RunDetailProjection } from '@vostride/agent-qa-schema'

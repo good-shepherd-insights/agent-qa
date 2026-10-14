@@ -67,7 +67,10 @@ describe('421 judge panel walls', () => {
     // Re-blessed 2026-10-14 (Phase 441 plan 02, D-01/E3): two pairs for the declared-secrets loader,
     // packages/cli/src/composition/declared-secrets.ts -> core and -> runner. No judge-panel or
     // eval-local edge was added; the digest was recomputed from that ledger.
-    expect(digest(read('packages/arch/src/lint/surface-firewall-ledger.ts'))).toBe('443d78e2e6160ef598c754c4ba70ccbd1abddc14485675bbe7eaf4c265ae6afc')
+    // Re-blessed 2026-10-14 (Phase 441 plan 14, D-07): the ledger SHRANK by one entry —
+    // packages/cli/src/reporters/console-reporter.ts -> @vostride/agent-qa-safety, whose only import
+    // (the unmask) 441-13 deleted. Nothing was added; the digest was recomputed from that ledger.
+    expect(digest(read('packages/arch/src/lint/surface-firewall-ledger.ts'))).toBe('cf5cac5ab2025ed5573f858360bc829fa6904b8cf7d53c22058ebcb8fed8c144')
     for (const text of ["import { loadJudgeCalibrationEvidence as data } from '@vostride/agent-qa-eval-local'",
       "const data = await import('@vostride/agent-qa-eval-local')"]) {
       const hits = calibrationImports({ file: 'packages/cli/src/judge-new.ts', text })

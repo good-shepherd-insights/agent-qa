@@ -17,11 +17,12 @@
 // ports, the REAL JUnit + wire reporters, the REAL masking middleware, the REAL cache-key floor
 // helpers, the REAL debug-logging middleware and the shipped dashboard routers.
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Command } from 'commander'
 
 import { createMaskingMiddleware } from '@vostride/agent-qa-safety'
 import type { ProviderRequestParams } from '@vostride/agent-qa-safety'
@@ -54,6 +55,9 @@ import {
 import { createEvidenceBlobReader } from '@vostride/agent-qa-agent-local'
 import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { createEntitiesCommand } from '../commands/entities.js'
+import * as localAgentHost from '../composition/local-agent-host.js'
+import { createKnowledgeCommand } from '../commands/knowledge.js'
 import { renderClauseResults } from '../commands/result-render.js'
 import {
   ARTIFACT_FILE,
@@ -95,6 +99,19 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import { createJunitReporter, createWireReporter } from '../reporters/index.js'
+
+// Counts host compositions so the C441-DISPLAY refusal cells can show none happened.
+const hostCompositions = vi.hoisted(() => ({ count: 0 }))
+vi.mock('../composition/local-agent-host.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof localAgentHost>()
+  return {
+    ...actual,
+    composeCliLocalAgent: (...args: Parameters<typeof actual.composeCliLocalAgent>) => {
+      hostCompositions.count += 1
+      return actual.composeCliLocalAgent(...args)
+    },
+  }
+})
 
 const MARKER = /\[secret:ROLLCALL_\w+\]/
 
@@ -1040,4 +1057,93 @@ describe('SEAM-05 unmask boundary roll-call — enrollment guard (T-363-31)', ()
     expect(FIXTURE.envelopes.length).toBeGreaterThan(0)
     expect(MASKED_SURFACES.length).toBe(SURFACE_ROLLCALL.length)
   })
+})
+
+// ---- C441-DISPLAY: the terminal commands refuse without a readable secrets file (E3) -----------
+
+// `composes` is whether the command composes a host once the secrets file is readable: the
+// control that makes the zero count after a refusal mean something.
+const REFUSING_COMMANDS: readonly (readonly [string, readonly string[], boolean])[] = [
+  ['entities', ['entities', 'get', 'MEM-001'], true],
+  ['knowledge read', ['knowledge', 'bundles'], true],
+  ['knowledge maintain', ['knowledge', 'rebuild-index'], false],
+]
+
+describe('C441-DISPLAY', () => {
+  const roots: string[] = []
+
+  afterEach(() => {
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  })
+
+  it.each(REFUSING_COMMANDS)(
+    '%s refuses at start when the secrets file cannot be read',
+    async (_name, args, composes) => {
+      const root = mkdtempSync(join(tmpdir(), 'c441-display-refusal-'))
+      roots.push(root)
+      const configPath = join(root, 'agent-qa.config.yaml')
+      writeFileSync(configPath, `${JSON.stringify({
+        workspace: {
+          testMatch: ['tests/**/*.yaml'],
+          suiteMatch: ['suites/**/*.suite.yaml'],
+          hooksFile: 'hooks.yaml',
+          envFile: '.env',
+          secretsFile: 'secrets-dir',
+        },
+        use: { mobile: { appState: 'preserve' } },
+      })}\n`)
+      // A directory: present, and unreadable as a file.
+      mkdirSync(join(root, 'secrets-dir'))
+      const secretsPath = join(root, 'secrets-dir')
+
+      const out: string[] = []
+      const err: string[] = []
+      const log = vi.spyOn(console, 'log').mockImplementation((...values: unknown[]) => {
+        out.push(values.map(String).join(' '))
+      })
+      const error = vi.spyOn(console, 'error').mockImplementation((...values: unknown[]) => {
+        err.push(values.map(String).join(' '))
+      })
+      const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+        out.push(String(chunk))
+        return true
+      })
+      const stderr = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+        err.push(String(chunk))
+        return true
+      })
+      const priorExit = process.exitCode
+      process.exitCode = undefined
+      const drive = async (): Promise<void> => {
+        const program = new Command()
+          .option('--config <path>', 'config file path')
+          .addCommand(createEntitiesCommand())
+          .addCommand(createKnowledgeCommand())
+        program.exitOverride()
+        await program.parseAsync(['node', 'agent-qa', '--config', configPath, ...args])
+      }
+      try {
+        hostCompositions.count = 0
+        await drive()
+
+        expect(process.exitCode).toBe(1)
+        expect(out.join('')).toBe('')
+        const stderrText = err.join('\n')
+        expect(stderrText).toContain(`Error: Secrets file could not be read: ${secretsPath}`)
+        expect(stderrText).toContain('Check the path and file permissions before running tests.')
+        expect(hostCompositions.count).toBe(0)
+
+        rmSync(secretsPath, { recursive: true })
+        writeFileSync(secretsPath, '')
+        await drive()
+        expect(hostCompositions.count > 0).toBe(composes)
+      } finally {
+        process.exitCode = priorExit
+        log.mockRestore()
+        error.mockRestore()
+        stdout.mockRestore()
+        stderr.mockRestore()
+      }
+    },
+  )
 })

@@ -354,7 +354,6 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'createChatState',
   'createFunctionRegistry',
   'createJobKindRegistry',
-  'createMaskingContext',
   // 392 plan 07, CHAT-01 / CHAT-06: stage 2 itself. It is on this list because the composition root
   // is the only thing that can bind it, and it opens no path this pin exists to close: the stage
   // takes an ALREADY-BUILT model and answers with a PLAN — intentions over execute-less tools — so
@@ -492,7 +491,6 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // function — published so a surface (and plan 02's scenario corpus) asserts against the
   // shipped wording rather than re-spelling it.
   'unhandledReason',
-  'unmaskForHumanOutput',
   // 403-01 (D-02): the ONE parse of a live-view token. The dashboard route and the frame proxy
   // bind THIS by reference; a private parse anywhere else is a second token authority.
   'validateLiveUrlToken',

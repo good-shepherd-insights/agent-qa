@@ -89,6 +89,7 @@ beforeEach(() => {
   mkdirSync(knowledgeRoot)
   mkdirSync(join(root, 'agent-qa-eval'))
   writeConfig()
+  writeFileSync(join(root, '.env.secrets.local'), '')
   vi.spyOn(llm, 'resolveModelAuth').mockImplementation(async () => { throw new Error('unexpected credentials') })
   vi.spyOn(globalThis, 'fetch').mockImplementation(async () => { throw new Error('unexpected network') })
   vi.spyOn(console, 'warn').mockImplementation(() => undefined)
