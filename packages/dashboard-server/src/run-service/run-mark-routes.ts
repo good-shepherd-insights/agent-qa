@@ -9,7 +9,6 @@ import {
 } from '@vostride/agent-qa-schema'
 
 import type { AgentHost } from '../chat/host.js'
-import { unmaskTreeForDisplay } from '../masking/display-tree.js'
 import { readJsonBody } from '../server/body-parser.js'
 import { refuseCrossSiteRequest } from '../server/cross-site.js'
 import { refusalFor, respondJson, type RunDetailRefusal } from './run-detail-routes.js'
@@ -50,7 +49,7 @@ export async function markRun(
   }
 }
 
-/** POST /api/runs/:id/mark. Only the local human boundary restores successful output. */
+/** POST /api/runs/:id/mark. Both doors answer the op's outcome as it is; `'human'` adds the same-site guard. */
 export function registerRunMarkRoute(
   req: IncomingMessage,
   res: ServerResponse,
@@ -70,9 +69,7 @@ export function registerRunMarkRoute(
       respondJson(res, outcome.status, outcome.body)
       return
     }
-    respondJson(res, 200, deps.boundary === 'human'
-      ? unmaskTreeForDisplay(deps.host, outcome.body, { runId: deps.runId })
-      : outcome.body)
+    respondJson(res, 200, outcome.body)
   }, () => { respondJson(res, 400, { error: 'invalid_mark_input' }) })
     .catch(() => { respondJson(res, 500, { error: 'read_failed' }) })
 }

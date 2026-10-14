@@ -229,7 +229,11 @@ function walk(dir: string): string[] {
 // 2026-09-26, 429-07 D-08: the schema-derived visibility walker left the run path when `config
 // show` moved onto the shared masking map. It stays as the test oracle the map's parity cells
 // check against; no production module imports it, and the reconciliation below asserts that.
-const OFF_RUN_PATH_FILES = ['cli/src/composition/config-visibility.ts'] as const
+// 441-15: the display unmasker lost its last production caller and is deleted in the next commit.
+const OFF_RUN_PATH_FILES = [
+  'cli/src/composition/config-visibility.ts',
+  'cli/src/composition/display-unmask.ts',
+] as const
 
 const PINNED_SET = [
   ...PINNED_DIRECTORIES.flatMap((dir) => walk(join(PACKAGES, dir))),

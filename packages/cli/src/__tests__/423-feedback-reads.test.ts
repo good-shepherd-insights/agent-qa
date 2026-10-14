@@ -1102,7 +1102,10 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
   // invisible and every cold read falls to its own no-context arm. A cold posture measured under
   // that pin is a measurement of the pin. Putting the ALS-backed resolver back is also what makes
   // this cell answer the same way run alone and run inside the file.
-  it('HTTP-FEEDBACK-HUMAN-POSTURE: both doors show cold read-scope free text with declared-secret chips, and warm plain text with secret chips', async () => {
+  // RE-AIMED 2026-10-14 (441-15, D-07): the warm half was the human door painting a chip over the
+  // recorded placeholder through the display seam. The seam is deleted, so both doors now answer
+  // the warm read alike.
+  it('HTTP-FEEDBACK-HUMAN-POSTURE: both doors show cold read-scope free text with declared-secret chips, and warm text as the read masked it', async () => {
     setActiveMaskingContextResolver(ambientMaskingContextResolver)
     const s = await httpScene()
     const [human, machine] = s.doors as [typeof s.doors[0], typeof s.doors[1]]
@@ -1143,12 +1146,10 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
     masking.register(SECRET)
     setActiveMaskingContextResolver(() => masking)
     const warmHuman = await read(human)
-    expect(warmHuman.notes).toEqual(['first run-level note', null, `step note ${redacted}`])
-    expect(warmHuman.reasoning).toEqual(['The recorded state advanced'])
-    expect(warmHuman.content).toEqual(content)
-    // The bearer door keeps the recorded placeholder instead of a display chip.
     const warmMachine = await read(machine)
     expect(warmMachine.notes).toEqual(['first run-level note', null, masking.mask(`step note ${SECRET}`)])
+    expect(warmMachine.reasoning).toEqual(['The recorded state advanced'])
+    expect(warmHuman).toEqual(warmMachine)
     expect(JSON.stringify([warmHuman, warmMachine])).not.toContain(SECRET)
     expect([...COLD_READ_SCOPE_FUNCTION_IDS]).toEqual(['runs.postprocessing', 'runs.knowledge',
       'runs.evidence', 'runs.marks.history', 'runs.mark.preview', 'runs.overview', 'runs.list'])

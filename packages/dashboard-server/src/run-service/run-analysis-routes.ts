@@ -12,12 +12,9 @@
 // credential asked. The sibling detail adapter's own note says a second spelling agrees on the day
 // it is written and is a wire-contract fork thereafter.
 //
-// ONLY THE HUMAN DOOR RESTORES. The verdict sentence QUOTES PRODUCER TEXT — the failing step's
-// recorded error, which `templateSentenceParts` lifts verbatim into `observed (step N): "…"` — so
-// it carries `<SECRET_n>` at rest exactly as `failureSummary` does. The local arm passes
-// `boundary: 'human'` and the body crosses `unmaskTreeForDisplay`; the bearer-authed remote row
-// passes nothing and stays masked by the option's `'machine'` default, because a token
-// authenticates a CLIENT and not a person's browser session (405-10, D-12's masking clause).
+// BOTH DOORS SERVE THE STORED BODY (441 D-07). The verdict sentence quotes the failing step's
+// recorded error, which was masked at write, and neither door restores anything. The local arm's
+// `boundary: 'human'` only turns on the same-site guard below.
 //
 // THE REFUSAL VOCABULARY IS IMPORTED, NEVER RESPELLED. `refusalFor` is the detail adapter's, made
 // exported for this file; `unknown_run` / `agent_host_unavailable` / `read_failed` mean here
@@ -31,7 +28,6 @@ import {
 } from '@vostride/agent-qa-schema'
 
 import type { AgentHost } from '../chat/host.js'
-import { unmaskTreeForDisplay } from '../masking/display-tree.js'
 import { refuseCrossSiteRequest } from '../server/cross-site.js'
 import { refusalFor, respondJson, type RunDetailRefusal } from './run-detail-routes.js'
 
@@ -74,12 +70,10 @@ export interface RunAnalysisReadDeps {
   /** The injected host. Its absence is the ROUTER'S 503, not this function's. */
   readonly host: AgentHost
   /**
-   * WHO IS ON THE OTHER END OF THIS SOCKET — and therefore whether masked placeholders are
-   * restored on the way out. `'machine'` by default, which is the masked posture: restoration is
-   * something an arm has to ASK for, in one token, at a place a reader can see.
-   *
-   * `'human'` IS PASSED BY EXACTLY ONE ARM: the LOCAL door's `GET /api/runs/:id/analysis` in
-   * `routes.ts`. The remote `GET /run/:runId/analysis` row passes nothing.
+   * WHO IS ON THE OTHER END OF THIS SOCKET. Both values serve the same stored body (441 D-07);
+   * `'human'` only turns on the same-site guard. It is passed by exactly one arm, the LOCAL door's
+   * `GET /api/runs/:id/analysis` in `routes.ts`; the remote `GET /run/:runId/analysis` row passes
+   * nothing.
    */
   readonly boundary?: 'human' | 'machine'
 }
@@ -91,9 +85,8 @@ export function serveRunAnalysisRead(
   deps: RunAnalysisReadDeps,
 ): void {
   // THE SAME-SITE GUARD, GATED ON `boundary` FOR THE REASON THE DETAIL ADAPTER RECORDS (405 CR-01):
-  // this arm's seam call is the line below, in this file, and the remote door dispatches the same
-  // function from a legitimately non-loopback Host. An unconditional check would refuse the door
-  // it was not written for; gated, the refusal fires exactly when restoration does.
+  // the remote door dispatches the same function from a legitimately non-loopback Host, and an
+  // unconditional check would refuse the door it was not written for.
   if (deps.boundary === 'human' && refuseCrossSiteRequest(req) !== undefined) {
     respondJson(res, 403, { error: 'cross_site_refused' })
     return
@@ -104,17 +97,7 @@ export function serveRunAnalysisRead(
         respondJson(res, outcome.status, outcome.body)
         return
       }
-      // THE SEAM, PER STRING ON THE RESULT TREE AND NEVER ON THE SERIALIZED BODY. A restored value
-      // carrying a quote would break a body unmasked after `JSON.stringify`; walked before it, the
-      // value is escaped like any other string. A refusal body is NEVER walked: it holds this
-      // door's own closed words and nothing a run ever masked.
-      respondJson(
-        res,
-        200,
-        deps.boundary === 'human'
-          ? unmaskTreeForDisplay(deps.host, outcome.body, { runId: deps.runId })
-          : outcome.body,
-      )
+      respondJson(res, 200, outcome.body)
     },
     // The read classifies every refusal it can name; anything reaching here is this module
     // failing, which is a 500 by name and never a body that looks like an answer.

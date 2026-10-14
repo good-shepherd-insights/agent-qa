@@ -46,7 +46,6 @@ function fixture() {
     registry, runsMarkFunctionId: RUNS_MARK_FUNCTION_ID,
     caller: { surface: 'dashboard', origin: 'human' },
     invokeFunction: (handle, id, input, caller) => invokeFunction(handle as FunctionRegistry, id, input, caller),
-    unmaskForDisplay: (text: string) => text.replaceAll('<SECRET_0>', NOTE),
   }
   return { host, mark }
 }
@@ -116,11 +115,10 @@ describe('markRun delegates to the shared gate and feedback port', () => {
 })
 
 describe('registered POST /api/runs/:id/mark', () => {
-  it('keeps a machine-boundary success masked and never calls the display seam', async () => {
+  it('answers a machine-boundary success as the op returned it', async () => {
     const f = fixture()
-    const unmaskForDisplay = vi.fn((text: string) => text)
     const server = createServer((req, res) => registerRunMarkRoute(req, res, {
-      host: { ...f.host, unmaskForDisplay }, runId: RUN_ID,
+      host: f.host, runId: RUN_ID,
     }))
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
     closers.push(() => new Promise<void>(resolve => server.close(() => resolve())))
@@ -129,15 +127,14 @@ describe('registered POST /api/runs/:id/mark', () => {
     })
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual(outcome)
-    expect(unmaskForDisplay).not.toHaveBeenCalled()
   })
 
-  it('reaches the real router and restores successful receipt text before JSON serialization', async () => {
+  it('reaches the real router and answers the receipt text as stored (441 D-07)', async () => {
     const f = fixture()
     const response = await fetch(await socket(f.host), { method: 'POST', body: JSON.stringify({ kind: 'false-fail' }) })
     expect(response.status).toBe(200)
     expect(response.headers.get('access-control-allow-origin')).toBeNull()
-    expect(await response.json()).toEqual({ ...outcome, receipt: { ...outcome.receipt, note: NOTE } })
+    expect(await response.json()).toEqual(outcome)
     expect(f.mark).toHaveBeenCalledOnce()
   })
 
@@ -167,7 +164,7 @@ describe('registered POST /api/runs/:id/mark', () => {
     const url = await socket(f.host)
     const landed = await fetch(url, { method: 'POST', body: JSON.stringify({ kind: 'false-fail', note: NOTE }) })
     expect(landed.status).toBe(200)
-    expect(await landed.json()).toEqual({ ...outcome, receipt: { ...outcome.receipt, note: NOTE } })
+    expect(await landed.json()).toEqual(outcome)
     expect(f.mark).toHaveBeenCalledOnce()
     const malformed = await fetch(url, { method: 'POST', body: NOTE })
     expect(malformed.status).toBe(400)

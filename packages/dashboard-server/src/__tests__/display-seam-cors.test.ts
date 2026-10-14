@@ -1,22 +1,12 @@
 /**
- * THE DISPLAY SEAM CARRIES NO CROSS-ORIGIN READ GRANT AND NO REBINDABLE HOST (405 CR-01).
+ * THE RUN-TEXT READS CARRY NO CROSS-ORIGIN READ GRANT AND NO REBINDABLE HOST (405 CR-01).
  *
- * WHAT CHANGED UNDER THE HEADER. 405-10 put `unmaskTreeForDisplay` on five read arms of the local
- * dashboard door. Before that seam those bodies carried `<SECRET_1>` placeholders; afterwards they
- * carry the RESTORED CLEARTEXT of a declared secret. Four of the five answered through `json()`,
- * whose wildcard `Access-Control-Allow-Origin` did not change — the sensitivity of what sat behind
- * it did. That is the whole defect: a page on any origin the operator happens to have open could
- * `fetch` the run list, read the ids out of it, then `fetch` the artifact and read the secrets out
- * of the config snapshot. The loopback bind is no defence, because the attacker is the operator's
- * own browser reaching another ORIGIN rather than a remote host reaching this interface.
- *
- * AND THE FIFTH ARM IS WHY THIS CELL'S SECOND PREDICATE WAS REWRITTEN. `GET /api/runs/:id/detail`
- * carries the richest restored body on the door and was never CORS-readable — its own private JSON
- * writer grants nothing. But its crossing lives in a DIFFERENT MODULE from the other four, and the
- * first version of the invariant below read one hard-coded router file. The fifth call site was
- * therefore missing from BOTH sides of its comparison: it compared 4 to 4, reported total coverage
- * of what was 4 of 5, and stayed green. An invariant that names the file it audits can only ever
- * be as wide as the last person's memory, so this one DISCOVERS its universe instead.
+ * WHAT THESE ARMS ARE. 405-10 put a display-restore walk on the local door's run reads, and CR-01
+ * took the wildcard `Access-Control-Allow-Origin` off them, because a page on any origin the
+ * operator happens to have open could otherwise `fetch` the run list, read the ids out of it, then
+ * `fetch` the artifact and read the run's text. 441-15 (D-07) removed the restore: every arm now
+ * serves the text as it was stored, masked at write. The no-grant posture and the Host check stay,
+ * because what a run recorded is still not something another origin should read.
  *
  * TWO PREDICATES, AND NEITHER CAN SATISFY THE OTHER.
  *
@@ -27,8 +17,8 @@
  *   the header capture having quietly broken.
  *
  *   PREDICATE B — THE SOURCE COUPLING. Reads no wire at all, and reads no filename either: it
- *   WALKS the package for every module that calls the seam and requires each one to carry a guard.
- *   A sixth arm in a seventh module lands inside its universe by construction.
+ *   WALKS the package for every module that invokes the cross-site guard and requires the set to
+ *   equal a reviewed register, so a module that drops its guard reds here.
  */
 
 import { createServer, request as httpRequest, type Server } from 'node:http'
@@ -49,33 +39,23 @@ const RUN_SERVICE_DIR = join(PACKAGE_SRC, 'run-service')
 const RUN_ID = 'run-405-cr01'
 
 /**
- * THE ARMS THE SEAM IS ON — the five 405-10 put it on, plus the sixth 406-01 added. Named here as
- * PATHS rather than as a source list, because what a browser can read is a property of the wire
- * and not of a symbol table.
- *
- * AN ARM ENROLLS IN BOTH HALVES OR IN NEITHER. `REVIEWED_SEAM_MODULES` below is a regex over
- * source text; this list is what drives a socket. 406 added `run-analysis-routes.ts` to that
- * register and left `/analysis` out of this one, so the newest door restoring cleartext for a
- * human was asserted only by a grep for a guard token — and this file's own header records that
- * the source half once "mistook not being guarded for being guarded". The wire half is the answer
- * to that, so a new arm is not covered until it appears HERE.
+ * THE GUARDED RUN-TEXT ARMS. Named here as PATHS rather than as a source list, because what a
+ * browser can read is a property of the wire and not of a symbol table. An arm enrolls in both
+ * halves or in neither: a new arm is not covered until it appears HERE.
  */
-const SEAM_READ_PATHS: readonly string[] = [
+const RUN_TEXT_READ_PATHS: readonly string[] = [
   '/api/runs',
   `/api/runs/${RUN_ID}`,
   `/api/runs/${RUN_ID}/artifact`,
   `/api/runs/${RUN_ID}/execution-logs`,
   `/api/runs/${RUN_ID}/detail`,
-  // 406-01 (D-04): the failure view's read. Restores on the local human arm exactly as `/detail`
-  // does, because the verdict sentence quotes the failing step's recorded error.
+  // 406-01 (D-04): the failure view's read; the verdict sentence quotes the failing step's error.
   `/api/runs/${RUN_ID}/analysis`,
-  // 407-01 (D-05): the Knowledge panel's read. Restores on the local human arm for the same
-  // reason and over MORE producer text than either neighbour — every step's text, every served
-  // brief line's summary and every caution's sentence, all masked at rest.
+  // 407-01 (D-05): the Knowledge panel's read, over every step's text and served brief line.
   `/api/runs/${RUN_ID}/knowledge`,
 ]
 
-/** A legacy read that is NOT behind the seam. Its wildcard is unchanged and this cell says so. */
+/** A legacy read that is NOT guarded. Its wildcard is unchanged and this cell says so. */
 const LEGACY_READ_PATH = '/api/stats'
 
 function seedDatabase(): DashboardDatabase {
@@ -103,15 +83,10 @@ function seedDatabase(): DashboardDatabase {
 }
 
 /**
- * A host that BINDS the run-detail op and answers the seam.
- *
- * It is supplied deliberately rather than left absent: with no host every arm takes its
- * `agentHost === undefined` branch and never crosses the seam at all, so the header assertions
- * below would be statements about a code path the shipped door does not take. `/api/runs/:id/detail`
- * additionally 503s without one, and a 503 carries no grant either — which is exactly the shape of
- * vacuity this file's non-vacuity assertions exist to refuse.
+ * A host that BINDS the run-detail op. Without one `/api/runs/:id/detail` 503s, and a 503 carries
+ * no grant either — the shape of vacuity this file's non-vacuity assertions exist to refuse.
  */
-function seamHost(): AgentHost {
+function runTextHost(): AgentHost {
   return {
     registry: {},
     caller: { kind: 'test' },
@@ -130,7 +105,6 @@ function seamHost(): AgentHost {
       subActions: [],
       tokens: { measuredSteps: 0, unmeasuredSteps: 0 },
     }),
-    unmaskForDisplay: (text: string): string => text,
   } as unknown as AgentHost
 }
 
@@ -146,7 +120,7 @@ let port = 0
 beforeAll(async () => {
   const db = seedDatabase()
   const router = createRouter(
-    { db, agentHost: seamHost() } as unknown as Parameters<typeof createRouter>[0],
+    { db, agentHost: runTextHost() } as unknown as Parameters<typeof createRouter>[0],
   )
   server = createServer(router)
   await new Promise<void>((ready) => server.listen(0, '127.0.0.1', ready))
@@ -197,7 +171,7 @@ describe('PREDICATE A — the wire', () => {
     expect(answer.allowOrigin).toBe('*')
   })
 
-  it.each(SEAM_READ_PATHS)('%s answers a same-origin reader and grants NO cross-origin read', async (path) => {
+  it.each(RUN_TEXT_READ_PATHS)('%s answers a same-origin reader and grants NO cross-origin read', async (path) => {
     const answer = await probe(path, {
       origin: `http://127.0.0.1:${String(port)}`,
       'sec-fetch-site': 'same-origin',
@@ -207,11 +181,11 @@ describe('PREDICATE A — the wire', () => {
     expect(answer.body).toContain(RUN_ID)
     expect(
       answer.allowOrigin,
-      `${path} handed a cross-origin reader a grant over a body that can carry restored cleartext`,
+      `${path} handed a cross-origin reader a grant over a run's stored text`,
     ).toBeUndefined()
   })
 
-  it.each(SEAM_READ_PATHS)('%s admits the local non-browser drive that sends no Origin', async (path) => {
+  it.each(RUN_TEXT_READ_PATHS)('%s admits the local non-browser drive that sends no Origin', async (path) => {
     // The CLI, `curl` and the conformance harness send no Origin. Refusing them would brick the
     // local drive these arms exist for, so this is a load-bearing admission and not an oversight.
     const answer = await probe(path)
@@ -220,18 +194,18 @@ describe('PREDICATE A — the wire', () => {
     expect(answer.allowOrigin).toBeUndefined()
   })
 
-  it.each(SEAM_READ_PATHS)('%s refuses a page on another origin', async (path) => {
+  it.each(RUN_TEXT_READ_PATHS)('%s refuses a page on another origin', async (path) => {
     const answer = await probe(path, { origin: 'http://evil.test', 'sec-fetch-site': 'cross-site' })
     expect(answer.status).toBe(403)
     expect(answer.allowOrigin).toBeUndefined()
     expect(answer.body).not.toContain(RUN_ID)
   })
 
-  it.each(SEAM_READ_PATHS)('%s refuses a rebound name that resolves to this loopback port', async (path) => {
+  it.each(RUN_TEXT_READ_PATHS)('%s refuses a rebound name that resolves to this loopback port', async (path) => {
     // DNS rebinding is the attack the missing header alone does NOT stop: the attacker's own name
     // resolves here, so the browser considers the read same-origin and asks for no grant at all.
     // The Host check is what closes it — and on `/detail`, whose answer never carried a grant to
-    // begin with, it is the ONLY rung standing between a rebound page and the run's cleartext.
+    // begin with, it is the ONLY rung standing between a rebound page and the run's text.
     const answer = await probe(path, { host: 'evil.test' })
     expect(answer.status).toBe(403)
     expect(answer.body).not.toContain(RUN_ID)
@@ -256,84 +230,50 @@ function walkSourceFiles(dir: string, found: string[] = []): string[] {
   return found
 }
 
-const SEAM_CALL = 'unmaskTreeForDisplay('
-/** The seam's own definition and its recursive self-calls are the IMPLEMENTATION, not a door. */
-const SEAM_DEFINITION = `export function ${SEAM_CALL}`
 /** A guard INVOCATION — the `(req` tail is what keeps an import line from counting as one. */
 const GUARD_CALL = /\b(?:refuseCrossSiteDisplayRead|refuseCrossSiteRequest)\(\s*(?:req|request)\b/gu
+/** The guard's own definition is the IMPLEMENTATION, not a door. */
+const GUARD_DEFINITION = 'export function refuseCrossSiteRequest('
 
-interface SeamModule {
-  readonly file: string
-  readonly seamCalls: number
-  readonly guardCalls: number
-}
-
-/** Every module that CROSSES the seam, discovered by walking — never by naming. */
-function discoverSeamModules(): SeamModule[] {
-  const modules: SeamModule[] = []
+/** Every module that INVOKES the guard, discovered by walking — never by naming. */
+function discoverGuardedModules(): string[] {
+  const modules: string[] = []
   for (const full of walkSourceFiles(PACKAGE_SRC)) {
     const source = readFileSync(full, 'utf8')
-    if (source.includes(SEAM_DEFINITION)) continue
-    const seamCalls = source.split(SEAM_CALL).length - 1
-    if (seamCalls === 0) continue
-    modules.push({
-      file: relative(PACKAGE_SRC, full).split(sep).join('/'),
-      seamCalls,
-      guardCalls: source.match(GUARD_CALL)?.length ?? 0,
-    })
+    if (source.includes(GUARD_DEFINITION)) continue
+    if ((source.match(GUARD_CALL)?.length ?? 0) === 0) continue
+    modules.push(relative(PACKAGE_SRC, full).split(sep).join('/'))
   }
-  return modules.sort((a, b) => a.file.localeCompare(b.file))
+  return modules.sort((a, b) => a.localeCompare(b))
 }
 
 /**
- * THE REGISTER IS FROZEN, NOT GENERATED, on `suite-parent-debris-census.test.ts`'s law.
- *
- * A register recomputed from its own scan output can never fail. This one is hand-authored: it
- * names the modules whose seam crossings a PERSON has checked are actually covered by the guard
- * beside them — which is a stronger claim than "this file contains a guard token somewhere", and
- * not one a walk can make. A new module reds here even when it looks guarded, because looking
- * guarded is exactly what the first version of this invariant mistook for being guarded.
+ * THE REGISTER IS FROZEN, NOT GENERATED, on `suite-parent-debris-census.test.ts`'s law: a register
+ * recomputed from its own scan output can never fail. It names every module a PERSON has checked
+ * invokes the guard where it should; the run-text arms are the four run-service adapters and
+ * `server/routes.ts`, and the rest guard their own surfaces.
  */
-const REVIEWED_SEAM_MODULES: readonly string[] = [
-  // 406-01 (D-04, T-406-04): the failure view's adapter. Its ONE crossing sits behind
-  // `refuseCrossSiteRequest(req)` in the same function, gated on `boundary === 'human'` exactly as
-  // the detail adapter's is — the local arm opts in, the authed remote row passes nothing and
-  // never reaches the crossing at all. Reviewed against the source, not against a token count.
+const REVIEWED_GUARDED_MODULES: readonly string[] = [
   'run-service/run-analysis-routes.ts',
   'run-service/run-detail-routes.ts',
-  // 407-01 (D-05, T-407-03/T-407-04): the Knowledge panel's adapter. Its ONE crossing sits behind
-  // `refuseCrossSiteRequest(req)` in the same function, gated on `boundary === 'human'` exactly as
-  // its two neighbours are — the local arm opts in, and any authed remote row passes nothing and
-  // never reaches the crossing at all. It answers through the same no-grant `respondJson` it
-  // imports from the detail adapter rather than a second writer. Reviewed against the source, not
-  // against a token count.
   'run-service/run-knowledge-routes.ts',
-  // 419 D-13: cross-site refusal precedes parsing and dispatch; only a successful human
-  // response reaches restoration. Source reviewed with the route's socket refusal cells.
   'run-service/run-mark-routes.ts',
+  'run-service/run-service-routes.ts',
+  'server/config-routes.ts',
+  'server/llm-connect-route.ts',
   'server/routes.ts',
+  'server/server.ts',
 ]
 
 describe('PREDICATE B — the source coupling', () => {
-  it('discovers the seam modules by walking, and finds the ones review has cleared', () => {
-    const modules = discoverSeamModules()
-    // Non-vacuity FIRST: a walk that found nothing would satisfy every per-module rule below.
-    expect(modules.length, 'the walk found no seam crossing at all — this predicate would be vacuous').toBeGreaterThan(0)
+  it('discovers the guarded modules by walking, and finds the ones review has cleared', () => {
+    const modules = discoverGuardedModules()
+    expect(modules.length, 'the walk found no guard at all — this predicate would be vacuous').toBeGreaterThan(0)
     expect(
-      modules.map((module) => module.file),
-      'a module crossed the display seam that this register has never been reviewed against — '
-      + 'check that its crossing is actually behind a guard, then add it here',
-    ).toEqual(REVIEWED_SEAM_MODULES)
-  })
-
-  it('every module that crosses the seam carries a guard for every crossing', () => {
-    for (const module of discoverSeamModules()) {
-      expect(
-        module.guardCalls,
-        `${module.file} crosses the display seam ${String(module.seamCalls)} time(s) but invokes `
-        + `the cross-site guard ${String(module.guardCalls)} time(s)`,
-      ).toBeGreaterThanOrEqual(module.seamCalls)
-    }
+      modules,
+      'the set of modules that invoke the cross-site guard changed — review the run-text arms, '
+      + 'then update this register',
+    ).toEqual(REVIEWED_GUARDED_MODULES)
   })
 
   it('the run-detail door writes no cross-origin grant, by decision rather than by inheritance', () => {

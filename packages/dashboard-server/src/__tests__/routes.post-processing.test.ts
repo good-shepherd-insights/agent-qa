@@ -110,7 +110,6 @@ function plantHost(options: PlantOptions): PlantedHost {
       }
       throw new Error(`the fixture was asked for an id it does not plant: ${functionId}`)
     },
-    unmaskForDisplay: (text) => text,
   }
   return { host, calls }
 }

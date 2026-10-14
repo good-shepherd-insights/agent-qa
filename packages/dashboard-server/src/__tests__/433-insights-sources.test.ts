@@ -72,7 +72,6 @@ type KnowledgeAnswer = 'throw' | 'incomplete' | readonly string[]
 
 function plantHost(answers: Record<string, KnowledgeAnswer>) {
   const calls: { functionId: string; input: unknown }[] = []
-  let unmasked = 0
   const host: AgentHost = {
     registry: REGISTRY,
     caller: CALLER,
@@ -114,12 +113,8 @@ function plantHost(answers: Record<string, KnowledgeAnswer>) {
         },
       })
     },
-    unmaskForDisplay: (text) => {
-      unmasked += 1
-      return text
-    },
   }
-  return { host, calls, unmaskedCount: () => unmasked }
+  return { host, calls }
 }
 
 interface MockResponse {
@@ -274,7 +269,6 @@ describe('C433-INSIGHTS-SOURCES: knowledge changes', () => {
     expect(planted.calls.map((call) => (call.input as { runId: string }).runId).sort()).toEqual(['r_curated', 'r_quiet'])
     const keys = collectKeys(body)
     for (const forbidden of ['summary', 'body', 'recordId', 'changes']) expect(keys.has(forbidden)).toBe(false)
-    expect(planted.unmaskedCount()).toBe(0)
     expect(res.headers['access-control-allow-origin']).toBeUndefined()
   })
 

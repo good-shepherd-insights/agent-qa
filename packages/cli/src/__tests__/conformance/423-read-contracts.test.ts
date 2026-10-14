@@ -6,8 +6,8 @@
 // a real mark ledger and knowledge store for the feedback reads. The same answer is then read through
 // the `fn` dispatch (the registry under the CLI's own caller, which is what `agent-qa fn` invokes),
 // the MCP protocol door built by the shipped factory over the same registry, the authed remote HTTP
-// door and the local human HTTP door. Machine doors must agree byte for byte; the human door may
-// differ only by restoring placeholders.
+// door and the local human HTTP door. Every door must agree byte for byte: since 441-15 (D-07) the
+// human door restores nothing.
 //
 // THE MCP HALF IS THE MAPPING'S OWN WORD. A projected read answers `tools/call` with the registry
 // result; an unprojected read has no door at all and its recorded `UNPROJECTED_OPS` reason classifies
@@ -34,8 +34,6 @@ import {
 import {
   buildRunMaskingContext,
   createEvidenceBlobReader,
-  resolveMaskingHostKey,
-  writeMaskingDigests,
   type LocalAgentHost,
 } from '@vostride/agent-qa-agent-local'
 import {
@@ -68,7 +66,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { composeDashboardAgentHost, composeDashboardDoor } from '../../commands/dashboard.js'
 import { MCP_FUNCTION_CALLER } from '../../commands/mcp.js'
-import { createDisplayUnmasker } from '../../composition/display-unmask.js'
 import { loadCapabilityCatalog } from '../../capability-catalog/loader.js'
 import { CLI_FUNCTION_CALLER } from '../../composition/local-agent-host.js'
 import { createFeedbackPortForHost } from '../../gates/feedback-host.js'
@@ -248,7 +245,6 @@ async function openDurableScene() {
   // words stay `pending`; the fact rides beside them rather than replacing either of them.
   const excludedRunId = db.insertRun({ name: 'Excluded run fixture', status: 'passed', duration: 1,
     startedAt: new Date(0).toISOString(), endedAt: new Date(1).toISOString() })
-  writeMaskingDigests({ root, runId, key: resolveMaskingHostKey(root), entries: mask.snapshotRegistered() })
   const blobs = new FsEvidenceArtifactStore({ root, runId })
   const consoleRef = blobs.persistEvidenceDocument({ schemaVersion: 1, kind: 'console', records: [
     { level: 'error', text: allowedPlaceholder, timestamp: 1 }, { level: 'log', text: authPlaceholder, timestamp: 2 }] })
@@ -316,8 +312,7 @@ async function openDurableScene() {
   } as unknown as FunctionDeps
   // 2026-10-01 (432-31): the retired, unread `resolveExecutionContext` registry option is dropped.
   const registry = createFunctionRegistry({ deps, auditSink: { appendGuardrailAudit() {} } })
-  const unmask = createDisplayUnmasker({ agentQaRoot: root, secretStores: () => [store], env: () => ({}), authStatePayloads: () => [] })
-  const agentHost = composeDashboardAgentHost({ registry } as LocalAgentHost, unmask)
+  const agentHost = composeDashboardAgentHost({ registry } as LocalAgentHost)
   const doors = await openDoors({ registry, agentHost, db, maskText: text => mask.mask(text) })
   return { root, db, runId, excludedRunId, authPlaceholder, allowedPlaceholder, doors, snapshot,
     async close() {
@@ -536,15 +531,6 @@ function mcpArgumentsFor(opId: string, input: Record<string, unknown>): Record<s
   return discriminant === undefined ? input : { [discriminant]: opId, ...input }
 }
 
-/** What the human door shows for a machine answer: every placeholder restored. */
-function humanViewOf(machine: unknown, scene: DurableScene | FeedbackScene, restores: boolean): unknown {
-  if (!restores || !('allowedPlaceholder' in scene)) return machine
-  const escaped = (text: string) => JSON.stringify(text).slice(1, -1)
-  return JSON.parse(JSON.stringify(machine)
-    .replaceAll(escaped(scene.allowedPlaceholder), escaped(ALLOWED))
-    .replaceAll(escaped(scene.authPlaceholder), escaped(AUTH_STATE)))
-}
-
 describe('423-38 all-door read contracts (D-04/D-18)', () => {
   let durableScene: DurableScene
   let feedbackScene: FeedbackScene
@@ -601,7 +587,7 @@ describe('423-38 all-door read contracts (D-04/D-18)', () => {
         expect(await doors.mcp(plausible, input)).toMatchObject({ door: 'absent' })
       }
 
-      // HTTP: the authed remote door answers the same bytes; the local human door restores.
+      // HTTP: the authed remote door and the local human door answer the same bytes.
       const path = scenario.http.path(input)
       const body = scenario.http.method === 'POST' ? input : undefined
       if (scenario.http.machine) {
@@ -613,14 +599,13 @@ describe('423-38 all-door read contracts (D-04/D-18)', () => {
       }
       const human = await doors.human(scenario.http.method, path, body)
       expect(human.status, human.raw).toBe(200)
-      const shown = humanViewOf(viaFn, scene, scenario.opId !== 'runs.postprocessing')
-      expect(human.body).toEqual(scenario.http.envelope === undefined ? shown : scenario.http.envelope(shown))
+      expect(human.body).toEqual(scenario.http.envelope === undefined ? viaFn : scenario.http.envelope(viaFn))
 
       if (before !== undefined && 'stores' in scene) expect(scene.stores.map(tree)).toEqual(before)
     }, 120_000)
   }
 
-  it('MASKED-MACHINE: machine doors keep placeholders, only the local human door restores, and no read tool gains a writer grant', async () => {
+  it('MASKED-MACHINE: every door keeps placeholders, the local human door restores nothing, and no read tool gains a writer grant', async () => {
     const doors = durableScene.doors
     const input = { runId: durableScene.runId, testIndex: 0, stepIndex: 0, kind: 'console' }
     const viaFn = JSON.stringify(await doors.fn('runs.evidence', input))
@@ -636,11 +621,12 @@ describe('423-38 all-door read contracts (D-04/D-18)', () => {
     const humanEvidence = await doors.human('GET', evidencePath(input))
     const humanKnowledge = await doors.human('GET', `/${durableScene.runId}/knowledge`)
     for (const raw of [humanDetail.raw, humanEvidence.raw, humanKnowledge.raw]) {
-      expect(raw).toContain(ALLOWED)
-      expect(raw).not.toContain(durableScene.authPlaceholder)
-      expect(raw).not.toContain(durableScene.allowedPlaceholder)
+      expect(raw).toContain(durableScene.allowedPlaceholder)
+      expect(raw).not.toContain(ALLOWED)
+      expect(raw).not.toContain(AUTH_TOKEN)
     }
-    expect(humanEvidence.body).toMatchObject({ document: { records: [{ text: ALLOWED }, { text: AUTH_STATE }] } })
+    expect(humanEvidence.body).toMatchObject({ document: { records: [
+      { text: durableScene.allowedPlaceholder }, { text: durableScene.authPlaceholder }] } })
     // The durable bytes stay masked whatever a door displayed.
     expect(JSON.stringify(durableScene.db.readRunDetailRows(durableScene.runId))).not.toContain(AUTH_TOKEN)
 

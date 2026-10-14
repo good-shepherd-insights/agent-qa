@@ -219,7 +219,6 @@ function hostOver(registry: FunctionRegistry): AgentHost {
       caller: FunctionCaller,
     ): Promise<unknown> =>
       invokeFunction(handle as unknown as FunctionRegistry, functionId, input, caller),
-    unmaskForDisplay: (text: string) => text,
   } as unknown as AgentHost
 }
 

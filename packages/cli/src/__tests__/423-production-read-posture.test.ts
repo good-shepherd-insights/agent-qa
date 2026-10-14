@@ -17,7 +17,6 @@ import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
 import { maskedMarker, type EvidenceDocument } from '@vostride/agent-qa-schema'
 
 import { composeDashboardAgentHost } from '../commands/dashboard.js'
-import { createDisplayUnmasker } from '../composition/display-unmask.js'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../composition/local-agent-host.js'
 
 const SECRET = 'synthetic-production-secret-423'
@@ -118,14 +117,9 @@ async function listen(server: ReturnType<typeof createServer>): Promise<string> 
 }
 
 // The local human door and the bearer machine door over the SAME composed host, as dashboard.ts
-// wires them. The display unmasker holds no store, so nothing a read masks can be restored here.
+// wires them. Neither restores anything a read masked (441 D-07).
 async function startDoors(f: ReturnType<typeof productionFixture>) {
-  const agentHost = composeDashboardAgentHost(
-    f.host,
-    createDisplayUnmasker({
-      agentQaRoot: f.agentQaRoot, secretStores: () => [], env: () => ({}), authStatePayloads: () => [],
-    }),
-  )
+  const agentHost = composeDashboardAgentHost(f.host)
   const started = await startServer({ db: f.db, port: 0, agentHost })
   cleanups.push(() => started.close())
   const address = started.server.address()

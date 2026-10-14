@@ -49,7 +49,6 @@ function seamHost(): AgentHost {
       subActions: [],
       tokens: { measuredSteps: 0, unmeasuredSteps: 0 },
     }),
-    unmaskForDisplay: (text: string): string => text,
   } as unknown as AgentHost
 }
 

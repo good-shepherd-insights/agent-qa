@@ -724,16 +724,31 @@ async function settleEscapes(): Promise<void> {
   await new Promise<void>((done) => setTimeout(done, 100))
 }
 
-/** Replace the host's display unmask with one that throws on its first call and only then. */
-function throwingUnmaskOnce(message: string): (host: AgentHost) => AgentHost {
+/** Replace the host's dispatch with one that throws SYNCHRONOUSLY on its first call and only then. */
+function throwingInvokeOnce(message: string): (host: AgentHost) => AgentHost {
   return (host) => {
     let calls = 0
     return {
       ...host,
-      unmaskForDisplay: (text: string, scope?: { runId: string }): string => {
+      invokeFunction: (registry, functionId, input, caller) => {
         calls += 1
         if (calls === 1) throw new Error(message)
-        return host.unmaskForDisplay(text, scope)
+        return host.invokeFunction(registry, functionId, input, caller)
+      },
+    }
+  }
+}
+
+/** Replace the host's dispatch with one whose first answer cannot be serialized, and only then. */
+function unserializableAnswerOnce(message: string): (host: AgentHost) => AgentHost {
+  return (host) => {
+    let calls = 0
+    return {
+      ...host,
+      invokeFunction: (registry, functionId, input, caller) => {
+        calls += 1
+        if (calls === 1) return Promise.resolve({ toJSON: (): never => { throw new Error(message) } })
+        return host.invokeFunction(registry, functionId, input, caller)
       },
     }
   }
@@ -762,16 +777,16 @@ describe('the fourth door outlives every malformed request a socket can carry (g
   })
 
   // RE-SPELLED 2026-10-01 (432-14): the synchronous arm was the run-confirm router's media-type
-  // refusal, deleted with it. The shipped server's synchronous run read now carries the claim: its
-  // display unmask runs inside the router's own call stack, so only the server's one `try` can
-  // answer a throw there.
+  // refusal, deleted with it. RE-AIMED 2026-10-14 (441-15, D-07): the display unmask that carried
+  // the claim next is deleted, so the evidence read's dispatch carries it — the arm calls the host
+  // inside the router's own call stack, so only the server's one `try` can answer a throw there.
   it('7d — a throwing SYNCHRONOUS arm is caught by the dispatch boundary', async () => {
-    const door = await openDoor({ wrapHost: throwingUnmaskOnce('432-14 unmask fault') })
+    const door = await openDoor({ wrapHost: throwingInvokeOnce('432-14 dispatch fault') })
     const watch = watchForEscapes()
     try {
       const answered = await rawRequest(door.port, {
         method: 'GET',
-        path: `/api/runs/${READ_RUN}`,
+        path: `/api/runs/${READ_RUN}/evidence?kind=console&testIndex=0&stepIndex=0`,
         headers: { origin: sameOrigin(door) },
       })
       expect(answered.status, `the throwing read never answered ${answered.note ?? ''}`).toBe(500)
@@ -786,11 +801,12 @@ describe('the fourth door outlives every malformed request a socket can carry (g
     }
   })
 
-  // RE-SPELLED 2026-10-01 (432-14): was the run-confirm answer handler's rejection. The mark door's
-  // handler writes its success through the display unmask AFTER its body read, so the throw is a
-  // rejection of that handler's promise, and only the arm's own `.catch` can answer it.
+  // RE-SPELLED 2026-10-01 (432-14): was the run-confirm answer handler's rejection. RE-AIMED
+  // 2026-10-14 (441-15, D-07): the display unmask is deleted, so the fault is an answer the mark
+  // door's responder cannot serialize. It throws AFTER the body read, so it is a rejection of that
+  // handler's promise, and only the arm's own `.catch` can answer it.
   it('7b-ii — a throwing responder is caught by the handler\'s own backstop', async () => {
-    const door = await openDoor({ wrapHost: throwingUnmaskOnce('400-14 unmask fault') })
+    const door = await openDoor({ wrapHost: unserializableAnswerOnce('400-14 responder fault') })
     const watch = watchForEscapes()
     try {
       const answered = await driveMark(door.port, { 'content-type': 'application/json' })

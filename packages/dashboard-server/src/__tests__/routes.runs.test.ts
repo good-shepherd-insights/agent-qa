@@ -1310,150 +1310,69 @@ describe('a persisted row\'s execution timeout is validated where it is consumed
   })
 })
 
-// ---- 405-10 (D-09 · RESEARCH Pitfall 7): the LOCAL door's four other human reads ---------------
+// ---- 441-15 (D-07): the LOCAL door's four other human reads serve stored text unchanged ----------
 //
-// `GET /api/runs/:id/detail` is not the only read a person makes of a run. The run LIST carries
-// each row's failure summary, `GET /api/runs/:id` carries the row itself, `/execution-logs` carries
-// hook stdout and step errors, and `/artifact` carries the config snapshot — every one of them
-// written masked and read by a human. D-09 says the seam applies at each, exactly once, and these
-// cells hold that. They also hold the thing it is easy to get wrong:
-//
-//   THE SCOPE IS THE ROW'S OWN RUN ID. Digests are per run, so a list scoped to one run would try
-//   this row's placeholders against that row's digests — a wrong restoration, or a chip where a
-//   value belongs. The recording seam below asserts the id it was called with, per row.
+// The run list, `GET /api/runs/:id`, `/execution-logs` and `/artifact` answer what was written,
+// masked at write. A declared value's named marker and an old run's numbered placeholder (D-20)
+// both reach the browser as the text they are, with or without an agent host bound.
 
-const SEAM_PLACEHOLDER = '<SECRET_0>'
-const SEAM_RESTORED = 'sk-live-restored-000'
+const STORED_MARKER = '[secret:PW_441]'
+const OLD_PLACEHOLDER = '<SECRET_0>'
+const STORED_TEXT = `failed near ${STORED_MARKER} and ${OLD_PLACEHOLDER}`
 
-/** A minimal `AgentHost` whose only real member is a recording display seam. */
-function seamHost(restoreTo: string = SEAM_RESTORED): {
-  agentHost: unknown
-  calls: Array<{ text: string; runId: string | undefined }>
-} {
-  const calls: Array<{ text: string; runId: string | undefined }> = []
+function plainHost(): unknown {
   return {
-    calls,
-    agentHost: {
-      registry: {},
-      // 2026-10-01 (432-33): no scope set on the caller. Nothing reads one (432-20, D-12).
-      caller: { origin: 'human', surface: 'dashboard' },
-      runsPostProcessingFunctionId: 'runs.postprocessing',
-      runsEventsFunctionId: 'runs.events',
-      runsDetailFunctionId: 'runs.detail',
-      runsArtifactFunctionId: 'runs.artifact',
-      analysisGetFunctionId: 'analysis.get',
-      // 407-01 (D-05): the sixth dispatched id, widened here so every AgentHost literal in the
-      // workspace still satisfies the interface.
-      runsKnowledgeFunctionId: 'runs.knowledge',
-      invokeFunction: () => Promise.resolve({}),
-      unmaskForDisplay: (text: string, scope?: { runId: string }): string => {
-        calls.push({ text, runId: scope?.runId })
-        return text.split(SEAM_PLACEHOLDER).join(restoreTo)
-      },
-    },
+    registry: {},
+    caller: { origin: 'human', surface: 'dashboard' },
+    runsPostProcessingFunctionId: 'runs.postprocessing',
+    runsEventsFunctionId: 'runs.events',
+    runsDetailFunctionId: 'runs.detail',
+    runsArtifactFunctionId: 'runs.artifact',
+    analysisGetFunctionId: 'analysis.get',
+    runsKnowledgeFunctionId: 'runs.knowledge',
+    invokeFunction: () => Promise.resolve({}),
   }
 }
 
-describe('the local door restores masked placeholders on every human run read (405-10, D-09)', () => {
+const HUMAN_RUN_READS = [
+  '/api/runs',
+  '/api/runs/run-alpha',
+  '/api/runs/run-alpha/execution-logs',
+  '/api/runs/run-alpha/artifact',
+] as const
+
+describe('the local door serves stored run text unchanged on every human run read (441-15, D-07)', () => {
   let db: ReturnType<typeof createMockDatabase>
 
   beforeEach(() => {
     db = createMockDatabase()
-  })
-
-  it('restores each run-list row under that row\'s own id', async () => {
-    db.insertRun({ id: 'run-alpha', name: 'Alpha', failureSummary: `failed near ${SEAM_PLACEHOLDER}` })
-    db.insertRun({ id: 'run-beta', name: 'Beta', failureSummary: 'no secret here' })
-    const { agentHost, calls } = seamHost()
-
-    const response = await invokeRoute(
-      createRouter({ db: db as never, agentHost: agentHost as never }),
-      '/api/runs',
-    )
-
-    expect(response.status).toBe(200)
-    expect(response.body).toContain(SEAM_RESTORED)
-    expect(response.body).not.toContain(SEAM_PLACEHOLDER)
-    // Per-row scoping: every string of the alpha row carried alpha's id, never beta's.
-    const alphaCalls = calls.filter((call) => call.text.includes('failed near'))
-    expect(alphaCalls).toHaveLength(1)
-    expect(alphaCalls[0].runId).toBe('run-alpha')
-    expect(calls.filter((call) => call.text === 'Beta')[0]?.runId).toBe('run-beta')
-  })
-
-  it('restores GET /api/runs/:id under that run\'s scope', async () => {
-    db.insertRun({ id: 'run-alpha', name: 'Alpha', failureSummary: `failed near ${SEAM_PLACEHOLDER}` })
-    const { agentHost, calls } = seamHost()
-
-    const response = await invokeRoute(
-      createRouter({ db: db as never, agentHost: agentHost as never }),
-      '/api/runs/run-alpha',
-    )
-
-    expect(response.status).toBe(200)
-    expect(response.body).toContain(SEAM_RESTORED)
-    expect(response.body).not.toContain(SEAM_PLACEHOLDER)
-    for (const call of calls) expect(call.runId).toBe('run-alpha')
-  })
-
-  it('restores GET /api/runs/:id/execution-logs', async () => {
-    db.insertRun({ id: 'run-alpha', name: 'Alpha' })
-    ;(db as unknown as { __plantLog(entry: { runId: string; message: string }): void })
-      .__plantLog({ runId: 'run-alpha', message: `seeded with ${SEAM_PLACEHOLDER}` })
-    const { agentHost, calls } = seamHost()
-
-    const response = await invokeRoute(
-      createRouter({ db: db as never, agentHost: agentHost as never }),
-      '/api/runs/run-alpha/execution-logs',
-    )
-
-    expect(response.status).toBe(200)
-    expect(response.body).toContain(`seeded with ${SEAM_RESTORED}`)
-    expect(response.body).not.toContain(SEAM_PLACEHOLDER)
-    for (const call of calls) expect(call.runId).toBe('run-alpha')
-  })
-
-  it('restores GET /api/runs/:id/artifact', async () => {
-    db.insertRun({ id: 'run-alpha', name: 'Alpha' })
+    db.insertRun({ id: 'run-alpha', name: 'Alpha', failureSummary: STORED_TEXT })
     db.insertRunArtifact({
       runId: 'run-alpha',
       kind: 'run',
-      payload: { config: { rawConfigContent: `token: ${SEAM_PLACEHOLDER}` } },
+      payload: { config: { rawConfigContent: `token: ${STORED_TEXT}` } },
     })
-    const { agentHost, calls } = seamHost()
+    ;(db as unknown as { __plantLog(entry: { runId: string; message: string }): void })
+      .__plantLog({ runId: 'run-alpha', message: `seeded with ${STORED_TEXT}` })
+  })
 
+  it.each(HUMAN_RUN_READS)('%s serves a stored marker and an old placeholder as the text they are', async (path) => {
     const response = await invokeRoute(
-      createRouter({ db: db as never, agentHost: agentHost as never }),
-      '/api/runs/run-alpha/artifact',
+      createRouter({ db: db as never, agentHost: plainHost() as never }),
+      path,
     )
 
     expect(response.status).toBe(200)
-    expect(response.body).toContain(SEAM_RESTORED)
-    expect(response.body).not.toContain(SEAM_PLACEHOLDER)
-    for (const call of calls) expect(call.runId).toBe('run-alpha')
+    expect(response.body).toContain(STORED_TEXT)
   })
 
   it('answers exactly as before when the composition binds no agent host', async () => {
-    db.insertRun({ id: 'run-alpha', name: 'Alpha', failureSummary: `failed near ${SEAM_PLACEHOLDER}` })
-    db.insertRunArtifact({
-      runId: 'run-alpha',
-      kind: 'run',
-      payload: { config: { rawConfigContent: `token: ${SEAM_PLACEHOLDER}` } },
-    })
-    ;(db as unknown as { __plantLog(entry: { runId: string; message: string }): void })
-      .__plantLog({ runId: 'run-alpha', message: `seeded with ${SEAM_PLACEHOLDER}` })
     const router = createRouter(db as never)
 
-    for (const path of [
-      '/api/runs',
-      '/api/runs/run-alpha',
-      '/api/runs/run-alpha/execution-logs',
-      '/api/runs/run-alpha/artifact',
-    ]) {
+    for (const path of HUMAN_RUN_READS) {
       const response = await invokeRoute(router, path)
       expect(response.status, path).toBe(200)
-      expect(response.body, path).toContain(SEAM_PLACEHOLDER)
-      expect(response.body, path).not.toContain(SEAM_RESTORED)
+      expect(response.body, path).toContain(STORED_TEXT)
     }
   })
 })

@@ -64,7 +64,6 @@ import { FsEvidenceArtifactStore, slugBranch } from '@vostride/agent-qa-runner-l
 import {
   RunsMarkPreviewResultSchema,
   RunsMarksHistoryResultSchema,
-  maskedMarker,
   projectSubActionRecorded,
   type FeedbackReadsPort,
   type MarkReceipt,
@@ -234,7 +233,6 @@ function hostOver(registry: FunctionRegistry): AgentHost {
       caller: FunctionCaller,
     ): Promise<unknown> =>
       invokeFunction(handle as unknown as FunctionRegistry, functionId, input, caller),
-    unmaskForDisplay: (text: string) => text,
   } as unknown as AgentHost
 }
 
@@ -454,7 +452,6 @@ async function serveEvidence() {
   const baseHost = hostOver(registry)
   const host: AgentHost = { ...baseHost,
     invokeFunction: (...args) => { seen.push(args[1]); return baseHost.invokeFunction(...args) },
-    unmaskForDisplay: (text) => { seen.push('display'); return text },
   }
   const started = await startServer({ db, port: 0, agentHost: host })
   closers.push(started.close)
@@ -475,8 +472,7 @@ describe('423 typed evidence HTTP doors', () => {
     const response = await fetch(`${f.local}/evidence${query}`)
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({ outcome: 'ready', evidence: { ref: f.ref }, document: { kind: 'console' } })
-    expect(f.seen).toContain(RUNS_EVIDENCE_FUNCTION_ID)
-    expect(f.seen).toContain('display')
+    expect(f.seen).toEqual([RUNS_EVIDENCE_FUNCTION_ID])
     expect(response.headers.get('access-control-allow-origin')).toBeNull()
   })
   // RE-SPELLED 2026-10-01 (432-21, D-12/D-13) from 'HTTP-EVIDENCE-MACHINE authenticates before
@@ -534,7 +530,6 @@ describe('423 typed evidence HTTP doors', () => {
     const result = await invokeFunction(f.registry, RUNS_ARTIFACT_FUNCTION_ID,
       { runId: RUN_ID, sha: f.ref.sha }, REGISTRY_CALLER) as { bytesBase64: string }
     expect(Buffer.from(result.bytesBase64, 'base64').equals(bytes)).toBe(true)
-    expect(f.seen).not.toContain('display')
   })
 })
 // ---- 423-21 (D-18): the two feedback reads on both HTTP doors ---------------------------------
@@ -545,10 +540,6 @@ describe('423 typed evidence HTTP doors', () => {
 // 2026-09-30, 432-09: the first mark applied a knowledge fix, and its changed record is joined.
 
 const FEEDBACK_NOTE_SECRET = 'synthetic-423-21-note-token'
-const FEEDBACK_AUTH_TOKEN = 'synthetic-423-21-cookie-token'
-const FEEDBACK_AUTH_STATE = JSON.stringify({
-  cookies: [{ name: 'session', value: FEEDBACK_AUTH_TOKEN, domain: 'app.test', path: '/' }], origins: [],
-})
 const FIRST_MARK = 'mark_0123456789ab'
 const SECOND_MARK = 'mark_0123456789ac'
 
@@ -620,7 +611,6 @@ async function serveFeedbackReads(options: { withPreview?: boolean; unbound?: bo
   const baseHost = hostOver(registry)
   const host: AgentHost = { ...baseHost,
     invokeFunction: (...args) => { seen.push(args[1]); return baseHost.invokeFunction(...args) },
-    unmaskForDisplay: (text) => { seen.push('display'); return text },
   }
   const started = await startServer({ db, port: 0, agentHost: host })
   closers.push(started.close)
@@ -634,24 +624,19 @@ async function serveFeedbackReads(options: { withPreview?: boolean; unbound?: bo
   }
 }
 
-/** The same routes on a real socket, with a host that answers a planted masked body and restores it. */
-async function serveRestoringFeedbackHost(body: unknown) {
+/** The same routes on a real socket, with a host that answers one planted body for every op. */
+async function servePlantedHost(body: unknown) {
   const db = new DashboardDatabase({ dbPath: ':memory:' })
   databases.push(db)
-  const restored: Array<string | undefined> = []
   const host = { ...hostOver(composeRegistry(undefined)),
     invokeFunction: () => Promise.resolve(body),
-    unmaskForDisplay: (text: string, scope?: { runId: string }) => {
-      restored.push(scope?.runId)
-      return text.split('<SECRET_0>').join('restored-note-value').split('<SECRET_1>').join(FEEDBACK_AUTH_STATE)
-    },
   } as AgentHost
   const started = await startServer({ db, port: 0, agentHost: host })
   closers.push(started.close)
   const remote = createServer(createRunServiceRoutes({ agentHost: host } as unknown as RunServicePorts))
   servers.push(remote)
   await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve))
-  return { restored,
+  return {
     local: `http://127.0.0.1:${(started.server.address() as AddressInfo).port}/api/runs/${RUN_ID}`,
     remote: `http://127.0.0.1:${(remote.address() as AddressInfo).port}/run/${RUN_ID}`,
     headers: TOKENLESS_HEADERS,
@@ -669,9 +654,9 @@ describe('423-21 feedback reads on both HTTP doors (D-18)', () => {
   it('HTTP-MARKS-HISTORY: both doors answer runs.marks.history exactly as the registry does, guarded and masked', async () => {
     const f = await serveFeedbackReads()
     const expected = await invokeFunction(f.registry, RUNS_MARKS_HISTORY_FUNCTION_ID, { runId: RUN_ID }, REGISTRY_CALLER)
-    // A cold registry holds no masking authority for this read, so free text is fully redacted.
+    expect(JSON.stringify(expected)).not.toContain(FEEDBACK_NOTE_SECRET)
     expect(RunsMarksHistoryResultSchema.parse(expected)).toMatchObject({ kind: 'history', entries: [
-      { markId: FIRST_MARK, note: maskedMarker('secret'), active: false, supersededBy: SECOND_MARK,
+      { markId: FIRST_MARK, active: false, supersededBy: SECOND_MARK,
         changedRecords: [{ recordId: 'mem_423_21', contentAbsence: { reason: 'not-bound' } }] },
       { markId: SECOND_MARK, active: true, supersedes: FIRST_MARK },
     ] })
@@ -681,7 +666,7 @@ describe('423-21 feedback reads on both HTTP doors (D-18)', () => {
     expect(local.status).toBe(200)
     expect(local.headers.get('access-control-allow-origin')).toBeNull()
     expect(await local.json()).toEqual(expected)
-    expect(f.seen).toEqual([RUNS_MARKS_HISTORY_FUNCTION_ID, ...f.seen.slice(1).map(() => 'display')])
+    expect(f.seen).toEqual([RUNS_MARKS_HISTORY_FUNCTION_ID])
 
     f.seen.length = 0
     expect((await fetch(`${f.remote}/${RUN_ID}/marks`, { headers: CROSS_SITE_HEADERS })).status).toBe(403)
@@ -689,7 +674,7 @@ describe('423-21 feedback reads on both HTTP doors (D-18)', () => {
     const remote = await fetch(`${f.remote}/${RUN_ID}/marks`, { headers: f.headers })
     expect(remote.status).toBe(200)
     expect(await remote.json()).toEqual(expected)
-    expect(f.seen, 'the machine door never restores').toEqual([RUNS_MARKS_HISTORY_FUNCTION_ID])
+    expect(f.seen).toEqual([RUNS_MARKS_HISTORY_FUNCTION_ID])
 
     // Typed outcomes are results, not transport errors, on both doors.
     const unknownRun = 'r_no-such-run-was-ever-marked-here-at-all'
@@ -721,31 +706,24 @@ describe('423-21 feedback reads on both HTTP doors (D-18)', () => {
       expect((await answer.json() as { error: string }).error).toBe('agent_host_unavailable')
     }
 
-    // The local human door restores; the bearer door stays masked.
+    // 441-15 (D-07): both doors answer a stored marker and an old placeholder as they are.
     const history = RunsMarksHistoryResultSchema.parse(expected)
     if (history.kind !== 'history') throw new Error('expected a history result')
     const withNote = (note: string) => ({ ...history, entries: history.entries.map((entry, index) => index === 0 ? { ...entry, note } : entry) })
-    const masked = withNote('<SECRET_1>')
-    const restoring = await serveRestoringFeedbackHost(masked)
-    const human = await fetch(`${restoring.local}/marks`)
+    const stored = withNote('note [secret:PW_441] and <SECRET_1>')
+    const planted = await servePlantedHost(stored)
+    const human = await fetch(`${planted.local}/marks`)
     expect(human.status).toBe(200)
-    const humanRaw = await human.text()
-    expect(JSON.parse(humanRaw)).toEqual(withNote(FEEDBACK_AUTH_STATE))
-    expect(restoring.restored.length).toBeGreaterThan(0)
-    expect(new Set(restoring.restored)).toEqual(new Set([RUN_ID]))
-    restoring.restored.length = 0
-    const machine = await fetch(`${restoring.remote}/marks`, { headers: restoring.headers })
-    expect(await machine.json()).toEqual(masked)
-    expect(restoring.restored).toEqual([])
-    const plainNote = await serveRestoringFeedbackHost(withNote('note <SECRET_0>'))
-    expect(await (await fetch(`${plainNote.local}/marks`)).json()).toEqual(withNote('note restored-note-value'))
+    expect(await human.text()).toBe(JSON.stringify(stored))
+    const machine = await fetch(`${planted.remote}/marks`, { headers: planted.headers })
+    expect(await machine.text()).toBe(JSON.stringify(stored))
   })
 
   it('HTTP-MARK-PREVIEW: both doors POST the exact runs.mark input to runs.mark.preview and answer as the registry does', async () => {
     const f = await serveFeedbackReads()
     const expected = await invokeFunction(f.registry, RUNS_MARK_PREVIEW_FUNCTION_ID, previewInput(), REGISTRY_CALLER)
-    expect(RunsMarkPreviewResultSchema.parse(expected)).toMatchObject({ kind: 'consequences', prospective: true,
-      groundTruth: [{ recordedVerdict: { reasoning: maskedMarker('secret') } }] })
+    expect(JSON.stringify(expected)).not.toContain(FEEDBACK_NOTE_SECRET)
+    expect(RunsMarkPreviewResultSchema.parse(expected)).toMatchObject({ kind: 'consequences', prospective: true })
     f.seen.length = 0
     f.portCalls.length = 0
 
@@ -807,19 +785,16 @@ describe('423-21 feedback reads on both HTTP doors (D-18)', () => {
       expect(await answer.json()).toMatchObject({ error: 'agent_host_unavailable' })
     }
 
-    const masked = feedbackPreview(RUN_ID) as Extract<RunsMarkPreviewResult, { kind: 'consequences' }>
-    const placeholderBody = { ...masked, groundTruth: [{ ...masked.groundTruth[0]!,
-      recordedVerdict: { pass: false, reasoning: 'near <SECRET_0>' }, correctedExpectation: '<SECRET_1>' }] }
-    const restoring = await serveRestoringFeedbackHost(placeholderBody)
-    const human = await postJson(`${restoring.local}/mark-preview`, previewInput())
+    // 441-15 (D-07): both doors answer a stored marker and an old placeholder as they are.
+    const consequences = feedbackPreview(RUN_ID) as Extract<RunsMarkPreviewResult, { kind: 'consequences' }>
+    const stored = RunsMarkPreviewResultSchema.parse({ ...consequences, groundTruth: [{ ...consequences.groundTruth[0]!,
+      recordedVerdict: { pass: false, reasoning: 'near [secret:PW_441]' }, correctedExpectation: '<SECRET_1>' }] })
+    const planted = await servePlantedHost(stored)
+    const human = await postJson(`${planted.local}/mark-preview`, previewInput())
     expect(human.status).toBe(200)
-    const humanRaw = await human.text()
-    expect(JSON.parse(humanRaw)).toMatchObject({ groundTruth: [{ recordedVerdict: { reasoning: 'near restored-note-value' },
-      correctedExpectation: FEEDBACK_AUTH_STATE }] })
-    restoring.restored.length = 0
-    const machine = await postJson(`${restoring.remote}/mark-preview`, previewInput(), restoring.headers)
-    expect(await machine.json()).toEqual(placeholderBody)
-    expect(restoring.restored).toEqual([])
+    expect(await human.text()).toBe(JSON.stringify(stored))
+    const machine = await postJson(`${planted.remote}/mark-preview`, previewInput(), planted.headers)
+    expect(await machine.text()).toBe(JSON.stringify(stored))
   })
 
   it('FEEDBACK-HTTP-WRITES-NOTHING: every feedback HTTP leg leaves the read store and the dashboard rows unchanged', async () => {
@@ -837,7 +812,7 @@ describe('423-21 feedback reads on both HTTP doors (D-18)', () => {
     expect(pathMap(f.root)).toEqual(before)
     expect(existsSync(join(f.root, 'runs', slugBranch('r_no-such-run-was-ever-marked-here-at-all')))).toBe(false)
     expect(JSON.stringify(f.db.readRunDetailRows(RUN_ID))).toBe(rowsBefore)
-    expect(f.seen.filter(id => id !== 'display').sort()).toEqual([
+    expect([...f.seen].sort()).toEqual([
       RUNS_MARK_PREVIEW_FUNCTION_ID, RUNS_MARK_PREVIEW_FUNCTION_ID, RUNS_MARK_PREVIEW_FUNCTION_ID, RUNS_MARK_PREVIEW_FUNCTION_ID,
       RUNS_MARKS_HISTORY_FUNCTION_ID, RUNS_MARKS_HISTORY_FUNCTION_ID, RUNS_MARKS_HISTORY_FUNCTION_ID, RUNS_MARKS_HISTORY_FUNCTION_ID,
     ])
@@ -1032,12 +1007,10 @@ describe('the artifact arm reads no store of its own (D-13, the fourth-door law)
 
 // ---- 405-10 (D-09): the `boundary` option, and what each of its two values promises -----------
 //
-// THE DEFAULT IS THE POINT. `serveRunDetailRead` serves BOTH doors — the local one a person's
-// browser reads and the authed remote one a bearer token reads — and only the first is a display
-// boundary. So restoration is opt-in: a dispatch that says nothing gets the masked projection it
-// got before this plan, byte for byte, and the seam is never even consulted. These two cells drive
-// the adapter directly rather than through a socket, because the claim is about which VALUE the
-// option carries and a socket would add nothing but a port.
+// `serveRunDetailRead` serves BOTH doors — the local one a person's browser reads and the authed
+// remote one a bearer token reads. Since 441-15 (D-07) both answer the projection as stored, and
+// `boundary: 'human'` only turns on the local same-site guard. These cells drive the adapter
+// directly, because the claim is about which VALUE the option carries.
 
 /** A `ServerResponse` stand-in that records the one write the adapter makes. */
 function recordingResponse(): {
@@ -1064,101 +1037,109 @@ function recordingResponse(): {
   return { res, status: () => status, raw: () => raw, done }
 }
 
-/** A host whose `runs.detail` answers one planted projection, recording every seam call. */
-function seamRecordingHost(projection: unknown): {
-  host: AgentHost
-  calls: Array<{ text: string; runId: string | undefined }>
-} {
-  const calls: Array<{ text: string; runId: string | undefined }> = []
+/** A host whose every op answers one planted body. */
+function plantedHost(body: unknown): AgentHost {
   return {
-    calls,
-    host: {
-      registry: {} as unknown as AgentRegistryHandle,
-      caller: REGISTRY_CALLER,
-      runsPostProcessingFunctionId: 'test:planted-post-processing-op',
-      runsEventsFunctionId: 'test:planted-events-op',
-      runsDetailFunctionId: RUNS_DETAIL_FUNCTION_ID,
-      runsArtifactFunctionId: RUNS_ARTIFACT_FUNCTION_ID,
-      analysisGetFunctionId: ANALYSIS_GET_FUNCTION_ID,
-      // 407-01 (D-05): the sixth dispatched id, widened here so every AgentHost literal in the
-      // workspace still satisfies the interface.
-      runsKnowledgeFunctionId: RUNS_KNOWLEDGE_FUNCTION_ID,
-      invokeFunction: () => Promise.resolve(projection),
-      unmaskForDisplay: (text: string, scope?: { runId: string }): string => {
-        calls.push({ text, runId: scope?.runId })
-        return text.split('<SECRET_0>').join('sk-restored-value')
-      },
-    } as unknown as AgentHost,
-  }
+    registry: {} as unknown as AgentRegistryHandle,
+    caller: REGISTRY_CALLER,
+    runsPostProcessingFunctionId: 'test:planted-post-processing-op',
+    runsEventsFunctionId: 'test:planted-events-op',
+    runsDetailFunctionId: RUNS_DETAIL_FUNCTION_ID,
+    runsArtifactFunctionId: RUNS_ARTIFACT_FUNCTION_ID,
+    analysisGetFunctionId: ANALYSIS_GET_FUNCTION_ID,
+    runsKnowledgeFunctionId: RUNS_KNOWLEDGE_FUNCTION_ID,
+    invokeFunction: () => Promise.resolve(body),
+  } as unknown as AgentHost
 }
 
-/** A projection shaped like the real one, with a placeholder in every string channel the page reads. */
-function maskedProjection(): Record<string, unknown> {
+/** A projection shaped like the real one, with stored text in every string channel the page reads. */
+function storedProjection(text: string): Record<string, unknown> {
   return {
     runId: RUN_ID,
-    members: [{ testIndex: 0, attempts: 1, failureSummary: 'failed near <SECRET_0>' }],
-    steps: [{ stepIndex: 0, stepText: 'Navigate to <SECRET_0>', error: 'timeout on <SECRET_0>' }],
-    subActions: [{ subActionIndex: 0, plan: 'Type <SECRET_0>', plannedAction: '{"value":"<SECRET_0>"}' }],
+    members: [{ testIndex: 0, attempts: 1, failureSummary: `failed near ${text}` }],
+    steps: [{ stepIndex: 0, stepText: `Navigate to ${text}`, error: `timeout on ${text}` }],
+    subActions: [{ subActionIndex: 0, plan: `Type ${text}`, plannedAction: `{"value":"${text}"}` }],
     tokens: { measuredSteps: 0, unmeasuredSteps: 1 },
   }
 }
 
 describe("serveRunDetailRead's boundary option (405-10, D-09)", () => {
-  it("restores every string channel under this run's scope when boundary is 'human'", async () => {
-    const { host, calls } = seamRecordingHost(maskedProjection())
+  it("serves the stored projection unchanged when boundary is 'human'", async () => {
+    const projection = storedProjection('<SECRET_0>')
     const recorder = recordingResponse()
 
-    // A LOOPBACK HOST, because the human arm now carries the same-site guard (405 CR-01, second
-    // pass) and a request that states no Host models no real HTTP/1.1 client.
     serveRunDetailRead(
       { headers: { host: '127.0.0.1:3470' } } as never,
       recorder.res,
-      { runId: RUN_ID, host, boundary: 'human' },
+      { runId: RUN_ID, host: plantedHost(projection), boundary: 'human' },
     )
     await recorder.done
 
     expect(recorder.status()).toBe(200)
-    expect(recorder.raw()).not.toContain('<SECRET_')
-    const body = JSON.parse(recorder.raw()) as ReturnType<typeof maskedProjection>
-    expect((body.members as Array<{ failureSummary: string }>)[0].failureSummary)
-      .toBe('failed near sk-restored-value')
-    const step = (body.steps as Array<{ stepText: string; error: string }>)[0]
-    expect(step.stepText).toBe('Navigate to sk-restored-value')
-    expect(step.error).toBe('timeout on sk-restored-value')
-    const sub = (body.subActions as Array<{ plan: string; plannedAction: string }>)[0]
-    expect(sub.plan).toBe('Type sk-restored-value')
-    // A JSON-NESTED STRING IS STILL A STRING to the walk, and the restored value lands inside it
-    // without the outer body ceasing to parse — which is the Pitfall 3 claim.
-    expect(sub.plannedAction).toBe('{"value":"sk-restored-value"}')
-
-    // Every call carried THIS run's scope; none was scope-less.
-    expect(calls.length).toBeGreaterThan(0)
-    for (const call of calls) expect(call.runId).toBe(RUN_ID)
-    // Scalars never crossed the seam.
-    expect(calls.map((call) => call.text)).not.toContain('0')
+    expect(recorder.raw()).toBe(JSON.stringify(projection))
   })
 
-  it('leaves the projection masked and never consults the seam without a boundary (the remote door)', async () => {
-    const { host, calls } = seamRecordingHost(maskedProjection())
+  it('serves the stored projection unchanged without a boundary, at a non-loopback Host (the remote door)', async () => {
+    const projection = storedProjection('<SECRET_0>')
     const recorder = recordingResponse()
 
-    // NO `boundary` — exactly what `run-service-routes.ts`'s `'detail'` dispatch passes (405-05).
-    //
-    // AND A DELIBERATELY NON-LOOPBACK HOST. The human arm's same-site guard would refuse this
-    // request outright; the remote door is reached at a real hostname and must not inherit a
-    // loopback check written for a person's local browser session. A 200 here is the assertion
-    // that the guard is gated on `boundary` and not on the function (405 CR-01, second pass).
+    // A 200 at a real hostname is the assertion that the same-site guard is gated on `boundary`
+    // and not on the function (405 CR-01, second pass).
     serveRunDetailRead(
       { headers: { host: 'runs.example.com' } } as never,
       recorder.res,
-      { runId: RUN_ID, host },
+      { runId: RUN_ID, host: plantedHost(projection) },
     )
     await recorder.done
 
     expect(recorder.status()).toBe(200)
-    expect(recorder.raw()).toContain('<SECRET_0>')
-    expect(recorder.raw()).not.toContain('sk-restored-value')
-    // Not merely "did not restore" — the host's seam was never called at all.
-    expect(calls).toEqual([])
+    expect(recorder.raw()).toBe(JSON.stringify(projection))
+  })
+})
+
+// ---- 441-15 (D-07): the dashboard shows what was stored and restores nothing ----------------------
+
+async function serveBothDoors(body: unknown) {
+  const db = new DashboardDatabase({ dbPath: ':memory:' })
+  databases.push(db)
+  const host = plantedHost(body)
+  const started = await startServer({ db, port: 0, agentHost: host })
+  closers.push(started.close)
+  const remote = createServer(createRunServiceRoutes({ agentHost: host } as unknown as RunServicePorts))
+  servers.push(remote)
+  await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve))
+  return {
+    local: `http://127.0.0.1:${(started.server.address() as AddressInfo).port}/api/runs/${RUN_ID}`,
+    remote: `http://127.0.0.1:${(remote.address() as AddressInfo).port}/run/${RUN_ID}`,
+  }
+}
+
+describe('C441-DISPLAY', () => {
+  it('the human door serves a stored marker unchanged', async () => {
+    const projection = storedProjection('[secret:PW_441]')
+    const doors = await serveBothDoors(projection)
+
+    for (const url of [`${doors.local}/detail`, `${doors.remote}/detail`]) {
+      const response = await fetch(url, { headers: TOKENLESS_HEADERS })
+      expect(response.status, url).toBe(200)
+      expect(await response.text(), url).toBe(JSON.stringify(projection))
+    }
+  })
+
+  it('no dashboard route restores or rewrites stored text', async () => {
+    const body = storedProjection('<SECRET_0> beside [secret:PW_441]')
+    const doors = await serveBothDoors(body)
+
+    for (const url of [
+      `${doors.local}/detail`,
+      `${doors.local}/analysis`,
+      `${doors.local}/knowledge`,
+      `${doors.remote}/detail`,
+      `${doors.remote}/analysis`,
+    ]) {
+      const response = await fetch(url, { headers: TOKENLESS_HEADERS })
+      expect(response.status, url).toBe(200)
+      expect(await response.text(), url).toBe(JSON.stringify(body))
+    }
   })
 })

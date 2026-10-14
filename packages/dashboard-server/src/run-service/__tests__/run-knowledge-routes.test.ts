@@ -9,7 +9,7 @@
 // `dependencies`, so the production edge it forbids stays forbidden.
 //
 // THE ADAPTER FUNCTION AND THE SOCKET, EACH FOR WHAT ONLY IT CAN SEE. The read's own vocabulary —
-// the refusal statuses, the display seam, the cross-site guard — is measured through a recording
+// the refusal statuses, the stored body, the cross-site guard — is measured through a recording
 // response, which keeps each claim about one thing. Two facts live ABOVE that function and are
 // driven over a real socket at the bottom of this file: the arm's POSITION in `routes.ts` (the
 // `/api/runs/:id` catch-all below it claims every four-segment GET and answers `Not found`, which
@@ -165,7 +165,7 @@ function composeRegistry(document: CompletedRunHandoff | undefined): FunctionReg
  */
 function hostOver(
   registry: FunctionRegistry,
-  options: { knowledgeFunctionId?: string; unmask?: (text: string) => string } = {},
+  options: { knowledgeFunctionId?: string } = {},
 ): AgentHost {
   return {
     registry: registry as unknown as AgentRegistryHandle,
@@ -183,7 +183,6 @@ function hostOver(
       caller: FunctionCaller,
     ): Promise<unknown> =>
       invokeFunction(handle as unknown as FunctionRegistry, functionId, input, caller),
-    unmaskForDisplay: options.unmask ?? ((text: string) => text),
   } as unknown as AgentHost
 }
 
@@ -309,28 +308,26 @@ describe('serveRunKnowledgeRead — the door (405 CR-01 · 405-10 D-09)', () => 
     expect(dispatched).toBe(0)
   })
 
-  it("restores a declared secret in a step's text when boundary is 'human'", async () => {
-    const registry = composeRegistry(recordedRun('Sign in with <SECRET_0>'))
+  const STORED_STEP = 'Sign in with [secret:PW_441] or <SECRET_0>'
+
+  it("serves a step's stored text unchanged when boundary is 'human' (441 D-07)", async () => {
+    const registry = composeRegistry(recordedRun(STORED_STEP))
     const recorder = recordingResponse()
 
     serveRunKnowledgeRead(LOOPBACK, recorder.res, {
       runId: RUN_ID,
-      host: hostOver(registry, {
-        unmask: (text: string) => text.split('<SECRET_0>').join('sk-restored-value'),
-      }),
+      host: hostOver(registry),
       boundary: 'human',
     })
     await recorder.done
 
     expect(recorder.status()).toBe(200)
-    expect(recorder.raw()).not.toContain('<SECRET_')
-    expect(recorder.raw()).toContain('Sign in with sk-restored-value')
+    expect(recorder.raw()).toContain(STORED_STEP)
   })
 
-  it('leaves the projection masked with no boundary — the machine default', async () => {
-    const registry = composeRegistry(recordedRun('Sign in with <SECRET_0>'))
+  it('serves the same stored text with no boundary, at a non-loopback Host', async () => {
+    const registry = composeRegistry(recordedRun(STORED_STEP))
     const recorder = recordingResponse()
-    let seamCalls = 0
 
     // NO `boundary`, AND A NON-LOOPBACK HOST: an authed remote row is reached at a real hostname
     // and must not inherit a loopback check written for a person's local browser session. A 200
@@ -338,23 +335,12 @@ describe('serveRunKnowledgeRead — the door (405 CR-01 · 405-10 D-09)', () => 
     serveRunKnowledgeRead(
       { headers: { host: 'runs.example.com' } } as never,
       recorder.res,
-      {
-        runId: RUN_ID,
-        host: hostOver(registry, {
-          unmask: (text: string) => {
-            seamCalls += 1
-            return text
-          },
-        }),
-      },
+      { runId: RUN_ID, host: hostOver(registry) },
     )
     await recorder.done
 
     expect(recorder.status()).toBe(200)
-    expect(recorder.raw()).toContain('<SECRET_0>')
-    expect(recorder.raw()).not.toContain('sk-restored-value')
-    // Not merely "did not restore" — the host's seam was never consulted at all.
-    expect(seamCalls).toBe(0)
+    expect(recorder.raw()).toContain(STORED_STEP)
   })
 })
 

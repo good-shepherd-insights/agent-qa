@@ -31,7 +31,6 @@ import {
 } from '@vostride/agent-qa-schema'
 
 import type { AgentHost } from '../chat/host.js'
-import { unmaskTreeForDisplay } from '../masking/display-tree.js'
 import { readJsonBody } from '../server/body-parser.js'
 import { refuseCrossSiteRequest } from '../server/cross-site.js'
 
@@ -123,10 +122,10 @@ export async function readRunDetail(
 /**
  * This door's JSON writer — and the ABSENCE of a cross-origin grant on it is load-bearing (405 CR-01).
  *
- * `serveRunDetailRead` crosses the display seam, so this body carries the RESTORED CLEARTEXT of a
- * declared secret. `Content-Type` and `Content-Length` are the whole header set on purpose: no
- * `Access-Control-Allow-Origin`, because a page on another origin that the operator happens to have
- * open must not be able to read a run's secrets out of this response. Until CR-01 that posture was
+ * `serveRunDetailRead` answers a run's whole stored projection. `Content-Type` and `Content-Length`
+ * are the whole header set on purpose: no `Access-Control-Allow-Origin`, because a page on another
+ * origin that the operator happens to have open must not be able to read a run out of this
+ * response. Until CR-01 that posture was
  * an accident of which writer this file inherited rather than a decision, and the sibling arms in
  * `server/routes.ts` — which answered through the wildcard-writing `json()` — proved how easily the
  * accident goes the other way. If a later refactor wants one JSON writer across both files, the one
@@ -154,26 +153,17 @@ export interface RunDetailReadDeps {
   /** The injected host. Its absence is the ROUTER'S 503, not this function's. */
   readonly host: AgentHost
   /**
-   * WHO IS ON THE OTHER END OF THIS SOCKET (405-10, D-09) — and therefore whether masked
-   * placeholders are restored on the way out.
+   * WHO IS ON THE OTHER END OF THIS SOCKET (405-10, D-09). Both doors serve the same body, masked
+   * at write, and nothing restores it (441 D-07); `'human'` only turns on the same-site guard.
    *
-   * IT DEFAULTS TO `'machine'`, WHICH IS THE MASKED POSTURE, and the default is the whole point.
-   * A door that has not thought about who is reading gets today's behaviour: the projection travels
-   * exactly as the subscriber wrote it, placeholders and all. Restoration is something an arm has
-   * to ASK for, in one token, at a place a reader can see — which is the fail-closed direction
-   * for a seam whose failure mode is putting a credential on a wire.
-   *
-   * `'human'` IS PASSED BY EXACTLY ONE ARM: the LOCAL door's `GET /api/runs/:id/detail` in
-   * `routes.ts`. The authed REMOTE door's `GET /run/:runId/detail` (`run-service-routes.ts`,
-   * 405-05) passes nothing and stays masked by construction — a bearer token authenticates a
-   * CLIENT, not a person's browser session, so restoring there would hand declared secrets to every
-   * token holder and every intermediary. 405-05 recorded that as a deliberate reversal of a
-   * CONTEXT.md integration point; reversing it back is adding `boundary: 'human'` to that dispatch.
+   * `'human'` IS PASSED BY THE LOCAL door's arms in `routes.ts`. The authed REMOTE door's
+   * `GET /run/:runId/detail` (`run-service-routes.ts`, 405-05) passes nothing, because it is
+   * legitimately reached at a non-loopback Host.
    */
   readonly boundary?: 'human' | 'machine'
 }
 
-/** Parsed evidence shares the guarded display boundary; raw artifacts never enter this path. */
+/** Parsed evidence shares the guarded human boundary; raw artifacts never enter this path. */
 export function serveRunEvidenceRead(
   req: IncomingMessage,
   res: ServerResponse,
@@ -205,9 +195,7 @@ export function serveRunEvidenceRead(
   void deps.host.invokeFunction(deps.host.registry, deps.host.runsEvidenceFunctionId,
     parsed.data, deps.host.caller).then(result => {
     const body = RunsEvidenceResultSchema.parse(result)
-    respondJson(res, 200, deps.boundary === 'human'
-      ? unmaskTreeForDisplay(deps.host, body, { runId: deps.runId })
-      : body)
+    respondJson(res, 200, body)
   }).catch((error: unknown) => {
     const refusal = refusalFor(error)
     respondJson(res, refusal.status, refusal.body)
@@ -216,8 +204,8 @@ export function serveRunEvidenceRead(
 
 /**
  * Answer one feedback read's typed result. Its outcomes, refusals included, are the op's result
- * and travel as 200; only thrown classes map to status codes. The human door restores; every
- * other door answers the op's masked body.
+ * and travel as 200; only thrown classes map to status codes. Every door answers the op's body as
+ * stored.
  */
 function respondFeedbackRead(
   res: ServerResponse,
@@ -228,9 +216,7 @@ function respondFeedbackRead(
 ): void {
   void deps.host.invokeFunction(deps.host.registry, functionId, input, deps.host.caller).then(result => {
     const body = parse(result)
-    respondJson(res, 200, deps.boundary === 'human'
-      ? unmaskTreeForDisplay(deps.host, body, { runId: deps.runId })
-      : body)
+    respondJson(res, 200, body)
   }).catch((error: unknown) => {
     const refusal = refusalFor(error)
     respondJson(res, refusal.status, refusal.body)
@@ -301,19 +287,15 @@ export function serveRunDetailRead(
   // THE SAME-SITE GUARD, AND IT IS GATED ON `boundary` BECAUSE THIS FUNCTION SERVES TWO DOORS
   // (405 CR-01, second pass).
   //
-  // WHY IT LIVES HERE AND NOT AT THE ROUTER'S DISPATCH. The four sibling arms carry their guard in
-  // `routes.ts` because their seam call is in `routes.ts`. This arm's seam call is the line below,
-  // in this file, and it is the RICHEST restored body on the door — the whole run-detail
-  // projection. A guard placed at the dispatch would sit in a different file from the crossing it
-  // protects, which is exactly the split that let this arm be missed in the first pass: an
-  // invariant that reads one router cannot see a crossing in another module. Beside the seam, a
-  // future caller that opts into `'human'` inherits the guard instead of having to remember it.
+  // WHY IT LIVES HERE AND NOT AT THE ROUTER'S DISPATCH. This arm answers the richest body on the
+  // door — the whole run-detail projection — from this file, so the guard sits beside that answer.
+  // A future caller that opts into `'human'` inherits the guard instead of having to remember it.
   //
   // WHY `boundary === 'human'` AND NOT UNCONDITIONALLY. The authed REMOTE door dispatches this same
   // function with no `boundary`, and that door is legitimately reached at a NON-loopback Host. An
   // unconditional loopback check here would refuse every real remote read — a guard that breaks the
-  // door it was not written for. Gating on `boundary` makes the refusal fire exactly when
-  // restoration fires: the local human arm, and only it.
+  // door it was not written for. Gating on `boundary` makes the refusal fire on the local human
+  // arm, and only it.
   //
   // WHAT IT IS FOR, GIVEN CORS IS ALREADY CLOSED HERE. `respondJson` writes no cross-origin grant,
   // so a page on another ORIGIN already cannot read this body. What the grant's absence does NOT
@@ -336,17 +318,7 @@ export function serveRunDetailRead(
         respondJson(res, outcome.status, outcome.body)
         return
       }
-      // THE SEAM, PER STRING ON THE PROJECTION TREE AND NEVER ON THE SERIALIZED BODY (Pitfall 3).
-      // A restored value carrying a quote would break a body unmasked after `JSON.stringify`;
-      // walked before it, the value is escaped like any other string. A refusal body is NEVER
-      // walked: it holds this door's own closed words and nothing a run ever masked.
-      respondJson(
-        res,
-        200,
-        deps.boundary === 'human'
-          ? unmaskTreeForDisplay(deps.host, outcome.body, { runId: deps.runId })
-          : outcome.body,
-      )
+      respondJson(res, 200, outcome.body)
     },
     // The read classifies every refusal it can name; anything reaching here is this module
     // failing, which is a 500 by name and never a body that looks like an answer.

@@ -1,5 +1,5 @@
 /// <reference lib="dom" />
-// Real durable rows, registry dispatch, display sidecar and HTTP adapter. No sanitizer mock.
+// Real durable rows, registry dispatch and HTTP adapter. No sanitizer mock.
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -9,8 +9,6 @@ import { createFunctionRegistry, type FunctionDeps } from '@vostride/agent-qa-ag
 import {
   buildRunMaskingContext,
   createEvidenceBlobReader,
-  resolveMaskingHostKey,
-  writeMaskingDigests,
   type LocalAgentHost,
 } from '@vostride/agent-qa-agent-local'
 import {
@@ -36,7 +34,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { chromium, type Browser, type Page } from 'playwright-core'
 
 import { composeDashboardAgentHost } from '../../commands/dashboard.js'
-import { createDisplayUnmasker } from '../../composition/display-unmask.js'
 import { PACKAGES_ROOT } from './spawned-chat.js'
 
 const AUTH_TOKEN = 'synthetic-423-cookie-token'
@@ -63,7 +60,6 @@ async function startFixture(
   const placeholders = new Map(mask.snapshotRegistered().map(({ value, placeholder }) => [value, placeholder]))
   const authPlaceholder = placeholders.get(AUTH_STATE)!
   const allowedPlaceholder = placeholders.get(ALLOWED)!
-  writeMaskingDigests({ root, runId, key: resolveMaskingHostKey(root), entries: mask.snapshotRegistered() })
   setActiveMaskingContextResolver(() => mask)
   const evidenceDocument = { schemaVersion: 1 as const, kind: 'console' as const, records: [
     { level: 'log', text: allowedPlaceholder, timestamp: 1 },
@@ -101,10 +97,7 @@ async function startFixture(
     // 2026-10-02 (432-36, D-12): no `resolveExecutionContext` registry option; the registry reads
     // no context (432-20).
   })
-  const unmask = createDisplayUnmasker({
-    agentQaRoot: root, secretStores: () => [store], env: () => ({}), authStatePayloads: () => [],
-  })
-  const agentHost = composeDashboardAgentHost({ registry } as LocalAgentHost, unmask)
+  const agentHost = composeDashboardAgentHost({ registry } as LocalAgentHost)
   const started = await startServer({
     db, port: 0, agentHost,
     ...(display === undefined ? {} : { uiDir: join(PACKAGES_ROOT, 'dashboard-ui', 'dist') }),
@@ -122,7 +115,7 @@ async function startFixture(
   const remoteAddress = remote.address()
   if (remoteAddress === null || typeof remoteAddress === 'string') throw new Error('Remote fixture did not bind')
   return {
-    root, db, runId, origin, authPlaceholder, allowedPlaceholder, unmask, evidenceRef, evidenceDocument,
+    root, db, runId, origin, authPlaceholder, allowedPlaceholder, evidenceRef, evidenceDocument,
     machineUrl: `http://127.0.0.1:${machineAddress.port}`,
     remoteUrl: `http://127.0.0.1:${remoteAddress.port}/run/${runId}/evidence?kind=console&testIndex=0&stepIndex=0`,
     async close() {
@@ -142,16 +135,16 @@ describe('423 guarded human read', () => {
   beforeAll(async () => { fixture = await startFixture() })
   afterAll(async () => { await fixture?.close() })
 
-  it('HTTP-EVIDENCE-HUMAN restores evidence while raw SHA bytes stay masked', async () => {
+  it('HTTP-EVIDENCE-HUMAN serves evidence as stored, and raw SHA bytes stay as stored (441 D-07)', async () => {
     const url = `${fixture.origin}/api/runs/${fixture.runId}`
     const response = await fetch(`${url}/evidence?kind=console&testIndex=0&stepIndex=0`)
     expect(response.status).toBe(200)
     const raw = await response.text()
     const body = JSON.parse(raw)
     expect(body).toMatchObject({ outcome: 'ready', document: { records: [
-      { text: ALLOWED }, { text: AUTH_STATE },
+      { text: fixture.allowedPlaceholder }, { text: fixture.authPlaceholder },
     ] } })
-    expect(raw).not.toContain(fixture.authPlaceholder)
+    expect(raw).not.toContain(AUTH_TOKEN)
     const artifact = await fetch(`${url}/artifacts/${fixture.evidenceRef.sha}`)
     expect(await artifact.text()).toBe(JSON.stringify(fixture.evidenceDocument))
     expect(artifact.headers.get('etag')).toBe(`"${fixture.evidenceRef.sha}"`)
@@ -170,21 +163,20 @@ describe('423 guarded human read', () => {
     expect(JSON.stringify(fixture.db.readRunDetailRows(fixture.runId))).not.toContain(AUTH_TOKEN)
   })
 
-  it('C423-HUMAN-DETAIL-SANITIZED: T-405-38 restores durable HTTP output', async () => {
-    // Prove the synthetic sidecar restores the auth shape, independently of the response.
-    expect(fixture.unmask(fixture.authPlaceholder, { runId: fixture.runId })).toBe(AUTH_STATE)
+  it('C423-HUMAN-DETAIL-SANITIZED: T-405-38 the human door answers durable rows as stored (441 D-07)', async () => {
     const response = await fetch(`${fixture.origin}/api/runs/${fixture.runId}/detail`)
     expect(response.status).toBe(200)
     const raw = await response.text()
     const body = JSON.parse(raw) as RunDetailProjection
-    expect.soft(body.steps[0]?.error).toBe(AUTH_STATE)
-    expect.soft(raw).not.toContain(fixture.authPlaceholder)
-    expect.soft(body.steps[0]?.stepText, 'allowed quoted text must survive JSON serialization').toBe(ALLOWED)
-    expect.soft(body.steps[1]?.stepText).toBe(`Normal text [secret] ${maskedMarker('email')} ${maskedMarker('secret')}`)
+    expect.soft(body.steps[0]?.error).toBe(fixture.authPlaceholder)
+    expect.soft(body.steps[0]?.stepText).toBe(fixture.allowedPlaceholder)
+    expect.soft(body.steps[1]?.stepText).toBe('Normal text [secret] <EMAIL_123> <SECRET_987>')
+    expect.soft(raw).not.toContain(AUTH_TOKEN)
+    expect.soft(raw).not.toContain(ALLOWED)
     expect.soft(response.headers.get('access-control-allow-origin')).toBeNull()
   })
 
-  it('C423-HUMAN-DETAIL-SANITIZED: cross-site reads are refused before restoration', async () => {
+  it('C423-HUMAN-DETAIL-SANITIZED: cross-site reads are refused before dispatch', async () => {
     const response = await fetch(`${fixture.origin}/api/runs/${fixture.runId}/detail`, {
       headers: { Origin: 'https://other.test', 'Sec-Fetch-Site': 'cross-site' },
     })
@@ -205,7 +197,7 @@ describe('423 guarded human read', () => {
     expect(stored).not.toContain(AUTH_TOKEN)
   })
 
-  it('C423-HUMAN-DETAIL-SANITIZED: empty evidence and missing sidecars retain honest absence', async () => {
+  it('C423-HUMAN-DETAIL-SANITIZED: empty evidence answers empty, and an old run\'s placeholders are served as the text they are', async () => {
     const runId = fixture.db.insertRun({
       name: 'Historical run', status: 'passed', duration: 0,
       startedAt: new Date(0).toISOString(), endedAt: new Date(0).toISOString(),
@@ -220,7 +212,7 @@ describe('423 guarded human read', () => {
     })
     const historical = await fetch(url)
     const body = await historical.json() as RunDetailProjection
-    expect(body.steps[0]?.stepText).toBe(`${maskedMarker('secret')} ${maskedMarker('email')} [secret]`)
+    expect(body.steps[0]?.stepText).toBe('<SECRET_0> <EMAIL_0> [secret]')
     expect(JSON.stringify(body)).not.toContain(AUTH_TOKEN)
   })
 })
@@ -302,7 +294,10 @@ describe('423 rendered run-detail sinks', () => {
     expect.soft(text).toContain(SECRET_LABEL)
     expect.soft(text).toContain(EMAIL_LABEL)
     expect.soft(text).toContain('[secret]')
-    expect.soft(text).not.toMatch(/<SECRET_|<EMAIL_|␟masked:/u)
+    // 441-15 (D-07, D-20): no server pass rewrites an old run's numbered placeholder, so the chip
+    // lane shows it as the text it is.
+    expect.soft(text).not.toMatch(/␟masked:/u)
+    expect.soft(text).toContain('<SECRET_82>')
     expect.soft(text).toContain(AUTH_STATE)
     const attrs = await dialog.evaluate((element) => Array.from(element.querySelectorAll('*'))
       .flatMap((node) => Array.from(node.attributes).map((attribute) => attribute.value)).join('\n'))

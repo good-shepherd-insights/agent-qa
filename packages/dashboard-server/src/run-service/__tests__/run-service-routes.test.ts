@@ -400,7 +400,6 @@ describe('the READ rows dispatch through the injected host (405-05, D-12)', () =
         seen.push(functionId)
         return Promise.reject(Object.assign(new Error('planted'), { name }))
       },
-      unmaskForDisplay: (text: string) => text,
     } as unknown as NonNullable<RunServicePorts['agentHost']>
   }
 
@@ -428,16 +427,16 @@ describe('the READ rows dispatch through the injected host (405-05, D-12)', () =
   })
 
   it('leaves the analysis row MASKED — no boundary reaches the shared adapter (D-04)', async () => {
-    // A SOURCE ASSERTION, because the claim is about what the dispatch does NOT pass. The seam's
-    // behaviour is measured in the roll-call; what only this file can see is that this door's arm
-    // never opts in. The roll-call's masked-side row is the second half of the same guard.
+    // A SOURCE ASSERTION, because the claim is about what the dispatch does NOT pass. Both doors
+    // serve the stored body (441 D-07); `boundary` only turns on the local same-site guard, which a
+    // door reached at a non-loopback Host must not take.
     const source = await readFile(new URL('../run-service-routes.ts', import.meta.url), 'utf8')
     const opener = "case 'analysis':"
     const start = source.indexOf(opener)
     expect(start, 'the analysis arm was renamed — this cell would be vacuous').toBeGreaterThan(-1)
     const arm = source.slice(start, source.indexOf('\n        case ', start + 1))
     expect(arm).toContain('serveRunAnalysisRead(req, res, { runId, host })')
-    expect(arm, 'a bearer-authed wire never restores declared secrets').not.toContain('boundary')
+    expect(arm, 'a bearer-authed wire takes no local same-site guard').not.toContain('boundary')
   })
 
   it('reaches the artifact adapter, and tells its two 404s apart on this door too', async () => {

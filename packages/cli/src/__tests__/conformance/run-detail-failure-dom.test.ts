@@ -28,11 +28,9 @@
 // THE DRIVING HAPPENS ONCE, IN `beforeAll`, AND THE CELLS ASSERT ON WHAT IT RECORDED. The drive
 // records and never asserts, so each named claim can be the only red under its own mutation.
 //
-// NO RESTART LEG. D-08 — that a process which never saw a run execute still restores its values —
-// is `run-detail-dom.test.ts`'s claim and is measured there on the passing run. Re-driving it here
-// would double this file's wall time to re-prove somebody else's property. Cell (3e) reads the
-// restored value on the FIRST process, which is the fact this file needs: the banner sits on the
-// restore lane like every other producer string on the page.
+// NO RESTART LEG. Since 441-15 (D-07) the dashboard serves the text a run stored and restores
+// nothing, so a second process would read exactly what the first one does. Cell (3e) reads the
+// banner's text on the FIRST process, which is the fact this file needs.
 //
 // THE CLIPBOARD IS MEASURED HERE TOO, AND ON THE SHIPPED BUNDLE (3g · T-405-43). The copy button
 // is a SECOND medium a person reads a redaction in, and until this cell existed the only thing

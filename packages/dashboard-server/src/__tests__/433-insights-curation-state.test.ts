@@ -52,7 +52,6 @@ function plantHost(
   postProcessing: Record<string, PostProcessingAnswer> = {},
 ) {
   const calls: { functionId: string; input: unknown }[] = []
-  let unmasked = 0
   const host: AgentHost = {
     registry: REGISTRY,
     caller: CALLER,
@@ -106,16 +105,12 @@ function plantHost(
         },
       })
     },
-    unmaskForDisplay: (text) => {
-      unmasked += 1
-      return text
-    },
   }
   const runIdsFor = (functionId: string) => calls
     .filter((call) => call.functionId === functionId)
     .map((call) => (call.input as { runId: string }).runId)
     .sort()
-  return { host, calls, runIdsFor, unmaskedCount: () => unmasked }
+  return { host, calls, runIdsFor }
 }
 
 interface MockResponse {
@@ -320,6 +315,5 @@ describe('C433-INSIGHTS-CURATION: curation state', () => {
       expect(keys.has(forbidden)).toBe(false)
     }
     expect(JSON.stringify(body)).not.toContain('planted')
-    expect(planted.unmaskedCount()).toBe(0)
   })
 })

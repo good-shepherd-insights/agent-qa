@@ -56,7 +56,6 @@ import {
 // cross the function layer and this file constructs no evidence store.
 // 405-01 (D-03): the durable run-detail read. One arm below, above the `/api/runs/:id` catch-all,
 // formatting nothing and opening no database.
-import { unmaskTreeForDisplay } from '../masking/display-tree.js'
 import {
   serveRunArtifact,
   serveRunDetailRead,
@@ -586,17 +585,11 @@ function jsonNoCors(res: ServerResponse, data: unknown, status = 200): void {
 }
 
 /**
- * Refuse a cross-site driver on a read that crosses the display seam, and refuse it with NO
- * cross-origin grant on the refusal either.
+ * Refuse a cross-site driver on a run-text read, and refuse it with NO cross-origin grant on the
+ * refusal either.
  *
- * WHY THESE ARMS AND NOT THE OTHERS (405 CR-01). 405-10 put `unmaskTreeForDisplay` on four read
- * arms. Before that seam their bodies carried `<SECRET_1>` placeholders; they now carry the
- * RESTORED CLEARTEXT of a declared secret. The sensitivity of the data behind this server's
- * pre-existing wildcard `Access-Control-Allow-Origin` changed without the wildcard changing, so on
- * these four arms the grant has to go: a page on any origin the operator has open could otherwise
- * `fetch` the run list, read the ids, then `fetch` the artifact and read the secrets out of the
- * config snapshot. The loopback bind is not a defence against that — it stops a remote HOST, and
- * the attacker here is the operator's own browser reaching another ORIGIN.
+ * WHY THESE ARMS AND NOT THE OTHERS (405 CR-01). They answer a run's stored text, served as it
+ * was stored (441 D-07), and they keep the no-grant posture CR-01 gave them.
  *
  * WHY THE REFUSAL AND NOT ONLY THE MISSING HEADER. Dropping the wildcard stops a page on another
  * ORIGIN from READING the body. It does not stop DNS rebinding, where the attacker's own name
@@ -605,7 +598,7 @@ function jsonNoCors(res: ServerResponse, data: unknown, status = 200): void {
  * ADMITS the caller that sends no `Origin` — the CLI, `curl`, the conformance harness — which is
  * the local drive these arms exist for.
  *
- * SCOPE, DELIBERATELY NARROW. Only the arms that cross the seam. `json()` above keeps its wildcard
+ * SCOPE, DELIBERATELY NARROW. Only the run-text arms. `json()` above keeps its wildcard
  * for the legacy read routes, whose whole-server posture is the re-platform question its own
  * docstring defers; widening it here would change the posture of routes this fix does not own.
  *
@@ -2152,8 +2145,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
 
     // GET /api/runs
     if (path === '/api/runs' && req.method === 'GET') {
-      // THE SAME-SITE GUARD, FIRST (405 CR-01) — see `refuseCrossSiteDisplayRead`. This arm
-      // crosses the display seam below, so its body can carry restored cleartext.
+      // THE SAME-SITE GUARD, FIRST (405 CR-01) — see `refuseCrossSiteDisplayRead`.
       if (refuseCrossSiteDisplayRead(req, res)) return
       const status = url.searchParams.get('status') ?? undefined
       const name = url.searchParams.get('name') ?? undefined
@@ -2193,25 +2185,8 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
           const filtered = platformFilteredRuns.filter(run => matchesTargetFilter(run, target))
 
           const runs = filtered.slice(offset, offset + limit)
-          // THE HUMAN-READ SEAM, PER ROW AND UNDER THAT ROW'S OWN ID (405-10, D-09). A run row
-          // carries the run's `failureSummary` and name, both of which the masker reduced at
-          // write time — this is a page a person reads, so the placeholders are restored here or
-          // they reach the browser as `<SECRET_1>`. The scope is the ROW's id and never the
-          // request's: the digests that say which value a placeholder stood for are per run, so a
-          // list scoped to one run would restore every other row's placeholders to the wrong
-          // thing (or, correctly, to nothing at all).
-          //
-          // `deps.agentHost` ABSENT IS TODAY'S ANSWER. Test harnesses and any composition without
-          // a host answer exactly as they did before this plan: masked.
-          const humanRuns = deps.agentHost === undefined
-            ? runs
-            : runs.map((run) => unmaskTreeForDisplay(
-              deps.agentHost as AgentHost,
-              run,
-              { runId: String((run as { id?: unknown }).id ?? '') },
-            ))
           jsonNoCors(res, {
-            runs: humanRuns,
+            runs,
             total: filtered.length,
             targets: targetOptions,
           })
@@ -2260,8 +2235,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
     // GET /api/runs/:id/artifact
     const runArtifactMatch = path.match(/^\/api\/runs\/([^/]+)\/artifact$/)
     if (runArtifactMatch && req.method === 'GET') {
-      // THE SAME-SITE GUARD, FIRST (405 CR-01) — see `refuseCrossSiteDisplayRead`. This arm
-      // crosses the display seam below, so its body can carry restored cleartext.
+      // THE SAME-SITE GUARD, FIRST (405 CR-01) — see `refuseCrossSiteDisplayRead`.
       if (refuseCrossSiteDisplayRead(req, res)) return
       const runId = decodeURIComponent(runArtifactMatch[1])
       const run = db.getRun(runId)
@@ -2270,17 +2244,11 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         return
       }
       const bundle = db.getRunArtifactBundle(runId)
-      // The artifact DRAWER is a human read (D-09) — its config snapshot and terminal errors are
-      // where a declared secret most often ended up. The seam runs on the JSON tree only; the
-      // artifact BYTES route (`/artifacts/:sha`) never crosses it at all.
-      const artifactBody = {
+      jsonNoCors(res, {
         run,
         artifact: sanitizeArtifactForResponse(bundle.artifact),
         missingSections: getArtifactMissingSections(bundle.artifact),
-      }
-      jsonNoCors(res, deps.agentHost === undefined
-        ? artifactBody
-        : unmaskTreeForDisplay(deps.agentHost, artifactBody, { runId }))
+      })
       return
     }
 
@@ -2298,8 +2266,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
 
     // GET /api/runs/:id/execution-logs
     if (path.startsWith('/api/runs/') && path.endsWith('/execution-logs') && req.method === 'GET') {
-      // THE SAME-SITE GUARD, FIRST (405 CR-01) — see `refuseCrossSiteDisplayRead`. This arm
-      // crosses the display seam below, so its body can carry restored cleartext.
+      // THE SAME-SITE GUARD, FIRST (405 CR-01) — see `refuseCrossSiteDisplayRead`.
       if (refuseCrossSiteDisplayRead(req, res)) return
       const segments = path.split('/')
       const id = segments[3]
@@ -2315,11 +2282,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
       // no child rows — one `runs` row per run since 402-09 — and a suite's hook logs are written
       // against that one id, carrying `test_index`/`step_index` to say where in the run they ran.
       const logs = db.getExecutionLogs({ runId: id, stepId, type })
-      // Execution logs are a human read (D-09): hook stdout and step errors are written masked and
-      // are read by a person looking for what went wrong.
-      jsonNoCors(res, deps.agentHost === undefined
-        ? { logs }
-        : unmaskTreeForDisplay(deps.agentHost, { logs }, { runId: id }))
+      jsonNoCors(res, { logs })
       return
     }
 
@@ -2585,9 +2548,8 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         json(res, { error: 'invalid_run_id' }, 400)
         return
       }
-      // THE ONE ARM THAT OPTS THE DISPLAY SEAM IN (405-10, D-09). This is the local door,
-      // read by a person's browser session. The authed REMOTE door's `/run/:runId/detail`
-      // dispatch passes nothing and stays masked by the option's `'machine'` default.
+      // THE LOCAL HUMAN DOOR (405-10, D-09): `boundary: 'human'` turns on the same-site guard. The
+      // authed REMOTE door's `/run/:runId/detail` passes nothing; both serve the body as stored.
       serveRunDetailRead(req, res, { runId: detailRunId, host: deps.agentHost, boundary: 'human' })
       return
     }
@@ -2615,9 +2577,8 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         json(res, { error: 'invalid_run_id' }, 400)
         return
       }
-      // THE HUMAN DOOR, AND THE ONLY ONE THAT RESTORES (D-04's masking clause). The verdict
-      // sentence quotes the failing step's recorded error, so it carries placeholders exactly as
-      // the detail projection does. The authed REMOTE row passes no `boundary` and stays masked.
+      // THE HUMAN DOOR (D-04): `boundary: 'human'` turns on the same-site guard. The authed REMOTE
+      // row passes no `boundary`; both serve the body as stored (441 D-07).
       serveRunAnalysisRead(req, res, { runId: analysisRunId, host: deps.agentHost, boundary: 'human' })
       return
     }
@@ -2649,9 +2610,8 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         json(res, { error: 'invalid_run_id' }, 400)
         return
       }
-      // THE HUMAN DOOR, AND THE ONLY ONE THAT RESTORES (405-10 D-09). The projection carries every
-      // step's text and every served brief line's summary, all masked at rest, so this arm opts the
-      // display seam in exactly as its two neighbours do.
+      // THE HUMAN DOOR (405-10 D-09): `boundary: 'human'` turns on the same-site guard, as on its
+      // two neighbours. The body is served as stored (441 D-07).
       serveRunKnowledgeRead(req, res, {
         runId: knowledgeRunId,
         host: deps.agentHost,
@@ -2744,12 +2704,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
       // produced, so a page rendering them rendered an empty tree that looked like a bug rather
       // than like an absence. The run's members, steps and sub-actions are `GET /api/runs/:id/detail`'s,
       // through `runs.detail`.
-      //
-      // 405-10 (D-09): and the one row it does answer with is a human read, so it crosses the
-      // display seam on the runs-list arm's reasoning.
-      jsonNoCors(res, deps.agentHost === undefined
-        ? { run }
-        : unmaskTreeForDisplay(deps.agentHost, { run }, { runId: id }))
+      jsonNoCors(res, { run })
       return
     }
 
@@ -2764,7 +2719,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
 
     // GET /api/insights/knowledge-changes — what curation changed across the window's runs (433-30,
     // F-433-26). Each run is read through `runs.knowledge`, the op the Knowledge tab reads, on the
-    // machine boundary: only counts leave this arm, so nothing is restored.
+    // machine boundary: only counts leave this arm.
     if (path === '/api/insights/knowledge-changes' && req.method === 'GET') {
       if (refuseCrossSiteDisplayRead(req, res)) return
       if (!deps.agentHost) {

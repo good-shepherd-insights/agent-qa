@@ -187,7 +187,6 @@ function plantedHost(read: {
       }
       throw new Error(`the fixture was asked for an id it does not plant: ${functionId}`)
     },
-    unmaskForDisplay: (text) => text,
   }
 }
 

@@ -21,5 +21,6 @@ test('C430-AGENT-HOST-MEMBERS-EXACT', () => {
     | `listDecl${'arations'}`
     | `onSession${'Event'}`
     | `readCapability${'Catalog'}`
+    | `unmaskFor${'Display'}`
   expectTypeOf<Extract<keyof AgentHost, Removed>>().toEqualTypeOf<never>()
 })

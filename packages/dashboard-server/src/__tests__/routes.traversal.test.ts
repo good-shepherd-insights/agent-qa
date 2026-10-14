@@ -96,7 +96,6 @@ function plantedHost(): AgentHost {
     caller: { surface: 'test', actor: 'traversal' },
     runsArtifactFunctionId: 'test:planted-artifact-op',
     analysisGetFunctionId: 'test:planted-analysis-get-op',
-    unmaskForDisplay: (text: string) => text,
     invokeFunction: (_registry: unknown, _id: string, input: unknown) => {
       const { sha } = input as { sha: string }
       dispatchedShas.push(sha)

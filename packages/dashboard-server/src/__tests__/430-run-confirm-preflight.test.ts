@@ -24,7 +24,6 @@ function seamHost(): AgentHost {
       invocations.push(functionId)
       return Promise.resolve({ kind: 'run-not-found', runId: 'run-432-14' })
     },
-    unmaskForDisplay: (text: string): string => text,
   } as unknown as AgentHost
 }
 

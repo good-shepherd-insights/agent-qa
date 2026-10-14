@@ -29,6 +29,7 @@ describe('the confirm router closed sets (430)', () => {
     }
   })
 
+  // 2026-10-14 (441-15, D-07): the display member is gone; the dashboard restores nothing.
   it('C430-AGENT-HOST-MEMBERS-EXACT: the host seam carries the run-detail and mark members only', () => {
     expect(AGENT_HOST_MEMBERS).toEqual([
       'registry',
@@ -44,7 +45,6 @@ describe('the confirm router closed sets (430)', () => {
       'runsMarksHistoryFunctionId',
       'runsMarkPreviewFunctionId',
       'invokeFunction',
-      'unmaskForDisplay',
     ])
   })
 })

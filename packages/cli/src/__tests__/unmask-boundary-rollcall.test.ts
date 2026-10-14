@@ -463,8 +463,8 @@ const ROLLCALL_ANALYSIS_HANDOFF: CompletedRunHandoff = {
  * The base roll-call host the run reads below spread over (400-06, narrowed by 430 D-02).
  *
  * WHAT IS SUPPLIED rather than composed is the HOST, which is an input to the routers and not the
- * thing under test. 2026-10-14 (441-14, D-07): its `unmaskForDisplay` restores nothing — the
- * dashboard serves the text a run stored, masked at write.
+ * thing under test. 2026-10-14 (441-15, D-07): it carries no display member — the dashboard
+ * serves the text a run stored, masked at write.
  */
 function dashboardRollCallHost(): AgentHost {
   return {
@@ -492,7 +492,6 @@ function dashboardRollCallHost(): AgentHost {
       results: FIXTURE.clauseResults,
       denials: [],
     }),
-    unmaskForDisplay: (text: string) => text,
   }
 }
 
