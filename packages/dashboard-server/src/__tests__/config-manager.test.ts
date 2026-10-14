@@ -1034,6 +1034,15 @@ describe('C441-CONFIG', () => {
     expect(short.kind).toBe('ok')
     if (short.kind !== 'ok') return
     expect(short.fileIssues.some((issue) => issue.message.includes('q7')), JSON.stringify(short.fileIssues)).toBe(true)
+
+    await writeFile(configPath, 'a: b: compact\n')
+    const broken = await new ConfigManager(configPath, declaredMask('compact', 'PW_441')).readMasked()
+    expect(broken.kind).toBe('file_invalid')
+    if (broken.kind !== 'file_invalid') return
+    expect(broken.message).toContain('[secret:PW_441]')
+    expect(broken.message).not.toContain('compact')
+    const unloadable = await new ConfigManager(configPath, () => { throw new Error('a: b: compact') }).readMasked()
+    expect(unloadable).toMatchObject({ kind: 'file_invalid', message: 'The config file is not valid YAML.' })
   })
 })
 

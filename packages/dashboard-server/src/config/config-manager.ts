@@ -171,7 +171,7 @@ export class ConfigManager {
     if (read.kind === 'absent') {
       return { kind: 'ok', config: {}, revision: CONFIG_REVISION_ABSENT, lines: [], fileIssues: [] }
     }
-    if (read.kind === 'file_invalid') return read
+    if (read.kind === 'file_invalid') return { ...read, message: this.maskSummary(read.message) }
     const masked = maskDocument(read.doc, this.mask)
     const config = (masked.toJSON() as Record<string, unknown> | null) ?? {}
     const parsed = AgentQaConfigSchema.safeParse(normalizeForValidation(read.config))
@@ -179,10 +179,19 @@ export class ConfigManager {
       ? []
       : parsed.error.issues.map((issue) => ({
         path: issue.path.map((key) => (typeof key === 'number' ? key : String(key))),
-        message: issue.message,
+        message: this.mask(issue.message),
       }))
     const lines = fileLines(this.mask(read.raw))
     return { kind: 'ok', config, revision: read.revision, lines, fileIssues }
+  }
+
+  // A file that does not parse can leave the declared secrets unreadable; its message is then withheld.
+  private maskSummary(message: string): string {
+    try {
+      return this.mask(message)
+    } catch {
+      return 'The config file is not valid YAML.'
+    }
   }
 
   // 429-06 D-09: one in-file value, read from the config file alone.
@@ -389,7 +398,7 @@ export class ConfigManager {
         error: 'validation_failed',
         issues: parsed.error.issues.map((issue) => ({
           path: issue.path.map((key) => (typeof key === 'number' ? key : String(key))),
-          message: issue.message,
+          message: this.mask(issue.message),
         })),
       }
     }
