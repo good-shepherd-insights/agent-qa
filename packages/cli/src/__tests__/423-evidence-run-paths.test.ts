@@ -89,11 +89,10 @@ for (const path of ['COMPOSED', 'DIRECT'] as const) {
     } as unknown as RunInvocationInputs['config']
     const configContent = JSON.stringify(config)
     writeFileSync(configFilePath, configContent)
-    const secretStore = SecretStore.fromEnvContent('')
+    const lateSecret = 'synthetic-late-console-token'
+    const secretStore = SecretStore.fromEnvContent(`LATE_CONSOLE=${lateSecret}`)
     const secretRedactor = new SecretRedactor(secretStore)
     const masking = buildRunMaskingContext({ env: {} })
-    const lateSecret = 'synthetic-late-console-token'
-    boundary.onExecute = () => masking.register(lateSecret)
     const records = [
       { level: 'warn', text: `first ${lateSecret}`, timestamp: 23, location: { url: `https://example.invalid/${lateSecret}`, lineNumber: 2, columnNumber: 4 } },
       { level: 'error', text: `second ${lateSecret}`, timestamp: 11 },
@@ -169,8 +168,8 @@ for (const path of ['COMPOSED', 'DIRECT'] as const) {
       const text = Buffer.from(bytes).toString('utf8')
       expect(text).not.toContain(lateSecret)
       expect(ConsoleEvidenceDocumentSchema.parse(JSON.parse(text)).records).toEqual(records.map(record => ({
-        ...record, text: masking.mask(record.text),
-        ...(record.location ? { location: { ...record.location, url: masking.mask(record.location.url) } } : {}),
+        ...record, text: secretRedactor.redactString(record.text),
+        ...(record.location ? { location: { ...record.location, url: secretRedactor.redactString(record.location.url) } } : {}),
       })))
       expect(createHash('sha256').update(bytes).digest('hex')).toBe(entry.ref.sha)
       expect(entry.ref.id).toBe(`console-evidence:${entry.ref.sha}`)
@@ -267,7 +266,7 @@ async function ariaReadback(mode: 'two' | 'empty' | 'missing' | 'mobile' | 'chil
       platform: mode === 'mobile' ? 'android' : 'web',
       async setup() {}, async cleanup() {},
       async observe() { current = screens[Math.min(observeIndex++, screens.length - 1)]!; return current },
-      async execute() { masking.register(secret); return { success: true } },
+      async execute() { return { success: true } },
       async screenshot() { return Buffer.from(`decision image ${current.tree}`) },
     },
     planner: { async plan() { return { plan: {
@@ -277,7 +276,8 @@ async function ariaReadback(mode: 'two' | 'empty' | 'missing' | 'mobile' | 'chil
     verifier: { async verify(step, _before, after, action) { return { verification: scriptedVerification({
       step, after, action, pass: verification++ > 0, reasoning: 'fixture verdict',
     }) } } },
-    masking, evidenceArtifacts: store, events: sink,
+    masking, secretRedactor: new SecretRedactor(new SecretStore({ ARIA_SECRET: secret })),
+    evidenceArtifacts: store, events: sink,
   }
   let result: StepResult | undefined
   try {
@@ -373,7 +373,7 @@ async function ariaReadback(mode: 'two' | 'empty' | 'missing' | 'mobile' | 'chil
         expect(Buffer.from(bytes).equals(Buffer.from(publicationBytes.get(ref.sha)!))).toBe(true)
         expect(createHash('sha256').update(bytes).digest('hex')).toBe(ref.sha)
         const text = Buffer.from(bytes).toString()
-        expect(AriaEvidenceDocumentSchema.parse(JSON.parse(text))).toEqual({ schemaVersion: 1, kind: 'aria', tree: masking.mask(before[index]!.tree) })
+        expect(AriaEvidenceDocumentSchema.parse(JSON.parse(text))).toEqual({ schemaVersion: 1, kind: 'aria', tree: `before child ${index} [secret:ARIA_SECRET]` })
         expect(text).not.toContain(secret)
         expect(text).not.toContain('after child')
       }
