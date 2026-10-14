@@ -70,14 +70,12 @@ export const configAuthSetSpec: FunctionSpec<ConfigAuthSetInput, ConfigChangeOut
    */
   classify: classifyConfigChangeOutput,
   async invoke(input, deps): Promise<ConfigChangeOutput> {
-    // The same four-way guard its siblings carry, including `configScan` (395-04, CFGM-02) — and on
-    // this op the scan is not only defence in depth for the rendered artifact: it is half of the
-    // D-11 input check itself, so an unbound scan here would remove a gate rather than weaken one.
-    const { configFiles, configValidate, configScan, configWrite } = deps
+    // The same three-way guard its siblings carry: the files, the validator and the direct writer.
+    // The D-11 input check is the reference shape rule, which needs no port (441 D-15).
+    const { configFiles, configValidate, configWrite } = deps
     if (
       configFiles === undefined
       || configValidate === undefined
-      || configScan === undefined
       || configWrite === undefined
     ) {
       throw new FunctionNotBoundError(CONFIG_AUTH_SET_FUNCTION_ID)

@@ -4,7 +4,6 @@
 // directly against fake ports so the projection logic is pinned independently of the gate,
 // the registry, and any host access — `invoke-function.test.ts` owns the pipeline itself.
 
-import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
 import type {
   CompletedRunHandoff,
   ConfigChange,
@@ -670,8 +669,6 @@ describe('C432-ALL-OPS-AVAILABLE: the 432-27 gate read and auth writer serve eve
           return Promise.resolve({ ok: true as const })
         },
       },
-      configScan: { scan: (parts: Parameters<typeof scanConstructedArtifact>[0]) =>
-        scanConstructedArtifact(parts, {}) },
       configWrite: {
         applyFields: ({ changes }: { changes: readonly ConfigChange[] }) => {
           written.push(changes)

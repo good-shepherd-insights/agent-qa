@@ -148,11 +148,6 @@ export function writeTestScaffoldStopDetail(answer: {
 }): string {
   if (answer.detail !== undefined && answer.detail !== '') return answer.detail
   const attempted = answer.summaryLine === undefined ? '' : ` (${answer.summaryLine})`
-  if (answer.outcome === 'blocked' && answer.blockedReason === 'guardrail-hit') {
-    return 'the configuration was not written because the guardrail found a secret'
-      + `${attempted}, so there is no target to write a test against. Nothing was written; move the `
-      + 'secret out of the configuration files and ask again.'
-  }
   if (answer.outcome === 'blocked') {
     const issues = answer.validationIssues === undefined || answer.validationIssues.length === 0
       ? ''

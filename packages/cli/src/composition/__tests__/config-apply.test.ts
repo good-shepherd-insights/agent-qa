@@ -177,12 +177,6 @@ function registryFor() {
     // THE REAL THREE, over the real workspace and the real repository.
     configFiles: createConfigFilesPort(configPath),
     configValidate: createConfigValidatePort(),
-    // 441 D-15: the ops' dependency guard still names the scan port; nothing may call it.
-    configScan: {
-      scan: () => {
-        throw new Error('a config change must not be scanned')
-      },
-    },
     // 432-11: the direct writer the config operations publish through.
     configWrite: createConfigWritePort(configPath),
   }

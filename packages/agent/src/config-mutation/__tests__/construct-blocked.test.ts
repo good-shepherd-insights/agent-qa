@@ -245,12 +245,6 @@ function directHarness(options: Parameters<typeof harness>[0]) {
   const writes: unknown[] = []
   const deps = {
     ...test.deps,
-    // The op's dependency guard still names the scan port; nothing may call it.
-    configScan: {
-      scan: () => {
-        throw new Error('a config change must not be scanned')
-      },
-    },
     configWrite: {
       applyFields: (request: unknown) => {
         writes.push(request)

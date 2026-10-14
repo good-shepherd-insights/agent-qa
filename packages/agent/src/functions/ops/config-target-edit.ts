@@ -55,12 +55,11 @@ export const configTargetEditSpec: FunctionSpec<ConfigTargetEditInput, ConfigCha
    */
   classify: classifyConfigChangeOutput,
   async invoke(input, deps): Promise<ConfigChangeOutput> {
-    // The same four-way guard its siblings carry, including `configScan` (395-04, CFGM-02).
-    const { configFiles, configValidate, configScan, configWrite } = deps
+    // The same three-way guard its siblings carry: the files, the validator and the direct writer.
+    const { configFiles, configValidate, configWrite } = deps
     if (
       configFiles === undefined
       || configValidate === undefined
-      || configScan === undefined
       || configWrite === undefined
     ) {
       throw new FunctionNotBoundError(CONFIG_TARGET_EDIT_FUNCTION_ID)

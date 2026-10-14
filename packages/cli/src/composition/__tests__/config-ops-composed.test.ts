@@ -127,12 +127,6 @@ function registry() {
     // THE TWO PRODUCTION PORTS THIS FILE IS ABOUT.
     configFiles: createConfigFilesPort(configPath),
     configValidate: createConfigValidatePort(),
-    // 441 D-15: the ops' dependency guard still names the scan port; nothing may call it.
-    configScan: {
-      scan: () => {
-        throw new Error('a config change must not be scanned')
-      },
-    },
     // 432-11: THE REAL DIRECT WRITER, over the real workspace.
     configWrite: createConfigWritePort(configPath),
     // Nothing should reach the store any more; it is still bound so a filing would be seen.

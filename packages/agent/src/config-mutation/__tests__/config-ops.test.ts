@@ -271,12 +271,6 @@ function harness(options: {
         return Promise.resolve({ proposalId: `prop-${filed.length}` })
       },
     },
-    // The ops' dependency guard still names the scan port; nothing may call it.
-    configScan: {
-      scan: () => {
-        throw new Error('a config change must not be scanned')
-      },
-    },
     // 432-11: the direct writer. It records what it was handed and answers as the host port does;
     // what the host does with those changes is measured against real files in `cli`.
     configWrite: {

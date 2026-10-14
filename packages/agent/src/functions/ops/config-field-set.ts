@@ -54,19 +54,13 @@ export const configFieldSetSpec: FunctionSpec<ConfigFieldSetInput, ConfigChangeO
    */
   classify: classifyConfigChangeOutput,
   async invoke(input, deps): Promise<ConfigChangeOutput> {
-    // FOUR DEPS, ONE `boundThrough`. The declared name is the direct writer (432-11): a host that
-    // cannot publish a config change cannot run this op. The other three are checked here, by
-    // name, so an in-layer caller holding the spec gets the same refusal a pipeline caller would.
-    //
-    // `configScan` IS IN THAT LIST AND ITS ABSENCE REFUSES (395-04, CFGM-02). A construction that
-    // cannot scan must not write: the alternative is a guardrail that silently stops existing
-    // whenever a host forgets one line of wiring, which is the permissive direction a security
-    // control may not fail in.
-    const { configFiles, configValidate, configScan, configWrite } = deps
+    // THREE DEPS, ONE `boundThrough`: the files, the validator and the direct writer (432-11). The
+    // declared name is the writer; all three are checked here, by name, so an in-layer caller
+    // holding the spec gets the same refusal a pipeline caller would. No scan (441 D-15).
+    const { configFiles, configValidate, configWrite } = deps
     if (
       configFiles === undefined
       || configValidate === undefined
-      || configScan === undefined
       || configWrite === undefined
     ) {
       throw new FunctionNotBoundError(CONFIG_FIELD_SET_FUNCTION_ID)

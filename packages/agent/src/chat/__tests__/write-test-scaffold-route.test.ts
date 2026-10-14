@@ -58,7 +58,6 @@
 import { isMap, isScalar, isSeq, parseDocument } from 'yaml'
 import { describe, expect, it } from 'vitest'
 
-import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
 import { CROSS_BOUNDARY_REASONS, utf8Decode, utf8Encode } from '@vostride/agent-qa-schema'
 import type {
   AgentAskInput,
@@ -176,8 +175,8 @@ interface Harness {
 //
 // THE REPAIR IS THE REAL REGISTERED SPEC, never a second double that answers differently.
 // `configProjectScaffoldSpec.invoke` runs here over in-memory ports, so `parseHostnameToken`, the
-// declared-target predicate, the candidate assembly, the cross-boundary classifier, the guardrail
-// scan and the filing are all production's. Two of the five ports are doubles for a BOUNDARY reason
+// declared-target predicate, the candidate assembly, the cross-boundary classifier and the
+// publication are all production's. Two of the four ports are doubles for a BOUNDARY reason
 // rather than a convenience one: `configValidate` is `core`'s `AgentQaConfigSchema` and
 // `scaffoldContent` is the shared content module beside `agent-qa init`, and `packages/agent` may
 // import neither. Both are measured against their real implementations in
@@ -338,10 +337,6 @@ function scaffoldOpFixture(options: {
       configFiles,
       configValidate,
       configWrite,
-      // THE REAL SCAN with an EMPTY seed set, on `config-apply.test.ts`'s stated reasoning: the
-      // function is production's, the seeds are not, because a cell whose verdict depended on the
-      // developer's exported variables would be measuring the machine.
-      configScan: { scan: (parts) => scanConstructedArtifact(parts, {}) },
       scaffoldContent,
     } as Parameters<typeof configProjectScaffoldSpec.invoke>[1],
     published,
@@ -679,31 +674,8 @@ describe('one turn: detect, scaffold, author (D-14 · CFGM-05; 432-11 D-05)', ()
   // 2026-10-03 (quick 261003-cpv, 432 review WR-03): every blocked or no-change scaffold answers
   // with its own reason. The fallback "this project has no configuration … name the site" was wrong
   // here: the person named the site, and the scaffold said why it wrote nothing.
-  it('C261003-CPV-SCAFFOLD-REASONS: a guardrail-blocked scaffold says the guardrail found a secret, and where',
-    async () => {
-      const summaryLine = 'configure this project for https://booking.com as target booking-com — blocked: '
-        + 'your configuration already carries a secret at hooks.yaml'
-      const test = harness({
-        targets: [],
-        scaffoldAnswer: {
-          outcome: 'blocked',
-          summaryLine,
-          blockedReason: 'guardrail-hit',
-          paths: ['hooks.yaml'],
-        },
-      })
-      const result = await test.runTurn({ message: 'write a test for booking.com checkout' })
-
-      expect(result.status).toBe('fail_closed')
-      expect(test.ordering).toEqual([CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID])
-      const reason = result.unhandled?.reason ?? ''
-      expect(reason).toContain(summaryLine)
-      expect(reason).toContain('secret')
-      expect(reason).not.toBe(WRITE_TEST_UNCONFIGURED_DETAIL)
-      expect(reason).not.toContain('Name the site')
-      expect(reason).not.toContain('no agent-qa configuration')
-    })
-
+  // 2026-10-14 (441-18, D-15): 'a guardrail-blocked scaffold says the guardrail found a secret, and
+  // where' is deleted with the route's guardrail branch; no scaffold is blocked for a secret.
   it('C261003-CPV-SCAFFOLD-REASONS: a schema-blocked scaffold says the result would not be valid, with the issue',
     async () => {
       const test = harness({

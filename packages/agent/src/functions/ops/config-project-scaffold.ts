@@ -68,19 +68,14 @@ export const configProjectScaffoldSpec: FunctionSpec<
    */
   classify: classifyConfigChangeOutput,
   async invoke(input, deps): Promise<ConfigChangeOutput> {
-    // FIVE DEPS, ONE `boundThrough`, on the arrangement the deleted `config.undo.propose` used
-    // (432-17) — with the declared name being this op's OWN one. `scaffoldContent` is what a host that cannot render the shared
-    // scaffold substance lacks, and it is the fact that makes this op specifically unavailable.
-    //
-    // `configScan`'s ABSENCE REFUSES, as it does for every propose op (395-04, CFGM-02) — and this
-    // op is the sharpest case for it. D-12 says the scan reads WHOLE NEW FILES for scaffold, and
-    // every byte of this proposal is a new file: there is no committed artifact to have been
-    // cleared earlier. A construction that cannot scan must not surface a diff.
-    const { configFiles, configValidate, configScan, configWrite, scaffoldContent } = deps
+    // FOUR DEPS, ONE `boundThrough`, on the arrangement the deleted `config.undo.propose` used
+    // (432-17) — with the declared name being this op's OWN one: the files, the validator, the
+    // direct writer and `scaffoldContent`, which is what a host that cannot render the shared
+    // scaffold substance lacks and the fact that makes this op specifically unavailable.
+    const { configFiles, configValidate, configWrite, scaffoldContent } = deps
     if (
       configFiles === undefined
       || configValidate === undefined
-      || configScan === undefined
       || configWrite === undefined
       || scaffoldContent === undefined
     ) {

@@ -240,12 +240,6 @@ function registryFor(options: { readonly confirm?: boolean } = {}) {
     scaffoldContent: createScaffoldContentPort(),
     // 432-11: THE REAL DIRECT WRITER the scaffold publishes through.
     configWrite: createConfigWritePort(configPath),
-    // 441 D-15: the ops' dependency guard still names the scan port; nothing may call it.
-    configScan: {
-      scan: () => {
-        throw new Error('a config change must not be scanned')
-      },
-    },
   }
 
   return createFunctionRegistry({
@@ -1067,11 +1061,6 @@ function directRegistry() {
     },
     configFiles: createConfigFilesPort(configPath),
     configValidate: createConfigValidatePort(),
-    configScan: {
-      scan: () => {
-        throw new Error('a config change must not be scanned')
-      },
-    },
     scaffoldContent: createScaffoldContentPort(),
     configWrite: (host as Record<string, unknown>).createConfigWritePort === undefined
       ? undefined

@@ -58,15 +58,11 @@ export const configTargetCreateSpec: FunctionSpec<ConfigTargetCreateInput, Confi
    */
   classify: classifyConfigChangeOutput,
   async invoke(input, deps): Promise<ConfigChangeOutput> {
-    // THE SAME FOUR-WAY GUARD ITS SIBLINGS CARRY, INCLUDING `configScan` (395-04, CFGM-02). A
-    // construction that cannot scan must not surface a diff: the alternative is a guardrail that
-    // silently stops existing whenever a host forgets one line of wiring, which is the permissive
-    // direction a security control may not fail in.
-    const { configFiles, configValidate, configScan, configWrite } = deps
+    // The same three-way guard its siblings carry: the files, the validator and the direct writer.
+    const { configFiles, configValidate, configWrite } = deps
     if (
       configFiles === undefined
       || configValidate === undefined
-      || configScan === undefined
       || configWrite === undefined
     ) {
       throw new FunctionNotBoundError(CONFIG_TARGET_CREATE_FUNCTION_ID)
