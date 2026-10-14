@@ -4,16 +4,15 @@
 // families multiply, and an operator who is handed a thousand-case batch reviews none of them.
 // So a refresh is capped. A cap on its own, however, creates the failure this file exists to
 // prevent: if the SAME leading seeds are re-selected every time, the seeds behind them are
-// never reached. That happens whenever a seed produces no publishable variant — a policy
-// refusal, a family that does not apply — because nothing on disk records that the tuple was
-// already decided. The cap then spends itself, refresh after refresh, on work already done.
+// never reached. That happens whenever a seed produces no publishable variant — a family that
+// does not apply — because nothing on disk records that the tuple was already decided. The cap then spends itself, refresh after refresh, on work already done.
 //
 // The fix is a durable per-product refresh record: every completed (seed, mutator) outcome is
 // settled for the generation and the guardrail policy it was decided under, so a later refresh
 // skips it and reaches the seeds behind it. The two keys are deliberate. A TABLE-VERSION bump
 // is a new generation whose tuples are open again — and it retires nothing, so an id committed
-// under generation 1 is never re-derived. A POLICY change reopens refusals specifically,
-// because "the host blocked this" is a statement about a policy, not about the bytes.
+// under generation 1 is never re-derived. A POLICY change reopens settled tuples (441-53
+// removes the policy key).
 //
 // The records are published write-once, named by their own content digest, so two refreshes
 // racing over one unchanged corpus publish one identical record rather than two histories.
@@ -32,7 +31,6 @@ import {
   type SeedingPlan,
 } from '@vostride/agent-qa-eval'
 import { asRunId, computeBriefDigest, type LosslessServedBriefProofV1 } from '@vostride/agent-qa-schema'
-import { loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import {
   loadAdversarialGuardrailPolicy,
   stageAdversarialProposal,
@@ -62,18 +60,6 @@ afterEach(() => {
 })
 
 const ROUTE_POLICY = loadAdversarialGuardrailPolicy()
-const BLOCK_POLICY = loadGuardrailPolicy({
-  detectors: {
-    awsKey: 'block',
-    creditCard: 'block',
-    pemKey: 'block',
-    bearer: 'redact',
-    apiKey: 'redact',
-    email: 'redact',
-    injectionShape: 'block',
-  },
-  allowlist: [],
-})
 
 /** More eligible seeds than the default cap, so the overflow is real rather than notional. */
 const SEED_COUNT = 10
@@ -202,10 +188,6 @@ function stagedSeedIds(result: StageAdversarialProposalResult): string[] {
   return [...new Set(result.staged.map(row => row.seedCassetteId))].sort()
 }
 
-function refusedSeedIds(result: StageAdversarialProposalResult): string[] {
-  return [...new Set(result.refusals.map(row => row.seedCassetteId))].sort()
-}
-
 function stateFiles(f: Fixture, product = 'default'): string[] {
   const dir = join(f.agentQaRoot, ADVERSARIAL_STATE_SUBDIR, product)
   try {
@@ -266,44 +248,6 @@ describe('422 adversarial refresh bounding and recovery', () => {
     expect(third.skips).toHaveLength(SEED_COUNT)
     expect(third.skips.every(skip => skip.reason === 'already-derived')).toBe(true)
     expect([...new Set(third.skips.map(skip => skip.seedCassetteId))].sort()).toEqual([...f.seedIds])
-  })
-
-  it('settles refusals durably so a later refresh advances past them, and reopens them under a new policy', async () => {
-    const f = fixture()
-    const first = await stage(f, { mutators: ['injection-template'], policy: BLOCK_POLICY })
-
-    // Nothing publishable: every selected seed was refused by the host policy.
-    expect(first.kind).toBe('nothing-derived')
-    expect(first.staged).toEqual([])
-    expect(first.seedsConsidered).toBe(8)
-    expect(refusedSeedIds(first)).toEqual(f.seedIds.slice(0, 8))
-
-    // A refused tuple is a COMPLETED outcome for this generation and this policy. Without that
-    // record the same eight seeds would be re-selected and re-refused forever.
-    const second = await stage(f, { mutators: ['injection-template'], policy: BLOCK_POLICY })
-    expect(second.seedsConsidered).toBe(SEED_COUNT - 8)
-    expect(refusedSeedIds(second)).toEqual(f.seedIds.slice(8))
-    expect(refusedSeedIds(second).some(id => refusedSeedIds(first).includes(id))).toBe(false)
-
-    const third = await stage(f, { mutators: ['injection-template'], policy: BLOCK_POLICY })
-    expect(third.kind).toBe('nothing-derived')
-    expect(third.seedsConsidered).toBe(0)
-    // Nothing was scanned, so nothing may be reported as refused NOW — but an empty batch with
-    // no rows at all is indistinguishable from a refresh that never ran, so every settled
-    // refusal is disclosed on its own channel, naming the detector and never the surface.
-    expect(third.refusals).toEqual([])
-    expect([...new Set(third.settledRefusals.map(row => row.seedCassetteId))].sort())
-      .toEqual([...f.seedIds])
-    for (const row of third.settledRefusals) {
-      expect(row).toMatchObject({ mutator: 'injection-template', detector: 'injectionShape' })
-    }
-
-    // "The host blocked this" is a statement about a POLICY. Loosen it and every refusal is
-    // open again — the cap applies to the reopened population exactly as it did the first time.
-    const relaxed = await stage(f, { mutators: ['injection-template'], policy: ROUTE_POLICY })
-    expect(relaxed.kind).toBe('staged')
-    expect(relaxed.eligibleSeeds).toBe(SEED_COUNT)
-    expect(stagedSeedIds(relaxed)).toEqual(f.seedIds.slice(0, 8))
   })
 
   it('publishes one identical record for a repeated refresh and refuses conflicting bytes under one digest', async () => {

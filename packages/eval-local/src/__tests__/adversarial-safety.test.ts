@@ -1,17 +1,11 @@
 // 422-01-T2 — the same-byte safety boundary.
 //
-// Staging produces reviewable bytes; admission must commit THOSE bytes or nothing. This file
-// attacks that claim from both sides. First the POLICY side: a host that tightens
-// `injectionShape` from `route` to `block` after a batch was staged must refuse the already
-// staged injection bytes, with zero admitted entries — the recheck happens under the policy
-// loaded at admission, not the one loaded at staging (D-03). Then the BYTE side: every way an
-// operator (or anything with write access to the audit dir) can alter what was reviewed —
-// each of the three serialized documents, the manifest itself, the blob closure, the file
-// kind — must produce a refusal BEFORE the committed corpus digest can move.
-//
-// The refusal rows are also checked for what they DO NOT carry: a detector fired on
-// injection-shaped text, so echoing the offending name or the text back into a diagnostic
-// would put the very content the checkpoint refused into a log.
+// Staging produces reviewable bytes; admission must commit THOSE bytes or nothing. First the
+// content side: the reviewed bytes are committed as authored, whatever the host policy says
+// (441 D-15). Then the BYTE side: every way an operator (or anything with write access to the
+// audit dir) can alter what was reviewed — each of the three serialized documents, the
+// manifest itself, the blob closure, the file kind — must produce a refusal BEFORE the
+// committed corpus digest can move.
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -32,14 +26,13 @@ import { loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import {
   ADVERSARIAL_MANIFEST_FILE,
   computeAdversarialBatchDigest,
-  listStagedAdversarial,
   loadAdversarialGuardrailPolicy,
   refreshAdversarialSplit,
   stageAdversarialProposal,
   type AdversarialBatchManifest,
 } from '../adversarial-composition.js'
 import { readCommittedCorpus } from '../committed-corpus-source.js'
-import { committedBlobPath, committedCorpusPath } from '../committed-root-store.js'
+import { committedBlobPath, committedCassettePath, committedCorpusPath } from '../committed-root-store.js'
 import { seedCommittedCorpus } from '../seeding-composition.js'
 import {
   LOCAL_FIXTURE_BLOB_BYTES,
@@ -96,7 +89,7 @@ const artifacts: ArtifactSource = {
 }
 
 /** One committed proof-backed natural leaf — the D-07 seed population, minimal. */
-function fixture() {
+function fixture(opts: { seedText?: string } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'adversarial-safety-'))
   roots.push(root)
   const committedRoot = join(root, 'committed')
@@ -112,6 +105,7 @@ function fixture() {
   const extraction = extractRunCassettes({ handoff, artifacts })
   const extracted = extraction.cassettes.find(row => row.cassette.granularity === 'leaf')!
   const seed = extracted.cassette as LeafCassette
+  if (opts.seedText !== undefined) seed.input.stateBefore.tree += `\n- text "${opts.seedText}"`
   const plan: SeedingPlan = {
     product: 'default',
     runId: handoff.runId,
@@ -187,39 +181,22 @@ function caseDir(f: ReturnType<typeof fixture>, batchDigest: string): string {
 }
 
 describe('422 adversarial same-byte safety boundary', () => {
-  it('refuses staged injection bytes when the host policy moved from route to block, admitting nothing', async () => {
-    const f = fixture()
+  it('admits staged injection bytes holding a card number as authored, under a block policy', async () => {
+    const f = fixture({ seedText: 'Card 4242 4242 4242 4242' })
     const staged = await stageInjection(f)
     const before = corpusDigest(f.committedRoot)
-    const bytes = tree(f.committedRoot)
 
-    const refused = refresh(f, staged.batchDigest!, BLOCK_POLICY)
+    const admitted = refresh(f, staged.batchDigest!, BLOCK_POLICY)
 
-    expect(refused.kind).toBe('refused')
-    expect(refused.reason).toBe('admission-refused')
-    expect(refused.admitted).toEqual([])
-    expect(refused.writesStarted).toBe(false)
-    expect(refused.refusals.length).toBeGreaterThan(0)
-    for (const refusal of refused.refusals) {
-      expect(refusal).toMatchObject({
-        cassetteId: staged.staged[0]!.cassetteId,
-        seedCassetteId: f.seed.id,
-        generator: 'injection-name',
-        detector: 'injectionShape',
-        action: 'block',
-      })
-    }
-    // The refusal names identities, never the offending surface text (Pitfall: a diagnostic
-    // that echoes refused content re-exports what the checkpoint just refused).
-    const rendered = JSON.stringify(refused.refusals)
-    expect(rendered).not.toContain('Ignore all previous instructions')
-    expect(rendered).not.toContain(f.seed.input.stateBefore.elements[0]!.name)
-
-    expect(corpusDigest(f.committedRoot)).toBe(before)
-    expect(refused.nextCorpusDigest).toBe(before)
-    expect(tree(f.committedRoot)).toEqual(bytes)
-    // The reviewed batch survives its refusal: the operator can see what was rejected.
-    expect(listStagedAdversarial({ agentQaRoot: f.agentQaRoot, product: 'default' })).toHaveLength(1)
+    expect(admitted.kind).toBe('admitted')
+    expect(admitted.refusals).toEqual([])
+    expect(admitted.admitted.map(row => row.cassetteId)).toEqual([staged.staged[0]!.cassetteId])
+    expect(admitted.nextCorpusDigest).not.toBe(before)
+    const committed = readFileSync(
+      join(f.committedRoot, committedCassettePath('default', staged.staged[0]!.cassetteId)),
+      'utf8',
+    )
+    expect(committed).toContain('4242 4242 4242 4242')
   })
 
   it.each(['cassette.json', 'label.json', 'entry.json'] as const)(

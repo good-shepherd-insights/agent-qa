@@ -106,7 +106,6 @@ import {
   isNovelState,
   stageFeedbackEntry,
   admitStagedFeedback,
-  ADVERSARIAL_EGRESS_CHANNEL,
   ADVERSARIAL_STAGING_SUBDIR,
   listStagedAdversarial,
   loadAdversarialGuardrailPolicy,
@@ -1389,12 +1388,11 @@ export async function runSeedFromFeedbackVerb(session: EvalSession, opts: {
 // — this whole path makes no model call at all, which is why the session is resolved
 // key-only by the command layer.
 //
-// The policy is LOADED here and handed down as a required parameter (D-03): the composition
-// below never defaults one, so a host that tightens `injectionShape` to `block` binds at
-// admission even for bytes staged under the old setting.
+// The policy is loaded here only for its digest, which keys settled tuples (441-53 removes it);
+// staged and admitted cases are committed as authored (441 D-15).
 // ---------------------------------------------------------------------------
 
-export { ADVERSARIAL_EGRESS_CHANNEL, ADVERSARIAL_STAGING_SUBDIR }
+export { ADVERSARIAL_STAGING_SUBDIR }
 export type { AdversarialRefusal, AdversarialStagingSkip, StagedAdversarialCase }
 
 /**
@@ -1465,9 +1463,8 @@ export interface AdversarialVerbResult {
    * The identity that authored this refresh's probes (D-11), REDUCED FOR DISCLOSURE.
    *
    * Family plus a digest, never the configured id. This DTO is what `eval adversarial --json`
-   * prints verbatim to stdout, which on any CI host is a log -- and unlike the committed corpus
-   * entry, it crosses no `assertCommittedEgressSafe` and is emitted even on the
-   * `nothing-derived` branch where no case was ever scanned. A configured model id can embed a
+   * prints verbatim to stdout, which on any CI host is a log, and it is emitted even on the
+   * `nothing-derived` branch where no case was derived. A configured model id can embed a
    * credential; that is why the preflight masks it for its own diagnostics and why
    * `ProbeReservation` records `authorDigest` rather than the id.
    */

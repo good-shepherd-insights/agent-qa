@@ -8,8 +8,8 @@
 //
 // So the contract here is progress-preserving rather than all-or-nothing:
 //
-//   * the whole batch is preflighted — integrity, provenance, exact bytes, the loaded policy
-//     and every referenced blob — BEFORE the first case is committed, so an interruption can
+//   * the whole batch is preflighted — integrity, provenance, exact bytes and every
+//     referenced blob — BEFORE the first case is committed, so an interruption can
 //     only ever happen between cases that were each already judged admissible;
 //   * a case that landed stays landed, and the reviewed batch stays on disk;
 //   * a retry resumes THAT manifest and nothing else, reporting the survivor as `unchanged`

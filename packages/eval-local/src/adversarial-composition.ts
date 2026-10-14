@@ -9,13 +9,8 @@
 // `eval adversarial --admit --batch <digest>` branch. An operator reviews real
 // injection-shaped text before it can enter a git-tracked root.
 //
-// Checkpoint law (D-03): BOTH the generation-time scan and the admission-time recheck call
-// `assertCommittedEgressSafe` with the HOST'S LOADED policy — a required parameter here, never
-// a defaulted fallback — and `channel: 'eval-adversarial'`, over ALL THREE serialized
-// documents of a case (cassette, standalone label, corpus entry). `injectionShape` defaults to
-// `route`, so an injection probe fires an audit row and is still admitted; a `block` (or a
-// non-user `redact`) hit becomes a typed `AdversarialRefusal` row and publishes no cassette.
-// Rechecking at admission is what makes a policy tightened AFTER staging still bind.
+// Content law (441 D-15): staged and admitted cases are committed as authored, with no content
+// check; the operator's review of the exact bytes is the gate.
 //
 // Exact-byte law (D-02): the reviewed manifest pins the sha256 of each staged document, and
 // the batch digest is a function of those pins. Admission re-reads the staged bytes, re-hashes
@@ -44,7 +39,6 @@ import {
   PROBE_GENERATOR_KINDS,
   buildProbeRequest,
   canonicalJson,
-  cassetteEgressText,
   committedFileText,
   deriveAdversarialCassetteId,
   deriveProbeCassette,
@@ -75,8 +69,6 @@ import {
   type StandaloneLabelRecord,
 } from '@vostride/agent-qa-eval'
 import {
-  CommittedEgressBlockedError,
-  assertCommittedEgressSafe,
   defaultGuardrailPolicyInput,
   loadGuardrailPolicy,
   type AuditSink,
@@ -112,9 +104,6 @@ import { seedCommittedCorpus, type SeedingBatchReport } from './seeding-composit
 /** Local staging root for reviewable adversarial batches (D-01, beside `eval/feedback`). */
 export const ADVERSARIAL_STAGING_SUBDIR = 'eval/adversarial'
 
-/** The ONE checkpoint channel both the generation scan and the admission recheck name (D-03). */
-export const ADVERSARIAL_EGRESS_CHANNEL = 'eval-adversarial'
-
 /** The reviewed manifest's file name inside a staged batch directory. */
 export const ADVERSARIAL_MANIFEST_FILE = 'manifest.json'
 
@@ -148,8 +137,7 @@ export interface AdversarialSeedProvenancePin {
  * provenance cannot be true is exactly what a refusal is for.
  *
  * The author's model id is deliberately NOT pinned here. It is already on the corpus entry,
- * where the egress checkpoint scans it, and a configured model id can itself embed a
- * credential (422-05); the manifest is written after that scan and is not itself scanned.
+ * whose bytes the manifest pins.
  */
 export interface AdversarialBatchManifestCase {
   cassetteId: string
@@ -212,10 +200,7 @@ const manifestSchema = z.object({
   cases: z.array(manifestCaseSchema).min(1),
 }).strict()
 
-/**
- * A per-detector refusal row (D-03). A refused case publishes NO cassette; the refusal is
- * DATA on the report, never a thrown error, so one blocked variant never aborts a batch.
- */
+/** A per-detector refusal row. Nothing produces one since 441-42 (D-15); the field stays empty. */
 export interface AdversarialRefusal {
   cassetteId: string
   seedCassetteId: string
@@ -343,8 +328,7 @@ export interface AdversarialProbeSkip {
 /**
  * An authored RESPONSE the pure contract refused.
  *
- * Distinct from `AdversarialRefusal`, which is a POLICY block with a firing detector. This one
- * says the model's answer was not a usable probe — too long, not a name, folded back onto the
+ * It says the model's answer was not a usable probe — too long, not a name, folded back onto the
  * recorded identity. It names no text either, for the same reason.
  */
 export interface AdversarialProbeRefusal {
@@ -358,7 +342,7 @@ export interface StageAdversarialProposalInput {
   agentQaRoot: string
   committedRoot: string
   product: string
-  /** D-03: the host's LOADED policy, required — this composition never defaults one. */
+  /** Read only for its digest, which keys settled tuples (441-53 removes it). */
   policy: GuardrailPolicy
   auditSink?: AuditSink
   mutators?: readonly AdversarialMutator[]
@@ -383,7 +367,7 @@ export interface StageAdversarialProposalInput {
   maxProbeCalls?: number
   /** Where `maxProbeCalls` came from. Absent with a value means 'flag'. */
   maxProbeCallsSource?: Exclude<AdversarialCapSource, 'default'>
-  /** Derive and scan, publish nothing — neither staged bytes nor a settle record. */
+  /** Derive, publish nothing — neither staged bytes nor a settle record. */
   dryRun?: boolean
 }
 
@@ -479,7 +463,7 @@ export interface RefreshAdversarialSplitInput {
   product: string
   /** The reviewed batch digest the operator named; exact, never "the latest". */
   batchDigest: string
-  /** D-03: the policy LOADED AT ADMISSION — a tightening since staging must bind. */
+  /** Unread (441-53 removes it). */
   policy: GuardrailPolicy
   auditSink?: AuditSink
   seedingOutputBaseDir: string
@@ -502,7 +486,7 @@ export interface RefreshAdversarialSplitInput {
  *
  * Four counts, deliberately not three. `admitted` are cases whose bytes this run committed;
  * `unchanged` are reviewed cases already present BYTE-IDENTICALLY, which move no digest and
- * must not be double-counted as admissions; `refusals` are policy blocks; `remaining` are
+ * must not be double-counted as admissions; `refusals` is always empty (441 D-15); `remaining` are
  * reviewed members that have not landed — the number that makes a partial admission legible
  * as one. Collapsing any pair of them is how an interrupted run comes to read as a complete one.
  */
@@ -876,56 +860,6 @@ export function adversarialProbeTupleKey(
   return [seedCassetteId, kind, String(promptVersion)].join('\u001F')
 }
 
-// ---------------------------------------------------------------------------
-// The ONE checkpoint helper both legs call (D-03).
-// ---------------------------------------------------------------------------
-
-interface CaseTexts {
-  cassetteId: string
-  seedCassetteId: string
-  kind: GeneratorKind
-  /** The scan VIEW of the cassette; the committed bytes are `texts.cassette`. */
-  scanView: string
-  texts: { cassette: string; label: string; entry: string }
-}
-
-/**
- * Scan all three serialized documents of one case on the adversarial channel.
- *
- * Only `CommittedEgressBlockedError` becomes refusal data — every other error is a real
- * operational failure and propagates. A blocked case yields one row PER firing detector so
- * the report names what actually tripped, not just that something did.
- */
-function scanCase(
-  input: CaseTexts,
-  opts: { policy: GuardrailPolicy; auditSink?: AuditSink },
-): readonly AdversarialRefusal[] {
-  try {
-    assertCommittedEgressSafe(
-      [
-        { label: `cassette:${input.cassetteId}`, text: input.scanView },
-        { label: `label:${input.cassetteId}`, text: input.texts.label },
-        { label: `corpus:${input.cassetteId}`, text: input.texts.entry },
-      ],
-      {
-        policy: opts.policy,
-        channel: ADVERSARIAL_EGRESS_CHANNEL,
-        ...(opts.auditSink === undefined ? {} : { auditSink: opts.auditSink }),
-      },
-    )
-    return []
-  } catch (error) {
-    if (!(error instanceof CommittedEgressBlockedError)) throw error
-    return error.blocked.map(blocked => ({
-      cassetteId: input.cassetteId,
-      seedCassetteId: input.seedCassetteId,
-      generator: input.kind,
-      detector: blocked.detector,
-      action: blocked.action,
-    }))
-  }
-}
-
 /**
  * Resolve the derived cassette's blob closure from the SEED's committed blobs, by content
  * address. Nothing is copied here; the bytes are proof that the closure is admissible.
@@ -1141,7 +1075,6 @@ export async function stageAdversarialProposal(
   // its own eligibility check, so considered + deferred is exactly that population.
   const eligibleSeeds = generated.seedsConsidered + generated.seedsDeferred
 
-  const refusals: AdversarialRefusal[] = []
   const stagingSkips: AdversarialStagingSkip[] = []
   const tuples: AdversarialRefreshTuple[] = []
   const publishable: {
@@ -1177,30 +1110,6 @@ export async function stageAdversarialProposal(
       cassette: committedFileText(variant.cassette),
       label: committedFileText(variant.labelRecord),
       entry: committedFileText(variant.corpusEntry),
-    }
-    const caseRefusals = scanCase(
-      {
-        cassetteId: variant.cassette.id,
-        seedCassetteId: variant.seedCassetteId,
-        kind: variant.generator.kind,
-        scanView: cassetteEgressText(variant.cassette),
-        texts,
-      },
-      { policy: input.policy, ...(input.auditSink === undefined ? {} : { auditSink: input.auditSink }) },
-    )
-    if (caseRefusals.length > 0) {
-      refusals.push(...caseRefusals)
-      // A refusal is a decision the LOADED POLICY made about these bytes. It settles under that
-      // policy's digest and reopens the moment the host changes it — which is the only way a
-      // refused family ever gets a second hearing, and the only way it stops eating the cap.
-      tuples.push({
-        seedCassetteId: variant.seedCassetteId,
-        mutator: variant.mutator,
-        cassetteId: variant.cassette.id,
-        outcome: 'refused',
-        detail: caseRefusals[0]!.detector,
-      })
-      continue
     }
     const resolved = resolveSeedBlobs(
       input.committedRoot,
@@ -1410,26 +1319,6 @@ export async function stageAdversarialProposal(
           label: committedFileText(probe.labelRecord),
           entry: committedFileText(probe.corpusEntry),
         }
-        // THE SAME loaded policy, on the SAME channel, over the SAME three documents. A probe is
-        // the one case in this pipeline whose text was written by a model that was just asked to
-        // author bait, so scanning it through a second, gentler path would invert the priority.
-        const probeCaseRefusals = scanCase(
-          {
-            cassetteId: probe.cassette.id,
-            seedCassetteId: probe.seedCassetteId,
-            kind: probe.kind,
-            scanView: cassetteEgressText(probe.cassette),
-            texts,
-          },
-          { policy: input.policy, ...(input.auditSink === undefined ? {} : { auditSink: input.auditSink }) },
-        )
-        if (probeCaseRefusals.length > 0) {
-          recordProbeOutcome(input.agentQaRoot, attempt, reservationKey, {
-            schemaVersion: 1, outcome: 'refused', detail: probeCaseRefusals[0]!.detector,
-          })
-          refusals.push(...probeCaseRefusals)
-          continue
-        }
         // The durable output, written ONCE, and written BEFORE any operational skip below it.
         // A later refresh that finds it re-derives this exact case with no call at all, which
         // is what makes the crash between the answer and the reviewed batch a recoverable one
@@ -1526,7 +1415,7 @@ export async function stageAdversarialProposal(
   const base: Omit<StageAdversarialProposalResult, 'kind'> = {
     product: input.product,
     staged: publishable.map(row => stagedCaseOf(row.manifestCase)),
-    refusals,
+    refusals: [],
     skips: [...settledSkips, ...generated.skips],
     stagingSkips,
     seedsConsidered: generated.seedsConsidered,
@@ -1729,9 +1618,9 @@ export function listStagedAdversarial(input: {
  * Commit ONE reviewed batch, named by its digest.
  *
  * The order is deliberate: integrity first (nothing is trusted because it is on disk), then
- * the admission-time checkpoint under the policy loaded NOW, then blob resolution, then the
- * one sanctioned seeding writer, then a byte-verification of what actually landed. Only a
- * case whose committed bytes equal the reviewed bytes counts as admitted.
+ * blob resolution, then the one sanctioned seeding writer, then a byte-verification of what
+ * actually landed. Only a case whose committed bytes equal the reviewed bytes counts as
+ * admitted; the reviewed bytes are committed as authored (441 D-15).
  */
 export function refreshAdversarialSplit(
   input: RefreshAdversarialSplitInput,
@@ -1808,7 +1697,6 @@ function refreshAdversarialSplitOwned(input: RefreshAdversarialSplitInput): Refr
   const previous = readCommittedCorpusDigest({ committedRoot: input.committedRoot })
   if (previous.kind !== 'digest') return { ...base, kind: 'refused', reason: 'corpus-unavailable' }
 
-  const refusals: AdversarialRefusal[] = []
   const stagingSkips: AdversarialStagingSkip[] = []
   const unchanged: StagedAdversarialCase[] = []
   const admissible: {
@@ -1864,20 +1752,6 @@ function refreshAdversarialSplitOwned(input: RefreshAdversarialSplitInput): Refr
       })
       continue
     }
-    const caseRefusals = scanCase(
-      {
-        cassetteId: staged.manifest.cassetteId,
-        seedCassetteId: staged.manifest.seedCassetteId,
-        kind: staged.manifest.kind,
-        scanView: cassetteEgressText(staged.cassette),
-        texts: staged.texts,
-      },
-      { policy: input.policy, ...(input.auditSink === undefined ? {} : { auditSink: input.auditSink }) },
-    )
-    if (caseRefusals.length > 0) {
-      refusals.push(...caseRefusals)
-      continue
-    }
     const resolved = resolveSeedBlobs(
       input.committedRoot,
       input.product,
@@ -1924,7 +1798,6 @@ function refreshAdversarialSplitOwned(input: RefreshAdversarialSplitInput): Refr
     ...base,
     kind: 'admitted',
     unchanged,
-    refusals,
     stagingSkips,
     previousCorpusDigest: previous.corpusDigest,
   }
@@ -1990,7 +1863,6 @@ function refreshAdversarialSplitOwned(input: RefreshAdversarialSplitInput): Refr
         batches: [{ plan, cassettes }],
         committedRoot: input.committedRoot,
         seedingOutputBaseDir: input.seedingOutputBaseDir,
-        policy: input.policy,
         ...(input.auditSink === undefined ? {} : { auditSink: input.auditSink }),
       }).reports[0]
     } catch {
@@ -2047,7 +1919,6 @@ function refreshAdversarialSplitOwned(input: RefreshAdversarialSplitInput): Refr
       : { reason: interrupted ? ('admission-interrupted' as const) : ('admission-refused' as const) }),
     admitted,
     unchanged,
-    refusals,
     remaining,
     stagingSkips,
     writesStarted: true,
@@ -2143,14 +2014,13 @@ function stagedCaseOf(manifestCase: AdversarialBatchManifestCase): StagedAdversa
 }
 
 /**
- * The host's guardrail policy for the adversarial channel (D-03).
+ * The host's guardrail policy for adversarial refreshes, read only for its digest (441-53 removes it).
  *
  * It lives HERE rather than in the CLI because the FUNC-02 surface firewall does not let the
  * eval composition root name `@vostride/agent-qa-safety`, and the ledger only ever shrinks.
  * eval-local already depends on the gate package, so the loader is a legitimate eval-local
  * function rather than a re-export that would widen this package's surface with foreign
- * symbols. It does not INVENT a policy: an absent host override resolves to the same shipped
- * default input every other committed-egress checkpoint uses.
+ * symbols. It does not INVENT a policy: an absent host override resolves to the shipped default.
  */
 export function loadAdversarialGuardrailPolicy(input?: unknown): GuardrailPolicy {
   return loadGuardrailPolicy(input ?? defaultGuardrailPolicyInput)

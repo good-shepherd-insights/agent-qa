@@ -12,7 +12,7 @@
 // overwrite). The write is deterministic: the same outcome yields the same path and the same bytes —
 // no timestamps or random ids are minted here; timing data already lives inside the outcome from the
 // engine clock. Records land ONLY under this output root — never knowledge dirs or committed trees;
-// the committed corpus root with fail-closed egress (assertCommittedEgressSafe) is Phase 371's leg.
+// the committed corpus root is Phase 371's leg. Records are written as handed over (441 D-15).
 
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'

@@ -41,7 +41,6 @@ import type {
   SilverExclusion,
 } from '@vostride/agent-qa-eval'
 import type { AuditSink } from '@vostride/agent-qa-safety'
-import type { GuardrailPolicy } from '@vostride/agent-qa-schema'
 
 import {
   COMMITTED_GITIGNORE_TEXT,
@@ -66,8 +65,6 @@ export interface SeedCommittedCorpusInput {
   committedRoot: string
   /** Seeding-scoped output base dir. */
   seedingOutputBaseDir: string
-  /** Unread; only adversarial admission still passes it (441-42-2 removes it). */
-  policy?: GuardrailPolicy
   /** Unread (441-57 removes it). */
   auditSink?: AuditSink
 }

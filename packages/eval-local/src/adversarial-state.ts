@@ -72,7 +72,8 @@ const digestField = z.string().regex(LOWER_HEX_64)
  * What a completed `(seed, mutator)` tuple resolved to.
  *
  * All three are COMPLETED work. `derived` produced reviewable bytes; `refused` was blocked by
- * the loaded policy; `inapplicable` is the generator's own typed statement that the family
+ * the loaded policy before 441-42 and is only read back from older records; `inapplicable` is
+ * the generator's own typed statement that the family
  * cannot act on this seed. A tuple that is merely DEFERRED (`cap-exceeded`) or that was already
  * settled earlier (`already-derived`) is not an outcome and never lands here — recording either
  * would settle work nobody did.
@@ -387,7 +388,7 @@ export function derivedAdversarialCassetteIds(
 // (D-11): not the returned text, which does not exist yet, and not the author, because a second
 // host with a second model must not buy a second copy of a probe this corpus already holds. Its
 // BODY names the author by DIGEST and family rather than by raw model id — a configured model id
-// can itself embed a credential (422-05), and this file is written before any egress scan runs.
+// can itself embed a credential (422-05).
 // ---------------------------------------------------------------------------
 
 /**
@@ -422,7 +423,8 @@ export interface ProbeReservation extends ProbeReservationKey {
  * What a provider call resolved to.
  *
  * All four are ANSWERS — the port returned control. `derived` carries the authored text so a
- * later refresh can re-derive the same case for free; `refused` is a policy block, `invalid` an
+ * later refresh can re-derive the same case for free; `refused` is a policy block recorded
+ * before 441-42 and only read back now, `invalid` an
  * answer the pure contract rejected, and `error` a call that failed. None of the last three
  * carries text: a refused surface is data, not a diagnostic.
  */

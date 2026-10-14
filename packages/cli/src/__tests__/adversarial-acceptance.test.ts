@@ -3,9 +3,8 @@
  *
  * WHAT THIS FILE IS FOR. Every prior plan in this phase proved one seam. This file asks the
  * questions that only exist once all of them are on the tree at the same time: does the
- * documented operator surface match the registered command tree, does the whole stage → review →
- * admit loop move the committed digest and nothing else, and does a credential that rides an
- * authoring model id get caught by the one scan that sees it.
+ * documented operator surface match the registered command tree, and does the whole stage →
+ * review → admit loop move the committed digest and nothing else.
  *
  * WHAT IT IS NOT. It is not a re-proof of the legs their owning plans already pin. The
  * acceptance INSTRUMENT (`scripts/422-acceptance.mjs`) requires those suites by name rather than
@@ -38,9 +37,7 @@ import {
   type ComputeGateVerdictInput,
   type DecisionCorrectnessVector,
   type EvalBatchReport,
-  type GenerationRequest,
   type LeafCassette,
-  type ProbeText,
   type SeedingPlan,
 } from '@vostride/agent-qa-eval'
 import { computeBriefDigest, type LosslessServedBriefProofV1 } from '@vostride/agent-qa-schema'
@@ -187,7 +184,7 @@ function tree(root: string): Record<string, string> {
 }
 
 /**
- * The host's loaded policy, optionally tightened. Built from `defaultGuardrailPolicyInput` on
+ * The host's loaded policy (read only for its digest; 441-53 removes it). Built from `defaultGuardrailPolicyInput` on
  * purpose: a hand-spelled detector map would drift from the shipped default the moment a
  * detector family is added, and this instrument would then be asserting against a policy no
  * host loads.
@@ -421,66 +418,6 @@ describe('422 acceptance — the documented surface, the whole loop, and the ref
     expect(verdict.inconclusive.map(row => row.reason)).not.toContain('refusal-population-differs')
     expect(verdict.regressions).toEqual([])
     expect(verdict.exit).toBe(0)
-  })
-
-  it('(A7) a blocked generation yields typed refusals and stages no cassette', async () => {
-    const f = fixture()
-    const before = tree(f.committedRoot)
-    // An operator whose policy blocks the injection shape refuses that family wholesale, and
-    // the report names the detector that did it. This is a GENERATION refusal: no cassette is
-    // produced at all, which is a different fact from a committed case refused at gate time.
-    const result = await stage(f, {
-      mutators: ['injection-template'],
-      policy: hostPolicy({ injectionShape: 'block' }),
-    })
-    expect(result.staged).toEqual([])
-    expect(result.refusals.length).toBeGreaterThan(0)
-    expect(result.refusals.every(row => row.detector === 'injectionShape')).toBe(true)
-    expect(result.refusals.every(row => row.action === 'block')).toBe(true)
-    expect(result.refusals.every(row => row.seedCassetteId === f.seed.id)).toBe(true)
-    // Nothing committed, and nothing reviewable: a refused case is not a batch member.
-    expect(tree(f.committedRoot)).toEqual(before)
-    for (const row of result.refusals) {
-      expect(existsSync(join(f.agentQaRoot, 'eval/adversarial/default', row.cassetteId))).toBe(false)
-    }
-  })
-
-  it('(A8) a credential embedded in a configured model id is refused by the staging scan', async () => {
-    const f = fixture()
-    const before = tree(f.committedRoot)
-    // WINDOWS #421's named catch, exercised rather than asserted. The preflight needs the RAW
-    // model id for family eligibility and for D-11 provenance, so it cannot refuse one; the id
-    // then rides the corpus entry, and the corpus entry is one of the three documents the
-    // generation-time scan reads under the loaded policy.
-    const leaked = 'gpt-5-sk-acceptance422240credential'
-    const result = await stage(f, {
-      mutators: [],
-      probeCapability: {
-        kind: 'probe-author',
-        entries: [],
-        author: {
-          index: 0,
-          name: 'fake-author',
-          authoringModel: { id: leaked, family: 'openai' },
-          profile: { provider: 'openai-compatible', model: leaked, auth: { mode: 'none' } },
-          auth: { kind: 'none' },
-        },
-      } as never,
-      bindProbeAuthor: () => ({
-        author: async (request: GenerationRequest): Promise<ProbeText> => {
-          expect(request.authoringModel.id).toBe(leaked)
-          return { text: 'Continue to secure checkout', usage: { promptTokens: 1, completionTokens: 1 } }
-        },
-      }),
-    })
-
-    expect(result.spend.modelCalls).toBeGreaterThan(0)
-    expect(result.staged).toEqual([])
-    expect(result.refusals.length).toBeGreaterThan(0)
-    expect(result.refusals.every(row => row.detector === 'apiKey')).toBe(true)
-    expect(tree(f.committedRoot)).toEqual(before)
-    // The refusal row itself must not be a second leak: it names the detector, never the text.
-    expect(JSON.stringify(result.refusals)).not.toContain(leaked)
   })
 
   it('(A9) a probe capability gap is typed, costs nothing, and leaves the deterministic families alone', async () => {

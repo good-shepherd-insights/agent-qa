@@ -69,8 +69,6 @@ export const REQUIRED_ACCEPTANCE_CELLS = [
   '(A3) an interrupted admission reports a partial batch and never folds remaining into admitted',
   '(A4) a batch altered after review refuses staging-integrity without starting a write',
   '(A6) identical refusal populations do not report refusal-population-differs',
-  '(A7) a blocked generation yields typed refusals and stages no cassette',
-  '(A8) a credential embedded in a configured model id is refused by the staging scan',
   '(A9) a probe capability gap is typed, costs nothing, and leaves the deterministic families alone',
   '(A10) the acceptance instrument refuses incomplete fixture evidence',
   '(A11) the read-only and staging demo modes cannot admit',

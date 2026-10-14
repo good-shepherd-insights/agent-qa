@@ -95,10 +95,9 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   // derived cassette, its cloned standalone label and its corpus entry as the exact reviewable
   // bytes, pinned by content address in a batch manifest. Blob bytes are VALIDATED against the
   // seed's committed blobs and never copied into staging. (2) Admission is the operator's act
-  // alone: `refreshAdversarialSplit` rechecks the same bytes on the `eval-adversarial` channel
-  // under the policy loaded AT ADMISSION and then delegates every committed write to the
-  // existing single sanctioned seeding helper — it opens no second writer and mints no third
-  // channel. Generation, eligibility, target selection and the label clone are eval core's;
+  // alone: `refreshAdversarialSplit` verifies the reviewed bytes and delegates every committed
+  // write, as authored (441 D-15), to the existing single sanctioned seeding helper — it opens
+  // no second writer. Generation, eligibility, target selection and the label clone are eval core's;
   // this composition executes and stores, never decides. The provider-invocation clause above
   // is UNAMENDED: nothing in the adversarial path constructs a model.
   // Phase 422 D-04/D-08 (422-03): a THIRD half beside the two above — the durable per-product
@@ -108,7 +107,7 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   // selected-seed membership, and one settled outcome per completed (seed, mutator) tuple keyed
   // by table generation and guardrail-policy digest. It lives BESIDE the staging tree because a
   // staged batch is reviewable data an operator may delete, and the record of what was already
-  // decided must outlive it. Nothing here derives, scans or admits.
+  // decided must outlive it. Nothing here derives or admits.
   // Phase 422 D-04/D-10/D-11 (422-06): a FOURTH half — the probe-reservation store under
   // `.agent-qa/eval/adversarial-probes/<product>/<tupleDigest>.{reservation,completion}.json`. It
   // exists because the refresh record above CANNOT carry it: that record is named by its own
@@ -119,7 +118,7 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   // it died. The provider-invocation clause below remains UNAMENDED and is not weakened: this
   // package still constructs no model, resolves no credential and names no provider — it calls a
   // port the CLI bound (D-10), and it stores what that call cost.
-  'the adversarial batch staging store under .agent-qa/eval/adversarial/, the durable per-product refresh-state store under .agent-qa/eval/adversarial-state/, the probe-reservation store under .agent-qa/eval/adversarial-probes/, and the operator-only admission recheck on the eval-adversarial channel, delegating committed writes to the single sanctioned seeding helper',
+  'the adversarial batch staging store under .agent-qa/eval/adversarial/, the durable per-product refresh-state store under .agent-qa/eval/adversarial-state/, the probe-reservation store under .agent-qa/eval/adversarial-probes/, and the operator-only admission of reviewed bytes, delegating committed writes to the single sanctioned seeding helper',
 ] as const
 export const AGENT_QA_EVAL_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
   // Phase 422 D-07/D-10 (422-21), recorded here rather than in a plan summary because this is the
@@ -127,7 +126,7 @@ export const AGENT_QA_EVAL_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
   //
   //   NO MODEL IS CONSTRUCTED ON THE ADVERSARIAL PATH.
   //
-  // Staging derives, scans and stores; the probe call goes out through a
+  // Staging derives and stores; the probe call goes out through a
   // `ProbeAuthorPort` this package receives and never builds. The author's model comes into
   // existence in `packages/cli/src/adversarial-probe-author.ts`, inside `runSafetyScope`, and what
   // crosses back here is one method taking a pure DTO and returning text plus usage. So the four

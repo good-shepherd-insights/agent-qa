@@ -131,15 +131,6 @@ function tree(root: string): Record<string, string> {
   )
 }
 
-function guardrailRows(agentQaRoot: string, product = 'default'): { channel: string; action: string; detector: string }[] {
-  const file = join(agentQaRoot, 'eval/audit/adversarial', product, 'guardrail_audit.jsonl')
-  if (!existsSync(file)) return []
-  return readFileSync(file, 'utf8')
-    .split('\n')
-    .filter(line => line.trim() !== '')
-    .map(line => JSON.parse(line) as { channel: string; action: string; detector: string })
-}
-
 /**
  * A committed root holding exactly ONE proof-backed natural leaf with a resolvable gold
  * anchor and a real blob in its closure — the D-07 seed population, minimal.
@@ -323,29 +314,6 @@ describe('422 adversarial tracer — stage, review, admit', () => {
 
     // The reviewed batch is retired once every case actually landed.
     expect(existsSync(join(f.agentQaRoot, 'eval/adversarial/default', batch))).toBe(false)
-  })
-
-  it('audits generation and admission on the eval-adversarial channel with injectionShape routed, never blocked', async () => {
-    const f = fixture()
-    const s = await session(f)
-    const staged = await runAdversarialVerb(s, {
-      ...adversarialHostOptions(s), product: 'default', mutators: ['injection-template'],
-    })
-    expect(staged.kind).toBe('staged')
-    const generation = guardrailRows(f.agentQaRoot)
-    expect(generation.length).toBeGreaterThan(0)
-    expect(generation.every(row => row.channel.startsWith('eval-adversarial:'))).toBe(true)
-    expect(generation.some(row => row.detector === 'injectionShape' && row.action === 'route')).toBe(true)
-    // `route` is a SIGNAL, not a refusal: the injection variant is still reviewable.
-    expect(staged.refusals).toEqual([])
-
-    const admitted = await runAdversarialVerb(s, {
-      ...adversarialHostOptions(s), product: 'default', admit: true, batch: staged.batchDigest!,
-    })
-    expect(admitted.kind).toBe('admitted')
-    expect(admitted.refusals).toEqual([])
-    const admission = guardrailRows(f.agentQaRoot).slice(generation.length)
-    expect(admission.some(row => row.channel.startsWith('eval-adversarial:') && row.action === 'route')).toBe(true)
   })
 
   // 422-01-T2 at the public surface: the same-byte boundary must hold through the verb, not

@@ -220,7 +220,6 @@ export type {
 // reachable from the proposer's `/reader` door.
 export {
   ADVERSARIAL_DEFAULT_MAX_PROBE_CALLS,
-  ADVERSARIAL_EGRESS_CHANNEL,
   ADVERSARIAL_MANIFEST_FILE,
   ADVERSARIAL_STAGING_SUBDIR,
   adversarialProbeTupleKey,
