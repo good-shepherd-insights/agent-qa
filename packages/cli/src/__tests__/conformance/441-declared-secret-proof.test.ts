@@ -683,6 +683,18 @@ const TWIN_VALUES = [
 ] as const
 const TWIN_TEXT = TWIN_VALUES.join(' | ')
 const TWIN_ENV = { AGENT_QA_X_PASSWORD: 'pw-env-441' }
+const TWIN_AUTH_STATE = 'twin-441'
+const RUN_TWIN_VALUES = [
+  'qa@example.com',
+  'cookie-441-value',
+  'ls-441-value',
+  'pw-env-441',
+  'envfile-441',
+  '4242 4242 4242 4242',
+  'AKIAIOSFODNN7EXAMPLE',
+  'Bearer abc123def456ghi789',
+] as const
+const RUN_TWIN_TEXT = RUN_TWIN_VALUES.join(' | ')
 
 function sessionKinds(agentQaRoot: string, kind: string): string {
   return sessionEvents(agentQaRoot).filter((event) => event.kind === kind)
@@ -695,7 +707,7 @@ function twinProject(project: RecordedDoorProject, secrets: string): void {
   const paths = resolveAuthStatePaths({
     configDir: dirname(project.configPath),
     targetName: POPULATED_TARGET_NAME,
-    stateName: 'twin-441',
+    stateName: TWIN_AUTH_STATE,
     platform: 'web',
   })
   mkdirSync(paths.targetDir, { recursive: true })
@@ -704,7 +716,14 @@ function twinProject(project: RecordedDoorProject, secrets: string): void {
       name: 'session', value: 'cookie-441-value', domain: '127.0.0.1', path: '/',
       expires: -1, httpOnly: false, secure: false, sameSite: 'Lax',
     }],
-    origins: [],
+    origins: [{
+      origin: project.target.url,
+      localStorage: [{ name: 'twin', value: 'ls-441-value' }],
+    }],
+  })}\n`, 'utf8')
+  writeFileSync(paths.metadataPath, `${JSON.stringify({
+    version: 1, kind: 'web', target: POPULATED_TARGET_NAME, name: TWIN_AUTH_STATE,
+    capturedAt: '2026-10-14T00:00:00.000Z',
   })}\n`, 'utf8')
 }
 
@@ -796,6 +815,39 @@ describe('C441-NOTHING-ELSE', () => {
       for (const request of stub.requests) expect(request.status).toBe(200)
     } finally {
       await stub.close()
+      await project.close()
+    }
+  }, CELL_BUDGET_MS)
+
+  it('a run leaves every undeclared value unchanged and blocks nothing', async () => {
+    const project = await recordedDoorProject('441-run-twin', { fullBodies: true })
+    try {
+      twinProject(project, `SHORT_441=${SHORT}\n`)
+      const testFile = join(project.root, project.testPath)
+      const test = parseYaml(readFileSync(testFile, 'utf8')) as Record<string, unknown>
+      test.use = { authState: TWIN_AUTH_STATE }
+      test.steps = [
+        `Click the ${POPULATED_BUTTON_LABEL} button. Keep these on file: ${RUN_TWIN_TEXT}`,
+      ]
+      writeFileSync(testFile, stringifyYaml(test), 'utf8')
+
+      const outcome = await spawnCliRun(project, ['run', project.testPath], { env: TWIN_ENV })
+      expect(outcome.status, transcript(outcome)).toBe(0)
+      expect(outcome.stderr, transcript(outcome)).not.toMatch(/guardrail|blocked/iu)
+      const runIds = runStoreIds(project)
+      expect(runIds, transcript(outcome)).toHaveLength(1)
+      const verdict = runStoreEvents(project, runIds[0]!).find((event) => event.type === 'verdict')
+      expect(verdict?.payload, transcript(outcome)).toMatchObject({ verdict: 'passed' })
+
+      const bodies = wholeBodies(project.model.requests).join('\n')
+      const events = readFileSync(join(runDirectory(project, runIds[0]!), 'events.jsonl'), 'utf8')
+      for (const value of RUN_TWIN_VALUES) {
+        expect(bodies, value).toContain(value)
+        expect(events, value).toContain(value)
+      }
+      expect(project.model.requests.length).toBeGreaterThan(0)
+      for (const request of project.model.requests) expect(request.status).toBe(200)
+    } finally {
       await project.close()
     }
   }, CELL_BUDGET_MS)
