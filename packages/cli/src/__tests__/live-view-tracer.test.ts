@@ -217,7 +217,6 @@ beforeAll(async () => {
   const liveView = composeLiveView({
     sessions,
     origin: () => boundOrigin,
-    door: runDoor,
     now: () => clock.now,
   })
 

@@ -1,11 +1,15 @@
 // The live-view COMPOSITION (403 D-03/D-04, Q4(b)) — the one place a signer, a live run registry
 // and the function layer's validator are joined.
 //
-// WHAT IT PRODUCES, AND WHY THREE THINGS RATHER THAN ONE. `liveView` is the mint-side port the
+// WHAT IT PRODUCES, AND WHY TWO THINGS RATHER THAN ONE. `liveView` is the mint-side port the
 // function layer needs; `validate` is the read-side the dashboard's frame proxy binds BY REFERENCE
-// (so there is exactly one parse of a `liveUrl` token in this system); `mintedSecretStore` is the
-// masking half. Both directions are composed together deliberately — a mint whose validator was
-// composed elsewhere is a token system with two opinions about what a valid token is.
+// (so there is exactly one parse of a `liveUrl` token in this system). Both directions are composed
+// together deliberately — a mint whose validator was composed elsewhere is a token system with two
+// opinions about what a valid token is.
+//
+// 441-48 (D-01): it registers no minted token for masking. A door-minted credential is not a
+// declared secret; the token's guarantee is structural — a URL fragment, the frame socket's first
+// message, and an op `classify` that refuses to interpolate it.
 
 import {
   EDITOR_LIVE_URL_FUNCTION_ID,
@@ -27,18 +31,10 @@ import type {
 
 import { createEphemeralLiveUrlSigner } from './live-url-signer.js'
 import type { RunServiceSessionRegistry } from './run-service-session-registry.js'
-// TYPE-ONLY, and it must stay type-only: `commands/dashboard.ts` imports this module's VALUE, so
-// a value edge back would close a cycle at module-evaluation time.
-import type { DashboardRunDoor } from '../commands/dashboard.js'
-
-/** How many minted tokens the masking store remembers. FIFO past the cap — bounded, not a leak. */
-export const MINTED_LIVE_URL_TOKEN_CAP = 256
 
 export interface ComposeLiveViewInput {
   readonly sessions: RunServiceSessionRegistry
   readonly origin: () => string | undefined
-  /** Narrowed to the ONE member this composer uses: it binds ITS OWN store, so the command never has to. */
-  readonly door: Pick<DashboardRunDoor, 'bindMaskingSecrets'>
   readonly signer?: LiveUrlSigner
   readonly now?: () => number
   /**
@@ -54,34 +50,11 @@ export interface ComposedLiveView {
   readonly liveView: LiveViewPort
   /** The read side — the function layer's own validator, closed over the same signer. */
   validate(token: string, expect: { subject: LiveViewSubjectRef; now: number }): LiveUrlVerdict
-  /** Every token this composition has minted, as a masking secret store. */
-  readonly mintedSecretStore: { forEachSecret(cb: (name: string, value: string) => void): void }
 }
 
 export function composeLiveView(input: ComposeLiveViewInput): ComposedLiveView {
   const signer = input.signer ?? createEphemeralLiveUrlSigner()
   const now = input.now ?? ((): number => Date.now())
-
-  /**
-   * 2026-08-25 (403, Q4(b) + Pitfall 2): tokens are registered for MASKING, with a known limit.
-   *
-   * `safety/src/masking/seed.ts:17` walks `forEachSecret` ONCE, at run start — so a token minted
-   * mid-run is not masked by THAT run's masker, only by runs started afterwards. This store is
-   * therefore the second line, not the guarantee. The guarantee is structural: the token rides a
-   * URL fragment (never sent to a server), the frame socket's first message (never logged), and
-   * the op's `classify` refuses to interpolate it — which is what `live-view-anchors.test.ts`'s
-   * log-scan measures on the shipped binary.
-   */
-  const minted: string[] = []
-  const mintedSecretStore = {
-    forEachSecret(cb: (name: string, value: string) => void): void {
-      minted.forEach((token, index) => cb(`liveUrl#${index}`, token))
-    },
-  }
-  // THE COMPOSER BINDS ITS OWN STORE (402-06's law, `dashboard.ts:1380-1387`): every composition
-  // that goes through the shipped composer is seeded, including the conformance suites'. The
-  // command never calls `bindMaskingSecrets` for us — that is how a binder gets forgotten.
-  input.door.bindMaskingSecrets(mintedSecretStore)
 
   const liveView: LiveViewPort = {
     signer,
@@ -92,10 +65,6 @@ export function composeLiveView(input: ComposeLiveViewInput): ComposedLiveView {
       if (!session) return undefined
       return session.streamCapabilityOf(handle)
     },
-    onMinted(token: string): void {
-      minted.push(token)
-      while (minted.length > MINTED_LIVE_URL_TOKEN_CAP) minted.shift()
-    },
     ...(input.editorCapabilityOf === undefined ? {} : { editorCapabilityOf: input.editorCapabilityOf }),
   }
 
@@ -103,7 +72,6 @@ export function composeLiveView(input: ComposeLiveViewInput): ComposedLiveView {
     liveView,
     // BY REFERENCE, not re-implemented. The dashboard-server holds no parse of its own (LIVE-02).
     validate: (token, expect) => validateLiveUrlToken(signer, token, expect),
-    mintedSecretStore,
   }
 }
 
@@ -119,8 +87,8 @@ export function composeLiveView(input: ComposeLiveViewInput): ComposedLiveView {
  * happen to agree.
  *
  * THE DISPATCHER, NOT THE PORT UNDERNEATH IT (D-04). Going straight to `liveView.signer` would skip
- * the op-level gate, the receipt classification and the minted-token registration — the carve-out
- * the no-private-powers law refuses. `runs.liveurl` is the ONLY producer of these tokens and this
+ * the op-level gate and the receipt classification — the carve-out the no-private-powers law
+ * refuses. `runs.liveurl` is the ONLY producer of these tokens and this
  * is the only way to reach it from a door.
  *
  * PARSED, NOT CAST. `RunsLiveUrlResultSchema` is `.strict()`, so a result that grew a field — a

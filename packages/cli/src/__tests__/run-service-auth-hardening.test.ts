@@ -6,7 +6,8 @@
 // cross-site one, refused by the dashboard's shared same-site guard above the route table — or to
 // the tokenless success that replaced it. The production refusal, the never-forwarded run id and
 // the live-view signature's compare discipline are unchanged claims; 441-58 (D-01, D-12) deleted the
-// cells that had a run mask a door's or the environment's values.
+// cells that had a run mask a door's or the environment's values, and 441-48 (D-01) the BIND-HALF
+// cells with the door's masking binder they measured.
 //
 // THE FRAME, STATED: every wire cell below drives the PRODUCTION COMPOSITION over real TCP —
 // `startServer` with `runService` from `composeRunServicePorts`, over a host from
@@ -51,7 +52,7 @@ import {
 /**
  * A bearer value a pre-432 client might still present, hunted for in every captured channel.
  *
- * THE VARIABLE NAME CARRIES NO SUFFIX `sensitiveEnvSlice` RECOGNISES, deliberately: a probe called
+ * THE VARIABLE NAME CARRIES NO CREDENTIAL-SHAPED SUFFIX, deliberately: a probe called
  * `PROBE_API_TOKEN` would be masked by machinery that has nothing to do with this door.
  */
 const TOKEN = 'zz-402-06-planted-run-credential-4b91ce'
@@ -521,26 +522,11 @@ describe('the compare discipline is source-pinned, on stripped CODE (T-402-20)',
 
 // ---- (4) THE MASKING SWEEP --------------------------------------------------------------------
 
-/**
- * A door stub carrying what `composeRunServicePorts` reads from one, plus a recorder for a store
- * bound to it. 432-21: the composer binds nothing, and the recorder is how a cell sees that.
- */
-function stubDoor(): {
-  door: {
-    resolveHost: () => undefined
-    observeSessions: () => () => void
-    bindMaskingSecrets: (store: { forEachSecret(cb: (n: string, v: string) => void): void }) => void
-  }
-  bound: () => { forEachSecret(cb: (n: string, v: string) => void): void } | undefined
-} {
-  let bound: { forEachSecret(cb: (n: string, v: string) => void): void } | undefined
+/** A door stub carrying what `composeRunServicePorts` reads from one. */
+function stubDoor(): { resolveHost: () => undefined; observeSessions: () => () => void } {
   return {
-    door: {
-      resolveHost: () => undefined,
-      observeSessions: () => () => { /* nothing observes this composition */ },
-      bindMaskingSecrets: (store) => { bound = store },
-    },
-    bound: () => bound,
+    resolveHost: () => undefined,
+    observeSessions: () => () => { /* nothing observes this composition */ },
   }
 }
 
@@ -573,7 +559,7 @@ describe('the token value reaches no channel (T-402-21)', () => {
         let thrown: unknown
         let composition: ReturnType<typeof composeRunServicePorts> | undefined
         try {
-          composition = composeRunServicePorts({ door: stubDoor().door })
+          composition = composeRunServicePorts({ door: stubDoor() })
         } catch (error) {
           thrown = error
         }
@@ -631,43 +617,6 @@ describe('the token value reaches no channel (T-402-21)', () => {
     expect(bodies.filter((body) => body.includes('"cross_site_refused"')).length)
       .toBe(CROSS_SITE_CLASSES.length)
   }, 60_000)
-})
-
-// ---- (5) THE SECRET STORE IS CONSUMED (WINDOWS #224, T-402-04) --------------------------------
-//
-// 402-06 bound the run-service token store into the door's bridge. 432-21 deleted the store, and
-// 441-58 (D-01) stopped a door's stores reaching a run's mask, so only the BIND half remains.
-
-describe('the door’s credentials reach every run’s masker (#224)', () => {
-  it('BIND HALF — composing the ports seeds the door with the resolved values', () => {
-    // RE-SPELLED 2026-10-01 (432-21, D-12): there are no resolved values; the composer binds nothing.
-    const recorder = stubDoor()
-    const composition = composeRunServicePorts({ door: recorder.door })
-    try {
-      expect(recorder.bound()).toBeUndefined()
-      expect('secretStore' in composition).toBe(false)
-    } finally {
-      composition.dispose()
-    }
-  })
-
-  it('BIND HALF — the real door has nothing bound until the composer runs', async () => {
-    // RE-SPELLED 2026-10-01 (432-21, D-12): and nothing bound after it runs either.
-    const configPath = fixtureWorkspace({ environment: 'local' })
-    const configDir = dirname(resolve(configPath))
-    const { DashboardDatabase } = await import('@vostride/agent-qa-dashboard')
-    const db = new DashboardDatabase({ dbPath: join(configDir, 'bind.db') })
-    const runDoor = await createDashboardRunDoor({ db })
-    try {
-      expect(runDoor.runBridge.maskingSecrets?.()).toBeUndefined()
-      const composition = composeRunServicePorts({ door: runDoor })
-      expect(runDoor.runBridge.maskingSecrets?.()).toBeUndefined()
-      composition.dispose()
-    } finally {
-      db.close()
-      rmSync(configDir, { recursive: true, force: true })
-    }
-  })
 })
 
 // ---- (6) THE SECOND REFUSAL OF `runId` (WINDOWS #231) -----------------------------------------

@@ -495,7 +495,6 @@ beforeAll(async () => {
   const liveView = composeLiveView({
     sessions,
     origin: () => boundOrigin,
-    door: runDoor,
   })
 
   const { agentHost, host } = composeDashboardDoor({

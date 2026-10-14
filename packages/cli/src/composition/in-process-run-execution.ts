@@ -380,20 +380,6 @@ export function refuseUnhonourableRequestFields(request: RunsStartInput): void {
   if (refused.length > 0) throw new RunRequestFieldRefusedError(refused)
 }
 
-/** One store over several; its one caller is the dashboard's cold-read bridge, which 441-48 deletes. */
-export function mergedSecretStore(
-  ...stores: readonly ({ forEachSecret(cb: (name: string, value: string) => void): void } | undefined)[]
-): { forEachSecret(cb: (name: string, value: string) => void): void } | undefined {
-  const present = stores.filter((store) => store !== undefined)
-  if (present.length === 0) return undefined
-  if (present.length === 1) return present[0]
-  return {
-    forEachSecret(cb) {
-      for (const store of present) store.forEachSecret(cb)
-    },
-  }
-}
-
 export async function runInProcessCliRun(
   options: InProcessCliRunExecutionOptions,
   request: RunsStartInput,

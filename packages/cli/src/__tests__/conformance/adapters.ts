@@ -890,7 +890,7 @@ export async function withRunServiceDoor<Answer>(
   // `live_view_unavailable` and the route-table enumeration would report an unanswered route.
   // Composing the SHIPPED composers rather than a stand-in is this module's whole rule.
   const sessions = createRunServiceSessionRegistry({ observeSessions: runDoor.observeSessions })
-  const liveView = composeLiveView({ sessions, origin: () => boundOrigin, door: runDoor })
+  const liveView = composeLiveView({ sessions, origin: () => boundOrigin })
   // 405-05 (D-12 / 402 D-16): THE PROJECTION READER, bound over the same handle the ingest writes
   // through — exactly as `agent-qa dashboard` binds it. Without it `GET /run/:runId/detail` would
   // answer 503 `agent_host_unavailable`, which is a fact about a composition that forgot a port

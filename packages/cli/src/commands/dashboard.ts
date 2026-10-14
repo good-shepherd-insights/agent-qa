@@ -291,13 +291,6 @@ export interface DashboardDoorInput {
    */
   readonly boundOrigin: () => string | undefined
   /**
-   * The masking stores THIS PROCESS holds, as the run door unions them (405-10, D-08). Nothing in
-   * this door reads them since the dashboard stopped restoring (441 D-07); 441-48 deletes them.
-   */
-  readonly maskingSecretStores?: () => Iterable<{
-    forEachSecret(cb: (name: string, value: string) => void): void
-  }>
-  /**
    * An EXPLICIT OVERRIDE of the context this door's calls and runs are recorded under (D-05, spec
    * §2.2).
    *
@@ -474,35 +467,8 @@ export interface DashboardRunDoor {
    * reach back and affect that run.
    */
   observeSessions(observer: (session: RunSession) => void): () => void
-  /**
-   * Bind the secrets THIS PROCESS holds that every run through this door must mask (402-06, #224).
-   *
-   * THE SAME MUTABLE-BOX SHAPE AS `bindHost`, AND FOR THE SAME ORDERING REASON. The door's bridge
-   * is an INPUT to `composeDashboardDoor`, and the composer that holds a secret — `composeLiveView`,
-   * which mints `liveUrl` tokens — needs the door. Neither can be built first, so the value arrives
-   * through a box the bridge reads at run time.
-   *
-   * IT IS NOT OPTIONAL PLUMBING A CALLER MIGHT FORGET: the composer calls it itself, so any
-   * composition that goes through the shipped composer is seeded.
-   *
-   * 2026-08-25 (403-01, T-403-16): IT IS ADDITIVE, and the door UNIONS every bound store through
-   * `mergedSecretStore`. It used to be a single assignment, which is how one of two binders would
-   * have vanished without a cell noticing. 2026-10-01 (432-21, D-12): the second binder —
-   * `composeRunServicePorts` with the declared run-service credentials — is gone with those
-   * credentials, so the shipped command binds one store; the union stays, because a set of one is
-   * still the honest shape for a door any composer may bind to. `live-view-masking.test.ts` pins
-   * the minted token masked, and two binders unioned.
-   */
-  bindMaskingSecrets(store: {
-    forEachSecret(cb: (name: string, value: string) => void): void
-  }): void
-  /**
-   * Read back the bound stores, as a set (405-10, D-08). The read side of `bindMaskingSecrets`;
-   * its display reader is gone (441 D-07), and 441-48 deletes both.
-   */
-  maskingSecretStores(): Iterable<{
-    forEachSecret(cb: (name: string, value: string) => void): void
-  }>
+  // 441-48 (D-01): the door holds no secrets of its own for masking. Its masking binder and store
+  // set are deleted; a run masks the values its project declares and nothing a door minted.
 }
 
 /** Structural, so this module names the dashboard package's own type without importing its value. */
@@ -603,33 +569,14 @@ export async function createDashboardRunDoor(input: {
   // DEFERRED, and load-bearing: `in-process-run-execution.ts` imports `commands/run.ts`'s producers
   // statically and `commands/run.ts` imports this command's neighbours, so a static edge back can
   // close an ESM cycle at module-evaluation time. Every other door acquires this port the same way.
-  // 403-01 (T-403-16): `mergedSecretStore` rides the SAME deferred import for the same reason —
-  // a static edge back into `in-process-run-execution.ts` closes an ESM cycle through
-  // `commands/run.ts`. It is imported rather than re-written here because the door's
-  // `maskingSecrets` contract IS that function's three states, and a second union would be free
-  // to disagree about the one-store case the #224 identity cell pins.
-  const { cliRunSubscribers, mergedSecretStore } = await import('../composition/in-process-run-execution.js')
+  const { cliRunSubscribers } = await import('../composition/in-process-run-execution.js')
 
   const entries = new Map<string, DashboardRunEntry>()
   /** 402-01: everyone watching the ONE bridge this process's host publishes sessions through. */
   const sessionObservers = new Set<(session: RunSession) => void>()
   let boundHost: LocalAgentHost | undefined
-  /**
-   * 402-06 (#224) + 403-01 (T-403-16): the secrets OTHER composers in this process hold, read at
-   * RUN time.
-   *
-   * A SET, NOT A SLOT, and the difference is the whole of T-403-16: with one slot whichever composer
-   * bound LAST won, silently. Since 432-21 (D-12) the shipped command binds one store —
-   * `composeLiveView`'s minted `liveUrl` tokens — because the run-service credentials are deleted.
-   * Empty is still the honest state of a dashboard that holds none.
-   */
-  const maskingSecretStores = new Set<{
-    forEachSecret(cb: (name: string, value: string) => void): void
-  }>()
 
   const runBridge: NonNullable<ComposeCliLocalAgentInput['runBridge']> = {
-    // 402-06 (T-402-04): READ PER RUN, never captured. See `bindMaskingSecrets`.
-    maskingSecrets: () => mergedSecretStore(...maskingSecretStores),
     // 404-05 (D-16): the chip emitter's second sink, on the conditional-spread house rule — an
     // absent relay is an ABSENT field, so the drain leg's own `relay === undefined` arm decides.
     ...(input.chipRelay === undefined ? {} : { chipRelay: input.chipRelay }),
@@ -759,10 +706,6 @@ export async function createDashboardRunDoor(input: {
       sessionObservers.add(observer)
       return () => { sessionObservers.delete(observer) }
     },
-    bindMaskingSecrets: (store): void => { maskingSecretStores.add(store) },
-    // A FRESH ARRAY PER CALL, never the live `Set`: a caller that could `add` to it would be a
-    // second `bindMaskingSecrets` with none of its documentation.
-    maskingSecretStores: () => [...maskingSecretStores],
   }
 }
 
@@ -970,8 +913,8 @@ export function composeRunServicePorts(input: RunServiceCompositionInput): RunSe
 
   // 2026-10-01 (432-21, D-12): no store is bound here. Until then the declared run-service token
   // values were seeded into every run's masker from this line (402-06, WINDOWS #224); the tokens
-  // are deleted, and environment secret masking still covers every run through the door's own
-  // seeding.
+  // are deleted, and since 441-48 (D-01) the door seeds no masker at all — a run masks the values
+  // its project declares.
   return {
     ports,
     // THE SAME OBJECT `ports.readiness` HOLDS, deliberately — see the field's own doc.
@@ -1261,12 +1204,11 @@ async function startDashboardBackedServices(
     // session manager registers into it, the frame socket attaches from it), so the mint and the
     // socket can never disagree about which editor sessions exist.
     const editorSubjects = createLiveEditorSubjects()
-    // The signer, the mint port and the validator, joined once. `composeLiveView` binds its own
-    // minted-token masking store inside the composer (402-06's law) — the command never does.
+    // The signer, the mint port and the validator, joined once. 441-48 (D-01): it registers no
+    // minted token for masking — a door-minted credential is not a declared secret.
     const liveView = composeLiveView({
       sessions,
       origin: () => boundOrigin,
-      door: runDoor,
       editorCapabilityOf: editorSubjects.capabilityOf,
     })
 
@@ -1284,8 +1226,6 @@ async function startDashboardBackedServices(
       // either: that setter is a process global and would re-answer the question for every
       // composition in this process (Pitfall 5).
       runBridge: runDoor.runBridge,
-      // 405-10 (D-08): read by nothing since 441-15; 441-48 deletes it with the door's stores.
-      maskingSecretStores: runDoor.maskingSecretStores,
     })
     runDoor.bindHost(runHost)
 

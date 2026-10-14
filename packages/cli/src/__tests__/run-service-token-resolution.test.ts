@@ -33,11 +33,10 @@ const PLANTED_VAR = 'AGENT_QA_402_RUN_CRED'
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..')
 
-function door(bound: unknown[] = []) {
+function door() {
   return {
     resolveHost: () => undefined,
     observeSessions: () => () => {},
-    bindMaskingSecrets: (store: unknown) => { bound.push(store) },
   }
 }
 
@@ -59,16 +58,14 @@ describe('C432-TOKENLESS-RUN-SERVICE: the run-service bearer resolver is deleted
   })
 
   // RE-SPELLED from 'start-time resolution refuses an unset declaration by NAME' and 'the masker is
-  // seeded by DECLARED name': nothing is declared to the composer, so nothing can refuse, and no
-  // store is bound to the door.
+  // seeded by DECLARED name': nothing is declared to the composer, so nothing can refuse, and it
+  // holds no store. 441-48 (D-01): a door has no masking binder for it to call.
   it('C432-TOKENLESS-RUN-SERVICE: the composer takes no declarations, refuses nothing, binds no store', () => {
-    const bound: unknown[] = []
-    const composition = composeRunServicePorts({ door: door(bound) })
+    const composition = composeRunServicePorts({ door: door() })
     try {
       expect(Object.keys(composition.ports).sort()).toEqual(['attach', 'invokeRunStart', 'mintLiveUrl', 'readiness'])
       expect('secretStore' in composition).toBe(false)
       expect('tokenCount' in composition).toBe(false)
-      expect(bound).toEqual([])
       expect(JSON.stringify(Object.keys(composition))).not.toContain(PLANTED_VAR)
     } finally {
       composition.dispose()

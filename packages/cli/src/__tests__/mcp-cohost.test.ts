@@ -203,9 +203,6 @@ beforeAll(async () => {
   const liveView = composeLiveView({
     sessions,
     origin: () => boundOrigin,
-    // The one member `composeLiveView` narrows its door to. It binds its own minted-token masking
-    // store through this, which is 402-06's law and is why the command never calls it.
-    door: { bindMaskingSecrets: () => {} },
   })
 
   const auditSink = {
