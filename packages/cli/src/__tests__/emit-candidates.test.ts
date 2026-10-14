@@ -1078,6 +1078,43 @@ function queuedPayload(knowledgeRoot: string, candidateId: string): CurationCand
   )
 }
 
+describe('C441-CURATION', () => {
+  function slotValue(fillText: string, interpolatedVariables: { name: string; value: string }[]) {
+    const fill = subAction([element('login', 'Login')], 'login')
+    fill.plannedAction = {
+      type: 'fill',
+      ref: asRef('login'),
+      text: fillText,
+      clearMode: 'replace',
+      submit: false,
+    }
+    const steps = [
+      step({ stepIndex: 0, stepText: 'Open the sign-in page' }),
+      step({ stepIndex: 1, stepText: 'Enter the sign-in value', interpolatedVariables }, [fill]),
+    ]
+    const [target] = projectCurationCandidates(
+      handoff([testOutcome({ testId: 'auth::c441-slot' }, steps)]),
+      policy,
+    ).filter((row) => row.kind === 'procedure')
+    return parseProcedureTrajectorySeed(target!.bodySeed)?.steps[1]?.action?.values['text']
+  }
+
+  it('a secret slot still names its source', () => {
+    expect(slotValue('[secret:LOGIN_PW]', [{ name: 'LOGIN_PW', value: 'Hunter-42-zz' }])).toEqual({
+      observed: '[secret:LOGIN_PW]',
+      source: 'masked-secret',
+      sourceName: 'LOGIN_PW',
+      targetRef: 'login',
+    })
+  })
+
+  it('a numbered email placeholder from an old run is literal text', () => {
+    expect(
+      slotValue('<EMAIL_0>', [{ name: 'PROBE_USER', value: 'qa.user+381@example.com' }]),
+    ).toEqual({ observed: '<EMAIL_0>', source: 'literal', targetRef: 'login' })
+  })
+})
+
 describe('emitCurationCandidates atomic queue drop (CUR-04)', () => {
   const roots: string[] = []
 
