@@ -165,7 +165,7 @@ describe('replayCassette — single sample', () => {
     })
   })
 
-  it('Test 5: any other throw yields a harness-error sample — reported, never scored', async () => {
+  it('a planner error is a harness error, not a guardrail refusal', async () => {
     const probe = makeFactory(() => {
       throw new Error('provider outage')
     })

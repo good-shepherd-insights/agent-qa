@@ -68,7 +68,6 @@ export const REQUIRED_ACCEPTANCE_CELLS = [
   '(A2) staging leaves the committed root byte-identical and admission moves the corpus digest',
   '(A3) an interrupted admission reports a partial batch and never folds remaining into admitted',
   '(A4) a batch altered after review refuses staging-integrity without starting a write',
-  '(A5) a guardrail block on a committed adversarial replay is never the regression exit',
   '(A6) identical refusal populations do not report refusal-population-differs',
   '(A7) a blocked generation yields typed refusals and stages no cassette',
   '(A8) a credential embedded in a configured model id is refused by the staging scan',

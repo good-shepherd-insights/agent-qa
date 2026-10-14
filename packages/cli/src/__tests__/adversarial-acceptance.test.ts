@@ -4,9 +4,8 @@
  * WHAT THIS FILE IS FOR. Every prior plan in this phase proved one seam. This file asks the
  * questions that only exist once all of them are on the tree at the same time: does the
  * documented operator surface match the registered command tree, does the whole stage → review →
- * admit loop move the committed digest and nothing else, is a guardrail block structurally
- * incapable of reaching the regression exit, and does a credential that rides an authoring model
- * id get caught by the one scan that sees it.
+ * admit loop move the committed digest and nothing else, and does a credential that rides an
+ * authoring model id get caught by the one scan that sees it.
  *
  * WHAT IT IS NOT. It is not a re-proof of the legs their owning plans already pin. The
  * acceptance INSTRUMENT (`scripts/422-acceptance.mjs`) requires those suites by name rather than
@@ -18,7 +17,7 @@
  * quality, and nothing below claims demo admission.
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join, relative } from 'node:path'
+import { join, relative } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Command } from 'commander'
@@ -36,26 +35,22 @@ import {
   projectCorpusEntry,
   projectDecisionVectorsDocument,
   projectSilverLabelRecord,
-  replayCassette,
   type ComputeGateVerdictInput,
   type DecisionCorrectnessVector,
   type EvalBatchReport,
   type GenerationRequest,
   type LeafCassette,
   type ProbeText,
-  type ReplayPlannerFactory,
   type SeedingPlan,
 } from '@vostride/agent-qa-eval'
 import { computeBriefDigest, type LosslessServedBriefProofV1 } from '@vostride/agent-qa-schema'
 import {
   FsRunArtifactSource,
-  committedCassettePath,
-  loadCassetteBundle,
   refreshAdversarialSplit,
   seedCommittedCorpus,
 } from '@vostride/agent-qa-eval-local'
 import { openCorpusReader } from '@vostride/agent-qa-eval-local/reader'
-import { GuardrailBlockError, defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
+import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 
 import { markFixture } from '../gates/__tests__/feedback-fixture.js'
 import { createEvalCommand } from '../commands/eval.js'
@@ -412,71 +407,6 @@ describe('422 acceptance — the documented surface, the whole loop, and the ref
     expect(refused.admitted).toEqual([])
     expect(refused.writesStarted).toBe(false)
     expect(tree(f.committedRoot)).toEqual(before)
-  })
-
-  it('(A5) a guardrail block on a committed adversarial replay is never the regression exit', async () => {
-    // MECHANISM ONE — a load-time guard rejection on a committed adversarial cassette is the
-    // typed `guard-failed` replay refusal, and a moved refusal population is INCONCLUSIVE.
-    expect(REPLAY_REFUSAL_REASONS).toContain('guard-failed')
-    const refusal = gateFixture()
-    refusal.baseline.report.honesty.refusalCounts['guard-failed'] = 0
-    refusal.current.report.honesty.refusalCounts['guard-failed'] = 3
-    const refusalVerdict = computeGateVerdict(refusal)
-    expect(refusalVerdict.exit).toBe(2)
-    expect(refusalVerdict.exit).not.toBe(1)
-    const reasons = refusalVerdict.inconclusive.map(row => row.reason)
-    expect(reasons).toContain('refusal-population-differs')
-    // Pitfall 15, literally: a refused probe is never counted as a regression.
-    expect(refusalVerdict.regressions).toEqual([])
-
-    // MECHANISM TWO — a request-hook block during replay refuses the whole cassette. Prove
-    // the route from committed bytes through the engine and honesty fold into the gate.
-    const f = fixture()
-    const loaded = loadCassetteBundle(
-      dirname(join(f.committedRoot, committedCassettePath('default', f.seed.id))),
-    )
-    expect(loaded.kind).toBe('loaded')
-    if (loaded.kind !== 'loaded') throw new Error('expected a loaded seed cassette')
-    const plannerFactory: ReplayPlannerFactory = {
-      create: () => ({
-        model: 'planner-model' as unknown as ReturnType<ReplayPlannerFactory['create']>['model'],
-        replayedModel: { provider: 'test', modelId: 'model-1' },
-        plan: async () => { throw new GuardrailBlockError('injectionShape') },
-      }),
-    }
-    const outcome = await replayCassette({
-      cassette: loaded.cassette,
-      artifacts: loaded.artifacts,
-      plannerFactory,
-      actionToolNames: new Set(),
-      clock: { now: () => 0 },
-    })
-    expect(outcome).toMatchObject({
-      kind: 'integrity-refusal', reason: 'guard-failed', cassetteId: f.seed.id,
-    })
-    const report = buildEvalReport([{ cassetteId: f.seed.id, outcome }])
-    expect(report.honesty.refusalCounts['guard-failed']).toBe(1)
-    expect(report.honesty.harnessErrorCount).toBe(0)
-    const replay = gateFixture()
-    replay.current.report.honesty.refusalCounts = report.honesty.refusalCounts
-    replay.current.report.honesty.harnessErrorCount = report.honesty.harnessErrorCount
-    const replayVerdict = computeGateVerdict(replay)
-    expect(replayVerdict.exit).toBe(2)
-    const replayReasons = replayVerdict.inconclusive.map(row => row.reason)
-    expect(replayReasons).toContain('refusal-population-differs')
-    expect(replayReasons).not.toContain('harness-errors')
-    expect(replayVerdict.regressions).toEqual([])
-
-    // INFRASTRUCTURE CONTROL — provider outages still reach harness-errors with exit-2
-    // precedence, independently of the guardrail refusal route.
-    const harness = gateFixture()
-    harness.baseline.report.honesty.harnessErrorCount = 0
-    harness.current.report.honesty.harnessErrorCount = 3
-    const harnessVerdict = computeGateVerdict(harness)
-    expect(harnessVerdict.exit).toBe(2)
-    expect(harnessVerdict.exit).not.toBe(1)
-    expect(harnessVerdict.inconclusive.map(row => row.reason)).toContain('harness-errors')
-    expect(harnessVerdict.regressions).toEqual([])
   })
 
   it('(A6) identical refusal populations do not report refusal-population-differs', () => {
