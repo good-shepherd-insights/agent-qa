@@ -58,9 +58,6 @@ const TEST_PARTITION = {
   heldOutFraction: 0.95,
   privateFraction: 0.5,
 } as const
-// AKIA + 16 uppercase-alphanumerics — the exact shape the awsKey PATTERN detector
-// catches (an arbitrary random string would NOT be detected — Research Pitfall 4).
-const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
 const PRODUCT = 'default'
 
 const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
@@ -267,21 +264,6 @@ function planFor(handoff: CompletedRunHandoff, cassettes: readonly ExtractedCass
   return buildSeedingPlan({ handoff, cassettes, partition: TEST_PARTITION })
 }
 
-/** Plant the AWS-key-shaped secret in ONE staged cassette's text evidence. */
-function plantSecret(
-  cassettes: readonly ExtractedCassette[],
-  plan: SeedingPlan,
-): { staged: ExtractedCassette[]; plantedId: string } {
-  const targetCase = plan.cases.find(
-    (planCase) => planCase.labelRecord.label.pairing?.relation === 'contrastive-negative',
-  )!
-  const staged = structuredClone(cassettes) as ExtractedCassette[]
-  const target = staged.find((entry) => entry.cassette.id === targetCase.cassetteId)!
-  if (target.cassette.granularity !== 'leaf') throw new Error('fixture pair member must be a leaf')
-  target.cassette.input.stateBefore.url = `https://example.test/checkout?key=${AWS_KEY}`
-  return { staged, plantedId: targetCase.cassetteId }
-}
-
 describe('committed-root proofs (ROOT-02 / GUARD-FUT-04, D-13, D-15)', () => {
   let root: string
   let outDir: string
@@ -307,47 +289,6 @@ describe('committed-root proofs (ROOT-02 / GUARD-FUT-04, D-13, D-15)', () => {
   afterEach(async () => {
     await rm(root, { recursive: true, force: true })
     await rm(outDir, { recursive: true, force: true })
-  })
-
-  it('raw-byte proof, detector layer (GUARD-FUT-04): a planted secret never reaches the tracked committed set', () => {
-    const handoff = seedingHandoff()
-    const cassettes = extract(handoff)
-    const plan = planFor(handoff, cassettes)
-    const { staged, plantedId } = plantSecret(cassettes, plan)
-
-    // Positive control FIRST: the secret IS present in the staged input fixture —
-    // the exact text the seeding helper would commit — so the probe below is live.
-    const stagedTarget = staged.find((entry) => entry.cassette.id === plantedId)!
-    expect(committedFileText(stagedTarget.cassette)).toContain(AWS_KEY)
-
-    const report = seed(plan, staged)
-
-    // (1) The carrying case is refused, with a detection naming the detector.
-    expect(report.refusals).toHaveLength(1)
-    const refusal = report.refusals[0]!
-    expect(refusal.cassetteId).toBe(plantedId)
-    expect(refusal.kind).toBe('egress-blocked')
-    if (refusal.kind !== 'egress-blocked') throw new Error('expected egress-blocked refusal')
-    expect(refusal.detections.some((detection) => detection.detector === 'awsKey')).toBe(true)
-
-    // (2) Raw-byte walk of the git-TRACKED committed set: zero occurrences. The
-    // walker's exclusion rules come from the scaffolded .gitignore on disk, and
-    // that file must contain a rule covering blobs dirs.
-    const walk = walkCommittedRoot(root)
-    expect(walk.ignoredDirNames).toContain(BLOBS_SUBDIR)
-    expect(walk.trackedPaths.length).toBeGreaterThan(0)
-    expect(filesContaining(root, walk.trackedPaths, AWS_KEY)).toEqual([])
-    // Stronger than required: the ignored (blob) side is clean too.
-    expect(filesContaining(root, walk.ignoredPaths, AWS_KEY)).toEqual([])
-
-    // (4) The refusal was per-case: clean siblings in the same batch landed.
-    expect(report.seededCount).toBe(2)
-    const landedIds = plan.cases
-      .map((planCase) => planCase.cassetteId)
-      .filter((id) => id !== plantedId)
-    for (const id of landedIds) {
-      expect(walk.trackedPaths).toContain(committedCassettePath(PRODUCT, id))
-    }
   })
 
   it('raw-byte proof, masking layer (GUARD-FUT-04): a MaskingContext-registered value appears nowhere raw in the committed tree', () => {
@@ -438,29 +379,5 @@ describe('committed-root proofs (ROOT-02 / GUARD-FUT-04, D-13, D-15)', () => {
     expect(counts.labelCount).toBe(report.seededCount)
     expect(counts.corpusCount).toBe(report.seededCount)
     expect(report.seededCount).toBe(3)
-  })
-
-  it('membership invariant survives refusals: the refused case is absent from all three trees (D-13 x D-14)', () => {
-    const handoff = seedingHandoff()
-    const cassettes = extract(handoff)
-    const plan = planFor(handoff, cassettes)
-    const { staged, plantedId } = plantSecret(cassettes, plan)
-
-    const report = seed(plan, staged)
-    expect(report.refusals).toHaveLength(1)
-    expect(report.refusals[0]!.cassetteId).toBe(plantedId)
-    expect(report.seededCount).toBe(2)
-
-    const walk = walkCommittedRoot(root)
-    // The refused case appears in NONE of the three trees.
-    expect(walk.trackedPaths).not.toContain(committedCassettePath(PRODUCT, plantedId))
-    expect(walk.trackedPaths).not.toContain(committedLabelPath(PRODUCT, plantedId))
-    expect(walk.trackedPaths).not.toContain(committedCorpusPath(PRODUCT, plantedId))
-
-    // And the invariant still holds both ways over what DID land.
-    const counts = assertMembershipInvariant(root, walk)
-    expect(counts.cassetteCount).toBe(report.seededCount)
-    expect(counts.labelCount).toBe(report.seededCount)
-    expect(counts.corpusCount).toBe(report.seededCount)
   })
 })

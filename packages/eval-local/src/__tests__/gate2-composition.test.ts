@@ -33,19 +33,6 @@ function admissionInput(f: ReturnType<typeof fixture>, dryRun = false) {
 }
 
 describe('418 feedback staging and explicit admission', () => {
-  it('rechecks staged text on eval-seeding and retains egress-refused entries', async () => {
-    const f = fixture()
-    expect(await stageFeedbackEntry(feedbackInput(f))).toMatchObject({ kind: 'staged' })
-    const [entry] = listStagedFeedback({ agentQaRoot: f.agentQaRoot })
-    const cassette = entry!.extracted.cassette
-    cassette.input.stepText = 'AKIAIOSFODNN7EXAMPLE'
-    writeFileSync(join(entry!.dir, 'cassette.json'), JSON.stringify(cassette))
-    const result = await admitStagedFeedback(admissionInput(f))
-    expect(result.admitted).toEqual([])
-    expect(result.refusals).toMatchObject([{ kind: 'egress-blocked', cassetteId: cassette.id }])
-    expect(listStagedFeedback({ agentQaRoot: f.agentQaRoot })).toHaveLength(1)
-    expect(result.nextCorpusDigest).toBe(result.previousCorpusDigest)
-  })
   it('checks committed novelty, publishes write-once locally, and never changes committed bytes', async () => {
     const f = fixture({ targetInCorpus: true })
     const committed = loadCassetteBundles(join(f.committedRoot, 'cassettes')).loaded.find(b => b.cassette.granularity === 'leaf')!

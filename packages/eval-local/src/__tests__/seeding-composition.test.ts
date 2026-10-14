@@ -6,7 +6,6 @@ import { join } from 'node:path'
 import {
   buildSeedingPlan,
   JUDGE_CONFIG,
-  committedFileText,
   extractRunCassettes,
   projectJudgeConfigContract,
   projectMatcherConfigContract,
@@ -34,7 +33,7 @@ import {
   committedCorpusPath,
   committedLabelPath,
 } from '../committed-root-store.js'
-import { SEEDING_EGRESS_CHANNEL, seedCommittedCorpus } from '../seeding-composition.js'
+import { seedCommittedCorpus } from '../seeding-composition.js'
 import type { SeedingReport } from '../seeding-composition.js'
 import {
   LOCAL_FIXTURE_BLOB_BYTES,
@@ -54,7 +53,6 @@ const TEST_PARTITION = {
   heldOutFraction: 0.95,
   privateFraction: 0.5,
 } as const
-const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
 const PRODUCT = 'default'
 
 const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
@@ -239,68 +237,6 @@ describe('seedCommittedCorpus (ROOT-02, D-13/D-14/D-15/D-16/D-17)', () => {
     }
   })
 
-  it("refuses a blocked case's WHOLE unit and the batch continues (D-14)", async () => {
-    const blockedCase = plan.cases.find(
-      (planCase) => planCase.labelRecord.label.pairing?.relation === 'contrastive-negative',
-    )!
-    const seeded = structuredClone(cassettes)
-    const target = seeded.find((entry) => entry.cassette.id === blockedCase.cassetteId)!
-    const targetCassette = target.cassette
-    if (targetCassette.granularity !== 'leaf') throw new Error('fixture pair member must be a leaf')
-    targetCassette.input.stateBefore.url = `https://example.test/checkout?key=${AWS_KEY}`
-
-    // The function returns normally — the batch never aborts.
-    const report = seed({ cassettes: seeded })
-
-    expect(report.refusals).toHaveLength(1)
-    const refusal = report.refusals[0]!
-    expect(refusal.cassetteId).toBe(blockedCase.cassetteId)
-    expect(refusal.kind).toBe('egress-blocked')
-    if (refusal.kind !== 'egress-blocked') throw new Error('expected egress-blocked refusal')
-    expect(
-      refusal.detections.some(
-        (detection) =>
-          detection.detector === 'awsKey' &&
-          detection.label === `cassette:${blockedCase.cassetteId}`,
-      ),
-    ).toBe(true)
-
-    // The atomicity proof: NONE of the blocked case's files exist on disk.
-    const blockedPaths = casePaths(blockedCase.cassetteId)
-    expect(existsSync(join(root, blockedPaths.cassette))).toBe(false)
-    expect(existsSync(join(root, blockedPaths.label))).toBe(false)
-    expect(existsSync(join(root, blockedPaths.corpus))).toBe(false)
-    expect(
-      existsSync(
-        join(root, committedBlobPath(PRODUCT, blockedCase.cassetteId, LOCAL_FIXTURE_BLOB_SHA)),
-      ),
-    ).toBe(false)
-
-    // The other cases landed.
-    expect(report.seededCount).toBe(2)
-    for (const planCase of plan.cases) {
-      if (planCase.cassetteId === blockedCase.cassetteId) continue
-      expect(existsSync(join(root, casePaths(planCase.cassetteId).cassette))).toBe(true)
-    }
-
-    // Audit rows landed under the seeding output dir with the channel-prefixed label
-    // BEFORE the block was thrown (the checkpoint appends first, then throws).
-    const auditRaw = await readFile(join(outDir, 'guardrail_audit.jsonl'), 'utf8')
-    const rows = auditRaw
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line) as { channel: string; detector: string; action: string })
-    expect(SEEDING_EGRESS_CHANNEL).toBe('eval-seeding')
-    expect(
-      rows.some(
-        (row) =>
-          row.channel === `${SEEDING_EGRESS_CHANNEL}:cassette:${blockedCase.cassetteId}` &&
-          row.detector === 'awsKey' &&
-          row.action === 'block',
-      ),
-    ).toBe(true)
-  })
-
   it('re-seeding identical input is a byte-identical idempotent no-op everywhere (D-17)', () => {
     seed()
     const before = snapshotTree(root)
@@ -394,11 +330,9 @@ describe('seedCommittedCorpus (ROOT-02, D-13/D-14/D-15/D-16/D-17)', () => {
 
 /**
  * 413 SC2 / T-413-01: the growth campaign records `ServedBrief.proof` — the exact model-visible
- * prompt material of every turn — and the seeder commits it. That is NEW committed prose, so the
- * D-10 obligation is to prove the SHIPPED checkpoint already covers it: no new detector, no new
- * channel, no new masking seam. Both cells mirror the precedents on `stateBefore.url`
- * (`:219` here, `committed-root-proof.test.ts:260` and `:342`) with the plant moved into
- * `proof.promptTurns`.
+ * prompt material of every turn — and the seeder commits it as recorded. A declared value in it
+ * was masked at record time by the run's redactor, so the committed prose carries the marker and
+ * never the value (441 D-06, D-15: the seeder runs no egress check of its own).
  */
 function losslessProof(text: string): LosslessServedBriefProofV1 {
   const turn: ServedPromptTurn = {
@@ -424,7 +358,7 @@ function losslessProof(text: string): LosslessServedBriefProofV1 {
   }
 }
 
-describe('413 SC2 — lossless proof text passes the eval-seeding checkpoint (D-10, T-413-01)', () => {
+describe('413 SC2 — lossless proof text is committed as recorded, its declared value masked (D-10, T-413-01)', () => {
   let root: string
   let outDir: string
   let handoff: CompletedRunHandoff
@@ -451,72 +385,6 @@ describe('413 SC2 — lossless proof text passes the eval-seeding checkpoint (D-
   afterEach(async () => {
     await rm(root, { recursive: true, force: true })
     await rm(outDir, { recursive: true, force: true })
-  })
-
-  it("refuses the WHOLE case when a secret rides in proof.promptTurns, and the batch continues", async () => {
-    const cassettes = extract(handoff)
-    const plan = planFor(handoff, cassettes)
-    const blockedCase = plan.cases.find(
-      (planCase) => planCase.labelRecord.label.pairing?.relation === 'contrastive-negative',
-    )!
-    const staged = structuredClone(cassettes) as ExtractedCassette[]
-    const target = staged.find((entry) => entry.cassette.id === blockedCase.cassetteId)!
-    if (target.cassette.granularity !== 'leaf') throw new Error('fixture pair member must be a leaf')
-    target.cassette.input.servedBrief = {
-      ...target.cassette.input.servedBrief,
-      proof: losslessProof(`Remember the checkout key ${AWS_KEY} for the next turn.`),
-    }
-
-    // Positive control FIRST: the committed text the seeder would write DOES carry the key,
-    // so the refusal below cannot pass vacuously (T-371-19).
-    expect(committedFileText(target.cassette)).toContain(AWS_KEY)
-
-    const report = seed(plan, staged)
-
-    expect(report.refusals).toHaveLength(1)
-    const refusal = report.refusals[0]!
-    expect(refusal.cassetteId).toBe(blockedCase.cassetteId)
-    expect(refusal.kind).toBe('egress-blocked')
-    if (refusal.kind !== 'egress-blocked') throw new Error('expected egress-blocked refusal')
-    expect(
-      refusal.detections.some(
-        (detection) =>
-          detection.detector === 'awsKey' &&
-          detection.label === `cassette:${blockedCase.cassetteId}`,
-      ),
-    ).toBe(true)
-
-    // Whole-unit atomicity: none of the blocked case's four files landed.
-    const blockedPaths = casePaths(blockedCase.cassetteId)
-    expect(existsSync(join(root, blockedPaths.cassette))).toBe(false)
-    expect(existsSync(join(root, blockedPaths.label))).toBe(false)
-    expect(existsSync(join(root, blockedPaths.corpus))).toBe(false)
-    expect(
-      existsSync(
-        join(root, committedBlobPath(PRODUCT, blockedCase.cassetteId, LOCAL_FIXTURE_BLOB_SHA)),
-      ),
-    ).toBe(false)
-
-    // Per-case, not per-batch: the clean siblings landed.
-    expect(report.seededCount).toBe(2)
-    for (const planCase of plan.cases) {
-      if (planCase.cassetteId === blockedCase.cassetteId) continue
-      expect(existsSync(join(root, casePaths(planCase.cassetteId).cassette))).toBe(true)
-    }
-
-    const auditRaw = await readFile(join(outDir, 'guardrail_audit.jsonl'), 'utf8')
-    const rows = auditRaw
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line) as { channel: string; detector: string; action: string })
-    expect(
-      rows.some(
-        (row) =>
-          row.channel === `${SEEDING_EGRESS_CHANNEL}:cassette:${blockedCase.cassetteId}` &&
-          row.detector === 'awsKey' &&
-          row.action === 'block',
-      ),
-    ).toBe(true)
   })
 
   it('commits a masking-registered value in proof.promptTurns as its placeholder, never raw', () => {
@@ -550,5 +418,32 @@ describe('413 SC2 — lossless proof text passes the eval-seeding checkpoint (D-
     const committed = readFileSync(join(root, casePaths(plan.cases[0]!.cassetteId).cassette), 'utf8')
     expect(committed).toContain('[secret:TURN_TOKEN]')
     expect(committed).not.toContain(REGISTERED)
+  })
+})
+
+// 441-42 D-15 (pulled forward in 441-12): seeds are committed as authored, with no egress check.
+describe('C441-COMMITTED', () => {
+  it('a seeded cassette with credential-shaped text is committed', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'eval-local-c441-root-'))
+    const outDir = await mkdtemp(join(tmpdir(), 'eval-local-c441-out-'))
+    try {
+      const handoff = seedingHandoff()
+      const cassettes = structuredClone(extract(handoff))
+      const plan = planFor(handoff, cassettes)
+      const target = cassettes.find((entry) => entry.cassette.id === plan.cases[0]!.cassetteId)!
+      const cassette = target.cassette
+      if (cassette.granularity !== 'leaf') throw new Error('fixture case must be a leaf')
+      cassette.input.stateBefore.tree += '\n- text "Card 4242 4242 4242 4242 with Bearer abc123def456ghi789"'
+
+      const report = seedCommittedCorpus({ plan, cassettes, committedRoot: root, seedingOutputBaseDir: outDir })
+
+      expect(report.refusals.map((refusal) => refusal.kind).join(', ')).toBe('')
+      const committed = readFileSync(join(root, casePaths(cassette.id).cassette), 'utf8')
+      expect(committed).toContain('4242 4242 4242 4242')
+      expect(committed).toContain('Bearer abc123def456ghi789')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(outDir, { recursive: true, force: true })
+    }
   })
 })

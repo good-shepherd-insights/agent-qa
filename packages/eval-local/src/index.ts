@@ -109,7 +109,6 @@ export { DEFAULT_EVAL_REPORTS_SUBDIR, FsReportStore, loadStagedReport } from './
 export type { FsReportStoreConfig, StagedReportLoad, WrittenReport } from './report-store.js'
 
 export {
-  SEEDING_EGRESS_CHANNEL,
   seedCommittedCorpus,
   writePartitionManifest,
   writeRunExclusion,

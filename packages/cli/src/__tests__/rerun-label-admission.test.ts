@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as model from '@vostride/agent-qa-model'
@@ -177,7 +177,7 @@ describe('420 member admission through actual seed', () => {
     expect(readRunExclusions(f.committedRoot).exclusions).toHaveLength(1)
   })
 
-  it.each(['egress', 'conflict'] as const)('protects label-only revisions from %s without rewriting the original', mode => {
+  it.each(['conflict'] as const)('protects label-only revisions from %s without rewriting the original', () => {
     const f = fixture()
     const snapshot = readCommittedCorpus(f.committedRoot).snapshot
     const plan = buildSeedingPlan({ handoff: { ...f.handoff, tests: [f.member] }, partition,
@@ -188,14 +188,12 @@ describe('420 member admission through actual seed', () => {
     const revision = plan.labelRevisions[0]!
     const path = join(f.committedRoot, committedLabelPath('default', revision.cassetteId))
       .replace(/\.json$/, `--revision-${revision.revision!.id}.json`)
-    if (mode === 'egress') revision.provenance.runId = 'AKIAIOSFODNN7EXAMPLE'
-    else writeFileSync(path, committedFileText({ occupied: true }))
+    writeFileSync(path, committedFileText({ occupied: true }))
     const before = bytes(f.committedRoot)
     const report = seedCommittedCorpus({ plan, cassettes: [], committedRoot: f.committedRoot,
       seedingOutputBaseDir: join(f.agentQaRoot, 'eval', 'audit') })
     expect(report.refusals).toContainEqual(expect.objectContaining({ cassetteId: f.original.id,
-      kind: mode === 'egress' ? 'egress-blocked' : 'write-conflict' }))
+      kind: 'write-conflict' }))
     expect(bytes(f.committedRoot)).toEqual(before)
-    if (mode === 'egress') expect(existsSync(path)).toBe(false)
   })
 })

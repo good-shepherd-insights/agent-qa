@@ -2683,12 +2683,6 @@ function requireManifestWritten(
   if (outcome.kind === 'write-conflict') {
     throw new EvalPartitionManifestConflictError(product, path)
   }
-  if (outcome.kind === 'egress-blocked') {
-    throw new Error(
-      `partition manifest for ${product} at ${path} was egress-blocked: `
-        + outcome.detections.map(detection => `${detection.label}/${detection.detector}`).join(' '),
-    )
-  }
   return outcome.kind
 }
 

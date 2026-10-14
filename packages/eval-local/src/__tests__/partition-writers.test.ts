@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -18,7 +18,6 @@ import {
   committedPartitionManifestPath,
 } from '../committed-root-store.js'
 import {
-  SEEDING_EGRESS_CHANNEL,
   writePartitionManifest,
   writeRunExclusion,
 } from '../seeding-composition.js'
@@ -27,7 +26,6 @@ import type {
   WriteRunExclusionOutcome,
 } from '../seeding-composition.js'
 
-const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
 const SALT = 'a3f'.repeat(21).concat('b')
 const OTHER_SALT = 'b4e'.repeat(21).concat('c')
 const ANALYSIS_DIGEST = '3d'.repeat(32)
@@ -167,43 +165,5 @@ describe('writePartitionManifest / writeRunExclusion (414 D-02/D-05/D-06, ROOT-0
       writeExclusion(exclusion({ runId: 'r_y', runSlug: 'r_y', product: 'example-web' })),
     ).toEqual({ kind: 'unchanged', path: mirrorPath })
     expect(readFileSync(join(root, mirrorPath)).equals(withBackfill)).toBe(true)
-  })
-
-  it('blocks secret-shaped bytes at the eval-seeding checkpoint — audited, nothing lands', async () => {
-    const leakyExclusion = exclusion({ runSlug: AWS_KEY })
-    const exclusionLabel = `exclusion:${leakyExclusion.product}/${leakyExclusion.runSlug}`
-
-    expect(writeExclusion(leakyExclusion)).toEqual({
-      kind: 'egress-blocked',
-      detections: [{ label: exclusionLabel, detector: 'awsKey' }],
-    })
-    expect(
-      existsSync(join(root, committedExclusionPath(leakyExclusion.product, leakyExclusion.runSlug))),
-    ).toBe(false)
-
-    const leakyManifest = manifest({ product: `example-web-${AWS_KEY}` })
-    expect(writeManifest(leakyManifest)).toEqual({
-      kind: 'egress-blocked',
-      detections: [{ label: `partition-manifest:${leakyManifest.product}`, detector: 'awsKey' }],
-    })
-    expect(existsSync(join(root, committedPartitionManifestPath(leakyManifest.product)))).toBe(false)
-
-    const rows = (await readFile(join(outDir, 'guardrail_audit.jsonl'), 'utf8'))
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line) as { channel: string; detector: string; action: string })
-    for (const label of [exclusionLabel, `partition-manifest:${leakyManifest.product}`]) {
-      expect(
-        rows.some(
-          (row) =>
-            row.channel === `${SEEDING_EGRESS_CHANNEL}:${label}` &&
-            row.detector === 'awsKey' &&
-            row.action === 'block',
-        ),
-      ).toBe(true)
-    }
-    // The seeding channel, never the report channel — one audit trail per surface.
-    expect(SEEDING_EGRESS_CHANNEL).toBe('eval-seeding')
-    expect(rows.every((row) => row.channel.startsWith('eval-seeding:'))).toBe(true)
   })
 })

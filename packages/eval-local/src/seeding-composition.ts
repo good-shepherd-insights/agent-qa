@@ -6,33 +6,26 @@
 //
 // Composition law (ROOT-02):
 //   - Every committed TEXT write — gitignore, root marker, contracts projections, cassette, label
-//     record, corpus entry — passes through `assertCommittedEgressSafe` with a labeled part, the
-//     'eval-seeding' channel, and a JsonlAuditSink BEFORE any byte reaches the store. Cassette text
-//     arrives masked with the run's declared secrets from record time (ROOT-02's "after masking"
-//     is satisfied by construction) — this checkpoint is the
-//     LAST line of defense, fail-closed on pattern detections, audit rows appended before any throw.
-//     The validated cassette scan view renders only machine ScreenState timestamps in scientific
-//     notation; original serialized bytes and hashes still land unchanged (419-11).
-//   - The atomic unit is the CASE: cassette + label record + corpus entry are checkpointed in ONE
-//     call and land together or not at all. A block refuses the whole case as a typed refusal
-//     carrying the detector labels, and the batch continues — never a batch abort (D-14).
+//     record, corpus entry — is committed as authored (441 D-15: no egress check). Cassette text
+//     arrives masked with the run's declared secrets from record time, and nothing else masks it.
+//   - The atomic unit is the CASE: cassette + label record + corpus entry land together or not at
+//     all, and a refused case never aborts the batch (D-14).
 //   - Write-once (D-17): all of a case's text paths are PREVIEWED against the store before any
 //     write; a conflict on ANY file refuses the whole case before anything lands. Byte-identical
 //     re-seeding reports 'unchanged' everywhere and mutates nothing.
-//   - Blob bytes bypass the text checkpoint (pixels are unscannable) and land only under
-//     ignore-covered blobs/ paths after the store's sha-format + byte-hash verification (D-15). A
+//   - Blob bytes land only under ignore-covered blobs/ paths after the store's sha-format +
+//     byte-hash verification (D-15). A
 //     blob verification refusal surfaces as the same typed write-conflict — never silent.
 //   - Every committed text is serialized by eval core's committedFileText (the ONE serializer);
 //     canonical key order is what makes the byte-compare idempotence hold across re-seeds.
-//   - The helper makes ZERO model calls and opens no safety scope: the audit sink goes to the
-//     checkpoint opts directly.
+//   - The helper makes ZERO model calls and opens no safety scope. Its `policy` and `auditSink`
+//     options are unread since 441-12 (441-42 removes them).
 
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import {
   canonicalJson,
-  cassetteEgressText,
   committedFileText,
   contractFileName,
   projectJudgeConfigContract,
@@ -48,14 +41,7 @@ import type {
   SeedingPlan,
   SilverExclusion,
 } from '@vostride/agent-qa-eval'
-import {
-  CommittedEgressBlockedError,
-  assertCommittedEgressSafe,
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-  type AuditSink,
-} from '@vostride/agent-qa-safety'
-import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
+import type { AuditSink } from '@vostride/agent-qa-safety'
 import type { GuardrailPolicy } from '@vostride/agent-qa-schema'
 
 import {
@@ -72,9 +58,6 @@ import {
 } from './committed-root-store.js'
 import type { CommittedWriteOutcome } from './committed-root-store.js'
 
-/** The ROOT-02 checkpoint channel: audit rows land as `eval-seeding:<part label>`. */
-export const SEEDING_EGRESS_CHANNEL = 'eval-seeding'
-
 export interface SeedCommittedCorpusInput {
   /** The pure eval-core plan — the ONLY decision-maker; this helper executes it verbatim (D-16). */
   plan: SeedingPlan
@@ -82,14 +65,16 @@ export interface SeedCommittedCorpusInput {
   cassettes: readonly ExtractedCassette[]
   /** Explicit absolute committed-root path — `<configDir>/agent-qa-eval` for the 372 CLI. */
   committedRoot: string
-  /** Seeding-scoped audit-sink base dir (the JsonlAuditSink lands guardrail rows here). */
+  /** Seeding-scoped output base dir. */
   seedingOutputBaseDir: string
-  /** Guardrail policy; defaults to the shipped default input, injectable for tests. */
+  /** Unread since 441-12 (441-42 removes it). */
   policy?: GuardrailPolicy
+  /** Unread since 441-12 (441-42 removes it). */
   auditSink?: AuditSink
 }
 
 export type SeedingRefusal =
+  // Produced only by golden-composition's census commit now; 441-23 and 441-42 remove it.
   | {
       cassetteId: string
       kind: 'egress-blocked'
@@ -109,7 +94,7 @@ export interface SeedingReport {
   seededCount: number
   /** Cases whose every file was byte-identical (D-17 idempotent no-op). */
   unchangedCount: number
-  /** Typed per-case refusals — egress blocks, write conflicts, missing cassettes. Never silent. */
+  /** Typed per-case refusals — write conflicts and missing cassettes. Never silent. */
   refusals: SeedingRefusal[]
   /** Matcher skips, carried verbatim from the plan. */
   pairSkips: PairSkip[]
@@ -130,8 +115,8 @@ export interface SeedingReport {
 
 /**
  * Execute a SeedingPlan against the committed root: scaffold (D-15), contracts projections
- * (D-04), then each case as an atomic checkpoint-then-preview-then-write unit (D-14/D-17).
- * Blocked or conflicted cases refuse atomically; the batch always runs to completion.
+ * (D-04), then each case as an atomic preview-then-write unit (D-14/D-17). Conflicted cases
+ * refuse atomically; the batch always runs to completion.
  */
 /** 2026-09-08, 418 D-21: one reviewed invocation may contain several actual product/run plans.
  * The existing per-case sequential writer remains the unit; no whole-root transaction is implied.
@@ -154,30 +139,15 @@ export function seedCommittedCorpus(input: SeedCommittedCorpusInput | SeedCommit
 
 function executeSeedingPlan(input: SeedCommittedCorpusInput): SeedingReport {
   const store = new FsCommittedRootStore({ committedRoot: input.committedRoot })
-  const auditSink = input.auditSink ?? new JsonlAuditSink(input.seedingOutputBaseDir)
-  const policy = input.policy ?? loadGuardrailPolicy(defaultGuardrailPolicyInput)
-  const checkpointOpts = { policy, channel: SEEDING_EGRESS_CHANNEL, auditSink }
 
-  // (1) Scaffold: both texts checkpointed in one call, then handed to the store pre-checked
-  // (the store never imports the guardrail — this helper owns content policy).
-  const checkedScaffold = assertCommittedEgressSafe(
-    [
-      { label: 'gitignore', text: COMMITTED_GITIGNORE_TEXT },
-      { label: 'root-marker', text: committedFileText(buildRootMarkerValue()) },
-    ],
-    checkpointOpts,
-  )
-  const scaffoldOutcomes = store.scaffold(checkedScaffold[0]!, checkedScaffold[1]!)
+  // (1) Scaffold.
+  const scaffoldOutcomes = store.scaffold(COMMITTED_GITIGNORE_TEXT, committedFileText(buildRootMarkerValue()))
 
-  // (2) D-04 contracts projections, through the same checkpoint, one file per version.
+  // (2) D-04 contracts projections, one file per version.
   const contracts: SeedingReport['contracts'] = []
   for (const projection of [projectMatcherConfigContract(), projectJudgeConfigContract()]) {
     const fileName = contractFileName(projection)
-    const checked = assertCommittedEgressSafe(
-      [{ label: `contracts:${fileName}`, text: committedFileText(projection) }],
-      checkpointOpts,
-    )
-    const outcome = store.writeText(committedContractPath(fileName), checked[0]!)
+    const outcome = store.writeText(committedContractPath(fileName), committedFileText(projection))
     contracts.push({ fileName, outcome: outcome.kind })
   }
 
@@ -209,29 +179,6 @@ function executeSeedingPlan(input: SeedCommittedCorpusInput): SeedingReport {
       { relPath: committedCorpusPath(product, cassetteId), text: committedFileText(planCase.corpusEntry) },
     ]
 
-    // ONE checkpoint call covering ALL of the case's text parts — a block refuses the whole
-    // unit with the detector labels and the batch continues (D-14).
-    try {
-      assertCommittedEgressSafe(
-        [
-          { label: `cassette:${cassetteId}`, text: cassetteEgressText(extracted.cassette) },
-          { label: `label:${cassetteId}`, text: texts[1]!.text },
-          { label: `corpus:${cassetteId}`, text: texts[2]!.text },
-        ],
-        checkpointOpts,
-      )
-    } catch (err) {
-      if (err instanceof CommittedEgressBlockedError) {
-        refusals.push({
-          cassetteId,
-          kind: 'egress-blocked',
-          detections: err.blocked.map(({ label, detector }) => ({ label, detector })),
-        })
-        continue
-      }
-      throw err
-    }
-
     // Preview ALL text paths before writing ANY — a conflict on one file refuses the whole
     // case with nothing partial landed (per-case atomicity across D-17 too).
     const conflicting = texts.find(
@@ -251,8 +198,8 @@ function executeSeedingPlan(input: SeedCommittedCorpusInput): SeedingReport {
       refusals.push({ cassetteId, kind: 'write-conflict', path: textConflict.path })
       continue
     }
-    // Blob bytes bypass the checkpoint (binary, ignore-covered, D-15); the store verifies
-    // sha format + byte hash before landing. A verification refusal is surfaced typed.
+    // Blob bytes (binary, ignore-covered, D-15): the store verifies sha format + byte hash
+    // before landing. A verification refusal is surfaced typed.
     let blobConflictPath: string | undefined
     for (const blob of extracted.blobs) {
       const relBlobPath = committedBlobPath(product, cassetteId, blob.sha)
@@ -281,14 +228,6 @@ function executeSeedingPlan(input: SeedCommittedCorpusInput): SeedingReport {
     const path = committedLabelPath(product, cassetteId)
       .replace(/\.json$/, `--revision-${revision.revision.id}.json`)
     const text = committedFileText(revision)
-    try {
-      assertCommittedEgressSafe([{ label: `label-revision:${cassetteId}`, text }], checkpointOpts)
-    } catch (err) {
-      if (!(err instanceof CommittedEgressBlockedError)) throw err
-      refusals.push({ cassetteId, kind: 'egress-blocked',
-        detections: err.blocked.map(({ label, detector }) => ({ label, detector })) })
-      continue
-    }
     if (store.previewText(path, text) === 'conflict') {
       refusals.push({ cassetteId, kind: 'write-conflict', path })
       continue
@@ -324,12 +263,9 @@ function executeSeedingPlan(input: SeedCommittedCorpusInput): SeedingReport {
 // ---------------------------------------------------------------------------
 // The two committed PARTITION documents (414 D-02/D-05/D-06).
 //
-// Both are the ONE-part writer recipe from `baseline-pointer.ts` — checkpoint,
-// preview, write-once — pointed at this file's `eval-seeding` channel rather than
-// the report channel. That channel choice is the whole reason they live here and
-// not in a module of their own: a manifest and an exclusion are seeding-side
-// committed bytes, and minting a third channel would fragment the audit trail
-// this checkpoint exists to keep (the D-15 argument, applied to seeding).
+// Both are the write-once recipe from `baseline-pointer.ts` — preview, then write —
+// with no egress check (441 D-15). They live here because a manifest and an
+// exclusion are seeding-side committed bytes.
 //
 // Neither writer mints a salt. The salt is 32 random bytes minted ONCE per product
 // upstream (the Plan 07 seed verb) and handed here inside an already-guarded
@@ -337,10 +273,9 @@ function executeSeedingPlan(input: SeedCommittedCorpusInput): SeedingReport {
 // derived salt would be a public salt.
 // ---------------------------------------------------------------------------
 
-/** Both writers answer with the same four outcomes; only the label differs. */
+/** Both writers answer with the same outcomes. */
 type CommittedDocumentOutcome =
   | { kind: 'written' | 'unchanged'; path: string }
-  | { kind: 'egress-blocked'; detections: readonly { label: string; detector: string }[] }
   | { kind: 'write-conflict'; path: string }
 
 export interface WritePartitionManifestInput {
@@ -348,9 +283,9 @@ export interface WritePartitionManifestInput {
   manifest: PartitionManifest
   /** Explicit absolute committed-root path — `<configDir>/agent-qa-eval` for the CLI. */
   committedRoot: string
-  /** Seeding-scoped audit-sink base dir (the JsonlAuditSink lands guardrail rows here). */
+  /** Seeding-scoped output base dir. */
   seedingOutputBaseDir: string
-  /** Guardrail policy; defaults to the shipped default input, injectable for tests. */
+  /** Unread since 441-12 (441-42 removes it). */
   policy?: GuardrailPolicy
 }
 
@@ -365,17 +300,6 @@ export interface WriteRunExclusionInput {
 }
 
 export type WriteRunExclusionOutcome = CommittedDocumentOutcome
-
-/** A block becomes the typed outcome; anything else the checkpoint raises is a real error. */
-function blockedOutcome(err: unknown): CommittedDocumentOutcome {
-  if (err instanceof CommittedEgressBlockedError) {
-    return {
-      kind: 'egress-blocked',
-      detections: err.blocked.map(({ label, detector }) => ({ label, detector })),
-    }
-  }
-  throw err
-}
 
 /** Preview-then-write against the write-once store, mapping the outcome (371 D-17). */
 function previewThenWrite(
@@ -406,20 +330,8 @@ export function writePartitionManifest(
 ): WritePartitionManifestOutcome {
   const relPath = committedPartitionManifestPath(input.manifest.product)
   const text = committedFileText(input.manifest)
-  const label = `partition-manifest:${input.manifest.product}`
 
-  // (1) ONE checkpoint call on the SEEDING channel — never the report channel (D-15's argument).
-  try {
-    assertCommittedEgressSafe([{ label, text }], {
-      policy: input.policy ?? loadGuardrailPolicy(defaultGuardrailPolicyInput),
-      channel: SEEDING_EGRESS_CHANNEL,
-      auditSink: new JsonlAuditSink(input.seedingOutputBaseDir),
-    })
-  } catch (err) {
-    return blockedOutcome(err)
-  }
-
-  // (2) Write-once: preview, then write.
+  // Write-once: preview, then write.
   return previewThenWrite(input.committedRoot, relPath, text)
 }
 
@@ -437,20 +349,8 @@ export function writePartitionManifest(
 export function writeRunExclusion(input: WriteRunExclusionInput): WriteRunExclusionOutcome {
   const relPath = committedExclusionPath(input.record.product, input.record.runSlug)
   const text = committedFileText(input.record)
-  const label = `exclusion:${input.record.product}/${input.record.runSlug}`
 
-  // (1) ONE checkpoint call on the SEEDING channel — same surface, same audit trail.
-  try {
-    assertCommittedEgressSafe([{ label, text }], {
-      policy: input.policy ?? loadGuardrailPolicy(defaultGuardrailPolicyInput),
-      channel: SEEDING_EGRESS_CHANNEL,
-      auditSink: new JsonlAuditSink(input.seedingOutputBaseDir),
-    })
-  } catch (err) {
-    return blockedOutcome(err)
-  }
-
-  // (2) The CORE comparison, before the byte preview.
+  // (1) The CORE comparison, before the byte preview.
   const committedFile = join(input.committedRoot, relPath)
   if (existsSync(committedFile)) {
     let existing: unknown
@@ -470,6 +370,6 @@ export function writeRunExclusion(input: WriteRunExclusionInput): WriteRunExclus
     }
   }
 
-  // (3) Write-once for everything the core comparison did not settle.
+  // (2) Write-once for everything the core comparison did not settle.
   return previewThenWrite(input.committedRoot, relPath, text)
 }

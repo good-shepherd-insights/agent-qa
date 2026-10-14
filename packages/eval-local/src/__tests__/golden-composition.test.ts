@@ -62,8 +62,7 @@ describe('freezeGoldenTrajectory', () => {
   })
   afterEach(() => { vi.restoreAllMocks(); rmSync(root, { recursive: true, force: true }) })
 
-  it('writes one private gold case with three audited parts, commits census, and repeats without a write', () => {
-    const checkpoint = vi.spyOn(safety, 'assertCommittedEgressSafe')
+  it('writes one private gold case with three committed parts, commits census, and repeats without a write', () => {
     const first = freeze()
     expect(first.kind).toBe('frozen')
     if (first.kind !== 'frozen') throw new Error(JSON.stringify(first))
@@ -73,7 +72,6 @@ describe('freezeGoldenTrajectory', () => {
     const files = paths(id)
     expect(JSON.parse(readFileSync(files[2]!, 'utf8'))).toMatchObject({ split: 'held-out', heldOutVisibility: 'private' })
     expect(JSON.parse(readFileSync(files[1]!, 'utf8')).label).toMatchObject({ tier: 'gold', sourceChannel: 'user-mark' })
-    expect(checkpoint).toHaveBeenCalledWith(expect.arrayContaining(['cassette', 'label', 'corpus'].map(part => ({ label: part + ':' + id, text: expect.any(String) }))), expect.objectContaining({ channel: 'eval-seeding' }))
     expect(rows).toEqual([])
     const read = readCommittedCorpus(committedRoot)
     expect(read.snapshot.entries).toHaveLength(1)
@@ -121,24 +119,6 @@ describe('freezeGoldenTrajectory', () => {
     expect(rows).toEqual([])
     expect(readFileSync(paths(plan.cases[0]!.cassetteId)[0]!, 'utf8')).toBe(expected)
     expect(handoff.tests[0]!.steps[0]!.subActions[0]!.stateBefore.timestamp).toBe(timestamp)
-  })
-
-  it.each([
-    ['captured timestamp as user text', '1788883958737'],
-    ['captured timestamp as numeric content', 1_788_883_958_737],
-    ['PAN as user text', '4111111111111111'],
-    ['PAN as numeric content', 4_111_111_111_111_111],
-  ] as const)('still refuses %s outside machine screen timestamp metadata', (_name, value) => {
-    const state = handoff.tests[0]!.steps[0]!.subActions[0]!.stateBefore
-    state.timestamp = 1_788_883_958_737
-    if (typeof value === 'string') state.tree = value
-    else state.metadata = Object.assign({}, state.metadata, { timestamp: value })
-    expect(freeze().kind).toBe('refused')
-    expect(rows).toEqual(expect.arrayContaining([expect.objectContaining({
-      detector: 'creditCard', action: 'block',
-      redactedFingerprint: createHash('sha256').update(String(value)).digest('hex').slice(0, 16),
-    })]))
-    expect(readCommittedCorpus(committedRoot).snapshot.entries).toHaveLength(0)
   })
 
   it('false-pass writes both independent gold channels', () => {
@@ -254,14 +234,6 @@ describe('freezeGoldenTrajectory', () => {
     expect(existsSync(files[0]!)).toBe(false)
     expect(existsSync(files[2]!)).toBe(false)
     expect(readFileSync(files[1]!, 'utf8')).toBe('existing foreign bytes')
-  })
-
-  it('refuses secret-bearing evidence without landing its case', () => {
-    handoff.tests[0]!.steps[0]!.subActions[0]!.stateBefore.tree = 'key AKIAIOSFODNN7EXAMPLE'
-    const result = freeze()
-    expect(result).toMatchObject({ kind: 'refused', refusals: [{ kind: 'egress-blocked' }] })
-    expect(readCommittedCorpus(committedRoot).snapshot.entries).toHaveLength(0)
-    expect(rows).toEqual(expect.arrayContaining([expect.objectContaining({ detector: 'awsKey', action: 'block', channel: expect.stringMatching(/^eval-seeding:cassette:/) })]))
   })
 
   it('answers missing steps and cached-only steps without creating a committed root', () => {

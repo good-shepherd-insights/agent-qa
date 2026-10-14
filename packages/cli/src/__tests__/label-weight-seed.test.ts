@@ -133,17 +133,6 @@ describe('420 actual CLI seed weights', () => {
     expect([...reread.snapshot.labelsById.values()].every(label => label.weight?.value === 0.3)).toBe(true)
   })
 
-  it('checkpoints newly persisted planner evidence and blocks an unmasked value before either pair label lands', async () => {
-    const f = fixture()
-    // Public guardrail test vector, not a credential.
-    f.step.subActions[1]!.callRecord = { resolvedModelId: 'AKIAIOSFODNN7EXAMPLE' }
-    f.save()
-    const session = await resolveEvalSession({ configPath: f.configPath })
-    const report = await runSeedVerb(session, {}, fractions)
-    expect(report.refusals.filter(row => row.kind === 'egress-blocked')).toHaveLength(2)
-    expect(readCommittedCorpus(f.committedRoot).snapshot.labelsById.size).toBe(0)
-  })
-
   it('joins committed source runs once, includes an extraction-skipped step, and preserves old weights as population grows', async () => {
     const f = fixture()
     const skipped = structuredClone(f.step)
