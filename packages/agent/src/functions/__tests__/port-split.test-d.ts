@@ -211,6 +211,7 @@ expectTypeOf<OptionalFunctionDepKey>()
     | 'feedback'
     | 'feedbackReads'
     | 'configWrite'
+    | 'secretMask'
   >()
 
 // Every member of that union must actually be an optional member of the deps record — the half
@@ -280,6 +281,7 @@ type HandSpelledOptionalDepKey =
   | 'draftShelf' | 'authoringFunnel' | 'configFiles'
   | 'configValidate' | 'configScan'
   | 'scaffoldContent' | 'capabilityCatalog' | 'feedback' | 'feedbackReads' | 'configWrite'
+  | 'secretMask'
 
 describe('C423-FEEDBACK-BINDINGS-EXACT', () => {
   test('pins the optional dep key union and its runtime roster in both directions', () => {
@@ -317,7 +319,8 @@ describe('C432-GRANT-DEPS-ABSENT', () => {
     expectTypeOf<Extract<(typeof OPTIONAL_FUNCTION_DEP_KEYS)[number], 'standingGrants'>>().toEqualTypeOf<never>()
   })
 
-  test('C432-GRANT-DEPS-ABSENT: the roster still counts 23 members, so the absence is not vacuous', () => {
-    expectTypeOf<(typeof OPTIONAL_FUNCTION_DEP_KEYS)['length']>().toEqualTypeOf<23>()
+  // RE-SPELLED 2026-10-14 (441-16, D-06) from '… still counts 23 members …': secretMask joins.
+  test('C432-GRANT-DEPS-ABSENT: the roster still counts 24 members, so the absence is not vacuous', () => {
+    expectTypeOf<(typeof OPTIONAL_FUNCTION_DEP_KEYS)['length']>().toEqualTypeOf<24>()
   })
 })

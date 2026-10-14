@@ -122,13 +122,22 @@ export const runsEvidenceSpec: FunctionSpec<RunsEvidenceInput, RunsEvidenceResul
     }
     const parsed = EvidenceDocumentSchema.safeParse(rawDocument)
     if (!parsed.success || parsed.data.kind !== address.kind) return error('invalid-document', capture)
-    // A valid document that no context can mask is unreadable, never evidence and never invalid.
-    const context = getActiveMaskingContext()
-    if (context === undefined) return error('masking-unavailable', capture)
+    // A valid document that cannot be masked is unreadable, never evidence and never invalid.
+    let declared = deps.secretMask
+    if (declared === undefined) {
+      // 2026-10-13 (441-16): the ambient arm is taken only when no secretMask is bound; 441-16-2 deletes it.
+      const context = getActiveMaskingContext()
+      if (context === undefined) return error('masking-unavailable', capture)
+      declared = text => context.mask(text)
+    }
+    const bound = declared
+    let maskFailed = false
+    const mask: MaskFn = text => {
+      try { return bound(text) } catch (cause) { maskFailed = true; throw cause }
+    }
     try {
-      const mask: MaskFn = text => context.mask(text)
       const document = maskDocument(parsed.data, mask)
       return RunsEvidenceResultSchema.parse({ address, outcome: 'ready', evidence: capture, document })
-    } catch { return error('invalid-document', capture) }
+    } catch { return error(maskFailed ? 'masking-unavailable' : 'invalid-document', capture) }
   },
 }

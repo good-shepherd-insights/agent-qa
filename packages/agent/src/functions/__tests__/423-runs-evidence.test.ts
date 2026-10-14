@@ -1,17 +1,19 @@
 import { createHash } from 'node:crypto'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
+import { describe, expect, it, vi } from 'vitest'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import {
-  asRunId, EvidenceEntrySchema, RunsEvidenceInputSchema, RunsEvidenceResultSchema, maskedMarker,
+  asRunId, EvidenceEntrySchema, RunsEvidenceInputSchema, RunsEvidenceResultSchema,
 } from '@vostride/agent-qa-schema'
 import type {
-  EvidenceDocument, EvidenceEntry, EvidenceKind, RunDetailRows, RunDetailStep, RunDetailSubAction,
-  RunsEvidenceInput,
+  EvidenceDocument, EvidenceEntry, EvidenceKind, FunctionCaller, MaskFn, RunDetailRows, RunDetailStep,
+  RunDetailSubAction, RunsEvidenceInput,
 } from '@vostride/agent-qa-schema'
 import { runsEvidenceSpec } from '../ops/runs-evidence.js'
 import { sniffEvidenceContentType } from '../ops/runs-artifact.js'
 import { FunctionNotBoundError, type FunctionDeps } from '../spec.js'
 import { RunNotFoundError } from '../ops/runs-get.js'
+import { createFunctionRegistry } from '../registry.js'
+import { invokeFunction } from '../invoke.js'
 
 const runId = asRunId('run-423-evidence-read')
 const kinds = ['console', 'network', 'a11y', 'aria', 'variables'] as const
@@ -26,6 +28,11 @@ const counts = {
   console: { total: 1, errors: 1, warnings: 0 }, network: { total: 1, failed: 1, errored: 0 },
   a11y: { minor: 0, moderate: 0, serious: 1, critical: 0 }, variables: { count: 1 },
 }
+function declaredMask(secrets: Record<string, string>): MaskFn {
+  const redactor = new SecretRedactor(new SecretStore(secrets))
+  return text => redactor.redactString(text)
+}
+const identity: MaskFn = text => text
 function bytesOf(value: unknown) { return new TextEncoder().encode(JSON.stringify(value)) }
 function entryFor(kind: EvidenceKind, bytes: Uint8Array): EvidenceEntry {
   if (kind === 'variables') return { kind, state: 'present', counts: counts.variables }
@@ -33,7 +40,7 @@ function entryFor(kind: EvidenceKind, bytes: Uint8Array): EvidenceEntry {
   const ref = { id: `${kind === 'aria' ? 'aria-state' : `${kind}-evidence`}:${sha}`, sha }
   return EvidenceEntrySchema.parse({ kind, state: 'present', ref, ...(kind === 'aria' ? {} : { counts: counts[kind] }) })
 }
-function fixture(kind: EvidenceKind, document: unknown = documents[kind]) {
+function fixture(kind: EvidenceKind, document: unknown = documents[kind], secretMask: MaskFn | null = identity) {
   const bytes = bytesOf(document)
   const entry = entryFor(kind, bytes)
   const evidence = {
@@ -59,14 +66,12 @@ function fixture(kind: EvidenceKind, document: unknown = documents[kind]) {
   const deps = {
     runDetail: { read: vi.fn(async () => rows) }, evidenceBlobs: { read: readBlob },
     runs: { get: forbidden }, config: { getMasked: forbidden },
+    ...(secretMask === null ? {} : { secretMask }),
   } as unknown as FunctionDeps
   const address: RunsEvidenceInput = { runId, testIndex: 2, stepIndex: 3, kind, ...(kind === 'aria' ? { subActionIndex: 4 } : {}) }
   return { bytes, entry, step, child, rows, deps, readBlob, forbidden, address,
     read: () => runsEvidenceSpec.invoke(address, deps) }
 }
-
-beforeEach(() => setActiveMaskingContextResolver(() => createMaskingContext()))
-afterEach(() => setActiveMaskingContextResolver(() => undefined))
 
 describe('EVIDENCE-ALL-KINDS', () => {
   it.each(kinds)('%s present returns its validated recorded document', async kind => {
@@ -185,33 +190,28 @@ it('VARIABLES-INLINE preserves source and prototype names and rejects a missing 
   expect(f.readBlob).not.toHaveBeenCalled()
 })
 it('EVIDENCE-MASK masks free-text keys and values with the live context while preserving bytes', async () => {
-  const masking = createMaskingContext()
-  masking.register('synthetic-sensitive')
-  setActiveMaskingContextResolver(() => masking)
-  const f = fixture('console', { ...documents.console, records: [{ level: 'error', text: 'synthetic-sensitive operator@example.test', timestamp: 1 }] })
+  const mask = declaredMask({ SYN_441: 'synthetic-sensitive' })
+  const f = fixture('console', { ...documents.console, records: [{ level: 'error', text: 'synthetic-sensitive operator@example.test', timestamp: 1 }] }, mask)
   const before = Array.from(f.bytes)
   const result = await f.read()
-  expect(result).toMatchObject({ outcome: 'ready', document: { records: [{ text: masking.mask('synthetic-sensitive operator@example.test') }] } })
+  expect(result).toMatchObject({ outcome: 'ready', document: { records: [{ text: '[secret:SYN_441] operator@example.test' }] } })
   expect(JSON.stringify(result)).not.toContain('synthetic-sensitive')
   expect(f.bytes).toEqual(new Uint8Array(before))
-  const variables = fixture('variables')
+  const variables = fixture('variables', documents.variables, mask)
   variables.step.variableSnapshot = { 'synthetic-sensitive': { value: 'synthetic-sensitive', source: 'capture' } }
-  expect(await variables.read()).toMatchObject({ outcome: 'ready', document: { records: { [masking.mask('synthetic-sensitive')]: { value: masking.mask('synthetic-sensitive'), source: 'capture' } } } })
+  expect(await variables.read()).toMatchObject({ outcome: 'ready', document: { records: { '[secret:SYN_441]': { value: '[secret:SYN_441]', source: 'capture' } } } })
 })
 it('EVIDENCE-MASK-NO-CONTEXT refuses a valid document it cannot mask as masking-unavailable', async () => {
-  setActiveMaskingContextResolver(() => undefined)
-  const f = fixture('console')
+  const f = fixture('console', documents.console, null)
   const result = await f.read()
   expect(result).toEqual({ address: f.address, outcome: 'read-error', code: 'masking-unavailable', capture: f.entry })
   expect(JSON.stringify(result)).not.toContain('recorded console')
   expect(JSON.stringify(result)).not.toContain('"document"')
-  expect(JSON.stringify(result)).not.toContain(maskedMarker('secret'))
+  expect(JSON.stringify(result)).not.toContain('masked:')
   expect(f.readBlob).toHaveBeenCalledWith(runId, 'ref' in f.entry ? f.entry.ref.sha : '')
 })
 it('EVIDENCE-MULTI-KEY keeps distinct keys, empty maps and stored order, and refuses masked key collisions', async () => {
-  const masking = createMaskingContext()
-  masking.register('recorded response')
-  setActiveMaskingContextResolver(() => masking)
+  const mask = declaredMask({ BODY_441: 'recorded response' })
   const network: EvidenceDocument = { schemaVersion: 1, kind: 'network', records: [
     { url: 'https://example.test/api', method: 'POST', status: 200,
       requestHeaders: { 'content-type': 'application/json', 'x-request-id': 'req-1' },
@@ -219,7 +219,7 @@ it('EVIDENCE-MULTI-KEY keeps distinct keys, empty maps and stored order, and ref
       startTime: 1, endTime: 2, body: 'recorded response' },
     { url: 'https://example.test/health', method: 'GET', status: 204, requestHeaders: {}, responseHeaders: {}, startTime: 3, endTime: 4 },
   ] }
-  const f = fixture('network', network)
+  const f = fixture('network', network, mask)
   const read = await f.read()
   expect(read).toMatchObject({ outcome: 'ready' })
   const records = (read as { document: Extract<EvidenceDocument, { kind: 'network' }> }).document.records
@@ -232,18 +232,17 @@ it('EVIDENCE-MULTI-KEY keeps distinct keys, empty maps and stored order, and ref
   })
   expect(records[1]!.requestHeaders).toEqual({})
   expect(records[1]!.responseHeaders).toEqual({})
-  expect(records[0]!.body).toBe(masking.mask('recorded response'))
-  expect(records[0]!.body).toMatch(/^<SECRET_\d+>$/)
+  expect(records[0]!.body).toBe('[secret:BODY_441]')
 
-  const variables = fixture('variables')
+  const variables = fixture('variables', documents.variables, mask)
   variables.step.variableSnapshot = { second: { value: 'two', source: 'env' }, first: { value: 'one', source: 'inline' } }
   const snapshot = await variables.read()
   expect(snapshot).toMatchObject({ outcome: 'ready' })
   expect(Object.entries((snapshot as { document: { records: object } }).document.records))
     .toEqual([['second', { value: 'two', source: 'env' }], ['first', { value: 'one', source: 'inline' }]])
 
-  setActiveMaskingContextResolver(() => ({ mask: () => 'collapsed', unmask: text => text }))
-  expect(await f.read()).toEqual({ address: f.address, outcome: 'read-error', code: 'invalid-document', capture: f.entry })
+  const collapsed = fixture('network', network, () => 'collapsed')
+  expect(await collapsed.read()).toEqual({ address: collapsed.address, outcome: 'read-error', code: 'invalid-document', capture: collapsed.entry })
 })
 it('EVIDENCE-PORTS reports missing bindings, missing runs and storage errors distinctly', async () => {
   const f = fixture('console')
@@ -268,4 +267,30 @@ it('EVIDENCE-CONTRACT rejects crossed documents, extra fields and false ready st
   expect(runsEvidenceSpec.resultKind).toBe('unary')
   expect(runsEvidenceSpec.risk.readOnly).toBe(true)
   expect(sniffEvidenceContentType(f.bytes)).toBe('application/octet-stream')
+})
+
+describe('C441-COLD-READ', () => {
+  const caller = { surface: 'test', origin: 'agent' } as FunctionCaller
+  const auditSink = { appendGuardrailAudit() {} }
+  const aria: EvidenceDocument = { schemaVersion: 1, kind: 'aria', tree: 'textbox "Password" value="Hunter-42-zz" for qa@example.com' }
+  const readThroughRegistry = (deps: FunctionDeps, address: RunsEvidenceInput) =>
+    invokeFunction(createFunctionRegistry({ deps, auditSink }), 'runs.evidence', address, caller)
+
+  it('runs.evidence masks a stored document with the declared mask', async () => {
+    const f = fixture('aria', aria, declaredMask({ PW_441: 'Hunter-42-zz' }))
+    const result = await readThroughRegistry(f.deps, f.address)
+    expect(result).toMatchObject({ outcome: 'ready',
+      document: { kind: 'aria', tree: 'textbox "Password" value="[secret:PW_441]" for qa@example.com' } })
+    expect(JSON.stringify(result)).not.toContain('Hunter-42-zz')
+  })
+
+  it('runs.evidence answers masking-unavailable without a mask', async () => {
+    const unbound = fixture('aria', aria, null)
+    const throwing = fixture('aria', aria, () => { throw new Error('synthetic unreadable secrets file') })
+    for (const f of [unbound, throwing]) {
+      const result = await readThroughRegistry(f.deps, f.address)
+      expect(result).toEqual({ address: f.address, outcome: 'read-error', code: 'masking-unavailable', capture: f.entry })
+      expect(JSON.stringify(result)).not.toContain('Hunter-42-zz')
+    }
+  })
 })

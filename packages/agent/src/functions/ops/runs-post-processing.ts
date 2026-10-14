@@ -126,7 +126,7 @@ export function projectPostProcessingExclusion(
 /** Copy only recorded DTO facts; queue state and cancellation requests are not detail fields. */
 function projectStageDetails(
   state: PostProcessingChainState | undefined,
-  mask: MaskFn,
+  mask: MaskFn | undefined,
 ): PostProcessingStatus['stageDetails'] {
   const rows = {
     analysis: state?.analyzeRun,
@@ -144,8 +144,10 @@ function projectStageDetails(
       ...(row.startedAt === undefined ? {} : { startedAt: row.startedAt }),
       ...(row.updatedAt === undefined ? {} : { updatedAt: row.updatedAt }),
       ...(row.conclusionKind === undefined ? {} : { conclusionKind: row.conclusionKind }),
-      ...(row.lastFailureKind === undefined ? {} : { lastFailureKind: mask(row.lastFailureKind) }),
-      ...(row.lastFailureReason === undefined ? {} : { lastFailureReason: mask(row.lastFailureReason) }),
+      ...(row.lastFailureKind === undefined || mask === undefined
+        ? {} : { lastFailureKind: mask(row.lastFailureKind) }),
+      ...(row.lastFailureReason === undefined || mask === undefined
+        ? {} : { lastFailureReason: mask(row.lastFailureReason) }),
     } satisfies PostProcessingStageDetail
   }
   return Object.keys(details).length === 0 ? undefined : details
@@ -191,9 +193,9 @@ type RecordedSnapshots =
   | { kind: 'withheld'; reason: CurationSnapshotWithheldReason }
 
 /**
- * One verdict for both recorded copies (423 D-15, Gap 2). With no masking context every identity
- * would collapse to one marker, so projection is not attempted; with one, either copy refusing
- * withholds both, so the checkpoint and the notification can never disagree.
+ * One verdict for both recorded copies (423 D-15, Gap 2). With no mask projection is not
+ * attempted; with one, either copy refusing withholds both, so the checkpoint and the
+ * notification can never disagree.
  */
 function projectRecordedSnapshots(
   state: PostProcessingChainState | undefined,
@@ -214,6 +216,18 @@ function projectRecordedSnapshots(
     served[key] = projection.snapshot
   }
   return { kind: 'served', ...served }
+}
+
+// Without a usable mask, failure prose is omitted and recorded snapshots are withheld.
+function projectMasked(
+  state: PostProcessingChainState | undefined,
+  mask: MaskFn | undefined,
+  stageMask = mask,
+) {
+  return {
+    stageDetails: projectStageDetails(state, stageMask),
+    snapshots: projectRecordedSnapshots(state, mask),
+  }
 }
 
 function withNestedSnapshot(
@@ -275,17 +289,22 @@ export const runsPostProcessingSpec: FunctionSpec<RunsPostProcessingInput, PostP
     // legitimately be polled before its handoff lands (the skip runs after the write). An
     // absent document simply carries no exclusion fact.
     const exclusion = projectPostProcessingExclusion(await deps.runs.get(input.runId))
-    // Resolve at invocation time: the host can bind a different masking scope for each read.
-    // Without that scope, free-text failure fields fail closed with the shared display marker.
-    const masking = getActiveMaskingContext()
-    const mask: MaskFn = masking === undefined
-      ? () => maskedMarker('secret')
-      : text => masking.mask(text)
-    const stageDetails = projectStageDetails(
-      state,
-      mask,
-    )
-    const snapshots = projectRecordedSnapshots(state, masking === undefined ? undefined : mask)
+    let projected: ReturnType<typeof projectMasked>
+    const declared = deps.secretMask
+    if (declared === undefined) {
+      // 2026-10-13 (441-16): the ambient arm is taken only when no secretMask is bound; 441-16-2 deletes it.
+      const masking = getActiveMaskingContext()
+      projected = masking === undefined
+        ? projectMasked(state, undefined, () => maskedMarker('secret'))
+        : projectMasked(state, text => masking.mask(text))
+    } else {
+      try {
+        projected = projectMasked(state, declared)
+      } catch {
+        projected = projectMasked(state, undefined)
+      }
+    }
+    const { stageDetails, snapshots } = projected
     const curationSnapshot = snapshots.kind === 'served' ? snapshots.checkpoint : undefined
     const recordedNotification = state?.notification
     const notification = recordedNotification?.stages.curation.curationSnapshot === undefined

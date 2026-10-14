@@ -43,6 +43,7 @@ import type {
   KnowledgeRejectInput,
   EvidenceBlobLookup,
   EvidenceBlobPresence,
+  MaskFn,
   MaskedResolvedConfig,
   PostProcessingStageDetail,
   QuarantineOperationsPort,
@@ -148,6 +149,7 @@ export type OptionalFunctionDepKey =
   | 'feedback' // 2026-09-08, 419 GATE3-01: the Gate-3 mark port
   | 'feedbackReads' // 2026-09-15, 423 D-19/D-16: read-only mark history and preview, no writer authority
   | 'configWrite' // 2026-09-30, 432-07 D-05/D-07: the direct config writer, no proposal and no git
+  | 'secretMask' // 2026-10-14, 441-16 D-06: the declared-secret mask the run reads project through
 
 /**
  * 419 GATE3-01: the union previously had only a type-level pin, invisible to vitest.
@@ -177,6 +179,7 @@ export const OPTIONAL_FUNCTION_DEP_KEYS = [
   'feedback',
   'feedbackReads',
   'configWrite',
+  'secretMask',
 ] as const satisfies readonly OptionalFunctionDepKey[]
 
 type ExactlyEqual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
@@ -1236,6 +1239,8 @@ export interface FunctionDeps {
    * the single behaviour XPLN-02 exists to make impossible. The op refuses BY NAME instead.
    */
   capabilityCatalog?: CapabilityCatalogPort
+  /** 441 D-06: the host's declared-secret mask for projected run text; absent or throwing, run reads fail closed. */
+  readonly secretMask?: MaskFn
 }
 
 /**

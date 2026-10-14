@@ -1,4 +1,4 @@
-import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import {
   asJobId,
   asRunId,
@@ -8,15 +8,21 @@ import {
   CurationSnapshotSchema,
   CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
-import type { CurationSnapshot, PostProcessingStageDetail, RunNotification } from '@vostride/agent-qa-schema'
-import { afterEach, describe, expect, it } from 'vitest'
+import type { CurationSnapshot, MaskFn, PostProcessingStageDetail, RunNotification } from '@vostride/agent-qa-schema'
+import { describe, expect, it } from 'vitest'
 
 import { runsPostProcessingSpec } from '../ops/runs-post-processing.js'
 import type { FunctionDeps, PostProcessingChainState } from '../spec.js'
 
 const RUN_ID = asRunId('run-423-stage-details')
 
-function read(state: PostProcessingChainState | undefined) {
+function declaredMask(secrets: Record<string, string>): MaskFn {
+  const redactor = new SecretRedactor(new SecretStore(secrets))
+  return text => redactor.redactString(text)
+}
+const identity: MaskFn = text => text
+
+function read(state: PostProcessingChainState | undefined, secretMask?: MaskFn) {
   const deps: FunctionDeps = {
     runs: {
       list: async () => [],
@@ -41,11 +47,10 @@ function read(state: PostProcessingChainState | undefined) {
       idSource: { jobIdFor: (kind, key) => asJobId(`${kind}:${key}`) },
       readChain: async () => state,
     },
+    ...(secretMask === undefined ? {} : { secretMask }),
   }
   return runsPostProcessingSpec.invoke({ runId: RUN_ID }, deps)
 }
-
-afterEach(() => setActiveMaskingContextResolver(() => undefined))
 
 function snapshot(): CurationSnapshot {
   return CurationSnapshotSchema.parse({
@@ -65,9 +70,7 @@ function snapshot(): CurationSnapshot {
 
 describe('423 checkpoint-backed snapshot projection', () => {
   it('NOTIFICATION-MASK: terminal-only snapshot crosses the same strict live mask without mutation', async () => {
-    const masking = createMaskingContext()
-    masking.register('synthetic-snapshot-secret')
-    setActiveMaskingContextResolver(() => masking)
+    const mask = declaredMask({ SNAP_441: 'synthetic-snapshot-secret' })
     const recorded = snapshot()
     const notification = {
       schemaVersion: CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION, runId: RUN_ID, outcome: 'done' as const,
@@ -76,10 +79,10 @@ describe('423 checkpoint-backed snapshot projection', () => {
         curationSnapshot: recorded } },
     } satisfies RunNotification
     const before = JSON.stringify(notification)
-    const result = await read({ notification })
+    const result = await read({ notification }, mask)
     expect(JSON.stringify(result)).not.toContain('synthetic-snapshot-secret')
     expect(result.notification).toEqual(JSON.parse(before.replaceAll('synthetic-snapshot-secret',
-      masking.mask('synthetic-snapshot-secret'))))
+      '[secret:SNAP_441]')))
     expect(PostProcessingStatusSchema.parse(result)).toEqual(result)
     expect(JSON.stringify(notification)).toBe(before)
     expect(result).not.toHaveProperty('curationSnapshot')
@@ -98,9 +101,9 @@ describe('423 checkpoint-backed snapshot projection', () => {
       stages: { analysis: { status: 'done' as const },
         curation: { status: 'done' as const, curationSnapshot: recorded } } } satisfies RunNotification
     const before = JSON.stringify(notification)
-    setActiveMaskingContextResolver(() => ({ mask: () => maskedMarker('secret'), unmask: text => text }))
-    await expect(read({ notification })).resolves.toHaveProperty('curationSnapshotWithheld', { reason: 'projection-refused' })
-    const result = await read({ notification })
+    const collapsing: MaskFn = () => '[secret:COLLAPSED_441]'
+    await expect(read({ notification }, collapsing)).resolves.toHaveProperty('curationSnapshotWithheld', { reason: 'projection-refused' })
+    const result = await read({ notification }, collapsing)
     expect(result.notification?.stages.curation).toEqual({ status: 'done' })
     expect(JSON.stringify(notification)).toBe(before)
     expect(JSON.stringify(result)).not.toContain('synthetic-secret')
@@ -108,9 +111,7 @@ describe('423 checkpoint-backed snapshot projection', () => {
   })
 
   it('POSTPROCESSING-SNAPSHOT-EARLY copies exact masked facts beside three details and two chips', async () => {
-    const masking = createMaskingContext()
-    masking.register('synthetic-snapshot-secret')
-    setActiveMaskingContextResolver(() => masking)
+    const mask = declaredMask({ SNAP_441: 'synthetic-snapshot-secret' })
     const recorded = snapshot()
     const before = structuredClone(recorded)
     const result = await read({
@@ -118,9 +119,9 @@ describe('423 checkpoint-backed snapshot projection', () => {
       curateMemory: { status: 'done', claimed: false, attempts: 2 },
       proposeImprovements: { status: 'queued', claimed: true, attempts: 1 },
       curationSnapshot: recorded,
-    })
+    }, mask)
     const expected = JSON.parse(JSON.stringify(before).replaceAll('synthetic-snapshot-secret',
-      masking.mask('synthetic-snapshot-secret')))
+      '[secret:SNAP_441]'))
     expect(result).toHaveProperty('curationSnapshot', expected)
     expect(result.chips).toEqual({ analysis: 'done', curation: 'done' })
     expect(result.stageDetails).toEqual({ analysis: { attempts: 1 }, curation: { attempts: 2 }, proposals: { attempts: 1 } })
@@ -150,14 +151,13 @@ describe('423 checkpoint-backed snapshot projection', () => {
   })
 
   it('POSTPROCESSING-FAILED-PROPOSALS retains a completed snapshot after later chain failure', async () => {
-    setActiveMaskingContextResolver(() => createMaskingContext())
     const recorded = snapshot()
     const result = await read({
       analyzeRun: { status: 'done', claimed: false },
       curateMemory: { status: 'done', claimed: false },
       proposeImprovements: { status: 'failed', claimed: false, lastFailureKind: 'permanent' },
       curationSnapshot: recorded,
-    })
+    }, identity)
     expect(result).toHaveProperty('curationSnapshot', recorded)
     expect(result.chips).toEqual({ analysis: 'done', curation: 'done' })
     expect(runsPostProcessingSpec.classify!(result).status).toBe('executed')
@@ -181,7 +181,6 @@ describe('423 checkpoint-backed snapshot projection', () => {
     })
     const pending = { analysis: 'pending', curation: 'pending' }
 
-    setActiveMaskingContextResolver(() => undefined)
     await expect(read({ curationSnapshot: recorded })).resolves.toEqual({ runId: RUN_ID, chips: pending,
       curationSnapshotWithheld: { reason: 'masking-unavailable' } })
     const unavailable = await read({ curationSnapshot: recorded })
@@ -200,20 +199,18 @@ describe('423 checkpoint-backed snapshot projection', () => {
     expect(notification.stages.curation.curationSnapshot).toBe(recorded)
     expect(PostProcessingStatusSchema.safeParse(nested).success).toBe(true)
 
-    setActiveMaskingContextResolver(() => ({ mask: () => 'collided-identity', unmask: text => text }))
     const collided = await read({
       analyzeRun: { status: 'done', claimed: false, attempts: 1 },
       curateMemory: { status: 'done', claimed: false, attempts: 2 },
       curationSnapshot: recorded,
-    })
+    }, () => 'collided-identity')
     expect(collided).toEqual({ runId: RUN_ID, chips: { analysis: 'done', curation: 'done' },
       stageDetails: { analysis: { attempts: 1 }, curation: { attempts: 2 } },
       curationSnapshotWithheld: { reason: 'projection-refused' } })
     expect(PostProcessingStatusSchema.safeParse(collided).success).toBe(true)
 
-    setActiveMaskingContextResolver(() => createMaskingContext())
     const invalid = { ...recorded, 'synthetic-raw-secret-key': 'synthetic-raw-secret-value' }
-    const refused = await read({ curationSnapshot: invalid })
+    const refused = await read({ curationSnapshot: invalid }, identity)
     expect(refused).toEqual({ runId: RUN_ID, chips: pending,
       curationSnapshotWithheld: { reason: 'projection-refused' } })
     expect(JSON.stringify(refused)).not.toContain('synthetic-raw-secret-key')
@@ -225,10 +222,9 @@ describe('423 checkpoint-backed snapshot projection', () => {
 
     const empty = CurationSnapshotSchema.parse({ schemaVersion: 1, rows: [],
       breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 } })
-    const served = await read({ curationSnapshot: empty })
+    const served = await read({ curationSnapshot: empty }, identity)
     expect(served).toEqual({ runId: RUN_ID, chips: pending, curationSnapshot: empty })
     expect(served).not.toHaveProperty('curationSnapshotWithheld')
-    setActiveMaskingContextResolver(() => undefined)
     expect(await read({ curationSnapshot: empty })).toEqual({ runId: RUN_ID, chips: pending,
       curationSnapshotWithheld: { reason: 'masking-unavailable' } })
   })
@@ -236,9 +232,7 @@ describe('423 checkpoint-backed snapshot projection', () => {
 
 describe('423 durable stage projection', () => {
   it('THREE-STAGE-ROWS projects exact recorded facts and masks failure text', async () => {
-    const masking = createMaskingContext()
-    masking.register('synthetic-stage-secret')
-    setActiveMaskingContextResolver(() => masking)
+    const mask = declaredMask({ STAGE_441: 'synthetic-stage-secret' })
     const analysis: PostProcessingStageDetail = {
       attempts: 2,
       createdAt: '2026-09-14T00:00:01.000Z',
@@ -262,14 +256,14 @@ describe('423 durable stage projection', () => {
       proposeImprovements: { status: 'failed' as const, claimed: false, ...proposals },
     }
     const before = structuredClone(state)
-    const result = await read(state)
+    const result = await read(state, mask)
     expect(result.stageDetails).toEqual({
-      analysis: { ...analysis, lastFailureReason: masking.mask(analysis.lastFailureReason!) },
+      analysis: { ...analysis, lastFailureReason: 'retry [secret:STAGE_441] for operator@example.test' },
       curation,
       proposals,
     })
     expect(JSON.stringify(result)).not.toContain('synthetic-stage-secret')
-    expect(JSON.stringify(result)).not.toContain('operator@example.test')
+    expect(JSON.stringify(result)).toContain('operator@example.test')
     expect(state).toEqual(before)
     expect(PostProcessingStatusSchema.parse(result)).toEqual(result)
   })
@@ -313,5 +307,25 @@ describe('423 durable stage projection', () => {
   it('CHIP-CONTROL terminal status wins over a stale claim', async () => {
     const result = await read({ analyzeRun: { status: 'done', claimed: true } })
     expect(result.chips).toEqual({ analysis: 'done', curation: 'pending' })
+  })
+})
+
+describe('C441-COLD-READ', () => {
+  it('runs.post-processing withholds without a mask', async () => {
+    const recorded = snapshot()
+    const failing = { status: 'failed' as const, claimed: false, lastFailureKind: 'permanent',
+      lastFailureReason: 'synthetic-cold-secret for qa@example.com' }
+    const throwing: MaskFn = () => { throw new Error('synthetic unreadable secrets file') }
+    const unbound = await read({ curationSnapshot: recorded })
+    expect(unbound).toEqual({ runId: RUN_ID, chips: { analysis: 'pending', curation: 'pending' },
+      curationSnapshotWithheld: { reason: 'masking-unavailable' } })
+    const failed = await read({ analyzeRun: failing, curationSnapshot: recorded }, throwing)
+    expect(failed).toEqual({ runId: RUN_ID, chips: { analysis: 'failed', curation: 'pending' },
+      stageDetails: { analysis: {} }, curationSnapshotWithheld: { reason: 'masking-unavailable' } })
+    for (const result of [unbound, failed]) {
+      expect(JSON.stringify(result)).not.toContain('synthetic-snapshot-secret')
+      expect(JSON.stringify(result)).not.toContain('synthetic-cold-secret')
+      expect(PostProcessingStatusSchema.parse(result)).toEqual(result)
+    }
   })
 })
