@@ -1,17 +1,21 @@
-import { rmSync } from 'node:fs'
+import { rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
-import { createMaskingContext, getActiveMaskingContext } from '@vostride/agent-qa-safety'
 import type { createModel } from '@vostride/agent-qa-model'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import type { ImprovementPlan } from '@vostride/agent-qa-schema'
 import { generateText } from 'ai'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resolveEvalSession } from '../../eval-session-composition.js'
 import * as llm from '../../llm-utils.js'
 import { assertSameStructure, wordImprovementPlan, WORDING_MAX_OUTPUT_TOKENS, WORDING_TIMEOUT_MS, type WordingInput } from '../feedback-wording.js'
+import { createFeedbackPortForHost } from '../feedback-host.js'
 import { markFixture } from './feedback-fixture.js'
 
 vi.mock('ai', async original => ({ ...await original<typeof import('ai')>(), generateText: vi.fn() }))
+
+const declared = new SecretRedactor(SecretStore.fromEnvContent('PW_441=Hunter-42-zz'))
+const declaredMask = (text: string) => declared.redactString(text)
 
 describe('419 bounded feedback wording', () => {
   let root: string
@@ -30,7 +34,7 @@ describe('419 bounded feedback wording', () => {
     session.config.registry = { llms: [{ name: 'fixture', provider: 'openai-compatible', model: 'fixture-model', vision: false, baseURL: 'http://127.0.0.1:1/v1' }] }
     session.config.use = { ...session.config.use, llm: 'fixture' }
     model = vi.fn<typeof createModel>(() => ({}) as ReturnType<typeof createModel>)
-    input = { plan, config: session.config, executionContext: 'ci', maskingContextFactory: createMaskingContext,
+    input = { plan, config: session.config, executionContext: 'ci', mask: declaredMask,
       auditDir: join(root, 'word-audit'), createModelForTest: model }
     vi.spyOn(llm, 'resolveModelAuth').mockResolvedValue({ kind: 'unauthenticated', credentialKey: 'fixture', provider: 'openai-compatible', optional: true, message: 'controlled fixture' })
     vi.mocked(generateText).mockReset()
@@ -38,20 +42,20 @@ describe('419 bounded feedback wording', () => {
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); rmSync(root, { recursive: true, force: true }) })
 
   it('no model config returns floor immediately with zero model, auth and masking calls', async () => {
-    const maskingContextFactory = vi.fn(createMaskingContext)
+    const mask = vi.fn(declaredMask)
     const started = performance.now()
-    expect(await wordImprovementPlan({ ...input, config: undefined, maskingContextFactory })).toEqual(input.plan)
+    expect(await wordImprovementPlan({ ...input, config: undefined, mask })).toEqual(input.plan)
     const elapsed = performance.now() - started
     expect(elapsed).toBeLessThan(100)
     console.info(`419 wording floor latency: ${elapsed.toFixed(3)} ms`)
     expect(model).not.toHaveBeenCalled()
     expect(llm.resolveModelAuth).not.toHaveBeenCalled()
-    expect(maskingContextFactory).not.toHaveBeenCalled()
+    expect(mask).not.toHaveBeenCalled()
   })
 
   it('valid text uses one model inside the safety scope with fixed token/retry/timeout bounds', async () => {
     vi.mocked(generateText).mockImplementation(async options => {
-      expect(getActiveMaskingContext()).toBeDefined()
+      expect(model.mock.calls[0]![2]('pw Hunter-42-zz')).toBe('pw [secret:PW_441]')
       expect(options).toMatchObject({ maxOutputTokens: WORDING_MAX_OUTPUT_TOKENS, maxRetries: 0, temperature: 0 })
       expect(options.abortSignal).toBeInstanceOf(AbortSignal)
       return { text: JSON.stringify({ summary: 'Clarified record', body: 'Clarified evidence only.' }) } as Awaited<ReturnType<typeof generateText>>
@@ -127,5 +131,42 @@ describe('419 bounded feedback wording', () => {
     const empty: ImprovementPlan = { ...base, kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } }
     expect(await wordImprovementPlan({ ...input, plan: empty })).toBe(empty)
     expect(model).toHaveBeenCalledOnce()
+  })
+})
+
+describe('C441-EGRESS', () => {
+  let root: string | undefined
+  afterEach(() => { vi.restoreAllMocks(); if (root) rmSync(root, { recursive: true, force: true }) })
+
+  it('feedback wording sends a declared value as its named marker', async () => {
+    const f = markFixture(); root = f.root
+    writeFileSync(f.configPath, ['workspace:', '  testMatch: [tests/**/*.yaml]', '  suiteMatch: [suites/**/*.suite.yaml]',
+      '  hooksFile: hooks.yaml', '  envFile: .env', '  secretsFile: .env.secrets.local', 'registry:', '  llms:',
+      '    - name: fixture', '      provider: openai-compatible', '      model: fixture-model', '      vision: false',
+      '      baseURL: http://127.0.0.1:1/v1', 'use:', '  llm: fixture', '  mobile:', '    appState: preserve', ''].join('\n'))
+    writeFileSync(join(f.root, '.env.secrets.local'), 'PW_441=Hunter-42-zz\n')
+    vi.spyOn(llm, 'resolveModelAuth').mockResolvedValue({ kind: 'unauthenticated', credentialKey: 'fixture', provider: 'openai-compatible', optional: true, message: 'controlled fixture' })
+    const sent: string[] = []
+    let modelMask: ((text: string) => string) | undefined
+    const recorder = vi.fn<typeof createModel>((_profile, _auth, mask) => { modelMask = mask; return {} as ReturnType<typeof createModel> })
+    vi.mocked(generateText).mockReset().mockImplementation(async options => {
+      sent.push(modelMask!(String(options.prompt)))
+      return { text: JSON.stringify({ summary: 'Clarified record', body: 'Clarified evidence only.' }) } as Awaited<ReturnType<typeof generateText>>
+    })
+    const word = vi.fn<typeof wordImprovementPlan>(async wording => {
+      const plan = structuredClone(wording.plan)
+      if (plan.kind === 'knowledge') for (const delta of plan.deltas) {
+        const bundle = delta.kind === 'Supersede' ? delta.newBundle : delta.kind === 'Add' ? delta.bundle : undefined
+        if (bundle) bundle.body = `${bundle.body} Log in with Hunter-42-zz.`
+      }
+      return await wordImprovementPlan({ ...wording, plan, createModelForTest: recorder })
+    })
+    const result = await createFeedbackPortForHost({ ...f.deps, word }).mark({ runId: f.handoff.runId, kind: 'false-fail' })
+
+    expect(result).toMatchObject({ kind: 'marked' })
+    expect(recorder).toHaveBeenCalledOnce()
+    expect(sent).toHaveLength(1)
+    expect(sent[0]).toContain('[secret:PW_441]')
+    expect(sent[0]).not.toContain('Hunter-42-zz')
   })
 })

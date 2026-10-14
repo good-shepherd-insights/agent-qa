@@ -216,7 +216,8 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
             { handoff, member, step, served, ...(procedure === undefined ? {} : { procedure }) }))
           if (intent.plan === undefined) plan = await (deps.word ?? wordImprovementPlan)({ plan, config: session.config,
             executionContext: session.executionContext,
-            maskingContextFactory: async () => (await resolveEvalSession({ configPath: deps.configPath })).maskingContextFactory(),
+            // Wording keeps its floor when the declared secrets cannot be read: the mask throws inside its catch.
+            mask: await resolveEvalSession({ configPath: deps.configPath }).then(full => full.mask, (error: unknown) => (): never => { throw error }),
             auditDir: resolve(deps.agentQaRoot, 'eval', 'audit', 'mark-wording', mark.markId) })
           intent = ledger.checkpointIntent({ ...intent, mark, plan })
           const draft = decideMarkDraft(plan, { servedRecords: served.length, procedureRead: procedure !== undefined,

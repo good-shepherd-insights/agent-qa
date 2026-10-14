@@ -19,8 +19,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
-import { buildRunMaskingContext } from '@vostride/agent-qa-agent-local'
 import * as model from '@vostride/agent-qa-model'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import * as ai from 'ai'
 import { NO_PROBE_MODEL_REASONS, type NoProbeModelGap } from '@vostride/agent-qa-eval'
 import * as composition from '../eval-session-composition.js'
@@ -35,6 +35,7 @@ vi.mock('ai', async importOriginal => ({
 }))
 
 const secret = 'fixture-preflight-credential-42205'
+const declared = new SecretRedactor(SecretStore.fromEnvContent(`FIXTURE_SECRET=${secret}`))
 const authFetch = vi.fn<typeof fetch>()
 
 /**
@@ -69,8 +70,7 @@ function session(evalConfig: composition.EvalCliConfig = {}): composition.EvalSe
     configPath: '/fixture/agent-qa.config.yaml',
     configDir: '/fixture',
     executionContext: {} as composition.EvalSession['executionContext'],
-    maskingContextFactory: () => buildRunMaskingContext({ env: { FIXTURE_SECRET: secret } }),
-    mask: (text: string) => text,
+    mask: text => declared.redactString(text),
   }
 }
 
@@ -183,22 +183,6 @@ describe('422-05 deterministic zero-call capability gaps', () => {
     // Remove the last credential and the general cause takes over again.
     auth.mockImplementation(async name => withoutCredential(name))
     expect((await gapFor({ judges: ['judge', 'gemini'] })).reason).toBe('no-credential')
-  })
-
-  it('masks every disclosure, including a name a later entry teaches it to mask', async () => {
-    auth.mockImplementation(async () => ({
-      kind: 'bearer-token', credentialKey: 'claude', provider: 'anthropic-compatible',
-      token: secret,
-    }))
-    const capability = await gapFor({ judges: [secret, 'judge'] })
-    expect(capability.reason).toBe('single-family-host')
-    expect(capability.entries[0]).toMatchObject({
-      index: 0, credential: 'resolution-failed', failures: ['config-unresolved', 'no-credential'],
-    })
-    // The unresolvable entry was NAMED with the credential a later entry then registered; the
-    // masker runs after every registration for exactly this case.
-    expect(capability.entries[0]!.name).not.toBe(secret)
-    expect(JSON.stringify(capability)).not.toContain(secret)
   })
 
   it('refuses an unresolvable replay planner with safe text and no planner credential', async () => {

@@ -22,8 +22,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
-import { buildRunMaskingContext } from '@vostride/agent-qa-agent-local'
 import * as model from '@vostride/agent-qa-model'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import * as ai from 'ai'
 import {
   ADVERSARIAL_PROMPT_HASH,
@@ -48,6 +48,7 @@ vi.mock('ai', async importOriginal => ({
 }))
 
 const secret = 'fixture-probe-credential-42205'
+const declared = new SecretRedactor(SecretStore.fromEnvContent(`FIXTURE_SECRET=${secret}`))
 const authFetch = vi.fn<typeof fetch>()
 
 /** The demo host's shape: an openai-family planner, a same-family judge, a Claude entry. */
@@ -78,8 +79,7 @@ function session(evalConfig: composition.EvalCliConfig = {}): composition.EvalSe
     configPath: '/fixture/agent-qa.config.yaml',
     configDir: '/fixture',
     executionContext: {} as composition.EvalSession['executionContext'],
-    maskingContextFactory: () => buildRunMaskingContext({ env: { FIXTURE_SECRET: secret } }),
-    mask: (text: string) => text,
+    mask: text => declared.redactString(text),
   }
 }
 
@@ -103,6 +103,7 @@ function probeRequest(overrides: Partial<GenerationRequest> = {}): GenerationReq
 interface CapturedFactoryCall {
   profile: Parameters<typeof model.createModel>[0]
   auth: Parameters<typeof model.createModel>[1]
+  mask: Parameters<typeof model.createModel>[2]
 }
 
 /** A stub that RECORDS the binding and the request, and answers the frozen prompt's shape. */
@@ -114,8 +115,8 @@ function capturingStub(text = 'Proceed to the payment step') {
     factoryCalls,
     generateCalls,
     handle,
-    createModelImpl: ((profile, resolved) => {
-      factoryCalls.push({ profile, auth: resolved })
+    createModelImpl: ((profile, resolved, mask) => {
+      factoryCalls.push({ profile, auth: resolved, mask })
       return handle
     }) as typeof model.createModel,
     generateTextImpl: (async (options: Record<string, unknown>) => {
@@ -144,8 +145,7 @@ function authorInput(
   return {
     author,
     executionContext: {} as composition.EvalSession['executionContext'],
-    maskingContextFactory: () => buildRunMaskingContext({ env: { FIXTURE_SECRET: secret } }),
-    mask: (text: string) => text,
+    mask: session().mask,
     auditDir: '/fixture/.agent-qa/eval/audit/adversarial',
     createModelImpl: stub.createModelImpl,
     generateTextImpl: stub.generateTextImpl,
@@ -329,5 +329,22 @@ describe('422-05 the eligible probe author, bound in the CLI', () => {
     expect(answered.usage).toEqual({ promptTokens: 311, completionTokens: 7 })
     expect(JSON.stringify(answered)).not.toContain(secret)
     expect(Object.keys(answered).sort()).toEqual(['text', 'usage'])
+  })
+
+  it('the probe author masks with the session\'s mask', async () => {
+    const capability = await selectAuthor(['claude'])
+    const stub = capturingStub()
+    const input = authorInput(capability.author, stub)
+    const request = probeRequest({
+      surface: { role: 'button', name: `Pay with ${secret}`, siblingNames: [`Pay with ${secret}`, 'Back'] },
+    })
+    await createAdversarialProbeAuthor(input).author(request)
+
+    expect(stub.factoryCalls).toHaveLength(1)
+    expect(stub.factoryCalls[0]!.mask).toBe(input.mask)
+    const sent = stub.factoryCalls[0]!.mask(String(stub.generateCalls[0]!.prompt))
+    expect(String(stub.generateCalls[0]!.prompt)).toContain(secret)
+    expect(sent).toContain('[secret:FIXTURE_SECRET]')
+    expect(sent).not.toContain(secret)
   })
 })

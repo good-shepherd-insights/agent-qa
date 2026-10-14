@@ -41,78 +41,73 @@ export async function preflightJudgePanel(
 
   const named = deps.resolveNamedConfig ?? resolveNamedConfig
   const resolveAuth = deps.resolveModelAuth ?? resolveModelAuth
-  const masker = session.maskingContextFactory()
-  try {
-    const rows: { config?: NamedLLMConfigLike; auth?: ResolvedLLMAuth;
-      diagnostic: JudgeCalibrationEntryDiagnostic }[] = []
-    // Preserve declaration order and aliases. A failing entry never short-circuits its siblings.
-    for (const [index, name] of names.entries()) {
-      const diagnostic: JudgeCalibrationEntryDiagnostic = {
-        index, name, families: [], credential: 'resolution-failed', failures: [],
-      }
-      const row: (typeof rows)[number] = { diagnostic }
-      try {
-        const { config } = await named(name, session.configPath, { keyOnly: true })
-        row.config = config
-        diagnostic.modelId = config.model
-        diagnostic.families = [...resolveJudgeFamilies(config.model)].sort()
-      } catch {
-        diagnostic.failures = ['config-unresolved']
-      }
-      if (row.config) {
-        try {
-          const auth = await resolveAuth(row.config.name, row.config)
-          row.auth = auth
-          diagnostic.credential = auth.kind === 'missing' || auth.kind === 'unauthenticated'
-            ? auth.kind : 'present'
-          if (auth.kind === 'api-key') masker.register(auth.apiKey)
-          if (auth.kind === 'bearer-token') masker.register(auth.token)
-        } catch { /* Exception text is never disclosure. */ }
-      }
-      if (diagnostic.credential !== 'present') diagnostic.failures = [...diagnostic.failures, 'no-credential']
-      rows.push(row)
+  const rows: { config?: NamedLLMConfigLike; auth?: ResolvedLLMAuth;
+    diagnostic: JudgeCalibrationEntryDiagnostic }[] = []
+  // Preserve declaration order and aliases. A failing entry never short-circuits its siblings.
+  for (const [index, name] of names.entries()) {
+    const diagnostic: JudgeCalibrationEntryDiagnostic = {
+      index, name, families: [], credential: 'resolution-failed', failures: [],
     }
-
-    // Shared replay declaration, key-only: do not ask for planner credentials.
-    let replayProfile: ModelProfile
+    const row: (typeof rows)[number] = { diagnostic }
     try {
-      replayProfile = await resolveReplayProfileDeclaration(session, named)
+      const { config } = await named(name, session.configPath, { keyOnly: true })
+      row.config = config
+      diagnostic.modelId = config.model
+      diagnostic.families = [...resolveJudgeFamilies(config.model)].sort()
     } catch {
-      // Resolver messages can contain registry names or provider details. Keep the refusal
-      // actionable without forwarding untrusted text, even when credential resolution failed.
-      throw new Error('Cannot resolve the replay profile for judge panel preflight. Check use.llm and its registry.llms entry.')
+      diagnostic.failures = ['config-unresolved']
     }
-    const replayFamilies = resolveJudgeFamilies(replayProfile.model)
-    const sets = rows.map(row => resolveJudgeFamilies(row.config?.model ?? ''))
-    for (const [index, row] of rows.entries()) {
-      const failures = [...row.diagnostic.failures]
-      if (row.config && (sets[index]!.size === 0 || replayFamilies.size === 0)) failures.push('unknown-family')
-      if (judgeFamiliesIntersect(sets[index]!, replayFamilies)) failures.push('replay-family-collision')
-      if (sets.some((set, other) => other !== index && judgeFamiliesIntersect(sets[index]!, set))) failures.push('member-family-collision')
-      row.diagnostic.failures = failures
+    if (row.config) {
+      try {
+        const auth = await resolveAuth(row.config.name, row.config)
+        row.auth = auth
+        diagnostic.credential = auth.kind === 'missing' || auth.kind === 'unauthenticated'
+          ? auth.kind : 'present'
+      } catch { /* Exception text is never disclosure. */ }
     }
-    // Mask only disclosure, after all credentials are registered (a later entry can mask an
-    // earlier name). Family assessment and canonical identity always use the raw model ids.
-    const entries = rows.map(({ diagnostic }) => ({ ...diagnostic,
-      name: masker.mask(diagnostic.name),
-      ...(diagnostic.modelId === undefined ? {} : { modelId: masker.mask(diagnostic.modelId) }),
-    }))
-    const modelIds = rows.flatMap(row => row.config ? [row.config.model] : [])
-    const complete = modelIds.length === names.length
-    const identity = complete ? createPanelIdentity(modelIds) : undefined
-    // A credential embedded in a model id cannot be published as a canonical identity.
-    // Never fabricate a replacement identity from masked model ids.
-    const safeIdentity = [replayProfile.model, ...modelIds].every(id => masker.mask(id) === id) ? identity : undefined
-    const gap = (reason: JudgeCalibrationGapReason): JudgePanelPreflightResult => ({
-      kind: 'capability-gap', status: 'capability-gap', reason, minN, entries,
-      ...(safeIdentity === undefined ? {} : { identity: safeIdentity }),
-    })
-    if (rows.some(row => row.diagnostic.credential !== 'present')) return gap('no-credential')
-    const eligibility = assessPanelEligibility({ memberModelIds: modelIds, replayedModelId: replayProfile.model })
-    if (!eligibility.eligible) return gap('single-family-host')
-    return { kind: 'eligible', status: 'uncalibrated', n: 0, minN, entries,
-      identity: identity!, replayProfile,
-      members: rows.map(row => toModelProfileAndAuth(row.config!, row.auth!)),
-    }
-  } finally { masker.dispose() }
+    if (diagnostic.credential !== 'present') diagnostic.failures = [...diagnostic.failures, 'no-credential']
+    rows.push(row)
+  }
+
+  // Shared replay declaration, key-only: do not ask for planner credentials.
+  let replayProfile: ModelProfile
+  try {
+    replayProfile = await resolveReplayProfileDeclaration(session, named)
+  } catch {
+    // Resolver messages can contain registry names or provider details. Keep the refusal
+    // actionable without forwarding untrusted text, even when credential resolution failed.
+    throw new Error('Cannot resolve the replay profile for judge panel preflight. Check use.llm and its registry.llms entry.')
+  }
+  const replayFamilies = resolveJudgeFamilies(replayProfile.model)
+  const sets = rows.map(row => resolveJudgeFamilies(row.config?.model ?? ''))
+  for (const [index, row] of rows.entries()) {
+    const failures = [...row.diagnostic.failures]
+    if (row.config && (sets[index]!.size === 0 || replayFamilies.size === 0)) failures.push('unknown-family')
+    if (judgeFamiliesIntersect(sets[index]!, replayFamilies)) failures.push('replay-family-collision')
+    if (sets.some((set, other) => other !== index && judgeFamiliesIntersect(sets[index]!, set))) failures.push('member-family-collision')
+    row.diagnostic.failures = failures
+  }
+  // Only disclosure is masked, with the session's declared secrets. Family assessment and
+  // canonical identity always use the raw model ids.
+  const entries = rows.map(({ diagnostic }) => ({ ...diagnostic,
+    name: session.mask(diagnostic.name),
+    ...(diagnostic.modelId === undefined ? {} : { modelId: session.mask(diagnostic.modelId) }),
+  }))
+  const modelIds = rows.flatMap(row => row.config ? [row.config.model] : [])
+  const complete = modelIds.length === names.length
+  const identity = complete ? createPanelIdentity(modelIds) : undefined
+  // A declared secret embedded in a model id cannot be published as a canonical identity.
+  // Never fabricate a replacement identity from masked model ids.
+  const safeIdentity = [replayProfile.model, ...modelIds].every(id => session.mask(id) === id) ? identity : undefined
+  const gap = (reason: JudgeCalibrationGapReason): JudgePanelPreflightResult => ({
+    kind: 'capability-gap', status: 'capability-gap', reason, minN, entries,
+    ...(safeIdentity === undefined ? {} : { identity: safeIdentity }),
+  })
+  if (rows.some(row => row.diagnostic.credential !== 'present')) return gap('no-credential')
+  const eligibility = assessPanelEligibility({ memberModelIds: modelIds, replayedModelId: replayProfile.model })
+  if (!eligibility.eligible) return gap('single-family-host')
+  return { kind: 'eligible', status: 'uncalibrated', n: 0, minN, entries,
+    identity: identity!, replayProfile,
+    members: rows.map(row => toModelProfileAndAuth(row.config!, row.auth!)),
+  }
 }

@@ -3,10 +3,8 @@ import { resolveKnowledgeRoot } from '@vostride/agent-qa-core'
 // The CLI composition-root sibling for the eval verbs (Phase 372, Plan 04 — the D-05 sibling of
 // the run session composition, which as of 385-08/D-13 is the local agent package's composition
 // subtree rather than a module beside this one). It discharges at ONE site what every eval verb (replay / score /
-// report / seed; plans 372-05/06/07) stands on: D-06 run-parity seeded masking — the factory
-// seeds from the SAME three sources as run (the workspace secrets file's SecretStore, the
-// name-based sensitive env slice, and auth-state sensitive strings) via the IMPORTED
-// buildRunMaskingContext, never a copy; D-07 the eval-scoped audit stream — per-invocation dirs
+// report / seed; plans 372-05/06/07) stands on: the session's `mask`, a SecretRedactor over the
+// workspace secrets file and nothing else (441 D-01/D-06); D-07 the eval-scoped audit stream — per-invocation dirs
 // under .agent-qa/eval/audit/<verb>/<key>, never .agent-qa/runs/ and never a fabricated runId
 // (Pitfall 2: buildRunAuditSink is the run-dir-rooted, runId-stamping builder and is never
 // reused here); and D-03 judge-as-named-user-facing-config — judge/planner resolution flows
@@ -20,7 +18,7 @@ import { resolveKnowledgeRoot } from '@vostride/agent-qa-core'
 import { createHash, randomBytes } from 'node:crypto'
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs'
 import type { Dirent } from 'node:fs'
-import { readFile, readdir } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import {
   HANDOFF_FILE,
@@ -197,11 +195,10 @@ import { hasNoiseFloorArtefacts } from './curation/promotion-posture.js'
 export { renderCensusMarkdown }
 import { renderEvalReportMarkdown } from './eval-report-render.js'
 import {
-  buildRunMaskingContext,
   LOCAL_CURATION_CAPABILITIES,
   resolveRunExecutionContext,
 } from '@vostride/agent-qa-agent-local'
-import type { RunExecutionContext, RunMaskingContext } from '@vostride/agent-qa-agent-local'
+import type { RunExecutionContext } from '@vostride/agent-qa-agent-local'
 
 // The @vostride/agent-qa-eval-local workspace edge (G5) is anchored by the real store/loader
 // value imports above (372-05/06); this type re-export stays for the report verb plan (372-07)
@@ -318,27 +315,22 @@ export interface EvalSession {
   configPath: string
   configDir: string
   evalConfig: EvalCliConfig
-  /**
-   * D-06: each call constructs a fresh, disposable MaskingContext seeded from the SAME three
-   * sources as run via the imported buildRunMaskingContext — a secret registered in any source
-   * masks to a placeholder on every eval egress.
-   */
-  maskingContextFactory: () => RunMaskingContext
+  /** Every declared secrets-file value as `[secret:<name>]`; a key-only session's mask throws. */
   mask: MaskFn
   executionContext: RunExecutionContext
 }
 
 /**
  * Resolve the one eval session (D-05). Validates the config through resolveConfig (which now
- * carries the typed `eval` block), loads the workspace secrets file into a SecretStore, reads
- * every persisted auth-state payload best-effort, merges flag overrides over the config eval
- * block (flags win field-wise, D-03), and closes the run-parity masking seed over all of it.
- * Config errors are typed Errors naming the offending path (D-08) — never process.exit.
+ * carries the typed `eval` block), loads the workspace secrets file into a SecretStore, merges
+ * flag overrides over the config eval block (flags win field-wise, D-03), and masks with the
+ * declared secrets alone. Config errors are typed Errors naming the offending path (D-08) —
+ * never process.exit.
  */
 export async function resolveEvalSession(input: {
   configPath?: string
   flags?: EvalSessionFlags
-  /** Declaration-only host probes neither read secrets/auth state nor create a run masker. */
+  /** Declaration-only host probes read no secrets file, so their session cannot mask. */
   keyOnly?: boolean
 } = {}): Promise<EvalSession> {
   const configPath = input.configPath ?? 'agent-qa.config.yaml'
@@ -352,7 +344,6 @@ export async function resolveEvalSession(input: {
     return {
       config, configPath, configDir,
       evalConfig,
-      maskingContextFactory: () => { throw new Error('A key-only eval session cannot create a run masker') },
       mask: () => { throw new Error('A key-only eval session has no declared secrets to mask with') },
       executionContext: resolveRunExecutionContext(),
     }
@@ -361,17 +352,12 @@ export async function resolveEvalSession(input: {
   const secretStore = await loadEvalSecretStore(config, configDir)
   const { SecretRedactor } = await import('@vostride/agent-qa-runner')
   const redactor = new SecretRedactor(secretStore)
-  const authStatePayloads = await readAuthStatePayloadsBestEffort(
-    resolve(configDir, config.services?.authState?.dir ?? '.agent-qa/auth-states'),
-  )
 
   return {
     config,
     configPath,
     configDir,
     evalConfig,
-    maskingContextFactory: () =>
-      buildRunMaskingContext({ secretStore, env: process.env, authStatePayloads }),
     mask: (text) => redactor.redactString(text),
     executionContext: resolveRunExecutionContext(),
   }
@@ -434,25 +420,20 @@ export interface ExtractVerbResult {
  * refusal — pre-366 documents surface here, never as batch errors), and hand every survivor to
  * the sanctioned engines: `extractRunCassettes` selects/projects, `FsCassetteStore` stages
  * idempotently (rm+mkdir recreate). The CLI adds NO selection, completeness, or dedup logic.
- * The whole body runs inside `runSafetyScope` with the session's seeded masking context and a
- * D-07 eval-scoped audit sink — extract has no model egress, the discipline is uniform anyway.
+ * The whole body runs inside `runSafetyScope` with a D-07 eval-scoped audit sink — extract has
+ * no model egress, the discipline is uniform anyway.
  */
 export async function runExtractVerb(
   session: EvalSession,
   filters: { run?: string; product?: string } = {},
 ): Promise<ExtractVerbResult> {
-  const maskingContext = session.maskingContextFactory()
   const auditSink = new JsonlAuditSink(
     evalAuditDir(session.configDir, 'extract', filters.run ?? 'sweep'),
   )
-  try {
-    return await runSafetyScope(
-      { maskingContext, auditSink, executionContext: session.executionContext },
-      async () => sweepAndExtract(resolve(session.configDir, '.agent-qa'), filters),
-    )
-  } finally {
-    maskingContext.dispose()
-  }
+  return await runSafetyScope(
+    { auditSink, executionContext: session.executionContext },
+    async () => sweepAndExtract(resolve(session.configDir, '.agent-qa'), filters),
+  )
 }
 
 // ---- internals --------------------------------------------------------------------------------
@@ -974,14 +955,7 @@ export async function runJudgeCalibrateVerb(session: EvalSession, opts: {
       mask: session.mask } }
     : { kind: 'capability-gap', reason: preflight.reason, minN: preflight.minN,
       publication: context, commit: opts.commit, replace: opts.replace })
-  const masker = session.maskingContextFactory()
-  try {
-    for (const member of preflight.kind === 'eligible' ? preflight.members : []) {
-      if (member.auth.kind === 'api-key') masker.register(member.auth.apiKey)
-      if (member.auth.kind === 'bearer-token') masker.register(member.auth.token)
-    }
-    return JSON.parse(masker.mask(JSON.stringify({ ...result, entries: preflight.entries }))) as typeof result & { entries: typeof preflight.entries }
-  } finally { masker.dispose() }
+  return JSON.parse(session.mask(JSON.stringify({ ...result, entries: preflight.entries }))) as typeof result & { entries: typeof preflight.entries }
 }
 
 export type JudgeCalibrateVerbResult = Awaited<ReturnType<typeof runJudgeCalibrateVerb>>
@@ -1778,7 +1752,7 @@ async function defaultProbeAuthorBinder(
   return (author, binding) => createAdversarialProbeAuthor({
     author,
     executionContext: session.executionContext,
-    maskingContextFactory: session.maskingContextFactory,
+    mask: session.mask,
     auditDir,
     onCallAttempted: binding.onCallAttempted,
   })
@@ -1870,10 +1844,9 @@ export async function runReplayGateVerb(
   }
   const identity = await resolveGateProfileIdentity(session, opts.plannerOverrides)
   const profile = await resolveReplayProfileDeclaration(session)
-  // A key-only session deliberately has no masker. Prepare the full run-parity session only
-  // when the composition crosses its spend boundary, before resolving provider credentials.
+  // A key-only session deliberately cannot mask. Prepare the full session only when the
+  // composition crosses its spend boundary, before resolving provider credentials.
   let execution: Promise<EvalSession> | undefined
-  let maskingContextFactory = session.maskingContextFactory
   let mask = session.mask
   const names = selectedEvalJudgeNames(session.evalConfig)
   const prepare = () =>
@@ -1884,7 +1857,6 @@ export async function runReplayGateVerb(
       if ((await resolveGateProfileIdentity(full, opts.plannerOverrides)).profileKey !== identity.profileKey) {
         throw new EvalJudgeDeclarationError('Gate profile identity changed before execution; re-run eval replay-gate.')
       }
-      maskingContextFactory = full.maskingContextFactory
       mask = full.mask
       return full
     }))
@@ -1915,7 +1887,6 @@ export async function runReplayGateVerb(
     record: opts.dryRun !== true,
     session: {
       ...session,
-      maskingContextFactory: () => maskingContextFactory(),
       mask: (text) => mask(text),
     },
     composition: {
@@ -3492,30 +3463,6 @@ async function loadEvalSecretStore(
   }
 }
 
-/**
- * Best-effort read of every persisted auth-state payload under the configured auth-state dir
- * (mirrors run.ts readAuthStatePayloadBestEffort — D-06 masking seed source). An absent dir or
- * an unreadable/invalid file degrades silently: the source simply contributes no seed.
- */
-async function readAuthStatePayloadsBestEffort(authStateDir: string): Promise<unknown[]> {
-  let entries: string[]
-  try {
-    entries = (await readdir(authStateDir, { recursive: true })) as string[]
-  } catch {
-    return []
-  }
-
-  const payloads: unknown[] = []
-  for (const entry of entries) {
-    try {
-      payloads.push(JSON.parse(await readFile(resolve(authStateDir, entry), 'utf-8')) as unknown)
-    } catch {
-      // best-effort: directories, unreadable files, and non-JSON contribute no seed
-    }
-  }
-  return payloads
-}
-
 /** Field-wise merge of flag overrides over the config eval block — flags win (D-03). */
 function mergeEvalConfig(
   fromConfig: AgentQaConfig['eval'],
@@ -3550,7 +3497,6 @@ export { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner
 export { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
 export { createModel } from '@vostride/agent-qa-model'
 export type { AgentQaConfig as FeedbackWordingConfig } from '@vostride/agent-qa-core'
-export type { RunMaskingContext as FeedbackMaskingContext } from '@vostride/agent-qa-agent-local'
 // 2026-09-11, 422 D-09/D-10: the adversarial probe preflight and the author binding reach the
 // pure probe contracts through this same composition boundary the judge preflight uses. The
 // FUNC-02 surface firewall ledgers this file for `@vostride/agent-qa-eval` and only ever

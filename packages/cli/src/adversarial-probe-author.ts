@@ -22,7 +22,8 @@
  */
 import { generateText } from 'ai'
 import { z } from 'zod'
-import type { RunExecutionContext, RunMaskingContext } from '@vostride/agent-qa-agent-local'
+import type { RunExecutionContext } from '@vostride/agent-qa-agent-local'
+import type { MaskFn } from '@vostride/agent-qa-schema'
 import {
   createModel, JsonlAuditSink, runSafetyScope, renderAdversarialProbePrompt,
   type GenerationRequest, type ProbeAuthorPort, type ProbeGeneratorKind, type ProbeText,
@@ -63,8 +64,8 @@ export interface AdversarialProbeAuthorInput {
   /** The preflight's choice. Carries credentials; never serialized by anything here. */
   author: AdversarialProbeAuthorSelection
   executionContext: RunExecutionContext
-  /** A fresh, disposable masker per call — the session's own factory, never a copy. */
-  maskingContextFactory: () => RunMaskingContext
+  /** The eval session's declared-secret mask, applied to every request this author sends. */
+  mask: MaskFn
   auditDir: string
   /**
    * Called BEFORE the model is constructed and before anything is sent. A throw refuses the
@@ -110,47 +111,42 @@ export function createAdversarialProbeAuthor(
           ? {}
           : { capabilities: { ...author.profile.capabilities } }),
       }
-      const maskingContext = input.maskingContextFactory()
-      try {
-        return await runSafetyScope({
-          maskingContext,
-          auditSink: new JsonlAuditSink(input.auditDir),
-          executionContext: input.executionContext,
-        }, async () => {
-          // 2026-10-14 (441-04, D-06): transitional; 441-11 replaces it with the declared mask.
-          const model = create(profile, author.auth, (text) => maskingContext.mask(text))
-          const prompt = renderAdversarialProbePrompt(request)
-          const result = await generate({
-            model,
-            maxRetries: 0,
-            temperature: 0,
-            maxOutputTokens: PROBE_AUTHOR_MAX_OUTPUT_TOKENS,
-            abortSignal: AbortSignal.timeout(PROBE_AUTHOR_TIMEOUT_MS),
-            system: prompt.system,
-            prompt: prompt.user,
-          })
-          const parsed = AUTHORED_NAME.safeParse(parseJson(result.text))
-          if (!parsed.success) {
-            throw new Error('The probe author returned a response that is not the single-field name object the frozen prompt requires.')
-          }
-          return {
-            text: parsed.data.name,
-            // Reported spend, carried as reported -- and ABSENT when the provider reported
-            // nothing, never zero. A zero here would be a measured claim about a call whose
-            // cost we do not know, and the disclosure that reads this cannot tell the two
-            // apart once they are the same number. The probe budget is denominated in CALLS
-            // for exactly this reason, so an unreported token still never buys an extra call.
-            usage: {
-              ...(reportedCount(result.usage?.inputTokens) === undefined
-                ? {}
-                : { promptTokens: reportedCount(result.usage?.inputTokens) }),
-              ...(reportedCount(result.usage?.outputTokens) === undefined
-                ? {}
-                : { completionTokens: reportedCount(result.usage?.outputTokens) }),
-            },
-          }
+      return await runSafetyScope({
+        auditSink: new JsonlAuditSink(input.auditDir),
+        executionContext: input.executionContext,
+      }, async () => {
+        const model = create(profile, author.auth, input.mask)
+        const prompt = renderAdversarialProbePrompt(request)
+        const result = await generate({
+          model,
+          maxRetries: 0,
+          temperature: 0,
+          maxOutputTokens: PROBE_AUTHOR_MAX_OUTPUT_TOKENS,
+          abortSignal: AbortSignal.timeout(PROBE_AUTHOR_TIMEOUT_MS),
+          system: prompt.system,
+          prompt: prompt.user,
         })
-      } finally { maskingContext.dispose() }
+        const parsed = AUTHORED_NAME.safeParse(parseJson(result.text))
+        if (!parsed.success) {
+          throw new Error('The probe author returned a response that is not the single-field name object the frozen prompt requires.')
+        }
+        return {
+          text: parsed.data.name,
+          // Reported spend, carried as reported -- and ABSENT when the provider reported
+          // nothing, never zero. A zero here would be a measured claim about a call whose
+          // cost we do not know, and the disclosure that reads this cannot tell the two
+          // apart once they are the same number. The probe budget is denominated in CALLS
+          // for exactly this reason, so an unreported token still never buys an extra call.
+          usage: {
+            ...(reportedCount(result.usage?.inputTokens) === undefined
+              ? {}
+              : { promptTokens: reportedCount(result.usage?.inputTokens) }),
+            ...(reportedCount(result.usage?.outputTokens) === undefined
+              ? {}
+              : { completionTokens: reportedCount(result.usage?.outputTokens) }),
+          },
+        }
+      })
     },
   }
 }

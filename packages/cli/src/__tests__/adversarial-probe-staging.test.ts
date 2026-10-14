@@ -27,7 +27,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as model from '@vostride/agent-qa-model'
 import * as ai from 'ai'
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
-import { buildRunMaskingContext } from '@vostride/agent-qa-agent-local'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { computeBriefDigest, type LosslessServedBriefProofV1 } from '@vostride/agent-qa-schema'
 import {
   ADVERSARIAL_PROMPT_VERSION,
@@ -202,8 +202,7 @@ function preflightSession(): EvalSession {
     configPath: '/fixture/agent-qa.config.yaml',
     configDir: '/fixture',
     executionContext: {} as EvalSession['executionContext'],
-    maskingContextFactory: () => buildRunMaskingContext({ env: { FIXTURE_SECRET: PROBE_CREDENTIAL } }),
-    mask: (text: string) => text,
+    mask: text => new SecretRedactor(SecretStore.fromEnvContent(`FIXTURE_SECRET=${PROBE_CREDENTIAL}`)).redactString(text),
   }
 }
 
@@ -270,7 +269,7 @@ async function stage(f: Fixture, s: EvalSession, opts: StageOptions = {}) {
       createAdversarialProbeAuthor({
         author,
         executionContext: s.executionContext,
-        maskingContextFactory: () => buildRunMaskingContext({ env: {} }),
+        mask: s.mask,
         auditDir: join(f.agentQaRoot, 'eval', 'audit', 'adversarial-probe'),
         onCallAttempted: binding.onCallAttempted,
         createModelImpl: stub.createModelImpl,

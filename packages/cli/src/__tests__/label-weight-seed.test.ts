@@ -191,10 +191,10 @@ describe('420 actual CLI seed weights', () => {
 
   it('preserves recorded masked planner evidence through both new weight blocks and the egress checkpoint', async () => {
     const f = fixture()
+    writeFileSync(join(f.root, '.env.secrets.local'), 'PRIVATE_MODEL=operator-private-model-fixture-420\n')
     const session = await resolveEvalSession({ configPath: f.configPath })
-    const masking = session.maskingContextFactory()
-    masking.register('operator-private-model-fixture-420')
-    const masked = masking.mask('operator-private-model-fixture-420')
+    const masked = session.mask('operator-private-model-fixture-420')
+    expect(masked).toBe('[secret:PRIVATE_MODEL]')
     f.step.subActions[1]!.callRecord = { resolvedModelId: masked }
     f.save()
     const report = await runSeedVerb(session, {}, fractions)

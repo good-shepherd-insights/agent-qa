@@ -1,7 +1,7 @@
-// Phase 372-04 — eval-session-composition behaviors (D-03 flag precedence, D-06 run-parity
-// masking seed, D-07 eval-scoped audit dirs, D-03/D-10 judge preflight, D-08 typed errors).
+// Phase 372-04 — eval-session-composition behaviors (D-03 flag precedence, 441 D-06 declared
+// mask, D-07 eval-scoped audit dirs, D-03/D-10 judge preflight, D-08 typed errors).
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { slugBranch } from '@vostride/agent-qa-runner-local'
@@ -13,9 +13,6 @@ import {
   resolveGate2Caps,
 } from '../eval-session-composition.js'
 
-const SECRET_VALUE = 'super-sensitive-value-123456'
-const COOKIE_VALUE = 'cookie-sensitive-value-9876'
-const ENV_TOKEN_VALUE = 'ambient-env-token-value-5555'
 
 let tmpRoot: string
 let savedXdgDataHome: string | undefined
@@ -64,18 +61,12 @@ async function writeFixture(options: {
   evalBlock?: string
   useLlm?: boolean
   secrets?: string | null
-  authStatePayload?: unknown
 } = {}): Promise<{ dir: string; configPath: string }> {
   const dir = await mkdtemp(join(tmpRoot, 'fixture-'))
   const configPath = join(dir, 'agent-qa.config.yaml')
   await writeFile(configPath, configYaml(options))
   if (options.secrets !== null) {
     await writeFile(join(dir, '.env.secrets.local'), options.secrets ?? '')
-  }
-  if (options.authStatePayload !== undefined) {
-    const authDir = join(dir, '.agent-qa', 'auth-states', 'target')
-    await mkdir(authDir, { recursive: true })
-    await writeFile(join(authDir, 'state.json'), JSON.stringify(options.authStatePayload))
   }
   return { dir, configPath }
 }
@@ -91,7 +82,6 @@ beforeEach(async () => {
 afterEach(async () => {
   if (savedXdgDataHome === undefined) delete process.env.XDG_DATA_HOME
   else process.env.XDG_DATA_HOME = savedXdgDataHome
-  delete process.env.EVAL_PARITY_TEST_TOKEN
   for (const key of Object.keys(process.env)) {
     if (key.startsWith('AGENT_QA_')) delete process.env[key]
   }
@@ -139,48 +129,6 @@ describe('resolveEvalSession — eval config + flag overrides (D-03)', () => {
     expect(session.configDir).toBe(resolve(dir))
     expect(session.configPath).toBe(configPath)
     expect(['local-interactive', 'local-headless', 'ci', 'cloud']).toContain(session.executionContext)
-  })
-})
-
-describe('resolveEvalSession — seeded masking factory (D-06 run-parity)', () => {
-  it('masks secrets-file, sensitive-env, and auth-state values to placeholders', async () => {
-    process.env.EVAL_PARITY_TEST_TOKEN = ENV_TOKEN_VALUE
-    const { configPath } = await writeFixture({
-      secrets: `FAKE_SECRET=${SECRET_VALUE}\n`,
-      authStatePayload: { cookies: [{ name: 'sid', value: COOKIE_VALUE }] },
-    })
-
-    const session = await resolveEvalSession({ configPath })
-    const masked = session
-      .maskingContextFactory()
-      .mask(`a ${SECRET_VALUE} b ${COOKIE_VALUE} c ${ENV_TOKEN_VALUE} d`)
-
-    expect(masked).not.toContain(SECRET_VALUE)
-    expect(masked).not.toContain(COOKIE_VALUE)
-    expect(masked).not.toContain(ENV_TOKEN_VALUE)
-    expect(masked).toContain('<SECRET_')
-  })
-
-  it('returns independent disposable contexts on each factory call', async () => {
-    const { configPath } = await writeFixture({
-      secrets: `FAKE_SECRET=${SECRET_VALUE}\n`,
-    })
-    const session = await resolveEvalSession({ configPath })
-
-    const first = session.maskingContextFactory()
-    first.register('registered-only-in-first-0001')
-    expect(first.mask('x registered-only-in-first-0001 y')).not.toContain(
-      'registered-only-in-first-0001',
-    )
-
-    const second = session.maskingContextFactory()
-    expect(second.mask('x registered-only-in-first-0001 y')).toContain(
-      'registered-only-in-first-0001',
-    )
-    expect(second.mask(SECRET_VALUE)).not.toContain(SECRET_VALUE)
-
-    first.dispose()
-    second.dispose()
   })
 })
 

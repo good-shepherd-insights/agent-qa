@@ -324,21 +324,19 @@ export async function recoverPendingPostVerdictContinuations(input: RecoverPendi
         continue
       }
       let handoff: PostVerdictHandoff | undefined
-      // Disposal travels with the actual operation, even if the caller's deadline expires.
+      // The operation runs to its end even if the caller's deadline expires.
       const completion = (async () => {
         const { resolveEvalSession } = await import('../eval-session-composition.js')
-        const session = await resolveEvalSession({ configPath: input.configPath })
+        // A config or secrets file the eval session cannot read refuses before any producer starts.
+        await resolveEvalSession({ configPath: input.configPath })
         // Expired discovery must not start a new producer after its caller returned.
         if (Date.now() >= input.deadlineMs || input.signal?.aborted) return
-        const maskingContext = session.maskingContextFactory()
-        try {
-          const auditSink = buildRunAuditSink({ configDir: dirname(input.configPath), runId })
-          const { createPostVerdictStep } = await import('./post-verdict-step.js')
-          const step = createPostVerdictStep({ ...bound, detach: true })
-          handoff = step.handoff
-          await runSafetyScope({ maskingContext, auditSink, executionContext: 'local-headless' },
-            async () => await step.port.run({} as Parameters<typeof step.port.run>[0]))
-        } finally { maskingContext.dispose() }
+        const auditSink = buildRunAuditSink({ configDir: dirname(input.configPath), runId })
+        const { createPostVerdictStep } = await import('./post-verdict-step.js')
+        const step = createPostVerdictStep({ ...bound, detach: true })
+        handoff = step.handoff
+        await runSafetyScope({ auditSink, executionContext: 'local-headless' },
+          async () => await step.port.run({} as Parameters<typeof step.port.run>[0]))
       })()
       const settled = await waitForPostVerdictContinuation(completion, input.deadlineMs, input.signal)
       const disclose = () => {

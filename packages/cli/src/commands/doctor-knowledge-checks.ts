@@ -36,7 +36,6 @@ import {
 } from '@vostride/agent-qa-schema'
 import {
   LOCAL_KNOWLEDGE_PROBES,
-  buildRunMaskingContext,
   type AcquireEmbedderOutcome,
   type IndexFace,
   type ReadEmbedderWorkerRegistrationOutcome,
@@ -383,9 +382,8 @@ async function probeGapDisclosure(input: CreateKnowledgeChecksInput): Promise<st
       return 'no-probe-model: panel-not-configured'
     }
     const session = await resolveEvalSession({ configPath: input.configPath, keyOnly: true })
-    // Every credential the preflight resolves is registered in this disposable masker before any
-    // diagnostic exists; none of those diagnostics is rendered here in any case.
-    session.maskingContextFactory = () => buildRunMaskingContext({ env: process.env })
+    // The preflight masks its diagnostics; a key-only session cannot, so it takes the declared mask.
+    session.mask = (await import('../composition/declared-secrets.js')).createDeclaredSecretMask(input.configPath).mask
     const { resolveAdversarialProbeCapability } =
       await import('../adversarial-probe-preflight.js')
     const capability = await resolveAdversarialProbeCapability(session)
@@ -467,9 +465,9 @@ async function doctorPanelDisclosure(input: CreateKnowledgeChecksInput): Promise
     if (names.length === 0) return '; judge panel: capability gap: panel-not-configured'
     if (names.length === 1) return ''
     const session = await resolveEvalSession({ configPath: input.configPath, keyOnly: true })
-    // Key-only resolution avoids auth plugins and execution setup. Preflight registers every
-    // locally resolved credential in this disposable masker before creating disclosure.
-    session.maskingContextFactory = () => buildRunMaskingContext({ env: process.env })
+    // Key-only resolution avoids auth plugins and execution setup; the preflight masks its
+    // diagnostics with the declared secrets.
+    session.mask = (await import('../composition/declared-secrets.js')).createDeclaredSecretMask(input.configPath).mask
     const preflight = await preflightJudgePanel(session)
     const families = preflight.entries.map(entry => entry.families.join('+') || 'unknown').join(', ')
     const prefix = `; judge panel: ${names.length} members (${families}) · calibration: `

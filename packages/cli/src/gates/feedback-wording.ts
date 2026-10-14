@@ -1,5 +1,5 @@
-import { createModel, JsonlAuditSink, runSafetyScope, type FeedbackWordingConfig, type FeedbackMaskingContext } from '../eval-session-composition.js'
-import { canonicalJson, ImprovementPlanSchema, type ExecutionContext, type ImprovementPlan } from '@vostride/agent-qa-schema'
+import { createModel, JsonlAuditSink, runSafetyScope, type FeedbackWordingConfig } from '../eval-session-composition.js'
+import { canonicalJson, ImprovementPlanSchema, type ExecutionContext, type ImprovementPlan, type MaskFn } from '@vostride/agent-qa-schema'
 import { generateText } from 'ai'
 import { z } from 'zod'
 import { resolveLLMModels, resolveModelAuth, toModelProfileAndAuth } from '../llm-utils.js'
@@ -27,7 +27,7 @@ export interface WordingInput {
   plan: ImprovementPlan
   config: FeedbackWordingConfig | undefined
   executionContext: ExecutionContext
-  maskingContextFactory: () => FeedbackMaskingContext | Promise<FeedbackMaskingContext>
+  mask: MaskFn
   auditDir: string
   createModelForTest?: typeof createModel
 }
@@ -36,7 +36,6 @@ export interface WordingInput {
 export async function wordImprovementPlan(input: WordingInput): Promise<ImprovementPlan> {
   if (input.plan.kind === 'no-draftable-fix') return input.plan
   const floor = { ...input.plan, wording: 'floor' as const }
-  let maskingContext: FeedbackMaskingContext | undefined
   let timeout: ReturnType<typeof setTimeout> | undefined
   try {
     if (!input.config?.registry?.llms?.length || !input.config.use?.llm) return floor
@@ -47,16 +46,12 @@ export async function wordImprovementPlan(input: WordingInput): Promise<Improvem
     const resolved = toModelProfileAndAuth(selected.planner, auth)
     const profileCopy = { ...resolved.profile,
       ...(resolved.profile.capabilities === undefined ? {} : { capabilities: { ...resolved.profile.capabilities } }) }
-    const wordingContext = await input.maskingContextFactory()
-    maskingContext = wordingContext
     const controller = new AbortController()
     const expired = new Promise<never>((_resolve, reject) => {
       timeout = setTimeout(() => { controller.abort(); reject(new Error('Wording timed out')) }, WORDING_TIMEOUT_MS)
     })
-    return await runSafetyScope({ maskingContext, auditSink: new JsonlAuditSink(input.auditDir), executionContext: input.executionContext }, async () => {
-      // 2026-10-14 (441-04, D-06): transitional; 441-11 replaces it with the declared mask.
-      const mask = (text: string) => wordingContext.mask(text)
-      const model = (input.createModelForTest ?? createModel)(profileCopy, resolved.auth, mask)
+    return await runSafetyScope({ auditSink: new JsonlAuditSink(input.auditDir), executionContext: input.executionContext }, async () => {
+      const model = (input.createModelForTest ?? createModel)(profileCopy, resolved.auth, input.mask)
       const bundle = floor.kind === 'knowledge' ? floor.deltas.flatMap(delta => delta.kind === 'Supersede' ? [delta.newBundle] : delta.kind === 'Add' ? [delta.bundle] : [])[0] : undefined
       const prose = floor.kind === 'test-edit' ? { intent: floor.intent } : { summary: bundle?.summary, body: bundle?.body }
       const response = await Promise.race([generateText({ model, maxOutputTokens: WORDING_MAX_OUTPUT_TOKENS,
@@ -76,5 +71,5 @@ export async function wordImprovementPlan(input: WordingInput): Promise<Improvem
       return result
     })
   } catch { return floor }
-  finally { if (timeout !== undefined) clearTimeout(timeout); maskingContext?.dispose() }
+  finally { if (timeout !== undefined) clearTimeout(timeout) }
 }

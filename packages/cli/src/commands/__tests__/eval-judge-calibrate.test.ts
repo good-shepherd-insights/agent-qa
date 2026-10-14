@@ -266,7 +266,7 @@ it('renders only masked member recovery diagnostics for a credential gap without
     : { kind: 'api-key', credentialKey: name, provider: 'openai-compatible', apiKey: secret })
   const output = await invoke(f.configPath, ['--judge-panel'])
   expect(output.exit).toBe(0)
-  expect(output.stdout).toContain('member 1: member-<SECRET_')
+  expect(output.stdout).toContain('member 1: member-[secret:JUDGE_KEY]')
   expect(output.stdout).toContain('credential=missing; no-credential')
   expect(output.stdout).not.toContain(secret)
   expect(boundary).toMatchObject({ calls: 0, binds: 0 })
