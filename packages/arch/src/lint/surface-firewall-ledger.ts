@@ -398,10 +398,4 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     clearedBy: '386',
     reason: 'version notice reads host state directly; relocates with the composition root',
   },
-  {
-    file: 'packages/cli/src/wm-flush.ts',
-    specifier: '@vostride/agent-qa-safety',
-    clearedBy: '386',
-    reason: 'working-memory flush wires safety ports by hand; relocates with the run-session composition root',
-  },
 ]

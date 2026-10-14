@@ -1,27 +1,15 @@
-// RED scaffold (Wave 0, Phase 358 · WM-02 · D-13 · Pattern 7 · Open Q2 · Pitfall 5). Pins the
-// run-end redacted flush BEFORE Plan 07 lands it. The flush composes the already-shipped
-// mask() + assertCommittedEgressSafe committed-egress checkpoint (Phase 347) into a JSON
-// artifact — the first LIVE composition of that checkpoint (discharges MASK-FUT-02). Open Q2
-// disposition: a blocked entry's value is replaced by a `[blocked:<detector>:<fingerprint>]`
-// placeholder — the artifact ALWAYS exists, no secret ever lands, the run exit code is
-// untouched (Pitfall 5: never throws out of the flush).
-//
-// RED BY DESIGN: `../wm-flush` does not exist until Plan 07 — the unresolved import IS the
-// intended failure. Pinned API:
-//   flushWorkingMemory(store, { artifactsDir, mask, policy, auditSink? })
-//     → Promise<{ path, entriesWritten, blocked }>  (store.dispose() called after write)
+// The run-end working-memory flush (Phase 358 · WM-02 · D-13): every value is masked with the
+// run's declared mask (441 D-06) and written as is (441 D-15), the store is disposed, and the
+// flush never throws (Pitfall 5: the run exit code is untouched).
+//   flushWorkingMemory(store, { artifactsDir, mask }) → Promise<{ path, entriesWritten }>
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdir, rm, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { loadGuardrailPolicy, defaultGuardrailPolicyInput } from '@vostride/agent-qa-safety'
-import type { GuardrailAuditRow } from '@vostride/agent-qa-safety'
-// Plan-07 flush helper — intentionally unresolved today (the RED reason for this suite):
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { flushWorkingMemory } from '../wm-flush.js'
 
 const TMP_DIR = join(tmpdir(), 'agent-qa-wm-flush-test-' + process.pid)
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
-const PEM = '-----BEGIN PRIVATE KEY-----\nMIIBVAIBADANBg\n-----END PRIVATE KEY-----'
 
 interface Entry { key: string; value: string; kind: string; provenance: string }
 
@@ -47,7 +35,7 @@ describe('flushWorkingMemory — happy path (D-13)', () => {
       { key: 'otp', value: '4821', kind: 'extracted-value', provenance: 'observation' },
       { key: 'file', value: 'report.pdf', kind: 'filename', provenance: 'observation' },
     ])
-    const result = await flushWorkingMemory(store, { artifactsDir: TMP_DIR, mask: (v: string) => `MASKED(${v})`, policy })
+    const result = await flushWorkingMemory(store, { artifactsDir: TMP_DIR, mask: (v: string) => `MASKED(${v})` })
 
     const written = JSON.parse(await readFile(result.path, 'utf8')) as { entries: Entry[] }
     expect(written.entries).toHaveLength(2)
@@ -60,40 +48,38 @@ describe('flushWorkingMemory — happy path (D-13)', () => {
   })
 })
 
-describe('flushWorkingMemory — guardrail composition + blocked-entry placeholder (Open Q2)', () => {
-  it('invokes assertCommittedEgressSafe on channel working-memory-flush and fingerprints a blocked entry', async () => {
-    const auditRows: GuardrailAuditRow[] = []
+describe('C441-COMMITTED', () => {
+  it('the working-memory flush masks a declared value and keeps the rest', async () => {
+    const redactor = new SecretRedactor(SecretStore.fromEnvContent('PW_441=Hunter-42-zz'))
     const store = fakeStore([
-      { key: 'safe', value: 'ordinary note', kind: 'progress-marker', provenance: 'plannerInference' },
-      { key: 'leak', value: PEM, kind: 'extracted-value', provenance: 'toolResult' }, // trips pemKey (block)
+      { key: 'password', value: 'Hunter-42-zz', kind: 'extracted-value', provenance: 'observation' },
+      { key: 'card', value: '4242 4242 4242 4242', kind: 'extracted-value', provenance: 'observation' },
     ])
-    // Identity mask so the PEM reaches the block-class detector deterministically.
     const result = await flushWorkingMemory(store, {
       artifactsDir: TMP_DIR,
-      mask: (v: string) => v,
-      policy,
-      auditSink: { appendGuardrailAudit: (row: GuardrailAuditRow) => { auditRows.push(row) } },
+      mask: (v: string) => redactor.redactString(v),
     })
 
     const raw = await readFile(result.path, 'utf8')
     const written = JSON.parse(raw) as { entries: Entry[] }
-    const leak = written.entries.find((e) => e.key === 'leak')
-    // The raw private key never lands anywhere in the artifact.
-    expect(raw).not.toContain('BEGIN PRIVATE KEY')
-    // The blocked entry's value is a fingerprinted placeholder naming the detector.
-    expect(leak?.value).toMatch(/^\[blocked:pemKey:/)
-    expect(result.blocked.some((b: { detector: string }) => b.detector === 'pemKey')).toBe(true)
-    // The checkpoint was composed on the WM channel and its audit rows were preserved.
-    expect(auditRows.some((r) => r.channel?.includes('working-memory-flush'))).toBe(true)
+    expect(written.entries.find((e) => e.key === 'password')?.value).toBe('[secret:PW_441]')
+    expect(written.entries.find((e) => e.key === 'card')?.value).toBe('4242 4242 4242 4242')
+    expect(raw).not.toContain('Hunter-42-zz')
+    expect('blocked' in result).toBe(false)
   })
 })
 
 describe('flushWorkingMemory — never throws (Pitfall 5)', () => {
-  it('resolves best-effort with the artifact when an entry is blocked (exit code untouched)', async () => {
-    const store = fakeStore([{ key: 'leak', value: PEM, kind: 'extracted-value', provenance: 'toolResult' }])
-    await expect(
-      flushWorkingMemory(store, { artifactsDir: TMP_DIR, mask: (v: string) => v, policy }),
-    ).resolves.toMatchObject({ entriesWritten: 1 })
+  it('resolves best-effort with the artifact when the mask throws, writing no raw value', async () => {
+    const store = fakeStore([{ key: 'otp', value: '4821', kind: 'extracted-value', provenance: 'toolResult' }])
+    const result = await flushWorkingMemory(store, {
+      artifactsDir: TMP_DIR,
+      mask: () => { throw new Error('mask failed') },
+    })
+
+    expect(result.entriesWritten).toBe(1)
+    const written = JSON.parse(await readFile(result.path, 'utf8')) as { entries: Entry[] }
+    expect(written.entries[0]?.value).toBe('[mask-error]')
     expect(store.disposed).toBe(true)
   })
 })
