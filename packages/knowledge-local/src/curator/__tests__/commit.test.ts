@@ -44,6 +44,8 @@ import type {
   PublishBundleOutcome,
 } from '../../bundle-publish.test-helper.js'
 import { openIndexReaderConnection } from '../../index-open.js'
+import { rebuildIndex } from '../../index-rebuild.js'
+import { makeFakeEmbedder } from '../../__tests__/fixtures/fake-embedder.js'
 import { listCommitIntents } from '../../journal/intent-journal.js'
 import { recoverExpiredBundleMutations } from '../../journal/bundle-mutation.js'
 import { acquireWriterLease } from '../../lease/writer-lease.js'
@@ -1591,6 +1593,42 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
         candidateId: candidateContentAddress(old),
         ...old,
       }).success).toBe(true)
+    })
+
+    it('an authored bundle with credential-shaped text is embedded and indexed as written', async () => {
+      const credential = 'Bearer abc123def456ghi789'
+      const body = `Send the header Authorization: ${credential} with the checkout call.`
+      const claimed = job(artifactFreeCaptureReceipt(), {
+        summarySeed: 'Checkout authorization header',
+        bodySeed: body,
+        secretFlagged: true,
+        evidenceToken: 'credential-shaped-evidence',
+        attributingObservationId: 'credential-shaped-observation',
+      })
+
+      const outcome = commitCurationDelta(
+        deps(),
+        claimed,
+        checkpoint(addDelta(draft({ summary: 'Checkout authorization header', body }))),
+      )
+      if (outcome.kind !== 'applied') throw new Error(`expected applied Add, got ${outcome.kind}`)
+      expect(indexedRow(outcome.bundleId)).toMatchObject({ embed_status: 'pending' })
+      expect(String(indexedRow(outcome.bundleId)?.embedding_input)).toContain(credential)
+
+      await rebuildIndex({ knowledgeRoot, embedder: makeFakeEmbedder() })
+
+      const row = indexedRow(outcome.bundleId)
+      expect(row).toMatchObject({ embed_status: 'present' })
+      expect(row?.embedding).toBeInstanceOf(Uint8Array)
+      const reader = openIndexReaderConnection(knowledgeRoot)
+      try {
+        const lexical = reader.db
+          .prepare('SELECT content FROM fts_records WHERE rowid = ?')
+          .get(row?.record_rowid as number)
+        expect(String(lexical?.content)).toContain(credential)
+      } finally {
+        reader.db.close()
+      }
     })
   })
 

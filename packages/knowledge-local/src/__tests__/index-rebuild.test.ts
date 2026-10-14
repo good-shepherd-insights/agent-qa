@@ -37,9 +37,11 @@ import {
   type PublishBundleOutcome,
 } from '../bundle-publish.test-helper.js'
 import {
+  EMBED_STATUS_PENDING,
   EMBED_STATUS_SCRUBBED,
   EMBED_STATUS_SUPPRESSED,
   projectBundleIndexRow,
+  selectPendingEmbeddingRows,
 } from '../index-rebuild.js'
 import {
   INDEX_DB_FILE,
@@ -1183,7 +1185,17 @@ describe('IDX-01 derived-index rebuild projection', () => {
     const target = publishNamed(product, 'Dual suppression live replacement')
     const victim = publishNamed(product, 'Dual suppression redacted victim')
 
-    projectBundleIndexRow({ knowledgeRoot, bundleId: victim.id, suppressDense: true })
+    projectBundleIndexRow({ knowledgeRoot, bundleId: victim.id })
+    // 2026-10-15 (441-24, D-27): nothing writes the terminal value now; an old row may hold it.
+    const legacyWriter = new DatabaseSync(join(knowledgeRoot, 'memory', 'index', INDEX_DB_FILE))
+    try {
+      legacyWriter
+        .prepare('UPDATE records SET embed_status = ?, embedding = NULL WHERE bundle_id = ?')
+        .run(EMBED_STATUS_SUPPRESSED, victim.id)
+      legacyWriter.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+    } finally {
+      legacyWriter.close()
+    }
 
     const reader = openReader()
     try {
@@ -1342,6 +1354,42 @@ describe('IDX-01 derived-index rebuild projection', () => {
       ).toEqual({ product: slugBranch('Reconcile Product') })
     } finally {
       reader.db.close()
+    }
+  })
+})
+
+describe('suppressed lexical-only embedding status', () => {
+  it('persists as terminal and is excluded from the pending-vector selector', () => {
+    const db = new DatabaseSync(':memory:')
+    try {
+      db.exec(`
+        CREATE TABLE records (
+          record_rowid INTEGER PRIMARY KEY,
+          bundle_id TEXT NOT NULL,
+          contextual_rendering TEXT NOT NULL,
+          embed_status TEXT NOT NULL
+        )
+      `)
+      const insert = db.prepare(`
+        INSERT INTO records (bundle_id, contextual_rendering, embed_status)
+        VALUES (?, ?, ?)
+      `)
+      insert.run('pending-bundle', 'pending rendering', EMBED_STATUS_PENDING)
+      insert.run('suppressed-bundle', 'redacted lexical rendering', EMBED_STATUS_SUPPRESSED)
+
+      expect(
+        db.prepare('SELECT embed_status FROM records WHERE bundle_id = ?')
+          .get('suppressed-bundle'),
+      ).toEqual({ embed_status: EMBED_STATUS_SUPPRESSED })
+      expect(selectPendingEmbeddingRows(db)).toEqual([
+        {
+          record_rowid: 1,
+          bundle_id: 'pending-bundle',
+          contextual_rendering: 'pending rendering',
+        },
+      ])
+    } finally {
+      db.close()
     }
   })
 })

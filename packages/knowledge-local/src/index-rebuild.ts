@@ -113,22 +113,21 @@ export interface ProjectBundleIndexRowOptions {
   bundleId: string
   /** Required whenever the same content-addressed id exists in more than one product. */
   product?: string
-  /** SAFE-02 lexical bytes after governed redaction. */
-  lexicalInput?: string
-  /** Terminal dense suppression; ordinary backfill must never select this row. */
-  suppressDense?: boolean
 }
 
 export const EMBED_STATUS_PENDING = 'pending'
 export const EMBED_STATUS_PRESENT = 'present'
-/** SAFE-02 terminal state: lexical projection exists, but dense bytes must never be backfilled. */
+/**
+ * SAFE-02 terminal state: lexical projection exists, but dense bytes must never be backfilled.
+ * 2026-10-15 (441-24, D-27): nothing writes it now; rows indexed before 441 may still hold it.
+ */
 export const EMBED_STATUS_SUPPRESSED = 'suppressed'
 /**
  * Structurally-dead dense suppression (Deprecate/Supersede scrub), distinct from the SAFE-02
  * terminal above. The contract pair: structural death is reversible — projecting the record live
  * again (e.g. a rollback restore) resets this value to pending so ordinary backfill re-embeds it —
- * while SAFE-02 redaction (EMBED_STATUS_SUPPRESSED via applyProjectionSafety's suppressDense) is
- * terminal and survives everything, including a death-and-revival cycle.
+ * while a row already holding EMBED_STATUS_SUPPRESSED stays terminal, including through a
+ * death-and-revival cycle.
  */
 export const EMBED_STATUS_SCRUBBED = 'scrubbed'
 
@@ -649,11 +648,10 @@ function projectBundle(
       return
     }
     /**
-     * D-15 revival seam: a rollback restore re-projects through applyIndexDeltaForBundle with no
-     * lexicalInput/suppressDense, so the reset must live on this default projection path, not
-     * behind applyProjectionSafety's gate. The WHERE clause makes it a no-op for pending/present
-     * rows and deliberately unable to match the SAFE-02 terminal value — only a structurally
-     * scrubbed row projecting live again re-enters the ordinary backfill pipeline.
+     * D-15 revival seam: a rollback restore re-projects through applyIndexDeltaForBundle, so the
+     * reset lives on this default projection path. The WHERE clause makes it a no-op for
+     * pending/present rows and deliberately unable to match the SAFE-02 terminal value — only a
+     * structurally scrubbed row projecting live again re-enters the ordinary backfill pipeline.
      */
     db.prepare(`
       UPDATE records
@@ -663,55 +661,6 @@ function projectBundle(
     refreshVecMetadata(db, vec, recordRowid, activeProfile)
     replaceAnchorGraph(db, projected.bundle, projected.product, recordRowid)
   }, authority, beforeCommit, { family: 'project-bundle', hooks })
-}
-
-function applyProjectionSafety(
-  db: DatabaseSync,
-  vec: VecCapability,
-  bundle: LoadedBundle,
-  activeProfile: EmbeddingProfile,
-  lexicalInput: string,
-  suppressDense: boolean,
-  authority?: MutationAuthorityContext,
-): void {
-  const row = db
-    .prepare('SELECT record_rowid, status FROM records WHERE bundle_id = ?')
-    .get(bundle.manifest.id)
-  if (row === undefined) {
-    throw new Error(`projection safety source bundle ${bundle.manifest.id} is missing`)
-  }
-  if (isDeadStatus(row.status)) return
-  const recordRowid = Number(row.record_rowid)
-  const situatingLine = buildSituatingLine(db, recordRowid)
-  const contextualRendering = renderContextual(lexicalInput, situatingLine)
-
-  transaction(db, () => {
-    db.prepare(`
-      UPDATE records
-      SET embedding_input = ?, situating_line = ?, contextual_rendering = ?,
-          embed_status = ?, embedding = NULL
-      WHERE record_rowid = ?
-    `).run(
-      lexicalInput,
-      situatingLine,
-      contextualRendering,
-      suppressDense ? EMBED_STATUS_SUPPRESSED : EMBED_STATUS_PENDING,
-      recordRowid,
-    )
-    const fts = db
-      .prepare('SELECT identity FROM fts_records WHERE rowid = ?')
-      .get(recordRowid)
-    if (fts === undefined) throw new Error(`projection FTS row ${recordRowid} is missing`)
-    db.prepare('DELETE FROM fts_records WHERE rowid = ?').run(recordRowid)
-    db.prepare(`
-      INSERT INTO fts_records (rowid, identity, content, context)
-      VALUES (?, ?, ?, ?)
-    `).run(recordRowid, String(fts.identity), lexicalInput, situatingLine)
-    if (vec === 'vec0') {
-      db.prepare(`DELETE FROM ${vecTableName(activeProfile)} WHERE record_rowid = ?`)
-        .run(BigInt(recordRowid))
-    }
-  }, authority)
 }
 
 /**
@@ -776,17 +725,6 @@ function projectBundleIndexRowWithAuthority(
     emitEquivalentToBridges(writer.db, authority)
     removeOrphanGraphNodes(writer.db, authority)
     refreshContextualRenderings(writer.db, writer.renderingEpochStale, authority)
-    if (opts.lexicalInput !== undefined || opts.suppressDense === true) {
-      applyProjectionSafety(
-        writer.db,
-        writer.vec,
-        projected.bundle,
-        activeProfile,
-        opts.lexicalInput ?? projected.bundle.manifest.embeddingInput,
-        opts.suppressDense === true,
-        authority,
-      )
-    }
     withMutationAuthority(authority, () => writer.completeRenderingEpoch())
   } finally {
     writer.close()

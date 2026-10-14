@@ -262,6 +262,29 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     }
   }
 
+  function writeLegacySuppressedRow(bundleId: string): void {
+    const writer = knowledgeLocal.openIndexWriter(knowledgeRoot)
+    try {
+      const record = writer.db
+        .prepare('SELECT record_rowid FROM records WHERE bundle_id = ?')
+        .get(bundleId)
+      if (record === undefined) throw new Error(`records row for ${bundleId} is missing`)
+      writer.db
+        .prepare('UPDATE records SET embed_status = ?, embedding = NULL WHERE record_rowid = ?')
+        .run(EMBED_STATUS_SUPPRESSED, record.record_rowid)
+      if (writer.vec === 'vec0') {
+        writer.db
+          .prepare(`
+            DELETE FROM ${knowledgeLocal.vecTableName(DEFAULT_EMBEDDING_PROFILE)}
+            WHERE record_rowid = ?
+          `)
+          .run(BigInt(Number(record.record_rowid)))
+      }
+    } finally {
+      writer.close()
+    }
+  }
+
   function embedState(bundleId: string): {
     embedStatus: string
     embeddingPresent: boolean
@@ -697,8 +720,8 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     })
     await knowledgeLocal.rebuildIndex({ knowledgeRoot, embedder: makeFakeEmbedder() })
 
-    // SAFE-02 governed redaction takes the terminal dense suppression while the record is live.
-    projectBundleIndexRow({ knowledgeRoot, bundleId: victim.id, suppressDense: true })
+    // 2026-10-15 (441-24, D-27): nothing writes the terminal value now; an old row may hold it.
+    writeLegacySuppressedRow(victim.id)
     expect(embedState(victim.id)).toEqual({
       embedStatus: EMBED_STATUS_SUPPRESSED,
       embeddingPresent: false,

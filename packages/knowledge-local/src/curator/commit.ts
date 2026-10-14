@@ -9,7 +9,6 @@ import {
   evaluatePromotionGate,
   parseProcedureBody,
   procedureStepKeys,
-  renderEmbeddingInput,
   sha256hex,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -93,7 +92,6 @@ import type {
   UnknownMintIntent,
   UnknownResolutionIntent,
 } from './disposition.js'
-import { assessEmbeddingInput } from './embed-gate.js'
 
 export { assemblePromotionGateInput } from '../promotion-gate-input.js'
 
@@ -198,8 +196,6 @@ export interface ApplyIndexDeltaForBundleInput {
   priors?: TrustPriorTable
   bundleId: string
   product?: string
-  lexicalInput?: string
-  suppressDense?: boolean
 }
 
 /** Shared Plan 378-10 projection authority used by commit and journal reconciliation. */
@@ -944,18 +940,6 @@ export function commitCurationDelta(
   if (beforeWork !== undefined) return beforeWork
   assertCaptureSafePayload(job)
 
-  const authoredDraft = draftForDelta(checkpoint.delta, job) ?? syntheticDraft(job)
-  const embedding = renderEmbeddingInput({
-    summary: authoredDraft.summary,
-    body: authoredDraft.body,
-    anchors: authoredDraft.anchors,
-  })
-  const embedGate = assessEmbeddingInput({
-    renderedEmbeddingInput: embedding,
-    llmAuthoredFields: [authoredDraft.summary, authoredDraft.body],
-    secretFlaggedAtEmit: job.payload.secretFlagged === true,
-    policy: deps.policy,
-  })
   const disposed = disposeDelta({
     ...(deps.priors === undefined ? {} : { priors: deps.priors }),
     delta: checkpoint.delta,
@@ -1438,8 +1422,6 @@ export function commitCurationDelta(
                 knowledgeRoot: deps.knowledgeRoot,
                 bundleId: published.id,
                 product: bundleProduct,
-                lexicalInput: embedGate.redactedLexicalInput,
-                suppressDense: embedGate.suppressDense,
               })
             }
           } else if (delta.kind === 'Confirm') {
@@ -1600,8 +1582,6 @@ export function commitCurationDelta(
             knowledgeRoot: deps.knowledgeRoot,
             bundleId,
             product: bundleProduct,
-            ...(draft === undefined ? {} : { lexicalInput: embedGate.redactedLexicalInput }),
-            ...(draft === undefined ? {} : { suppressDense: embedGate.suppressDense }),
           })
 
           if (disposed.firstSeenRegistration !== undefined) {
