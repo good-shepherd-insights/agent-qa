@@ -728,11 +728,10 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // `yaml` Document API the comment-preserving mutation needs cannot live in-layer. The edit is a
   // fact about the file FORMAT, and it rides the port that already owns reading it.
   //
-  // 395-04 adds two: `ConfigFieldSetResult` — the edit answers with the value it REPLACED beside
+  // 395-04 adds `ConfigFieldSetResult` — the edit answers with the value it REPLACED beside
   // the bytes it wrote, because the per-value cross-boundary classifier compares the two and a
   // second parse to recover the old value would be free to disagree with the one that applied the
-  // edit — and `ConfigScanPortLike`, the construction-time secret scan bound to the host's own
-  // masking seeds (D-09: one seed set, not two lists that agree today).
+  // edit. 2026-10-14 (441-39, D-15): the construction scan's port type is deleted with the scan.
   'ConfigFieldSetResult',
   'ConfigFieldValue',
   'ConfigFileBytes',
@@ -747,7 +746,6 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // it and the CLI host implements it over `commands/scaffold-content.ts` — the one producer both
   // `agent-qa init` and `config.project.scaffold` render, so the two scaffolds cannot drift.
   'ConfigScaffoldContentPortLike',
-  'ConfigScanPortLike',
   // 395-05: the yaml FORMAT's value vocabulary — scalars, sequences and maps. A target entry and a
   // hook entry are written as one block each, so the port that writes them cannot be scalar-only.
   'ConfigStructuredValue',

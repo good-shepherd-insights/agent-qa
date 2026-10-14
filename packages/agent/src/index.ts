@@ -294,7 +294,6 @@ export type {
   ConfigFilesPortLike,
   ConfigPathFacts,
   ConfigScaffoldContentPortLike,
-  ConfigScanPortLike,
   ConfigStructuredValue,
   ConfigValidatePortLike,
   ConfigValidation,

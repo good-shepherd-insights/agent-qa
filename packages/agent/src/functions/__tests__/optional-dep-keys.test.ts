@@ -27,7 +27,6 @@ describe('optional function dep keys (419 GATE3-01)', () => {
       'authoringFunnel',
       'configFiles',
       'configValidate',
-      'configScan',
       'scaffoldContent',
       'capabilityCatalog',
       'feedback',
@@ -44,8 +43,10 @@ describe('optional function dep keys (419 GATE3-01)', () => {
   // 2026-10-01, 432-18 (D-03/D-15): standingGrants leaves with the grant ops and the ledger, so
   // 24 - 1 = 23.
   // RE-SPELLED 2026-10-14 (441-16, D-06) from 'has exactly 23 optional bindings': secretMask joins.
-  it('has exactly 24 optional bindings', () => {
-    expect(OPTIONAL_FUNCTION_DEP_KEYS).toHaveLength(24)
+  // RE-SPELLED 2026-10-14 (441-39, D-15) from 'has exactly 24 optional bindings': the construction
+  // scan's binding leaves with the scan, so 24 - 1 = 23.
+  it('has exactly 23 optional bindings', () => {
+    expect(OPTIONAL_FUNCTION_DEP_KEYS).toHaveLength(23)
   })
 })
 
@@ -53,11 +54,12 @@ describe('optional function dep keys (419 GATE3-01)', () => {
 // rather than shared with the pin above.
 // 2026-10-01, 432-17: the six proposal, apply and undo bindings leave the hand-spelled roster too.
 // 2026-10-01, 432-18: standingGrants leaves it with the grant ops.
+// 2026-10-14, 441-39 (D-15): the construction scan's binding leaves it with the scan.
 const EXPECTED_BINDINGS = [
   'liveView', 'runInvocation', 'knowledgeReview', 'postProcessing', 'runDetail', 'evidenceBlobs',
   'analysis', 'recurrence', 'quarantine', 'chatTurn',
   'draftEvaluation', 'authoringRead', 'authoringScope', 'draftShelf', 'authoringFunnel',
-  'configFiles', 'configValidate', 'configScan',
+  'configFiles', 'configValidate',
   'scaffoldContent', 'capabilityCatalog', 'feedback', 'feedbackReads',
   'configWrite', 'secretMask',
 ]
@@ -88,19 +90,20 @@ describe('C423-FEEDBACK-BINDINGS-EXACT', () => {
 // type half of this claim is the same-named block in port-split.test-d.ts; this is the runtime half.
 describe('C432-GRANT-DEPS-ABSENT', () => {
   // RE-SPELLED 2026-10-14 (441-16, D-06) from '… and the roster counts 23': secretMask joins.
-  it('C432-GRANT-DEPS-ABSENT: no optional binding names a grant port, and the roster counts 24', () => {
+  // RE-SPELLED 2026-10-14 (441-39, D-15) from '… and the roster counts 24': the scan binding leaves.
+  it('C432-GRANT-DEPS-ABSENT: no optional binding names a grant port, and the roster counts 23', () => {
     const roster: readonly string[] = OPTIONAL_FUNCTION_DEP_KEYS
     expect(roster.includes('standingGrants'), 'standingGrants is still an optional binding').toBe(false)
     expect(roster.filter(key => /grant/i.test(key)), 'a grant-shaped binding replaced it').toEqual([])
-    expect(roster).toHaveLength(24)
-    expect(EXPECTED_BINDINGS).toHaveLength(24)
+    expect(roster).toHaveLength(23)
+    expect(EXPECTED_BINDINGS).toHaveLength(23)
   })
 })
 
 // 2026-10-02, 432-39 (D-03/D-10/D-12/D-15): C432-OPTIONAL-DEPS-EXACT. The optional roster, the
 // `FunctionDeps` interface and the agent barrel agree EXACTLY — compile-checked against the type and
 // measured against the real runtime object — and no binding is a permission, proposal, confirm or
-// undo port. The four required ports are spelled by hand beside the 24 optional ones.
+// undo port. The four required ports are spelled by hand beside the 23 optional ones (441-39: was 24).
 type ExactKeys<T, K extends PropertyKey> = [keyof T] extends [K]
   ? ([K] extends [keyof T] ? true : false)
   : false
@@ -124,7 +127,7 @@ describe('C432-OPTIONAL-DEPS-EXACT', () => {
 
   it('C432-OPTIONAL-DEPS-EXACT: no binding is a permission, proposal, confirm or undo port', () => {
     const roster: readonly string[] = [...REQUIRED_DEP_KEYS, ...OPTIONAL_FUNCTION_DEP_KEYS]
-    expect(roster).toHaveLength(28)
+    expect(roster).toHaveLength(27)
     // `authoringScope` is the authored-product scope port, not a permission scope, so the census
     // names the permission words rather than every `scope`.
     expect(roster.filter(key =>

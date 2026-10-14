@@ -61,7 +61,6 @@ import type {
 import type { AuthoringFunnelPortLike } from '../authoring/funnel.js'
 import type {
   ConfigFilesPortLike,
-  ConfigScanPortLike,
   ConfigScaffoldContentPortLike,
   ConfigValidatePortLike,
   ConfigWritePortLike,
@@ -143,7 +142,6 @@ export type OptionalFunctionDepKey =
   | 'authoringFunnel'
   | 'configFiles'
   | 'configValidate'
-  | 'configScan'
   | 'scaffoldContent'
   | 'capabilityCatalog'
   | 'feedback' // 2026-09-08, 419 GATE3-01: the Gate-3 mark port
@@ -173,7 +171,6 @@ export const OPTIONAL_FUNCTION_DEP_KEYS = [
   'authoringFunnel',
   'configFiles',
   'configValidate',
-  'configScan',
   'scaffoldContent',
   'capabilityCatalog',
   'feedback',
@@ -1194,21 +1191,6 @@ export interface FunctionDeps {
    * The capability is declared here and bound in `cli`.
    */
   configValidate?: ConfigValidatePortLike
-  /**
-   * 395 D-09/D-12 · CFGM-02: the construction-time secret scan, bound to the host's masking seeds.
-   *
-   * A DEP RATHER THAN A DIRECT CALL, even though this package may import `packages/safety` and does.
-   * The FUNCTION is pure and could be called from here; its SEEDS are the resolved environment slice
-   * the run masker is built from, and this package reads no environment. Binding the closure at the
-   * composition root is what makes the values this scan knows and the values the masker hides one
-   * set by construction (D-09) rather than two lists that happen to agree.
-   *
-   * BOUND UNCONDITIONALLY BY `composeLocalAgent`, unlike its neighbours: there is no host that legitimately cannot scan, because the capability needs nothing
-   * but the process it is already running in. It is optional here only so the deps record stays one
-   * shape, and the change ops refuse BY NAME when it is missing — a construction that cannot scan
-   * must not write.
-   */
-  configScan?: ConfigScanPortLike
   /**
    * 395-08 D-04 · CFGM-05: the shared scaffold CONTENT, rendered by the host that owns it.
    *

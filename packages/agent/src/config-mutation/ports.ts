@@ -34,11 +34,6 @@
 // on disk is what a person already has in their repository.
 
 import type {
-  ConstructionScanPart,
-  ConstructionScanReport,
-} from '@vostride/agent-qa-safety'
-
-import type {
   ConfigChange,
   ConfigPathSegment,
   ConfigWriteIssue,
@@ -190,27 +185,6 @@ export interface ConfigFilesPortLike {
    * the hooks schema at the next run rather than at the proposal.
    */
   mintHookId(): string
-}
-
-/**
- * The D-09 construction scan, bound to the host's own masking seed sources (395-04, CFGM-02).
- *
- * A CLOSURE RATHER THAN THE FUNCTION ITSELF, and the closed-over half is the whole point. The scan
- * `packages/safety` exports takes `(parts, seeds)`; the SEEDS are host facts — the resolved
- * environment slice the run masker is built from — and this package reads no environment. Binding
- * them at the composition root is what makes the values this scan knows and the values the masker
- * hides one set by construction (D-09's sibling-input law), rather than two lists that agree today.
- *
- * SYNCHRONOUS, because the scan it wraps is pure and synchronous. A promise here would invite an
- * implementation that went and fetched something, which is the property the scan's own purity
- * contract exists to keep.
- *
- * NO POLICY ARGUMENT, DELIBERATELY — see the scan's file header. An operator's egress policy answers
- * "may this text reach a model provider"; this answers "is a secret about to be written into a git
- * commit", and a shared knob would let a defensible `awsKey: 'off'` disable the second one.
- */
-export interface ConfigScanPortLike {
-  scan(parts: readonly ConstructionScanPart[]): ConstructionScanReport
 }
 
 /**

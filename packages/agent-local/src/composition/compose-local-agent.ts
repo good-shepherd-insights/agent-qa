@@ -182,10 +182,8 @@ import {
   defaultGuardrailPolicyInput,
   getActiveExecutionContext,
   loadGuardrailPolicy,
-  scanConstructedArtifact,
   setActiveExecutionContextResolver,
 } from '@vostride/agent-qa-safety'
-import type { MaskingSeedSources } from '@vostride/agent-qa-safety'
 import {
   ARTIFACT_FILE,
   FsEventLog,
@@ -1862,25 +1860,6 @@ export interface ComposeLocalAgentInput {
    */
   readonly runDetail?: RunDetailReaderPort
   /**
-   * 395-04 D-09 · CFGM-02: where the construction scan's seed values come from.
-   *
-   * THE SOURCES AND NOT A LIST OF STRINGS, so `seedMaskingContext` — the SAME function the run
-   * masker is built with — does the walking. A caller-side extraction would be a second place the
-   * seed set is decided, and D-09 exists because two seed lists drift.
-   *
-   * HOST-SUPPLIED because the environment is a host fact, and this composition is host-neutral: the
-   * D-16 artifact guard in `__tests__/strategy-config-unreachable.test.ts` reds on ANY environment
-   * read in this package's built output, which is how the first draft of this line was caught (the
-   * guard reads the built text, comments included, so the name it refuses is not written here). The
-   * CLI host passes a thunk over `sensitiveEnvSlice` — the D-05 NAME-BASED filter — and never the
-   * raw environment, which would seed HOME and PATH and refuse a config edit whose new value
-   * happened to equal one of them.
-   *
-   * A THUNK, so a long-lived host scans against the environment it has NOW rather than the one it
-   * was composed in. Its absence leaves `configScan` unbound, and the propose ops refuse by name.
-   */
-  readonly configScanSeeds?: () => MaskingSeedSources
-  /**
    * 432-12 (D-05): how a direct knowledge change reaches the writer-lease holder when one is alive,
    * as an OPTIONAL operation on the input bag rather than a new production seam (the 386-41 D-2
    * idiom): `agent-local` cannot name a socket and does not. The CLI host injects a closure
@@ -3305,30 +3284,7 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
         ? {}
         : { scaffoldContent: input.scaffoldContent }),
       ...(input.configWrite === undefined ? {} : { configWrite: input.configWrite }),
-      // 395-04 D-09/D-12 · CFGM-02: the construction-time secret scan.
-      //
-      // THE FUNCTION IS BOUND HERE AND THE SEEDS ARE THE HOST'S, and that split was MEASURED rather
-      // than chosen. The first draft read the ambient environment right here, and
-      // `strategy-config-unreachable.test.ts` — 392 D-16's guard over this package's built artifact —
-      // went red on it by name: this composition is host-NEUTRAL, and a composition that reaches for
-      // an ambient fact is one whose behaviour a caller cannot see. The environment is a host fact,
-      // so it arrives from the host, and this package stays readable as what it is.
-      //
-      // A THUNK rather than a value, because a long-lived host outlives the environment it was
-      // composed in — a daemon that loaded a credential after startup would otherwise scan against
-      // the environment as it stood at composition time.
-      //
-      // CONDITIONALLY SPREAD, AND ITS ABSENCE REFUSES. A host that supplies no seed source cannot
-      // change the config at all: `config.field.set` names this dep and raises
-      // `FunctionNotBoundError` without it. That is deliberately louder than degrading to a
-      // pattern-only scan — a guardrail that quietly weakens when one composition line is missing is
-      // the silent-permissive failure a security control may not have.
-      ...(() => {
-        const seeds = input.configScanSeeds
-        return seeds === undefined
-          ? {}
-          : { configScan: { scan: (parts) => scanConstructedArtifact(parts, seeds()) } }
-      })(),
+      // 2026-10-14 (441-39, D-15): a config change is not scanned for secrets, so no scan is bound.
       // 2026-10-01 (432-17, D-05): no config proposal filer is bound; the six config ops write in
       // the call through `configWrite`.
     },

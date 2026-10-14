@@ -134,12 +134,9 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // 394 analogues. Bundling them would make a composition that can read config but cannot commit
 // report the whole config story absent — which is exactly the state `unbound` exists to
 // distinguish from a capability that never existed.
-// 395-04 extends it a NINETEENTH time, by name: `configScan` — the construction-time secret scan,
-// bound to the host's masking seed sources. It is a key of its own rather than a member of
-// `configFiles` for the reason that split already states, read on this phase's safety axis: the
-// FUNCTION is pure and lives in `packages/safety`, and what a host supplies is its SEEDS. Folding it
-// into the files port would make "this host can read config bytes" and "this host knows which
-// values are secret" one claim, and the second is the one CFGM-02 turns on.
+// 395-04 extended it a NINETEENTH time with the construction-time secret scan's key, bound to the
+// host's masking seed sources. 2026-10-14 (441-39, D-15): a config change is no longer scanned, and
+// that key leaves the union with the scan.
 // 395-06 D-07 extends it a TWENTIETH time, by name: `configUndoSource` — the repository's own
 // account of the last agent configuration commit. It is a key of its own rather than a verb on
 // `configApply`, and the split is the funnel's argument read on the read/write axis this phase is
@@ -186,6 +183,7 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // 2026-10-01, 432-17 D-05/D-07/D-09: proposalsInbox, draftApply, authoringProposals, configApply,
 // configProposals and configUndoSource leave with the inbox, the apply ops and the undo (24 members).
 // 2026-10-01, 432-18 D-03/D-15: standingGrants leaves with the grant ops and the ledger (23 members).
+// 2026-10-14, 441-16 D-06: secretMask joins (24 members); 441-39 D-15: the scan key leaves (23).
 expectTypeOf<OptionalFunctionDepKey>()
   .toEqualTypeOf<
     | 'liveView'
@@ -205,7 +203,6 @@ expectTypeOf<OptionalFunctionDepKey>()
     | 'authoringFunnel'
     | 'configFiles'
     | 'configValidate'
-    | 'configScan'
     | 'scaffoldContent'
     | 'capabilityCatalog'
     | 'feedback'
@@ -274,12 +271,13 @@ expectTypeOf<Parameters<typeof mapStepEvidenceToWhy>>().toEqualTypeOf<
 // so vitest counts it; the top-level pins above typecheck but report no tests.
 // 2026-10-01 (432-17): the six proposal, apply and undo deps leave the hand-spelled union too.
 // 2026-10-01 (432-18): standingGrants leaves it with the grant ops.
+// 2026-10-14 (441-39, D-15): the construction scan's key leaves it with the scan.
 type HandSpelledOptionalDepKey =
   | 'liveView' | 'runInvocation' | 'knowledgeReview' | 'postProcessing' | 'runDetail'
   | 'evidenceBlobs' | 'analysis' | 'recurrence' | 'quarantine'
   | 'chatTurn' | 'draftEvaluation' | 'authoringRead' | 'authoringScope'
   | 'draftShelf' | 'authoringFunnel' | 'configFiles'
-  | 'configValidate' | 'configScan'
+  | 'configValidate'
   | 'scaffoldContent' | 'capabilityCatalog' | 'feedback' | 'feedbackReads' | 'configWrite'
   | 'secretMask'
 
@@ -320,7 +318,8 @@ describe('C432-GRANT-DEPS-ABSENT', () => {
   })
 
   // RE-SPELLED 2026-10-14 (441-16, D-06) from '… still counts 23 members …': secretMask joins.
-  test('C432-GRANT-DEPS-ABSENT: the roster still counts 24 members, so the absence is not vacuous', () => {
-    expectTypeOf<(typeof OPTIONAL_FUNCTION_DEP_KEYS)['length']>().toEqualTypeOf<24>()
+  // RE-SPELLED 2026-10-14 (441-39, D-15) from '… still counts 24 members …': the scan key leaves.
+  test('C432-GRANT-DEPS-ABSENT: the roster still counts 23 members, so the absence is not vacuous', () => {
+    expectTypeOf<(typeof OPTIONAL_FUNCTION_DEP_KEYS)['length']>().toEqualTypeOf<23>()
   })
 })

@@ -87,7 +87,6 @@ import {
   latestBuildOrdinal,
   LOCAL_DAEMON_CAPABILITIES,
   resolveRunExecutionContext,
-  sensitiveEnvSlice,
 } from '@vostride/agent-qa-agent-local'
 import type {
   CandidateProsePosture,
@@ -2057,21 +2056,6 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
         },
       }),
     }),
-    // 395-04 D-09 · CFGM-02: the construction scan's seeds, supplied by the HOST because the
-    // environment is a host fact — `composeLocalAgent` is host-neutral and its own D-16 artifact
-    // guard reds on a `process.env` read in that package.
-    //
-    // `sensitiveEnvSlice` AND NOT `process.env`, imported rather than restated. It is the D-05
-    // name-based filter `buildRunMaskingContext` already feeds `seedMaskingContext` with, so the
-    // values this scan looks for and the values the run masker hides are one set by construction
-    // (D-09's sibling-input law). Raw env would seed HOME, PATH and every planner-visible setting,
-    // and a config edit whose new value happened to equal one of them would be refused as a secret —
-    // so bypassing the filter fails in both directions at once.
-    //
-    // The run's other two channels — the `SecretStore` and captured auth state — are RUN-SCOPED and
-    // do not exist at proposal time. Inventing them here would be inventing facts; the scan's
-    // pattern half is what covers shapes nobody seeded.
-    configScanSeeds: () => ({ env: sensitiveEnvSlice(process.env) }),
     config: input.config ?? createMaskedConfigReader(input.configPath),
     knowledgeRoot,
     // 400-01 (D-05): forwarded untouched, conditionally spread on this file's own absent-field
