@@ -817,6 +817,34 @@ describe('a dashboard-launched run leaves no masking-digests sidecar (441-58, D-
       await target.close()
     }
   }, 120_000)
+
+  // 441-48 (D-14): with the sidecar module deleted, the host root gains no masking key either.
+  it('a finished run leaves no masking digest or host key', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({
+        origin: target.origin,
+        environment: 'local',
+        plantedSecret: 'zq7-planted-masking-secret-441-48',
+      })
+
+      try {
+        await runInProcessCliRun(
+          { ...fixtureOptions(fixture), executionContext: 'local-headless' },
+          { patterns: [fixture.testPattern] },
+        )
+      } catch { /* the member's framework error */ }
+
+      expect(eventTypes(fixture as never)).toContain('runFinished')
+      const dirs = runDirs(fixture as never)
+      expect(dirs).toHaveLength(1)
+      expect(existsSync(join(dirs[0]!, 'masking-digests.json'))).toBe(false)
+      expect(existsSync(join(fixture.agentQaRoot, 'masking-key'))).toBe(false)
+    } finally {
+      await target.close()
+    }
+  }, 120_000)
 })
 
 // ---------------------------------------------------------------------------
