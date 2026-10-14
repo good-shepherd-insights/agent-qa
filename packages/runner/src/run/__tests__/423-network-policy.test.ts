@@ -1,7 +1,8 @@
-import { expect, test } from 'vitest'
+import { describe, expect, test } from 'vitest'
 import { maskedMarker } from '@vostride/agent-qa-schema'
 import type { NetworkLogEntry } from '../../result.js'
 import { projectNetworkEvidence } from '../network-evidence-policy.js'
+import { redactSecretValue, SecretRedactor, SecretStore } from '../../loop/secrets.js'
 
 const identity = (text: string) => text
 const record = (extra: Partial<NetworkLogEntry> = {}): NetworkLogEntry => ({
@@ -75,4 +76,32 @@ test('DATA-URI-OMITTED: embedded image, script, style, font and binary bodies st
     expect(project({ body, requestBody: body })).not.toHaveProperty('body')
     expect(project({ body, requestBody: body })).not.toHaveProperty('requestBody')
   }
+})
+
+describe('C441-NETWORK', () => {
+  const declaredMask = (declared: Record<string, string>) => {
+    const redactor = new SecretRedactor(new SecretStore(declared))
+    return (text: string) => redactSecretValue(text, redactor)
+  }
+
+  test('an undeclared credential header is recorded as captured', () => {
+    const recorded = project({
+      requestHeaders: { Authorization: 'Bearer abc123def456ghi789', Cookie: 'sid=cookie-441', 'content-type': 'application/json' },
+    }, declaredMask({}))
+    expect(recorded.requestHeaders).toEqual({
+      Authorization: 'Bearer abc123def456ghi789', Cookie: 'sid=cookie-441', 'content-type': 'application/json',
+    })
+  })
+
+  test('a declared value in a header or a body is masked by name', () => {
+    const body = '{"password":"Hunter-42-zz"}'
+    const recorded = project({
+      requestHeaders: { 'X-Api': 'Hunter-42-zz', 'content-type': 'application/json' },
+      requestBody: body, body,
+    }, declaredMask({ PW_441: 'Hunter-42-zz' }))
+    expect(recorded.requestHeaders['X-Api']).toBe('[secret:PW_441]')
+    expect(recorded.requestBody).toBe('{"password":"[secret:PW_441]"}')
+    expect(recorded.body).toBe('{"password":"[secret:PW_441]"}')
+    expect(JSON.stringify(recorded)).not.toContain('Hunter-42-zz')
+  })
 })
