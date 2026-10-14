@@ -28,7 +28,6 @@ import {
 import type {
   Action,
   ExecutionContext,
-  MaskingContext,
   MemberTestOutcome,
   RecordedActionResult,
   RunEvent,

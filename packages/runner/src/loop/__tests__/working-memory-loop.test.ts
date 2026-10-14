@@ -8,7 +8,7 @@
 // invoked, context.workingMemory is never served, and evidence.workingMemory is never
 // snapshotted — those gaps ARE the intended failure (GREEN when Plan 08 lands).
 import { describe, it, expect } from 'vitest'
-import type { ScreenState, MaskingContext } from '@vostride/agent-qa-schema'
+import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { PlatformAdapter, Action, ActionResult } from '../../platform.js'
 import type { LoopPorts } from '../ports.js'
 import type { Planner, PlanResult, StepContext, Verifier } from '../types.js'
@@ -223,18 +223,5 @@ describe('C441-RUN-RECORDS', () => {
     expect(record?.actions[0]?.element?.name).toBe(`Sign in ${MARKER} as ${EMAIL}`)
     expect(record?.carried[0]?.text).toContain(`${MARKER}-${EMAIL}.csv`)
     expect(recordLines).not.toContain(PW)
-  })
-
-  it('a masking context on the ports is no longer read', async () => {
-    const masking = {
-      mask: (text: string) => text.split(EMAIL).join('<EMAIL_0>'),
-      unmask: (text: string) => text,
-    } as unknown as MaskingContext
-    const { result, recordLines } = await runDeclaredValueStep({ masking } as never)
-    expect(result.status).toBe('passed')
-    expect(result.evidence?.subActions[0]?.plan).toContain(EMAIL)
-    expect(JSON.stringify(result.evidence?.workingMemory)).toContain(EMAIL)
-    expect(recordLines).toContain(EMAIL)
-    expect(JSON.stringify(result.evidence)).not.toContain('<EMAIL_0>')
   })
 })

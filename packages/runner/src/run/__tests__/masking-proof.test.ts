@@ -25,7 +25,6 @@ import type {
   Action,
   CompletedRunHandoff,
   InterpolatedVariable,
-  MaskingContext,
   RunEventEnvelope,
   ScopeKey,
   StepEvidence,
@@ -401,18 +400,5 @@ describe('C441-RUN-RECORDS', () => {
     for (const envelope of envelopes) {
       expect(JSON.stringify(envelope.payload)).not.toContain('Hunter-42-zz')
     }
-  })
-
-  it('a masking context on RunConfig is not read', async () => {
-    const rewritesEmail: MaskingContext = {
-      mask: (text: string) => text.replaceAll('qa@example.com', '<EMAIL_1>'),
-      unmask: (text: string) => text,
-    }
-    const envelopes = await runRecords({ masking: rewritesEmail, secretRedactor: RECORDS_REDACTOR })
-    const { started, announced } = publishedStepTexts(envelopes)
-
-    expect(started).toEqual(['Sign in as qa@example.com with [secret:PW_441]'])
-    expect(announced).toEqual(['Sign in as qa@example.com with [secret:PW_441]'])
-    expect(envelopes.some(envelope => JSON.stringify(envelope.payload).includes('<EMAIL_1>'))).toBe(false)
   })
 })

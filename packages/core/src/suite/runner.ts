@@ -14,7 +14,6 @@ import type {
   SecretRedactor,
   SecretStore,
 } from '@vostride/agent-qa-runner'
-import type { MaskingContext } from '@vostride/agent-qa-schema'
 import type { LanguageModel } from 'ai'
 import type { LogManager } from '../logging/log-manager.js'
 
@@ -33,8 +32,6 @@ export interface RunSuiteConfig {
   planner: Planner
   verifier: Verifier
   cache?: ActionPlanCache
-  /** D-05 masking seam threaded through to each test's runner loop (identity pre-362). */
-  masking?: MaskingContext
   /**
    * WM-01 run-scoped working-memory store (Phase 358). ONE store spans all suite member tests
    * (run-scoped, not test-scoped) and is threaded into each test's runner loop; the CLI flushes

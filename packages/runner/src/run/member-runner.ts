@@ -25,7 +25,7 @@
 import type { LanguageModel } from 'ai'
 import type { StepModelScopeFactory, StepModelScopeKey } from './ports.js'
 import { computeToolSchemaDigest, RecordingEntrySchema } from '@vostride/agent-qa-schema'
-import type { DeclaredModelProfile, MaskingContext, RecordingEntry } from '@vostride/agent-qa-schema'
+import type { DeclaredModelProfile, RecordingEntry } from '@vostride/agent-qa-schema'
 import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
 import type { Action, ActionResult, PlatformAdapter, RecordingCapability, RecordingStop, RuntimeAuthStateConfig } from '../platform.js'
 import type { AccessibilityViolation, StepResult, TestResult } from '../result.js'
@@ -134,7 +134,6 @@ export interface MemberRunConfig {
   planner: Planner
   verifier?: Verifier
   cache?: ActionPlanCache
-  masking?: MaskingContext
   modelProfiles?: {
     planner: DeclaredModelProfile
     verifier?: DeclaredModelProfile
@@ -800,7 +799,6 @@ async function runMemberAttempt(
       planner: modelScope?.planner ?? config.planner,
       verifier: modelScope ? modelScope.verifier : config.verifier,
       cache: config.cache,
-      masking: config.masking,
       modelProfiles: config.modelProfiles,
       toolSchemaDigest,
       workingMemory: config.workingMemory,

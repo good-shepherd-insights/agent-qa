@@ -19,7 +19,6 @@ import type {
   RunStatus,
   ScopeKey,
   ExecutionContext,
-  MaskingContext,
   CompletedRunHandoff,
   HookStartedPayload,
   HookFinishedPayload,
@@ -497,8 +496,6 @@ export interface RunConfig {
   gateRun?: true
   members: readonly RunMemberDescriptor[]
   executor: MemberTestExecutor
-  /** Unread since 441-12: the shell masks with `secretRedactor`. 441-19 deletes it. */
-  masking?: MaskingContext
   /**
    * The run's redactor over the secrets its producer read at the run's start (441-12, D-06/D-11).
    * Every bus event, and so `events.jsonl` and the dashboard rows, is masked with it and nothing

@@ -12,7 +12,6 @@ import type {
   DownloadEvidence,
   EvidenceDocument,
   DeclaredModelProfile,
-  MaskingContext,
   ModelUsageObservations,
   ProcedureBodyPayload,
   ProcedureMatch,
@@ -263,13 +262,6 @@ export interface LoopPorts {
    * CLI composition root. Absent ⇒ every step misses (no cache), never throws (D-05).
    */
   cache?: ActionPlanCache
-  /**
-   * D-05 masking seam for the cache key. `mask()` is applied to stepText BEFORE it enters
-   * key material (the MASK-FUT-01 floor). Identity when unbound (pre-362); Phase 362 seeds
-   * the live run-scope context. Never a `safety`/`safety-local` import — the browser-safe
-   * schema `{ mask, unmask }` type only.
-   */
-  masking?: MaskingContext
   /**
    * D-05 declared decision context for both model roles. Composition roots pass the
    * same profile objects to the planner/verifier constructors and this recording lane;

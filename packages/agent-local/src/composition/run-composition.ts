@@ -26,7 +26,6 @@ import { detectExecutionContext, JsonlAuditSink } from '@vostride/agent-qa-safet
 import { guardToolOutput } from '@vostride/agent-qa-model'
 import type { TokenAccounting } from '@vostride/agent-qa-model'
 import type {
-  MaskingContext,
   ModelCapabilities,
   RecordedRetrievalRung,
   RecordId,
@@ -875,7 +874,6 @@ export interface BuildMemberRunConfigInput {
   planner: Planner
   verifier: Verifier
   cache?: ActionPlanCache
-  masking?: MaskingContext
   workingMemory?: WorkingMemoryPort
   storageState?: StorageStatePort
   compressor?: ScreenshotCompressor
@@ -938,7 +936,6 @@ export function buildMemberRunConfig(input: BuildMemberRunConfigInput): MemberRu
     planner: input.planner,
     verifier: input.verifier,
     cache: input.cache,
-    masking: input.masking,
     workingMemory: input.workingMemory,
     storageState: input.storageState,
     // CTXB-06: model's canonical compaction (compactLogs for log bursts, guardBlob
