@@ -1,13 +1,6 @@
 import { z } from 'zod'
 import { EvidenceArtifactRefSchema } from '../ids/artifact-ref'
 
-export type NetworkCredentialHeader =
-  | 'authorization' | 'proxy-authorization' | 'cookie' | 'set-cookie' | 'x-api-key'
-  | 'x-auth-token' | 'x-access-token' | 'x-csrf-token' | 'x-xsrf-token'
-export const NETWORK_CREDENTIAL_HEADERS = [
-  'authorization', 'proxy-authorization', 'cookie', 'set-cookie', 'x-api-key',
-  'x-auth-token', 'x-access-token', 'x-csrf-token', 'x-xsrf-token',
-] as const satisfies readonly NetworkCredentialHeader[]
 export type NetworkBodyContentType =
   | 'application/json' | 'text/html' | 'text/plain' | 'application/xml'
   | 'text/xml' | 'application/x-www-form-urlencoded'

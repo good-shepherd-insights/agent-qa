@@ -1,17 +1,13 @@
-import {
-  maskedMarker, NETWORK_BODY_CONTENT_TYPES, NETWORK_BODY_MAX_BYTES,
-  NETWORK_CREDENTIAL_HEADERS, utf8Encode,
-} from '@vostride/agent-qa-schema'
+import { NETWORK_BODY_CONTENT_TYPES, NETWORK_BODY_MAX_BYTES, utf8Encode } from '@vostride/agent-qa-schema'
 import type { EvidenceDocument, MaskFn } from '@vostride/agent-qa-schema'
 import type { NetworkLogEntry } from '../result.js'
 
 type NetworkRecord = Extract<EvidenceDocument, { kind: 'network' }>['records'][number]
-const credentialHeaders: ReadonlySet<string> = new Set(NETWORK_CREDENTIAL_HEADERS)
 const bodyContentTypes: ReadonlySet<string> = new Set(NETWORK_BODY_CONTENT_TYPES)
 
 function maskHeaders(headers: Record<string, string>, mask: MaskFn): Record<string, string> {
   return Object.fromEntries(Object.entries(headers).map(([name, value]) => [
-    mask(name), mask(credentialHeaders.has(name.toLowerCase()) ? maskedMarker('secret') : value),
+    mask(name), mask(value),
   ]))
 }
 

@@ -5,10 +5,6 @@ const sha = 'a'.repeat(64)
 const ref = (prefix: string) => ({ id: `${prefix}${sha}`, sha })
 
 describe('423 evidence contracts', () => {
-  test('C423-HEADERS-EXACT', () => {
-    expect(api.NETWORK_CREDENTIAL_HEADERS).toEqual(['authorization', 'proxy-authorization',
-      'cookie', 'set-cookie', 'x-api-key', 'x-auth-token', 'x-access-token', 'x-csrf-token', 'x-xsrf-token'])
-  })
   test('C423-CONTENT-TYPES-EXACT', () => {
     expect(api.NETWORK_BODY_CONTENT_TYPES).toEqual(['application/json', 'text/html', 'text/plain',
       'application/xml', 'text/xml', 'application/x-www-form-urlencoded'])

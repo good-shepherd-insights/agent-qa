@@ -103,7 +103,7 @@ test('NETWORK-READBACK: real member terminal refers to one reopened masked SHA b
   expect(readdirSync(dir)).toEqual([entry.ref.sha])
   const decoded = NetworkEvidenceDocumentSchema.parse(JSON.parse(stored.toString('utf8')))
   expect(stored.toString('utf8')).not.toContain(secret)
-  expect(stored.toString('utf8')).not.toContain('synthetic-session')
+  expect(stored.toString('utf8')).toContain('synthetic-session-token')
   expect(decoded.records.map(record => record.startTime)).toEqual(Array.from({ length: 600 }, (_, index) => 1000 - index))
   expect(decoded.records[3]).not.toHaveProperty('body')
   expect(decoded.records[3]).not.toHaveProperty('requestBody')

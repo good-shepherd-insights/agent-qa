@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'vitest'
-import { maskedMarker } from '@vostride/agent-qa-schema'
 import type { NetworkLogEntry } from '../../result.js'
 import { projectNetworkEvidence } from '../network-evidence-policy.js'
 import { redactSecretValue, SecretRedactor, SecretStore } from '../../loop/secrets.js'
@@ -15,7 +14,7 @@ const record = (extra: Partial<NetworkLogEntry> = {}): NetworkLogEntry => ({
 const project = (extra: Partial<NetworkLogEntry>, mask = identity) =>
   projectNetworkEvidence([record(extra)], mask).records[0]
 
-test('HEADER-CASE: every credential value is redacted before the live mask, with metadata and order retained', () => {
+test('HEADER-CASE: every credential header value passes through the mask as captured, with metadata and order retained', () => {
   const names = ['authorization', 'proxy-authorization', 'cookie', 'set-cookie', 'x-api-key',
     'x-auth-token', 'x-access-token', 'x-csrf-token', 'x-xsrf-token']
   const headers = Object.fromEntries(names.map((name, index) => [index % 2 ? name.toUpperCase() : name, 'fresh-session-value']))
@@ -27,13 +26,12 @@ test('HEADER-CASE: every credential value is redacted before the live mask, with
     seen.push(text)
     return text.replaceAll('SYNTHETIC', '[secret]')
   })
-  expect(Object.values(result.records[0].responseHeaders)).toEqual(names.map(() => maskedMarker('secret')))
+  expect(Object.values(result.records[0].responseHeaders)).toEqual(names.map(() => 'fresh-session-value'))
   expect(result.records[0]).toMatchObject({ url: 'url-[secret]', method: 'method-[secret]',
     requestHeaders: { 'safe-[secret]': 'value-[secret]' }, timing: { 'time-[secret]': 2 },
     startTime: 20, endTime: 30, status: 200, requestSize: 123, responseSize: 456 })
   expect(result.records.map(value => value.status)).toEqual([200, 404])
-  expect(seen).not.toContain('fresh-session-value')
-  expect(seen).toContain(maskedMarker('secret'))
+  expect(seen).toContain('fresh-session-value')
   expect(source.requestHeaders).toEqual({ ...headers, 'safe-SYNTHETIC': 'value-SYNTHETIC' })
 })
 

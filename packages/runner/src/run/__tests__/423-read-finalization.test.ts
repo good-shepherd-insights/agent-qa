@@ -383,7 +383,7 @@ test('NETWORK-COUNTS: one document and exact persisted total/failed/errored coun
   expect(f.documents).toHaveLength(1)
   expect(f.documents[0]).toEqual(projectNetworkEvidence(records, text => redactSecretValue(text, f.config.secretRedactor)))
   expect(JSON.stringify(f.documents)).not.toContain(secret)
-  expect(JSON.stringify(f.documents)).not.toContain('synthetic-fresh-session')
+  expect(JSON.stringify(f.documents)).toContain('synthetic-fresh-session')
   expect(f.adapter.drainNetworkLogs).toHaveBeenCalledTimes(1)
 })
 

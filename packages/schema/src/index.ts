@@ -256,7 +256,6 @@ export type {
 } from './run/recording'
 export {
   EVIDENCE_KINDS,
-  NETWORK_CREDENTIAL_HEADERS,
   NETWORK_BODY_CONTENT_TYPES,
   NETWORK_BODY_MAX_BYTES,
   EVIDENCE_ABSENCE_REASONS,
@@ -276,7 +275,6 @@ export {
 } from './run/evidence'
 export type {
   EvidenceKind,
-  NetworkCredentialHeader,
   NetworkBodyContentType,
   EvidenceAbsenceReason,
   EvidenceDocument,
