@@ -15,8 +15,7 @@
 //
 // An explicit change is authority in every execution context, so it writes through the store's
 // narrow explicit entry, which skips only the automatic propose-only downgrade and keeps the actual
-// ExecutionContext on every durable record. Delta validation, bundle egress and every promotion gate
-// still apply.
+// ExecutionContext on every durable record. Delta validation and every promotion gate still apply.
 //
 // 2026-10-01 (432-17, D-05/D-22): the proposal door is deleted with the inbox — the claim by atomic
 // rename, the applied/rejected publication, the in-flight wait and the restore-to-pending on failure.
@@ -426,8 +425,7 @@ async function applyMarkArm(
       }
     } catch (error) {
       if (!(error instanceof KnowledgePromotionError)
-        || error.reason === 'propose-only' || error.reason === 'not-found'
-        || error.reason === 'egress-blocked') throw error
+        || error.reason === 'propose-only' || error.reason === 'not-found') throw error
       commitReceipt.held.push({ candidateId, reason: error.reason })
     }
     commitReceipt.gate3.push({ candidateId, receiptDigest: receipt.receiptDigest })

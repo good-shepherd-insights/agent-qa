@@ -158,24 +158,17 @@ export type KnowledgePromotionErrorReason =
   | PromotionGateHoldReason
   | 'propose-only'
   | 'not-found'
-  | 'egress-blocked'
 
 /** Typed refusal for the evidence-gated promote port; callers never receive a force path. */
 export class KnowledgePromotionError extends Error {
   readonly candidateId: RecordId
   readonly reason: KnowledgePromotionErrorReason
-  readonly detections?: readonly { label: string; detector: string }[]
 
-  constructor(
-    candidateId: RecordId,
-    reason: KnowledgePromotionErrorReason,
-    detections?: readonly { label: string; detector: string }[],
-  ) {
+  constructor(candidateId: RecordId, reason: KnowledgePromotionErrorReason) {
     super(`knowledge promotion refused for ${candidateId}: ${reason}`)
     this.name = 'KnowledgePromotionError'
     this.candidateId = candidateId
     this.reason = reason
-    if (detections !== undefined) this.detections = detections
   }
 }
 
@@ -441,9 +434,7 @@ function promotionBuildOrdinal(
 function expectedPromotionHold(error: unknown): error is KnowledgePromotionError & {
   reason: PromotionGateHoldReason | 'propose-only'
 } {
-  return error instanceof KnowledgePromotionError
-    && error.reason !== 'not-found'
-    && error.reason !== 'egress-blocked'
+  return error instanceof KnowledgePromotionError && error.reason !== 'not-found'
 }
 
 function unreachableCanaryOutcome(outcome: never): never {
@@ -462,7 +453,7 @@ const EXPLICIT_PROFILE: DispositionProfile = Object.freeze({ mode: 'drain-to-act
 /**
  * The one place write authority becomes a disposition profile. Explicit authority skips only the
  * automatic propose-only downgrade: the store still records the actual execution context, and
- * delta validation, bundle egress and every promotion gate apply unchanged.
+ * delta validation and every promotion gate apply unchanged.
  */
 function dispositionProfileFor(
   config: CreateLocalKnowledgeStoreConfig,
@@ -518,9 +509,6 @@ function buildLocalKnowledgeStore(
   }
 
   function checkedAppend(candidateId: RecordId, appended: AppendOutcome): GateReceiptRecordOutcome {
-    if (appended.kind === 'egress-blocked') {
-      throw new KnowledgePromotionError(candidateId, appended.kind, appended.detections)
-    }
     if (appended.kind === 'not-found') throw new KnowledgePromotionError(candidateId, appended.kind)
     return appended
   }
@@ -625,9 +613,6 @@ function buildLocalKnowledgeStore(
           retractsCurationJobId: promoted.curationJobId,
           rollbackReceiptId: healReceiptId,
         })
-        if (appended.kind === 'egress-blocked') {
-          throw new KnowledgePromotionError(candidateId, appended.kind, appended.detections)
-        }
         if (appended.kind === 'not-found') {
           throw new KnowledgePromotionError(candidateId, appended.kind)
         }
@@ -673,9 +658,6 @@ function buildLocalKnowledgeStore(
       curationJobId: `promote:${candidateId}`,
       buildOrdinal: promotionBuildOrdinal(config, resolved.bundle),
     })
-    if (appended.kind === 'egress-blocked') {
-      throw new KnowledgePromotionError(candidateId, appended.kind, appended.detections)
-    }
     if (appended.kind === 'not-found') {
       throw new KnowledgePromotionError(candidateId, appended.kind)
     }
@@ -688,9 +670,6 @@ function buildLocalKnowledgeStore(
       producedAtOrdinal: promotionBuildOrdinal(config, resolved.bundle),
       producedBy: { opId: 'promote' },
     })
-    if (receipt.kind === 'egress-blocked') {
-      throw new KnowledgePromotionError(candidateId, receipt.kind, receipt.detections)
-    }
     if (receipt.kind === 'not-found') throw new KnowledgePromotionError(candidateId, receipt.kind)
     applyIndexDeltaForBundleWithinCurrentAuthority({
       ...(priors === undefined ? {} : { priors }),
@@ -876,13 +855,6 @@ function buildLocalKnowledgeStore(
               observationId,
               origin: 'agent-verified',
             })
-            if (appended.kind === 'egress-blocked') {
-              throw new KnowledgePromotionError(
-                outcome.candidateId,
-                appended.kind,
-                appended.detections,
-              )
-            }
             if (appended.kind === 'not-found') {
               throw new KnowledgePromotionError(outcome.candidateId, appended.kind)
             }

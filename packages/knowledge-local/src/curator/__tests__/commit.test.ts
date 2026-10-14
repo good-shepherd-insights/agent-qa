@@ -82,6 +82,17 @@ const measurementAnchors: Anchor[] = [
   { t: 'platform', platform: 'web' },
 ]
 
+function collidingPublication(): PublishBundleOutcome {
+  return {
+    kind: 'identity-collision',
+    id: asRecordId('collision-record'),
+    dir: '/collision-record',
+    reason: 'identity-hash-mismatch',
+    expectedIdentityHash: 'a'.repeat(64),
+    existingIdentityHash: 'b'.repeat(64),
+  }
+}
+
 describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-03)', () => {
   let root: string
   let knowledgeRoot: string
@@ -460,7 +471,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       (
         _config: BundleStoreConfig,
         _input: PublishBundleInput,
-      ): PublishBundleOutcome => ({ kind: 'egress-blocked', detections: [] }),
+      ): PublishBundleOutcome => collidingPublication(),
     )
 
     const outcome = commitCurationDelta(
@@ -469,7 +480,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       checkpoint(addDelta()),
     )
 
-    expect(outcome).toMatchObject({ kind: 'withheld', reason: 'egress-blocked' })
+    expect(outcome).toMatchObject({ kind: 'failed', reason: 'identity-collision' })
     expect(publisher).toHaveBeenCalledOnce()
     expect(publisher.mock.calls[0]?.[1]).toMatchObject({
       artifacts: [
@@ -595,7 +606,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
         (
           _config: BundleStoreConfig,
           _input: PublishBundleInput,
-        ): PublishBundleOutcome => ({ kind: 'egress-blocked', detections: [] }),
+        ): PublishBundleOutcome => collidingPublication(),
       )
       const afterIntentWritten = vi.fn()
 
@@ -1343,10 +1354,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       (
         _config: BundleStoreConfig,
         _input: PublishBundleInput,
-      ): PublishBundleOutcome => ({
-        kind: 'egress-blocked',
-        detections: [],
-      }),
+      ): PublishBundleOutcome => collidingPublication(),
     )
 
     const outcome = commitCurationDelta(
@@ -1358,7 +1366,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       checkpoint(addDelta()),
     )
 
-    expect(outcome).toMatchObject({ kind: 'withheld', reason: 'egress-blocked' })
+    expect(outcome).toMatchObject({ kind: 'failed', reason: 'identity-collision' })
     expect(publisher).toHaveBeenCalledOnce()
     expect(publisher.mock.calls[0]?.[0]).toMatchObject({
       writerLeaseId: claimed.leaseId,

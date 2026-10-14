@@ -925,7 +925,7 @@ describe('drainQueue daemon substrate', () => {
       maintenance: 'skip',
       operations: {
         ...maintenanceFreeOperations(),
-        commitCurationDelta: () => ({ kind: 'withheld', reason: 'egress-blocked' }),
+        commitCurationDelta: () => ({ kind: 'withheld', reason: 'injection-restricted' }),
       },
     })
 

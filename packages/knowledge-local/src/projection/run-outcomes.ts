@@ -237,8 +237,8 @@ export interface FoldRunOutcomesOptions {
 /**
  * What the fold's detection step did, as DATA (390 Pitfall 4).
  *
- * Every arm is a fact the caller can print. In particular an `'egress-blocked'` append is a value,
- * not an exception: a guardrail refusal that vanished inside a catch is exactly how an `entered`
+ * Every arm is a fact the caller can print. In particular a refused ledger append is a value,
+ * not an exception: a refusal that vanished inside a catch is exactly how an `entered`
  * event goes missing in silence, and a missing `entered` event is a test that keeps failing builds
  * with nobody told why it was supposed to stop.
  */

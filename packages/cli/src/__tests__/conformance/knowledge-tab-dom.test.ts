@@ -589,7 +589,7 @@ interface ServedCanaryTuple {
 interface AttributedFailure {
   readonly tuple?: ServedCanaryTuple
   readonly plantedObservationId: string
-  /** `appendOutcomeEvent`'s own verdict — `appended`, `duplicate`, `not-found`, `egress-blocked`. */
+  /** `appendOutcomeEvent`'s own verdict — `appended`, `duplicate`, `not-found`. */
   readonly appendOutcome: string
   /** How many `jobs` rows the curation plant's UPDATE actually changed. Exactly 1 is the claim. */
   readonly jobRowsUpdated: number

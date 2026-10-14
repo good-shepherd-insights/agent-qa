@@ -728,10 +728,6 @@ function appendedOrThrow(
       return true
     case 'duplicate':
       return false
-    case 'egress-blocked':
-      throw new Error(
-        `rollback inverse for ${targetRecordId} was blocked at committed egress`,
-      )
     case 'not-found':
       throw new Error(`rollback target ${targetRecordId} disappeared during commit`)
   }

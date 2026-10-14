@@ -184,8 +184,7 @@ export type CommitCurationOutcome =
   | ({ kind: 'converted-confirm' } & CommittedBundleResult)
   | {
       kind: 'withheld'
-      reason: 'egress-blocked' | 'injection-restricted'
-      detections?: readonly { label: string; detector: string }[]
+      reason: 'injection-restricted'
       bundleId?: RecordId
       bundleDir?: string
       promotionHoldReason?: PromotionGateHoldReason
@@ -776,9 +775,6 @@ function commitUnknownMintIntentWithinCurrentAuthority(
     job.leaseId,
     prepared.publication,
   )
-  if (published.kind === 'egress-blocked') {
-    return { kind: 'withheld', reason: 'egress-blocked', detections: published.detections }
-  }
   if (published.kind === 'identity-collision') {
     return {
       kind: 'failed',
@@ -913,9 +909,6 @@ function appendFailure(
     | ReturnType<typeof appendPromotionReceipt>
     | ReturnType<typeof appendRelation>,
 ): CommitCurationOutcome | undefined {
-  if (outcome.kind === 'egress-blocked') {
-    return { kind: 'withheld', reason: 'egress-blocked', detections: outcome.detections }
-  }
   if (outcome.kind === 'not-found') return { kind: 'failed', reason: 'append-failed' }
   return undefined
 }
@@ -1324,14 +1317,6 @@ export function commitCurationDelta(
               job.leaseId,
               preparedPublication,
             )
-            if (published.kind === 'egress-blocked') {
-              finishCommitWithinCurrentAuthority(deps, job, curationObservation)
-              return {
-                kind: 'withheld',
-                reason: 'egress-blocked',
-                detections: published.detections,
-              }
-            }
             if (published.kind === 'identity-collision') {
               finishCommitWithinCurrentAuthority(deps, job, curationObservation)
               return {

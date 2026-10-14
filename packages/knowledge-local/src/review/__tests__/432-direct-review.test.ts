@@ -2,8 +2,8 @@
 //
 // An explicit mark, accept, reject or forget is authority in every execution context, so it
 // lands in the call: no inbox envelope is written or read, the actual ExecutionContext is kept
-// on the durable record, and the writer lease, delta validation, bundle egress and every
-// promotion gate still apply. Automatic curation keeps its own context profile (ci/cloud stay
+// on the durable record, and the writer lease, delta validation and every promotion gate still
+// apply. Automatic curation keeps its own context profile (ci/cloud stay
 // proposed), which is why the two matrices are measured separately below.
 
 import { createHash } from 'node:crypto'

@@ -48,7 +48,6 @@ import { commitBundleMutation } from './journal/bundle-mutation.js'
 export type AppendOutcome =
   | { kind: 'appended' }
   | { kind: 'duplicate' }
-  | { kind: 'egress-blocked'; detections: readonly { label: string; detector: string }[] }
   | { kind: 'not-found' }
 
 /** 416 D-04: receipt identity is its verified content digest, before any committed write. */
@@ -99,7 +98,6 @@ export function appendPromotionReceipt(
 
 export type AppendEnrichedOutcome =
   | { kind: 'appended' | 'duplicate'; enriched: boolean }
-  | { kind: 'egress-blocked'; detections: readonly { label: string; detector: string }[] }
   | { kind: 'not-found' }
 
 export interface BundleProseEnrichment {

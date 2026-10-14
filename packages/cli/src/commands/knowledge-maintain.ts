@@ -1392,19 +1392,6 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
                 return { kind: 'completed', receipt: outcome.receipt, alreadyPurged: false }
               case 'already-purged':
                 return { kind: 'completed', receipt: outcome.receipt, alreadyPurged: true }
-              case 'egress-blocked':
-                emitHuman(
-                  purgeMask,
-                  pc.red([
-                    'knowledge purge: refusal [egress-blocked]: receipt failed committed egress',
-                    ...outcome.detections.map((detection) => (
-                      `  ${detection.label}: ${detection.detector}`
-                    )),
-                  ].join('\n')),
-                  'stderr',
-                )
-                process.exitCode = 1
-                return { kind: 'failed' }
               case 'not-found':
                 emitHuman(
                   purgeMask,

@@ -209,10 +209,6 @@ export interface PurgeRecordInput {
 export type PurgeRecordOutcome =
   | { kind: 'purged'; receipt: PurgeReceipt }
   | { kind: 'already-purged'; receipt: PurgeReceipt }
-  | {
-      kind: 'egress-blocked'
-      detections: readonly { label: string; detector: string }[]
-    }
   | { kind: 'not-found' }
 
 interface ResolvedBundle {

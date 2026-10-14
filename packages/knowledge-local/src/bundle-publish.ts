@@ -70,7 +70,6 @@ export interface PublishBundleInput
 
 export type PublishBundleOutcome =
   | { kind: 'published'; id: RecordId; dir: string; evidenceIncomplete: boolean }
-  | { kind: 'egress-blocked'; detections: readonly { label: string; detector: string }[] }
   | { kind: 'already-exists'; id: RecordId }
   | {
       kind: 'identity-collision'
