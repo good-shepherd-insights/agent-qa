@@ -27,12 +27,12 @@ import {
 import type { QuarantineLedgerEvent } from '@vostride/agent-qa-schema'
 
 import {
-  QUARANTINE_LEDGER_EGRESS_CHANNEL,
   QUARANTINE_LEDGER_FILENAME,
   appendQuarantineEvents,
   foldQuarantineLedgerState,
   readQuarantineLedger,
 } from '../ledger.js'
+import { createQuarantineOperations } from '../operations.js'
 
 const PRODUCT = 'example-web'
 const FILE_PATH = 'tests/checkout.test.yaml'
@@ -476,11 +476,7 @@ describe('quarantine ledger re-entry history (390-18)', () => {
   })
 })
 
-// ---- appendQuarantineEvents: egress-checkpointed committed writes (D-04) --
-
-// AKIA + 16 uppercase alphanumerics is the exact detector-shaped key the committed-root proof
-// uses. An arbitrary random string would not exercise the refusal path at all.
-const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
+// ---- appendQuarantineEvents: shape-checked committed writes (D-04) --
 
 describe('appendQuarantineEvents (D-04)', () => {
   let knowledgeRoot: string
@@ -499,10 +495,6 @@ describe('appendQuarantineEvents (D-04)', () => {
   function ledgerText(): string {
     return readFileSync(join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME), 'utf8')
   }
-
-  it('names its own committed-egress channel', () => {
-    expect(QUARANTINE_LEDGER_EGRESS_CHANNEL).toBe('quarantine-ledger')
-  })
 
   it('round-trips: append then read then fold reproduces the events identically', () => {
     const events = [entered(), renewed()]
@@ -548,41 +540,6 @@ describe('appendQuarantineEvents (D-04)', () => {
     expect(existsSync(join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME))).toBe(false)
   })
 
-  it('refuses a secret-bearing append as DATA, writing no byte and throwing nothing', () => {
-    const outcome = appendQuarantineEvents(
-      knowledgeRoot,
-      [entered({ owner: `oncall-${AWS_KEY}` })],
-      { auditBaseDir },
-    )
-
-    expect(outcome.kind).toBe('egress-blocked')
-    if (outcome.kind !== 'egress-blocked') throw new Error('expected an egress refusal')
-    expect(outcome.detections.map((detection) => detection.detector)).toContain('awsKey')
-
-    // Fail-closed: the checkpoint runs BEFORE any byte reaches the committed file.
-    expect(existsSync(join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME))).toBe(false)
-
-    // And the refusal is audited under the caller-owned audit dir, on this channel.
-    const auditPath = join(auditBaseDir, 'guardrail_audit.jsonl')
-    expect(existsSync(auditPath)).toBe(true)
-    expect(readFileSync(auditPath, 'utf8')).toContain(QUARANTINE_LEDGER_EGRESS_CHANNEL)
-  })
-
-  it('a blocked unit leaves an existing ledger byte-unchanged — all-or-nothing', () => {
-    appendQuarantineEvents(knowledgeRoot, [entered()], { auditBaseDir })
-    const before = ledgerText()
-
-    const outcome = appendQuarantineEvents(
-      knowledgeRoot,
-      [renewed(), entered({ testName: 'second test', owner: `oncall-${AWS_KEY}` })],
-      { auditBaseDir },
-    )
-
-    expect(outcome.kind).toBe('egress-blocked')
-    // The CLEAN sibling in the same unit is withheld too: the checkpoint is one unit.
-    expect(ledgerText()).toBe(before)
-  })
-
   // 390-11 / WR-07. The write half and the read half range ONE predicate. A line the reader refuses
   // is not a refusal, it is CORRUPTION of a committed artifact: it is invisible to `list`, answers
   // `no-entry` on `release`, duplicates on retry, and prints `N unreadable line(s)` on every
@@ -604,22 +561,6 @@ describe('appendQuarantineEvents (D-04)', () => {
       }),
     ).toThrow(/index 0/)
 
-    expect(existsSync(join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME))).toBe(false)
-  })
-
-  it('the shape pre-check runs BEFORE the egress checkpoint', () => {
-    // An event that is BOTH malformed and secret-bearing answers the STRUCTURAL refusal, and no
-    // audit row is written — which is only observable if the pre-check truly precedes the
-    // checkpoint rather than sitting beside it.
-    expect(() =>
-      appendQuarantineEvents(
-        knowledgeRoot,
-        [entered({ filePath: UNMATCHABLE_IDENTITY, owner: `oncall-${AWS_KEY}` })],
-        { auditBaseDir },
-      ),
-    ).toThrow(TypeError)
-
-    expect(existsSync(join(auditBaseDir, 'guardrail_audit.jsonl'))).toBe(false)
     expect(existsSync(join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME))).toBe(false)
   })
 
@@ -715,7 +656,6 @@ describe('appendQuarantineEvents (D-04)', () => {
       ).toThrow(/index 0[\s\S]*schemaVersion/)
 
       expect(existsSync(join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME))).toBe(false)
-      expect(existsSync(join(auditBaseDir, 'guardrail_audit.jsonl'))).toBe(false)
     })
   }
 
@@ -824,6 +764,51 @@ describe('appendQuarantineEvents (D-04)', () => {
     expect(event.at).toBe(ENTERED_AT)
     if (event.kind !== 'entered') throw new Error('expected an entered event')
     expect(event.expiresAt).toBe(EXPIRES_AT)
+  })
+})
+
+// ---- Phase 441, D-15: committed text is not scanned ---------------------
+
+describe('C441-COMMITTED', () => {
+  const CARD_TEST_NAME = 'checkout pays with 4242 4242 4242 4242'
+  const BEARER_OWNER = 'oncall Bearer abc123def456ghi789'
+  let knowledgeRoot: string
+
+  beforeEach(async () => {
+    knowledgeRoot = await mkdtemp(join(tmpdir(), 'quarantine-c441-committed-'))
+  })
+
+  afterEach(async () => {
+    await rm(knowledgeRoot, { recursive: true, force: true })
+  })
+
+  it('a quarantine ledger row with credential-shaped text is appended as written', () => {
+    const event = entered({ testName: CARD_TEST_NAME, owner: BEARER_OWNER })
+
+    expect(appendQuarantineEvents(knowledgeRoot, [event])).toEqual({ kind: 'appended', lines: 1 })
+
+    const text = readFileSync(join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME), 'utf8')
+    expect(text).toBe(`${canonicalJson(event)}\n`)
+    expect(text).toContain('4242 4242 4242 4242')
+    expect(text).toContain('Bearer abc123def456ghi789')
+    expect(readQuarantineLedger(knowledgeRoot)).toEqual({ events: [event], refusedLines: [] })
+  })
+
+  it('quarantine.add with the same text answers entered and the row reads back as written', async () => {
+    const operations = createQuarantineOperations({
+      resolveKnowledgeRoot: () => knowledgeRoot,
+      now: () => ENTERED_AT,
+      mintIdentityPath: (filePath) => filePath,
+    })
+
+    expect(await operations.add({
+      product: PRODUCT, filePath: FILE_PATH, testName: CARD_TEST_NAME, owner: BEARER_OWNER,
+    })).toMatchObject({ kind: 'entered' })
+
+    const [row] = readQuarantineLedger(knowledgeRoot).events
+    expect(row).toMatchObject({ kind: 'entered', testName: CARD_TEST_NAME, owner: BEARER_OWNER })
+    expect(readFileSync(join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME), 'utf8'))
+      .toBe(`${canonicalJson(row)}\n`)
   })
 })
 

@@ -97,8 +97,6 @@ const SCOPE: ScopeKey = { tier: 'product', key: 'grants-unread-storefront' }
 const CONTEXTS = ['local-interactive', 'local-headless', 'ci', 'cloud'] as const satisfies
   readonly ExecutionContext[]
 const NOW = '2026-10-01T00:00:00.000Z'
-/** A live guardrail detector's own fixture shape — an AWS key the checkpoint must catch. */
-const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
 const LEGACY_LEDGER = 'grants.jsonl'
 
 /**
@@ -294,17 +292,6 @@ describe('C432-GRANTS-UNREAD-WRITER-ABSENT: an old grants.jsonl is never read, w
     expect(digest(ledger)).toBe(before)
     expect(grantShapedSiblings()).toEqual([])
   }, 120_000)
-
-  // Carried from "surfaces a committed-egress refusal as a typed throw, with no byte written".
-  it('C432-GRANTS-UNREAD-WRITER-ABSENT: a committed-egress refusal on a direct writer throws typed and leaves it untouched', async () => {
-    const before = digest(ledger)
-    recorder.paths.length = 0
-    await expect(quarantine().add({
-      product: 'grants-unread', filePath: 'tests/c.yaml', testName: 'gamma', owner: `oncall-${AWS_KEY}`,
-    })).rejects.toMatchObject({ name: 'QuarantineWriteBlockedError' })
-    expect(touchedLedger()).toEqual([])
-    expect(digest(ledger)).toBe(before)
-  })
 
   // 432-18 task 2: the retry, unreadable-file and absent-file edges.
   it('C432-GRANTS-UNREAD-WRITER-ABSENT: a retried explicit change answers its first outcome and still never opens it', async () => {

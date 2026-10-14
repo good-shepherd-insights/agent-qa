@@ -2336,27 +2336,6 @@ describe('the quarantine disposition line (390 D-08, Pitfall 4)', () => {
     expect(line).not.toMatch(/no authored verdict admits/)
   })
 
-  it('warns on a blocked append and names the self-healing path — never a silent loss', async () => {
-    const warn = vi.fn()
-
-    await runCurationTail(baseOptions(
-      withQuarantine({
-        kind: 'evaluated',
-        append: { kind: 'egress-blocked', detections: [{ label: 'l', detector: 'awsKey' }] },
-        events: [],
-        flagged: [],
-        escalatedNotQuarantined: [],
-        refusedLines: [],
-      }),
-      { log: { warn, info: vi.fn() } },
-    ))
-
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('egress-blocked (awsKey)'))
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("next run's fold re-evaluates and appends then"),
-    )
-  })
-
   it('warns when the committed ledger could not be read at all', async () => {
     const warn = vi.fn()
 

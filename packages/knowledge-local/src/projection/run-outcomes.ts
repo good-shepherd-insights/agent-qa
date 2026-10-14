@@ -38,7 +38,6 @@ import type {
   VerdictClass,
 } from '@vostride/agent-qa-schema'
 
-import type { GuardrailPolicy } from '@vostride/agent-qa-schema'
 import { QuarantineLedgerVersionError } from '@vostride/agent-qa-schema'
 import type { QuarantineLedgerEvent } from '@vostride/agent-qa-schema'
 
@@ -203,7 +202,7 @@ export interface RebuildRunOutcomesReport {
 /**
  * What the fold needs before it may evaluate the quarantine detection ladder (390 D-08).
  *
- * Grouped and OPTIONAL on purpose: a caller that cannot supply a clock and an audit location does
+ * Grouped and OPTIONAL on purpose: a caller that cannot supply a clock does
  * not get a silently empty evaluation, it gets `{kind: 'not-evaluated', reason: 'not-requested'}`
  * on the report. "Detection ran and found nothing" and "detection never ran" are different facts.
  */
@@ -214,9 +213,8 @@ export interface QuarantineDetectionOptions {
    * is what lets both expiry and the ladder be pinned one step either side.
    */
   now: string
-  /** Explicit audit location for the ledger's committed-egress checkpoint; never inferred. */
-  auditBaseDir: string
-  policy?: GuardrailPolicy
+  // 2026-10-15 (441-41, D-15): unread since the committed-egress check went; 441-53 deletes it.
+  auditBaseDir?: string
 }
 
 export interface FoldRunOutcomesOptions {
@@ -237,10 +235,10 @@ export interface FoldRunOutcomesOptions {
 /**
  * What the fold's detection step did, as DATA (390 Pitfall 4).
  *
- * Every arm is a fact the caller can print. In particular a refused ledger append is a value,
- * not an exception: a refusal that vanished inside a catch is exactly how an `entered`
- * event goes missing in silence, and a missing `entered` event is a test that keeps failing builds
- * with nobody told why it was supposed to stop.
+ * Every arm is a fact the caller can print. A ledger that could not be read is a value, not an
+ * exception: a failure that vanished inside a catch is exactly how an `entered` event goes missing
+ * in silence, and a missing `entered` event is a test that keeps failing builds with nobody told
+ * why it was supposed to stop.
  */
 export type QuarantineFoldOutcome =
   | { kind: 'not-evaluated'; reason: 'already-applied' | 'not-requested' }
@@ -852,7 +850,7 @@ export function reconcileRunOutcomesProjection(
  * ORDERING, stated rather than pretended (Open Q1). The projection lives in SQLite and the ledger
  * is a committed JSONL file; there is no transaction that spans both, so this cannot be atomic and
  * the code does not claim to be. The append orders AFTER the projection commit, which means a
- * crash — or an egress refusal — between the two leaves the counters applied and no event written.
+ * crash between the two leaves the counters applied and no event written.
  * That state SELF-HEALS: the window is still crossed, so the next applied fold re-evaluates and
  * appends then. The opposite order (append first) would have the strictly worse failure: a
  * quarantine entry for a run whose counters never landed.
@@ -964,10 +962,7 @@ function evaluateQuarantineForFold(
     now: opts.now,
   })
 
-  const append = appendQuarantineEvents(knowledgeRoot, detection.events, {
-    auditBaseDir: opts.auditBaseDir,
-    ...(opts.policy === undefined ? {} : { policy: opts.policy }),
-  })
+  const append = appendQuarantineEvents(knowledgeRoot, detection.events)
 
   return {
     kind: 'evaluated',

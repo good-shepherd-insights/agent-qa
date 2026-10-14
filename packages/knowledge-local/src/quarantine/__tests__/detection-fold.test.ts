@@ -11,7 +11,7 @@
 //  2. THE APPEND ORDERS AFTER THE COMMIT, and that is not atomic — deliberately. A prevented append
 //     leaves the window crossed and the NEXT applied fold re-evaluates and appends then. Documented
 //     and pinned as self-healing, never pretended atomic (Open Q1).
-//  3. A REFUSED APPEND IS DATA. A blocked egress that silently loses an `entered` event is the
+//  3. A REFUSED READ IS DATA. A ledger failure that silently loses an `entered` event is the
 //     defect class Pitfall 4 names, so the refusal rides out on the fold report and the tail logs
 //     it. There is no bare catch anywhere on this path.
 
@@ -19,7 +19,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import {
   CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
   QUARANTINE_UNASSIGNED_OWNER,
@@ -28,7 +27,6 @@ import {
 import type {
   Anchor,
   CompletedRunHandoff,
-  GuardrailPolicy,
   PerTestOutcome,
   QuarantineLedgerEvent,
   ScopeKey,
@@ -327,7 +325,7 @@ function harness(prefix: string): FoldHarness {
 function fold(
   env: FoldHarness,
   handoff: CompletedRunHandoff,
-  overrides: { now?: string; policy?: GuardrailPolicy; withoutQuarantine?: true } = {},
+  overrides: { now?: string; withoutQuarantine?: true } = {},
 ): FoldRunOutcomesReport {
   return foldRunOutcomes({
     knowledgeRoot: env.knowledgeRoot,
@@ -337,7 +335,6 @@ function fold(
       quarantine: {
         now: overrides.now ?? NOW,
         auditBaseDir: env.auditBaseDir,
-        ...(overrides.policy === undefined ? {} : { policy: overrides.policy }),
       },
     }),
   })
@@ -360,7 +357,6 @@ function crossThreeInFive(env: FoldHarness, opts: {
   verdict?: FoldVerdictSpec
   testName?: string
   filePath?: string
-  policy?: GuardrailPolicy
 } = {}): FoldRunOutcomesReport {
   let last: FoldRunOutcomesReport | undefined
   for (const buildOrdinal of [1, 2, 3]) {
@@ -370,7 +366,7 @@ function crossThreeInFive(env: FoldHarness, opts: {
       ...(opts.verdict === undefined ? {} : { verdict: opts.verdict }),
       ...(opts.testName === undefined ? {} : { testName: opts.testName }),
       ...(opts.filePath === undefined ? {} : { filePath: opts.filePath }),
-    }), opts.policy === undefined ? {} : { policy: opts.policy })
+    }))
   }
   if (last === undefined) throw new Error('no fold ran')
   return last
@@ -460,50 +456,6 @@ describe('detection is gated on the applied arm (D-08)', () => {
 })
 
 describe('the append orders AFTER the commit, and self-heals (Open Q1)', () => {
-  /**
-   * A committed-egress refusal is the one prevented-append this suite can induce deterministically:
-   * an email-shaped token inside the test NAME travels onto the `entered` event, and the default
-   * policy's `email: 'redact'` blocks a non-user-authored committed part. Flipping that one
-   * detector to `off` on the NEXT fold is the whole delta — same identity, same crossed window.
-   */
-  const SECRET_TEST_NAME = 'checkout as qa-owner@example.com'
-  const unblocked = (): GuardrailPolicy => loadGuardrailPolicy({
-    detectors: {
-      awsKey: 'block',
-      creditCard: 'block',
-      pemKey: 'block',
-      bearer: 'redact',
-      apiKey: 'redact',
-      email: 'off',
-    },
-    allowlist: [],
-  })
-
-  it('surfaces a blocked append as DATA, leaves the file untouched, and appends next fold', () => {
-    const env = harness('agent-qa-detect-heal')
-
-    const blockedReport = crossThreeInFive(env, { testName: SECRET_TEST_NAME })
-
-    expect(blockedReport.kind).toBe('applied')
-    if (blockedReport.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
-    expect(blockedReport.quarantine.events).toHaveLength(1)
-    expect(blockedReport.quarantine.append.kind).toBe('egress-blocked')
-    // Fail-closed: the checkpoint runs before a byte reaches the committed file.
-    expect(existsSync(ledgerPath(env))).toBe(false)
-
-    // The window is STILL crossed, so the next applied fold re-evaluates and appends exactly once.
-    const healed = fold(
-      env,
-      handoffFixture({ runId: 'run-heal-4', buildOrdinal: 4, testName: SECRET_TEST_NAME }),
-      { policy: unblocked() },
-    )
-
-    if (healed.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
-    expect(healed.quarantine.append).toEqual({ kind: 'appended', lines: 1 })
-    expect(ledgerLines(env)).toHaveLength(1)
-    expect(ledgerLines(env)[0]).toMatchObject({ kind: 'entered', testName: SECRET_TEST_NAME })
-  })
-
   it('appends no SECOND entered once the window is open — re-entry is suppressed', () => {
     const env = harness('agent-qa-detect-once')
     crossThreeInFive(env)

@@ -1,4 +1,4 @@
-// The committed quarantine ledger: read, pure state fold, egress-checkpointed append
+// The committed quarantine ledger: read, pure state fold, shape-checked append
 // (Phase 390, D-01/D-03/D-04/D-11).
 //
 // `quarantine.jsonl` sits DIRECTLY under the committed knowledge root as its OWN top-level
@@ -20,18 +20,14 @@
 // `expiresAt` are stamped by callers at write time (D-11). That is what lets expiry boundaries be
 // pinned one second either side with no flake.
 //
-// WRITE POSTURE — fail-closed and audited, on TWO gates in a fixed order. Every append first
-// pre-checks each event against BOTH legs the READ's guard ranges — the VERSION IDENTITY
-// (`=== CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION`) and schema's `hasQuarantineEventShape`, which is
-// the LAST of that guard's FIVE legs (390-22 / IN-02) and asserts only that `schemaVersion` is a
-// NUMBER — and then
-// passes the committed-egress checkpoint on this module's OWN channel; only after all of it does a
-// byte reach the file. The two gates answer different questions and answer them differently: the
-// pre-check asks "can this ever be read back?" and THROWS (a write the reader refuses is corruption
-// of a committed artifact, not a refusal a caller can sensibly carry on from — it is invisible to
-// `list`, unreleasable, and duplicates on retry), while the egress one asks "does this leak a
-// secret?" and comes back as DATA (never a bare catch, never a throw the caller has to guess at).
-// Quarantine events are CODE-authored — threshold crossings, auto-exits, the gated verbs — never model output, which is
+// WRITE POSTURE — fail-closed on ONE gate. Every append first pre-checks each event against BOTH
+// legs the READ's guard ranges — the VERSION IDENTITY (`=== CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION`)
+// and schema's `hasQuarantineEventShape`, which is the LAST of that guard's FIVE legs (390-22 /
+// IN-02) and asserts only that `schemaVersion` is a NUMBER — and only after all of it does a byte
+// reach the file. The pre-check asks "can this ever be read back?" and THROWS: a write the reader
+// refuses is corruption of a committed artifact, not a refusal a caller can sensibly carry on from
+// (it is invisible to `list`, unreleasable, and duplicates on retry). The text itself is written as
+// handed over; no detector scans it (Phase 441, D-15). Quarantine events are CODE-authored — threshold crossings, auto-exits, the gated verbs — never model output, which is
 // why CTX-FUT-01's propose-only posture deliberately does not bind these writes (D-04; the dated
 // posture note lands in REQUIREMENTS.md).
 //
@@ -63,19 +59,11 @@ import { appendFileSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import {
-  CommittedEgressBlockedError,
-  assertCommittedEgressSafe,
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
-import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
-import {
   CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
   canonicalJson,
   guardQuarantineLedgerEvent,
   hasQuarantineEventShape,
 } from '@vostride/agent-qa-schema'
-import type { GuardrailPolicy } from '@vostride/agent-qa-schema'
 import type {
   QuarantineEntryState,
   QuarantineEntryStateName,
@@ -318,42 +306,27 @@ export function foldQuarantineLedgerState(
   })
 }
 
-/**
- * The ledger's own committed-egress channel (D-04). Distinct from the bundle channel so an audit
- * row says which committed surface a refusal came from without anyone having to infer it.
- */
-export const QUARANTINE_LEDGER_EGRESS_CHANNEL = 'quarantine-ledger'
-
 export interface QuarantineAppendOptions {
-  policy?: GuardrailPolicy
-  /** Explicit audit location; nothing silently resolves into a working directory. */
-  auditBaseDir: string
+  // 2026-10-15 (441-41, D-15): unread since the committed-egress check went; 441-53 deletes it.
+  auditBaseDir?: string
 }
 
-/**
- * What an append answers. `'egress-blocked'` is a VALUE, not an exception: a guardrail refusal is
- * information the caller surfaces (the drain tail logs it), and the alternative — a throw inside a
- * fold whose failures are already swallowed — is how an `entered` event goes missing in silence.
- */
-export type QuarantineAppendOutcome =
-  | { kind: 'appended'; lines: number }
-  | { kind: 'egress-blocked'; detections: readonly { label: string; detector: string }[] }
+/** What an append answers: how many lines it wrote. */
+export type QuarantineAppendOutcome = { kind: 'appended'; lines: number }
 
 /**
  * Append lifecycle events to the committed ledger, as ONE fail-closed unit (D-04).
  *
- * Order is the whole point: shape-check EVERY event → serialize → checkpoint EVERY line together →
- * only then write. Because both gates cover the unit, a single refused event withholds its clean
- * siblings too, and the existing file is left byte-unchanged. Partial writes are the failure mode
- * that would leave the committed truth half-updated and a reviewer unable to tell.
+ * Order is the whole point: shape-check EVERY event → serialize → only then write. Because the
+ * check covers the unit, a single refused event withholds its clean siblings too, and the existing
+ * file is left byte-unchanged. Partial writes are the failure mode that would leave the committed
+ * truth half-updated and a reviewer unable to tell.
  *
  * Throws a `TypeError` naming the offending index — and which leg refused — when an event would
  * not survive {@link readQuarantineLedger}'s own guard, on EITHER of that guard's legs: the version
  * identity (390-14 / G-390-1) or the structural predicate (390-11 / WR-07). This is deliberately a
- * THROW rather than an outcome arm: every arm of {@link QuarantineAppendOutcome} describes a write
- * that did not happen for a reason the caller can act on, whereas authoring an unreadable line is a
- * CALLER BUG that would otherwise commit permanent, unlistable, unreleasable damage to a shared
- * artifact.
+ * THROW rather than an outcome: authoring an unreadable line is a CALLER BUG that would otherwise
+ * commit permanent, unlistable, unreleasable damage to a shared artifact.
  *
  * Callers stamp `at` and `expiresAt` themselves (D-11): this module reads no clock, which is what
  * keeps both the write path and the fold deterministic.
@@ -361,7 +334,7 @@ export type QuarantineAppendOutcome =
 export function appendQuarantineEvents(
   knowledgeRoot: string,
   events: readonly QuarantineLedgerEvent[],
-  opts: QuarantineAppendOptions,
+  _opts: QuarantineAppendOptions = {},
 ): QuarantineAppendOutcome {
   if (events.length === 0) return { kind: 'appended', lines: 0 }
 
@@ -403,8 +376,8 @@ export function appendQuarantineEvents(
   // divergence the permanently-empty migration registry currently hides. The explicit comparison
   // has no such coupling, and it states the rule where the loop already states its sibling.
   //
-  // Both legs run before the egress checkpoint and before any filesystem call, so a refused unit
-  // leaves no byte and no audit row. The message names the offending index AND which leg refused,
+  // Both legs run before any filesystem call, so a refused unit leaves no byte. The message names
+  // the offending index AND which leg refused,
   // so an operator reading the throw can tell a malformed record from a wrong-version one.
   for (let index = 0; index < events.length; index += 1) {
     const version = events[index]?.schemaVersion
@@ -424,29 +397,6 @@ export function appendQuarantineEvents(
   }
 
   const lines = events.map((event) => canonicalJson(event))
-  const parts = lines.map((text, index) => ({
-    label: `${QUARANTINE_LEDGER_FILENAME}#${String(index + 1)}`,
-    text,
-  }))
-
-  const checkpointOpts = {
-    policy: opts.policy ?? loadGuardrailPolicy(defaultGuardrailPolicyInput),
-    channel: QUARANTINE_LEDGER_EGRESS_CHANNEL,
-    auditSink: new JsonlAuditSink(opts.auditBaseDir),
-  }
-
-  try {
-    assertCommittedEgressSafe(parts, checkpointOpts)
-  } catch (error) {
-    if (error instanceof CommittedEgressBlockedError) {
-      return {
-        kind: 'egress-blocked',
-        detections: error.blocked.map(({ label, detector }) => ({ label, detector })),
-      }
-    }
-    throw error
-  }
-
   mkdirSync(knowledgeRoot, { recursive: true })
   appendFileSync(quarantineLedgerPath(knowledgeRoot), `${lines.join('\n')}\n`, 'utf8')
   return { kind: 'appended', lines: lines.length }

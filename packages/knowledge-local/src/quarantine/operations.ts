@@ -18,12 +18,9 @@
 // Healing there would answer "nothing is quarantined" about a file full of entries — silently
 // un-quarantining every one of them, which is the exact silent flip this phase exists to prevent.
 //
-// WRITES ARE ALL-OR-NOTHING AND AUDITED. Every append goes through `appendQuarantineEvents`, whose
-// committed-egress checkpoint runs before a byte reaches the file. That checkpoint answers a
-// refusal as DATA; this port's own contract has no blocked arm — `add` answers entered|renewed and
-// `release` answers released|no-entry — so a refusal is re-raised here as a typed error. The
-// alternative would have been to answer `entered` while the ledger recorded nothing, which tells an
-// operator a test is quarantined when the next run will fail on it.
+// WRITES ARE ALL-OR-NOTHING. Every append goes through `appendQuarantineEvents`, whose shape and
+// version check runs before a byte reaches the file. The text is written as handed over; no
+// detector scans it (Phase 441, D-15).
 //
 // SERIALIZATION IS THIS MODULE'S, and it is taken here rather than assumed about a caller. `release`
 // and `add` run their WHOLE read-fold-decide-append cycle inside the MRSW writer lease — acquired
@@ -66,7 +63,6 @@ import {
   slugBranch,
 } from '@vostride/agent-qa-schema'
 import type {
-  GuardrailPolicy,
   QuarantineAddInput,
   QuarantineAddOutput,
   QuarantineEntryState,
@@ -111,29 +107,10 @@ export const QUARANTINE_MANUAL_ENTRY_FINGERPRINT = 'manual-entry'
 export const QUARANTINE_MANUAL_ENTRY_CLASS: VerdictClass = 'unknown'
 
 /**
- * A write the committed-egress checkpoint refused.
- *
- * The port's result unions carry no blocked arm by design (390-04), so the refusal surfaces as a
- * typed throw naming what the detectors matched. The ledger is byte-unchanged when this is raised —
- * the checkpoint runs before any write.
- */
-export class QuarantineWriteBlockedError extends Error {
-  constructor(readonly detections: readonly { label: string; detector: string }[]) {
-    super(
-      `the quarantine ledger write was refused by the committed-egress checkpoint: ${
-        detections.map((detection) => detection.detector).join(', ')
-      }`,
-    )
-    this.name = 'QuarantineWriteBlockedError'
-  }
-}
-
-/**
  * Another writer holds the MRSW lease, so the verb declined instead of writing beside it.
  *
- * Same shape and same reason as `QuarantineWriteBlockedError` above: the port's result unions carry
- * no lease arm by design (390-04), so a refusal that is not one of the named outcomes surfaces as a
- * typed throw. The ledger is byte-unchanged when this is raised — the acquisition fails before the
+ * The port's result unions carry no lease arm by design (390-04), so a refusal that is not one of
+ * the named outcomes surfaces as a typed throw. The ledger is byte-unchanged when this is raised — the acquisition fails before the
  * read, so nothing was decided either.
  *
  * The holder is carried, not just named in the message, because the operator's next question is
@@ -166,7 +143,7 @@ export class QuarantineLeaseHeldError extends Error {
 /**
  * The `filePath` a caller sent cannot mint the durable identity the ledger is keyed on (390-12).
  *
- * Same shape and same reason as the two refusals above: the port's result unions carry no refusal
+ * Same shape and same reason as the lease refusal above: the port's result unions carry no refusal
  * arm by design (390-04), so a refusal that is not one of the named outcomes surfaces as a typed
  * throw. Raised BEFORE the knowledge root is resolved, before the lease is acquired and before a
  * byte is read, so a refused call costs the ledger nothing and the next writer nothing.
@@ -200,8 +177,8 @@ export class QuarantineIdentityRefusedError extends Error {
 export interface QuarantineOperationsOptions {
   /** The committed knowledge root. A FACTORY, because the CLI host resolves it asynchronously. */
   resolveKnowledgeRoot: () => Promise<string> | string
-  /** Explicit audit location for the egress checkpoint; nothing resolves into a working directory. */
-  auditBaseDir: string
+  // 2026-10-15 (441-41, D-15): unread since the committed-egress check went; 441-53 deletes it.
+  auditBaseDir?: string
   /** The ONLY way wall clock enters these verbs. Required — see the module head. */
   now: () => string
   /**
@@ -243,7 +220,6 @@ export interface QuarantineOperationsOptions {
    * between the two is still unfenced. `lease/under-writer-lease.ts` states the residual in full.
    */
   resolveWriterAuthority?: () => { leaseId: string; epoch: number } | undefined
-  policy?: GuardrailPolicy
 }
 
 /**
@@ -355,11 +331,7 @@ export function createQuarantineOperations(
   }
 
   function append(knowledgeRoot: string, events: readonly QuarantineLedgerEvent[]): void {
-    const outcome = appendQuarantineEvents(knowledgeRoot, events, {
-      auditBaseDir: options.auditBaseDir,
-      ...(options.policy === undefined ? {} : { policy: options.policy }),
-    })
-    if (outcome.kind === 'egress-blocked') throw new QuarantineWriteBlockedError(outcome.detections)
+    appendQuarantineEvents(knowledgeRoot, events)
   }
 
   function entryFor(

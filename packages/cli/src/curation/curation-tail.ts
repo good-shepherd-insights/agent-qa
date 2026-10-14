@@ -545,8 +545,8 @@ function remedyFor(crossing: {
  *  - lifecycle events landed (a test entered or left quarantine),
  *  - an escalation was class-gated AWAY from auto-quarantine — the D-05 anti-silencing surfacing,
  *    which is exactly the case that appends nothing and would otherwise pass unremarked,
- *  - the append or the read was REFUSED. A blocked egress that loses an `entered` event is the
- *    defect class this warning exists for; it is never swallowed by a bare catch.
+ *  - the ledger read was REFUSED, whole or by line. A ledger that loses an `entered` event in
+ *    silence is the defect class this warning exists for; it is never swallowed by a bare catch.
  *
  * Flags alone stay quiet: a suspected-flaky rung fires every second failure and its home is the
  * recurrence sentence, not the drain log.
@@ -642,13 +642,6 @@ function logQuarantineDisposition(
       + `${String(sighting.windowOrdinals)} failing builds and will keep failing this build. `
       + `Verdict producer: ${sighting.producer} — `
       + remedyFor({ authored, disposition, floorEligibility }),
-    )
-  }
-  if (outcome.append.kind === 'egress-blocked') {
-    log.warn(
-      `Quarantine ledger append refused for ${runId}: egress-blocked (`
-      + `${outcome.append.detections.map((detection) => detection.detector).join(', ')}). `
-      + 'The window stays crossed; the next run\'s fold re-evaluates and appends then.',
     )
   }
   if (outcome.refusedLines.length > 0) {
@@ -771,7 +764,6 @@ export async function curateCompletedRun(
           quarantine: {
             now: new Date(tailStartedAtMs).toISOString(),
             auditBaseDir: input.agentQaRoot,
-            policy: input.policy,
           },
         })
         logQuarantineDisposition(receiptIdentity.runId, fold.quarantine, input.log)

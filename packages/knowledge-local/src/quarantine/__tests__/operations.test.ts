@@ -59,7 +59,6 @@ import {
   QUARANTINE_MANUAL_ENTRY_CLASS,
   QUARANTINE_MANUAL_ENTRY_FINGERPRINT,
   QuarantineIdentityRefusedError,
-  QuarantineWriteBlockedError,
   createQuarantineOperations,
   underWriterLease,
 } from '../operations.js'
@@ -70,9 +69,6 @@ const NOW = '2026-05-01T00:00:00.000Z'
 const DEFAULT_EXPIRY = '2026-05-31T00:00:00.000Z'
 /** Far enough past `now` that every corpus entry folds to `quarantined`. */
 const FAR_FUTURE = '2026-12-01T00:00:00.000Z'
-
-/** A live guardrail detector's own fixture shape — an AWS key the checkpoint must catch. */
-const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
 
 function identity(letter: string, name: string): {
   product: string
@@ -538,21 +534,6 @@ describe('createQuarantineOperations (D-12/D-13)', () => {
   it('answers no-entry against an absent ledger without creating the file', async () => {
     expect(await operations().release(A)).toEqual({ kind: 'no-entry' })
     expect(existsSync(join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME))).toBe(false)
-  })
-
-  // ---- write discipline -------------------------------------------------------------------
-
-  it('routes every write through the egress checkpoint: a blocked add throws typed, writes nothing', async () => {
-    const blocked = operations().add({ ...A, owner: `oncall-${AWS_KEY}` })
-
-    await expect(blocked).rejects.toBeInstanceOf(QuarantineWriteBlockedError)
-    await expect(blocked).rejects.toMatchObject({ name: 'QuarantineWriteBlockedError' })
-    // Fail-closed: the refusal comes back from the append as DATA and is re-raised here because
-    // this port's own contract has no blocked arm — a silent `entered` answer would tell an
-    // operator a test is quarantined while the ledger says nothing of the kind.
-    expect(existsSync(join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME))).toBe(false)
-    expect(readFileSync(join(auditBaseDir, 'guardrail_audit.jsonl'), 'utf8'))
-      .toContain('quarantine-ledger')
   })
 
   // ---- the product partition (390-09 / WR-01) ---------------------------------------------

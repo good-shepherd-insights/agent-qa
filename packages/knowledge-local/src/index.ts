@@ -85,7 +85,6 @@ export type { BundleEgressOptions } from './journal/curation-effect-receipt.js'
 // residual. The three in-package writers — the verbs, detection, and the run-outcome projection —
 // import it from './quarantine/ledger.js' directly, so nothing outside was withheld from anyone.
 export {
-  QUARANTINE_LEDGER_EGRESS_CHANNEL,
   QUARANTINE_LEDGER_FILENAME,
   foldQuarantineLedgerState,
   quarantineLedgerPath,
@@ -122,16 +121,16 @@ export type {
 // and this package consume it and neither may import the other); what is published here is the
 // factory the composition root binds, plus the two literals a manual entry records where an auto
 // entry records a real fingerprint.
-// `QuarantineIdentityRefusedError` joins its sibling refusal on the barrel (390-12) for the same
-// reason that one is here: a surface rendering `quarantine.add` needs to tell an operator WHY a
-// path was refused, and an error it cannot name is an error it renders as "unknown". This is an
+// `QuarantineIdentityRefusedError` is on the barrel (390-12) because a surface rendering
+// `quarantine.add` needs to tell an operator WHY a path was refused, and an error it cannot name
+// is an error it renders as "unknown". Its blocked-write sibling went with the committed-egress
+// check (441-41, D-15). This is an
 // error type, not a power — `underWriterLease` and `appendQuarantineEvents` stay off the barrel,
 // where 390-11 put the second one, because the committed-write surface only ever shrinks.
 export {
   QUARANTINE_MANUAL_ENTRY_CLASS,
   QUARANTINE_MANUAL_ENTRY_FINGERPRINT,
   QuarantineIdentityRefusedError,
-  QuarantineWriteBlockedError,
   createQuarantineOperations,
 } from './quarantine/operations.js'
 export type { QuarantineOperationsOptions } from './quarantine/operations.js'
