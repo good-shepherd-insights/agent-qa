@@ -734,8 +734,6 @@ export function cliRunSubscribers(input: {
 }): (attach: RunSubscriberAttachInput) => { flush(): Promise<void> } {
   return (attach) => attachRunSubscribers({
     session: attach.session,
-    // 2026-10-14 (441-58): the console reporter's context, from the run's mask; 441-13 deletes it.
-    maskingContext: { mask: attach.mask, unmask: (text) => text },
     console: input.console ?? false,
     junitOutputPath: input.junitOutputPath,
     extraSubscribers: input.extraSubscribers,

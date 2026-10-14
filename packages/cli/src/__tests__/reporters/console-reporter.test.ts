@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { QuarantineAppliedEntry } from '@vostride/agent-qa-schema'
+import type { QuarantineAppliedEntry, StepStartedPayload } from '@vostride/agent-qa-schema'
 
 import {
   QUARANTINE_TEST_ANNOTATION,
@@ -20,7 +20,7 @@ function renderFixture(
 ): { output: string; secrets: ReturnType<typeof buildReporterFixture> } {
   const fixture = buildReporterFixture()
   const capture = createCapture()
-  const reporter = createConsoleReporter(fixture.ctx, {
+  const reporter = createConsoleReporter({
     plain: true,
     colorize: false,
     verbose,
@@ -33,14 +33,6 @@ function renderFixture(
 }
 
 describe('createConsoleReporter', () => {
-  it('unmasks human prose — originals appear, placeholders never do (D-09/D-10)', () => {
-    const { output, secrets } = renderFixture(true)
-    expect(output).toContain(secrets.stepSecret)
-    expect(output).toContain(secrets.hookSecret)
-    expect(output).toContain(secrets.summarySecret)
-    expect(output).not.toMatch(/<SECRET_\d+>/)
-  })
-
   it('renders the v1 console surface — step, hook, per-test, and summary lines', () => {
     const { output } = renderFixture(true)
     expect(output).toContain('Open login page')
@@ -67,8 +59,20 @@ describe('createConsoleReporter', () => {
     const fixture = buildReporterFixture()
     const a = createCapture()
     const b = createCapture()
-    const repA = createConsoleReporter(fixture.ctx, { plain: true, colorize: false, verbose: true, write: a.write, isTTY: false })
-    const repB = createConsoleReporter(fixture.ctx, { plain: true, colorize: false, verbose: true, write: b.write, isTTY: false })
+    const repA = createConsoleReporter({
+      plain: true,
+      colorize: false,
+      verbose: true,
+      write: a.write,
+      isTTY: false,
+    })
+    const repB = createConsoleReporter({
+      plain: true,
+      colorize: false,
+      verbose: true,
+      write: b.write,
+      isTTY: false,
+    })
     for (const envelope of fixture.envelopes) repA.handler(envelope)
     for (const envelope of fixture.envelopes) repB.handler(envelope)
     expect(a.output()).toBe(b.output())
@@ -77,7 +81,7 @@ describe('createConsoleReporter', () => {
   it('exposes an awaitable flush()', async () => {
     const fixture = buildReporterFixture()
     const capture = createCapture()
-    const reporter = createConsoleReporter(fixture.ctx, { plain: true, write: capture.write, isTTY: false })
+    const reporter = createConsoleReporter({ plain: true, write: capture.write, isTTY: false })
     for (const envelope of fixture.envelopes) reporter.handler(envelope)
     await expect(reporter.flush()).resolves.toBeUndefined()
   })
@@ -139,6 +143,37 @@ describe('createConsoleReporter — the 390 D-15 quarantine disposition', () => 
       { ...QUARANTINED_CHECKOUT, filePath: 'tests/login.yaml', testName: 'Login test' },
     ])
     expect(output).toBe(renderFixture(true).output)
+  })
+})
+
+describe('C441-DISPLAY', () => {
+  it('the console reporter prints the masked payload as it is', () => {
+    const fixture = buildReporterFixture()
+    const capture = createCapture()
+    const reporter = createConsoleReporter({
+      plain: true,
+      colorize: false,
+      write: capture.write,
+      isTTY: false,
+    })
+    for (const envelope of fixture.envelopes) {
+      const payload = envelope.payload as StepStartedPayload
+      const masked = envelope.type === 'stepStarted' && payload.stepIndex === 0
+        ? { ...envelope, payload: { ...payload, stepText: 'Log in with [secret:PW_441]' } }
+        : envelope
+      reporter.handler(masked)
+    }
+    expect(capture.output()).toContain('Log in with [secret:PW_441]')
+  })
+
+  it('the console reporter prints a numbered placeholder unchanged and restores nothing', () => {
+    const { output, secrets } = renderFixture(true)
+    const placeholder = secrets.ctx.mask(secrets.stepSecret)
+    expect(placeholder).not.toBe(secrets.stepSecret)
+    expect(output).toContain(`Timeout waiting for token ${placeholder}`)
+    for (const secret of [secrets.stepSecret, secrets.hookSecret, secrets.summarySecret]) {
+      expect(output).not.toContain(secret)
+    }
   })
 })
 

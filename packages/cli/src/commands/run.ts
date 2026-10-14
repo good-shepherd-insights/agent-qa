@@ -1927,8 +1927,6 @@ async function executeSuites(
           analyticsHost?.bindMaskingContext({ mask })
           return attachRunSubscribers({
             session,
-            // 2026-10-14 (441-58): the console reporter's context, from the run's mask; 441-13 deletes it.
-            maskingContext: { mask, unmask: (text) => text },
             console: reporterSelection.console ? { verbose: false, logLevel: effectiveLogLevel } : false,
             junitOutputPath: reporterSelection.junit ? opts.junitOutput : undefined,
             extraSubscribers: [
@@ -2961,7 +2959,7 @@ export async function produceSuiteRunMembers(
     })
 
     // 363-09/363-11 (D-01 clean cut, CLI side): the v1 Reporter constructions are GONE. The bus
-    // subscribers (console unmasks; junit + wire stay masked; dashboard ingest; analytics) are
+    // subscribers (console, junit and wire print masked payloads; dashboard ingest; analytics) are
     // attached in the core's `onSession` hook below via `attachRunSubscribers` — the ONE run-level
     // attach point, which moved with the run start it follows (401-04). No reporter is threaded into
     // the runner config.
@@ -3863,9 +3861,9 @@ export async function produceDirectRunMembers(
   const singleStorageState = await buildStorageStateStore(configDir)
 
   // 363-09/363-11 (D-01 clean cut, CLI side): the v1 Reporter constructions are GONE. The bus
-  // subscribers (console unmasks; junit + wire masked; dashboard ingest; analytics) attach in the
-  // core's `onSession` hook below via `attachRunSubscribers`. No reporter is threaded into the run
-  // path.
+  // subscribers (console, junit and wire print masked payloads; dashboard ingest; analytics)
+  // attach in the core's `onSession` hook below via `attachRunSubscribers`. No reporter is
+  // threaded into the run path.
   const captureScreenshots = reporterSelection.dashboard || opts.screenshotMode === 'every-step' || Boolean(opts.screenshotDir)
 
   const { LogManager } = await import('@vostride/agent-qa-core')
@@ -5114,13 +5112,12 @@ export function createRunCommand(): Command {
               },
               subscribers: ({ session, quarantined, mask, onMemberSnapshot }) => {
                 singleAnalytics.bindMaskingContext({ mask })
-                // Attach the bus subscribers (console unmasks; junit + wire masked; dashboard
-                // ingest; analytics) — replay-then-live gives D-04 for free. `quarantined` is the
-                // SAME resolved set the run was assembled with (390 D-15, Pitfall 8).
+                // Attach the bus subscribers (console, junit and wire print masked payloads;
+                // dashboard ingest; analytics) — replay-then-live gives D-04 for free.
+                // `quarantined` is the SAME resolved set the run was assembled with (390 D-15,
+                // Pitfall 8).
                 return attachRunSubscribers({
                   session,
-                  // 2026-10-14 (441-58): the console reporter's context, from the run's mask; 441-13 deletes it.
-                  maskingContext: { mask, unmask: (text) => text },
                   console: reporterSelection.console ? { verbose: false, logLevel: effectiveLogLevel } : false,
                   junitOutputPath: reporterSelection.junit ? opts.junitOutput : undefined,
                   extraSubscribers: [

@@ -18,7 +18,7 @@
 // to substitute something else for each one.
 
 import type { AuditSink, SafetyHookRunner } from '@vostride/agent-qa-safety'
-import type { MaskingContext, QuarantineAppliedEntry } from '@vostride/agent-qa-schema'
+import type { QuarantineAppliedEntry } from '@vostride/agent-qa-schema'
 import { buildRunSessionSafetyHooks } from '@vostride/agent-qa-agent-local'
 import type {
   AttachableRunSession,
@@ -102,8 +102,6 @@ export function buildAnalyticsRunSubscriber(input: {
 
 export interface AttachRunSubscribersInput {
   session: AttachableRunSession
-  /** The run MaskingContext — the console reporter's sole unmasking authority (SEAM-05). */
-  maskingContext: MaskingContext
   /** Console reporter options, or `false` to skip the console surface for this run. */
   console?: ConsoleReporterOptions | false
   /** JUnit output path — when set, the masked durable JUnit subscriber is attached and flushed. */
@@ -122,7 +120,7 @@ export interface AttachRunSubscribersInput {
 
 /**
  * Attach the run's bus subscribers at a startRun site (used by BOTH sites — Pitfall 8). Constructs
- * the CLI-owned reporters (console unmasks; junit + wire stay masked, wire env-gated internally),
+ * the CLI-owned reporters (console, junit and wire print the payloads as masked; wire env-gated),
  * subscribes each via `session.subscribe(REPLAY_FROM_START, …)` alongside any `extraSubscribers`
  * (dashboard/analytics), and returns a single `flush()` awaiting every subscriber's flush (JUnit write, dashboard finalize, analytics
  * drain) — the CLI awaits this after `session.done` before mapping the verdict to the exit code.
@@ -138,7 +136,7 @@ export function attachRunSubscribers(input: AttachRunSubscribersInput): { flush:
 
   let consoleHandle: ConsoleReporterHandle | undefined
   if (input.console !== false) {
-    consoleHandle = createConsoleReporter(input.maskingContext, {
+    consoleHandle = createConsoleReporter({
       ...(input.console ?? {}),
       ...(quarantined === undefined ? {} : { quarantined }),
     })

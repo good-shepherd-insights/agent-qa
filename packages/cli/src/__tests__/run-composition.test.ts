@@ -44,14 +44,12 @@ describe('attachRunSubscribers (bus composition swap, 363-09)', () => {
   }
 
   it('subscribes console + junit + wire + extra subscribers all from the replay-then-live floor (seq 1)', async () => {
-    const ctx = createMaskingContext()
     const session = fakeSession()
     const extraFlush = vi.fn().mockResolvedValue(undefined)
     const extra: RunSubscriberHandle = { handler: vi.fn(), flush: extraFlush }
 
     const { flush } = attachRunSubscribers({
       session: session as never,
-      maskingContext: ctx,
       console: { verbose: false, write: () => {} },
       junitOutputPath: join(tmpdir(), `agent-qa-junit-${Date.now()}.xml`),
       extraSubscribers: [extra],
@@ -70,13 +68,11 @@ describe('attachRunSubscribers (bus composition swap, 363-09)', () => {
   // 2026-10-02 (432-42, D-14): the live seam is deleted, so the second half of this title is now its
   // absence — a legacy controller smuggled in is never bound (old title kept for the console half).
   it('skips the console subscriber and unbinds the live seam when console is false', async () => {
-    const ctx = createMaskingContext()
     const session = fakeSession()
     const bind = vi.fn()
 
     attachRunSubscribers({
       session: session as never,
-      maskingContext: ctx,
       console: false,
       ...({ live: { bind, pauseLive() {}, resumeLive() {} } } as object),
     })
@@ -88,7 +84,6 @@ describe('attachRunSubscribers (bus composition swap, 363-09)', () => {
   })
 
   it('best-effort flush: a rejecting subscriber flush never rejects the combined flush (RUNX-03)', async () => {
-    const ctx = createMaskingContext()
     const session = fakeSession()
     const rejecting: RunSubscriberHandle = {
       handler: vi.fn(),
@@ -98,7 +93,6 @@ describe('attachRunSubscribers (bus composition swap, 363-09)', () => {
 
     const { flush } = attachRunSubscribers({
       session: session as never,
-      maskingContext: ctx,
       console: false,
       extraSubscribers: [rejecting, settling],
     })
@@ -132,9 +126,6 @@ describe('attachRunSubscribers threads the quarantine snapshot to both reporters
 
     const { flush } = attachRunSubscribers({
       session: session as never,
-      // A fresh run context: this test is about the disposition reaching both surfaces, and the
-      // fixture's masked prose is exercised by the reporter suites themselves.
-      maskingContext: createMaskingContext(),
       console: { plain: true, colorize: false, isTTY: false, write: capture.write },
       junitOutputPath: junitPath,
       quarantined: [QUARANTINED_CHECKOUT],

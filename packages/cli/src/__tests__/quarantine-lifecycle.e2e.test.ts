@@ -58,7 +58,6 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import {
   CURRENT_ANALYSIS_SCHEMA_VERSION,
@@ -534,7 +533,7 @@ async function driveRun(env: Harness, script: RunScript, now = NOW): Promise<Dri
     quarantined: snapshotAtStart,
   })
   const consoleChunks: string[] = []
-  const consoleReporter = createConsoleReporter(createMaskingContext(), {
+  const consoleReporter = createConsoleReporter({
     plain: true,
     colorize: false,
     isTTY: false,

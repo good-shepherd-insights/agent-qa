@@ -3,7 +3,6 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 import type {
   RunEventEnvelope,
   RunEventType,
@@ -99,7 +98,7 @@ describe('C439-UNPROVEN-REASON', () => {
     expect(unescapeXml(message ?? '')).toBe(UNPROVEN_ERROR)
 
     const capture = createCapture()
-    const reporter = createConsoleReporter(createMaskingContext(), {
+    const reporter = createConsoleReporter({
       plain: true,
       colorize: false,
       verbose: true,

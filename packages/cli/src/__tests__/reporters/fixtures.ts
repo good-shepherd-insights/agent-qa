@@ -3,8 +3,8 @@
 // One masking context + one canonical envelope stream, built from the REAL schema
 // envelope/payload types (never hand-rolled shapes). Masked placeholders are planted
 // exactly where the sink would put them: a step `error`, a `hookFinished` variable
-// value, and a `testFinished.failureSummary`. The console reporter must UNMASK these
-// (D-09/D-10); the JUnit + wire reporters must leave the placeholders intact (D-11/D-02).
+// value, and a `testFinished.failureSummary`. Every reporter prints them as they are
+// (441 D-07: nothing restores a value).
 
 import { createMaskingContext } from '@vostride/agent-qa-safety'
 import type { MaskingContext, QuarantineAppliedEntry } from '@vostride/agent-qa-schema'

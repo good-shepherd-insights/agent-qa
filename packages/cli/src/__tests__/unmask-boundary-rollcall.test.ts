@@ -20,10 +20,11 @@
 // ONE fixture, both sides (D-12): a single `createMaskingContext()` with five sentinel secrets of
 // different shapes is planted — via `ctx.mask(...)` exactly where each sink puts a placeholder — into
 // one envelope stream + one handoff + one artifact snapshot + one cache-key input + one provider-egress
-// request + one debug-log record + one confirm action. The human registry drives the REAL console
-// reporter and the REAL Plan-09 unmasking confirm decorator; the masked registry drives the REAL
-// FsEventLog / FsHandoffStore / FsRunArtifactStore ports, the REAL JUnit + wire reporters, the REAL
-// masking egress hook, the REAL cache-key floor helpers, and the REAL debug-logging middleware.
+// request + one debug-log record + one confirm action. The human registry drives the chat clause
+// results and the dashboard reads (the console rows left in 441-13, D-07); the masked registry
+// drives the REAL FsEventLog / FsHandoffStore / FsRunArtifactStore ports, the REAL JUnit + wire
+// reporters, the REAL masking egress hook, the REAL cache-key floor helpers, and the REAL
+// debug-logging middleware.
 
 import { describe, expect, it } from 'vitest'
 import { createHash } from 'node:crypto'
@@ -105,7 +106,7 @@ import type {
   TestStartedPayload,
 } from '@vostride/agent-qa-schema'
 
-import { createConsoleReporter, createJunitReporter, createWireReporter } from '../reporters/index.js'
+import { createJunitReporter, createWireReporter } from '../reporters/index.js'
 
 // Any `<SECRET_n>` residue — matches both the raw `<SECRET_0>` and the XML-escaped `&lt;SECRET_0&gt;`.
 const PLACEHOLDER = /SECRET_\d+/
@@ -449,28 +450,6 @@ const ROLLCALL_ANALYSIS_HANDOFF: CompletedRunHandoff = {
   }],
 } as unknown as CompletedRunHandoff
 
-/** Replay the full envelope stream through the REAL console reporter (the sole unmasking surface). */
-function renderConsole(): string {
-  const chunks: string[] = []
-  const reporter = createConsoleReporter(FIXTURE.ctx, {
-    write: (chunk) => void chunks.push(chunk),
-    plain: true,
-    isTTY: false,
-    colorize: false,
-    verbose: true,
-  })
-  for (const envelope of FIXTURE.envelopes) reporter.handler(envelope)
-  return chunks.join('')
-}
-
-/** Grab only the console lines matching a needle, so each entry pins a distinct surface region. */
-function consoleLines(needle: string): string {
-  return renderConsole()
-    .split('\n')
-    .filter((line) => line.includes(needle))
-    .join('\n')
-}
-
 /**
  * The base roll-call host the run reads below spread over (400-06, narrowed by 430 D-02).
  *
@@ -773,27 +752,8 @@ interface HumanSurface {
   render: () => string | Promise<string>
 }
 
+// 2026-10-14 (441-13, D-07): the four console rows left with the console reporter's unmask.
 const HUMAN_SURFACES: HumanSurface[] = [
-  {
-    name: 'console:step-line',
-    originals: [SECRETS.step],
-    render: () => consoleLines('Navigate to'),
-  },
-  {
-    name: 'console:error-prose',
-    originals: [SECRETS.error],
-    render: () => consoleLines('Error:'),
-  },
-  {
-    name: 'console:hook-variable',
-    originals: [SECRETS.hook],
-    render: () => consoleLines('TOKEN='),
-  },
-  {
-    name: 'console:run-summary',
-    originals: [SECRETS.summary],
-    render: () => consoleLines('Checkout failed near'),
-  },
   // 2026-10-01 (432-19, D-14/D-15; 432-14 deferred #3): 'confirm:ask-prompt' leaves the roll-call.
   // It drove the unmasking confirm decorator over the ask-tier prompt; the confirm port and the
   // decorator are deleted, and no prompt is shown to anyone, so there is no such human surface.
@@ -866,19 +826,6 @@ describe('SEAM-05 unmask boundary roll-call — HUMAN side restores originals (D
       expect(output).not.toMatch(PLACEHOLDER)
     },
   )
-
-  it('the console reporter is the sole unmasking surface — the whole stream carries zero placeholders', () => {
-    const output = renderConsole()
-    expect(output).not.toMatch(PLACEHOLDER)
-    // `confirm` rides the ask-tier action name and `opResult` rides a chat clause result; neither
-    // is in the run envelope stream this reporter replays, so neither could appear here whatever
-    // the reporter did. Each is asserted by its OWN roll-call entry above.
-    for (const original of ALL_ORIGINALS.filter(
-      (secret) => secret !== SECRETS.confirm && secret !== SECRETS.opResult,
-    )) {
-      expect(output).toContain(original)
-    }
-  })
 })
 
 // ---- MASKED registry: surfaces that MUST keep only placeholders (D-11) -----------------------
@@ -1120,10 +1067,6 @@ describe('SEAM-05 unmask boundary roll-call — MASKED side keeps placeholders (
 // The single source of truth for what is walked. A surface added to either registry without being
 // listed here (or listed here without a walking entry) fails this test — new surfaces MUST enrol.
 const SURFACE_ROLLCALL = [
-  'console:step-line',
-  'console:error-prose',
-  'console:hook-variable',
-  'console:run-summary',
   // 2026-10-01 (432-19): 'confirm:ask-prompt' left with the confirm port and its decorator.
   'durable:events.jsonl',
   'durable:handoff.json',

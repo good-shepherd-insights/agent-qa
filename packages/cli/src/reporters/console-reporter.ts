@@ -1,7 +1,6 @@
 import pc from 'picocolors'
-import { unmaskForHumanOutput } from '@vostride/agent-qa-safety'
 import { quarantineAppliesToTest } from '@vostride/agent-qa-schema'
-import type { MaskingContext, QuarantineAppliedEntry } from '@vostride/agent-qa-schema'
+import type { QuarantineAppliedEntry } from '@vostride/agent-qa-schema'
 import type {
   HookFinishedPayload,
   HookStartedPayload,
@@ -31,7 +30,7 @@ export interface ConsoleReporterOptions {
   colorize?: boolean
   plain?: boolean
   logLevel?: string
-  /** Injectable write target — every human write flows through here after unmasking. */
+  /** Injectable write target — every human write flows through here. */
   write?: (chunk: string) => void
   /** Test seam: override TTY detection (defaults to process.stdout.isTTY). */
   isTTY?: boolean
@@ -82,16 +81,10 @@ interface TestMeta {
 
 /**
  * `createConsoleReporter` — the bus-subscriber successor to core's `ConsoleReporter`
- * (D-01/D-03). Pure accumulation from typed envelopes (D-04, replay-equivalent). Every
- * stdout write composes its final string from MASKED payload data, then calls
- * `unmaskForHumanOutput(ctx, finalString)` exactly ONCE immediately before the write
- * (D-09/D-10) — the injected `ctx` is the only unmasking authority (never the ambient
- * resolver). The human terminal is the sole unmasking surface in the phase.
+ * (D-01/D-03). Pure accumulation from typed envelopes (D-04, replay-equivalent). Payloads are
+ * printed as masked at their source (441 D-07).
  */
-export function createConsoleReporter(
-  ctx: MaskingContext,
-  options: ConsoleReporterOptions = {},
-): ConsoleReporterHandle {
+export function createConsoleReporter(options: ConsoleReporterOptions = {}): ConsoleReporterHandle {
   const verbose = options.verbose ?? false
   const isTTY = options.isTTY ?? process.stdout.isTTY === true
   const plain = options.plain ?? (!isTTY || process.env.CI === 'true')
@@ -99,10 +92,8 @@ export function createConsoleReporter(
   const canOverwrite = !plain && isTTY && options.logLevel !== 'debug'
   const sink = options.write ?? ((chunk: string) => void process.stdout.write(chunk))
 
-  // The single unmask-then-write chokepoint (SEAM-05). No payload-derived string may
-  // reach the sink except through here.
   function emit(finalMasked: string): void {
-    sink(unmaskForHumanOutput(ctx, finalMasked))
+    sink(finalMasked)
   }
 
   function transient(text: string): void {

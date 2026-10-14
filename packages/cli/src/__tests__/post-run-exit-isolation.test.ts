@@ -335,7 +335,7 @@ async function runScenario(
     //    own injected writer. `plain`/`isTTY:false` remove the TTY control codes so what is
     //    compared is the text a CI log holds.
     const reporterFixture = buildReporterFixture()
-    const reporter = createConsoleReporter(reporterFixture.ctx, {
+    const reporter = createConsoleReporter({
       plain: true,
       colorize: false,
       verbose: true,
