@@ -46,14 +46,14 @@ import {
  * The rows assert the DESIRED contract; on the shipped build the faithful reproduction
  * leaves the end-to-end row RED and pins the FIRST stage where the email-arm procedure
  * candidate vanishes. The stages:
- *   P          — pure projection (the 381-46 placeholder-mode classification over the REAL handoff)
+ *   P          — pure projection over the REAL handoff (an old `<EMAIL_0>` slot is literal, 441 D-20)
  *   E          — enqueue outcome + on-disk queued dir on a cold knowledge root
  *   D-nomodel  — site discriminator: modelDeps undefined, REAL defaultOperations; §7.9's
  *                restricted fallback authors a one-element Noop for procedure jobs, so IF the
  *                candidate reaches the drain, exactly one delta-noop(fallback-no-model) must
  *                be visible (the 381-47 typed chain)
  *   D-scripted — desired end-to-end: author scripted with the live sentinel-arm proposal
- *                shape; a procedure bundle must commit with parameter PROBE_USER and every
+ *                shape; a procedure bundle must commit with the proposal's parameter and every
  *                drain outcome must be visible (never zero-trace)
  */
 
@@ -226,7 +226,7 @@ describe('F-381-48-1 live-artifact staged reproduction (Plan 381-49)', () => {
     expect(existsSync(join(fixtureDir, CURATION_TAIL_RECEIPT_FILE))).toBe(false)
   })
 
-  it('stage P: the real handoff projects exactly one procedure candidate carrying the 381-46 classification', () => {
+  it('stage P: the real handoff projects exactly one procedure candidate whose old placeholder reads as literal text', () => {
     const handoff = loadCompletedRunHandoff(join(fixtureDir, HANDOFF_FILE))
     const projections = projectCurationCandidates(handoff, livePolicy())
     const procedures = projections.filter((candidate) => candidate.kind === 'procedure')
@@ -235,12 +235,11 @@ describe('F-381-48-1 live-artifact staged reproduction (Plan 381-49)', () => {
     const seed = parseProcedureTrajectorySeed(procedures[0]!.bodySeed)
     expect(seed).toBeDefined()
     expect(seed!.steps).toHaveLength(3)
-    // The placeholder-mode contract over the REAL handoff: whole-slot <EMAIL_0> with
-    // unambiguous email-valued provenance names the live binding.
-    expect(seed!.steps[0]!.action?.values['text']).toMatchObject({
+    // 2026-10-14 (441-10, D-20): the recorded placeholder is old data and reads as literal text.
+    expect(seed!.steps[0]!.action?.values['text']).toEqual({
       observed: '<EMAIL_0>',
-      source: 'test-variable',
-      sourceName: 'PROBE_USER',
+      source: 'literal',
+      targetRef: 'e2',
     })
   })
 
@@ -316,7 +315,7 @@ describe('F-381-48-1 live-artifact staged reproduction (Plan 381-49)', () => {
   )
 
   it(
-    'stage D-scripted (desired end-to-end): the email-arm artifacts commit a procedure bundle with parameter PROBE_USER and every drain outcome is visible',
+    "stage D-scripted (desired end-to-end): the email-arm artifacts commit a procedure bundle with the proposal's parameter and every drain outcome is visible",
     async () => {
       const roots = stageRoots()
       const { warns, log } = warnCapture()
@@ -416,11 +415,9 @@ describe('F-381-48-1 live-artifact staged reproduction (Plan 381-49)', () => {
             )
       expect(egressEmailRows).toEqual([])
 
-      // The committed bundle is a real procedure: record.md parses as a procedure body,
-      // the committed parameter is named exactly PROBE_USER (D-03 forced
-      // parameterization consuming 381-46's placeholder-mode sourceName), and the fill
-      // slot references the parameter by name — neither the raw email nor the EMAIL
-      // placeholder survives as the slot's committed value.
+      // The committed bundle is a real procedure: record.md parses as a procedure body, and the
+      // literal slot is covered by the proposal's own parameter (441-10, D-20: no binding name
+      // is read from an old placeholder), which the fill slot references by name.
       const procedureId = procedureBundleIds(roots.knowledgeRoot)[0]!
       const recordMd = readFileSync(
         join(roots.knowledgeRoot, 'memory', SCOPE_KEY, 'bundles', procedureId, 'record.md'),
@@ -429,11 +426,11 @@ describe('F-381-48-1 live-artifact staged reproduction (Plan 381-49)', () => {
       const body = parseProcedureBody(recordMd)
       expect(body).toBeDefined()
       expect(body!.parameters).toEqual([
-        { name: 'PROBE_USER', type: 'string', required: true },
+        { name: 'username', type: 'string', required: true },
       ])
       const fillStep = body!.steps.find((step) => step.action.type === 'fill')
       expect(fillStep).toBeDefined()
-      expect(fillStep!.action.values['text']).toEqual({ param: 'PROBE_USER' })
+      expect(fillStep!.action.values['text']).toEqual({ param: 'username' })
     },
     TAIL_TIMEOUT_MS,
   )

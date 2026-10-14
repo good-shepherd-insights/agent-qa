@@ -38,7 +38,6 @@ import {
 } from '@vostride/agent-qa-runner'
 import { RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import {
-  createMaskingContext,
   defaultGuardrailPolicyInput,
   loadGuardrailPolicy,
   type AuditSink,
@@ -465,14 +464,6 @@ const wholeFlowPlusSubFlow = JSON.stringify({
   ],
 })
 
-/**
- * F-381-45-1 (run r_essed-dry-eland-marine-anthem-lime-rein-ready-fair-utter): the guardrail's
- * model-bound email pass rewrote the interpolated PROBE_USER value to `<EMAIL_0>` before the
- * planner echoed it into the fill action, so the recorded evidence carries the placeholder as
- * the observed value beside 381-41's VERBATIM provenance pair. These fixtures replicate that
- * exact artifact shape — they do not invent one.
- */
-const F381451_EMAIL = 'qa.user+381@example.com'
 const F381451_PAGE = 'http://127.0.0.1:8931/form.html'
 
 function guardrailElement(ref: string, name: string): ElementInfo {
@@ -563,111 +554,6 @@ function guardrailStep(input: {
       : { interpolatedVariables: input.interpolatedVariables }),
   }
 }
-
-/** The placeholder-form seed built by the REAL emit fold — never hand-assembled. */
-function placeholderFormSeed(): ProcedureTrajectorySeed {
-  const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
-  const steps = [
-    guardrailStep({
-      stepIndex: 0,
-      stepText: 'Open the form',
-      ref: 'open-form',
-      name: 'Open form',
-    }),
-    guardrailStep({
-      stepIndex: 1,
-      stepText: 'Fill the username field',
-      ref: 'username',
-      name: 'Username',
-      fillText: '<EMAIL_0>',
-      interpolatedVariables: [{ name: 'PROBE_USER', value: F381451_EMAIL }],
-    }),
-    guardrailStep({
-      stepIndex: 2,
-      stepText: 'Submit the form',
-      ref: 'submit',
-      name: 'Submit',
-    }),
-  ]
-  const test: PerTestOutcome = {
-    testId: 'form::submit-username',
-    testName: 'Submit username form',
-    testIndex: 0,
-    outcome: 'passed',
-    steps,
-    filePath: 'form.spec.yaml',
-  }
-  const run: CompletedRunHandoff = {
-    schemaVersion: 3,
-    runId: asRunId('r-essed-utter'),
-    scope: { tier: 'product', key: 'storefront' },
-    buildOrdinal: 42,
-    executionContext: 'local-interactive',
-    aggregateVerdict: 'passed',
-    configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
-    startedAt: 1_750_000_000_000,
-    endedAt: 1_750_000_001_000,
-    tests: [test],
-  }
-  const [target] = projectCurationCandidates(run, policy).filter(
-    (row) => row.kind === 'procedure',
-  )
-  const seed = parseProcedureTrajectorySeed(target!.bodySeed)
-  if (seed === undefined) throw new Error('expected parseable placeholder-form seed')
-  return seed
-}
-
-function placeholderFormJob(): CurationJobView {
-  const seed = placeholderFormSeed()
-  return procedureJob({
-    bodySeed: canonicalJson(seed),
-    anchors: [
-      { t: 'flow', name: seed.flowName },
-      { t: 'page', route: F381451_PAGE },
-    ],
-    secretFlagged: false,
-    captureReceipt: {
-      regions: [],
-      interactions: [
-        { stepIndex: 0, elementRef: 'open-form' },
-        { stepIndex: 1, elementRef: 'username' },
-        { stepIndex: 2, elementRef: 'submit' },
-      ],
-      omissions: [],
-      redactions: [],
-    },
-  })
-}
-
-/** The live sentinel-arm proposal shape: whole-flow span, one invented string name. */
-const placeholderCoveringProposal = JSON.stringify({
-  candidates: [
-    {
-      flowName: 'form::submit-username',
-      stepSpan: [0, 2],
-      parameters: [
-        {
-          name: 'username',
-          type: 'string',
-          required: true,
-          appliesTo: [{ stepOrdinal: 1, field: 'text' }],
-        },
-      ],
-      successAssertion: 'The form accepts the username',
-    },
-  ],
-})
-
-const placeholderMissingProposal = JSON.stringify({
-  candidates: [
-    {
-      flowName: 'form::submit-username',
-      stepSpan: [0, 2],
-      parameters: [],
-      successAssertion: 'The form accepts the username',
-    },
-  ],
-})
 
 function author(outputs: string[]) {
   return buildCuratorAuthor({
@@ -1401,70 +1287,6 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
       authorship: procedureOutcome.authorship,
     })
     expect(checkpoint.deltas).toHaveLength(2)
-  })
-})
-
-describe('guardrail-placeholder extraction (F-381-45-1, PROC-01)', () => {
-  it('mechanism row A: the model-visible render carries only the placeholder after mask()', async () => {
-    const { author: run, prompts } = capturingAuthor([placeholderCoveringProposal])
-    await run(placeholderFormJob(), [])
-
-    // Recreate the live guardrail state: the model-bound email pass has already minted
-    // this address, so EVERY model-visible render passes through mask() with it registered.
-    const context = createMaskingContext()
-    expect(context.mask(F381451_EMAIL)).toBe('<EMAIL_0>')
-    const maskedRender = context.mask(`${prompts[0]!.system}\n${prompts[0]!.user}`)
-
-    // The raw email is structurally ABSENT from the model's input: only the deterministic
-    // sourceName channel can carry the binding name to the committed parameter.
-    expect(maskedRender).toContain('<EMAIL_0>')
-    expect(maskedRender).not.toContain(F381451_EMAIL)
-  })
-
-  it('mechanism row B: the deterministic sourceName channel survives the guardrail transform', async () => {
-    const { author: run, prompts } = capturingAuthor([placeholderCoveringProposal])
-    await run(placeholderFormJob(), [])
-
-    const rendered = JSON.parse(
-      prompts[0]!.user.slice(
-        prompts[0]!.user.indexOf('{'),
-        prompts[0]!.user.lastIndexOf('}') + 1,
-      ),
-    ) as {
-      steps: {
-        valueSlots?: Record<string, { source?: string; sourceName?: string }>
-      }[]
-    }
-
-    // Severed channel today: the placeholder classifies masked-secret with NO sourceName,
-    // so D-03's prompt line instructs a SECRET-typed parameter for a test variable.
-    expect(rendered.steps[1]?.valueSlots?.['text']?.source).toBe('test-variable')
-    expect(rendered.steps[1]?.valueSlots?.['text']?.sourceName).toBe('PROBE_USER')
-  })
-
-  it('end-to-end row C: a covering proposal commits parameter PROBE_USER, not its own name', async () => {
-    const outcome = await author([placeholderCoveringProposal])(placeholderFormJob(), [])
-    if (outcome.kind !== 'authored') throw new Error('expected authored outcome')
-    const payload = parseProcedureBody(addBundles(outcome.deltas)[0]!.body)
-
-    expect(payload?.steps[1]?.action.values['text']).toEqual({ param: 'PROBE_USER' })
-    expect(payload?.parameters).toEqual([
-      { name: 'PROBE_USER', type: 'string', required: true },
-    ])
-  })
-
-  it('end-to-end row D: a proposal that MISSES the slot still forces parameter PROBE_USER', async () => {
-    const outcome = await author([placeholderMissingProposal])(placeholderFormJob(), [])
-    if (outcome.kind !== 'authored') throw new Error('expected authored outcome')
-    const payload = parseProcedureBody(addBundles(outcome.deltas)[0]!.body)
-
-    expect(payload?.steps[1]?.action.values['text']).toEqual({ param: 'PROBE_USER' })
-    expect(payload?.parameters).toEqual([
-      { name: 'PROBE_USER', type: 'string', required: true },
-    ])
-    expect(payload?.parameters.map((parameter) => parameter.name).join()).not.toMatch(
-      /step\d+_/,
-    )
   })
 })
 

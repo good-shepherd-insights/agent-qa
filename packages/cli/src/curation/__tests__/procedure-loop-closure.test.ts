@@ -289,7 +289,7 @@ function handoffFor(runId: string, buildOrdinal: number): CompletedRunHandoff {
             {
               type: 'fill',
               ref: asRef('e-password'),
-              text: '<SECRET_0>',
+              text: '[secret:step2_text]',
               clearMode: 'replace',
               submit: true,
             },
@@ -605,7 +605,7 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
       { name: 'step2_text', type: 'secret', required: true },
     ])
     expect(bundle.body).not.toContain('{{env:ACCOUNT_EMAIL}}')
-    expect(bundle.body).not.toContain('<SECRET_0>')
+    expect(bundle.body).not.toContain('[secret:step2_text]')
   })
 
   it('hint before trust: getProcedure serves the committed procedure as a hint at zero canary confirmations', { timeout: 60_000 }, async () => {
