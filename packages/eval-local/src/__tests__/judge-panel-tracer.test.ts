@@ -52,7 +52,7 @@ async function trace(judge?: RunCassetteReplayInput['judge']) {
     modelOverrides: { languageModels: planner.languageModels },
     clock: { now: () => 100 },
     replayOutputBaseDir: join(root, 'audit'), recordStore: new FsReplayRecordStore({ root }),
-    scoreStore, ...(judge === undefined ? {} : { judge }) })
+    mask: (text: string) => text, scoreStore, ...(judge === undefined ? {} : { judge }) })
   const deterministic = scoreCassetteReplay(cassette, outcome)
   expect(deterministic).toMatchObject({ kind: 'leaf', entry: { kind: 'decision',
     score: { kind: 'unresolved-tie', cause: 'partial-identity' } } })

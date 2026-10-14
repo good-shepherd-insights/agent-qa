@@ -1,7 +1,6 @@
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { buildEvalReport, computeBatchKey, projectBaselinePointer } from '@vostride/agent-qa-eval'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { expect } from 'vitest'
 import * as local from '../../index.js'
 import { incrementingClock, noneAuth, stubProfile, warningStub, writeCommittedFloorFixture } from './floor-fixtures.js'
@@ -15,7 +14,7 @@ export async function labelGateFixture(root: string) {
   const stub = warningStub(), profile = stubProfile(), agentQaRoot = join(root, '.agent-qa')
   const profileKeyInputs = { plannerModelId: profile.model, matcherVersion: buildEvalReport([]).matcherVersion }
   const mode = { kind: 'fresh' as const, profile, auth: noneAuth,
-    modelOverrides: { languageModels: stub.languageModels }, maskingContextFactory: createMaskingContext,
+    modelOverrides: { languageModels: stub.languageModels }, mask: (text: string) => text,
     seed: 11, cassettesRoot: corpus.cassettesRoot, replayOutputBaseDir: join(root, 'audit') }
   const floor = await local.runNoiseFloorMeasurement({ ...mode, committedRoot, agentQaRoot,
     profileKeyInputs, seeds: [11, 29], repeats: 3, bootstrapSeed: 97, commit: true,

@@ -33,6 +33,7 @@ function session(evalConfig: composition.EvalCliConfig = {}): composition.EvalSe
     evalConfig, configPath: '/fixture/agent-qa.config.yaml', configDir: '/fixture',
     executionContext: {} as composition.EvalSession['executionContext'],
     maskingContextFactory: () => buildRunMaskingContext({ env: { FIXTURE_SECRET: secret } }),
+    mask: (text: string) => text,
   }
 }
 const named = vi.fn<typeof llm.resolveNamedConfig>()

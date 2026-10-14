@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { LeafReplayResult } from '@vostride/agent-qa-eval'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { runCassetteReplay } from '../replay-composition.js'
@@ -37,9 +38,9 @@ import {
   throwingStub,
 } from './fixtures/replay-fixtures.js'
 
-// An obviously-synthetic email: the empty-seeded MaskingContext auto-masks emails, so this reaches
-// the boundary as an <EMAIL_n> placeholder (D-06). Never a live secret (T-368-15).
+// An undeclared email reaches the boundary as written (441 D-23). Never a live secret (T-368-15).
 const EMAIL_SENTINEL = 'replay-sentinel-user@masked.example'
+const DECLARED_SENTINEL = 'replay-sentinel-declared-7q4z'
 
 describe('RPLY-02 captured provider-boundary proof (runCassetteReplay, D-05/D-06)', () => {
   const tempRoots: string[] = []
@@ -59,6 +60,7 @@ describe('RPLY-02 captured provider-boundary proof (runCassetteReplay, D-05/D-06
     const stub = capturingStub(() => actionGenerateResult('web'))
 
     const outcome = await runCassetteReplay({
+      mask: (text: string) => text,
       cassette: bundle.cassette,
       artifacts: bundle.artifacts,
       profile: stubProfile(),
@@ -83,9 +85,12 @@ describe('RPLY-02 captured provider-boundary proof (runCassetteReplay, D-05/D-06
   })
 
   it('masks the recorded observation: the raw sentinel is absent and a placeholder is present at the boundary', async () => {
-    const handoff = makeReplayHandoff({ stepText: `Confirm the email ${EMAIL_SENTINEL} then click Continue` })
+    const handoff = makeReplayHandoff({
+      stepText: `Use ${DECLARED_SENTINEL} for ${EMAIL_SENTINEL} then click Continue`,
+    })
     const bundle = extractStoreLoad(handoff, memArtifacts(), await tempRoot('replay-b-mask-'))
     const stub = capturingStub(() => actionGenerateResult('web'))
+    const redactor = new SecretRedactor(SecretStore.fromEnvContent(`REPLAY_TOKEN=${DECLARED_SENTINEL}`))
 
     await runCassetteReplay({
       cassette: bundle.cassette,
@@ -94,12 +99,14 @@ describe('RPLY-02 captured provider-boundary proof (runCassetteReplay, D-05/D-06
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
       replayOutputBaseDir: await tempRoot('replay-b-mask-audit-'),
+      mask: (text) => redactor.redactString(text),
     })
 
     // Over the FULL serialized captured params, not just the observation text (acceptance).
     const serialized = JSON.stringify(stub.captured[0])
-    expect(serialized).toContain('<EMAIL_')
-    expect(serialized).not.toContain(EMAIL_SENTINEL)
+    expect(serialized).toContain('[secret:REPLAY_TOKEN]')
+    expect(serialized).not.toContain(DECLARED_SENTINEL)
+    expect(serialized).toContain(EMAIL_SENTINEL)
   })
 
   it('preserves truncation-only coverage for an empty ServedBrief without inventing learned tiers', async () => {
@@ -113,6 +120,7 @@ describe('RPLY-02 captured provider-boundary proof (runCassetteReplay, D-05/D-06
     const stub = capturingStub(() => actionGenerateResult('web'))
 
     const outcome = await runCassetteReplay({
+      mask: (text: string) => text,
       cassette: bundle.cassette,
       artifacts: bundle.artifacts,
       profile: stubProfile(),
@@ -154,6 +162,7 @@ describe('RPLY-02 captured provider-boundary proof (runCassetteReplay, D-05/D-06
     const storeRoot = await tempRoot('replay-b-incomplete-store-')
 
     const outcome = await runCassetteReplay({
+      mask: (text: string) => text,
       cassette: bundle.cassette,
       artifacts: bundle.artifacts,
       profile: stubProfile(),

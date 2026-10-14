@@ -8,8 +8,8 @@
 //   - Every committed TEXT write — gitignore, root marker, contracts projections, cassette, label
 //     record, corpus entry — passes through `assertCommittedEgressSafe` with a labeled part, the
 //     'eval-seeding' channel, and a JsonlAuditSink BEFORE any byte reaches the store. Cassette text
-//     arrives placeholder-masked from record time (the MaskingContext layer is upstream at
-//     recording; ROOT-02's "after masking" is satisfied by construction) — this checkpoint is the
+//     arrives masked with the run's declared secrets from record time (ROOT-02's "after masking"
+//     is satisfied by construction) — this checkpoint is the
 //     LAST line of defense, fail-closed on pattern detections, audit rows appended before any throw.
 //     The validated cassette scan view renders only machine ScreenState timestamps in scientific
 //     notation; original serialized bytes and hashes still land unchanged (419-11).

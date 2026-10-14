@@ -48,7 +48,7 @@ export interface SweepCassetteReplaysInput {
   k?: number
   seed?: number
   judge?: RunCassetteReplayInput['judge']
-  maskingContextFactory: RunCassetteReplayInput['maskingContextFactory']
+  mask: RunCassetteReplayInput['mask']
   replayOutputBaseDir: string
   recordStore: FsReplayRecordStore
   scoreStore: FsScoreStore
@@ -96,7 +96,7 @@ export async function sweepCassetteReplays(
         ...(input.k !== undefined ? { k: input.k } : {}),
         ...(input.seed !== undefined ? { seed: input.seed } : {}),
         ...(input.judge !== undefined ? { judge: input.judge } : {}),
-        maskingContextFactory: input.maskingContextFactory,
+        mask: input.mask,
         replayOutputBaseDir: input.replayOutputBaseDir,
         recordStore: input.recordStore,
         scoreStore: input.scoreStore,

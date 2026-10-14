@@ -37,6 +37,7 @@ async function fixture(options: Parameters<typeof writeGate1Fixture>[1] = {}) {
   const stub = respondingStub(call => JSON.stringify(call.prompt).includes('gate1-collateral-0')
     ? actionGenerateResult('web', 'e-other') : gate1Responder(f)(call))
   const input: RunReplayGateInput = {
+    mask: (text: string) => text,
     injection: f.injection, committedRoot: f.committedRoot, agentQaRoot: f.agentQaRoot,
     identity: f.identity, planner: { profile: stubProfile(),
       modelOverrides: { languageModels: stub.languageModels }, resolveAuth: async () => noneAuth },

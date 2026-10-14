@@ -59,6 +59,7 @@ describe('RPLY-04 modality / offline / mobile proof (runCassetteReplay)', () => 
     const stub = capturingStub(() => actionGenerateResult('web'))
 
     const outcome = await runCassetteReplay({
+      mask: (text: string) => text,
       cassette: bundle.cassette,
       artifacts: bundle.artifacts,
       profile: stubProfile(),
@@ -84,6 +85,7 @@ describe('RPLY-04 modality / offline / mobile proof (runCassetteReplay)', () => 
     const stub = capturingStub(() => actionGenerateResult('web'))
 
     const outcome = await runCassetteReplay({
+      mask: (text: string) => text,
       cassette: bundle.cassette,
       artifacts: bundle.artifacts,
       profile: stubProfile(),
@@ -111,6 +113,7 @@ describe('RPLY-04 modality / offline / mobile proof (runCassetteReplay)', () => 
     const stub = capturingStub(() => actionGenerateResult('android'))
 
     const outcome = await runCassetteReplay({
+      mask: (text: string) => text,
       cassette: bundle.cassette,
       artifacts: bundle.artifacts,
       profile: stubProfile(),
@@ -146,6 +149,7 @@ describe('RPLY-04 modality / offline / mobile proof (runCassetteReplay)', () => 
     // it would ECONNREFUSED — the suite passing proves the harness has no network path besides the
     // injected model handle.
     const outcome = await runCassetteReplay({
+      mask: (text: string) => text,
       cassette: bundle.cassette,
       artifacts: bundle.artifacts,
       profile: stubProfile('http://localhost:1/v1'),

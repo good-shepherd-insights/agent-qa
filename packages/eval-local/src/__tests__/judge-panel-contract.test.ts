@@ -74,7 +74,8 @@ it.each([2, 3])('public binding uses %i independent captured handles in sequenti
   const order: string[] = []
   const inputs = ['claude-fixture', 'gemini-fixture', 'llama-fixture'].slice(0, size).map(model => {
     const stub = capturingStub(() => { order.push(model); return judgeGenerateResult('equivalent', 'high') }, model)
-    return { profile: { ...stubProfile(), model }, auth: noneAuth, modelOverrides: { languageModels: stub.languageModels } }
+    return { profile: { ...stubProfile(), model }, auth: noneAuth, mask: (text: string) => text,
+      modelOverrides: { languageModels: stub.languageModels } }
   })
   const before = inputs.map(input => JSON.stringify(input.profile))
   const port = publicApi.bindJudgePanel(inputs)

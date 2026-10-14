@@ -14,7 +14,6 @@ import {
   type NoiseFloorArtefact,
 } from '@vostride/agent-qa-eval'
 import { renderObservationLine } from '@vostride/agent-qa-runner'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 import {
   asRecordId,
   asRef,
@@ -344,7 +343,7 @@ export async function warmGateRoot(
     profile: stubProfile(),
     auth: noneAuth,
     modelOverrides: { languageModels: stub.languageModels },
-    maskingContextFactory: createMaskingContext,
+    mask: (text: string) => text,
     seed,
     k: 1,
     replayOutputBaseDir: fixture.gateRoot,

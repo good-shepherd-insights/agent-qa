@@ -44,7 +44,7 @@ export type ReleaseGateMode =
       auth: ResolvedModelAuth
       modelOverrides?: ModelProviderOverrides
       judge?: RunCassetteReplayInput['judge']
-      maskingContextFactory: RunCassetteReplayInput['maskingContextFactory']
+      mask: RunCassetteReplayInput['mask']
       seed: number
       cassettesRoot: string
       replayOutputBaseDir: string
@@ -184,7 +184,7 @@ export async function runReleaseGate(input: RunReleaseGateInput): Promise<RunRel
         auth: mode.auth,
         modelOverrides: mode.modelOverrides,
         judge: mode.judge,
-        maskingContextFactory: mode.maskingContextFactory,
+        mask: mode.mask,
         seed: mode.seed,
         k: 1,
         replayOutputBaseDir: mode.replayOutputBaseDir,

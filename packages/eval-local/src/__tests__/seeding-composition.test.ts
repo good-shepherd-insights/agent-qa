@@ -13,10 +13,10 @@ import {
 } from '@vostride/agent-qa-eval'
 import type { ArtifactSource, ExtractedCassette, SeedingPlan } from '@vostride/agent-qa-eval'
 import {
-  createMaskingContext,
   defaultGuardrailPolicyInput,
   loadGuardrailPolicy,
 } from '@vostride/agent-qa-safety'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { asRef, computeBriefDigest } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
@@ -521,15 +521,14 @@ describe('413 SC2 — lossless proof text passes the eval-seeding checkpoint (D-
 
   it('commits a masking-registered value in proof.promptTurns as its placeholder, never raw', () => {
     const REGISTERED = 'melon-proof-turn-registered-secret-4k2v'
-    const context = createMaskingContext()
-    context.register(REGISTERED)
+    const redactor = new SecretRedactor(SecretStore.fromEnvContent(`TURN_TOKEN=${REGISTERED}`))
 
     const rawTurnText = `Reuse the checkout token ${REGISTERED} on the next turn.`
     // Positive controls: the unmasked prose carries the value and the mask rewrites it.
     expect(rawTurnText).toContain(REGISTERED)
-    const maskedTurnText = context.mask(rawTurnText)
+    const maskedTurnText = redactor.redactString(rawTurnText)
     expect(maskedTurnText).not.toContain(REGISTERED)
-    expect(maskedTurnText).toContain('<SECRET_0>')
+    expect(maskedTurnText).toContain('[secret:TURN_TOKEN]')
 
     // Apply the mask at the RECORD boundary — upstream of extraction, exactly as live recording
     // masks evidence before anything is staged (committed-root-proof.test.ts:342 idiom). The
@@ -549,7 +548,7 @@ describe('413 SC2 — lossless proof text passes the eval-seeding checkpoint (D-
     expect(report.seededCount).toBe(3)
 
     const committed = readFileSync(join(root, casePaths(plan.cases[0]!.cassetteId).cassette), 'utf8')
-    expect(committed).toContain('<SECRET_0>')
+    expect(committed).toContain('[secret:TURN_TOKEN]')
     expect(committed).not.toContain(REGISTERED)
   })
 })

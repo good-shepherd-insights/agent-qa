@@ -48,7 +48,7 @@ it.each(['equivalent', 'different', 'unsure', 'swap-disagreement', 'error'] as c
         if (scenario === 'error') throw new Error('private fixture transport failure')
         return judgeGenerateResult(scenario === 'swap-disagreement' ? (index === 0 ? 'equivalent' : 'different') : scenario, 'high')
       })
-      return { stub, input: { profile: stubProfile(), auth: noneAuth,
+      return { stub, input: { profile: stubProfile(), auth: noneAuth, mask: (text: string) => text,
         modelOverrides: { languageModels: stub.languageModels } } }
     }
     const direct = makeInput(), singleton = makeInput()
@@ -126,7 +126,7 @@ describe('bindJudgePort provider boundary', () => {
       ? { kind: 'element-equivalence', gold: { role: 'button', nameNormalized: hostile, ordinal: 0 }, candidate: { role: 'button', nameNormalized: 'Continue', ordinal: 1 } }
       : { kind: 'value-equivalence', goldValue: hostile, candidateValue: 'Continue' }
     const stub = capturingStub(() => judgeGenerateResult('unsure', 'low'))
-    const port = bindJudgePort({ profile: stubProfile(), auth: noneAuth, modelOverrides: { languageModels: stub.languageModels } })
+    const port = bindJudgePort({ profile: stubProfile(), auth: noneAuth, mask: (text: string) => text, modelOverrides: { languageModels: stub.languageModels } })
     for (const order of ['ab', 'ba'] as const) {
       const payload = buildJudgePrompt({ stepText: 'Compare evidence', question }, order)
       await port.call(payload)
@@ -142,7 +142,7 @@ describe('bindJudgePort provider boundary', () => {
     const stub = capturingStub(() => judgeGenerateResult('equivalent', 'high'))
     const port = bindJudgePort({
       profile: stubProfile(),
-      auth: noneAuth,
+      auth: noneAuth, mask: (text: string) => text,
       modelOverrides: { languageModels: stub.languageModels },
     })
 
@@ -164,7 +164,7 @@ describe('bindJudgePort provider boundary', () => {
     )
     const port = bindJudgePort({
       profile: stubProfile(),
-      auth: noneAuth,
+      auth: noneAuth, mask: (text: string) => text,
       modelOverrides: { languageModels: stub.languageModels },
     })
 
@@ -184,7 +184,7 @@ describe('bindJudgePort provider boundary', () => {
     const stub = capturingStub(() => proseGenerateResult())
     const port = bindJudgePort({
       profile: stubProfile(),
-      auth: noneAuth,
+      auth: noneAuth, mask: (text: string) => text,
       modelOverrides: { languageModels: stub.languageModels },
     })
 
@@ -197,7 +197,7 @@ describe('bindJudgePort provider boundary', () => {
     const stub = throwingStub()
     const port = bindJudgePort({
       profile: stubProfile(),
-      auth: noneAuth,
+      auth: noneAuth, mask: (text: string) => text,
       modelOverrides: { languageModels: stub.languageModels },
     })
 
@@ -219,7 +219,7 @@ describe('bindJudgePort provider boundary', () => {
     const start = factoryProfiles.length
     const stub = capturingStub(() => judgeGenerateResult('equivalent', 'high'))
     let observed = 0
-    const panel = bindJudgePanel([0, 1].map(() => ({ profile, auth: noneAuth,
+    const panel = bindJudgePanel([0, 1].map(() => ({ profile, auth: noneAuth, mask: (text: string) => text,
       modelOverrides: { languageModels: stub.languageModels },
       modelCallObservation: { onProviderCall: () => { observed++ } },
     })))
@@ -246,7 +246,7 @@ describe('bindJudgePort provider boundary', () => {
     )
     const port = bindJudgePort({
       profile: stubProfile(),
-      auth: noneAuth,
+      auth: noneAuth, mask: (text: string) => text,
       modelOverrides: { languageModels: stub.languageModels },
     })
 

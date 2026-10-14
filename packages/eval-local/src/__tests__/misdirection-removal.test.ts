@@ -20,7 +20,6 @@ import {
   type ServedBrief,
   type StepEvidence,
 } from '@vostride/agent-qa-schema'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 import {
   applyBriefDelta,
   canonicalJson,
@@ -152,7 +151,7 @@ async function ablate(fixture: ReturnType<typeof ordinaryCandidate>, options: Ab
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
-      maskingContextFactory: createMaskingContext,
+      mask: (text: string) => text,
     },
     gate1Dir: join(f.agentQaRoot, options.dir ?? 'ordinary-removal'),
   })
@@ -514,7 +513,7 @@ describe('D-18 refusals stay narrow and always precede replay spend', () => {
         profile: stubProfile(),
         auth: noneAuth,
         modelOverrides: { languageModels: stub.languageModels },
-        maskingContextFactory: createMaskingContext,
+        mask: (text: string) => text,
       },
       gate1Dir: join(f.agentQaRoot, 'two-decisions'),
     })

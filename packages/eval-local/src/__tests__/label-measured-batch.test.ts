@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { computeCorpusDigest, projectSilverLabelRecord } from '@vostride/agent-qa-eval'
 import type { StandaloneLabelRecord } from '@vostride/agent-qa-eval'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { sha256hex } from '@vostride/agent-qa-schema'
 import { replayCorpusOnce } from '../aa-floor-composition.js'
 import { readCommittedCorpus, listCommittedReports } from '../committed-corpus-source.js'
@@ -35,7 +34,7 @@ async function fixture(withLabels = false) {
   }
   const input = { ...corpus, agentQaRoot: root, runRoot: join(root, 'r0'),
     profile: stubProfile(), auth: noneAuth, modelOverrides: { languageModels: stub.languageModels },
-    maskingContextFactory: createMaskingContext, seed: 11, replayOutputBaseDir: join(root, 'audit'),
+    mask: (text: string) => text, seed: 11, replayOutputBaseDir: join(root, 'audit'),
     source: 'committed', clock: incrementingClock(), corpusDigest: computeCorpusDigest(read.snapshot.entries),
     productByCassetteId: new Map(read.snapshot.entries.map(entry => [entry.cassetteId, entry.product])),
     corpusEntriesById: entries, labelRecords,

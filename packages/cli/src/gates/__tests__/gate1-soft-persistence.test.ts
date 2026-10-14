@@ -5,7 +5,6 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { createLabelRevision, projectSilverLabelRecord } from '@vostride/agent-qa-eval'
 import { committedLabelPath, runReplayGate } from '@vostride/agent-qa-eval-local'
 import { GateReceiptSchema } from '@vostride/agent-qa-schema'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { gateReceiptsFor } from '@vostride/agent-qa-knowledge-local/reader'
 import { resolveEvalSession } from '../../eval-session-composition.js'
 import { createReplayGateHost } from '../replay-gate-host.js'
@@ -59,7 +58,7 @@ it.each(['gold', 'near-gold', 'silver'] as const)(
         k: 3, kSource: 'default', maxScreens: 64, judgeOverrideConfigured: false,
         baselineSeed: { floorSeeds: [11] } },
       runReplayGate: input => runReplayGate({ ...input, committedRoot: f.committedRoot,
-        maskingContextFactory: createMaskingContext }),
+        mask: (text: string) => text }),
     })
     let firstHarm: unknown
     for (const value of [undefined, 0, 0.25, 1]) {

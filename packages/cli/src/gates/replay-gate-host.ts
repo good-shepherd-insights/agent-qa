@@ -57,7 +57,7 @@ export interface ReplayGateHostDeps {
   session: EvalSession
   composition: Omit<
     RunReplayGateInput,
-    'injection' | 'committedRoot' | 'agentQaRoot' | 'maskingContextFactory' | 'producedBy'
+    'injection' | 'committedRoot' | 'agentQaRoot' | 'mask' | 'producedBy'
   >
   reader?: KnowledgeReaderPort
   curation?: Pick<LocalCurationCapabilities, 'recordGateReceipt'> & {
@@ -176,7 +176,7 @@ export function createReplayGateHost(deps: ReplayGateHostDeps): ReplayGateHost {
       injection: found.injection,
       committedRoot: resolve(configDir, 'agent-qa-eval'),
       agentQaRoot: deps.agentQaRoot,
-      maskingContextFactory: deps.session.maskingContextFactory,
+      mask: deps.session.mask,
       producedBy: { opId: 'eval.replay-gate' },
     })
     if (result.kind === 'refused') return { ...result, exit: 2 }

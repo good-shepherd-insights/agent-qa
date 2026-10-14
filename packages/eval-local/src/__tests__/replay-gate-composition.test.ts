@@ -21,7 +21,6 @@ import {
   type CompletedRunHandoff,
   type ServedBrief,
 } from '@vostride/agent-qa-schema'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 import {
   composeBaselineProfileKey,
   JUDGE_CONFIG,
@@ -97,6 +96,7 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
     await warmGateRoot(f, baseline)
     const stub = respondingStub(gate1Responder(f))
     const input: evalLocal.RunReplayGateInput = {
+      mask: (text: string) => text,
       injection: f.injection,
       committedRoot: f.committedRoot,
       agentQaRoot: f.agentQaRoot,
@@ -255,7 +255,7 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
           }),
       seed: 11,
       k: 1,
-      maskingContextFactory: createMaskingContext,
+      mask: (text: string) => text,
       replayOutputBaseDir: gateRoot,
       source: 'committed',
       corpusDigest: f.corpusDigest,
@@ -570,7 +570,7 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
           profile: stubProfile(),
           auth: noneAuth,
           modelOverrides: { languageModels: stub.languageModels },
-          maskingContextFactory: createMaskingContext,
+          mask: (text: string) => text,
         },
         gate1Dir: join(f.agentQaRoot, 'active-removal'),
       })
@@ -899,8 +899,8 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
       authCalls++
       return noneAuth
     }
-    input.maskingContextFactory = () => {
-      throw new Error('preflight must not create masking context')
+    input.mask = () => {
+      throw new Error('preflight must not mask')
     }
     if (mode === 'procedure' || mode === 'unknown') input.injection = { ...f.injection, kind: mode }
     if (mode === 'target-unavailable') input.injection = { ...f.injection, target: undefined }
@@ -1220,7 +1220,7 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
       },
       seed: 11,
       k: 1,
-      maskingContextFactory: createMaskingContext,
+      mask: (text: string) => text,
       replayOutputBaseDir: gateRoot,
       source: 'committed',
       corpusDigest: f.corpusDigest,

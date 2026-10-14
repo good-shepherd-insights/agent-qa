@@ -203,6 +203,7 @@ function preflightSession(): EvalSession {
     configDir: '/fixture',
     executionContext: {} as EvalSession['executionContext'],
     maskingContextFactory: () => buildRunMaskingContext({ env: { FIXTURE_SECRET: PROBE_CREDENTIAL } }),
+    mask: (text: string) => text,
   }
 }
 

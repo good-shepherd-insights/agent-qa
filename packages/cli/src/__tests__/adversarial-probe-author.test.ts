@@ -79,6 +79,7 @@ function session(evalConfig: composition.EvalCliConfig = {}): composition.EvalSe
     configDir: '/fixture',
     executionContext: {} as composition.EvalSession['executionContext'],
     maskingContextFactory: () => buildRunMaskingContext({ env: { FIXTURE_SECRET: secret } }),
+    mask: (text: string) => text,
   }
 }
 
@@ -144,6 +145,7 @@ function authorInput(
     author,
     executionContext: {} as composition.EvalSession['executionContext'],
     maskingContextFactory: () => buildRunMaskingContext({ env: { FIXTURE_SECRET: secret } }),
+    mask: (text: string) => text,
     auditDir: '/fixture/.agent-qa/eval/audit/adversarial',
     createModelImpl: stub.createModelImpl,
     generateTextImpl: stub.generateTextImpl,

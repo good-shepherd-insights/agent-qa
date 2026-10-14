@@ -60,7 +60,7 @@ export interface ReplayCorpusOnceInput {
   auth: ResolvedModelAuth
   modelOverrides?: ModelProviderOverrides
   judge?: RunCassetteReplayInput['judge']
-  maskingContextFactory: RunCassetteReplayInput['maskingContextFactory']
+  mask: RunCassetteReplayInput['mask']
   seed: number
   k?: number
   replayOutputBaseDir: string
@@ -86,7 +86,7 @@ export interface RunNoiseFloorMeasurementInput {
   fromMeasured?: string
   modelOverrides?: ModelProviderOverrides
   judge?: RunCassetteReplayInput['judge']
-  maskingContextFactory: RunCassetteReplayInput['maskingContextFactory']
+  mask: RunCassetteReplayInput['mask']
   profileKeyInputs: {
     plannerModelId: string
     matcherVersion: number
@@ -219,7 +219,7 @@ export async function runNoiseFloorMeasurement(
       auth: input.auth,
       modelOverrides: input.modelOverrides,
       judge: input.judge,
-      maskingContextFactory: input.maskingContextFactory,
+      mask: input.mask,
       seed,
       k: 1,
       replayOutputBaseDir: join(input.reportOutputBaseDir, `r${index}`),
@@ -365,7 +365,7 @@ export async function replayCorpusOnce(
     k: input.k ?? 1,
     seed: input.seed,
     judge: input.judge,
-    maskingContextFactory: input.maskingContextFactory,
+    mask: input.mask,
     replayOutputBaseDir: input.replayOutputBaseDir,
     recordStore,
     scoreStore,

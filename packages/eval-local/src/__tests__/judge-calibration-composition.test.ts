@@ -6,18 +6,20 @@ import * as core from '@vostride/agent-qa-eval'
 import * as local from '../index.js'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
 import { asRunId, asRef, sha256hex, slugBranch, type MarkReceipt } from '@vostride/agent-qa-schema'
-import { createMaskingContext, getActiveMaskingContext, getActiveAuditSink } from '@vostride/agent-qa-safety'
+import { getActiveAuditSink } from '@vostride/agent-qa-safety'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { runJudgePanelCalibration, runJudgeCalibration } from '../judge-calibration-composition.js'
 import * as publication from '../judge-calibration-source.js'
 import { makeLocalV2Handoff, LOCAL_FIXTURE_BLOB_BYTES } from './fixtures/local-handoff-fixture.js'
 import { capturingStub, judgeGenerateResult } from './fixtures/replay-fixtures.js'
 
 const binds = vi.hoisted(() => ({ count: 0, fail: false }))
+const redactor = new SecretRedactor(SecretStore.fromEnvContent('JUDGE_API_KEY=fixture-private-api-key'))
 vi.mock('../judge-binding.js', async original => {
   const actual = await original<typeof import('../judge-binding.js')>()
   return { ...actual, bindJudgePanel: (...args: Parameters<typeof actual.bindJudgePanel>) => {
     binds.count++
-    expect(getActiveMaskingContext()).toBeDefined()
+    for (const member of args[0]) expect(member.mask('fixture-private-api-key')).toBe('[secret:JUDGE_API_KEY]')
     if (binds.fail) throw new Error('fixture-private-binding-error')
     return actual.bindJudgePanel(...args)
   } }
@@ -30,14 +32,10 @@ function fixture(models: core.CassetteModelReceipt[] = [{}], verdicts: ('equival
   const memberIds = ['claude-sonnet-4', 'gemini-2.5', 'llama-3'].slice(0, verdicts.length)
   const rows = models.map((model, index) => addEvidence(project, index, model, memberIds, ambiguous, excluded.includes(index)))
   for (const row of rows) { row.report.runIdentity!.corpusDigest = core.computeCorpusDigest(local.readActiveCommittedCorpus(row.committedRoot, row.root).snapshot.entries); row.saveReport() }
-  const contexts: ReturnType<typeof createMaskingContext>[] = []
-  const disposes: number[] = []
   let calls = 0
   const members = memberIds.map((model, index) => {
     const stub = capturingStub(() => {
       calls++
-      expect(getActiveMaskingContext()).toBe(contexts.at(-1))
-      expect(getActiveMaskingContext()!.mask('fixture-private-api-key')).not.toContain('fixture-private-api-key')
       getActiveAuditSink()!.appendGuardrailAudit({ channel: 'provider-request', detector: 'bearer', action: 'redact' })
       if (verdicts[index] === 'error') throw new Error('fixture-private-provider-error')
       return judgeGenerateResult(verdicts[index] === 'unsure' ? 'unsure' : verdicts[index]!, 'high')
@@ -46,9 +44,8 @@ function fixture(models: core.CassetteModelReceipt[] = [{}], verdicts: ('equival
       auth: { kind: 'api-key' as const, apiKey: 'fixture-private-api-key' }, modelOverrides: { languageModels: stub.languageModels } }
   })
   const input = { ...rows[0]!.input, members, replayProfile: { provider: 'openai-compatible' as const, model: 'gpt-5', auth: { mode: 'none' as const } },
-    maskingContextFactory: () => { const context = createMaskingContext(); const dispose = context.dispose.bind(context); const index = contexts.length;
-      contexts.push(context); context.dispose = () => { disposes.push(index); dispose() }; return context } }
-  return { input, rows, contexts, disposes, calls: () => calls }
+    mask: (text: string) => redactor.redactString(text) }
+  return { input, rows, calls: () => calls }
 }
 it.each([false, true])('publishes and rereads legitimate nonexecutable exclusions: all excluded=%s', async allExcluded => {
   const f = fixture([{}, {}], undefined, false, allExcluded ? [0, 1] : [1])
@@ -133,11 +130,10 @@ it('keeps all refused histories n0 with zero bindings, cost and absent estimates
   expect(result).toMatchObject({ status: 'uncalibrated', n: 0, counts: { attempted: 0, eligibilityRefused: 2 }, cost: { callBound: 0, usage: { calls: 0 } } })
   expect(result).not.toHaveProperty('pooledAgreement'); expect(result).not.toHaveProperty('wilson95')
   expect(result.abstention).not.toHaveProperty('rate'); expect(result.disagreement).not.toHaveProperty('rate')
-  expect(binds.count).toBe(0); expect(f.calls()).toBe(0); expect(f.contexts).toHaveLength(1)
+  expect(binds.count).toBe(0); expect(f.calls()).toBe(0)
 })
-it('keeps sequential fresh scoped bindings, durable audit paths and disposal across decisions', async () => {
+it('keeps sequential fresh scoped bindings and durable audit paths across decisions', async () => {
   const f = fixture([{}, {}]), result = await runJudgePanelCalibration(f.input)
-  expect(f.contexts).toHaveLength(3); expect(f.contexts[1]).not.toBe(f.contexts[2]); expect(f.disposes).toEqual([1, 2, 0])
   expect(result.cost.usage.calls).toBe(8); expect(f.calls()).toBe(8); expect(binds.count).toBe(2)
   const audit = readFileSync(join(result.auditDirectory, 'guardrail_audit.jsonl'), 'utf8')
   expect(audit.trim().split('\n')).toHaveLength(8)
@@ -153,12 +149,11 @@ it('retains errored member call cost separately from abstention and pair denomin
   expect(result.cost.usage.calls).toBe(6); expect(f.calls()).toBe(6)
   expect(result.cost.usage.inputTokens).toBe(40)
   expect(JSON.stringify(result)).not.toContain('fixture-private-provider-error')
-  expect(f.disposes).toEqual([1, 0])
 })
-it('disposes the fresh scope when binding throws without invoking a provider', async () => {
+it('refuses without invoking a provider when binding throws', async () => {
   const f = fixture(); binds.fail = true
   await expect(runJudgePanelCalibration(f.input)).rejects.toThrow('Judge calibration probe failed; inspect the local audit and retry.')
-  expect(f.calls()).toBe(0); expect(f.disposes).toEqual([1, 0])
+  expect(f.calls()).toBe(0)
 })
 it('still probes a guarded ambiguous target with independently unresolved truth', async () => {
   const f = fixture([{}], ['equivalent', 'equivalent'], true)
@@ -188,7 +183,7 @@ it('refuses credential-bearing canonical member identity without inventing or bi
   const f = fixture()
   f.input.members[0]!.profile.model = 'claude-sonnet-4/fixture-private-api-key'
   await expect(runJudgePanelCalibration(f.input)).rejects.toThrow('Judge calibration probe failed; inspect the local audit and retry.')
-  expect(binds.count).toBe(0); expect(f.calls()).toBe(0); expect(f.disposes).toEqual([0])
+  expect(binds.count).toBe(0); expect(f.calls()).toBe(0)
 })
 it('requires an explicit composite at the direct operator boundary', async () => {
   const f = fixture(); f.input.members.pop()

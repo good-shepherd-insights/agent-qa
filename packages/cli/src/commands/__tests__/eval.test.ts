@@ -461,6 +461,7 @@ describe('runGateVerb — fresh and offline release verdicts', () => {
       committedRoot,
       agentQaRoot: f.agentQaRoot,
       identity,
+      mask: (text: string) => text,
       planner: {
         profile: stubProfile(),
         resolveAuth: async () => noneAuth,
@@ -1516,10 +1517,10 @@ describe('runReplayVerb — offline sweep through the sanctioned composition (D-
     expect(result.replayed).toBe(2)
     expect(stub.captured.length).toBeGreaterThan(0)
     // Captured POST the pinned-last mask middleware: the secrets-file value reaches the provider
-    // boundary as a <SECRET_n> placeholder, never as raw bytes — end-to-end proof the CLI passes
-    // the 372-01 seam into runCassetteReplay.
+    // boundary as its named marker, never as raw bytes — end-to-end proof the CLI passes the
+    // session's mask into runCassetteReplay.
     const boundaryPayload = JSON.stringify(stub.captured)
-    expect(boundaryPayload).toContain('<SECRET_')
+    expect(boundaryPayload).toContain('[secret:EVAL_FIXTURE_TOKEN]')
     expect(boundaryPayload).not.toContain(FAKE_REPLAY_SECRET)
   })
 
@@ -1710,6 +1711,7 @@ async function setScoreJudgeBlock(
     cassette: bundle.cassette, artifacts: bundle.artifacts, ...planner,
     modelOverrides: replayStub(planner.profile.model).overrides,
     clock: { now: () => 100 }, replayOutputBaseDir: join(root, 'eval', 'report-fixture-audit'),
+    mask: (text: string) => text,
     recordStore: new FsReplayRecordStore({ root }), scoreStore: new FsScoreStore({ root }),
     ...(judge === undefined ? {} : { judge: {
       profile: { ...planner.profile, model: judge.judgeModelId }, auth: planner.auth,

@@ -11,7 +11,6 @@ import {
   renderGateLines,
 } from '@vostride/agent-qa-eval'
 import { resolveCapabilities } from '@vostride/agent-qa-model'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { slugBranch } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -47,7 +46,7 @@ async function fixture(configure?: Parameters<typeof writeCommittedFloorFixture>
     profile,
     auth: noneAuth,
     modelOverrides: { languageModels: stub.languageModels },
-    maskingContextFactory: createMaskingContext,
+    mask: (text: string) => text,
     seed: 11,
     cassettesRoot: corpus.cassettesRoot,
     replayOutputBaseDir: join(root, 'audit'),

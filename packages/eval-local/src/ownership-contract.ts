@@ -10,9 +10,9 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   'cassette bundle writes under the runtime workdir staging root',
   // Phase 368 D-04/D-05/D-06: the ONE sanctioned replay-composition helper (runCassetteReplay)
   // binding createModel egress + a temp-0 LLMPlanner (368-01 nonActionTools seam) + runSafetyScope
-  // (empty-seeded MaskingContext + replay-scoped JsonlAuditSink) + optional replay-record
-  // persistence. This deliberately makes eval-local the SECOND package (after cli) importing both
-  // model and runner; Phase 372's CLI wraps exactly this helper.
+  // (replay-scoped JsonlAuditSink) with the caller's declared mask on every request + optional
+  // replay-record persistence. This deliberately makes eval-local the SECOND package (after cli)
+  // importing both model and runner; Phase 372's CLI wraps exactly this helper.
   'the single sanctioned replay-composition helper wiring createModel + LLMPlanner + runSafetyScope',
   // Phase 369 D-13: per-cassette score persistence — score.json written BESIDE its replay.json in
   // the same slugged cassette dir, FILE-scoped overwrite (never a dir recreate: Pitfall 5) so the

@@ -332,7 +332,8 @@ it('persists an actual zero-tolerance harmed receipt carrying the weight produce
   const result = await runReplayGate({ injection: gate.injection, committedRoot: gate.committedRoot, agentQaRoot: gate.agentQaRoot,
     identity: gate.identity, planner: { profile: stubProfile(), modelOverrides: { languageModels: stub.languageModels }, resolveAuth: async () => noneAuth },
     judgeOverrideConfigured: false, k: 3, kSource: 'default', maxScreens: 64,
-    baselineSeed: { floorSeeds: [11] }, producedBy: { opId: 'eval.replay-gate' }, clock: incrementingClock() })
+    baselineSeed: { floorSeeds: [11] }, producedBy: { opId: 'eval.replay-gate' }, clock: incrementingClock(),
+    mask: (text: string) => text })
   expect(result.kind).toBe('receipt')
   if (result.kind !== 'receipt') throw new Error('gate receipt refused')
   expect(result.receipt.verdict).toBe('fail')

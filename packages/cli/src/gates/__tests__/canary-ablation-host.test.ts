@@ -70,7 +70,7 @@ describe('418 lazy canary host bridge', () => {
       target: { runId: 'run', testId: 'test', stepIndex: 0 }, attributedObservationId: 'observation' }
     await composition.runCanaryAblation(session, input)
     expect(ablate).toHaveBeenLastCalledWith(expect.objectContaining({ k: 5, baseSeed: 29,
-      replay: expect.objectContaining({ maskingContextFactory: expect.any(Function) }) }))
+      replay: expect.objectContaining({ mask: expect.any(Function) }) }))
     await composition.runCanaryAblation(session, { ...input, k: 3, seed: 7 })
     expect(ablate).toHaveBeenLastCalledWith(expect.objectContaining({ k: 3, baseSeed: 7 }))
     await composition.runCanaryAblation({ ...session, evalConfig: {} }, input)

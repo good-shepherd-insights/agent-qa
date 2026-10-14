@@ -14,7 +14,6 @@ import * as local from '../index.js'
 import * as calibrationSource from '../judge-calibration-source.js'
 import { writeCommittedFloorFixture, incrementingClock, noneAuth } from './fixtures/floor-fixtures.js'
 import { capturingStub, actionGenerateResult, familyStubProfile, judgeGenerateResult } from './fixtures/replay-fixtures.js'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 
 const roots: string[] = []
 afterEach(() => { vi.restoreAllMocks(); for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true }) })
@@ -52,7 +51,7 @@ it.each(['absent', 'gap'])('fresh floor reports disclose %s and measured recover
   const judge = createPanelIdentity(members.map(member => member.profile.model))
   const input = { ...corpus, agentQaRoot: join(root, '.agent-qa'), profile: familyStubProfile('gpt-replay-stub'),
     auth: noneAuth, modelOverrides: { languageModels: planner.languageModels }, judge: { members },
-    maskingContextFactory: createMaskingContext,
+    mask: (text: string) => text,
     profileKeyInputs: { plannerModelId: 'gpt-replay-stub', matcherVersion: 1,
       judgeModelId: judge.judgeModelId, judgeVersion: judge.judgeVersion },
     seeds: [11, 29], repeats: 3, bootstrapSeed: 97, commit: false,

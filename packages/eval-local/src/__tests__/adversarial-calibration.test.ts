@@ -120,7 +120,7 @@ it('keeps a probe-author-capable singleton from bypassing the panel capability r
   expect(read.adversarialMembers?.some(member => member.generator?.authoringModel?.id === memberModelIds[0]))
     .toBe(true)
   await expect(runJudgePanelCalibration({ ...f.input, replayProfile: { provider: 'openai-compatible',
-    model: 'gpt-5', auth: { mode: 'none' } }, members: [singleton] })).rejects.toThrow()
+    model: 'gpt-5', auth: { mode: 'none' } }, members: [singleton], mask: text => text })).rejects.toThrow()
 
   const gap = await runJudgeCalibration({ kind: 'capability-gap', reason: 'single-family-host',
     minN: core.resolveJudgeCalibrationMinimum() })

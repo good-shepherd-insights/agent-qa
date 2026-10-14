@@ -14,7 +14,6 @@ import {
   projectBaselinePointer,
 } from '@vostride/agent-qa-eval'
 import { resolveCapabilities } from '@vostride/agent-qa-model'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { computeBriefDigest, sha256hex } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -56,7 +55,7 @@ async function fixture() {
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
-      maskingContextFactory: createMaskingContext,
+      mask: (text: string) => text,
       seed: 11,
       replayOutputBaseDir: join(root, 'audit'),
       source: 'committed',
@@ -84,7 +83,7 @@ async function measurementFixture(configure?: Parameters<typeof writeCommittedFl
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
-      maskingContextFactory: createMaskingContext,
+      mask: (text: string) => text,
       profileKeyInputs: { plannerModelId: stubProfile().model, matcherVersion: buildEvalReport([]).matcherVersion },
       seeds: [11, 29],
       repeats: 3,
@@ -148,7 +147,7 @@ describe('runNoiseFloorMeasurement', () => {
       .mockImplementation(() => { throw new Error('model creation forbidden') })
     const recovered = await evalLocal.runNoiseFloorMeasurement({ ...input, auth: undefined,
       fromMeasured, commit: true,
-      maskingContextFactory: () => { throw new Error('replay safety setup forbidden during recovery') },
+      mask: () => { throw new Error('replay masking forbidden during recovery') },
     })
     expect(recovered.artefact).toEqual({ ...fresh.artefact,
       runs: fresh.artefact.runs.map((run, index) => ({ ...run, reportDigest: historicalReportDigests[index] })),

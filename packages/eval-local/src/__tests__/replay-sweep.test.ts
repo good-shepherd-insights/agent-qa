@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { extractRunCassettes } from '@vostride/agent-qa-eval'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { asRunId, slugBranch } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -87,7 +86,7 @@ describe('sweepCassetteReplays', () => {
     const replaysRoot = join(root, 'repeat-a', 'replays')
     const stub = capturingStub(() => actionGenerateResult())
     const progress: string[] = []
-    const maskingContextFactory = vi.fn(() => createMaskingContext())
+    const mask = vi.fn((text: string) => text)
 
     const result = await evalLocal.sweepCassetteReplays({
       selected,
@@ -96,7 +95,7 @@ describe('sweepCassetteReplays', () => {
       modelOverrides: { languageModels: stub.languageModels },
       k: 1,
       seed: 17,
-      maskingContextFactory,
+      mask,
       replayOutputBaseDir: join(root, 'audit'),
       ...stores(root, replaysRoot),
       replaysRoot,
@@ -113,7 +112,7 @@ describe('sweepCassetteReplays', () => {
     expect(progress).toEqual(ids)
     expect(stub.captured).toHaveLength(2)
     expect(stub.captured.every(call => call.seed === 17)).toBe(true)
-    expect(maskingContextFactory).toHaveBeenCalledTimes(4)
+    expect(mask).toHaveBeenCalled()
     for (const dir of result.replayedDirs) {
       expect(evalLocal.loadReplayRecord(dir).kind).toBe('loaded')
       expect(evalLocal.loadScoreRecord(dir).kind).toBe('loaded')
@@ -142,7 +141,7 @@ describe('sweepCassetteReplays', () => {
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
-      maskingContextFactory: createMaskingContext,
+      mask: (text: string) => text,
       replayOutputBaseDir: join(root, 'audit'),
       ...persistence,
       replaysRoot,
@@ -172,7 +171,7 @@ describe('sweepCassetteReplays', () => {
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
-      maskingContextFactory: createMaskingContext,
+      mask: (text: string) => text,
     }
     const firstRoot = join(root, 'repeat-a', 'replays')
     const first = await evalLocal.sweepCassetteReplays({

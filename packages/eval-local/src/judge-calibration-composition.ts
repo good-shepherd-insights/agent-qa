@@ -8,7 +8,7 @@ import {
   type JudgeCalibrationMinimum, type JudgeTargetedCalibrationDisclosure, type UsageAggregator,
 } from '@vostride/agent-qa-eval'
 import type { ModelProfile } from '@vostride/agent-qa-model'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
+import type { MaskFn } from '@vostride/agent-qa-schema'
 import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { bindJudgePanel, type JudgeBindingInput } from './judge-binding.js'
 import { loadJudgeCalibrationEvidence } from './judge-calibration-evidence-source.js'
@@ -64,29 +64,24 @@ export interface RunJudgePanelCalibrationInput {
   agentQaRoot: string
   profile: BaselineProfileKeyInput
   replayProfile: ModelProfile
-  members: readonly JudgeBindingInput[]
+  members: readonly Omit<JudgeBindingInput, 'mask'>[]
   minN?: JudgeCalibrationMinimum
   replayRunRoots?: readonly string[]
-  maskingContextFactory?: () => ReturnType<typeof createMaskingContext>
+  mask: MaskFn
 }
 
 /** Operator-only forced probe. Credentials and source action content never enter its DTO. */
 export async function runJudgePanelCalibration(input: RunJudgePanelCalibrationInput) {
-  const disclosure = (input.maskingContextFactory ?? createMaskingContext)()
   try {
-    for (const member of input.members) {
-      if (member.auth.kind === 'api-key') disclosure.register(member.auth.apiKey)
-      if (member.auth.kind === 'bearer-token') disclosure.register(member.auth.token)
-    }
     if (input.members.length < 2) throw new Error('Explicit panel required')
-    // Never manufacture a replacement canonical identity from a credential-bearing ID.
+    // Never manufacture a replacement canonical identity from a secret-bearing ID.
     if ([input.replayProfile.model, ...input.members.map(member => member.profile.model)]
-      .some(id => disclosure.mask(id) !== id)) throw new Error('Unsafe model identity')
+      .some(id => input.mask(id) !== id)) throw new Error('Unsafe model identity')
     const preview = await executeJudgePanelCalibration(input)
-    return JSON.parse(disclosure.mask(JSON.stringify(preview))) as typeof preview
+    return JSON.parse(input.mask(JSON.stringify(preview))) as typeof preview
   } catch {
     throw new Error('Judge calibration probe failed; inspect the local audit and retry.')
-  } finally { disclosure.dispose() }
+  }
 }
 
 async function executeJudgePanelCalibration(input: RunJudgePanelCalibrationInput) {
@@ -117,23 +112,16 @@ async function executeJudgePanelCalibration(input: RunJudgePanelCalibrationInput
     }
     const probe = prepareJudgeCalibrationProbe(row)
     if (!probe) { observations.push({ ...common, kind: 'skipped', reason: 'missing-evidence' }); continue }
-    const masker = (input.maskingContextFactory ?? createMaskingContext)()
     try {
-      // Explicit member credentials join the fresh session seed before any egress.
-      for (const member of input.members) {
-        if (member.auth.kind === 'api-key') masker.register(member.auth.apiKey)
-        if (member.auth.kind === 'bearer-token') masker.register(member.auth.token)
-      }
       const usage: UsageAggregator = { calls: 0 }
-      const outcome = await runSafetyScope({ maskingContext: masker,
-        auditSink: new JsonlAuditSink(auditDirectory) }, () => {
-        const port = bindJudgePanel(input.members)
+      const outcome = await runSafetyScope({ auditSink: new JsonlAuditSink(auditDirectory) }, () => {
+        const port = bindJudgePanel(input.members.map(member => ({ ...member, mask: input.mask })))
         return adjudicatePanelComparison(port, probe.evidence, usage)
       })
       observations.push({ ...common, kind: 'attempted', probe, outcome, usage })
     } catch {
       throw new Error('Judge calibration probe failed; inspect the local audit and retry.')
-    } finally { masker.dispose() }
+    }
   }
   // 422 D-12: RAW disclosure beside the measurement. The bait population is the committed
   // adversarial arm — never this run's gold, which the reader has already kept disjoint from it.

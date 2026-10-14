@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { assignSplit, computeCorpusDigest } from '@vostride/agent-qa-eval'
 import { asRunId, computeBriefDigest, distilledScreenStateDigest, slugBranch, type CompletedRunHandoff } from '@vostride/agent-qa-schema'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { ablateCanaryStep, readCommittedCorpusDigest, GATE2_AUDIT_SUBDIR } from '../index.js'
 import { readCommittedCorpus } from '../committed-corpus-source.js'
 import { resolveActiveRecordRemoval } from '../replay-gate-composition.js'
@@ -204,7 +203,7 @@ function inputFor(f: ReturnType<typeof fixture>, behavior: 'flipped' | 'held' | 
     attributedObservationId: '../observed/canary', k: 3, baseSeed: 11,
     replay: {
       profile: stubProfile(), auth: noneAuth, modelOverrides: { languageModels: stub.languageModels },
-      maskingContextFactory: createMaskingContext,
+      mask: (text: string) => text,
       modelCallObservation: { onProviderCall: () => { observedCalls++ } },
     },
   }

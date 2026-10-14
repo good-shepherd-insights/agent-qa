@@ -70,6 +70,7 @@ function session(evalConfig: composition.EvalCliConfig = {}): composition.EvalSe
     configDir: '/fixture',
     executionContext: {} as composition.EvalSession['executionContext'],
     maskingContextFactory: () => buildRunMaskingContext({ env: { FIXTURE_SECRET: secret } }),
+    mask: (text: string) => text,
   }
 }
 

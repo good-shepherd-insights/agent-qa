@@ -12,10 +12,11 @@ const { makeLocalV2Handoff, LOCAL_FIXTURE_BLOB_BYTES } = await import(new URL('.
 const { capturingStub, judgeGenerateResult, actionGenerateResult } = await import(new URL('../../../../eval-local/src/__tests__/fixtures/replay-fixtures.js', import.meta.url).href)
 import { files as filesUnder } from '../../gates/__tests__/feedback-fixture.js'
 import { runJudgeCalibrateVerb, resolveEvalSession, resolveReplayProfileDeclaration } from '../../eval-session-composition.js'
-import { getActiveMaskingContext, getActiveAuditSink } from '@vostride/agent-qa-safety'
+import { getActiveAuditSink } from '@vostride/agent-qa-safety'
 
 const boundary = vi.hoisted(() => ({ calls: 0, binds: 0, comparisons: 0, publications: 0,
-  inputs: [] as unknown[], overrides: {} as import('@vostride/agent-qa-model').ModelProviderOverrides }))
+  inputs: [] as unknown[], masks: [] as ((text: string) => string)[],
+  overrides: {} as import('@vostride/agent-qa-model').ModelProviderOverrides }))
 vi.mock('@vostride/agent-qa-eval-local', async original => {
   const actual = await original<typeof import('@vostride/agent-qa-eval-local')>()
   return { ...actual, runJudgeCalibration: (...args: Parameters<typeof actual.runJudgeCalibration>) => {
@@ -28,6 +29,7 @@ vi.mock('@vostride/agent-qa-model', async original => {
   const actual = await original<typeof import('@vostride/agent-qa-model')>()
   return { ...actual, createModel: (...args: Parameters<typeof actual.createModel>) => {
     boundary.binds++
+    boundary.masks.push(args[2])
     return actual.createModel(args[0], args[1], args[2], boundary.overrides, args[4])
   } }
 })
@@ -44,7 +46,7 @@ const digest = (value: unknown) => sha256hex(core.canonicalJson(value))
 const bytes = (root: string) => filesUnder(root).map(path => [path, readFileSync(path).toString('hex')])
 beforeEach(() => {
   boundary.calls = boundary.binds = boundary.comparisons = 0
-  boundary.publications = 0; boundary.inputs = []
+  boundary.publications = 0; boundary.inputs = []; boundary.masks = []
   vi.spyOn(console, 'log').mockImplementation(() => {})
   vi.spyOn(console, 'error').mockImplementation(() => {})
   vi.spyOn(globalThis, 'fetch').mockImplementation(() => { throw new Error('network forbidden') })
@@ -59,7 +61,7 @@ afterEach(() => {
 function fixture(models: core.CassetteModelReceipt[] = [{}], members = ['claude-sonnet-4', 'gemini-2.5'], tie = false) {
   const project = mkdtempSync(join(tmpdir(), 'judge-operator-')); roots.push(project)
   const configPath = join(project, 'agent-qa.config.yaml')
-  writeFileSync(join(project, 'fixture.secrets'), '')
+  writeFileSync(join(project, 'fixture.secrets'), `JUDGE_KEY=${secret}\n`)
   writeFileSync(configPath, JSON.stringify({ workspace: { testMatch: ['tests/*.yaml'], suiteMatch: ['suites/*.yaml'], hooksFile: 'hooks.yaml', envFile: '.env', secretsFile: 'fixture.secrets' },
     registry: { llms: ['gpt-5', ...members].map((model, i) => ({ name: `model${i}`, provider: 'openai-compatible', model, baseURL: 'http://127.0.0.1:1/v1', vision: false })) },
     use: { llm: 'model0', mobile: { appState: 'preserve' } }, eval: { judges: members.map((_, i) => `model${i + 1}`) } }))
@@ -69,8 +71,7 @@ function fixture(models: core.CassetteModelReceipt[] = [{}], members = ['claude-
     row.saveReport()
   }
   const stubs = members.map(model => capturingStub(() => {
-    expect(getActiveMaskingContext()).toBeDefined()
-    expect(getActiveMaskingContext()!.mask(secret)).not.toContain(secret)
+    expect(boundary.masks.at(-1)!(secret)).toBe('[secret:JUDGE_KEY]')
     expect(getActiveAuditSink()).toBeDefined()
     boundary.calls++; return judgeGenerateResult('equivalent', 'high')
   }, model))
@@ -108,7 +109,7 @@ async function produceSavedRun(f: ReturnType<typeof fixture>, floor = false) {
   const profileKey = core.composeBaselineProfileKey({ ...profileInputs, fingerprint })
   const common = { committedRoot: f.committedRoot, cassettesRoot: join(f.committedRoot, 'cassettes'),
     agentQaRoot: root, profile, auth: { kind: 'none' as const }, clock: () => 0,
-    maskingContextFactory: session.maskingContextFactory,
+    mask: session.mask,
     judge: { members: f.members.map(model => ({ profile: { ...profile, model }, auth: { kind: 'api-key' as const, apiKey: secret } })) } }
   const produced = floor ? await local.runNoiseFloorMeasurement({ ...common, profileKeyInputs: profileInputs,
     seeds: [11, 29], repeats: 3, bootstrapSeed: 7, commit: false, reportOutputBaseDir: join(root, 'floor-audit') })
@@ -317,7 +318,7 @@ it.each([undefined, [], ['model1']].flatMap(judges => [false, true].flatMap(repl
   const config = JSON.parse(readFileSync(f.configPath, 'utf8')); config.eval = judges === undefined ? {} : { judges }
   writeFileSync(f.configPath, JSON.stringify(config))
   boundary.calls = boundary.binds = boundary.comparisons = 0
-  boundary.publications = 0; boundary.inputs = []
+  boundary.publications = 0; boundary.inputs = []; boundary.masks = []
   vi.mocked(llm.resolveModelAuth).mockClear()
   const flags = ['--judge-panel', '--commit', ...(replace ? ['--replace'] : []), ...(json ? ['--json'] : [])]
   for (const existing of [true, false]) {

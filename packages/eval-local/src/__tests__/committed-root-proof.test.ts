@@ -24,10 +24,10 @@ import {
 } from '@vostride/agent-qa-eval'
 import type { ArtifactSource, ExtractedCassette, SeedingPlan } from '@vostride/agent-qa-eval'
 import {
-  createMaskingContext,
   defaultGuardrailPolicyInput,
   loadGuardrailPolicy,
 } from '@vostride/agent-qa-safety'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { asRef } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, Decision, SubActionEvidence } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -352,16 +352,15 @@ describe('committed-root proofs (ROOT-02 / GUARD-FUT-04, D-13, D-15)', () => {
 
   it('raw-byte proof, masking layer (GUARD-FUT-04): a MaskingContext-registered value appears nowhere raw in the committed tree', () => {
     const REGISTERED = 'melon-proof-registered-secret-9x7q'
-    const context = createMaskingContext()
-    context.register(REGISTERED)
+    const redactor = new SecretRedactor(SecretStore.fromEnvContent(`PROOF_TOKEN=${REGISTERED}`))
 
     const rawUrl = `https://example.test/checkout?token=${REGISTERED}`
     // Positive controls: the unmasked fixture text contains the value, and the
     // mask actually rewrites it to the placeholder.
     expect(rawUrl).toContain(REGISTERED)
-    const maskedUrl = context.mask(rawUrl)
+    const maskedUrl = redactor.redactString(rawUrl)
     expect(maskedUrl).not.toContain(REGISTERED)
-    expect(maskedUrl).toContain('<SECRET_0>')
+    expect(maskedUrl).toContain('[secret:PROOF_TOKEN]')
 
     // Apply the mask at the simulated record boundary — upstream of extraction,
     // mirroring how live recording masks evidence before it is ever staged.
@@ -387,7 +386,7 @@ describe('committed-root proofs (ROOT-02 / GUARD-FUT-04, D-13, D-15)', () => {
     expect(filesContaining(root, walk.ignoredPaths, REGISTERED)).toEqual([])
 
     // The masked placeholder DID land — proof the crafted evidence flowed through.
-    expect(filesContaining(root, walk.trackedPaths, '<SECRET_0>').length).toBeGreaterThan(0)
+    expect(filesContaining(root, walk.trackedPaths, '[secret:PROOF_TOKEN]').length).toBeGreaterThan(0)
   })
 
   it('text/blob partition is total and exclusive over every committed file (D-15)', () => {

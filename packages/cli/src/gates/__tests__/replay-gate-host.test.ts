@@ -6,7 +6,7 @@ import { Gate1ReceiptNotPersistedError } from '@vostride/agent-qa-agent'
 import type { KnowledgeReaderPort } from '@vostride/agent-qa-agent'
 import { createKnowledgeReader, LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import { renderGate1Line } from '@vostride/agent-qa-eval'
-import { CommittedEgressBlockedError, createMaskingContext } from '@vostride/agent-qa-safety'
+import { CommittedEgressBlockedError } from '@vostride/agent-qa-safety'
 import {
   asEvidenceToken,
   asRecordId,
@@ -161,7 +161,7 @@ describe('417 DATA replay gate bridge', () => {
         injection: expect.objectContaining({ candidateId }),
         producedBy: { opId: 'eval.replay-gate' },
         committedRoot: join(root, 'agent-qa-eval'),
-        maskingContextFactory: deps.session.maskingContextFactory,
+        mask: deps.session.mask,
       }),
     )
     expect(await host.port.runReplayGate(asRecordId(candidateId))).toEqual(
@@ -417,7 +417,7 @@ describe('417 DATA replay gate bridge', () => {
       await local.replayCorpusOnce({ selected: f.selected, cassettesRoot: f.cassettesRoot, agentQaRoot: deps.agentQaRoot,
         runRoot, profile: familyStubProfile('gpt-fixture'), auth: noneAuth, modelOverrides: plannerOverrides,
         judge: { members: ids.map(id => ({ profile: familyStubProfile(id), auth: noneAuth, modelOverrides: judgeOverrides })) },
-        seed: 11, k: 1, maskingContextFactory: createMaskingContext, replayOutputBaseDir: runRoot, source: 'committed', corpusDigest: f.corpusDigest })
+        seed: 11, k: 1, mask: (text: string) => text, replayOutputBaseDir: runRoot, source: 'committed', corpusDigest: f.corpusDigest })
       warmed = true
       for (const judge of judges) judge.captured.length = 0
       auth.mockClear()
@@ -665,9 +665,7 @@ describe('417 DATA replay gate bridge', () => {
           await input.composition.planner.resolveAuth()
           expect(auth).toHaveBeenCalledTimes(1)
           expect(auth).toHaveBeenNthCalledWith(1, 'planner', expect.objectContaining({ model: 'gpt-stub' }))
-          const masker = input.session.maskingContextFactory()
-          expect(masker.mask(secret)).not.toContain(secret)
-          masker.dispose()
+          expect(input.session.mask(secret)).toBe('[secret:FIXTURE_SECRET]')
           expect(auth).toHaveBeenCalledTimes(1)
           await input.composition.judge!.resolveAuth()
           // Identity preparation is declaration-only: each model resolves credentials

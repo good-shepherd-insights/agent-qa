@@ -9,7 +9,7 @@ import { createModel } from '@vostride/agent-qa-model'
 import type { ModelProfile, ResolvedModelAuth } from '@vostride/agent-qa-model'
 import { asRecordId, asRef, sha256hex } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { FsCassetteStore } from '../cassette-store.js'
@@ -30,29 +30,6 @@ import {
   judgeGenerateResult,
   throwingStub as keyedThrowingStub,
 } from './fixtures/replay-fixtures.js'
-
-// Instrument @vostride/agent-qa-safety so the D-06 masking context's dispose() is observable
-// without changing production code. The wrapper returns the REAL empty-seeded context (masking +
-// guardrail behaviour intact) and only counts dispose() calls. Every named export is preserved so
-// the model egress chain (registerFirstPartySafetyHooks) and safety-local's resolver install are
-// unaffected.
-const safetyHooks = vi.hoisted(() => ({ disposeCalls: 0 }))
-vi.mock('@vostride/agent-qa-safety', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@vostride/agent-qa-safety')>()
-  return {
-    ...actual,
-    createMaskingContext: (options?: { minRegisteredLength?: number }) => {
-      const context = actual.createMaskingContext(options)
-      const dispose = context.dispose.bind(context)
-      return Object.assign(context, {
-        dispose: () => {
-          safetyHooks.disposeCalls++
-          dispose()
-        },
-      })
-    },
-  }
-})
 
 type StubLanguageModel = ReturnType<typeof createModel>
 type CapturedCallOptions = Parameters<StubLanguageModel['doGenerate']>[0]
@@ -172,7 +149,6 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
   }
 
   afterEach(async () => {
-    safetyHooks.disposeCalls = 0
     await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
   })
 
@@ -182,6 +158,7 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
     const replayDir = await tempRoot('replay-comp-temp0-')
 
     const outcome = await runCassetteReplay({
+      mask: (text: string) => text,
       cassette,
       artifacts,
       profile: stubProfile(),
@@ -245,6 +222,7 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
     const stub = capturingStub(() => actionGenerateResult())
     const replayDir = await tempRoot('replay-comp-proof-')
     const outcome = await runCassetteReplay({
+      mask: (text: string) => text,
       cassette,
       artifacts,
       profile: stubProfile(),
@@ -281,6 +259,7 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
     const replayDir = await tempRoot('replay-comp-seed-warning-')
 
     const outcome = await runCassetteReplay({
+      mask: (text: string) => text,
       cassette,
       artifacts,
       profile: stubProfile(),
@@ -315,6 +294,7 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
     const replayDir = await tempRoot('replay-comp-ids-')
 
     const outcome = (await runCassetteReplay({
+      mask: (text: string) => text,
       cassette,
       artifacts,
       profile: stubProfile(),
@@ -336,6 +316,7 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
     const replayDir = await tempRoot('replay-comp-ksample-')
 
     const outcome = (await runCassetteReplay({
+      mask: (text: string) => text,
       cassette,
       artifacts,
       profile: stubProfile(),
@@ -357,29 +338,13 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
     expect(outcome.agreement.k).toBe(3)
   })
 
-  it('disposes the replay\'s masking context once', async () => {
-    const { cassette, artifacts } = extractLeaf(makeLocalV2Handoff())
-    const stub = capturingStub(() => actionGenerateResult())
-    const replayDir = await tempRoot('replay-comp-audit-')
-
-    await runCassetteReplay({
-      cassette,
-      artifacts,
-      profile: stubProfile(),
-      auth: noneAuth,
-      modelOverrides: { languageModels: stub.languageModels },
-      replayOutputBaseDir: replayDir,
-    })
-
-    expect(safetyHooks.disposeCalls).toBe(1)
-  })
-
   it('persists the outcome only when a record store is supplied (D-12)', async () => {
     const { cassette, artifacts } = extractLeaf(makeLocalV2Handoff())
 
     const withStoreRoot = await tempRoot('replay-comp-store-')
     const withStoreReplayDir = await tempRoot('replay-comp-store-audit-')
     const persistedOutcome = await runCassetteReplay({
+      mask: (text: string) => text,
       cassette,
       artifacts,
       profile: stubProfile(),
@@ -398,6 +363,7 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
     const noStoreRoot = await tempRoot('replay-comp-nostore-')
     const noStoreReplayDir = await tempRoot('replay-comp-nostore-audit-')
     await runCassetteReplay({
+      mask: (text: string) => text,
       cassette,
       artifacts,
       profile: stubProfile(),
@@ -435,7 +401,6 @@ describe('runCassetteReplay — production round-trip spine (RPLY-02, D-05/D-12)
   }
 
   afterEach(async () => {
-    safetyHooks.disposeCalls = 0
     await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
   })
 
@@ -450,6 +415,7 @@ describe('runCassetteReplay — production round-trip spine (RPLY-02, D-05/D-12)
 
     const stub = capturingStub(() => actionGenerateResult())
     const outcome = await runCassetteReplay({
+      mask: (text: string) => text,
       cassette: load.cassette,
       artifacts: load.artifacts,
       profile: stubProfile(),
@@ -505,6 +471,7 @@ describe('runCassetteReplay — production round-trip spine (RPLY-02, D-05/D-12)
     }
 
     const outcome = await runCassetteReplay({
+      mask: (text: string) => text,
       cassette: load.cassette,
       artifacts: load.artifacts,
       profile: stubProfile(),
@@ -548,6 +515,7 @@ describe('runCassetteReplay — production round-trip spine (RPLY-02, D-05/D-12)
     )
 
     const outcome = await runCassetteReplay({
+      mask: (text: string) => text,
       cassette: load.cassette,
       artifacts: load.artifacts,
       profile: stubProfile(),
@@ -581,7 +549,6 @@ describe('runCassetteReplay — optional score persistence (369-08, D-13/OQ-2)',
   }
 
   afterEach(async () => {
-    safetyHooks.disposeCalls = 0
     await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
   })
 
@@ -591,6 +558,7 @@ describe('runCassetteReplay — optional score persistence (369-08, D-13/OQ-2)',
     const replayDir = await tempRoot('replay-comp-scored-audit-')
 
     const outcome = await runCassetteReplay({
+      mask: (text: string) => text,
       cassette,
       artifacts,
       profile: stubProfile(),
@@ -633,6 +601,7 @@ describe('runCassetteReplay — optional score persistence (369-08, D-13/OQ-2)',
     if (load.kind !== 'loaded') throw new Error('expected a loaded bundle')
 
     const outcome = await runCassetteReplay({
+      mask: (text: string) => text,
       cassette: load.cassette,
       artifacts: load.artifacts,
       profile: stubProfile(),
@@ -737,7 +706,6 @@ describe('runCassetteReplay — tier-4 judge leg (370-07, JUDGE-01/03/04)', () =
   }
 
   afterEach(async () => {
-    safetyHooks.disposeCalls = 0
     await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
   })
 
@@ -761,6 +729,7 @@ describe('runCassetteReplay — tier-4 judge leg (370-07, JUDGE-01/03/04)', () =
     )
 
     const outcome = await runCassetteReplay({
+      mask: (text: string) => text,
       cassette,
       artifacts,
       profile: familyStubProfile(REPLAY_MODEL_ID),
@@ -940,13 +909,10 @@ describe('runCassetteReplay — tier-4 judge leg (370-07, JUDGE-01/03/04)', () =
   })
 })
 
-// ─── Task 1 (372-01): the D-06 maskingContextFactory seam (G1) ───
-
-// A registered fake secret embedded in the recorded step text — long enough for the default
-// ≥4-char register guard, shaped to trip NO guardrail detector (no Bearer prefix, no email).
+// A declared fake secret embedded in the recorded step text.
 const FAKE_REPLAY_SECRET = 'raw-fake-replay-secret-9001'
 
-describe('runCassetteReplay — D-06 maskingContextFactory seam (372-01, G1/BASE-01)', () => {
+describe('runCassetteReplay — D-06 declared mask (372-01, G1/BASE-01)', () => {
   const tempRoots: string[] = []
 
   async function tempRoot(prefix: string): Promise<string> {
@@ -956,7 +922,6 @@ describe('runCassetteReplay — D-06 maskingContextFactory seam (372-01, G1/BASE
   }
 
   afterEach(async () => {
-    safetyHooks.disposeCalls = 0
     await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
   })
 
@@ -967,10 +932,11 @@ describe('runCassetteReplay — D-06 maskingContextFactory seam (372-01, G1/BASE
     return handoff
   }
 
-  it('masks a factory-registered secret to a placeholder in the replay egress (D-06)', async () => {
+  it('masks a declared secret to its named marker in the replay egress (D-06)', async () => {
     const { cassette, artifacts } = extractLeaf(secretHandoff())
     const stub = capturingStub(() => actionGenerateResult())
     const replayDir = await tempRoot('replay-mask-seeded-')
+    const redactor = new SecretRedactor(SecretStore.fromEnvContent(`REPLAY_TOKEN=${FAKE_REPLAY_SECRET}`))
 
     await runCassetteReplay({
       cassette,
@@ -979,64 +945,49 @@ describe('runCassetteReplay — D-06 maskingContextFactory seam (372-01, G1/BASE
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
       replayOutputBaseDir: replayDir,
-      maskingContextFactory: () => {
-        const ctx = createMaskingContext()
-        ctx.register(FAKE_REPLAY_SECRET)
-        return ctx
-      },
+      mask: (text) => redactor.redactString(text),
     })
 
-    // Captured POST the pinned-last mask middleware: the registered secret reaches the provider
-    // boundary as a <SECRET_n> placeholder, never as raw bytes.
+    // Captured POST the pinned-last mask middleware: the declared secret reaches the provider
+    // boundary as its named marker, never as raw bytes.
     expect(stub.captured).toHaveLength(1)
     const boundaryPayload = JSON.stringify(stub.captured[0]!)
-    expect(boundaryPayload).toContain('<SECRET_')
+    expect(boundaryPayload).toContain('[secret:REPLAY_TOKEN]')
     expect(boundaryPayload).not.toContain(FAKE_REPLAY_SECRET)
   })
+})
 
-  it('invokes the factory once per internal scope — replay AND judge adjudication — and disposes each context (Pitfall 1)', async () => {
-    const { cassette, artifacts } = extractLeaf(makeLocalV2Handoff())
-    const stub = capturingStub(() => actionGenerateResult())
-    const storeRoot = await tempRoot('replay-mask-scopes-store-')
-    const replayDir = await tempRoot('replay-mask-scopes-audit-')
+describe('C441-EGRESS', () => {
+  const tempRoots: string[] = []
+  const declared = new SecretRedactor(SecretStore.fromEnvContent('PW_441=Hunter-42-zz'))
+  const mask = (text: string) => declared.redactString(text)
 
-    let invocations = 0
-    const disposed: boolean[] = []
-    const countingFactory = () => {
-      const index = invocations++
-      disposed.push(false)
-      const ctx = createMaskingContext()
-      const dispose = ctx.dispose.bind(ctx)
-      return Object.assign(ctx, {
-        dispose: () => {
-          disposed[index] = true
-          dispose()
-        },
-      })
-    }
+  async function tempRoot(prefix: string): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), prefix))
+    tempRoots.push(root)
+    return root
+  }
 
-    const outcome = await runCassetteReplay({
-      cassette,
-      artifacts,
-      profile: stubProfile(),
-      auth: noneAuth,
-      modelOverrides: { languageModels: stub.languageModels },
-      replayOutputBaseDir: replayDir,
-      scoreStore: new FsScoreStore({ root: storeRoot }),
-      maskingContextFactory: countingFactory,
-    })
-
-    if (!('granularity' in outcome)) throw new Error('expected a replay result, got a refusal')
-    // The score leg ran, so BOTH internal safety scopes constructed their context from the
-    // injected factory — a shadowed inner empty scope would show as fewer than two invocations.
-    expect(invocations).toBe(2)
-    expect(disposed).toEqual([true, true])
+  afterEach(async () => {
+    await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
   })
 
-  it('preserves the empty-seeded default for library callers passing no factory (368 posture)', async () => {
-    const { cassette, artifacts } = extractLeaf(secretHandoff())
+  function pageTextHandoff(): CompletedRunHandoff {
+    const handoff = makeLocalV2Handoff()
+    for (const step of handoff.tests[0]!.steps) {
+      for (const subAction of step.subActions) {
+        subAction.stateBefore = {
+          ...subAction.stateBefore,
+          tree: 'text Signed in as qa@example.com with password Hunter-42-zz\nbutton Continue',
+        }
+      }
+    }
+    return handoff
+  }
+
+  it('replayed planner requests mask a declared value and keep an email', async () => {
+    const { cassette, artifacts } = extractLeaf(pageTextHandoff())
     const stub = capturingStub(() => actionGenerateResult())
-    const replayDir = await tempRoot('replay-mask-default-')
 
     await runCassetteReplay({
       cassette,
@@ -1044,13 +995,15 @@ describe('runCassetteReplay — D-06 maskingContextFactory seam (372-01, G1/BASE
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
-      replayOutputBaseDir: replayDir,
+      replayOutputBaseDir: await tempRoot('c441-egress-replay-'),
+      mask,
     })
 
-    // No factory ⇒ no registration ever happened ⇒ the raw string rides the prompt untouched,
-    // byte-identical to pre-372 library-caller behavior.
     expect(stub.captured).toHaveLength(1)
-    expect(JSON.stringify(stub.captured[0]!)).toContain(FAKE_REPLAY_SECRET)
+    const recorded = JSON.stringify(stub.captured[0]!)
+    expect(recorded).toContain('[secret:PW_441]')
+    expect(recorded).toContain('qa@example.com')
+    expect(recorded).not.toContain('Hunter-42-zz')
   })
 })
 

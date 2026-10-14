@@ -185,9 +185,11 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
+  MaskFn,
   RunAnalysisArtifact,
   Verdict,
 } from '@vostride/agent-qa-schema'
+import type { SecretStore } from '@vostride/agent-qa-runner'
 import type { AgentQaConfig } from '@vostride/agent-qa-core'
 import { loadConfigFile, resolveConfig } from './config.js'
 import { listTargets, resolveTarget } from './targets.js'
@@ -322,6 +324,7 @@ export interface EvalSession {
    * masks to a placeholder on every eval egress.
    */
   maskingContextFactory: () => RunMaskingContext
+  mask: MaskFn
   executionContext: RunExecutionContext
 }
 
@@ -350,11 +353,14 @@ export async function resolveEvalSession(input: {
       config, configPath, configDir,
       evalConfig,
       maskingContextFactory: () => { throw new Error('A key-only eval session cannot create a run masker') },
+      mask: () => { throw new Error('A key-only eval session has no declared secrets to mask with') },
       executionContext: resolveRunExecutionContext(),
     }
   }
 
   const secretStore = await loadEvalSecretStore(config, configDir)
+  const { SecretRedactor } = await import('@vostride/agent-qa-runner')
+  const redactor = new SecretRedactor(secretStore)
   const authStatePayloads = await readAuthStatePayloadsBestEffort(
     resolve(configDir, config.services?.authState?.dir ?? '.agent-qa/auth-states'),
   )
@@ -366,6 +372,7 @@ export async function resolveEvalSession(input: {
     evalConfig,
     maskingContextFactory: () =>
       buildRunMaskingContext({ secretStore, env: process.env, authStatePayloads }),
+    mask: (text) => redactor.redactString(text),
     executionContext: resolveRunExecutionContext(),
   }
 }
@@ -650,10 +657,10 @@ function replayInvocationSpend(
 /**
  * The replay verb pipeline (D-01/D-02): sweep every staged cassette bundle (or the ones the
  * filters name), load each through loadCassetteBundle (typed refusals as data), and drive
- * runCassetteReplay — production planner profile, D-06 session-seeded maskingContextFactory,
+ * runCassetteReplay — production planner profile, the session's declared mask (441 D-06),
  * D-03 judge bag, D-07 batchKey-scoped audit dir, replay + score stores. After the loop the
  * judge counters are folded from the PERSISTED ScoreRecords (render from disk, never recompute,
- * D-04). Pitfall 1: runCassetteReplay opens its OWN safety scopes with the injected factory, so
+ * D-04). Pitfall 1: runCassetteReplay opens its OWN safety scopes, so
  * no outer runSafetyScope wraps the model legs here. `opts` is the TEST-ONLY captured-boundary
  * stub seam (createModel overrides passthrough) — judge/k/seed are NOT verb parameters, they
  * arrive flag-merged on `session.evalConfig` (D-03).
@@ -765,7 +772,7 @@ export async function runReplayVerb(
             judge: withJudgeOverrides(judgeResolution.judge, opts.judgeOverrides),
           }
         : {}),
-      maskingContextFactory: session.maskingContextFactory,
+      mask: session.mask,
       replayOutputBaseDir: replayBaseDir,
       recordStore,
       scoreStore,
@@ -964,7 +971,7 @@ export async function runJudgeCalibrateVerb(session: EvalSession, opts: {
   const result = await runJudgeCalibration(preflight.kind === 'eligible'
     ? { kind: 'probe', commit: opts.commit, replace: opts.replace, probe: { ...context, replayProfile,
       members: preflight.members.map(member => ({ ...member, modelOverrides: opts.judgeOverrides })),
-      maskingContextFactory: session.maskingContextFactory } }
+      mask: session.mask } }
     : { kind: 'capability-gap', reason: preflight.reason, minN: preflight.minN,
       publication: context, commit: opts.commit, replace: opts.replace })
   const masker = session.maskingContextFactory()
@@ -1139,7 +1146,7 @@ export async function runCanaryAblation(session: EvalSession, input: RunCanaryAb
     agentQaRoot: input.agentQaRoot, committedRoot, recordId: input.recordId,
     target: input.target, attributedObservationId: input.attributedObservationId, k, baseSeed,
     replay: { profile: planner.profile, auth: planner.auth,
-      modelOverrides: input.plannerOverrides, maskingContextFactory: execution.maskingContextFactory },
+      modelOverrides: input.plannerOverrides, mask: execution.mask },
   })
 }
 
@@ -1308,7 +1315,7 @@ export async function runMisdirectionCheck(
     replay: {
       profile: planner.profile,
       auth: planner.auth,
-      maskingContextFactory: execution.maskingContextFactory,
+      mask: execution.mask,
     },
   })
   if (result.kind !== 'ablated') return { kind: 'unavailable', reason: result.reason }
@@ -1867,6 +1874,7 @@ export async function runReplayGateVerb(
   // when the composition crosses its spend boundary, before resolving provider credentials.
   let execution: Promise<EvalSession> | undefined
   let maskingContextFactory = session.maskingContextFactory
+  let mask = session.mask
   const names = selectedEvalJudgeNames(session.evalConfig)
   const prepare = () =>
     (execution ??= resolveEvalSession({
@@ -1877,6 +1885,7 @@ export async function runReplayGateVerb(
         throw new EvalJudgeDeclarationError('Gate profile identity changed before execution; re-run eval replay-gate.')
       }
       maskingContextFactory = full.maskingContextFactory
+      mask = full.mask
       return full
     }))
   const declarations = await resolveEvalJudgeDeclarations(session)
@@ -1904,7 +1913,11 @@ export async function runReplayGateVerb(
     configPath: session.configPath,
     agentQaRoot: opts.agentQaRoot ?? resolve(session.configDir, '.agent-qa'),
     record: opts.dryRun !== true,
-    session: { ...session, maskingContextFactory: () => maskingContextFactory() },
+    session: {
+      ...session,
+      maskingContextFactory: () => maskingContextFactory(),
+      mask: (text) => mask(text),
+    },
     composition: {
       identity,
       baselineWarmup: { configPath: session.configPath,
@@ -2018,7 +2031,7 @@ export async function runFloorVerb(
     ...(opts.fromMeasured === undefined ? {} : { fromMeasured: resolve(session.configDir, opts.fromMeasured) }),
     modelOverrides: opts.plannerOverrides,
     judge,
-    maskingContextFactory: session.maskingContextFactory,
+    mask: session.mask,
     profileKeyInputs,
     seeds, repeats, bootstrapSeed, classifierRepeatability,
     explanation: opts.explanation,
@@ -2132,7 +2145,7 @@ export async function runGateVerb(
     mode = {
       kind: 'fresh', ...planner, modelOverrides: opts.plannerOverrides,
       judge: withJudgeOverrides(judgeResolution.judge, opts.judgeOverrides),
-      maskingContextFactory: session.maskingContextFactory,
+      mask: session.mask,
       seed, cassettesRoot: resolveCassettesRoot(session, 'committed').cassettesRoot,
       replayOutputBaseDir: evalAuditDir(session.configDir, 'gate', profileKey),
       onProgress: line => process.stderr.write(line + '\n'),
@@ -3457,7 +3470,7 @@ async function resolveNamedProfile(
 async function loadEvalSecretStore(
   config: AgentQaConfig,
   configDir: string,
-): Promise<{ forEachSecret(cb: (name: string, value: string) => void): void }> {
+): Promise<SecretStore> {
   const secretsPath = resolve(configDir, config.workspace.secretsFile)
 
   let content: string

@@ -14,13 +14,15 @@ const { actionGenerateResult } = await import(new URL('../../../eval-local/src/_
 const { writeCommittedFloorFixture } = await import(new URL('../../../eval-local/src/__tests__/fixtures/floor-fixtures.js', import.meta.url).href)
 import { files as filesUnder } from '../gates/__tests__/feedback-fixture.js'
 import { runJudgeCalibrateVerb, resolveEvalSession } from '../eval-session-composition.js'
-import { getActiveMaskingContext, getActiveAuditSink } from '@vostride/agent-qa-safety'
+import { getActiveAuditSink } from '@vostride/agent-qa-safety'
 
-const boundary = vi.hoisted(() => ({ calls: 0, binds: 0, comparisons: 0, overrides: {} as import('@vostride/agent-qa-model').ModelProviderOverrides }))
+const boundary = vi.hoisted(() => ({ calls: 0, binds: 0, comparisons: 0, masks: [] as ((text: string) => string)[],
+  overrides: {} as import('@vostride/agent-qa-model').ModelProviderOverrides }))
 vi.mock('@vostride/agent-qa-model', async original => {
   const actual = await original<typeof import('@vostride/agent-qa-model')>()
   return { ...actual, createModel: (...args: Parameters<typeof actual.createModel>) => {
     boundary.binds++
+    boundary.masks.push(args[2])
     return actual.createModel(args[0], args[1], args[2], boundary.overrides, args[4])
   } }
 })
@@ -51,7 +53,7 @@ afterEach(() => {
 function fixture(models: core.CassetteModelReceipt[] = [{}], members = ['claude-sonnet-4', 'gemini-2.5']) {
   const project = mkdtempSync(join(tmpdir(), 'judge-operator-')); roots.push(project)
   const configPath = join(project, 'agent-qa.config.yaml')
-  writeFileSync(join(project, 'fixture.secrets'), '')
+  writeFileSync(join(project, 'fixture.secrets'), `JUDGE_KEY=${secret}\n`)
   writeFileSync(configPath, JSON.stringify({ workspace: { testMatch: ['tests/*.yaml'], suiteMatch: ['suites/*.yaml'], hooksFile: 'hooks.yaml', envFile: '.env', secretsFile: 'fixture.secrets' },
     registry: { llms: ['gpt-5', ...members].map((model, i) => ({ name: `model${i}`, provider: 'openai-compatible', model, baseURL: 'http://127.0.0.1:1/v1', vision: false })) },
     use: { llm: 'model0', mobile: { appState: 'preserve' } }, eval: { judges: members.map((_, i) => `model${i + 1}`) } }))
@@ -66,8 +68,7 @@ function fixture(models: core.CassetteModelReceipt[] = [{}], members = ['claude-
     row.saveReport()
   }
   const stubs = members.map(model => capturingStub(() => {
-    expect(getActiveMaskingContext()).toBeDefined()
-    expect(getActiveMaskingContext()!.mask(secret)).not.toContain(secret)
+    expect(boundary.masks.at(-1)!(secret)).toBe('[secret:JUDGE_KEY]')
     expect(getActiveAuditSink()).toBeDefined()
     boundary.calls++; return judgeGenerateResult('equivalent', 'high')
   }, model))

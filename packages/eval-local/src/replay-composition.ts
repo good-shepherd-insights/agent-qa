@@ -15,11 +15,8 @@
 //     server through unmodified production planner code.
 //   - Model selection derives ONLY from the caller-supplied profile, never the recorded id (D-03):
 //     recorded vs replayed ids are both stamped on the result, neither is enforced.
-//   - The ENTIRE replayCassette invocation runs inside runSafetyScope with a MaskingContext that
-//     is empty-seeded by default, CLI-seeded via the 372 maskingContextFactory seam (cassette
-//     content is already placeholder-masked at extraction; the guardrail detectors still scan
-//     every replayed prompt) and a replay-scoped JsonlAuditSink under the replay output dir
-//     (D-06 / T-368-12 / T-368-13). The masking context is disposed in `finally`.
+//   - Every model request is masked with the caller's declared mask (441 D-06); the replay runs
+//     inside runSafetyScope with a replay-scoped JsonlAuditSink under the replay output dir.
 
 import {
   adjudicateCassetteScore,
@@ -63,14 +60,15 @@ import type {
   ResolvedModelAuth,
 } from '@vostride/agent-qa-model'
 import { LLMPlanner, buildTools, defaultRegistry } from '@vostride/agent-qa-runner'
-import type { DeclaredModelProfile, ScreenState } from '@vostride/agent-qa-schema'
-import { createMaskingContext, getActiveMaskingContext } from '@vostride/agent-qa-safety'
+import type { DeclaredModelProfile, MaskFn, ScreenState } from '@vostride/agent-qa-schema'
 import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
 
 import { bindJudgePanel, bindJudgePort } from './judge-binding.js'
 import type { JudgeBindingInput } from './judge-binding.js'
 import type { FsReplayRecordStore } from './replay-record-store.js'
 import type { FsScoreStore } from './score-store.js'
+
+type JudgeDeclaration = Omit<JudgeBindingInput, 'mask'>
 
 export interface RunCassetteReplayInput {
   /** A loaded, guarded cassette (leaf or procedure) — normally from loadCassetteBundle. */
@@ -116,16 +114,9 @@ export interface RunCassetteReplayInput {
    * verbatim into assessJudgeEligibility — it lifts ONLY known-same-family refusal and stamps
    * the D-16 identity block with familyOverride; unknown families stay forbidden.
    */
-  judge?: (JudgeBindingInput & { allowSameFamily?: boolean }) |
-    { members: readonly JudgeBindingInput[]; allowSameFamily?: boolean }
-  /**
-   * Phase 372 D-06 seam (G1): the CLI injects a run-parity seeded masking-context factory
-   * (secret store + sensitive env + auth-state strings) so replayed prompts and judge calls see
-   * the SAME masking the live run did. Absence is a first-class configuration — library callers
-   * keep the 368 empty-seeded default. The factory is called once per internal safety scope
-   * (replay + judge adjudication) so each scope gets a fresh disposable context.
-   */
-  maskingContextFactory?: () => ReturnType<typeof createMaskingContext>
+  judge?: (JudgeDeclaration & { allowSameFamily?: boolean }) |
+    { members: readonly JudgeDeclaration[]; allowSameFamily?: boolean }
+  mask: MaskFn
 }
 
 /** Persist the declared identity, including a refused panel; singletons retain old bytes. */
@@ -313,9 +304,7 @@ export async function runCassetteReplay(
   // The ONLY createModel call site and the ONLY egress path. The handle is shared across samples
   // (RESEARCH A3); per-sample freshness is confined to accounting + planner + exchange server.
   // D-11: computeReplayProfileFingerprintFor must read these same resolved profile values.
-  // 2026-10-14 (441-04, D-06): the registrar's masking hook, made explicit; 441-11 replaces it.
-  const mask = (text: string) => getActiveMaskingContext()?.mask(text) ?? text
-  const model = createModel(profileCopy, input.auth, mask, input.modelOverrides ?? {}, input.modelCallObservation)
+  const model = createModel(profileCopy, input.auth, input.mask, input.modelOverrides ?? {}, input.modelCallObservation)
   const replayedModel = { provider: input.profile.provider, modelId: input.profile.model }
 
   const plannerFactory: ReplayPlannerFactory = {
@@ -352,11 +341,8 @@ export async function runCassetteReplay(
   // Host wall-clock behind the eval-core ReplayClock port (eval core bans host time APIs).
   const clock: ReplayClock = input.clock ?? { now: () => performance.now() }
 
-  // D-06 safety scope: factory-or-default masking (empty-seeded pass-through by default,
-  // CLI-seeded via the 372 maskingContextFactory seam; guardrails still scan every replayed
-  // prompt) + a replay-scoped JsonlAuditSink under the replay output dir. The executionContext
-  // is omitted so the live host detector resolves it.
-  const maskingContext = (input.maskingContextFactory ?? createMaskingContext)()
+  // A replay-scoped JsonlAuditSink under the replay output dir. The executionContext is omitted
+  // so the live host detector resolves it.
   const auditSink = new JsonlAuditSink(input.replayOutputBaseDir)
 
   const engineInput: ReplayCassetteInput = {
@@ -370,14 +356,10 @@ export async function runCassetteReplay(
     escalationPredicate: input.escalationPredicate ?? neverEscalate,
   }
 
-  let outcome: ReplayCassetteOutcome
-  try {
-    // The ENTIRE engine invocation runs inside runSafetyScope so the ALS bundle propagates to
-    // every plan() → createModel egress call.
-    outcome = await runSafetyScope({ maskingContext, auditSink }, () => replayCassette(engineInput))
-  } finally {
-    maskingContext.dispose()
-  }
+  // The ENTIRE engine invocation runs inside runSafetyScope so the ALS bundle propagates to
+  // every plan() → createModel egress call.
+  const outcome: ReplayCassetteOutcome =
+    await runSafetyScope({ auditSink }, () => replayCassette(engineInput))
 
   if (input.recordStore !== undefined) {
     input.recordStore.save(outcome)
@@ -402,7 +384,7 @@ export async function runCassetteReplay(
     const recordedModelId = recordedReceiptModelId(input.cassette)
     const declaration = input.judge
     const members = declaration !== undefined && 'members' in declaration ? declaration.members : undefined
-    const single = members === undefined ? declaration as (JudgeBindingInput & { allowSameFamily?: boolean }) | undefined
+    const single = members === undefined ? declaration as (JudgeDeclaration & { allowSameFamily?: boolean }) | undefined
       : members.length === 1 ? { ...members[0], allowSameFamily: declaration?.allowSameFamily } : undefined
     const panel = members !== undefined && members.length > 1 ? members : undefined
     const eligibilityInput = {
@@ -415,12 +397,12 @@ export async function runCassetteReplay(
     const eligibility = panel === undefined
       ? assessJudgeEligibility({ ...eligibilityInput, judgeModelId: single?.profile.model })
       : assessPanelEligibility({ ...eligibilityInput, memberModelIds: panel.map(member => member.profile.model) })
-    const observedBinding = (member: JudgeBindingInput): JudgeBindingInput => {
+    const observedBinding = (member: JudgeDeclaration): JudgeBindingInput => {
       const hooks = [...new Set([
         input.modelCallObservation?.onProviderCall,
         member.modelCallObservation?.onProviderCall,
       ].filter(hook => hook !== undefined))]
-      return { ...member, modelCallObservation: { onProviderCall: () => {
+      return { ...member, mask: input.mask, modelCallObservation: { onProviderCall: () => {
         for (const hook of hooks) {
           try { hook() } catch { /* Observation cannot interrupt another counter or provider call. */ }
         }
@@ -432,29 +414,22 @@ export async function runCassetteReplay(
       : bindJudgePort(observedBinding(single))
 
     // The judge safety scope (Pitfall 1): the replay scope closed before scoring, so adjudication
-    // gets its OWN fresh masking context and a replay-scoped JsonlAuditSink — the ALS-resolved
-    // mask/guardrail/audit machinery covers every judge egress call, and its audit rows land
-    // under the replay output dir (JUDGE-03). Adjudication runs UNCONDITIONALLY so every tie is
-    // stamped with its disposition even when no port exists (D-06/D-10/D-12); the pure
-    // scoreCassetteReplay output itself stays untouched.
-    const judgeMaskingContext = (input.maskingContextFactory ?? createMaskingContext)()
+    // gets its OWN replay-scoped JsonlAuditSink and its audit rows land under the replay output
+    // dir (JUDGE-03). Adjudication runs UNCONDITIONALLY so every tie is stamped with its
+    // disposition even when no port exists (D-06/D-10/D-12); the pure scoreCassetteReplay output
+    // itself stays untouched.
     const judgeAuditSink = new JsonlAuditSink(input.replayOutputBaseDir)
-    let adjudicated
-    try {
-      adjudicated = await runSafetyScope(
-        { maskingContext: judgeMaskingContext, auditSink: judgeAuditSink },
-        () =>
-          adjudicateCassetteScore({
-            cassette: scoringCassette,
-            outcome,
-            score,
-            eligibility,
-            ...(port !== undefined ? { port } : {}),
-          }),
-      )
-    } finally {
-      judgeMaskingContext.dispose()
-    }
+    const adjudicated = await runSafetyScope(
+      { auditSink: judgeAuditSink },
+      () =>
+        adjudicateCassetteScore({
+          cassette: scoringCassette,
+          outcome,
+          score,
+          eligibility,
+          ...(port !== undefined ? { port } : {}),
+        }),
+    )
 
     input.scoreStore.save({
       cassetteId: input.cassette.id,

@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { asRef, GateReceiptSchema, receiptDigestOf, slugBranch } from '@vostride/agent-qa-schema'
 import { composeBaselineProfileKey, createPanelIdentity, JUDGE_CONFIG } from '@vostride/agent-qa-eval'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 import * as local from '../index.js'
 import { writeGate1Fixture, gate1Responder } from './fixtures/gate1-fixtures.js'
 import { actionGenerateResult, familyStubProfile, judgeGenerateResult, noneAuth, respondingStub } from './fixtures/replay-fixtures.js'
@@ -57,7 +56,7 @@ async function fixture(options: { ids?: string[]; recorded?: string; warm?: bool
     agentQaRoot: f.agentQaRoot, runRoot, profile, auth: noneAuth,
     modelOverrides: { languageModels: planner.languageModels },
     ...(members.length === 0 ? {} : { judge: { members: members.map(member => ({ ...member, auth: noneAuth })) } }),
-    seed: 11, k: 1, maskingContextFactory: createMaskingContext, replayOutputBaseDir: runRoot,
+    seed: 11, k: 1, mask: (text: string) => text, replayOutputBaseDir: runRoot,
     source: 'committed', corpusDigest: f.corpusDigest, clock: incrementingClock() })
   planner.captured.length = 0
   warmed = true
@@ -67,7 +66,7 @@ async function fixture(options: { ids?: string[]; recorded?: string; warm?: bool
       modelOverrides: { languageModels: planner.languageModels } }, judgeMembers: members,
     judgeOverrideConfigured: false, k: 3, kSource: 'default', maxScreens: 64,
     baselineSeed: { floorSeeds: [11] }, producedBy: { opId: 'eval.replay-gate' },
-    maskingContextFactory: createMaskingContext, clock: incrementingClock() }
+    mask: (text: string) => text, clock: incrementingClock() }
   return { f, input, panel, planner, judges, members }
 }
 

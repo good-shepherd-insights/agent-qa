@@ -226,7 +226,7 @@ export interface RunReplayGateInput {
   baselineSeed: { seed?: number; source: 'flag' | 'config' } | { floorSeeds: readonly number[] }
   /** Effective CLI selection for a copyable, spend-bearing cache recovery command. */
   baselineWarmup?: { configPath: string; judge?: string; judges?: readonly string[] }
-  maskingContextFactory?: RunCassetteReplayInput['maskingContextFactory']
+  mask: RunCassetteReplayInput['mask']
   producedBy: { opId: string }
   clock?: () => number
   onProgress?: (line: string) => void
@@ -250,7 +250,7 @@ export type ReplayBag = Pick<
   | 'auth'
   | 'modelOverrides'
   | 'judge'
-  | 'maskingContextFactory'
+  | 'mask'
   | 'modelCallObservation'
   | 'clock'
 >
@@ -960,7 +960,7 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
     profile: input.planner.profile,
     auth,
     modelOverrides: input.planner.modelOverrides,
-    maskingContextFactory: input.maskingContextFactory,
+    mask: input.mask,
     modelCallObservation: {
       onProviderCall: () => {
         spend.modelCalls++
