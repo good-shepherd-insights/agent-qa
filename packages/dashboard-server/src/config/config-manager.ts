@@ -5,7 +5,6 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import {
   Document,
-  isAlias,
   isMap,
   isNode,
   isScalar,
@@ -66,7 +65,6 @@ export type ConfigReadOutcome =
 export interface ConfigFileLine {
   n: number
   text: string
-  path?: ConfigPathSegment[]
 }
 
 export type MaskedConfigOutcome =
@@ -78,8 +76,6 @@ export type MaskedConfigOutcome =
     fileIssues: ConfigWriteIssue[]
   }
   | { kind: 'file_invalid'; message: string; revision: string }
-
-export type RevealOutcome = { kind: 'ok'; value: string } | { kind: 'not_found' }
 
 export const MASK_WRITTEN_BACK = 'mask_written_back'
 
@@ -192,27 +188,6 @@ export class ConfigManager {
     } catch {
       return 'The config file is not valid YAML.'
     }
-  }
-
-  // 429-06 D-09: one in-file value, read from the config file alone.
-  async revealAt(path: readonly ConfigPathSegment[]): Promise<RevealOutcome> {
-    let raw: string
-    try {
-      raw = await readFile(this.configPath, 'utf-8')
-    } catch (err: unknown) {
-      if (isMissingFile(err)) return { kind: 'not_found' }
-      throw err
-    }
-    const doc = parseDocument(raw)
-    if (doc.errors.length > 0) return { kind: 'not_found' }
-    const resolved = resolvePath(doc, path)
-    if (resolved === undefined) return { kind: 'not_found' }
-    let node = doc.getIn(resolved, true)
-    if (isAlias(node)) node = node.resolve(doc)
-    if (!isScalar(node) || node.value === null || node.value === undefined) {
-      return { kind: 'not_found' }
-    }
-    return { kind: 'ok', value: String(node.value) }
   }
 
   private async readParsed(): Promise<

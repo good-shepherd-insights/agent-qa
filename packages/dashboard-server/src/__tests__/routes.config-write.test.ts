@@ -801,14 +801,15 @@ describe('one write path to the config file (429-32)', () => {
   })
 
   // 2026-09-30, 432-07 D-05: replaceDocument, the direct writer's whole-file publication over the
-  // digest it was built from, is the sixth file method. It stays inside the class like the others.
-  it('ONE-WRITE-PATH: the manager exposes only its six file methods, and nothing outside the class touches the file', async () => {
+  // digest it was built from, is a file method. It stays inside the class like the others. 441-49
+  // (D-29) deleted the reveal read, leaving five.
+  it('ONE-WRITE-PATH: the manager exposes only its five file methods, and nothing outside the class touches the file', async () => {
     const source = await readFile(CONFIG_MANAGER_SOURCE, 'utf-8')
     const body = classBody(source)
 
     const publicMethods = [...body.matchAll(/^ {2}(?:async )?([A-Za-z]\w*)\(/gm)].map((match) => match[1])
     expect(publicMethods.sort()).toEqual(
-      ['applyChanges', 'constructor', 'readMasked', 'readWithRevision', 'replaceDocument', 'restorePriors', 'revealAt'],
+      ['applyChanges', 'constructor', 'readMasked', 'readWithRevision', 'replaceDocument', 'restorePriors'],
     )
     for (const retired of ['updateSection', 'replaceSection', 'replaceSectionRaw', 'deleteSectionRaw', 'readDocument']) {
       expect(source).not.toMatch(new RegExp(`\\b${retired}\\b`))

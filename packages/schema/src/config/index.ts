@@ -28,7 +28,6 @@ export {
   CONFIG_WRITE_REFUSALS,
   ConfigChangeSchema,
   ConfigPathSegmentSchema,
-  ConfigRevealRequestSchema,
   ConfigUndoRequestSchema,
   ConfigWriteRequestSchema,
   isPageWritableConfigPath,

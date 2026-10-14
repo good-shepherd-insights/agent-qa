@@ -113,7 +113,6 @@ export {
   ConfigChangeSchema,
   configLeafOwner,
   ConfigPathSegmentSchema,
-  ConfigRevealRequestSchema,
   ConfigUndoRequestSchema,
   ConfigWriteRequestSchema,
   DEFAULT_PARALLEL_WORKERS,

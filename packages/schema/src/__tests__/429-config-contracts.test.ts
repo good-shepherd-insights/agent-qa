@@ -334,8 +334,6 @@ test('C429-CONFIG-ACTION-REFUSALS-EXACT', () => {
   expect(api.CONFIG_ACTION_REFUSALS).toEqual([
     'undo_expired',
     'undo_conflict',
-    'reveal_not_secret',
-    'reveal_not_found',
   ])
 })
 
@@ -366,13 +364,9 @@ test('CONNECT-REQUEST-STRICT', () => {
   }
 })
 
-test('REVEAL-UNDO-MOVE-STRICT', () => {
+// 441-49 (D-29): the reveal request schema and its cases are deleted; Undo and Move remain.
+test('UNDO-MOVE-STRICT', () => {
   const cases = [
-    {
-      schema: api.ConfigRevealRequestSchema,
-      valid: { path: ['registry', 'llms', { name: 'gpt-5.6' }, 'providerHeaders', 'Authorization'] },
-      emptyRequired: { path: [''] },
-    },
     {
       schema: api.ConfigUndoRequestSchema,
       valid: { token: 'undo-1' },
@@ -389,5 +383,4 @@ test('REVEAL-UNDO-MOVE-STRICT', () => {
     expect(schema.safeParse({ ...valid, extra: true }).success).toBe(false)
     expect(schema.safeParse(emptyRequired).success).toBe(false)
   }
-  expect(api.ConfigRevealRequestSchema.safeParse({ path: [] }).success).toBe(false)
 })

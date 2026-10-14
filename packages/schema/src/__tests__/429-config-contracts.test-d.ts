@@ -103,7 +103,7 @@ test('C429-LLM-SETUP-REFUSALS-EXACT', () => {
 })
 
 test('C429-CONFIG-ACTION-REFUSALS-EXACT', () => {
-  type Expected = 'undo_expired' | 'undo_conflict' | 'reveal_not_secret' | 'reveal_not_found'
+  type Expected = 'undo_expired' | 'undo_conflict'
   expectTypeOf<ConfigActionRefusal>().toEqualTypeOf<Expected>()
   expectTypeOf<(typeof CONFIG_ACTION_REFUSALS)[number]>().toEqualTypeOf<Expected>()
   expectTypeOf<Exclude<ConfigActionRefusal, Expected>>().toEqualTypeOf<never>()

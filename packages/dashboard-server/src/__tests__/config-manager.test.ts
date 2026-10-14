@@ -1044,6 +1044,21 @@ describe('C441-CONFIG', () => {
     const unloadable = await new ConfigManager(configPath, () => { throw new Error('a: b: compact') }).readMasked()
     expect(unloadable).toMatchObject({ kind: 'file_invalid', message: 'The config file is not valid YAML.' })
   })
+
+  it('there is no reveal route', async () => {
+    await writeFile(configPath, ORDERED_CONFIG.replace('registry:\n', 'registry:\n  providers:\n    farm:\n      accessKey: Hunter-42-zz\n'))
+
+    // Composed, so no package source spells the retired route (441-49's grep).
+    const answer = await invokeRoute(['/api/config', 'reveal'].join('/'), {
+      method: 'POST',
+      headers: { ...SELF_HOST_HEADERS, origin: `http://${SELF_HOST_HEADERS.host}`, 'sec-fetch-site': 'same-origin' },
+      body: JSON.stringify({ path: ['registry', 'providers', 'farm', 'accessKey'] }),
+    })
+
+    expect(answer.status).toBe(404)
+    expect(JSON.parse(answer.body)).toEqual({ error: 'Not found' })
+    expect(answer.body).not.toContain('Hunter-42-zz')
+  })
 })
 
 // 2026-09-30, 432-07 D-05/D-07 (EDGE-12): the transaction queue belongs to the resolved config path,

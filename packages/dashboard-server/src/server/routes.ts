@@ -72,7 +72,6 @@ import { serveRunAnalysisRead } from '../run-service/run-analysis-routes.js'
 import { readRunKnowledge, serveRunKnowledgeRead } from '../run-service/run-knowledge-routes.js'
 import { registerRunMarkRoute } from '../run-service/run-mark-routes.js'
 import {
-  registerConfigRevealRoute,
   registerConfigRevisionRoute,
   registerConfigUndoRoute,
   registerConfigWriteRoute,
@@ -2068,16 +2067,6 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         return
       }
       registerConfigRevisionRoute(req, res, { configManager })
-      return
-    }
-
-    // 429-06 D-09: the eye's read answers every method itself, so no preflight grant reaches it.
-    if (path === '/api/config/reveal') {
-      if (!configManager) {
-        jsonNoCors(res, { error: 'config_unavailable' }, 503)
-        return
-      }
-      registerConfigRevealRoute(req, res, { configManager })
       return
     }
 

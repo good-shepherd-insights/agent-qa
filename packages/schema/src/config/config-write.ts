@@ -141,15 +141,12 @@ export type ConfigWriteResult = {
 /** The revision a config file that does not exist yet reports. */
 export const CONFIG_REVISION_ABSENT = 'absent'
 
-// 2026-09-26, 429-04 D-09/D-24: the reveal read and the server-side Undo.
+// 2026-09-26, 429-04 D-24: the server-side Undo.
 
-/** Reads one secret leaf unmasked; the path must name a leaf the masking map classes secret. */
-export const ConfigRevealRequestSchema = z.object({
-  path: ConfigPathSchema,
-}).strict()
+// 2026-10-13 (441-49, D-29): read only by the page's reveal; 441-49-2 deletes it.
+export type ConfigRevealRequest = { path: z.infer<typeof ConfigPathSchema> }
 
-export type ConfigRevealRequest = z.infer<typeof ConfigRevealRequestSchema>
-
+// 2026-10-13 (441-49, D-29): read only by the page's reveal; 441-49-2 deletes it.
 export type ConfigRevealResult = { value: string }
 
 export const ConfigUndoRequestSchema = z.object({
@@ -161,21 +158,15 @@ export type ConfigUndoRequest = z.infer<typeof ConfigUndoRequestSchema>
 export type ConfigUndoResult = { restored: true; revision?: string }
 
 /**
- * Why a reveal or an Undo was refused.
+ * Why an Undo was refused.
  * - `undo_expired`: the token is unknown or its window has passed.
  * - `undo_conflict`: the field changed since the write the token undoes.
- * - `reveal_not_secret`: the path names a leaf that is not masked.
- * - `reveal_not_found`: the path names no leaf in the file.
  */
 export type ConfigActionRefusal =
   | 'undo_expired'
   | 'undo_conflict'
-  | 'reveal_not_secret'
-  | 'reveal_not_found'
 // prettier-ignore
 export const CONFIG_ACTION_REFUSALS = [
   'undo_expired',
   'undo_conflict',
-  'reveal_not_secret',
-  'reveal_not_found',
 ] as const satisfies readonly ConfigActionRefusal[]
