@@ -184,6 +184,25 @@ describe('resolveEvalSession — seeded masking factory (D-06 run-parity)', () =
   })
 })
 
+describe('C441-EGRESS', () => {
+  it('the eval session masks with its secrets file and nothing else', async () => {
+    process.env.AGENT_QA_X_PASSWORD = 'env-password-not-declared-77'
+    const { configPath } = await writeFixture({ secrets: 'PW_441=Hunter-42-zz\n' })
+    const session = await resolveEvalSession({ configPath })
+
+    expect(session.mask('pw Hunter-42-zz env env-password-not-declared-77'))
+      .toBe('pw [secret:PW_441] env env-password-not-declared-77')
+  })
+
+  it('a key-only session refuses to mask', async () => {
+    const { configPath } = await writeFixture({ secrets: 'PW_441=Hunter-42-zz\n' })
+    const session = await resolveEvalSession({ configPath, keyOnly: true })
+
+    expect(() => session.mask('Hunter-42-zz'))
+      .toThrow('A key-only eval session has no declared secrets to mask with')
+  })
+})
+
 describe('evalAuditDir — per-invocation eval audit dirs (D-07)', () => {
   it('roots under .agent-qa/eval/audit/<verb>/<slugBranch(key)> and never under runs', () => {
     const dir = evalAuditDir('/cfg', 'replay', 'abc/def')

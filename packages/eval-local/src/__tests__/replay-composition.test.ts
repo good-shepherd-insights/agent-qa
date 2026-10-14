@@ -1005,6 +1005,37 @@ describe('C441-EGRESS', () => {
     expect(recorded).toContain('qa@example.com')
     expect(recorded).not.toContain('Hunter-42-zz')
   })
+
+  it('judge requests are masked with the same mask', async () => {
+    const storeRoot = await tempRoot('c441-egress-judge-store-')
+    const { cassette, artifacts } = extractLeaf(
+      midBandHandoff('Fill the note for qa@example.com with Hunter-42-zz'),
+    )
+    const replayStub = keyedCapturingStub(() => fillGenerateResult(CANDIDATE_FILL_TEXT), REPLAY_MODEL_ID)
+    const judgeStub = keyedCapturingStub(() => judgeGenerateResult('equivalent', 'high'), JUDGE_MODEL_ID)
+
+    await runCassetteReplay({
+      cassette,
+      artifacts,
+      profile: familyStubProfile(REPLAY_MODEL_ID),
+      auth: noneAuth,
+      modelOverrides: { languageModels: replayStub.languageModels },
+      replayOutputBaseDir: await tempRoot('c441-egress-judge-audit-'),
+      scoreStore: new FsScoreStore({ root: storeRoot }),
+      judge: {
+        profile: familyStubProfile(JUDGE_MODEL_ID),
+        auth: noneAuth,
+        modelOverrides: { languageModels: judgeStub.languageModels },
+      },
+      mask,
+    })
+
+    expect(judgeStub.captured).toHaveLength(2)
+    const recorded = JSON.stringify(judgeStub.captured)
+    expect(recorded).toContain('[secret:PW_441]')
+    expect(recorded).toContain('qa@example.com')
+    expect(recorded).not.toContain('Hunter-42-zz')
+  })
 })
 
 export {

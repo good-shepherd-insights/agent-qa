@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as core from '@vostride/agent-qa-eval'
 import * as local from '../index.js'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
@@ -27,12 +27,13 @@ vi.mock('../judge-binding.js', async original => {
 const roots: string[] = []
 const digest = (value: unknown) => sha256hex(core.canonicalJson(value))
 afterEach(() => { binds.count = 0; binds.fail = false; vi.restoreAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
-function fixture(models: core.CassetteModelReceipt[] = [{}], verdicts: ('equivalent' | 'different' | 'error' | 'unsure')[] = ['equivalent', 'equivalent'], ambiguous = false, excluded: readonly number[] = []) {
+function fixture(models: core.CassetteModelReceipt[] = [{}], verdicts: ('equivalent' | 'different' | 'error' | 'unsure')[] = ['equivalent', 'equivalent'], ambiguous = false, excluded: readonly number[] = [], stepText?: string) {
   const project = mkdtempSync(join(tmpdir(), 'judge-probe-')); roots.push(project)
   const memberIds = ['claude-sonnet-4', 'gemini-2.5', 'llama-3'].slice(0, verdicts.length)
-  const rows = models.map((model, index) => addEvidence(project, index, model, memberIds, ambiguous, excluded.includes(index)))
+  const rows = models.map((model, index) => addEvidence(project, index, model, memberIds, ambiguous, excluded.includes(index), stepText))
   for (const row of rows) { row.report.runIdentity!.corpusDigest = core.computeCorpusDigest(local.readActiveCommittedCorpus(row.committedRoot, row.root).snapshot.entries); row.saveReport() }
   let calls = 0
+  const stubs: ReturnType<typeof capturingStub>[] = []
   const members = memberIds.map((model, index) => {
     const stub = capturingStub(() => {
       calls++
@@ -40,12 +41,13 @@ function fixture(models: core.CassetteModelReceipt[] = [{}], verdicts: ('equival
       if (verdicts[index] === 'error') throw new Error('fixture-private-provider-error')
       return judgeGenerateResult(verdicts[index] === 'unsure' ? 'unsure' : verdicts[index]!, 'high')
     }, model)
+    stubs.push(stub)
     return { profile: { provider: 'openai-compatible' as const, model, baseURL: 'http://127.0.0.1:1/v1', auth: { mode: 'none' as const } },
       auth: { kind: 'api-key' as const, apiKey: 'fixture-private-api-key' }, modelOverrides: { languageModels: stub.languageModels } }
   })
   const input = { ...rows[0]!.input, members, replayProfile: { provider: 'openai-compatible' as const, model: 'gpt-5', auth: { mode: 'none' as const } },
     mask: (text: string) => redactor.redactString(text) }
-  return { input, rows, calls: () => calls }
+  return { input, rows, stubs, calls: () => calls }
 }
 it.each([false, true])('publishes and rereads legitimate nonexecutable exclusions: all excluded=%s', async allExcluded => {
   const f = fixture([{}, {}], undefined, false, allExcluded ? [0, 1] : [1])
@@ -251,11 +253,25 @@ it('refuses unavailable saved evidence on valid-composite gap publication with i
   expect(f.calls()).toBe(0); expect(binds.count).toBe(0)
 })
 
-function addEvidence(project: string, index: number, model: core.CassetteModelReceipt, members: readonly string[], ambiguous = false, excluded = false) {
+describe('C441-EGRESS', () => {
+  it('judge calibration masks with its input mask', async () => {
+    const f = fixture([{}], undefined, false, [], 'Sign in with Hunter-42-zz')
+    const declared = new SecretRedactor(SecretStore.fromEnvContent(
+      'JUDGE_API_KEY=fixture-private-api-key\nPW_441=Hunter-42-zz'))
+    f.input.mask = text => declared.redactString(text)
+    await runJudgePanelCalibration(f.input)
+    const recorded = JSON.stringify(f.stubs.flatMap(stub => stub.captured))
+    expect(f.calls()).toBeGreaterThan(0)
+    expect(recorded).toContain('[secret:PW_441]')
+    expect(recorded).not.toContain('Hunter-42-zz')
+  })
+})
+function addEvidence(project: string, index: number, model: core.CassetteModelReceipt, members: readonly string[], ambiguous = false, excluded = false, stepText?: string) {
   const root = join(project, '.agent-qa')
   const committedRoot = join(project, 'agent-qa-eval')
   const handoff = makeLocalV2Handoff({ runId: asRunId(`judge-calibration-local-${index}`), scope: { tier: 'product', key: 'shop' } })
   handoff.tests[0]!.steps = [handoff.tests[0]!.steps[0]!]
+  if (stepText !== undefined) handoff.tests[0]!.steps[0]!.stepText = stepText
   if (ambiguous) for (const sub of handoff.tests[0]!.steps[0]!.subActions) {
     const ref = asRef('e-alternative')
     sub.stateBefore.elements.push({ ...structuredClone(sub.stateBefore.elements[0]!), ref })
