@@ -464,9 +464,6 @@ function createComposedRunExecution(input: {
             ...(input.runBridge?.resolveRunFlags === undefined
               ? {}
               : { resolveRunFlags: input.runBridge.resolveRunFlags }),
-            ...(input.runBridge?.maskingSecrets === undefined
-              ? {}
-              : { maskingSecrets: input.runBridge.maskingSecrets }),
             // ═══ 2026-08-26 — Phase 404 D-06: THIS DOOR'S DRAIN LEG ═══
             //
             // `postRunTail` and not `afterVerdict`: the drive starts this AFTER `afterVerdict`
@@ -683,20 +680,14 @@ export interface ComposeCliLocalAgentInput {
     readonly resolveAppiumUrl?: InProcessCliRunExecutionOptions['resolveAppiumUrl']
     /** Per-run flags this host's own UI offers that the request DTO has no field for. */
     readonly resolveRunFlags?: InProcessCliRunExecutionOptions['resolveRunFlags']
-    /**
-     * Secrets this host holds that every run through it must mask (402-06, T-402-04).
-     *
-     * A PASS-THROUGH LIKE ITS FOUR SIBLINGS. The dashboard's minted `liveUrl` tokens are the case
-     * (and, until 432-21, the run-service credentials): they live only in this process, under names
-     * `sensitiveEnvSlice` does not recognise, and the runs they concern execute in the same process.
-     * See the option's own doc on `InProcessCliRunExecutionOptions` for why it is a resolver rather
-     * than a store.
-     */
-    readonly maskingSecrets?: InProcessCliRunExecutionOptions['maskingSecrets']
+    /** Secrets this host holds; they feed only the cold reads now. */
+    readonly maskingSecrets?: () => {
+      forEachSecret(cb: (name: string, value: string) => void): void
+    } | undefined
     /**
      * This host's SECOND chip sink (404 D-16) — the dashboard's live push channel.
      *
-     * A PASS-THROUGH LIKE ITS FIVE SIBLINGS: this composition neither creates nor defaults it. It
+     * A PASS-THROUGH LIKE ITS FOUR SIBLINGS: this composition neither creates nor defaults it. It
      * is handed to `composeCliPostRunTail` as `relay`, which threads it to the chip emitter in
      * 404-05. A host that watches its own runs' chips supplies one; every other door passes
      * nothing and the emitter writes only to `events.jsonl`, exactly as it does today.

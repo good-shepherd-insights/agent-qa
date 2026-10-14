@@ -73,14 +73,7 @@ const LEGACY_HEADER_CLASSES = [
 interface WorkspaceInput {
   /** `undefined` writes NO declaration, which classifies the run's target as shared. */
   readonly environment?: 'local' | 'production'
-  /**
-   * Mask this text through each started run's OWN masking context (402-06, #224).
-   *
-   * The observer is CHAINED onto the door's real bridge rather than replacing it: the spread keeps
-   * the door's `onSession` routing, its ingest subscribers and — the point of the cell — its
-   * `maskingSecrets` resolver. What is added is one reader, so the value a reporter would print is
-   * observable.
-   */
+  /** Mask this text through each started run's own mask, chained onto the door's real bridge. */
   readonly observeMasking?: { readonly text: string; readonly seen: string[] }
 }
 
@@ -652,10 +645,8 @@ describe('the token value reaches no channel (T-402-21)', () => {
 
 // ---- (5) THE SECRET STORE IS CONSUMED (WINDOWS #224, T-402-04) --------------------------------
 //
-// 402-06 bound the run-service token store into the door's bridge and pinned that every run walked
-// it. 2026-10-01 (432-21, D-12): the token store is deleted, so the BIND half is re-spelled to its
-// absence; the CONSUME half — a store a door binds reaches every run's masker — is unchanged,
-// because the live-view composer still binds its minted tokens through the same seam.
+// 402-06 bound the run-service token store into the door's bridge. 432-21 deleted the store, and
+// 441-58 (D-01) stopped a door's stores reaching a run's mask, so only the BIND half remains.
 
 describe('the door’s credentials reach every run’s masker (#224)', () => {
   it('BIND HALF — composing the ports seeds the door with the resolved values', () => {
@@ -687,72 +678,6 @@ describe('the door’s credentials reach every run’s masker (#224)', () => {
       rmSync(configDir, { recursive: true, force: true })
     }
   })
-
-  it('CONSUME HALF — a real run masks the credential, and does NOT without the wiring', async () => {
-    const configPath = fixtureWorkspace({ environment: 'local' })
-    const configDir = dirname(resolve(configPath))
-    const { runInProcessCliRun } = await import('../composition/in-process-run-execution.js')
-
-    // THE VALUE IS GENUINELY IN THIS PROCESS'S ENVIRONMENT for the duration, because that is the
-    // production situation: the runs execute in the same process that holds the credential, so a
-    // hook or a shell step that echoes the variable prints it. The control below is what shows
-    // `sensitiveEnvSlice` does not save us — it selects by NAME SUFFIX, and `…_CRED` matches none.
-    const previous = process.env[TOKEN_VAR]
-    process.env[TOKEN_VAR] = TOKEN
-    try {
-      const line = `the run printed ${TOKEN} on its way past`
-      const capture = async (
-        maskingSecrets?: () => { forEachSecret(cb: (n: string, v: string) => void): void },
-      ): Promise<string> => {
-        // MASKED INSIDE THE SUBSCRIBER, not afterwards. The drive disposes the context in its
-        // `finally`, which clears every registration — so a closure called after the run returns
-        // measures an EMPTY masker and reports a leak on both arms. This is the surface a reporter
-        // actually masks through: inside the run, holding the run's own context.
-        let mask: string | undefined
-        // THE RUN FAILS, AND THAT IS FINE — this fixture declares no model, so the member surfaces
-        // a framework error the drive re-raises to preserve `agent-qa run`'s exit-2 contract (the
-        // remote door converts it; a direct call does not). The masking context is built and bound
-        // BEFORE the members execute, and the subscriber that captures it is attached inside the
-        // core's `onSession`, so it is in hand either way. What this cell measures is the SEED, not
-        // a passing run.
-        await runInProcessCliRun(
-          {
-            configPath,
-            agentQaRoot: join(configDir, '.agent-qa'),
-            executionContext: 'local-headless',
-            subscribers: ({ maskingContext }) => {
-              mask = maskingContext.mask(line)
-              return undefined
-            },
-            ...(maskingSecrets === undefined ? {} : { maskingSecrets }),
-          },
-          { patterns: ['tests/probe.test.yaml'] },
-        ).catch(() => undefined)
-        if (mask === undefined) throw new Error('the run never reached its subscribers')
-        return mask
-      }
-
-      const withoutWiring = await capture()
-      // 432-21: a store of the shape any door composer binds (the live-view composer's minted
-      // tokens are the shipped case); the run-service token store that used to be bound is deleted.
-      const withWiring = await capture(
-        () => ({ forEachSecret(cb: (n: string, v: string) => void) { cb(TOKEN_VAR, TOKEN) } }),
-      )
-
-      // THE GAP, MEASURED rather than asserted: the shipped seed pipeline does not know this value.
-      expect(withoutWiring).toContain(TOKEN)
-      // And the wiring closes it — the value is replaced by a placeholder, not merely absent.
-      expect(withWiring).not.toContain(TOKEN)
-      expect(withWiring).toContain('SECRET')
-      // The rest of the line survives, so the mask is a substitution and not a redaction of
-      // everything the run said.
-      expect(withWiring).toContain('the run printed')
-    } finally {
-      if (previous === undefined) delete process.env[TOKEN_VAR]
-      else process.env[TOKEN_VAR] = previous
-      rmSync(configDir, { recursive: true, force: true })
-    }
-  }, 180_000)
 })
 
 // RE-SPELLED 2026-10-01 (432-21, D-12) from 'END TO END — a run started over the wire masks the

@@ -345,28 +345,6 @@ export interface InProcessCliRunExecutionOptions {
    * an ack contract behind it, so it is filed rather than smuggled in here.
    */
   readonly resolveRunFlags?: (runId: string) => { readonly disableCache?: boolean } | undefined
-  /**
-   * Secrets the DOOR holds that every run through it must mask (402-06, T-402-04 / T-402-21).
-   *
-   * WHY A DOOR CAN HOLD A SECRET A RUN'S OWN PRODUCER CANNOT SEE. The masking context is seeded
-   * from three channels: the run's `SecretStore` (its project's `.env.secrets.local`), the
-   * name-based `sensitiveEnvSlice` of the environment, and captured auth state. A value the door
-   * itself minted — a `liveUrl` token signed by this process — is in none of them, and the runs
-   * still execute inside that process. (Until 432-21 a declared run-service credential was the
-   * other case: an operator could point its `tokenEnvVar` at a name the suffix-based slice did not
-   * recognise. Those credentials are deleted, D-12.)
-   *
-   * A RESOLVER AND NOT A STORE, because a door's secrets are bound AFTER the host that runs runs is
-   * composed — the composer that holds them needs the door, and the host it hands its bridge to
-   * already exists by then. Read at run time, it cannot be stale; captured at compose time, it would
-   * always be empty.
-   *
-   * IT IS ADDITIVE TO THE PRODUCER'S OWN SEED, never a replacement: both stores are walked, so a
-   * door that holds credentials does not cost a run its project's secrets.
-   */
-  readonly maskingSecrets?: () => {
-    forEachSecret(cb: (name: string, value: string) => void): void
-  } | undefined
 }
 
 /**
@@ -411,15 +389,7 @@ export function refuseUnhonourableRequestFields(request: RunsStartInput): void {
   if (refused.length > 0) throw new RunRequestFieldRefusedError(refused)
 }
 
-/**
- * One store over several, in declaration order. Absent members contribute nothing.
- *
- * EXPORTED since 403-01, and not as a convenience: the dashboard run door now UNIONS every store
- * bound through `bindMaskingSecrets`, and it must use THIS union rather than a second one written
- * beside it — because the door's contract is exactly this function's three states (`undefined` for
- * zero stores, the store ITSELF for one, a walker for many), and the #224 cells pin both of the
- * first two by identity.
- */
+/** One store over several; its one caller is the dashboard's cold-read bridge, which 441-48 deletes. */
 export function mergedSecretStore(
   ...stores: readonly ({ forEachSecret(cb: (name: string, value: string) => void): void } | undefined)[]
 ): { forEachSecret(cb: (name: string, value: string) => void): void } | undefined {
@@ -476,10 +446,7 @@ export async function runInProcessCliRun(
   const warnByName = options.warn ?? ((): void => { /* a door with no renderer drops the line */ })
 
   const maskingContext = buildRunMaskingContext({
-    // THE PRODUCER'S SECRETS AND THE DOOR'S, walked as one store. `buildRunMaskingContext` takes a
-    // single `secretStore`, and composing the two here rather than widening its signature keeps
-    // the seed pipeline's one-call shape (`agent-local`'s `buildRunMaskingContext` doc) intact.
-    secretStore: mergedSecretStore(produced.maskingSeed?.secretStore, options.maskingSecrets?.()),
+    secretStore: produced.maskingSeed?.secretStore,
     env: process.env,
     ...(produced.maskingSeed?.authStatePayloads === undefined
       ? {}

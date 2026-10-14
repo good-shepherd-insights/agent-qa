@@ -107,22 +107,13 @@ interface Fixture {
   readonly validate: ReturnType<typeof composeLiveView>['validate']
   readonly maskingSecrets: () => { forEachSecret(cb: (n: string, v: string) => void): void } | undefined
   readonly close: () => Promise<void>
-  /** Every line the chained observer masked through a started run's OWN context. */
-  readonly seen: string[]
-  /** The text that observer masks. Set before starting the run whose masking is measured. */
-  observed: string
 }
 
 const openFixtures: Fixture[] = []
 
 /**
- * The shipped command's composition, with the two binders run in a chosen ORDER.
- *
- * Everything here is the production composer: `createDashboardRunDoor`, `composeLiveView`,
- * `composeDashboardDoor`, `composeRunServicePorts`, `startServer`. The ONLY addition is a chained
- * `subscribers` observer that masks a line through each started run's own context — the
- * `observeMasking` idiom from `run-service-auth-hardening.test.ts`, which keeps the door's own
- * `maskingSecrets` resolver intact because that resolver is the thing under measurement.
+ * The shipped command's composition, with the two binders run in a chosen ORDER: every composer
+ * here is the production one.
  */
 async function openFixture(order: BinderOrder): Promise<Fixture> {
   const configPath = fixtureWorkspace()
@@ -131,8 +122,6 @@ async function openFixture(order: BinderOrder): Promise<Fixture> {
   const db = new DashboardDatabase({ dbPath: join(configDir, 'dashboard.db') })
   const runDoor = await createDashboardRunDoor({ db })
   let boundOrigin: string | undefined
-  const seen: string[] = []
-  const state = { observed: '' }
 
   const sessions = createRunServiceSessionRegistry({ observeSessions: runDoor.observeSessions })
 
@@ -157,13 +146,7 @@ async function openFixture(order: BinderOrder): Promise<Fixture> {
     configPath,
     boundOrigin: () => boundOrigin,
     liveView: composedLiveView.liveView,
-    runBridge: {
-      ...runDoor.runBridge,
-      subscribers: (attach) => {
-        if (state.observed !== '') seen.push(attach.maskingContext.mask(state.observed))
-        return runDoor.runBridge.subscribers?.(attach)
-      },
-    },
+    runBridge: runDoor.runBridge,
   })
   runDoor.bindHost(host)
 
@@ -185,9 +168,6 @@ async function openFixture(order: BinderOrder): Promise<Fixture> {
     registry: host.registry as FunctionRegistry,
     validate: composedLiveView.validate,
     maskingSecrets: () => runDoor.runBridge.maskingSecrets?.(),
-    seen,
-    get observed() { return state.observed },
-    set observed(value: string) { state.observed = value },
     close: async () => {
       started.close()
       runService.dispose()
@@ -239,31 +219,6 @@ describe.each(BINDER_ORDERS)('the door UNIONS every bound secret store — order
       .toContain(CREDENTIAL)
     expect(walked, `the minted liveUrl token must survive binder order ${order}`)
       .toContain(token)
-  }, 180_000)
-
-  it('(2) CONSUME HALF — a run started AFTER both masks both values in its own context', async () => {
-    const fixture = await openFixture(order)
-    const first = await startRunOverTheWire(fixture)
-    const result = RunsLiveUrlResultSchema.parse(
-      await invokeFunction(fixture.registry, RUNS_LIVE_URL_FUNCTION_ID, { runId: first, handle: 0 }, DASHBOARD_FUNCTION_CALLER),
-    )
-    const token = result.liveUrl.split('#')[1] as string
-
-    // The SECOND run is the one under measurement: `seed.ts:17` walks the store once at run start,
-    // so only a run started after the mint can mask the minted token (the Pitfall 2 limit, stated
-    // as a dated note in `composeLiveView`).
-    fixture.observed = `the run printed ${CREDENTIAL} and ${token} on its way past`
-    await startRunOverTheWire(fixture)
-
-    expect(fixture.seen.length, 'the positive control — the masker was actually driven')
-      .toBeGreaterThan(0)
-    for (const masked of fixture.seen) {
-      expect(masked).not.toContain(CREDENTIAL)
-      expect(masked).not.toContain(token)
-      expect(masked).toContain('SECRET')
-      expect(masked, 'a mask is a substitution, not a redaction of the whole line')
-        .toContain('the run printed')
-    }
   }, 180_000)
 })
 
