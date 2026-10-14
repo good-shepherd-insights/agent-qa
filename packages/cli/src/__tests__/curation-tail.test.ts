@@ -38,7 +38,6 @@ import {
   type CanaryOutcome,
   type CompletedRunHandoff,
   type GuardrailPolicy,
-  type MaskingContext,
   type QuarantineLedgerEvent,
   type StepEvidence,
 } from '@vostride/agent-qa-schema'
@@ -59,7 +58,7 @@ const configDir = '/workspace/project'
 const knowledgeRoot = '/workspace/project/agent-qa-knowledge'
 const runId = 'run-curation-tail'
 const auditSink = {} as AuditSink
-const maskingContext = {} as MaskingContext
+const mask = (text: string) => text
 const policy = {} as GuardrailPolicy
 const modelDeps = {} as RunCurationTailOptions['modelDeps']
 
@@ -390,7 +389,7 @@ function baseOptions(
     knowledgeConfig: { dir: 'agent-qa-knowledge' },
     configDir,
     auditSink,
-    maskingContext,
+    mask,
     modelDeps,
     policy,
     log: { warn: vi.fn() },
@@ -603,7 +602,6 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
         order.push('scope')
         expect(ambientExecutionContext).not.toBe(completed.executionContext)
         expect(bundle).toEqual({
-          maskingContext,
           auditSink,
           executionContext: completed.executionContext,
         })

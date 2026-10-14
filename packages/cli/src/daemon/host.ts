@@ -2321,7 +2321,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           })
           // WR-03 / D-01: the same three fields the CLI binding returns — but the two
           // bindings are NOT equivalent, and the reason is declared one field above: only a
-          // leg folding with a masker active may claim the kind that runs the same per-run fold.
+          // leg folding with the declared mask bound may claim the kind that runs the same fold.
           //
           // 422 D-13: and the committed receipt's candidates, spread on presence exactly as the
           // terminal spreads them. A fold that wrote no receipt forwards NO field — never an

@@ -27,7 +27,6 @@ import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   type CompletedRunHandoff,
   type GuardrailPolicy,
-  type MaskingContext,
   type PostProcessingStatus,
   type RunEventEnvelope,
   type Verdict,
@@ -157,8 +156,8 @@ function fixture(behaviour: {
   curateRun?: () => Promise<{ curated: number; deprecated: number; complete: boolean }>
   /** Burn the whole drain budget after the first job, leaving the chain mid-flight. */
   stopAfterFirstJob?: boolean
-  /** The run's masker, threaded to the fold today and to the chip's error field from 388-07. */
-  maskingContext?: MaskingContext
+  /** The tail's mask, threaded to the fold and to the chip's error field. */
+  mask?: (text: string) => string
 } = {}): Fixture {
   const agentQaRoot = mkdtempSync(join(tmpdir(), 'agent-qa-388-04-'))
   roots.push(agentQaRoot)
@@ -197,9 +196,7 @@ function fixture(behaviour: {
         knowledgeConfig: { dir: 'knowledge' },
         configDir: agentQaRoot,
         auditSink: {} as AuditSink,
-        ...(behaviour.maskingContext === undefined
-          ? {}
-          : { maskingContext: behaviour.maskingContext }),
+        ...(behaviour.mask === undefined ? {} : { mask: behaviour.mask }),
         policy: {} as GuardrailPolicy,
         log: {
           warn: (message: string) => warn(message),
@@ -371,10 +368,7 @@ describe('the post-run chip emitter (ANLZ-05, D-13/D-16)', () => {
             + 'x'.repeat(900),
           )
         },
-        maskingContext: {
-          mask: (text: string) => text.split(SECRET).join(REDACTION),
-          unmask: (text: string) => text,
-        },
+        mask: (text: string) => text.split(SECRET).join(REDACTION),
       })
       const tail = runPostRunTail(f.options())
       await stepEnqueue(f.agentQaRoot)

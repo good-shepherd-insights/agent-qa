@@ -48,7 +48,6 @@ import type {
   AnalysisGetOutput,
   CompletedRunHandoff,
   GuardrailPolicy,
-  MaskingContext,
   PostProcessingStatus,
   RunDigest,
   RunEventEnvelope,
@@ -375,7 +374,7 @@ function options(h: Harness): RunPostRunTailOptions {
     knowledgeConfig: { dir: 'agent-qa-knowledge' },
     configDir,
     auditSink: {} as AuditSink,
-    maskingContext: {} as MaskingContext,
+    mask: (text: string) => text,
     policy: {} as GuardrailPolicy,
     log: {
       warn: (message: string) => h.warn(message),

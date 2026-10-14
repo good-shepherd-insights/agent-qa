@@ -57,6 +57,7 @@ vi.mock('../../composition/in-process-run-execution.js', () => ({
 import { composeLocalAgent, type ComposeLocalAgentInput, type LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import { MISDIRECTION_POSTURE_FILE, readMisdirectionRunPosture } from '../misdirection-run-state.js'
 import { completedRunDir } from '../curation-tail.js'
+import { defaultPostRunTailOperations } from '../post-run-tail.js'
 
 import type { InProcessCliRunExecutionOptions } from '../../composition/in-process-run-execution.js'
 import { createInProcessFixture } from '../../composition/__tests__/in-process-run-fixture.js'
@@ -491,4 +492,21 @@ describe('422-27 recorded posture reaches both production analysis hosts', () =>
       )
     },
   )
+})
+
+describe('C441-CURATION', () => {
+  it('the post-run tail declares masker-active exactly when it holds a mask', () => {
+    const created = fixture()
+    const composedPosture = (mask?: (text: string) => string) => {
+      hosts.push(defaultPostRunTailOperations().composeHost({
+        agentQaRoot: created.agentQaRoot,
+        configPath: created.configPath,
+        ...(mask === undefined ? {} : { mask }),
+        curateRun: async () => ({ curated: 0, deprecated: 0, complete: true }),
+      }))
+      return vi.mocked(composeLocalAgent).mock.calls.at(-1)![0].postRun?.candidateProse
+    }
+    expect(composedPosture((text) => text)).toBe('masker-active')
+    expect(composedPosture()).toBe('no-masker')
+  })
 })

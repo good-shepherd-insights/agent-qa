@@ -79,14 +79,14 @@ function livePolicy(): GuardrailPolicy {
 }
 
 /**
- * The live run's masking context state at tail time: the model-bound email pass had
- * already minted the placeholder for the probe value during planning (the recorded
- * plannedAction carries `<EMAIL_0>`), and run.ts hands that same context to the tail.
+ * The live run's mask at tail time: the model-bound email pass had already minted the
+ * placeholder for the probe value during planning (the recorded plannedAction carries
+ * `<EMAIL_0>`), and run.ts hands that context's mask to the tail.
  */
-function liveMaskingContext(): ReturnType<typeof createMaskingContext> {
+function liveMask(): (text: string) => string {
   const context = createMaskingContext()
   context.mask(PROBE_EMAIL)
-  return context
+  return (text) => context.mask(text)
 }
 
 interface StagedRoots {
@@ -277,7 +277,7 @@ describe('F-381-48-1 live-artifact staged reproduction (Plan 381-49)', () => {
     async () => {
       const roots = stageRoots()
       const { warns, log } = warnCapture()
-      // REAL defaultOperations: no operations override at all. Policy, masking context,
+      // REAL defaultOperations: no operations override at all. Policy, mask,
       // and audit sink mirror run-session-composition.ts.
       await runCurationTail({
         runId: RUN_ID,
@@ -285,7 +285,7 @@ describe('F-381-48-1 live-artifact staged reproduction (Plan 381-49)', () => {
         knowledgeConfig: roots.knowledgeConfig,
         configDir: roots.configDir,
         auditSink: new JsonlAuditSink(roots.agentQaRoot),
-        maskingContext: liveMaskingContext(),
+        mask: liveMask(),
         policy: livePolicy(),
         log,
       })
@@ -327,7 +327,7 @@ describe('F-381-48-1 live-artifact staged reproduction (Plan 381-49)', () => {
         knowledgeConfig: roots.knowledgeConfig,
         configDir: roots.configDir,
         auditSink: new JsonlAuditSink(roots.agentQaRoot),
-        maskingContext: liveMaskingContext(),
+        mask: liveMask(),
         modelDeps: { profile: scriptedProfile(), auth: scriptedAuth },
         policy: livePolicy(),
         log,

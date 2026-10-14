@@ -246,8 +246,8 @@ export function defaultAgentJobsOpsDeps(configPath: string): AgentJobsOpsDeps {
       // on a queue this command never drains, which is what it was. Both live in the store's
       // SELECTION rather than in a binding, so the row is never OFFERED — a guarantee no
       // capability object can weaken. The posture is also the honest one rather than a lever: this
-      // host holds no masking context, and a host that cannot say its fold redacts may not claim
-      // the kind that folds.
+      // host binds no declared mask to a fold, and a host that cannot say its fold masks may not
+      // claim the kind that folds.
       const host = composeCliLocalAgent({
         agentQaRoot: join(configDir, '.agent-qa'),
         configPath,

@@ -198,9 +198,8 @@ export function createDaemonCommand(deps: DaemonCommandDeps = DEFAULT_DEPS): Com
           // parity): this binding rides the SAME resolveCliJobModel → buildJobModelCapability
           // → createModel chain as the CLI tail's, and the masking seam is createModel's own
           // pinned-LAST middleware — structurally identical on both hosts, proven by the
-          // llm-utils masking-egress pin. What differs is only the ACTIVE context: the daemon
-          // pumps outside any runSafetyScope, so no per-run MaskingContext is registered here
-          // (the same fact its candidateProse: 'no-masker' declaration records for curation).
+          // llm-utils masking-egress pin. What differs is curation: the daemon's fold is handed
+          // no declared mask (the fact its candidateProse: 'no-masker' declaration records).
           // The author's evidence egress is protected by two layers that need no scope:
           // (1) masked-at-record — handoff evidence is masked before it is ever written, so
           // the bytes the author quotes are already redacted; (2) the middleware's residual

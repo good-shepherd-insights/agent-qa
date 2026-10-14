@@ -60,16 +60,13 @@ export interface ComposeCliPostRunTailInput {
   readonly knowledgeConfig: RunCurationTailOptions['knowledgeConfig']
   readonly auditSink: RunCurationTailOptions['auditSink']
   /**
-   * The RUN's masking context, when the caller has one.
+   * The declared mask, when the caller has one.
    *
    * Conditionally spread rather than passed as `undefined`, because the tail DERIVES its candidate-
    * prose posture from this field's PRESENCE (388-10, UF-388-01): a tail composed without one
-   * declares `no-masker` and may not claim `curate-memory` at all. An `undefined` written into the
-   * field would be indistinguishable from a masker at the type level and identical at runtime, but
-   * the conditional spread is the house rule every sibling literal follows and the one that keeps
-   * "absent means absent" true everywhere.
+   * declares `no-masker` and may not claim `curate-memory` at all.
    */
-  readonly maskingContext?: RunCurationTailOptions['maskingContext']
+  readonly mask?: RunCurationTailOptions['mask']
   readonly modelDeps?: RunCurationTailOptions['modelDeps']
   /** A caller's own policy. Absent ⇒ `defaultPostRunGuardrailPolicy()`, the shipped expression. */
   readonly policy?: RunCurationTailOptions['policy']
@@ -109,7 +106,7 @@ export function composeCliPostRunTail(input: ComposeCliPostRunTailInput): PostRu
     auditSink: input.auditSink,
     policy: input.policy ?? defaultPostRunGuardrailPolicy(),
     log: input.log,
-    ...(input.maskingContext === undefined ? {} : { maskingContext: input.maskingContext }),
+    ...(input.mask === undefined ? {} : { mask: input.mask }),
     ...(input.modelDeps === undefined ? {} : { modelDeps: input.modelDeps }),
     ...(input.signal === undefined ? {} : { signal: input.signal }),
     ...(input.enqueueOutcome === undefined ? {} : { enqueueOutcome: input.enqueueOutcome }),

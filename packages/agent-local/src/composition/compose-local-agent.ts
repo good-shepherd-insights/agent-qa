@@ -1709,15 +1709,11 @@ export interface LocalAgentHost {
  * fold does with candidate prose has not been reviewed for UF-388-01, and the typechecker is
  * what makes that review mandatory rather than customary.
  *
- * - `'masker-active'` — a `MaskingContext` is ACTIVE for the duration of the fold, or the
- *   binding never reaches candidate emission at all. This certifies only that A masker is
- *   active — NOT that it is the masker of the run being folded. The run masker holds exact
- *   values with no classification heuristics (`run-composition.ts:453-502`), so a fold of a
- *   FOREIGN run's row under this run's masker is not redacted for that run's values. That
- *   case is real today and is unscoped here (T-388-30).
- * - `'no-masker'` — the binding folds with NO `MaskingContext` in scope. A statement about
- *   DISCLOSURE, not about capability: the fold would run, but its prose redaction would
- *   degrade to a pass-through, so a host declaring this may not claim the kind that runs it.
+ * - `'masker-active'` — the fold has the declared-secret mask bound (441-01 decision 10), or the
+ *   binding never reaches candidate emission at all.
+ * - `'no-masker'` — the binding folds with NO declared mask. A statement about DISCLOSURE, not
+ *   about capability: the fold would run, but its prose masking would degrade to a pass-through,
+ *   so a host declaring this may not claim the kind that runs it.
  */
 export type CandidateProsePosture = 'masker-active' | 'no-masker'
 

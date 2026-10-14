@@ -1,3 +1,7 @@
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import {
   asRef,
   asRunId,
@@ -12,7 +16,10 @@ import {
   type SubActionEvidence,
 } from '@vostride/agent-qa-schema'
 import {
+  curationCandidatePayloadSchema,
   parseAuthoredCheckpoint,
+  queuedCandidateDir,
+  type CurationCandidatePayload,
   type CurationJobView,
 } from '@vostride/agent-qa-knowledge-local'
 import { createModel } from '@vostride/agent-qa-model'
@@ -20,6 +27,8 @@ import type { ModelProfile, ResolvedModelAuth } from '@vostride/agent-qa-model'
 import {
   buildScreenState,
   executeStep,
+  SecretRedactor,
+  SecretStore,
   type Action as RunnerAction,
   type ActionPlan,
   type ActionResult,
@@ -27,18 +36,22 @@ import {
   type PlatformAdapter,
   type StepContext,
 } from '@vostride/agent-qa-runner'
+import { RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import {
   createMaskingContext,
   defaultGuardrailPolicyInput,
   loadGuardrailPolicy,
-  setActiveMaskingContextResolver,
+  type AuditSink,
 } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
+import { runCurationTail } from '../curation-tail.js'
 import { buildCuratorAuthor, CURATOR_RETRY_CAP } from '../curator-author.js'
 import {
+  emitCurationCandidates,
   parseProcedureTrajectorySeed,
   projectCurationCandidates,
+  type EmitReport,
   type ProcedureTrajectorySeed,
 } from '../emit-candidates.js'
 
@@ -1560,9 +1573,9 @@ describe('C438-PROCEDURE-WRITE', () => {
     }
   }
 
-  function writeSeed(): ProcedureTrajectorySeed {
+  function writeSeed(mask?: (text: string) => string): ProcedureTrajectorySeed {
     const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
-    const [target] = projectCurationCandidates(invoiceRun(), policy).filter(
+    const [target] = projectCurationCandidates(invoiceRun(), policy, mask).filter(
       (row) => row.kind === 'procedure',
     )
     const seed = parseProcedureTrajectorySeed(target!.bodySeed)
@@ -1634,18 +1647,11 @@ describe('C438-PROCEDURE-WRITE', () => {
     expect(payload?.steps[1]?.guard.target).toEqual(editLabel)
   })
 
-  it('passes the written name and row through the active masking context', () => {
-    setActiveMaskingContextResolver(() => ({
-      mask: (text) => text.replaceAll('Elm', '<ADDR_0>').replaceAll('947', '<NUM_0>'),
-      unmask: (text) => text,
-    }))
-    try {
-      const seed = writeSeed()
-      expect(seed.steps[0]?.action?.targets['ref']?.name).toBe('Invoice <NUM_0>')
-      expect(seed.steps[1]?.action?.targets['ref']?.row).toBe('7 <ADDR_0> Street')
-    } finally {
-      setActiveMaskingContextResolver(() => undefined)
-    }
+  it("passes the written name and row through the tail's mask", () => {
+    const seed = writeSeed((text) =>
+      text.replaceAll('Elm', '[secret:STREET]').replaceAll('947', '[secret:INVOICE]'))
+    expect(seed.steps[0]?.action?.targets['ref']?.name).toBe('Invoice [secret:INVOICE]')
+    expect(seed.steps[1]?.action?.targets['ref']?.row).toBe('7 [secret:STREET] Street')
   })
 
   it('rejects a version-1 seed as a candidate', async () => {
@@ -1885,5 +1891,175 @@ describe('C438-HEALED-BODY', () => {
     expect(Object.keys(targets).sort()).toEqual(['fromRef', 'toRef'])
     expect(targets['fromRef']).toMatchObject({ role: 'button', name: 'Card' })
     expect(targets['toRef']).toMatchObject({ role: 'button', name: 'Drop A' })
+  })
+})
+
+describe('C441-CURATION', () => {
+  const DECLARED = 'Hunter-42-zz'
+  const EMAIL = 'qa@example.com'
+  const PAGE = 'https://shop.example/account'
+  const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
+
+  function declaredMask(): (text: string) => string {
+    const redactor = new SecretRedactor(new SecretStore({ PW_441: DECLARED }))
+    return (text) => redactor.redactString(text)
+  }
+
+  function maskStep(input: {
+    stepIndex: number
+    stepText: string
+    ref: string
+    name: string
+    assertOutcome?: StepEvidence['assertOutcome']
+  }): StepEvidence {
+    const state = { ...guardrailScreen([guardrailElement(input.ref, input.name)]), url: PAGE }
+    return {
+      ...guardrailStep({
+        stepIndex: input.stepIndex,
+        stepText: input.stepText,
+        ref: input.ref,
+        name: input.name,
+      }),
+      subActions: [{
+        plan: `Use ${input.ref}`,
+        plannedAction: { type: 'click', ref: asRef(input.ref) },
+        stateBefore: state,
+        stateAfter: state,
+        result: { success: true },
+      }],
+      ...(input.assertOutcome === undefined ? {} : { assertOutcome: input.assertOutcome }),
+    }
+  }
+
+  function maskRun(runId: string, steps: StepEvidence[]): CompletedRunHandoff {
+    return {
+      schemaVersion: 3,
+      runId: asRunId(runId),
+      scope: { tier: 'product', key: 'storefront' },
+      buildOrdinal: 42,
+      executionContext: 'local-interactive',
+      aggregateVerdict: 'passed',
+      configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
+      startedAt: 1_750_000_000_000,
+      endedAt: 1_750_000_001_000,
+      tests: [{
+        testId: 'account::sign-in',
+        testName: 'Sign in',
+        testIndex: 0,
+        outcome: 'passed',
+        steps,
+        filePath: 'account.spec.yaml',
+      }],
+    }
+  }
+
+  function queuedPayloads(knowledgeRoot: string, reports: EmitReport[]): CurationCandidatePayload[] {
+    return reports.flatMap((report) => report.details).map((detail) => {
+      if (detail.candidateId === undefined) throw new Error(`candidate not queued: ${detail.outcome.kind}`)
+      return curationCandidatePayloadSchema.parse(JSON.parse(readFileSync(
+        join(queuedCandidateDir(knowledgeRoot, detail.candidateId), 'payload.json'),
+        'utf8',
+      )))
+    })
+  }
+
+  it('the curation tail masks candidate prose with the mask it is handed', async () => {
+    const handoff = maskRun('r-c441-curation-tail', [
+      maskStep({
+        stepIndex: 0,
+        stepText: `Sign in as ${EMAIL} with ${DECLARED}`,
+        ref: 'account',
+        name: `Account ${EMAIL} ${DECLARED}`,
+      }),
+      maskStep({ stepIndex: 1, stepText: 'Open the orders page', ref: 'orders', name: 'Orders' }),
+    ])
+    const root = mkdtempSync(join(tmpdir(), 'c441-curation-'))
+    try {
+      const agentQaRoot = join(root, '.agent-qa')
+      const knowledgeRoot = join(root, 'agent-qa-knowledge')
+      const runDir = join(agentQaRoot, RUNS_SUBDIR, slugBranch(String(handoff.runId)))
+      mkdirSync(runDir, { recursive: true })
+      const reports: EmitReport[] = []
+      await runCurationTail({
+        runId: String(handoff.runId),
+        agentQaRoot,
+        knowledgeConfig: { dir: 'agent-qa-knowledge' },
+        configDir: root,
+        auditSink: {} as AuditSink,
+        mask: declaredMask(),
+        policy,
+        log: { warn: () => undefined },
+        authority: { leaseId: 'c441-lease', epoch: 1 },
+        operations: {
+          loadCompletedRunHandoff: () => handoff,
+          resolveKnowledgeRoot: () => knowledgeRoot,
+          listCompletedRunDirs: () => [runDir],
+          readCurationTailReceipt: () => undefined,
+          writeCurationTailReceipt: () => undefined,
+          emitCurationCandidates: (options) => {
+            const report = emitCurationCandidates(options)
+            reports.push(report)
+            return report
+          },
+          openKnowledgeReader: () => ({ emitCanaryOutcome: () => undefined }) as never,
+          emitCanaryOutcomes: async () => ({ emitted: 0, refused: 0, unresolved: 0 }) as never,
+          foldRunOutcomes: () => { throw new Error('not under test') },
+          reconcileRunOutcomesProjection: () => ({ kind: 'current' }) as never,
+          drainQueue: async () => { throw new Error('not under test') },
+        },
+      })
+
+      const procedure = queuedPayloads(knowledgeRoot, reports).find((row) => row.kind === 'procedure')
+      if (procedure === undefined) throw new Error('expected a queued procedure candidate')
+      const seed = parseProcedureTrajectorySeed(procedure.bodySeed)
+      const maskedText = `Sign in as ${EMAIL} with [secret:PW_441]`
+      expect(seed?.steps[0]?.instruction).toBe(maskedText)
+      expect(procedure.distilledObservations[0]?.step.naturalKey).toBe(maskedText)
+      expect(procedure.distilledObservations[1]?.flow?.precedes).toBe(maskedText)
+      expect(procedure.summarySeed).toContain(maskedText)
+      expect(seed?.steps[0]?.action?.targets['ref']?.name)
+        .toBe(`Account ${EMAIL} [secret:PW_441]`)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it("a passed assertValue's measurement seed carries the declared marker", () => {
+    const handoff = maskRun('r-c441-measurement', [
+      maskStep({
+        stepIndex: 0,
+        stepText: 'Check the stored session note',
+        ref: 'note',
+        name: 'Session note',
+        assertOutcome: {
+          source: 'storage',
+          op: 'contains',
+          passed: true,
+          expected: DECLARED,
+          actual: `${DECLARED} for ${EMAIL}`,
+        },
+      }),
+    ])
+    const root = mkdtempSync(join(tmpdir(), 'c441-measurement-'))
+    try {
+      const knowledgeRoot = join(root, 'agent-qa-knowledge')
+      const runDir = join(root, 'runs', 'r-c441-measurement')
+      mkdirSync(runDir, { recursive: true })
+      const report = emitCurationCandidates({
+        handoff, runDir, knowledgeRoot, policy, mask: declaredMask(),
+      })
+      const payloads = queuedPayloads(knowledgeRoot, [report])
+      const measurement = payloads.find((row) =>
+        row.anchors.some((anchor) => anchor.t === 'flow' && anchor.name === 'measurement:assert-value:storage'))
+      if (measurement === undefined) throw new Error('expected an assert-value:storage measurement')
+      expect(measurement.summarySeed)
+        .toBe(`assert-value:storage measured as [secret:PW_441] for ${EMAIL}`)
+      expect(measurement.bodySeed)
+        .toBe(`Verified assert-value:storage value: [secret:PW_441] for ${EMAIL}.`)
+      expect(payloads.length).toBeGreaterThan(1)
+      expect(JSON.stringify(payloads)).not.toContain(DECLARED)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })

@@ -185,7 +185,7 @@ export interface PostVerdictStepOperations {
    * A host composed over this run's project, opened for the ENQUEUE and closed again.
    *
    * A separate composition from the tail's, deliberately: the tail composes its own host for the
-   * drain, with the run's masking context threaded so `composeHost` can DERIVE `masker-active`
+   * drain, with the run's declared mask threaded so `composeHost` can DERIVE `masker-active`
    * from what it HAS. This one folds nothing and prints nothing — it opens the queue, writes one
    * row and closes — so it needs neither, and sharing one handle across the shell's step and a
    * tail that may never run would leave an sqlite handle open on every framework-error exit.
@@ -373,7 +373,7 @@ export class PostProcessingUnboundError extends Error {
  * store's `(kind, idempotency_key)` unique index exists to absorb (385 D-08), and reporting it as a
  * failure would make the store's own guarantee look like an error to every reader.
  *
- * THE HOST IS CLOSED HERE. The tail composes its own for the drain (with the run's masking context
+ * THE HOST IS CLOSED HERE. The tail composes its own for the drain (with the run's declared mask
  * threaded, which this one has no use for), so leaving this handle open would leave an sqlite
  * connection behind on every run that ends above the tail.
  */

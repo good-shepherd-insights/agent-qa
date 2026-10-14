@@ -22,7 +22,7 @@ import { promotionHostProof } from './promotion-host-proof.js'
 import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
 import { DIGEST_JOB_ID_SOURCE } from '@vostride/agent-qa-agent-local'
 import type { AuditSink } from '@vostride/agent-qa-safety'
-import type { GuardrailPolicy, MaskingContext, ResolvePromotionPosture } from '@vostride/agent-qa-schema'
+import type { GuardrailPolicy, ResolvePromotionPosture } from '@vostride/agent-qa-schema'
 
 import { runVerdictFirstCurationTail } from '../curation/curation-tail.js'
 import {
@@ -135,7 +135,7 @@ function options(h: Harness): RunPostRunTailOptions {
     knowledgeConfig: { dir: 'agent-qa-knowledge' },
     configDir,
     auditSink: {} as AuditSink,
-    maskingContext: {} as MaskingContext,
+    mask: (text: string) => text,
     policy: {} as GuardrailPolicy,
     log: { warn: (message: string) => h.warn(message) },
     operations: h.operations,

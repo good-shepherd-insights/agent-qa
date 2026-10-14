@@ -32,7 +32,6 @@ import {
 } from '@vostride/agent-qa-runner-local'
 import {
   defaultGuardrailPolicyInput,
-  getActiveMaskingContext,
   loadGuardrailPolicy,
   type AuditSink,
 } from '@vostride/agent-qa-safety'
@@ -41,7 +40,7 @@ import type {
   ExecutionContext,
   GuardrailPolicy,
   CurationSnapshot,
-  MaskingContext,
+  MaskFn,
   ResolvePromotionPosture,
   ScopeKey,
 } from '@vostride/agent-qa-schema'
@@ -152,7 +151,7 @@ export interface RunCurationTailOptions {
   knowledgeConfig: { dir: string }
   configDir: string
   auditSink: AuditSink
-  maskingContext?: MaskingContext
+  mask?: MaskFn
   /** The exact already-resolved planner profile and auth used by the run. */
   modelDeps?: CurationTailModelDeps
   policy: GuardrailPolicy
@@ -469,7 +468,7 @@ export interface CurateCompletedRunInput {
   knowledgeRoot: string
   agentQaRoot: string
   auditSink: AuditSink
-  maskingContext?: MaskingContext
+  mask?: MaskFn
   policy: GuardrailPolicy
   modelDeps?: CurationTailModelDeps
   /** An already-resolved author wins over `modelDeps`; a standing host holds one per process. */
@@ -705,7 +704,6 @@ export async function curateCompletedRun(
     : Math.max(0, input.deadlineMs - tailStartedAtMs)
   await operations.runSafetyScope(
     {
-      maskingContext: input.maskingContext,
       auditSink: input.auditSink,
       // SAFE-01: posture is persisted run truth, never an ambient re-detection.
       executionContext: input.handoff.executionContext,
@@ -716,6 +714,7 @@ export async function curateCompletedRun(
         runDir: input.runDir,
         knowledgeRoot: input.knowledgeRoot,
         policy: input.policy,
+        ...(input.mask === undefined ? {} : { mask: input.mask }),
       })
       // 381-50: visibility never gates — the summary line is additive diagnosis
       // beside (never inside) the noop warn and the complete predicate below.
@@ -785,11 +784,11 @@ export async function curateCompletedRun(
               kind: 'fallback-required' as const,
               reason: 'no-model' as const,
             })
-          // 2026-10-14 (441-04, D-06): the author runs inside this tail's safety scope; 441-10
-          // replaces this with the tail's explicit mask.
+          // 2026-10-14 (441-10, decision 10): a tail with no mask runs only on a 'no-masker' host,
+          // which may not claim the kind that folds.
           : operations.buildCuratorAuthor({
               ...input.modelDeps,
-              mask: (text) => getActiveMaskingContext()?.mask(text) ?? text,
+              mask: input.mask ?? ((text) => text),
             }))
       const drain = await operations.drainQueue({
         sourceRunId: String(input.handoff.runId),
@@ -1058,7 +1057,7 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
         knowledgeRoot,
         agentQaRoot: opts.agentQaRoot,
         auditSink: opts.auditSink,
-        ...(opts.maskingContext === undefined ? {} : { maskingContext: opts.maskingContext }),
+        ...(opts.mask === undefined ? {} : { mask: opts.mask }),
         policy: opts.policy,
         ...(opts.modelDeps === undefined ? {} : { modelDeps: opts.modelDeps }),
         ...(opts.authority === undefined ? {} : { authority: opts.authority }),

@@ -506,7 +506,8 @@ function createComposedRunExecution(input: {
                 configFilePath: context.configFilePath,
                 knowledgeConfig: inputs.config.knowledge,
                 auditSink: context.auditSink,
-                maskingContext: context.maskingContext,
+                // 2026-10-14 (441-10, D-06): 441-58 replaces this source with the run's redactor.
+                mask: (text) => context.maskingContext.mask(text),
                 // LOG, NEVER PRINT. The tail's close-out line and digest block are CLI outputs, and
                 // this door serves `agent-qa fn --json` (stdout is the JSON document) and the MCP
                 // host (stdout IS the JSON-RPC connection). Both go to the same stderr sink the

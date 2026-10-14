@@ -1996,7 +1996,8 @@ async function executeSuites(
             configFilePath,
             knowledgeConfig: config.knowledge,
             auditSink,
-            maskingContext,
+            // 2026-10-14 (441-10, D-06): 441-58 replaces this source with the run's redactor.
+            mask: (text) => maskingContext.mask(text),
             ...(produced.getCurationModelDeps() === undefined
               ? {}
               : { modelDeps: produced.getCurationModelDeps()! }),
@@ -5257,7 +5258,7 @@ export function createRunCommand(): Command {
                   configFilePath,
                   knowledgeConfig: config.knowledge,
                   auditSink,
-                  maskingContext,
+                  mask: (text) => maskingContext.mask(text),
                   ...(produced.getCurationModelDeps() === undefined
                     ? {}
                     : { modelDeps: produced.getCurationModelDeps()! }),

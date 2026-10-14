@@ -22,13 +22,14 @@ import {
   type DistilledObservation,
   type FactSubtype,
   type GuardrailPolicy,
+  type MaskFn,
   type PerTestOutcome,
   type Platform,
   type ProcedureJsonValue,
   type StepEvidence,
   type SubActionEvidence,
 } from '@vostride/agent-qa-schema'
-import { detectEmails, getActiveMaskingContext, scan } from '@vostride/agent-qa-safety'
+import { detectEmails, scan } from '@vostride/agent-qa-safety'
 
 import {
   actionRefs,
@@ -359,10 +360,10 @@ function projectFact(
   )
 }
 
-function measurementSeeds(step: StepEvidence): MeasurementSeed[] {
+function measurementSeeds(step: StepEvidence, mask: MaskFn | undefined): MeasurementSeed[] {
   const reported = step.reportedValue === undefined
     ? []
-    : [{ metric: 'reported-value', value: step.reportedValue.value }]
+    : [{ metric: 'reported-value', value: maskedProse(step.reportedValue.value, mask) }]
   const asserted =
     step.assertOutcome === undefined || !step.assertOutcome.passed
       ? []
@@ -371,7 +372,7 @@ function measurementSeeds(step: StepEvidence): MeasurementSeed[] {
             metric: `assert-value:${step.assertOutcome.source}`,
             value: step.assertOutcome.actual === null
               ? 'null'
-              : (step.assertOutcome.actual ?? 'undefined'),
+              : maskedProse(step.assertOutcome.actual ?? 'undefined', mask),
           },
         ]
   return [...reported, ...asserted]
@@ -382,6 +383,7 @@ function projectMeasurements(
   test: PerTestOutcome,
   step: StepEvidence,
   policy: GuardrailPolicy,
+  mask: MaskFn | undefined,
 ): CurationCandidateProjection[] {
   if (!step.verifierVerdict.pass) return []
   const firstSubAction = step.subActions[0]
@@ -391,7 +393,7 @@ function projectMeasurements(
   const platform = firstSubAction.stateBefore.platform
   const id = observationId(handoff, test.testIndex, step.stepIndex)
 
-  return measurementSeeds(step).map((measurement) => {
+  return measurementSeeds(step, mask).map((measurement) => {
     const metricAnchor = {
       t: 'flow' as const,
       name: `measurement:${measurement.metric}`,
@@ -765,22 +767,9 @@ function isCompositeJsonValue(
   return value === null || typeof value === 'object'
 }
 
-/**
- * F-381-48-1: step instruction TEXT is recorded post-interpolation, so a `{{env:}}`-bound
- * email rides the handoff's stepText VERBATIM into every procedure-candidate prose surface
- * (summarySeed, seed instructions, observation naturalKeys). The committed-egress
- * checkpoint then blocks the publish (redact-action detections block on non-user parts)
- * and the drain's 'withheld' outcome is structurally silent at the tail. The projection
- * therefore masks prose through the SAME ambient masking context that minted the
- * plannedAction's placeholder — the candidate survives UNDER the transform; the wall is
- * untouched. Value slots are not routed here: D-03 forced parameterization owns them.
- * Outside a safety scope (pure unit fixtures) this is the identity function, and
- * non-email, unregistered values (the sentinel arm) pass through byte-identical.
- * Deliberately NOT `{{env:}}` re-templatization — that prose design ruling stays deferred
- * (Plan 381-42 third prohibition).
- */
-function maskedProse(text: string): string {
-  return getActiveMaskingContext()?.mask(text) ?? text
+// 2026-10-14 (441-10, D-06): the caller's declared mask; absent only on a 'no-masker' host.
+function maskedProse(text: string, mask: MaskFn | undefined): string {
+  return mask?.(text) ?? text
 }
 
 function completingSubAction(step: StepEvidence): SubActionEvidence | undefined {
@@ -798,10 +787,11 @@ function tidyName(name: string): string {
 /**
  * The strict identity replay re-finds (438 D-11): role, the exact observed name and, on the lane
  * the planner stated, the stated row words recorded in the step's evidence (already redacted).
- * Name and row pass the active masking context like the rest of the body. No position is written.
+ * Name and row pass the caller's mask like the rest of the body. No position is written.
  */
 function trajectoryTargets(
   subAction: SubActionEvidence,
+  mask: MaskFn | undefined,
 ): Record<string, z.infer<typeof trajectoryGuardTargetSchema>> {
   const targets: Record<string, z.infer<typeof trajectoryGuardTargetSchema>> = {}
   const action = subAction.plannedAction as unknown as Record<string, unknown>
@@ -824,8 +814,8 @@ function trajectoryTargets(
       ref,
       role: element.role,
       nameNormalized: element.nameNormalized,
-      name: maskedProse(element.name),
-      ...(row === undefined || row === '' ? {} : { row: maskedProse(row) }),
+      name: maskedProse(element.name, mask),
+      ...(row === undefined || row === '' ? {} : { row: maskedProse(row, mask) }),
     }
   }
   return targets
@@ -872,7 +862,7 @@ function trajectoryValues(
   return values
 }
 
-function trajectoryStep(step: StepEvidence): ProcedureTrajectoryStep {
+function trajectoryStep(step: StepEvidence, mask: MaskFn | undefined): ProcedureTrajectoryStep {
   const completing = completingSubAction(step)
   const values =
     completing === undefined
@@ -886,13 +876,13 @@ function trajectoryStep(step: StepEvidence): ProcedureTrajectoryStep {
     : completing.stateBefore.url
   return {
     ordinal: step.stepIndex,
-    instruction: maskedProse(step.stepText),
+    instruction: maskedProse(step.stepText, mask),
     ...(completing === undefined || values === undefined
       ? {}
       : {
           action: {
             type: completing.plannedAction.type,
-            targets: trajectoryTargets(completing),
+            targets: trajectoryTargets(completing, mask),
             values,
           },
         }),
@@ -904,6 +894,7 @@ function projectProcedureTarget(
   handoff: CompletedRunHandoff,
   test: PerTestOutcome,
   policy: GuardrailPolicy,
+  mask: MaskFn | undefined,
 ): CurationCandidateProjection | undefined {
   if (test.outcome !== 'passed') return undefined
   if (test.steps.length < 2) return undefined
@@ -930,14 +921,14 @@ function projectProcedureTarget(
     const previous = test.steps[position - 1]
     return {
       schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
-      step: { naturalKey: maskedProse(step.stepText), ordinal: step.stepIndex },
+      step: { naturalKey: maskedProse(step.stepText, mask), ordinal: step.stepIndex },
       ...(stepPlatform === undefined
         ? {}
         : { platform: observationPlatform(stepPlatform) }),
       test: { id: test.testId },
       flow: {
         name: flowName,
-        ...(previous === undefined ? {} : { precedes: maskedProse(previous.stepText) }),
+        ...(previous === undefined ? {} : { precedes: maskedProse(previous.stepText, mask) }),
       },
       ...(route === undefined || stepPlatform === undefined
         ? {}
@@ -957,7 +948,7 @@ function projectProcedureTarget(
   const seed: ProcedureTrajectorySeed = {
     version: PROCEDURE_TRAJECTORY_SEED_VERSION,
     flowName,
-    steps: test.steps.map(trajectoryStep),
+    steps: test.steps.map((step) => trajectoryStep(step, mask)),
   }
   const seenArtifacts = new Set<string>()
   const artifactDescriptors = test.steps
@@ -974,7 +965,7 @@ function projectProcedureTarget(
       kind: 'procedure',
       anchors,
       summarySeed: `Procedure ${flowName}: ${test.steps
-        .map((step) => maskedProse(step.stepText))
+        .map((step) => maskedProse(step.stepText, mask))
         .join(' -> ')}`,
       bodySeed: canonicalJson(seed),
       observations,
@@ -1000,9 +991,10 @@ function projectProcedureTarget(
 export function projectProcedureTargets(
   handoff: CompletedRunHandoff,
   policy: GuardrailPolicy,
+  mask?: MaskFn,
 ): CurationCandidateProjection[] {
   return handoff.tests.flatMap((test) => {
-    const target = projectProcedureTarget(handoff, test, policy)
+    const target = projectProcedureTarget(handoff, test, policy, mask)
     return target === undefined ? [] : [target]
   })
 }
@@ -1011,6 +1003,7 @@ export function projectProcedureTargets(
 export function projectCurationCandidates(
   handoff: CompletedRunHandoff,
   policy: GuardrailPolicy,
+  mask?: MaskFn,
 ): CurationCandidateProjection[] {
   return [
     ...handoff.tests.flatMap((test) => {
@@ -1018,13 +1011,13 @@ export function projectCurationCandidates(
         const fact = projectFact(handoff, test, step, policy)
         return [
           ...(fact === undefined ? [] : [fact]),
-          ...projectMeasurements(handoff, test, step, policy),
+          ...projectMeasurements(handoff, test, step, policy, mask),
         ]
       })
       const caution = projectCaution(handoff, test, policy)
       return [...factsAndMeasurements, ...(caution === undefined ? [] : [caution])]
     }),
-    ...projectProcedureTargets(handoff, policy),
+    ...projectProcedureTargets(handoff, policy, mask),
   ]
 }
 
@@ -1035,6 +1028,7 @@ export interface EmitCurationCandidatesOptions {
   /** Absolute agent-qa-knowledge root that owns the durable queue. */
   knowledgeRoot: string
   policy: GuardrailPolicy
+  mask?: MaskFn
 }
 
 export type EmitCandidateOutcome =
@@ -1093,7 +1087,7 @@ export function emitCurationCandidates(opts: EmitCurationCandidatesOptions): Emi
     refused: 0,
     details: [],
   }
-  for (const projected of projectCurationCandidates(opts.handoff, opts.policy)) {
+  for (const projected of projectCurationCandidates(opts.handoff, opts.policy, opts.mask)) {
     const artifactSources = bindArtifactSources(projected, opts.runDir)
     let outcome: EmitCandidateOutcome
     try {

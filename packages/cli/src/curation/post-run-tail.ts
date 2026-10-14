@@ -225,10 +225,10 @@ export interface PostRunTailHostInput {
   readonly agentQaRoot: string
   readonly configPath: string
   /**
-   * The run masker this tail was handed, if any — carried so `composeHost` can DERIVE the
+   * The declared mask this tail was handed, if any — carried so `composeHost` can DERIVE the
    * posture from what the tail HAS rather than assert one it intends (388-10, UF-388-01).
    */
-  readonly maskingContext?: RunCurationTailOptions['maskingContext']
+  readonly mask?: RunCurationTailOptions['mask']
   /**
    * The writer lease the PUMP holds, resolved at the Gate-1 claim (422 D-14).
    *
@@ -297,17 +297,10 @@ export function defaultPostRunTailOperations(): PostRunTailOperations {
           ? {}
           : { resolveClaimAuthority: input.resolveClaimAuthority }),
         curateRun: input.curateRun,
-        // Derived from presence, never hard-coded (388-10): the tail declares what it HAS,
-        // not what it intends. Both production sites in `run.ts` pass a masking context
-        // unconditionally, so production behaviour is unchanged — and a harness that
-        // composes the tail without one gets the claim deferral rather than a silent
-        // unmasked emission. The LIMIT of the derivation: what is derived here is that A
-        // masker is active, not that it is the folded run's. `curateRun` below folds the
-        // JOB PAYLOAD's runId while passing `opts.maskingContext`, which is THIS run's
-        // masker, and the pump runs whatever `runNextJob` returns, own row or foreign — so
-        // a foreign run's row folded here is masked by the wrong masker. Pre-existing and
-        // unscoped (T-388-30); this comment must not imply otherwise.
-        candidateProse: input.maskingContext === undefined ? 'no-masker' : 'masker-active',
+        // Derived from presence, never hard-coded (388-10): the tail declares what it HAS. Both
+        // production sites in `run.ts` pass a mask, and a harness that composes the tail
+        // without one gets the claim deferral rather than an unmasked emission.
+        candidateProse: input.mask === undefined ? 'no-masker' : 'masker-active',
       },
     }),
     acquireWriterLease: LOCAL_DAEMON_CAPABILITIES.acquireWriterLease,
@@ -396,7 +389,7 @@ export interface RunPostRunTailOptions extends Pick<
   | 'knowledgeConfig'
   | 'configDir'
   | 'auditSink'
-  | 'maskingContext'
+  | 'mask'
   | 'modelDeps'
   | 'policy'
   | 'signal'
@@ -645,7 +638,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
       knowledgeRoot,
       agentQaRoot: opts.agentQaRoot,
       auditSink: opts.auditSink,
-      ...(opts.maskingContext === undefined ? {} : { maskingContext: opts.maskingContext }),
+      ...(opts.mask === undefined ? {} : { mask: opts.mask }),
       policy: opts.policy,
       ...(opts.modelDeps === undefined ? {} : { modelDeps: opts.modelDeps }),
       ...(heldAuthority === undefined ? {} : { authority: heldAuthority }),
@@ -676,8 +669,8 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
       agentQaRoot: opts.agentQaRoot,
       configPath: opts.configPath,
       // The same conditional spread the fold is threaded with: composeHost derives the
-      // posture from this value's PRESENCE, so the tail never asserts a masker it lacks.
-      ...(opts.maskingContext === undefined ? {} : { maskingContext: opts.maskingContext }),
+      // posture from this value's PRESENCE, so the tail never asserts a mask it lacks.
+      ...(opts.mask === undefined ? {} : { mask: opts.mask }),
       // The SAME `heldAuthority` closure `curateRun` reads above, and for the same reason: the
       // fold and the Gate-1 write happen under one lease, and a second way to learn which lease
       // is a second answer to who is writing (422 D-14).
@@ -814,10 +807,9 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
           agentQaRoot: opts.agentQaRoot,
           runId: opts.runId,
           chainJobIds: ownChainJobIds,
-          // The run's own masker, spread on the same conditional idiom the fold is threaded
-          // with above: the chip's error text crosses the same disclosure boundary the fold's
-          // does, and it may not be the one output that skipped the masker (WR-08).
-          ...(opts.maskingContext === undefined ? {} : { maskingContext: opts.maskingContext }),
+          // The tail's mask, spread on the same conditional idiom the fold is threaded with: the
+          // chip's error text crosses the same disclosure boundary the fold's does (WR-08).
+          ...(opts.mask === undefined ? {} : { mask: opts.mask }),
           // 404-05 (D-16): the dashboard's second sink, threaded on the same conditional idiom —
           // an absent relay is an ABSENT field, never a present `undefined`, so the emitter's own
           // optional call is what decides, in one place.
@@ -904,7 +896,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
           knowledgeConfig: opts.knowledgeConfig,
           configDir: opts.configDir,
           auditSink: opts.auditSink,
-          ...(opts.maskingContext === undefined ? {} : { maskingContext: opts.maskingContext }),
+          ...(opts.mask === undefined ? {} : { mask: opts.mask }),
           ...(opts.modelDeps === undefined ? {} : { modelDeps: opts.modelDeps }),
           policy: opts.policy,
           ...(opts.signal === undefined ? {} : { signal: opts.signal }),
@@ -1144,7 +1136,7 @@ export type PostRunPendingPosture = 'handed-off' | 'backlog-exhausted' | 'none'
  * Which hosts may drain a stage's kind — read off 388-10's posture contract rather than
  * restated as a condition.
  *
- * `curate-memory` is unclaimable by a host that folds with no masker active
+ * `curate-memory` is unclaimable by a host that folds with no declared mask bound
  * (`UNCLAIMABLE_BY_PROSE_POSTURE`), and the production daemon declares exactly that posture,
  * so no daemon will ever drain curation. The parenthetical used to be chosen by POSTURE
  * alone and pasted onto every pending stage, which is how a handed-off leg came to promise a

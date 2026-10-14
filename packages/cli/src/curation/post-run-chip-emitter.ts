@@ -36,7 +36,7 @@ import { appendFileSync, readFileSync } from 'node:fs'
 import type {
   ChipEventPayload,
   JobKind,
-  MaskingContext,
+  MaskFn,
   RunEventEnvelope,
   RunEventType,
 } from '@vostride/agent-qa-schema'
@@ -177,12 +177,12 @@ export interface CreatePostRunChipEmitterOptions {
    */
   readonly chainJobIds: readonly string[]
   /**
-   * The run's own masker, the same one the fold is threaded with.
+   * The tail's declared mask, the same one the fold is threaded with.
    *
    * OPTIONAL because a tail may legitimately carry none, and the bound below still applies —
    * absence must degrade the redaction, never the discipline.
    */
-  readonly maskingContext?: MaskingContext
+  readonly mask?: MaskFn
   /** The tail's one wall clock, so envelope stamps and budget arithmetic share a source. */
   readonly now?: () => number
   /**
@@ -263,7 +263,7 @@ export function createPostRunChipEmitter(
    * discipline rather than being the exception to it (T-388-17 / WR-08).
    */
   const chipError = (reason: string): string =>
-    (options.maskingContext?.mask(reason) ?? reason).slice(0, CHIP_ERROR_MAX_LENGTH)
+    (options.mask?.(reason) ?? reason).slice(0, CHIP_ERROR_MAX_LENGTH)
   // Read ONCE, at construction: the emitter is the only writer of this file from here on, so
   // re-reading per append would be asking a file what this object already knows — and would
   // make the trail's ordering depend on nobody else appending, which is the assumption the

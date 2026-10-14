@@ -5410,7 +5410,7 @@
     {
       "runner": "vitest",
       "file": "packages/cli/src/curation/__tests__/curator-author-procedure.test.ts",
-      "fullName": "C438-PROCEDURE-WRITE passes the written name and row through the active masking context",
+      "fullName": "C438-PROCEDURE-WRITE passes the written name and row through the tail's mask",
       "origin": "438 D-11"
     },
     {
