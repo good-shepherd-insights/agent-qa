@@ -9,7 +9,6 @@ import {
   projectRunExclusion,
 } from '@vostride/agent-qa-eval'
 import type { PartitionManifest, RunExclusionRecord } from '@vostride/agent-qa-eval'
-import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
@@ -30,8 +29,6 @@ const SALT = 'a3f'.repeat(21).concat('b')
 const OTHER_SALT = 'b4e'.repeat(21).concat('c')
 const ANALYSIS_DIGEST = '3d'.repeat(32)
 const OTHER_DIGEST = '7f'.repeat(32)
-
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 
 function manifest(overrides: Partial<PartitionManifest> = {}): PartitionManifest {
   return {
@@ -67,7 +64,6 @@ describe('writePartitionManifest / writeRunExclusion (414 D-02/D-05/D-06, ROOT-0
       manifest: value,
       committedRoot: root,
       seedingOutputBaseDir: outDir,
-      policy,
     })
   }
 
@@ -76,7 +72,6 @@ describe('writePartitionManifest / writeRunExclusion (414 D-02/D-05/D-06, ROOT-0
       record,
       committedRoot: root,
       seedingOutputBaseDir: outDir,
-      policy,
     })
   }
 

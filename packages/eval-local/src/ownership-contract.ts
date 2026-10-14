@@ -35,17 +35,14 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   'the tier-4 judge-port binding through createModel, including bindJudgePanel as N existing bindings during replay, Gate 1 and operator calibration inside runSafetyScope',
   // Phase 371 ROOT-01/D-15/D-17: the write-once committed eval-root store under agent-qa-eval/ —
   // scaffolded gitignore covering every blobs/ dir, schemaVersion root marker, per-segment slugged
-  // paths, byte-compare idempotence, typed write-conflict refusal; content policy (the
-  // committed-egress checkpoint) lives in the seeding composition helper, never here.
+  // paths, byte-compare idempotence, typed write-conflict refusal.
   'the write-once committed eval-root store scaffolding and refusing under agent-qa-eval/',
   // Phase 371 D-14/D-16 (ROOT-02): the ONE sanctioned corpus-seeding composition helper
-  // (seedCommittedCorpus) executing eval-core SeedingPlans — every committed text write through
-  // assertCommittedEgressSafe (fail-closed, JsonlAuditSink-audited, channel 'eval-seeding'),
-  // per-case atomic refusal on block or write-conflict, batch never aborts; blob bytes bypass
-  // the checkpoint and land only under ignore-covered blobs/ paths (D-15). Selection and
-  // labeling stay in eval core — this helper executes, never decides. 372's CLI wraps exactly
-  // this function.
-  'the single sanctioned corpus-seeding composition helper writing the committed eval root through the egress checkpoint',
+  // (seedCommittedCorpus) executing eval-core SeedingPlans — every committed text written as
+  // authored (441 D-15), per-case atomic refusal on write-conflict, batch never aborts; blob
+  // bytes land only under ignore-covered blobs/ paths (D-15). Selection and labeling stay in
+  // eval core — this helper executes, never decides. 372's CLI wraps exactly this function.
+  'the single sanctioned corpus-seeding composition helper writing the committed eval root',
   // Phase 372 G2/D-02/D-08: the read legs inverting the replay-record, score, and cassette-bundle
   // write legs — loadReplayRecord/loadScoreRecord mirror the loader's typed-refusal posture (every
   // read/parse failure is a returned ReplayRefusal, absence of score.json is typed, never a
@@ -71,10 +68,8 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   // measurement, scoring and verdict derivations remain in eval core.
   'the write-once noise-floor artefact writer under agent-qa-eval/reports/noise-floor/ and the decisions.json third part of the report commit; the per-repeat retargeted replay sweep and batch assembly; the gate-side release-gate and floor compositions over the committed-root read leg',
   // Phase 414 D-02/D-05/D-15 (ROOT-07/ROOT-08/ROOT-10): the partition manifest and the run
-  // exclusion are two more committed documents, so they join the SEEDING family under the SAME
-  // 'eval-seeding' checkpoint channel seedCommittedCorpus already owns — never a third channel,
-  // for the reason D-15 gave on the report side: a new channel is a new policy surface no
-  // reviewed policy covers. Both are write-once (a manifest whose salt or fractions disagree
+  // exclusion are two more committed documents, so they join the SEEDING family and are written
+  // as authored (441 D-15). Both are write-once (a manifest whose salt or fractions disagree
   // with the committed one ⇒ 'write-conflict', because changing them re-partitions a corpus that
   // has already been gated against; an exclusion compares runExclusionCore so a later backfill
   // block never reads as a new decision). Neither writer mints a salt — it arrives as data from
@@ -82,7 +77,7 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   // leg and the manifests into eval core's pure readGatePosture; the derivation stays in eval
   // core, and the symbol lives on the MAIN entry because private held-out entries gate (D-09)
   // and the proposer's reader port must never count them.
-  'the write-once partition-manifest and run-exclusion writers under agent-qa-eval/contracts/ and agent-qa-eval/exclusions/ behind the eval-seeding checkpoint, and the gate-side posture composition over the committed-root read leg',
+  'the write-once partition-manifest and run-exclusion writers under agent-qa-eval/contracts/ and agent-qa-eval/exclusions/, and the gate-side posture composition over the committed-root read leg',
   // Phase 414 D-18/D-19/D-20 (ROOT-10 SC5): the proposer-side /reader subpath — a SECOND package
   // entry, published beside the main one for the reason knowledge-local's reader entry exists:
   // an entry is the only boundary a rule can key on. The main entry is the GATE side (the root as

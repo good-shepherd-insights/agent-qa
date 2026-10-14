@@ -11,10 +11,6 @@ import {
   projectMatcherConfigContract,
 } from '@vostride/agent-qa-eval'
 import type { ArtifactSource, ExtractedCassette, SeedingPlan } from '@vostride/agent-qa-eval'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { asRef, computeBriefDigest } from '@vostride/agent-qa-schema'
 import type {
@@ -54,8 +50,6 @@ const TEST_PARTITION = {
   privateFraction: 0.5,
 } as const
 const PRODUCT = 'default'
-
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 
 function fullArtifacts(): ArtifactSource {
   const entries = new Map<string, Uint8Array>([[LOCAL_FIXTURE_BLOB_SHA, LOCAL_FIXTURE_BLOB_BYTES]])
@@ -170,7 +164,6 @@ describe('seedCommittedCorpus (ROOT-02, D-13/D-14/D-15/D-16/D-17)', () => {
       cassettes: overrides.cassettes ?? cassettes,
       committedRoot: root,
       seedingOutputBaseDir: outDir,
-      policy,
     })
   }
 
@@ -332,7 +325,7 @@ describe('seedCommittedCorpus (ROOT-02, D-13/D-14/D-15/D-16/D-17)', () => {
  * 413 SC2 / T-413-01: the growth campaign records `ServedBrief.proof` — the exact model-visible
  * prompt material of every turn — and the seeder commits it as recorded. A declared value in it
  * was masked at record time by the run's redactor, so the committed prose carries the marker and
- * never the value (441 D-06, D-15: the seeder runs no egress check of its own).
+ * never the value (441 D-06, D-15: the seeder runs no content check of its own).
  */
 function losslessProof(text: string): LosslessServedBriefProofV1 {
   const turn: ServedPromptTurn = {
@@ -372,7 +365,6 @@ describe('413 SC2 — lossless proof text is committed as recorded, its declared
       cassettes: seedCassettes,
       committedRoot: root,
       seedingOutputBaseDir: outDir,
-      policy,
     })
   }
 
@@ -421,7 +413,7 @@ describe('413 SC2 — lossless proof text is committed as recorded, its declared
   })
 })
 
-// 441-42 D-15 (pulled forward in 441-12): seeds are committed as authored, with no egress check.
+// 441 D-15 (landed in 441-12): seeds are committed as authored, with no content check.
 describe('C441-COMMITTED', () => {
   it('a seeded cassette with credential-shaped text is committed', async () => {
     const root = await mkdtemp(join(tmpdir(), 'eval-local-c441-root-'))

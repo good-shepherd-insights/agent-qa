@@ -31,7 +31,6 @@ import type {
   RunExclusionRecord,
   SeedingPlan,
 } from '@vostride/agent-qa-eval'
-import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import { asRef, slugBranch } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, Decision, SubActionEvidence } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -66,7 +65,6 @@ import {
 } from './fixtures/local-handoff-fixture.js'
 
 const PRODUCT = 'default'
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 
 /**
  * The 414-05 shared partition vector — the same salt and fractions this file,
@@ -276,7 +274,6 @@ describe('readCommittedCorpus / listCommittedReports / listBaselinePointers (413
       cassettes,
       committedRoot: root,
       seedingOutputBaseDir: outDir,
-      policy,
     })
   })
 

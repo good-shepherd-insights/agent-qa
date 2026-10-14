@@ -13,7 +13,6 @@ import {
   createPanelIdentity,
 } from '@vostride/agent-qa-eval'
 import type { ArtifactSource, ExtractedCassette, SeedingPlan } from '@vostride/agent-qa-eval'
-import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -39,7 +38,6 @@ const TEST_PARTITION = {
 
 const PRODUCT = 'default'
 const PLANNER_MODEL_ID = 'gpt-5.6-terra'
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 
 function fullArtifacts(): ArtifactSource {
   const entries = new Map<string, Uint8Array>([[LOCAL_FIXTURE_BLOB_SHA, LOCAL_FIXTURE_BLOB_BYTES]])
@@ -88,7 +86,6 @@ describe('readGatePostureFor (414 D-15, ROOT-10)', () => {
       cassettes,
       committedRoot: root,
       seedingOutputBaseDir: outDir,
-      policy,
     })
   })
 
@@ -109,7 +106,6 @@ describe('readGatePostureFor (414 D-15, ROOT-10)', () => {
         manifest,
         committedRoot: root,
         seedingOutputBaseDir: outDir,
-        policy,
       }).kind,
     ).toBe('written')
 

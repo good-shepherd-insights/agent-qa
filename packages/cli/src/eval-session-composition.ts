@@ -2207,7 +2207,7 @@ export interface SeedExclusionRow {
   product: string
   /** Committed-root-relative exclusion path. */
   path: string
-  outcome: 'written' | 'unchanged' | 'write-conflict' | 'egress-blocked'
+  outcome: 'written' | 'unchanged' | 'write-conflict'
 }
 
 /** One run's resolved verdicts flattened to the two fields the DTO and the census print (D-04). */
@@ -2290,7 +2290,6 @@ export interface SeedVerbResult {
  * bundles), let buildSeedingPlan decide (eval core is the ONLY decision-maker, D-16), and hand
  * the plan verbatim to seedCommittedCorpus — the CLI adds NO selection or labeling logic.
  * The committed root is ALWAYS `<configDir>/agent-qa-eval`; no flag can retarget it (D-12).
- * Guardrail audit rows land under the D-07 per-run seed audit dirs via the helper's own sink.
  */
 export async function runSeedVerb(
   session: EvalSession,
@@ -2411,7 +2410,7 @@ export async function runSeedVerb(
           committedRoot,
           seedingOutputBaseDir: evalAuditDir(session.configDir, 'seed', runSlug),
         })
-        // egress-blocked and write-conflict are DATA rows on the DTO, never throws (D-08).
+        // A write-conflict is a DATA row on the DTO, never a throw (D-08).
         result.exclusionsWritten.push({
           runSlug,
           product,
@@ -2670,9 +2669,8 @@ export function resolveTargetEnvironmentForProduct(
 }
 
 /**
- * The manifest writer's four outcomes narrowed to the two a partition row can carry. A
- * write-conflict is D-05's refusal; an egress block on a document that is a product slug, a hex
- * salt and two numbers means the guardrail policy caught something the operator must look at.
+ * The manifest writer's three outcomes narrowed to the two a partition row can carry. A
+ * write-conflict is D-05's refusal and throws.
  */
 function requireManifestWritten(
   outcome: ReturnType<typeof writePartitionManifest>,

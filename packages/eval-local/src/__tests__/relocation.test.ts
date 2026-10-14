@@ -26,7 +26,6 @@ import {
   selectGateSet,
 } from '@vostride/agent-qa-eval'
 import type { ArtifactSource, ExtractedCassette, SeedingPlan } from '@vostride/agent-qa-eval'
-import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import { asRef } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, Decision, SubActionEvidence } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -48,8 +47,6 @@ const TEST_PARTITION = {
   heldOutFraction: 0.95,
   privateFraction: 0.5,
 } as const
-
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 
 function fullArtifacts(): ArtifactSource {
   const entries = new Map<string, Uint8Array>([[LOCAL_FIXTURE_BLOB_SHA, LOCAL_FIXTURE_BLOB_BYTES]])
@@ -151,7 +148,6 @@ describe('414 ROOT-07 — relocation: the split and the exclusion set are functi
       cassettes,
       committedRoot: rootA,
       seedingOutputBaseDir: outDir,
-      policy,
     })
     writePartitionManifest({
       manifest: projectPartitionManifest({
@@ -162,7 +158,6 @@ describe('414 ROOT-07 — relocation: the split and the exclusion set are functi
       }),
       committedRoot: rootA,
       seedingOutputBaseDir: outDir,
-      policy,
     })
 
     // The move. A DIFFERENT mkdtemp prefix, so the two absolute paths share no suffix and a

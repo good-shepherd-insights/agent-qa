@@ -27,7 +27,6 @@ import type {
   ExtractedCassette,
   SeedingPlan,
 } from '@vostride/agent-qa-eval'
-import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import { asRef } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, Decision, SubActionEvidence } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -65,8 +64,6 @@ const READER_PARTITION = {
 
 /** How many silver tests the fixture handoff is cloned into (see READER_PARTITION). */
 const SILVER_CLONE_COUNT = 8
-
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 
 function fullArtifacts(): ArtifactSource {
   const entries = new Map<string, Uint8Array>([[LOCAL_FIXTURE_BLOB_SHA, LOCAL_FIXTURE_BLOB_BYTES]])
@@ -180,7 +177,6 @@ describe('openCorpusReader on the /reader subpath (414 D-18/D-19/D-20, ROOT-10 S
       cassettes,
       committedRoot: root,
       seedingOutputBaseDir: outDir,
-      policy,
     })
     writePartitionManifest({
       manifest: projectPartitionManifest({
@@ -191,7 +187,6 @@ describe('openCorpusReader on the /reader subpath (414 D-18/D-19/D-20, ROOT-10 S
       }),
       committedRoot: root,
       seedingOutputBaseDir: outDir,
-      policy,
     })
     writeCommitted(
       root,

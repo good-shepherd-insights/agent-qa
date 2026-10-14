@@ -178,7 +178,7 @@ describe('420 actual CLI seed weights', () => {
     expect(existsSync(f.committedRoot)).toBe(false)
   })
 
-  it('preserves recorded masked planner evidence through both new weight blocks and the egress checkpoint', async () => {
+  it('preserves recorded masked planner evidence through both new weight blocks into the committed root', async () => {
     const f = fixture()
     writeFileSync(join(f.root, '.env.secrets.local'), 'PRIVATE_MODEL=operator-private-model-fixture-420\n')
     const session = await resolveEvalSession({ configPath: f.configPath })

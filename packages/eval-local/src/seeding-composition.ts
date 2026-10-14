@@ -18,8 +18,7 @@
 //     blob verification refusal surfaces as the same typed write-conflict — never silent.
 //   - Every committed text is serialized by eval core's committedFileText (the ONE serializer);
 //     canonical key order is what makes the byte-compare idempotence hold across re-seeds.
-//   - The helper makes ZERO model calls and opens no safety scope. Its `policy` and `auditSink`
-//     options are unread since 441-12 (441-42 removes them).
+//   - The helper makes ZERO model calls and opens no safety scope.
 
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -67,19 +66,13 @@ export interface SeedCommittedCorpusInput {
   committedRoot: string
   /** Seeding-scoped output base dir. */
   seedingOutputBaseDir: string
-  /** Unread since 441-12 (441-42 removes it). */
+  /** Unread; only adversarial admission still passes it (441-42-2 removes it). */
   policy?: GuardrailPolicy
-  /** Unread since 441-12 (441-42 removes it). */
+  /** Unread (441-57 removes it). */
   auditSink?: AuditSink
 }
 
 export type SeedingRefusal =
-  // Produced only by golden-composition's census commit now; 441-23 and 441-42 remove it.
-  | {
-      cassetteId: string
-      kind: 'egress-blocked'
-      detections: readonly { label: string; detector: string }[]
-    }
   | { cassetteId: string; kind: 'write-conflict'; path: string }
   | { cassetteId: string; kind: 'missing-cassette' }
 
@@ -285,8 +278,6 @@ export interface WritePartitionManifestInput {
   committedRoot: string
   /** Seeding-scoped output base dir. */
   seedingOutputBaseDir: string
-  /** Unread since 441-12 (441-42 removes it). */
-  policy?: GuardrailPolicy
 }
 
 export type WritePartitionManifestOutcome = CommittedDocumentOutcome
@@ -296,7 +287,6 @@ export interface WriteRunExclusionInput {
   record: RunExclusionRecord
   committedRoot: string
   seedingOutputBaseDir: string
-  policy?: GuardrailPolicy
 }
 
 export type WriteRunExclusionOutcome = CommittedDocumentOutcome
