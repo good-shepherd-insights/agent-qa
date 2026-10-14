@@ -36,8 +36,6 @@ import {
   makeScreenStateFixture,
 } from './fixtures/bundle-fixture.js'
 
-const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
-
 function sha(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
@@ -255,27 +253,6 @@ describe('publishBundle staged committed publish (D-11/D-12/D-15)', () => {
         closeSync: vi.fn(),
       }),
     ).toThrow(error)
-  })
-
-  it('refuses a detector-shaped secret with audit but no bundle or staging bytes', () => {
-    const blockedInput = input({
-      draft: makeBundleDraftFixture({ body: `Do not commit ${AWS_KEY}` }),
-    })
-
-    const outcome = publishBundle(config(), blockedInput)
-
-    expect(outcome.kind).toBe('egress-blocked')
-    if (outcome.kind !== 'egress-blocked') throw new Error('expected egress refusal')
-    expect(outcome.detections).toContainEqual({ label: 'record.md', detector: 'awsKey' })
-    expect(readdirSync(bundlesDir())).toEqual([])
-    expect(
-      walkFiles(knowledgeRoot).filter((relPath) =>
-        readFileSync(join(knowledgeRoot, relPath)).includes(Buffer.from(AWS_KEY)),
-      ),
-    ).toEqual([])
-    expect(readFileSync(join(auditBaseDir, 'guardrail_audit.jsonl'), 'utf8')).toContain(
-      'knowledge-bundle:record.md',
-    )
   })
 
   it('throws loudly when thumbnails are requested', () => {

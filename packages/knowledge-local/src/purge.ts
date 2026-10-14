@@ -29,7 +29,6 @@ import {
 import type { RecordId } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
-import { checkpointCommittedParts } from './bundle-egress.js'
 import { assertWithinKnowledgeRoot } from './knowledge-containment.js'
 import { loadBundle } from './bundle-read.js'
 import type { LoadedBundle } from './bundle-read.js'
@@ -184,7 +183,7 @@ export interface PurgeRecordInput {
   recordId: RecordId
   /** Caller-owned sovereign identity; Phase 382 supplies the confirmed user identity. */
   initiator: string
-  /** Optional explicit runtime audit root; omission uses the knowledge root's stable sibling. */
+  // 2026-10-15 (441-22, D-15): unread since the committed-egress check went; 441-53 deletes it.
   auditBaseDir?: string
   /** Runtime-counter reservation used for a fresh destruction receipt; resumes reuse intent. */
   purgedAtOrdinal?: number
@@ -285,9 +284,6 @@ function assertInput(input: PurgeRecordInput): void {
     && !/^[0-9a-f]{64}$/u.test(input.expectedAffectedSetFingerprint)
   ) {
     throw new TypeError('expectedAffectedSetFingerprint must be a lowercase SHA-256 hex digest')
-  }
-  if (input.auditBaseDir !== undefined && !isAbsolute(input.auditBaseDir)) {
-    throw new TypeError('auditBaseDir must be absolute when supplied')
   }
   if (
     input.purgedAtOrdinal !== undefined
@@ -1220,10 +1216,6 @@ function buildReceipt(
   })
 }
 
-function auditBaseDir(input: PurgeRecordInput): string {
-  return input.auditBaseDir ?? join(dirname(input.knowledgeRoot), '.agent-qa')
-}
-
 /**
  * Publish one complete durable artifact without exposing partial bytes and without ever
  * overwriting an existing audit fact. The hard link is the exclusive atomic visibility step; the
@@ -1404,7 +1396,7 @@ export function purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome {
   assertInput(input)
 
   // Preview and execution share this one resolution. The caller's preview fingerprint is
-  // checked before checkpoint publication, durable intent creation, or destructive mutation.
+  // checked before durable intent creation or destructive mutation.
   const resolved = resolvePurgeTargets(input.knowledgeRoot, input.recordId)
   assertExpectedAffectedSet(input.expectedAffectedSetFingerprint, resolved.affectedSet)
 
@@ -1429,12 +1421,6 @@ export function purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome {
   const occurrenceOrdinal = freshPurgeOrdinal(input)
   const receipt = buildReceipt(input, matches, occurrenceOrdinal)
   const receiptText = committedFileText(receipt)
-  const checkpoint = checkpointCommittedParts(
-    [{ label: receiptCycleRelativePath(input.recordId, receiptCycle), text: receiptText }],
-    { auditBaseDir: auditBaseDir(input) },
-  )
-  if (checkpoint.kind === 'egress-blocked') return checkpoint
-
   const kind = matches[0]!.bundle.frontmatter.kind
 
   // The exact queue deletion set came from the same canonical resolution shown to the caller.

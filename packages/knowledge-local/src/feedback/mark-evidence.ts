@@ -10,7 +10,8 @@ export { MARK_EVIDENCE_TOKEN_PREFIX, type AppendMarkEvidenceOutcome } from './ma
 
 export interface AppendMarkEvidenceInput {
   knowledgeRoot: string
-  auditBaseDir: string
+  // 2026-10-15 (441-22, D-15): unread since the committed-egress check went; 441-53 deletes it.
+  auditBaseDir?: string
   executionContext: ExecutionContext
   lease: { leaseId: string; epoch: number }
   mark: Pick<MarkReceipt, 'markId' | 'runId' | 'kind'>
@@ -41,13 +42,12 @@ export async function appendMarkEvidence(input: AppendMarkEvidenceInput): Promis
         continue
       }
       const config: BundleStoreConfig = { knowledgeRoot: input.knowledgeRoot, productKey: target.productKey,
-        auditBaseDir: input.auditBaseDir, commitArtifacts: 'none', writerLeaseId: input.lease.leaseId,
-        writerEpoch: input.lease.epoch }
+        commitArtifacts: 'none', writerLeaseId: input.lease.leaseId, writerEpoch: input.lease.epoch }
       let changed = false
       for (const effect of target.effects) {
         const outcome = appendOutcomeEvent(config, asRecordId(target.recordId),
           markEvidenceEvent(effect, input.mark.markId, target.buildOrdinal))
-        // Do not misreport safety refusal or a lost target as a successful mark.
+        // Do not misreport a lost target as a successful mark.
         if (outcome.kind !== 'appended' && outcome.kind !== 'duplicate') {
           throw new Error(`mark evidence append refused: ${outcome.kind}`)
         }

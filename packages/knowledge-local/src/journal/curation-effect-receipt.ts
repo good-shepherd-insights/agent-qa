@@ -7,9 +7,9 @@ import {
 import { dirname, isAbsolute, join } from 'node:path'
 
 import { canonicalJson, sha256hex } from '@vostride/agent-qa-schema'
+import type { GuardrailPolicy } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
-import { checkpointCommittedParts, type BundleEgressOptions } from '../bundle-egress.js'
 import { fsyncDirectory } from '../durable-fs.js'
 import { assertWithinKnowledgeRoot } from '../knowledge-containment.js'
 import { withCurrentWriterAuthority, type CurrentWriterAuthority } from '../lease/writer-lease.js'
@@ -102,6 +102,12 @@ export function listCurationEffectReceipts(knowledgeRoot: string): CurationEffec
     .map((entry) => parseReceipt(readFileSync(join(dir, entry.name), 'utf8'), entry.name))
 }
 
+// 2026-10-15 (441-22, D-15): unread since the committed-egress check went; 441-26 removes it.
+export interface BundleEgressOptions {
+  policy?: GuardrailPolicy
+  auditBaseDir?: string
+}
+
 export interface WriteCurationEffectReceiptOptions extends BundleEgressOptions {
   knowledgeRoot: string
   authority: CurrentWriterAuthority
@@ -125,8 +131,6 @@ export function writeCurationEffectReceiptWithinCurrentAuthority(
     }
     return
   }
-  const checked = checkpointCommittedParts([{ label: 'curation-effect-receipt', text }], opts)
-  if (checked.kind !== 'ok') throw new Error('curation effect receipt egress blocked')
   mkdirSync(dirname(file), { recursive: true })
   fsyncDirectory(dirname(dirname(file)))
   const temporary = `${file}.tmp-${randomUUID()}`

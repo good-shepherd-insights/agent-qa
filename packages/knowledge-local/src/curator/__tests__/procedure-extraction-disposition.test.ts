@@ -438,8 +438,6 @@ describe('procedure extraction disposition — binding integrity & secrets (D-03
 })
 
 describe('procedure extraction commit path — artifact cap & egress backstop (A3/T-381-07)', () => {
-  const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
-
   interface HarnessArtifact {
     bytes: Buffer
     stepIndex: number
@@ -555,17 +553,5 @@ describe('procedure extraction commit path — artifact cap & egress backstop (A
       ]),
     )
     expect(loaded.bundle.manifest.evidenceIncomplete).toBe(true)
-  })
-
-  it('fails the commit when a seeded secret string rides an extraction artifact', () => {
-    const outcome = commitProcedureWithArtifacts([
-      {
-        bytes: Buffer.from(`opaque evidence carrying ${AWS_KEY}\n`),
-        stepIndex: 0,
-        role: 'opaque-evidence',
-        originalName: 'leaky-step-0.txt',
-      },
-    ])
-    expect(outcome).toEqual({ kind: 'noop', reason: 'procedure-artifact-egress' })
   })
 })

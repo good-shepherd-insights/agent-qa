@@ -21,11 +21,6 @@ import {
   type TrustPriorTable,
 } from '@vostride/agent-qa-schema'
 
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
-
-import { ARTIFACT_STEP_CAP_BYTES } from '../artifact-copy.js'
-import { checkpointCommittedParts } from '../bundle-egress.js'
 import {
   deriveBundleTrust,
   loadBundle,
@@ -58,7 +53,7 @@ export const BLAST_RADIUS_MAX_SUPERSEDES_PER_ANCHOR_PER_DRAIN = 1
 // 407-04 (D-08/D-10): `canaryOutcomeObservationId` MOVED to `../serving/canary-observation-id.js`
 // and is re-exported here so every writer-side caller keeps its import path. The reader entry must
 // recompute the identity the writer stamped, and this file cannot be on that entry — it names the
-// bundle store, the egress checkpoint and the curation queue payloads. One implementation, two
+// bundle store and the curation queue payloads. One implementation, two
 // import paths: a second spelling would be a silent attribution failure, not a compile error.
 export { canaryOutcomeObservationId } from '../serving/canary-observation-id.js'
 
@@ -74,7 +69,8 @@ export interface ProcedureDispositionEvidence {
   /** Claimed candidate directory the inventory's relative paths resolve against. */
   candidateDir: string
   policy: GuardrailPolicy
-  auditBaseDir: string
+  // 2026-10-15 (441-22, D-15): unread since the committed-egress check went; 441-53 deletes it.
+  auditBaseDir?: string
 }
 
 export interface DispositionCandidateContext {
@@ -1184,8 +1180,6 @@ function disposeProcedureExtraction(input: DisposeDeltaInput): string | undefine
   const bindingReject = procedureBindingIntegrityReject(payload)
   if (bindingReject !== undefined) return bindingReject
 
-  if (procedureArtifactEgressBlocked(evidence)) return 'procedure-artifact-egress'
-
   return undefined
 }
 
@@ -1251,44 +1245,6 @@ function procedureBindingIntegrityReject(
     return 'procedure-param-unreferenced'
   }
   return undefined
-}
-
-/**
- * RESEARCH A3 / Pitfall 10 / T-381-07. The ratified ≤2MB/step artifact cap is enforced by
- * the ONE existing commit-path wall — `copyArtifacts` (`ARTIFACT_STEP_CAP_BYTES`, skip
- * reason 'step-cap') inside `commitCurationDelta`'s required pre-copy pass — so disposition
- * adds no duplicate clamp. What the commit path does NOT cover is artifact BYTES under the
- * committed-text egress checkpoint: `publishBundle` checkpoints only rendered text parts,
- * while artifact blobs land in the gitignore-covered artifacts/ tree. The extraction wall
- * therefore runs the same fail-closed assert over every claimed artifact's bytes before a
- * procedure delta may commit. Two deliberate skips, both parity with the copy wall: a
- * pruned source (the copy skips it identically) and bytes above `ARTIFACT_STEP_CAP_BYTES`
- * (the copy refuses it as 'step-cap', so it can never ride the bundle — scanning it would
- * only expose the detector pass to multi-megabyte pathological inputs).
- */
-function procedureArtifactEgressBlocked(
-  evidence: ProcedureDispositionEvidence,
-): boolean {
-  const parts: { label: string; text: string }[] = []
-  for (const artifact of evidence.artifactInventory) {
-    let bytes: Buffer
-    try {
-      bytes = readFileSync(join(evidence.candidateDir, artifact.relativePath))
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
-      throw error
-    }
-    if (bytes.byteLength > ARTIFACT_STEP_CAP_BYTES) continue
-    parts.push({
-      label: `procedure-artifact:${artifact.sha256}`,
-      text: bytes.toString('utf8'),
-    })
-  }
-  if (parts.length === 0) return false
-  return checkpointCommittedParts(parts, {
-    policy: evidence.policy,
-    auditBaseDir: evidence.auditBaseDir,
-  }).kind === 'egress-blocked'
 }
 
 /**

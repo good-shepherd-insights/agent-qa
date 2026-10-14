@@ -1,6 +1,6 @@
-// Per-mutation bundle writes are one D-11 checkpoint unit over the new content and rewritten
-// manifest. BNDL-03 deduplicates before checkpointing, while the schema fold repeats that defense
-// in depth. Every mutable file uses a full same-directory temp rewrite plus atomic rename (§4).
+// Per-mutation bundle writes rewrite the content and manifest as one journaled unit. BNDL-03
+// deduplicates before writing, while the schema fold repeats that defense in depth. Every mutable
+// file uses a full same-directory temp rewrite plus atomic rename (§4).
 
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
@@ -41,7 +41,6 @@ import type {
   RecordId,
 } from '@vostride/agent-qa-schema'
 
-import { checkpointCommittedParts } from './bundle-egress.js'
 import type { BundleStoreConfig } from './bundle-publish.js'
 import { GATES_REL_PATH, readGateReceipts, readMeasurements } from './bundle-read.js'
 import { commitBundleMutation } from './journal/bundle-mutation.js'
@@ -66,9 +65,8 @@ export function appendGateReceipt(
   if (existing.some(line => line.receiptDigest === parsed.receiptDigest)) return { kind: 'duplicate' }
   const file = join(dir, GATES_REL_PATH)
   const existingText = existsSync(file) ? readFileSync(file, 'utf8') : ''
-  const appendedText = canonicalJson(parsed) + '\n'
-  const rewrittenText = existingText + appendedText
-  return checkpointAndRewrite(config, dir, id, GATES_REL_PATH, appendedText, rewrittenText,
+  const rewrittenText = existingText + canonicalJson(parsed) + '\n'
+  return rewriteBundleFile(config, dir, id, GATES_REL_PATH, rewrittenText,
     rewriteManifest(manifest, GATES_REL_PATH, rewrittenText))
 }
 
@@ -94,9 +92,8 @@ export function appendPromotionReceipt(
   }
   const file = join(dir, GATES_REL_PATH)
   const existingText = existsSync(file) ? readFileSync(file, 'utf8') : ''
-  const appendedText = canonicalJson(parsed) + '\n'
-  const rewrittenText = existingText + appendedText
-  return checkpointAndRewrite(config, dir, id, GATES_REL_PATH, appendedText, rewrittenText,
+  const rewrittenText = existingText + canonicalJson(parsed) + '\n'
+  return rewriteBundleFile(config, dir, id, GATES_REL_PATH, rewrittenText,
     rewriteManifest(manifest, GATES_REL_PATH, rewrittenText))
 }
 
@@ -185,27 +182,14 @@ function rewriteManifestParts(
   })
 }
 
-function checkpointAndRewrite(
+function rewriteBundleFile(
   config: BundleStoreConfig,
   dir: string,
   id: RecordId,
   relPath: string,
-  appendedText: string,
   rewrittenText: string,
   manifestText: string,
 ): AppendOutcome {
-  const checkpoint = checkpointCommittedParts(
-    [
-      { label: relPath, text: appendedText },
-      { label: 'manifest.json', text: manifestText },
-    ],
-    {
-      auditBaseDir: config.auditBaseDir,
-      ...(config.policy === undefined ? {} : { policy: config.policy }),
-    },
-  )
-  if (checkpoint.kind === 'egress-blocked') return checkpoint
-
   commitBundleMutation({
     knowledgeRoot: config.knowledgeRoot,
     bundleDir: dir,
@@ -248,18 +232,9 @@ export function appendOutcomeEvent(
     return { kind: 'duplicate' }
   }
 
-  const appendedText = `${canonicalJson(parsedEvent)}\n`
-  const rewrittenText = `${existingText}${appendedText}`
+  const rewrittenText = `${existingText}${canonicalJson(parsedEvent)}\n`
   const manifestText = rewriteManifest(manifest, OUTCOMES_REL_PATH, rewrittenText)
-  return checkpointAndRewrite(
-    config,
-    dir,
-    id,
-    OUTCOMES_REL_PATH,
-    appendedText,
-    rewrittenText,
-    manifestText,
-  )
+  return rewriteBundleFile(config, dir, id, OUTCOMES_REL_PATH, rewrittenText, manifestText)
 }
 
 /**
@@ -285,15 +260,7 @@ export function writeMeasurementBaseline(
     MEASUREMENTS_REL_PATH,
     baselineText,
   )
-  return checkpointAndRewrite(
-    config,
-    dir,
-    id,
-    MEASUREMENTS_REL_PATH,
-    baselineText,
-    baselineText,
-    manifestText,
-  )
+  return rewriteBundleFile(config, dir, id, MEASUREMENTS_REL_PATH, baselineText, manifestText)
 }
 
 /**
@@ -315,22 +282,13 @@ export function appendMeasurementObservation(
   const file = join(dir, MEASUREMENTS_REL_PATH)
   const existingText = readFileSync(file, 'utf8')
   const parsedObservation = measurementObservationSchema.parse(observation)
-  const appendedText = `${canonicalJson(parsedObservation)}\n`
-  const rewrittenText = `${existingText}${appendedText}`
+  const rewrittenText = `${existingText}${canonicalJson(parsedObservation)}\n`
   const manifestText = rewriteManifest(
     manifest,
     MEASUREMENTS_REL_PATH,
     rewrittenText,
   )
-  return checkpointAndRewrite(
-    config,
-    dir,
-    id,
-    MEASUREMENTS_REL_PATH,
-    appendedText,
-    rewrittenText,
-    manifestText,
-  )
+  return rewriteBundleFile(config, dir, id, MEASUREMENTS_REL_PATH, rewrittenText, manifestText)
 }
 
 /**
@@ -391,20 +349,6 @@ export function appendOutcomeEventWithEnrichment(
     [OUTCOMES_REL_PATH]: outcomesText,
   }
   const manifestText = rewriteManifestParts(manifest, rewrittenParts, embeddingInput)
-  const checkpoint = checkpointCommittedParts(
-    [
-      { label: 'record.md', text: recordText },
-      { label: 'provenance.json', text: provenanceText },
-      ...(duplicate ? [] : [{ label: OUTCOMES_REL_PATH, text: appendedText }]),
-      { label: 'manifest.json', text: manifestText },
-    ],
-    {
-      auditBaseDir: config.auditBaseDir,
-      ...(config.policy === undefined ? {} : { policy: config.policy }),
-    },
-  )
-  if (checkpoint.kind === 'egress-blocked') return checkpoint
-
   commitBundleMutation({
     knowledgeRoot: config.knowledgeRoot,
     bundleDir: dir,
@@ -459,16 +403,7 @@ export function appendRelation(
     ...existing,
     relations: [...existing.relations, parsedRelation],
   }
-  const appendedText = `${canonicalJson(parsedRelation)}\n`
   const rewrittenText = committedFileText(rewritten)
   const manifestText = rewriteManifest(manifest, RELATIONS_REL_PATH, rewrittenText)
-  return checkpointAndRewrite(
-    config,
-    dir,
-    id,
-    RELATIONS_REL_PATH,
-    appendedText,
-    rewrittenText,
-    manifestText,
-  )
+  return rewriteBundleFile(config, dir, id, RELATIONS_REL_PATH, rewrittenText, manifestText)
 }

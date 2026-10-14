@@ -1,6 +1,6 @@
 // Bundle publication is the D-11/D-12/D-15 store seam beneath KnowledgePort (D-04).
-// It copies capped artifacts into an invisible sibling staging directory, checkpoints every
-// committed text part as one unit, writes manifest.json last (§7.8), then atomically renames.
+// It copies capped artifacts into an invisible sibling staging directory, writes every
+// committed text part with manifest.json last (§7.8), then atomically renames.
 // BNDL-02/D-05 only treats an occupied target as already-exists after full-identity equality.
 
 import { randomUUID } from 'node:crypto'
@@ -34,7 +34,6 @@ import type {
   ArtifactCopySkipReason,
   SkippedArtifact,
 } from './artifact-copy.js'
-import { checkpointCommittedParts } from './bundle-egress.js'
 import { renderBundleParts } from './bundle-parts.js'
 import type { RenderBundlePartsInput } from './bundle-parts.js'
 import { durableRename, fsyncDirectory, fsyncTree } from './durable-fs.js'
@@ -44,7 +43,8 @@ export interface BundleStoreConfig {
   /** Absolute committed-root path. Deliberately no working-directory default. */
   knowledgeRoot: string
   productKey: string
-  auditBaseDir: string
+  // 2026-10-15 (441-22, D-15): unread since the committed-egress check went; 441-53 deletes it.
+  auditBaseDir?: string
   commitArtifacts: 'none' | 'thumbnails'
   /** Active writer identity used to attribute crash-left staging trees. */
   writerLeaseId?: string
@@ -275,19 +275,6 @@ export function stageBundle(
       copiedArtifacts,
       evidenceIncomplete: copiedArtifacts.evidenceIncomplete,
     })
-    const checkpoint = checkpointCommittedParts(
-      rendered.parts.map(({ label, text }) => ({ label, text })),
-      {
-        auditBaseDir: config.auditBaseDir,
-        ...(config.policy === undefined ? {} : { policy: config.policy }),
-      },
-    )
-
-    if (checkpoint.kind === 'egress-blocked') {
-      removeStaging(stagingDir, stagingRoot, bundlesDir)
-      return checkpoint
-    }
-
     const manifest = rendered.parts.at(-1)
     if (manifest?.relPath !== 'manifest.json') {
       throw new TypeError('renderBundleParts must return manifest.json last')

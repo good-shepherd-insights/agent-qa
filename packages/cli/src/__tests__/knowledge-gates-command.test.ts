@@ -1,5 +1,5 @@
 // 2026-09-06, 416 D-17/D-18: real persisted history through the read-only function layer.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { stripVTControlCharacters } from 'node:util'
@@ -46,9 +46,10 @@ describe('agent-qa knowledge gates', () => {
       use: { mobile: { appState: 'preserve' } },
     }) + '\n')
     writeFileSync(join(root, '.env.secrets.local'), '')
+    const agentQaRoot = join(root, '.agent-qa')
     const config: BundleStoreConfig = {
       knowledgeRoot: join(root, 'agent-qa-knowledge'), productKey: 'shop',
-      auditBaseDir: join(root, '.agent-qa'), commitArtifacts: 'none',
+      auditBaseDir: agentQaRoot, commitArtifacts: 'none',
     }
     const result = publishBundleForTest(config, {
       draft: { kind: 'fact', subtype: 'selector', anchors: [{ t: 'el', role: 'button', name: 'Checkout' }],
@@ -61,7 +62,7 @@ describe('agent-qa knowledge gates', () => {
     })
     expect(result.kind).toBe('published')
     if (result.kind !== 'published') throw new Error('gate fixture publication failed')
-    return { configPath, config, id: result.id, dir: result.dir }
+    return { configPath, config, agentQaRoot, id: result.id, dir: result.dir }
   }
 
   async function invoke(configPath: string, args: string[], expectedError?: string) {
@@ -86,11 +87,11 @@ describe('agent-qa knowledge gates', () => {
   }
 
   it('refreshes eval-root presence across reads from the same composed host', async () => {
-    const { config, configPath, id } = fixture()
-    const host = composeCliLocalAgent({ configPath, agentQaRoot: config.auditBaseDir })
+    const { agentQaRoot, configPath, id } = fixture()
+    const host = composeCliLocalAgent({ configPath, agentQaRoot })
     const read = () => invokeFunction(host.registry, 'knowledge.gates.list', { recordId: id }, CLI_FUNCTION_CALLER)
     expect(await read()).toMatchObject({ kind: 'found', posture: 'absent' })
-    const committedRoot = join(config.auditBaseDir, '..', 'agent-qa-eval')
+    const committedRoot = join(agentQaRoot, '..', 'agent-qa-eval')
     mkdirSync(join(committedRoot, 'reports/noise-floor'), { recursive: true })
     expect(await read()).toMatchObject({ kind: 'found', posture: 'absent' })
     writeFileSync(join(committedRoot, 'reports/noise-floor/any-profile.json'), '{}')
@@ -129,7 +130,7 @@ describe('agent-qa knowledge gates', () => {
     { raw: 'receipt-auditor@example.invalid', defect: 'schema' },
     { raw: 'Bearer synthetic-receipt-token', defect: 'JSON' },
   ])('does not expose $defect parser input through function or CLI errors', async ({ raw, defect }) => {
-    const { config, configPath, id, dir } = fixture()
+    const { agentQaRoot, configPath, id, dir } = fixture()
     const receipt = stampReceiptDigest({
       schemaVersion: 1, kind: 'promotion', candidateId: id,
       promotionPath: 'deterministic-verdict-floor', citedReceiptDigests: [],
@@ -138,7 +139,7 @@ describe('agent-qa knowledge gates', () => {
     const bytes = defect === 'schema'
       ? `${canonicalJson({ ...receipt, [raw]: 'unexpected' })}\n` : `${raw}\n`
     writeFileSync(join(dir, 'evidence/gates.jsonl'), bytes)
-    const host = composeCliLocalAgent({ configPath, agentQaRoot: config.auditBaseDir })
+    const host = composeCliLocalAgent({ configPath, agentQaRoot })
     const failure = await invokeFunction(host.registry, 'knowledge.gates.list', { recordId: id }, CLI_FUNCTION_CALLER)
       .then(() => { throw new Error('expected read refusal') }, error => error as Error)
     expect(failure.message).toContain(`evidence/gates.jsonl line 1: invalid ${defect === 'schema' ? 'receipt schema' : 'JSON'}`)
@@ -146,45 +147,6 @@ describe('agent-qa knowledge gates', () => {
     expect(failure.cause).toBeUndefined()
     for (const args of [[id, '--json'], [id]]) await invoke(configPath, args, failure.message)
     expect(readFileSync(join(dir, 'evidence/gates.jsonl'), 'utf8')).toBe(bytes)
-  })
-
-  // 416 D-18/D-20: the writer rejects detector-visible raw text; the CLI preserves
-  // producer-masked fields. These are synthetic values, never host credentials.
-  it.each([
-    { raw: 'AKIAIOSFODNN7EXAMPLE', detector: 'awsKey' },
-    { raw: 'Bearer synthetic-receipt-token', detector: 'bearer' },
-    { raw: 'receipt-auditor@example.invalid', detector: 'email' },
-  ])('refuses $detector text before either receipt writer changes committed history', async ({ raw, detector }) => {
-    const { config, configPath, id, dir } = fixture()
-    const manifestBefore = readFileSync(join(dir, 'manifest.json'), 'utf8')
-    const outcomesBefore = readFileSync(join(dir, 'evidence/outcomes.jsonl'), 'utf8')
-    const promotion = {
-      schemaVersion: 1 as const, kind: 'promotion' as const, candidateId: id,
-      promotionPath: 'deterministic-verdict-floor' as const, citedReceiptDigests: [],
-      producedAtOrdinal: 6, producedBy: { opId: raw },
-    }
-    const gate = stampReceiptDigest({
-      schemaVersion: 1, gate: 3, verdict: 'pass', candidateId: id,
-      producedAtOrdinal: 7, producedBy: { jobId: 'synthetic-review' },
-      runId: raw, mark: 'confirmed-bug',
-    })
-    for (const append of [
-      () => appendPromotionReceipt(config, id, promotion),
-      () => appendGateReceipt(config, id, gate),
-    ]) {
-      expect(append()).toEqual({
-        kind: 'egress-blocked',
-        detections: [{ label: 'evidence/gates.jsonl', detector }],
-      })
-      expect(existsSync(join(dir, 'evidence/gates.jsonl'))).toBe(false)
-      expect(readFileSync(join(dir, 'manifest.json'), 'utf8')).toBe(manifestBefore)
-      expect(readFileSync(join(dir, 'evidence/outcomes.jsonl'), 'utf8')).toBe(outcomesBefore)
-    }
-    const output = await invoke(configPath, [id, '--json'])
-    const dto = KnowledgeGatesListResultSchema.parse(JSON.parse(output))
-    expect(dto).toMatchObject({ kind: 'found', lines: [], standing: [] })
-    expect(output).not.toContain(raw)
-    expect(verifyBundleIntegrity(dir).ok).toBe(true)
   })
 
   it('preserves producer-masked sensitive fields and their digests through write, read and JSON output', async () => {

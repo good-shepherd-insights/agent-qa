@@ -75,8 +75,7 @@ export type {
   OpenEntityIndexOptions,
 } from './entity-index/entity-index.js'
 
-export { KNOWLEDGE_BUNDLE_EGRESS_CHANNEL, checkpointCommittedParts } from './bundle-egress.js'
-export type { BundleEgressOptions, BundleEgressOutcome } from './bundle-egress.js'
+export type { BundleEgressOptions } from './journal/curation-effect-receipt.js'
 // 2026-10-01 (432-18, D-14/D-15/D-22): the committed standing-grant ledger, its reader and the grant
 // verbs are deleted. An old `grants.jsonl` stays on disk and nothing in this package opens it.
 // 390 D-01/D-03/D-11: the committed quarantine ledger — read, pure state fold. The event DTOs and

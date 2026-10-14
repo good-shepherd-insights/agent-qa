@@ -69,7 +69,6 @@ interface PurgeRecordInput {
 interface PurgeRecordOutcome {
   kind: string
   receipt?: PurgeReceipt
-  detections?: readonly { label: string; detector: string }[]
 }
 
 interface PurgeReceipt {
@@ -1532,37 +1531,6 @@ describe('DCAY-05 sovereign purge', () => {
     expect(() => schemaApi.guardPurgeReceipt({ ...receipt, schemaVersion: 2 })).toThrow(
       /schemaVersion 2 is not supported/u,
     )
-  })
-
-  it('refuses a detector-shaped receipt input before deleting any surface', () => {
-    const awsKey = 'AKIAIOSFODNN7EXAMPLE'
-    const target = publish('receipt-egress-refusal', [
-      { t: 'el', role: 'button', name: 'Receipt egress refusal' },
-      { t: 'page', route: '/purge/receipt-egress-refusal' },
-      { t: 'platform', platform: 'web' },
-    ])
-    const receiptPath = join(
-      knowledgeRoot,
-      'memory',
-      'receipts',
-      `purge-${target.id}.json`,
-    )
-
-    const blocked = purgeApi().purgeRecord({
-      knowledgeRoot,
-      recordId: target.id,
-      initiator: awsKey,
-    })
-
-    expect(blocked.kind).toBe('egress-blocked')
-    expect(blocked.detections).toContainEqual({
-      label: `memory/receipts/purge-${target.id}.json`,
-      detector: 'awsKey',
-    })
-    expect(existsSync(target.dir)).toBe(true)
-    expect(existsSync(receiptPath)).toBe(false)
-    expect(readFileSync(join(root, '.agent-qa', 'guardrail_audit.jsonl'), 'utf8'))
-      .toContain('knowledge-bundle:memory/receipts/purge-')
   })
 
   it('requires a runtime-counter reservation before intent publication or mutation', () => {

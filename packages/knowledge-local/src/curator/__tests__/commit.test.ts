@@ -72,7 +72,6 @@ import {
   makeScreenStateFixture,
 } from '../../__tests__/fixtures/bundle-fixture.js'
 
-const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
 const checkoutAnchors: Anchor[] = [
   { t: 'el', role: 'button', name: 'Checkout' },
   { t: 'page', route: '/checkout' },
@@ -1335,18 +1334,6 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     expect(readFileSync(join(added.bundleDir, 'evidence/outcomes.jsonl'))).toEqual(sourceBefore)
     expect(readFileSync(join(shadowDir, 'evidence/outcomes.jsonl'))).toEqual(shadowBefore)
     expect(listCommitIntents(knowledgeRoot)).toEqual([])
-  })
-
-  it('maps committed-egress refusal to a typed withheld outcome', () => {
-    const blockedDraft = draft({ body: `Never persist ${AWS_KEY}` })
-    const blockedJob = job(artifactFreeCaptureReceipt(), { bodySeed: blockedDraft.body })
-
-    const outcome = commitCurationDelta(deps(), blockedJob, checkpoint(addDelta(blockedDraft)))
-
-    expect(outcome.kind).toBe('withheld')
-    if (outcome.kind !== 'withheld') throw new Error('expected withheld outcome')
-    expect(outcome.reason).toBe('egress-blocked')
-    expect(outcome.detections).toContainEqual({ label: 'record.md', detector: 'awsKey' })
   })
 
   it('passes the claimed writer lease and mutable replacement hook through store config', () => {

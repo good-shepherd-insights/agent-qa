@@ -45,7 +45,6 @@ const EXECUTION_CONTEXTS = ['local-interactive', 'local-headless', 'ci', 'cloud'
   readonly ExecutionContext[]
 const ANCHOR: Anchor = { t: 'el', role: 'Button', name: 'Checkout' }
 const SCOPE: ScopeKey = { tier: 'product', key: 'direct-storefront' }
-const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
 const OPERATION = '6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b'
 const LATER_OPERATION = '7a2d3b4c-5e6f-4a71-9b8c-0d1e2f3a4b5c'
 
@@ -268,7 +267,7 @@ describe('432 direct explicit knowledge writer (D-04, D-05, D-08, D-09, D-11)', 
     expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
   })
 
-  it('C432-EXPLICIT-LEASE-EGRESS: a held lease is delegated the direct request, bounded and never stolen, and bundle egress refuses a secret-bearing fix', async () => {
+  it('C432-EXPLICIT-LEASE: a held lease is delegated the direct request, bounded and never stolen', async () => {
     const recordId = publish('delegated checkout')
     const request = { verb: 'forget' as const, input: { target: { grain: 'record' as const, recordId } } }
     const holder = acquireWriterLease(knowledgeRoot)
@@ -303,16 +302,6 @@ describe('432 direct explicit knowledge writer (D-04, D-05, D-08, D-09, D-11)', 
     } finally {
       releaseLease({ knowledgeRoot, leaseId: holder.leaseId })
     }
-
-    const victim = publish('egress checkout')
-    const before = canonicalFiles(knowledgeRoot)
-    await expect(explicit({ ...base('ci'), request: { verb: 'mark',
-      input: markInput(victim, { body: `Use the admin key ${AWS_KEY}` }) } }))
-      .rejects.toMatchObject({ outcome: { kind: 'withheld', reason: 'egress-blocked' } })
-    expect(canonicalFiles(knowledgeRoot), 'egress refusal leaves every committed byte unchanged').toEqual(before)
-    expect(enumerateBundleDirs(knowledgeRoot)).toHaveLength(2)
-    expect(status(victim)).toBe('candidate')
-    expect(acquireWriterLease(knowledgeRoot).kind, 'the refused write released its lease').toBe('acquired')
   })
 
   it('C432-EXPLICIT-RETRY: a repeated operation identity lands its effects once and returns the same record ids, and a later mark leaves the earlier fix intact', async () => {

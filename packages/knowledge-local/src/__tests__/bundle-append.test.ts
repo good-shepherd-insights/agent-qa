@@ -31,7 +31,7 @@ import {
   type AppendOutcome,
   writeMeasurementBaseline,
 } from '../bundle-append.js'
-import { readMeasurements } from '../bundle-read.js'
+import { loadBundle, readMeasurements } from '../bundle-read.js'
 import {
   publishBundle,
   type BundleStoreConfig,
@@ -42,12 +42,19 @@ import {
   recoverExpiredBundleMutations,
 } from '../journal/bundle-mutation.js'
 import {
+  listCurationEffectReceipts,
+  receiptForEffect,
+  writeCurationEffectReceipt,
+  type CurationEffect,
+  type CurationObservation,
+} from '../journal/curation-effect-receipt.js'
+import { acquireWriterLease } from '../lease/writer-lease.js'
+import { purgeRecord } from '../purge.js'
+import {
   makeBundleDraftFixture,
   makeDiscriminantFixture,
   makeScreenStateFixture,
 } from './fixtures/bundle-fixture.js'
-
-const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
 
 const MEASUREMENT_BASELINE: MeasurementBaseline = {
   mu0: 125,
@@ -526,31 +533,7 @@ describe('bundle append atomic checkpoint units (D-11/BNDL-03)', () => {
     expect(readFileSync(manifestPath)).toEqual(manifestBefore)
   })
 
-  it('blocks detector-shaped event payloads with audit and zero committed writes', () => {
-    const blocked = BundleOutcomeEventSchema.parse({
-      type: 'deprecated',
-      evidenceToken: 'append-secret',
-      curationJobId: 'append-secret-job',
-      buildOrdinal: 43,
-      reason: `credential ${AWS_KEY}`,
-    })
-    const outcomesPath = join(bundleDir, 'evidence', 'outcomes.jsonl')
-    const manifestPath = join(bundleDir, 'manifest.json')
-    const outcomesBefore = readFileSync(outcomesPath)
-    const manifestBefore = readFileSync(manifestPath)
-
-    const outcome = appendOutcomeEvent(config, id, blocked)
-
-    expect(outcome.kind).toBe('egress-blocked')
-    expect(readFileSync(outcomesPath)).toEqual(outcomesBefore)
-    expect(readFileSync(manifestPath)).toEqual(manifestBefore)
-    expect(readFileSync(join(config.auditBaseDir, 'guardrail_audit.jsonl'), 'utf8')).toContain(
-      'knowledge-bundle:evidence/outcomes.jsonl',
-    )
-    expect(mutationDirs()).toEqual([])
-  })
-
-  it('appends, deduplicates, and blocks relations with the pinned relation key', () => {
+  it('appends and deduplicates relations with the pinned relation key', () => {
     const relationsPath = join(bundleDir, 'relations.json')
     const manifestPath = join(bundleDir, 'manifest.json')
     const first = relation()
@@ -568,18 +551,6 @@ describe('bundle append atomic checkpoint units (D-11/BNDL-03)', () => {
         relation({ addedAtOrdinal: 999 }),
       ),
     ).toEqual<AppendOutcome>({ kind: 'duplicate' })
-    expect(readFileSync(relationsPath)).toEqual(relationsAfterAppend)
-    expect(readFileSync(manifestPath)).toEqual(manifestAfterAppend)
-
-    const blocked = appendRelation(
-      config,
-      id,
-      relation({
-        targetId: `fact-${AWS_KEY}`,
-        curationJobId: 'append-secret-relation-job',
-      }),
-    )
-    expect(blocked.kind).toBe('egress-blocked')
     expect(readFileSync(relationsPath)).toEqual(relationsAfterAppend)
     expect(readFileSync(manifestPath)).toEqual(manifestAfterAppend)
     expect(mutationDirs()).toEqual([])
@@ -602,5 +573,133 @@ describe('bundle append atomic checkpoint units (D-11/BNDL-03)', () => {
     expect(readFileSync(manifestPath)).toEqual(manifestBefore)
     expect(readFileSync(outcomesPath)).toEqual(outcomesBefore)
     expect(existsSync(join(bundleDir, 'manifest.json.tmp'))).toBe(false)
+  })
+})
+
+describe('C441-COMMITTED', () => {
+  const SUMMARY = 'Pay with card 4242 4242 4242 4242 at checkout'
+  const BODY = 'Send Bearer abc123def456ghi789 with key AKIAIOSFODNN7EXAMPLE, then mail qa@example.com.'
+  let root: string
+  let knowledgeRoot: string
+  let config: BundleStoreConfig
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'knowledge-c441-committed-'))
+    knowledgeRoot = join(root, 'agent-qa-knowledge')
+    config = { knowledgeRoot, productKey: 'Example Store / production', commitArtifacts: 'none' }
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  function publishFixture(text: { summary: string; body: string }, needsEnrichment: boolean) {
+    const published = publishBundle(config, {
+      draft: makeBundleDraftFixture(text),
+      discriminant: {
+        kind: 'fact',
+        subtype: 'selector',
+        elementRef: { role: 'Button', name: needsEnrichment ? 'Enrich' : 'Pay' },
+      },
+      originClass: 'agent-verified',
+      createdAtOrdinal: 42,
+      screenStates: [makeScreenStateFixture()],
+      initialEvents: [],
+      relations: [],
+      provenance: {
+        mode: 'run-linked',
+        runId: 'c441-committed-run',
+        testId: 'c441-committed-test',
+        stepIndex: 0,
+        ...(needsEnrichment
+          ? {
+              authorship: { path: 'deterministic-fallback', executionContext: 'local-headless' },
+              needsEnrichment: true,
+            }
+          : {}),
+      },
+      artifacts: [],
+    })
+    if (published.kind !== 'published') throw new Error(`expected publication, got ${published.kind}`)
+    return published
+  }
+
+  function loaded(dir: string) {
+    const outcome = loadBundle(dir)
+    if (outcome.kind !== 'loaded') throw new Error(`expected a loaded bundle, got ${outcome.kind}`)
+    return outcome.bundle
+  }
+
+  it('a bundle with credential-shaped text is committed as written', () => {
+    const published = publishFixture({ summary: SUMMARY, body: BODY }, false)
+    expect(loaded(published.dir)).toMatchObject({ summary: SUMMARY, body: BODY })
+    expect(readFileSync(join(published.dir, 'record.md'), 'utf8')).toContain(BODY)
+
+    const enrichable = publishFixture(
+      { summary: 'Sign in control', body: 'Sign in with the recorded account.' },
+      true,
+    )
+    const enriched = appendOutcomeEventWithEnrichment(config, enrichable.id, event(), {
+      summary: SUMMARY,
+      body: BODY,
+      authorship: { path: 'deterministic-fallback', executionContext: 'local-headless' },
+    })
+    expect(enriched).toEqual({ kind: 'appended', enriched: true })
+    expect(loaded(enrichable.dir)).toMatchObject({ summary: SUMMARY, body: BODY })
+
+    const deprecated = BundleOutcomeEventSchema.parse({
+      type: 'deprecated',
+      evidenceToken: 'c441-committed-deprecated',
+      curationJobId: 'c441-committed-job',
+      buildOrdinal: 43,
+      reason: BODY,
+    })
+    expect(appendOutcomeEvent(config, published.id, deprecated)).toEqual({ kind: 'appended' })
+    expect(readFileSync(join(published.dir, 'evidence', 'outcomes.jsonl'), 'utf8')).toBe(
+      `${canonicalJson(deprecated)}\n`,
+    )
+  })
+
+  it('a purge receipt and a curation effect receipt with the same text are written', () => {
+    const published = publishFixture({ summary: SUMMARY, body: BODY }, false)
+    const purged = purgeRecord({
+      knowledgeRoot,
+      recordId: published.id,
+      initiator: BODY,
+      purgedAtOrdinal: 43,
+    })
+    if (purged.kind !== 'purged') throw new Error(`expected a purge, got ${purged.kind}`)
+    expect(purged.receipt.initiator).toBe(BODY)
+    expect(
+      readFileSync(join(knowledgeRoot, 'memory', 'receipts', `purge-${published.id}.json`), 'utf8'),
+    ).toContain(BODY)
+
+    const lease = acquireWriterLease(knowledgeRoot)
+    if (lease.kind !== 'acquired') throw new Error(`expected a writer lease, got ${lease.kind}`)
+    const effect: CurationEffect = {
+      recordId: published.id,
+      product: 'Example Store / production',
+      change: 'added',
+      atOrdinal: 42,
+      evidenceToken: BODY,
+    }
+    const observation: CurationObservation = {
+      schemaVersion: 1,
+      sourceRunId: 'c441-committed-run',
+      observationId: 'c441-committed-observation',
+      originalDeltaKind: 'Supersede',
+      appliedDeltaKind: 'Add',
+      disposition: 'downgraded',
+      downgradeReason: SUMMARY,
+      effects: [effect],
+    }
+    const receipt = receiptForEffect('a'.repeat(64), observation, effect)
+    writeCurationEffectReceipt({
+      knowledgeRoot,
+      authority: { leaseId: lease.leaseId, epoch: lease.epoch },
+      receipt,
+    })
+    expect(listCurationEffectReceipts(knowledgeRoot)).toEqual([receipt])
+    expect(receipt).toMatchObject({ evidenceToken: BODY, downgradeReason: SUMMARY })
   })
 })
