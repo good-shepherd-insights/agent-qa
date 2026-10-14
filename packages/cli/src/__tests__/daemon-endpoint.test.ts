@@ -311,6 +311,7 @@ function fnFixture(label: string): {
     })}\n`,
     'utf8',
   )
+  writeFileSync(join(root, '.env.secrets.local'), '', 'utf8')
   return { root, agentQaRoot, configPath, socketPath }
 }
 

@@ -1,30 +1,21 @@
-// SEAM-05 both-sides unmask-boundary ROLL-CALL (Phase 363, Plan 13 — D-12 regression clause).
+// SEAM-05 unmask-boundary ROLL-CALL (Phase 363, Plan 13 — D-12 regression clause).
 //
-// Decision provenance:
-//   D-09 — every projection/sink routes payload strings through the run MaskingContext (placeholders
-//          only exist post-seam).
-//   D-10 — the masking mechanism is grep-auditable; THIS suite is its behavioral backstop.
-//   D-11 — the human terminal is the SOLE unmasking surface (console prose + the ask-tier confirm
-//          prompt restore originals); every durable/machine/egress surface stays masked.
-//   D-12 — one synthetic fixture drives BOTH directions: human surfaces restore the ORIGINAL secrets,
-//          machine/durable surfaces keep only the placeholders.
-//   SEAM-05 — this file discharges the requirement's regression-test clause. Permanent; extended,
-//          never replaced.
+// 2026-10-14 (441-14, D-07): nothing restores a declared value. Every enrolled surface — the chat
+// terminal emit, the dashboard reads, and every durable, machine and egress sink — shows the
+// declared marker `[secret:<name>]` and never the value. The human-side registry, which asserted
+// restoration, is gone; its surfaces are enrolled below on the masked side.
 //
 // ENROLLMENT RULE (the house roll-call idiom — 345 role-coverage / 356 key-floor / 361 payload
-// roll-call): every human OR masked surface is a NAMED registry entry walked exhaustively. A new
-// surface that touches run output MUST enrol in exactly one of the two registries AND appear in the
-// single `SURFACE_ROLLCALL` union below — the enrollment guard fails on any surface that is walked
-// but not enrolled, or enrolled but not walked. New surfaces must enrol to ship.
+// roll-call): every surface is a NAMED registry entry walked exhaustively, and appears in the single
+// `SURFACE_ROLLCALL` union below — the enrollment guard fails on any surface that is walked but not
+// enrolled, or enrolled but not walked. New surfaces must enrol to ship.
 //
-// ONE fixture, both sides (D-12): a single `createMaskingContext()` with five sentinel secrets of
-// different shapes is planted — via `ctx.mask(...)` exactly where each sink puts a placeholder — into
-// one envelope stream + one handoff + one artifact snapshot + one cache-key input + one provider-egress
-// request + one debug-log record + one confirm action. The human registry drives the chat clause
-// results and the dashboard reads (the console rows left in 441-13, D-07); the masked registry
-// drives the REAL FsEventLog / FsHandoffStore / FsRunArtifactStore ports, the REAL JUnit + wire
-// reporters, the REAL masking egress hook, the REAL cache-key floor helpers, and the REAL
-// debug-logging middleware.
+// ONE fixture (D-12): a single `SecretRedactor` over six declared values of different shapes is
+// planted — via its `redactString` exactly where each sink puts a marker — into one envelope stream,
+// one handoff, one artifact snapshot, one cache-key input, one provider-egress request and one
+// debug-log record. The registry drives the REAL FsEventLog / FsHandoffStore / FsRunArtifactStore
+// ports, the REAL JUnit + wire reporters, the REAL masking middleware, the REAL cache-key floor
+// helpers, the REAL debug-logging middleware and the shipped dashboard routers.
 
 import { describe, expect, it } from 'vitest'
 import { createHash } from 'node:crypto'
@@ -32,12 +23,9 @@ import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import {
-  createMaskingContext,
-  createMaskingProviderRequestHook,
-  unmaskForHumanOutput,
-} from '@vostride/agent-qa-safety'
+import { createMaskingMiddleware } from '@vostride/agent-qa-safety'
 import type { ProviderRequestParams } from '@vostride/agent-qa-safety'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { debugLoggingMiddleware } from '@vostride/agent-qa-model'
 // 405-10 (D-09): the shipped subscriber, database, detail adapter and routers. A cell that
 // mounted its own would be measuring a door this product does not ship.
@@ -108,11 +96,9 @@ import type {
 
 import { createJunitReporter, createWireReporter } from '../reporters/index.js'
 
-// Any `<SECRET_n>` residue — matches both the raw `<SECRET_0>` and the XML-escaped `&lt;SECRET_0&gt;`.
-const PLACEHOLDER = /SECRET_\d+/
+const MARKER = /\[secret:ROLLCALL_\w+\]/
 
-// The five sentinel originals, of deliberately different shapes. None contains the substring
-// `SECRET_`, so a placeholder-absence assertion can never false-positive on an original.
+// The sentinel originals, of deliberately different shapes, each declared under its own name.
 const SECRETS = {
   step: 'sk-live-URL-000aaa111', // rides a rendered step line
   error: 'sk-live-STEP-222bbb333', // rides a step error / cache input / egress / debug body
@@ -126,15 +112,25 @@ const SECRETS = {
   opResult: 'sk-live-OPR-000fff111',
 } as const
 
+const SECRET_NAMES: Record<keyof typeof SECRETS, string> = {
+  step: 'ROLLCALL_STEP',
+  error: 'ROLLCALL_ERROR',
+  hook: 'ROLLCALL_HOOK',
+  summary: 'ROLLCALL_SUMMARY',
+  confirm: 'ROLLCALL_CONFIRM',
+  opResult: 'ROLLCALL_OP_RESULT',
+}
+
+function markerOf(key: keyof typeof SECRETS): string {
+  return `[secret:${SECRET_NAMES[key]}]`
+}
+
 const RUN_ID = 'rollcall-run'
 const SCOPE: ScopeKey = { tier: 'suite', key: 'auth' }
 
-// The concrete safety context type (register/dispose/clear) the confirm decorator's
-// `RunMaskingContext` param requires — the leaner schema `MaskingContext` interface omits them.
-type RollCallMaskingContext = ReturnType<typeof createMaskingContext>
-
 interface RollCallFixture {
-  ctx: RollCallMaskingContext
+  // The one declared mask every surface below derives from.
+  redactor: SecretRedactor
   envelopes: RunEventEnvelope[]
   handoff: CompletedRunHandoff
   artifactStage: RunArtifactStageInput
@@ -147,16 +143,15 @@ interface RollCallFixture {
 }
 
 /**
- * Build the ONE fixture (D-12). Register all five secrets in a single MaskingContext, then plant each
- * as a placeholder — through `ctx.mask(...)` — exactly where its sink would emit it: the envelope
- * stream (step text, step error, hook variable + stdout, failureSummary), the completed-run handoff
- * (step evidence reasoning), the run artifact (config snapshot + terminal error), the cache-key input
- * (masked step text), the provider-egress request (RAW secret the egress hook masks), the debug-log
- * response body, and the confirm action name (masked; the decorator unmasks it for the human).
+ * Build the ONE fixture (D-12). Declare every sentinel in a single `SecretRedactor`, then plant each
+ * as its marker exactly where its sink would emit it. The provider-egress request carries the RAW
+ * value, which the masking middleware masks.
  */
 function buildRollCallFixture(): RollCallFixture {
-  const ctx = createMaskingContext()
-  for (const secret of Object.values(SECRETS)) ctx.register(secret)
+  const declared = (Object.keys(SECRETS) as (keyof typeof SECRETS)[])
+    .map((key) => [SECRET_NAMES[key], SECRETS[key]] as const)
+  const redactor = new SecretRedactor(new SecretStore(declared))
+  const mask = (text: string): string => redactor.redactString(text)
 
   // --- one envelope stream --------------------------------------------------------------------
   let seq = 0
@@ -184,7 +179,7 @@ function buildRollCallFixture(): RollCallFixture {
     totalSteps: 2,
     // G-428-2: the authored step texts ride the already-enrolled envelope stream, masked at the
     // producer exactly as the matching stepStarted.stepText below.
-    stepTexts: [ctx.mask(`Navigate to ${SECRETS.step}`), 'Submit credentials'],
+    stepTexts: [mask(`Navigate to ${SECRETS.step}`), 'Submit credentials'],
   }
 
   const okStep: StepFinalizedPayload = {
@@ -207,7 +202,7 @@ function buildRollCallFixture(): RollCallFixture {
     briefDigest: 'digest',
     status: 'failed',
     durationMs: 800,
-    error: ctx.mask(`Timeout waiting for token ${SECRETS.error}`),
+    error: mask(`Timeout waiting for token ${SECRETS.error}`),
   }
 
   const hookFinished = {
@@ -217,9 +212,9 @@ function buildRollCallFixture(): RollCallFixture {
     scope: 'test',
     status: 'passed',
     durationMs: 300,
-    stdout: ctx.mask(`seeded with ${SECRETS.hook}`),
+    stdout: mask(`seeded with ${SECRETS.hook}`),
     stderr: '',
-    variables: { TOKEN: ctx.mask(SECRETS.hook), REGION: 'us-east-1' },
+    variables: { TOKEN: mask(SECRETS.hook), REGION: 'us-east-1' },
     kind: 'hook',
   }
 
@@ -246,7 +241,7 @@ function buildRollCallFixture(): RollCallFixture {
     briefDigest: 'digest',
     status: 'failed',
     durationMs: 1_200,
-    error: ctx.mask('Element not found'),
+    error: mask('Element not found'),
   }
 
   const test1Finished: TestFinishedPayload = {
@@ -254,7 +249,7 @@ function buildRollCallFixture(): RollCallFixture {
     testIndex: 1,
     outcome: 'failed',
     durationMs: 1_500,
-    failureSummary: ctx.mask(`Checkout failed near ${SECRETS.summary}`),
+    failureSummary: mask(`Checkout failed near ${SECRETS.summary}`),
   }
 
   const runFinished: RunFinishedPayload = { aggregateVerdict: 'failed', disposition: 'detached', finalSeq: 0 }
@@ -263,7 +258,7 @@ function buildRollCallFixture(): RollCallFixture {
     env('runStarted', runStarted),
     env('testStarted', test0Started),
     // step 0 carries the sentinel in its VISIBLE step text (console step-line surface)
-    env('stepStarted', { testIndex: 0, stepIndex: 0, stepText: ctx.mask(`Navigate to ${SECRETS.step}`) } satisfies StepStartedPayload),
+    env('stepStarted', { testIndex: 0, stepIndex: 0, stepText: mask(`Navigate to ${SECRETS.step}`) } satisfies StepStartedPayload),
     env('stepFinalized', okStep),
     env('stepStarted', { testIndex: 0, stepIndex: 1, stepText: 'Submit credentials' } satisfies StepStartedPayload),
     env('stepFinalized', failedStep),
@@ -291,11 +286,11 @@ function buildRollCallFixture(): RollCallFixture {
   }
   const maskedStep: StepEvidence = {
     stepIndex: 0,
-    stepText: ctx.mask(`Save the record ${SECRETS.summary}`),
+    stepText: mask(`Save the record ${SECRETS.summary}`),
     cacheStatus: 'miss',
     servedBrief,
     subActions: [],
-    verifierVerdict: { pass: false, reasoning: ctx.mask(`failed near ${SECRETS.summary}`) },
+    verifierVerdict: { pass: false, reasoning: mask(`failed near ${SECRETS.summary}`) },
   }
   const outcome: PerTestOutcome = {
     testId: 't1',
@@ -321,8 +316,8 @@ function buildRollCallFixture(): RollCallFixture {
   // --- one run artifact snapshot (config + terminal error) ------------------------------------
   const artifactStage: RunArtifactStageInput = {
     schemaVersion: RUN_ARTIFACT_SCHEMA_VERSION,
-    config: { rawConfigContent: ctx.mask(`base_url: https://app.test\n# token ${SECRETS.summary}`) },
-    errors: [{ code: 'RUN_FAILED', message: ctx.mask(`boom ${SECRETS.error}`), phase: 'run' }],
+    config: { rawConfigContent: mask(`base_url: https://app.test\n# token ${SECRETS.summary}`) },
+    errors: [{ code: 'RUN_FAILED', message: mask(`boom ${SECRETS.error}`), phase: 'run' }],
   }
 
   // --- one cache-key input (356 floor: masked step text + value-free env digest) --------------
@@ -331,7 +326,7 @@ function buildRollCallFixture(): RollCallFixture {
     platform: 'web',
     suiteConfigDigest: 'suite-digest',
     testConfigDigest: 'test-digest',
-    stepText: ctx.mask(`call API with ${SECRETS.error}`),
+    stepText: mask(`call API with ${SECRETS.error}`),
     stepIndex: 0,
     testIndex: 0,
     relevantEnvDigest: relevantEnvDigest(envVars, 'salt'),
@@ -345,21 +340,19 @@ function buildRollCallFixture(): RollCallFixture {
   } as unknown as ProviderRequestParams
 
   return {
-    ctx,
+    redactor,
     envelopes,
     handoff,
     artifactStage,
     cacheInput,
     egressParams,
-    debugResponseBody: ctx.mask(`{"detail":"rejected ${SECRETS.error}"}`),
-    confirmActionName: ctx.mask(`git push to ${SECRETS.confirm}`),
-    // MASKED AT THE SOURCE, which is the contract `results[]` carries (D-05, and the 2026-08-20
-    // D-10 adjudication's binding corollary): the payload on the turn contract is the placeholder
-    // form, so the session log and every `agent.ask` client hold the placeholder and only a
-    // surface's own emit restores it.
+    debugResponseBody: mask(`{"detail":"rejected ${SECRETS.error}"}`),
+    confirmActionName: mask(`git push to ${SECRETS.confirm}`),
+    // MASKED AT THE SOURCE, which is the contract `results[]` carries (D-05): the session log and
+    // every `agent.ask` client hold the marker.
     clauseResults: [{
       functionId: 'config.auth.set',
-      payload: { outcome: 'proposed', token: ctx.mask(SECRETS.opResult) },
+      payload: { outcome: 'proposed', token: mask(SECRETS.opResult) },
     }],
   }
 }
@@ -370,14 +363,13 @@ const ALL_ORIGINALS = Object.values(SECRETS)
 /**
  * The handoff `analysis.get` reads (406-01, D-04) — one failed member carrying ONE masked quote.
  *
- * A SECOND HANDOFF RATHER THAN A SECOND FIXTURE. It is built from `FIXTURE.ctx`, so it is the same
- * masking context every other surface in this file derives from; what differs is the SHAPE the
+ * A SECOND HANDOFF RATHER THAN A SECOND FIXTURE. It is built from `FIXTURE.redactor`, so it is the
+ * same declared mask every other surface in this file derives from; what differs is the SHAPE the
  * analysis path needs and the envelope stream cannot supply — a recorded sub-action `result.error`
  * (which `errorTextOf` lifts into the sentence's grounding quote) and a persisted `rootCause`, so
  * the floor leg produces a deterministic verdict rather than a minted `unknown` with no quote.
  *
- * The quote carries `SECRETS.error`, which is what makes both roll-call sides falsifiable: the
- * local door must restore it into the sentence, and the authed remote door must not.
+ * The quote carries `SECRETS.error`'s marker, which both doors must serve as the marker.
  */
 const ROLLCALL_ANALYSIS_HANDOFF: CompletedRunHandoff = {
   schemaVersion: 1,
@@ -430,7 +422,7 @@ const ROLLCALL_ANALYSIS_HANDOFF: CompletedRunHandoff = {
             captureMode: 'textOnly',
           },
         },
-        result: { success: false, error: FIXTURE.ctx.mask(`Timeout waiting for token ${SECRETS.error}`) },
+        result: { success: false, error: FIXTURE.redactor.redactString(`Timeout waiting for token ${SECRETS.error}`) },
       }],
       verifierVerdict: { pass: false, reasoning: 'timeout' },
     }],
@@ -454,10 +446,8 @@ const ROLLCALL_ANALYSIS_HANDOFF: CompletedRunHandoff = {
  * The base roll-call host the run reads below spread over (400-06, narrowed by 430 D-02).
  *
  * WHAT IS SUPPLIED rather than composed is the HOST, which is an input to the routers and not the
- * thing under test. The `unmaskForDisplay` it binds is the production binding's SHAPE — one
- * `unmaskForHumanOutput` call per emit — over this file's one fixture context, which is what lets
- * a cell see a restoration at all. The dashboard's conversation emits it once served were deleted
- * in 430, and the members only they read left the host with them.
+ * thing under test. 2026-10-14 (441-14, D-07): its `unmaskForDisplay` restores nothing — the
+ * dashboard serves the text a run stored, masked at write.
  */
 function dashboardRollCallHost(): AgentHost {
   return {
@@ -485,36 +475,22 @@ function dashboardRollCallHost(): AgentHost {
       results: FIXTURE.clauseResults,
       denials: [],
     }),
-    unmaskForDisplay: (text: string) => unmaskForHumanOutput(FIXTURE.ctx, text),
+    unmaskForDisplay: (text: string) => text,
   }
 }
 
 
-// ---- 405-10 (D-09 · DETL-02): THE DASHBOARD'S RUN READS, BOTH SIDES --------------------------
+// ---- 405-10 (D-09 · DETL-02): THE DASHBOARD'S RUN READS --------------------------------------
 //
-// WHAT THIS BLOCK ADDS AND WHY IT IS NINE ENTRIES RATHER THAN ONE. 400-06 enrolled the fourth
-// door's CHAT emits. The run-detail rebuild opened five more human reads on the same door — the
-// detail page, the run list, one run's row, its execution logs and its artifact drawer — and every
-// one of them serves text a run masked. D-09's claim is that ONE seam is applied at each of them,
-// and the enrollment rule below is what stops the sixth from forgetting: a new dashboard read
-// route that does not enrol reds the guard.
-//
-// THE MASKED HALF IS THE OTHER HALF OF THE SAME CLAIM. A seam applied on the way OUT is only safe
-// if nothing durable or machine-facing gained cleartext on the way in, so the four masked entries
-// scan exactly the sinks a restoration could have leaked into: the SQLite rows the page reads
-// from, the run-stream SSE frames a client persists, the authed REMOTE door's detail body (which
-// stays masked BY CONSTRUCTION — `serveRunDetailRead`'s `boundary` defaults to machine, 405-05),
-// and the artifact bytes, which are never text to begin with.
+// The detail page, the run list, one run's row, its execution logs, its artifact drawer and the
+// failure view each serve text a run masked; the SQLite rows, the run-stream SSE frames, the authed
+// REMOTE door's bodies and the artifact bytes are the sinks behind them. A new dashboard read route
+// that does not enrol reds the guard.
 //
 // NOTHING BELOW THE ROUTE IS FAKED. `createDashboardRunIngest` is the shipped subscriber writing a
 // real `:memory:` v2 database; `createDashboardRunDetailReader` is the shipped adapter;
 // `createFunctionRegistry` + `invokeFunction` are the shipped registry and dispatcher;
-// `createRouter` / `createRunServiceRoutes` are the shipped routers, mounted on real sockets. What
-// is SUPPLIED is the host's `unmaskForDisplay`, which is `unmaskForHumanOutput(FIXTURE.ctx, text)`
-// — the production binding's SHAPE (one call per emitted string) over this file's one fixture, so
-// the cell can see a restoration at all without dragging a workspace and a digest sidecar in. The
-// seam's own matching mechanism is measured where it lives, in
-// `packages/cli/src/composition/__tests__/display-unmask.test.ts`.
+// `createRouter` / `createRunServiceRoutes` are the shipped routers, mounted on real sockets.
 
 /** The four REQUIRED read ports, minimal by construction — `runs.detail` reaches none of them. */
 function rollCallFunctionDeps(
@@ -564,7 +540,7 @@ function rollCallFunctionDeps(
  * these — `runs.detail` is where the projection is computed, where
  * the token sum is folded and where `RunNotFoundError` is minted, so a fixture that answered it
  * would be a second implementation of all three. This one DISPATCHES, through the shipped
- * `invokeFunction`, and keeps the same one-call-per-emit `unmaskForDisplay`.
+ * `invokeFunction`.
  */
 function dashboardRunRollCallHost(registry: FunctionRegistry): AgentHost {
   return {
@@ -626,13 +602,11 @@ function dashboardRunRollCall(): Promise<DashboardRunRollCall> {
     for (const envelope of FIXTURE.envelopes) ingest.handler(envelope)
     await ingest.finalize()
 
-    // ONE BLOB, WHOSE BYTES ARE A PNG HEADER FOLLOWED BY MASKED TEXT. A real screenshot has no text
-    // to restore, which would make "the bytes were not rewritten" unfalsifiable — so this blob
-    // CARRIES a placeholder. The masked-side assertion then has something to see, and the sha
-    // comparison inside `render` is the byte-identity claim on top of it.
+    // ONE BLOB, WHOSE BYTES ARE A PNG HEADER FOLLOWED BY MASKED TEXT, so the masked assertion has a
+    // marker to see; the sha comparison inside `render` is the byte-identity claim on top of it.
     const artifactBytes = Buffer.concat([
       Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-      Buffer.from(FIXTURE.ctx.mask(`config token ${SECRETS.summary}`), 'utf8'),
+      Buffer.from(FIXTURE.redactor.redactString(`config token ${SECRETS.summary}`), 'utf8'),
     ])
     const ref = new FsEvidenceArtifactStore({ root: TMP_ROOT, runId: RUN_ID })
       .persistDecisionScreenshot(new Uint8Array(artifactBytes))
@@ -744,94 +718,10 @@ async function rollCallServicePorts(): Promise<unknown> {
   }
 }
 
-// ---- HUMAN registry: surfaces that MUST restore the original secrets (D-11) ------------------
-
-interface HumanSurface {
-  name: string
-  originals: string[]
-  render: () => string | Promise<string>
-}
-
-// 2026-10-14 (441-13, D-07): the four console rows left with the console reporter's unmask.
-const HUMAN_SURFACES: HumanSurface[] = [
-  // 2026-10-01 (432-19, D-14/D-15; 432-14 deferred #3): 'confirm:ask-prompt' leaves the roll-call.
-  // It drove the unmasking confirm decorator over the ask-tier prompt; the confirm port and the
-  // decorator are deleted, and no prompt is shown to anyone, so there is no such human surface.
-  {
-    // 399.1 (criterion 3): the op-result payload block, on its way to a terminal. Both chat
-    // surfaces compose it with `renderClauseResults` and emit it through `unmaskForHumanOutput`,
-    // and that composition is what is driven here — a person reading a turn sees the value the op
-    // actually returned, restored, exactly as they see a step line restored.
-    name: 'chat:clause-results',
-    originals: [SECRETS.opResult],
-    render: () => unmaskForHumanOutput(
-      FIXTURE.ctx,
-      renderClauseResults(FIXTURE.clauseResults, FIXTURE.clauseResults.length).join('\n'),
-    ),
-  },
-  {
-    // 405-10 (D-09): THE REBUILT PAGE'S ONE DURABLE READ. Members carry the failure summary, steps
-    // carry the step text and the step error — three different channels of one projection, so a
-    // seam applied to only part of the tree reds here rather than in review.
-    name: 'dashboard:run-detail',
-    originals: [SECRETS.step, SECRETS.error, SECRETS.summary],
-    render: () => localDashboardRead(`/api/runs/${RUN_ID}/detail`),
-  },
-  {
-    // 406-01 (D-04 · DETL-04): THE FAILURE VIEW'S READ. The floor sentence QUOTES the failing
-    // step's recorded error, so the restored value has to appear in this door's body — a
-    // producer string on a new door is a new crossing, and this row is where it is held.
-    name: 'dashboard:run-analysis',
-    originals: [SECRETS.error],
-    render: () => localDashboardRead(`/api/runs/${RUN_ID}/analysis`),
-  },
-  {
-    // The run LIST. Its rows are a person's first sight of a failure, and the summary on each is
-    // exactly where a masked value lands. The seam is applied PER ROW under that row's own id.
-    name: 'dashboard:run-list',
-    originals: [SECRETS.summary],
-    render: () => localDashboardRead('/api/runs'),
-  },
-  {
-    // One run's ROW, on the arm the page reads before the projection arrives.
-    name: 'dashboard:run-row',
-    originals: [SECRETS.summary],
-    render: () => localDashboardRead(`/api/runs/${RUN_ID}`),
-  },
-  {
-    // EXECUTION LOGS — hook stdout, which is the surface a person opens when a run failed in setup.
-    // The hook's `variables.TOKEN` is NOT among this entry's originals on purpose: the auth-state
-    // redactor removes it after the seam restores it, which is Pitfall 7's order proving itself.
-    name: 'dashboard:execution-logs',
-    originals: [SECRETS.hook],
-    render: () => localDashboardRead(`/api/runs/${RUN_ID}/execution-logs`),
-  },
-  {
-    // THE ARTIFACT DRAWER's JSON — the run row plus the artifact snapshot. The artifact BYTES are a
-    // different surface entirely and are enrolled on the masked side, where they belong (D-09).
-    name: 'dashboard:artifact-drawer',
-    originals: [SECRETS.summary],
-    render: () => localDashboardRead(`/api/runs/${RUN_ID}/artifact`),
-  },
-]
-
-describe('SEAM-05 unmask boundary roll-call — HUMAN side restores originals (D-11/D-12)', () => {
-  it.each(HUMAN_SURFACES.map((surface) => [surface.name, surface] as const))(
-    'human surface %s restores every original and shows no placeholder',
-    async (_name, surface) => {
-      const output = await surface.render()
-      for (const original of surface.originals) {
-        expect(output).toContain(original)
-      }
-      expect(output).not.toMatch(PLACEHOLDER)
-    },
-  )
-})
-
-// ---- MASKED registry: surfaces that MUST keep only placeholders (D-11) -----------------------
+// ---- MASKED registry: every surface shows markers and no declared value (D-07) ---------------
 //
-// Each entry produces the surface's bytes from the SAME fixture and asserts placeholders present
-// AND every original absent. Filesystem ports write under one tmp runtime root; the reporters use
+// Each entry produces the surface's bytes from the SAME fixture and asserts a marker present AND
+// every original absent. Filesystem ports write under one tmp runtime root; the reporters use
 // their injected write targets; the egress/cache/debug surfaces call the real helpers directly.
 
 const TMP_ROOT = mkdtempSync(join(tmpdir(), 'unmask-rollcall-'))
@@ -841,9 +731,54 @@ interface MaskedSurface {
   name: string
   render: () => string | Promise<string>
   payloadFree?: true
+  // The markers this surface must carry, where the surface names particular values.
+  markers?: string[]
 }
 
 const MASKED_SURFACES: MaskedSurface[] = [
+  {
+    // The chat terminal's emit: the op-result payload block through the declared mask.
+    name: 'chat:clause-results',
+    markers: [markerOf('opResult')],
+    render: () => FIXTURE.redactor.redactString(
+      renderClauseResults(FIXTURE.clauseResults, FIXTURE.clauseResults.length).join('\n'),
+    ),
+  },
+  {
+    // Members carry the failure summary, steps carry the step text and the step error.
+    name: 'dashboard:run-detail',
+    markers: [markerOf('step'), markerOf('error'), markerOf('summary')],
+    render: () => localDashboardRead(`/api/runs/${RUN_ID}/detail`),
+  },
+  {
+    // 406-01 (D-04 · DETL-04): the floor sentence quotes the failing step's recorded error.
+    name: 'dashboard:run-analysis',
+    markers: [markerOf('error')],
+    render: () => localDashboardRead(`/api/runs/${RUN_ID}/analysis`),
+  },
+  {
+    name: 'dashboard:run-list',
+    markers: [markerOf('summary')],
+    render: () => localDashboardRead('/api/runs'),
+  },
+  {
+    // One run's ROW, on the arm the page reads before the projection arrives.
+    name: 'dashboard:run-row',
+    markers: [markerOf('summary')],
+    render: () => localDashboardRead(`/api/runs/${RUN_ID}`),
+  },
+  {
+    // Execution logs — hook stdout.
+    name: 'dashboard:execution-logs',
+    markers: [markerOf('hook')],
+    render: () => localDashboardRead(`/api/runs/${RUN_ID}/execution-logs`),
+  },
+  {
+    // The artifact drawer's JSON — the run row plus the artifact snapshot.
+    name: 'dashboard:artifact-drawer',
+    markers: [markerOf('summary')],
+    render: () => localDashboardRead(`/api/runs/${RUN_ID}/artifact`),
+  },
   {
     // events.jsonl — the durable event log, through the REAL FsEventLog under a tmpdir.
     name: 'durable:events.jsonl',
@@ -941,29 +876,31 @@ const MASKED_SURFACES: MaskedSurface[] = [
     },
   },
   {
-    // provider egress — the 362-07 proof idiom, through the REAL masking egress hook.
+    // provider egress — the 362-07 proof idiom, through the REAL masking middleware every model
+    // call carries (441-02, 441-04).
     name: 'machine:provider-egress',
-    render: () => {
-      const hook = createMaskingProviderRequestHook(() => FIXTURE.ctx)
-      return JSON.stringify(hook(FIXTURE.egressParams))
+    markers: [markerOf('error')],
+    render: async () => {
+      const middleware = createMaskingMiddleware((text) => FIXTURE.redactor.redactString(text))
+      const transformParams = middleware.transformParams
+      if (!transformParams) throw new Error('the masking middleware must expose transformParams')
+      return JSON.stringify(await transformParams({
+        params: FIXTURE.egressParams,
+        type: 'generate',
+        model: { modelId: 'test-model' },
+      } as never))
     },
   },
   {
-    // 399.1 (criterion 3): THE SAME RENDER, WITHOUT THE SURFACE'S EMIT — and this pairing is the
-    // whole point. The human entry above proves the payload reaches a person restored; this one
-    // proves the render module is not what restored it. `renderClauseResults` is where a shortcut
-    // would be tempting and invisible: a module that unmasked for itself would satisfy every
-    // rendering assertion in this repository while handing its caller a cleartext string that the
-    // session log, the `agent.ask` clients and the persistence seam would then carry.
+    // 399.1 (criterion 3): THE SAME RENDER, WITHOUT THE SURFACE'S EMIT. `renderClauseResults` is
+    // a render, not an emit: it hands its caller the marker form the session log and the
+    // `agent.ask` clients carry.
     name: 'machine:chat-clause-results',
     render: () => renderClauseResults(FIXTURE.clauseResults, FIXTURE.clauseResults.length).join('\n'),
   },
   {
-    // 405-10 (D-09): THE ROWS THE PAGE READS FROM. This is the pairing every human dashboard entry
-    // above needs: those five restore, so the tempting shortcut is to unmask on the way IN — at
-    // ingest — which would satisfy every response assertion in this file while turning the
-    // dashboard database into a cleartext store that outlives the request, survives a backup and
-    // is read by every other query in the product. The four run-shaped tables are dumped whole.
+    // 405-10 (D-09): THE ROWS THE PAGE READS FROM, dumped whole: a cleartext value at ingest would
+    // outlive the request, survive a backup and be read by every other query in the product.
     name: 'durable:dashboard-sqlite-rows',
     render: async () => {
       const fixture = await dashboardRunRollCall()
@@ -980,7 +917,7 @@ const MASKED_SURFACES: MaskedSurface[] = [
   },
   {
     // THE RUN-STREAM SSE. A machine wire whose consumer is its own display boundary, and the
-    // channel a client persists — a frame that carried a restored value would put a credential in
+    // channel a client persists — a frame that carried a declared value would put a credential in
     // whatever buffered it. The SHIPPED local router serves it over a real socket.
     name: 'machine:run-stream-sse',
     render: async () => {
@@ -997,12 +934,8 @@ const MASKED_SURFACES: MaskedSurface[] = [
     },
   },
   {
-    // THE AUTHED REMOTE DOOR'S DETAIL BODY, which stays masked BY CONSTRUCTION (405-05's recorded
-    // decision): the remote dispatch calls `serveRunDetailRead` with no `boundary`, and the option
-    // defaults to `'machine'`. A bearer token authenticates a CLIENT, not a person's browser
-    // session, so restoring there would hand declared secrets to every token holder and every
-    // intermediary. THIS ENTRY IS WHERE THAT DECISION IS HELD: adding `boundary: 'human'` to that
-    // dispatch reds it, which is exactly the review the reversal deserves.
+    // THE AUTHED REMOTE DOOR'S DETAIL BODY (405-05): the remote dispatch calls
+    // `serveRunDetailRead` with no `boundary`, and the option defaults to `'machine'`.
     name: 'machine:remote-run-detail',
     render: async () => {
       const ports = await rollCallServicePorts()
@@ -1013,10 +946,7 @@ const MASKED_SURFACES: MaskedSurface[] = [
     },
   },
   {
-    // 406-01 (D-04): THE AUTHED REMOTE DOOR'S ANALYSIS BODY, masked BY CONSTRUCTION for the reason
-    // its detail sibling above is — the remote dispatch calls `serveRunAnalysisRead` with no
-    // boundary and the option defaults to `'machine'`. This entry is where that decision is HELD:
-    // opting the arm in reds here, which is exactly the review the reversal deserves.
+    // 406-01 (D-04): THE AUTHED REMOTE DOOR'S ANALYSIS BODY, on its detail sibling's terms.
     name: 'machine:remote-run-analysis',
     render: async () => {
       const ports = await rollCallServicePorts()
@@ -1028,7 +958,7 @@ const MASKED_SURFACES: MaskedSurface[] = [
   },
   {
     // ARTIFACT BYTES — served exactly as stored, on every door (D-09: the seam never unmasks a
-    // blob). The blob this fixture wrote carries a placeholder so the masked assertion has
+    // blob). The blob this fixture wrote carries a marker so the masked assertion has
     // something to see; the sha comparison INSIDE this render is the byte-identity claim, and it
     // is made against the address the SHIPPED store minted rather than against two hex strings
     // this file chose.
@@ -1042,19 +972,20 @@ const MASKED_SURFACES: MaskedSurface[] = [
       expect(createHash('sha256').update(servedBytes).digest('hex'), 'bytes served === bytes stored')
         .toBe(fixture.artifactSha)
       expect(servedBytes.equals(fixture.artifactBytes)).toBe(true)
-      // `latin1` is a byte-for-byte decoding, so the placeholder-present / original-absent scan the
+      // `latin1` is a byte-for-byte decoding, so the marker-present / original-absent scan the
       // masked registry runs over this string is a scan of the BYTES rather than of a re-encoding.
       return servedBytes.toString('latin1')
     },
   },
 ]
 
-describe('SEAM-05 unmask boundary roll-call — MASKED side keeps placeholders (D-11/D-12)', () => {
+describe('SEAM-05 unmask boundary roll-call — MASKED side keeps markers (D-11/D-12)', () => {
   it.each(MASKED_SURFACES.map((surface) => [surface.name, surface] as const))(
-    'masked surface %s keeps placeholders and leaks no original',
+    'masked surface %s keeps markers and leaks no original',
     async (_name, surface) => {
       const output = await surface.render()
-      if (!surface.payloadFree) expect(output).toMatch(PLACEHOLDER)
+      if (!surface.payloadFree) expect(output).toMatch(MARKER)
+      for (const marker of surface.markers ?? []) expect(output).toContain(marker)
       for (const original of ALL_ORIGINALS) {
         expect(output).not.toContain(original)
       }
@@ -1081,7 +1012,7 @@ const SURFACE_ROLLCALL = [
   // 430 D-02 (2026-09-28): the dashboard's conversation emits and its replay window were deleted
   // with the server door, so their three sinks leave the roll-call. A returning sink reds the
   // enrollment cell below.
-  // 405-10 (D-09): the dashboard's five human RUN reads and the four surfaces that must stay masked.
+  // 405-10 (D-09): the dashboard's run reads and the four sinks behind them.
   'dashboard:run-detail',
   'dashboard:run-list',
   'dashboard:run-row',
@@ -1091,25 +1022,22 @@ const SURFACE_ROLLCALL = [
   'machine:run-stream-sse',
   'machine:remote-run-detail',
   'machine:artifact-bytes',
-  // 406-01 (D-04): the failure view's read, on both doors — restored on the local one, masked on
-  // the authed remote one.
+  // 406-01 (D-04): the failure view's read, on both doors.
   'dashboard:run-analysis',
   'machine:remote-run-analysis',
 ] as const
 
 describe('SEAM-05 unmask boundary roll-call — enrollment guard (T-363-31)', () => {
   it('every walked surface is enrolled in the SURFACE_ROLLCALL union exactly once', () => {
-    const walked = [...HUMAN_SURFACES.map((s) => s.name), ...MASKED_SURFACES.map((s) => s.name)]
-    // No name collides across the two registries.
+    const walked = MASKED_SURFACES.map((s) => s.name)
     expect(new Set(walked).size).toBe(walked.length)
     // The walked union is exactly the declared roll-call — a new unenrolled surface fails here.
     expect([...walked].sort()).toEqual([...SURFACE_ROLLCALL].sort())
   })
 
-  it('both sides derive from ONE fixture (single MaskingContext, single envelope stream)', () => {
-    // Every masked-side envelope surface and every human-side surface reads the same FIXTURE.ctx /
-    // FIXTURE.envelopes references — no per-surface fixture forks.
+  it('every surface derives from ONE fixture (single SecretRedactor, single envelope stream)', () => {
+    expect(FIXTURE.redactor).toBeInstanceOf(SecretRedactor)
     expect(FIXTURE.envelopes.length).toBeGreaterThan(0)
-    expect(HUMAN_SURFACES.length + MASKED_SURFACES.length).toBe(SURFACE_ROLLCALL.length)
+    expect(MASKED_SURFACES.length).toBe(SURFACE_ROLLCALL.length)
   })
 })

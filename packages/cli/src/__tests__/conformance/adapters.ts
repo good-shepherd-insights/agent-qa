@@ -586,6 +586,7 @@ function fnListingFixture(): { root: string; configPath: string } {
     })}\n`,
     'utf8',
   )
+  writeFileSync(join(root, '.env.secrets.local'), '', 'utf8')
   return { root, configPath }
 }
 

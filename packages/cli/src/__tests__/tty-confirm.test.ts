@@ -160,6 +160,7 @@ describe('the CLI binds a confirmation exactly where there is somebody to ask', 
     try {
       const configPath = join(root, 'agent-qa.config.yaml')
       writeFileSync(configPath, VALID_CONFIG)
+      writeFileSync(join(root, '.env.secrets.local'), '')
       expect(process.stdin.isTTY === true).toBe(false)
       const before = ['data', 'readable', 'keypress'].map((event) => process.stdin.listenerCount(event))
       const program = new Command().option('--config <path>').addCommand(createFnCommand())

@@ -500,6 +500,8 @@ describe('C432-LIVE-CALLERS — the nine named live callers carry no retired fla
     for (const probe of probes) {
       const project = scratch('rung1')
       writeFileSync(join(project, 'agent-qa.config.yaml'), ZERO_TARGET_CONFIG)
+      // The script's `write_config` leaves an empty secrets file beside the config.
+      writeFileSync(join(project, '.env.secrets.local'), '')
       const answer = run(
         process.execPath,
         [CLI_DIST, 'fn', 'config.project.scaffold', '--input', JSON.stringify({ domain: probe.token })],

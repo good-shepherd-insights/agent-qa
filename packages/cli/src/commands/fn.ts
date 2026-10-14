@@ -6,16 +6,17 @@
 
 import { dirname, resolve } from 'node:path'
 
-import {
-  createMaskingContext,
-  invokeFunction,
-  unmaskForHumanOutput,
-} from '@vostride/agent-qa-agent'
+import { invokeFunction } from '@vostride/agent-qa-agent'
 import type { FunctionDeclaration } from '@vostride/agent-qa-agent'
 import type { RunExecutionPort } from '@vostride/agent-qa-agent-local'
+import { maskPayloadStrings, type MaskFn } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import pc from 'picocolors'
 
+import {
+  createDeclaredSecretMask,
+  DeclaredSecretsUnavailableError,
+} from '../composition/declared-secrets.js'
 import {
   CLI_FUNCTION_CALLER,
   composeCliLocalAgent,
@@ -114,36 +115,37 @@ interface SeqStamped {
  * Human mode prints one line per event and closes with the last seq observed, which is
  * exactly the value to hand back as `--from` on the next invocation.
  */
-async function renderStream(stream: AsyncIterable<unknown>, json: boolean): Promise<void> {
-  const maskingContext = json ? undefined : createMaskingContext()
+async function renderStream(
+  stream: AsyncIterable<unknown>,
+  json: boolean,
+  mask: MaskFn,
+): Promise<void> {
   let count = 0
   let lastSeq: number | undefined
 
-  try {
-    for await (const element of stream) {
-      count += 1
-      const stamped = element as SeqStamped
-      lastSeq = stamped.seq
-      if (json) {
-        console.log(JSON.stringify(element))
-        continue
-      }
-      const label = `${pc.dim(`seq ${stamped.seq ?? '?'}`)}  ${pc.bold(stamped.type ?? 'event')}`
-      console.log(unmaskForHumanOutput(maskingContext!, label))
+  for await (const element of stream) {
+    count += 1
+    const stamped = element as SeqStamped
+    lastSeq = stamped.seq
+    if (json) {
+      console.log(JSON.stringify(maskPayloadStrings(element, mask)))
+      continue
     }
+    const label = `${pc.dim(`seq ${stamped.seq ?? '?'}`)}  ${pc.bold(stamped.type ?? 'event')}`
+    console.log(mask(label))
+  }
 
-    if (!json) {
-      console.log(pc.dim(
-        `${count} event${count === 1 ? '' : 's'} · last seq ${lastSeq ?? 'none'}`,
-      ))
-    }
-  } finally {
-    maskingContext?.dispose()
+  if (!json) {
+    console.log(mask(pc.dim(
+      `${count} event${count === 1 ? '' : 's'} · last seq ${lastSeq ?? 'none'}`,
+    )))
   }
 }
 
-function emitJson(value: unknown): void {
-  console.log(JSON.stringify(value, null, 2))
+// 2026-10-14 (441-14, D-07): leaves are masked before serialization, so a declared value holding a
+// JSON-special character can neither break the document nor slip past the mask.
+function emitJson(mask: MaskFn, value: unknown): void {
+  console.log(JSON.stringify(maskPayloadStrings(value, mask), null, 2))
 }
 
 /**
@@ -156,20 +158,15 @@ function emitJson(value: unknown): void {
  * disagree, with the measured one green while the shipped one drops a field. There is one render
  * here and the suite drives it.
  *
- * IT DOES NOT PRINT AND IT DOES NOT UNMASK. `emitHuman` below owns both, which is where the
- * disclosure boundary belongs and the only place `unmaskForHumanOutput` may run.
+ * IT DOES NOT PRINT AND IT DOES NOT MASK. The emitters below own both: each prints through the
+ * command's declared mask, and nothing restores a value.
  */
 export function renderFnResult(result: unknown): string {
   return JSON.stringify(result, null, 2)
 }
 
-function emitHuman(maskedText: string): void {
-  const maskingContext = createMaskingContext()
-  try {
-    console.log(unmaskForHumanOutput(maskingContext, maskedText))
-  } finally {
-    maskingContext.dispose()
-  }
+function emitHuman(mask: MaskFn, text: string): void {
+  console.log(mask(text))
 }
 
 /**
@@ -206,15 +203,34 @@ function renderListing(declarations: readonly FunctionDeclaration[]): string {
   ].join('\n')
 }
 
-function reportError(error: unknown): void {
-  if (error instanceof FnCommandError) {
-    console.error(pc.red(`Function error [${error.code}]: ${error.message}`))
-  } else if (error instanceof Error) {
-    console.error(pc.red(`Function error [${error.name}]: ${error.message}`))
-  } else {
-    console.error(pc.red(`Function error: ${String(error)}`))
-  }
+function printUnavailable(error: DeclaredSecretsUnavailableError): void {
+  const [first, ...rest] = error.lines
+  if (first !== undefined) console.error(pc.red(first))
+  for (const line of rest) console.error(pc.dim(line))
+}
+
+function reportError(error: unknown, mask?: MaskFn): void {
   process.exitCode = 1
+  if (error instanceof DeclaredSecretsUnavailableError) {
+    printUnavailable(error)
+    return
+  }
+  const line = error instanceof FnCommandError
+    ? `Function error [${error.code}]: ${error.message}`
+    : error instanceof Error
+      ? `Function error [${error.name}]: ${error.message}`
+      : `Function error: ${String(error)}`
+  let shown = line
+  if (mask !== undefined) {
+    try {
+      shown = mask(line)
+    } catch (maskError) {
+      if (!(maskError instanceof DeclaredSecretsUnavailableError)) throw maskError
+      printUnavailable(maskError)
+      return
+    }
+  }
+  console.error(pc.red(shown))
 }
 
 /**
@@ -239,8 +255,13 @@ export function createFnCommand(deps: FnCommandDeps = {}): Command {
     .option('--from <lastEventId>', 'resume a stream after this event seq')
     .option('--via-daemon', 'dispatch through the project daemon instead of in-process')
     .action(async (id: string | undefined, options: FnOptions, command: Command) => {
+      let mask: MaskFn | undefined
       try {
         const composition = compositionInput(command)
+        const declaredSecrets = createDeclaredSecretMask(composition.configPath)
+        // E3: refuse before a host is composed when the secrets file cannot be read.
+        declaredSecrets.redactor()
+        mask = declaredSecrets.mask
         const viaDaemon =
           options.viaDaemon === true || process.env.AGENT_QA_VIA_DAEMON === '1'
         const daemonKnowledgeRoot = viaDaemon
@@ -258,20 +279,22 @@ export function createFnCommand(deps: FnCommandDeps = {}): Command {
           ? undefined
           : composeCliLocalAgent({
               ...composition,
+              declaredSecrets,
               ...(deps.runExecution === undefined ? {} : { runExecution: deps.runExecution }),
             }).registry
 
         if (options.list === true) {
           const registry = localRegistry ?? composeCliLocalAgent({
             ...composition,
+            declaredSecrets,
             ...(deps.runExecution === undefined ? {} : { runExecution: deps.runExecution }),
           }).registry
           const declarations = registry.list(CLI_FUNCTION_CALLER)
           if (options.json === true) {
-            emitJson(declarations.map(declarationRow))
+            emitJson(mask, declarations.map(declarationRow))
             return
           }
-          emitHuman(renderListing(declarations))
+          emitHuman(mask, renderListing(declarations))
           return
         }
 
@@ -295,17 +318,17 @@ export function createFnCommand(deps: FnCommandDeps = {}): Command {
         // The registry knows which ops stream (D-08); the rendering follows the RESULT so
         // the invoker needs no per-id knowledge of its own.
         if (isStream(result)) {
-          await renderStream(result, options.json === true)
+          await renderStream(result, options.json === true, mask)
           return
         }
 
         if (options.json === true) {
-          emitJson(result)
+          emitJson(mask, result)
           return
         }
-        emitHuman(renderFnResult(result))
+        emitHuman(mask, renderFnResult(result))
       } catch (error) {
-        reportError(error)
+        reportError(error, mask)
       }
     })
 }

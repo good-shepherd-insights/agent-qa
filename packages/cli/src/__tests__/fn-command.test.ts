@@ -290,6 +290,7 @@ function fixtureWorkspace(roots: string[]): FixtureWorkspace {
     }, null, 2)}\n`,
     'utf8',
   )
+  writeFileSync(join(root, '.env.secrets.local'), '', 'utf8')
   return {
     root,
     configPath,
@@ -1393,5 +1394,69 @@ describe('agent-qa fn runs.events (the D-08 stream kind)', () => {
     expect(result.stderr).toBe('')
     expect(result.exitCode).toBeUndefined()
     expect(result.stdout).toBe('')
+  })
+})
+
+describe('C441-DISPLAY', () => {
+  const roots: string[] = []
+  let originalExitCode: typeof process.exitCode
+
+  beforeEach(() => {
+    originalExitCode = process.exitCode
+  })
+
+  afterEach(() => {
+    process.exitCode = originalExitCode
+    for (const root of roots.splice(0)) {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fn prints a declared value in an op result as its named marker', async () => {
+    const workspace = fixtureWorkspace(roots)
+    writeFileSync(join(workspace.root, '.env.secrets.local'), 'PW_441=Hunter-42-zz\n', 'utf8')
+    seedRuns(workspace, [
+      handoff({
+        runId: 'run-secret',
+        buildOrdinal: 3,
+        aggregateVerdict: 'failed',
+        tests: [{
+          testId: 'test-1',
+          testName: 'log in with Hunter-42-zz',
+          filePath: 'tests/login.yaml',
+          testIndex: 0,
+          outcome: 'failed',
+          steps: [],
+        }],
+      }),
+    ])
+    const args = ['runs.get', '--input', JSON.stringify({ runId: 'run-secret' })]
+
+    const human = await invoke(workspace, args)
+    const json = await invoke(workspace, [...args, '--json'])
+
+    for (const result of [human, json]) {
+      expect(result.exitCode).toBeUndefined()
+      expect(result.stdout).toContain('log in with [secret:PW_441]')
+      expect(`${result.stdout}\n${result.stderr}`).not.toContain('Hunter-42-zz')
+    }
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      runId: 'run-secret',
+      tests: [{ testName: 'log in with [secret:PW_441]' }],
+    })
+  })
+
+  it('fn refuses at start when the secrets file cannot be read', async () => {
+    const workspace = fixtureWorkspace(roots)
+    rmSync(join(workspace.root, '.env.secrets.local'))
+
+    const result = await invoke(workspace, ['runs.list', '--json'])
+
+    expect(result.exitCode).toBe(1)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toContain(
+      `Error: Secrets file not found: ${join(workspace.root, '.env.secrets.local')}`,
+    )
+    expect(result.stderr).toContain('Create the file before running tests.')
   })
 })

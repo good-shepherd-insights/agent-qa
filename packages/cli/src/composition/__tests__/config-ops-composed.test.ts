@@ -489,6 +489,7 @@ describe('C432-CONFIG-SIX-OPS: every config operation writes in the call through
 
   it('C432-CONFIG-SIX-OPS: all six through agent-qa fn in a directory with no repository', async () => {
     writeFileSync(configPath, ZERO_TARGET_CONFIG)
+    writeFileSync(join(root, '.env.secrets.local'), '')
     expect(spawnSync('git', ['rev-parse', '--git-dir'], { cwd: root, encoding: 'utf8' }).status)
       .not.toBe(0)
 
