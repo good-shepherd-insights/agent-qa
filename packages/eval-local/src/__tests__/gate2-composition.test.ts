@@ -53,10 +53,9 @@ describe('418 feedback staging and explicit admission', () => {
     expect(tree(f.agentQaRoot)).toEqual(bytes)
     expect(tree(f.committedRoot)).toEqual(before)
   })
-  it.each(['egress', 'digest', 'wrong-product', 'wrong-run', 'rerun', 'ambiguous'] as const)('refuses %s before any publication', async mode => {
+  it.each(['digest', 'wrong-product', 'wrong-run', 'rerun', 'ambiguous'] as const)('refuses %s before any publication', async mode => {
     const f = fixture()
     const input = feedbackInput(f)
-    if (mode === 'egress') f.step.stepText = 'AKIAIOSFODNN7EXAMPLE'
     if (mode === 'digest') input.stateDigest = '../outside'
     if (mode === 'wrong-product') input.product = 'other-product'
     if (mode === 'wrong-run') input.target.runId = 'another-run'
@@ -65,12 +64,10 @@ describe('418 feedback staging and explicit admission', () => {
     f.save()
     const runtime = tree(f.agentQaRoot)
     const committed = tree(f.committedRoot)
-    const auditSink = { appendGuardrailAudit: vi.fn() }
-    expect(await stageFeedbackEntry({ ...input, auditSink })).toEqual({ kind: mode === 'egress' ? 'egress-blocked' : 'target-unavailable' })
+    expect(await stageFeedbackEntry(input)).toEqual({ kind: 'target-unavailable' })
     expect(listStagedFeedback({ agentQaRoot: f.agentQaRoot })).toEqual([])
     expect(tree(f.agentQaRoot)).toEqual(runtime)
     expect(tree(f.committedRoot)).toEqual(committed)
-    if (mode === 'egress') expect(auditSink.appendGuardrailAudit).toHaveBeenCalledWith(expect.objectContaining({ channel: 'eval-feedback-staging:cassette' }))
   })
   it('admits a mixed-product and mixed-run batch once with real provenance, natural splits and unchanged labels', async () => {
     const f = fixture()

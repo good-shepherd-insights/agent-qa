@@ -1,5 +1,5 @@
 // Gate-side composition only: extraction, selection and census projection stay in eval core.
-// The shipped writers own every committed byte and their named egress checkpoints.
+// The shipped writers own every committed byte.
 import { join } from 'node:path'
 
 import {
@@ -12,7 +12,7 @@ import {
   resolveMarkedDecisions,
 } from '@vostride/agent-qa-eval'
 import type { AuditSink } from '@vostride/agent-qa-safety'
-import type { CompletedRunHandoff, GuardrailPolicy, MarkReceipt } from '@vostride/agent-qa-schema'
+import type { CompletedRunHandoff, MarkReceipt } from '@vostride/agent-qa-schema'
 
 import { FsRunArtifactSource } from './artifact-source.js'
 import { commitCensus } from './census-committing.js'
@@ -33,7 +33,6 @@ export interface FreezeGoldenTrajectoryInput {
   handoff: CompletedRunHandoff
   supersedes?: string
   priorGold?: MarkReceipt['gold']
-  policy?: GuardrailPolicy
   auditSink?: AuditSink
 }
 
@@ -74,7 +73,6 @@ export function freezeGoldenTrajectory(input: FreezeGoldenTrajectoryInput): Free
     cassettes: plan.goldCassettes,
     committedRoot: input.committedRoot,
     seedingOutputBaseDir: outputBaseDir,
-    policy: input.policy,
     auditSink: input.auditSink,
   })
   if (seeded.refusals.length > 0) return { kind: 'refused', refusals: seeded.refusals }
@@ -105,13 +103,7 @@ export function freezeGoldenTrajectory(input: FreezeGoldenTrajectoryInput): Free
     markdown: renderCensusMarkdown(census),
     committedRoot: input.committedRoot,
     censusOutputBaseDir: outputBaseDir,
-    policy: input.policy,
   })
-  if (committed.kind === 'egress-blocked') {
-    return { kind: 'refused', refusals: plan.cases.map(({ cassetteId }) => ({
-      cassetteId, kind: 'egress-blocked', detections: committed.detections,
-    })) }
-  }
   return {
     kind: 'frozen',
     cases: plan.cases.map(({ cassetteId, labelRecord }) => {

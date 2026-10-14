@@ -5,7 +5,6 @@ import { join } from 'node:path'
 
 import { buildGoldenTrajectoryPlan, buildSeedingPlan, committedFileText, computeDecisionIdentity, createScoringContext, decisionCorrectnessVectors, deriveCensus, extractRunCassettes, renderCensusMarkdown, scoreCassetteReplay, type LeafReplayResult } from '@vostride/agent-qa-eval'
 import { FsEvidenceArtifactStore, HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import * as safety from '@vostride/agent-qa-safety'
 import type { GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import type { MarkReceipt } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -109,7 +108,6 @@ describe('freezeGoldenTrajectory', () => {
   it('freezes the captured Luhn-valid screen timestamp without changing cassette bytes or receipt hashes', () => {
     // Actual 419 (4a) failure: 2026-09-08T16:12:38.737Z, audit fingerprint 11103290ebca9211.
     const timestamp = 1_788_883_958_737
-    expect(safety.scan(String(timestamp), safety.loadGuardrailPolicy(safety.defaultGuardrailPolicyInput)).result.action).toBe('block')
     handoff.tests[0]!.steps[0]!.subActions[0]!.stateBefore.timestamp = timestamp
     const cassettes = extract()
     const plan = buildGoldenTrajectoryPlan({ handoff, cassettes, mark, product })

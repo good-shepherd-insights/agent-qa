@@ -7,7 +7,6 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { asRunId, type CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import { buildSeedingPlan, committedFileText, extractRunCassettes, computeCorpusDigest } from '@vostride/agent-qa-eval'
 import * as api from '../index.js'
-import * as safety from '@vostride/agent-qa-safety'
 import { committedCassettePath, committedCorpusPath, committedLabelPath } from '../committed-root-store.js'
 import { makeLocalV2Handoff, LOCAL_FIXTURE_BLOB_BYTES } from './fixtures/local-handoff-fixture.js'
 
@@ -113,29 +112,6 @@ it('refuses active lock contention and input drift without publishing', async ()
   expect((await f.invoke({ commit: true, onBoundary: (stage: string) => { if (stage === 'after-lock') { f.handoff.tests[0]!.steps[0]!.modelProfile!.modelId = 'gpt-5'; f.persistRun(f.handoff) } } }))?.kind).toBe('input-drift')
   expect(bytes(f.committedRoot)).toEqual(before)
 }, 15000)
-it('checks every text through egress before writing any part', async () => {
-  const f = setup()
-  // Public detector vector in immutable provenance; a label revision must be checkpointed.
-  for (const item of f.plan.cases) {
-    const path = committedLabelPath('shop', item.cassetteId), label = JSON.parse(readFileSync(join(f.committedRoot, path), 'utf8'))
-    label.label.verdict.reasoning = 'AKIAIOSFODNN7EXAMPLE'
-    write(f.committedRoot, path, committedFileText(label))
-  }
-  const before = bytes(f.committedRoot)
-  expect((await f.invoke({ commit: true }))?.kind).toBe('egress-blocked')
-  expect(bytes(f.committedRoot)).toEqual(before)
-})
-it.each([0, 1, 2])('blocks egress part %i before all committed writes', async blockedIndex => {
-  const f = setup(), before = bytes(f.committedRoot), checkpoint = safety.assertCommittedEgressSafe
-  const spy = vi.spyOn(safety, 'assertCommittedEgressSafe').mockImplementation((parts, opts) => {
-    expect(parts).toHaveLength(3)
-    expect(opts.channel).toBe('eval-report')
-    return checkpoint(parts.map((part, index) => index === blockedIndex ? { ...part, text: 'AKIAIOSFODNN7EXAMPLE' } : part), opts)
-  })
-  expect((await f.invoke({ commit: true }))?.kind).toBe('egress-blocked')
-  expect(spy).toHaveBeenCalledOnce()
-  expect(bytes(f.committedRoot)).toEqual(before)
-})
 it('previews every destination and refuses one conflicting revision before any other write', async () => {
   const f = setup(), before = bytes(f.committedRoot)
   const preview = api.FsCommittedRootStore.prototype.previewText

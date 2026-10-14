@@ -490,21 +490,12 @@ function renderCensusSummary(result: CensusVerbResult): void {
     )
   }
   if (result.committed !== undefined) {
-    // 372 D-08: egress blocks and write conflicts are DATA — rendered loudly, never exit 1.
+    // 372 D-08: write conflicts are DATA — rendered loudly, never exit 1.
     if (result.committed.kind === 'committed') {
       console.log(
         `committed: json ${result.committed.json}, markdown ${result.committed.markdown}`,
       )
       console.log(pc.dim(`census dir: ${result.committed.censusDir}`))
-    } else if (result.committed.kind === 'egress-blocked') {
-      console.log(
-        pc.red(
-          'commit egress-blocked: '
-            + result.committed.detections
-              .map(detection => `${detection.label} (${detection.detector})`)
-              .join(', '),
-        ),
-      )
     } else {
       console.log(pc.red(`commit write-conflict: ${result.committed.path}`))
     }
@@ -586,7 +577,7 @@ export function createEvalCommand(): Command {
           }
         }
         if (opts.json) console.log(JSON.stringify(result, null, 2))
-        else if (!('status' in result) && !('artifact' in result)) console.error(`calibrate: ${result.kind} — ${'reason' in result ? result.reason : 'path' in result ? result.path : 'committed egress blocked'}`)
+        else if (!('status' in result) && !('artifact' in result)) console.error(`calibrate: ${result.kind} — ${'reason' in result ? result.reason : result.path}`)
         else {
           const report = 'artifact' in result ? result.artifact : result
           console.log(`judge panel: ${report.status} n=${report.n} minN=${report.minN} (${report.minNSource})`)
@@ -1053,7 +1044,7 @@ export function createEvalCommand(): Command {
             }
           } catch (err) {
             // D-08: a rejected --campaign manifest and a config/session failure are the only
-            // failure modes — egress-blocked and write-conflict outcomes are data (T-413-21/24).
+            // failure modes — write-conflict outcomes are data (T-413-21/24).
             console.error(pc.red(err instanceof Error ? err.message : String(err)))
             process.exitCode = 1
           }
@@ -1182,7 +1173,7 @@ export function createEvalCommand(): Command {
               onProgress: (line) => console.error(line),
             })
             if (result.kind === 'receipt') {
-              // GateReceiptSchema + assertCommittedEgressSafe live at the existing eval boundary.
+              // GateReceiptSchema validation lives at the existing eval boundary.
               if (opts.json) console.log(serializeReplayGateReceipt(result.receipt))
               else {
                 for (const line of result.lines) console.log(line)

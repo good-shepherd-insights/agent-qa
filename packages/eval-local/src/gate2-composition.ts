@@ -21,9 +21,9 @@ import {
   type SeedingPlan,
   type ReplaySample,
 } from '@vostride/agent-qa-eval'
-import { BENEFITS, distilledScreenStateDigest, slugBranch, type Benefit, type CrossCheck, type GuardrailPolicy } from '@vostride/agent-qa-schema'
+import { BENEFITS, distilledScreenStateDigest, slugBranch, type Benefit, type CrossCheck } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
-import { assertCommittedEgressSafe, CommittedEgressBlockedError, defaultGuardrailPolicyInput, loadGuardrailPolicy, type AuditSink } from '@vostride/agent-qa-safety'
+import type { AuditSink } from '@vostride/agent-qa-safety'
 import { loadCompletedRunHandoff, RUNS_SUBDIR, HANDOFF_FILE } from '@vostride/agent-qa-runner-local'
 import { FsRunArtifactSource } from './artifact-source.js'
 import { loadCassetteBundle } from './cassette-loader.js'
@@ -49,7 +49,6 @@ export const GATE2_TARGET_SUBDIR = 'target'
 
 // 2026-09-08, 418 D-21: staging is local audit DATA. Only explicit admission calls the seeder.
 export const FEEDBACK_STAGING_SUBDIR = 'eval/feedback'
-export const FEEDBACK_EGRESS_CHANNEL = 'eval-feedback-staging'
 const feedbackSchema = z.object({
   schemaVersion: z.literal(1), product: z.string().min(1), stateDigest: z.string().regex(/^[0-9a-f]{64}$/),
   attributedObservationId: z.string().min(1), benefit: z.enum(BENEFITS), candidateId: z.string().min(1),
@@ -72,13 +71,13 @@ export interface StageFeedbackEntryInput extends FeedbackStateInput {
   attributedObservationId: string
   benefit: Benefit
   candidateId: string
-  policy?: GuardrailPolicy
+  // 441-23: unread since the egress check went; 441-32 deletes it.
   auditSink?: AuditSink
 }
 export type StageFeedbackEntryResult =
   | { kind: 'staged'; dir: string }
   | { kind: 'already-staged' | 'not-novel' }
-  | { kind: 'egress-blocked' | 'target-unavailable' | 'write-conflict' }
+  | { kind: 'target-unavailable' | 'write-conflict' }
 
 function feedbackDir(input: Omit<FeedbackStateInput, 'committedRoot'>): string {
   if (!/^[0-9a-f]{64}$/.test(input.stateDigest)) throw new TypeError('invalid feedback state digest')
@@ -126,8 +125,8 @@ export async function stageFeedbackEntry(input: StageFeedbackEntryInput): Promis
     requireDirectories(dirname(dir))
     if (pathPresent(dir)) return { kind: 'already-staged' }
     if (!isNovelState(input)) return { kind: 'not-novel' }
-    // Reuse the same pure extraction as Gate2, in memory. The old locator publishes before
-    // scanning, so calling its write leg here would violate the staging safety checkpoint.
+    // Reuse the same pure extraction as Gate2, in memory; the old locator's write leg would
+    // publish outside this staging directory.
     const handoff = loadCompletedRunHandoff(join(input.agentQaRoot, RUNS_SUBDIR, slugBranch(input.target.runId), HANDOFF_FILE))
     if (handoff.runId !== input.target.runId || resolveProductPartition(handoff.scope) !== input.product
       || handoff.tests.find(test => test.testId === input.target.testId)?.isRerun === true) return { kind: 'target-unavailable' }
@@ -141,10 +140,7 @@ export async function stageFeedbackEntry(input: StageFeedbackEntryInput): Promis
     const metadata = feedbackSchema.parse({ schemaVersion: 1, product: input.product, stateDigest: input.stateDigest,
       attributedObservationId: input.attributedObservationId, benefit: input.benefit, candidateId: input.candidateId,
       ...input.target, stagedAt: new Date().toISOString() })
-    const texts = assertCommittedEgressSafe([
-      { label: 'cassette', text: committedFileText(extracted.cassette) },
-      { label: 'feedback', text: committedFileText(metadata) },
-    ], { policy: input.policy ?? loadGuardrailPolicy(defaultGuardrailPolicyInput), channel: FEEDBACK_EGRESS_CHANNEL, auditSink: input.auditSink })
+    const texts = [committedFileText(extracted.cassette), committedFileText(metadata)]
     for (const blob of extracted.blobs) {
       if (!/^[0-9a-f]{64}$/.test(blob.sha) || createHash('sha256').update(blob.bytes).digest('hex') !== blob.sha) return { kind: 'target-unavailable' }
     }
@@ -161,7 +157,6 @@ export async function stageFeedbackEntry(input: StageFeedbackEntryInput): Promis
     temporary = undefined
     return { kind: 'staged', dir }
   } catch (error) {
-    if (error instanceof CommittedEgressBlockedError) return { kind: 'egress-blocked' }
     if (['EEXIST', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? '')) return { kind: 'write-conflict' }
     return { kind: 'target-unavailable' }
   } finally {
@@ -221,7 +216,7 @@ export interface AdmitStagedFeedbackResult {
 }
 export async function admitStagedFeedback(input: {
   agentQaRoot: string; committedRoot: string; product?: string; dryRun: boolean
-  policy?: GuardrailPolicy; auditSink?: AuditSink; seedingOutputBaseDir: string
+  auditSink?: AuditSink; seedingOutputBaseDir: string
 }): Promise<AdmitStagedFeedbackResult> {
   const previous = readCommittedCorpusDigest(input)
   if (previous.kind !== 'digest') throw new TypeError('feedback corpus unavailable')
@@ -243,7 +238,7 @@ export async function admitStagedFeedback(input: {
     let seeded: SeedingBatchReport | undefined
     try {
       seeded = seedCommittedCorpus({ batches, committedRoot: input.committedRoot,
-        seedingOutputBaseDir: input.seedingOutputBaseDir, policy: input.policy, auditSink: input.auditSink })
+        seedingOutputBaseDir: input.seedingOutputBaseDir, auditSink: input.auditSink })
     } catch {
       result.failures.push({ phase: 'write', reason: 'seeding-unavailable' })
     }

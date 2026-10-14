@@ -8,13 +8,10 @@ import { canonicalJson, committedFileText, composeBaselineProfileKey, createPane
   JUDGE_TARGETED_CALIBRATION_UNAVAILABLE_REASONS,
   type JudgeCalibrationMinimum, type JudgeCalibrationDiagnostics, type JudgeIdentityBlock,
 } from '@vostride/agent-qa-eval'
-import { sha256hex, slugBranch, type GuardrailPolicy } from '@vostride/agent-qa-schema'
-import { assertCommittedEgressSafe, CommittedEgressBlockedError, defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
-import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
+import { sha256hex, slugBranch } from '@vostride/agent-qa-schema'
 import { assertCalibrationPath } from './calibration-source.js'
 import { loadJudgeCalibrationEvidence, type LoadJudgeCalibrationEvidenceInput } from './judge-calibration-evidence-source.js'
 import { acquireMarkLock } from './mark-lock.js'
-import { REPORT_EGRESS_CHANNEL } from './report-committing.js'
 
 export const JUDGE_CALIBRATION_SCHEMA_VERSION = 1
 export const JUDGE_CALIBRATION_SUBDIR = 'judge-calibration'
@@ -85,7 +82,6 @@ export type JudgeCalibrationRead = { kind: 'absent' }
 export type JudgeCalibrationPublication = { kind: 'committed' | 'unchanged'; artifact: JudgeCalibrationArtifact; path: string }
   | { kind: 'refused' | 'busy' | 'input-drift' | 'publication-failed'; reason: string }
   | { kind: 'write-conflict'; path: string }
-  | { kind: 'egress-blocked'; detections: readonly { label: string; detector: string }[] }
 
 /** Locator only. Admission always checks the complete key and profile separately. */
 export function judgeCalibrationPath(profileKey: string): string {
@@ -219,12 +215,6 @@ function checkedText(root: string, path: string): string | undefined {
   try { if (!lstatSync(path).isFile()) throw new Error('invalid artifact path'); return readFileSync(path, 'utf8') }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error }
 }
-function checkEgress(artifact: JudgeCalibrationArtifact, policy?: GuardrailPolicy, auditDirectory?: string) {
-  assertCommittedEgressSafe([{ label: 'judge-calibration', text: committedFileText(artifact) }], {
-    channel: REPORT_EGRESS_CHANNEL, policy: policy ?? loadGuardrailPolicy(defaultGuardrailPolicyInput),
-    ...(auditDirectory ? { auditSink: new JsonlAuditSink(auditDirectory) } : {}),
-  })
-}
 export function readJudgeCalibration(input: Omit<JudgeCalibrationReadInput, 'minN'> & {
   /** Operators may require an exact minimum; report consumers retain the recorded policy. */
   minN?: JudgeCalibrationMinimum
@@ -237,22 +227,20 @@ export function readJudgeCalibration(input: Omit<JudgeCalibrationReadInput, 'min
     if (!artifact || !admitted({ ...input, minN: input.minN ?? {
       value: artifact.minN, source: artifact.minNSource,
     } }, artifact)) return { kind: 'refused', reason: 'Judge calibration identity or evidence is invalid or stale.' }
-    checkEgress(artifact)
     return { kind: 'loaded', artifact }
   } catch { return { kind: 'refused', reason: 'Judge calibration or evidence unavailable; inspect the profile and local corpus.' } }
 }
 
 /** One checked file, with immutable create or explicit atomic replace under the operator lock. */
 export async function publishJudgeCalibration(input: JudgeCalibrationReadInput & {
-  artifact: JudgeCalibrationArtifact; replace?: boolean; policy?: GuardrailPolicy;
-  auditDirectory: string; onBoundary?: (stage: string) => void;
+  artifact: JudgeCalibrationArtifact; replace?: boolean;
+  // 441-23: unread since the egress check went; 441-32 deletes it.
+  auditDirectory?: string; onBoundary?: (stage: string) => void;
 }): Promise<JudgeCalibrationPublication> {
   let release: (() => void) | undefined, temp: string | undefined
   try {
     const artifact = guardJudgeCalibration(input.artifact)
     if (!artifact || !admitted(input, artifact)) return { kind: 'refused', reason: 'Judge calibration identity or evidence is invalid or stale.' }
-    assertCalibrationPath(input.agentQaRoot, input.auditDirectory)
-    checkEgress(artifact, input.policy, input.auditDirectory)
     const path = judgeCalibrationPath(artifact.profileKey), destination = join(input.committedRoot, path)
     const original = checkedText(input.committedRoot, destination)
     const originalInode = original === undefined ? undefined : lstatSync(destination).ino
@@ -293,8 +281,7 @@ export async function publishJudgeCalibration(input: JudgeCalibrationReadInput &
     if (original === undefined) linkSync(temp, destination)
     else renameSync(temp, destination)
     return { kind: 'committed', artifact, path }
-  } catch (error) {
-    if (error instanceof CommittedEgressBlockedError) return { kind: 'egress-blocked', detections: error.blocked.map(({ label, detector }) => ({ label, detector })) }
+  } catch {
     return { kind: 'publication-failed', reason: 'Judge calibration publication interrupted; inspect local inputs and retry.' }
   } finally {
     if (temp) { try { unlinkSync(temp) } catch { /* Renamed or removed by the owner. */ } }

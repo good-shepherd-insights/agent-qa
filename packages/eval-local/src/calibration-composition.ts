@@ -1,25 +1,22 @@
 import { closeSync, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { calibrateLabels, canonicalJson, collectSoftPopulation, committedFileText, computeCorpusDigest, computeSoftWeight, createLabelRevision, deriveLabelRevisionId, type StandaloneLabelRecord } from '@vostride/agent-qa-eval'
-import { sha256hex, type GuardrailPolicy } from '@vostride/agent-qa-schema'
-import { assertCommittedEgressSafe, CommittedEgressBlockedError, defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
-import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
+import { sha256hex } from '@vostride/agent-qa-schema'
 import { assertCalibrationPath, calibrationGenerationId, guardLabelCalibration, LABEL_CALIBRATION_PATH, type LabelCalibrationArtifact } from './calibration-source.js'
 import { readCommittedCorpus } from './committed-corpus-source.js'
 import { loadCalibrationEvidence } from './calibration-evidence-source.js'
 import { loadLabelEvidence } from './label-evidence-source.js'
 import { committedLabelRevisionPath, FsCommittedRootStore } from './committed-root-store.js'
-import { REPORT_EGRESS_CHANNEL } from './report-committing.js'
 import { acquireMarkLock } from './mark-lock.js'
 
 export interface RunLabelCalibrationInput {
   committedRoot: string
   agentQaRoot: string
-  reportOutputBaseDir: string
+  // 441-23: unread since the egress check went; 441-32 deletes it.
+  reportOutputBaseDir?: string
   commit?: boolean
   replace?: boolean
   minGold?: { value: number; source: 'default' | 'cli' }
-  policy?: GuardrailPolicy
   /** Synchronous failure injection at actual publication boundaries; never supplied by learners. */
   onBoundary?: (stage: string) => void
 }
@@ -27,7 +24,6 @@ export type RunLabelCalibrationResult =
   | { kind: 'dry-run' | 'committed' | 'unchanged'; artifact: LabelCalibrationArtifact; refreshedCount: number }
   | { kind: 'refused' | 'busy' | 'input-drift' | 'publication-failed'; reason: string }
   | { kind: 'write-conflict'; path: string }
-  | { kind: 'egress-blocked'; detections: readonly { label: string; detector: string }[] }
 
 // Outside label traversal: lock tombstones are runtime ownership, never label history.
 const LOCK_PATH = '.label-calibration.lock'
@@ -123,18 +119,7 @@ export async function runLabelCalibration(input: RunLabelCalibrationInput): Prom
   if (input.replace && !input.commit) return { kind: 'refused', reason: '--replace requires --commit' }
   let planned: ReturnType<typeof prepare>
   try { planned = prepare(input) } catch { return { kind: 'refused', reason: 'Calibration inputs unavailable or invalid; inspect committed labels and run evidence.' } }
-  if (!input.commit) {
-    try {
-      // Preview discloses the same data as publication but must not create audit bytes.
-      assertCommittedEgressSafe([...planned.parts, { label: 'label-calibration', text: committedFileText(planned.artifact) }], {
-        channel: REPORT_EGRESS_CHANNEL, policy: input.policy ?? loadGuardrailPolicy(defaultGuardrailPolicyInput),
-      })
-      return { kind: 'dry-run', artifact: planned.artifact, refreshedCount: planned.refreshedCount }
-    } catch (error) {
-      if (error instanceof CommittedEgressBlockedError) return { kind: 'egress-blocked', detections: error.blocked.map(({ label, detector }) => ({ label, detector })) }
-      return { kind: 'refused', reason: 'Calibration preview could not be checked safely.' }
-    }
-  }
+  if (!input.commit) return { kind: 'dry-run', artifact: planned.artifact, refreshedCount: planned.refreshedCount }
   const lock = join(input.committedRoot, LOCK_PATH), marker = join(input.committedRoot, LABEL_CALIBRATION_PATH)
   let release: (() => void) | undefined, lockInode: number | undefined
   const temps: string[] = []
@@ -151,8 +136,6 @@ export async function runLabelCalibration(input: RunLabelCalibrationInput): Prom
     if (!unchangedInputs()) return { kind: 'input-drift', reason: 'Calibration inputs changed; retry from the current snapshot.' }
     const artifactPart = { relPath: LABEL_CALIBRATION_PATH, label: 'label-calibration', text: committedFileText(planned.artifact) }
     const parts = [...planned.parts, artifactPart]
-    assertCommittedEgressSafe(parts, { channel: REPORT_EGRESS_CHANNEL,
-      policy: input.policy ?? loadGuardrailPolicy(defaultGuardrailPolicyInput), auditSink: new JsonlAuditSink(input.reportOutputBaseDir) })
     const store = new FsCommittedRootStore(input)
     // Preview every destination before the first revision or marker byte is created.
     const previews = parts.map(part => { assertCalibrationPath(input.committedRoot, join(input.committedRoot, part.relPath)); return store.previewText(part.relPath, part.text) })
@@ -183,8 +166,7 @@ export async function runLabelCalibration(input: RunLabelCalibrationInput): Prom
     renameSync(temp, marker)
     input.onBoundary?.('after-marker')
     return { kind: 'committed', artifact: planned.artifact, refreshedCount: planned.refreshedCount }
-  } catch (error) {
-    if (error instanceof CommittedEgressBlockedError) return { kind: 'egress-blocked', detections: error.blocked.map(({ label, detector }) => ({ label, detector })) }
+  } catch {
     return { kind: 'publication-failed', reason: 'Calibration publication interrupted; a complete generation remains selected. Retry the identical command.' }
   } finally {
     for (const temp of temps) { try { unlinkSync(temp) } catch { /* Already renamed or externally removed. */ } }

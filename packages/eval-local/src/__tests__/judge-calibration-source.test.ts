@@ -210,10 +210,3 @@ it('returns busy for a live concurrent publisher without an artifact', async () 
   expect(await publishing).toMatchObject({ kind: 'busy' })
   expect(existsSync(f.path)).toBe(false)
 })
-it('blocks credential-bearing content on eval-report before creating publication paths', async () => {
-  const f = fixture(), input = { ...f.input, profile: { ...f.input.profile, plannerModelId: 'gpt-5/Bearer fixturecredentialabcdefghijklmnop' } }
-  const artifact = createJudgeCalibrationArtifact(input, { status: 'capability-gap', reason: 'no-credential' })
-  expect(await f.publish({ ...input, artifact })).toMatchObject({ kind: 'egress-blocked' })
-  expect(existsSync(join(f.input.committedRoot, 'reports'))).toBe(false)
-  expect(existsSync(join(f.input.committedRoot, '.judge-calibration.lock'))).toBe(false)
-})

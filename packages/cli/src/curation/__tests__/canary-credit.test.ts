@@ -100,7 +100,7 @@ describe('418 credit pass', () => {
   it.each(['stage-refuses', 'stage-throws', 'novelty-throws'] as const)('isolates %s from credit', async mode => {
     const ablation = capability()
     ablation.isNovel = async () => { if (mode === 'novelty-throws') throw new Error('refused'); return true }
-    ablation.stage = async () => { if (mode === 'stage-throws') throw new Error('refused'); return { kind: 'egress-blocked' } }
+    ablation.stage = async () => { if (mode === 'stage-throws') throw new Error('refused'); return { kind: 'target-unavailable' } }
     const live: CompletedRunHandoff = { ...handoff, tests: [{ testId: 'checkout', testIndex: 0, testName: 'Checkout', filePath: 'checkout.yaml', outcome: 'passed',
       steps: [liveStep()] }] }
     const report = await credit([row()], ablation, { handoff: live })

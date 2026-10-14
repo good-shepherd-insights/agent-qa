@@ -45,7 +45,7 @@ export type CanaryCorpusDigestResult =
 export interface CanaryAblation {
   isNovel(input: { product: string; stateDigest: string }): Promise<boolean>
   stage(input: CanaryAblationInput & { product: string; stateDigest: string; benefit: Benefit }): Promise<
-    { kind: 'staged' | 'already-staged' | 'not-novel' | 'no-eval-root' | 'egress-blocked' | 'target-unavailable' | 'write-conflict' }
+    { kind: 'staged' | 'already-staged' | 'not-novel' | 'no-eval-root' | 'target-unavailable' | 'write-conflict' }
     | { kind: 'unavailable'; reason: string } | { kind: 'error'; message: string }
   >
   ablate(input: CanaryAblationInput): Promise<CanaryAblationResult>

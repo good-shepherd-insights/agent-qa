@@ -1027,7 +1027,6 @@ export async function runCalibrateVerb(session: EvalSession, opts: {
     'input-drift': 'Calibration inputs changed; retry from the current snapshot.',
     'publication-failed': 'Calibration publication interrupted; retry the identical command.',
     'write-conflict': 'Calibration bytes conflict; review the dry-run, then use --commit --replace to replace the marker. Immutable revision conflicts require inspection.',
-    'egress-blocked': 'Calibration output was blocked by the egress checkpoint; inspect the local audit and mask source evidence before retrying.',
   }
   return { kind: result.kind, reason: reasons[result.kind] }
 }
@@ -1318,7 +1317,7 @@ export function isFeedbackStateNovel(session: EvalSession, input: { agentQaRoot:
   if (digest.kind !== 'digest') throw new TypeError('feedback corpus unavailable')
   return isNovelState({ ...input, committedRoot: resolve(session.configDir, 'agent-qa-eval') })
 }
-export async function runFeedbackStaging(session: EvalSession, input: Omit<StageFeedbackEntryInput, 'committedRoot' | 'policy' | 'auditSink'>) {
+export async function runFeedbackStaging(session: EvalSession, input: Omit<StageFeedbackEntryInput, 'committedRoot' | 'auditSink'>) {
   const digest = readCanaryCorpusDigest(session)
   if (digest.kind !== 'digest') return digest
   return stageFeedbackEntry({ ...input, committedRoot: resolve(session.configDir, 'agent-qa-eval'),
@@ -2795,7 +2794,7 @@ export interface ReportVerbResult {
   committedFile?: string
   /** Decision vectors actually projected for this invocation's report, including an empty set. */
   decisionVectorCount?: number
-  /** The typed commitEvalReport outcome when `--commit` ran — egress blocks are DATA (D-08). */
+  /** The typed commitEvalReport outcome when `--commit` ran — write conflicts are DATA (D-08). */
   committed?: CommitEvalReportOutcome
   /** Batch-level judge identity: consistent blocks pass through; mixed/absent surface honestly. */
   judgeIdentity: 'present' | 'absent' | 'mixed'
@@ -2803,8 +2802,8 @@ export interface ReportVerbResult {
   source: EvalCorpusSource
   /**
    * 413 D-19/D-20: the typed baseline-designation outcome when `--baseline` ran. Written,
-   * unchanged, REFUSED (a same-family report is not a gate comparator), egress-blocked or a
-   * write-conflict — all five are DATA, and the verb's exit code is unaffected by any of them.
+   * unchanged, REFUSED (a same-family report is not a gate comparator) or a write-conflict —
+   * all four are DATA, and the verb's exit code is unaffected by any of them.
    */
   baseline?: WriteBaselinePointerOutcome
   /** 413 D-19: the profile key the designation was composed under, present whenever it ran. */
@@ -2821,8 +2820,8 @@ export interface ReportVerbResult {
  * threads from the persisted ScoreRecord.judge blocks: consistent blocks pass to buildEvalReport,
  * mixed or absent surfaces honestly — never fabricated (T-372-20). Exactly ONE buildEvalReport
  * call aggregates (the CLI never re-sums scores); the staged report always lands via
- * FsReportStore, and `--commit` additionally routes through commitEvalReport's egress
- * checkpoint into the committed root (D-13/D-17).
+ * FsReportStore, and `--commit` additionally routes through commitEvalReport into the
+ * committed root (D-13/D-17).
  */
 export async function runReportVerb(
   session: EvalSession,
@@ -3031,8 +3030,8 @@ export async function runReportVerb(
   const staged = new FsReportStore({ root: agentQaRoot }).save(report, decisions, reportProfileProof?.replayGeneration)
 
   // (7) `--commit`: render the deterministic markdown projection and route all THREE parts through
-  // commitEvalReport's egress checkpoint into the committed root (D-13) — the typed outcome
-  // (committed / egress-blocked / write-conflict) folds into the DTO as data (D-08).
+  // commitEvalReport into the committed root (D-13) — the typed outcome
+  // (committed / write-conflict) folds into the DTO as data (D-08).
   const committedRoot = resolve(session.configDir, 'agent-qa-eval')
   const reportOutputBaseDir = evalAuditDir(session.configDir, 'report', report.batchKey)
   let committed: CommitEvalReportOutcome | undefined
@@ -3237,7 +3236,7 @@ export interface CensusVerbResult {
   census: CorpusCensus
   /** Absolute path of the guarded `--campaign` manifest when one was supplied. */
   campaignManifest?: string
-  /** The typed commitCensus outcome when `--commit` ran — egress blocks are DATA (372 D-08). */
+  /** The typed commitCensus outcome when `--commit` ran — write conflicts are DATA (372 D-08). */
   committed?: CommitCensusOutcome
   /**
    * Read-only floor artefact disclosure, sorted by profileKey (415 D-14). This field never
@@ -3379,8 +3378,8 @@ export async function runCensusVerb(
   })
 
   // (5) `--commit`: render the deterministic markdown projection and route BOTH parts through
-  // commitCensus's egress checkpoint into `reports/census/<corpus-digest>/` (D-15). The typed
-  // outcome (committed / egress-blocked / write-conflict) folds into the DTO as data (372 D-08).
+  // commitCensus into `reports/census/<corpus-digest>/` (D-15). The typed
+  // outcome (committed / write-conflict) folds into the DTO as data (372 D-08).
   let committed: CommitCensusOutcome | undefined
   if (opts.commit === true) {
     committed = commitCensus({

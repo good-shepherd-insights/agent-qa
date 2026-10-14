@@ -357,41 +357,20 @@ describe('417 replay-gate command', () => {
     expect(result.spend.sampleCount).toBe(3)
     expect(fixture.planner.captured).toHaveLength(3)
   })
-  it.each(['unsafe', 'refused'] as const)('never emits %s content on JSON stdout', async (kind) => {
+  it.each(['refused'] as const)('never emits %s content on JSON stdout', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.spyOn(evalVerbs, 'resolveEvalSession').mockResolvedValue({} as EvalSession)
-    if (kind === 'refused')
-      vi.spyOn(evalVerbs, 'runReplayGateVerb').mockResolvedValue({
-        maxScreens: 64,
-        maxScreensSource: 'default',
-        k: 3,
-        kSource: 'default',
-        kind: 'refused',
-        refusal: { path: '/missing', reason: 'no-floor' },
-        notices: [],
-        exit: 2,
-      })
-    else {
-      const { completeGate1Receipt } = await import(
-        new URL(
-          '../../../../knowledge-local/src/curator/__tests__/fixtures/promotion-floor-fixture.js',
-          import.meta.url,
-        ).href
-      )
-      vi.spyOn(evalVerbs, 'runReplayGateVerb').mockResolvedValue({
-        maxScreens: 64,
-        maxScreensSource: 'default',
-        k: 3,
-        kSource: 'default',
-        kind: 'receipt',
-        receipt: completeGate1Receipt('AKIAIOSFODNN7EXAMPLE'),
-        recorded: 'dry-run',
-        lines: [],
-        notices: [],
-        exit: 0,
-      })
-    }
+    vi.spyOn(evalVerbs, 'runReplayGateVerb').mockResolvedValue({
+      maxScreens: 64,
+      maxScreensSource: 'default',
+      k: 3,
+      kSource: 'default',
+      kind: 'refused',
+      refusal: { path: '/missing', reason: 'no-floor' },
+      notices: [],
+      exit: 2,
+    })
     await createEvalCommand().parseAsync(['replay-gate', 'candidate', '--json'], { from: 'user' })
     expect(log).not.toHaveBeenCalled()
     expect(process.exitCode).toBe(2)

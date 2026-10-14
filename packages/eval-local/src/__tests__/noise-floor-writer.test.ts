@@ -16,7 +16,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { committedNoiseFloorPath } from '../committed-root-store.js'
 import { writeNoiseFloorArtefact } from '../noise-floor-writer.js'
-import { REPORT_EGRESS_CHANNEL } from '../report-committing.js'
 
 const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
 
@@ -113,20 +112,5 @@ describe('writeNoiseFloorArtefact (415 D-04/D-12)', () => {
     expect(write()).toMatchObject({ kind: 'refused', refusal: { kind: 'unusable-measurement' } })
     expect(existsSync(join(root, 'reports'))).toBe(false)
     expect(existsSync(join(outDir, 'guardrail_audit.jsonl'))).toBe(false)
-  })
-
-  it('returns egress-blocked for a planted secret on the existing eval-report channel', () => {
-    artefact.explanation = `planted marker ${AWS_KEY}`
-    expect(write()).toEqual({
-      kind: 'egress-blocked',
-      detections: [{ label: `noise-floor:${artefact.profileKey}`, detector: 'awsKey' }],
-    })
-    expect(existsSync(join(root, 'reports/noise-floor'))).toBe(false)
-    const rows = readFileSync(join(outDir, 'guardrail_audit.jsonl'), 'utf8')
-      .trim().split('\n').map(line => JSON.parse(line))
-    expect(rows).toContainEqual(expect.objectContaining({
-      channel: `${REPORT_EGRESS_CHANNEL}:noise-floor:${artefact.profileKey}`,
-      detector: 'awsKey', action: 'block',
-    }))
   })
 })

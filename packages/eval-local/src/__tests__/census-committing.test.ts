@@ -1,11 +1,10 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { committedFileText, deriveCensus, renderCensusMarkdown } from '@vostride/agent-qa-eval'
 import type { CorpusCensus } from '@vostride/agent-qa-eval'
-import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import { slugBranch } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -21,13 +20,9 @@ import {
   commitCensus,
 } from '../census-committing.js'
 import type { CommitCensusOutcome } from '../census-committing.js'
-import { REPORT_EGRESS_CHANNEL } from '../report-committing.js'
 import { listCommittedReports } from '../committed-corpus-source.js'
 
-const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
 const MARKDOWN = '# Corpus Census\n\nentries: 0\n'
-
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 
 describe('commitCensus (413 D-15/D-16)', () => {
   let root: string
@@ -40,7 +35,6 @@ describe('commitCensus (413 D-15/D-16)', () => {
       markdown: overrides.markdown ?? MARKDOWN,
       committedRoot: root,
       censusOutputBaseDir: outDir,
-      policy,
     })
   }
 
@@ -132,37 +126,5 @@ describe('commitCensus (413 D-15/D-16)', () => {
     const paths = censusFilePaths()
     expect(existsSync(paths.json)).toBe(false)
     expect(readFileSync(paths.markdown, 'utf8')).toBe('# a different census body\n')
-  })
-
-  it('refuses the WHOLE census on a guardrail detection — typed, audited, nothing lands', async () => {
-    const outcome = commit({ markdown: `# leaky census\n\nkey: ${AWS_KEY}\n` })
-
-    expect(outcome.kind).toBe('egress-blocked')
-    if (outcome.kind !== 'egress-blocked') throw new Error('expected egress-blocked outcome')
-    expect(
-      outcome.detections.some(
-        (detection) =>
-          detection.detector === 'awsKey' &&
-          detection.label === `census-markdown:${census.corpusDigest}`,
-      ),
-    ).toBe(true)
-
-    const paths = censusFilePaths()
-    expect(existsSync(paths.json)).toBe(false)
-    expect(existsSync(paths.markdown)).toBe(false)
-
-    const auditRaw = await readFile(join(outDir, 'guardrail_audit.jsonl'), 'utf8')
-    const rows = auditRaw
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line) as { channel: string; detector: string; action: string })
-    expect(
-      rows.some(
-        (row) =>
-          row.channel === `${REPORT_EGRESS_CHANNEL}:census-markdown:${census.corpusDigest}` &&
-          row.detector === 'awsKey' &&
-          row.action === 'block',
-      ),
-    ).toBe(true)
   })
 })

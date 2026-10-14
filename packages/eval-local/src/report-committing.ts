@@ -25,9 +25,6 @@ import {
   committedReportPath,
 } from './committed-root-store.js'
 
-/** The D-13 checkpoint channel: audit rows land as `eval-report:<part label>`. */
-export const REPORT_EGRESS_CHANNEL = 'eval-report'
-
 export const COMMITTED_REPORT_JSON_FILE = 'report.json'
 export const COMMITTED_REPORT_MARKDOWN_FILE = 'report.md'
 export const COMMITTED_REPORT_DECISIONS_FILE = 'decisions.json'

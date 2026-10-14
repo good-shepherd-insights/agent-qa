@@ -66,7 +66,7 @@ export type { RunReplayGateInput, RunReplayGateResult, RemovalFlipsOutcomeInput,
 
 export { ablateCanaryStep, readCommittedCorpusDigest, GATE2_AUDIT_SUBDIR, GATE2_TARGET_SUBDIR } from './gate2-composition.js'
 export type { AblateCanaryStepInput, AblateCanaryStepResult, CommittedCorpusDigestRead } from './gate2-composition.js'
-export { FEEDBACK_STAGING_SUBDIR, FEEDBACK_EGRESS_CHANNEL, isNovelState, stageFeedbackEntry, listStagedFeedback, admitStagedFeedback } from './gate2-composition.js'
+export { FEEDBACK_STAGING_SUBDIR, isNovelState, stageFeedbackEntry, listStagedFeedback, admitStagedFeedback } from './gate2-composition.js'
 export type { FeedbackStateInput, StageFeedbackEntryInput, StageFeedbackEntryResult, StagedFeedbackEntry, AdmitStagedFeedbackResult } from './gate2-composition.js'
 
 export { loadCassetteBundles, sweepCassetteReplays } from './replay-sweep.js'
@@ -124,7 +124,6 @@ export type {
 } from './seeding-composition.js'
 
 export {
-  REPORT_EGRESS_CHANNEL,
   COMMITTED_REPORT_DECISIONS_FILE,
   COMMITTED_REPORT_JSON_FILE,
   COMMITTED_REPORT_MARKDOWN_FILE,

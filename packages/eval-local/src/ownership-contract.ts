@@ -4,7 +4,7 @@ export const AGENT_QA_EVAL_LOCAL_PACKAGE_NAME = '@vostride/agent-qa-eval-local'
 export const AGENT_QA_EVAL_LOCAL_PACKAGE_DIR = 'packages/eval-local'
 export const AGENT_QA_EVAL_LOCAL_PACKAGE_CLASSES = ['storageImplementation'] as const
 export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
-  'operator-only label calibration publication through eval-report egress, complete target authorization and guarded label evidence reads',
+  'operator-only label calibration publication, complete target authorization and guarded label evidence reads',
   'all eval filesystem IO behind the neutral handoff and artifact read ports',
   'handoff and artifact reads composed over runner-local stores',
   'cassette bundle writes under the runtime workdir staging root',
@@ -53,24 +53,23 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   // staged trees and the report verb rebuilds its inputs integrity-checked from disk.
   'replay-record, score, and staged-bundle read legs with typed refusals and sweep enumeration',
   // Phase 372 D-13 (BASE-02): commitEvalReport — the baseline report commits beside the corpus
-  // and contracts that produced it, one dir per batchKey; every byte through
-  // assertCommittedEgressSafe (fail-closed, JsonlAuditSink-audited, channel 'eval-report'),
-  // JSON + markdown as ONE atomic checkpoint unit, write-once (identical regen ⇒ 'unchanged',
-  // divergent bytes ⇒ typed 'write-conflict', never an overwrite).
+  // and contracts that produced it, one dir per batchKey; JSON + markdown as ONE atomic unit,
+  // write-once (identical regen ⇒ 'unchanged', divergent bytes ⇒ typed 'write-conflict', never
+  // an overwrite). 441 D-15: the bytes are written as given, with no content check.
   // Phase 413 D-15/D-19/D-20 (ROOT-05/ROOT-11): the committed census and per-profile baseline
-  // pointer join the reports/ family under the SAME 'eval-report' checkpoint channel — never a
-  // new channel — and the same write-once refusal (identical regen ⇒ 'unchanged', a key already
-  // pointing elsewhere ⇒ 'write-conflict', so moving a baseline stays a reviewed git edit). The
-  // pointer writer additionally consults eval core's ONE comparator predicate BEFORE any write,
-  // so a same-family-judged report is refused rather than designated. Paired with the read leg
-  // that loads the committed root back for derivation; every derivation stays in eval core.
-  'the write-once committed census and baseline-pointer writers under agent-qa-eval/reports/ behind the eval-report checkpoint, and the committed-root read leg',
-  // Phase 415 D-04/D-16: per-profile floors and the report's optional decisions part share
-  // eval-report. The per-repeat reports stay local because every whole-corpus replay shares
-  // the designated baseline's batchKey; committing another body would be a write-conflict.
+  // pointer join the reports/ family with the same write-once refusal (identical regen ⇒
+  // 'unchanged', a key already pointing elsewhere ⇒ 'write-conflict', so moving a baseline stays
+  // a reviewed git edit). The pointer writer additionally consults eval core's ONE comparator
+  // predicate BEFORE any write, so a same-family-judged report is refused rather than
+  // designated. Paired with the read leg that loads the committed root back for derivation;
+  // every derivation stays in eval core.
+  'the write-once committed census and baseline-pointer writers under agent-qa-eval/reports/, and the committed-root read leg',
+  // Phase 415 D-04/D-16: per-profile floors and the report's optional decisions part. The
+  // per-repeat reports stay local because every whole-corpus replay shares the designated
+  // baseline's batchKey; committing another body would be a write-conflict.
   // Retargeted sweep/assembly and the gate/floor compositions bind the existing ports;
   // measurement, scoring and verdict derivations remain in eval core.
-  'the write-once noise-floor artefact writer under agent-qa-eval/reports/noise-floor/ and the decisions.json third part of the report commit, both behind the eval-report checkpoint — never a third channel; the per-repeat retargeted replay sweep and batch assembly; the gate-side release-gate and floor compositions over the committed-root read leg',
+  'the write-once noise-floor artefact writer under agent-qa-eval/reports/noise-floor/ and the decisions.json third part of the report commit; the per-repeat retargeted replay sweep and batch assembly; the gate-side release-gate and floor compositions over the committed-root read leg',
   // Phase 414 D-02/D-05/D-15 (ROOT-07/ROOT-08/ROOT-10): the partition manifest and the run
   // exclusion are two more committed documents, so they join the SEEDING family under the SAME
   // 'eval-seeding' checkpoint channel seedCommittedCorpus already owns — never a third channel,

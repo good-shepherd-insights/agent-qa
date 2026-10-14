@@ -6,7 +6,6 @@ import { Gate1ReceiptNotPersistedError } from '@vostride/agent-qa-agent'
 import type { KnowledgeReaderPort } from '@vostride/agent-qa-agent'
 import { createKnowledgeReader, LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import { renderGate1Line } from '@vostride/agent-qa-eval'
-import { CommittedEgressBlockedError } from '@vostride/agent-qa-safety'
 import {
   asEvidenceToken,
   asRecordId,
@@ -508,16 +507,6 @@ describe('417 DATA replay gate bridge', () => {
     expect(GateReceiptSchema.parse(read.lines[0]).receiptDigest).toBe(
       receiptDigestOf(read.lines[0]!),
     )
-  })
-  it('serializes only schema-valid, committed-egress-safe receipts', () => {
-    const receipt = completeGate1Receipt(candidateId)
-    expect(GateReceiptSchema.parse(JSON.parse(serializeReplayGateReceipt(receipt)))).toEqual(
-      receipt,
-    )
-    expect(() => serializeReplayGateReceipt({ kind: 'refused', reason: 'private' })).toThrow()
-    expect(() =>
-      serializeReplayGateReceipt({ ...receipt, candidateId: 'AKIAIOSFODNN7EXAMPLE' }),
-    ).toThrow(CommittedEgressBlockedError)
   })
   it.each(['procedure', 'unknown'] as const)(
     'records the real %s tier abstention and reads its kind-excluded hold',

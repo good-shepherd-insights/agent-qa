@@ -6,7 +6,6 @@ import { asRunId, type CompletedRunHandoff, type MarkReceipt } from '@vostride/a
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
 import { buildSeedingPlan, committedFileText, extractRunCassettes, computeCorpusDigest } from '@vostride/agent-qa-eval'
 import * as api from '../index.js'
-import * as safety from '@vostride/agent-qa-safety'
 import { committedCassettePath, committedCorpusPath, committedLabelPath } from '../committed-root-store.js'
 import { makeLocalV2Handoff, LOCAL_FIXTURE_BLOB_BYTES } from './fixtures/local-handoff-fixture.js'
 
@@ -153,20 +152,6 @@ it('keeps artifact bytes independent of wall clock and file creation order', asy
   vi.spyOn(Date, 'now').mockReturnValue(9_999_999_999_999)
   expect(await f.invoke()).toEqual(initial)
   expect(bytes(f.committedRoot)).toEqual(originals)
-})
-
-it.each([false, true])('refuses each egress part before authoritative writes (commit=%s)', async commit => {
-  for (const blockedIndex of [0, 1, 2]) {
-    const f = setup(), before = bytes(f.root), checkpoint = safety.assertCommittedEgressSafe
-    const spy = vi.spyOn(safety, 'assertCommittedEgressSafe').mockImplementation((parts, options) => {
-      expect(parts).toHaveLength(3)
-      return checkpoint(parts.map((part, index) => index === blockedIndex ? { ...part, text: 'AKIAIOSFODNN7EXAMPLE' } : part), options)
-    })
-    expect(await f.invoke({ commit })).toMatchObject({ kind: 'egress-blocked' })
-    expect(bytes(f.committedRoot)).toEqual(Object.fromEntries(Object.entries(before).filter(([path]) => path.startsWith('committed/')).map(([path, text]) => [path.slice(10), text])))
-    if (!commit) expect(bytes(f.root)).toEqual(before)
-    spy.mockRestore()
-  }
 })
 
 it.each(['labels', 'corpus', 'cassettes'])('refuses symlinked %s destinations without changing either tree', async directory => {

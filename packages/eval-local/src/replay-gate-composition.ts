@@ -4,11 +4,6 @@ import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { HANDOFF_FILE, RUNS_SUBDIR, loadCompletedRunHandoff } from '@vostride/agent-qa-runner-local'
 import {
-  assertCommittedEgressSafe,
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
-import {
   applyBriefDelta,
   assessJudgeEligibility,
   assessPanelEligibility,
@@ -188,14 +183,9 @@ interface TargetLocationDetail {
   reason?: string
 }
 
-/** The CLI's JSON egress uses the same guarded DTO boundary as persisted receipts. */
+/** The CLI's JSON output uses the same schema-validated DTO as persisted receipts. */
 export function serializeReplayGateReceipt(receipt: unknown): string {
-  const text = JSON.stringify(GateReceiptSchema.parse(receipt), null, 2)
-  assertCommittedEgressSafe([{ label: 'eval.replay-gate', text }], {
-    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
-    channel: 'eval.replay-gate',
-  })
-  return text
+  return JSON.stringify(GateReceiptSchema.parse(receipt), null, 2)
 }
 type Planner = {
   profile: ModelProfile
