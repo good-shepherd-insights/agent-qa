@@ -1,7 +1,7 @@
 // The function registry (Phase 384, FUNC-01 / FUNC-03).
 //
 // The registry OWNS the specs and hands out declaration views only. Its internals —
-// the spec map, the injected deps and the host's read scope — live in a module-private
+// the spec map and the injected deps — live in a module-private
 // WeakMap that only `invokeFunction` reads. A surface holding a `FunctionRegistry`
 // therefore has exactly one way to run a capability: `invokeFunction`'s validated dispatch.
 // Since 432-13 that path asks nobody (no gate, confirm port, grant reader or deny overlay).
@@ -341,8 +341,6 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
 ]
 
 export interface CreateFunctionRegistryOptions {
-  /** Host-owned lifetime around an authorized unary read; absent preserves ambient scope. */
-  withReadScope?: (functionId: string, invoke: () => Promise<unknown>) => Promise<unknown>
   /** Host-backed implementations the ops read through; built at the composition root. */
   deps: FunctionDeps
   /**
@@ -378,7 +376,6 @@ export interface FunctionRegistry {
 }
 
 interface RegistryInternals {
-  withReadScope?: CreateFunctionRegistryOptions['withReadScope']
   specs: ReadonlyMap<string, FunctionSpec>
   deps: FunctionDeps
 }
@@ -540,7 +537,6 @@ export function createRegistryFromSpecs(
   }
 
   REGISTRY_INTERNALS.set(registry, {
-    ...(options.withReadScope === undefined ? {} : { withReadScope: options.withReadScope }),
     specs: byId,
     deps: options.deps,
   })

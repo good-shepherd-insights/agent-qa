@@ -112,6 +112,7 @@ function fixtureRegistry(): FunctionRegistry {
     // makes the `runIdFrom: 'output'` cell a statement about the source rather than an accident of
     // two ids that happened to match.
     runInvocation: { start: () => Promise.resolve({ runId: asRunId(STARTED_RUN_ID) }) },
+    secretMask: (text: string) => text,
   } as unknown as FunctionDeps
 
   return createFunctionRegistry({ deps, auditSink })

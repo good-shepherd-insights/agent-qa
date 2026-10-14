@@ -60,6 +60,7 @@ import { CONTRACTS_BY_ID, expectProjectionDerivedFrom } from './projection-relat
  */
 function fakeDeps(): FunctionDeps {
   return {
+    secretMask: (text: string) => text,
     runs: {
       list: () => Promise.resolve([]),
       get: () => Promise.resolve(undefined),

@@ -30,9 +30,7 @@
 // around `invokeFunction`: every external caller still arrives through the pipeline. 2026-10-01
 // (432-26, D-12): the op declares no `read` scope, and no step of that pipeline checks one.
 
-import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
 import {
-  maskedMarker,
   maskRecordContent,
   NO_KNOWLEDGE_READER_TRUNCATION,
   projectRecordContent,
@@ -64,6 +62,7 @@ import type {
 import type { ClauseVerdict, FunctionDeps, FunctionSpec, KnowledgeReaderPort } from '../spec.js'
 import { knowledgeRecordsDiffSpec } from './knowledge-records-diff.js'
 import { projectPostProcessingChips, runsPostProcessingSpec } from './runs-post-processing.js'
+import { requireSecretMask } from './secret-mask.js'
 
 /**
  * Lowercase dot taxonomy (384 D-15): the `runs` domain, one noun.
@@ -507,10 +506,7 @@ export const runsKnowledgeSpec: FunctionSpec<RunsKnowledgeInput, RunKnowledgePro
       changes = []
     }
 
-    const masking = getActiveMaskingContext()
-    const mask: MaskFn = masking === undefined
-      ? () => maskedMarker('secret')
-      : (text) => masking.mask(text)
+    const mask = requireSecretMask(deps, RUNS_KNOWLEDGE_FUNCTION_ID)
 
     // The fixed checkpoint first; the notification carries a copy of the same snapshot.
     const curationSnapshot = status?.curationSnapshot

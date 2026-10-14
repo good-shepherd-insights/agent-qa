@@ -5,7 +5,7 @@
 
 import { createHash } from 'node:crypto'
 
-import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import type { AuditSink } from '@vostride/agent-qa-safety'
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
@@ -15,13 +15,13 @@ import {
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   RunOverviewProjectionSchema,
   asRunId,
-  maskedMarker,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   EvidenceDocument,
   EvidenceEntry,
   FunctionCaller,
+  MaskFn,
   PerTestOutcome,
   RecordChange,
   RecordedTargets,
@@ -34,7 +34,7 @@ import type {
   ServedBrief,
   StepEvidence,
 } from '@vostride/agent-qa-schema'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { FunctionInputError, FunctionNotBoundError, invokeFunction } from '../invoke.js'
 import { EvidenceBlobAbsentError } from '../ops/runs-artifact.js'
@@ -142,6 +142,7 @@ interface Scene {
   rows: RunDetailRows | undefined
   targets?: RecordedTargets
   bindDetail?: boolean
+  secretMask?: MaskFn | null
 }
 
 function singleTestScene(): Scene {
@@ -186,6 +187,7 @@ function harness(scene: Scene) {
       }),
     },
     ...(scene.bindDetail === false ? {} : { runDetail: { read: detailRead } }),
+    ...(scene.secretMask === null ? {} : { secretMask: scene.secretMask ?? identity }),
   }
   const registry = createFunctionRegistry({
     deps,
@@ -198,8 +200,11 @@ function harness(scene: Scene) {
   }
 }
 
-beforeEach(() => setActiveMaskingContextResolver(() => createMaskingContext()))
-afterEach(() => setActiveMaskingContextResolver(() => undefined))
+const identity: MaskFn = text => text
+function declaredMask(secrets: Record<string, string>): MaskFn {
+  const redactor = new SecretRedactor(new SecretStore(secrets))
+  return text => redactor.redactString(text)
+}
 
 describe('OVERVIEW-REGISTRY: runs.overview is a registered read over one completed run (D-06)', () => {
   it('lists runs.overview as a bound read-only registry op', () => {
@@ -443,6 +448,7 @@ interface MultiOptions {
   knowledge?: Partial<KnowledgeReaderPort>
   chain?: PostProcessingChainState | undefined
   bindPostProcessing?: boolean
+  secretMask?: MaskFn | null
 }
 
 function multiHarness(scene: Multi, options: MultiOptions = {}) {
@@ -498,6 +504,7 @@ function multiHarness(scene: Multi, options: MultiOptions = {}) {
     },
     runDetail: { read: async () => rows },
     evidenceBlobs,
+    ...(options.secretMask === null ? {} : { secretMask: options.secretMask ?? identity }),
     ...(options.bindPostProcessing === false ? {} : {
       postProcessing: {
         idSource: { jobIdFor: (kind: string, key: string) => `${kind}:${key}` as never },
@@ -735,10 +742,14 @@ describe('OVERVIEW-LEARNED: what the run learned, with every record id and bucke
   it('distinguishes a snapshot never recorded from one withheld', async () => {
     const none = await multiHarness(multiScene(), { bindPostProcessing: false }).overview()
     expect(none.learned.snapshot).toEqual({ state: 'not-recorded' })
-    setActiveMaskingContextResolver(() => undefined)
-    const withheld = await multiHarness(multiScene()).overview()
-    expect(withheld.learned.snapshot).toEqual({ state: 'withheld', reason: 'masking-unavailable' })
-    expect(withheld.tests[0]?.name).toEqual({ text: maskedMarker('secret') })
+    const collapsing: MaskFn = text => text === 'rec-a' ? 'rec-learned' : text
+    const withheld = await multiHarness(multiScene(), { secretMask: collapsing }).overview()
+    expect(withheld.learned.snapshot).toEqual({ state: 'withheld', reason: 'projection-refused' })
+    expect(withheld.tests[0]?.name).toEqual({ text: 'Checkout smoke' })
+    await expect(multiHarness(multiScene(), { secretMask: null }).overview())
+      .rejects.toThrow(/no declared-secret mask/)
+    await expect(multiHarness(multiScene(), { secretMask: () => { throw new Error('synthetic unreadable secrets file') } })
+      .overview()).rejects.toThrow('synthetic unreadable secrets file')
   })
 })
 
@@ -757,15 +768,13 @@ describe('OVERVIEW-TRUNCATION: only labels and one-line summaries are cut', () =
 
   it('masks a declared multi-line secret before collapsing its line breaks', async () => {
     const secret = '-----BEGIN KEY-----\nT431-pem-sentinel\n-----END KEY-----'
-    const masking = createMaskingContext()
-    masking.register(secret)
-    setActiveMaskingContextResolver(() => masking)
     const scene = singleTestScene()
+    scene.secretMask = declaredMask({ PEM_441: secret })
     scene.document = completed([member(0, 'test-checkout', `Sign with\n${secret}`, [
       handoffStep(0, `Paste ${secret} into the form`),
     ])])
     const result = JSON.stringify(await harness(scene).overview({ runId: RUN_ID }))
     expect(result).not.toContain('T431-pem-sentinel')
-    expect(result).toContain(JSON.stringify(`Sign with ${masking.mask(secret)}`).slice(1, -1))
+    expect(result).toContain(JSON.stringify('Sign with [secret:PEM_441]').slice(1, -1))
   })
 })

@@ -1,12 +1,12 @@
 // 2026-09-15, 423 D-16/D-17: what runs.mark would do for this exact input, through the read-only
 // feedbackReads port. The result is prospective: no intent, lease, model call, id mint or write.
-import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
-import { RunsMarkInputSchema, RunsMarkPreviewResultSchema, maskRecordContent, maskedMarker } from '@vostride/agent-qa-schema'
+import { RunsMarkInputSchema, RunsMarkPreviewResultSchema, maskRecordContent } from '@vostride/agent-qa-schema'
 import type { MaskFn, RunsMarkInput, RunsMarkPreviewResult } from '@vostride/agent-qa-schema'
 
 import { FunctionNotBoundError } from '../spec.js'
 import type { ClauseVerdict, FunctionSpec } from '../spec.js'
 import { runsMarkSpec } from './runs-mark.js'
+import { requireSecretMask } from './secret-mask.js'
 
 export const RUNS_MARK_PREVIEW_FUNCTION_ID = 'runs.mark.preview'
 
@@ -69,8 +69,7 @@ export const runsMarkPreviewSpec: FunctionSpec<RunsMarkInput, RunsMarkPreviewRes
     if (preview === undefined) throw new FunctionNotBoundError(RUNS_MARK_PREVIEW_FUNCTION_ID)
     const answer = await preview.call(deps.feedbackReads, parsed)
     if (answer.runId !== parsed.runId) throw new Error('feedbackReads.preview answered for another run')
-    const context = getActiveMaskingContext()
-    const mask: MaskFn = context === undefined ? () => maskedMarker('secret') : text => context.mask(text)
+    const mask = requireSecretMask(deps, RUNS_MARK_PREVIEW_FUNCTION_ID)
     return RunsMarkPreviewResultSchema.parse(maskResult(answer, mask))
   },
 }

@@ -150,7 +150,7 @@ function depsOver(document: CompletedRunHandoff | undefined): FunctionDeps {
 
 function composeRegistry(document: CompletedRunHandoff | undefined): FunctionRegistry {
   return createFunctionRegistry({
-    deps: depsOver(document),
+    deps: { ...depsOver(document), secretMask: (text: string) => text },
     // Discards every row: this file asserts on the path, never on the audit trail.
     auditSink: { appendGuardrailAudit() {} },
   })

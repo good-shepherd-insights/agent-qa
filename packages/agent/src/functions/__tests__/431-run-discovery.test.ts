@@ -4,18 +4,19 @@
 // one measured path. The reader is a fake port: this layer owns ordering, filtering and the cap,
 // and never learns where a run's bytes live.
 
-import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
-import { CURRENT_HANDOFF_SCHEMA_VERSION, maskedMarker } from '@vostride/agent-qa-schema'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
+import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   FunctionCaller,
+  MaskFn,
   PerTestOutcome,
   RecordedTargets,
   RunStatus,
   RunSummary,
 } from '@vostride/agent-qa-schema'
 import type { AuditSink } from '@vostride/agent-qa-safety'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import { FunctionInputError, invokeFunction } from '../invoke.js'
 import { runsListSpec } from '../ops/runs-list.js'
@@ -31,8 +32,10 @@ const READER: FunctionCaller = {
 
 const NO_AUDIT: AuditSink = { appendGuardrailAudit() {} }
 
-beforeEach(() => setActiveMaskingContextResolver(() => createMaskingContext()))
-afterEach(() => setActiveMaskingContextResolver(() => undefined))
+function declaredMask(secrets: Record<string, string>): MaskFn {
+  const redactor = new SecretRedactor(new SecretStore(secrets))
+  return text => redactor.redactString(text)
+}
 
 function member(testIndex: number, testId: string, testName: string): PerTestOutcome {
   return {
@@ -75,6 +78,7 @@ interface Harness {
 function harness(
   documents: readonly CompletedRunHandoff[],
   targets?: (runId: string) => RecordedTargets,
+  secretMask: MaskFn | null = text => text,
 ): Harness {
   let listCalls = 0
   const targetCalls: string[] = []
@@ -96,7 +100,7 @@ function harness(
         }),
   }
   const registry = createRegistryFromSpecs([runsListSpec], {
-    deps: { runs } as unknown as FunctionDeps,
+    deps: { runs, ...(secretMask === null ? {} : { secretMask }) } as unknown as FunctionDeps,
     auditSink: NO_AUDIT,
     // 2026-10-02 (432-36, D-12): no `resolveExecutionContext` registry option; the registry reads
     // no context (432-20).
@@ -235,24 +239,21 @@ describe('LIST-ROWS: every row names all of its tests', () => {
 
   it('masks a declared secret in a test name and never matches the title filter on it', async () => {
     const secret = 'T431-list-sentinel-not-a-real-credential'
-    const masking = createMaskingContext()
-    masking.register(secret)
-    setActiveMaskingContextResolver(() => masking)
-    const reader = harness([run({ runId: 'run-secret', endedAt: 1,
-      tests: [member(0, 't-login', `Login as ${secret}`)] })])
+    const documents = [run({ runId: 'run-secret', endedAt: 1,
+      tests: [member(0, 't-login', `Login as ${secret}`)] })]
+    const reader = harness(documents, undefined, declaredMask({ LIST_441: secret }))
 
     const [row] = await reader.list({})
-    expect(row!.tests[0]!.testName).toBe(masking.mask(`Login as ${secret}`))
+    expect(row!.tests[0]!.testName).toBe('Login as [secret:LIST_441]')
     expect(JSON.stringify(row)).not.toContain(secret)
     expect(await reader.list({ test: secret.slice(0, 12) })).toEqual([])
     expect((await reader.list({ test: 'login as' })).map((listed) => listed.runId)).toEqual(['run-secret'])
 
-    setActiveMaskingContextResolver(() => undefined)
-    const [cold] = await reader.list({})
-    expect(cold!.tests[0]!.testName).toBe(maskedMarker('secret'))
-    await expect(reader.list({ test: 'login' }))
-      .rejects.toThrow(/masking sources could not be loaded[\s\S]*filter by test id/)
-    expect((await reader.list({ test: 't-login' })).map((listed) => listed.runId)).toEqual(['run-secret'])
+    await expect(harness(documents, undefined, null).list({ test: 'login' }))
+      .rejects.toThrow(/no declared-secret mask/)
+    const unreadable = harness(documents, undefined, () => { throw new Error('synthetic unreadable secrets file') })
+    await expect(unreadable.list({ test: 'login' })).rejects.toThrow('synthetic unreadable secrets file')
+    await expect(unreadable.list({ test: 't-login' })).rejects.toThrow('synthetic unreadable secrets file')
   })
 
   it('reports an unknown target set when no recorded target reader is bound', async () => {

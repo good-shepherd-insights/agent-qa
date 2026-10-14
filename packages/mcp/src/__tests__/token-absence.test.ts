@@ -24,8 +24,7 @@
 // THE SCAR IT GENERALISES. `masked-serialization.test.ts` is the T-395-R5-10 corpus: a declared
 // credential reaching `content[].text` and `structuredContent` because the masker never saw the
 // escaped spelling. Same shape, different credential — and a harder one, because a minted token is
-// NOT registered with the masker at the moment the App renders it (it is offered to the host's
-// masking store through `onMinted`, which is a best-effort second line, never the guard). So for
+// NOT a declared secret, so no masker ever sees it (441 D-01; `onMinted` only observes it). So for
 // this credential the only real defence is that no model-readable code path ever touches it. That
 // is a claim about REACHABILITY, which is why the corpus below is the whole flow rather than one
 // serializer.
@@ -93,7 +92,7 @@
 // 2027-01-15 so the fix is proven rather than asserted.
 //
 // THE GROUND TRUTH IS WHAT THE FLOW MINTED, NOT A PLANT. Tokens are captured at `LiveViewPort`'s
-// `onMinted` hook — the single registration point `runs.liveurl` calls for every token it ever
+// `onMinted` hook — the single observation point `runs.liveurl` calls for every token it ever
 // produces (`ops/runs-live-url.ts`). A planted lookalike would prove the scanner works; capturing
 // the real mints proves the FLOW is clean. Every needle is therefore a string that really crossed
 // the invocation wall in this test.

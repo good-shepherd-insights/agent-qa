@@ -257,6 +257,7 @@ describe('RUN-TARGET-HISTORY: runs.list filters on recorded targets, not current
   function registry(): FunctionRegistry {
     return createFunctionRegistry({
       deps: {
+        secretMask: (text: string) => text,
         runs: createRunsReader(agentQaRoot),
         knowledge: {
           listBundles: () => Promise.resolve([]),

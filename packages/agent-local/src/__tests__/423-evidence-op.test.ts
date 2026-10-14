@@ -5,7 +5,6 @@ import * as agent from '@vostride/agent-qa-agent'
 import type { FunctionDeps } from '@vostride/agent-qa-agent'
 import { generateRunId } from '../../../ids/dist/index.js'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
-import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
 import { asRunId, EvidenceArtifactRefSchema, RunsEvidenceResultSchema } from '@vostride/agent-qa-schema'
 import type { FunctionCaller, RunDetailRows } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -19,10 +18,8 @@ const op = 'runs.evidence'
 let temporary: string
 beforeEach(() => {
   temporary = mkdtempSync(join(tmpdir(), 'agent-qa-evidence-op-'))
-  setActiveMaskingContextResolver(() => createMaskingContext())
 })
 afterEach(() => {
-  setActiveMaskingContextResolver(() => undefined)
   rmSync(temporary, { recursive: true, force: true })
 })
 

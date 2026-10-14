@@ -7,7 +7,6 @@ import { join } from 'node:path'
 
 import { createFunctionRegistry, type FunctionDeps } from '@vostride/agent-qa-agent'
 import {
-  buildRunMaskingContext,
   createEvidenceBlobReader,
   type LocalAgentHost,
 } from '@vostride/agent-qa-agent-local'
@@ -20,8 +19,8 @@ import {
   startServer,
 } from '@vostride/agent-qa-dashboard'
 import { generateRunId } from '@vostride/agent-qa-ids'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
-import { setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   MarkReceiptSchema,
@@ -50,17 +49,11 @@ async function startFixture(
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-423-sinks-'))
   const db = new DashboardDatabase({ dbPath: join(root, 'dashboard.db') })
   const runId = generateRunId()
-  const values = { AUTH_STATE, ALLOWED }
-  const store = {
-    forEachSecret(cb: (name: string, value: string) => void) {
-      for (const [name, value] of Object.entries(values)) cb(name, value)
-    },
-  }
-  const mask = buildRunMaskingContext({ secretStore: store, env: {} })
-  const placeholders = new Map(mask.snapshotRegistered().map(({ value, placeholder }) => [value, placeholder]))
-  const authPlaceholder = placeholders.get(AUTH_STATE)!
-  const allowedPlaceholder = placeholders.get(ALLOWED)!
-  setActiveMaskingContextResolver(() => mask)
+  // 2026-10-14 (441-16, D-06): records hold the declared marker the run wrote; reads mask with the same store.
+  const redactor = new SecretRedactor(new SecretStore({ AUTH_STATE, ALLOWED }))
+  const mask = (text: string) => redactor.redactString(text)
+  const authPlaceholder = mask(AUTH_STATE)
+  const allowedPlaceholder = mask(ALLOWED)
   const evidenceDocument = { schemaVersion: 1 as const, kind: 'console' as const, records: [
     { level: 'log', text: allowedPlaceholder, timestamp: 1 },
     { level: 'log', text: authPlaceholder, timestamp: 2 },
@@ -91,6 +84,7 @@ async function startFixture(
   const registry = createFunctionRegistry({
     deps: {
       runDetail: createDashboardRunDetailReader(db), evidenceBlobs: createEvidenceBlobReader({ agentQaRoot: root }),
+      secretMask: mask,
       ...extraDeps?.(runId),
     } as FunctionDeps,
     auditSink: { appendGuardrailAudit() {} },
@@ -123,8 +117,6 @@ async function startFixture(
       await new Promise<void>((resolve, reject) => machine.close((error) => error ? reject(error) : resolve()))
       await new Promise<void>((resolve, reject) => remote.close((error) => error ? reject(error) : resolve()))
       db.close()
-      setActiveMaskingContextResolver(() => undefined)
-      mask.dispose()
       rmSync(root, { recursive: true, force: true })
     },
   }

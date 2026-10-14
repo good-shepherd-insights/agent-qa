@@ -431,7 +431,7 @@ function stripComments(source: string): string {
  * The ambient-context family, as a COMPLETE SET rather than as the one name somebody remembered.
  *
  * Every member is a shipped export that answers "what is the ambient state of this process?" —
- * `safety`'s three active-resolver pairs, `safety-local`'s detector, and the run composition's own
+ * `safety`'s two active-resolver pairs, `safety-local`'s detector, and the run composition's own
  * wrapper around it. D-07 makes all of them wrong here for one reason: the core answers to a DOOR,
  * and a door's posture is not a property of the machine it runs on.
  */
@@ -442,8 +442,6 @@ const AMBIENT_RESOLVERS = [
   'setActiveExecutionContextResolver',
   'getActiveAuditSink',
   'setActiveAuditSinkResolver',
-  'getActiveMaskingContext',
-  'setActiveMaskingContextResolver',
   'runSafetyScope',
   'AsyncLocalStorage',
 ] as const

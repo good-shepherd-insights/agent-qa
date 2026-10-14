@@ -1,9 +1,8 @@
 // 2026-09-15, 423 D-19: every mark on a run in ordinal order, with read-time supersession. Pure
 // observation through the feedbackReads port. 2026-09-30, 432-09 (D-04/D-25): each applied knowledge
 // fix carries the records it changed, read now; nothing is read from a proposal store.
-import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
 import {
-  RunsMarksHistoryInputSchema, RunsMarksHistoryResultSchema, markAddressKey, maskRecordContent, maskedMarker,
+  RunsMarksHistoryInputSchema, RunsMarksHistoryResultSchema, markAddressKey, maskRecordContent,
 } from '@vostride/agent-qa-schema'
 import type {
   MarkHistoryChangedRecord, MarkHistoryEntry, MarkReceipt, MaskFn, RunsMarksHistoryInput, RunsMarksHistoryResult,
@@ -11,6 +10,7 @@ import type {
 
 import { FunctionNotBoundError } from '../spec.js'
 import type { ClauseVerdict, FunctionSpec } from '../spec.js'
+import { requireSecretMask } from './secret-mask.js'
 
 export const RUNS_MARKS_HISTORY_FUNCTION_ID = 'runs.marks.history'
 
@@ -95,8 +95,7 @@ export const runsMarksHistorySpec: FunctionSpec<RunsMarksHistoryInput, RunsMarks
       nextOnAddress.set(key, receipts[index]!.markId)
     }
 
-    const context = getActiveMaskingContext()
-    const mask: MaskFn = context === undefined ? () => maskedMarker('secret') : text => context.mask(text)
+    const mask = requireSecretMask(deps, RUNS_MARKS_HISTORY_FUNCTION_ID)
     return RunsMarksHistoryResultSchema.parse({
       kind: 'history',
       runId,

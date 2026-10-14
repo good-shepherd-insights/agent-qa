@@ -85,9 +85,8 @@ export const runsLiveUrlSpec: FunctionSpec<RunsLiveUrlInput, RunsLiveUrlResult> 
       iat: now,
       exp,
     })
-    // Q4(b): the ONE registration point for minted tokens, and it is complete precisely because
-    // this op is the only minter. Fire-and-forget — a masking store is a best-effort second line
-    // behind fragment carriage, never a gate on producing the link the caller asked for.
+    // The one observation point for minted tokens, complete because this op is the only minter.
+    // 2026-10-14 (441-16, D-01): no shipped host binds it; it never gates producing the link.
     liveView.onMinted?.(token)
 
     return { liveUrl: liveUrlOf(origin, input.runId, token), expiresAt: exp, handle, stream }

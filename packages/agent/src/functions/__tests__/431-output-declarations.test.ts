@@ -30,7 +30,7 @@ const auditSink: AuditSink = { appendGuardrailAudit() {} }
 // `grantedScopes`/`safeMode` caller fields are dropped; nothing read them.
 function options(deps: unknown = {}): CreateFunctionRegistryOptions {
   return {
-    deps: deps as FunctionDeps,
+    deps: { secretMask: (text: string) => text, ...(deps as object) } as FunctionDeps,
     auditSink,
   }
 }

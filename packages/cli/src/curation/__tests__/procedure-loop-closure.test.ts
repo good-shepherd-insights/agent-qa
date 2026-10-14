@@ -896,7 +896,7 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
       // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
     } as unknown as FunctionDeps
     const registry = createFunctionRegistry({
-      deps,
+      deps: { ...deps, secretMask: (text: string) => text },
       auditSink: { appendGuardrailAudit() {} },
       // 2026-10-02 (432-37, D-12): no `resolveExecutionContext` registry option, and the caller
       // carries no `grantedScopes`/`safeMode`; the registry reads neither (432-20).

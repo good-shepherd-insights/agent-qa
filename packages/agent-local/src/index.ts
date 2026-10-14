@@ -229,9 +229,6 @@ export {
   CHAT_PLANNER_CALLER,
   CHAT_RESOLVER_CALLER,
 } from './composition/compose-local-agent.js'
-// 431 D-06: the cold read-scope allowlist, published as data so a door's posture cell can pin the
-// exact membership its host enforces. A frozen id list carries no dispatch and no host reach.
-export { COLD_READ_SCOPE_FUNCTION_IDS } from './composition/compose-local-agent.js'
 
 export type {
   ApplyKnowledgeChangeInput,

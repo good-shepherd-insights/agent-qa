@@ -19,9 +19,7 @@
 // a total mapping with no capability, no port and nothing to await, so the exhaustive table
 // that pins it costs a test file and not a store.
 
-import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
 import {
-  maskedMarker,
   CurationSnapshotSchema,
   POST_PROCESSING_DETAIL_STAGES,
   PostProcessingStatusSchema,
@@ -219,13 +217,9 @@ function projectRecordedSnapshots(
 }
 
 // Without a usable mask, failure prose is omitted and recorded snapshots are withheld.
-function projectMasked(
-  state: PostProcessingChainState | undefined,
-  mask: MaskFn | undefined,
-  stageMask = mask,
-) {
+function projectMasked(state: PostProcessingChainState | undefined, mask: MaskFn | undefined) {
   return {
-    stageDetails: projectStageDetails(state, stageMask),
+    stageDetails: projectStageDetails(state, mask),
     snapshots: projectRecordedSnapshots(state, mask),
   }
 }
@@ -290,19 +284,10 @@ export const runsPostProcessingSpec: FunctionSpec<RunsPostProcessingInput, PostP
     // absent document simply carries no exclusion fact.
     const exclusion = projectPostProcessingExclusion(await deps.runs.get(input.runId))
     let projected: ReturnType<typeof projectMasked>
-    const declared = deps.secretMask
-    if (declared === undefined) {
-      // 2026-10-13 (441-16): the ambient arm is taken only when no secretMask is bound; 441-16-2 deletes it.
-      const masking = getActiveMaskingContext()
-      projected = masking === undefined
-        ? projectMasked(state, undefined, () => maskedMarker('secret'))
-        : projectMasked(state, text => masking.mask(text))
-    } else {
-      try {
-        projected = projectMasked(state, declared)
-      } catch {
-        projected = projectMasked(state, undefined)
-      }
+    try {
+      projected = projectMasked(state, deps.secretMask)
+    } catch {
+      projected = projectMasked(state, undefined)
     }
     const { stageDetails, snapshots } = projected
     const curationSnapshot = snapshots.kind === 'served' ? snapshots.checkpoint : undefined

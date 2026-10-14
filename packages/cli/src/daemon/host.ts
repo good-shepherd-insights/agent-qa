@@ -2259,10 +2259,6 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         : (await import('../composition/declared-secrets.js'))
           .createDeclaredSecretMask(input.configPath).mask,
       ...(feedback === undefined ? {} : { feedback }),
-      ...(input.configPath === undefined ? {} : {
-        readMaskingSources: (await import('../composition/local-agent-host.js'))
-          .createColdReadMaskingSources(input.configPath),
-      }),
       resolveTrustPriors,
       resolvePromotionPosture: resolveHostPromotionPosture,
       agentQaRoot: input.agentQaRoot,

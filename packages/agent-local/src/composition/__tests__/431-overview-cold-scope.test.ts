@@ -1,39 +1,37 @@
 // Phase 431 plan 02 (D-03/D-06, T-431-05): OVERVIEW-COLD-SCOPE.
 //
 // `runs.overview` returns stored text — test names, step labels and served record summaries — so a
-// cold host must open the same read scope the other stored-text reads use and mask this project's
-// declared secrets with it. Without that scope the op falls to its no-context arm and every label
-// is the display marker, which is the difference the masked cell below measures. `runs.list`
-// carries the same stored test names and joined the scope in the 431 code review.
+// cold host masks it with the composition's declared mask. 2026-10-14 (441-16, D-06): the cold read
+// scope is gone; a host whose secrets file cannot be read refuses rather than masking everything.
 
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
-import { setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
-import { ambientMaskingContextResolver } from '@vostride/agent-qa-safety-local'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { FsHandoffStore } from '@vostride/agent-qa-runner-local'
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   RunOverviewProjectionSchema,
   RunsListOutputSchema,
-  maskedMarker,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   FunctionCaller,
+  MaskFn,
   RunDetailRows,
   RunId,
   RunOverviewProjection,
 } from '@vostride/agent-qa-schema'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { COLD_READ_SCOPE_FUNCTION_IDS, composeLocalAgent } from '../compose-local-agent.js'
+import { composeLocalAgent } from '../compose-local-agent.js'
 
 const RUN_ID = 'run-431-overview-cold'
 const SENTINEL = 'T431-overview-cold-sentinel-not-a-real-credential'
-const REDACTED = maskedMarker('secret')
+const REDACTED = '[secret:OVERVIEW_PASSWORD]'
+const UNREADABLE = 'synthetic: workspace.secretsFile cannot be read'
 
 const READER: FunctionCaller = {
   surface: 'test',
@@ -44,7 +42,6 @@ let root: string
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'agent-qa-431-overview-cold-'))
-  setActiveMaskingContextResolver(ambientMaskingContextResolver)
   const handoff: CompletedRunHandoff = {
     schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: RUN_ID as RunId,
@@ -85,7 +82,6 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  setActiveMaskingContextResolver(() => undefined)
   rmSync(root, { recursive: true, force: true })
 })
 
@@ -98,9 +94,9 @@ const rows: RunDetailRows = {
   subActions: [],
 }
 
-function host(sources?: () => Promise<unknown>) {
+function host(mask: MaskFn) {
   return composeLocalAgent({
-    mask: (text) => text,
+    mask,
     agentQaRoot: join(root, '.agent-qa'),
     mintQuarantineIdentityPath: (path) => path,
     config: { getMasked: async () => ({ schemaVersion: 1, configPath: 'agent-qa.config.yaml', entries: [] }) },
@@ -108,17 +104,12 @@ function host(sources?: () => Promise<unknown>) {
     model: () => { throw new Error('an overview read must not resolve a model') },
     resolveExecutionContext: () => 'local-headless',
     runDetail: { read: async () => rows },
-    ...(sources === undefined ? {} : {
-      readMaskingSources: sources as NonNullable<Parameters<typeof composeLocalAgent>[0]['readMaskingSources']>,
-    }),
   })
 }
 
-const declared = () => Promise.resolve({
-  secretsContent: `OVERVIEW_PASSWORD=${SENTINEL}\n`,
-  secretStores: [],
-  env: {},
-})
+const redactor = new SecretRedactor(new SecretStore({ OVERVIEW_PASSWORD: SENTINEL }))
+const declared: MaskFn = text => redactor.redactString(text)
+const unreadable: MaskFn = () => { throw new Error(UNREADABLE) }
 
 async function overviewThrough(composed: ReturnType<typeof host>): Promise<RunOverviewProjection> {
   return RunOverviewProjectionSchema.parse(
@@ -133,14 +124,6 @@ function storedText(overview: RunOverviewProjection) {
 }
 
 describe('OVERVIEW-COLD-SCOPE: runs.overview reads stored text under the cold read scope', () => {
-  it('pins the cold read-scope allowlist to exactly seven stored-text reads', () => {
-    expect([...COLD_READ_SCOPE_FUNCTION_IDS]).toEqual([
-      'runs.postprocessing', 'runs.knowledge', 'runs.evidence', 'runs.marks.history',
-      'runs.mark.preview', 'runs.overview', 'runs.list',
-    ])
-    expect(Object.isFrozen(COLD_READ_SCOPE_FUNCTION_IDS)).toBe(true)
-  })
-
   it('masks declared secrets in the cold overview and keeps the rest readable', async () => {
     const composed = host(declared)
     try {
@@ -154,18 +137,11 @@ describe('OVERVIEW-COLD-SCOPE: runs.overview reads stored text under the cold re
     } finally {
       await composed.close()
     }
-  })
-
-  it('opens the scope for the overview and not for an unrelated read', async () => {
-    const sources = vi.fn(declared)
-    const composed = host(sources)
+    const cold = host(unreadable)
     try {
-      await invokeFunction(composed.registry, 'runs.detail', { runId: RUN_ID }, READER)
-      expect(sources).not.toHaveBeenCalled()
-      await overviewThrough(composed)
-      expect(sources).toHaveBeenCalledTimes(1)
+      await expect(overviewThrough(cold)).rejects.toThrow(UNREADABLE)
     } finally {
-      await composed.close()
+      await cold.close()
     }
   })
 
@@ -182,28 +158,13 @@ describe('OVERVIEW-COLD-SCOPE: runs.overview reads stored text under the cold re
     } finally {
       await composed.close()
     }
-    const cold = host()
+    const cold = host(unreadable)
     try {
-      const rows = await listed(cold, {})
-      expect(rows.map((row) => row.tests.map((test) => test.testName))).toEqual([[REDACTED]])
-      await expect(listed(cold, { test: 'login' }))
-        .rejects.toThrow(/masking sources could not be loaded[\s\S]*filter by test id/)
-      await expect(listed(cold, { test: SENTINEL.slice(0, 12) }))
-        .rejects.toThrow(/masking sources could not be loaded[\s\S]*filter by test id/)
-      expect((await listed(cold, { test: 'test-login' })).map((row) => row.runId)).toEqual([RUN_ID])
+      for (const input of [{}, { test: 'login' }, { test: SENTINEL.slice(0, 12) }, { test: 'test-login' }]) {
+        await expect(listed(cold, input)).rejects.toThrow(UNREADABLE)
+      }
     } finally {
       await cold.close()
-    }
-  })
-
-  it('falls to the no-context marker, never cleartext, on a host with no masking sources', async () => {
-    const composed = host()
-    try {
-      const overview = await overviewThrough(composed)
-      expect(storedText(overview)).toEqual({ name: REDACTED, label: REDACTED, summary: REDACTED })
-      expect(JSON.stringify(overview)).not.toContain(SENTINEL)
-    } finally {
-      await composed.close()
     }
   })
 })

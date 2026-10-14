@@ -56,7 +56,7 @@ function handoff(runId: string, endedAt: number): CompletedRunHandoff {
 }
 
 function registryOver(recorded: readonly CompletedRunHandoff[]): FunctionRegistry {
-  const deps = { runs: { list: () => Promise.resolve([...recorded]) } } as unknown as FunctionDeps
+  const deps = { runs: { list: () => Promise.resolve([...recorded]) }, secretMask: (text: string) => text } as unknown as FunctionDeps
   return createFunctionRegistry({ deps, auditSink })
 }
 

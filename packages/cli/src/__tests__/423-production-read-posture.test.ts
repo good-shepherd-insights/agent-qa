@@ -1,5 +1,5 @@
 // 423 Gap 1: runs.evidence over the production composition. No test installs a masking resolver;
-// every read below reaches its masking context only through the host's own cold read scope.
+// 2026-10-14 (441-16, D-06): every read below masks with the host's declared mask.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -13,14 +13,13 @@ import {
 } from '@vostride/agent-qa-dashboard'
 import { generateRunId } from '@vostride/agent-qa-ids'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
-import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
-import { maskedMarker, type EvidenceDocument } from '@vostride/agent-qa-schema'
+import type { EvidenceDocument } from '@vostride/agent-qa-schema'
 
 import { composeDashboardAgentHost } from '../commands/dashboard.js'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../composition/local-agent-host.js'
 
 const SECRET = 'synthetic-production-secret-423'
-const MARKER = maskedMarker('secret')
+const MARKER = '[secret:SESSION]'
 
 const cleanups: (() => Promise<void> | void)[] = []
 afterEach(async () => {
@@ -99,10 +98,8 @@ function productionFixture() {
   })
   cleanups.push(() => host.close())
   const read = async (kind: 'network' | 'variables') => {
-    expect(getActiveMaskingContext()).toBeUndefined()
     const result = await invokeFunction(host.registry, 'runs.evidence',
       { runId, testIndex: 0, stepIndex: 0, kind }, CLI_FUNCTION_CALLER)
-    expect(getActiveMaskingContext()).toBeUndefined()
     return result as { outcome: string; code?: string }
   }
   return { root, configPath, agentQaRoot, secretsFile, runId, db, host, networkRef, read }
@@ -207,7 +204,6 @@ describe('423 production read posture', () => {
     const served = Buffer.from(await artifact.arrayBuffer())
     expect(served).toEqual(Buffer.from(JSON.stringify(networkDocument)))
     expect(served).toEqual(Buffer.from(new FsEvidenceArtifactStore({ root: f.agentQaRoot, runId: f.runId }).getBlob(f.networkRef.sha)!))
-    expect(getActiveMaskingContext()).toBeUndefined()
   })
 
   it('COLD-EVIDENCE-UNAVAILABLE answers masking-unavailable with the capture kept when cold sources are missing', async () => {
@@ -222,7 +218,6 @@ describe('423 production read posture', () => {
       capture: { kind: 'network', state: 'present', ref: f.networkRef, counts: { total: 2, failed: 0, errored: 0 } },
     })
     expect(result).not.toHaveProperty('document')
-    expect(getActiveMaskingContext()).toBeUndefined()
 
     const human = await fetch(doors.human)
     expect(human.status).toBe(200)

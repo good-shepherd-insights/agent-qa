@@ -1,25 +1,17 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { chainJobIdsForRun, invokeFunction } from '@vostride/agent-qa-agent'
-import {
-  buildRunMaskingContext, composeLocalAgent, DIGEST_JOB_ID_SOURCE,
-} from '@vostride/agent-qa-agent-local'
+import { composeLocalAgent, DIGEST_JOB_ID_SOURCE } from '@vostride/agent-qa-agent-local'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
-import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
-import { resolveAuthStatePaths, writeAuthStateFiles } from '@vostride/agent-qa-core'
+import { generateRunId } from '@vostride/agent-qa-ids'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import {
-  CURRENT_HANDOFF_SCHEMA_VERSION, CurationSnapshotSchema, maskedMarker, sha256hex,
-} from '@vostride/agent-qa-schema'
+import { CURRENT_HANDOFF_SCHEMA_VERSION, CurationSnapshotSchema, sha256hex } from '@vostride/agent-qa-schema'
 import type { CurationSnapshot, PostProcessingStatus } from '@vostride/agent-qa-schema'
-import { getActiveAuditSink, getActiveExecutionContext, getActiveMaskingContext } from '@vostride/agent-qa-safety'
-import { runSafetyScope } from '@vostride/agent-qa-safety-local'
-import type { MaskingContext } from '@vostride/agent-qa-schema'
 
-import { CLI_FUNCTION_CALLER, composeCliLocalAgent, createColdReadMaskingSources } from '../local-agent-host.js'
+import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
 import { resolveConfig } from '../../config.js'
 
 const roots: string[] = []
@@ -27,15 +19,8 @@ const hosts: LocalAgentHost[] = []
 afterEach(async () => {
   for (const host of hosts.splice(0)) await host.close()
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
-  vi.unstubAllEnvs()
   vi.restoreAllMocks()
 })
-
-function storeOf(values: Record<string, string>) {
-  return { forEachSecret(cb: (name: string, value: string) => void) {
-    for (const [name, value] of Object.entries(values)) cb(name, value)
-  } }
-}
 
 function project() {
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-423-cold-read-'))
@@ -104,9 +89,8 @@ async function publish(p: ReturnType<typeof project>, completed?: CurationSnapsh
   }))
 }
 
-function cold(p: ReturnType<typeof project>, retained: () => Iterable<ReturnType<typeof storeOf>> = () => []) {
-  const input = { agentQaRoot: p.agentQaRoot, configPath: p.configPath, maskingSecretStores: retained }
-  const host = composeCliLocalAgent(input)
+function cold(p: ReturnType<typeof project>) {
+  const host = composeCliLocalAgent({ agentQaRoot: p.agentQaRoot, configPath: p.configPath })
   hosts.push(host)
   vi.spyOn(host, 'jobs').mockImplementation(async () => { throw new Error('cold read opened jobs') })
   return {
@@ -117,235 +101,14 @@ function cold(p: ReturnType<typeof project>, retained: () => Iterable<ReturnType
   }
 }
 
-const AUDIT_LOG = 'execution_audit.jsonl'
-
-function fixtureBytes(root: string, omit?: string): unknown {
-  return readdirSync(root, { withFileTypes: true }).filter(entry => entry.name !== omit).map(entry => [entry.name,
-    entry.isDirectory() ? fixtureBytes(join(root, entry.name), omit) : readFileSync(join(root, entry.name), 'hex')])
-}
-
-function expectUnchangedTree(root: string, before: unknown, fixture: string) {
-  const after = fixtureBytes(root)
-  expect(after).toEqual(before)
-  console.info(JSON.stringify({ kind: 'auth-read-tree-proof', fixture,
-    before: sha256hex(JSON.stringify(before)), after: sha256hex(JSON.stringify(after)) }))
-}
-
-async function authFixture(p: ReturnType<typeof project>, value: string, stateName = 'current-session') {
-  const paths = resolveAuthStatePaths({ configDir: p.root, targetName: 'local',
-    stateName, target: { platform: 'web' } })
-  await writeAuthStateFiles(paths, { payload: { cookies: [{ name: 'session', value,
-    domain: '127.0.0.1', path: '/', expires: -1, httpOnly: true, secure: false, sameSite: 'Lax' }], origins: [] },
-  metadata: { version: 1, kind: 'web', target: 'local', name: stateName,
-    capturedAt: '2026-09-14T00:00:00.000Z' } })
-  return paths
-}
-
-type AuthDeclarationKind = 'missing' | 'capture-missing' | 'missing-metadata' | 'unreadable' | 'invalid-json'
-  | 'null' | 'indexeddb' | 'malformed-cookie' | 'wrong-metadata' | 'invalid-declaration'
-  | 'multi-document' | 'payload-lost'
-
-async function authDeclarationFixture(p: ReturnType<typeof project>, kind: AuthDeclarationKind) {
-  mkdirSync(join(p.root, 'tests'))
-  const current = JSON.stringify({ 'test-id': generateTestId(),
-    name: 'Current declaration', target: 'local', steps: ['Inspect page'], use: { authState: kind === 'capture-missing'
-      ? { name: 'current-session', load: false, capture: true } : 'current-session' } })
-  // multi-document: ONE file, TWO documents — the valid declaration above and an invalid sibling
-  // document whose authState name AuthStateNameSchema rejects. parseTestFile returns 1 test, 1 error.
-  const invalidSibling = JSON.stringify({ 'test-id': generateTestId(), name: 'Invalid sibling document',
-    target: 'local', steps: ['Inspect page'], use: { authState: { name: 'INVALID' } } })
-  writeFileSync(join(p.root, 'tests', 'current.yaml'),
-    kind === 'multi-document' ? `${current}\n---\n${invalidSibling}\n` : current)
-  const paths = await authFixture(p, 'synthetic-auth-only-secret')
-  // missing / capture-missing model a state that was NEVER captured: neither file exists.
-  if (kind === 'missing' || kind === 'capture-missing') { rmSync(paths.payloadPath); rmSync(paths.metadataPath) }
-  // payload-lost models a state that WAS captured and then deleted or rotated away: its metadata remains.
-  if (kind === 'payload-lost') rmSync(paths.payloadPath)
-  if (kind === 'missing-metadata') rmSync(paths.metadataPath)
-  if (kind === 'unreadable') { rmSync(paths.payloadPath); mkdirSync(paths.payloadPath) }
-  if (kind === 'invalid-json') writeFileSync(paths.payloadPath, '{')
-  if (kind === 'null') writeFileSync(paths.payloadPath, 'null')
-  if (kind === 'indexeddb') writeFileSync(paths.payloadPath, JSON.stringify({ cookies: [], origins: [
-    { origin: 'http://127.0.0.1:1', localStorage: [], indexedDB: [{ value: 'unsupported-secret' }] },
-  ] }))
-  if (kind === 'malformed-cookie') writeFileSync(paths.payloadPath, JSON.stringify({ cookies: [{ value: 42 }], origins: [] }))
-  if (kind === 'wrong-metadata') writeFileSync(paths.metadataPath, JSON.stringify({ version: 1, kind: 'web',
-    target: 'foreign', name: 'current-session', capturedAt: '2026-09-14T00:00:00.000Z' }))
-  if (kind === 'invalid-declaration') {
-    writeFileSync(join(p.root, 'tests', 'invalid.yaml'), JSON.stringify({ 'test-id': generateTestId(),
-      name: 'Invalid declaration', target: 'local', steps: ['Inspect page'], use: { authState: { name: 'INVALID' } } }))
-  }
-}
-
 describe('Wave 18 cold read masking recovery', () => {
-  it.each(['test', 'suite', 'capture'] as const)('COLD-AUTH-INHERITANCE %s resolves fresh seeds without file writes', async kind => {
-    const p = project()
-    const value = 'synthetic-current-auth-token'
-    const rotated = 'synthetic-rotated-auth-token'
-    const authState = kind === 'capture'
-      ? { name: 'current-session', load: false, capture: true } : 'current-session'
-    const testId = generateTestId()
-    mkdirSync(join(p.root, 'tests'))
-    writeFileSync(join(p.root, 'tests', 'current.yaml'), JSON.stringify({
-      'test-id': testId, name: 'Current state', target: 'local', steps: ['Inspect page'],
-      ...(kind !== 'suite' ? { use: { authState } } : {}),
-    }))
-    if (kind === 'suite') {
-      mkdirSync(join(p.root, 'suites'))
-      writeFileSync(join(p.root, 'suites', 'current.yaml'), JSON.stringify({
-        name: 'Inherited state', target: 'local', use: { authState },
-        tests: [{ test: '../tests/current.yaml', id: testId }],
-      }))
-    }
-    await authFixture(p, value)
-    const before = fixtureBytes(p.root)
-    const sources = createColdReadMaskingSources(p.configPath)
-    expect((await sources())?.authStatePayloads).toHaveLength(1)
-    expectUnchangedTree(p.root, before, `inheritance-${kind}`)
-    expect(existsSync(join(p.agentQaRoot, 'agent-jobs.db'))).toBe(false)
-    expect(existsSync(join(p.agentQaRoot, 'job-checkpoints'))).toBe(false)
-    await publish(p, snapshot(p.runId, [`first ${value}`, `second ${rotated}`]))
-    const read = cold(p)
-    const tokens = async () => (await read.read()).curationSnapshot!.rows[0]!.changes.map(row => row.change.evidenceToken)
-    expect(await tokens()).toEqual([`first ${maskedMarker('secret')}`, `second ${rotated}`])
-    await authFixture(p, rotated)
-    expect(await tokens()).toEqual([`first ${value}`, `second ${maskedMarker('secret')}`])
-    expect(read.host.jobs).not.toHaveBeenCalled()
-  })
-
-  it.each(['missing', 'capture-missing', 'invalid-declaration', 'multi-document', 'coexisting'] as const)(
-    'COLD-AUTH-SKIPPED %s keeps every resolvable source and serves the masked snapshot', async kind => {
-      const p = project()
-      await authDeclarationFixture(p, kind === 'coexisting' ? 'missing' : kind)
-      const coexisting = 'synthetic-coexisting-cookie'
-      if (kind === 'coexisting') {
-        writeFileSync(join(p.root, 'tests', 'second.yaml'), JSON.stringify({ 'test-id': generateTestId(),
-          name: 'Second declaration', target: 'local', steps: ['Inspect page'], use: { authState: 'second-session' } }))
-        await authFixture(p, coexisting, 'second-session')
-      }
-      const secrets = 'CURRENT=synthetic-skipped-secret\n'
-      writeFileSync(p.secretFile, secrets)
-      const before = fixtureBytes(p.root)
-      const sources = await createColdReadMaskingSources(p.configPath)()
-      expect(sources).toBeDefined()
-      // invalid-declaration's sibling FILE and multi-document's sibling DOCUMENT both still leave
-      // the captured current-session declaration standing, so each seeds exactly one payload.
-      expect(sources!.authStatePayloads).toHaveLength(kind === 'missing' || kind === 'capture-missing' ? 0 : 1)
-      expect(sources!.secretsContent).toBe(secrets)
-      expectUnchangedTree(p.root, before, `skipped-${kind}`)
-      expect(existsSync(join(p.agentQaRoot, 'agent-jobs.db'))).toBe(false)
-      expect(existsSync(join(p.agentQaRoot, 'job-checkpoints'))).toBe(false)
-      // The one binding both the publish site and the expectation site read. An arm that carries a
-      // captured value publishes it in clear and expects it back masked, which is what proves the
-      // surviving declaration seeded the mask; every other arm keeps its unmasked `second plain`,
-      // which proves the mask is narrow as well as present.
-      const secondValue = kind === 'coexisting' ? coexisting
-        : kind === 'multi-document' ? 'synthetic-auth-only-secret' : undefined
-      const second = secondValue === undefined ? 'second plain' : `second ${secondValue}`
-      await publish(p, snapshot(p.runId, ['first synthetic-skipped-secret', second]))
-      const read = cold(p)
-      const first = await read.read()
-      // Measured after the first read, which opens the published job store (SQLite sidecars).
-      // Until 432-13 every invocation appended one execution audit row; no op gate writes one now,
-      // so the second read must add none. Nothing else may change either.
-      const audit = join(p.agentQaRoot, 'execution_audit.jsonl')
-      const auditRows = () => existsSync(audit) ? readFileSync(audit, 'utf8').split('\n').filter(Boolean).length : 0
-      const settled = fixtureBytes(p.root, AUDIT_LOG)
-      const settledRows = auditRows()
-      expect(first).not.toHaveProperty('curationSnapshotWithheld')
-      expect(first.curationSnapshot!.rows[0]!.changes.map(row => row.change.evidenceToken)).toEqual([
-        `first ${maskedMarker('secret')}`,
-        secondValue === undefined ? 'second plain' : `second ${maskedMarker('secret')}`,
-      ])
-      expect(await read.read()).toEqual(first)
-      expect(fixtureBytes(p.root, AUDIT_LOG)).toEqual(settled)
-      expect(auditRows()).toBe(settledRows)
-      expect(read.host.jobs).not.toHaveBeenCalled()
-    },
-  )
-
-  it.each(['missing-metadata', 'payload-lost', 'unreadable', 'invalid-json', 'null', 'indexeddb',
-    'malformed-cookie', 'wrong-metadata'] as const)(
-    'COLD-AUTH-REFUSAL %s never creates partial masking authority', async kind => {
-      const p = project()
-      await authDeclarationFixture(p, kind)
-      const before = fixtureBytes(p.root)
-      expect(await createColdReadMaskingSources(p.configPath)()).toBeUndefined()
-      expectUnchangedTree(p.root, before, `refusal-${kind}`)
-      expect(existsSync(join(p.agentQaRoot, 'agent-jobs.db'))).toBe(false)
-      expect(existsSync(join(p.agentQaRoot, 'job-checkpoints'))).toBe(false)
-      const read = cold(p)
-      expect(await read.read()).not.toHaveProperty('curationSnapshot')
-      expect(existsSync(join(p.agentQaRoot, 'agent-jobs.db'))).toBe(false)
-      await publish(p, snapshot(p.runId))
-      const withheld = await read.read()
-      expect(withheld).toMatchObject({ chips: { curation: 'done' },
-        curationSnapshotWithheld: { reason: 'masking-unavailable' } })
-      expect(withheld).not.toHaveProperty('curationSnapshot')
-    },
-  )
-
-  it('COLD-AUTH-GLOBAL preserves the existing rejection of global auth declarations', async () => {
-    const p = project()
-    Object.assign(p.config.use, { authState: 'current-session' })
-    writeFileSync(p.configPath, JSON.stringify(p.config))
-    await expect(resolveConfig({ configPath: p.configPath, loadAuthPlugins: false })).rejects.toThrow()
-    const before = fixtureBytes(p.root)
-    expect(await createColdReadMaskingSources(p.configPath)()).toBeUndefined()
-    expectUnchangedTree(p.root, before, 'global-refusal')
-    expect(existsSync(p.agentQaRoot)).toBe(false)
-  })
-
-  it('COLD-AUTH masks configured single and suite auth-only values while preserving two checkpoint events', async () => {
-    const p = project()
-    const testId = generateTestId()
-    mkdirSync(join(p.root, 'tests'))
-    mkdirSync(join(p.root, 'suites'))
-    writeFileSync(join(p.root, 'tests', 'auth.yaml'), JSON.stringify({
-      'test-id': testId, name: 'Auth read', target: 'local', steps: ['Inspect page'],
-      use: { authState: 'single-session' },
-    }))
-    const suiteTestId = generateTestId()
-    writeFileSync(join(p.root, 'tests', 'suite-member.yaml'), JSON.stringify({
-      'test-id': suiteTestId, name: 'Suite member', target: 'local', steps: ['Inspect page'],
-    }))
-    writeFileSync(join(p.root, 'suites', 'auth.yaml'), JSON.stringify({
-      name: 'Auth suite', target: 'local', tests: [{ test: '../tests/suite-member.yaml', id: suiteTestId }],
-      use: { authState: 'suite-session' },
-    }))
-    const single = 'synthetic-single-cookie-value'
-    const suite = 'synthetic-suite-storage-value'
-    for (const [stateName, payload] of [
-      ['single-session', { cookies: [{ name: 'session', value: single }], origins: [] }],
-      ['suite-session', { cookies: [], origins: [{ origin: 'http://127.0.0.1:1',
-        localStorage: [{ name: 'token', value: suite }] }] }],
-    ] as const) {
-      await writeAuthStateFiles(resolveAuthStatePaths({ configDir: p.root,
-        targetName: 'local', stateName, target: { platform: 'web' } }), {
-        payload, metadata: { version: 1, kind: 'web', target: 'local', name: stateName,
-          capturedAt: '2026-09-14T00:00:00.000Z' },
-      })
-    }
-    await publish(p, snapshot(p.runId, [`first ${single}`, `second ${suite}`]))
-    const read = cold(p)
-    const result = await read.read()
-    expect(result.curationSnapshot!.rows[0]!.changes.map(row => row.change.evidenceToken))
-      .toEqual([`first ${maskedMarker('secret')}`, `second ${maskedMarker('secret')}`])
-    expect(result.curationSnapshot!.rows[0]!.changes).toHaveLength(2)
-    await expect(invokeFunction(read.host.registry, 'runs.knowledge', { runId: p.runId }, CLI_FUNCTION_CALLER))
-      .resolves.toMatchObject({ kind: 'ready', curation: { status: 'done' } })
-    expect(read.host.jobs).not.toHaveBeenCalled()
-  })
-
   it('COLD-TWO-EVENTS reads one confirmed record with both actual checkpoint events intact', async () => {
     const p = project()
     const recorded = snapshot(p.runId)
     await publish(p, recorded)
-    expect(getActiveMaskingContext()).toBeUndefined()
     const read = cold(p)
     await expect(read.read()).resolves.toMatchObject({ curationSnapshot: recorded })
     expect(read.host.jobs).not.toHaveBeenCalled()
-    expect(getActiveMaskingContext()).toBeUndefined()
   })
 
   it('COLD-KNOWLEDGE keeps the nested checkpoint read successful on the same cold registry', async () => {
@@ -357,20 +120,24 @@ describe('Wave 18 cold read masking recovery', () => {
     expect(read.host.jobs).not.toHaveBeenCalled()
   })
 
+  // 2026-10-14 (441-16, E3): an unreadable secrets file now refuses the knowledge read, so the
+  // withheld snapshot is the projection refusal, a raw value colliding with its recorded marker.
   it('COLD-KNOWLEDGE-WITHHELD keeps the knowledge read ready and names the withheld snapshot', async () => {
     const p = project()
-    await publish(p, snapshot(p.runId))
-    rmSync(p.secretFile)
+    const first = 'first-sensitive-event'
+    const recorded = snapshot(p.runId, [first, '[secret:FIRST]'])
+    recorded.rows[0]!.changes[1]!.change.observationId = recorded.rows[0]!.changes[0]!.change.observationId
+    writeFileSync(p.secretFile, `FIRST=${first}\n`)
+    await publish(p, recorded)
     const read = cold(p)
     const knowledge = await invokeFunction(
       read.host.registry, 'runs.knowledge', { runId: p.runId }, CLI_FUNCTION_CALLER,
     ) as { kind: string, learned: Record<string, unknown> }
     expect(knowledge.kind).toBe('ready')
-    expect(knowledge.learned.curationSnapshotWithheld).toEqual({ reason: 'masking-unavailable' })
+    expect(knowledge.learned.curationSnapshotWithheld).toEqual({ reason: 'projection-refused' })
     expect(knowledge.learned).not.toHaveProperty('curationSnapshot')
     expect(knowledge.learned).not.toHaveProperty('sinceThen')
     expect(read.host.jobs).not.toHaveBeenCalled()
-    expect(getActiveMaskingContext()).toBeUndefined()
   })
 
   it('COLD-HISTORICAL retains absent snapshot and missing-directory behavior with unavailable sources', async () => {
@@ -384,33 +151,6 @@ describe('Wave 18 cold read masking recovery', () => {
     expect(await read.read()).not.toHaveProperty('curationSnapshot')
   })
 
-  it('COLD-SOURCES rereads configured, retained and sensitive environment seeds without mutating stores', async () => {
-    const p = project()
-    const configured = 'configured-first-value'
-    const rotated = 'configured-second-value'
-    const retained = { TOKEN: 'retained-runtime-value' }
-    const envValue = 'environment-sensitive-value'
-    vi.stubEnv('COLD_READ_TEST_TOKEN', envValue)
-    writeFileSync(p.secretFile, `CURRENT=${configured}\n`)
-    const store = storeOf(retained)
-    const sources = createColdReadMaskingSources(p.configPath, () => [store])
-    expect((await sources())?.secretStores).toEqual([store])
-    expect(existsSync(p.agentQaRoot)).toBe(false)
-    const text = [configured, rotated, retained.TOKEN, envValue, 'ordinary-event'].join(' / ')
-    await publish(p, snapshot(p.runId, [text]))
-    const read = cold(p, () => [store])
-    const token = async () => (await read.read()).curationSnapshot!.rows[0]!.changes[0]!.change.evidenceToken
-    const marker = maskedMarker('secret')
-    expect(await token()).toBe([marker, rotated, marker, marker, 'ordinary-event'].join(' / '))
-    writeFileSync(p.secretFile, `CURRENT=${rotated}\n`)
-    retained.TOKEN = configured
-    expect(await token()).toBe([marker, marker, 'retained-runtime-value', marker, 'ordinary-event'].join(' / '))
-    const values: string[] = []
-    store.forEachSecret((_name, value) => { values.push(value) })
-    expect(values).toEqual([configured])
-    expect((await sources())?.secretsContent).toBe(`CURRENT=${rotated}\n`)
-  })
-
   it.each(['missing', 'invalid', 'unreadable'] as const)('COLD-SOURCE-REFUSAL %s sources retain the existing fail-closed context', async kind => {
     const p = project()
     await publish(p, snapshot(p.runId))
@@ -421,66 +161,24 @@ describe('Wave 18 cold read masking recovery', () => {
     const withheld = await read.read()
     expect(withheld).toHaveProperty('curationSnapshotWithheld', { reason: 'masking-unavailable' })
     expect(withheld).not.toHaveProperty('curationSnapshot')
-    expect(getActiveMaskingContext()).toBeUndefined()
+    await expect(invokeFunction(read.host.registry, 'runs.knowledge', { runId: p.runId }, CLI_FUNCTION_CALLER))
+      .rejects.toThrow(/Secrets file (not found|is invalid|could not be read)/)
   })
 
+  // 2026-10-14 (441-16, D-06): declared values mask to distinct names, so the duplicate is a raw
+  // value beside a recorded copy of its own marker.
   it('COLD-COLLISION refuses genuinely masked duplicate events without deleting history', async () => {
     const p = project()
     const first = 'first-sensitive-event'
-    const second = 'second-sensitive-event'
-    const recorded = snapshot(p.runId, [first, second])
+    const recorded = snapshot(p.runId, [first, '[secret:FIRST]'])
     // Only the evidence distinguishes these historical identities.
     recorded.rows[0]!.changes[1]!.change.observationId = recorded.rows[0]!.changes[0]!.change.observationId
-    writeFileSync(p.secretFile, `FIRST=${first}\nSECOND=${second}\n`)
+    writeFileSync(p.secretFile, `FIRST=${first}\n`)
     await publish(p, recorded)
     const withheld = await cold(p).read()
     expect(withheld).toHaveProperty('curationSnapshotWithheld', { reason: 'projection-refused' })
     expect(withheld).not.toHaveProperty('curationSnapshot')
     expect(JSON.stringify(withheld)).not.toContain(first)
     expect(recorded.rows[0]!.changes).toHaveLength(2)
-    expect(getActiveMaskingContext()).toBeUndefined()
-  })
-
-  it('COLD-LIFETIME preserves execution/audit authority and disposes only its own context after await', async () => {
-    const p = project()
-    const secret = 'lifetime-sensitive-value'
-    writeFileSync(p.secretFile, `VALUE=${secret}\n`)
-    await publish(p, snapshot(p.runId, [secret]))
-    const read = cold(p)
-    const sink = { appendGuardrailAudit() {} }
-    let active: MaskingContext | undefined
-    const original = CurationSnapshotSchema.safeParse.bind(CurationSnapshotSchema)
-    vi.spyOn(CurationSnapshotSchema, 'safeParse').mockImplementation((...args) => {
-      active = getActiveMaskingContext()
-      expect(getActiveExecutionContext()).toBe('ci')
-      expect(getActiveAuditSink()).toBe(sink)
-      return original(...args)
-    })
-    await runSafetyScope({ executionContext: 'ci', auditSink: sink }, async () => {
-      await read.read()
-      expect(getActiveMaskingContext()).toBeUndefined()
-      expect(getActiveExecutionContext()).toBe('ci')
-      expect(getActiveAuditSink()).toBe(sink)
-    })
-    expect(active).toBeDefined()
-    // The wrapper's underlying registrations have been disposed; retained host stores were not.
-    expect(active!.mask(secret)).toBe(secret)
-  })
-
-  it('COLD-ACTIVE keeps an existing run masker and skips unavailable cold sources', async () => {
-    const p = project()
-    const secret = 'active-context-value'
-    await publish(p, snapshot(p.runId, [secret]))
-    rmSync(p.secretFile)
-    const context = buildRunMaskingContext({ secretStore: storeOf({ VALUE: secret }), env: {} })
-    const read = cold(p)
-    try {
-      await runSafetyScope({ maskingContext: context }, async () => {
-        const result = await read.read()
-        expect(result.curationSnapshot!.rows[0]!.changes[0]!.change.evidenceToken).toBe('<SECRET_0>')
-        expect(getActiveMaskingContext()).toBe(context)
-      })
-      expect(context.mask(secret)).toBe('<SECRET_0>')
-    } finally { context.dispose() }
   })
 })

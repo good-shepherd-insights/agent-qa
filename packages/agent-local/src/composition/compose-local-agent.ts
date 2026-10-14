@@ -177,12 +177,10 @@ import type { FeedbackPort, FeedbackReadsPort } from '@vostride/agent-qa-schema'
 import type { ArtifactRef } from '@vostride/agent-qa-schema'
 import type { ServedRecordFacts } from '@vostride/agent-qa-knowledge-local'
 export type { ServedRecordFacts, MarkTriage, ApplyFeedbackInput } from '@vostride/agent-qa-knowledge-local'
-import { ReplayIncompleteError, SecretStore } from '@vostride/agent-qa-runner'
+import { ReplayIncompleteError } from '@vostride/agent-qa-runner'
 import {
   defaultGuardrailPolicyInput,
-  getActiveAuditSink,
   getActiveExecutionContext,
-  getActiveMaskingContext,
   loadGuardrailPolicy,
   scanConstructedArtifact,
   setActiveExecutionContextResolver,
@@ -197,11 +195,9 @@ import {
   loadCompletedRunHandoff,
   slugBranch,
 } from '@vostride/agent-qa-runner-local'
-import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
+import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
 import {
   admitAnalysisArtifactForRun,
-  maskedMarker,
-  PLACEHOLDER_PATTERN,
   ANALYSIS_FILE,
   asJobId,
   DEFAULT_EMBEDDING_PROFILE,
@@ -243,7 +239,7 @@ import type {
 import { createKnowledgeReaderPort } from './knowledge-review-reader.js'
 import type { SightMemoryEntities } from './knowledge-review-reader.js'
 import { createEvidenceBlobReader, readEvidenceBlobBytes } from './evidence-blob-reader.js'
-import { buildRunMaskingContext, buildRunPorts } from './run-composition.js'
+import { buildRunPorts } from './run-composition.js'
 import type { RetrievalRungResolver } from './run-composition.js'
 import { writeAnalysisArtifact } from '../analysis/persist-analysis.js'
 import { createJsonlSessionLog } from '../session/jsonl-session-log.js'
@@ -1736,15 +1732,8 @@ export const UNCLAIMABLE_BY_PROSE_POSTURE: Record<CandidateProsePosture, readonl
   })
 
 export interface ComposeLocalAgentInput {
-  // 2026-10-14 (441-55, D-06): the declared-secret mask for the chat projections.
+  // 2026-10-14 (441-55, 441-16, D-06): the declared-secret mask for chat projections and run reads.
   readonly mask: MaskFn
-  /** Current host sources for cold snapshot reads. Undefined means no masking authority. */
-  readonly readMaskingSources?: () => Promise<{
-    readonly secretsContent: string
-    readonly secretStores: readonly { forEachSecret(cb: (name: string, value: string) => void): void }[]
-    readonly env: Record<string, string | undefined>
-    readonly authStatePayloads?: readonly unknown[]
-  } | undefined>
   /** Immutable neutral data resolved by the host, reused until recomposition. */
   readonly resolveTrustPriors?: CreateLocalKnowledgeStoreConfig['resolveTrustPriors']
   readonly feedback?: FeedbackPort
@@ -2571,23 +2560,6 @@ function chatToolsetHash(registry: FunctionRegistry | undefined): string {
   return sha256hex16(chatToolsetIds(registry).join('\n'))
 }
 
-// The cold read-scope allowlist: unary reads that mask stored text at read time and so need a
-// masking context on doors that enter none. 423 gap closure widened it with runs.evidence, and
-// 423-46 widened it again with the two feedback reads on the owner's recorded decision (2026-09-16,
-// option A): a cold host — the dashboard once the run ends — shows each mark note, the recorded
-// reasoning and the joined record content readable with declared-secret spans chipped, rather than
-// replacing all three with the display marker. ROADMAP SC4 asks the history read for each mark's
-// note, and one mechanism now answers for all five reads. Membership is pinned by
-// HTTP-FEEDBACK-HUMAN-POSTURE (423-feedback-reads.test.ts), once measured by leg F10 of the
-// phase's mutation driver (since removed). 431 D-06 adds runs.overview, whose test names, step
-// labels and record summaries are stored text, and runs.list, whose test names are the same stored
-// text; OVERVIEW-COLD-SCOPE pins all seven members exactly.
-// Frozen at runtime: `as const` alone would let any importer splice masking off for every host.
-export const COLD_READ_SCOPE_FUNCTION_IDS = Object.freeze([
-  'runs.postprocessing', 'runs.knowledge', 'runs.evidence', 'runs.marks.history', 'runs.mark.preview',
-  'runs.overview', 'runs.list',
-] as const satisfies readonly string[])
-
 export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost {
   const clock = input.clock ?? SYSTEM_CLOCK
 
@@ -3006,60 +2978,8 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
   }
 
   const registry = createFunctionRegistry({
-    ...(input.readMaskingSources === undefined ? {} : {
-      withReadScope: async (functionId: string, invoke: () => Promise<unknown>) => {
-        // Do not change reads outside the allowlist or replace the context of a run/turn that
-        // already holds masking authority.
-        if (!(COLD_READ_SCOPE_FUNCTION_IDS as readonly string[]).includes(functionId)
-          || getActiveMaskingContext() !== undefined) return invoke()
-        let masking: ReturnType<typeof buildRunMaskingContext> | undefined
-        try {
-          const sources = await input.readMaskingSources!()
-          if (sources !== undefined) {
-            const declared = SecretStore.fromEnvContent(sources.secretsContent)
-            const entries: [string, string][] = []
-            for (const store of [declared, ...sources.secretStores]) {
-              store.forEachSecret((name, value) => { entries.push([name, value]) })
-            }
-            masking = buildRunMaskingContext({ env: sources.env,
-              authStatePayloads: sources.authStatePayloads, secretStore: {
-              forEachSecret(cb) { for (const [name, value] of entries) cb(name, value) },
-            } })
-          }
-        } catch {
-          // Unavailable or invalid sources never authorize an empty context. Each op's own
-          // no-context arm remains authoritative (runs.evidence answers masking-unavailable).
-        }
-        if (masking === undefined) return invoke()
-        const coldMasking = masking
-        const maskFresh = (text: string) => coldMasking.mask(text).replaceAll(
-          PLACEHOLDER_PATTERN,
-          (_token, category: string) => maskedMarker(category === 'EMAIL' ? 'email' : 'secret'),
-        )
-        const mask = (text: string): string => {
-          // Keep recorded placeholders verbatim. Only newly masked spans receive display
-          // markers: a fresh SECRET_0 has no relationship to the run's historical SECRET_0.
-          let cursor = 0
-          let result = ''
-          for (const token of text.matchAll(PLACEHOLDER_PATTERN)) {
-            result += maskFresh(text.slice(cursor, token.index)) + token[0]
-            cursor = token.index + token[0].length
-          }
-          return result + maskFresh(text.slice(cursor))
-        }
-        const auditSink = getActiveAuditSink()
-        try {
-          return await runSafetyScope({
-            maskingContext: { mask, unmask: text => text },
-            executionContext: getActiveExecutionContext(),
-            ...(auditSink === undefined ? {} : { auditSink }),
-          }, invoke)
-        } finally {
-          masking.dispose()
-        }
-      },
-    }),
     deps: {
+      secretMask: input.mask,
       runs: {
         ...runsReader,
         get: async (runId) => {

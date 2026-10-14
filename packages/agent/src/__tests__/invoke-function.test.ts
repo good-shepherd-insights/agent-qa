@@ -39,51 +39,6 @@ import {
 import type { CreateFunctionRegistryOptions } from '../functions/registry.js'
 import type { FunctionDeps, FunctionSpec } from '../functions/spec.js'
 
-describe('read invocation scope', () => {
-  // RE-SPELLED 2026-09-30 (432-13): 'READ-SCOPE surrounds awaited read dispatch after the gate and
-  // preserves output validation'. The scope still surrounds the dispatch; no gate row precedes it.
-  it('READ-SCOPE surrounds awaited read dispatch and preserves output validation', async () => {
-    const events: string[] = []
-    const sink = capturingSink()
-    const spec: FunctionSpec = {
-      ...runsListSpec,
-      invoke: async () => {
-        events.push('invoke')
-        await Promise.resolve()
-        events.push('settled')
-        return []
-      },
-    }
-    const registry = createRegistryFromSpecs([spec], {
-      ...registryOptions({ auditSink: sink.sink }),
-      withReadScope: async (functionId: string, invoke: () => Promise<unknown>) => {
-        expect(functionId).toBe('runs.list')
-        expect(sink.auditRows()).toHaveLength(0)
-        events.push('enter')
-        try { return await invoke() } finally { events.push('dispose') }
-      },
-    })
-    expect(await invokeFunction(registry, 'runs.list', {}, caller(['read']))).toEqual([])
-    expect(events).toEqual(['enter', 'invoke', 'settled', 'dispose'])
-  })
-
-  it('READ-SCOPE never runs for denied calls or write dispatch', async () => {
-    let scopes = 0
-    const registry = createRegistryFromSpecs([runsListSpec, configSetSpec], {
-      ...registryOptions(),
-      withReadScope: async (_functionId: string, invoke: () => Promise<unknown>) => {
-        scopes++
-        return invoke()
-      },
-    })
-    // 432-20 (D-12): the denied call is now an input refusal — no caller is refused for its grants.
-    await expect(invokeFunction(registry, 'runs.list', { unexpected: true }, caller([])))
-      .rejects.toBeInstanceOf(FunctionInputError)
-    await invokeFunction(registry, 'config.set', {}, caller(['config-write']))
-    expect(scopes).toBe(0)
-  })
-})
-
 function handoff(runId: string, buildOrdinal: number): CompletedRunHandoff {
   return {
     schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
@@ -108,6 +63,7 @@ function spyDeps(documents: readonly CompletedRunHandoff[] = []): SpyDeps {
   let listCalls = 0
   return {
     deps: {
+      secretMask: (text: string) => text,
       runs: {
         list: () => {
           listCalls += 1

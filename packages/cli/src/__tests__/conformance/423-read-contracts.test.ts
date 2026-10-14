@@ -32,7 +32,6 @@ import {
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
 import {
-  buildRunMaskingContext,
   createEvidenceBlobReader,
   type LocalAgentHost,
 } from '@vostride/agent-qa-agent-local'
@@ -44,8 +43,8 @@ import {
   type RunServicePorts,
 } from '@vostride/agent-qa-dashboard'
 import { AGENT_QA_TOOL_PROJECTIONS, buildAgentQaMcpServer, UNPROJECTED_OPS } from '@vostride/agent-qa-mcp'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
-import { setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
 import {
   asRunId,
   canonicalJson,
@@ -229,14 +228,11 @@ function knowledgeHandoff(runId: RunId, allowedPlaceholder: string): CompletedRu
 async function openDurableScene() {
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-423-38-durable-'))
   const db = new DashboardDatabase({ dbPath: join(root, 'dashboard.db') })
-  const values = { AUTH_STATE, ALLOWED }
-  const store = { forEachSecret(cb: (name: string, value: string) => void) {
-    for (const [name, value] of Object.entries(values)) cb(name, value) } }
-  const mask = buildRunMaskingContext({ secretStore: store, env: {} })
-  const placeholders = new Map(mask.snapshotRegistered().map(({ value, placeholder }) => [value, placeholder]))
-  const authPlaceholder = placeholders.get(AUTH_STATE)!
-  const allowedPlaceholder = placeholders.get(ALLOWED)!
-  setActiveMaskingContextResolver(() => mask)
+  // 2026-10-14 (441-16, D-06): records hold the declared marker the run wrote; reads mask with the same store.
+  const redactor = new SecretRedactor(new SecretStore({ AUTH_STATE, ALLOWED }))
+  const mask = (text: string) => redactor.redactString(text)
+  const authPlaceholder = mask(AUTH_STATE)
+  const allowedPlaceholder = mask(ALLOWED)
 
   const runId = db.insertRun({ name: 'Read contract fixture', status: 'failed', duration: 1,
     startedAt: new Date(0).toISOString(), endedAt: new Date(1).toISOString() })
@@ -309,17 +305,16 @@ async function openDurableScene() {
     },
     runDetail: createDashboardRunDetailReader(db),
     evidenceBlobs: createEvidenceBlobReader({ agentQaRoot: root }),
+    secretMask: mask,
   } as unknown as FunctionDeps
   // 2026-10-01 (432-31): the retired, unread `resolveExecutionContext` registry option is dropped.
   const registry = createFunctionRegistry({ deps, auditSink: { appendGuardrailAudit() {} } })
   const agentHost = composeDashboardAgentHost({ registry } as LocalAgentHost)
-  const doors = await openDoors({ registry, agentHost, db, maskText: text => mask.mask(text) })
+  const doors = await openDoors({ registry, agentHost, db, maskText: mask })
   return { root, db, runId, excludedRunId, authPlaceholder, allowedPlaceholder, doors, snapshot,
     async close() {
       await doors.close()
       db.close()
-      setActiveMaskingContextResolver(() => undefined)
-      mask.dispose()
       rmSync(root, { recursive: true, force: true })
     } }
 }

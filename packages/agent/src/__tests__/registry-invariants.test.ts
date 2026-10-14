@@ -373,6 +373,7 @@ function handoff(runId: string): CompletedRunHandoff {
 function fakeDeps(): FunctionDeps {
   const documents = [handoff(FIXTURE_RUN_ID)]
   return {
+    secretMask: (text: string) => text,
     runs: {
       list: () => Promise.resolve(documents),
       get: runId => Promise.resolve(documents.find(document => document.runId === runId)),

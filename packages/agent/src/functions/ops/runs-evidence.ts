@@ -1,4 +1,3 @@
-import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
 import {
   EvidenceDocumentSchema, EvidenceEntrySchema, RunsEvidenceInputSchema, RunsEvidenceOutputContract,
   RunsEvidenceResultSchema, sha256hexBytes, utf8Decode, utf8Encode,
@@ -123,17 +122,11 @@ export const runsEvidenceSpec: FunctionSpec<RunsEvidenceInput, RunsEvidenceResul
     const parsed = EvidenceDocumentSchema.safeParse(rawDocument)
     if (!parsed.success || parsed.data.kind !== address.kind) return error('invalid-document', capture)
     // A valid document that cannot be masked is unreadable, never evidence and never invalid.
-    let declared = deps.secretMask
-    if (declared === undefined) {
-      // 2026-10-13 (441-16): the ambient arm is taken only when no secretMask is bound; 441-16-2 deletes it.
-      const context = getActiveMaskingContext()
-      if (context === undefined) return error('masking-unavailable', capture)
-      declared = text => context.mask(text)
-    }
-    const bound = declared
+    const declared = deps.secretMask
+    if (declared === undefined) return error('masking-unavailable', capture)
     let maskFailed = false
     const mask: MaskFn = text => {
-      try { return bound(text) } catch (cause) { maskFailed = true; throw cause }
+      try { return declared(text) } catch (cause) { maskFailed = true; throw cause }
     }
     try {
       const document = maskDocument(parsed.data, mask)

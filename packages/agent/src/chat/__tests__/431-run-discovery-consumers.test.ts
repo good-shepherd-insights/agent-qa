@@ -66,6 +66,7 @@ const NEWEST = 'run-tie-b'
 function listRegistry(documents: readonly CompletedRunHandoff[]) {
   return createRegistryFromSpecs([runsListSpec], {
     deps: {
+      secretMask: (text: string) => text,
       runs: {
         list: () => Promise.resolve(documents),
         get: (runId: string) => Promise.resolve(documents.find((document) => document.runId === runId)),

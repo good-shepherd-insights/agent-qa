@@ -121,6 +121,7 @@ const DOCUMENTS: readonly CompletedRunHandoff[] = [
 ]
 
 const DEPS: FunctionDeps = {
+  secretMask: (text: string) => text,
   runs: {
     list: () => Promise.resolve(DOCUMENTS),
     get: (runId) => Promise.resolve(DOCUMENTS.find((document) => document.runId === runId)),
@@ -719,6 +720,7 @@ function countingDeps(): { readonly deps: FunctionDeps; readonly calls: () => nu
     knowledge: wrap(DEPS.knowledge),
     entities: wrap(DEPS.entities),
     config: wrap(DEPS.config),
+    secretMask: (text: string) => text,
   }
   return { deps, calls: () => calls }
 }

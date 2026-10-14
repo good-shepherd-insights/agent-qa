@@ -988,8 +988,8 @@ export interface StartedRun {
  *
  * `capabilityOf` answers `undefined` for a run this host has no live session for (the op turns
  * that into `unknown_run`) and a `LiveStreamDeclaration` — possibly `{ kind: 'none' }` — otherwise.
- * `onMinted` is the Q4(b) hook: every minted token value is offered to the host's masking store, so
- * runs started after the mint mask it if it is ever printed.
+ * `onMinted` observes every minted token value. 2026-10-14 (441-16, D-01): no shipped host binds it
+ * (a minted token is not a declared secret); tests use it to capture what the op really minted.
  *
  * `editorCapabilityOf` is the editor subject's read (428 D-07), through which `editor.liveurl`
  * mints. ABSENT means this host serves no live editor — the standalone MCP host and the MCP App

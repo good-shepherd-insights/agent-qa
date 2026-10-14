@@ -11,13 +11,11 @@
 // BUILT FIELD BY FIELD. Nothing below spreads a producer, knowledge or dashboard value into the
 // result, so a field added upstream cannot reach this contract without being named here.
 
-import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
 import {
   RUN_OVERVIEW_TEXT_MAX_CODE_POINTS,
   RUN_OVERVIEW_TRUNCATION_INDICATOR,
   RunOverviewProjectionSchema,
   RunsOverviewInputSchema,
-  maskedMarker,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
@@ -50,6 +48,7 @@ import type { ClauseVerdict, FunctionDeps, FunctionSpec } from '../spec.js'
 import { annotatePresence } from './evidence-presence.js'
 import { RunNotFoundError } from './runs-get.js'
 import { runsKnowledgeSpec } from './runs-knowledge.js'
+import { requireSecretMask } from './secret-mask.js'
 
 export const RUNS_OVERVIEW_FUNCTION_ID = 'runs.overview'
 
@@ -77,11 +76,6 @@ export function overviewText(raw: string, mask: MaskFn): RunOverviewText {
       + RUN_OVERVIEW_TRUNCATION_INDICATOR,
     truncated: true,
   }
-}
-
-function activeMask(): MaskFn {
-  const masking = getActiveMaskingContext()
-  return masking === undefined ? () => maskedMarker('secret') : (text) => masking.mask(text)
 }
 
 const withPresence = (presence: Presence, sha: string) => {
@@ -363,7 +357,7 @@ export const runsOverviewSpec: FunctionSpec<RunsOverviewInput, RunOverviewProjec
       ? { status: 'unknown' }
       : await deps.runs.getRecordedTargets(input.runId)
     const presence = await readPresence(deps, input.runId, rows)
-    const mask = activeMask()
+    const mask = requireSecretMask(deps, RUNS_OVERVIEW_FUNCTION_ID)
 
     return {
       runId,

@@ -9,7 +9,6 @@
 // port and nothing to await can have an exhaustive table written over it for the cost of a test
 // file rather than a store.
 
-import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
@@ -23,7 +22,7 @@ import type {
   RunDetailSubAction,
   RunId,
 } from '@vostride/agent-qa-schema'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import { invokeFunction } from '../functions/invoke.js'
 import {
@@ -351,9 +350,6 @@ describe('runs.detail — presence per artifact ref (D-17)', () => {
 // scope, each is served every time: every attempt reads the same ports the same number of times,
 // every caller gets the same projection, and no audit row is written.
 describe('C432-ALL-OPS-AVAILABLE: the 432-27 run reads serve every caller', () => {
-  beforeEach(() => setActiveMaskingContextResolver(() => createMaskingContext()))
-  afterEach(() => setActiveMaskingContextResolver(() => undefined))
-
   it('C432-ALL-OPS-AVAILABLE: a retried runs.detail and runs.overview are served alike to every caller', async () => {
     const document: CompletedRunHandoff = {
       schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
@@ -389,6 +385,7 @@ describe('C432-ALL-OPS-AVAILABLE: the 432-27 run reads serve every caller', () =
     }
     const reads = { detail: 0, handoff: 0 }
     const deps: FunctionDeps = {
+      secretMask: (text: string) => text,
       runs: {
         list: () => Promise.resolve([document]),
         get: (runId) => {

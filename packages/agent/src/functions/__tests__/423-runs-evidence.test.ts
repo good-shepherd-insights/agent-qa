@@ -272,7 +272,8 @@ it('EVIDENCE-CONTRACT rejects crossed documents, extra fields and false ready st
 describe('C441-COLD-READ', () => {
   const caller = { surface: 'test', origin: 'agent' } as FunctionCaller
   const auditSink = { appendGuardrailAudit() {} }
-  const aria: EvidenceDocument = { schemaVersion: 1, kind: 'aria', tree: 'textbox "Password" value="Hunter-42-zz" for qa@example.com' }
+  const aria: EvidenceDocument = { schemaVersion: 1, kind: 'aria',
+    tree: 'textbox "Password" value="Hunter-42-zz" for qa@example.com; cookie session=undeclared-cookie-441' }
   const readThroughRegistry = (deps: FunctionDeps, address: RunsEvidenceInput) =>
     invokeFunction(createFunctionRegistry({ deps, auditSink }), 'runs.evidence', address, caller)
 
@@ -280,7 +281,8 @@ describe('C441-COLD-READ', () => {
     const f = fixture('aria', aria, declaredMask({ PW_441: 'Hunter-42-zz' }))
     const result = await readThroughRegistry(f.deps, f.address)
     expect(result).toMatchObject({ outcome: 'ready',
-      document: { kind: 'aria', tree: 'textbox "Password" value="[secret:PW_441]" for qa@example.com' } })
+      document: { kind: 'aria',
+        tree: 'textbox "Password" value="[secret:PW_441]" for qa@example.com; cookie session=undeclared-cookie-441' } })
     expect(JSON.stringify(result)).not.toContain('Hunter-42-zz')
   })
 

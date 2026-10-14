@@ -22,7 +22,7 @@ import { AGENT_QA_TOOL_PROJECTIONS } from '@vostride/agent-qa-mcp'
 import { DashboardDatabase, createDashboardRunDetailReader } from '@vostride/agent-qa-dashboard'
 import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
 import { FsEvidenceArtifactStore, FsHandoffStore } from '@vostride/agent-qa-runner-local'
-import { CURRENT_HANDOFF_SCHEMA_VERSION, maskedMarker } from '@vostride/agent-qa-schema'
+import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, EvidenceDocument, PerTestOutcome } from '@vostride/agent-qa-schema'
 import { Command, CommanderError } from 'commander'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -363,7 +363,7 @@ describe('CLI-RUN-READ-PARITY: runs list, overview and knowledge', () => {
     const mcp = await mcpReader({ configPath: project.configPath, agentQaRoot: root })
 
     const listed = json(await cli(project.configPath, ['runs', 'list', '--json']))
-    expect(listed).toMatchObject([{ runId, tests: [{ testId: 't-login', testName: `Login as ${maskedMarker('secret')}` }] }])
+    expect(listed).toMatchObject([{ runId, tests: [{ testId: 't-login', testName: 'Login as [secret:LIST_PASSWORD]' }] }])
     expect(listed).toEqual(unwrapped(await mcp.structured('agent_qa_list_runs', {})))
     const human = await cli(project.configPath, ['runs', 'list'])
     expect(human.exitCode).toBe(0)
@@ -376,13 +376,14 @@ describe('CLI-RUN-READ-PARITY: runs list, overview and knowledge', () => {
     const visible = json(await cli(project.configPath, ['runs', 'list', '--test', 'LOGIN AS', '--json']))
     expect((visible as { runId: string }[]).map((row) => row.runId)).toEqual([runId])
 
+    // 2026-10-14 (441-16, E3): without a readable secrets file the list refuses with the loader's message.
     rmSync(join(project.root, '.env.secrets.local'))
-    const unmaskable = await cli(project.configPath, ['runs', 'list', '--test', 'LOGIN AS', '--json'])
-    expect(unmaskable.exitCode).toBe(1)
-    expect(unmaskable.stdout).toBe('')
-    expect(unmaskable.stderr).toMatch(/masking sources could not be loaded[\s\S]*filter by test id/)
-    const byId = json(await cli(project.configPath, ['runs', 'list', '--test', 't-login', '--json']))
-    expect((byId as { runId: string }[]).map((row) => row.runId)).toEqual([runId])
+    for (const test of ['LOGIN AS', 't-login']) {
+      const unmaskable = await cli(project.configPath, ['runs', 'list', '--test', test, '--json'])
+      expect(unmaskable.exitCode, test).toBe(1)
+      expect(unmaskable.stdout, test).toBe('')
+      expect(unmaskable.stderr, test).toMatch(/Secrets file not found/)
+    }
   })
 
   it.each([

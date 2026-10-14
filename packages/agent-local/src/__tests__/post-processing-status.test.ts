@@ -14,7 +14,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 
 import { chainJobIdsForRun, invokeFunction, RUNS_POST_PROCESSING_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import type { ClockPort, ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
@@ -142,7 +142,6 @@ const roots: string[] = []
 const hosts: LocalAgentHost[] = []
 
 afterEach(async () => {
-  setActiveMaskingContextResolver(() => undefined)
   for (const host of hosts.splice(0)) await host.close()
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
@@ -162,11 +161,11 @@ interface Harness {
 function createHarness(existingRoot?: string, postRun?: {
   curateRun?: PostRunJobCapabilities['curateRun']
   stageAdversarialProposal?: PostRunJobCapabilities['stageAdversarialProposal']
-}): Harness {
+}, mask: (text: string) => string = (text) => text): Harness {
   const agentQaRoot = existingRoot ?? mkdtempSync(join(tmpdir(), 'agent-qa-pp-status-'))
   if (existingRoot === undefined) roots.push(agentQaRoot)
   const host = composeLocalAgent({
-    mask: (text) => text,
+    mask,
     mintQuarantineIdentityPath: MINT_IDENTITY,
     agentQaRoot,
     config: TEST_CONFIG,
@@ -308,8 +307,6 @@ describe('423 completed checkpoint snapshot', () => {
       })
       expect(cold).not.toHaveProperty('notification')
       expect(await jobs.store.listNotifications()).toEqual([])
-      const masking = createMaskingContext()
-      setActiveMaskingContextResolver(() => masking)
       const projected = await createHarness(writer.agentQaRoot).status()
       expect(projected.curationSnapshot).toEqual(CURATION_SNAPSHOT)
       expect(projected.chips).toEqual({ analysis: 'done', curation: 'done' })
@@ -449,8 +446,6 @@ describe('423 cold stage facts', () => {
       const before = readQueue(writer.agentQaRoot)
       expect(before.rows).toHaveLength(3)
       const bytes = readFileSync(join(writer.agentQaRoot, AGENT_JOB_STORE_DB_FILE))
-      const masking = createMaskingContext()
-      setActiveMaskingContextResolver(() => masking)
       const cold = createHarness(writer.agentQaRoot)
       const result = await cold.status()
       const expected = Object.fromEntries(stages.map(([stage, , , id]) => {
@@ -515,8 +510,6 @@ describe('423 cold stage facts', () => {
     }
     expect(rowOf(queued).started_at).toBeNull()
 
-    const masking = createMaskingContext()
-    setActiveMaskingContextResolver(() => masking)
     const cold = createHarness(writer.agentQaRoot)
     const statusOf = async (runId: string) => await invokeFunction(
       cold.host.registry,
@@ -543,7 +536,9 @@ describe('423 cold stage facts', () => {
     expect('claimedAt' in never!).toBe(false)
   })
 
-  it('MASK-FAILURE-REASON masks persisted prose with the active read context', async () => {
+  // RE-SPELLED 2026-10-14 (441-16, D-06/D-23) from '… with the active read context': the host's
+  // declared mask replaces the installed context, and the undeclared email is returned as written.
+  it("MASK-FAILURE-REASON masks persisted prose with the host's declared mask", async () => {
     const writer = createHarness()
     const jobs = await writer.host.jobs()
     const fence = await jobs.store.adoptEpoch(1)
@@ -554,13 +549,11 @@ describe('423 cold stage facts', () => {
     await closeWriter(writer)
     const before = readQueue(writer.agentQaRoot)
     expect(before.rows[0]?.last_failure_reason).toBe(reason)
-    const masking = createMaskingContext()
-    masking.register('synthetic-cold-secret')
-    setActiveMaskingContextResolver(() => masking)
-    const result = await createHarness(writer.agentQaRoot).status()
-    expect(result.stageDetails?.analysis?.lastFailureReason).toBe(masking.mask(reason))
+    const redactor = new SecretRedactor(new SecretStore({ COLD_441: 'synthetic-cold-secret' }))
+    const result = await createHarness(writer.agentQaRoot, undefined, (text) => redactor.redactString(text)).status()
+    expect(result.stageDetails?.analysis?.lastFailureReason).toBe('[secret:COLD_441] for operator@example.test')
     expect(JSON.stringify(result)).not.toContain('synthetic-cold-secret')
-    expect(JSON.stringify(result)).not.toContain('operator@example.test')
+    expect(JSON.stringify(result)).toContain('operator@example.test')
     expect(readQueue(writer.agentQaRoot)).toEqual(before)
   })
 

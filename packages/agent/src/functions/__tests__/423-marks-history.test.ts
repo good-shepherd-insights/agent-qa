@@ -1,8 +1,8 @@
 // 2026-09-15, 423 D-19: ordinal mark history over a read-only feedback port.
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
-import { MarkReceiptSchema, RunsMarksHistoryResultSchema, asRunId, maskedMarker } from '@vostride/agent-qa-schema'
-import type { FunctionCaller, MarkHistoryChangedRecord, MarkReceipt, RunId } from '@vostride/agent-qa-schema'
+import { describe, expect, it, vi } from 'vitest'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
+import { MarkReceiptSchema, RunsMarksHistoryResultSchema, asRunId } from '@vostride/agent-qa-schema'
+import type { FunctionCaller, MarkHistoryChangedRecord, MarkReceipt, MaskFn, RunId } from '@vostride/agent-qa-schema'
 import { invokeFunction } from '../invoke.js'
 import { runsMarksHistorySpec } from '../ops/runs-marks-history.js'
 import { createRegistryFromSpecs } from '../registry.js'
@@ -89,7 +89,12 @@ function port(read: unknown) {
   return { history: vi.fn(async (_runId: RunId) => read) }
 }
 
-function deps(feedbackReads?: ReturnType<typeof port>) {
+function declaredMask(secrets: Record<string, string>): MaskFn {
+  const redactor = new SecretRedactor(new SecretStore(secrets))
+  return text => redactor.redactString(text)
+}
+
+function deps(feedbackReads?: ReturnType<typeof port>, secretMask: MaskFn | null = text => text) {
   const forbidden = vi.fn(() => { throw new Error('history must not touch runs, config or the mark writer') })
   return {
     forbidden,
@@ -100,13 +105,14 @@ function deps(feedbackReads?: ReturnType<typeof port>) {
       config: { getMasked: forbidden },
       feedback: { mark: forbidden, marksFor: forbidden },
       ...(feedbackReads === undefined ? {} : { feedbackReads }),
+      ...(secretMask === null ? {} : { secretMask }),
     } as unknown as FunctionDeps,
   }
 }
 
-async function read(entries: readonly ReadEntry[]) {
+async function read(entries: readonly ReadEntry[], secretMask?: MaskFn | null) {
   const reads = port({ kind: 'history', entries })
-  const { deps: bound, forbidden } = deps(reads)
+  const { deps: bound, forbidden } = deps(reads, secretMask)
   const result = await historySpec().invoke({ runId }, bound)
   expect(forbidden).not.toHaveBeenCalled()
   expect(reads.history).toHaveBeenCalledWith(runId)
@@ -117,9 +123,6 @@ function expectedFacts(value: MarkReceipt): Record<string, unknown> {
   const { schemaVersion: _version, runSlug: _slug, correctedExpectation, correctedAction, ...facts } = value
   return { ...facts, corrected: { expectation: correctedExpectation !== undefined, action: correctedAction !== undefined } }
 }
-
-beforeEach(() => setActiveMaskingContextResolver(() => createMaskingContext()))
-afterEach(() => setActiveMaskingContextResolver(() => undefined))
 
 describe('423-36 runs.marks.history contract (D-19)', () => {
   it.each(['A', 'B'] as const)('HISTORY-ORDINAL: sequence %s returns every receipt fact in ledger ordinal order', async name => {
@@ -242,30 +245,27 @@ describe('423-36 runs.marks.history contract (D-19)', () => {
   // RE-SPELLED 432-09 from 'HISTORY-MASK: note, root-cause producer and proposal decision reason cross
   // the live mask; identities do not': the joined record content crosses the mask in its place.
   it('HISTORY-MASK: note, root-cause producer and changed record content cross the live mask; identities do not', async () => {
-    const masking = createMaskingContext()
-    masking.register('synthetic-sensitive-token')
-    setActiveMaskingContextResolver(() => masking)
     const secret = 'synthetic-sensitive-token'
+    const mask = declaredMask({ TOKEN_441: secret })
     const entries: ReadEntry[] = [
       { receipt: receipt(1, { testIndex: 0, testId: 'member-a' }, { note: `note ${secret}`,
         rootCause: { class: 'app_bug', producer: `producer ${secret}` },
         disposition: knowledgeFix('fact', ['mem_m1']) }),
       changedRecords: [{ recordId: 'mem_m1', recordContent: { ...CONTENT, applicability: { ...CONTENT.applicability, anchors: [] }, content: `content ${secret}` } }] },
     ]
-    const result = await read(entries)
+    const result = await read(entries, mask)
     const [entry] = result.entries
     expect(entry).toMatchObject({
-      markId: markIdOf(1), testId: 'member-a', note: masking.mask(`note ${secret}`),
-      rootCause: { class: 'app_bug', producer: masking.mask(`producer ${secret}`) },
+      markId: markIdOf(1), testId: 'member-a', note: mask(`note ${secret}`),
+      rootCause: { class: 'app_bug', producer: mask(`producer ${secret}`) },
       disposition: knowledgeFix('fact', ['mem_m1']),
-      changedRecords: [{ recordId: 'mem_m1', recordContent: { content: masking.mask(`content ${secret}`) } }],
+      changedRecords: [{ recordId: 'mem_m1', recordContent: { content: mask(`content ${secret}`) } }],
     })
     expect(JSON.stringify(result)).not.toContain(secret)
 
-    setActiveMaskingContextResolver(() => undefined)
-    const unmaskable = await read(entries)
-    expect(unmaskable.entries[0]).toMatchObject({ markId: markIdOf(1), note: maskedMarker('secret'),
-      rootCause: { producer: maskedMarker('secret') },
-      changedRecords: [{ recordId: 'mem_m1', recordContent: { content: maskedMarker('secret') } }] })
+    expect(entry).toMatchObject({ note: 'note [secret:TOKEN_441]' })
+    await expect(read(entries, null)).rejects.toThrow(/no declared-secret mask/)
+    const unreadable = () => { throw new Error('synthetic unreadable secrets file') }
+    await expect(read(entries, unreadable)).rejects.toThrow('synthetic unreadable secrets file')
   })
 })

@@ -113,6 +113,8 @@ function workspace(): Workspace {
     }, null, 2)}\n`,
     'utf8',
   )
+  // 2026-10-14 (441-16, E3): `runs.list` refuses without a readable secrets file.
+  writeFileSync(join(root, '.env.secrets.local'), '', 'utf8')
   const agentQaRoot = join(root, '.agent-qa')
   mkdirSync(agentQaRoot, { recursive: true })
   // Two completed runs, the newer one ending later, so "most recent" is a claim about

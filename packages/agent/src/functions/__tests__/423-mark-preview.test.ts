@@ -1,8 +1,8 @@
 // 2026-09-15, 423 D-16/D-17: the exact-input consequence preview contract over feedbackReads.
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
-import { RunsMarkInputSchema, RunsMarkOutcomeSchema, RunsMarkPreviewResultSchema, asRunId, maskedMarker } from '@vostride/agent-qa-schema'
-import type { FunctionCaller, RunsMarkInput } from '@vostride/agent-qa-schema'
+import { describe, expect, it, vi } from 'vitest'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
+import { RunsMarkInputSchema, RunsMarkOutcomeSchema, RunsMarkPreviewResultSchema, asRunId } from '@vostride/agent-qa-schema'
+import type { FunctionCaller, MaskFn, RunsMarkInput } from '@vostride/agent-qa-schema'
 import { invokeFunction } from '../invoke.js'
 import { runsMarkSpec } from '../ops/runs-mark.js'
 import { RUNS_MARK_PREVIEW_FUNCTION_ID, runsMarkPreviewSpec } from '../ops/runs-mark-preview.js'
@@ -74,7 +74,12 @@ function port(answer: unknown) {
     preview: vi.fn(async (_input: RunsMarkInput) => answer) }
 }
 
-function deps(feedbackReads?: object) {
+function declaredMask(secrets: Record<string, string>): MaskFn {
+  const redactor = new SecretRedactor(new SecretStore(secrets))
+  return text => redactor.redactString(text)
+}
+
+function deps(feedbackReads?: object, secretMask: MaskFn | null = text => text) {
   const forbidden = vi.fn(() => { throw new Error('preview must not touch runs, config or the mark writer') })
   return {
     forbidden,
@@ -85,21 +90,19 @@ function deps(feedbackReads?: object) {
       config: { getMasked: forbidden },
       feedback: { mark: forbidden, marksFor: forbidden },
       ...(feedbackReads === undefined ? {} : { feedbackReads }),
+      ...(secretMask === null ? {} : { secretMask }),
     } as unknown as FunctionDeps,
   }
 }
 
-async function previewOf(answer: unknown, raw: unknown = input) {
+async function previewOf(answer: unknown, raw: unknown = input, secretMask?: MaskFn | null) {
   const reads = port(answer)
-  const { deps: bound, forbidden } = deps(reads)
+  const { deps: bound, forbidden } = deps(reads, secretMask)
   const result = await previewSpec().invoke(raw, bound) as Record<string, unknown>
   expect(forbidden).not.toHaveBeenCalled()
   expect(reads.history).not.toHaveBeenCalled()
   return { result, reads }
 }
-
-beforeEach(() => setActiveMaskingContextResolver(() => createMaskingContext()))
-afterEach(() => setActiveMaskingContextResolver(() => undefined))
 
 describe('423-37 runs.mark.preview contract (D-16/D-17)', () => {
   it('PREVIEW-INPUT-IDENTICAL: the preview input is RunsMarkInputSchema itself and runs.mark gains no preview field', async () => {
@@ -220,17 +223,15 @@ describe('423-37 runs.mark.preview contract (D-16/D-17)', () => {
     expect(parse(consequences({ member: { testIndex: 0 } }))).toBe(false)
 
     const secret = 'synthetic-sensitive-token'
-    const masking = createMaskingContext()
-    masking.register(secret)
-    setActiveMaskingContextResolver(() => masking)
+    const mask = declaredMask({ TOKEN_441: secret })
     const sensitive = consequences({ groundTruth: [{ testIndex: 1, stepIndex: 2, verdict: 'pass',
       recordedVerdict: { pass: false, reasoning: `reasoning ${secret}` }, correctedExpectation: `expect ${secret}`,
       correctedAction: true }] })
-    const masked = await previewOf(sensitive)
+    const masked = await previewOf(sensitive, input, mask)
     expect(JSON.stringify(masked.result)).not.toContain(secret)
     expect(masked.result.groundTruth).toEqual([{ testIndex: 1, stepIndex: 2, verdict: 'pass',
-      recordedVerdict: { pass: false, reasoning: masking.mask(`reasoning ${secret}`) },
-      correctedExpectation: masking.mask(`expect ${secret}`), correctedAction: true }])
+      recordedVerdict: { pass: false, reasoning: mask(`reasoning ${secret}`) },
+      correctedExpectation: mask(`expect ${secret}`), correctedAction: true }])
     // 423-19 D-17: reached-record content and overturned evidence tokens cross the same mask; ids stay structural.
     const reached = { ...falsePass, knowledge: { servedRecordIds: ['record-a'], appendsEvidence: true, evidence: { confirmed: 1, overturned: 1 },
       records: [{ recordId: 'record-a', recordContent: { content: `body ${secret}`, summary: `summary ${secret}`, kind: 'fact',
@@ -239,23 +240,22 @@ describe('423-37 runs.mark.preview contract (D-16/D-17)', () => {
           trustNarrative: `narrative ${secret}` } },
       served: true, evidence: { kind: 'effects', effects: [{ direction: 'confirm' },
         { direction: 'overturn', overturnsEvidenceToken: `prior ${secret}`, overturnsCurationJobId: 'canary-job' }] } }] } }
-    const reachedMasked = (await previewOf(reached)).result as { knowledge: { records: Record<string, unknown>[] } }
+    const reachedMasked = (await previewOf(reached, input, mask)).result as { knowledge: { records: Record<string, unknown>[] } }
     expect(JSON.stringify(reachedMasked)).not.toContain(secret)
-    expect(reachedMasked.knowledge.records[0]).toEqual({ recordId: 'record-a', recordContent: { content: masking.mask(`body ${secret}`),
-      summary: masking.mask(`summary ${secret}`), kind: 'fact', applicability: { product: 'storefront', scope: 'product:storefront',
-        anchors: [masking.mask(`el:${secret}`)], openedAtOrdinal: 1 }, currentStatus: 'active', currentTrust: { confirmations: 1,
-        contradictions: 0, evidenceTokens: [masking.mask(`token ${secret}`)], lastEventOrdinal: 2, trustNarrative: masking.mask(`narrative ${secret}`) } },
+    expect(reachedMasked.knowledge.records[0]).toEqual({ recordId: 'record-a', recordContent: { content: mask(`body ${secret}`),
+      summary: mask(`summary ${secret}`), kind: 'fact', applicability: { product: 'storefront', scope: 'product:storefront',
+        anchors: [mask(`el:${secret}`)], openedAtOrdinal: 1 }, currentStatus: 'active', currentTrust: { confirmations: 1,
+        contradictions: 0, evidenceTokens: [mask(`token ${secret}`)], lastEventOrdinal: 2, trustNarrative: mask(`narrative ${secret}`) } },
     served: true, evidence: { kind: 'effects', effects: [{ direction: 'confirm' },
-      { direction: 'overturn', overturnsEvidenceToken: masking.mask(`prior ${secret}`), overturnsCurationJobId: 'canary-job' }] } })
+      { direction: 'overturn', overturnsEvidenceToken: mask(`prior ${secret}`), overturnsCurationJobId: 'canary-job' }] } })
     // A non-false-pass overturn, a missing join arm and miscounted effects are refused at parse time.
     expect(parse({ ...reached, markKind: 'false-fail', labels: [reached.labels[0]] })).toBe(false)
     expect(parse({ ...reached, knowledge: { ...reached.knowledge, evidence: { confirmed: 1, overturned: 0 } } })).toBe(false)
     const { recordContent: _content, ...unjoined } = reached.knowledge.records[0]!
     expect(parse({ ...reached, knowledge: { ...reached.knowledge, records: [unjoined] } })).toBe(false)
-    setActiveMaskingContextResolver(() => undefined)
-    const cold = await previewOf(sensitive)
-    expect(cold.result.groundTruth).toMatchObject([{ recordedVerdict: { reasoning: maskedMarker('secret') },
-      correctedExpectation: maskedMarker('secret') }])
+    await expect(previewOf(sensitive, input, null)).rejects.toThrow(/no declared-secret mask/)
+    const unreadable = () => { throw new Error('synthetic unreadable secrets file') }
+    await expect(previewOf(sensitive, input, unreadable)).rejects.toThrow('synthetic unreadable secrets file')
 
     await expect(previewSpec().invoke(input, deps(port({ kind: 'run-not-found', runId: asRunId('run-other') })).deps))
       .rejects.toThrow(/another run/)

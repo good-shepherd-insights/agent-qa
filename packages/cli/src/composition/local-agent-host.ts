@@ -54,7 +54,6 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { z } from 'zod'
 
 import {
   Document as YamlDocument,
@@ -114,10 +113,6 @@ import {
   DEFAULT_AGENT_QA_CACHE_DIR,
   DEFAULT_AGENT_QA_RUNS_DB_PATH,
   parseTestFile,
-  parseSuiteFile,
-  normalizeAuthStateUse,
-  resolveAuthStateForRun,
-  resolveAuthStatePaths,
   parseTestFileWithTokens,
   renderPatchedTestDoc,
   resolveKnowledgeRoot,
@@ -178,7 +173,6 @@ import {
   loadConfigFile,
   loadEnvOverrides,
   mergeConfigs,
-  mergeUseBlocks,
   normalizeConfigForValidation,
   resolveConfig,
 } from '../config.js'
@@ -244,87 +238,6 @@ export function createMaskedConfigReader(configPath: string): ConfigReaderPort {
         ],
       })
     },
-  }
-}
-
-// The run masker understands cookies and localStorage. Refuse other storage payloads rather
-// than silently establishing authority with an incomplete seed set (e.g. IndexedDB).
-const ColdReadAuthPayloadSchema = z.object({
-  cookies: z.array(z.object({
-    name: z.string(), value: z.string(), domain: z.string().optional(),
-    path: z.string().optional(), expires: z.number().optional(),
-    httpOnly: z.boolean().optional(), secure: z.boolean().optional(),
-    sameSite: z.enum(['Strict', 'Lax', 'None']).optional(), partitionKey: z.string().optional(),
-  }).strict()),
-  origins: z.array(z.object({
-    origin: z.string(),
-    localStorage: z.array(z.object({ name: z.string(), value: z.string() }).strict()),
-  }).strict()),
-}).strict()
-
-/** Resolve only cold-read masking inputs: no plugins, run preparation, or directory writes. */
-export function createColdReadMaskingSources(
-  configPath: string,
-  retainedStores: () => Iterable<{
-    forEachSecret(cb: (name: string, value: string) => void): void
-  }> = () => [],
-): NonNullable<ComposeLocalAgentInput['readMaskingSources']> {
-  return async () => {
-    try {
-      const config = await resolveConfig({ configPath, loadAuthPlugins: false })
-      const workspace = resolveWorkspacePaths({ config, configPath })
-      const declarations = new Map<string, { targetName: string, stateName: string }>()
-      const collect = (targetName: string, use: Record<string, unknown>) => {
-        const auth = normalizeAuthStateUse(use)
-        if (auth === undefined || (!auth.load && !auth.capture)) return
-        declarations.set(JSON.stringify([targetName, auth.name]), { targetName, stateName: auth.name })
-      }
-      const tests = await discoverWorkspaceFiles({ workspace, kind: 'test' })
-      const suites = await discoverWorkspaceFiles({ workspace, kind: 'suite' })
-      for (const file of tests) {
-        const parsed = parseTestFile(readFileSync(file.absolutePath, 'utf8'), file.workspaceRelativePath)
-        // Collect from every document that parsed. parseTestFile walks parseAllDocuments and pushes
-        // into `tests` and `errors` independently, so a non-empty error list never means zero usable
-        // declarations — one bad document must not discard its siblings, whose states a run could
-        // have loaded. A file that yields no test contributes nothing through this loop already.
-        for (const test of parsed.tests) {
-          collect(test.target, mergeUseBlocks(config.use, undefined, test.use, {}))
-        }
-      }
-      for (const file of suites) {
-        const suite = await parseSuiteFile(file.absolutePath)
-        collect(suite.target, mergeUseBlocks(config.use, suite.use, undefined, {}))
-      }
-      const authStatePayloads: unknown[] = []
-      for (const declaration of declarations.values()) {
-        const target = resolveTarget(config, declaration.targetName)
-        const location = {
-          configDir: dirname(resolve(configPath)), authStateDir: config.services?.authState?.dir,
-          ...declaration, target: { platform: target.platform },
-        }
-        const paths = resolveAuthStatePaths(location)
-        // Safe to skip, and ONLY this: a state that was never captured — neither payload nor
-        // metadata on disk — holds no values a run could have recorded. A payload absent beside a
-        // live metadata file is the opposite: a state that DID exist, whose values may sit in the
-        // run's recorded text, so it falls through to resolveAuthStateForRun, which throws when
-        // either file is missing or unreadable and is caught below into a refusal of every source.
-        if (!existsSync(paths.payloadPath) && !existsSync(paths.metadataPath)) continue
-        const state = await resolveAuthStateForRun(location)
-        authStatePayloads.push(ColdReadAuthPayloadSchema.parse(
-          JSON.parse(readFileSync(state.storageStatePath, 'utf8')),
-        ))
-      }
-      return {
-        secretsContent: readFileSync(workspace.secretsFile.absolutePath, 'utf8'),
-        secretStores: [...retainedStores()],
-        env: process.env,
-        authStatePayloads,
-      }
-    } catch {
-      // Required file/config failures leave no new masking authority. An optional retained
-      // store may be absent, but a missing required source is never an empty secret file.
-      return undefined
-    }
   }
 }
 
@@ -552,10 +465,6 @@ function createComposedRunExecution(input: {
 }
 
 export interface ComposeCliLocalAgentInput {
-  /** Additional credentials this host retains, enumerated again for every cold read. */
-  readonly maskingSecretStores?: () => Iterable<{
-    forEachSecret(cb: (name: string, value: string) => void): void
-  }>
   /** An enclosing host supplies its ready snapshot, including the matching disclosure. */
   trustPriors?: ReturnType<typeof trustPriorsForHost>
   /** An enclosing drain may supply its already-memoised preparation. */
@@ -678,10 +587,6 @@ export interface ComposeCliLocalAgentInput {
     readonly resolveAppiumUrl?: InProcessCliRunExecutionOptions['resolveAppiumUrl']
     /** Per-run flags this host's own UI offers that the request DTO has no field for. */
     readonly resolveRunFlags?: InProcessCliRunExecutionOptions['resolveRunFlags']
-    /** Secrets this host holds; they feed only the cold reads now. */
-    readonly maskingSecrets?: () => {
-      forEachSecret(cb: (name: string, value: string) => void): void
-    } | undefined
     /**
      * This host's SECOND chip sink (404 D-16) — the dashboard's live push channel.
      *
@@ -2056,13 +1961,6 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
   const declaredSecrets = input.declaredSecrets ?? createDeclaredSecretMask(input.configPath)
   const host = composeLocalAgent({
     mask: declaredSecrets.mask,
-    readMaskingSources: createColdReadMaskingSources(input.configPath, () => {
-      const bridgeSecrets = input.runBridge?.maskingSecrets?.()
-      return [
-        ...(bridgeSecrets === undefined ? [] : [bridgeSecrets]),
-        ...(input.maskingSecretStores?.() ?? []),
-      ]
-    }),
     feedback: createFeedbackPortForHost({
       resolveTrustPriors,
       configPath: input.configPath, agentQaRoot: input.agentQaRoot, randomUuid: randomUUID,

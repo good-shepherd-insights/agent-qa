@@ -46,7 +46,6 @@ import {
   RUNS_MARKS_HISTORY_FUNCTION_ID,
   createFunctionRegistry,
   invokeFunction,
-  type CreateFunctionRegistryOptions,
   type FunctionDeps,
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
@@ -55,11 +54,7 @@ import {
 // `validate:arch` walks `src` with `__tests__` excluded and reconciles only runtime
 // `dependencies`, so the production edges these packages forbid stay forbidden. The point of
 // driving them is that a reader written in this file would be a second containment rule.
-import {
-  buildRunMaskingContext,
-  createEvidenceBlobReader,
-  runSafetyScope,
-} from '@vostride/agent-qa-agent-local'
+import { createEvidenceBlobReader } from '@vostride/agent-qa-agent-local'
 import { FsEvidenceArtifactStore, slugBranch } from '@vostride/agent-qa-runner-local'
 import {
   RunsMarkPreviewResultSchema,
@@ -157,6 +152,7 @@ function depsWith(
   runDetail: FunctionDeps['runDetail'],
   evidenceBlobs?: FunctionDeps['evidenceBlobs'],
   feedbackReads?: FeedbackReadsPort,
+  secretMask?: FunctionDeps['secretMask'],
 ): FunctionDeps {
   return {
     runs: {
@@ -186,6 +182,7 @@ function depsWith(
     ...(runDetail === undefined ? {} : { runDetail }),
     ...(evidenceBlobs === undefined ? {} : { evidenceBlobs }),
     ...(feedbackReads === undefined ? {} : { feedbackReads }),
+    ...(secretMask === undefined ? {} : { secretMask }),
   } as unknown as FunctionDeps
 }
 
@@ -193,11 +190,10 @@ function composeRegistry(
   runDetail: FunctionDeps['runDetail'],
   evidenceBlobs?: FunctionDeps['evidenceBlobs'],
   feedbackReads?: FeedbackReadsPort,
-  withReadScope?: CreateFunctionRegistryOptions['withReadScope'],
+  secretMask?: FunctionDeps['secretMask'],
 ): FunctionRegistry {
   return createFunctionRegistry({
-    ...(withReadScope === undefined ? {} : { withReadScope }),
-    deps: depsWith(runDetail, evidenceBlobs, feedbackReads),
+    deps: depsWith(runDetail, evidenceBlobs, feedbackReads, secretMask),
     // Discards every row: this file asserts on the path, never on the audit trail.
     auditSink: { appendGuardrailAudit() {} },
   })
@@ -422,12 +418,9 @@ const PNG_BYTES = new Uint8Array([
 ])
 const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46])
 
-// The production host enters a cold masking scope for runs.evidence (423-39); without one the op
+// 2026-10-14 (441-16, D-06): the production host binds its declared mask; without one runs.evidence
 // answers masking-unavailable, so the doors would never reach the recorded evidence.
-const coldEvidenceReadScope: NonNullable<CreateFunctionRegistryOptions['withReadScope']> = (functionId, invoke) =>
-  functionId === RUNS_EVIDENCE_FUNCTION_ID
-    ? runSafetyScope({ maskingContext: buildRunMaskingContext({ env: {} }) }, invoke)
-    : invoke()
+const declaredMask: NonNullable<FunctionDeps['secretMask']> = (text) => text
 
 async function serveEvidence() {
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-423-http-evidence-'))
@@ -447,7 +440,7 @@ async function serveEvidence() {
       variables: { kind: 'variables', state: 'absent', reason: 'not-captured' },
     } })
   const registry = composeRegistry(createDashboardRunDetailReader(db), createEvidenceBlobReader({ agentQaRoot: root }),
-    undefined, coldEvidenceReadScope)
+    undefined, declaredMask)
   const seen: string[] = []
   const baseHost = hostOver(registry)
   const host: AgentHost = { ...baseHost,
@@ -606,7 +599,8 @@ async function serveFeedbackReads(options: { withPreview?: boolean; unbound?: bo
   databases.push(db)
   const portCalls: string[] = []
   const registry = composeRegistry(createDashboardRunDetailReader(db), undefined,
-    options.unbound === true ? undefined : fileFeedbackReads(root, portCalls, options))
+    options.unbound === true ? undefined : fileFeedbackReads(root, portCalls, options),
+    (text) => text.replaceAll(FEEDBACK_NOTE_SECRET, '[secret:FEEDBACK_441]'))
   const seen: string[] = []
   const baseHost = hostOver(registry)
   const host: AgentHost = { ...baseHost,

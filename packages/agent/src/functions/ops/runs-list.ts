@@ -4,17 +4,14 @@
 // orders it newest-finished first under a total order (endedAt, then runId) so a fixed fixture
 // always renders byte-identically, and caps what it returns only after every filter has run.
 //
-// Test names are stored text, masked exactly as runs.overview masks them (cold read scope, else
-// the display marker), and the title filter only ever sees the masked name. With no masking context
-// every title is the marker, so a title filter refuses by name rather than answering an empty list.
+// Test names are stored text, masked with the host's declared mask exactly as runs.overview masks
+// them, and the title filter only ever sees the masked name.
 
-import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
 import {
   RUNS_LIST_DEFAULT_LIMIT,
   RunsListInputSchema,
   RunsListOutputContract,
   RunsListOutputSchema,
-  maskedMarker,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
@@ -25,13 +22,9 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import type { ClauseVerdict, FunctionSpec } from '../spec.js'
+import { requireSecretMask } from './secret-mask.js'
 
 export const RUNS_LIST_FUNCTION_ID = 'runs.list'
-
-function activeMask(): MaskFn {
-  const masking = getActiveMaskingContext()
-  return masking === undefined ? () => maskedMarker('secret') : (text) => masking.mask(text)
-}
 
 export function toRunSummary(
   document: CompletedRunHandoff,
@@ -102,17 +95,8 @@ export const runsListSpec: FunctionSpec<RunsListInput, RunSummary[]> = {
   },
   async invoke(input, deps) {
     const limit = input.limit ?? RUNS_LIST_DEFAULT_LIMIT
-    const mask = activeMask()
+    const mask = requireSecretMask(deps, RUNS_LIST_FUNCTION_ID)
     const documents = await deps.runs.list()
-    const { test } = input
-    if (test !== undefined && getActiveMaskingContext() === undefined
-      && !documents.some((document) => document.tests.some((member) => member.testId === test))) {
-      throw new Error(
-        'runs.list cannot filter by test title: the masking sources could not be loaded (the config, '
-        + 'test and suite files, .env.secrets.local and saved auth states), so every test title is '
-        + 'masked. Fix the source that fails to load, or filter by test id.',
-      )
-    }
     const candidates = documents
       .filter((document) => (
         (input.verdict === undefined || document.aggregateVerdict === input.verdict)

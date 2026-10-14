@@ -33,9 +33,10 @@ import type {
   StepEvidence,
   StepPlanSource,
 } from '@vostride/agent-qa-schema'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
-import { CurationSnapshotSchema, KnowledgeRecordShowResultSchema, maskedMarker } from '@vostride/agent-qa-schema'
+import { describe, expect, it, vi } from 'vitest'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
+import { CurationSnapshotSchema, KnowledgeRecordShowResultSchema } from '@vostride/agent-qa-schema'
+import type { MaskFn } from '@vostride/agent-qa-schema'
 import { createFunctionRegistry } from '../registry.js'
 import { invokeFunction } from '../invoke.js'
 
@@ -211,6 +212,12 @@ interface DepsOptions {
   chain?: PostProcessingChainState | undefined
   bindPostProcessing?: boolean
   bindProposalsInbox?: boolean
+  secretMask?: MaskFn | null
+}
+
+function declaredMask(secrets: Record<string, string>): MaskFn {
+  const redactor = new SecretRedactor(new SecretStore(secrets))
+  return text => redactor.redactString(text)
 }
 
 function deps(options: DepsOptions = {}): FunctionDeps {
@@ -237,6 +244,7 @@ function deps(options: DepsOptions = {}): FunctionDeps {
   }
   return {
     ...base,
+    ...(options.secretMask === null ? {} : { secretMask: options.secretMask ?? ((text: string) => text) }),
     ...(options.bindPostProcessing === true
       ? {
           postProcessing: {
@@ -319,9 +327,6 @@ const identityOf = (row: RecordChange) =>
   [row.recordId, row.change, row.atOrdinal, row.byRecordId ?? '', row.evidenceToken ?? ''].join('|')
 
 describe('423 current content and fixed historical sections', () => {
-  beforeEach(() => setActiveMaskingContextResolver(() => masking))
-  afterEach(() => setActiveMaskingContextResolver(() => undefined))
-  const masking = createMaskingContext()
 
   it('USED-ALL-CHANNELS: one union batch enriches learned and every used channel', async () => {
     const showRecords = vi.fn(async ({ recordIds }: { recordIds: readonly string[] }) => recordIds.map(currentRecord))
@@ -406,19 +411,20 @@ describe('423 current content and fixed historical sections', () => {
         changes: [{ bucket: 'added', change: change({ recordId, change: 'added', atOrdinal: 20, sourceRunId: RUN_ID }) }] })),
       breakdown: { added: 2, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 } })
     const diff = snapshot.rows.map(row => row.changes[0]!.change)
-    setActiveMaskingContextResolver(() => undefined)
+    const collapsing: MaskFn = text => text.endsWith('-learned') ? 'collapsed-learned' : text
     const options: DepsOptions = { bindPostProcessing: true, chain: { curationSnapshot: snapshot,
       curateMemory: { status: 'done', claimed: false } }, knowledge: { diffSince: async () => diff,
-      showRecords: async ({ recordIds }) => recordIds.map(currentRecord) } }
+      showRecords: async ({ recordIds }) => recordIds.map(currentRecord) }, secretMask: collapsing }
     await expect(ready(options)).resolves.toMatchObject({ kind: 'ready',
-      learned: { curationSnapshotWithheld: { reason: 'masking-unavailable' } } })
+      learned: { curationSnapshotWithheld: { reason: 'projection-refused' } } })
     const result = await ready(options)
     expect(result.learned.changes.map(row => row.recordId)).toEqual(['first-learned', 'second-learned'])
     expect(result.learned.changes).toHaveLength(diff.length)
     expect(result.learned).not.toHaveProperty('curationSnapshot')
     expect(result.learned).not.toHaveProperty('sinceThen')
-    expect(result.learned).toHaveProperty('curationSnapshotWithheld', { reason: 'masking-unavailable' })
+    expect(result.learned).toHaveProperty('curationSnapshotWithheld', { reason: 'projection-refused' })
     expect(RunKnowledgeProjectionSchema.safeParse(result).success).toBe(true)
+    await expect(ready({ ...options, secretMask: null })).rejects.toThrow(/no declared-secret mask/)
   })
 
   it('LATER-PROMOTION: the same record and a distinct same-ordinal confirmation remain since then', async () => {
@@ -496,8 +502,7 @@ describe('423 current content and fixed historical sections', () => {
 
   it('JOINED-STRINGS-MASKED: joined prose crosses the live mask while exact identities stay unmasked', async () => {
     const secret = 'synthetic-secret-9f2c'
-    const local = createMaskingContext()
-    local.register(secret)
+    const local = declaredMask({ SECRET_441: secret })
     const secretRecord = (recordId: string) => KnowledgeRecordShowResultSchema.parse({
       kind: 'found', schemaVersion: 1, summary: `summary ${secret}`, body: `body ${secret}`,
       provenance: { schemaVersion: 1, mode: 'standalone', originClass: 'agent-observed', sourceDescription: 'synthetic inspection' },
@@ -506,20 +511,18 @@ describe('423 current content and fixed historical sections', () => {
         openedAtOrdinal: 3, lastEventOrdinal: 3, anchors: [`el:${secret}`], trustNarrative: `narrative ${secret}` },
     })
     const options: DepsOptions = { knowledge: { diffSince: async () => [change({ recordId: 'rec-a', sourceRunId: RUN_ID })],
-      showRecords: async ({ recordIds }) => recordIds.map(secretRecord) } }
-    setActiveMaskingContextResolver(() => local)
+      showRecords: async ({ recordIds }) => recordIds.map(secretRecord) }, secretMask: local }
     const masked = await ready(options)
     expect(JSON.stringify(masked)).not.toContain(secret)
     expect(masked.steps[0]?.served.channel1[0]).toMatchObject({ id: 'rec-a', recordContent: {
-      content: local.mask(`body ${secret}`), summary: local.mask(`summary ${secret}`),
-      applicability: { product: local.mask(`shop ${secret}`), anchors: [local.mask(`el:${secret}`)] },
-      currentTrust: { evidenceTokens: [local.mask(`token ${secret}`)], trustNarrative: local.mask(`narrative ${secret}`) } } })
+      content: local(`body ${secret}`), summary: local(`summary ${secret}`),
+      applicability: { product: local(`shop ${secret}`), anchors: [local(`el:${secret}`)] },
+      currentTrust: { evidenceTokens: [local(`token ${secret}`)], trustNarrative: local(`narrative ${secret}`) } } })
     expect(masked.learned.changes[0]).toMatchObject({ recordId: 'rec-a', sourceRunId: RUN_ID })
-    setActiveMaskingContextResolver(() => undefined)
-    const closed = await ready(options)
-    expect(JSON.stringify(closed)).not.toContain(secret)
-    expect(closed.steps[0]?.served.channel1[0]).toHaveProperty('recordContent.content', maskedMarker('secret'))
-    expect(closed.steps[0]?.served.channel1[0]?.id).toBe('rec-a')
+    expect(masked.steps[0]?.served.channel1[0]).toHaveProperty('recordContent.content', 'body [secret:SECRET_441]')
+    await expect(ready({ ...options, secretMask: null })).rejects.toThrow(/no declared-secret mask/)
+    await expect(ready({ ...options, secretMask: () => { throw new Error('synthetic unreadable secrets file') } }))
+      .rejects.toThrow('synthetic unreadable secrets file')
   })
 
   it('JOIN-NOT-BOUND: actual registry retains the read with typed enrichment absence and no unary fallback', async () => {

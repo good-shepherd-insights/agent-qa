@@ -30,6 +30,7 @@ import type { FunctionDeps } from '../functions/spec.js'
 
 function fakeDeps(): FunctionDeps {
   return {
+    secretMask: (text: string) => text,
     runs: {
       list: () => Promise.resolve([]),
       get: () => Promise.resolve(undefined),

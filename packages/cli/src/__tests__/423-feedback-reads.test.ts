@@ -5,13 +5,12 @@ import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readd
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import * as agent from '@vostride/agent-qa-agent'
-import { COLD_READ_SCOPE_FUNCTION_IDS, createKnowledgeReader, LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
+import { createKnowledgeReader, LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import { createRunServiceRoutes, DashboardDatabase, startServer, type RunServicePorts } from '@vostride/agent-qa-dashboard'
 import { generateRunId } from '@vostride/agent-qa-ids'
 import { AGENT_QA_OP_CONTRACTS, UNPROJECTED_OPS } from '@vostride/agent-qa-mcp'
-import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
-import { ambientMaskingContextResolver } from '@vostride/agent-qa-safety-local'
-import { asEvidenceToken, asRecordId, asRunId, maskedMarker, RunsEvidenceInputSchema, RunsMarkInputSchema, RunsMarksHistoryInputSchema, RunsMarkOutcomeSchema, RunsMarkPreviewResultSchema, type FeedbackReadsPort, type MarkReceipt, type RunId, type RunsMarkInput, type RunsMarkPreviewResult, type RunsMarksHistoryResult, RunsMarksHistoryResultSchema } from '@vostride/agent-qa-schema'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
+import { asEvidenceToken, asRecordId, asRunId, RunsEvidenceInputSchema, RunsMarkInputSchema, RunsMarksHistoryInputSchema, RunsMarkOutcomeSchema, RunsMarkPreviewResultSchema, type FeedbackReadsPort, type MarkReceipt, type RunId, type RunsMarkInput, type RunsMarkPreviewResult, type RunsMarksHistoryResult, RunsMarksHistoryResultSchema } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { composeDashboardDoor, DASHBOARD_FUNCTION_CALLER } from '../commands/dashboard.js'
@@ -220,6 +219,13 @@ describe('423-35 shared mark consequence plan (D-16)', () => {
 // 2026-09-30, 432-09 (D-04/D-22/D-25): history projects each mark's applied change and never reads
 // the retired proposal inbox, readable or not.
 const SECRET = 'synthetic-423-18-history-token'
+const CHIP = '[secret:HISTORY_SYNTHETIC_TOKEN]'
+type Mask = (text: string) => string
+function declaredMask(secrets: Record<string, string>): Mask {
+  const redactor = new SecretRedactor(new SecretStore(secrets))
+  return text => redactor.redactString(text)
+}
+const identity: Mask = text => text
 type HistoryReadsDeps = FeedbackReadsHostDeps
 
 /** Every path under a root, directories included, so a created directory is a visible change. */
@@ -233,8 +239,8 @@ function tree(root: string): [string, string][] {
 
 const readsFor = (deps: HistoryReadsDeps): FeedbackReadsPort => createFeedbackReadsPortForHost(deps)
 
-const historyOf = async (reads: FeedbackReadsPort, runId: RunId): Promise<RunsMarksHistoryResult> =>
-  await runsMarksHistorySpec.invoke({ runId }, { feedbackReads: reads } as never)
+const historyOf = async (reads: FeedbackReadsPort, runId: RunId, secretMask: Mask | null = identity): Promise<RunsMarksHistoryResult> =>
+  await runsMarksHistorySpec.invoke({ runId }, { feedbackReads: reads, ...(secretMask === null ? {} : { secretMask }) } as never)
 
 function historyEntries(result: RunsMarksHistoryResult) {
   if (result.kind !== 'history') throw new Error(`expected history, got ${result.kind}`)
@@ -274,7 +280,6 @@ describe('423-18 read-only marks history host (D-19)', () => {
   let template: MarkedTemplate
 
   beforeAll(async () => { template = await markedTemplate(roots) }, 180_000)
-  afterEach(() => setActiveMaskingContextResolver(() => undefined))
   afterAll(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 
   function scene() {
@@ -383,22 +388,15 @@ describe('423-18 read-only marks history host (D-19)', () => {
     expect(raw.entries[0]!.receipt).toEqual(first)
     const content = raw.entries[0]!.changedRecords![0]!.recordContent!.content
 
-    const masking = createMaskingContext()
-    masking.register(SECRET)
-    setActiveMaskingContextResolver(() => masking)
-    const masked = await historyOf(reads, template.runId)
+    const mask = declaredMask({ HISTORY_SYNTHETIC_TOKEN: SECRET })
+    const masked = await historyOf(reads, template.runId, mask)
     const entries = historyEntries(masked)
-    expect(entries[0]).toMatchObject({ note: masking.mask('first run-level note') })
-    expect(entries[0]!.changedRecords![0]!.recordContent!.content).toBe(masking.mask(content))
-    expect(entries[2]).toMatchObject({ markId: third.markId, note: masking.mask(`step note ${SECRET}`) })
+    expect(entries[0]).toMatchObject({ note: 'first run-level note' })
+    expect(entries[0]!.changedRecords![0]!.recordContent!.content).toBe(mask(content))
+    expect(entries[2]).toMatchObject({ markId: third.markId, note: `step note ${CHIP}` })
     expect(JSON.stringify(masked)).not.toContain(SECRET)
 
-    setActiveMaskingContextResolver(() => undefined)
-    const unmaskable = historyEntries(await historyOf(reads, template.runId))
-    expect(unmaskable[0]!.note).toBe(maskedMarker('secret'))
-    expect(unmaskable[0]!.changedRecords![0]!.recordContent!.content).toBe(maskedMarker('secret'))
-    expect(unmaskable[2]!.note).toBe(maskedMarker('secret'))
-    expect(JSON.stringify(unmaskable)).not.toContain(content)
+    await expect(historyOf(reads, template.runId, null)).rejects.toThrow(/no declared-secret mask/)
   })
 
   it('HISTORY-CORRUPT: corrupt ledgers are typed failures that leave their bytes in place', async () => {
@@ -474,8 +472,8 @@ describe('423-18 marks history registration and host binding (D-19)', () => {
     const [first, second, third] = template.receipts as [MarkReceipt, MarkReceipt, MarkReceipt]
     expect(entries.map(entry => [entry.markId, entry.ordinal, entry.active, entry.supersededBy ?? null, entry.disposition.kind]))
       .toEqual([[first.markId, 1, false, second.markId, 'applied'], [second.markId, 2, true, null, 'confirmed-bug'], [third.markId, 3, true, null, 'applied']])
-    // A cold host holds no masking authority for this read, so every free-text field is fully redacted.
-    expect(entries.map(entry => entry.note ?? null)).toEqual([maskedMarker('secret'), null, maskedMarker('secret')])
+    // 2026-10-14 (441-16, D-06): a cold host masks the declared secret and leaves the rest as written.
+    expect(entries.map(entry => entry.note ?? null)).toEqual(['first run-level note', null, `step note ${CHIP}`])
     // 432-09: the applied fix's records are joined by id, and their content crosses the same mask.
     expect(entries[0]!.changedRecords!.map(record => record.recordId)).toEqual(changedRecordIdsOf(first))
     expect(entries[0]!).not.toHaveProperty('proposal')
@@ -574,9 +572,10 @@ async function rawPreview(reads: FeedbackReadsPort, input: RunsMarkInput): Promi
 }
 
 /** The real op: exact input parse, live mask and strict result parse over the host answer. */
-async function opPreview(reads: FeedbackReadsPort, input: RunsMarkInput): Promise<RunsMarkPreviewResult> {
+async function opPreview(reads: FeedbackReadsPort, input: RunsMarkInput, secretMask: Mask | null = identity): Promise<RunsMarkPreviewResult> {
   previewPort(reads)
-  return await denying(async () => await runsMarkPreviewSpec.invoke(input, { feedbackReads: reads } as never) as RunsMarkPreviewResult)
+  return await denying(async () => await runsMarkPreviewSpec.invoke(input,
+    { feedbackReads: reads, ...(secretMask === null ? {} : { secretMask }) } as never) as RunsMarkPreviewResult)
 }
 
 function consequencesOf(result: RunsMarkPreviewResult): Consequences {
@@ -598,7 +597,6 @@ function bundleDirOf(f: PreviewFixture, recordId: string) {
 describe('423-19 content-led consequence preview over the read host (D-16/D-17)', () => {
   const roots: string[] = []
   afterEach(() => {
-    setActiveMaskingContextResolver(() => undefined)
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
   })
   function fixture() {
@@ -760,17 +758,13 @@ describe('423-19 content-led consequence preview over the read host (D-16/D-17)'
     expect(raw.knowledge.records[0]!.recordContent!.content).toContain(CONTENT_SECRET)
     expect(tree(f.root)).toEqual(before)
 
-    // Joined content crosses the live mask; without a context it is fully redacted.
-    const masking = createMaskingContext()
-    masking.register(CONTENT_SECRET)
-    setActiveMaskingContextResolver(() => masking)
-    const masked = consequencesOf(await opPreview(reads, { runId, kind: 'false-fail' }))
-    expect(masked.knowledge.records[0]!.recordContent).toMatchObject({ content: masking.mask(shown.body), summary: masking.mask(shown.summary) })
+    // Joined content crosses the declared mask; without one the read refuses.
+    const mask = declaredMask({ CONTENT_441: CONTENT_SECRET })
+    const masked = consequencesOf(await opPreview(reads, { runId, kind: 'false-fail' }, mask))
+    expect(masked.knowledge.records[0]!.recordContent).toMatchObject({ content: mask(shown.body), summary: mask(shown.summary) })
     expect(JSON.stringify(masked)).not.toContain(CONTENT_SECRET)
-    setActiveMaskingContextResolver(() => undefined)
-    const cold = consequencesOf(await opPreview(reads, { runId, kind: 'false-fail' }))
-    expect(cold.knowledge.records[0]!.recordContent).toMatchObject({ content: maskedMarker('secret'), summary: maskedMarker('secret') })
-    expect(cold.knowledge.records[0]).toMatchObject({ recordId: f.published.id, served: true, evidence: { kind: 'effects', effects: [{ direction: 'confirm' }] } })
+    expect(masked.knowledge.records[0]).toMatchObject({ recordId: f.published.id, served: true, evidence: { kind: 'effects', effects: [{ direction: 'confirm' }] } })
+    await expect(opPreview(reads, { runId, kind: 'false-fail' }, null)).rejects.toThrow(/no declared-secret mask/)
 
     // A reader with no batch join keeps the record id and its effect under a named absence.
     const unbatched = { ...createKnowledgeReader(() => f.knowledgeRoot), showRecords: undefined }
@@ -852,7 +846,6 @@ describe('423-19 runs.mark.preview registration and composed invocation (D-16)',
   beforeAll(async () => { template = await markedTemplate(roots) }, 180_000)
   afterEach(async () => {
     process.exitCode = 0
-    setActiveMaskingContextResolver(() => undefined)
     for (const close of closers.splice(0).reverse()) await close()
   })
   afterAll(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -869,11 +862,12 @@ describe('423-19 runs.mark.preview registration and composed invocation (D-16)',
   // The run-level address's latest mark is the confirmed-bug at ordinal 2, so a false-pass supersedes it.
   const input = (): RunsMarkInput => ({ runId: template.runId, kind: 'false-pass', note: `preview ${SECRET}` })
 
-  /** A cold host holds no masking authority for this read, so the op's no-context mask fully redacts free text. */
+  /** 2026-10-14 (441-16, D-06): a cold host masks with the project's declared secrets. */
   async function expectedColdPreview(s: ReturnType<typeof coldScene>) {
     const reads = createFeedbackReadsPortForHost({ agentQaRoot: s.agentQaRoot, configPath: s.configPath })
     expect(typeof reads.preview, 'gates/feedback-read-host must expose preview').toBe('function')
-    return await runsMarkPreviewSpec.invoke(input(), { feedbackReads: reads } as never) as RunsMarkPreviewResult
+    return await runsMarkPreviewSpec.invoke(input(),
+      { feedbackReads: reads, secretMask: declaredMask({ HISTORY_SYNTHETIC_TOKEN: SECRET }) } as never) as RunsMarkPreviewResult
   }
 
   function expectColdMaskedPreview(value: unknown) {
@@ -883,8 +877,9 @@ describe('423-19 runs.mark.preview registration and composed invocation (D-16)',
       resolvedStep: { stepIndex: 0, reason: 'passing-verdict' }, latest: { kind: 'supersedes', markId: second.markId, ordinal: 2 },
       basis: { ledgerOrdinal: 3, priorMarkOrdinal: 2 } })
     expect(result.labels.map(label => label.channel)).toEqual(['user-mark', 'overturned-verdict'])
-    expect(result.groundTruth[0]!.recordedVerdict.reasoning).toBe(maskedMarker('secret'))
-    expect(result.knowledge.records[0]).toMatchObject({ served: true, recordContent: { content: maskedMarker('secret'), summary: maskedMarker('secret') } })
+    expect(result.groundTruth[0]!.recordedVerdict.reasoning).toBe('The recorded state advanced')
+    expect(result.knowledge.records[0]).toMatchObject({ served: true,
+      recordContent: { content: 'The Held checkout marked button was resolved and verified.' } })
     expect(JSON.stringify(result)).not.toContain(SECRET)
     expectNoMint(result, template.receipts.map(receipt => receipt.markId))
     return result
@@ -1006,7 +1001,6 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
 
   beforeAll(async () => { template = await markedTemplate(roots) }, 180_000)
   afterEach(async () => {
-    setActiveMaskingContextResolver(() => undefined)
     for (const close of closers.splice(0).reverse()) await close()
   })
   afterAll(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -1044,7 +1038,8 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
     const s = await httpScene()
     const before = storeMaps(s.stores)
     const viaRegistry = await agent.invokeFunction(s.door.host.registry, HISTORY, { runId: template.runId }, DASHBOARD_FUNCTION_CALLER)
-    const viaOp = await historyOf(createFeedbackReadsPortForHost({ agentQaRoot: s.agentQaRoot, configPath: s.configPath }), template.runId)
+    const viaOp = await historyOf(createFeedbackReadsPortForHost({ agentQaRoot: s.agentQaRoot, configPath: s.configPath }), template.runId,
+      declaredMask({ HISTORY_SYNTHETIC_TOKEN: SECRET }))
     expect(viaRegistry).toEqual(viaOp)
     const entries = historyEntries(RunsMarksHistoryResultSchema.parse(viaRegistry))
     expect(entries.map(entry => [entry.ordinal, entry.active, entry.disposition.kind]))
@@ -1064,7 +1059,7 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
     const before = storeMaps(s.stores)
     const viaRegistry = await agent.invokeFunction(s.door.host.registry, PREVIEW, previewBody(), DASHBOARD_FUNCTION_CALLER)
     const viaOp = await runsMarkPreviewSpec.invoke(previewBody(), { feedbackReads: createFeedbackReadsPortForHost({
-      agentQaRoot: s.agentQaRoot, configPath: s.configPath }) } as never)
+      agentQaRoot: s.agentQaRoot, configPath: s.configPath }), secretMask: declaredMask({ HISTORY_SYNTHETIC_TOKEN: SECRET }) } as never)
     expect(viaRegistry).toEqual(viaOp)
     const [, second] = template.receipts as [MarkReceipt, MarkReceipt, MarkReceipt]
     expect(consequencesOf(RunsMarkPreviewResultSchema.parse(viaRegistry))).toMatchObject({ prospective: true, markKind: 'false-pass',
@@ -1082,31 +1077,10 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
     expect(storeMaps(s.stores)).toEqual(before)
   }, 180_000)
 
-  // Re-pinned 2026-09-16 for 423-46's owner decision (option A): `runs.marks.history` and
-  // `runs.mark.preview` JOINED compose-local-agent's cold read-scope allowlist, so a cold host — the
-  // dashboard after the run ends is the one that matters — resolves this project's declared secrets
-  // for the read and returns the free text readable with the declared span shown as a display chip.
-  // That is the posture warm hosts already had and what ROADMAP SC4 asks of the history read. Drop
-  // either id from `COLD_READ_SCOPE_FUNCTION_IDS` and this cell reds back to the full redaction it
-  // pinned from 423-21 until today (leg F10 of the phase's mutation driver, since removed).
-  //
-  // 2026-09-28 (431 D-06): runs.overview joined the same allowlist, so the membership this cell
-  // closes on was six reads, pinned exactly AFTER the behaviour so leg F10 still reds on the doors'
-  // own output first. OVERVIEW-COLD-SCOPE (agent-local) measures the overview's own posture.
-  // The 431 code review added runs.list (its test names are the same stored text): seven reads.
-  //
-  // THE AMBIENT MASKING RESOLVER IS PUT BACK FIRST, and that line is the measurement rather than
-  // hygiene beside it. Every other describe in this file "restores" the process resolver by
-  // installing `() => undefined`, which does not restore anything: it PINS the process answer to
-  // absent for every later reader, so the scope the host opens around an allowlisted read is
-  // invisible and every cold read falls to its own no-context arm. A cold posture measured under
-  // that pin is a measurement of the pin. Putting the ALS-backed resolver back is also what makes
-  // this cell answer the same way run alone and run inside the file.
-  // RE-AIMED 2026-10-14 (441-15, D-07): the warm half was the human door painting a chip over the
-  // recorded placeholder through the display seam. The seam is deleted, so both doors now answer
-  // the warm read alike.
+  // RE-AIMED 2026-10-14 (441-16, D-06/D-12): both doors mask a cold read with the project's declared
+  // secrets, so the declared span reads as its `[secret:<name>]` marker and the rest as written. The
+  // cold read scope, its allowlist and the installed warm context are gone, and so is the warm half.
   it('HTTP-FEEDBACK-HUMAN-POSTURE: both doors show cold read-scope free text with declared-secret chips, and warm text as the read masked it', async () => {
-    setActiveMaskingContextResolver(ambientMaskingContextResolver)
     const s = await httpScene()
     const [human, machine] = s.doors as [typeof s.doors[0], typeof s.doors[1]]
     const read = async (door: typeof human) => {
@@ -1120,10 +1094,7 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
         reasoning: preview.groundTruth.map(item => item.recordedVerdict.reasoning),
         content: [served, ...unserved.sort()] }
     }
-    const redacted = maskedMarker('secret')
-    // The cold scope masks the FRESH span it resolved from this project's secrets file straight to
-    // the display marker, so both doors read alike: the bearer door has no recorded placeholder to
-    // keep here, because nothing was masked when the note was written.
+    const redacted = CHIP
     // 432-09 (D-04): the template's two false-fail marks applied their fixes, so the store now holds
     // those records and this false-pass preview reaches them after the served one. Their content is
     // the floor-worded fix, and the user's note inside it crosses the same mask as the note itself.
@@ -1141,18 +1112,6 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
     expect(coldHuman).toEqual(cold)
     expect(coldMachine).toEqual(cold)
     expect(JSON.stringify([coldHuman, coldMachine])).not.toContain(SECRET)
-
-    const masking = createMaskingContext()
-    masking.register(SECRET)
-    setActiveMaskingContextResolver(() => masking)
-    const warmHuman = await read(human)
-    const warmMachine = await read(machine)
-    expect(warmMachine.notes).toEqual(['first run-level note', null, masking.mask(`step note ${SECRET}`)])
-    expect(warmMachine.reasoning).toEqual(['The recorded state advanced'])
-    expect(warmHuman).toEqual(warmMachine)
-    expect(JSON.stringify([warmHuman, warmMachine])).not.toContain(SECRET)
-    expect([...COLD_READ_SCOPE_FUNCTION_IDS]).toEqual(['runs.postprocessing', 'runs.knowledge',
-      'runs.evidence', 'runs.marks.history', 'runs.mark.preview', 'runs.overview', 'runs.list'])
   }, 180_000)
 
   it('FEEDBACK-HTTP-WRITES-NOTHING: HTTP history and preview leave every store byte-identical and create nothing', async () => {

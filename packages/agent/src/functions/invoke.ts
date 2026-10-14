@@ -6,7 +6,7 @@
 // invoke runs once, in every execution context, and no execution-audit row is written for it.
 //
 // What stays is everything that is not an approval: the unknown-id refusal, input validation, the
-// binding check, the host's read scope, dispatch, and output validation for unary results.
+// binding check, dispatch, and output validation for unary results.
 //
 // 2026-10-01 (432-20, D-10/D-12): THERE ARE NO PERMISSIONS EITHER. The scope subset check, the
 // human-origin check and their two refusal classes are deleted, and so is the registry's safe-mode
@@ -98,11 +98,7 @@ export async function invokeFunction(
     throw new FunctionNotBoundError(functionId)
   }
 
-  const dispatch = () => spec.invoke(parsed.data, internals.deps)
-  const result = spec.resultKind === 'unary' && spec.risk.readOnly === true
-    && internals.withReadScope !== undefined
-    ? await internals.withReadScope(functionId, dispatch)
-    : await dispatch()
+  const result = await spec.invoke(parsed.data, internals.deps)
 
   // A stream result IS the declared async iterable and passes through untouched: the
   // spec's `output` describes one ELEMENT, so parsing the iterable against it would be a

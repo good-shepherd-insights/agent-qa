@@ -2,7 +2,6 @@ import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import {
   asJobId,
   asRunId,
-  maskedMarker,
   POST_PROCESSING_CHIP_STATUSES,
   PostProcessingStatusSchema,
   CurationSnapshotSchema,
@@ -300,8 +299,9 @@ describe('423 durable stage projection', () => {
       },
     }
     const result = await read(state)
-    expect(result.stageDetails?.analysis?.lastFailureReason).toBe(maskedMarker('secret'))
+    expect(result.stageDetails).toEqual({ analysis: {} })
     expect(JSON.stringify(result)).not.toContain('synthetic-unregistered-secret')
+    expect(JSON.stringify(result)).not.toContain('masked:')
   })
 
   it('CHIP-CONTROL terminal status wins over a stale claim', async () => {

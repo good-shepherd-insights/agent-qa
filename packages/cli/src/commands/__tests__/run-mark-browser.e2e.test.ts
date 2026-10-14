@@ -90,6 +90,8 @@ async function wire(page: Page): Promise<Wire> {
 
 async function scene() {
   const fixture = markFixture()
+  // 2026-10-14 (441-16, E3): the door's run reads refuse without a readable secrets file.
+  writeFileSync(join(fixture.root, '.env.secrets.local'), '')
   const config = parse(readFileSync(fixture.configPath, 'utf8'))
   // 432-22 (D-15/D-22): the fixture declares no `safety` block (the key is deleted), so there is no
   // trust mode to remove; the config is re-serialized unchanged.
