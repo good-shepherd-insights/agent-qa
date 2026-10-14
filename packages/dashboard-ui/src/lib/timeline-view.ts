@@ -1,5 +1,4 @@
 import { actionSentenceText, buildActionSentence, RESULT_WORDS } from './action-vocabulary'
-import { copyTextOf } from './display-text'
 import { formatOffset, type TimelineMarker, type TimelineModel } from './playhead'
 
 export const TIMELINE_COPY = {
@@ -19,7 +18,7 @@ export function markerDensity(slotWidth: number): MarkerDensity {
 
 export function timelineValueText(marker: TimelineMarker, total: number): string {
   const time = formatOffset(marker.recordingOffsetMs)
-  return copyTextOf(`Step ${marker.stepIndex + 1}, sub-action ${marker.ordinal} of ${total}: ${actionSentenceText(buildActionSentence(marker.subAction))}, ${RESULT_WORDS[marker.result]}${time === undefined ? '' : `, ${time}`}`)
+  return `Step ${marker.stepIndex + 1}, sub-action ${marker.ordinal} of ${total}: ${actionSentenceText(buildActionSentence(marker.subAction))}, ${RESULT_WORDS[marker.result]}${time === undefined ? '' : `, ${time}`}`
 }
 
 export function timelineReadout(model: TimelineModel, marker: TimelineMarker | undefined, short = false, position?: number): string {

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { asRef, maskedMarker, type RunDetailSubAction } from '@vostride/agent-qa-schema'
+import { asRef, type RunDetailSubAction } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SubActionTreeItem } from '../sub-action-tree-item'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -49,18 +49,18 @@ it('TREE-ROW-FAMILY-ICON keeps the icon, failure words, cache marker and row add
   expect(onSelect).toHaveBeenCalledOnce()
 })
 
-it('TREE-ROW-NO-PLAN-TEXT uses a truncated sentence and keeps secrets behind chips', () => {
+it('TREE-ROW-NO-PLAN-TEXT uses a truncated sentence and shows a stored secret marker as text', () => {
   const { row, sub } = mount(true)
   expect(row.textContent).not.toContain(sub.plan)
   expect(row.querySelector('[data-sub-action-plan]')).toBeNull()
   expect(row.textContent).toBe("Clicked 'Learn more'")
   expect(row.querySelector('.truncate')).not.toBeNull()
-  const secret = maskedMarker('secret')
+  const secret = '[secret:PW]'
   act(() => root!.render(<SubActionTreeItem sub={{ ...sub,
     plannedAction: { type: 'fill', ref: asRef('password'), text: secret, clearMode: 'replace', submit: false },
   }} stepId='0:0' cached={false} isSelected={false} onSelect={() => {}} />))
-  expect(container.querySelector('[data-masked="secret"]')).not.toBeNull()
-  expect(container.innerHTML).not.toContain(secret)
+  expect(container.querySelector('[data-masked]')).toBeNull()
+  expect(container.textContent).toBe("Filled 'Learn more' with [secret:PW]")
 })
 
 describe('C437-NO-INPUT-LABEL', () => {

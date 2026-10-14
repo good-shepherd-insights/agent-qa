@@ -530,13 +530,13 @@ describe('members, the thin handle stream and the terminal freeze', () => {
 })
 
 // ---------------------------------------------------------------------------
-// G-428-2 (428-30): a pending row carries the masked text testStarted sent
+// G-428-2 (428-30): a pending row carries the text testStarted sent
 // ---------------------------------------------------------------------------
 
 describe('G-428-2: pending rows are seeded from testStarted.stepTexts (owner decision 2026-09-26 (2))', () => {
-  // The producer (428-28) masks each entry with the run's own MaskingContext, so an entry equals
-  // the stepText its step later announces. The fold keeps the entry as it arrived: no unmasking
-  // happens here, and a `<SECRET_n>` stays a placeholder until the row paints it as a chip.
+  // The producer masks each entry with the declared-secret mask, so an entry equals the stepText
+  // its step later announces. The fold keeps the entry as it arrived, and the row shows it as
+  // written: a declared value is already its `[secret:<name>]` (D-28).
   const started = (extra: Record<string, unknown>) =>
     envelope('testStarted', { testId: 't', testIndex: 0, name: 'm', ...extra })
 

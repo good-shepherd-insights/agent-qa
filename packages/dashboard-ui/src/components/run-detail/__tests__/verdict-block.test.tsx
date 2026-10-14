@@ -22,7 +22,6 @@ import { MemoryRouter } from 'react-router'
 import { readFileSync } from 'node:fs'
 import { MARKS, type RunDetailMemberMark } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { MASKED_MARKER_DELIMITER, maskedMarker } from "@vostride/agent-qa-schema"
 
 import { VerdictBlock } from "@/components/run-detail/verdict-block"
 import { MemberGroup } from "@/components/run-detail/member-group"
@@ -233,19 +232,15 @@ describe("the provenance and the sentence keep their 406-01 contract (D-10, T-40
       .toBe('observed (step 0): "Submit never became enabled"')
   })
 
-  it("renders a markup-bearing sentence as TEXT and paints its masked marker as a chip", () => {
-    // THE SENTENCE IS THE ONE STRING ON THE SEAM. It is a producer string carrying the failing
-    // step's own error, so it arrives with a typed marker after the display unmask; the block
-    // renders it through `MaskedText` and nothing else in this component goes near the seam.
-    const hostile = `<img src=x onerror=alert(1)> observed with ${maskedMarker("secret")}`
+  it("renders a markup-bearing sentence as TEXT and shows its stored marker as written", () => {
+    const hostile = "<img src=x onerror=alert(1)> observed with [secret:PW]"
     const block = render({ sentence: hostile })
 
     const sentence = block.querySelector("[data-verdict-sentence]")
     expect(sentence?.querySelectorAll("img").length, "no element was ever constructed").toBe(0)
     expect(block.querySelectorAll("img").length).toBe(0)
-    expect(sentence?.textContent).toContain("<img src=x onerror=alert(1)>")
-    expect(block.textContent, "the marker's delimiter never reaches a text node")
-      .not.toContain(MASKED_MARKER_DELIMITER)
+    expect(sentence?.textContent).toBe(hostile)
+    expect(block.querySelector("[data-masked]")).toBeNull()
   })
 })
 

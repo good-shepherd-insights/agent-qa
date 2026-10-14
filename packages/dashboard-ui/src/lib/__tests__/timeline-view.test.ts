@@ -1,7 +1,6 @@
 import { expect, test } from 'vitest'
-import { asRef, maskedMarker } from '@vostride/agent-qa-schema'
+import { asRef } from '@vostride/agent-qa-schema'
 import type { TimelineMarker, TimelineModel } from '../playhead'
-import { copyTextOf } from '../display-text'
 
 const modules = import.meta.glob<typeof import('../timeline-view')>('../timeline-view.ts', { eager: true })
 function view() {
@@ -13,7 +12,7 @@ const marker: TimelineMarker = {
   result: 'passed', frame: 'absent', recordingOffsetMs: 7400,
   subAction: {
     testIndex: 0, stepIndex: 1, subActionIndex: 0, plan: 'private reasoning',
-    plannedAction: { type: 'fill', ref: asRef('e1'), text: maskedMarker('secret'), clearMode: 'replace', submit: false },
+    plannedAction: { type: 'fill', ref: asRef('e1'), text: '[secret:PW]', clearMode: 'replace', submit: false },
     result: { success: true }, screenStateHash: 'screen',
   },
 }
@@ -27,8 +26,7 @@ test('TIMELINE-DENSITY', () => {
 
 test('TIMELINE-VALUE-TEXT-MASKED', () => {
   const text = view().timelineValueText(marker, 12)
-  expect(text).toBe(`Step 2, sub-action 3 of 12: Filled with ${copyTextOf(maskedMarker('secret'))}, passed, 0:07`)
-  expect(text).not.toContain(maskedMarker('secret'))
+  expect(text).toBe('Step 2, sub-action 3 of 12: Filled with [secret:PW], passed, 0:07')
   expect(view().timelineValueText({ ...marker, recordingOffsetMs: undefined }, 12)).not.toContain('0:07')
 })
 

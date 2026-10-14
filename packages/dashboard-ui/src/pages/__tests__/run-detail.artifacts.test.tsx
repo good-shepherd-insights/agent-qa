@@ -18,14 +18,12 @@ import { MemoryRouter, Route, Routes } from "react-router"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { RunDetailProjection } from "@vostride/agent-qa-schema"
-import { asRef, maskedMarker, MASKED_MARKER_DELIMITER } from "@vostride/agent-qa-schema"
+import { asRef } from "@vostride/agent-qa-schema"
 
 import { displayStepsForGroups } from "@/lib/display-step"
 import type { RunDetailGroup } from "@/lib/run-detail-view"
 import {
   EVIDENCE_INCOMPLETE_LABEL,
-  MASKED_EMAIL_LABEL,
-  MASKED_SECRET_LABEL,
   TOKENS_NOT_MEASURED_LABEL,
   tokenPairLine,
 } from "@/lib/run-detail-view"
@@ -124,8 +122,8 @@ const SHA = "a1b2c3d4".repeat(8)
 const HASH_BEFORE = "1".repeat(64)
 const HASH_AFTER = "2".repeat(64)
 
-/** The planner's own sentence, carrying two markers the display seam could not restore (D-10). */
-const MASKED_PLAN = `Sign in as ${maskedMarker('email')} using ${maskedMarker('secret')}`
+/** The planner's own sentence as stored: an undeclared email and a declared value's marker (D-28). */
+const STORED_PLAN = "Sign in as qa-person@example.com using [secret:PW]"
 
 function makeProjection(overrides: Partial<RunDetailProjection> = {}): RunDetailProjection {
   return {
@@ -150,7 +148,7 @@ function makeProjection(overrides: Partial<RunDetailProjection> = {}): RunDetail
         testIndex: 0,
         stepIndex: 0,
         subActionIndex: 0,
-        plan: MASKED_PLAN,
+        plan: STORED_PLAN,
         plannedAction: { type: "click", ref: asRef("submit") },
         result: { success: true },
         screenStateHash: HASH_BEFORE,
@@ -301,17 +299,12 @@ describe("run detail renders the durable projection's five facts", () => {
     expect(view.querySelector("[data-run-detail-error]")).toBeNull()
   })
 
-  // D-10 / T-405-40. The load-bearing assertion is the last one: no marker survives into any text
-  // node, so a reader can tell deliberate redaction apart from a broken page.
-  it("paints the planner's masked values as typed chips and leaves no marker in the DOM", async () => {
+  // D-28: the planner's stored sentence is shown as written, and nothing paints a chip over it.
+  it("shows the planner's stored sentence as written, with no chip", async () => {
     const view = await renderAt()
 
-    expect(view.querySelector('[data-masked="email"]')?.textContent).toContain(MASKED_EMAIL_LABEL)
-    expect(view.querySelector('[data-masked="secret"]')?.textContent).toContain(MASKED_SECRET_LABEL)
-    expect(view.querySelector("[data-sub-action-plan]")?.textContent).toContain("Sign in as ")
-    expect(view.textContent).not.toContain(MASKED_MARKER_DELIMITER)
-    expect(view.textContent).not.toContain("<SECRET_")
-    expect(view.textContent).not.toContain("<EMAIL_")
+    expect(view.querySelector("[data-sub-action-plan]")?.textContent).toBe(STORED_PLAN)
+    expect(view.querySelector("[data-masked]")).toBeNull()
   })
 
   // Owner correction, 2026-09-21 (424-33): Overview omits redundant hash/state rows.

@@ -1,10 +1,9 @@
 // @vitest-environment jsdom
 import { act, type ComponentProps } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { asRef, maskedMarker } from '@vostride/agent-qa-schema'
+import { asRef } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { buildTimelineModel, type TimelineModel } from '@/lib/playhead'
-import { copyTextOf } from '@/lib/display-text'
 import type { RunDetailGroup } from '@/lib/run-detail-view'
 
 const modules = import.meta.glob<typeof import('../timeline')>('../timeline.tsx', { eager: true })
@@ -26,7 +25,7 @@ beforeEach(() => {
       step: { testIndex: 0, stepIndex, cacheStatus: 'miss', verifierVerdict: { pass: true, reasoning: '' }, selfHealOccurred: stepIndex === 0, briefDigest: 'digest' },
       subActions: [0, 1].map(subActionIndex => ({
         testIndex: 0, stepIndex, subActionIndex, plan: 'private reasoning',
-        plannedAction: { type: 'fill', ref: asRef('e1'), text: maskedMarker('secret'), clearMode: 'replace', submit: false },
+        plannedAction: { type: 'fill', ref: asRef('e1'), text: '[secret:PW]', clearMode: 'replace', submit: false },
         result: { success: subActionIndex === 0 }, screenStateHash: 'screen',
         recordingOffsetMs: (stepIndex * 2 + subActionIndex) * 10000,
         artifactRefs: subActionIndex === 1 ? [] : [{ id: `decision-screenshot:${'a'.repeat(64)}`, sha: 'a'.repeat(64) }],
@@ -75,8 +74,7 @@ test('TIMELINE-SLIDER-ARIA', () => {
   expect(slider.getAttribute('aria-valuemin')).toBe('0')
   expect(slider.getAttribute('aria-valuemax')).toBe('100')
   expect(slider.getAttribute('aria-valuenow')).toBe('13')
-  expect(slider.getAttribute('aria-valuetext')).toBe(`Step 1, sub-action 1 of 4: Filled with ${copyTextOf(maskedMarker('secret'))}, passed, 0:00`)
-  expect(host.innerHTML).not.toContain(maskedMarker('secret'))
+  expect(slider.getAttribute('aria-valuetext')).toBe('Step 1, sub-action 1 of 4: Filled with [secret:PW], passed, 0:00')
   expect(host.querySelectorAll('[tabindex="0"]')).toHaveLength(1)
 })
 
@@ -174,7 +172,7 @@ test('TIMELINE-MARKER-DETAILS and coincident groups preserve masked reachable ac
   const marker = query('[data-timeline-marker="1"]')
   expect(marker.getAttribute('aria-label')).toContain('Step 1')
   expect(marker.getAttribute('aria-label')).toContain('Filled')
-  expect(marker.getAttribute('aria-label')).not.toContain(maskedMarker('secret'))
+  expect(marker.getAttribute('aria-label')).toContain('Filled with [secret:PW]')
   await act(async () => { marker.focus() })
   expect(document.querySelector('[role="tooltip"], [data-timeline-marker-details]')).toBeNull()
   act(() => marker.click())

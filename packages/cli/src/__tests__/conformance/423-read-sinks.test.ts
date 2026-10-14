@@ -225,7 +225,7 @@ const NESTED = JSON.stringify({ [KEY]: [VALUE, { note: maskedMarker('secret') }]
 const DISPLAY_KEY = `key [${SECRET_LABEL}] [${EMAIL_LABEL}]`
 const DISPLAY_VALUE = `normal [${EMAIL_LABEL}] [${SECRET_LABEL}] [secret]`
 const DISPLAY_NESTED = JSON.stringify({ [DISPLAY_KEY]: [DISPLAY_VALUE, { note: `[${SECRET_LABEL}]` }] })
-const DISPLAY_NAME = `Name [${SECRET_LABEL}] [${EMAIL_LABEL}] [${SECRET_LABEL}]`
+const STORED_NAME = `Name ${maskedMarker('secret')} ${maskedMarker('email')} <SECRET_99>`
 
 describe('423 rendered run-detail sinks', () => {
   let fixture: Awaited<ReturnType<typeof startFixture>>
@@ -234,7 +234,7 @@ describe('423 rendered run-detail sinks', () => {
 
   beforeAll(async () => {
     fixture = await startFixture({
-      name: `Name ${maskedMarker('secret')} ${maskedMarker('email')} <SECRET_99>`,
+      name: STORED_NAME,
       attributes: { [KEY]: VALUE, nested: NESTED, normal: 'Readable normal value', auth: AUTH_STATE },
     })
     browser = await chromium.launch({ headless: true })
@@ -274,8 +274,8 @@ describe('423 rendered run-detail sinks', () => {
       .toBe(DISPLAY_NESTED)
   })
 
-  it('SINK-TITLE: document title contains display labels and normal run text', async () => {
-    expect(await page.title()).toBe(`Run - ${DISPLAY_NAME} | agent-qa`)
+  it('SINK-TITLE: document title is the stored run name as written', async () => {
+    expect(await page.title()).toBe(`Run - ${STORED_NAME} | agent-qa`)
     expect(await page.title()).not.toContain(AUTH_TOKEN)
   })
 

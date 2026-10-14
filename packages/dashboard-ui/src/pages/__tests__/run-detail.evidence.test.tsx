@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { generateRunId } from '@vostride/agent-qa-ids'
-import { asRunId, maskedMarker } from '@vostride/agent-qa-schema'
+import { asRunId } from '@vostride/agent-qa-schema'
 import type { EvidenceDocument, RunDetailStep, RunDetailSubAction, RunsEvidenceResult, StepEvidenceEntries } from '@vostride/agent-qa-schema'
 import { TabA11y } from '@/components/run-detail/tab-a11y'
 import { TabPanels } from '@/components/run-detail/tab-panels'
@@ -299,34 +299,35 @@ it('PRE-MILESTONE-UNAVAILABLE-ALL-TABS says not recorded on every historical evi
   expect(fetchMock).not.toHaveBeenCalled()
 })
 
-it('ARIA-READS-SUB-ACTION renders the selected artifact as masked text, never markup', async () => {
-  fetchMock.mockResolvedValue(documentResponse({ schemaVersion: 1, kind: 'aria', tree: `button ${maskedMarker('secret')} <img src=x onerror=alert(1)>` }))
+it('ARIA-READS-SUB-ACTION renders the selected artifact as text, never markup', async () => {
+  fetchMock.mockResolvedValue(documentResponse({ schemaVersion: 1, kind: 'aria', tree: 'button [secret:PW] <img src=x onerror=alert(1)>' }))
   await evidencePanels('aria')
   expect(fetchMock).toHaveBeenCalledExactlyOnceWith(`/api/runs/${runId}/evidence?testIndex=0&stepIndex=0&kind=aria&subActionIndex=2`)
-  expect(container.querySelector('pre')?.textContent).toContain('button')
-  expect(container.querySelector('[data-masked="secret"]')).not.toBeNull()
+  expect(container.querySelector('pre')?.textContent).toBe('button [secret:PW] <img src=x onerror=alert(1)>')
+  expect(container.querySelector('[data-masked]')).toBeNull()
   expect(container.querySelector('img')).toBeNull()
   await evidencePanels('aria', completeStep(), null)
   expect(container.querySelector('[data-evidence-state="no-selection"]')).not.toBeNull()
 })
 
-for (const kind of ['network', 'console'] as const) it(`RECORDS-${kind.toUpperCase()} shows exactly the selected step with masked text`, async () => {
+for (const kind of ['network', 'console'] as const) it(`RECORDS-${kind.toUpperCase()} shows exactly the selected step as text`, async () => {
   const selected = completeStep()
   const earlier = { ...step(0), consoleLogs: [{ level: 'log', timestamp: 0, text: 'earlier console' }],
     networkLogs: [{ url: 'https://example.com/earlier', method: 'GET', status: 200, requestHeaders: {}, responseHeaders: {}, startTime: 0, endTime: 1 }] }
   fetchMock.mockResolvedValue(documentResponse(kind === 'console'
-    ? { schemaVersion: 1, kind, records: [{ level: 'error', timestamp: 1, text: `selected ${maskedMarker('secret')} <img src=x>` }] }
-    : { schemaVersion: 1, kind, records: [{ url: `https://example.com/selected-${maskedMarker('secret')}`, method: 'GET', status: 200,
-      requestHeaders: {}, responseHeaders: { 'content-type': 'text/html' }, body: `<img src=x> ${maskedMarker('secret')}`, startTime: 2, endTime: 3 }] }))
+    ? { schemaVersion: 1, kind, records: [{ level: 'error', timestamp: 1, text: 'selected [secret:PW] <img src=x>' }] }
+    : { schemaVersion: 1, kind, records: [{ url: 'https://example.com/selected-[secret:PW]', method: 'GET', status: 200,
+      requestHeaders: {}, responseHeaders: { 'content-type': 'text/html' }, body: '<img src=x> [secret:PW]', startTime: 2, endTime: 3 }] }))
   await evidencePanels(kind, selected, subAction, [], [earlier, selected])
   expect(container.textContent).toContain('selected')
   expect(container.textContent).not.toContain('earlier')
-  expect(container.querySelector('[data-masked="secret"]')).not.toBeNull()
+  expect(container.textContent).toContain('[secret:PW]')
+  expect(container.querySelector('[data-masked]')).toBeNull()
   expect(container.querySelector('img')).toBeNull()
   if (kind === 'network') {
     await act(async () => { container.querySelector<HTMLTableRowElement>('tbody tr')!.click() })
-    expect(container.querySelector('pre')?.textContent).toContain('<img src=x>')
-    expect(container.querySelector('pre [data-masked="secret"]')).not.toBeNull()
+    expect(container.querySelector('pre')?.textContent).toBe('<img src=x> [secret:PW]')
+    expect(container.querySelector('[data-masked]')).toBeNull()
     expect(container.querySelector('img')).toBeNull()
   }
 })

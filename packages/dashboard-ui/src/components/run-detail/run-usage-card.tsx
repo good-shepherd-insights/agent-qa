@@ -13,11 +13,9 @@
 // summary. Each of those functions answers `undefined` when its fact is absent and this file
 // renders nothing for it — the card never fills a gap with a zero, an "n/a" or a row of dashes.
 //
-// EVERY PRODUCER ID GOES THROUGH `MaskedText` (T-425-05-01). Model and provider ids are producer
-// strings served masked; the `masked` flag on a `UsageLine` is what routes them, and there is no
-// `dangerouslySetInnerHTML` in this file.
+// Model and provider ids are producer strings rendered as the stored text (T-425-05-01, D-28);
+// there is no `dangerouslySetInnerHTML` in this file.
 
-import { MaskedText } from "@/components/run-detail/masked-text"
 import { TooltipContent } from "@/components/ui/tooltip"
 import {
   cachedInputLine,
@@ -28,8 +26,8 @@ import {
 } from "@/lib/run-detail-view"
 import type { RunModelSummary, RunTokenTotals } from "@vostride/agent-qa-schema"
 
-/** One painted line: the kind rides `data-usage-line`, and `masked` decides how the text renders. */
-type CardLine = { kind: string; text: string; masked?: boolean }
+/** One painted line: the kind rides `data-usage-line`. */
+type CardLine = { kind: string; text: string }
 
 /**
  * The card's lines in reading order: what was spent, what the provider discounted, how much of the
@@ -49,11 +47,7 @@ function usageCardLines(
     { kind: "totals", text: usageTotalsLine(tokens) },
     ...(cached === undefined ? [] : [{ kind: "cached", text: cached }]),
     ...(coverage === undefined ? [] : [{ kind: "coverage", text: coverage }]),
-    ...usageModelLines(models).map((line: UsageLine) => ({
-      kind: line.kind,
-      text: line.text,
-      masked: line.masked,
-    })),
+    ...usageModelLines(models).map((line: UsageLine) => ({ kind: line.kind, text: line.text })),
   ]
 }
 
@@ -87,7 +81,7 @@ export function RunUsageCard({
             data-usage-line={line.kind}
             className={line.kind === "totals" ? "font-medium" : "text-muted-foreground"}
           >
-            {line.masked === true ? <MaskedText text={line.text} /> : line.text}
+            {line.text}
           </p>
         ))}
       </div>

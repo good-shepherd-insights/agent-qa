@@ -5,10 +5,7 @@ import type { DisplayStep } from "@/lib/display-step"
 import { cn } from "@/lib/utils"
 import { useEvidenceRecords } from '@/hooks/use-evidence-records'
 import { EVIDENCE_COPY, resolveEvidenceView } from '@/lib/evidence-state-view'
-import { copyTextOf } from '@/lib/display-text'
-import { splitMaskedText } from '@/lib/masked-text'
 import { EvidenceLoading, EvidenceState } from './evidence-state'
-import { MaskedText } from './masked-text'
 
 export function formatRelativeTime(offsetMs: number): string {
   if (offsetMs >= 1000) return `+${(offsetMs / 1000).toFixed(1)}s`
@@ -59,8 +56,8 @@ function HeadersTable({ headers }: { headers: Record<string, string> }) {
     <div className="space-y-0.5">
       {entries.map(([key, val]) => (
         <div key={key} className="flex gap-2 text-xs font-mono">
-          <span className="text-muted-foreground shrink-0"><MaskedText text={key} />:</span>
-          <span className="break-all"><MaskedText text={val} /></span>
+          <span className="text-muted-foreground shrink-0">{key}:</span>
+          <span className="break-all">{val}</span>
         </div>
       ))}
     </div>
@@ -80,7 +77,7 @@ function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
   const handleCopy = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
-    navigator.clipboard.writeText(copyTextOf(text))
+    navigator.clipboard.writeText(text)
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
   }, [text])
@@ -96,12 +93,12 @@ function ResponseBody({ body, contentType }: { body: string; contentType: string
   if (ct.includes('application/json')) {
     try {
       const pretty = JSON.stringify(JSON.parse(body), null, 2)
-      return <pre className="text-xs font-mono bg-background/60 rounded-sm px-3 py-2 overflow-x-auto max-h-48 whitespace-pre-wrap break-all"><MaskedText text={pretty} /></pre>
+      return <pre className="text-xs font-mono bg-background/60 rounded-sm px-3 py-2 overflow-x-auto max-h-48 whitespace-pre-wrap break-all">{pretty}</pre>
     } catch {
-      return <pre className="text-xs font-mono bg-background/60 rounded-sm px-3 py-2 overflow-x-auto max-h-48 whitespace-pre-wrap break-all"><MaskedText text={body} /></pre>
+      return <pre className="text-xs font-mono bg-background/60 rounded-sm px-3 py-2 overflow-x-auto max-h-48 whitespace-pre-wrap break-all">{body}</pre>
     }
   }
-  return <pre className="text-xs font-mono bg-background/60 rounded-sm px-3 py-2 overflow-x-auto max-h-48 whitespace-pre-wrap break-all"><MaskedText text={body} /></pre>
+  return <pre className="text-xs font-mono bg-background/60 rounded-sm px-3 py-2 overflow-x-auto max-h-48 whitespace-pre-wrap break-all">{body}</pre>
 }
 
 function ExpandedDetail({ entry }: { entry: NetworkEntry }) {
@@ -124,7 +121,7 @@ function ExpandedDetail({ entry }: { entry: NetworkEntry }) {
           {isPost && (
             <DetailSection label="Request Body">
               {entry.requestBody ? (
-                <pre className="text-xs font-mono bg-background/60 rounded-sm px-3 py-2 overflow-x-auto max-h-48 whitespace-pre-wrap break-all"><MaskedText text={entry.requestBody} /></pre>
+                <pre className="text-xs font-mono bg-background/60 rounded-sm px-3 py-2 overflow-x-auto max-h-48 whitespace-pre-wrap break-all">{entry.requestBody}</pre>
               ) : (
                 <span className="text-xs text-muted-foreground italic">No request body</span>
               )}
@@ -151,7 +148,7 @@ function ExpandedDetail({ entry }: { entry: NetworkEntry }) {
                 <div className="flex flex-wrap gap-3">
                   {validTimings.map(([phase, ms]) => (
                     <div key={phase} className="text-xs font-mono">
-                      <span className="text-muted-foreground"><MaskedText text={phase} />:</span>{" "}
+                      <span className="text-muted-foreground">{phase}:</span>{" "}
                       <span>{Math.round(ms)}ms</span>
                     </div>
                   ))}
@@ -166,14 +163,13 @@ function ExpandedDetail({ entry }: { entry: NetworkEntry }) {
 }
 
 function HighlightMatch({ text, query }: { text: string; query: string }) {
-  if (!query || splitMaskedText(text).some(segment => segment.kind === 'masked')) return <MaskedText text={text} />
-  const idx = text.toLowerCase().indexOf(query.toLowerCase())
-  if (idx === -1) return <MaskedText text={text} />
+  const idx = query ? text.toLowerCase().indexOf(query.toLowerCase()) : -1
+  if (idx === -1) return <>{text}</>
   return (
     <>
-      <MaskedText text={text.slice(0, idx)} />
-      <mark className="bg-yellow-400/30 text-inherit rounded-sm px-0.5"><MaskedText text={text.slice(idx, idx + query.length)} /></mark>
-      <MaskedText text={text.slice(idx + query.length)} />
+      {text.slice(0, idx)}
+      <mark className="bg-yellow-400/30 text-inherit rounded-sm px-0.5">{text.slice(idx, idx + query.length)}</mark>
+      {text.slice(idx + query.length)}
     </>
   )
 }

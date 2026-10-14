@@ -51,7 +51,6 @@ import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { RunNotice } from '@/components/run-detail/run-notice'
 import { isPreMilestoneRun } from '@/lib/run-notice-view'
 import { usePageTitle } from "@/hooks/use-page-title"
-import { copyTextOf } from "@/lib/display-text"
 import { getRunFaviconState, useRunStatusFavicon } from "@/hooks/use-run-status-favicon"
 import { hasStepId, isSubactionSelection, runDetailStepKey, type Selection } from "@/lib/selection"
 import { displayStepsForGroups, type DisplayStep } from "@/lib/display-step"
@@ -150,7 +149,7 @@ export default function RunDetailPage() {
 
   const [run, setRun] = useState<RunRow | null>(null)
   const runTitle = run ? `Run - ${run.name}` : "Run"
-  usePageTitle(copyTextOf(runTitle))
+  usePageTitle(runTitle)
   useRunStatusFavicon(getRunFaviconState(run?.status))
   // THE PAGE'S ONE DURABLE READ (D-03/D-16). `undefined` = not asked yet; `null` = the read
   // FAILED. Those are different facts and the tree renders them differently: an unasked page is

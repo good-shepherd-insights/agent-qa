@@ -2,7 +2,6 @@ import { Brain, Play, ShieldCheck, Target } from "lucide-react"
 
 import { ReasoningPipeline } from "@/components/reasoning-pipeline"
 import type { SectionDef, ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
-import { MaskedText } from "@/components/run-detail/masked-text"
 import type { DisplayStep } from "@/lib/display-step"
 import { readIdempotentNoopMeta, type RunDetailSubAction } from "@vostride/agent-qa-schema"
 import { RESULT_WORDS, displayTargetName } from "@/lib/action-vocabulary"
@@ -60,7 +59,7 @@ function buildSubActionSections(sub: RunDetailSubAction): SectionDef[] {
         data-sub-action-plan
         className="m-0 whitespace-pre-wrap break-words text-sm text-muted-foreground [overflow-wrap:anywhere]"
       >
-        <MaskedText text={sub.plan} />
+        {sub.plan}
       </p>
     ),
   })
@@ -76,7 +75,7 @@ function buildSubActionSections(sub: RunDetailSubAction): SectionDef[] {
         data-sub-action-planned-action
         className="max-w-full min-w-0 text-[10px] font-mono bg-muted/30 rounded-sm p-2 overflow-x-auto whitespace-pre-wrap break-words"
       >
-        <MaskedText text={JSON.stringify(sub.plannedAction, null, 2)} />
+        {JSON.stringify(sub.plannedAction, null, 2)}
       </pre>
     ),
   })
@@ -97,7 +96,7 @@ function buildSubActionSections(sub: RunDetailSubAction): SectionDef[] {
     children:
       sub.result.error === undefined ? null : (
         <div className="bg-destructive/10 text-destructive rounded-sm p-2 text-xs break-words [overflow-wrap:anywhere]">
-          <MaskedText text={sub.result.error} />
+          {sub.result.error}
         </div>
       ),
   })
@@ -114,7 +113,7 @@ function buildSubActionSections(sub: RunDetailSubAction): SectionDef[] {
         duration: null,
         children: (
           <p data-grounding-descriptor className="m-0 text-sm text-muted-foreground break-words">
-            <MaskedText text={descriptor} />
+            {descriptor}
           </p>
         ),
       })
@@ -155,7 +154,7 @@ export function TabOverview({
                 data-step-error
                 className="bg-destructive/10 text-destructive rounded-sm p-2 text-sm break-words [overflow-wrap:anywhere]"
               >
-                <MaskedText text={step.error} />
+                {step.error}
               </div>
             </div>
           ) : null}

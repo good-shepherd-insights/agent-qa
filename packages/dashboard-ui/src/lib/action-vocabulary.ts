@@ -5,7 +5,6 @@ import {
   Braces, CircleDashed, Compass, Hand, Hourglass, MousePointer2, CircleCheck,
   Smartphone, Terminal, TextCursorInput, Wrench, type LucideIcon,
 } from 'lucide-react'
-import { copyTextOf } from './display-text'
 
 export const ACTION_VERBS = {
   click: { past: 'Clicked', infinitive: 'click' },
@@ -182,5 +181,5 @@ export function buildActionSentence(sub: RunDetailSubAction): ActionSentenceMode
 }
 
 export function actionSentenceText(model: ActionSentenceModel): string {
-  return model.parts.map(part => copyTextOf(part.text)).join('')
+  return model.parts.map(part => part.text).join('')
 }

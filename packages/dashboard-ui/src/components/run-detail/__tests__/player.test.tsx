@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, type ComponentProps } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { asRef, maskedMarker } from '@vostride/agent-qa-schema'
+import { asRef } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { buildTimelineModel, latestUsableFrame, type TimelineModel } from '@/lib/playhead'
 import type { RunDetailGroup } from '@/lib/run-detail-view'
@@ -35,7 +35,7 @@ beforeEach(() => {
       step: { testIndex: 0, stepIndex: 0, cacheStatus: 'miss', verifierVerdict: { pass: true, reasoning: '' }, selfHealOccurred: false, briefDigest: 'digest' },
       subActions: [0, 1].map(subActionIndex => ({
         testIndex: 0, stepIndex: 0, subActionIndex, plan: 'private reasoning',
-        plannedAction: { type: 'fill', ref: asRef('e1'), text: maskedMarker('secret'), clearMode: 'replace', submit: false },
+        plannedAction: { type: 'fill', ref: asRef('e1'), text: '[secret:PW]', clearMode: 'replace', submit: false },
         result: { success: true }, screenStateHash: 'screen', recordingOffsetMs: subActionIndex * 10000,
         artifactRefs: subActionIndex === 0 ? [{ id: `decision-screenshot:${sha}`, sha }] : [],
       })),
@@ -102,7 +102,7 @@ test('PLAYER-CAPTION-SUBSTITUTION', () => {
   expect(caption.textContent).toContain('Filled')
   expect(caption.textContent).not.toContain('passed')
   expect(caption.textContent).not.toContain('0:00')
-  expect(host.innerHTML).not.toContain(maskedMarker('secret'))
+  expect(caption.textContent).toContain('Filled with [secret:PW]')
   render()
   expect(query('[data-frame-source-sub-action]')).toBeNull()
   expect(query('[data-player-caption]').textContent).not.toContain('Showing')

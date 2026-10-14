@@ -2,11 +2,9 @@ import type { EvidenceDocument } from '@vostride/agent-qa-schema'
 import { Badge } from '@/components/ui/badge'
 import { useEvidenceRecords } from '@/hooks/use-evidence-records'
 import type { DisplayStep } from '@/lib/display-step'
-import { copyTextOf } from '@/lib/display-text'
 import { resolveEvidenceView } from '@/lib/evidence-state-view'
 import { cn } from '@/lib/utils'
 import { EvidenceState, EvidenceLoading } from './evidence-state'
-import { MaskedText } from './masked-text'
 
 function impactColor(impact: string): string {
   switch (impact) {
@@ -29,14 +27,14 @@ function Violations({ records }: { records: Extract<EvidenceDocument, { kind: 'a
           {group.map((v, i) => <div key={i} className="border border-border/50 rounded-sm p-3 space-y-1.5">
             <div className="flex items-center gap-2">
               <Badge className={cn('text-[10px] px-1.5 py-0', impactColor(v.impact))}>{v.impact}</Badge>
-              <span className="text-sm font-medium"><MaskedText text={v.help} /></span>
+              <span className="text-sm font-medium">{v.help}</span>
             </div>
-            <div className="text-[10px] font-mono text-muted-foreground"><MaskedText text={v.ruleId} /></div>
-            <p className="text-xs text-muted-foreground"><MaskedText text={v.description} /></p>
+            <div className="text-[10px] font-mono text-muted-foreground">{v.ruleId}</div>
+            <p className="text-xs text-muted-foreground">{v.description}</p>
             {v.nodes.length > 0 && <div className="space-y-1 mt-1">
-              {v.nodes.map((node, j) => <pre key={j} className="text-[10px] font-mono bg-muted/30 rounded p-1.5 overflow-x-auto whitespace-pre-wrap break-words"><MaskedText text={node.html} /></pre>)}
+              {v.nodes.map((node, j) => <pre key={j} className="text-[10px] font-mono bg-muted/30 rounded p-1.5 overflow-x-auto whitespace-pre-wrap break-words">{node.html}</pre>)}
             </div>}
-            <a href={copyTextOf(v.helpUrl)} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-500 hover:underline">Learn more</a>
+            <a href={v.helpUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-500 hover:underline">Learn more</a>
           </div>)}
         </section>
       })}

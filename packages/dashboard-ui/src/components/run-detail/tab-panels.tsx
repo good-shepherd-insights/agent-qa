@@ -18,7 +18,6 @@ import { resolveEvidenceView } from '@/lib/evidence-state-view'
 import { Accessibility, CircleX, Globe } from 'lucide-react'
 import type { EvidenceKind } from '@vostride/agent-qa-schema'
 import { absentTriggerName, countedTriggerName, PROBLEM_COUNT_TONES, tabCounts } from '@/lib/evidence-counts'
-import { copyTextOf } from '@/lib/display-text'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { EvidenceScopeLine, type EvidenceScope } from './evidence-scope-line'
 
@@ -97,7 +96,7 @@ export function TabPanels({
     const trigger = (
       <TabsTrigger
         value={value}
-        aria-label={name ? copyTextOf(name) : undefined}
+        aria-label={name || undefined}
         className={`text-xs rounded-none flex-initial${count?.kind === 'absent' ? ' opacity-60 data-[state=active]:opacity-100' : ''}`}
       >
         {label}

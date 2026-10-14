@@ -24,7 +24,7 @@ import type {
   RunDetailStep,
   RunDetailSubAction,
 } from "@vostride/agent-qa-schema"
-import { MASKED_MARKER_DELIMITER, asRef, maskedMarker } from "@vostride/agent-qa-schema"
+import { asRef } from "@vostride/agent-qa-schema"
 
 import { MemberGroup } from "@/components/run-detail/member-group"
 import { StepTree } from "@/components/run-detail/step-tree"
@@ -285,20 +285,14 @@ describe("a member that never ran renders honestly, never as an empty tree (D-18
     expect(view.textContent).toContain("skipped by fail-fast")
   })
 
-  it("paints the summary's masked marker as a chip and leaks no delimiter (D-10, 405 CR-03)", () => {
-    // THE PRODUCER'S SENTENCE, WITH A REDACTION IN IT. `failureSummary` is routed through the mask
-    // by `projectTestFinished`, so it carries a placeholder at rest and a typed marker after the
-    // display seam. Rendered raw it put the marker's own delimiter into a text node — the state
-    // D-10 forbids, and the same class 405-12 found on the sub-action row.
-    //
-    // The delimiter is asserted BY CONSTANT so a respelling of the marker cannot pass by drift.
+  it("shows the summary's stored marker as written, with no chip (D-28, 405 CR-03)", () => {
     const view = tree(
       [
         group(
           member(2, {
             name: "Checkout",
             outcome: "failed",
-            failureSummary: `could not sign in with ${maskedMarker("secret")} at step 3`,
+            failureSummary: "could not sign in with [secret:PW] at step 3",
           }),
           [],
         ),
@@ -307,9 +301,8 @@ describe("a member that never ran renders honestly, never as an empty tree (D-18
     )
 
     const summary = view.querySelector("[data-member-failure-summary]")
-    expect(summary?.textContent).toContain("could not sign in with ")
-    expect(summary?.textContent).toContain(" at step 3")
-    expect(view.textContent).not.toContain(MASKED_MARKER_DELIMITER)
+    expect(summary?.textContent).toBe("could not sign in with [secret:PW] at step 3")
+    expect(view.querySelector("[data-masked]")).toBeNull()
   })
 
   it("leaves the member's NAME unmasked — structural identity is not a redaction (405 CR-03)", () => {

@@ -1,6 +1,5 @@
-import { ACTION_FAMILY_BY_TYPE, asRef, maskedMarker, type Action, type RunDetailSubAction } from '@vostride/agent-qa-schema'
+import { ACTION_FAMILY_BY_TYPE, asRef, type Action, type RunDetailSubAction } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
-import { copyTextOf } from '../display-text'
 
 const modules = import.meta.glob<typeof import('../action-vocabulary')>('../action-vocabulary.ts', { eager: true })
 function vocabulary() {
@@ -45,17 +44,16 @@ describe('action vocabulary', () => {
     expect(actionSentenceText(buildActionSentence(sub(undefined, true, { role: 'option' })))).toBe('Clicked an option')
     expect(actionSentenceText(buildActionSentence(sub()))).toBe('Clicked')
   })
-  it('SENTENCE-SECRET-CHIP', () => {
+  it('SENTENCE-SECRET-TEXT', () => {
     const { buildActionSentence, actionSentenceText } = vocabulary()
-    const secret = maskedMarker('secret')
+    const secret = '[secret:PW]'
     for (const action of [{ type: 'fill', text: secret }, { type: 'select', value: secret },
       { type: 'paste', value: secret }, { type: 'setVariable', name: 'password', value: secret },
       { type: 'keypress', keys: [secret] }]) {
       const model = buildActionSentence(sub(action))
       expect(model.parts).toContainEqual({ kind: 'masked', text: secret })
       expect(model.parts.filter(part => part.kind === 'text').some(part => part.text.includes(secret))).toBe(false)
-      expect(actionSentenceText(model)).toContain(copyTextOf(secret))
-      expect(actionSentenceText(model)).not.toContain(secret)
+      expect(actionSentenceText(model)).toContain(secret)
     }
   })
   it('SENTENCE-NAVIGATE-BRANCHES', () => {
@@ -93,10 +91,10 @@ describe('action vocabulary', () => {
 
 it('SENTENCE-TARGET-ICON-FONT removes decorative private-use glyphs only in display names', () => {
   const { buildActionSentence, actionSentenceText } = vocabulary()
-  const name = '\uF291 Products 日本語 👩🏽‍💻 ' + maskedMarker('secret')
+  const name = '\uF291 Products 日本語 👩🏽‍💻 [secret:PW]'
   const recorded = sub(undefined, true, { name })
   const text = actionSentenceText(buildActionSentence(recorded))
-  expect(text).toBe(`Clicked 'Products 日本語 👩🏽‍💻 ${copyTextOf(maskedMarker('secret'))}'`)
+  expect(text).toBe("Clicked 'Products 日本語 👩🏽‍💻 [secret:PW]'")
   expect(recorded.grounding?.descriptor.name).toBe(name)
 })
 

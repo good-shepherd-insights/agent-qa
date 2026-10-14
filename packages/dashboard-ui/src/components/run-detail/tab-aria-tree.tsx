@@ -4,7 +4,6 @@ import { useEvidenceRecords } from '@/hooks/use-evidence-records'
 import type { DisplayStep } from '@/lib/display-step'
 import { resolveEvidenceView } from '@/lib/evidence-state-view'
 import { EvidenceLoading, EvidenceState } from './evidence-state'
-import { MaskedText } from './masked-text'
 
 interface TabAriaTreeProps {
   step: DisplayStep | null
@@ -25,7 +24,7 @@ export function TabAriaTree({ step, subAction, runId, selection = subAction ? 's
     actionLabel={view.action?.label} onAction={view.action?.type === 'retry' ? retry : undefined} />
   return view.document.kind === 'aria' ? (
     <ScrollArea className="h-full min-h-0 w-full">
-      <pre className="p-3 font-mono text-xs whitespace-pre-wrap break-words"><MaskedText text={view.document.tree} /></pre>
+      <pre className="p-3 font-mono text-xs whitespace-pre-wrap break-words">{view.document.tree}</pre>
     </ScrollArea>
   ) : null
 }

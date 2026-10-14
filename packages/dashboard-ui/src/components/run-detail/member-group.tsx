@@ -26,28 +26,13 @@
 // `memberNote` decision, restated in markup, now with a third voice on the page). The analysis
 // never merges with the runner's line: two producers, two blocks.
 //
-// AND THE RUNNER'S SENTENCE IS THE ONE THAT GOES THROUGH THE SEAM (D-10, T-405-40, 405 CR-03).
-// That asymmetry is the whole point of the two-speakers note above, so it is spelled out here
-// rather than left to be inferred:
-//
-//   - `failureSummary` is a PRODUCER string. `projectTestFinished` routes it through
-//     `maskPayloadStrings` by name, so it carries `<SECRET_n>` at rest and a typed marker after
-//     the display seam. Rendered raw, the marker's delimiter reaches a text node a person reads.
-//     It therefore goes through `MaskedText`, the same seam the overview has painted every
-//     producer string through since 405-11 and the same one 405-12 put on the sub-action row.
-//
-//   - `memberDisplayName` does NOT, and its absence from the seam is a decision. `testStarted.name`
-//     is published UNMASKED as structural identity, beside `testId` and for the same reason the
-//     shell states there — it is a member's name, not a captured stream. Wrapping it would claim a
-//     redaction the producer never made.
-//
-//   - `memberNote` does not either: it is this product's own constant, not a producer's sentence.
+// `failureSummary` is a PRODUCER string and is rendered as the stored text, so a declared value
+// shows as the `[secret:<name>]` the producer recorded (D-28). React escapes it into a text node.
 
 import { useState, type ReactNode } from "react"
 import { ChevronRight } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
-import { MaskedText } from "@/components/run-detail/masked-text"
 import { VerdictBlock } from "@/components/run-detail/verdict-block"
 import { MarkGlyph } from "@/components/run-detail/feedback-entry"
 import { feedbackAddress } from "@/lib/feedback-view"
@@ -101,7 +86,7 @@ function ThinMemberBody({ group }: { group: RunDetailGroup }) {
       <span data-member-note>{note}</span>
       {failureSummary ? (
         <span data-member-failure-summary className="ml-2 select-text text-foreground/70">
-          <MaskedText text={failureSummary} />
+          {failureSummary}
         </span>
       ) : null}
     </div>

@@ -24,7 +24,6 @@ import {
   TOKENS_NOT_MEASURED_LABEL,
   usageTotalsLine,
 } from "@/lib/run-detail-view"
-import { maskedMarker } from "@vostride/agent-qa-schema"
 import type { RunModelSummary, RunTokenTotals } from "@vostride/agent-qa-schema"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -206,18 +205,16 @@ describe("who answered this run (425-05 · D-23, UI-SPEC E5 zero-one-many)", () 
   })
 })
 
-// T-425-05-01: a model id is a PRODUCER string, served masked when the read could not restore it.
-// Rendering it raw would put the marker itself in front of a reader; the card routes every id
-// through `MaskedText`, which paints the marker as the typed chip and everything else as text.
-describe("producer ids go through the masking renderer (425-05 · T-425-05-01)", () => {
-  it("USAGE-MODEL-LINES: a masked model id renders as the typed chip, never as the marker", async () => {
+// T-425-05-01: a model id is a PRODUCER string, rendered as the stored text (D-28).
+describe("producer ids render as the stored text (425-05 · T-425-05-01)", () => {
+  it("USAGE-MODEL-LINES: a stored [secret:<name>] model id renders as text, with no chip", async () => {
     const card = await openCard(MEASURED, {
-      declared: [{ provider: "openai", modelId: maskedMarker("secret"), stepCount: 3 }],
+      declared: [{ provider: "openai", modelId: "[secret:MODEL_ID]", stepCount: 3 }],
     })
 
     const model = card.querySelector<HTMLElement>('[data-usage-line="model"]')
     expect(model).not.toBeNull()
-    expect(model?.querySelector('[data-masked="secret"]')).not.toBeNull()
-    expect(model?.textContent).not.toContain(maskedMarker("secret"))
+    expect(model?.textContent).toContain("[secret:MODEL_ID]")
+    expect(model?.querySelector("[data-masked]")).toBeNull()
   })
 })

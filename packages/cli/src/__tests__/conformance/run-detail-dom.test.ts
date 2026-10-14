@@ -64,7 +64,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { MASKED_MARKER_DELIMITER, PLACEHOLDER_PATTERN, slugBranch } from '@vostride/agent-qa-schema'
+import { slugBranch } from '@vostride/agent-qa-schema'
 import { chromium } from 'playwright-core'
 import type { Browser, BrowserContext, Page } from 'playwright-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -179,9 +179,6 @@ function publishedSectionLabel(key: string): string {
 const REASONING_SECTION_LABEL = publishedSectionLabel('reasoning')
 
 const DECLARED_SECRET_MARKER = `[secret:${POPULATED_SECRET_NAME}]`
-
-/** A fresh, non-global copy of the placeholder pattern — `PLACEHOLDER_PATTERN` carries `lastIndex`. */
-const placeholderRe = (): RegExp => new RegExp(PLACEHOLDER_PATTERN.source, 'u')
 
 /** One response the browser actually received, as the cells that read it consume it. */
 interface RecordedResponse {
@@ -912,7 +909,7 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
     expect(observed.screenStateChip).toBeUndefined()
   })
 
-  it('(2a) the env credential is VISIBLE on the page as written, and no placeholder reaches a text node', () => {
+  it('(2a) the env credential is VISIBLE on the page as written', () => {
     const observed = firstVisit()
     expect(
       observed.bodyText.includes(POPULATED_SECRET_VALUE),
@@ -920,19 +917,6 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
       + 'declared secret, so the run records it as written and the page shows it as written '
       + `(D-07, D-23).${context()}`,
     ).toBe(true)
-
-    const raw = observed.textNodes.filter((text) => placeholderRe().test(text))
-    expect(
-      raw,
-      `a raw masking placeholder reached a text node a person reads.${context()}`,
-    ).toEqual([])
-
-    const delimited = observed.textNodes.filter((text) => text.includes(MASKED_MARKER_DELIMITER))
-    expect(
-      delimited,
-      'a masked-marker delimiter reached a text node instead of being split into a chip — the '
-      + `parser and the stored marker have drifted apart.${context()}`,
-    ).toEqual([])
 
     // THE TWO VALUES SHARE ONE SENTENCE, and this is where that is held: without it, (2a) and (2e)
     // could drift onto two unrelated strings and both go on passing about nothing in particular.
@@ -1022,11 +1006,6 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
       'the env credential is not shown as written by a dashboard that never saw this run execute; '
       + `the run recorded it as written, so the page reads it from the record (D-07).${context()}`,
     ).toBe(true)
-    const raw = (observed as PageObservation).textNodes.filter((text) => placeholderRe().test(text))
-    expect(
-      raw,
-      `a raw masking placeholder reached a text node on the restarted host.${context()}`,
-    ).toEqual([])
   })
 
   it('(2e) the DECLARED-secret lane is irreversible: the value is absent and its named marker is what a person sees (WINDOWS #286)', () => {

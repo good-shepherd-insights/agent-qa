@@ -7,7 +7,6 @@ import type { DisplayStep } from "@/lib/display-step"
 import { useEvidenceRecords } from '@/hooks/use-evidence-records'
 import { EVIDENCE_COPY, resolveEvidenceView } from '@/lib/evidence-state-view'
 import { EvidenceLoading, EvidenceState } from './evidence-state'
-import { MaskedText } from './masked-text'
 
 interface TabEnvProps {
   step: Pick<DisplayStep, 'variableSnapshot' | 'testIndex' | 'stepIndex' | 'evidence'> | null
@@ -106,8 +105,8 @@ function Variables({ step, executionLogs = [] }: { step: Pick<DisplayStep, 'vari
               <tbody>
                 {envEntries.map(([key, meta]) => (
                   <tr key={key} className="border-b border-border/50">
-                    <td className="py-1.5 px-2 font-mono text-xs text-muted-foreground"><MaskedText text={key} /></td>
-                    <td className="py-1.5 px-2 font-mono text-xs break-all"><MaskedText text={meta.value} /></td>
+                    <td className="py-1.5 px-2 font-mono text-xs text-muted-foreground">{key}</td>
+                    <td className="py-1.5 px-2 font-mono text-xs break-all">{meta.value}</td>
                     <td className="py-1.5 px-2">
                       <Badge className={cn("text-[10px] px-1.5 py-0 border", sourceColor(meta.source))}>
                         {meta.source}

@@ -11,7 +11,7 @@ import { fromRunDetailStep } from "@/lib/display-step"
 import { routes } from "@/lib/routes"
 import { EVIDENCE_INCOMPLETE_LABEL } from "@/lib/run-detail-view"
 import type { ArtifactRef, RunDetailSubAction } from "@vostride/agent-qa-schema"
-import { asRef, maskedMarker } from "@vostride/agent-qa-schema"
+import { asRef } from "@vostride/agent-qa-schema"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -89,7 +89,7 @@ afterEach(() => {
 describe("TabOverview screenshot states", () => {
   it("cleans icon glyphs from grounding display without changing Unicode or stored evidence", async () => {
     const sub = makeSubAction([])
-    const name = `\uE001 Café 日本語 \u{F0001} ${maskedMarker("secret")}`
+    const name = "\uE001 Café 日本語 \u{F0001} [secret:PW]"
     sub.grounding = { descriptor: { role: "button", name }, attempts: [] }
     const view = await renderOverview(sub)
     const grounding = Array.from(view.querySelectorAll("button")).find(button => button.textContent?.includes("Grounding"))!
@@ -97,7 +97,8 @@ describe("TabOverview screenshot states", () => {
     const rendered = view.querySelector("[data-grounding-descriptor]")!
     expect(rendered.textContent).toContain("button Café 日本語")
     expect(rendered.textContent).not.toMatch(/[\uE000-\uF8FF\u{F0000}-\u{FFFFD}]/u)
-    expect(rendered.querySelector('[data-masked="secret"]')).not.toBeNull()
+    expect(rendered.textContent).toContain("[secret:PW]")
+    expect(rendered.querySelector("[data-masked]")).toBeNull()
     expect(sub.grounding.descriptor.name).toBe(name)
   })
 

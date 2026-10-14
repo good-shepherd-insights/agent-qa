@@ -9,17 +9,9 @@
 // PRESENCE BRANCHES: is there a marker, are there cited steps, are there siblings. Anything that
 // had to be decided was decided in the projection.
 //
-// THE SENTENCE IS A PRODUCER STRING AND GOES THROUGH THE SEAM (D-12, 405 D-10). It quotes the
-// failing step's recorded error verbatim — Playwright's own text — inside
-// `observed (step N): "…"`, so it carries `<SECRET_n>` at rest and a typed marker after the
-// display seam, exactly as `failureSummary` does one component away. Rendered raw, the marker's
-// delimiter reaches a text node a person reads. `MaskedText` is the same seam the overview, the
-// sub-action row and the failure banner have painted every producer string through since 405-11.
-//
-// AND IT IS THE ONLY STRING ON THAT SEAM, which is the same decision restated four times now. The
-// provenance ("LLM verdict · 0.86"), the marker, the sibling line and the step labels are this
-// PRODUCT's words about the verdict's own fields; wrapping them would claim a redaction nobody ever
-// made. Every one of them is a constant or a formatter, never a producer's sentence.
+// THE SENTENCE IS A PRODUCER STRING, rendered as the stored text (D-28). It quotes the failing
+// step's recorded error verbatim — Playwright's own text — inside `observed (step N): "…"`, so a
+// declared value in it shows as the `[secret:<name>]` the producer recorded.
 //
 // NO COPY AFFORDANCE AND NO TITLE WRITE (T-406-05). WINDOWS #302/#303 name the clipboard and the
 // document title as unenumerated egress sinks for RESTORED cleartext: the local door restores
@@ -27,10 +19,10 @@
 // move that value into a bug report, while a title write would move it into a bfcache entry and
 // every window-title log. Neither is here; the sentence stays where the reader can see it.
 //
-// TEXT NODES AND ELEMENTS, NEVER MARKUP (T-406-02). Nothing in this file or in `MaskedText` below
-// it hands React raw HTML — the acceptance gate greps this file for the escape hatch's name and
-// requires zero occurrences, which is why the name is not written anywhere in it. A jsdom cell
-// feeds this component markup and asserts no element was constructed.
+// TEXT NODES AND ELEMENTS, NEVER MARKUP (T-406-02). Nothing in this file hands React raw HTML —
+// the acceptance gate greps this file for the escape hatch's name and requires zero occurrences,
+// which is why the name is not written anywhere in it. A jsdom cell feeds this component markup
+// and asserts no element was constructed.
 //
 // A CITED STEP IS A BUTTON AND A SIBLING IS A BUTTON, because both DO something (D-02, D-08): the
 // first selects that step in this member's tree through the page's existing `Selection`, the second
@@ -77,7 +69,6 @@
 // `data-*` DESCRIBES WHAT IS RENDERED, not what was passed (the banner's `showingFull` lesson).
 
 import { EvidenceIncomplete } from "@/components/run-detail/evidence-incomplete"
-import { MaskedText } from "@/components/run-detail/masked-text"
 import {
   CITED_ARTIFACT_LABEL,
   citedStepLabel,
@@ -136,7 +127,7 @@ export function VerdictBlock({
       className="mx-2 mt-1 mb-1.5 rounded-[2px] border border-border/60 bg-muted/10 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring/50"
     >
       <span data-verdict-sentence className="select-text text-foreground/80">
-        <MaskedText text={view.sentence} />
+        {view.sentence}
       </span>
 
       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted-foreground">

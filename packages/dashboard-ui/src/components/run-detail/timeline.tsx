@@ -4,10 +4,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ACTION_FAMILY_ICONS, UNKNOWN_ACTION_ICON, buildActionSentence } from '@/lib/action-vocabulary'
 import type { SuiteTimelineModel } from '@/lib/suite-timeline'
 import { ActionSentence } from './action-sentence'
-import { MaskedText } from './masked-text'
 import { nearestMarker, snapToMarker, type Playhead, type PlayerSource, type TimelineMarker, type TimelineModel } from '@/lib/playhead'
 import { TIMELINE_COPY, timelineValueText } from '@/lib/timeline-view'
-import { copyTextOf } from '@/lib/display-text'
 
 export interface TimelineProps {
   model: TimelineModel
@@ -139,7 +137,7 @@ export function Timeline({ model, playhead, source, memberLabel, seekFraction, o
           <div aria-hidden='true' className='absolute left-0 top-3 h-1 rounded-full bg-primary/50'
             style={{ width: `${playheadPosition * 100}%` }} />
           <span ref={slider} data-timeline-playhead role='slider' tabIndex={0}
-            aria-label={memberLabel ? `${TIMELINE_COPY.slider}: ${copyTextOf(memberLabel)}` : TIMELINE_COPY.slider}
+            aria-label={memberLabel ? `${TIMELINE_COPY.slider}: ${memberLabel}` : TIMELINE_COPY.slider}
             aria-orientation='horizontal' onKeyDown={navigate}
             aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round((position ?? 0) * 100)}
             aria-valuetext={current ? timelineValueText(current, model.markers.length) : 'No actions recorded for this test'}
@@ -156,7 +154,7 @@ export function Timeline({ model, playhead, source, memberLabel, seekFraction, o
           const classes = 'absolute top-0 flex h-7 w-7 -translate-x-1/2 items-center justify-center rounded-full focus-visible:outline-2 focus-visible:outline-ring'
           const circle = `flex h-5 w-5 items-center justify-center rounded-full border ${active ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/30 bg-background text-muted-foreground hover:bg-muted'}`
           return cluster.length === 1 ? <button key={marker.ordinal} type='button' data-timeline-marker={marker.ordinal} data-timeline-active={active || undefined} aria-current={active ? 'step' : undefined} style={style} className={classes}
-              aria-label={copyTextOf(`${context(marker)}: ${timelineValueText(marker, model.markers.length)}`)}
+              aria-label={`${context(marker)}: ${timelineValueText(marker, model.markers.length)}`}
               onPointerDown={event => beginDrag(event, marker)} onClick={event => { if (event.detail === 0) activate(marker) }}><span data-timeline-circle className={circle}><Icon aria-hidden='true' className='h-3 w-3' /></span></button>
             : <Popover key={marker.ordinal} open={openGroup === marker.ordinal} onOpenChange={open => setOpenGroup(open ? marker.ordinal : null)}>
             <PopoverTrigger asChild><button type='button' data-timeline-marker-group data-timeline-active={active || undefined} aria-current={active ? 'step' : undefined} style={style} className={classes}
@@ -165,12 +163,12 @@ export function Timeline({ model, playhead, source, memberLabel, seekFraction, o
             <PopoverContent className='max-h-64 w-80 overflow-y-auto p-1' aria-label='Nearby actions'
               onPointerDown={event => event.stopPropagation()}>
               {cluster.map(entry => <button key={entry.ordinal} type='button' data-timeline-marker={entry.ordinal} className='block w-full rounded p-2 text-left hover:bg-muted'
-                onClick={() => activate(entry)}><span className='text-xs'><MaskedText text={context(entry)} /></span><ActionSentence sub={entry.subAction} /></button>)}
+                onClick={() => activate(entry)}><span className='text-xs'>{context(entry)}</span><ActionSentence sub={entry.subAction} /></button>)}
             </PopoverContent>
           </Popover>
         })}
         {members?.filter(member => member.model.markers.length === 0).map(member => <button key={`empty-${member.model.testIndex}`} type='button' data-timeline-empty-member={member.model.testIndex}
-            aria-label={copyTextOf(`${member.label}: No actions recorded`)}
+            aria-label={`${member.label}: No actions recorded`}
             className='absolute top-0 flex h-7 w-7 -translate-x-1/2 items-center justify-center rounded-full focus-visible:outline-2 focus-visible:outline-ring'
             style={{ left: `${(member.start + member.end) * 50}%` }}
             onPointerDown={event => beginDrag(event)} onClick={event => { if (event.detail === 0) onSeekFraction((member.start + member.end) / 2) }}>

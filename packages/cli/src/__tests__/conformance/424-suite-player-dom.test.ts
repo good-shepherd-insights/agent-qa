@@ -1,7 +1,7 @@
 /// <reference lib="dom" />
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { maskedMarker, type RunDetailProjection } from '@vostride/agent-qa-schema'
+import type { RunDetailProjection } from '@vostride/agent-qa-schema'
 import { DashboardDatabase } from '@vostride/agent-qa-dashboard'
 import type { Page } from 'playwright-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -314,7 +314,7 @@ it('SUITE-BROWSER-ANNOTATION: new recorded intervals align in normal, magnifier 
     try {
       const grounding = structuredClone(detail)
       const named = grounding.subActions.find(action => action.testIndex === sub!.testIndex && action.stepIndex === sub!.stepIndex && action.subActionIndex === sub!.subActionIndex)!
-      named.grounding = { descriptor: { role: 'button', name: `\uE001 Café 日本語 \u{F0001} ${maskedMarker('secret')}` }, attempts: [] }
+      named.grounding = { descriptor: { role: 'button', name: '\uE001 Café 日本語 \u{F0001} [secret:PW]' }, attempts: [] }
       await page.route('**/api/runs/*/detail', route => route.fulfill({ json: grounding }))
       await ready(page)
       await page.getByRole('radio', { name: 'Video', exact: true }).click()
@@ -328,7 +328,8 @@ it('SUITE-BROWSER-ANNOTATION: new recorded intervals align in normal, magnifier 
       const descriptor = page.locator('[data-grounding-descriptor]')
       expect(await descriptor.textContent()).toContain('button Café 日本語')
       expect(await descriptor.textContent()).not.toMatch(/[\uE000-\uF8FF\u{F0000}-\u{FFFFD}]/u)
-      expect(await descriptor.locator('[data-masked="secret"]').count()).toBe(1)
+      expect(await descriptor.textContent()).toContain('[secret:PW]')
+      expect(await descriptor.locator('[data-masked]').count()).toBe(0)
       await descriptor.scrollIntoViewIfNeeded()
       await capture(page, `grounding-circle-${width}`)
       await page.locator('[data-player]').scrollIntoViewIfNeeded()

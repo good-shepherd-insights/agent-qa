@@ -7,7 +7,6 @@ import { ScreenshotViewer } from '@/components/screenshot-viewer'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { copyTextOf } from '@/lib/display-text'
 import { EVIDENCE_COPY, resolveEvidenceView } from '@/lib/evidence-state-view'
 import { formatOffset, frameUsable, type PlayerSource, type Playhead, type TimelineModel, type UsableFrame } from '@/lib/playhead'
 import { captionModel, mediaErrorView, PLAYER_COPY, PLAYBACK_SPEEDS, storePlayerSource, VIDEO_UNTIMED_NOTE } from '@/lib/player-view'
@@ -347,7 +346,7 @@ export function Player(props: PlayerProps) {
   const caption = marker ? captionModel(marker, frame) : undefined
   const videoView = resolveEvidenceView({ kind: 'video', selection: 'sub-action', entry: recording, read: 'idle' })
   const absent = videoView.kind === 'state'
-  const videoName = absent ? copyTextOf(`${PLAYER_COPY.video} — ${videoView.title}`) : PLAYER_COPY.video
+  const videoName = absent ? `${PLAYER_COPY.video} — ${videoView.title}` : PLAYER_COPY.video
   const available = mediaAvailable && (source === 'frames' ? frameUsable(selectedFrame) : !absent)
   const hasAnnotations = source === 'frames' ? !!frameAnnotation(frameOwner?.subAction)
     : model.markers.some(candidate => candidate.subAction.result.annotation && validRecordedAnnotation(candidate.subAction.result.annotation))
