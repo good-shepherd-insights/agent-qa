@@ -31,9 +31,8 @@
 // to this product and they have DIFFERENT observable fates on this page:
 //
 //   (A) A value seeded into the run's masking context BY NAME — `sensitiveEnvSlice`'s `_SECRET`
-//       suffix family. No redactor touches it; the bus projection masks it into `<SECRET_n>`, the
-//       run records a keyed digest for it, and 405-10's display-unmask seam re-derives it from the
-//       host's current sources and puts the REAL VALUE back at every local human read. This is the
+//       suffix family. No redactor touches it; the bus projection masks it into `<SECRET_n>`, and
+//       since 441-15 (D-07) the dashboard serves that stored text and restores nothing. This is the
 //       lane criterion 2 is about, and cells (2a)/(2d) are its acceptance.
 //
 //   (B) A value DECLARED in the project's `SecretStore`. The runner builds a `SecretRedactor` from
@@ -929,7 +928,7 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
     expect(
       delimited,
       'a masked-marker delimiter reached a text node instead of being split into a chip — the '
-      + `parser and the seam have drifted apart.${context()}`,
+      + `parser and the stored marker have drifted apart.${context()}`,
     ).toEqual([])
 
     // THE TWO VALUES SHARE ONE SENTENCE, and this is where that is held: without it, (2a) and (2e)

@@ -510,7 +510,7 @@ describe('the compare discipline is source-pinned, on stripped CODE (T-402-20)',
       }
     }
     walk(SRC)
-    expect(callers.sort()).toEqual(['composition/display-unmask.ts', 'composition/live-url-signer.ts'])
+    expect(callers.sort()).toEqual(['composition/live-url-signer.ts'])
   })
 
   it('carries NO permissive arm and no query-parameter carriage', () => {

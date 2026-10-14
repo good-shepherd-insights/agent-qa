@@ -6,9 +6,8 @@
 //
 //   `generateFailureSummary` (runner) → `projectTestFinished`, which routes the string through
 //   `maskPayloadStrings` BY NAME, so it carries `<SECRET_n>` / `<EMAIL_n>` at rest → the dashboard
-//   subscriber writes it to `runs.failure_summary` → `GET /api/runs/:id` crosses
-//   `unmaskTreeForDisplay`, which restores what this host can and rewrites what it cannot into a
-//   typed marker → here.
+//   subscriber writes it to `runs.failure_summary` → `GET /api/runs/:id` serves it as stored,
+//   restoring nothing (441 D-07) → here.
 //
 // Rendered raw, the marker's delimiter reaches a text node a person reads — precisely the state
 // 405-11's third truth and its prohibition forbid. 405-12 fixed the identical defect one row away

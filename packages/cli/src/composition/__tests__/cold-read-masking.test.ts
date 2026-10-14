@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { chainJobIdsForRun, invokeFunction } from '@vostride/agent-qa-agent'
 import {
   buildRunMaskingContext, composeLocalAgent, DIGEST_JOB_ID_SOURCE,
-  resolveMaskingHostKey, writeMaskingDigests,
 } from '@vostride/agent-qa-agent-local'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
@@ -21,7 +20,6 @@ import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import type { MaskingContext } from '@vostride/agent-qa-schema'
 
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent, createColdReadMaskingSources } from '../local-agent-host.js'
-import { createDisplayUnmasker } from '../display-unmask.js'
 import { resolveConfig } from '../../config.js'
 
 const roots: string[] = []
@@ -373,27 +371,6 @@ describe('Wave 18 cold read masking recovery', () => {
     expect(knowledge.learned).not.toHaveProperty('sinceThen')
     expect(read.host.jobs).not.toHaveBeenCalled()
     expect(getActiveMaskingContext()).toBeUndefined()
-  })
-
-  it('COLD-ROTATION preserves historical tokens while newly masked text cannot restore through their indices', async () => {
-    const p = project()
-    const historical = 'historical-retained-value'
-    const current = 'current-configured-value'
-    const old = buildRunMaskingContext({ secretStore: storeOf({ OLD: historical }), env: {} })
-    writeMaskingDigests({ root: p.agentQaRoot, runId: p.runId, key: resolveMaskingHostKey(p.agentQaRoot),
-      entries: old.snapshotRegistered().map(({ placeholder, value }) => ({ placeholder, value })) })
-    old.dispose()
-    writeFileSync(p.secretFile, `CURRENT=${current}\n`)
-    const original = `historical <SECRET_0> fresh ${current}`
-    await publish(p, snapshot(p.runId, [original]))
-    const read = cold(p, () => [storeOf({ OLD: historical })])
-    const result = await read.read()
-    const token = result.curationSnapshot!.rows[0]!.changes[0]!.change.evidenceToken!
-    expect(token).toBe(`historical <SECRET_0> fresh ${maskedMarker('secret')}`)
-    const display = createDisplayUnmasker({ agentQaRoot: p.agentQaRoot,
-      secretStores: () => [storeOf({ CURRENT: current, OLD: historical })], env: () => ({}),
-      authStatePayloads: () => [] })
-    expect(display(token, { runId: p.runId })).toBe(`historical ${historical} fresh ${maskedMarker('secret')}`)
   })
 
   it('COLD-HISTORICAL retains absent snapshot and missing-directory behavior with unavailable sources', async () => {

@@ -52,8 +52,8 @@
 //       suffix — `_SECRET` here — and never by value. That value is NOT in the runner's secret
 //       store, so no redactor touches it; it survives into the planner's reasoning text and is
 //       masked at projection into `<SECRET_0>`. This is the channel that mints the placeholder
-//       the page renders, and the display-unmask seam re-derives it from the same env slice at
-//       read time, which is what makes 405-12's unmasked-side cell possible at all.
+//       the page renders; since 441-15 (D-07) the dashboard serves that stored text and restores
+//       nothing.
 //
 // The email needs no declaration: `<EMAIL_n>` is minted lazily inside `mask()` by the email
 // detector over whatever text passes through, so an address in the planner's reasoning becomes a
