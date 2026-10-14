@@ -24,7 +24,6 @@ export type LocalPersistenceStore = PersistencePort
 export {
   buildMemberRunConfig,
   buildRunAuditSink,
-  buildRunMaskingContext,
   buildRunPorts,
   buildRunSessionSafetyHooks,
   buildScreenshotCompressor,
@@ -34,12 +33,10 @@ export {
   createSuiteLifecycle,
   SUITE_LIFECYCLE_LANE,
   SuiteBoundaryWhileLiveError,
-  extractAuthStateSensitiveStrings,
   openRunKnowledgeComposition,
   resolveBuildTagSetting,
   resolveRunBuildOrdinal,
   resolveRunExecutionContext,
-  sensitiveEnvSlice,
   stampAuditSink,
   toMemberTest,
 } from './composition/run-composition.js'
@@ -52,7 +49,6 @@ export type {
   RunDigestMemberInput,
   RunExecutionContext,
   RunKnowledgeComposition,
-  RunMaskingContext,
   RunPersistencePorts,
   SuiteLifecycle,
   SuiteLifecycleHooks,

@@ -13,7 +13,6 @@ import type { RunEventEnvelope, StepFinalizedPayload, SubActionRecordedPayload }
 import type { ModelProfile } from '@vostride/agent-qa-schema'
 import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
 import { createModel, createTokenAccounting } from '@vostride/agent-qa-model'
-import { buildRunMaskingContext } from '@vostride/agent-qa-agent-local'
 import {
   createMemberEventSink, createRunEventBus, createStepModelScope,
   LLMPlanner, LLMVerifier, makeScreenState, runMemberTest, SecretRedactor, SecretStore,
@@ -64,7 +63,9 @@ async function usageRun(options: { retry?: boolean; omitCache?: boolean; unscope
   const testId = generateTestId()
   const dbPath = join(dir, `${runId}.db`)
   const db = new DashboardDatabase({ dbPath })
-  const masking = buildRunMaskingContext({ env: {} })
+  // The routed model id is declared, so it never reaches final egress.
+  const redactor = new SecretRedactor(new SecretStore({ ROUTED_MODEL: 'synthetic-routed-model' }))
+  const mask = (text: string) => redactor.redactString(text)
   const store = new FsEvidenceArtifactStore({ root: dir, runId })
   const bus = createRunEventBus({ runId })
   const events: RunEventEnvelope[] = []
@@ -95,8 +96,6 @@ async function usageRun(options: { retry?: boolean; omitCache?: boolean; unscope
     if (extracting) {
       extractionStarted = true
       terminalCountAtExtraction = events.filter(event => event.type === 'stepFinalized').length
-      // This secret was unknown during planning and must still disappear at final egress.
-      masking.register('synthetic-routed-model')
     }
     return new Response(JSON.stringify({
       id: 'chat-synthetic-423-31', created: 1, model: 'synthetic-routed-model',
@@ -129,7 +128,7 @@ async function usageRun(options: { retry?: boolean; omitCache?: boolean; unscope
     provider: 'openai-compatible', model: 'gpt-4o', baseURL: 'https://usage-fixture.invalid/v1',
     auth: { mode: 'none' },
   }
-  const model = createModel(profile, { kind: 'none' }, text => masking.mask(text))
+  const model = createModel(profile, { kind: 'none' }, mask)
   const accounting = createTokenAccounting({ getCapabilities: () => profile.capabilities! })
   const consumers = (models: { plannerModel: typeof model; verifierModel: typeof model }) => ({
     planner: new LLMPlanner(models.plannerModel, 'web', undefined, undefined, accounting),
@@ -145,18 +144,18 @@ async function usageRun(options: { retry?: boolean; omitCache?: boolean; unscope
       adapter: { platform: 'web', async setup() {}, async cleanup() {},
         async observe() { return makeScreenState() }, async execute() { return { success: true } } },
       ...consumers({ plannerModel: model, verifierModel: model }), plannerModel: model, verifierModel: model,
-      testIndex: 0, abortSignal: new AbortController().signal, masking, evidenceArtifacts: store,
-      secretRedactor: new SecretRedactor(new SecretStore()),
-      sink: createMemberEventSink({ bus, mask: text => masking.mask(text), testIndex: 0 }),
+      testIndex: 0, abortSignal: new AbortController().signal, evidenceArtifacts: store,
+      secretRedactor: redactor,
+      sink: createMemberEventSink({ bus, mask, testIndex: 0 }),
       ...(options.unscoped ? {} : { stepModelScope: { runId, create: key => {
         scope = createStepModelScope({ key,
           models: {
-            planner: { model, bind: observer => createModel(profile, { kind: 'none' }, text => masking.mask(text), {}, observer) },
-            verifier: { model, bind: observer => createModel(profile, { kind: 'none' }, text => masking.mask(text), {}, observer) },
+            planner: { model, bind: observer => createModel(profile, { kind: 'none' }, mask, {}, observer) },
+            verifier: { model, bind: observer => createModel(profile, { kind: 'none' }, mask, {}, observer) },
           },
           profiles: { planner: { provider: profile.provider, modelId: profile.model },
             verifier: { provider: profile.provider, modelId: profile.model } },
-          mask: text => masking.mask(text),
+          mask,
           createConsumers: models => consumers(models as { plannerModel: typeof model; verifierModel: typeof model }),
         })
         return scope
@@ -181,7 +180,7 @@ async function usageRun(options: { retry?: boolean; omitCache?: boolean; unscope
         snapshot: scope?.snapshot(), requests, extractionStarted, terminalCountAtExtraction, store,
       }
     } finally { cold.close() }
-  } finally { bus.close(); db.close(); masking.dispose() }
+  } finally { bus.close(); db.close() }
 }
 
 it('USAGE-COLD-ROUNDTRIP: real model attempts survive final event, subscriber and cold read', async () => {
@@ -202,8 +201,7 @@ it('TIMEOUT-DETAIL-ROUNDTRIP: a timeout failure summary lands on the member row 
   const testId = generateTestId()
   const dbPath = join(dir, `${runId}.db`)
   const db = new DashboardDatabase({ dbPath })
-  const masking = buildRunMaskingContext({ env: {} })
-  masking.register('synthetic-unrelated-secret-423-42')
+  const redactor = new SecretRedactor(new SecretStore({ UNRELATED: 'synthetic-unrelated-secret-423-42' }))
   const bus = createRunEventBus({ runId })
   const ingest = createDashboardRunIngest({ db, correlationEnv: { runId } })
   bus.subscribe(1, event => ingest.handler(event))
@@ -211,12 +209,12 @@ it('TIMEOUT-DETAIL-ROUNDTRIP: a timeout failure summary lands on the member row 
   try {
     bus.publish('runStarted', {})
     bus.publish('testStarted', { testIndex: 0, testId, name: 'Timeout roundtrip' })
-    const failureSummary = masking.mask(summary)
+    const failureSummary = redactor.redactString(summary)
     expect(failureSummary).toBe(summary)
     bus.publish('testFinished', { testIndex: 0, testId, outcome: 'timeout', failureSummary })
     bus.publish('runFinished', { aggregateVerdict: 'failed' })
     await ingest.finalize({})
-  } finally { bus.close(); db.close(); masking.dispose() }
+  } finally { bus.close(); db.close() }
   const cold = new DashboardDatabase({ dbPath })
   try {
     expect(cold.readRunDetailRows(runId)!.members[0]?.failureSummary).toBe(summary)

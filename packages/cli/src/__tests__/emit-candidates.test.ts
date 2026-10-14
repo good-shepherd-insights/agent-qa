@@ -859,7 +859,7 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
 
   it.each([
     ['an EMAIL-valued binding (mask() transforms this shape unconditionally)', 'PROBE_USER', 'qa.user@example.com'],
-    ['a credential-NAMED binding (sensitiveEnvSlice registers this name)', 'PROBE_API_TOKEN', 'tok-live-9f3a2b'],
+    ['a credential-NAMED binding (the deleted env-name seed registered this name)', 'PROBE_API_TOKEN', 'tok-live-9f3a2b'],
   ])(
     'classifies %s by its binding name — the matcher is shape-INSENSITIVE',
     (_label, name, value) => {

@@ -14,8 +14,8 @@
 // other" — held; what failed was that nothing was hidden from either.
 //
 // MEASURED TWICE BEFORE THIS FILE EXISTED. A code reviewer measured `raw value present in
-// serialization? false` for `sk-live"abc\def`; the phase verifier then drove the real
-// `buildRunMaskingContext` masker over six inputs and recorded four of five shapes leaking
+// serialization? false` for `sk-live"abc\def`; the phase verifier then drove the real run
+// masking-context masker (deleted 441-19) over six inputs and recorded four of five shapes leaking
 // verbatim on both channels, including a `*_CREDENTIALS`-style JSON blob. This file is the
 // standing corpus for that class.
 //

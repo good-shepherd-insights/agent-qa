@@ -124,8 +124,11 @@ describe('the suite path runs inside runSafetyScope and masks with its own redac
     // 401-11: ONE run body, in the drive, and `run.ts` wraps none of its own.
     expect(count(driveSource, 'runSafetyScope(')).toBe(1)
     expect(count(runSource, 'runSafetyScope(')).toBe(0)
-    expect(count(driveSource, 'buildRunMaskingContext(')).toBe(0)
-    expect(count(runSource, 'buildRunMaskingContext(')).toBe(0)
+    // 441-19 (D-12): the run seed helper is deleted; neither site reaches its primitives either.
+    for (const source of [driveSource, runSource]) {
+      expect(count(source, 'createMaskingContext(')).toBe(0)
+      expect(count(source, 'seedMaskingContext(')).toBe(0)
+    }
     // 441-58 (D-06): the producer's redactor reaches the ONE assembler, which puts it on RunConfig;
     // no masking context is handed over or set.
     expect(runSource).toContain('secretRedactor')
@@ -211,9 +214,10 @@ describe('the single-test path activates the seams with no identity mint remaini
 
   it('builds no run MaskingContext at either site, and the SafetyHookRunner once in the drive', () => {
     // 441-58 (D-06): no site builds a run masking context; the hooks are built once, in the drive.
-    expect(count(driveSource, 'buildRunMaskingContext(')).toBe(0)
+    // 441-19 (D-12): the seed helper is deleted, so its primitives are what stays pinned absent.
+    expect(count(driveSource, 'createMaskingContext(')).toBe(0)
     expect(count(driveSource, 'buildRunSafetyHooks(')).toBe(1)
-    expect(count(runSource, 'buildRunMaskingContext(')).toBe(0)
+    expect(count(runSource, 'createMaskingContext(')).toBe(0)
     expect(count(runSource, 'buildRunSafetyHooks(')).toBe(0)
   })
 

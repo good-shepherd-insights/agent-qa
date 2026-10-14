@@ -10,7 +10,7 @@ import { EvidenceArtifactRefSchema, NETWORK_BODY_MAX_BYTES } from '@vostride/age
 import type {
   EvidenceDocument, RunEventEnvelope, StepFinalizedPayload, SubActionRecordedPayload,
 } from '@vostride/agent-qa-schema'
-import { buildRunMaskingContext } from '@vostride/agent-qa-agent-local'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
 
 // 423-25 (R-26): measurement of a SYNTHETIC finalized-v4 fixture. Nothing here is a production
@@ -103,9 +103,8 @@ async function freshFixture(root: string) {
   const path = join(root, 'fresh-v4.db')
   new DashboardDatabase({ dbPath: path }).close()
   const before = snapshot(path)
-  const masking = buildRunMaskingContext({ env: {} })
-  masking.register(SECRET)
-  const mask = (text: string) => masking.mask(text)
+  const redactor = new SecretRedactor(new SecretStore({ ROW_BUDGET_SECRET: SECRET }))
+  const mask = (text: string) => redactor.redactString(text)
   const store = new FsEvidenceArtifactStore({ root: join(root, 'blobs'), runId: RUN_ID })
   const persist = (document: Exclude<EvidenceDocument, { kind: 'variables' }>) =>
     EvidenceArtifactRefSchema.parse(store.persistEvidenceDocument(document))
@@ -191,7 +190,6 @@ async function freshFixture(root: string) {
     await ingest.finalize({})
   } finally {
     db.close()
-    masking.dispose()
   }
   const after = snapshot(path)
   const reader = new DatabaseSync(path, { readOnly: true })
