@@ -60,23 +60,6 @@ export const MODELS_HEADING = 'Models'
  */
 export const TOKEN_USAGE_TRIGGER_LABEL = 'Token usage — details'
 
-/** The chip for a `SECRET` placeholder this host's current config cannot restore (D-10). */
-export const MASKED_SECRET_LABEL = "masked secret — not in this host's config"
-
-/**
- * The same chip on a LIVE surface (428 D-22). The live wire masks by design (405 D-09), so the value
- * is not missing from this host's config and the run-detail sentence would state a false reason.
- */
-export const MASKED_SECRET_LIVE_LABEL = 'masked secret'
-
-/**
- * The chip for a masked email (D-10).
- *
- * Email placeholders are minted during masking BY DETECTION and have no source to re-derive from,
- * so this one is never restorable — it is a permanent state, not a misconfiguration.
- */
-export const MASKED_EMAIL_LABEL = 'masked email'
-
 /**
  * The honest state for a ref whose blob is gone or was never written (406-05 · D-17 / D-18).
  *
@@ -362,16 +345,10 @@ export function cachedInputLine(tokens: RunTokenTotals): string | undefined {
   return `cached input ${cached} of ${fullTokens.format(cachedInputMeasuredTokens)} (provider-reported) over ${String(cachedMeasuredSteps)} of ${String(measuredSteps)} measured steps`
 }
 
-/**
- * One line of the usage card's model section, and what the card must do with it.
- *
- * `masked` marks the lines that carry a PRODUCER string (a model or provider id); the card renders
- * every line, heading included, as a plain text node.
- */
+/** One line of the usage card's model section; the card renders every line as a plain text node. */
 export interface UsageLine {
   readonly kind: 'model' | 'models' | 'responded' | 'heading'
   readonly text: string
-  readonly masked?: boolean
 }
 
 /** One identity, as the card names it — the parenthesis only when a provider was recorded. */
@@ -403,13 +380,12 @@ export function usageModelLines(models: RunModelSummary | undefined): readonly U
 
   if (declared?.length === 1 && (responding === undefined || responding.length <= 1)) {
     return [
-      { kind: 'model', text: `Model ${identityText(declared[0])}`, masked: true },
+      { kind: 'model', text: `Model ${identityText(declared[0])}` },
       ...differing.map(
         (entry): UsageLine => ({
           kind: 'responded',
           text: `responded as ${entry.modelId}`,
-          masked: true,
-        }),
+          }),
       ),
     ]
   }
@@ -420,14 +396,12 @@ export function usageModelLines(models: RunModelSummary | undefined): readonly U
       (entry): UsageLine => ({
         kind: 'models',
         text: `${identityText(entry)} × ${String(entry.stepCount)} steps`,
-        masked: true,
       }),
     ),
     ...differing.map(
       (entry): UsageLine => ({
         kind: 'responded',
         text: `responded as ${entry.modelId} × ${String(entry.stepCount)} steps`,
-        masked: true,
       }),
     ),
   ]

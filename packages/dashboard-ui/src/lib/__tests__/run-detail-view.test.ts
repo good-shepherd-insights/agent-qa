@@ -362,14 +362,14 @@ describe('model identity in the card (425-05 · D-23)', () => {
 
   it('USAGE-MODEL-LINES: one declared model is one Model line', () => {
     expect(usageModelLines(declaredOne)).toEqual([
-      { kind: 'model', text: 'Model gpt-5.6-terra (openai)', masked: true },
+      { kind: 'model', text: 'Model gpt-5.6-terra (openai)' },
     ])
     expect(
       usageModelLines({
         ...declaredOne,
         responding: [{ modelId: 'gpt-5.6-terra', stepCount: 3 }],
       }),
-    ).toEqual([{ kind: 'model', text: 'Model gpt-5.6-terra (openai)', masked: true }])
+    ).toEqual([{ kind: 'model', text: 'Model gpt-5.6-terra (openai)' }])
   })
 
   it('USAGE-MODEL-LINES: a responding id that differs is said, and only then', () => {
@@ -379,8 +379,8 @@ describe('model identity in the card (425-05 · D-23)', () => {
         responding: [{ modelId: 'gpt-5.6-terra-2026-09-01', stepCount: 3 }],
       }),
     ).toEqual([
-      { kind: 'model', text: 'Model gpt-5.6-terra (openai)', masked: true },
-      { kind: 'responded', text: 'responded as gpt-5.6-terra-2026-09-01', masked: true },
+      { kind: 'model', text: 'Model gpt-5.6-terra (openai)' },
+      { kind: 'responded', text: 'responded as gpt-5.6-terra-2026-09-01' },
     ])
   })
 
@@ -398,9 +398,9 @@ describe('model identity in the card (425-05 · D-23)', () => {
       }),
     ).toEqual([
       { kind: 'heading', text: MODELS_HEADING },
-      { kind: 'models', text: 'gpt-5.6-terra (openai) × 2 steps', masked: true },
-      { kind: 'models', text: 'claude-opus-5 (anthropic) × 1 steps', masked: true },
-      { kind: 'responded', text: 'responded as claude-opus-5-20260901 × 1 steps', masked: true },
+      { kind: 'models', text: 'gpt-5.6-terra (openai) × 2 steps' },
+      { kind: 'models', text: 'claude-opus-5 (anthropic) × 1 steps' },
+      { kind: 'responded', text: 'responded as claude-opus-5-20260901 × 1 steps' },
     ])
   })
 
@@ -409,7 +409,7 @@ describe('model identity in the card (425-05 · D-23)', () => {
       usageModelLines({ responding: [{ modelId: 'gpt-5.6-terra', stepCount: 4 }] }),
     ).toEqual([
       { kind: 'heading', text: MODELS_HEADING },
-      { kind: 'responded', text: 'responded as gpt-5.6-terra × 4 steps', masked: true },
+      { kind: 'responded', text: 'responded as gpt-5.6-terra × 4 steps' },
     ])
   })
 
@@ -420,7 +420,7 @@ describe('model identity in the card (425-05 · D-23)', () => {
       declared: [{ modelId: 'gpt-5.6-terra', stepCount: 3 }],
     } as unknown as RunModelSummary
     expect(usageModelLines(providerless)).toEqual([
-      { kind: 'model', text: 'Model gpt-5.6-terra', masked: true },
+      { kind: 'model', text: 'Model gpt-5.6-terra' },
     ])
   })
 })

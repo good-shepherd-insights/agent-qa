@@ -170,6 +170,18 @@ describe("FailureBanner", () => {
     expect(view.querySelector("[data-masked]")).toBeNull()
   })
 
+  it("old marker text renders as written", () => {
+    // An old run's stored text can still hold a numbered placeholder or a `␟`-fenced marker
+    // (441 D-20); the banner shows those characters and converts neither.
+    const old = `Step 1/1 "probe" failed: token <SECRET_1> and ␟masked:secret␟ stay as stored`
+    const view = mount(<FailureBanner summary={old} />)
+
+    expect(textOf(view)).toBe(old)
+    expect(textOf(view)).toContain("<SECRET_1>")
+    expect(textOf(view)).toContain("␟masked:secret␟")
+    expect(view.querySelector("[data-masked]")).toBeNull()
+  })
+
   it("writes only the PREVIEW to the clipboard while the banner is collapsed", async () => {
     const writeText = stubClipboard()
 

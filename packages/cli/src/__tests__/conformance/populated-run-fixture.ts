@@ -176,7 +176,7 @@ export const POPULATED_TEST_PATH = 'tests/populated.test.yaml'
  * THE ARITHMETIC, WRITTEN OUT SO THE DOM CELL'S CLAIM IS AUDITABLE BY READING. Measured rather than
  * counted by eye: `generateFailureSummary`'s format was executed over this module's own strings
  * with the two masking placeholders in the positions the seam puts them, and the result split the
- * way `truncateMaskedText` spends its budget (one word per whitespace-free token, one per marker).
+ * way `truncateText` spends its budget (one word per whitespace-free token).
  * Three numbers in the block that stood here were wrong — the shipped step text's length, the
  * credential's distance from the marker, and a five-word claim positioned as if it justified the
  * first (WINDOWS #296).

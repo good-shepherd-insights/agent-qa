@@ -151,13 +151,11 @@ function unescapeStringBody(body: string): string {
  * something else.
  *
  * EITHER QUOTE STYLE, AND THE STYLE IS NOT THE CONSTANT'S BUSINESS (WINDOWS #297). This read used
- * to accept single quotes only, so `MASKED_SECRET_LABEL` — which is DOUBLE-quoted because its text
- * carries an apostrophe — could not be read at all, and the one cell that needed the secret chip's
- * published label had to hardcode it, which is the green-for-the-wrong-reason this whole file
- * exists to prevent. Worse in the other direction: a Prettier or ESLint quote-style change to
- * `run-detail-view.ts` turned the WORKING email read into a `beforeAll` throw that red all six
- * cells at once, for a formatting reason. The body is matched to the MATCHING quote across escaped
- * pairs, so a `\'` inside a single-quoted constant does not end it early.
+ * to accept single quotes only, so a DOUBLE-quoted constant (one whose text carries an apostrophe)
+ * could not be read at all, and a Prettier or ESLint quote-style change turned a working read into
+ * a `beforeAll` throw that red every cell at once, for a formatting reason. The body is matched to
+ * the MATCHING quote across escaped pairs, so a `\'` inside a single-quoted constant does not end
+ * it early.
  *
  * A TEMPLATE LITERAL IS STILL REFUSED, deliberately: its body can interpolate, and a helper that
  * returned the source text of `${...}` would be publishing a string nothing renders.
@@ -176,24 +174,21 @@ function publishedConstant(relativePath: string, name: string): string {
   return unescapeStringBody(entry[2] as string)
 }
 
-// The two chip labels, read only by the helper's own cells below.
-const MASKED_EMAIL_LABEL = publishedConstant('lib/run-detail-view.ts', 'MASKED_EMAIL_LABEL')
-const MASKED_SECRET_LABEL = publishedConstant('lib/run-detail-view.ts', 'MASKED_SECRET_LABEL')
-
 // ── THE HELPER'S OWN CELL (WINDOWS #297). It is outside the drive's `describe` deliberately: it
 // reads one source file and nothing else, so it must not pull a spawned binary, a browser and a
 // real run in behind it. A helper whose failure mode is "throws in `beforeAll` and reds every cell
 // in the file at once" is worth three cells of its own.
 describe('publishedConstant reads a constant whatever quotes it carries (WINDOWS #297)', () => {
-  it('publishedConstant reads the DOUBLE-quoted secret label with its apostrophe intact', () => {
-    expect(MASKED_SECRET_LABEL).toContain("host's")
-    expect(MASKED_SECRET_LABEL.startsWith('masked secret')).toBe(true)
+  it('publishedConstant reads a DOUBLE-quoted constant with its apostrophe intact', () => {
+    const title = publishedConstant('lib/config-copy.ts', 'CONFIG_LOAD_FAILED_TITLE')
+    expect(title).toBe("Couldn't load the config")
     // The body is the RUNTIME string, not the source text: no backslash survives the read.
-    expect(MASKED_SECRET_LABEL).not.toContain('\\')
+    expect(title).not.toContain('\\')
   })
 
-  it('publishedConstant still reads the SINGLE-quoted email label, unchanged', () => {
-    expect(MASKED_EMAIL_LABEL).toBe('masked email')
+  it('publishedConstant still reads a SINGLE-quoted constant, unchanged', () => {
+    expect(publishedConstant('lib/run-detail-view.ts', 'TOKEN_USAGE_TRIGGER_LABEL'))
+      .toBe('Token usage — details')
   })
 
   it('publishedConstant refuses a name it cannot find rather than answering an empty string', () => {
