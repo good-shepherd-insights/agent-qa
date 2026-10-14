@@ -1008,6 +1008,33 @@ describe('C441-CONFIG', () => {
     expect(read.lines.every((line) => !('class' in line))).toBe(true)
     expect(JSON.stringify(read)).not.toContain('Hunter-42-zz')
   })
+
+  it('a validation message shows a declared value as its marker', async () => {
+    const declared = new ConfigManager(configPath, declaredMask('Hunter-42-zz', 'PW_441'))
+    await writeFile(configPath, ORDERED_CONFIG.replace('  llm: planner', '  llm: Hunter-42-zz'))
+
+    const read = await declared.readMasked()
+
+    expect(read.kind).toBe('ok')
+    if (read.kind !== 'ok') return
+    const readMessages = read.fileIssues.map((issue) => issue.message)
+    expect(JSON.stringify(read.fileIssues)).not.toContain('Hunter-42-zz')
+    expect(readMessages.some((message) => message.includes('[secret:PW_441]')), JSON.stringify(readMessages)).toBe(true)
+
+    await writeFile(configPath, ORDERED_CONFIG)
+    const refused = await declared.applyChanges([{ op: 'set', path: ['use', 'llm'], value: 'Hunter-42-zz' }])
+    expect(refused.kind).toBe('refused')
+    if (refused.kind !== 'refused') return
+    const writeMessages = (refused.issues ?? []).map((issue) => issue.message)
+    expect(JSON.stringify(refused)).not.toContain('Hunter-42-zz')
+    expect(writeMessages.some((message) => message.includes('[secret:PW_441]')), JSON.stringify(writeMessages)).toBe(true)
+
+    await writeFile(configPath, ORDERED_CONFIG.replace('  llm: planner', '  llm: q7'))
+    const short = await declared.readMasked()
+    expect(short.kind).toBe('ok')
+    if (short.kind !== 'ok') return
+    expect(short.fileIssues.some((issue) => issue.message.includes('q7')), JSON.stringify(short.fileIssues)).toBe(true)
+  })
 })
 
 // 2026-09-30, 432-07 D-05/D-07 (EDGE-12): the transaction queue belongs to the resolved config path,

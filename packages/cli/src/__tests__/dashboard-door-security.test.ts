@@ -62,9 +62,10 @@ const PRODUCTION_TARGET = 'door-production'
 // ---- the fixture project -------------------------------------------------------------------
 
 /** The `surface-dispatch.ts` fixture project, verbatim in shape (see the door cell's own note). */
-function fixtureWorkspace(): string {
+function fixtureWorkspace(secrets = ''): string {
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-400-14-'))
   const configPath = join(root, 'agent-qa.config.yaml')
+  writeFileSync(join(root, '.env.secrets.local'), secrets, 'utf8')
   writeFileSync(
     configPath,
     `${JSON.stringify({
@@ -114,11 +115,12 @@ const openDoors: DoorFixture[] = []
  */
 async function openDoor(options: {
   readonly wrapHost?: (host: AgentHost) => AgentHost
+  readonly secrets?: string
 } = {}): Promise<DoorFixture> {
-  const configPath = fixtureWorkspace()
+  const configPath = fixtureWorkspace(options.secrets)
   const configRoot = dirname(resolve(configPath))
   let boundOrigin: string | undefined
-  const { host, agentHost } = composeDashboardDoor({
+  const { host, agentHost, declaredSecretMask } = composeDashboardDoor({
     agentQaRoot: join(configRoot, '.agent-qa'),
     configPath,
     boundOrigin: () => boundOrigin,
@@ -139,7 +141,7 @@ async function openDoor(options: {
   const signals = ['SIGINT', 'SIGTERM'] as const
   const before = signals.map((signal) => new Set(process.listeners(signal)))
   const started = await startServer({
-    declaredSecretMask: (text) => text,
+    declaredSecretMask,
     db,
     port: 0,
     // 2026-10-03 (quick-261003-tsr, WR-07): the fixture's own config, so the config and undo arms
@@ -687,6 +689,25 @@ describe('C432-RETAINED-CROSS-SITE', () => {
       origin: sameOrigin(door),
     })
     expectDispatchedOnce('C432-RETAINED-CROSS-SITE', door, accepted)
+  })
+})
+
+describe('C441-CONFIG', () => {
+  it('the dashboard command binds the declared mask', async () => {
+    const door = await openDoor({ secrets: 'PW_441=Hunter-42-zz\n' })
+    const config = JSON.parse(readFileSync(door.configPath, 'utf8')) as { use: Record<string, unknown> }
+    config.use.buildTag = 'Hunter-42-zz'
+    config.use.releaseNote = 'plain-441-value'
+    writeFileSync(door.configPath, `${JSON.stringify(config)}\n`, 'utf8')
+
+    const read = await rawRequest(door.port, { method: 'GET', path: '/api/config' })
+
+    expect(read.status, read.body).toBe(200)
+    expect(read.body).not.toContain('Hunter-42-zz')
+    const body = JSON.parse(read.body) as { config: { use: Record<string, unknown> }; file: { lines: { text: string }[] } }
+    expect(body.config.use.buildTag).toBe('[secret:PW_441]')
+    expect(body.config.use.releaseNote).toBe('plain-441-value')
+    expect(body.file.lines.some((line) => line.text.includes('[secret:PW_441]'))).toBe(true)
   })
 })
 
