@@ -47,17 +47,13 @@
 //       assumed: the redaction happens in the loop, the masking happens at bus projection, and
 //       the loop runs first.
 //
-//   (2) An ambient CREDENTIAL-SHAPED environment variable handed to the spawned dashboard. The
-//       run's masking context seeds from `sensitiveEnvSlice(process.env)`, which selects by NAME
-//       suffix — `_SECRET` here — and never by value. That value is NOT in the runner's secret
-//       store, so no redactor touches it; it survives into the planner's reasoning text and is
-//       masked at projection into `<SECRET_0>`. This is the channel that mints the placeholder
-//       the page renders; since 441-15 (D-07) the dashboard serves that stored text and restores
-//       nothing.
+//   (2) An ambient CREDENTIAL-SHAPED environment variable handed to the spawned dashboard. Its
+//       name ends in `_SECRET`, but it is not declared in the fixture's secrets file, and only a
+//       value declared there is masked (D-01, D-12). It survives into the planner's reasoning
+//       text and is recorded and shown as written.
 //
-// The email needs no declaration: `<EMAIL_n>` is minted lazily inside `mask()` by the email
-// detector over whatever text passes through, so an address in the planner's reasoning becomes a
-// placeholder without any host source declaring it.
+// The email is undeclared too, so an address in the planner's reasoning is recorded and shown as
+// written (D-23).
 //
 // AND ONE RUN THAT FAILS, ADDED BY 405-14 (WINDOWS #287). The run-detail page has a render site
 // that only exists on a FAILED run — the failure banner — and it was the last site on the rebuilt
@@ -102,8 +98,8 @@ import type { SpawnedDashboard } from './spawned-chat.js'
 // ---- The declared vocabulary --------------------------------------------------------------------
 
 /**
- * The ambient credential-shaped value the masking context registers, and therefore the ONE value
- * that becomes a `<SECRET_n>` placeholder on the wire.
+ * The ambient credential-shaped value. It is not declared in the fixture's secrets file, so it is
+ * recorded as written.
  *
  * A THROWAWAY THIS REPOSITORY OWNS: it names nothing,
  * opens nothing, and exists only inside a temp project's child environment. It is deliberately
@@ -112,12 +108,9 @@ import type { SpawnedDashboard } from './spawned-chat.js'
 export const POPULATED_SECRET_VALUE = 'zz-405-populated-secret-7f3a91c2'
 
 /**
- * The environment variable name the spawned dashboard carries it under.
- *
- * THE `_SECRET` SUFFIX IS LOAD-BEARING. `sensitiveEnvSlice` selects the run's masking seed by name
- * suffix family and never by value, so a variable called `AGENT_QA_405_09_POPULATED_VALUE` would
- * be handed to the child, ignored by the seed, and printed in clear by the first diagnostic that
- * happened to echo it. The suffix is what puts the value in the masking context.
+ * The environment variable name the spawned dashboard carries it under. The `_SECRET` suffix makes
+ * it credential-shaped by name; only a value declared in the fixture's secrets file is masked, so
+ * the suffix alone masks nothing.
  */
 export const POPULATED_SECRET_ENV_VAR = 'AGENT_QA_405_09_POPULATED_SECRET'
 
@@ -127,9 +120,9 @@ export const POPULATED_SECRET_NAME = 'POPULATED_STEP_SECRET'
 /**
  * The DECLARED secret's value: the runner's own redaction lane, distinct from the masking lane.
  *
- * A SECOND VALUE RATHER THAN THE SAME ONE, and the header states why: a value in the runner's
- * secret store is rewritten to `[secret:<name>]` before it is recorded, so sharing one value
- * between the two channels would silently delete the `<SECRET_n>` the page exists to render.
+ * A SECOND VALUE RATHER THAN THE SAME ONE: a value declared in the secrets file is rewritten to
+ * `[secret:<name>]` before it is recorded, so sharing one value between the two channels would
+ * erase the contrast between a declared value and an undeclared one.
  */
 export const POPULATED_DECLARED_SECRET_VALUE = 'zz-405-declared-secret-3c8e1f60'
 

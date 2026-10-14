@@ -30,12 +30,11 @@
 // 405-09 measured a fact this file must not paper over. There are TWO ways a value becomes secret
 // to this product and they have DIFFERENT observable fates on this page:
 //
-//   (A) A value seeded into the run's masking context BY NAME — `sensitiveEnvSlice`'s `_SECRET`
-//       suffix family. No redactor touches it; the bus projection masks it into `<SECRET_n>`, and
-//       since 441-15 (D-07) the dashboard serves that stored text and restores nothing. This is the
-//       lane criterion 2 is about, and cells (2a)/(2d) are its acceptance.
+//   (A) A credential-shaped value handed to the run in an environment variable and NOT declared
+//       in the fixture's secrets file. Only declared values are masked (D-01, D-12), so the run
+//       records it as written and the page shows it as written. Cells (2a)/(2d) are its acceptance.
 //
-//   (B) A value DECLARED in the project's `SecretStore`. The runner builds a `SecretRedactor` from
+//   (B) A value DECLARED in the fixture's secrets file (`.env.secrets.local`). The runner builds a `SecretRedactor` from
 //       that store and rewrites the value to its named `[secret:<name>]` marker INSIDE THE LOOP, at
 //       `plan: reasoning`, before any evidence is recorded. By the time the bus projection masks
 //       anything there is no value left to mask, so no placeholder is ever minted and the seam has
@@ -241,6 +240,8 @@ interface PageObservation {
   readonly maskedCategories: readonly string[]
   /** Every `[data-masked]` chip's visible text. */
   readonly maskedChipText: readonly string[]
+  /** The first step row's label, as painted. */
+  readonly stepRowText: string
   /** Every non-blank text node under `<body>` — the medium a person reads. */
   readonly textNodes: readonly string[]
   /** `document.body.innerText`, for the whole-page containment questions. */
@@ -487,6 +488,7 @@ async function observeRunDetail(
         bodyText: document.body.innerText,
         maskedCategories: masked.map((element) => element.getAttribute('data-masked') ?? '?'),
         maskedChipText: masked.map((element) => (element.textContent ?? '').trim()),
+        stepRowText: (document.querySelector('[data-step-id] > button')?.textContent ?? '').trim(),
         subActionCount: document.querySelectorAll('[data-sub-action]').length,
         stepCount: document.querySelectorAll('[data-step-id]').length,
       }
@@ -572,6 +574,7 @@ async function observeRunDetail(
       ...(screenStateChip === undefined ? {} : { screenStateChip }),
       maskedCategories: harvested.maskedCategories,
       maskedChipText: harvested.maskedChipText,
+      stepRowText: harvested.stepRowText,
       textNodes: harvested.textNodes,
       bodyText: harvested.bodyText,
       responses,
@@ -1051,5 +1054,25 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
       + '#286 must be re-measured, because the two-lane finding it records is what this cell holds '
       + `— or the reasoning stopped carrying the credential at all.${context()}`,
     ).toContain(marker)
+  })
+
+  describe('C441-DISPLAY', () => {
+    it('run detail shows a declared marker as text', () => {
+      const observed = firstVisit()
+      expect(
+        observed.stepRowText,
+        'the step row does not show the declared value\'s stored `[secret:<name>]` as text. The '
+        + `step text references the value declared in the fixture's secrets file (D-28).${context()}`,
+      ).toContain(DECLARED_SECRET_MARKER)
+      expect(
+        observed.textNodes.some((text) => text.includes(DECLARED_SECRET_MARKER)),
+        `no text node holds the stored marker as written.${context()}`,
+      ).toBe(true)
+      expect(
+        observed.maskedCategories,
+        `the page painted a masked-value chip; a stored marker is shown as text (D-28).${context()}`,
+      ).toEqual([])
+      expect(observed.bodyText, context()).not.toMatch(/masked (?:secret|email)/u)
+    })
   })
 })
