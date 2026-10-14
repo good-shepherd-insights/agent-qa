@@ -159,6 +159,7 @@ import {
 import type {
   FeedbackPort,
   FunctionCaller,
+  MaskFn,
   RunEventEnvelope,
   RunId,
   RunSession,
@@ -211,23 +212,17 @@ export const CLI_FUNCTION_CALLER: FunctionCaller = {
   origin: 'human',
 }
 
-/**
- * The `config.get` binding, and the T-384-07 / T-384-17 mitigation site.
- *
- * The resolved configuration is flattened and masked HERE, so the only configuration value that
- * ever crosses into the function layer is already masked. `loadAuthPlugins: false` keeps the read a
- * read: resolving a capability must not load and execute plugin code.
- *
- * What is secret is decided by the one shared masking map (429 D-08), the same map the dashboard
- * masks through, so this binding supplies no oracle of its own.
- */
-export function createMaskedConfigReader(configPath: string): ConfigReaderPort {
+// The `config.get` binding: every value crosses into the function layer through the declared mask
+// (441-20, D-29). `loadAuthPlugins: false` keeps the read a read: resolving a capability must not
+// load and execute plugin code.
+export function createConfigReader(configPath: string, mask: MaskFn): ConfigReaderPort {
   return {
     async getMasked() {
       const resolved = await resolveConfig({ configPath, loadAuthPlugins: false })
       return buildMaskedResolvedConfig({
         configPath,
         resolved,
+        mask,
         // Ascending precedence, mirroring `resolveConfig`'s own merge order. `cli-flag` is
         // absent because the `fn` invoker passes no configuration flags; `test-file` never
         // participates in a project-level config read.
@@ -493,13 +488,12 @@ export interface ComposeCliLocalAgentInput {
    * How this host reads configuration, MASKED (400-01, D-16).
    *
    * A passthrough with a default rather than a required argument, because there is exactly one
-   * right answer for a CLI — {@link createMaskedConfigReader} over this invocation's config path —
+   * right answer for a CLI — {@link createConfigReader} over this invocation's config path —
    * and one host that needs to say something more: `agent-qa dashboard` composes a host whose
    * `services.dashboard.baseUrl` is the origin the server actually bound, so the entity cards a
    * conversation in that browser renders carry working links with no user setup (387 D-10's config
    * knob, supplied by the second of its two suppliers). It is an OVERLAY over this reader in that
-   * host and never a replacement: the masking oracle, the layer precedence and the disclosure
-   * decision all stay where they are.
+   * host and never a replacement: the declared mask and the layer precedence stay where they are.
    */
   config?: ComposeLocalAgentInput['config']
   /**
@@ -2056,7 +2050,7 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
         },
       }),
     }),
-    config: input.config ?? createMaskedConfigReader(input.configPath),
+    config: input.config ?? createConfigReader(input.configPath, declaredSecrets.mask),
     knowledgeRoot,
     // 400-01 (D-05): forwarded untouched, conditionally spread on this file's own absent-field
     // rule so that a host supplying nothing composes exactly as it did before the option existed.

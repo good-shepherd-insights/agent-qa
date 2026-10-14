@@ -10,12 +10,13 @@
 // What "real" means in this file, stated so it can be checked rather than trusted: an actual
 // YAML file on disk, resolved by `resolveConfig` through the shipped `AgentQaConfigSchema`
 // (which is `.strict()`, so an undeclared `services.dashboard` key would fail the read
-// outright), masked by `buildMaskedResolvedConfig` through the shared masking map (429 D-08),
+// outright), masked by `buildMaskedResolvedConfig` with the declared-secret mask (441-20, D-29),
 // and handed to the real `entities.get` op through `createFunctionRegistry` and
 // `invokeFunction`. The only stubs are the ports this claim is not about.
 
 import { createFunctionRegistry, invokeFunction } from '@vostride/agent-qa-agent'
 import type { FunctionDeps } from '@vostride/agent-qa-agent'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import type { AuditSink } from '@vostride/agent-qa-safety'
 import type {
   EntityCard,
@@ -27,7 +28,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import { createMaskedConfigReader } from '../local-agent-host.js'
+import { createConfigReader } from '../local-agent-host.js'
+
+const DECLARED_VALUE = 'Hunter-42-zz'
+const declaredRedactor = new SecretRedactor(SecretStore.fromEnvContent(`PW_441=${DECLARED_VALUE}\n`))
 
 // 2026-10-02 (432-36, D-12): no `grantedScopes` or `safeMode` on the caller; the registry reads
 // neither (432-20).
@@ -93,8 +97,8 @@ function depsFor(configPath: string): FunctionDeps {
       resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),
       get: (ref) => Promise.resolve(ref === DESCRIPTOR.shortId ? DESCRIPTOR : undefined),
     },
-    // THE point of this file: the real reader, over a real file, through the real masker.
-    config: createMaskedConfigReader(configPath),
+    // THE point of this file: the real reader, over a real file, through the declared mask.
+    config: createConfigReader(configPath, (text) => declaredRedactor.redactString(text)),
   }
 }
 
@@ -129,15 +133,12 @@ describe('the card url is derived through the real masked-config path (D-10)', (
     expect('url' in card).toBe(false)
   })
 
-  it('omits the url when the masker REDUCED the base, rather than linking to the reduction',
+  it('omits the url when the declared mask changed the base, rather than linking to the marker',
     async () => {
-      // `services.dashboard.baseUrl` is a registered address leaf, so a base carrying a path
-      // prefix comes back as its bare origin with `masked: true`. Rendering against that
-      // reduction would point every card at `/t/...` on a host that serves the app under
-      // `/qa/` — a dead link shown with confidence. This is the case a hand-built DTO cannot
-      // produce, and the reason this file exists.
+      // A masked entry is not the operator's value, so the producer omits the link rather than
+      // pointing every card at a URL that carries `[secret:<name>]`.
       const card = await cardFor({
-        baseUrl: 'https://qa.example.com/qa',
+        baseUrl: `https://qa.example.com/${DECLARED_VALUE}`,
         workspace: 'acme',
       })
       expect('url' in card).toBe(false)
@@ -146,5 +147,15 @@ describe('the card url is derived through the real masked-config path (D-10)', (
   it('omits the url when only one half is configured', async () => {
     expect('url' in await cardFor({ baseUrl: 'https://qa.example.com' })).toBe(false)
     expect('url' in await cardFor({ workspace: 'acme' })).toBe(false)
+  })
+})
+
+describe('C441-CONFIG', () => {
+  it('a card url keeps the base path prefix as written', async () => {
+    const card = await cardFor({
+      baseUrl: 'https://qa.example.com/qa',
+      workspace: 'acme',
+    })
+    expect(card.url).toBe('https://qa.example.com/qa/t/acme/memory/MEM-004/cart-totals-vat')
   })
 })

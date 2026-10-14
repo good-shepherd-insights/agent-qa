@@ -71,8 +71,9 @@ import {
 import {
   CLI_FUNCTION_CALLER,
   composeCliLocalAgent,
-  createMaskedConfigReader,
+  createConfigReader,
 } from '../composition/local-agent-host.js'
+import { createDeclaredSecretMask } from '../composition/declared-secrets.js'
 import type { ComposeCliLocalAgentInput } from '../composition/local-agent-host.js'
 import {
   applyResolvedAuthToModelConfig,
@@ -261,7 +262,7 @@ export function overlayDashboardBaseUrl(
 /**
  * Does the inner config already carry the operator's OWN value for this key?
  *
- * The `masked` flag is read rather than the value, on `card-context.ts`'s own reasoning: a reduced
+ * The `masked` flag is read rather than the value, on `card-context.ts`'s own reasoning: a masked
  * entry is not the operator's value, and treating it as a presence would leave the overlay refusing
  * to fill an absence that is, as far as the producer is concerned, exactly what it is.
  */
@@ -389,15 +390,17 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
   const resolveExecutionContext = input.resolveExecutionContext
     ?? ((): ExecutionContext => 'local-headless')
 
+  const declaredSecrets = createDeclaredSecretMask(input.configPath)
   const host = composeCliLocalAgent({
     agentQaRoot: input.agentQaRoot,
     configPath: input.configPath,
+    declaredSecrets,
     // 403 D-03: forwarded untouched, conditionally spread — an absent port is an ABSENT field.
     ...(input.liveView === undefined ? {} : { liveView: input.liveView }),
     // 405 D-03: forwarded untouched, conditionally spread — an absent port is an ABSENT field.
     ...(input.runDetail === undefined ? {} : { runDetail: input.runDetail }),
     config: overlayDashboardBaseUrl(
-      createMaskedConfigReader(input.configPath),
+      createConfigReader(input.configPath, declaredSecrets.mask),
       input.boundOrigin,
       workspaceSegment,
     ),

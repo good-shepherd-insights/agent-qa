@@ -53,6 +53,8 @@ function fixtureWorkspace(): string {
     })}\n`,
     'utf8',
   )
+  // 2026-10-15 (441-20): config.get reads through the declared mask, which needs the file.
+  writeFileSync(join(root, '.env.secrets.local'), '', 'utf8')
   return configPath
 }
 
@@ -276,6 +278,7 @@ function cardUrlProject(): { parent: string; root: string; knowledgeRoot: string
     })}\n`,
     'utf8',
   )
+  writeFileSync(join(root, '.env.secrets.local'), '', 'utf8')
   return { parent, root, knowledgeRoot, configPath }
 }
 

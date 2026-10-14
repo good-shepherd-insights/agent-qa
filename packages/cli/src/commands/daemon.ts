@@ -17,7 +17,7 @@ import pc from 'picocolors'
 
 import { composeAnalyticsHost } from '../composition/analytics-host.js'
 import { createDeclaredSecretMask } from '../composition/declared-secrets.js'
-import { createMaskedConfigReader } from '../composition/local-agent-host.js'
+import { createConfigReader } from '../composition/local-agent-host.js'
 import { resolveConfig, resolveConfiguredKnowledgeRoot } from '../config.js'
 import { buildCuratorAuthor } from '../curation/curator-author.js'
 import { runDaemonHost } from '../daemon/host.js'
@@ -179,6 +179,7 @@ export function createDaemonCommand(deps: DaemonCommandDeps = DEFAULT_DEPS): Com
         const configPath = configPathFor(command)
         const configDir = dirname(configPath)
         const config = await resolveConfig({ configPath, loadAuthPlugins: false })
+        const declaredSecrets = createDeclaredSecretMask(configPath)
         // 398-10 (D-17/D-19): THIS COMMAND'S ANALYTICS COMPOSITION ROOT. The daemon is a standing
         // process, so it composes eagerly — unlike `run`, there is no early-returning path here for
         // a lazy composition to protect, and the host it is handed to emits from the moment it
@@ -186,14 +187,14 @@ export function createDaemonCommand(deps: DaemonCommandDeps = DEFAULT_DEPS): Com
         const analytics = await composeAnalyticsHost({
           surface: 'daemon',
           config,
-          maskingContext: { mask: createDeclaredSecretMask(configPath).mask },
+          maskingContext: { mask: declaredSecrets.mask },
         })
         const exitCode = await deps.runHost({
           analytics,
           agentQaRoot: resolve(configDir, '.agent-qa'),
           knowledgeRoot: resolveConfiguredKnowledgeRoot(config, configDir),
           configPath,
-          config: createMaskedConfigReader(configPath),
+          config: createConfigReader(configPath, declaredSecrets.mask),
           // 388 CR-02 — the daemon egress posture, resolved EXPLICITLY (389-06, verified
           // parity): this binding rides the SAME resolveCliJobModel → buildJobModelCapability
           // → createModel chain as the CLI tail's, and the masking seam is createModel's own

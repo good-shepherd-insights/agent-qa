@@ -116,7 +116,7 @@ export async function buildAgentManifest(
   if (configuration === 'unresolved') {
     try {
       // `loadAuthPlugins: false` keeps the read a read: resolving a posture must not load and
-      // execute plugin code, on the reasoning `createMaskedConfigReader` already states next door.
+      // execute plugin code, on the reasoning `createConfigReader` already states next door.
       await resolveConfig({ configPath, loadAuthPlugins: false })
       configuration = 'resolved'
     } catch {
