@@ -39,6 +39,14 @@ describe('redactSecretValue', () => {
   it('returns the value unchanged when no redactor is given', () => {
     expect(redactSecretValue('hunter2', undefined)).toBe('hunter2')
   })
+
+  it('keeps an own __proto__ key as data instead of setting the prototype', () => {
+    const redactor = new SecretRedactor(new SecretStore({ password: 'hunter2' }))
+    const redacted = redactSecretValue(Object.fromEntries([['__proto__', 'hunter2'], ['plain', 'x']]), redactor)
+    expect(Object.keys(redacted)).toEqual(['__proto__', 'plain'])
+    expect(Object.getOwnPropertyDescriptor(redacted, '__proto__')?.value).toBe('[secret:password]')
+    expect(Object.getPrototypeOf(redacted)).toBe(Object.prototype)
+  })
 })
 
 describe('resolveSecretTemplatesInValue', () => {

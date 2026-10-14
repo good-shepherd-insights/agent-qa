@@ -20,7 +20,8 @@ function fixture() {
     execute: async () => ({ success: true }),
   }
   const input = {
-    adapter, masking, planner: { plan: async () => { throw new Error('No model call permitted') } },
+    adapter, masking, secretRedactor: new SecretRedactor(new SecretStore()),
+    planner: { plan: async () => { throw new Error('No model call permitted') } },
     verifier: { verify: async () => { throw new Error('No model call permitted') } },
     plannerModel: {} as MemberRunConfig['plannerModel'], verifierModel: {} as MemberRunConfig['verifierModel'],
     sink: createMemberEventSink({ bus, masking, testIndex: 0 }),
@@ -56,30 +57,3 @@ test.each(['no-getter', 'non-callable', 'no-page', 'getter-throws', 'captured-ze
     expect(f.documents).toEqual([])
   },
 )
-
-test('VARIABLE-MASK-NAMES-COMPOSED: sensitive env names seed the actual live mask used at finalization', async () => {
-  const f = fixture()
-  const ambient = 'synthetic-ambient-credential-423'
-  const declared = 'synthetic-declared-credential-423'
-  const late = 'synthetic-midrun-credential-423'
-  const safeUrl = 'https://example.test/'
-  const env = { SYNTHETIC_API_TOKEN: ambient, BASE_URL: safeUrl }
-  const secretStore = new SecretStore({ declared })
-  const masking = buildRunMaskingContext({ env, secretStore })
-  const config = buildMemberRunConfig({ ...f.input, masking, envFileVars: env,
-    inlineVars: { [`name-${ambient}`]: ambient, [`name-${late}`]: late, [declared]: declared },
-    secretStore, secretRedactor: new SecretRedactor(secretStore),
-  })
-  f.adapter.execute = async () => { masking.register(late); return { success: true } }
-  await runMemberTest(f.member, config)
-  const snapshot = f.terminals[0].variableSnapshot
-  expect(snapshot).toEqual({
-    SYNTHETIC_API_TOKEN: { value: masking.mask(ambient), source: 'env' },
-    BASE_URL: { value: safeUrl, source: 'env' },
-    [`name-${masking.mask(ambient)}`]: { value: masking.mask(ambient), source: 'inline' },
-    [`name-${masking.mask(late)}`]: { value: masking.mask(late), source: 'inline' },
-    '[secret:declared]': { value: '[secret:declared]', source: 'inline' },
-  })
-  for (const value of [ambient, declared, late]) expect(JSON.stringify(snapshot)).not.toContain(value)
-  expect(f.terminals[0].evidence?.variables).toEqual({ kind: 'variables', state: 'present', counts: { count: 5 } })
-})

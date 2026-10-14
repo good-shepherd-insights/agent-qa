@@ -1,14 +1,15 @@
-import { expect, test, vi } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import type { EvidenceDocument, RunEventEnvelope, StepFinalizedPayload } from '@vostride/agent-qa-schema'
 import { createRunEventBus } from '../bus.js'
 import { createMemberEventSink } from '../event-sink.js'
 import { runMemberTest, type MemberRunConfig, type MemberTest } from '../member-runner.js'
 import { fakeModel, makeActionPlan, makeAdapter, makePlanner } from '../../loop/__tests__/loop-harness.js'
 import type { AccessibilityViolation, ConsoleLogEntry, NetworkLogEntry } from '../../result.js'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { projectNetworkEvidence } from '../network-evidence-policy.js'
 import { executeStep } from '../../loop/index.js'
 import type { LoopPorts } from '../../loop/ports.js'
+import { redactSecretValue, SecretRedactor, SecretStore } from '../../loop/secrets.js'
+import { makeScreenState } from '../../testing/screen-fixtures.js'
 import { VariableStore } from '../../variables/store.js'
 import { createStepReadFinalizer } from '../step-read-finalization.js'
 import { deriveMemberOutcome } from '../verdict.js'
@@ -25,11 +26,7 @@ function fixture() {
   const events: RunEventEnvelope[] = []
   const documents: EvidenceDocument[] = []
   const ariaDocuments: EvidenceDocument[] = []
-  const secrets = new Set<string>()
-  const masking = {
-    mask: (text: string) => [...secrets].reduce((value, item) => value.replaceAll(item, '[secret]'), text),
-    unmask: (text: string) => text,
-  }
+  const masking = { mask: (text: string) => text, unmask: (text: string) => text }
   const bus = createRunEventBus({ runId: 'synthetic-run-423' })
   bus.subscribe(1, event => events.push(event))
   const abort = new AbortController()
@@ -39,6 +36,7 @@ function fixture() {
     adapter, planner: makePlanner(), plannerModel: fakeModel, verifierModel: fakeModel,
     sink: createMemberEventSink({ bus, masking, testIndex: 3 }), testIndex: 3,
     abortSignal: abort.signal, masking,
+    secretRedactor: new SecretRedactor(new SecretStore({ LIVE_423: secret })),
     evidenceArtifacts: {
       persistDecisionScreenshot: () => ({ id: `decision-screenshot:${'a'.repeat(64)}`, sha: 'a'.repeat(64) }),
       getBlob: () => undefined,
@@ -54,7 +52,7 @@ function fixture() {
   const terminals = () => events.filter(event => event.type === 'stepFinalized').map(
     event => event.payload as StepFinalizedPayload,
   )
-  return { events, documents, ariaDocuments, secrets, abort, adapter, config, member, terminals }
+  return { events, documents, ariaDocuments, abort, adapter, config, member, terminals }
 }
 
 test('VARIABLE-FINAL: capture replaces the seed only before the single final snapshot', async () => {
@@ -63,12 +61,11 @@ test('VARIABLE-FINAL: capture replaces the seed only before the single final sna
   f.member.steps = [{ step: 'Click Log in', capture: { variable: 'captured', method: 'ai' } }]
   f.config.extractorFactory = () => ({ extract: async () => {
     expect(f.terminals()).toHaveLength(0)
-    f.secrets.add(secret)
     return { success: true, variableName: 'captured', value: secret, reasoning: 'synthetic' }
   } })
   await runMemberTest(f.member, f.config)
   expect(f.terminals()).toHaveLength(1)
-  expect(f.terminals()[0].variableSnapshot).toEqual({ captured: { value: '[secret]', source: 'capture' } })
+  expect(f.terminals()[0].variableSnapshot).toEqual({ captured: { value: '[secret:LIVE_423]', source: 'capture' } })
   expect(f.terminals()[0].evidence?.variables).toEqual({ kind: 'variables', state: 'present', counts: { count: 1 } })
 })
 
@@ -96,23 +93,18 @@ test('VARIABLE-SOURCES: all seven actual store origins survive final publication
   expect(f.terminals()[0].evidence?.variables).toMatchObject({ state: 'present', counts: { count: 7 } })
 })
 
-test('VARIABLE-MASK-NAMES: live mask and declared-secret redaction cover both names and values', async () => {
+test('VARIABLE-MASK-NAMES: declared-secret redaction covers both names and values, and an env-named value stays as written', async () => {
   const f = fixture()
   const declared = 'synthetic-declared-value'
   f.config.envFileVars = { SYNTHETIC_API_KEY: secret }
   f.config.inlineVars = { [`name-${secret}`]: `value-${secret}`, [declared]: declared }
   f.config.secretRedactor = { redactString: text => text.replaceAll(declared, '[secret]') }
-  f.config.executeStep = async (instruction, ports, context) => {
-    f.secrets.add(secret)
-    return executeStep(instruction, ports, context)
-  }
   await runMemberTest(f.member, f.config)
   expect(f.terminals()[0].variableSnapshot).toEqual({
-    SYNTHETIC_API_KEY: { value: '[secret]', source: 'env' },
-    'name-[secret]': { value: 'value-[secret]', source: 'inline' },
+    SYNTHETIC_API_KEY: { value: secret, source: 'env' },
+    [`name-${secret}`]: { value: `value-${secret}`, source: 'inline' },
     '[secret]': { value: '[secret]', source: 'inline' },
   })
-  expect(JSON.stringify(f.terminals())).not.toContain(secret)
   expect(JSON.stringify(f.terminals())).not.toContain(declared)
 })
 
@@ -174,10 +166,9 @@ test('EVID-A11Y-PRESENT: one live-masked document retains all violations and exa
   f.config.accessibility = { enabled: true }
   f.config.accessibilityCheck = vi.fn(async () => violations())
   f.member.steps = [{ step: 'Click Log in', capture: { variable: 'late', method: 'ai' } }]
-  f.config.extractorFactory = () => ({ extract: async () => {
-    f.secrets.add(secret)
-    return { success: true, variableName: 'late', value: secret, reasoning: 'synthetic' }
-  } })
+  f.config.extractorFactory = () => ({ extract: async () => (
+    { success: true, variableName: 'late', value: secret, reasoning: 'synthetic' }
+  ) })
   const persist = f.config.evidenceArtifacts!.persistEvidenceDocument!
   f.config.evidenceArtifacts!.persistEvidenceDocument = document => {
     expect(f.terminals()).toHaveLength(0)
@@ -187,7 +178,7 @@ test('EVID-A11Y-PRESENT: one live-masked document retains all violations and exa
   await runMemberTest(f.member, f.config)
   expect(f.config.accessibilityCheck).toHaveBeenCalledTimes(1)
   expect(f.documents).toEqual([{ schemaVersion: 1, kind: 'a11y',
-    records: JSON.parse(JSON.stringify(violations()).replaceAll(secret, '[secret]')) }])
+    records: JSON.parse(JSON.stringify(violations()).replaceAll(secret, '[secret:LIVE_423]')) }])
   expect(f.terminals()).toHaveLength(1)
   expect(f.terminals()[0].evidence?.a11y).toEqual({ kind: 'a11y', state: 'present',
     ref: { id: `a11y-evidence:${'b'.repeat(64)}`, sha: 'b'.repeat(64) },
@@ -222,12 +213,17 @@ test.each(['axe', 'persist', 'missing-mask', 'missing-store', 'bad-ref', 'mask']
     }
     if (kind === 'persist') f.config.evidenceArtifacts!.persistEvidenceDocument = () => { throw new Error(`synthetic persist ${secret}`) }
     if (kind === 'missing-store') f.config.evidenceArtifacts = undefined
-    if (kind === 'missing-mask') f.config.masking = undefined
+    if (kind === 'missing-mask') f.config.secretRedactor = undefined
     if (kind === 'bad-ref') f.config.evidenceArtifacts!.persistEvidenceDocument = () => ({ id: `console-evidence:${'b'.repeat(64)}`, sha: 'b'.repeat(64) })
-    if (kind === 'mask') f.config.masking = { ...f.config.masking!, mask: text => {
-      if (text.includes(secret)) throw new Error('synthetic mask failure')
-      return text
-    } }
+    // Armed after the step result's own redaction, so only the accessibility document's mask throws.
+    let armed = false
+    if (kind === 'mask') {
+      f.adapter.drainConsoleLogs = () => { armed = true; return [] }
+      f.config.secretRedactor = { redactString: text => {
+        if (armed && text.includes(secret)) throw new Error('synthetic mask failure')
+        return text
+      } }
+    }
     const result = await runMemberTest(f.member, f.config)
     expect(result.status).toBe('passed')
     expect(f.terminals()).toHaveLength(1)
@@ -295,7 +291,7 @@ test.each(['abort', 'throw'] as const)('EVID-ABORT-BEFORE: extraction %s retains
   expect(f.terminals()).toHaveLength(1)
   expect(f.terminals()[0].status).toBe(kind === 'abort' ? 'cancelled' : 'failed')
   expect(f.terminals()[0].evidence?.a11y).toMatchObject({ state: 'present', counts: { critical: 2 } })
-  expect(result.steps[0].accessibilityViolations).toEqual(violations())
+  expect(result.steps[0].accessibilityViolations).toEqual(JSON.parse(JSON.stringify(violations()).replaceAll(secret, '[secret:LIVE_423]')))
   expect(f.terminals()[0].variableSnapshot).toEqual({ prior: { value: 'retained', source: 'inline' } })
   expect(f.terminals()[0].evidence?.console).toMatchObject({ reason: 'not-captured' })
 })
@@ -351,20 +347,19 @@ test('EVID-WEB-PRESENT: live masked records/counts publish after a11y and variab
     return []
   }
   f.member.steps = [{ step: 'Click Log in', capture: { variable: 'captured', method: 'ai' } }]
-  f.config.extractorFactory = () => ({ extract: async () => {
-    f.secrets.add(secret)
-    return { success: true, variableName: 'captured', value: secret, reasoning: 'synthetic capture' }
-  } })
+  f.config.extractorFactory = () => ({ extract: async () => (
+    { success: true, variableName: 'captured', value: secret, reasoning: 'synthetic capture' }
+  ) })
   const result = await runMemberTest(f.member, f.config)
   expect(terminalsAtA11y).toBe(0)
   expect(subActionsAtA11y).toBeGreaterThan(0)
-  expect(result.steps[0].variableSnapshot?.captured.value).toBe(secret)
+  expect(result.steps[0].variableSnapshot?.captured.value).toBe('[secret:LIVE_423]')
   expect(f.terminals()).toHaveLength(1)
   expect(f.terminals()[0].evidence?.console).toEqual({ kind: 'console', state: 'present',
     ref: { id: `console-evidence:${'b'.repeat(64)}`, sha: 'b'.repeat(64) },
     counts: { total: 2, errors: 1, warnings: 1 } })
   expect(f.documents).toEqual([{ schemaVersion: 1, kind: 'console', records: [
-    { level: 'warn', text: '[secret]', timestamp: 20, location: { url: 'https://example.test/[secret]', lineNumber: 2, columnNumber: 1 } },
+    { level: 'warn', text: '[secret:LIVE_423]', timestamp: 20, location: { url: 'https://example.test/[secret:LIVE_423]', lineNumber: 2, columnNumber: 1 } },
     { level: 'error', text: 'second', timestamp: 10 },
   ] }])
   expect(JSON.stringify(f.documents)).not.toContain(secret)
@@ -375,10 +370,9 @@ test('NETWORK-COUNTS: one document and exact persisted total/failed/errored coun
   const records = [networkRecord(0, 200), networkRecord(1, 400), networkRecord(2, 503), networkRecord(3, 0), networkRecord(4, 399)]
   f.adapter.drainNetworkLogs = vi.fn(() => records)
   f.member.steps = [{ step: 'Click Log in', capture: { variable: 'captured', method: 'ai' } }]
-  f.config.extractorFactory = () => ({ extract: async () => {
-    f.secrets.add(secret)
-    return { success: true, variableName: 'captured', value: secret, reasoning: 'synthetic' }
-  } })
+  f.config.extractorFactory = () => ({ extract: async () => (
+    { success: true, variableName: 'captured', value: secret, reasoning: 'synthetic' }
+  ) })
   const persist = f.config.evidenceArtifacts!.persistEvidenceDocument!
   f.config.evidenceArtifacts!.persistEvidenceDocument = value => {
     expect(f.terminals()).toHaveLength(0)
@@ -387,7 +381,7 @@ test('NETWORK-COUNTS: one document and exact persisted total/failed/errored coun
   await runMemberTest(f.member, f.config)
   expect(f.terminals()[0].evidence?.network).toMatchObject({ kind: 'network', state: 'present', counts: { total: 5, failed: 2, errored: 1 } })
   expect(f.documents).toHaveLength(1)
-  expect(f.documents[0]).toEqual(projectNetworkEvidence(records, f.config.masking!.mask))
+  expect(f.documents[0]).toEqual(projectNetworkEvidence(records, text => redactSecretValue(text, f.config.secretRedactor)))
   expect(JSON.stringify(f.documents)).not.toContain(secret)
   expect(JSON.stringify(f.documents)).not.toContain('synthetic-fresh-session')
   expect(f.adapter.drainNetworkLogs).toHaveBeenCalledTimes(1)
@@ -409,10 +403,10 @@ test('NETWORK-MULTIPAGE: all drained page records survive in capture order witho
 
 test('NETWORK-BYTE-STRESS: 600 request plus response 32-KiB bodies retain masked bounds and small row facts', async () => {
   const f = fixture()
-  const masking = createMaskingContext()
-  for (let index = 0; index < 20; index++) masking.register(`synthetic-unused-secret-${index}`)
-  masking.register(secret)
-  f.config.masking = masking
+  const declared: Record<string, string> = { LIVE_423: secret }
+  for (let index = 0; index < 20; index++) declared[`UNUSED_${index}`] = `synthetic-unused-secret-${index}`
+  const redactor = new SecretRedactor(new SecretStore(declared))
+  f.config.secretRedactor = redactor
   const body = secret + 'é'.repeat(Math.floor((32768 - secret.length) / 2)) + 'a'.repeat((32768 - secret.length) % 2)
   expect(Buffer.byteLength(body)).toBe(32768)
   const records = Array.from({ length: 600 }, (_, i) => ({ ...networkRecord(i), body, requestBody: body }))
@@ -420,7 +414,7 @@ test('NETWORK-BYTE-STRESS: 600 request plus response 32-KiB bodies retain masked
   const baselineStart = performance.now()
   let timerAt = 0
   const timer = new Promise<void>(resolve => setTimeout(() => { timerAt = performance.now(); resolve() }, 0))
-  projectNetworkEvidence(records, text => masking.mask(text))
+  projectNetworkEvidence(records, text => redactor.redactString(text))
   const synchronousMs = performance.now() - baselineStart
   await timer
   console.info('NETWORK-BASELINE', JSON.stringify({ records: records.length, synchronousMs, timerDelayMs: timerAt - baselineStart }))
@@ -435,9 +429,9 @@ test('NETWORK-BYTE-STRESS: 600 request plus response 32-KiB bodies retain masked
   let serializationMs = 0
   let blobBytes = 0
   let maskMs = 0
-  f.config.masking = { ...masking, mask: text => {
+  f.config.secretRedactor = { redactString: text => {
     const started = performance.now()
-    const value = masking.mask(text)
+    const value = redactor.redactString(text)
     maskMs += performance.now() - started
     return value
   } }
@@ -457,7 +451,7 @@ test('NETWORK-BYTE-STRESS: 600 request plus response 32-KiB bodies retain masked
   const document = f.documents[0]
   if (document.kind !== 'network') throw new Error('Expected network')
   for (const record of document.records) {
-    expect(record.body).toContain('<SECRET_20>')
+    expect(record.body).toContain('[secret:LIVE_423]')
     expect(record.requestBody).toBe(record.body)
     expect(Buffer.byteLength(record.body!)).toBeLessThanOrEqual(32768)
   }
@@ -497,7 +491,7 @@ test.each(['empty', 'disabled', 'android', 'ios', 'capture-error', 'persist-erro
       f.config.appiumScript = async () => ({ success: true })
     }
     if (kind === 'persist-error') f.config.evidenceArtifacts!.persistEvidenceDocument = () => { throw new Error('synthetic persist error') }
-    if (kind === 'missing-mask') f.config.masking = undefined
+    if (kind === 'missing-mask') f.config.secretRedactor = undefined
     if (kind === 'missing-store') f.config.evidenceArtifacts = undefined
     if (kind === 'missing-drain') f.adapter.drainNetworkLogs = undefined
     const result = await runMemberTest(f.member, f.config)
@@ -762,7 +756,7 @@ test.each(['missing-mask', 'missing-store', 'bad-ref', 'missing-drain'] as const
   'EVID-UNBOUND: %s does not claim successful durable content', async kind => {
     const f = fixture()
     f.adapter.drainConsoleLogs = () => [{ level: 'error', text: secret, timestamp: 1 }]
-    if (kind === 'missing-mask') f.config.masking = undefined
+    if (kind === 'missing-mask') f.config.secretRedactor = undefined
     if (kind === 'missing-store') f.config.evidenceArtifacts = undefined
     if (kind === 'bad-ref') f.config.evidenceArtifacts!.persistEvidenceDocument = () => ({ id: 'console-evidence:bad', sha: 'b'.repeat(64) })
     if (kind === 'missing-drain') f.adapter.drainConsoleLogs = undefined
@@ -773,3 +767,68 @@ test.each(['missing-mask', 'missing-store', 'bad-ref', 'missing-drain'] as const
     expect(f.documents).toEqual([])
   },
 )
+
+describe('C441-RUN-RECORDS', () => {
+  const email = 'qa.user@example.com'
+  const marker = '[secret:LIVE_423]'
+
+  function memberWithEveryDocument() {
+    const f = fixture()
+    const screen = makeScreenState({ tree: `- textbox "${secret}" [ref=e1]\n- text "${email}"` })
+    f.adapter.observe = async () => screen
+    f.adapter.drainConsoleLogs = () => [{ level: 'info', text: `token ${secret} for ${email}`, timestamp: 1 }]
+    f.config.accessibility = { enabled: true }
+    f.config.accessibilityCheck = async () => [{ ruleId: 'label', impact: 'serious',
+      description: `field ${secret} owned by ${email}`, help: 'Label it', helpUrl: 'https://example.test/',
+      nodes: [{ html: `<input value="${secret}" placeholder="${email}">`, target: ['#login'] }] }]
+    f.config.inlineVars = { login: email }
+    f.member.steps = [{ step: 'Click Log in', capture: { variable: 'token', method: 'ai' } }]
+    f.config.extractorFactory = () => ({ extract: async () => (
+      { success: true, variableName: 'token', value: secret, reasoning: 'synthetic' }
+    ) })
+    return f
+  }
+
+  test('ARIA, console, accessibility and variable evidence mask a declared value and keep the rest', async () => {
+    const f = memberWithEveryDocument()
+    await runMemberTest(f.member, f.config)
+    const persisted = [...f.ariaDocuments, ...f.documents]
+    expect(persisted.map(document => document.kind).sort()).toEqual(['a11y', 'aria', 'console'])
+    for (const document of persisted) {
+      const text = JSON.stringify(document)
+      expect(text).toContain(marker)
+      expect(text).toContain(email)
+      expect(text).not.toContain(secret)
+    }
+    const terminal = f.terminals()[0]
+    expect(terminal.variableSnapshot).toEqual({
+      login: { value: email, source: 'inline' }, token: { value: marker, source: 'capture' },
+    })
+    expect(terminal.evidence).toMatchObject({
+      console: { state: 'present' }, a11y: { state: 'present' }, variables: { state: 'present' },
+    })
+    expect(f.events.filter(event => event.type === 'subActionRecorded')
+      .map(event => (event.payload as { ariaEvidence?: { state: string } }).ariaEvidence?.state)).toContain('present')
+  })
+
+  test('evidence is withheld when the member has no redactor', async () => {
+    const f = memberWithEveryDocument()
+    f.adapter.drainNetworkLogs = () => [networkRecord(0)]
+    f.config.secretRedactor = undefined
+    const result = await runMemberTest(f.member, f.config)
+    expect(result.status).toBe('passed')
+    expect(f.ariaDocuments).toEqual([])
+    expect(f.documents).toEqual([])
+    const terminal = f.terminals()[0]
+    expect(terminal.evidence).toEqual({
+      console: { kind: 'console', state: 'absent', reason: 'failed' },
+      network: { kind: 'network', state: 'absent', reason: 'failed' },
+      a11y: { kind: 'a11y', state: 'absent', reason: 'failed' },
+      variables: { kind: 'variables', state: 'absent', reason: 'failed' },
+    })
+    expect(terminal).not.toHaveProperty('variableSnapshot')
+    expect(f.events.filter(event => event.type === 'subActionRecorded')
+      .map(event => (event.payload as { ariaEvidence?: unknown }).ariaEvidence))
+      .toEqual(expect.arrayContaining([{ kind: 'aria', state: 'absent', reason: 'failed' }]))
+  })
+})

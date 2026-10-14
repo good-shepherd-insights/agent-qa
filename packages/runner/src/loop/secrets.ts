@@ -172,11 +172,10 @@ export function redactSecretValue<T>(value: T, redactor?: SecretRedactorPort): T
     return redacted as T
   }
   if (typeof value === 'object' && value !== null) {
-    const result: Record<string, unknown> = {}
-    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-      result[key] = redactSecretValue(item, redactor)
-    }
-    return result as T
+    // fromEntries defines own properties, so a `__proto__` key survives instead of setting the prototype.
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(
+      ([key, item]) => [key, redactSecretValue(item, redactor)],
+    )) as T
   }
   return value
 }

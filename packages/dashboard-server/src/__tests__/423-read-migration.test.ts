@@ -16,7 +16,7 @@ import { createModel, createTokenAccounting } from '@vostride/agent-qa-model'
 import { buildRunMaskingContext } from '@vostride/agent-qa-agent-local'
 import {
   createMemberEventSink, createRunEventBus, createStepModelScope,
-  LLMPlanner, LLMVerifier, makeScreenState, runMemberTest,
+  LLMPlanner, LLMVerifier, makeScreenState, runMemberTest, SecretRedactor, SecretStore,
 } from '@vostride/agent-qa-runner'
 import type { StepModelScope } from '@vostride/agent-qa-runner'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
@@ -146,6 +146,7 @@ async function usageRun(options: { retry?: boolean; omitCache?: boolean; unscope
         async observe() { return makeScreenState() }, async execute() { return { success: true } } },
       ...consumers({ plannerModel: model, verifierModel: model }), plannerModel: model, verifierModel: model,
       testIndex: 0, abortSignal: new AbortController().signal, masking, evidenceArtifacts: store,
+      secretRedactor: new SecretRedactor(new SecretStore()),
       sink: createMemberEventSink({ bus, masking, testIndex: 0 }),
       ...(options.unscoped ? {} : { stepModelScope: { runId, create: key => {
         scope = createStepModelScope({ key,

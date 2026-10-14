@@ -269,7 +269,7 @@ export async function executeStep(
     asOfBuild: ports.knowledgeAsOfBuild ?? 0,
     onSubActionRecorded: (evidence, index) => {
       const recordingOffsetMs = recordingOffsetFrom(ports.recordingZeroMs)
-      const ariaEvidence = persistAriaEvidence(evidence, ports.masking, ports.evidenceArtifacts)
+      const ariaEvidence = persistAriaEvidence(evidence, ports.secretRedactor, ports.evidenceArtifacts)
       ports.events?.subActionRecorded(evidence, index, {
         ariaEvidence,
         ...(recordingOffsetMs !== undefined ? { recordingOffsetMs } : {}),

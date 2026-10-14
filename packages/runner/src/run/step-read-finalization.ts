@@ -56,13 +56,13 @@ export function createStepReadFinalizer(
         consoleEvidence = { kind: 'console', state: 'absent', reason: 'empty' }
         return
       }
-      const masking = config.masking
+      const secretRedactor = config.secretRedactor
       const store = config.evidenceArtifacts
-      if (!masking || !store?.persistEvidenceDocument) {
+      if (!secretRedactor || !store?.persistEvidenceDocument) {
         consoleFailed()
         return
       }
-      const mask = (text: string) => masking.mask(text)
+      const mask = (text: string) => redactSecretValue(text, secretRedactor)
       const document = ConsoleEvidenceDocumentSchema.parse({
         schemaVersion: 1, kind: 'console',
         records: records.map(record => ({
@@ -107,17 +107,17 @@ export function createStepReadFinalizer(
         networkEvidence = { kind: 'network', state: 'absent', reason: 'empty' }
         return
       }
-      const masking = config.masking
+      const secretRedactor = config.secretRedactor
       const store = config.evidenceArtifacts
-      if (!masking || !store?.persistEvidenceDocument) throw new Error('Network evidence not bound')
+      if (!secretRedactor || !store?.persistEvidenceDocument) throw new Error('Network evidence not bound')
       const document: Extract<EvidenceDocument, { kind: 'network' }> = {
         schemaVersion: 1, kind: 'network', records: [],
       }
       // A measured 600-record, two-body fixture blocked timers for >400ms. Yield between
-      // batches, retaining all drained records and the live mask until one final publication.
+      // batches, retaining all drained records and the declared mask until one final publication.
       for (let offset = 0; offset < records.length; offset += 32) {
         document.records.push(...projectNetworkEvidence(
-          records.slice(offset, offset + 32), text => masking.mask(text),
+          records.slice(offset, offset + 32), text => redactSecretValue(text, secretRedactor),
         ).records)
         if (offset + 32 < records.length) await new Promise<void>(resolve => setTimeout(resolve, 0))
       }
@@ -156,10 +156,10 @@ export function createStepReadFinalizer(
       return
     }
     try {
-      const masking = config.masking
+      const secretRedactor = config.secretRedactor
       const store = config.evidenceArtifacts
-      if (!masking || !store?.persistEvidenceDocument) throw new Error('Accessibility evidence not bound')
-      const mask = (text: string) => masking.mask(redactSecretValue(text, config.secretRedactor))
+      if (!secretRedactor || !store?.persistEvidenceDocument) throw new Error('Accessibility evidence not bound')
+      const mask = (text: string) => redactSecretValue(text, secretRedactor)
       const document = A11yEvidenceDocumentSchema.parse({
         schemaVersion: 1, kind: 'a11y',
         records: a11yRecords.map(record => ({
@@ -183,9 +183,7 @@ export function createStepReadFinalizer(
     finalized = true
     const evidence = result.evidence ?? pending?.evidence ?? synthesizeStepEvidence(result, stepIndex, {
       scope: { tier: 'test', key: testName }, buildOrdinal: config.knowledgeAsOfBuild ?? 0,
-      mask: text => {
-        try { return config.masking?.mask(text) ?? text } catch { return '[secret]' }
-      },
+      mask: text => redactSecretValue(text, config.secretRedactor),
       modelProfile: config.modelProfiles?.planner,
       verifierIdentity: config.modelProfiles?.verifier,
       toolSchemaDigest,
@@ -193,8 +191,7 @@ export function createStepReadFinalizer(
     // Preserve the recorded loop evidence for handoff assembly even when enrichment replaced
     // the StepResult with an abort result. Bypasses use the very same synthesis as handoffs.
     result.evidence ??= evidence
-    // Extraction may register new secrets after axe completes. Persist with the current
-    // context here, and retain successful capture even if a later capture failed or aborted.
+    // Persist here, and retain successful capture even if a later capture failed or aborted.
     persistAccessibility()
     let variableSnapshot: ReturnType<typeof VariableSnapshotSchema.parse> | undefined
     let variables: StepEvidenceEntries['variables'] = {
@@ -205,9 +202,9 @@ export function createStepReadFinalizer(
         if (Object.keys(result.variableSnapshot).length === 0) {
           variables = { kind: 'variables', state: 'absent', reason: 'empty' }
         } else {
-          const masking = config.masking
-          if (!masking) throw new Error('Variable masking not bound')
-          const mask = (text: string) => masking.mask(redactSecretValue(text, config.secretRedactor))
+          const secretRedactor = config.secretRedactor
+          if (!secretRedactor) throw new Error('Variable masking not bound')
+          const mask = (text: string) => redactSecretValue(text, secretRedactor)
           const maskedSnapshot = Object.fromEntries(
             Object.entries(result.variableSnapshot).map(([name, entry]) => [
               mask(name), { value: mask(entry.value), source: entry.source },

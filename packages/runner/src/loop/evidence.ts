@@ -34,7 +34,6 @@ import type {
   LimitStopEvidence,
   LosslessServedBriefProofV1,
   ModelIdentity,
-  MaskingContext,
   ModelCallRecord,
   OperationCaptureAvailability,
   PlanningFailureEvidence,
@@ -63,23 +62,24 @@ import type {
 } from '@vostride/agent-qa-schema'
 import type { Action as PlatformAction, ActionResult as PlatformActionResult } from '../platform.js'
 import type { StepAnnotation, SubActionTrace } from '../result.js'
-import type { EvidenceArtifactStorePort } from './ports.js'
+import type { EvidenceArtifactStorePort, SecretRedactorPort } from './ports.js'
+import { redactSecretValue } from './secrets.js'
 
-/** D-02: persist the captured before tree with the live run mask; handoff states stay raw. */
+/** D-02: persist the captured before tree with the member's declared mask; handoff states stay raw. */
 export function persistAriaEvidence(
   evidence: SubActionEvidence,
-  masking: MaskingContext | undefined,
+  secretRedactor: SecretRedactorPort | undefined,
   store: EvidenceArtifactStorePort | undefined,
 ): AriaEvidenceEntry {
   if (evidence.stateBefore.tree.length === 0) {
     return { kind: 'aria', state: 'absent', reason: 'empty' }
   }
   try {
-    if (!masking || !store?.persistEvidenceDocument) {
+    if (!secretRedactor || !store?.persistEvidenceDocument) {
       return { kind: 'aria', state: 'absent', reason: 'failed' }
     }
     const ref = EvidenceArtifactRefSchema.parse(store.persistEvidenceDocument({
-      schemaVersion: 1, kind: 'aria', tree: masking.mask(evidence.stateBefore.tree),
+      schemaVersion: 1, kind: 'aria', tree: redactSecretValue(evidence.stateBefore.tree, secretRedactor),
     }))
     if (!ref.id.startsWith('aria-state:')) {
       return { kind: 'aria', state: 'absent', reason: 'failed' }
@@ -483,7 +483,7 @@ export class EvidenceRecorder {
 
   /**
    * Snapshot the run-scoped working-memory set served to this step's planning turns
-   * (WM-01, §12.15). The loop passes the values ALREADY masked (`ports.masking.mask`, Pitfall
+   * (WM-01, §12.15). The loop passes the values ALREADY masked (the loop's `recordMask`, Pitfall
    * 7 boundary 3) — recorded BESIDE the brief, never inside `servedBrief`.
    */
   recordWorkingMemory(entries: WorkingMemoryEntry[]): void {
@@ -594,7 +594,7 @@ export class EvidenceRecorder {
   // D-03/D-04/D-05/D-10/D-11). Sibling record* methods on the recorder; recording types ARE
   // the schema §A8 DTOs (353 D-14 law — no runner-local mirror). MASKED-BEFORE-RECORD: as with
   // recordWorkingMemory, the caller (the Plan 10 dispatch seam) masks every value-bearing field
-  // via `ports.masking.mask` BEFORE handing the DTO here — the recorder never sees a raw secret
+  // via the loop's `recordMask` BEFORE handing the DTO here — the recorder never sees a raw secret
   // and never store-raw-then-masks (T-360-01).
   // -------------------------------------------------------------------------
 

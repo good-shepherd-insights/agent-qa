@@ -5,6 +5,7 @@ import { executeStep } from '../index.js'
 import type { LoopPorts } from '../ports.js'
 import { createRunEventBus } from '../../run/bus.js'
 import { createMemberEventSink } from '../../run/event-sink.js'
+import { SecretRedactor, SecretStore } from '../secrets.js'
 import { makeActionPlan, makeAdapter, makePlanner, makeStepContext, makeVerifier, makeSafetyHooks } from './loop-harness.js'
 
 function fixture(path: 'live' | 'cache' | 'procedure' = 'live', zeroMs?: number) {
@@ -21,6 +22,7 @@ function fixture(path: 'live' | 'cache' | 'procedure' = 'live', zeroMs?: number)
   const ports: LoopPorts & { recordingZeroMs?: number } = {
     adapter: makeAdapter({ screenshot: async () => Buffer.from('synthetic frame') }),
     planner: makePlanner(), verifier: makeVerifier(), masking,
+    secretRedactor: new SecretRedactor(new SecretStore()),
     ...(zeroMs === undefined ? {} : { recordingZeroMs: zeroMs }),
     evidenceArtifacts: {
       persistDecisionScreenshot: bytes => persist(bytes, 'decision-screenshot'),

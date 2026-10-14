@@ -7,11 +7,12 @@ import type { EvidenceArtifactStorePort, LoopPorts } from '../ports.js'
 import { createRunEventBus } from '../../run/bus.js'
 import { createMemberEventSink } from '../../run/event-sink.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
+import { SecretRedactor, SecretStore } from '../secrets.js'
 import { makeActionPlan, makeAdapter, makePlanner, makeStepContext, makeVerifier } from './loop-harness.js'
 
-function fixture(tree = 'before synthetic-run-secret') {
+function fixture(tree = 'before synthetic-run-secret', declared: Record<string, string> = { RUN_SECRET: 'synthetic-run-secret' }) {
   const masking = createMaskingContext()
-  masking.register('synthetic-run-secret')
+  const secretRedactor = new SecretRedactor(new SecretStore(declared))
   const before = makeScreenState({ tree })
   const after = makeScreenState({ tree: 'after must remain raw synthetic-run-secret' })
   const events: RunEventEnvelope[] = []
@@ -41,12 +42,12 @@ function fixture(tree = 'before synthetic-run-secret') {
   adapter.execute = async () => { executed = true; return { success: true } }
   const observe = vi.spyOn(adapter, 'observe')
   const ports: LoopPorts = {
-    adapter, planner: makePlanner(), verifier: makeVerifier(), masking, evidenceArtifacts: store,
+    adapter, planner: makePlanner(), verifier: makeVerifier(), secretRedactor, evidenceArtifacts: store,
     events: createMemberEventSink({ bus, masking, testIndex: 2 }).loopEmitFor(3),
   }
   const children = () => events.filter(event => event.type === 'subActionRecorded')
     .map(event => event.payload as SubActionRecordedPayload)
-  return { before, after, ports, store, masking, documents, blobs, screenshotSha, children, observe }
+  return { before, after, ports, store, secretRedactor, documents, blobs, screenshotSha, children, observe }
 }
 
 it('ARIA-LIVE-MASK: the live run mask persists only before tree and leaves raw handoff states unchanged', async () => {
@@ -54,7 +55,7 @@ it('ARIA-LIVE-MASK: the live run mask persists only before tree and leaves raw h
   const raw = JSON.stringify([f.before, f.after])
   const result = await executeStep('Click Log in', f.ports, makeStepContext())
   expect(result.status).toBe('passed')
-  expect(f.documents).toEqual([{ schemaVersion: 1, kind: 'aria', tree: f.masking.mask(f.before.tree) }])
+  expect(f.documents).toEqual([{ schemaVersion: 1, kind: 'aria', tree: 'before [secret:RUN_SECRET]' }])
   expect(JSON.stringify(f.documents)).not.toContain('synthetic-run-secret')
   expect(JSON.stringify([f.before, f.after])).toBe(raw)
   expect(result.evidence?.subActions[0]?.stateBefore?.tree).toBe(f.before.tree)
@@ -78,17 +79,15 @@ it('ARIA-REF-APPEND: real sink appends one valid ARIA SHA beside the exact decis
   expect(sha256hexBytes(bytes)).toBe(ref.sha)
   expect(ref.id).toBe(`aria-state:${ref.sha}`)
   expect(AriaEvidenceDocumentSchema.parse(JSON.parse(new TextDecoder().decode(bytes))).tree)
-    .toBe(f.masking.mask(f.before.tree))
+    .toBe('before [secret:RUN_SECRET]')
   expect(child).toMatchObject({ testIndex: 2, stepIndex: 3, subActionIndex: 0 })
 })
 
-it('ARIA-ROTATED-SECRET: two runs and execution-time registration use their current independent masks', async () => {
-  for (const secret of ['synthetic-first-run', 'synthetic-second-run']) {
-    const f = fixture(`before ${secret}`)
-    const execute = f.ports.adapter.execute.bind(f.ports.adapter)
-    f.ports.adapter.execute = async action => { f.masking.register(secret); return execute(action) }
+it('ARIA-ROTATED-SECRET: two runs use their own independent declared masks', async () => {
+  for (const [name, secret] of [['FIRST_RUN', 'synthetic-first-run'], ['SECOND_RUN', 'synthetic-second-run']] as const) {
+    const f = fixture(`before ${secret}`, { [name]: secret })
     await executeStep('Click Log in', f.ports, makeStepContext())
-    expect(f.documents).toEqual([{ schemaVersion: 1, kind: 'aria', tree: f.masking.mask(f.before.tree) }])
+    expect(f.documents).toEqual([{ schemaVersion: 1, kind: 'aria', tree: `before [secret:${name}]` }])
     expect(JSON.stringify(f.documents)).not.toContain(secret)
     expect(f.before.tree).toContain(secret)
   }
@@ -98,14 +97,14 @@ for (const failure of ['write', 'mask', 'missing-mask', 'missing-store', 'invali
   it(`ARIA-WRITE-FAILED: ${failure} retains the action and screenshot with failed evidence`, async () => {
     const f = fixture()
     if (failure === 'write') f.store.persistEvidenceDocument = () => { throw new Error('synthetic write failure') }
-    if (failure === 'missing-mask') f.ports.masking = undefined
+    if (failure === 'missing-mask') f.ports.secretRedactor = undefined
     if (failure === 'missing-store') f.store.persistEvidenceDocument = undefined
     if (failure === 'invalid-ref') f.store.persistEvidenceDocument = () => ({ id: `console-evidence:${'a'.repeat(64)}`, sha: 'a'.repeat(64) })
     // Isolate a failing ARIA mask from the loop's unrelated narrative masking sites.
-    if (failure === 'mask') f.ports.masking = { mask: text => {
+    if (failure === 'mask') f.ports.secretRedactor = { redactString: text => {
       if (text === f.before.tree) throw new Error('synthetic tree mask failure')
-      return f.masking.mask(text)
-    }, unmask: text => text }
+      return f.secretRedactor.redactString(text)
+    } }
     const result = await executeStep('Click Log in', f.ports, makeStepContext())
     expect(result.status).toBe('passed')
     expect(result.evidence?.subActions).toHaveLength(1)
@@ -130,7 +129,7 @@ for (const platform of ['android', 'ios'] as const) {
     f.after.platform = platform
     f.ports.planner = makePlanner([makeActionPlan({ action: { type: 'wait' } })])
     await executeStep('Wait', f.ports, makeStepContext())
-    expect(f.documents).toEqual([{ schemaVersion: 1, kind: 'aria', tree: f.masking.mask(f.before.tree) }])
+    expect(f.documents).toEqual([{ schemaVersion: 1, kind: 'aria', tree: `native ${platform} [secret:RUN_SECRET]` }])
     expect(f.children()[0]?.ariaEvidence?.state).toBe('present')
     expect(f.observe).toHaveBeenCalledTimes(4)
   })

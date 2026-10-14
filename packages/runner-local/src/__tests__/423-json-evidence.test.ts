@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { EvidenceDocument, StepFinalizedPayload } from '@vostride/agent-qa-schema'
 import { NetworkEvidenceDocumentSchema } from '@vostride/agent-qa-schema'
-import { createMemberEventSink, createRunEventBus, runMemberTest } from '@vostride/agent-qa-runner'
+import { createMemberEventSink, createRunEventBus, runMemberTest, SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import type { MemberRunConfig, PlatformAdapter } from '@vostride/agent-qa-runner'
 import { FsEvidenceArtifactStore } from '../evidence-artifact-store.js'
 
@@ -65,12 +65,13 @@ test('NETWORK-READBACK: real member terminal refers to one reopened masked SHA b
   }
   const secret = 'synthetic-network-secret-423'
   const body = secret + 'a'.repeat(32768 - secret.length)
+  const oversized = '§'.repeat(16385)
   adapter.drainNetworkLogs = () => Array.from({ length: 600 }, (_, index) => ({
     url: `https://example.test/${secret}/${index}`, method: 'POST', status: index === 1 ? 404 : index === 2 ? 0 : 200,
     requestHeaders: { Authorization: 'synthetic-session-token', 'content-type': 'text/plain' },
     responseHeaders: { 'Set-Cookie': 'synthetic-session-cookie', 'content-type': 'text/plain' },
-    body: index === 3 ? '§'.repeat(5000) : body,
-    requestBody: index === 3 ? '§'.repeat(5000) : body, startTime: 1000 - index, endTime: 2000 - index,
+    body: index === 3 ? oversized : body,
+    requestBody: index === 3 ? oversized : body, startTime: 1000 - index, endTime: 2000 - index,
   }))
   const masking = { mask: (text: string) => text.replaceAll(secret, '[secret]').replaceAll('§', '[secret]'), unmask: (text: string) => text }
   const bus = createRunEventBus({ runId: 'run-423' })
@@ -88,6 +89,7 @@ test('NETWORK-READBACK: real member terminal refers to one reopened masked SHA b
     plannerModel: unusedModel, verifierModel: unusedModel, appiumScript: async () => ({ success: true }),
     sink: createMemberEventSink({ bus, masking, testIndex: 0 }), testIndex: 0,
     abortSignal: new AbortController().signal, masking, evidenceArtifacts: store,
+    secretRedactor: new SecretRedactor(new SecretStore({ NET_423: secret })),
   })
   expect(terminal?.evidence?.network).toMatchObject({ state: 'present', counts: { total: 600, failed: 1, errored: 1 } })
   const entry = terminal!.evidence!.network
@@ -108,7 +110,7 @@ test('NETWORK-READBACK: real member terminal refers to one reopened masked SHA b
   for (const [index, record] of decoded.records.entries()) {
     if (index === 3) continue
     expect(record.requestBody).toBe(record.body)
-    expect(Buffer.byteLength(record.body!)).toBe(32768 - secret.length + '[secret]'.length)
+    expect(Buffer.byteLength(record.body!)).toBe(32768 - secret.length + '[secret:NET_423]'.length)
   }
   console.info('NETWORK-READBACK-MEASUREMENTS', JSON.stringify({ records: 600, blobBytes: stored.length,
     networkEntryBytes: Buffer.byteLength(JSON.stringify(entry)) }))

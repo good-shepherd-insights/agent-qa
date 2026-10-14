@@ -13,7 +13,6 @@ import type {
   Action,
   ArtifactRef,
   Decision,
-  MaskingContext,
   RecordedRetrievalRung,
   ScopeKey,
   ServedAdmissionEvent,
@@ -607,24 +606,19 @@ describe('EvidenceRecorder.finalize — interpolatedVariables stamp', () => {
 
 // GREEN-ONLY REGRESSION GUARDS (no pre-fix path can make these red — the field did not
 // exist before this plan). They exist to stop a future "hardening" change from routing the
-// provenance value through maskValue at the loop's finalize call site. Masking here would
+// provenance value through recordMask at the loop's finalize call site. Masking here would
 // transform email-valued and credential-named bindings while plannedAction stayed raw,
 // breaking the emit fold's exact-string classification and REINTRODUCING G-381-3.
 describe('executeStep — provenance pairs are never masked (G-381-3 regression guard)', () => {
-  // A masking port that WOULD transform both shapes the real mask() transforms:
-  // emails (unconditional, registration-free) and credential-NAMED env values
-  // (sensitiveEnvSlice registers by name suffix).
-  const transformingMasking = {
-    mask: (text: string) => `MASKED(${text})`,
-    unmask: (text: string) => text,
-  } as unknown as MaskingContext
+  // A redactor that transforms every string, so any provenance value routed through it shows.
+  const transformingRedactor = { redactString: (text: string) => `MASKED(${text})` }
 
   async function stampedPairs(
     interpolatedVariables: { name: string; value: string }[],
   ): Promise<unknown> {
     const result = await executeStep(
       'log in',
-      { adapter: makeAdapter(), planner: makePlanner(), verifier: makeVerifier(), masking: transformingMasking } as never,
+      { adapter: makeAdapter(), planner: makePlanner(), verifier: makeVerifier(), secretRedactor: transformingRedactor } as never,
       makeStepContext({ interpolatedVariables }),
     )
     return (result.evidence as { interpolatedVariables?: unknown } | undefined)
