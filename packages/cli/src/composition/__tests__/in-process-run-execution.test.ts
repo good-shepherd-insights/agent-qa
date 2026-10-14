@@ -276,7 +276,7 @@ describe('the in-process run path refuses inputs instead of terminating its host
 // these cells read.
 // ============================================================================================
 
-import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach } from 'vitest'
 
@@ -908,6 +908,75 @@ describe('C441-RUN-RECORDS', () => {
       const lines = eventLines(fixture)
       expect(onlyStepText(lines)).toBe(`Sign in as qa@example.com with [secret:${PLANTED_SECRET_NAME}]`)
       expect(lines.filter((line) => line.includes(plantedSecret))).toEqual([])
+    } finally {
+      await target.close()
+    }
+  }, 120_000)
+
+  // The secrets file is rewritten once the run has started; the run keeps the redactor it read.
+  it('a run masks with the secrets read at its own start', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({
+        origin: target.origin,
+        environment: 'local',
+        stepText: 'Sign in with Hunter-42-zz, then with Later-99-qq',
+      })
+      const secretsPath = join(fixture.project, '.env.secrets.local')
+      writeFileSync(secretsPath, 'PW_441=Hunter-42-zz\n')
+      let rewritten = false
+      try {
+        await runInProcessCliRun(
+          {
+            ...fixtureOptions(fixture),
+            executionContext: 'local-headless',
+            onSession: (session) => {
+              session.subscribe(1, () => {
+                if (rewritten) return
+                rewritten = true
+                writeFileSync(secretsPath, 'PW_441=Later-99-qq\n')
+              })
+            },
+          },
+          { patterns: [fixture.testPattern] },
+        )
+      } catch { /* the member's framework error on the pinned empty browsers root */ }
+
+      expect(rewritten).toBe(true)
+      const lines = eventLines(fixture)
+      expect(onlyStepText(lines)).toBe('Sign in with [secret:PW_441], then with Later-99-qq')
+      expect(lines.filter((line) => line.includes('Hunter-42-zz'))).toEqual([])
+    } finally {
+      await target.close()
+    }
+  }, 120_000)
+
+  it('two runs from different secrets files each mask with their own', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const stepText = 'Use alpha-441-x and bravo-441-y'
+      const alpha = createInProcessFixture({ origin: target.origin, environment: 'local', stepText })
+      const bravo = createInProcessFixture({ origin: target.origin, environment: 'local', stepText })
+      writeFileSync(join(alpha.project, '.env.secrets.local'), 'A_441=alpha-441-x\n')
+      writeFileSync(join(bravo.project, '.env.secrets.local'), 'B_441=bravo-441-y\n')
+      const run = async (fixture: typeof alpha): Promise<void> => {
+        try {
+          await runInProcessCliRun(
+            { ...fixtureOptions(fixture), executionContext: 'local-headless' },
+            { patterns: [fixture.testPattern] },
+          )
+        } catch { /* the member's framework error on the pinned empty browsers root */ }
+      }
+      await Promise.all([run(alpha), run(bravo)])
+
+      const alphaLines = eventLines(alpha)
+      const bravoLines = eventLines(bravo)
+      expect(onlyStepText(alphaLines)).toBe('Use [secret:A_441] and bravo-441-y')
+      expect(onlyStepText(bravoLines)).toBe('Use alpha-441-x and [secret:B_441]')
+      expect(alphaLines.filter((line) => line.includes('alpha-441-x'))).toEqual([])
+      expect(bravoLines.filter((line) => line.includes('bravo-441-y'))).toEqual([])
     } finally {
       await target.close()
     }
