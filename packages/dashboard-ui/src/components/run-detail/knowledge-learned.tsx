@@ -51,8 +51,8 @@
 // Retrieval details (`retrieval-details.tsx`).
 //
 // ALL TEXT GOES THROUGH REACT TEXT NODES. No raw-HTML injection escape hatch appears anywhere in
-// this file — a grep for React's one is an acceptance criterion. Summaries are producer strings
-// crossing the display seam and render through MaskedText.
+// this file — a grep for React's one is an acceptance criterion. Summaries are stored producer
+// strings, shown as written.
 
 import { useId } from "react"
 import { Archive, Check, CornerDownRight, Inbox, Plus, Replace, type LucideIcon } from "lucide-react"
@@ -60,7 +60,6 @@ import type { CurationBucket } from "@vostride/agent-qa-schema"
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { KnowledgeRecordBody, RecordApplicability } from "./knowledge-record-body"
-import { MaskedText } from "./masked-text"
 import {
   BUCKET_LABELS,
   BUCKET_MEANINGS,
@@ -235,7 +234,7 @@ function BucketRow({ row }: { row: LearnedRowView }) {
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <BucketLabel bucket={row.bucket} />
         <span data-row-primary className="text-sm wrap-anywhere">
-          <MaskedText text={row.primary} />
+          {row.primary}
         </span>
         {row.note === undefined ? null : (
           <span data-proposed-note className="text-xs text-muted-foreground">
@@ -247,7 +246,7 @@ function BucketRow({ row }: { row: LearnedRowView }) {
         <p data-superseded-was className="flex items-baseline gap-1 text-xs text-muted-foreground wrap-anywhere">
           <CornerDownRight className="size-3 shrink-0" aria-hidden />
           <span>
-            {WAS_PREFIX} <MaskedText text={row.was.primary} />
+            {WAS_PREFIX} {row.was.primary}
           </span>
         </p>
       )}

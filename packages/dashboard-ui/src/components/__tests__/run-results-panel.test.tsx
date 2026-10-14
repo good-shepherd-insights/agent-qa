@@ -10,7 +10,7 @@
 // 403 `api.run-stream` suite already binds.
 //
 // THE ONE ROW (428 D-19/D-21/D-22). The panel renders its rows through the live page's
-// `LiveStepRowView`: a named glyph and the label, no clock, secrets as the masked chip. The
+// `LiveStepRowView`: a named glyph and the label as written, no clock. The
 // duration a finalized row used to show lives in run detail now, so the finalize cell asserts it
 // is absent (re-spelled in place; the title is unchanged).
 //
@@ -252,15 +252,14 @@ describe('RunResultsPanel renders the one live row (428 D-21)', () => {
     expect(view.querySelector('[data-elapsed]')).toBeNull()
   })
 
-  it('PANEL-SECRET-AS-CHIP: a <SECRET_n> placeholder in step text is the masked chip, never raw text', async () => {
+  // 2026-10-14 (441-37, D-20): an old run's numbered placeholder is the characters it holds.
+  it('PANEL-OLD-PLACEHOLDER-AS-TEXT: an old <SECRET_n> placeholder in step text renders as written, with no chip', async () => {
     const view = await renderPanel()
 
     feed(stepStarted('type <SECRET_1> into Password'))
 
-    expect(view.querySelectorAll('[data-masked="secret"]')).toHaveLength(1)
-    expect(view.textContent).not.toContain('<SECRET_')
-    expect(view.innerHTML).not.toContain('&lt;SECRET_')
-    expect(view.textContent).toContain('into Password')
+    expect(view.querySelector('[data-masked]')).toBeNull()
+    expect(view.textContent).toContain('type <SECRET_1> into Password')
   })
 })
 

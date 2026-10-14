@@ -1,8 +1,6 @@
 import { Ban, Check, Circle, CircleDashed, Minus, ShieldCheck, X, type LucideIcon } from 'lucide-react'
 
-import { MaskedChip } from '@/components/run-detail/masked-chip'
 import { LIVE_STEP_STATUS_NAMES, liveLabelText, liveRowShown } from '@/lib/live-step-row'
-import { splitMaskedText } from '@/lib/masked-text'
 import type { LiveStepRow, StepStatus } from '@/lib/run-stream-reducer'
 import { cn } from '@/lib/utils'
 
@@ -18,14 +16,13 @@ import { cn } from '@/lib/utils'
  * moves: a status is told apart by its shape, its tone and its accessible name. A sub-action reaches
  * the row only as `data-step-ticks`.
  *
- * SECRETS ARE CHIPS (D-22). A `<SECRET_n>` placeholder in the label is painted as run detail's
- * masked chip, with the live surface's own label. Every segment is a React text node or an element.
+ * THE LABEL IS TEXT (441 D-28, D-20). A stored `[secret:<name>]`, or an old run's `<SECRET_n>`, is
+ * shown as written in one React text node.
  *
  * THE WHOLE LABEL, WRAPPED (owner decision 2026-09-26 (1), G-428-1; supersedes 428-17's one-line
  * row). A long label wraps onto more lines and long words break, so every step's full text is
  * readable while it runs; nothing clips it and nothing ends it in an ellipsis. The glyph sits in a
- * box one label line tall, so it stays on the first line. A chip is an unbreakable inline box that
- * the text flows around: it is never split across lines, never shrunk and never clipped.
+ * box one label line tall, so it stays on the first line.
  *
  * NO TEXT, NO ROW (owner decision 2026-09-26 (2), G-428-2; supersedes 428-17's step-N fallback).
  * A row with no text draws nothing, so a pending step the runner sent no text for is simply absent
@@ -71,15 +68,7 @@ export function LiveStepRowView({ row }: { row: LiveStepRow }) {
         <Glyph className={cn('size-3.5', STATUS_TONE[row.status])} aria-hidden="true" />
       </span>
       <span className="min-w-0 flex-1 whitespace-normal break-words leading-5 [overflow-wrap:anywhere]">
-        {splitMaskedText(liveLabelText(row.text)).map((segment, index) =>
-          segment.kind === 'text' ? (
-            <span key={index}>{segment.text}</span>
-          ) : (
-            <span key={index} className="inline-flex shrink-0 whitespace-nowrap align-middle">
-              <MaskedChip category={segment.category} surface="live" />
-            </span>
-          ),
-        )}
+        {liveLabelText(row.text)}
       </span>
     </li>
   )

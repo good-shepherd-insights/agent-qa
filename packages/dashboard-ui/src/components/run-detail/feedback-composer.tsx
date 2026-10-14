@@ -14,7 +14,6 @@ import { DenialBlock } from '@/components/run-detail/denial-block'
 import { FeedbackHistory, type FeedbackHistoryProps } from '@/components/run-detail/feedback-history'
 import { FeedbackPreview } from '@/components/run-detail/feedback-preview'
 import { FeedbackTechnicalDetails } from '@/components/run-detail/feedback-technical-details'
-import { MaskedText } from '@/components/run-detail/masked-text'
 import { CorrectionFields, type CorrectedActionField } from '@/components/run-detail/mark-correction-fields'
 import {
   CHOICE_LABELS,
@@ -119,7 +118,7 @@ function TextParts({ parts }: { parts: FeedbackTextParts }) {
   return (
     <>
       {parts.prefix}
-      {parts.name === undefined ? null : <MaskedText text={parts.name} />}
+      {parts.name}
       {parts.suffix}
     </>
   )

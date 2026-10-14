@@ -27,8 +27,7 @@ import { getRunStatusDescriptor } from "@/lib/status"
 //
 // THE ONE ROW (428 D-19/D-21/D-22). Every row renders through the live page's `LiveStepRowView`:
 // a named glyph and the label. There is no clock anywhere in the panel, no duration on a row and
-// no elapsed badge; durations live in run detail. `<SECRET_n>` placeholders are painted as the
-// masked chip by the row itself.
+// no elapsed badge; durations live in run detail. The label is a text node, shown as written.
 //
 // ONLY ROWS WITH TEXT ARE DRAWN (owner decision 2026-09-26 (2), G-428-2). A row the runner sent no
 // text for is left out before the list and before the empty-state decision, so an old producer's

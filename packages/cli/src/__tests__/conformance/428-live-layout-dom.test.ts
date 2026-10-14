@@ -37,13 +37,6 @@ const CAPTURE_DIR_ENV = 'AGENT_QA_428_CAPTURE_DIR'
 const DESKTOP = { width: 1280, height: 800 }
 const NARROW = { width: 400, height: 800 }
 
-function publishedSentence(relativePath: string, name: string): string {
-  const source = readFileSync(join(PACKAGES_ROOT, 'dashboard-ui', 'src', relativePath), 'utf8')
-  const match = new RegExp(`${name}\\s*=\\s*'([^']+)'`, 'u').exec(source)
-  if (match === null) throw new Error(`${name} is no longer an exported single-quoted literal in ${relativePath}`)
-  return match[1] as string
-}
-
 function publishedTable(relativePath: string, table: string): Record<string, string> {
   const source = readFileSync(join(PACKAGES_ROOT, 'dashboard-ui', 'src', relativePath), 'utf8')
   const body = new RegExp(`${table}\\s*=\\s*\\{([^}]*)\\}`, 'u').exec(source)
@@ -54,7 +47,6 @@ function publishedTable(relativePath: string, table: string): Record<string, str
 }
 
 const STATUS_NAMES = publishedTable('lib/live-step-row.ts', 'LIVE_STEP_STATUS_NAMES')
-const MASKED_SECRET_LIVE_LABEL = publishedSentence('lib/run-detail-view.ts', 'MASKED_SECRET_LIVE_LABEL')
 
 /** How long a row is watched for a clock or a count to appear: three ticks of any 1 s clock. */
 const ROW_WATCH_MS = 3_000
@@ -77,7 +69,8 @@ const ROWS_STEP_TEXTS = ['open the search page', 'search for the blue kettle', '
 const OLD_PRODUCER_STEP_TEXT = 'open the old checkout'
 /**
  * The owner's own example from the 2026-09-26 review (G-428-1), which the one-line row cut off at
- * 'wait f…', extended so it is longer than the steps pane at any width, with one masked secret.
+ * 'wait f…', extended so it is longer than the steps pane at any width, with one old numbered
+ * placeholder.
  */
 const LONG_STEP_TEXT =
   'Select "Show" from the navbar, scroll to the end and click more, wait for the whole list to finish '
@@ -371,9 +364,7 @@ interface LongLabelReading {
   row: Box
   label: Box
   glyph: Box
-  chip: Box | null
   pane: Box | null
-  chipScroll: { scrollWidth: number; clientWidth: number } | null
   /** Every element in the row, the row included, whose content is wider than its box. */
   overflowing: { tag: string; className: string; scrollWidth: number; clientWidth: number }[]
   /** Every element in the row whose computed text-overflow is ellipsis. */
@@ -396,7 +387,6 @@ async function readLongLabel(page: Page): Promise<LongLabelReading> {
     }
     const glyph = li.children[0] as HTMLElement
     const label = li.children[1] as HTMLElement
-    const chip = li.querySelector('[data-masked]') as HTMLElement | null
     const style = getComputedStyle(label)
     const all = [li, ...li.querySelectorAll('*')].filter((element): element is HTMLElement => element instanceof HTMLElement)
     return {
@@ -405,9 +395,7 @@ async function readLongLabel(page: Page): Promise<LongLabelReading> {
       row: box(li) as Box,
       label: box(label) as Box,
       glyph: box(glyph) as Box,
-      chip: box(chip),
       pane: box(document.querySelector('[data-live-pane="steps"]')),
-      chipScroll: chip === null ? null : { scrollWidth: chip.scrollWidth, clientWidth: chip.clientWidth },
       overflowing: all
         .filter((element) => element.scrollWidth > element.clientWidth + 1)
         .map((element) => ({
@@ -439,20 +427,7 @@ function expectLongLabelFullyVisible(reading: LongLabelReading, viewport: { widt
   for (const word of LONG_STEP_WORDS) {
     expect(reading.text, `${context} — the word ${JSON.stringify(word)} is painted`).toContain(word)
   }
-  expect(reading.text, context).not.toContain('<SECRET_')
-  const { chip, row, label, glyph, pane } = reading
-  expect(chip, `${context} — the chip is in the row`).not.toBeNull()
-  if (chip !== null) {
-    expect(chip.x, `${context} — the chip starts inside the row`).toBeGreaterThanOrEqual(row.x - 1)
-    expect(chip.y, context).toBeGreaterThanOrEqual(row.y - 1)
-    expect(chip.x + chip.width, `${context} — the chip ends inside the row`).toBeLessThanOrEqual(row.x + row.width + 1)
-    expect(chip.y + chip.height, context).toBeLessThanOrEqual(row.y + row.height + 1)
-  }
-  expect(reading.chipScroll, context).not.toBeNull()
-  if (reading.chipScroll !== null) {
-    expect(reading.chipScroll.scrollWidth, `${context} — the chip is not clipped`)
-      .toBeLessThanOrEqual(reading.chipScroll.clientWidth + 1)
-  }
+  const { row, label, glyph, pane } = reading
   if (pane !== null) {
     expect(row.x + row.width, `${context} — the row stays inside the steps pane`).toBeLessThanOrEqual(pane.x + pane.width + 1)
   }
@@ -461,7 +436,7 @@ function expectLongLabelFullyVisible(reading: LongLabelReading, viewport: { widt
 }
 
 describe('the live step rows on the shipped bundle (428-24 Task 1)', () => {
-  it('LONG-LABEL-FULLY-VISIBLE-SHIPPED: a label longer than the steps pane wraps in full with a whole chip at 1280 and 400', async () => {
+  it('LONG-LABEL-FULLY-VISIBLE-SHIPPED: a label longer than the steps pane wraps in full at 1280 and 400', async () => {
     // 1280 is the docked page; 400 is the stacked one, where the steps pane is the page's width.
     for (const viewport of [DESKTOP, NARROW]) {
       await onLivePage(LONG_RUN, async (page) => {
@@ -558,24 +533,18 @@ describe('the live step rows on the shipped bundle (428-24 Task 1)', () => {
     })
   }, 120_000)
 
-  it('SECRET-CHIP-SHIPPED: a <SECRET_1> in a live label is the masked chip, and the raw placeholder is nowhere', async () => {
+  // 2026-10-14 (441-37, D-20): an old run's numbered placeholder is shown as the characters it holds.
+  it('SECRET-PLACEHOLDER-AS-TEXT-SHIPPED: a <SECRET_1> in a live label from an old run is shown as written, with no chip', async () => {
     await onLivePage(SECRET_RUN, async (page) => {
       const row = page.locator('[data-live-pane="steps"] li[data-step-status="running"]')
       await row.waitFor({ state: 'attached', timeout: 40_000 })
       const reading = await row.evaluate((node) => ({
-        chips: node.querySelectorAll('[data-masked="secret"]').length,
-        chipText: (node.querySelector('[data-masked="secret"]') as HTMLElement | null)?.innerText ?? null,
+        chips: node.querySelectorAll('[data-masked]').length,
         text: node.textContent ?? '',
-        body: document.body.innerText,
-        html: document.documentElement.outerHTML,
       }))
-      const context = JSON.stringify({ ...reading, body: undefined, html: undefined })
-      expect(reading.chips, context).toBe(1)
-      expect(reading.chipText, context).toBe(MASKED_SECRET_LIVE_LABEL)
-      expect(reading.text, `${context} — the rest of the label is painted`).toContain('into Password')
-      expect(reading.text, context).not.toContain('<SECRET_')
-      expect(reading.body).not.toContain('<SECRET_')
-      expect(reading.html).not.toContain('&lt;SECRET_')
+      const context = JSON.stringify(reading)
+      expect(reading.chips, context).toBe(0)
+      expect(reading.text, context).toContain(SECRET_STEP_TEXT)
     })
   }, 120_000)
 })

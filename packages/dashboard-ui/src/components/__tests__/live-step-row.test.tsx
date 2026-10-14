@@ -13,16 +13,8 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { maskedMarker } from '@vostride/agent-qa-schema'
-
 import { LIVE_STEP_GLYPHS, LiveStepRowView } from '@/components/live-step-row'
-import { MaskedChip } from '@/components/run-detail/masked-chip'
 import { LIVE_STEP_STATUS_NAMES, liveLabelText } from '@/lib/live-step-row'
-import {
-  MASKED_EMAIL_LABEL,
-  MASKED_SECRET_LABEL,
-  MASKED_SECRET_LIVE_LABEL,
-} from '@/lib/run-detail-view'
 import { STEP_STATUSES, type LiveStepRow, type StepStatus } from '@/lib/run-stream-reducer'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -281,35 +273,16 @@ describe('THE LIVE STEP ROW (428 D-19/D-20)', () => {
   })
 })
 
+// 2026-10-14 (441-37, D-20, D-28): a live label is shown as written. An old run's numbered
+// placeholder is the characters it holds, and no chip is painted.
 describe('SECRET PLACEHOLDERS ON A LIVE ROW (428 D-22, WINDOWS #289)', () => {
-  it('SECRET-PLACEHOLDER-AS-CHIP: a <SECRET_n> placeholder is painted as the masked chip and never reaches the DOM raw', () => {
+  it('SECRET-PLACEHOLDER-AS-TEXT: an old <SECRET_n> placeholder is shown as written, with no chip', () => {
     const li = render(row({ status: 'running', text: 'type <SECRET_1> into Password' }))
-    const text = li.textContent ?? ''
-    expect(text).toContain('type ')
-    expect(text).toContain(' into Password')
-    expect(text).not.toContain('<SECRET_')
-    expect(li.innerHTML).not.toMatch(/SECRET_\d/)
-    expect(li.querySelectorAll('[data-masked="secret"]')).toHaveLength(1)
+    expect(li.children[1]?.textContent).toBe('type <SECRET_1> into Password')
+    expect(li.querySelector('[data-masked]')).toBeNull()
   })
 
-  it('LIVE-CHIP-LABEL: the live chip says masked secret, and run detail keeps its own sentence', () => {
-    expect(MASKED_SECRET_LIVE_LABEL).toBe('masked secret')
-    const li = render(row({ text: 'type <SECRET_1> into Password' }))
-    expect(li.querySelector('[data-masked="secret"]')?.textContent).toBe(MASKED_SECRET_LIVE_LABEL)
-
-    act(() => {
-      root!.render(<MaskedChip category="secret" />)
-    })
-    expect(container!.querySelector('[data-masked="secret"]')?.textContent).toBe(MASKED_SECRET_LABEL)
-  })
-
-  // RE-SPELLED 2026-09-26 (428-31, owner decision 2026-09-26 (1), G-428-1). This cell was "text
-  // segments ellipsise and the chip never shrinks, so a long label never clips it". It pinned
-  // 428-17's one-line row: a flex, items-center, overflow-hidden label whose text segments carried
-  // the one-line ellipsis utility and min-w-0. The owner chose a wrapping row, so those tokens are
-  // now asserted ABSENT, and the chip's promise is kept: its wrapper is shrink-0 and nowrap, so it
-  // is never split across lines, never shrunk and never clipped.
-  it('CHIP-STAYS-WHOLE: the label wraps in full, and the chip stays whole: never split, shrunk or clipped', () => {
+  it('LABEL-WRAPS-WHOLE: a long label with an old placeholder wraps in full, and nothing clips it', () => {
     const text = `type <SECRET_1> into the ${'very '.repeat(40)}long Password field`
     const li = render(row({ text }))
     const label = li.children[1] as HTMLElement
@@ -319,41 +292,22 @@ describe('SECRET PLACEHOLDERS ON A LIVE ROW (428 D-22, WINDOWS #289)', () => {
     for (const token of ['overflow-hidden', 'items-center']) {
       expect(label.classList.contains(token), `${token} absent`).toBe(false)
     }
-    const parts = [...label.children] as HTMLElement[]
-    expect(parts).toHaveLength(3)
-    const chipParts = parts.filter((part) => part.querySelector('[data-masked]'))
-    expect(chipParts).toHaveLength(1)
-    for (const part of parts) {
-      if (chipParts.includes(part)) {
-        for (const token of ['shrink-0', 'whitespace-nowrap', 'inline-flex']) {
-          expect(part.classList.contains(token), `the chip's wrapper: ${token}`).toBe(true)
-        }
-      } else {
-        expect(clippingClasses(part), 'a text segment').toEqual([])
-      }
-    }
-    // Outside the chip's own wrapper nothing clips; the chip's badge is whole by its own nowrap.
-    expect(clippingClasses(li, (element) => chipParts.some((part) => part.contains(element)))).toEqual([])
-    expect(li.textContent).toContain(' into the ')
-    expect(li.textContent).toContain('long Password field')
+    expect(clippingClasses(li)).toEqual([])
+    expect(label.textContent).toBe(text)
   })
 
-  it('two placeholders are two chips, and an email placeholder keeps its own chip', () => {
-    const li = render(row({ text: 'sign in with <EMAIL_0> and <SECRET_1> then <SECRET_2>' }))
-    expect(li.querySelectorAll('[data-masked="secret"]')).toHaveLength(2)
-    expect(li.querySelector('[data-masked="email"]')?.textContent).toBe(MASKED_EMAIL_LABEL)
-    expect(li.textContent ?? '').not.toMatch(/<(SECRET|EMAIL)_/)
+  it('two placeholders and an email placeholder are shown as written, with no chip', () => {
+    const text = 'sign in with <EMAIL_0> and <SECRET_1> then <SECRET_2>'
+    const li = render(row({ text }))
+    expect(li.children[1]?.textContent).toBe(text)
+    expect(li.querySelector('[data-masked]')).toBeNull()
   })
 
-  it('liveLabelText turns placeholders into markers through the schema, and leaves near misses as text', () => {
-    expect(liveLabelText('a <SECRET_1> b')).toBe(`a ${maskedMarker('secret')} b`)
-    expect(liveLabelText('<EMAIL_12>')).toBe(maskedMarker('email'))
-    for (const nearMiss of ['<secret_1>', '<SECRET_>', 'SECRET_1', 'click Save', '']) {
-      expect(liveLabelText(nearMiss), nearMiss).toBe(nearMiss)
+  it('liveLabelText returns its input unchanged, old placeholders included', () => {
+    for (const label of ['a <SECRET_1> b', '<EMAIL_12>', 'type [secret:PASSWORD]', 'click Save', '']) {
+      expect(liveLabelText(label), label).toBe(label)
     }
     const source = readFileSync(resolve(__dirname, '../../lib/live-step-row.ts'), 'utf8')
-    expect(source).toContain('PLACEHOLDER_PATTERN')
-    expect(source).toContain('maskedMarker')
-    expect(source).not.toMatch(/new RegExp|[=(,]\s*\/[^/*\s][^/\n]*\/[gimsuy]*/)
+    expect(source).not.toContain('@vostride/agent-qa-schema')
   })
 })

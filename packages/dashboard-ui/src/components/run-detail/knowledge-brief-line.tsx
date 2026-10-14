@@ -24,12 +24,10 @@
 // button. The id stays the line's first `<p>`, which the shipped-binary harvest reads.
 //
 // ALL TEXT GOES THROUGH REACT TEXT NODES. No raw-HTML injection escape hatch appears anywhere in
-// this file — a grep for React's one is an acceptance criterion. The summary is a producer string
-// crossing the display seam, so it goes through `MaskedText`, which paints restored-marker
-// segments as chips and everything else as text.
+// this file — a grep for React's one is an acceptance criterion. The summary is a stored producer
+// string, shown as written.
 
 import { EvidenceIncomplete } from "./evidence-incomplete"
-import { MaskedText } from "./masked-text"
 import { RecordIdCopy } from "./record-id-copy"
 import {
   ATTRIBUTION_PENDING_TEXT,
@@ -98,7 +96,7 @@ export function KnowledgeBriefLine({ line }: { line: BriefLineView }) {
         how this span was measured grown to 895px inside a 639px parent WITH `break-word` applied.
         `anywhere` is the spelling that participates in intrinsic sizing, so the row can shrink it.
       */}
-      <span className="block text-xs wrap-anywhere"><MaskedText text={line.summary} /></span>
+      <span className="block text-xs wrap-anywhere">{line.summary}</span>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         {/* The same intrinsic break at the USE SITE: a record id is content-derived and unbroken. */}
         <div className="flex min-w-0 items-center gap-1">

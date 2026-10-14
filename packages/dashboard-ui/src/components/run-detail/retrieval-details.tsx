@@ -9,7 +9,6 @@ import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { NESTED_TRIGGER_CLASS } from "./knowledge-brief-line"
 import { KnowledgeStepDetail } from "./knowledge-step-detail"
-import { MaskedText } from "./masked-text"
 import { RecordIdCopy } from "./record-id-copy"
 import {
   LEDGER_ROW_LABELS,
@@ -108,7 +107,7 @@ function StepRow({ row }: { row: StepRowView }) {
 function lines(values: readonly string[]): ReactNode {
   return values.map((value, index) => (
     <span key={index} className="block">
-      <MaskedText text={value} />
+      {value}
     </span>
   ))
 }
@@ -117,7 +116,7 @@ function lines(values: readonly string[]): ReactNode {
 function idLines(values: readonly string[]): ReactNode {
   return values.map((value, index) => (
     <span key={index} className="block">
-      <MaskedText text={value} />
+      {value}
       <RecordIdCopy id={value} className="ml-1" />
     </span>
   ))
@@ -143,9 +142,7 @@ function ChangeLedgerEntry({ entry }: { entry: ChangeLedgerView }) {
   if (entry.ref !== undefined) {
     rows.push([
       "link",
-      entry.href === undefined ? (
-        <MaskedText text={entry.ref} />
-      ) : (
+      entry.href === undefined ? entry.ref : (
         <a href={entry.href} className="text-primary underline-offset-4 hover:underline">
           {entry.ref}
         </a>

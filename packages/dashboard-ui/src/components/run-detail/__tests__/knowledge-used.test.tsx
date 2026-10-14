@@ -7,7 +7,7 @@ import { act, type ReactElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, describe, expect, it } from "vitest"
 
-import { RunKnowledgeProjectionSchema, maskedMarker } from "@vostride/agent-qa-schema"
+import { RunKnowledgeProjectionSchema } from "@vostride/agent-qa-schema"
 
 import { KnowledgeUsed } from "@/components/run-detail/knowledge-used"
 import { TabKnowledge } from "@/components/run-detail/tab-knowledge"
@@ -278,16 +278,14 @@ describe("a used row says where its record applies (D-08)", () => {
     expect(appliesRow([]).textContent).toBe("Applies to shop")
   })
 
-  it("ANCHOR-UNPARSED-VERBATIM: an anchor that does not parse renders verbatim in mono, masked, never dropped", () => {
-    const secret = maskedMarker("secret")
-    const applies = appliesRow([`token=${secret}`, '{"t":"page"}', '{"route":"/cart","t":"page"}'])
+  it("ANCHOR-UNPARSED-VERBATIM: an anchor that does not parse renders verbatim in mono, never dropped", () => {
+    const applies = appliesRow(["token=[secret:API_TOKEN]", '{"t":"page"}', '{"route":"/cart","t":"page"}'])
     const unparsed = [...applies.querySelectorAll<HTMLElement>('[data-anchor-type="unparsed"]')]
     expect(unparsed.length).toBe(2)
     for (const span of unparsed) expect(span.className).toContain("font-mono")
     expect(unparsed[1]?.textContent).toBe('{"t":"page"}')
-    expect(unparsed[0]?.textContent?.startsWith("token=")).toBe(true)
-    expect(unparsed[0]?.querySelector('[data-masked="secret"]')).not.toBeNull()
-    expect(applies.textContent).not.toContain(secret)
+    expect(unparsed[0]?.textContent).toBe("token=[secret:API_TOKEN]")
+    expect(applies.querySelector("[data-masked]")).toBeNull()
     expect([...applies.querySelectorAll("[data-anchor-type]")].map(span => span.getAttribute("data-anchor-type")))
       .toEqual(["page", "unparsed", "unparsed"])
   })

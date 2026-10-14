@@ -5,7 +5,6 @@
 
 import { Fragment, type ReactNode } from "react"
 
-import { MaskedText } from "./masked-text"
 import {
   stepRefAccessibleName,
   type StepAddress,
@@ -55,14 +54,12 @@ export function KnowledgeStepRefs({
   stepRefs?: StepRefContext
   testNames?: ReadonlyMap<number, string>
 }) {
-  // A suite's test name is a text segment rendered as masked text, never a control.
+  // A suite's test name is a text segment rendered as text, never a control.
   return (
     <>
       {segments.map((segment, index) => (
         <Fragment key={index}>
-          {segment.kind === "text" ? (
-            <MaskedText text={segment.text} />
-          ) : (
+          {segment.kind === "text" ? segment.text : (
             <KnowledgeStepRef
               address={segment.address}
               stepRefs={stepRefs}

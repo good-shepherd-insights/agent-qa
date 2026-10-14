@@ -26,7 +26,6 @@
 
 import { Circle, CircleCheck, CircleDashed, CircleMinus, CircleX, type LucideIcon } from "lucide-react"
 import type { ReactElement } from "react"
-import { MaskedText } from "@/components/run-detail/masked-text"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import {
   CHIPS_UNAVAILABLE_TEXT,
@@ -134,9 +133,7 @@ function stageCardLines(card: StageCardView | undefined, door?: StageIndicatorDo
  * inside the header would give this surface its own delay and its own open-state bookkeeping, which
  * is two answers to "is a card open right now" on one page.
  *
- * EVERY LINE IS A TEXT NODE (T-404-01). Lines go through `MaskedText`, which paints markers as
- * chips and everything else as text; there is no `dangerouslySetInnerHTML` in this file. Routing
- * every line rather than only the producer-bearing ones removes the question of which is which.
+ * EVERY LINE IS A TEXT NODE (T-404-01); there is no `dangerouslySetInnerHTML` in this file.
  */
 function WithCard({
   stage,
@@ -165,7 +162,7 @@ function WithCard({
               data-stage-card-line={line.kind}
               className={index === 0 ? "font-medium" : "text-muted-foreground"}
             >
-              <MaskedText text={line.text} />
+              {line.text}
             </p>
           ))}
         </div>

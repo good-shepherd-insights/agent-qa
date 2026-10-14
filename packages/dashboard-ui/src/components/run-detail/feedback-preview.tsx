@@ -5,7 +5,6 @@ import { DenialBlock } from '@/components/run-detail/denial-block'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Skeleton } from '@/components/ui/skeleton'
-import { MaskedText } from '@/components/run-detail/masked-text'
 import type { FeedbackReadFailure } from '@/lib/api'
 import {
   CLI_ESCAPE_PARTS,
@@ -65,7 +64,7 @@ function TextParts({ parts }: { parts: FeedbackTextParts }) {
   return (
     <>
       {parts.prefix}
-      {parts.name === undefined ? null : <MaskedText text={parts.name} />}
+      {parts.name}
       {parts.suffix}
     </>
   )
@@ -73,7 +72,7 @@ function TextParts({ parts }: { parts: FeedbackTextParts }) {
 
 /**
  * "What this will do" (426 D-16, D-17). Presentational: every word comes from the preview read the
- * composer hands it, producer strings paint as text through MaskedText, and ids stay out of view.
+ * composer hands it, producer strings are text nodes, and ids stay out of view.
  * Not a live region; outcomes announce through the composer's footer status.
  */
 export function FeedbackPreview({
@@ -231,7 +230,7 @@ function RecordItem({ record }: { record: MarkPreviewKnowledgeRecord }) {
     <li data-preview-record={place} className="space-y-0.5 break-words">
       <p className="text-foreground">
         {record.recordContent !== undefined ? (
-          <MaskedText text={record.recordContent.content} />
+          record.recordContent.content
         ) : record.contentAbsence !== undefined ? (
           CONTENT_ABSENCE_TEXT[record.contentAbsence.reason]
         ) : null}

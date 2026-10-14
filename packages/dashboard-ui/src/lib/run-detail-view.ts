@@ -365,9 +365,8 @@ export function cachedInputLine(tokens: RunTokenTotals): string | undefined {
 /**
  * One line of the usage card's model section, and what the card must do with it.
  *
- * `masked` marks the lines that carry a PRODUCER string — a model or provider id the read served
- * masked — so the card routes exactly those through `MaskedText`. The heading is product copy and
- * is not routed: a constant this file owns has no marker in it and never will.
+ * `masked` marks the lines that carry a PRODUCER string (a model or provider id); the card renders
+ * every line, heading included, as a plain text node.
  */
 export interface UsageLine {
   readonly kind: 'model' | 'models' | 'responded' | 'heading'

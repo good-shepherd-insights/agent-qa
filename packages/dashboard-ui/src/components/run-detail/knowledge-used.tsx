@@ -9,7 +9,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { NESTED_TRIGGER_CLASS } from "./knowledge-brief-line"
 import { KnowledgeRecordBody, RecordApplicability } from "./knowledge-record-body"
 import { KnowledgeStepRefs } from "./knowledge-step-ref"
-import { MaskedText } from "./masked-text"
 import { RetrievalStatement } from "./retrieval-statement"
 import {
   CONTENT_ABSENCE_REASON_TEXT,
@@ -90,7 +89,7 @@ function UsedRecordRow({ record, stepRefs }: { record: UsedRecordView; stepRefs?
           <Badge variant="outline" className="text-muted-foreground">{RECORD_KIND_LABELS[record.kind]}</Badge>
         )}
         <span data-row-primary className="text-sm wrap-anywhere">
-          <MaskedText text={record.primary} />
+          {record.primary}
         </span>
         {record.onTrial === undefined ? null : <OnTrialTag />}
         {record.sinceStatus === undefined ? null : (

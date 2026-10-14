@@ -21,13 +21,12 @@
 //
 // ALL TEXT GOES THROUGH REACT TEXT NODES. No raw-HTML injection escape hatch appears anywhere in
 // this file — a grep for React's one is an acceptance criterion. Producer strings (caution
-// summaries here, brief summaries in `KnowledgeBriefLine`) go through `MaskedText`.
+// summaries here, brief summaries in `KnowledgeBriefLine`) are shown as written.
 
 import { ChevronRight } from "lucide-react"
 
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { KnowledgeBriefLine, NESTED_TRIGGER_CLASS } from "./knowledge-brief-line"
-import { MaskedText } from "./masked-text"
 import { RecordIdCopy } from "./record-id-copy"
 import {
   CHANNEL_EYEBROWS,
@@ -86,7 +85,7 @@ export function KnowledgeStepDetail({ detail }: { detail: StepDetailView }) {
               <li key={caution.id} data-served-channel="3" className="space-y-1">
                 {/* `overflow-wrap: anywhere`, NOT `break-word`: a caution summary is regularly one
                     unbroken token, and only `anywhere` participates in intrinsic sizing. */}
-                <span className="block text-xs wrap-anywhere"><MaskedText text={caution.summary} /></span>
+                <span className="block text-xs wrap-anywhere">{caution.summary}</span>
                 <div className="flex min-w-0 items-center gap-1">
                   <p className={`${MONO_CLASS} min-w-0 wrap-anywhere`}>{caution.id}</p>
                   <RecordIdCopy id={caution.id} />

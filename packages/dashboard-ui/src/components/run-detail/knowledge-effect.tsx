@@ -16,7 +16,6 @@ import {
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { KnowledgeStepRefs } from "./knowledge-step-ref"
-import { MaskedText } from "./masked-text"
 import {
   EFFECT_HEADING,
   UNCOUNTED_TRIALS_TOOLTIP,
@@ -129,7 +128,7 @@ function EffectEntry({
         {entry.parts.tail}
       </p>
       <p data-effect-record className="col-start-2 text-xs text-muted-foreground wrap-anywhere">
-        <MaskedText text={entry.record} />
+        {entry.record}
       </p>
     </li>
   )

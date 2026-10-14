@@ -9,7 +9,6 @@ import type { RunKnowledgeRecordContent } from "@vostride/agent-qa-schema"
 
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { NESTED_TRIGGER_CLASS } from "./knowledge-brief-line"
-import { MaskedText } from "./masked-text"
 import {
   EVIDENCE_NOTE_LABEL,
   SHOW_FULL_RECORD_LABEL,
@@ -22,7 +21,7 @@ import {
 export function RecordApplicability({ view }: { view: ApplicabilityView }) {
   return (
     <p data-row-applicability className="text-xs text-muted-foreground wrap-anywhere">
-      <MaskedText text={view.lead} />
+      {view.lead}
       {view.phrases.map((phrase, index) => (
         <Fragment key={index}>
           {" · "}
@@ -38,13 +37,13 @@ function AnchorPhrase({ phrase }: { phrase: AnchorPhraseView }) {
     return (
       <span data-anchor-type={phrase.type}>
         {phrase.text}{" "}
-        <code className="font-mono wrap-anywhere"><MaskedText text={phrase.literal} /></code>
+        <code className="font-mono wrap-anywhere">{phrase.literal}</code>
       </span>
     )
   }
   return (
     <span data-anchor-type={phrase.type} className={phrase.type === "unparsed" ? "font-mono wrap-anywhere" : undefined}>
-      <MaskedText text={phrase.text} />
+      {phrase.text}
     </span>
   )
 }
@@ -62,7 +61,7 @@ export function KnowledgeRecordBody({ content }: { content: RunKnowledgeRecordCo
           {currentStatusLine(content.currentStatus)}
         </p>
         <p data-record-content className="text-sm whitespace-pre-wrap wrap-anywhere">
-          <MaskedText text={content.content} />
+          {content.content}
         </p>
         <p data-trust-counts className="text-xs text-muted-foreground tabular-nums">
           {trustCountsLine(confirmations, contradictions)}
@@ -71,7 +70,7 @@ export function KnowledgeRecordBody({ content }: { content: RunKnowledgeRecordCo
           <div data-evidence-note className="border-l-2 border-border pl-2 space-y-1">
             <p className="text-xs font-medium text-muted-foreground">{EVIDENCE_NOTE_LABEL}</p>
             <p className="text-xs text-muted-foreground whitespace-pre-wrap wrap-anywhere">
-              <MaskedText text={trustNarrative} />
+              {trustNarrative}
             </p>
           </div>
         )}

@@ -236,8 +236,8 @@ export function feedbackOutcomeClass({ member, step, runStatus }: FeedbackOutcom
 }
 
 /**
- * A sentence with one producer string in it. The product words stay constants and `name` is painted
- * through MaskedText as a text node, so a step or test name can never become markup.
+ * A sentence with one producer string in it. The product words stay constants and `name` is a
+ * text node, so a step or test name can never become markup.
  */
 export interface FeedbackTextParts {
   prefix: string

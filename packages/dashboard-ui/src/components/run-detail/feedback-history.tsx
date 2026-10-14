@@ -5,7 +5,6 @@ import { markAddressKey } from '@vostride/agent-qa-schema'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Skeleton } from '@/components/ui/skeleton'
-import { MaskedText } from '@/components/run-detail/masked-text'
 import type { MarksHistoryRead } from '@/lib/api'
 import {
   ACTIVE_TEXT,
@@ -52,7 +51,7 @@ function TextParts({ parts }: { parts: FeedbackTextParts }) {
   return (
     <>
       {parts.prefix}
-      {parts.name === undefined ? null : <MaskedText text={parts.name} />}
+      {parts.name}
       {parts.suffix}
     </>
   )
@@ -220,7 +219,7 @@ function HistoryEntry({
       {entry.note === undefined ? null : (
         <p className="break-words">
           {'“'}
-          <MaskedText text={entry.note} />
+          {entry.note}
           {'”'}
         </p>
       )}
@@ -253,7 +252,7 @@ function AppliedTail({ applied, drafted }: { applied: NonNullable<ReturnType<typ
               ) : (
                 <>
                   {'“'}
-                  <MaskedText text={record.content} />
+                  {record.content}
                   {'”'}
                 </>
               )}
