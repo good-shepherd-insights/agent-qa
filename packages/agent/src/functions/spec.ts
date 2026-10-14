@@ -275,7 +275,7 @@ export type FunctionSchemaProjection = Readonly<Record<string, unknown>>
 export interface ClauseVerdict {
   readonly status: Exclude<ClauseReceiptStatus, 'not-run'>
   /**
-   * WHICH road, in the op's own vocabulary — `guardrail-hit`, `schema-fail`, a proposal id.
+   * WHICH road, in the op's own vocabulary — `schema-fail`, `refs-only`, a proposal id.
    *
    * The empty string means "this op has nothing to add", and the engine falls back to the line it
    * has always printed. It is not a second spelling of absence: a fold that had nothing to say and a

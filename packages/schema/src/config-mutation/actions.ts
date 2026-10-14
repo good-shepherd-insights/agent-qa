@@ -16,8 +16,8 @@
 // variable — never a credential. That is enforced here by the absence of any field a credential
 // could be assigned to, which is a property of the shape rather than a rule somebody remembers, and
 // `__tests__/proposal.test.ts` enumerates the keyset so adding one would be a visible edit. The
-// behavioural half — a literal secret arriving in one of the REFERENCE fields is itself a guardrail
-// hit at construction — is 395-05's, and it is defence in depth on top of this, not instead of it.
+// behavioural half — a value in one of the REFERENCE fields that is not shaped like a reference is
+// refused `refs-only` at construction — is defence in depth on top of this, not instead of it.
 
 import { z } from 'zod'
 
@@ -197,30 +197,13 @@ export type ConfigChangeFile = z.infer<typeof ConfigChangeFileSchema>
 // that wrote nothing, or an interruption that names exactly the files already written.
 
 /**
- * Why a change was blocked: the resulting configuration would not validate, or it would carry a
- * secret. The report names what was found and never the value. Nothing is written or kept.
+ * Why a change was blocked: the resulting configuration would not validate. The report names the
+ * issues and never the value. Nothing is written or kept. A config change is not scanned for
+ * secrets (441 D-15).
  */
-export const CONFIG_BLOCKED_REASONS = ['schema-fail', 'guardrail-hit'] as const
+export const CONFIG_BLOCKED_REASONS = ['schema-fail'] as const
 
 export type ConfigBlockedReason = (typeof CONFIG_BLOCKED_REASONS)[number]
-
-/**
- * One thing the guardrail scan found, described so a person can act without the value being shown.
- * `redactedFingerprint` is a stable, non-reversing marker, so two findings can be compared without
- * either carrying the value.
- */
-export const ConfigScanFindingSchema = z.object({
-  /** Workspace-relative path of the file the finding is in. */
-  path: z.string().min(1),
-  /** The config path or diff line label, when the detector can name one. */
-  field: z.string().min(1).optional(),
-  /** Which detector fired, in the safety package's own vocabulary. */
-  detector: z.string().min(1),
-  /** A short, non-reversing marker for the matched value. NEVER the value. */
-  redactedFingerprint: z.string().min(1),
-}).strict()
-
-export type ConfigScanFinding = z.infer<typeof ConfigScanFindingSchema>
 
 /**
  * Why a config change was refused with nothing written.
@@ -268,8 +251,8 @@ export type ConfigChangeRefusalReason = (typeof CONFIG_CHANGE_REFUSAL_REASONS)[n
  *                 order; `fields` are the config fields the change set; `shownDiff` is the diff of
  *                 the change against the files as this call read them. An outside edit to another
  *                 field, merged in the write's own turn, is kept and is not part of this diff.
- *   blocked     — the change would not validate or would carry a secret. It carries the report and
- *                 never the change; nothing was written and nothing was kept.
+ *   blocked     — the change would not validate. It carries the report and never the change;
+ *                 nothing was written and nothing was kept.
  *   no-change   — the configuration already holds the value.
  *   refused     — the request or the files at write time refused the change; nothing was written.
  *   interrupted — a multi-file change stopped part way. `written` hold their new bytes, `failed`
@@ -296,7 +279,6 @@ export const ConfigChangeOutputSchema = z.discriminatedUnion('outcome', [
     summaryLine: z.string().min(1),
     blockedReason: z.enum(CONFIG_BLOCKED_REASONS),
     paths: z.array(z.string().min(1)).min(1),
-    scanFindings: z.array(ConfigScanFindingSchema).optional(),
     /** Whole-config validation issues, in the validator's own words, reduced to position for YAML. */
     validationIssues: z.array(z.string().min(1)).optional(),
   }).strict(),

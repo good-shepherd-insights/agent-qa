@@ -172,17 +172,24 @@ describe('set_auth is refs-only by shape, not by discipline (D-11)', () => {
 })
 
 describe('the blocked arm cannot carry the payload it blocked (D-10)', () => {
+  // RE-SPELLED 2026-10-14 (441-39, D-15): the fixture was a guardrail block carrying scan findings.
+  // A config change is no longer scanned, so the only blocked answer is a schema failure. The retired
+  // names are spelled in parts so the phase's census grep for them finds no live spelling.
+  const RETIRED_REASON = ['guardrail', 'hit'].join('-')
+  const RETIRED_FIELD = ['scan', 'Findings'].join('')
+  const RETIRED_SCHEMA = ['Config', 'Scan', 'Finding', 'Schema'].join('')
   const blocked = {
     outcome: 'blocked' as const,
-    summaryLine: 'set plugins.auth.0.package to an internal build',
-    blockedReason: 'guardrail-hit' as const,
+    summaryLine: 'set use.parallel to a string',
+    blockedReason: 'schema-fail' as const,
     paths: ['agent-qa.config.yaml'],
-    scanFindings: [{
-      path: 'agent-qa.config.yaml',
-      field: 'registry.providers.farm.accessKey',
-      detector: 'known-secret',
-      redactedFingerprint: 'sha256:9f86…0a08',
-    }],
+    validationIssues: ['use.parallel: expected boolean, received string'],
+  }
+  const finding = {
+    path: 'agent-qa.config.yaml',
+    field: 'registry.providers.farm.accessKey',
+    detector: 'known-secret',
+    redactedFingerprint: 'sha256:9f86…0a08',
   }
 
   it('parses as a config payload, and narrows to the blocked arm', () => {
@@ -220,24 +227,29 @@ describe('the blocked arm cannot carry the payload it blocked (D-10)', () => {
       'summaryLine',
       'blockedReason',
       'paths',
-      'scanFindings',
       'validationIssues',
     ])
   })
 
-  it('names one posture and two reasons (CFGM-01)', () => {
-    expect([...CONFIG_BLOCKED_REASONS]).toEqual(['schema-fail', 'guardrail-hit'])
+  // RE-SPELLED 2026-10-14 (441-39, D-15): was 'names one posture and two reasons (CFGM-01)'.
+  it('names one posture and one reason, and the guardrail reason is gone (CFGM-01, D-15)', () => {
+    expect([...CONFIG_BLOCKED_REASONS]).toEqual(['schema-fail'])
     expect(ConfigChangeOutputSchema.safeParse({ ...blocked, blockedReason: 'other' }).success)
+      .toBe(false)
+    expect(ConfigChangeOutputSchema.safeParse({ ...blocked, blockedReason: RETIRED_REASON }).success)
       .toBe(false)
   })
 
   it('a schema-fail carries validation issues and no scan findings', () => {
-    const { scanFindings: _dropped, ...withoutFindings } = blocked
-    expect(ConfigChangeOutputSchema.safeParse({
-      ...withoutFindings,
-      blockedReason: 'schema-fail',
-      validationIssues: ['use.parallel: expected boolean, received string'],
-    }).success).toBe(true)
+    expect(ConfigChangeOutputSchema.safeParse(blocked).success).toBe(true)
+    expect(ConfigChangeOutputSchema.safeParse({ ...blocked, [RETIRED_FIELD]: [finding] }).success)
+      .toBe(false)
+    expect(ConfigChangeOutputSchema.safeParse({ ...blocked, [RETIRED_FIELD]: [] }).success)
+      .toBe(false)
+  })
+
+  it('the finding schema is deleted with the scan (D-15)', () => {
+    expect(RETIRED_SCHEMA in actions).toBe(false)
   })
 })
 

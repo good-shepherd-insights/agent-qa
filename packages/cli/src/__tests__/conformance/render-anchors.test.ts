@@ -5,8 +5,9 @@
 // stdout as `config.field.set completed`, with `executed` in green. The guardrail HELD — nothing
 // was written — and the person was told the mutation completed. The corrective information the
 // product had already computed and persisted (`blockedReason` distinguishing "you tried to write a
-// secret" from "your config is invalid"; `scanFindings` naming the detector and the file) never
-// reached the one person it was written for.
+// secret" from "your config is invalid"; the scan findings naming the detector and the file) never
+// reached the one person it was written for. 2026-10-14 (441-39, D-15): a config change is no
+// longer scanned, so the only blocked reason left is `schema-fail`.
 //
 // THE ASSERTION SURFACE IS CHILD STDOUT, AND THAT IS THE POINT (criterion 1's own words; 395's
 // corpus-blind-by-assertion-surface lesson). Every cell in phase 399 asserted on the op's RETURN

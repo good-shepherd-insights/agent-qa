@@ -44,7 +44,6 @@ export {
   ConfigFieldSetInputSchema,
   ConfigHookAddInputSchema,
   ConfigProjectScaffoldInputSchema,
-  ConfigScanFindingSchema,
   ConfigTargetCreateInputSchema,
   ConfigTargetEditInputSchema,
 } from './actions'
@@ -59,7 +58,6 @@ export type {
   ConfigHookAddInput,
   ConfigHookRuntime,
   ConfigProjectScaffoldInput,
-  ConfigScanFinding,
   ConfigTargetCreateInput,
   ConfigTargetEditInput,
 } from './actions'

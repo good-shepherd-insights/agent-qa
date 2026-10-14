@@ -24,7 +24,7 @@
  * members are actively wrong about it: `executed` asserts the change happened (measured G-399-2: a
  * credential-blocked config mutation rendered `executed` in green while the file was byte-unchanged,
  * and the reader's plausible next action was to paste the secret in by hand), while `failed` sends
- * them hunting a defect that does not exist. The specific reason — `guardrail-hit`, `schema-fail`,
+ * them hunting a defect that does not exist. The specific reason — `schema-fail`, `refs-only`,
  * `duplicate-of:…` — still travels in `outcome` and in the rendered payload; what this member adds
  * is the one bit a surface must not get wrong, which is whether the thing was carried out.
  *
