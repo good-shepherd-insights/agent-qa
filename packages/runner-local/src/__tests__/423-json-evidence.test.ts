@@ -73,7 +73,6 @@ test('NETWORK-READBACK: real member terminal refers to one reopened masked SHA b
     body: index === 3 ? oversized : body,
     requestBody: index === 3 ? oversized : body, startTime: 1000 - index, endTime: 2000 - index,
   }))
-  const masking = { mask: (text: string) => text.replaceAll(secret, '[secret]').replaceAll('§', '[secret]'), unmask: (text: string) => text }
   const bus = createRunEventBus({ runId: 'run-423' })
   let terminal: StepFinalizedPayload | undefined
   let visibleAtTerminal: Uint8Array | undefined
@@ -87,8 +86,8 @@ test('NETWORK-READBACK: real member terminal refers to one reopened masked SHA b
   await runMemberTest({ testId: 'synthetic-network', name: 'Network readback', filePath: 'synthetic.yaml', steps: ['{{appium: mobile: hideKeyboard}}'] }, {
     adapter, planner: { plan: async () => { throw new Error('No provider call expected') } },
     plannerModel: unusedModel, verifierModel: unusedModel, appiumScript: async () => ({ success: true }),
-    sink: createMemberEventSink({ bus, masking, testIndex: 0 }), testIndex: 0,
-    abortSignal: new AbortController().signal, masking, evidenceArtifacts: store,
+    sink: createMemberEventSink({ bus, mask: text => text.replaceAll(secret, '[secret]').replaceAll('§', '[secret]'), testIndex: 0 }), testIndex: 0,
+    abortSignal: new AbortController().signal, evidenceArtifacts: store,
     secretRedactor: new SecretRedactor(new SecretStore({ NET_423: secret })),
   })
   expect(terminal?.evidence?.network).toMatchObject({ state: 'present', counts: { total: 600, failed: 1, errored: 1 } })

@@ -2,7 +2,7 @@ import { expect, test, vi } from 'vitest'
 import { createMemberEventSink, createRunEventBus, runMemberTest, SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import type { MemberRunConfig, PlatformAdapter } from '@vostride/agent-qa-runner'
 import type { EvidenceDocument, StepFinalizedPayload } from '@vostride/agent-qa-schema'
-import { buildMemberRunConfig, buildRunMaskingContext } from '../run-composition.js'
+import { buildMemberRunConfig } from '../run-composition.js'
 
 vi.mock('@vostride/agent-qa-web', () => ({ runAccessibilityCheck: vi.fn(async () => []) }))
 
@@ -13,18 +13,18 @@ function fixture() {
   bus.subscribe(1, event => {
     if (event.type === 'stepFinalized') terminals.push(event.payload as StepFinalizedPayload)
   })
-  const masking = buildRunMaskingContext({ env: {} })
+  const secretRedactor = new SecretRedactor(new SecretStore())
   const adapter: PlatformAdapter = {
     platform: 'web', setup: async () => {}, cleanup: async () => {},
     observe: async () => { throw new Error('No extra capture permitted') },
     execute: async () => ({ success: true }),
   }
   const input = {
-    adapter, masking, secretRedactor: new SecretRedactor(new SecretStore()),
+    adapter, secretRedactor,
     planner: { plan: async () => { throw new Error('No model call permitted') } },
     verifier: { verify: async () => { throw new Error('No model call permitted') } },
     plannerModel: {} as MemberRunConfig['plannerModel'], verifierModel: {} as MemberRunConfig['verifierModel'],
-    sink: createMemberEventSink({ bus, masking, testIndex: 0 }),
+    sink: createMemberEventSink({ bus, mask: text => secretRedactor.redactString(text), testIndex: 0 }),
     testIndex: 0, abortSignal: new AbortController().signal, filePath: 'synthetic.yaml',
     accessibility: { enabled: true },
     evidenceArtifacts: {

@@ -26,7 +26,6 @@ function fixture() {
   const events: RunEventEnvelope[] = []
   const documents: EvidenceDocument[] = []
   const ariaDocuments: EvidenceDocument[] = []
-  const masking = { mask: (text: string) => text, unmask: (text: string) => text }
   const bus = createRunEventBus({ runId: 'synthetic-run-423' })
   bus.subscribe(1, event => events.push(event))
   const abort = new AbortController()
@@ -34,8 +33,8 @@ function fixture() {
   adapter.drainConsoleLogs = vi.fn((): ConsoleLogEntry[] => [])
   const config: MemberRunConfig = {
     adapter, planner: makePlanner(), plannerModel: fakeModel, verifierModel: fakeModel,
-    sink: createMemberEventSink({ bus, masking, testIndex: 3 }), testIndex: 3,
-    abortSignal: abort.signal, masking,
+    sink: createMemberEventSink({ bus, mask: (text) => text, testIndex: 3 }), testIndex: 3,
+    abortSignal: abort.signal,
     secretRedactor: new SecretRedactor(new SecretStore({ LIVE_423: secret })),
     evidenceArtifacts: {
       persistDecisionScreenshot: () => ({ id: `decision-screenshot:${'a'.repeat(64)}`, sha: 'a'.repeat(64) }),

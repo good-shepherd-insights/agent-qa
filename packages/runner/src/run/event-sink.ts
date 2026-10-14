@@ -12,7 +12,7 @@
 import type {
   HookFinishedPayload,
   HookStartedPayload,
-  MaskingContext,
+  MaskFn,
   StepEvidence,
   SubActionEvidence,
   TestRetryScheduledPayload,
@@ -51,16 +51,15 @@ function guardEmit(bus: RunEventBus, fn: () => void): void {
 
 /**
  * Build the per-member {@link MemberEventSink} the shell hands to the executor context (D-02).
- * `testIndex` is bound here; `stepIndex` is curried by `loopEmitFor`. `masking.mask` is the D-09
- * seam (identity pre-362). All three payload kinds go through the schema projections + mask.
+ * `testIndex` is bound here; `stepIndex` is curried by `loopEmitFor`. `mask` is the run's mask
+ * (441-12, D-06). All three payload kinds go through the schema projections + mask.
  */
 export function createMemberEventSink(deps: {
   bus: RunEventBus
-  masking: MaskingContext
+  mask: MaskFn
   testIndex: number
 }): MemberEventSink {
-  const { bus, masking, testIndex } = deps
-  const mask = (text: string): string => masking.mask(text)
+  const { bus, mask, testIndex } = deps
 
   return {
     stepStarted(input: { stepIndex: number; stepText: string }): void {

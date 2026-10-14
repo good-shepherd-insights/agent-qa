@@ -293,7 +293,7 @@ export function startRun(config: RunConfig): RunSession {
       // grouping, totalSteps). Suite grouping rides testStarted — the shell stays suite-agnostic
       // (no suite lifecycle events); reporters derive boundaries by watching the grouping change.
       // Absent optionals are omitted via conditional spread so no undefined-hole survives round-trip.
-      // Every field but stepTexts is structural identity (not a captured stream) — unmasked, matching
+      // Every field but stepTexts is structural identity (not a captured stream) — not masked, matching
       // testId/name. stepTexts (G-428-2) is authored step content, so it is masked here by `mask`, the
       // same run redactor the member's event sink below masks stepStarted.stepText with.
       bus.publish('testStarted', {
@@ -315,8 +315,7 @@ export function startRun(config: RunConfig): RunSession {
       if (runController.signal.aborted) memberController.abort()
       else runController.signal.addEventListener('abort', onRunAbort, { once: true })
 
-      // 2026-10-14 (441-12): an adapter over the run's mask until the sink takes `mask` itself.
-      const events = createMemberEventSink({ bus, masking: { mask, unmask: (text) => text }, testIndex })
+      const events = createMemberEventSink({ bus, mask, testIndex })
       let evidenceContext: MemberEvidenceContext | undefined
 
       // Race the executor against member-abort (SESSION-04). A member wedged on a genuinely-

@@ -168,7 +168,7 @@ it('REC-FARM-RUNNER-RETRY: real runner persists only the fresh finalized attempt
     steps: ['Run'], meta: { retries: 1 } }, {
     adapter, planner: {} as never, plannerModel: {} as never, verifierModel: {} as never,
     sink: createMemberEventSink({ bus: createRunEventBus({ runId: 'synthetic-retry-run' }),
-      masking: { mask: text => text, unmask: text => text }, testIndex: 0 }),
+      mask: text => text, testIndex: 0 }),
     testIndex: 0, abortSignal: new AbortController().signal, recording: { enabled: true },
     evidenceArtifacts: { persistDecisionScreenshot: () => ({ id: `decision-screenshot:${ref.sha}`, sha: ref.sha }),
       getBlob: () => undefined, persistRecording },

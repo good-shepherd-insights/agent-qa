@@ -260,7 +260,7 @@ async function ariaReadback(mode: 'two' | 'empty' | 'missing' | 'mobile' | 'chil
   })
   bus.publish('runStarted', {})
   bus.publish('testStarted', { testIndex: 0, testId: generateTestId(), name: 'ARIA member' })
-  const sink = createMemberEventSink({ bus, masking, testIndex: 0 }).loopEmitFor(0)
+  const sink = createMemberEventSink({ bus, mask: text => masking.mask(text), testIndex: 0 }).loopEmitFor(0)
   const ports: LoopPorts = {
     adapter: {
       platform: mode === 'mobile' ? 'android' : 'web',

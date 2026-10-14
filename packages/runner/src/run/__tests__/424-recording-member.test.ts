@@ -28,7 +28,7 @@ function fixture() {
   const config: MemberRunConfig = {
     adapter, planner: makePlanner(), plannerModel: fakeModel, verifierModel: fakeModel,
     sink: createMemberEventSink({ bus,
-      masking: { mask: text => text, unmask: text => text }, testIndex: 0 }),
+      mask: text => text, testIndex: 0 }),
     testIndex: 0, abortSignal: new AbortController().signal,
     recording: { enabled: true },
     evidenceArtifacts: { persistDecisionScreenshot: () => ({ id: `decision-screenshot:${ref.sha}`, sha: ref.sha }),

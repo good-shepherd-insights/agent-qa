@@ -56,7 +56,6 @@ function startBus() {
 
 it('ANNOTATION-PRODUCER-COLD-READ: dispatch witness survives bus, result JSON and reopened read', async () => {
   const { bus } = startBus()
-  const masking = { mask: (text: string) => text, unmask: (text: string) => text }
   const witness = { startMs: 105.5, endMs: 140.25, scene: 'recorded-page' as const, transform: 'identity' as const, width: 390, height: 844 }
   await executeStep('Click Log in', {
     adapter: { platform: 'web', setup: async () => {}, cleanup: async () => {}, observe: async () => makeScreenState(),
@@ -64,7 +63,7 @@ it('ANNOTATION-PRODUCER-COLD-READ: dispatch witness survives bus, result JSON an
       recording: { start: async () => ({}), stop: async () => undefined, beginAnnotation: () => () => witness },
     },
     planner: { plan: async () => ({ plan: { reasoning: 'Click', action: { type: 'click', ref: 'e2' }, confidence: 1, stepComplete: true, stepFailed: false } }) },
-    masking, events: createMemberEventSink({ bus, masking, testIndex: 0 }).loopEmitFor(0),
+    events: createMemberEventSink({ bus, mask: text => text, testIndex: 0 }).loopEmitFor(0),
   }, { stepInstruction: 'Click Log in', testName: 'Annotation', previousSteps: [],
     plannerModel: {} as never, verifierModel: {} as never })
   bus.publish('testFinished', { testIndex: 0, outcome: 'passed', recording })

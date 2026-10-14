@@ -1,5 +1,4 @@
 import { expect, it, vi } from 'vitest'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { AriaEvidenceDocumentSchema, sha256hexBytes } from '@vostride/agent-qa-schema'
 import type { EvidenceDocument, RunEventEnvelope, SubActionRecordedPayload } from '@vostride/agent-qa-schema'
 import { executeStep } from '../index.js'
@@ -11,7 +10,6 @@ import { SecretRedactor, SecretStore } from '../secrets.js'
 import { makeActionPlan, makeAdapter, makePlanner, makeStepContext, makeVerifier } from './loop-harness.js'
 
 function fixture(tree = 'before synthetic-run-secret', declared: Record<string, string> = { RUN_SECRET: 'synthetic-run-secret' }) {
-  const masking = createMaskingContext()
   const secretRedactor = new SecretRedactor(new SecretStore(declared))
   const before = makeScreenState({ tree })
   const after = makeScreenState({ tree: 'after must remain raw synthetic-run-secret' })
@@ -43,7 +41,7 @@ function fixture(tree = 'before synthetic-run-secret', declared: Record<string, 
   const observe = vi.spyOn(adapter, 'observe')
   const ports: LoopPorts = {
     adapter, planner: makePlanner(), verifier: makeVerifier(), secretRedactor, evidenceArtifacts: store,
-    events: createMemberEventSink({ bus, masking, testIndex: 2 }).loopEmitFor(3),
+    events: createMemberEventSink({ bus, mask: text => secretRedactor.redactString(text), testIndex: 2 }).loopEmitFor(3),
   }
   const children = () => events.filter(event => event.type === 'subActionRecorded')
     .map(event => event.payload as SubActionRecordedPayload)

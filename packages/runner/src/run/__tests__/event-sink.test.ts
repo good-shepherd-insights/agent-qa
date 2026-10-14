@@ -6,7 +6,7 @@
 // escapes redaction (T-363-05/T-363-06). RED before the sink widening exists.
 //
 // Runner package convention: `.js`-suffixed relative import specifiers. Real in-memory bus,
-// synthetic MaskingContext — no fs, no timers.
+// synthetic mask — no fs, no timers.
 import { describe, expect, it } from 'vitest'
 
 import { createRunEventBus } from '../bus.js'
@@ -16,7 +16,7 @@ import { makeEmptyServedBrief } from '../../loop/evidence.js'
 import type {
   HookFinishedPayload,
   HookStartedPayload,
-  MaskingContext,
+  MaskFn,
   RecordedRetrievalRung,
   RunEventEnvelope,
   ScopeKey,
@@ -28,11 +28,8 @@ import type {
 const SECRET = 'SECRET-42'
 const SCOPE: ScopeKey = { tier: 'suite', key: 'checkout' }
 
-/** The synthetic redactor shape 362 seeds — scrubs the planted secret from every string. */
-const MASKING: MaskingContext = {
-  mask: (text: string) => text.replaceAll(SECRET, '[masked]'),
-  unmask: (text: string) => text,
-}
+/** A synthetic run mask — scrubs the planted secret from every string. */
+const MASK: MaskFn = (text: string) => text.replaceAll(SECRET, '[masked]')
 
 function collect(bus: RunEventBus): RunEventEnvelope[] {
   const received: RunEventEnvelope[] = []
@@ -54,7 +51,7 @@ function makeStepEvidence(): StepEvidence {
 function makeSink(): { bus: RunEventBus; received: RunEventEnvelope[]; sink: ReturnType<typeof createMemberEventSink> } {
   const bus = createRunEventBus({ runId: 'run-1' })
   const received = collect(bus)
-  const sink = createMemberEventSink({ bus, masking: MASKING, testIndex: 2 })
+  const sink = createMemberEventSink({ bus, mask: MASK, testIndex: 2 })
   return { bus, received, sink }
 }
 

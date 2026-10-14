@@ -18,10 +18,9 @@ function fixture(path: 'live' | 'cache' | 'procedure' = 'live', zeroMs?: number)
     blobs.set(sha, bytes)
     return { id: `${prefix}:${sha}`, sha }
   }
-  const masking = { mask: (text: string) => text, unmask: (text: string) => text }
   const ports: LoopPorts & { recordingZeroMs?: number } = {
     adapter: makeAdapter({ screenshot: async () => Buffer.from('synthetic frame') }),
-    planner: makePlanner(), verifier: makeVerifier(), masking,
+    planner: makePlanner(), verifier: makeVerifier(),
     secretRedactor: new SecretRedactor(new SecretStore()),
     ...(zeroMs === undefined ? {} : { recordingZeroMs: zeroMs }),
     evidenceArtifacts: {
@@ -29,7 +28,7 @@ function fixture(path: 'live' | 'cache' | 'procedure' = 'live', zeroMs?: number)
       persistEvidenceDocument: doc => persist(new TextEncoder().encode(JSON.stringify(doc)), 'aria-state'),
       getBlob: sha => blobs.get(sha),
     },
-    events: createMemberEventSink({ bus, masking, testIndex: 0 }).loopEmitFor(0),
+    events: createMemberEventSink({ bus, mask: text => text, testIndex: 0 }).loopEmitFor(0),
   }
   if (path !== 'live') ports.planner = { plan: async () => { throw new Error('Replay must bypass planner') } }
   if (path === 'cache') ports.cache = {

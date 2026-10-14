@@ -147,7 +147,7 @@ async function usageRun(options: { retry?: boolean; omitCache?: boolean; unscope
       ...consumers({ plannerModel: model, verifierModel: model }), plannerModel: model, verifierModel: model,
       testIndex: 0, abortSignal: new AbortController().signal, masking, evidenceArtifacts: store,
       secretRedactor: new SecretRedactor(new SecretStore()),
-      sink: createMemberEventSink({ bus, masking, testIndex: 0 }),
+      sink: createMemberEventSink({ bus, mask: text => masking.mask(text), testIndex: 0 }),
       ...(options.unscoped ? {} : { stepModelScope: { runId, create: key => {
         scope = createStepModelScope({ key,
           models: {
