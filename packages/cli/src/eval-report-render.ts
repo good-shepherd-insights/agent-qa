@@ -29,11 +29,6 @@ export function renderFloorSummary(result: FloorVerbResult): string[] {
   const committed = result.committed
   if (committed !== undefined) {
     lines.push(`committed: ${committed.kind}` + ('path' in committed ? ` (${committed.path})` : ''))
-    if (committed.kind === 'egress-blocked') {
-      for (const detection of committed.detections) {
-        lines.push(`egress-blocked: ${detection.label} (${detection.detector})`)
-      }
-    }
   }
   for (const refusal of result.refusals) lines.push(`read refused: ${refusal.path}: ${refusal.reason}`)
   return [...lines, ...result.notices]

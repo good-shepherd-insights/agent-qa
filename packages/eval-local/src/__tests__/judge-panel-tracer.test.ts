@@ -4,8 +4,6 @@ import { dirname, join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { committedFileText, contractFileName, projectJudgeConfigContract, scoreCassetteReplay } from '@vostride/agent-qa-eval'
 import { asRef, sha256hex } from '@vostride/agent-qa-schema'
-import { assertCommittedEgressSafe, defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
-import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
 import * as publicApi from '../index.js'
 import { FsCommittedRootStore, committedContractPath } from '../committed-root-store.js'
 import { AGENT_QA_EVAL_LOCAL_OWNERSHIP_CONTRACT } from '../ownership-contract.js'
@@ -152,10 +150,6 @@ it('publishes the frozen v2 constitution and sanctioned public panel binding', (
   } })
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-panel-contract-'))
   roots.push(root)
-  assertCommittedEgressSafe([{ label: 'judge-config-v2', text }], {
-    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput), channel: 'eval-report',
-    auditSink: new JsonlAuditSink(join(root, 'audit')),
-  })
   const store = new FsCommittedRootStore({ committedRoot: root })
   const path = committedContractPath(contractFileName(projection))
   expect(store.writeText(path, text)).toEqual({ kind: 'written' })

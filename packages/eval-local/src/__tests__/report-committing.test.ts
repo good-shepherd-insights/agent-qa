@@ -1,11 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { buildEvalReport, committedFileText, projectDecisionVectorsDocument } from '@vostride/agent-qa-eval'
 import type { DecisionVectorsDocument, EvalBatchReport } from '@vostride/agent-qa-eval'
-import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import { slugBranch } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -18,15 +17,11 @@ import {
   COMMITTED_REPORT_JSON_FILE,
   COMMITTED_REPORT_DECISIONS_FILE,
   COMMITTED_REPORT_MARKDOWN_FILE,
-  REPORT_EGRESS_CHANNEL,
   commitEvalReport,
 } from '../report-committing.js'
 import type { CommitEvalReportOutcome } from '../report-committing.js'
 
-const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
 const MARKDOWN = '# Eval baseline report\n\nfirstAttemptDecisionAccuracy: 0/0\n'
-
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 
 describe('commitEvalReport (D-13, BASE-02)', () => {
   let root: string
@@ -44,7 +39,6 @@ describe('commitEvalReport (D-13, BASE-02)', () => {
       ...(overrides.decisions === undefined ? {} : { decisions: overrides.decisions }),
       committedRoot: root,
       reportOutputBaseDir: outDir,
-      policy,
     })
   }
 
@@ -117,41 +111,6 @@ describe('commitEvalReport (D-13, BASE-02)', () => {
     expect(readFileSync(paths.markdown, 'utf8')).toBe('# a different report body\n')
   })
 
-  it('refuses the WHOLE report on a guardrail detection — typed, audited, nothing lands', async () => {
-    const outcome = commit({ markdown: `# leaky report\n\nkey: ${AWS_KEY}\n` })
-
-    expect(outcome.kind).toBe('egress-blocked')
-    if (outcome.kind !== 'egress-blocked') throw new Error('expected egress-blocked outcome')
-    expect(
-      outcome.detections.some(
-        (detection) =>
-          detection.detector === 'awsKey' &&
-          detection.label === `report-markdown:${report.batchKey}`,
-      ),
-    ).toBe(true)
-
-    // Atomicity: neither part landed — JSON and markdown are one checkpoint unit.
-    const paths = reportFilePaths(report.batchKey)
-    expect(existsSync(paths.json)).toBe(false)
-    expect(existsSync(paths.markdown)).toBe(false)
-
-    // The audit row landed under the report output base dir BEFORE the block surfaced.
-    const auditRaw = await readFile(join(outDir, 'guardrail_audit.jsonl'), 'utf8')
-    const rows = auditRaw
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line) as { channel: string; detector: string; action: string })
-    expect(REPORT_EGRESS_CHANNEL).toBe('eval-report')
-    expect(
-      rows.some(
-        (row) =>
-          row.channel === `${REPORT_EGRESS_CHANNEL}:report-markdown:${report.batchKey}` &&
-          row.detector === 'awsKey' &&
-          row.action === 'block',
-      ),
-    ).toBe(true)
-  })
-
   function decisions(): DecisionVectorsDocument {
     return projectDecisionVectorsDocument({
       batchKey: report.batchKey, matcherVersion: report.matcherVersion, vectors: [],
@@ -185,29 +144,6 @@ describe('commitEvalReport (D-13, BASE-02)', () => {
     expect(existsSync(paths.json)).toBe(false)
     expect(existsSync(paths.markdown)).toBe(false)
     expect(readFileSync(join(root, path), 'utf8')).toBe(oldBytes)
-  })
-
-  it('a planted secret in decisions blocks all three parts on eval-report', () => {
-    const document = decisions()
-    document.vectors = [{
-      key: `${AWS_KEY}#-#0`, cassetteId: AWS_KEY, decisionOrdinal: 0,
-      product: 'fixture', briefSource: 'proof',
-      axes: {
-        headline: 'correct', elementIdentity: 'correct', value: 'not-applicable',
-        opClass: 'correct', sideEffect: 'correct', loop: 'not-applicable',
-      },
-    }]
-    expect(commit({ decisions: document })).toEqual({
-      kind: 'egress-blocked',
-      detections: [{ label: `report-decisions:${report.batchKey}`, detector: 'awsKey' }],
-    })
-    expect(existsSync(join(root, 'reports'))).toBe(false)
-    const rows = readFileSync(join(outDir, 'guardrail_audit.jsonl'), 'utf8')
-      .trim().split('\n').map(line => JSON.parse(line))
-    expect(rows).toContainEqual(expect.objectContaining({
-      channel: `${REPORT_EGRESS_CHANNEL}:report-decisions:${report.batchKey}`,
-      detector: 'awsKey', action: 'block',
-    }))
   })
 
   it.each(['batchKey', 'matcherVersion'] as const)(

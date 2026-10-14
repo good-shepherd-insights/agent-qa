@@ -1,19 +1,15 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { buildEvalReport, committedFileText, projectBaselinePointer } from '@vostride/agent-qa-eval'
 import type { BaselinePointer, EvalBatchReport } from '@vostride/agent-qa-eval'
-import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { FsCommittedRootStore, committedBaselinePointerPath } from '../committed-root-store.js'
-import { REPORT_EGRESS_CHANNEL } from '../report-committing.js'
 import { writeBaselinePointer } from '../baseline-pointer.js'
 import type { WriteBaselinePointerOutcome } from '../baseline-pointer.js'
-
-const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
 
 /**
  * Byte-copied from the committed D-18 fixture's `judge` block:
@@ -28,8 +24,6 @@ const FIXTURE_JUDGE_BLOCK = {
 } as const
 
 const FIXTURE_BATCH_KEY = '358327d21294f77b91645e3cefde46ad12fe065422757372835447a41865a71e'
-
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 
 describe('writeBaselinePointer (D-19/D-20, ROOT-11)', () => {
   let root: string
@@ -48,7 +42,6 @@ describe('writeBaselinePointer (D-19/D-20, ROOT-11)', () => {
       pointer: overrides.pointer ?? pointer,
       committedRoot: root,
       reportOutputBaseDir: outDir,
-      policy,
     })
   }
 
@@ -128,33 +121,6 @@ describe('writeBaselinePointer (D-19/D-20, ROOT-11)', () => {
     expect(existsSync(join(root, committedBaselinePointerPath(sameFamilyPointer.profileKey)))).toBe(
       false,
     )
-    // The checkpoint was never reached: refusing first means no guardrail row exists at all.
     expect(existsSync(join(outDir, 'guardrail_audit.jsonl'))).toBe(false)
-  })
-
-  it('refuses a leaky pointer body at the eval-report checkpoint — typed, audited, nothing lands', async () => {
-    const leaky: BaselinePointer = { ...pointer, profileKey: `planner=${AWS_KEY}|matcher=1` }
-
-    const outcome = write({ pointer: leaky })
-
-    expect(outcome).toEqual({
-      kind: 'egress-blocked',
-      detections: [{ label: `baseline-pointer:${leaky.profileKey}`, detector: 'awsKey' }],
-    })
-    expect(existsSync(join(root, committedBaselinePointerPath(leaky.profileKey)))).toBe(false)
-
-    const auditRaw = await readFile(join(outDir, 'guardrail_audit.jsonl'), 'utf8')
-    const rows = auditRaw
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line) as { channel: string; detector: string; action: string })
-    expect(
-      rows.some(
-        (row) =>
-          row.channel === `${REPORT_EGRESS_CHANNEL}:baseline-pointer:${leaky.profileKey}` &&
-          row.detector === 'awsKey' &&
-          row.action === 'block',
-      ),
-    ).toBe(true)
   })
 })

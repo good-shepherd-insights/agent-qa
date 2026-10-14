@@ -1,11 +1,9 @@
 // Phase 371 proof obligations for the committed eval root (ROOT-01/ROOT-02).
 //
-// The raw-byte proof (GUARD-FUT-04): a secret-shaped value planted in staged evidence
-// can NEVER reach the git-TRACKED committed set — shown at the pattern-detector layer
-// (the committed-egress checkpoint refuses the carrying case) and at the value-masking
-// layer (a MaskingContext-registered value masked at the record boundary appears nowhere
-// raw in the whole tree). Every negative assertion is paired with a positive control so
-// a vacuous pass is impossible (T-371-19).
+// The raw-byte proof (GUARD-FUT-04): a MaskingContext-registered value masked at the record
+// boundary appears nowhere raw in the whole tree. Every negative assertion is paired with a
+// positive control so a vacuous pass is impossible (T-371-19). Undeclared credential-shaped
+// text is committed as written (441 D-15, C441-COMMITTED).
 //
 // The tracked/ignored partition is a PURE ignore-aware filesystem walk — no git
 // subprocess (Research OQ-1). The walk's exclusion rules are parsed from the scaffolded
@@ -18,26 +16,32 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  buildEvalReport,
   buildSeedingPlan,
   committedFileText,
   extractRunCassettes,
+  projectBaselinePointer,
 } from '@vostride/agent-qa-eval'
 import type { ArtifactSource, ExtractedCassette, SeedingPlan } from '@vostride/agent-qa-eval'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { asRef } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, Decision, SubActionEvidence } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { writeBaselinePointer } from '../baseline-pointer.js'
 import { BLOBS_SUBDIR } from '../cassette-store.js'
 import {
+  committedBaselinePointerPath,
   committedCassettePath,
   committedCorpusPath,
   committedLabelPath,
+  committedReportPath,
 } from '../committed-root-store.js'
+import {
+  COMMITTED_REPORT_JSON_FILE,
+  COMMITTED_REPORT_MARKDOWN_FILE,
+  commitEvalReport,
+} from '../report-committing.js'
 import { seedCommittedCorpus } from '../seeding-composition.js'
 import type { SeedingReport } from '../seeding-composition.js'
 import {
@@ -59,8 +63,6 @@ const TEST_PARTITION = {
   privateFraction: 0.5,
 } as const
 const PRODUCT = 'default'
-
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 
 // ---------------------------------------------------------------------------
 // The pure ignore-aware walker (no git subprocess — Research OQ-1 resolution).
@@ -277,7 +279,6 @@ describe('committed-root proofs (ROOT-02 / GUARD-FUT-04, D-13, D-15)', () => {
       cassettes,
       committedRoot: root,
       seedingOutputBaseDir: outDir,
-      policy,
     })
   }
 
@@ -379,5 +380,66 @@ describe('committed-root proofs (ROOT-02 / GUARD-FUT-04, D-13, D-15)', () => {
     expect(counts.labelCount).toBe(report.seededCount)
     expect(counts.corpusCount).toBe(report.seededCount)
     expect(report.seededCount).toBe(3)
+  })
+})
+
+describe('C441-COMMITTED', () => {
+  const CARD = '4242 4242 4242 4242'
+  const BEARER = 'Bearer abc123def456ghi789'
+  let root: string
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'eval-local-c441-committed-'))
+  })
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('an eval report with credential-shaped text is committed as written', () => {
+    const report = buildEvalReport([])
+    const markdown = `# Eval baseline report\n\npaid with ${CARD}\nheader: ${BEARER}\n`
+
+    const outcome = commitEvalReport({ report, markdown, committedRoot: root })
+
+    expect(outcome).toEqual({
+      kind: 'committed',
+      json: 'written',
+      markdown: 'written',
+      reportDir: expect.any(String),
+    })
+    const written = readFileSync(
+      join(root, committedReportPath(report.batchKey, COMMITTED_REPORT_MARKDOWN_FILE)),
+      'utf8',
+    )
+    expect(written).toBe(markdown)
+    expect(written).toContain(CARD)
+    expect(written).toContain(BEARER)
+    expect(
+      readFileSync(join(root, committedReportPath(report.batchKey, COMMITTED_REPORT_JSON_FILE)), 'utf8'),
+    ).toBe(committedFileText(report))
+  })
+
+  it('a baseline pointer with the same text is written', () => {
+    const report = buildEvalReport([])
+    const pointer = {
+      ...projectBaselinePointer({
+        plannerModelId: 'gpt-5.6-terra',
+        fingerprint: 'fp-fixture',
+        corpusDigest: 'digest-fixture',
+        matcherVersion: 1,
+        batchKey: report.batchKey,
+      }),
+      profileKey: `planner=${CARD}|auth=${BEARER}`,
+    }
+
+    const outcome = writeBaselinePointer({ report, pointer, committedRoot: root })
+
+    const relPath = committedBaselinePointerPath(pointer.profileKey)
+    expect(outcome).toEqual({ kind: 'written', path: relPath })
+    const written = readFileSync(join(root, relPath), 'utf8')
+    expect(written).toBe(committedFileText(pointer))
+    expect(written).toContain(CARD)
+    expect(written).toContain(BEARER)
   })
 })

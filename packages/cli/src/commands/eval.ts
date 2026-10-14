@@ -403,21 +403,12 @@ function renderReportSummary(
   if (result.stagedFile !== undefined) console.log(pc.dim(`staged file: ${result.stagedFile}`))
   if (result.committedFile !== undefined) console.log(pc.dim(`committed file: ${result.committedFile}`))
   if (result.committed !== undefined) {
-    // D-08: egress blocks and write conflicts are DATA — rendered loudly, never exit 1.
+    // D-08: write conflicts are DATA — rendered loudly, never exit 1.
     if (result.committed.kind === 'committed') {
       console.log(
         `committed: json ${result.committed.json}, markdown ${result.committed.markdown}`,
       )
       console.log(pc.dim(`report dir: ${result.committed.reportDir}`))
-    } else if (result.committed.kind === 'egress-blocked') {
-      console.log(
-        pc.red(
-          'commit egress-blocked: '
-            + result.committed.detections
-              .map(detection => `${detection.label} (${detection.detector})`)
-              .join(', '),
-        ),
-      )
     } else {
       console.log(pc.red(`commit write-conflict: ${result.committed.path}`))
     }
@@ -430,15 +421,6 @@ function renderReportSummary(
       console.log(pc.dim(`baseline file: ${baseline.path}`))
     } else if (baseline.kind === 'refused') {
       console.log(pc.red(renderBaselineComparatorRefusal(baseline.refusal)))
-    } else if (baseline.kind === 'egress-blocked') {
-      console.log(
-        pc.red(
-          'baseline egress-blocked: '
-            + baseline.detections
-              .map(detection => `${detection.label} (${detection.detector})`)
-              .join(', '),
-        ),
-      )
     } else {
       console.log(pc.red(`baseline write-conflict: ${baseline.path}`))
     }
@@ -1016,14 +998,14 @@ export function createEvalCommand(): Command {
             )
             if (opts.json) {
               // D-04/Pitfall 11: exactly one JSON document on stdout — the committed outcome
-              // (incl. egress blocks and write conflicts) is DATA inside the DTO (D-08).
+              // (incl. write conflicts) is DATA inside the DTO (D-08).
               console.log(JSON.stringify(result, null, 2))
             } else {
               renderReportSummary(result, renderBaselineComparatorRefusal)
             }
           } catch (err) {
-            // D-08: typed named-input/config errors are the only failure modes — egress-blocked
-            // and write-conflict committed outcomes are data and never reach this catch.
+            // D-08: typed named-input/config errors are the only failure modes — write-conflict
+            // committed outcomes are data and never reach this catch.
             console.error(pc.red(err instanceof Error ? err.message : String(err)))
             process.exitCode = 1
           }
