@@ -109,11 +109,10 @@ describe('both CLI run paths exit through the verdict map (T-361-08)', () => {
   })
 })
 
-// (b) 362-06 SEAM-01/03 — the suite (multi-member) path activates the seams: it seeds a real run
-// MaskingContext, wraps the run body in `runSafetyScope`, threads the per-run SafetyHookRunner into
-// the member executor, wires `--trust-session`, and disposes the context LAST (Pitfall 8). The
-// identity mint (`buildIdentityMasking()`) no longer feeds the suite path's RunConfig.masking.
-describe('the suite path seeds a real run MaskingContext inside runSafetyScope (SEAM-01/03, 362-06)', () => {
+// (b) 362-06 SEAM-01/03 — the suite (multi-member) path runs inside `runSafetyScope` and threads the
+// per-run SafetyHookRunner into the member executor. 441-58 (D-06): the run masks with its producer's
+// redactor, and no run masking context is seeded.
+describe('the suite path runs inside runSafetyScope and masks with its own redactor (SEAM-01/03, 362-06)', () => {
   // RE-SPELLED 2026-09-30 (432-13, D-14/D-15): was 'registers the --trust-session flag and reads
   // config.safety?.trustMode'. Nothing asks, so there is nothing for trust to satisfy.
   it('registers no --trust-session flag and reads no config.safety?.trustMode', () => {
@@ -121,23 +120,17 @@ describe('the suite path seeds a real run MaskingContext inside runSafetyScope (
     expect(runSource).not.toContain('config.safety?.trustMode')
   })
 
-  it('wraps at least one run body in runSafetyScope with a real seeded run MaskingContext', () => {
-    // 401-11: ONE run body, in the drive, and `run.ts` wraps none of its own — which is what "the
-    // suite path runs inside a safety scope" means once the two paths share a body.
+  it('wraps one run body in runSafetyScope, and the run\'s mask is its own redactor', () => {
+    // 401-11: ONE run body, in the drive, and `run.ts` wraps none of its own.
     expect(count(driveSource, 'runSafetyScope(')).toBe(1)
     expect(count(runSource, 'runSafetyScope(')).toBe(0)
-    expect(count(driveSource, 'buildRunMaskingContext(')).toBe(1)
+    expect(count(driveSource, 'buildRunMaskingContext(')).toBe(0)
     expect(count(runSource, 'buildRunMaskingContext(')).toBe(0)
-    // The suite RunConfig masking is the run context, not the identity mint — RESTATED by 401-04
-    // rather than relaxed. The property is unchanged; the line moved. run.ts no longer literally
-    // writes `masking: maskingContext` because run.ts no longer literally writes a `RunConfig`: it
-    // hands the seeded run context to the door's ONE assembler, and the assembler is the single
-    // place either path's `RunConfig.masking` is set. Both halves are pinned, so a door that
-    // stopped handing over the run context, or an assembler that started minting its own, is a
-    // failure here just as the old single literal was.
-    expect(runSource).toContain('maskingContext,')
-    expect(assemblySource).toContain('masking: input.maskingContext')
-    expect(count(assemblySource, 'masking:')).toBe(1)
+    // 441-58 (D-06): the producer's redactor reaches the ONE assembler, which puts it on RunConfig;
+    // no masking context is handed over or set.
+    expect(runSource).toContain('secretRedactor')
+    expect(count(assemblySource, 'secretRedactor: input.secretRedactor')).toBe(1)
+    expect(count(assemblySource, 'masking:')).toBe(0)
   })
 
   it('threads the per-run SafetyHookRunner into the suite member executor', () => {
@@ -149,35 +142,22 @@ describe('the suite path seeds a real run MaskingContext inside runSafetyScope (
     expect(count(runSource, 'safetyHooks:')).toBeGreaterThanOrEqual(1)
     // The drive binds it back into the producer that owns the member closures, and BOTH producers
     // in `run.ts` implement that binding — so the runner still reaches the suite member executor.
-    expect(driveSource).toContain('produced.bindRunContext({ maskingContext, safetyHooks })')
-    expect(count(runSource, 'bindRunContext: ({ maskingContext, safetyHooks }) =>')).toBe(2)
+    expect(driveSource).toContain('produced.bindRunContext({ safetyHooks })')
+    expect(count(runSource, 'bindRunContext: ({ safetyHooks }) =>')).toBe(2)
   })
 
-  it('disposes the run MaskingContext from a finally, after the producer finalises, exactly once',
+  it('closes the run out from a finally, after the producer finalises, exactly once',
     () => {
-      // 401-11: the ordering is unchanged and it moved with the body it orders. `lifecycle.finalize()`
-      // is `produced.finalize?.()` now — the suite half's lifecycle, reached through the producer
-      // that owns it.
-      //
-      // 404 D-06: the dispose is no longer a LITERAL inside the scope's `finally`. It is the last
-      // statement of `closeOutRun`, which the drive's `finally` runs when no detached post-run leg
-      // was started and the LEG's own `finally` runs when one was — because a masker torn down on
-      // the drive's way out would leave that leg's fold `masker-active` by declaration and a
-      // pass-through in fact (T-404-01). The claim is therefore pinned as SHAPE rather than as a
-      // character offset: one dispose site, reached only from a `finally`, on both paths, and the
-      // lease released before it so the warning still masks.
-      expect(count(driveSource, 'maskingContext.dispose()'), 'ONE lifecycle, ONE dispose').toBe(1)
+      // 401-11 / 404 D-06: the close-out is `closeOutRun`, which the drive's `finally` runs when no
+      // detached post-run leg was started and the leg's own `finally` runs when one was. 441-58
+      // (D-12): there is no masking context to dispose; the close-out shape is what stays pinned.
       const closeOutIdx = driveSource.indexOf('const closeOutRun = (): void => {')
-      const disposeIdx = driveSource.indexOf('maskingContext.dispose()')
       expect(closeOutIdx).toBeGreaterThan(0)
-      expect(disposeIdx, 'the dispose lives inside the close-out').toBeGreaterThan(closeOutIdx)
       expect(
-        driveSource.slice(closeOutIdx, disposeIdx),
-        'the untaken lease is released BEFORE the masker dies, so its warning still masks',
+        driveSource.slice(closeOutIdx, closeOutIdx + 400),
+        'the untaken lease is released inside the close-out',
       ).toContain('releaseUntakenPostVerdictLease({')
 
-      // Both call sites, and both are a `finally`. `produced.finalize?.()` precedes both, so the
-      // teardown order this cell has always been about is unchanged.
       const finalizeIdx = driveSource.indexOf('await produced.finalize?.()')
       expect(finalizeIdx).toBeGreaterThan(0)
       const driveFinally = driveSource.indexOf('if (detachedTail === undefined) closeOutRun()')
@@ -187,9 +167,6 @@ describe('the suite path seeds a real run MaskingContext inside runSafetyScope (
         count(driveSource, '.finally(closeOutRun)'),
         'and the detached leg owns it when one was started — exactly one other call site',
       ).toBe(1)
-
-      // And `run.ts` disposes nothing of its own — a second dispose would be a second lifecycle.
-      expect(count(runSource, 'maskingContext.dispose()')).toBe(0)
     })
 })
 
@@ -232,18 +209,15 @@ describe('the single-test path activates the seams with no identity mint remaini
     expect(count(compositionSource, 'buildIdentityMasking')).toBe(0)
   })
 
-  it('builds the run MaskingContext + SafetyHookRunner ONCE, for both sites, with the same helpers', () => {
-    // "the same helpers at both sites" is now literally the same call, once. The regression this
-    // guarded against — one path drifting onto its own masking/hook construction — is caught by the
-    // zero-in-`run.ts` half rather than by a count of two.
-    expect(count(driveSource, 'buildRunMaskingContext(')).toBe(1)
+  it('builds no run MaskingContext at either site, and the SafetyHookRunner once in the drive', () => {
+    // 441-58 (D-06): no site builds a run masking context; the hooks are built once, in the drive.
+    expect(count(driveSource, 'buildRunMaskingContext(')).toBe(0)
     expect(count(driveSource, 'buildRunSafetyHooks(')).toBe(1)
     expect(count(runSource, 'buildRunMaskingContext(')).toBe(0)
     expect(count(runSource, 'buildRunSafetyHooks(')).toBe(0)
   })
 
   it('threads the run context + hooks into the single-test runTest config', () => {
-    expect(runSource).toContain('masking: singleMaskingContext')
     expect(runSource).toContain('safetyHooks: singleSafetyHooks')
   })
 

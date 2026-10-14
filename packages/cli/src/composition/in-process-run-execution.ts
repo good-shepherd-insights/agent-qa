@@ -44,6 +44,7 @@
 
 import { asRunId, resolveEffectiveWorkers } from '@vostride/agent-qa-schema'
 import type {
+  MaskFn,
   QuarantineAppliedEntry,
   RunSession,
   RunsStartInput,
@@ -61,18 +62,14 @@ import {
   REFUSED_RUN_REQUEST_FIELDS,
   RunRequestFieldRefusedError,
   buildRunAuditSink,
-  buildRunMaskingContext,
   createRunInvocationCore,
   mapVerdictToExitCode,
-  resolveMaskingHostKey,
   runSafetyScope,
-  writeMaskingDigests,
 } from '@vostride/agent-qa-agent-local'
 import { waitForPostVerdictContinuation } from '../curation/post-verdict-continuation.js'
 import type {
   RunExecutionContext,
   RunInvocationCoreOptions,
-  RunMaskingContext,
 } from '@vostride/agent-qa-agent-local'
 
 import { assembleCliRun } from './run-assembly.js'
@@ -136,7 +133,8 @@ export type RunMemberProducer = (
 export interface RunSubscriberAttachInput {
   readonly session: RunSession
   readonly quarantined: readonly QuarantineAppliedEntry[]
-  readonly maskingContext: RunMaskingContext
+  /** The run's mask: the producer's redactor over the secrets read at its start (441-58, D-06). */
+  readonly mask: MaskFn
   /**
    * The producer's snapshot channel (433-29, G-433-5): a door's dashboard ingest registers here to
    * stage each member's masked test and config onto the run's artifact. Absent when the producer
@@ -152,7 +150,7 @@ export interface CliRunVerdictContext {
   readonly verdict: string
   /** The verdict's own exit code, before any door-level fold (`--all`, a pending cancel). */
   readonly exitCode: number
-  readonly maskingContext: RunMaskingContext
+  readonly mask: MaskFn
   readonly auditSink: NonNullable<RunInvocationCoreOptions['auditSink']>
   readonly configDir: string
   readonly configFilePath: string
@@ -190,7 +188,7 @@ export interface CliRunOutcome {
    * Present only when the door supplied a `postRunTail`. It never rejects — the drive catches and
    * warns — so awaiting it is safe and not awaiting it is the point: `execute()` resolving before
    * this settles is exactly what keeps `run-settled` off the drain's clock (RESEARCH Pitfall 2).
-   * When it resolves, the untaken-lease backstop has run and the masking context is disposed.
+   * When it resolves, the untaken-lease backstop has run.
    */
   readonly settled?: Promise<void>
 }
@@ -248,9 +246,8 @@ export interface InProcessCliRunExecutionOptions {
    *
    * IT IS A HOOK RATHER THAN THE DRIVE'S OWN WORK because the tail is a door concern that must not
    * leave the scope: `agent-qa run` folds its `--all` suite result into the code here and drains the
-   * post-verdict knowledge curation, whose egress has to mask like every other. A drive that ran the
-   * tail itself would own a lifecycle it has no business owning; a door that ran it after the drive
-   * returned would run it outside the masking context.
+   * post-verdict knowledge curation, whose egress masks with the context's `mask`. A drive that ran
+   * the tail itself would own a lifecycle it has no business owning.
    */
   readonly afterVerdict?: (context: CliRunVerdictContext) => Promise<number> | number
   /**
@@ -295,12 +292,7 @@ export interface InProcessCliRunExecutionOptions {
    * the verdict and a leased device would stay leased. The run's lifecycle ends at `runFinished`;
    * curation is post-processing (D-07), and this option is where that sentence becomes code.
    *
-   * WHY THE MASKER IS DISPOSED IN *ITS* `finally` AND NOT THE DRIVE'S (T-404-01). The fold this leg
-   * runs emits candidate prose, and that prose crosses the same disclosure boundary every other run
-   * output does. If the drive disposed the masking context on its way out, this leg would fold with
-   * a dead masker — `masker-active` by declaration and a pass-through in fact. So the drive HANDS
-   * OVER its dispose duty: the fold runs inside the masker's lifetime, and the masker is disposed
-   * once the leg settles, whichever way it settled.
+   * The drive hands its close-out to this leg, which runs it once the leg settles (404 D-06).
    *
    * IT RUNS AFTER `afterVerdict` HAS SETTLED, so a door supplying both gets them in that order and
    * never concurrently. A throw is caught and warned by name — post-processing may never cost the
@@ -356,15 +348,14 @@ export interface InProcessCliRunExecutionOptions {
  *   1. resolve the inputs (reads only) — or take the door's, if it already has them;
  *   2. mint or accept the run's identity;
  *   3. produce members and an executor — mode-aware by default, overridable by a door with its own;
- *   4. build the ONE masking context, audit sink and safety-hook runner, and bind them back into
- *      the producer's closures;
+ *   4. build the audit sink and safety-hook runner, and bind the hooks back into the producer;
  *   5. compose the core, which owns the refuse/assemble/start order;
  *   6. inside the run's safety scope: execute, await `done`, finalise, flush, re-surface a member's
  *      framework error, map the verdict, and let the door's tail have the last word on the code.
  *
  * NO DEFENSIVE CATCH ANYWHERE (D-03). Crash-through is the accepted posture; the runner's
- * budget/abort machinery is the orderly containment. The `finally` below disposes the masking
- * context and does nothing else.
+ * budget/abort machinery is the orderly containment. The `finally` below closes the run out and
+ * does nothing else.
  */
 /**
  * Refuse the request fields this seam does not honour, BEFORE anything is read (401-05).
@@ -441,77 +432,9 @@ export async function runInProcessCliRun(
         ...(options.inputs === undefined ? {} : { inputs: options.inputs }),
       })
 
-  // HOISTED ABOVE THE MASKING CONTEXT (405-02): `persistMaskingDigests` below is defined the moment
-  // the context exists, and it warns rather than throws, so its renderer has to already be here.
   const warnByName = options.warn ?? ((): void => { /* a door with no renderer drops the line */ })
+  const mask: MaskFn = (text) => produced.secretRedactor.redactString(text)
 
-  const maskingContext = buildRunMaskingContext({
-    secretStore: produced.maskingSeed?.secretStore,
-    env: process.env,
-    ...(produced.maskingSeed?.authStatePayloads === undefined
-      ? {}
-      : { authStatePayloads: [...produced.maskingSeed.authStatePayloads] }),
-  })
-
-  /**
-   * Write this run's placeholder→keyed-digest sidecar (405-02, D-08).
-   *
-   * WHY IT EXISTS. The masking map is in-memory and run-scoped by spec (execution-safety §4), so
-   * once this process ends nothing on disk says WHICH declared secret `<SECRET_3>` stood for. A
-   * dashboard restarted after the run can therefore only count placeholders, and counting breaks
-   * the moment the host's secret sources change shape. This sidecar records value IDENTITY —
-   * `HMAC-SHA256(hostKey, value)` per placeholder — so a later reader can match a placeholder to a
-   * value it can re-derive from its own current sources, without the tool ever writing the value.
-   * `snapshotRegistered()` yields only SECRET rows; `<EMAIL_n>` is minted lazily inside `mask()`
-   * from text no host source declared and can never be re-derived, so it is never here (D-10).
-   *
-   * CALLED TWICE, DELIBERATELY. Once the moment the run's SESSION starts, so a run killed
-   * mid-flight still leaves its seeded registrations; once again in `closeOutRun` BEFORE
-   * `dispose()` clears the map, so the auth values 362-06 registers lazily mid-run land too. The
-   * map only ever grows and a placeholder's index never changes, so the second write is always a
-   * superset and replaces the file whole. ONE HELPER RATHER THAN TWO CALL SITES SPELLED OUT: two
-   * spellings of the same write is exactly how the second one drifts.
-   *
-   * WHY NOT EARLIER, DIRECTLY AFTER THE SEED — measured, not assumed. The core's identity check
-   * (`run-invocation-core.ts` step 2, FREEDOM) refuses a caller-supplied runId whose run DIRECTORY
-   * already exists, and this drive always supplies its id. A write between the seed and
-   * `core.execute` therefore mints that directory itself and the run refuses to start with
-   * `RunIdAlreadyInUseError` — the sidecar would have made the run impossible. `onSession` is the
-   * earliest legal moment: the id has passed both refusals, production has not refused the run, and
-   * the run dir exists because `runStarted` is already in it.
-   *
-   * A REFUSED RUN GETS NO SIDECAR. `closeOutRun` also runs on those paths, and a run that never
-   * started has no run of its own to describe — so the write is conditional on the session, keeping
-   * a refused run's artifact set empty.
-   *
-   * IT NEVER FAILS THE RUN (T-405-09, the T-367-17 idiom). The run's record is its event log; this
-   * sidecar is display convenience for a later read. A host that cannot write it — read-only root,
-   * full disk — still gets a complete run, and every placeholder simply degrades to a typed masked
-   * chip. The warning is BYTES-FREE: it names the run and the failure, never a value or the key.
-   *
-   * ONLY THIS DOOR WRITES ONE. `buildRunMaskingContext` is also called by
-   * `eval-session-composition.ts` and `commands/mcp.ts`; neither produces a dashboard-visible run
-   * with a run directory to write beside, so neither gets a sidecar.
-   */
-  const persistMaskingDigests = (): void => {
-    if (startedSession === undefined) return
-    try {
-      writeMaskingDigests({
-        root: options.agentQaRoot,
-        runId,
-        key: resolveMaskingHostKey(options.agentQaRoot),
-        entries: maskingContext
-          .snapshotRegistered()
-          .map(({ placeholder, value }) => ({ placeholder, value })),
-      })
-    } catch (error) {
-      warnByName(
-        `Run ${runId}: the masking digest sidecar was not written (`
-        + `${error instanceof Error ? error.message : String(error)}`
-        + '); masked values in this run will render as typed chips.',
-      )
-    }
-  }
   const auditSink = buildRunAuditSink({
     configDir: produced.configDir,
     runId,
@@ -521,7 +444,7 @@ export async function runInProcessCliRun(
   const { safetyHooks } = buildRunSafetyHooks({
     auditSink,
   })
-  produced.bindRunContext({ maskingContext, safetyHooks })
+  produced.bindRunContext({ safetyHooks })
 
   let quarantined: readonly QuarantineAppliedEntry[] = []
   let startedSession: RunSession | undefined
@@ -587,7 +510,6 @@ export async function runInProcessCliRun(
         configDir: assemblyContext.configDir,
         knowledgeRoot: produced.knowledgeRoot,
         ports: assemblyContext.ports,
-        maskingContext,
         secretRedactor: produced.secretRedactor,
         members: produced.members,
         executor: produced.executor,
@@ -609,15 +531,12 @@ export async function runInProcessCliRun(
     },
     onSession: (session) => {
       startedSession = session
-      // 405-02 (D-08): the FIRST digest write, at the earliest legal moment — see
-      // `persistMaskingDigests` for why "earliest legal" is here and not beside the seed.
-      persistMaskingDigests()
       produced.bindSession(session)
       options.onSession?.(session)
       startedSubscribers = options.subscribers?.({
         session,
         quarantined,
-        maskingContext,
+        mask,
         ...(produced.onMemberSnapshot === undefined ? {} : { onMemberSnapshot: produced.onMemberSnapshot }),
       })
     },
@@ -664,7 +583,7 @@ export async function runInProcessCliRun(
   let closedOut = false
 
   /**
-   * Release whatever lease nobody took, then dispose the masker. Exactly once, whoever runs it.
+   * Release whatever lease nobody took. Exactly once, whoever runs it.
    *
    * 404 D-10, the structural no-leak rule: any lease still in the box here is a lease "released
    * untaken". If the tail took it this is a no-op; if something filled the box ahead of a pump
@@ -675,7 +594,6 @@ export async function runInProcessCliRun(
    * measured one (404-01): a framework error re-thrown above `mapVerdictToExitCode` skips
    * `afterVerdict` entirely, and a release scoped to that call left the lease held for its whole
    * TTL — the very posture this rule exists to prevent, on the ONE path most likely to produce it.
-   * It runs BEFORE the masker is disposed below, so its warning still masks.
    *
    * 2026-08-26: it ACQUIRES NOTHING to check. The step's acquisition is lazy, so that same
    * framework-error path now arrives here with an empty box and this call is silent — the
@@ -683,12 +601,8 @@ export async function runInProcessCliRun(
    * `run-parity.e2e.test.ts` measures. The backstop stays because the box can still be filled by a
    * host that supplies its own authority (the daemon door).
    *
-   * 404 D-06: WHY IT IS A FUNCTION RATHER THAN A `finally` BODY. A door with a detached post-run
-   * tail needs the masker ALIVE while that tail folds — the fold emits candidate prose across the
-   * same disclosure boundary every other run output crosses (T-404-01) — and the drive returns
-   * long before the tail settles. So the drive's `finally` runs this only when no tail was started,
-   * and the tail's own `finally` runs it otherwise. Exactly one of the two, decided by
-   * `detachedTail`'s presence at the moment the drive leaves.
+   * 404 D-06: the drive's `finally` runs this only when no detached leg was started, and the leg's
+   * own `finally` runs it otherwise; `detachedTail`'s presence decides which, once.
    */
   const closeOutRun = (): void => {
     if (closedOut) return
@@ -699,13 +613,6 @@ export async function runInProcessCliRun(
       runId,
       log: { warn: warnByName },
     })
-    // 405-02 (D-08): the SECOND digest write, here and not earlier, because `dispose()` on the very
-    // next line clears the map and 362-06 registers lazily-loaded auth values mid-run. A write
-    // after the dispose would record an empty run.
-    persistMaskingDigests()
-    // Dispose LAST, after `done`, finalize, the flush and any detached tail, so every late masker
-    // still replaces.
-    maskingContext.dispose()
   }
   let preparationDisclosureOwnedByDoor = false
   let preparationSettled = false
@@ -713,7 +620,7 @@ export async function runInProcessCliRun(
     completion.then(() => undefined, () => undefined).finally(closeOutRun)
 
   return await runSafetyScope(
-    { maskingContext, auditSink, executionContext: options.executionContext },
+    { auditSink, executionContext: options.executionContext },
     async (): Promise<CliRunOutcome> => {
       try {
         // The core refuses, assembles, starts and awaits the run. A production refusal throws
@@ -749,7 +656,7 @@ export async function runInProcessCliRun(
           runId,
           verdict,
           exitCode,
-          maskingContext,
+          mask,
           auditSink,
           configDir: produced.configDir,
           configFilePath: produced.configFilePath,
@@ -767,9 +674,7 @@ export async function runInProcessCliRun(
           return { runId, verdict, exitCode: finalExitCode,
             ...(detachedTail === undefined ? {} : { settled: detachedTail }) }
         }
-        // 404 D-06 / RESEARCH Pitfall 2: START it and RETURN. The dispose duty travels with it —
-        // see `closeOutRun` and the `postRunTail` option's own doc for why the masker may not be
-        // torn down before the fold that needs it.
+        // 404 D-06 / RESEARCH Pitfall 2: START it and RETURN; the close-out travels with it.
         detachedTail = retainUntilSettled(Promise.allSettled([
           postVerdictHandoff?.completion,
           options.postRunTail(verdictContext)
@@ -790,8 +695,7 @@ export async function runInProcessCliRun(
             if (handoff.failureDetail !== undefined) warnByName(handoff.failureDetail)
           }, () => warnByName(`Run ${runId}: preparation/enqueue failed (preparation-or-enqueue-error). Durable intent: ${handoff.pendingPath}.`))
         }
-        // The close-out runs HERE unless the detached tail took ownership of it — see
-        // `closeOutRun`'s own doc for why that hand-over is the whole of D-06's masker rule.
+        // The close-out runs HERE unless the detached tail took ownership of it.
         if (detachedTail === undefined && !preparationSettled && postVerdictHandoff?.completion !== undefined) {
           detachedTail = retainUntilSettled(postVerdictHandoff.completion)
         }
@@ -830,7 +734,8 @@ export function cliRunSubscribers(input: {
 }): (attach: RunSubscriberAttachInput) => { flush(): Promise<void> } {
   return (attach) => attachRunSubscribers({
     session: attach.session,
-    maskingContext: attach.maskingContext,
+    // 2026-10-14 (441-58): the console reporter's context, from the run's mask; 441-13 deletes it.
+    maskingContext: { mask: attach.mask, unmask: (text) => text },
     console: input.console ?? false,
     junitOutputPath: input.junitOutputPath,
     extraSubscribers: input.extraSubscribers,

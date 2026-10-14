@@ -276,7 +276,7 @@ describe('the in-process run path refuses inputs instead of terminating its host
 // these cells read.
 // ============================================================================================
 
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach } from 'vitest'
 
@@ -293,14 +293,6 @@ import {
 } from '../in-process-run-execution.js'
 import type { CliRunOutcome } from '../in-process-run-execution.js'
 import { PLANTED_SECRET_NAME, auditRows, buildOrdinalsExist, eventTypes, runDirs } from './in-process-run-fixture.js'
-// 405-02 (D-08): the sidecar READER, reached through the same composition hop the drive's writer
-// uses — `runner-local` is not a package a cli file may name (FUNC-02) and a test file is not
-// exempt from that firewall.
-import {
-  digestMaskedValue,
-  readMaskingDigests,
-  resolveMaskingHostKey,
-} from '@vostride/agent-qa-agent-local'
 import { parseTestFile } from '@vostride/agent-qa-core'
 import { memberStepText } from '@vostride/agent-qa-runner'
 
@@ -791,18 +783,14 @@ describe('the run-start baseline is taken PER MEMBER and deduped by URL (401-19,
 })
 
 // ---------------------------------------------------------------------------
-// 405-02 (D-08): the masking-digests sidecar the drive leaves beside events.jsonl
+// 441-58 (D-14): the drive writes no masking-digests sidecar beside events.jsonl
 // ---------------------------------------------------------------------------
 
-describe('a dashboard-launched run leaves a masking-digests sidecar (405-02, D-08)', () => {
-  it('masking-digests entries identify the declared secret without any file holding its bytes', async () => {
+describe('a dashboard-launched run leaves no masking-digests sidecar (441-58, D-14)', () => {
+  it('a run directory holds events.jsonl and no masking-digests.json', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
-      // A REAL, ≥4-char declared secret, so the run's seed provably registers it — the guard in
-      // `createMaskingContext` (minRegisteredLength 4) drops anything shorter and the cell would
-      // then be asserting over an empty map. The value is distinctive enough that a byte scan for
-      // it cannot collide with ordinary run output.
       const plantedSecret = 'zq7-planted-masking-secret-405-02'
       const fixture = createInProcessFixture({
         origin: target.origin,
@@ -810,10 +798,7 @@ describe('a dashboard-launched run leaves a masking-digests sidecar (405-02, D-0
         plantedSecret,
       })
 
-      // The member dies on the pinned empty browsers root — a FRAMEWORK error this drive
-      // re-surfaces, exactly as `THE REQUEST NAMES THE CONFIG` above absorbs it. Where the run
-      // LANDED is what this cell reads, and the close-out (with its second digest write) runs on
-      // that path too.
+      // The member dies on the pinned empty browsers root — a framework error the drive re-surfaces.
       try {
         await runInProcessCliRun(
           { ...fixtureOptions(fixture), executionContext: 'local-headless' },
@@ -821,44 +806,13 @@ describe('a dashboard-launched run leaves a masking-digests sidecar (405-02, D-0
         )
       } catch { /* the member's framework error */ }
 
-      // The run really happened — otherwise "there is a sidecar" says nothing.
       expect(eventTypes(fixture as never)).toContain('runStarted')
-
-      // The run's id, read off the one run directory rather than typed — the drive minted it.
       const dirs = runDirs(fixture as never)
       expect(dirs).toHaveLength(1)
-      const runId = dirs[0]!.split('/').pop()!
-
-      const sidecar = readMaskingDigests({ root: fixture.agentQaRoot, runId })
-      expect(sidecar).toBeDefined()
-      expect(sidecar!.algorithm).toBe('hmac-sha256')
-      expect(Object.keys(sidecar!.entries).length).toBeGreaterThanOrEqual(1)
-      // EVERY placeholder is a SECRET one — an EMAIL row here would be a value nothing could ever
-      // re-derive (D-10).
-      for (const placeholder of Object.keys(sidecar!.entries)) {
-        expect(placeholder).toMatch(/^<SECRET_\d+>$/)
-      }
-
-      // THE SIDECAR IS BESIDE THE EVENT LOG, in the same run dir family.
       const eventsPath = join(dirs[0]!, 'events.jsonl')
-      const sidecarPath = join(dirs[0]!, 'masking-digests.json')
       expect(existsSync(eventsPath)).toBe(true)
-      expect(existsSync(sidecarPath)).toBe(true)
-
-      // THE PROPERTY THE WHOLE MECHANISM EXISTS FOR (T-405-06), read off the BYTES of both files.
-      expect(readFileSync(sidecarPath).includes(plantedSecret)).toBe(false)
+      expect(existsSync(join(dirs[0]!, 'masking-digests.json'))).toBe(false)
       expect(readFileSync(eventsPath).includes(plantedSecret)).toBe(false)
-
-      // The digest really is this host's keyed HMAC of the planted value — not a bare hash, and
-      // not some unrelated string that merely happens not to be the secret.
-      const key = resolveMaskingHostKey(fixture.agentQaRoot)
-      expect(Object.values(sidecar!.entries)).toContain(digestMaskedValue(key, plantedSecret))
-
-      // THE HOST KEY IS 0600 AND ITS HEX IS NOWHERE IN THE SIDECAR (T-405-07).
-      const keyFile = join(fixture.agentQaRoot, 'masking-key')
-      expect(existsSync(keyFile)).toBe(true)
-      expect(statSync(keyFile).mode & 0o777).toBe(0o600)
-      expect(readFileSync(sidecarPath).includes(key.toString('hex'))).toBe(false)
     } finally {
       await target.close()
     }

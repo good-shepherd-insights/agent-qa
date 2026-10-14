@@ -573,7 +573,6 @@ describe('buildRunPorts — onSubscriberFault destination (403-13)', () => {
       configDir,
       knowledgeRoot: join(configDir, 'knowledge'),
       ports: buildRunPorts({ configDir, runId }),
-      maskingContext: {} as never,
       secretRedactor: new SecretRedactor(new SecretStore()),
       members: [],
       executor: (() => { throw new Error('unreachable in this cell') }) as never,

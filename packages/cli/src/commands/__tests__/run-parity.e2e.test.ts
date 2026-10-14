@@ -162,7 +162,7 @@ describe('agent-qa run parity across the in-process extraction (401-11)', () => 
     if (invocationsMeasured !== PARITY_INVOCATIONS.length) return
 
     expect(staleDeclaredAdditions([...observedRunDirFiles]).map((entry) => entry.file)).toEqual([])
-    // Non-vacuity: an empty list would make the check above trivially true forever.
-    expect(POST_GOLDEN_RUN_DIR_ADDITIONS.length).toBeGreaterThan(0)
+    // 441-58 (D-14): the ledger is empty since its only entry stopped being written.
+    expect(POST_GOLDEN_RUN_DIR_ADDITIONS).toEqual([])
   })
 })

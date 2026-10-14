@@ -23,6 +23,7 @@ import {
 } from './433-door-fixture.js'
 import {
   POPULATED_DECLARED_SECRET_VALUE,
+  POPULATED_SECRET_NAME,
   POPULATED_SECRET_ENV_VAR,
   POPULATED_SECRET_VALUE,
 } from './populated-run-fixture.js'
@@ -99,7 +100,9 @@ function expectTestCaptured(
   expect(route.status, `GET artifact: ${route.text}`).toBe(200)
   expect(route.body.missingSections, `missingSections ${context}\n${route.text.slice(0, 2_000)}`).toEqual([])
   expect(stored.source?.loadStatus, `stored source.loadStatus ${context}`).toBe('loaded')
-  expect(stored.source?.rawYaml, `stored source.rawYaml is the test file's bytes ${context}`).toBe(testFile)
+  // 441-58 (D-18): the run's redactor records a `{{secret:x}}` reference as `[secret:x]`.
+  const recordedTestFile = testFile.replace(/\{\{secret:(\w+)\}\}/gu, '[secret:$1]')
+  expect(stored.source?.rawYaml, `stored source.rawYaml is the test file's bytes ${context}`).toBe(recordedTestFile)
   expect(stored.source?.resolvedDefinition?.name, `resolved definition ${context}`).toBe(testName)
   expect(stored.config?.effectiveConfig, `effective config ${context}`).toBeTypeOf('object')
   expect(stored.config?.rawConfigContent, `config as written ${context}`).toBe(readFileSync(project.configPath, 'utf8'))
@@ -108,20 +111,19 @@ function expectTestCaptured(
 }
 
 function expectNoSecretStored(raw: string, label: string): void {
-  for (const [what, value] of [
-    ['the declared secret', POPULATED_DECLARED_SECRET_VALUE],
-    ['the masking-seeded credential', POPULATED_SECRET_VALUE],
-  ] as const) {
-    expect(raw.includes(value), `${what} is IN CLEAR in run_artifacts.payload (${label})`).toBe(false)
-  }
+  expect(raw.includes(POPULATED_DECLARED_SECRET_VALUE), `the declared secret is IN CLEAR in run_artifacts.payload (${label})`)
+    .toBe(false)
 }
 
 function expectPlantedLineMasked(raw: string, label: string): void {
   const stored = JSON.parse(raw) as Record<string, any>
   const envContent = stored.config?.envFile?.content as string | undefined
   expect(envContent, `the stored config carries the env file as written (${label})`).toBeTypeOf('string')
-  expect(envContent, `the planted declared value is a placeholder (${label})`).toMatch(/DOOR_PLANTED_DECLARED=<SECRET_\d+>/u)
-  expect(envContent, `the planted ambient value is a placeholder (${label})`).toMatch(/DOOR_PLANTED_AMBIENT=<SECRET_\d+>/u)
+  expect(envContent, `the planted declared value is its marker (${label})`)
+    .toContain(`DOOR_PLANTED_DECLARED=[secret:${POPULATED_SECRET_NAME}]`)
+  // 441-58 (D-01, D-12): an environment credential is not a declared secret, so it is recorded as written.
+  expect(envContent, `the planted ambient value is recorded as written (${label})`)
+    .toContain(`DOOR_PLANTED_AMBIENT=${POPULATED_SECRET_VALUE}`)
 }
 
 async function waitFor(check: () => boolean, budgetMs: number): Promise<boolean> {
@@ -211,7 +213,7 @@ describe('C433-ARTIFACT-CAPTURED: the dashboard door', () => {
   }
 
   beforeAll(async () => {
-    // The in-process door seeds the run's mask from this process's environment.
+    // The env value is in this process's environment and is recorded as written (441-58, D-12).
     process.env[POPULATED_SECRET_ENV_VAR] = POPULATED_SECRET_VALUE
     project = await plantedProject('artifact-dashboard')
     scene = await openDashboardScene(project)

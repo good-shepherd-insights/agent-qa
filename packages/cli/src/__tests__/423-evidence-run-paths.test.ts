@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { generateRunId, generateSuiteId, generateTestId } from '@vostride/agent-qa-ids'
 import { SecretRedactor, SecretStore, createRunEventBus, createMemberEventSink, executeStep, makeScreenState, scriptedVerification } from '@vostride/agent-qa-runner'
 import type { EvidenceArtifactStorePort } from '@vostride/agent-qa-runner'
-import { buildRunMaskingContext, createRunInvocationCore } from '@vostride/agent-qa-agent-local'
+import { createRunInvocationCore } from '@vostride/agent-qa-agent-local'
 import { FsEvidenceArtifactStore, slugBranch } from '@vostride/agent-qa-runner-local'
 import { DashboardDatabase, createDashboardRunDetailReader, createDashboardRunIngest } from '@vostride/agent-qa-dashboard'
 import { asRunId, AriaEvidenceDocumentSchema, ConsoleEvidenceDocumentSchema, screenStateHash } from '@vostride/agent-qa-schema'
@@ -92,7 +92,6 @@ for (const path of ['COMPOSED', 'DIRECT'] as const) {
     const lateSecret = 'synthetic-late-console-token'
     const secretStore = SecretStore.fromEnvContent(`LATE_CONSOLE=${lateSecret}`)
     const secretRedactor = new SecretRedactor(secretStore)
-    const masking = buildRunMaskingContext({ env: {} })
     const records = [
       { level: 'warn', text: `first ${lateSecret}`, timestamp: 23, location: { url: `https://example.invalid/${lateSecret}`, lineNumber: 2, columnNumber: 4 } },
       { level: 'error', text: `second ${lateSecret}`, timestamp: 11 },
@@ -118,7 +117,7 @@ for (const path of ['COMPOSED', 'DIRECT'] as const) {
           },
           variableContext: { envFileVars: {}, inlineVars: {}, cliVars: {}, userRunAttributes: {}, secretStore, secretRedactor },
         } as SuiteRunMemberProductionInput)
-    produced.bindRunContext({ maskingContext: masking, safetyHooks: undefined as never })
+    produced.bindRunContext({ safetyHooks: undefined as never })
     const dbPath = join(root, 'dashboard.db')
     const db = new DashboardDatabase({ dbPath })
     const ingest = createDashboardRunIngest({ db, correlationEnv: { runId } })
@@ -132,7 +131,7 @@ for (const path of ['COMPOSED', 'DIRECT'] as const) {
       assembleRun: async context => {
         store = context.ports.evidenceArtifacts
         const assembly = await assembleCliRun({
-          ...context, knowledgeRoot: produced.knowledgeRoot, maskingContext: masking, secretRedactor: produced.secretRedactor,
+          ...context, knowledgeRoot: produced.knowledgeRoot, secretRedactor: produced.secretRedactor,
           members: produced.members, executor: produced.executor, configDigests: produced.configDigests,
           product: produced.product, warn: () => {},
         })
@@ -218,7 +217,6 @@ for (const path of ['COMPOSED', 'DIRECT'] as const) {
       expect(reopened.getBlob(entry.ref.sha)).toEqual(bytes)
     } finally {
       db.close()
-      masking.dispose()
     }
   })
 }
@@ -228,8 +226,8 @@ for (const path of ['COMPOSED', 'DIRECT'] as const) {
 // here runs.detail selects the recorded child and the existing store reads its SHA bytes.
 async function ariaReadback(mode: 'two' | 'empty' | 'missing' | 'mobile' | 'childless' | 'historical') {
   const runId = generateRunId()
-  const masking = buildRunMaskingContext({ env: {} })
   const secret = 'synthetic-aria-late-secret'
+  const runRedactor = new SecretRedactor(new SecretStore())
   const before = [0, 1].map(index => makeScreenState({
     platform: mode === 'mobile' ? 'android' : 'web',
     tree: mode === 'empty' ? '' : `before child ${index} ${secret}`,
@@ -260,7 +258,7 @@ async function ariaReadback(mode: 'two' | 'empty' | 'missing' | 'mobile' | 'chil
   })
   bus.publish('runStarted', {})
   bus.publish('testStarted', { testIndex: 0, testId: generateTestId(), name: 'ARIA member' })
-  const sink = createMemberEventSink({ bus, mask: text => masking.mask(text), testIndex: 0 }).loopEmitFor(0)
+  const sink = createMemberEventSink({ bus, mask: text => runRedactor.redactString(text), testIndex: 0 }).loopEmitFor(0)
   const ports: LoopPorts = {
     adapter: {
       platform: mode === 'mobile' ? 'android' : 'web',
@@ -276,7 +274,7 @@ async function ariaReadback(mode: 'two' | 'empty' | 'missing' | 'mobile' | 'chil
     verifier: { async verify(step, _before, after, action) { return { verification: scriptedVerification({
       step, after, action, pass: verification++ > 0, reasoning: 'fixture verdict',
     }) } } },
-    masking, secretRedactor: new SecretRedactor(new SecretStore({ ARIA_SECRET: secret })),
+    secretRedactor: new SecretRedactor(new SecretStore({ ARIA_SECRET: secret })),
     evidenceArtifacts: store, events: sink,
   }
   let result: StepResult | undefined
@@ -378,7 +376,7 @@ async function ariaReadback(mode: 'two' | 'empty' | 'missing' | 'mobile' | 'chil
         expect(text).not.toContain('after child')
       }
     }
-  } finally { cold.close(); masking.dispose() }
+  } finally { cold.close() }
 }
 
 it('ARIA-COLD-READBACK / ARIA-SIDE-BEFORE: two children retain distinct before trees and decision screenshots across DB reopen', () => ariaReadback('two'))

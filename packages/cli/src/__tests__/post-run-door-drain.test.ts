@@ -13,12 +13,8 @@
 //      `'run-settled'` — db finalize, Appium lease release, handle cleanup — when the `invokeRun`
 //      promise settles. A drain awaited inside `execute()` holds all three for up to
 //      `DRAIN_BUDGET_MS`. The cell awaits the outcome while the tail is still parked.
-//   2. DISPOSE-AFTER-DRAIN (T-404-01). The fold this leg runs emits candidate prose across the same
-//      disclosure boundary every other run output crosses. A masker disposed on the drive's way out
-//      would leave the fold `masker-active` by declaration and a pass-through in fact. The cell
-//      spies on the run's OWN masking context — captured inside the tail, which is the last moment
-//      before the drive would have disposed it — and asserts the spy is cold while the tail is
-//      parked.
+//   2. DISPOSE-AFTER-DRAIN is gone (441-58, D-12): the verdict context carries a `mask`, with nothing
+//      to dispose.
 //   3. AFTER-VERDICT-FIRST. A door supplying both hooks gets them in sequence and never
 //      concurrently, so `--all`'s exit-code fold can never race a drain.
 //
@@ -30,10 +26,9 @@
 import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 
-import type { RunMaskingContext } from '@vostride/agent-qa-agent-local'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
-import type { CliRunOutcome, CliRunVerdictContext } from '../composition/in-process-run-execution.js'
+import type { CliRunOutcome } from '../composition/in-process-run-execution.js'
 import { runInProcessCliRun } from '../composition/in-process-run-execution.js'
 import {
   CountingTarget,
@@ -77,35 +72,19 @@ async function project(): Promise<ReturnType<typeof createInProcessFixture>> {
   return createInProcessFixture({ origin: target.origin, environment: 'local' })
 }
 
-/**
- * Spy on the RUN'S OWN masking context, from inside a hook that receives it.
- *
- * `vi.spyOn` on the instance rather than on the module, deliberately: what this cell needs to know
- * is whether THIS run's masker was torn down, and the drive calls `maskingContext.dispose()` on
- * exactly the object every hook is handed. A module-level double would answer a different question.
- */
-function watchDispose(context: CliRunVerdictContext): ReturnType<typeof vi.fn> {
-  const masker = context.maskingContext as RunMaskingContext & { dispose: () => void }
-  const spy = vi.fn(masker.dispose.bind(masker))
-  masker.dispose = spy as unknown as RunMaskingContext['dispose']
-  return spy
-}
-
 describe('the detached post-run leg (404 D-06, RESEARCH Pitfall 2)', () => {
-  it('resolves execute() BEFORE the tail settles, and disposes the masker only after it does',
+  it('resolves execute() BEFORE the tail settles',
     async () => {
       const fixture = await project()
       const gate = deferred()
-      let dispose: ReturnType<typeof vi.fn> | undefined
       let tailEntered = false
 
       const outcome: CliRunOutcome = await runInProcessCliRun(
         {
           ...fixtureOptions(fixture),
           executionContext: 'local-headless',
-          postRunTail: async (context) => {
+          postRunTail: async () => {
             tailEntered = true
-            dispose = watchDispose(context)
             await gate.promise
           },
         },
@@ -122,16 +101,8 @@ describe('the detached post-run leg (404 D-06, RESEARCH Pitfall 2)', () => {
       expect(tailEntered, 'the tail was started, not merely declared').toBe(true)
       expect(outcome.settled, 'the in-flight leg is exposed so a caller MAY wait').toBeDefined()
 
-      // (3) …and the masker is still alive, because the fold this leg runs crosses the same
-      //     disclosure boundary every other run output does (T-404-01).
-      expect(dispose, 'the tail must have been handed the run\'s own masking context').toBeDefined()
-      expect(dispose!, 'disposing before the fold would make masker-active a declaration, not a fact')
-        .not.toHaveBeenCalled()
-
       gate.resolve()
       await outcome.settled
-      expect(dispose!, 'and the dispose duty travelled WITH the leg, so it runs when the leg does')
-        .toHaveBeenCalledTimes(1)
     }, 120_000)
 
   it('runs afterVerdict to completion BEFORE the tail starts — never concurrently', async () => {
@@ -165,18 +136,16 @@ describe('the detached post-run leg (404 D-06, RESEARCH Pitfall 2)', () => {
     expect(order).toEqual(['afterVerdict:start', 'afterVerdict:end', 'tail:start', 'tail:end'])
   }, 120_000)
 
-  it('catches a THROWING tail, warns by name, and still disposes the masker', async () => {
+  it('catches a THROWING tail and warns by name', async () => {
     const fixture = await project()
     const warnings: string[] = []
-    let dispose: ReturnType<typeof vi.fn> | undefined
 
     const outcome = await runInProcessCliRun(
       {
         ...fixtureOptions(fixture),
         executionContext: 'local-headless',
         warn: (message) => { warnings.push(message) },
-        postRunTail: async (context) => {
-          dispose = watchDispose(context)
+        postRunTail: async () => {
           throw new Error('the queue database is unreadable')
         },
       },
@@ -190,32 +159,24 @@ describe('the detached post-run leg (404 D-06, RESEARCH Pitfall 2)', () => {
     expect(named, 'the failure is NAMED, not silently absorbed').toHaveLength(1)
     expect(named[0]).toContain('the queue database is unreadable')
     expect(named[0]).toContain(outcome.runId)
-    expect(dispose!, 'the close-out runs on the failure path too — a held masker is a leak').toHaveBeenCalledTimes(1)
   }, 120_000)
 
   it('a door with NO postRunTail closes out in the drive\'s own finally, exactly as before',
     async () => {
       const fixture = await project()
       const warnings: string[] = []
-      let dispose: ReturnType<typeof vi.fn> | undefined
 
       const outcome = await runInProcessCliRun(
         {
           ...fixtureOptions(fixture),
           executionContext: 'local-headless',
           warn: (message) => { warnings.push(message) },
-          afterVerdict: (context) => {
-            dispose = watchDispose(context)
-            return context.exitCode
-          },
+          afterVerdict: (context) => context.exitCode,
         },
         { patterns: [fixture.suitePattern] },
       )
 
       expect(outcome.settled, 'no leg was started, so there is nothing to expose').toBeUndefined()
-      // Disposed exactly once, by the drive, before `execute()` returned. The two close-out paths
-      // are mutually exclusive by construction and this is the arm that proves the OLD one intact.
-      expect(dispose!, 'the drive still owns the close-out when nobody took it from it').toHaveBeenCalledTimes(1)
       // 404-01's measured regression: an ordinary run acquires no lease, so the no-leak backstop
       // has nothing to release and nothing to say. A `released untaken` line here is the stderr
       // noise `run-parity.e2e.test.ts` exists to keep out of ordinary runs.

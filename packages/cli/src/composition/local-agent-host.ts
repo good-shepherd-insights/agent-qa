@@ -369,8 +369,8 @@ export function createColdReadMaskingSources(
  * inside `afterVerdict` is inside `execute()`, and `dashboard-server` emits `'run-settled'` — db
  * finalize, Appium release, handle cleanup — when that promise settles, so the runs list would show
  * "running" for a minute after the verdict and a leased device would stay leased (Pitfall 2). The
- * drive starts the tail AFTER `afterVerdict` settles, does not await it, and hands it the masker's
- * dispose duty so the fold still runs inside the masker's lifetime.
+ * drive starts the tail AFTER `afterVerdict` settles, does not await it, and hands it the run's
+ * close-out.
  *
  * WHAT ARRIVES FROM THE HOST SINCE 401-07: `onSession`, `subscribers`, `resolveAppiumUrl` and
  * `resolveRunFlags`, all four through `runBridge` and all four absent unless a host asks. A host that watches its runs
@@ -469,8 +469,7 @@ function createComposedRunExecution(input: {
             // `postRunTail` and not `afterVerdict`: the drive starts this AFTER `afterVerdict`
             // settles and does NOT await it, so `execute()` resolves and `dashboard-server`'s
             // `'run-settled'` (db finalize, Appium release, handle cleanup) fires on the verdict's
-            // clock rather than on the drain's (RESEARCH Pitfall 2). The masker is disposed in
-            // this leg's own `finally`, so the fold runs inside its lifetime (T-404-01).
+            // clock rather than on the drain's (RESEARCH Pitfall 2).
             //
             // DRAIN ONLY IF THE LEASE WAS ACTUALLY TAKEABLE. `takeAcquiredLease()` is the step's
             // one acquisition; `undefined` means somebody else holds it (or the posture was
@@ -503,8 +502,7 @@ function createComposedRunExecution(input: {
                 configFilePath: context.configFilePath,
                 knowledgeConfig: inputs.config.knowledge,
                 auditSink: context.auditSink,
-                // 2026-10-14 (441-10, D-06): 441-58 replaces this source with the run's redactor.
-                mask: (text) => context.maskingContext.mask(text),
+                mask: context.mask,
                 // LOG, NEVER PRINT. The tail's close-out line and digest block are CLI outputs, and
                 // this door serves `agent-qa fn --json` (stdout is the JSON document) and the MCP
                 // host (stdout IS the JSON-RPC connection). Both go to the same stderr sink the

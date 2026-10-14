@@ -319,13 +319,10 @@ describe('an interrupted gate run leaves nothing a full rebuild can reconstruct 
         for (const dir of [dirA, dirB]) {
           const runDir = join(fixture.agentQaRoot, 'runs', dir)
           expect(existsSync(join(runDir, HANDOFF_FILE))).toBe(false)
-          // 405-02 (D-08): `masking-digests.json` joined this inventory. It is residue of exactly
-          // the kind this cell pins — an interrupted run's sidecar, written when its session
-          // started — and it carries no contribution a rebuild could count: only HMAC digests of
-          // the placeholders the run minted, keyed by a host-local key.
           // 432-13: `execution_audit.jsonl` was the run gate's row; a start writes none now.
+          // 441-58 (D-14): nor does it write a `masking-digests.json` sidecar.
           expect(readdirSync(runDir).sort())
-            .toEqual(['artifact.json', 'events.jsonl', 'masking-digests.json'])
+            .toEqual(['artifact.json', 'events.jsonl'])
           expect(readFileSync(join(runDir, 'events.jsonl'), 'utf8').trim()).not.toBe('')
         }
         expect(existsSync(join(fixture.agentQaRoot, 'runs', runC, HANDOFF_FILE))).toBe(true)
@@ -460,12 +457,9 @@ describe('an interrupted gate run leaves nothing a full rebuild can reconstruct 
           const runDir = join(fixture.agentQaRoot, 'runs', dir)
           expect(existsSync(join(runDir, HANDOFF_FILE))).toBe(false)
           expect(existsSync(join(runDir, ANALYSIS_FILE))).toBe(false)
-          // 405-02 (D-08): `masking-digests.json` joined this inventory. It is residue of exactly
-          // the kind this cell pins — an interrupted run's sidecar, written when its session
-          // started — and it carries no contribution a rebuild could count: only HMAC digests of
-          // the placeholders the run minted, keyed by a host-local key.
+          // 441-58 (D-14): no `masking-digests.json` sidecar is written.
           expect(readdirSync(runDir).sort())
-            .toEqual(['artifact.json', 'events.jsonl', 'masking-digests.json'])
+            .toEqual(['artifact.json', 'events.jsonl'])
           expect(readFileSync(join(runDir, 'events.jsonl'), 'utf8')).toBe(residueBefore.get(dir))
         }
 

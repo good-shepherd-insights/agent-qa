@@ -4,7 +4,7 @@ import { basename, join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { generateRunId, generateSuiteId, generateTestId } from '@vostride/agent-qa-ids'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
-import { buildRunMaskingContext, createRunInvocationCore } from '@vostride/agent-qa-agent-local'
+import { createRunInvocationCore } from '@vostride/agent-qa-agent-local'
 import { createRunCommand, produceDirectRunMembers, produceSuiteRunMembers } from '../commands/run.js'
 import type { RunInvocationInputs, SuiteRunMemberProductionInput } from '../commands/run.js'
 import { assembleCliRun } from '../composition/run-assembly.js'
@@ -138,7 +138,6 @@ for (const path of ['suite', 'direct'] as const) {
     writeFileSync(configFilePath, configContent)
     const secretStore = SecretStore.fromEnvContent('')
     const secretRedactor = new SecretRedactor(secretStore)
-    const masking = buildRunMaskingContext({ env: {} })
     const opts = { disableCache: true, reporter: ['console'], record: setting.flag }
     const inputs = {
       config, configDir: root, configFilePath, configContent,
@@ -159,14 +158,14 @@ for (const path of ['suite', 'direct'] as const) {
           },
           variableContext: { envFileVars: {}, inlineVars: {}, cliVars: {}, userRunAttributes: {}, secretStore, secretRedactor },
         } as SuiteRunMemberProductionInput)
-    produced.bindRunContext({ maskingContext: masking, safetyHooks: undefined as never })
+    produced.bindRunContext({ safetyHooks: undefined as never })
     const core = createRunInvocationCore({
       configPath: configFilePath, agentQaRoot: join(root, '.agent-qa'), executionContext: 'ci',
       resolveTargetDeclaration: () => ({ targetClass: 'local', targetNames: ['fixture'], productionTargetNames: [] }),
       mintRunId: () => runId, isMintedRunId: () => true,
       assembleRun: async context => {
         const assembly = await assembleCliRun({
-          ...context, knowledgeRoot: produced.knowledgeRoot, maskingContext: masking, secretRedactor: produced.secretRedactor,
+          ...context, knowledgeRoot: produced.knowledgeRoot, secretRedactor: produced.secretRedactor,
           members: produced.members, executor: produced.executor, configDigests: produced.configDigests,
           product: produced.product, warn: () => {},
         })

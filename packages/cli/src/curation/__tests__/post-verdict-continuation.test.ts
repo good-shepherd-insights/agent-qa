@@ -66,7 +66,6 @@ it.each(['settles', 'host deadline expires', 'abort', 'detached tail', 'framewor
   let session!: RunSession
   let hostSettled = false
   let runnerSettled = false
-  let dispose!: ReturnType<typeof vi.spyOn>
   const abort = new AbortController()
   const detached = vi.fn(async () => undefined)
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
@@ -85,7 +84,7 @@ it.each(['settles', 'host deadline expires', 'abort', 'detached tail', 'framewor
       knowledgeRoot: join(fixture.project, 'knowledge'), targetClass: 'local',
       targetNames: [fixture.targetName], productionTargetNames: [], allowProduction: false, memberProbeUrls: [],
       secretRedactor: new SecretRedactor(new SecretStore()),
-      bindRunContext: ({ maskingContext }) => { dispose = vi.spyOn(maskingContext, 'dispose') }, applyAssembly: () => undefined,
+      bindRunContext: () => undefined, applyAssembly: () => undefined,
       bindSession: () => undefined, takeFrameworkError: () => mode === 'framework error' ? new Error('fixture framework failure') : undefined,
       getCurationModelDeps: () => undefined,
     }),
@@ -118,12 +117,12 @@ it.each(['settles', 'host deadline expires', 'abort', 'detached tail', 'framewor
         expect(hostSettled).toBe(true)
         expect(pending.settled).toBeDefined()
       }
-      expect(dispose).not.toHaveBeenCalled()
       expect(existsSync(join(runDir, 'post-verdict-pending.json.owner', 'owner.json'))).toBe(true)
     }
     release.resolve()
-    if (mode === 'framework error') await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(1))
-    else {
+    if (mode === 'framework error') {
+      await vi.waitFor(() => expect(existsSync(join(runDir, 'post-verdict-pending.json'))).toBe(false))
+    } else {
       const outcome = await running
       await outcome.settled
       expect(outcome.exitCode).toBe(1)
@@ -141,7 +140,6 @@ it.each(['settles', 'host deadline expires', 'abort', 'detached tail', 'framewor
         misdirectionEvidence: final.misdirectionEvidence })
     } finally { await host.close() }
     expect(existsSync(join(runDir, 'post-verdict-pending.json'))).toBe(false)
-    expect(dispose).toHaveBeenCalledTimes(1)
     if (mode === 'detached tail') expect(detached).toHaveBeenCalledTimes(1)
   } finally {
     release.resolve()
@@ -703,7 +701,6 @@ async function commandSignalFixture(mode: 'direct' | 'suite', timing: 'post-verd
   let session!: RunSession
   let runnerSettled = false
   let outcome: Awaited<ReturnType<typeof actualDrive>> | undefined
-  let dispose!: ReturnType<typeof vi.spyOn>
   const evidence = JSON.parse(readFileSync(f.handoffPath, 'utf8')).tests[0].steps[0]
   vi.spyOn(drive, 'runInProcessCliRun').mockImplementation(async (input, request) => {
     const produced = await input.produceMembers!({} as never)
@@ -722,10 +719,6 @@ async function commandSignalFixture(mode: 'direct' | 'suite', timing: 'post-verd
           if (timing === 'active-run') await releaseExecution.promise
           return { name: 'checkout', filePath: 'tests/direct.yaml', status: 'failed', duration: 1,
             steps: [{ name: 'Open checkout', status: 'failed', duration: 1, evidence }] }
-        },
-        bindRunContext: (context) => {
-          produced.bindRunContext(context)
-          dispose = vi.spyOn(context.maskingContext, 'dispose')
         },
       }),
       postProcessing: { ...input.postProcessing, misdirection: recoveryCapabilities(async () => {
@@ -760,7 +753,6 @@ async function commandSignalFixture(mode: 'direct' | 'suite', timing: 'post-verd
     else {
       expect(output.mock.calls.flat().join('\n')).toContain(`preparation pending; analysis is not yet queued. Durable intent: ${pendingPath}`)
       expect(existsSync(pendingPath)).toBe(true)
-      expect(dispose).not.toHaveBeenCalled()
       expect(outcome?.settled).toBeDefined()
     }
   } finally {
@@ -770,7 +762,6 @@ async function commandSignalFixture(mode: 'direct' | 'suite', timing: 'post-verd
     await outcome?.settled
     process.exitCode = beforeExitCode
   }
-  expect(dispose).toHaveBeenCalledTimes(1)
   expect(fetch).not.toHaveBeenCalled()
 }
 

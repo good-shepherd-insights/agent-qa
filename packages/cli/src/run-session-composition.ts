@@ -18,11 +18,10 @@
 // to substitute something else for each one.
 
 import type { AuditSink, SafetyHookRunner } from '@vostride/agent-qa-safety'
-import type { QuarantineAppliedEntry } from '@vostride/agent-qa-schema'
+import type { MaskingContext, QuarantineAppliedEntry } from '@vostride/agent-qa-schema'
 import { buildRunSessionSafetyHooks } from '@vostride/agent-qa-agent-local'
 import type {
   AttachableRunSession,
-  RunMaskingContext,
   RunSubscriberHandle,
 } from '@vostride/agent-qa-agent-local'
 import { createAnalyticsRunSubscriber } from '@vostride/agent-qa-analytics'
@@ -104,7 +103,7 @@ export function buildAnalyticsRunSubscriber(input: {
 export interface AttachRunSubscribersInput {
   session: AttachableRunSession
   /** The run MaskingContext — the console reporter's sole unmasking authority (SEAM-05). */
-  maskingContext: RunMaskingContext
+  maskingContext: MaskingContext
   /** Console reporter options, or `false` to skip the console surface for this run. */
   console?: ConsoleReporterOptions | false
   /** JUnit output path — when set, the masked durable JUnit subscriber is attached and flushed. */

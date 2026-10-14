@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { generateRunId, generateSuiteId, generateTestId } from '@vostride/agent-qa-ids'
 import { SecretRedactor, SecretStore, makeScreenState } from '@vostride/agent-qa-runner'
 import type { MemberRunConfig, StepModelScope, StepModelObservation } from '@vostride/agent-qa-runner'
-import { buildRunMaskingContext, createRunInvocationCore } from '@vostride/agent-qa-agent-local'
+import { createRunInvocationCore } from '@vostride/agent-qa-agent-local'
 import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
 import { asRunId } from '@vostride/agent-qa-schema'
 import { produceDirectRunMembers, produceSuiteRunMembers } from '../commands/run.js'
@@ -179,14 +179,13 @@ async function executePath(path: 'DIRECT' | 'SUITE' | 'COMPOSED', options: { mis
           },
           variableContext: { envFileVars: {}, inlineVars: {}, cliVars: {}, userRunAttributes: {}, secretStore, secretRedactor },
         } as SuiteRunMemberProductionInput)
-    const masking = buildRunMaskingContext({ env: {} })
-    produced.bindRunContext({ maskingContext: masking, safetyHooks: undefined as never })
+    produced.bindRunContext({ safetyHooks: undefined as never })
     const core = createRunInvocationCore({
       configPath: configFilePath, agentQaRoot: join(project, '.agent-qa'), executionContext: 'ci',
       resolveTargetDeclaration: () => ({ targetClass: 'local', targetNames: ['fixture'], productionTargetNames: [] }),
       mintRunId: () => runId, isMintedRunId: () => true,
       assembleRun: async context => {
-        const assembly = await assembleCliRun({ ...context, knowledgeRoot: produced.knowledgeRoot, maskingContext: masking,
+        const assembly = await assembleCliRun({ ...context, knowledgeRoot: produced.knowledgeRoot,
           secretRedactor: produced.secretRedactor,
           members: produced.members,
           executor: options.missingRunId ? (member, ctx) => produced.executor(member, { ...ctx, runId: undefined }) : produced.executor,

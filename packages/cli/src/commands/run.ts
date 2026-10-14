@@ -18,6 +18,7 @@ import { asRunId, maskPayloadStrings, resolvePlannerLimits, type PlannerLimitsRe
 import { memberPlannerConfig, plannerLimitsInfoLines, plannerLimitsRecord, type MemberPlannerConfig, type MemberPlannerLimits } from '../run-planner-limits.js'
 import type {
   DeclaredModelProfile,
+  MaskFn,
   ModelCapabilities,
   QuarantineAppliedEntry,
   RunSession,
@@ -33,8 +34,7 @@ import type { RunMemberDescriptor, ConfigDigests, MemberTestRunContext, MemberTe
 // does not name the knowledge package — 387 D-20); this host calls the ONE resolved helper.
 import { resolveRunQuarantineSnapshot } from '@vostride/agent-qa-agent-local'
 // 401-11 (D-02): the door renders the core's refusal; it no longer COMPOSES the core. That moved,
-// with the assembler hand-off, the masking context, the audit sink, the safety-hook runner and the
-// safety scope, into the ONE in-process drive both of this door's paths now call.
+// with the assembler hand-off, the audit sink, the safety-hook runner and the safety scope, into the ONE in-process drive both of this door's paths now call.
 import {
   refuseProductionWithoutOptIn,
   refuseUnavailableRunId,
@@ -65,7 +65,6 @@ import {
   computeRunConfigDigests,
   createSuiteLifecycle,
   SUITE_LIFECYCLE_LANE,
-  extractAuthStateSensitiveStrings,
   memoryToolGate,
   openRunKnowledgeComposition,
   resolveBuildTagSetting,
@@ -74,7 +73,6 @@ import {
   resolveRunExecutionContext,
   toMemberTest,
   type RunKnowledgeComposition,
-  type RunMaskingContext,
   type RunSubscriberHandle,
   type SuiteMemberBinding,
 } from '@vostride/agent-qa-agent-local'
@@ -317,8 +315,7 @@ function resolveIsCI(env: NodeJS.ProcessEnv = process.env): boolean {
 /**
  * Composition-root construction of the redesigned action cache (Phase 356, D-01/D-05/D-14).
  * Builds the runner-local `FsActionCache` behind a resolved branch `CachePolicy`, injected into the
- * runner loop's cache port via RunTest/RunSuite config. The loop's masking port carries the ONE run
- * MaskingContext (built at the composition root's startRun sites, SEAM-01/362-06), not this helper.
+ * runner loop's cache port via RunTest/RunSuite config.
  */
 async function buildActionCacheContext(params: {
   cacheDir: string
@@ -824,7 +821,7 @@ function readDashboardCorrelationEnv(env: NodeJS.ProcessEnv = process.env): {
 // drive lifecycle. Returns a subscriber handle whose `flush` lands the finalize sweep (the memory
 // section arrives out-of-band). Dashboard is optional — a load failure degrades to no subscriber.
 //
-// 433-29 (G-433-5, F-433-15): the ingest is built at ATTACH, where the run's masking context exists.
+// 433-29 (G-433-5, F-433-15): the ingest is built at ATTACH, where it is handed the run's mask.
 // Construction snapshots cross that mask before they reach the database (the suite path stored its
 // env file in clear before), and the producer's snapshot channel stages each member's loaded
 // test/config onto the run's artifact.
@@ -848,7 +845,7 @@ async function buildDashboardIngestSubscriber(input: {
       : fromEnv
     return (attach) => {
       const mask = (value: unknown): any => (isSnapshotRecord(value)
-        ? maskPayloadStrings(value, (text) => attach.maskingContext.mask(text))
+        ? maskPayloadStrings(value, attach.mask)
         : undefined)
       const ingest = createDashboardRunIngest({
         db: input.db,
@@ -873,7 +870,7 @@ async function buildDashboardIngestSubscriber(input: {
 }
 
 interface DashboardIngestAttach {
-  readonly maskingContext: { mask(text: string): string }
+  readonly mask: MaskFn
   readonly onMemberSnapshot?: RunArtifactSnapshotChannel['subscribe']
 }
 
@@ -1654,31 +1651,6 @@ function formatAuthStateCaptureFailure(paths: ResolvedAuthStatePaths): string {
   return `Could not save auth state "${paths.stateName}" for target "${paths.targetName}".`
 }
 
-/**
- * Read a persisted storage-state payload JSON best-effort (D-06 masking seed source). A missing or
- * unreadable file degrades to `undefined` — never a run failure; the source simply contributes no
- * seed. Used to seed the run MaskingContext from statically-resolved auth-state at run start and to
- * register mid-run captured auth values.
- */
-async function readAuthStatePayloadBestEffort(storageStatePath: string | undefined): Promise<unknown> {
-  if (!storageStatePath) return undefined
-  try {
-    const { readFile } = await import('node:fs/promises')
-    return JSON.parse(await readFile(storageStatePath, 'utf-8')) as unknown
-  } catch {
-    return undefined
-  }
-}
-
-/**
- * Register every cookie/localStorage value from an auth-state payload into the run MaskingContext
- * (D-06). Additive; the same stable per-run placeholders. A token minted by a mid-run login flow is
- * protected for every subsequent egress once registered here.
- */
-function registerAuthStateIntoMaskingContext(ctx: RunMaskingContext, payload: unknown): void {
-  for (const value of extractAuthStateSensitiveStrings(payload)) ctx.register(value)
-}
-
 function getStorageStateContext(adapter: PlatformAdapter): { storageState: (options?: { indexedDB?: boolean }) => Promise<unknown> } | null {
   const maybeGetPage = (adapter as { getPage?: () => unknown }).getPage
   if (typeof maybeGetPage !== 'function') return null
@@ -1951,18 +1923,18 @@ async function executeSuites(
         onSession: (session) => {
           activeRunSession = session
         },
-        subscribers: ({ session, quarantined, maskingContext, onMemberSnapshot }) => {
-          // The run's masking context now exists; point the analytics send seam at it.
-          analyticsHost?.bindMaskingContext(maskingContext)
+        subscribers: ({ session, quarantined, mask, onMemberSnapshot }) => {
+          analyticsHost?.bindMaskingContext({ mask })
           return attachRunSubscribers({
             session,
-            maskingContext,
+            // 2026-10-14 (441-58): the console reporter's context, from the run's mask; 441-13 deletes it.
+            maskingContext: { mask, unmask: (text) => text },
             console: reporterSelection.console ? { verbose: false, logLevel: effectiveLogLevel } : false,
             junitOutputPath: reporterSelection.junit ? opts.junitOutput : undefined,
             extraSubscribers: [
               ...(suiteDashboardIngest === undefined
                 ? []
-                : [suiteDashboardIngest({ maskingContext, ...(onMemberSnapshot === undefined ? {} : { onMemberSnapshot }) })]),
+                : [suiteDashboardIngest({ mask, ...(onMemberSnapshot === undefined ? {} : { onMemberSnapshot }) })]),
               ...extraSubscribers,
             ],
             // 390 D-15: the SAME resolved set the run was assembled with, so the reporters and the
@@ -1980,7 +1952,7 @@ async function executeSuites(
           )
           return frozenExitCode
         },
-        afterVerdict: async ({ exitCode: verdictExitCode, maskingContext, auditSink, postVerdict, postVerdictDeadlineMs }) => {
+        afterVerdict: async ({ exitCode: verdictExitCode, mask, auditSink, postVerdict, postVerdictDeadlineMs }) => {
           // 388-02 D-01: ONE shared post-run tail serves both of this command's tail sites
           // (Pitfall 1). 404 D-05: the ENQUEUE is no longer one of its legs — the shell's
           // post-verdict step performed it before `runFinished`, on this door and on every other,
@@ -1996,8 +1968,7 @@ async function executeSuites(
             configFilePath,
             knowledgeConfig: config.knowledge,
             auditSink,
-            // 2026-10-14 (441-10, D-06): 441-58 replaces this source with the run's redactor.
-            mask: (text) => maskingContext.mask(text),
+            mask,
             ...(produced.getCurationModelDeps() === undefined
               ? {}
               : { modelDeps: produced.getCurationModelDeps()! }),
@@ -2387,8 +2358,8 @@ export async function resolveSuitePreflight(input: {
  * copy and the thing it drives.
  *
  * WHAT IT DOES NOT DO, same as the test half: it does not resolve an execution context (the DOOR
- * does, D-07), it does not mint the run id, it does not build the masking context or the audit sink
- * (the drive does, once, and binds them back), and it cannot terminate its host — the five
+ * does, D-07), it does not mint the run id, it does not build the audit sink or the safety hooks
+ * (the drive does, once, and binds the hooks back), and it cannot terminate its host — the five
  * config-error refusals `prepareSuite` used to answer with `process.exit(2)` are `CliRunInputError`
  * throws carrying the same rendered lines and the same code.
  */
@@ -2449,6 +2420,7 @@ export async function produceSuiteRunMembers(
   if (suiteRunSecretRedactor === undefined) {
     throw new Error('This suite run has no secrets redactor; its records cannot be masked, so it was not started.')
   }
+  const suiteRunMask: MaskFn = (text) => suiteRunSecretRedactor.redactString(text)
   const hooksContext = input.hooksContext
   const analytics = input.analytics
   const activeSuiteDbs = input.activeSuiteDbs ?? new Set<any>()
@@ -2474,11 +2446,8 @@ export async function produceSuiteRunMembers(
   const { readFile } = await import('node:fs/promises')
   const path = await import('node:path')
 
-  // SEAM-01/03 (362-06): the ONE run MaskingContext + per-run SafetyHookRunner, BOUND by the drive
-  // after this producer returns and read at call time by the member/teardown closures below — which
-  // only ever execute after `startRun`. `runMaskingContext` also feeds the D-06 mid-run auth-state
-  // registration at teardown capture and the WM-flush report mask.
-  let runMaskingContext: RunMaskingContext | undefined
+  // SEAM-03 (362-06): the per-run SafetyHookRunner, bound by the drive after this producer returns
+  // and read at call time by the member closures below.
   let runSafetyHooks: SafetyHookRunner | undefined
   let activeRunSession: { cancel(): void } | undefined
   void activeRunSession
@@ -2559,7 +2528,6 @@ export async function produceSuiteRunMembers(
     // Teardown-time composition side effects (the old runSuite `.finally`).
     dashboardDb: any
     suiteWorkingMemory: WorkingMemoryStore
-    authStateStoragePath: string | undefined
     suiteAttributes: RunAttributes
     knowledgeSeed: {
       accounting: ReturnType<typeof createTokenAccounting>
@@ -2988,7 +2956,7 @@ export async function produceSuiteRunMembers(
       ports: { createModel, createScope: createStepModelScope },
       planner: { profile: plannerProfile, auth: plannerAuth, model: plannerModel },
       verifier: { profile: verifierProfile, auth: verifierAuth, model: verifierModel },
-      mask: text => runMaskingContext?.mask(text) ?? '[secret]',
+      mask: suiteRunMask,
       createConsumers,
     })
 
@@ -2999,8 +2967,7 @@ export async function produceSuiteRunMembers(
     // the runner config.
 
     // Wire the redesigned action cache (runner-local FsActionCache + branch policy), injected into
-    // the runner loop's cache port. The loop's masking port now carries the ONE run MaskingContext
-    // (assigned at the runId mint below), no longer the cache-context identity mint (SEAM-01/D-09).
+    // the runner loop's cache port.
     let actionCache: import('@vostride/agent-qa-runner').ActionPlanCache | undefined
     if (suiteEffectiveCacheEnabled) {
       const { resolve } = await import('node:path')
@@ -3071,9 +3038,6 @@ export async function produceSuiteRunMembers(
       // D-08/Q10: the sharp compressor is constructed at the composition root and injected into
       // every member's runner loop (sharp left core).
       compressor: buildScreenshotCompressor(logger?.createScopedLogger('adapter')),
-      // The run MaskingContext is assigned at the runId mint (below) — one source of truth,
-      // ungated from cache enablement (SEAM-01/D-09; WM masking + mask-before-cache-key go live).
-      masking: undefined,
       workingMemory: suiteWorkingMemory,
       storageState: suiteStorageState,
       plannerModel,
@@ -3143,7 +3107,6 @@ export async function produceSuiteRunMembers(
       bootstrapFailure: undefined,
       dashboardDb,
       suiteWorkingMemory,
-      authStateStoragePath: suiteAuthState?.storageStatePath,
       suiteAttributes,
       knowledgeSeed: {
         accounting: plannerAccounting,
@@ -3235,15 +3198,6 @@ export async function produceSuiteRunMembers(
     ) {
       try {
         const captured = await suiteConfig.authStateCapture.capture()
-        // D-06: a mid-run captured auth state may carry freshly-minted tokens — register its
-        // sensitive values into the run context so every subsequent egress masks them. Teardown
-        // runs inside runSafetyScope; the lexically-captured run context is the active one.
-        if (runMaskingContext) {
-          registerAuthStateIntoMaskingContext(
-            runMaskingContext,
-            await readAuthStatePayloadBestEffort(captured.storageStatePath),
-          )
-        }
         prepared.suiteSandboxOptions = suiteConfig.sandboxOptions
           ? { ...suiteConfig.sandboxOptions, authState: captured }
           : suiteConfig.sandboxOptions
@@ -3282,7 +3236,7 @@ export async function produceSuiteRunMembers(
 
     await flushWorkingMemory(prepared.suiteWorkingMemory, {
       artifactsDir: resolvePath(configDir, config.services?.dashboard?.artifactsDir ?? RUNTIME_ARTIFACTS_DIR),
-      mask: runMaskingContext ? (value: string) => runMaskingContext!.mask(value) : undefined,
+      mask: suiteRunMask,
     })
     closeSuiteDashboardDb(prepared.dashboardDb)
     printRunAttributes(prepared.suiteAttributes)
@@ -3438,7 +3392,6 @@ export async function produceSuiteRunMembers(
             planner: suiteConfig.planner,
             verifier: suiteConfig.verifier,
             cache: suiteConfig.cache,
-            masking: suiteConfig.masking,
             workingMemory: suiteConfig.workingMemory,
             storageState: suiteConfig.storageState,
             compressor: suiteConfig.compressor,
@@ -3569,24 +3522,6 @@ export async function produceSuiteRunMembers(
   let suiteBuildOrdinal = 0
   let suiteQuarantined: readonly QuarantineAppliedEntry[] = []
 
-  // SEAM-01/03/04 (362-06): construct the run's real seeded MaskingContext (D-05/06/07), the per-run
-  // stamped audit sink (D-12/13), and the per-run SafetyHookRunner (D-01/15/10) — then run the whole
-  // run body inside runSafetyScope so every createModel egress masks and every tool call is gated +
-  // audited (D-02/D-04). The masking context needs no runId, so it seeds from the statically-resolved
-  // suite auth-state payloads read best-effort here.
-  //
-  // MASKING BOUNDARY (363-09, RESEARCH Q7 item 3): every placeholder-bearing string originates AFTER
-  // this seam (masked egress, tool gating, WM). Pre-run errors (config/parse/target resolution, the
-  // validation-error DB writes and crash-finalizer above) occur BEFORE the MaskingContext exists, so
-  // they carry NO placeholders and need NO unmask call — the console reporter (the sole unmasking
-  // surface) only handles post-seam envelopes; step-failure/deny prose reaches humans through it.
-  // RETURNED, NOT CONSUMED. The masking context is built ONCE by the drive, for both of this
-  // door's paths and for every programmatic door; only the suite half has auth-state payloads to
-  // seed it with, so the seed travels out on the produced object and the drive folds it in.
-  const authStatePayloads = (
-    await Promise.all(preparedSuites.map((p) => readAuthStatePayloadBestEffort(p.authStateStoragePath)))
-  ).filter((payload): payload is unknown => payload !== undefined)
-
   const lifecycle = createSuiteLifecycle()
   const executor = buildSuiteMemberExecutor({ lifecycle, bindings })
 
@@ -3619,10 +3554,6 @@ export async function produceSuiteRunMembers(
     ...(buildTag === undefined ? {} : { buildTag }),
     logger: { setRunId: () => { /* the suite path stamps its loggers per prepared suite */ } },
     secretRedactor: suiteRunSecretRedactor,
-    maskingSeed: {
-      ...(variableContext?.secretStore === undefined ? {} : { secretStore: variableContext.secretStore }),
-      authStatePayloads,
-    },
     subscriberSeed: (() => {
       const withDb = preparedSuites.find((p) => p.dashboardDb)
       if (withDb === undefined) return {}
@@ -3634,15 +3565,12 @@ export async function produceSuiteRunMembers(
         attributes: withDb.suiteAttributes,
       }
     })(),
-    bindRunContext: ({ maskingContext, safetyHooks }) => {
-      runMaskingContext = maskingContext
+    bindRunContext: ({ safetyHooks }) => {
       runSafetyHooks = safetyHooks
-      // Point every suite's loop masking port at the ONE run context (ungated from cache — D-09/356).
-      for (const prepared of preparedSuites) prepared.suiteConfig.masking = maskingContext
-      // 433-29 (G-433-5): the suite's own source and config, once the run's mask exists.
+      // 433-29 (G-433-5): the suite's own source and config, masked with the run's redactor.
       for (const prepared of preparedSuites) {
         if (isSnapshotRecord(prepared.suiteArtifact)) {
-          suiteSnapshots.emit(maskRunArtifactSnapshot(prepared.suiteArtifact, maskingContext))
+          suiteSnapshots.emit(maskRunArtifactSnapshot(prepared.suiteArtifact, { mask: suiteRunMask }))
         }
       }
     },
@@ -3707,11 +3635,11 @@ export async function produceSuiteRunMembers(
  * into a new module will be refused by `pnpm validate:arch`, not by a review comment.
  *
  * WHAT IT DOES NOT DO. It does not resolve an execution context (the DOOR does, D-07), it does not
- * register signal handlers, it does not build the masking context or the audit sink (the drive does,
- * once, and hands them back through `bindRunContext`), and it cannot terminate its host: the one
- * refusal it makes is a `CliRunInputError`.
+ * register signal handlers, it does not build the audit sink or the safety hooks (the drive does,
+ * once, and hands the hooks back through `bindRunContext`), and it cannot terminate its host: the
+ * one refusal it makes is a `CliRunInputError`.
  *
- * THE LATE-BOUND SLOTS ARE THE SHIPPED SEMANTICS, PRESERVED. `maskingContext`, `safetyHooks`, the
+ * THE LATE-BOUND SLOTS ARE THE SHIPPED SEMANTICS, PRESERVED. `safetyHooks`, the
  * build ordinal and the quarantine set were `let`s the command assigned after the member closure was
  * defined and the closure read at CALL time — because the ordinal does not exist until the assembler
  * has advanced it, which happens after the gate. `bindRunContext` and `applyAssembly` are those same
@@ -3830,15 +3758,6 @@ export interface ProducedCliRunMembers {
    */
   readonly secretRedactor: SecretRedactorPort
   /**
-   * What the ONE masking context must be seeded with beyond the secret store. Only the suite half
-   * has any (its statically-resolved auth-state payloads), and the drive folds it in.
-   */
-  readonly maskingSeed?: {
-    /** The run's secret store — the drive seeds the ONE masking context from it. */
-    readonly secretStore?: SecretStore
-    readonly authStatePayloads?: readonly unknown[]
-  }
-  /**
    * What a door's dashboard-ingest subscriber needs and only the producer knows: the suite database
    * the prepared suites opened, plus the config/source snapshots and attributes the wire omits.
    */
@@ -3850,7 +3769,7 @@ export interface ProducedCliRunMembers {
   }
   /**
    * The producer's snapshot channel (433-29, G-433-5): each member's loaded test and config, and a
-   * suite's own source and config, masked with the run's context. Late listeners get a replay.
+   * suite's own source and config, masked with the run's redactor. Late listeners get a replay.
    */
   readonly onMemberSnapshot?: (listener: RunArtifactSnapshotListener) => () => void
   /**
@@ -3859,8 +3778,8 @@ export interface ProducedCliRunMembers {
    * execute, and it cannot precede the verdict because the ordinal is a durable write.
    */
   bindKnowledge?(buildOrdinal: number): void
-  /** The drive's masking context and safety hooks, bound before the run starts. */
-  bindRunContext(input: { maskingContext: RunMaskingContext; safetyHooks: SafetyHookRunner }): void
+  /** The drive's safety hooks, bound before the run starts. */
+  bindRunContext(input: { safetyHooks: SafetyHookRunner }): void
   /** The assembler's results, bound after the gate allowed the run and before `startRun`. */
   applyAssembly(input: { buildOrdinal: number; quarantined: readonly QuarantineAppliedEntry[] }): void
   /** The started session. Since 433-35 a member's framework error fails the run rather than cancelling it. */
@@ -3906,9 +3825,9 @@ export async function produceDirectRunMembers(
   const filtered = [...input.bindings]
   const memberSnapshots = createRunArtifactSnapshotChannel()
   const directRunProduct = input.product
+  const singleRunMask: MaskFn = (text) => runtimeSecrets.secretRedactor.redactString(text)
 
-  // The late-bound slots the run's own lifecycle fills. `singleMaskingContext`,
-  // `singleSafetyHooks`, `singleRunProduct` and `singleBuildOrdinal` are declared with the block
+  // The late-bound slots the run's own lifecycle fills. `singleSafetyHooks`, `singleRunProduct` and `singleBuildOrdinal` are declared with the block
   // below, exactly where the command declared them; these two are new only in the sense that the
   // command held them in its own scope.
   let frameworkError: unknown | undefined
@@ -3928,11 +3847,7 @@ export async function produceDirectRunMembers(
 
   // Wire action cache from config (logger wired after LogManager creation below)
   let actionCache: import('@vostride/agent-qa-runner').ActionPlanCache | undefined
-  // SEAM-01/03 (362-06): the ONE run MaskingContext + per-run SafetyHookRunner for this path,
-  // built at the singleRunId mint below and captured here so runOneDirectTest (defined before
-  // the mint) resolves the run bundle at call time — the second call site, same helpers
-  // (Pitfall 7). `singleMaskingContext` also feeds the D-06 mid-run auth registration.
-  let singleMaskingContext: RunMaskingContext | undefined
+  // SEAM-03 (362-06): the per-run SafetyHookRunner, bound by the drive and read at call time.
   let singleSafetyHooks: SafetyHookRunner | undefined
   let singleCurationModelDeps: CurationTailModelDeps | undefined
   let singleRunProduct = 'unknown'
@@ -3969,8 +3884,7 @@ export async function produceDirectRunMembers(
   })
 
   // Wire the redesigned action cache (runner-local FsActionCache + branch policy); skip when
-  // --disable-cache. The loop's masking port now carries the run MaskingContext (assigned at
-  // the singleRunId mint below), no longer a cache-context identity mint (SEAM-01/D-09).
+  // --disable-cache.
   if (opts.disableCache !== true) {
     const { resolve } = await import('node:path')
     const ctx = await buildActionCacheContext({
@@ -4075,14 +3989,6 @@ export async function produceDirectRunMembers(
       resolvedTarget: testResolvedTarget,
       authState: testAuthStateUse,
     })
-    // D-06: register the loaded auth-state's sensitive values into the run context (runs inside
-    // runSafetyScope, after the mint — singleMaskingContext is live). Additive; stable placeholders.
-    if (singleMaskingContext && testAuthState) {
-      registerAuthStateIntoMaskingContext(
-        singleMaskingContext,
-        await readAuthStatePayloadBestEffort(testAuthState.storageStatePath),
-      )
-    }
     let activeTestAuthState = testAuthState
 
     const testMergedUse = (testMergedConfig as any).use ?? (config as any).use ?? {}
@@ -4276,7 +4182,7 @@ export async function produceDirectRunMembers(
         ports: { createModel, createScope: createStepModelScope },
         planner: { profile: plannerProfile, auth: plannerAuth, model: plannerModel },
         verifier: { profile: verifierProfile, auth: verifierAuth, model: verifierModel },
-        mask: text => singleMaskingContext?.mask(text) ?? '[secret]',
+        mask: singleRunMask,
         createConsumers,
       })
 
@@ -4325,10 +4231,8 @@ export async function produceDirectRunMembers(
         secretRedactor: runtimeSecrets.secretRedactor,
       })
       // 433-29 (G-433-5, F-433-15): this member's test as written and effective config, masked
-      // with the run's own context, for every door's dashboard ingest. No mask, no snapshot.
-      if (singleMaskingContext !== undefined) {
-        memberSnapshots.emit(maskRunArtifactSnapshot(artifactContext.artifact, singleMaskingContext))
-      }
+      // with the run's redactor, for every door's dashboard ingest.
+      memberSnapshots.emit(maskRunArtifactSnapshot(artifactContext.artifact, { mask: singleRunMask }))
 
       const getAuthAwareSandboxOptions = () => sandboxOptions && activeTestAuthState
         ? { ...sandboxOptions, authState: activeTestAuthState }
@@ -4410,8 +4314,6 @@ export async function produceDirectRunMembers(
         cache: effectiveCacheEnabled ? actionCache : undefined,
         // D-08/Q10: the sharp compressor injected from the composition root (sharp left core).
         compressor: buildScreenshotCompressor(logger?.createScopedLogger('adapter')),
-        // SEAM-01/03: the ONE run context + gate, ungated from cache enablement (D-09/356).
-        masking: singleMaskingContext,
         safetyHooks: singleSafetyHooks,
         knowledgeReader: knowledge.reader,
         // 407 D-13: see the suite door above — one resolve per run, carried, never re-probed.
@@ -4468,14 +4370,6 @@ export async function produceDirectRunMembers(
             adapter: adapter!,
             paths: testAuthStateCapturePaths,
           })
-          // D-06: a mid-run captured auth state may carry freshly-minted tokens — register its
-          // sensitive values so every subsequent egress masks them.
-          if (singleMaskingContext) {
-            registerAuthStateIntoMaskingContext(
-              singleMaskingContext,
-              await readAuthStatePayloadBestEffort(activeTestAuthState.storageStatePath),
-            )
-          }
         } catch {
           result.status = 'failed'
           result.failureSummary = formatAuthStateCaptureFailure(testAuthStateCapturePaths)
@@ -4548,7 +4442,7 @@ export async function produceDirectRunMembers(
       // The helper never throws, so the run exit code is untouched (Pitfall 5).
       await flushWorkingMemory(singleWorkingMemory, {
         artifactsDir: resolvePath(configDir, config.services?.dashboard?.artifactsDir ?? RUNTIME_ARTIFACTS_DIR),
-        mask: singleMaskingContext ? (value: string) => singleMaskingContext!.mask(value) : undefined,
+        mask: singleRunMask,
       })
     }
     } catch (err) {
@@ -4702,9 +4596,7 @@ export async function produceDirectRunMembers(
     ...(singleBuildTag === undefined ? {} : { buildTag: singleBuildTag }),
     logger,
     secretRedactor: runtimeSecrets.secretRedactor,
-    maskingSeed: { secretStore: runtimeSecrets.secretStore },
-    bindRunContext: ({ maskingContext, safetyHooks }) => {
-      singleMaskingContext = maskingContext
+    bindRunContext: ({ safetyHooks }) => {
       singleSafetyHooks = safetyHooks
     },
     applyAssembly: ({ buildOrdinal, quarantined }) => {
@@ -5165,7 +5057,7 @@ export function createRunCommand(): Command {
         //
         // What used to be an inline `startRun`, then an inline `createRunInvocationCore`, is now a
         // call. The drive owns the ORDER and the run-scoped machinery every door needs identically —
-        // the ONE masking context, the ONE audit sink, the safety-hook runner, the safety scope, the
+        // the ONE audit sink, the safety-hook runner, the safety scope, the
         // assembler hand-off and the verdict map. This door supplies what only a door can answer: its
         // TTY posture, its members, its reporters, and what to do after the verdict. (432-13: no
         // trust flag and no confirm channel — nothing asks.)
@@ -5220,20 +5112,21 @@ export function createRunCommand(): Command {
                 activeRunSession = session
                 _startedRunId = singleRunId
               },
-              subscribers: ({ session, quarantined, maskingContext, onMemberSnapshot }) => {
-                singleAnalytics.bindMaskingContext(maskingContext)
+              subscribers: ({ session, quarantined, mask, onMemberSnapshot }) => {
+                singleAnalytics.bindMaskingContext({ mask })
                 // Attach the bus subscribers (console unmasks; junit + wire masked; dashboard
                 // ingest; analytics) — replay-then-live gives D-04 for free. `quarantined` is the
                 // SAME resolved set the run was assembled with (390 D-15, Pitfall 8).
                 return attachRunSubscribers({
                   session,
-                  maskingContext,
+                  // 2026-10-14 (441-58): the console reporter's context, from the run's mask; 441-13 deletes it.
+                  maskingContext: { mask, unmask: (text) => text },
                   console: reporterSelection.console ? { verbose: false, logLevel: effectiveLogLevel } : false,
                   junitOutputPath: reporterSelection.junit ? opts.junitOutput : undefined,
                   extraSubscribers: [
                     ...(singleDashboardIngest === undefined
                       ? []
-                      : [singleDashboardIngest({ maskingContext, ...(onMemberSnapshot === undefined ? {} : { onMemberSnapshot }) })]),
+                      : [singleDashboardIngest({ mask, ...(onMemberSnapshot === undefined ? {} : { onMemberSnapshot }) })]),
                     ...singleExtraSubscribers,
                   ],
                   quarantined,
@@ -5256,7 +5149,7 @@ export function createRunCommand(): Command {
                   verdictExitCode !== 0 ? verdictExitCode : (suitesFailed ? 1 : 0)
                 return frozenExitCode
               },
-              afterVerdict: async ({ exitCode, maskingContext, auditSink, postVerdict, postVerdictDeadlineMs }) => {
+              afterVerdict: async ({ exitCode, mask, auditSink, postVerdict, postVerdictDeadlineMs }) => {
                 // 388-02: the same shared tail as the multi-suite site above, and the same 404
                 // D-05 posture — the enqueue happened in the shell, so this handle has two legs.
                 const postRunTail = composeCliPostRunTail({
@@ -5269,7 +5162,7 @@ export function createRunCommand(): Command {
                   configFilePath,
                   knowledgeConfig: config.knowledge,
                   auditSink,
-                  mask: (text) => maskingContext.mask(text),
+                  mask,
                   ...(produced.getCurationModelDeps() === undefined
                     ? {}
                     : { modelDeps: produced.getCurationModelDeps()! }),

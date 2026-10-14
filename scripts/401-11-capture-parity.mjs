@@ -342,17 +342,8 @@ function runDirFiles(project) {
  * below fails on an entry that no reading actually produces, so a name that stops being written
  * has to be deleted here in the same commit rather than lingering as a permanent blind spot.
  */
-export const POST_GOLDEN_RUN_DIR_ADDITIONS = [
-  {
-    file: 'masking-digests.json',
-    addedBy: '405-02',
-    reason:
-      'Phase 405 D-08: the per-run masking value-identity sidecar. Every started run now writes '
-      + 'placeholder -> HMAC-SHA256(hostKey, value) beside events.jsonl so a restarted dashboard '
-      + 'can restore <SECRET_n> placeholders by value identity. It is a ratified new member of the '
-      + 'run-dir family, not extraction drift, and it holds no clear secret.',
-  },
-]
+// 441-58 (D-14) retired the only entry, 405-02's `masking-digests.json`: no run writes it now.
+export const POST_GOLDEN_RUN_DIR_ADDITIONS = []
 
 /** The declared names, as a Set — one derivation, used by both helpers below. */
 const declaredAdditionNames = new Set(POST_GOLDEN_RUN_DIR_ADDITIONS.map((entry) => entry.file))

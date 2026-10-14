@@ -4,8 +4,9 @@
 // `verifyBearer` port and the trust scope a token carried are deleted. Every cell below that
 // measured a bearer refusal is RE-SPELLED in place to the request the door still refuses — a
 // cross-site one, refused by the dashboard's shared same-site guard above the route table — or to
-// the tokenless success that replaced it. The production refusal, the never-forwarded run id, the
-// masking seam and the live-view signature's compare discipline are unchanged claims.
+// the tokenless success that replaced it. The production refusal, the never-forwarded run id and
+// the live-view signature's compare discipline are unchanged claims; 441-58 (D-01, D-12) deleted the
+// cells that had a run mask a door's or the environment's values.
 //
 // THE FRAME, STATED: every wire cell below drives the PRODUCTION COMPOSITION over real TCP —
 // `startServer` with `runService` from `composeRunServicePorts`, over a host from
@@ -73,8 +74,6 @@ const LEGACY_HEADER_CLASSES = [
 interface WorkspaceInput {
   /** `undefined` writes NO declaration, which classifies the run's target as shared. */
   readonly environment?: 'local' | 'production'
-  /** Mask this text through each started run's own mask, chained onto the door's real bridge. */
-  readonly observeMasking?: { readonly text: string; readonly seen: string[] }
 }
 
 /** The 402-01 fixture project, with the target's environment as the knob (432-21: no token block). */
@@ -138,20 +137,11 @@ async function openRunService(input: WorkspaceInput = {}): Promise<ServiceFixtur
   const db = new DashboardDatabase({ dbPath: join(configDir, 'dashboard.db') })
   const runDoor = await createDashboardRunDoor({ db })
   let boundOrigin: string | undefined
-  const observe = input.observeMasking
   const { agentHost, host } = composeDashboardDoor({
     agentQaRoot: join(configDir, '.agent-qa'),
     configPath,
     boundOrigin: () => boundOrigin,
-    runBridge: observe === undefined
-      ? runDoor.runBridge
-      : {
-          ...runDoor.runBridge,
-          subscribers: (attach) => {
-            observe.seen.push(attach.maskingContext.mask(observe.text))
-            return runDoor.runBridge.subscribers?.(attach)
-          },
-        },
+    runBridge: runDoor.runBridge,
   })
   runDoor.bindHost(host)
 
@@ -678,42 +668,6 @@ describe('the door’s credentials reach every run’s masker (#224)', () => {
       rmSync(configDir, { recursive: true, force: true })
     }
   })
-})
-
-// RE-SPELLED 2026-10-01 (432-21, D-12) from 'END TO END — a run started over the wire masks the
-// door's credential (#224)'. The door holds no credential; the end-to-end claim that survives is
-// that a run started over the wire masks this process's environment secrets in its own context
-// (D-13), through the shipped composition.
-describe('END TO END — a run started over the wire masks the door’s credential (#224)', () => {
-  it('the value the token holder presented is masked in that run’s own context', async () => {
-    const ENV_SECRET_VAR = 'AGENT_QA_432_21_PROBE_TOKEN'
-    const previous = process.env[ENV_SECRET_VAR]
-    process.env[ENV_SECRET_VAR] = TOKEN
-    try {
-      const seen: string[] = []
-      const text = `a reporter printed ${TOKEN} while the run was in flight`
-      const service = await openRunService({
-        environment: 'local',
-        observeMasking: { text, seen },
-      })
-      const response = await fetch(`${service.origin}/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ patterns: ['tests/probe.test.yaml'] }),
-      })
-      expect(response.status).toBe(202)
-
-      expect(seen.length).toBeGreaterThan(0)
-      for (const masked of seen) {
-        expect(masked).not.toContain(TOKEN)
-        expect(masked).toContain('SECRET')
-        expect(masked).toContain('a reporter printed')
-      }
-    } finally {
-      if (previous === undefined) delete process.env[ENV_SECRET_VAR]
-      else process.env[ENV_SECRET_VAR] = previous
-    }
-  }, 180_000)
 })
 
 // ---- (6) THE SECOND REFUSAL OF `runId` (WINDOWS #231) -----------------------------------------

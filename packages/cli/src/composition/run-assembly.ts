@@ -15,7 +15,7 @@
 // probe before the gate because `run.ts` no longer holds the probe.
 //
 // IT IS A CLI MODULE, NOT A COMPOSITION-PACKAGE ONE, for the reason the `RunAssembler` port exists:
-// members, the executor closure, reporters and the masking context are decisions a host answers for
+// members, the executor closure, reporters and the run's redactor are decisions a host answers for
 // itself. What crosses into `agent-local` is the TYPE. What stays here is the assembly.
 //
 // NOT A SECOND SPELLING OF ANYTHING. Every step below calls the SAME shared helper the suite path
@@ -46,7 +46,6 @@ import type {
   MemberTestExecutor,
   RunConfig,
   RunExecutionContext,
-  RunMaskingContext,
   RunMemberDescriptor,
   RunPersistencePorts,
 } from '@vostride/agent-qa-agent-local'
@@ -64,7 +63,6 @@ export interface CliRunAssemblyInput {
   readonly knowledgeRoot: string
   /** The durable ports the core built under `<configDir>/.agent-qa` (Pitfall 5). */
   readonly ports: RunPersistencePorts
-  readonly maskingContext: RunMaskingContext
   /** The redactor the producer read at the run's start; the shell masks every bus event with it (441-12). */
   readonly secretRedactor: NonNullable<RunConfig['secretRedactor']>
   readonly members: readonly RunMemberDescriptor[]
@@ -117,8 +115,8 @@ export interface CliRunAssembly {
 
 /**
  * Assemble the run for the `agent-qa run` door — BOTH of its paths (401-03 single-test, 401-04
- * suite). The door hands over what only it knows (its members, its executor closure, its masking
- * context, its product); everything with an effect outside this process happens here, which is to
+ * suite). The door hands over what only it knows (its members, its executor closure, its
+ * redactor, its product); everything with an effect outside this process happens here, which is to
  * say after the verdict.
  *
  * THE PROBE'S FAILURE IS NOT THE RUN'S FAILURE. `runBaselineProbe` is a best-effort health reading
@@ -173,7 +171,6 @@ export async function assembleCliRun(
     buildOrdinal,
     members,
     executor: input.executor,
-    masking: input.maskingContext,
     secretRedactor: input.secretRedactor,
     ports: input.ports,
     ...(quarantined.length > 0 ? { quarantined } : {}),

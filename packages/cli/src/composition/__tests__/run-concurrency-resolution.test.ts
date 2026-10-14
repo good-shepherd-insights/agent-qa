@@ -181,7 +181,6 @@ describe('the chain: the resolved count → the RunConfig the shell reads', () =
       configDir,
       knowledgeRoot: join(configDir, 'knowledge'),
       ports: {} as never,
-      maskingContext: {} as never,
       secretRedactor: new SecretRedactor(new SecretStore()),
       members: [],
       executor: (() => { throw new Error('unreachable in this cell') }) as never,
