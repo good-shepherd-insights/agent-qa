@@ -25,6 +25,7 @@ import type {
   EditorLiveUrlResult,
   LiveUrlVerdict,
   LiveViewSubjectRef,
+  MaskFn,
   RunSession,
   RunsLiveUrlResult,
 } from '@vostride/agent-qa-schema'
@@ -145,6 +146,8 @@ interface StartServerOptions {
   artifactsDir?: string
   workspacePaths?: ResolvedWorkspacePaths
   configPath?: string
+  // 441-21 (D-29): every config read this server serves passes through the declared mask.
+  declaredSecretMask: MaskFn
   llmConfig?: DashboardLLMConfig & {
     vision?: { screenshotSize?: number; effectiveResolution?: number }
   }
@@ -286,7 +289,7 @@ export async function startServer(opts: StartServerOptions): Promise<{
   }
 
   const resolvedConfigPath = configPath ?? resolve('agent-qa.config.yaml')
-  const configManager = new ConfigManager(resolvedConfigPath)
+  const configManager = new ConfigManager(resolvedConfigPath, opts.declaredSecretMask)
 
   // Read concurrency from config (defaults to os.cpus().length)
   const config = await readConfigValues(configManager).catch(() => ({}))

@@ -141,6 +141,7 @@ async function mountShippedHost(session: RunSession): Promise<number> {
 
   db = new DashboardDatabase({ dbPath: ':memory:' })
   started = await startServer({
+    declaredSecretMask: (text) => text,
     db,
     port: 0,
     configPath,

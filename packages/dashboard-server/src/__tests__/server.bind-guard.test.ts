@@ -98,6 +98,7 @@ async function start(opts: {
   dbs.push(db)
   const readiness = opts.readiness ?? INERT_READINESS
   const handle = await startServer({
+    declaredSecretMask: (text) => text,
     db,
     port: opts.port ?? 0,
     configPath: configPathFor(opts.legacyTokens === true),

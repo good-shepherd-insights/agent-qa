@@ -132,7 +132,7 @@ async function workspaceWith(testPlanner: string): Promise<{
   const createSession = vi.fn(async () => ({ sessionId: 'live-1', sessionNumber: 3 }))
   const router = createRouter({
     db: { getRuns: () => [], close() {} } as any,
-    configManager: new ConfigManager(configPath),
+    configManager: new ConfigManager(configPath, (text) => text),
     configPath,
     workspacePaths,
     testFileManager,

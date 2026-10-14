@@ -92,6 +92,7 @@ async function startFixture(
   })
   const agentHost = composeDashboardAgentHost({ registry } as LocalAgentHost)
   const started = await startServer({
+    declaredSecretMask: (text) => text,
     db, port: 0, agentHost,
     ...(display === undefined ? {} : { uiDir: join(PACKAGES_ROOT, 'dashboard-ui', 'dist') }),
   })

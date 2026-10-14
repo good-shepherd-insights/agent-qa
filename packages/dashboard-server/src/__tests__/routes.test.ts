@@ -320,7 +320,7 @@ async function createConfigWorkspace(configContent: string, hooksContent?: strin
     await writeFile(join(dir, 'hooks.yaml'), hooksContent, 'utf-8')
   }
   return {
-    configManager: new ConfigManager(configPath),
+    configManager: new ConfigManager(configPath, (text) => text),
     configPath,
   }
 }

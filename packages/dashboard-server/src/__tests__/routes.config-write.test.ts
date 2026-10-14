@@ -161,7 +161,7 @@ async function createConfigWorkspace(initialConfig = baseConfig): Promise<{
   tempDirs.push(dir)
   const configPath = join(dir, 'agent-qa.config.yaml')
   await writeFile(configPath, initialConfig, 'utf-8')
-  return { configManager: new ConfigManager(configPath), configPath }
+  return { configManager: new ConfigManager(configPath, (text) => text), configPath }
 }
 
 async function useConfigWorkspace(initialConfig = baseConfig): Promise<string> {
@@ -354,7 +354,7 @@ describe('PATCH /api/config concurrency, idempotency and file identity (429-05)'
     const configPath = join(linkDir, 'agent-qa.config.yaml')
     await writeFile(realPath, baseConfig, 'utf-8')
     await symlink(realPath, configPath)
-    router = createRouter({ db: createMockDatabase() as any, configManager: new ConfigManager(configPath), configPath })
+    router = createRouter({ db: createMockDatabase() as any, configManager: new ConfigManager(configPath, (text) => text), configPath })
 
     const response = await patchConfig(setStep('45s'))
 
@@ -492,20 +492,15 @@ describe('PATCH /api/config set-if-absent and expect (429-42)', () => {
     expect(mockRename).not.toHaveBeenCalled()
   })
 
-  it('EXPECT-ON-SECRET-REFUSED: an expect on a secret is refused 422 whether or not the guess is right', async () => {
+  // 441-21 (D-29): no path is classed secret, so an expect on a header is compared like any field.
+  it('EXPECT-ON-HEADER-COMPARED: an expect on a header value refuses a wrong guess 409 like any field', async () => {
     const configPath = await useConfigWorkspace(judgeConfig(['a', 'b']))
     const before = await readFile(configPath)
-    const secretPath = ['registry', 'llms', { name: 'proxy' }, 'providerHeaders', 'X-Org']
+    const headerPath = ['registry', 'llms', { name: 'proxy' }, 'providerHeaders', 'X-Org']
 
-    for (const guess of ['guess', 'org-secret-value']) {
-      const response = await patchConfig({ changes: [{ op: 'expect', path: secretPath, value: guess }] })
-      expect([guess, response.status]).toEqual([guess, 422])
-      expect(JSON.parse(response.body)).toEqual({ error: 'path_not_writable' })
-    }
-    // An ancestor holds the secret too, so it is never compared either.
-    const ancestor = await patchConfig({ changes: [{ op: 'expect', path: ['registry', 'llms'], value: [] }] })
-    expect(ancestor.status).toBe(422)
-    expect(JSON.parse(ancestor.body)).toEqual({ error: 'path_not_writable' })
+    const response = await patchConfig({ changes: [{ op: 'expect', path: headerPath, value: 'guess' }] })
+    expect(response.status).toBe(409)
+    expect(JSON.parse(response.body)).toEqual({ error: 'field_changed', path: headerPath })
     expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
   })
 })
@@ -705,35 +700,19 @@ describe('PATCH /api/config move (429-52)', () => {
     expect(text).not.toContain('X-Org')
   })
 
-  it('MOVE-ACROSS-CLASSES-REFUSED: a secret header moved onto a field served in clear is refused 422 and nothing is written', async () => {
-    const configPath = await useConfigWorkspace(headerConfig)
-    const before = await readFile(configPath)
-    mockRename.mockClear()
-
-    const response = await patchConfig({
-      changes: [{ op: 'move', from: [...HEADERS, 'X-Org'], path: ['registry', 'llms', { name: 'proxy' }, 'model'] }],
-    })
-
-    expect(response.status).toBe(422)
-    expect(JSON.parse(response.body)).toEqual({ error: 'path_not_writable' })
-    expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
-    expect(mockRename).not.toHaveBeenCalled()
-  })
-
-  it('MOVE-SUBTREE-ACROSS-CLASSES-REFUSED: a secret block whose values would land on fields served in clear is refused, though both ends class secret', async () => {
+  // 441-21 (D-29): a move is no longer refused by the masking class of either end.
+  it('MOVE-SUBTREE-ACROSS-PATHS-LANDS: a block moved between paths the map once classed differently lands whole', async () => {
     const withProvider = headerConfig.replace('registry:\n', 'registry:\n  providers:\n    farm:\n      platform: android\n      transport: local\n')
     const configPath = await useConfigWorkspace(withProvider)
-    const before = await readFile(configPath)
-    mockRename.mockClear()
 
     const response = await patchConfig({
       changes: [{ op: 'move', from: ['registry', 'providers', 'farm'], path: ['registry', 'devices', 'farm'] }],
     })
 
-    expect(response.status, response.body).toBe(422)
-    expect(JSON.parse(response.body)).toEqual({ error: 'path_not_writable' })
-    expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
-    expect(mockRename).not.toHaveBeenCalled()
+    expect(response.status, response.body).toBe(200)
+    const parsed = parseYaml(await readFile(configPath, 'utf-8')) as { registry: Record<string, unknown> }
+    expect(parsed.registry.devices).toEqual({ farm: { platform: 'android', transport: 'local' } })
+    expect(parsed.registry).not.toHaveProperty('providers')
   })
 
   it('MOVE-FROM-MISSING-REFUSED: a move from a header that is not there is refused 422 and nothing is written', async () => {
@@ -840,7 +819,7 @@ describe('one write path to the config file (429-32)', () => {
     const outside = source.replace(body, '')
     expect(outside.split('\n').filter((line) => FILE_ACCESS.test(line) && !line.startsWith('import'))).toEqual([])
 
-    const manager = new ConfigManager(join(tmpdir(), 'agent-qa-one-write-path.yaml'))
+    const manager = new ConfigManager(join(tmpdir(), 'agent-qa-one-write-path.yaml'), (text) => text)
     const prototypeMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(manager))
     for (const retired of ['read', 'updateSection', 'replaceSection', 'replaceSectionRaw', 'deleteSectionRaw', 'readDocument']) {
       expect(prototypeMethods).not.toContain(retired)

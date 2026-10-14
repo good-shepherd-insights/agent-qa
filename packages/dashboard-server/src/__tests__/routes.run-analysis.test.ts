@@ -260,6 +260,7 @@ async function serve(
   const db = new DashboardDatabase({ dbPath: ':memory:' })
   databases.push(db)
   const started = await startServer({
+    declaredSecretMask: (text) => text,
     db,
     port: 0,
     ...(options.withHost === false

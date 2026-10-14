@@ -127,7 +127,7 @@ async function createConfigWorkspace(initialConfig: string): Promise<{ configMan
   tempDirs.push(dir)
   const configPath = join(dir, 'agent-qa.config.yaml')
   await writeFile(configPath, initialConfig, 'utf-8')
-  return { configManager: new ConfigManager(configPath), configPath }
+  return { configManager: new ConfigManager(configPath, (text) => text), configPath }
 }
 
 async function testConnection(body: Record<string, unknown>): Promise<MockResponse> {

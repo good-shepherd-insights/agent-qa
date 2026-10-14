@@ -216,6 +216,7 @@ async function openScene(input: { fixture: Fixture }): Promise<Scene> {
   )
 
   const started = await startServer({
+    declaredSecretMask: (text) => text,
     db,
     port: 0,
     uiDir: UI_DIR,

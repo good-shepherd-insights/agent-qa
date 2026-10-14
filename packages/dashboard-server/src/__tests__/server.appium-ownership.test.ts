@@ -245,6 +245,7 @@ async function startDashboard(opts: { configContent?: string; llm?: boolean } = 
   currentDb = db
   const { configPath, workspacePaths } = createConfigPath(opts.configContent)
   started = await startServer({
+    declaredSecretMask: (text) => text,
     db,
     port: 0,
     configPath,

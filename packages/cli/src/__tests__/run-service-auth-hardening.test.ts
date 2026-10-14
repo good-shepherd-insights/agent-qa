@@ -149,6 +149,7 @@ async function openRunService(input: WorkspaceInput = {}): Promise<ServiceFixtur
   const runService = composeRunServicePorts({ door: runDoor })
 
   const started = await startServer({
+    declaredSecretMask: (text) => text,
     db,
     port: 0,
     configPath,

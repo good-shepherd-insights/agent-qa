@@ -111,7 +111,7 @@ async function scene() {
     boundOrigin: () => undefined, runDetail: createDashboardRunDetailReader(db) })
   const signals = ['SIGINT', 'SIGTERM'] as const
   const beforeListeners = signals.map(signal => new Set(process.listeners(signal)))
-  const server = await startServer({ db, port: 0, uiDir: UI_DIR, configPath: fixture.configPath,
+  const server = await startServer({ declaredSecretMask: (text) => text, db, port: 0, uiDir: UI_DIR, configPath: fixture.configPath,
     workspacePaths: resolveWorkspacePaths({ config, configPath: fixture.configPath }), agentHost: door.agentHost })
   const ownedListeners = signals.map((signal, index) => process.listeners(signal).filter(listener => !beforeListeners[index].has(listener)))
   closers.push(async () => {

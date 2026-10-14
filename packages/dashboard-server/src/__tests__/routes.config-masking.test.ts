@@ -6,7 +6,6 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { CONFIG_MASK_PLACEHOLDER } from '@vostride/agent-qa-schema'
 
 import { ConfigManager } from '../config/index.js'
 import { createRouter } from '../server/routes.js'
@@ -38,8 +37,6 @@ interface MockResponse {
 interface FileLine {
   n: number
   text: string
-  class?: string
-  path?: unknown[]
 }
 
 const HOST = '127.0.0.1:4317'
@@ -183,14 +180,22 @@ const secretConfig = [
   '',
 ].join('\n')
 
-async function useConfigWorkspace(initialConfig = secretConfig): Promise<string> {
+function declaredMask(declared: Record<string, string>): (text: string) => string {
+  return (text) => Object.entries(declared)
+    .reduce((shown, [name, value]) => shown.split(value).join(`[secret:${name}]`), text)
+}
+
+async function useConfigWorkspace(
+  initialConfig = secretConfig,
+  mask: (text: string) => string = (text) => text,
+): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'agent-qa-config-masking-'))
   tempDirs.push(dir)
   const configPath = join(dir, 'agent-qa.config.yaml')
   await writeFile(configPath, initialConfig, 'utf-8')
   router = createRouter({
     db: createMockDatabase() as any,
-    configManager: new ConfigManager(configPath),
+    configManager: new ConfigManager(configPath, mask),
     configPath,
   })
   return configPath
@@ -220,32 +225,28 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
 })
 
-describe('GET /api/config masked by the one map (429-06)', () => {
-  it('GET-CARRIES-NO-SECRET: every secret-class value reads [masked] whole and no auth.json value is sent', async () => {
-    await useConfigWorkspace()
+describe('GET /api/config through the declared mask (441-21, D-29)', () => {
+  it('GET-CARRIES-NO-SECRET: every declared value reads as its marker, an undeclared one as written, and no auth.json value is sent', async () => {
+    await useConfigWorkspace(secretConfig, declaredMask({ FARM_KEY: SENTINELS.farm, ROUTE_KEY: SENTINELS.header }))
 
     const { response, body } = await getConfig()
 
     expect(response.status).toBe(200)
-    for (const sentinel of [...Object.values(SENTINELS), AUTH_SENTINEL]) {
+    for (const sentinel of [SENTINELS.farm, SENTINELS.header, AUTH_SENTINEL]) {
       expect(response.body).not.toContain(sentinel)
     }
-    expect(response.body).not.toContain('DO-NOT-LEAK')
     const { config } = body
-    expect(config.registry.llms[0].providerHeaders['x-org-route']).toBe(CONFIG_MASK_PLACEHOLDER)
-    expect(config.registry.providers.farm.accessKey).toBe(CONFIG_MASK_PLACEHOLDER)
-    expect(config.registry.providers.farm.certificate).toBe(CONFIG_MASK_PLACEHOLDER)
-    expect(config.registry.devices.phone.match.udid).toBe(CONFIG_MASK_PLACEHOLDER)
-    expect(config.analytics.passRateScope.attributes.branch).toBe(CONFIG_MASK_PLACEHOLDER)
-    expect(config.workspace.secretsFile).toBe(CONFIG_MASK_PLACEHOLDER)
+    expect(config.registry.llms[0].providerHeaders['x-org-route']).toBe('[secret:ROUTE_KEY]')
+    expect(config.registry.providers.farm.accessKey).toBe('[secret:FARM_KEY]')
+    expect(config.registry.providers.farm.certificate)
+      .toBe(`${SENTINELS.certificate}-one\n${SENTINELS.certificate}-two\n`)
+    expect(config.registry.devices.phone.match.udid).toBe(SENTINELS.udid)
+    expect(config.analytics.passRateScope.attributes.branch).toBe(SENTINELS.attribute)
+    expect(config.workspace.secretsFile).toBe(SENTINELS.secretsFile)
     expect(config.registry.llms[0].baseURL).toBe('https://llm.example.test/v1')
     const lines = body.file.lines as FileLine[]
-    expect(lineHolding(lines, 'accessKey:').text).toBe(
-      `      accessKey: "${CONFIG_MASK_PLACEHOLDER}"`,
-    )
-    expect(lineHolding(lines, 'x-org-route:').text).toBe(
-      `        x-org-route: "${CONFIG_MASK_PLACEHOLDER}"`,
-    )
+    expect(lineHolding(lines, 'accessKey:').text).toBe('      accessKey: [secret:FARM_KEY] # rotated by the owner')
+    expect(lineHolding(lines, 'x-org-route:').text).toBe('        x-org-route: [secret:ROUTE_KEY]')
   })
 
   // 432-22 (D-12): re-spelled. The two env-var-name leaves were the MCP and run-service token
@@ -276,56 +277,24 @@ describe('GET /api/config masked by the one map (429-06)', () => {
     expect(body.file.path).toBe(configPath)
     const lines = body.file.lines as FileLine[]
     expect(lines.map((line) => line.n)).toEqual(lines.map((_, i) => i + 1))
-    expect(lines.some((line) => line.text.includes('owner notes'))).toBe(false)
-    expect(lines[0]).toEqual({ n: 1, text: 'workspace:' })
+    expect(lines.map((line) => line.text)).toEqual(onDisk.trimEnd().split('\n'))
+    expect(lines[0]).toEqual({ n: 1, text: '# owner notes: the farm key rotates monthly' })
     expect(lineHolding(lines, 'package:').text).toBe('    - package: "@example/agent-qa-auth"')
     expect(body).not.toHaveProperty('fileIssues')
   })
 
-  it('FILE-VIEW-LINES-CLASSED: secret lines carry their class and path, tagged on the masked text', async () => {
-    await useConfigWorkspace()
+  it('FILE-VIEW-LINES-UNCLASSED: every line is the file line through the mask, with no class or path tag', async () => {
+    await useConfigWorkspace(secretConfig, declaredMask({ CERT: SENTINELS.certificate }))
 
     const { body } = await getConfig()
     const lines = body.file.lines as FileLine[]
 
-    expect(lineHolding(lines, 'accessKey:')).toMatchObject({
-      class: 'secret',
-      path: ['registry', 'providers', 'farm', 'accessKey'],
-    })
-    expect(lineHolding(lines, 'x-org-route:')).toMatchObject({
-      class: 'secret',
-      path: ['registry', 'llms', { name: 'gpt' }, 'providerHeaders', 'x-org-route'],
-    })
-    expect(lineHolding(lines, 'udid:')).toMatchObject({
-      class: 'secret',
-      path: ['registry', 'devices', 'phone', 'match', 'udid'],
-    })
-    expect(lineHolding(lines, 'branch:')).toMatchObject({
-      class: 'secret',
-      path: ['analytics', 'passRateScope', 'attributes', 'branch'],
-    })
-    expect(lineHolding(lines, 'secretsFile:')).toMatchObject({
-      class: 'secret',
-      path: ['workspace', 'secretsFile'],
-    })
-    // The three-line block scalar is masked onto one line and the head comment line is not served,
-    // so the view is three lines shorter than the file.
+    expect(lines).toHaveLength(secretConfig.trimEnd().split('\n').length)
+    for (const line of lines) expect(Object.keys(line).sort()).toEqual(['n', 'text'])
     const certificate = lineHolding(lines, 'certificate:')
-    expect(certificate).toMatchObject({
-      text: `      certificate: "${CONFIG_MASK_PLACEHOLDER}"`,
-      class: 'secret',
-    })
-    expect(lines[certificate.n]!.text).toBe('  devices:')
-    expect(lines).toHaveLength(secretConfig.trimEnd().split('\n').length - 3)
-    for (const plain of [
-      '  llm: gpt',
-      '      baseURL: https://llm.example.test/v1',
-      '    appState: preserve',
-    ]) {
-      const line = lineHolding(lines, plain)
-      expect(line).not.toHaveProperty('class')
-      expect(line).not.toHaveProperty('path')
-    }
+    expect(lines[certificate.n]!.text).toBe('        [secret:CERT]-one')
+    expect(lines[certificate.n + 1]!.text).toBe('        [secret:CERT]-two')
+    expect(lineHolding(lines, 'udid:').text).toBe(`        udid: ${SENTINELS.udid}`)
   })
 
   it('REVISION-CHANGES-ON-OUTSIDE-EDIT: the revision read follows the bytes and matches a PATCH answer', async () => {
@@ -378,7 +347,10 @@ describe('GET /api/config masked by the one map (429-06)', () => {
   })
 
   it('GET-FILE-ISSUES: a file that parses but fails whole-config validation answers 200 naming each issue', async () => {
-    await useConfigWorkspace(secretConfig.replace('  llm: gpt', '  llm: missing-model'))
+    await useConfigWorkspace(
+      secretConfig.replace('  llm: gpt', '  llm: missing-model'),
+      declaredMask(Object.fromEntries(Object.entries(SENTINELS).map(([name, value]) => [name.toUpperCase(), value]))),
+    )
 
     const { response, body } = await getConfig()
 
@@ -426,24 +398,26 @@ const commentedConfig = [
   '',
 ].join('\n')
 
-describe('GET /api/config serves no comment text (429-41, CR-02)', () => {
-  it('COMMENTED-SECRET-NEVER-SERVED: no comment, and so no commented secret, reaches the read payload', async () => {
-    const configPath = await useConfigWorkspace(commentedConfig)
+describe('GET /api/config serves comments through the declared mask (441-21, D-29)', () => {
+  it('COMMENTED-SECRET-MASKED: a comment is served as written, and a declared value in it reads as its marker', async () => {
+    const [oldSecret, prevSecret, liveSecret] = commentedSecrets
+    const configPath = await useConfigWorkspace(
+      commentedConfig,
+      declaredMask({ OLD_KEY: oldSecret!, LIVE_KEY: liveSecret! }),
+    )
 
     const { response, body } = await getConfig()
 
     expect(response.status).toBe(200)
     const served = JSON.stringify(body)
-    for (const planted of [...commentedSecrets, ...Object.values(COMMENT_SENTINELS)]) {
-      expect(served).not.toContain(planted)
-    }
+    expect(served).not.toContain(oldSecret)
+    expect(served).not.toContain(liveSecret)
     const lines = body.file.lines as FileLine[]
     expect(lines.map((line) => line.n)).toEqual(lines.map((_, i) => i + 1))
-    expect(lines.some((line) => line.text.includes('#'))).toBe(false)
-    expect(lineHolding(lines, 'x-team:')).toMatchObject({
-      text: `        x-team: "${CONFIG_MASK_PLACEHOLDER}"`,
-      class: 'secret',
-    })
+    expect(lineHolding(lines, COMMENT_SENTINELS.head).text).toBe(`# ${COMMENT_SENTINELS.head}`)
+    expect(lineHolding(lines, 'x-api-key:').text).toBe('        # x-api-key: [secret:OLD_KEY]')
+    expect(lineHolding(lines, 'x-team:').text).toBe(`        x-team: "[secret:LIVE_KEY]" # was ${prevSecret}`)
+    expect(body.config.registry.llms[0].providerHeaders['x-team']).toBe('[secret:LIVE_KEY]')
     expect(body.config.workspace.testMatch).toEqual(['tests/**/*.yaml', 'more/**/*.yaml'])
     const onDisk = await readFile(configPath, 'utf-8')
     expect(onDisk).toBe(commentedConfig)

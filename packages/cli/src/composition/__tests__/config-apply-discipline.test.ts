@@ -192,7 +192,7 @@ function registryFor(overrides: Partial<FunctionDeps> = {}) {
     configValidate: createConfigValidatePort(),
     // 432-16 (D-07): no config apply port and no undo source — the production host binds neither.
     // 432-11: the direct writer the config operations publish through.
-    configWrite: createConfigWritePort(configPath),
+    configWrite: createConfigWritePort(configPath, (text) => text),
     // 395-11: the ONE seam a cell may replace, spread last and empty for every cell but the
     // rejected-case one. Every other dependency above stays production's.
     ...overrides,
@@ -328,7 +328,7 @@ describe('D-05: the human commits first, and the agent commits only what was app
   // path outside the workspace before anything is written.
   it('(3) a publication outside the workspace is refused, and nothing is written or committed', async () => {
     const before = repositoryState()
-    const outcome = await createConfigWritePort(configPath).publishFiles({
+    const outcome = await createConfigWritePort(configPath, (text) => text).publishFiles({
       files: [{ path: '../outside.yaml', bytes: utf8Encode('outside: true\n') }],
     })
 
@@ -343,7 +343,7 @@ describe('CFGM-04: a concurrent human edit always beats the agent (D-18)', () =>
   // RE-SPELLED 2026-10-01 (432-16): the two racers were applies of pre-432 proposals; they are now
   // two whole-file publications built from the same bytes.
   it('(4) two publications racing over one file: the second refuses at the digest re-check', async () => {
-    const port = createConfigWritePort(configPath)
+    const port = createConfigWritePort(configPath, (text) => text)
     const base = configDigest()
     const first = utf8Encode(SEEDED_CONFIG.replace('step: 30s', 'step: 45s'))
     const second = utf8Encode(SEEDED_CONFIG.replace('step: 30s', 'step: 50s'))
@@ -364,7 +364,7 @@ describe('CFGM-04: a concurrent human edit always beats the agent (D-18)', () =>
     const base = configDigest()
     writeFileSync(configPath, SEEDED_CONFIG.replace('navigation: 2m', 'navigation: 5m'))
 
-    const refused = await createConfigWritePort(configPath).publishFiles({
+    const refused = await createConfigWritePort(configPath, (text) => text).publishFiles({
       files: [{
         path: 'agent-qa.config.yaml',
         baseDigest: base,
@@ -389,7 +389,7 @@ describe('CFGM-04: a concurrent human edit always beats the agent (D-18)', () =>
     writeFileSync(configPath, humanEdit)
     const before = repositoryState()
 
-    expect((await createConfigWritePort(configPath).publishFiles({
+    expect((await createConfigWritePort(configPath, (text) => text).publishFiles({
       files: [{
         path: 'agent-qa.config.yaml',
         baseDigest: base,
@@ -408,7 +408,7 @@ describe('CFGM-04: a concurrent human edit always beats the agent (D-18)', () =>
     const humanEdit = SEEDED_CONFIG.replace('navigation: 2m', 'navigation: 5m')
     writeFileSync(configPath, humanEdit)
     git('commit', '--quiet', '-m', 'human raises the navigation budget', '--', 'agent-qa.config.yaml')
-    expect((await createConfigWritePort(configPath).publishFiles({
+    expect((await createConfigWritePort(configPath, (text) => text).publishFiles({
       files: [{ path: 'agent-qa.config.yaml', baseDigest: base, bytes: utf8Encode(SEEDED_CONFIG) }],
     })).kind).toBe('refused')
 
@@ -432,7 +432,7 @@ describe('the multi-file rollback: an interrupted apply leaves no partial config
     chmodSync(locked, 0o555)
     let outcome: unknown
     try {
-      outcome = await createConfigWritePort(configPath).publishFiles({
+      outcome = await createConfigWritePort(configPath, (text) => text).publishFiles({
         files: [
           { path: 'locked/hooks.yaml', bytes: utf8Encode('hooks: []\n') },
           {

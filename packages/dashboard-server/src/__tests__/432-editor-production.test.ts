@@ -269,7 +269,7 @@ beforeEach(async () => {
   resetEffects()
   project = await mkdtemp(join(tmpdir(), 'editor-production-'))
   configPath = join(project, 'agent-qa.config.yaml')
-  configManager = new ConfigManager(configPath)
+  configManager = new ConfigManager(configPath, (text) => text)
   await writeConfig()
   await Promise.all([
     writeFile(join(project, 'hooks.yaml'), 'hooks: []\n', 'utf-8'),

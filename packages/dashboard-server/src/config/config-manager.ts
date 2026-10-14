@@ -8,26 +8,22 @@ import {
   isAlias,
   isMap,
   isNode,
-  isPair,
   isScalar,
   isSeq,
-  LineCounter,
   parseDocument,
-  Scalar,
   visit,
   type Node,
 } from 'yaml'
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
 import {
-  classifyConfigPath,
   CONFIG_MASK_PLACEHOLDER,
   CONFIG_NAMED_ARRAYS,
   CONFIG_REVISION_ABSENT,
   type ConfigChange,
-  type MaskingClass,
   type ConfigPathSegment,
   type ConfigWriteIssue,
   type ConfigWriteRefusal,
+  type MaskFn,
 } from '@vostride/agent-qa-schema'
 
 export type ApplyChangesOutcome =
@@ -66,11 +62,10 @@ export type ConfigReadOutcome =
   | { kind: 'absent' }
   | { kind: 'file_invalid'; message: string; revision: string }
 
-/** One line of the masked config file. `path` is the segment path of the secret the line holds. */
+/** One line of the config file, as the declared mask shows it. */
 export interface ConfigFileLine {
   n: number
   text: string
-  class?: Exclude<MaskingClass, 'plain'>
   path?: ConfigPathSegment[]
 }
 
@@ -161,7 +156,7 @@ export async function readConfigValues(manager: ConfigManager): Promise<Record<s
 }
 
 export class ConfigManager {
-  constructor(private configPath: string) {}
+  constructor(private configPath: string, private mask: MaskFn) {}
 
   // 429-05 Pitfall 3: a half-edited file is named, never served as the partial config yaml recovers.
   async readWithRevision(): Promise<ConfigReadOutcome> {
@@ -170,26 +165,23 @@ export class ConfigManager {
     return { kind: 'ok', config: read.config, raw: read.raw, revision: read.revision }
   }
 
-  // 429-06 D-08: every value the map classes secret is replaced whole, in the payload and in the
-  // file view, and the view is tagged on the masked text because masking changes line counts.
+  // 441-21 D-29: the payload and the file view pass through the declared mask and nothing else.
   async readMasked(): Promise<MaskedConfigOutcome> {
     const read = await this.readParsed()
     if (read.kind === 'absent') {
       return { kind: 'ok', config: {}, revision: CONFIG_REVISION_ABSENT, lines: [], fileIssues: [] }
     }
     if (read.kind === 'file_invalid') return read
-    const secretValues: string[] = []
-    const masked = maskDocument(read.doc, secretValues)
-    stripComments(masked)
-    const config = (maskByMap(masked.toJSON(), []) as Record<string, unknown> | null) ?? {}
+    const masked = maskDocument(read.doc, this.mask)
+    const config = (masked.toJSON() as Record<string, unknown> | null) ?? {}
     const parsed = AgentQaConfigSchema.safeParse(normalizeForValidation(read.config))
     const fileIssues = parsed.success
       ? []
       : parsed.error.issues.map((issue) => ({
         path: issue.path.map((key) => (typeof key === 'number' ? key : String(key))),
-        message: redactSecrets(issue.message, secretValues),
+        message: issue.message,
       }))
-    const lines = classifyLines(masked.toString())
+    const lines = fileLines(this.mask(read.raw))
     return { kind: 'ok', config, revision: read.revision, lines, fileIssues }
   }
 
@@ -326,12 +318,8 @@ export class ConfigManager {
     }
     // yaml recovers a partial tree from a broken file and refuses to stringify it: never rewrite one.
     if (doc.errors.length > 0) return { kind: 'refused', error: 'file_invalid' }
-    // 429-42 CR-01: a write computed from the page's snapshot names what it read; every expect is
-    // checked against the file as read, before anything applies. A secret is never compared.
+    // 429-42 CR-01: every expect is checked against the file as read, before anything applies.
     const expects = changes.filter((change) => change.op === 'expect')
-    if (expects.some((change) => classifySegments(change.path) === 'secret')) {
-      return { kind: 'refused', error: 'path_not_writable' }
-    }
     for (const change of expects) {
       if (!isDeepStrictEqual(expectedFieldValue(doc, change.path), change.value ?? null)) {
         return { kind: 'refused', error: 'field_changed', path: [...change.path] }
@@ -493,9 +481,7 @@ function unsetAndPrune(doc: Document, path: ResolvedPath): void {
   }
 }
 
-// 429-52 (deferred 429-24): a rename re-keys the file's own node, value and comments, so the value
-// never travels. Both ends must share a masking class, or a secret could land on a field served in
-// clear. The value lands before from is pruned, so an emptied parent goes only once it has moved.
+// 429-52: a rename re-keys the file's own node, which lands before from is pruned.
 function moveField(
   doc: Document,
   from: readonly ConfigPathSegment[],
@@ -505,14 +491,8 @@ function moveField(
   const fromPath = resolvePath(doc, from)
   const toPath = resolvePath(doc, to)
   if (fromPath === undefined || toPath === undefined) return { kind: 'refused', error: 'path_not_found' }
-  if (classifySegments(from) !== classifySegments(to)) return { kind: 'refused', error: 'path_not_writable' }
   const node = nodeAt(doc, fromPath)
   if (node === undefined) return { kind: 'refused', error: 'path_not_found' }
-  // A block whose ends share a class can still hold leaves that class differently at the new key.
-  const leaves = leafPaths(isNode(node) ? node.toJS(doc) : node)
-  if (leaves.some((leaf) => classifySegments([...from, ...leaf]) !== classifySegments([...to, ...leaf]))) {
-    return { kind: 'refused', error: 'path_not_writable' }
-  }
   if (samePath(fromPath, toPath)) return { kind: 'ok', priors: [] }
   // A field moved inside itself, or onto an ancestor, would be deleted with its old key.
   if (isPrefix(fromPath, toPath) || isPrefix(toPath, fromPath)) {
@@ -533,15 +513,6 @@ function moveField(
       { kind: 'path', path: [...to], before, after: fieldState(doc, toPath) },
     ],
   }
-}
-
-// The path of every leaf below a value, relative to it; a scalar or an empty block is its own leaf.
-function leafPaths(value: unknown): (string | number)[][] {
-  const entries: [string | number, unknown][] = Array.isArray(value)
-    ? value.map((item, i) => [i, item])
-    : typeof value === 'object' && value !== null ? Object.entries(value) : []
-  if (entries.length === 0) return [[]]
-  return entries.flatMap(([key, item]) => leafPaths(item).map((leaf) => [key, ...leaf]))
 }
 
 function isPrefix(prefix: ResolvedPath, path: ResolvedPath): boolean {
@@ -632,127 +603,24 @@ function parseErrorSummary(doc: Document): string {
   return first.split('\n')[0]!.replace(/:\s*$/, '')
 }
 
-type VisitPath = readonly unknown[]
-
-// The segment path of a node inside a pair value or a sequence item; undefined for a mapping key.
-// With `named`, an entry of a named array that carries a unique name is addressed by `{ name }`.
-function nodeSegments(
-  key: unknown,
-  node: unknown,
-  path: VisitPath,
-  named = false,
-): ConfigPathSegment[] | undefined {
-  if (key === 'key') return undefined
-  const segments: ConfigPathSegment[] = []
-  const plain: (string | number)[] = []
-  for (let i = 0; i < path.length; i++) {
-    const ancestor = path[i]
-    const child = i + 1 < path.length ? path[i + 1] : node
-    if (isPair(ancestor)) {
-      if (child === ancestor.key) return undefined
-      const segment = isScalar(ancestor.key) ? String(ancestor.key.value) : String(ancestor.key)
-      segments.push(segment)
-      plain.push(segment)
-    } else if (isSeq(ancestor)) {
-      const index = ancestor.items.indexOf(child as never)
-      const inNamedArray = named && NAMED_ARRAY_PATHS.some((arrayPath) => samePath(arrayPath, plain))
-      const name = inNamedArray ? uniqueName(ancestor.items, child) : undefined
-      segments.push(name === undefined ? index : { name })
-      plain.push(index)
-    }
-  }
-  return segments
-}
-
-function uniqueName(items: readonly unknown[], child: unknown): string | undefined {
-  if (!isMap(child)) return undefined
-  const name = child.get('name')
-  if (typeof name !== 'string') return undefined
-  const matches = items.filter((item) => isMap(item) && item.get('name') === name)
-  return matches.length === 1 ? name : undefined
-}
-
-function classifySegments(segments: readonly ConfigPathSegment[]): MaskingClass {
-  return classifyConfigPath(segments.map((segment) => (typeof segment === 'object' ? 0 : segment)))
-}
-
-function maskDocument(doc: Document, secretValues: string[]): Document {
+// Every scalar, key or value, is replaced by what the mask shows for it. An alias reads its masked anchor.
+function maskDocument(doc: Document, mask: MaskFn): Document {
   const masked = doc.clone()
   visit(masked, {
-    Scalar(key, node, path) {
-      const segments = nodeSegments(key, node, path)
-      if (segments === undefined || node.value === null || node.value === undefined) return
-      if (classifySegments(segments) !== 'secret' || node.value === CONFIG_MASK_PLACEHOLDER) return
-      secretValues.push(String(node.value))
-      node.value = CONFIG_MASK_PLACEHOLDER
-      node.type = undefined
-    },
-    // An alias at a secret path would carry the anchored value into the payload in clear.
-    Alias(key, node, path) {
-      const segments = nodeSegments(key, node, path)
-      if (segments !== undefined && classifySegments(segments) === 'secret') {
-        return new Scalar(CONFIG_MASK_PLACEHOLDER)
-      }
-      return undefined
+    Scalar(_key, node) {
+      if (node.value === null || node.value === undefined) return
+      const text = String(node.value)
+      const shown = mask(text)
+      if (shown !== text) node.value = shown
     },
   })
   return masked
 }
 
-// 429-41 (CR-02): every comment goes, because secrecy is never decided from text (D-08).
-function stripComments(doc: Document): void {
-  doc.commentBefore = null
-  doc.comment = null
-  visit(doc, {
-    Node(_key, node) {
-      node.commentBefore = undefined
-      node.comment = undefined
-    },
-  })
-}
-
-function maskByMap(value: unknown, segments: (string | number)[]): unknown {
-  if (Array.isArray(value)) return value.map((item, i) => maskByMap(item, [...segments, i]))
-  if (typeof value === 'object' && value !== null) {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, item]) => [
-        key,
-        maskByMap(item, [...segments, key]),
-      ]),
-    )
-  }
-  if (value === null || value === undefined) return value
-  return classifyConfigPath(segments) === 'secret' ? CONFIG_MASK_PLACEHOLDER : value
-}
-
-function classifyLines(text: string): ConfigFileLine[] {
-  const lineCounter = new LineCounter()
-  const doc = parseDocument(text, { lineCounter })
-  const tags = new Map<number, Pick<ConfigFileLine, 'class' | 'path'>>()
-  visit(doc, {
-    Scalar(key, node, path) {
-      if (node.range === undefined || node.range === null || node.value === null) return
-      const segments = nodeSegments(key, node, path, true)
-      if (segments === undefined) return
-      const maskingClass = classifySegments(segments)
-      if (maskingClass === 'plain') return
-      const { line } = lineCounter.linePos(node.range[0])
-      const existing = tags.get(line)
-      if (existing?.class === 'secret') return
-      if (maskingClass === 'secret') tags.set(line, { class: 'secret', path: segments })
-      else if (existing === undefined) tags.set(line, { class: 'env-var-name' })
-    },
-  })
+function fileLines(text: string): ConfigFileLine[] {
   const texts = text.split('\n')
   if (texts.length > 0 && texts[texts.length - 1] === '') texts.pop()
-  return texts.map((lineText, i) => ({ n: i + 1, text: lineText, ...tags.get(i + 1) }))
-}
-
-// A validation message may quote the value it rejects; a secret one never reaches the page.
-function redactSecrets(message: string, secretValues: readonly string[]): string {
-  return secretValues.some((value) => value.length >= 4 && message.includes(value))
-    ? 'This value is not valid.'
-    : message
+  return texts.map((lineText, i) => ({ n: i + 1, text: lineText }))
 }
 
 function revisionOf(content: string): string {

@@ -39,7 +39,7 @@ beforeEach(async () => {
       invokeFunction(handle as unknown as FunctionRegistry, id, input, caller),
   } as unknown as AgentHost
   db = new DashboardDatabase({ dbPath: ':memory:' })
-  const started = await startServer({ db, port: 0, agentHost: host })
+  const started = await startServer({ declaredSecretMask: (text) => text, db, port: 0, agentHost: host })
   close = started.close
   origin = `http://127.0.0.1:${(started.server.address() as AddressInfo).port}`
   url = `${origin}/api/runs/${runId}/artifacts/${sha}`

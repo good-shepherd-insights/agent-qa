@@ -913,6 +913,7 @@ export async function withRunServiceDoor<Answer>(
     agentHost,
   })
   const started = await startServer({
+    declaredSecretMask: (text) => text,
     db,
     port: 0,
     configPath: fixture.configPath,

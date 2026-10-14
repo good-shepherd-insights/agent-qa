@@ -247,7 +247,7 @@ async function createConfigWorkspace(initialConfig = ''): Promise<{
     'utf-8',
   )
   return {
-    configManager: new ConfigManager(configPath),
+    configManager: new ConfigManager(configPath, (text) => text),
     configPath,
   }
 }

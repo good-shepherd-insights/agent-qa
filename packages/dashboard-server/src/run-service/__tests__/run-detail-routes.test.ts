@@ -311,6 +311,7 @@ async function serveOneRun(options: { withHost?: boolean } = {}): Promise<number
 
   const registry = composeRegistry(createDashboardRunDetailReader(db))
   const started = await startServer({
+    declaredSecretMask: (text) => text,
     db,
     port: 0,
     ...(options.withHost === false ? {} : { agentHost: hostOver(registry) }),
@@ -387,6 +388,7 @@ describe('GET /api/runs/:id/detail — the 405 tracer (D-01/D-03/D-14)', () => {
     const db = new DashboardDatabase({ dbPath: ':memory:' })
     databases.push(db)
     const started = await startServer({
+      declaredSecretMask: (text) => text,
       db,
       port: 0,
       agentHost: hostOver(composeRegistry(undefined)),
@@ -446,7 +448,7 @@ async function serveEvidence() {
   const host: AgentHost = { ...baseHost,
     invokeFunction: (...args) => { seen.push(args[1]); return baseHost.invokeFunction(...args) },
   }
-  const started = await startServer({ db, port: 0, agentHost: host })
+  const started = await startServer({ declaredSecretMask: (text) => text, db, port: 0, agentHost: host })
   closers.push(started.close)
   const remote = createServer(createRunServiceRoutes({ agentHost: host } as unknown as RunServicePorts))
   servers.push(remote)
@@ -606,7 +608,7 @@ async function serveFeedbackReads(options: { withPreview?: boolean; unbound?: bo
   const host: AgentHost = { ...baseHost,
     invokeFunction: (...args) => { seen.push(args[1]); return baseHost.invokeFunction(...args) },
   }
-  const started = await startServer({ db, port: 0, agentHost: host })
+  const started = await startServer({ declaredSecretMask: (text) => text, db, port: 0, agentHost: host })
   closers.push(started.close)
   const remote = createServer(createRunServiceRoutes({ agentHost: host } as unknown as RunServicePorts))
   servers.push(remote)
@@ -625,7 +627,7 @@ async function servePlantedHost(body: unknown) {
   const host = { ...hostOver(composeRegistry(undefined)),
     invokeFunction: () => Promise.resolve(body),
   } as AgentHost
-  const started = await startServer({ db, port: 0, agentHost: host })
+  const started = await startServer({ declaredSecretMask: (text) => text, db, port: 0, agentHost: host })
   closers.push(started.close)
   const remote = createServer(createRunServiceRoutes({ agentHost: host } as unknown as RunServicePorts))
   servers.push(remote)
@@ -848,6 +850,7 @@ async function serveOneArtifact(
     createEvidenceBlobReader({ agentQaRoot: root }),
   )
   const started = await startServer({
+    declaredSecretMask: (text) => text,
     db,
     port: 0,
     ...(options.withHost === false ? {} : { agentHost: hostOver(registry) }),
@@ -1097,7 +1100,7 @@ async function serveBothDoors(body: unknown) {
   const db = new DashboardDatabase({ dbPath: ':memory:' })
   databases.push(db)
   const host = plantedHost(body)
-  const started = await startServer({ db, port: 0, agentHost: host })
+  const started = await startServer({ declaredSecretMask: (text) => text, db, port: 0, agentHost: host })
   closers.push(started.close)
   const remote = createServer(createRunServiceRoutes({ agentHost: host } as unknown as RunServicePorts))
   servers.push(remote)

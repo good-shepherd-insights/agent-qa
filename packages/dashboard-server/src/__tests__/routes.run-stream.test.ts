@@ -567,7 +567,7 @@ describe('the local door CALLS the exported core — one implementation, not two
 
     const db = new DashboardDatabase({ dbPath: ':memory:' })
     const ports = servicePorts()
-    const started = await startServer({ db, port: 0, runService: ports })
+    const started = await startServer({ declaredSecretMask: (text) => text, db, port: 0, runService: ports })
     closers.push(started.close)
     const port = (started.server.address() as AddressInfo).port
 
@@ -700,7 +700,7 @@ describe('the PRODUCTION frame threads the attach port (server.ts, not the route
     // A REAL database rather than the router cells' stub: this frame is the shipped one, and the
     // claim is about what `startServer` wires, so nothing in it should be a lookalike.
     const db = new DashboardDatabase({ dbPath: ':memory:' })
-    const started = await startServer({ db, port: 0, runService: servicePorts() })
+    const started = await startServer({ declaredSecretMask: (text) => text, db, port: 0, runService: servicePorts() })
     closers.push(started.close)
     const port = (started.server.address() as AddressInfo).port
 
@@ -718,7 +718,7 @@ describe('the PRODUCTION frame threads the attach port (server.ts, not the route
     // derivation off `runService` precisely so this composition exists; that is the whole content
     // of the fix, and it is only measurable at the frame that threads it.
     const db = new DashboardDatabase({ dbPath: ':memory:' })
-    const started = await startServer({ db, port: 0, runServiceAttach: attachPort })
+    const started = await startServer({ declaredSecretMask: (text) => text, db, port: 0, runServiceAttach: attachPort })
     closers.push(started.close)
     const port = (started.server.address() as AddressInfo).port
 
@@ -733,7 +733,7 @@ describe('the PRODUCTION frame threads the attach port (server.ts, not the route
     // The header has to survive `node:http`'s own header folding and the server's routing before
     // it reaches the core. A router-only cell cannot see a frame that dropped it.
     const db = new DashboardDatabase({ dbPath: ':memory:' })
-    const started = await startServer({ db, port: 0, runServiceAttach: attachPort })
+    const started = await startServer({ declaredSecretMask: (text) => text, db, port: 0, runServiceAttach: attachPort })
     closers.push(started.close)
     const port = (started.server.address() as AddressInfo).port
 
@@ -749,7 +749,7 @@ describe('the PRODUCTION frame threads the attach port (server.ts, not the route
     // the connection open would hang this cell rather than fail it, which is why the resume-past-
     // the-end row below is driven here too.
     const db = new DashboardDatabase({ dbPath: ':memory:' })
-    const started = await startServer({ db, port: 0, runServiceAttach: attachPort })
+    const started = await startServer({ declaredSecretMask: (text) => text, db, port: 0, runServiceAttach: attachPort })
     closers.push(started.close)
     const port = (started.server.address() as AddressInfo).port
 
@@ -766,7 +766,7 @@ describe('the PRODUCTION frame threads the attach port (server.ts, not the route
 
   it('D-13: refuses the floor with 410 through the shipped frame', async () => {
     const db = new DashboardDatabase({ dbPath: ':memory:' })
-    const started = await startServer({ db, port: 0, runServiceAttach: attachPort })
+    const started = await startServer({ declaredSecretMask: (text) => text, db, port: 0, runServiceAttach: attachPort })
     closers.push(started.close)
     const port = (started.server.address() as AddressInfo).port
 
@@ -779,7 +779,7 @@ describe('the PRODUCTION frame threads the attach port (server.ts, not the route
 
   it('D-15: answers 404 unknown_run for a run this process never started', async () => {
     const db = new DashboardDatabase({ dbPath: ':memory:' })
-    const started = await startServer({ db, port: 0, runServiceAttach: attachPort })
+    const started = await startServer({ declaredSecretMask: (text) => text, db, port: 0, runServiceAttach: attachPort })
     closers.push(started.close)
     const port = (started.server.address() as AddressInfo).port
 
@@ -793,7 +793,7 @@ describe('the PRODUCTION frame threads the attach port (server.ts, not the route
     // is the honest word for that. The shipped command never reaches this composition — it threads
     // `runServiceAttach` on both token arms — but the frame's own answer is still a contract.
     const db = new DashboardDatabase({ dbPath: ':memory:' })
-    const started = await startServer({ db, port: 0 })
+    const started = await startServer({ declaredSecretMask: (text) => text, db, port: 0 })
     closers.push(started.close)
     const port = (started.server.address() as AddressInfo).port
 

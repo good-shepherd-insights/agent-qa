@@ -52,7 +52,7 @@ function fixture() {
 
 async function socket(host?: AgentHost) {
   const db = new DashboardDatabase({ dbPath: ':memory:' })
-  const started = await startServer({ db, port: 0, ...(host === undefined ? {} : { agentHost: host }) })
+  const started = await startServer({ declaredSecretMask: (text) => text, db, port: 0, ...(host === undefined ? {} : { agentHost: host }) })
   closers.push(async () => { started.close(); await new Promise<void>(resolve => started.server.close(() => resolve())); db.close() })
   return `http://127.0.0.1:${String((started.server.address() as AddressInfo).port)}/api/runs/${RUN_ID}/mark`
 }

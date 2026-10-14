@@ -1689,9 +1689,9 @@ function resolvesInsideWorkspace(realConfigDir: string, absolutePath: string): b
   }
 }
 
-async function dashboardConfigManager(path: string) {
+async function dashboardConfigManager(path: string, mask: MaskFn) {
   const { ConfigManager } = await import('@vostride/agent-qa-dashboard')
-  return new ConfigManager(path)
+  return new ConfigManager(path, mask)
 }
 
 /**
@@ -1708,14 +1708,14 @@ async function dashboardConfigManager(path: string) {
  *
  * The dashboard package is imported when a write happens, not when a host is composed.
  */
-export function createConfigWritePort(configPath: string): ConfigWritePort {
+export function createConfigWritePort(configPath: string, mask: MaskFn): ConfigWritePort {
   const absoluteConfigPath = resolve(configPath)
   const configDir = dirname(absoluteConfigPath)
   const configIdentity = workspaceRelativeIdentityPath(configDir, absoluteConfigPath)
 
   return {
     async applyFields({ changes }) {
-      const outcome = await (await dashboardConfigManager(absoluteConfigPath)).applyChanges(changes)
+      const outcome = await (await dashboardConfigManager(absoluteConfigPath, mask)).applyChanges(changes)
       if (outcome.kind === 'ok') {
         return {
           kind: 'applied',
@@ -1768,7 +1768,7 @@ export function createConfigWritePort(configPath: string): ConfigWritePort {
         const unwritten = planned.slice(index + 1).map((entry) => entry.identity)
         let replaced: Awaited<ReturnType<Awaited<ReturnType<typeof dashboardConfigManager>>['replaceDocument']>>
         try {
-          const manager = await dashboardConfigManager(file.absolutePath)
+          const manager = await dashboardConfigManager(file.absolutePath, mask)
           replaced = await manager.replaceDocument(file.expected, file.bytes)
         } catch (error) {
           return {
@@ -2011,7 +2011,7 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     // from — so there is no host posture in which a CLI has it unavailable.
     scaffoldContent: createScaffoldContentPort(),
     // 432-07 D-05/D-07: the direct config writer every config change op writes through.
-    configWrite: createConfigWritePort(input.configPath),
+    configWrite: createConfigWritePort(input.configPath, declaredSecrets.mask),
     // 398 D-09/D-11 · XPLN-02: the catalog port `agent.explain` binds through, constructed HERE
     // and bound unconditionally — a CLI always ships beside the committed capability catalog, so
     // there is no CLI posture in which the capability is genuinely unavailable. Binding it here is

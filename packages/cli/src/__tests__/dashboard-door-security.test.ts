@@ -139,6 +139,7 @@ async function openDoor(options: {
   const signals = ['SIGINT', 'SIGTERM'] as const
   const before = signals.map((signal) => new Set(process.listeners(signal)))
   const started = await startServer({
+    declaredSecretMask: (text) => text,
     db,
     port: 0,
     // 2026-10-03 (quick-261003-tsr, WR-07): the fixture's own config, so the config and undo arms

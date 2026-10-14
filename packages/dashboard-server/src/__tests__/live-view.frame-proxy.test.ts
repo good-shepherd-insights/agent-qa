@@ -197,6 +197,7 @@ async function productionFrame(sessions: Record<string, RunSession>): Promise<Fr
   const db = new DashboardDatabase({ dbPath: ':memory:' })
   const attach = vi.fn((runId: string): RunSession | undefined => sessions[runId])
   const started = await startServer({
+    declaredSecretMask: (text) => text,
     db,
     port: 0,
     runServiceAttach: attach,

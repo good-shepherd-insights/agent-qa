@@ -37,6 +37,7 @@ import type {
   FunctionCaller,
   MaskedConfigEntry,
   MaskedResolvedConfig,
+  MaskFn,
   RunEventEnvelope,
   RunServiceReadiness,
   RunSession,
@@ -338,6 +339,8 @@ export interface DashboardDoorInput {
 export interface DashboardDoor {
   readonly host: LocalAgentHost
   readonly agentHost: AgentHost
+  // 441-21 (D-29): the mask the host and its config reader share, for the server's config editor.
+  readonly declaredSecretMask: MaskFn
   // 2026-10-01 (432-14, D-14/D-15): the published posture measurement and the run-trigger scope
   // entry are deleted with the posture and the scope. The run door needs nothing back from this
   // composition but the host (`bindHost`).
@@ -410,6 +413,7 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
   return {
     host,
     agentHost: composeDashboardAgentHost(host),
+    declaredSecretMask: declaredSecrets.mask,
   }
 }
 
@@ -1215,7 +1219,7 @@ async function startDashboardBackedServices(
       editorCapabilityOf: editorSubjects.capabilityOf,
     })
 
-    const { agentHost, host: runHost } = composeDashboardDoor({
+    const { agentHost, host: runHost, declaredSecretMask } = composeDashboardDoor({
       agentQaRoot: resolve(configDir, '.agent-qa'),
       configPath: configFilePath,
       boundOrigin: () => boundOrigin,
@@ -1298,6 +1302,7 @@ async function startDashboardBackedServices(
       artifactsDir: resolve(configDir, artifactsDir),
       workspacePaths,
       configPath: configFilePath,
+      declaredSecretMask,
       llmConfig: dashboardLLMConfig,
       authFetch,
       agentHost,

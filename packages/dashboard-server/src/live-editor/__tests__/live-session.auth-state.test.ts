@@ -197,7 +197,7 @@ describe('LiveSession.captureWebAuthState', () => {
 
     tempDir = await mkdtemp(join(tmpdir(), 'agent-qa-live-auth-state-'))
     configPath = join(tempDir, 'agent-qa.config.yaml')
-    configManager = new ConfigManager(configPath)
+    configManager = new ConfigManager(configPath, (text) => text)
     await writeFile(configPath, [
       'services:',
       '  authState:',

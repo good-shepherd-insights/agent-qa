@@ -130,7 +130,7 @@ async function applyAnalyticsScopeConfig(content: string): Promise<void> {
     workspacePaths,
     testFileManager,
     suiteFileManager,
-    configManager: new ConfigManager(configPath),
+    configManager: new ConfigManager(configPath, (text) => text),
   })
 }
 

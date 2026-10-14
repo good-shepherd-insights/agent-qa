@@ -167,7 +167,7 @@ async function useConfigWorkspace(): Promise<void> {
   await writeFile(configPath, revealConfig, 'utf-8')
   router = createRouter({
     db: createMockDatabase() as any,
-    configManager: new ConfigManager(configPath),
+    configManager: new ConfigManager(configPath, (text) => text),
     configPath,
   })
 }

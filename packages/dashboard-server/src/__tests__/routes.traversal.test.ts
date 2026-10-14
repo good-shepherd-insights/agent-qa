@@ -128,7 +128,7 @@ beforeAll(async () => {
   const configPath = join(tempDir, 'agent-qa.config.yaml')
   writeFileSync(configPath, 'testDir: tests\n')
   db = new DashboardDatabase({ dbPath: ':memory:' })
-  const started = await startServer({ db, port: 0, configPath, agentHost: plantedHost() })
+  const started = await startServer({ declaredSecretMask: (text) => text, db, port: 0, configPath, agentHost: plantedHost() })
   close = started.close
   port = (started.server.address() as AddressInfo).port
 })

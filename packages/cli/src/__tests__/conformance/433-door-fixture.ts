@@ -240,6 +240,7 @@ export async function openDashboardScene(
     settled.push({ runId, status, details })
   })
   const started = await startServer({
+    declaredSecretMask: (text) => text,
     db,
     port: 0,
     configPath: project.configPath,

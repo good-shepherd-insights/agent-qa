@@ -59,6 +59,7 @@ async function serve(input: {
 } = {}): Promise<Served> {
   const db = new DashboardDatabase({ dbPath: ':memory:' })
   const started = await startServer({
+    declaredSecretMask: (text) => text,
     db,
     port: 0,
     ...(input.liveEditorSubjects === undefined ? {} : { liveEditorSubjects: input.liveEditorSubjects }),

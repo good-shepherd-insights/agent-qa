@@ -110,6 +110,7 @@ async function openFixture(): Promise<Fixture> {
   runDoor.bindHost(host)
 
   const started = await startServer({
+    declaredSecretMask: (text) => text,
     db,
     port: 0,
     configPath,

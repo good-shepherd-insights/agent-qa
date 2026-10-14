@@ -137,7 +137,7 @@ async function useConfig(yaml: string): Promise<void> {
   tempDirs.push(dir)
   const configPath = join(dir, 'agent-qa.config.yaml')
   await writeFile(configPath, yaml, 'utf-8')
-  router = createRouter({ db: { getRuns: () => [], close() {} } as any, configManager: new ConfigManager(configPath), configPath })
+  router = createRouter({ db: { getRuns: () => [], close() {} } as any, configManager: new ConfigManager(configPath, (text) => text), configPath })
 }
 
 function registerFakeSubscriptionPlugins(): void {

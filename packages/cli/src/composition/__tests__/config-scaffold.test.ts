@@ -239,7 +239,7 @@ function registryFor(options: { readonly confirm?: boolean } = {}) {
     // THE REAL PRODUCER. Not a double, and not a copy — the factory the CLI composition binds.
     scaffoldContent: createScaffoldContentPort(),
     // 432-11: THE REAL DIRECT WRITER the scaffold publishes through.
-    configWrite: createConfigWritePort(configPath),
+    configWrite: createConfigWritePort(configPath, (text) => text),
   }
 
   return createFunctionRegistry({

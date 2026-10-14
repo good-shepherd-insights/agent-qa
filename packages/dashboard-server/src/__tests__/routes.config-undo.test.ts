@@ -172,7 +172,7 @@ async function useConfig(yaml: string): Promise<string> {
   await writeFile(configPath, yaml, 'utf-8')
   router = createRouter({
     db: { getRuns: () => [], close() {} } as any,
-    configManager: new ConfigManager(configPath),
+    configManager: new ConfigManager(configPath, (text) => text),
     configPath,
   })
   return configPath

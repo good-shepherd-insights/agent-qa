@@ -357,6 +357,7 @@ describe('the /knowledge arm in routes.ts', () => {
     const db = new DashboardDatabase({ dbPath: ':memory:' })
     databases.push(db)
     const started = await startServer({
+      declaredSecretMask: (text) => text,
       db,
       port: 0,
       agentHost: hostOver(composeRegistry(recordedRun())),
@@ -376,7 +377,7 @@ describe('the /knowledge arm in routes.ts', () => {
   it('answers 503 agent_host_unavailable with no agent host — it opens no database instead', async () => {
     const db = new DashboardDatabase({ dbPath: ':memory:' })
     databases.push(db)
-    const started = await startServer({ db, port: 0 })
+    const started = await startServer({ declaredSecretMask: (text) => text, db, port: 0 })
     closers.push(started.close)
     const port = (started.server.address() as AddressInfo).port
 

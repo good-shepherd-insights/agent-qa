@@ -117,7 +117,7 @@ async function listen(server: ReturnType<typeof createServer>): Promise<string> 
 // wires them. Neither restores anything a read masked (441 D-07).
 async function startDoors(f: ReturnType<typeof productionFixture>) {
   const agentHost = composeDashboardAgentHost(f.host)
-  const started = await startServer({ db: f.db, port: 0, agentHost })
+  const started = await startServer({ declaredSecretMask: (text) => text, db: f.db, port: 0, agentHost })
   cleanups.push(() => started.close())
   const address = started.server.address()
   if (address === null || typeof address === 'string') throw new Error('Dashboard fixture did not bind')

@@ -40,7 +40,7 @@ for (const door of ['local', 'remote'] as const) {
       if (door === 'local') {
         const db = new DashboardDatabase({ dbPath: ':memory:' })
         closers.push(() => db.close())
-        const started = await startServer({ db, port: 0, agentHost: host })
+        const started = await startServer({ declaredSecretMask: (text) => text, db, port: 0, agentHost: host })
         server = started.server
         closers.push(started.close)
         path = `/api/runs/media-probe/artifacts/${sha}`

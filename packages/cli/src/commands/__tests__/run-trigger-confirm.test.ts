@@ -148,6 +148,7 @@ async function openScene(input: {
   )
 
   const started = await startServer({
+    declaredSecretMask: (text) => text,
     db,
     port: 0,
     configPath: fixture.configPath,

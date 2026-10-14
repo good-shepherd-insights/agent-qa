@@ -148,7 +148,7 @@ beforeEach(async () => {
   await mkdir(dir, { recursive: true })
   configPath = join(dir, 'agent-qa.config.yaml')
   await writeFile(configPath, SAMPLE_CONFIG)
-  manager = new ConfigManager(configPath)
+  manager = new ConfigManager(configPath, (text) => text)
   router = createRouter({
     db: {
       getRuns: vi.fn(() => []),
@@ -324,11 +324,7 @@ describe('ConfigManager', () => {
       const response = await invokeRoute('/api/config', { headers: { host: SELF_HOST_HEADERS.host } })
       expect(response.status).toBe(200)
       const authored = JSON.parse(response.body).config
-      // 429-06 D-08: the map classes workspace.secretsFile secret, so the read carries it masked whole.
-      expect(authored).toEqual({
-        ...source,
-        workspace: { ...source.workspace, secretsFile: CONFIG_MASK_PLACEHOLDER },
-      })
+      expect(authored).toEqual(source)
       expect(AgentQaConfigSchema.parse(authored).services?.recording)
         .toEqual({ enabled: true, ...recording })
       const section = authored.services?.recording as Record<string, unknown> | undefined
@@ -952,8 +948,12 @@ describe('dashboard compatible auth routes', () => {
   })
 })
 
-describe('ConfigManager map-masked read (429-06)', () => {
-  it('READ-MASKED-ALIASES-FAIL-CLOSED: an alias never carries a secret value past the map in either direction', async () => {
+function declaredMask(value: string, name: string): (text: string) => string {
+  return (text) => text.split(value).join(`[secret:${name}]`)
+}
+
+describe('ConfigManager masked read (441-21)', () => {
+  it('READ-MASKED-ALIASES-FAIL-CLOSED: an alias never carries a declared value past the mask', async () => {
     await writeFile(configPath, [
       'workspace:',
       '  secretsFile: &secret secret-DO-NOT-LEAK.local',
@@ -967,16 +967,46 @@ describe('ConfigManager map-masked read (429-06)', () => {
       '',
     ].join('\n'))
 
-    const read = await manager.readMasked()
+    const read = await new ConfigManager(configPath, declaredMask('DO-NOT-LEAK', 'LEAK')).readMasked()
 
     expect(read.kind).toBe('ok')
     if (read.kind !== 'ok') return
     const config = read.config as { workspace: Record<string, string>; knowledge: { dir: string }; registry: any }
-    expect(config.workspace.secretsFile).toBe(CONFIG_MASK_PLACEHOLDER)
-    expect(config.knowledge.dir).toBe(CONFIG_MASK_PLACEHOLDER)
-    expect(config.registry.providers.farm.accessKey).toBe(CONFIG_MASK_PLACEHOLDER)
+    expect(config.workspace.secretsFile).toBe('secret-[secret:LEAK].local')
+    expect(config.knowledge.dir).toBe('secret-[secret:LEAK].local')
+    expect(config.registry.providers.farm.accessKey).toBe('plain-anchor.env')
     expect(config.workspace.envFile).toBe('plain-anchor.env')
     expect(JSON.stringify(read)).not.toContain('DO-NOT-LEAK')
+  })
+})
+
+describe('C441-CONFIG', () => {
+  it('the config editor shows an undeclared credential as written and a declared value as its marker', async () => {
+    await writeFile(configPath, [
+      'registry:',
+      '  llms:',
+      '    - name: router',
+      '      provider: anthropic-compatible',
+      '      model: claude',
+      '      baseURL: https://example.test/v1',
+      '      providerHeaders:',
+      '        X-Api-Key: plain-441-value',
+      'use:',
+      '  buildTag: Hunter-42-zz',
+      '',
+    ].join('\n'))
+
+    const read = await new ConfigManager(configPath, declaredMask('Hunter-42-zz', 'PW_441')).readMasked()
+
+    expect(read.kind).toBe('ok')
+    if (read.kind !== 'ok') return
+    const config = read.config as { registry: { llms: Array<{ providerHeaders: Record<string, string> }> }; use: Record<string, unknown> }
+    expect(config.registry.llms[0]!.providerHeaders['X-Api-Key']).toBe('plain-441-value')
+    expect(config.use.buildTag).toBe('[secret:PW_441]')
+    expect(read.lines).toContainEqual({ n: 8, text: '        X-Api-Key: plain-441-value' })
+    expect(read.lines).toContainEqual({ n: 10, text: '  buildTag: [secret:PW_441]' })
+    expect(read.lines.every((line) => !('class' in line))).toBe(true)
+    expect(JSON.stringify(read)).not.toContain('Hunter-42-zz')
   })
 })
 
@@ -1013,8 +1043,8 @@ describe('C432-CONFIG-PATH-QUEUE: co-hosted writers of one config path share one
     const alias = `${dir}-alias`
     await symlink(dir, alias)
     try {
-      const first = new ConfigManager(configPath)
-      const second = new ConfigManager(join(alias, 'agent-qa.config.yaml'))
+      const first = new ConfigManager(configPath, (text) => text)
+      const second = new ConfigManager(join(alias, 'agent-qa.config.yaml'), (text) => text)
       const outcomes = await Promise.all(
         Array.from({ length: 24 }, (_, index) =>
           (index % 2 === 0 ? first : second).applyChanges([targetChange(index)])),
@@ -1031,8 +1061,8 @@ describe('C432-CONFIG-PATH-QUEUE: co-hosted writers of one config path share one
   })
 
   it('a stale same-field expectation from the second writer refuses once the first has changed it', async () => {
-    const first = new ConfigManager(configPath)
-    const second = new ConfigManager(configPath)
+    const first = new ConfigManager(configPath, (text) => text)
+    const second = new ConfigManager(configPath, (text) => text)
     const [landed, stale] = await Promise.all([
       first.applyChanges([
         { op: 'expect', path: ['use', 'llm'], value: 'planner' },
@@ -1057,7 +1087,7 @@ describe('C432-CONFIG-PATH-QUEUE: co-hosted writers of one config path share one
     const failed = serializeConfigWrite(configPath, async () => {
       throw new Error('queued failure')
     })
-    const successor = new ConfigManager(configPath).applyChanges([targetChange(2)])
+    const successor = new ConfigManager(configPath, (text) => text).applyChanges([targetChange(2)])
     await expect(failed).rejects.toThrow('queued failure')
     expect((await successor).kind).toBe('ok')
     expect(Object.keys(targetsOf(await readFile(configPath, 'utf-8')))).toEqual(['t2'])
@@ -1084,8 +1114,8 @@ describe('C432-CONFIG-PATH-QUEUE: co-hosted writers of one config path share one
   })
 
   it('dashboard Undo still restores its own field after a co-hosted writer changed a different one', async () => {
-    const dashboard = new ConfigManager(configPath)
-    const coHosted = new ConfigManager(configPath)
+    const dashboard = new ConfigManager(configPath, (text) => text)
+    const coHosted = new ConfigManager(configPath, (text) => text)
     const change = await dashboard.applyChanges(
       [{ op: 'set', path: ['use', 'mobile', 'appState'], value: 'reset' }],
       { capturePriors: true },
@@ -1101,7 +1131,7 @@ describe('C432-CONFIG-PATH-QUEUE: co-hosted writers of one config path share one
   })
 
   it('the PATCH autosave route and a co-hosted writer overlap on one path and every change lands', async () => {
-    const coHosted = new ConfigManager(configPath)
+    const coHosted = new ConfigManager(configPath, (text) => text)
     const [llm, appState, ...targets] = await Promise.all([
       patchConfig([{ op: 'set', path: ['use', 'llm'], value: 'gpt-5.6' }]),
       patchConfig([{ op: 'set', path: ['use', 'mobile', 'appState'], value: 'reset' }]),
@@ -1122,7 +1152,7 @@ describe('C432-CONFIG-PATH-QUEUE: co-hosted writers of one config path share one
     // nothing" true is on the measured road (WR-12).
     fsFault.failRename = true
     try {
-      const failed = new ConfigManager(configPath).applyChanges([targetChange(6)])
+      const failed = new ConfigManager(configPath, (text) => text).applyChanges([targetChange(6)])
       await expect(failed).rejects.toMatchObject({ code: 'EACCES' })
     } finally {
       fsFault.failRename = false
@@ -1150,7 +1180,7 @@ describe('C432-CONFIG-PATH-QUEUE: co-hosted writers of one config path share one
     expect(await readFile(configPath, 'utf-8')).toBe(QUEUE_CONFIG.replace('llm: planner', 'llm: gpt-5.6'))
 
     const created = join(dir, 'nested', 'hooks.yaml')
-    expect(await new ConfigManager(created).replaceDocument('absent', new TextEncoder().encode('hooks: []\n')))
+    expect(await new ConfigManager(created, (text) => text).replaceDocument('absent', new TextEncoder().encode('hooks: []\n')))
       .toMatchObject({ kind: 'ok', baseRevision: 'absent' })
     expect(await readFile(created, 'utf-8')).toBe('hooks: []\n')
   })
@@ -1161,7 +1191,7 @@ describe('C432-CONFIG-PATH-QUEUE: co-hosted writers of one config path share one
     await writeFile(realPath, QUEUE_CONFIG)
     await chmod(realPath, 0o600)
     await symlink(realPath, linkPath)
-    const outcome = await new ConfigManager(linkPath).applyChanges([targetChange(5)])
+    const outcome = await new ConfigManager(linkPath, (text) => text).applyChanges([targetChange(5)])
     expect(outcome.kind).toBe('ok')
     expect((await lstat(linkPath)).isSymbolicLink()).toBe(true)
     expect((await stat(realPath)).mode & 0o777).toBe(0o600)

@@ -8,7 +8,6 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, st
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { CONFIG_MASK_PLACEHOLDER } from '@vostride/agent-qa-schema'
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { parse, parseDocument } from 'yaml'
@@ -69,7 +68,7 @@ const SENTINELS = {
   udid: 'zz-429-33-UDID-SENTINEL-0d61',
   auth: 'zz-429-33-AUTH-JSON-SENTINEL-73fa',
 } as const
-// 429-41 (CR-02): secrets written inside comments, which the file view never serves.
+// Undeclared values written inside comments, which the file view shows as written (441-21, D-29).
 const COMMENT_SENTINELS = {
   above: 'zz-429-41-COMMENTED-HEADER-SENTINEL-5e0a',
   trailing: 'zz-429-41-TRAILING-COMMENT-SENTINEL-a3d8',
@@ -149,7 +148,7 @@ function writeProject(label: string, config: string, auth?: Record<string, unkno
   writeFileSync(configPath, config, 'utf8')
   writeFileSync(join(root, 'hooks.yaml'), 'hooks: []\n', 'utf8')
   writeFileSync(join(root, '.env'), '', 'utf8')
-  writeFileSync(join(root, '.env.secrets.local'), '', 'utf8')
+  writeFileSync(join(root, '.env.secrets.local'), `FARM_KEY=${SENTINELS.farm}\n`, 'utf8')
   mkdirSync(join(root, '.agent-qa'), { recursive: true })
   mkdirSync(join(root, 'agent-qa-knowledge'), { recursive: true })
   const authPath = join(hermeticEnv(root).HOME, '.agent-qa', 'auth.json')
@@ -489,9 +488,9 @@ describe('Config tabs, links, geometry, masking and names on the shipped bundle 
     for (const tab of TABS) {
       await openTab(h, page, tab)
       const html = await page.evaluate(() => document.documentElement.outerHTML)
-      for (const [kind, sentinel] of Object.entries({ ...SENTINELS, ...COMMENT_SENTINELS })) if (html.includes(sentinel)) leaks.push(`${tab}: ${kind}`)
+      for (const [kind, sentinel] of Object.entries({ auth: SENTINELS.auth, farm: SENTINELS.farm })) if (html.includes(sentinel)) leaks.push(`${tab}: ${kind}`)
     }
-    expect(leaks, 'a sentinel reached the page unmasked').toEqual([])
+    expect(leaks, 'an auth.json or declared value reached the page').toEqual([])
 
     const view = page.locator('[data-config-file-view]')
     await view.waitFor({ timeout: 10_000 })
@@ -501,29 +500,16 @@ describe('Config tabs, links, geometry, masking and names on the shipped bundle 
     })))
     const lineWith = (fragment: string) => lines.find((line) => line.text.includes(fragment))
     expect(lineWith(`port: ${MCP_PORT}`), JSON.stringify(lines)).toEqual({ text: `port: ${MCP_PORT}`, masking: 'plain' })
-    expect(lines.filter((line) => line.masking === 'env-var-name'), 'no leaf is an env-var name since 432-22').toEqual([])
-    expect(lineWith('x-org-route:')?.masking).toBe('secret')
-    expect(lineWith('x-org-route:')?.text).toContain(CONFIG_MASK_PLACEHOLDER)
-    expect(lineWith('accessKey:')?.masking).toBe('secret')
-    expect(lineWith('accessKey:')?.text).toContain(CONFIG_MASK_PLACEHOLDER)
+    // 441-21 (D-29): no line is classed by path; an undeclared value or comment reads as written and
+    // the farm key, declared in the secrets file, as its marker.
+    expect(lines.filter((line) => line.masking !== 'plain'), JSON.stringify(lines)).toEqual([])
+    expect(lineWith('x-org-route:')?.text).toBe(`x-org-route: ${SENTINELS.header}`)
+    expect(lineWith('accessKey:')?.text).toBe(`accessKey: [secret:FARM_KEY] # was ${COMMENT_SENTINELS.trailing}`)
+    expect(lineWith('# x-api-key:')?.text).toBe(`# x-api-key: ${COMMENT_SENTINELS.above}`)
     expect(lineWith('plugins:'), 'the plugins block is missing from the file view').toBeDefined()
     expect(lineWith(PLUGIN_PACKAGE), 'the plugin entry is missing from the file view').toBeDefined()
-    const viewText = (await view.textContent()) ?? ''
-    for (const sentinel of Object.values(COMMENT_SENTINELS)) {
-      expect(viewText, 'a commented secret reached the file view').not.toContain(sentinel)
-    }
-    expect(lines.some((line) => line.text.includes('#')), JSON.stringify(lines)).toBe(false)
     expect(await view.isVisible()).toBe(true)
     await captureFullPage(page, `config-file-masked-${labelOf(DESKTOP)}`)
-
-    const accessKey = view.locator('li[data-masking-class="secret"]').filter({ hasText: 'accessKey:' })
-    await accessKey.getByRole('button', { name: 'Show accessKey', exact: true }).click()
-    await accessKey.and(page.locator('[data-reveal-state="revealed"]')).waitFor({ timeout: 10_000 })
-    expect(await accessKey.textContent()).toContain(SENTINELS.farm)
-    expect(await accessKey.textContent()).not.toContain(COMMENT_SENTINELS.trailing)
-    expect(await page.evaluate(() => document.documentElement.outerHTML)).not.toContain(SENTINELS.header)
-    expect(await page.evaluate(() => document.documentElement.outerHTML)).not.toContain(SENTINELS.auth)
-    await captureViewport(page, `config-file-revealed-${labelOf(DESKTOP)}`)
     expect(opened.errors).toEqual([])
     await h.close(opened)
   }, 120_000)

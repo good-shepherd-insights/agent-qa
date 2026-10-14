@@ -90,7 +90,7 @@ function utf8(text: string): Uint8Array {
 function writePort(path = configPath): ConfigWritePort {
   const create = (host as Record<string, unknown>).createConfigWritePort
   expect(typeof create, 'the direct config writer is exported beside the old apply port').toBe('function')
-  return (create as (configPath: string) => ConfigWritePort)(path)
+  return (create as (configPath: string, mask: (text: string) => string) => ConfigWritePort)(path, (text) => text)
 }
 
 function serializeConfigWrite<T>(path: string, work: () => Promise<T>): Promise<T> {
@@ -214,7 +214,7 @@ describe('C432-CONFIG-OUTSIDE-EDIT: a generated change merges onto the file as i
 describe('C432-CONFIG-PATH-QUEUE: the direct writer and the dashboard manager share one queue per path', () => {
   it('overlapping disjoint writes from both writers all land', async () => {
     const port = writePort()
-    const manager = new dashboard.ConfigManager(configPath)
+    const manager = new dashboard.ConfigManager(configPath, (text) => text)
     const outcomes = await Promise.all(Array.from({ length: 20 }, async (_, index) =>
       index % 2 === 0
         ? (await port.applyFields({ changes: [targetChange(index)] })).kind
@@ -225,7 +225,7 @@ describe('C432-CONFIG-PATH-QUEUE: the direct writer and the dashboard manager sh
 
   it('a stale same-field expectation refuses once the co-hosted writer changed that field', async () => {
     const port = writePort()
-    const manager = new dashboard.ConfigManager(configPath)
+    const manager = new dashboard.ConfigManager(configPath, (text) => text)
     const [landed, stale] = await Promise.all([
       manager.applyChanges([
         { op: 'expect', path: ['use', 'timeout', 'step'], value: '30s' },
@@ -250,7 +250,7 @@ describe('C432-CONFIG-PATH-QUEUE: the direct writer and the dashboard manager sh
 
   it('a refused stale expectation succeeds on retry once it names the value the file now holds', async () => {
     const port = writePort()
-    expect((await new dashboard.ConfigManager(configPath).applyChanges([
+    expect((await new dashboard.ConfigManager(configPath, (text) => text).applyChanges([
       { op: 'set', path: ['use', 'timeout', 'step'], value: '40s' },
     ])).kind).toBe('ok')
     const stale = await port.applyFields({
@@ -272,7 +272,7 @@ describe('C432-CONFIG-PATH-QUEUE: the direct writer and the dashboard manager sh
 
   it('a whole-file publication of the config built before a co-hosted change refuses and keeps that change', async () => {
     const generated = SEEDED_CONFIG.replace('appState: reset', 'appState: preserve')
-    expect((await new dashboard.ConfigManager(configPath).applyChanges([
+    expect((await new dashboard.ConfigManager(configPath, (text) => text).applyChanges([
       { op: 'set', path: ['use', 'timeout', 'step'], value: '40s' },
     ])).kind).toBe('ok')
     expect(await writePort().publishFiles({

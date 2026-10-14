@@ -84,7 +84,7 @@ async function createManagerWorkspace(
   return {
     dir,
     configPath,
-    manager: new HookRegistryManager(new ConfigManager(configPath), configPath),
+    manager: new HookRegistryManager(new ConfigManager(configPath, (text) => text), configPath),
   }
 }
 

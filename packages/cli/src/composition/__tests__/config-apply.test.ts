@@ -178,7 +178,7 @@ function registryFor() {
     configFiles: createConfigFilesPort(configPath),
     configValidate: createConfigValidatePort(),
     // 432-11: the direct writer the config operations publish through.
-    configWrite: createConfigWritePort(configPath),
+    configWrite: createConfigWritePort(configPath, (text) => text),
   }
 
   return createFunctionRegistry({
@@ -345,7 +345,7 @@ describe('the config tracer: propose, accept, ONE byte-matched commit', () => {
   // comparison, before any write'. No stored payload exists to doctor; the direct writer's guard is
   // that a whole-file publication names the digest it was built from and refuses bytes that moved.
   it('(f) a whole-file publication over bytes that moved refuses before any write', async () => {
-    const port = createConfigWritePort(configPath)
+    const port = createConfigWritePort(configPath, (text) => text)
     const builtFrom = sha256hexBytes(Uint8Array.from(readFileSync(configPath)))
     const moved = SEEDED_CONFIG.replace('parallel: false', 'parallel: true')
     writeFileSync(configPath, moved)

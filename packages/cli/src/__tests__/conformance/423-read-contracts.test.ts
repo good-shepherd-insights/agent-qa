@@ -125,7 +125,7 @@ async function openDoors(input: {
   db: DashboardDatabase
   maskText: (text: string) => string
 }): Promise<Doors> {
-  const started = await startServer({ db: input.db, port: 0, agentHost: input.agentHost })
+  const started = await startServer({ declaredSecretMask: (text) => text, db: input.db, port: 0, agentHost: input.agentHost })
   const address = started.server.address()
   if (address === null || typeof address === 'string') throw new Error('human door bound no port')
   const humanOrigin = `http://127.0.0.1:${String(address.port)}`

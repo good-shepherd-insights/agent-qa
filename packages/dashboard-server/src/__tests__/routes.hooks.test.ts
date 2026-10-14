@@ -150,10 +150,10 @@ async function createConfigWorkspace(
   }
 
   return {
-    configManager: new ConfigManager(configPath),
+    configManager: new ConfigManager(configPath, (text) => text),
     configPath,
     workspacePaths: resolveWorkspacePaths({
-      config: await readConfigValues(new ConfigManager(configPath)) as any,
+      config: await readConfigValues(new ConfigManager(configPath, (text) => text)) as any,
       configPath,
     }),
     dir,

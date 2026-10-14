@@ -128,7 +128,7 @@ function registry() {
     configFiles: createConfigFilesPort(configPath),
     configValidate: createConfigValidatePort(),
     // 432-11: THE REAL DIRECT WRITER, over the real workspace.
-    configWrite: createConfigWritePort(configPath),
+    configWrite: createConfigWritePort(configPath, (text) => text),
     // Nothing should reach the store any more; it is still bound so a filing would be seen.
     configProposals: {
       put: (record: { kind: string; emittedBy: string; payload: unknown }) => {

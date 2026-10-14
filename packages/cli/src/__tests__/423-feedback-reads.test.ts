@@ -1015,7 +1015,7 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
     closers.push(() => door.host.close())
     const db = new DashboardDatabase({ dbPath: ':memory:' })
     closers.push(() => db.close())
-    const started = await startServer({ db, port: 0, agentHost: door.agentHost })
+    const started = await startServer({ declaredSecretMask: (text) => text, db, port: 0, agentHost: door.agentHost })
     closers.push(() => started.close())
     const remote: Server = createServer(createRunServiceRoutes({ agentHost: door.agentHost } as unknown as RunServicePorts))
     await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve))

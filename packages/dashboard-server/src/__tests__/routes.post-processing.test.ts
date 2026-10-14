@@ -152,6 +152,7 @@ async function serveWith(options: PlantOptions & { readonly withHost?: boolean }
   const planted = plantHost(options)
   const db = new DashboardDatabase({ dbPath: ':memory:' })
   const started = await startServer({
+    declaredSecretMask: (text) => text,
     db,
     port: 0,
     ...(options.withHost === false ? {} : { agentHost: planted.host }),

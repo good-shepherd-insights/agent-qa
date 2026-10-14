@@ -119,7 +119,7 @@ async function mcpDoor(scene: Scratch) {
 async function dashboardDoor(scene: Scratch, input: { runId: string; kind: 'false-fail' | 'confirmed-bug' }) {
   const db = new DashboardDatabase({ dbPath: ':memory:' })
   const door = composeDashboardDoor({ ...scene, boundOrigin: () => undefined })
-  const server = await startServer({ db, port: 0, configPath: scene.configPath,
+  const server = await startServer({ declaredSecretMask: (text) => text, db, port: 0, configPath: scene.configPath,
     workspacePaths: resolveWorkspacePaths({ config: scene.config, configPath: scene.configPath }),
     agentHost: door.agentHost })
   closers.push(async () => { server.close(); await door.host.close() })
