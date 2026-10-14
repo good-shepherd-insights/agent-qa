@@ -3,13 +3,6 @@ import { z } from 'zod'
 export const MASKED_RESOLVED_CONFIG_SCHEMA_VERSION = 1
 
 /**
- * The single placeholder a masked configuration value renders as. Kept a constant so the
- * masker (plan 03), the surfaces, and the conformance suite all agree on one literal and a
- * reader can never mistake a mask for a real value.
- */
-export const CONFIG_MASK_PLACEHOLDER = '[masked]'
-
-/**
  * Which layer supplied the winning value for a resolved configuration key.
  *
  * A clean machine vocabulary rather than the CLI's existing human debug labels
@@ -24,46 +17,24 @@ export type ConfigValueSource =
   | 'test-file'
 
 /**
- * One resolved configuration key/value pair, already masked (Phase 384, D-06/D-16).
+ * One resolved configuration key/value pair, rendered and passed through the declared-secret
+ * mask while it is constructed (Phase 384, D-06/D-16; 441-20 and 441-40, D-29).
  *
- * SECURITY CONTRACT (T-384-06, masked-at-the-boundary): when `masked` is true, the
- * operator's raw value is ABSENT from this entry, and it was absent from the moment the
- * entry was constructed — never carried in this DTO and redacted downstream. It is absent
- * by one of THREE routes:
- *   - the whole PATH is opaque, and `value` is {@link CONFIG_MASK_PLACEHOLDER};
- *   - the path is visible but the RENDER could not reduce the value — an address field with
- *     no absolute rendering — and `value` is {@link CONFIG_MASK_PLACEHOLDER} too;
- *   - the path is visible and the render REDUCED the value, so `value` is present but is a
- *     structural remainder of what the operator wrote (today, an address field rendered as
- *     `scheme://host[:port]`).
- *
- * `masked: true` therefore means exactly one thing — "this is not the operator's raw value"
- * — and carries no information about WHICH rule removed it. In particular the placeholder no
- * longer implies path opacity: a fully visible, schema-constrained path can render as the
- * placeholder, so a consumer must not read a cause out of it.
- *
- * What that guarantees, stated as the relation it actually is rather than as a totality:
- * masking is applied while the entry is CONSTRUCTED, under the composition's visibility,
- * census and render rules, so a surface holding a `MaskedResolvedConfig` cannot undo it —
- * there is nothing to undo, the raw value was never placed here. The guarantee is therefore
- * the CONSTRUCTION rule's, and it is exactly as wide as that rule: the masker names its own
- * residual limitations where they live (its census note carries one, with a reproducible
- * example), and this DTO inherits whatever bound those state rather than asserting a
- * narrower one of its own. It does not claim the masker has exactly one blind spot.
+ * The mask is applied at construction, so a surface holding a `MaskedResolvedConfig` never
+ * holds a declared value to redact downstream: each one already reads as its
+ * `[secret:<name>]` marker. Nothing else hides a value: no path, key name, placeholder or URL
+ * reduction.
  *
  * `value` is always a rendered string (numbers, booleans, and nested values are stringified
- * at construction) so masking is total and uniform: there is no value type that bypasses it.
+ * at construction) so the mask applies to every value alike.
  */
 export interface MaskedConfigEntry {
   /** Dot-path key into the resolved configuration tree. */
   key: string
-  /** The rendered value, the mask placeholder, or a reduced render — see `masked`. */
+  /** The rendered value through the declared mask. */
   value: string
   source: ConfigValueSource
-  /**
-   * True iff `value` is NOT the operator's raw value — the mask placeholder (by either
-   * route above), or a render that structurally reduced it.
-   */
+  /** True when the declared mask changed the rendered value. */
   masked: boolean
 }
 

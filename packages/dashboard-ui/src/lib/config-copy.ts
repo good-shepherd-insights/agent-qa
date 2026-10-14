@@ -363,7 +363,6 @@ export const CONNECT_REFUSAL_COPY = {
   file_invalid: "The config file doesn't parse. Fix it in your editor, then connect again.",
   invalid_write_input: COULD_NOT_SAVE_MODEL,
   path_not_found: COULD_NOT_SAVE_MODEL,
-  mask_written_back: COULD_NOT_SAVE_MODEL,
   write_failed: COULD_NOT_SAVE_MODEL,
   field_changed: COULD_NOT_SAVE_MODEL,
   path_not_writable: COULD_NOT_SAVE_MODEL,

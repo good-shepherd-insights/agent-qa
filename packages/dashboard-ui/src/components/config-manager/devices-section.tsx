@@ -1,7 +1,7 @@
 // DEVICES (429-22 · D-02, D-08, D-19, D-23, D-24 · UI-SPEC S2 "Record/list editors", S6, S8, E8).
 //
-// Each device is a row opened in place: platform and connection autosave, and its match settings
-// are secret-class, so each key shows in clear with its value through SecretValue. A new setting
+// Each device is a row opened in place: platform and connection autosave, and each match setting
+// shows its key with its value through SecretValue, replaced explicitly. A new setting
 // saves only through Save setting. Add device opens an inline draft row; delete acts at once with
 // Undo.
 

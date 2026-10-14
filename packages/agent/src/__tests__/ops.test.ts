@@ -15,7 +15,6 @@ import type {
   RunId,
 } from '@vostride/agent-qa-schema'
 import {
-  CONFIG_MASK_PLACEHOLDER,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   stampReceiptDigest,
@@ -100,7 +99,7 @@ const maskedConfig: MaskedResolvedConfig = {
   configPath: '/workspace/agent-qa.config.yaml',
   entries: [
     { key: 'workspace.testMatch', value: '["tests/**/*.yaml"]', source: 'config-file', masked: false },
-    { key: 'registry.providers.acme.apiKey', value: CONFIG_MASK_PLACEHOLDER, source: 'config-file', masked: true },
+    { key: 'registry.providers.acme.apiKey', value: '[secret:PW_441]', source: 'config-file', masked: true },
   ],
 }
 

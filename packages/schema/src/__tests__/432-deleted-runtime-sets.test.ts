@@ -460,19 +460,8 @@ describe('C432-RUNTIME-SETS: the 432-42 leftovers are absent and the retained ne
     expect(existsSync(join(SRC, 'safety', 'trust-credential.ts')), 'trust-credential.ts is back').toBe(false)
   })
 
-  // KEPT, DATED 2026-10-02 (432-42 census decision): `env-var-name` has no schema leaf since 432-22,
-  // but it is a member of the shared display vocabulary the dashboard file view, `config show` and
-  // the config line tagger render, and a config-mutation reference kind. Deleting a member of a
-  // closed public set is a vocabulary change no D-decision asks for; it gates nothing (D-12 deletes
-  // permissions, not display classes), so it stays, pinned exactly.
-  it('C432-RUNTIME-SETS: the masking classes are exactly the three display classes, env-var-name kept', () => {
-    expect(exported('MASKING_CLASSES')).toEqual(['secret', 'env-var-name', 'plain'])
-    const map = exported('CONFIG_MASKING_MAP') as Record<string, string>
-    expect(Object.values(map).filter((maskingClass) => maskingClass === 'env-var-name')).toEqual([])
-    // 2026-10-07 (436-07, D-02): the two per-step planner limits raise the leaf count from 92 to 94.
-    // 2026-10-07 (436-08, D-05): the old refilling planner key's row is cut, so 93.
-    expect(Object.keys(map).length, 'non-vacuity: the leaf map is the real one').toBe(93)
-  })
+  // 2026-10-15 (441-40, D-29): the masking classes cell, which kept `env-var-name` in the class
+  // vocabulary, is deleted with the classes and the map; the leaf list survives in config/leaves.ts.
 })
 
 // @ts-expect-error C432-RUNTIME-SETS (432-42): the scope key type is deleted

@@ -6,7 +6,6 @@ import {
   CONFIG_WRITE_OPS,
   CONFIG_WRITE_REFUSALS,
   LLM_SETUP_REFUSALS,
-  MASKING_CLASSES,
   PROVIDER_ERROR_CLASSES,
 } from '../index'
 import type {
@@ -18,7 +17,6 @@ import type {
   ConfigWriteOp,
   ConfigWriteRefusal,
   LlmSetupRefusal,
-  MaskingClass,
   ProviderErrorClass,
 } from '../index'
 
@@ -46,7 +44,6 @@ test('C429-CONFIG-WRITE-REFUSALS-EXACT', () => {
     | 'file_invalid'
     | 'path_not_found'
     | 'validation_failed'
-    | 'mask_written_back'
     | 'write_failed'
     | 'field_changed'
     | 'path_not_writable'
@@ -62,14 +59,6 @@ test('C429-CONFIG-NAMED-ARRAYS-EXACT', () => {
   expectTypeOf<(typeof CONFIG_NAMED_ARRAYS)[number]>().toEqualTypeOf<Expected>()
   expectTypeOf<Exclude<ConfigNamedArray, Expected>>().toEqualTypeOf<never>()
   expectTypeOf<Exclude<Expected, ConfigNamedArray>>().toEqualTypeOf<never>()
-})
-
-test('C429-MASKING-CLASSES-EXACT', () => {
-  type Expected = 'secret' | 'env-var-name' | 'plain'
-  expectTypeOf<MaskingClass>().toEqualTypeOf<Expected>()
-  expectTypeOf<(typeof MASKING_CLASSES)[number]>().toEqualTypeOf<Expected>()
-  expectTypeOf<Exclude<MaskingClass, Expected>>().toEqualTypeOf<never>()
-  expectTypeOf<Exclude<Expected, MaskingClass>>().toEqualTypeOf<never>()
 })
 
 test('C429-PROVIDER-ERROR-CLASSES-EXACT', () => {

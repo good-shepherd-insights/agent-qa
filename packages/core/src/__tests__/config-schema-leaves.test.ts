@@ -1,6 +1,7 @@
-// 2026-09-26, 429-03 D-06/D-08: the published config schema's leaves, walked structurally and
-// pinned against the masking map's keys, so a new schema leaf reds here until it is classified.
-import { CONFIG_MASKING_MAP, CONFIG_SCHEMA_LEAVES, classifyConfigPath } from '@vostride/agent-qa-schema'
+// 2026-09-26, 429-03 D-06: the published config schema's leaves, walked structurally and pinned
+// against the schema's leaf list, so a new schema leaf reds here until it is listed. 2026-10-15
+// (441-40, D-29): the list no longer carries masking classes.
+import { CONFIG_SCHEMA_LEAVES, isConfigSchemaPath } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
 import { AgentQaConfigSchema } from '../schema/config-schema.js'
@@ -77,8 +78,6 @@ describe('config schema leaves', () => {
   it('CONFIG-SCHEMA-LEAVES-PINNED', () => {
     const walked = schemaLeaves()
     expect(walked).toEqual([...CONFIG_SCHEMA_LEAVES])
-    // 2026-10-01 (432-22): the env-var-name witness (`services.mcp.tokens[].tokenEnvVar`) left with
-    // the token list; `workspace.secretsFile` keeps a classified non-plain witness in the set.
     for (const witness of [
       'use.timeout.step',
       'registry.llms[].name',
@@ -95,12 +94,12 @@ describe('config schema leaves', () => {
     expect(walked).toContain('allowProduction')
     expect(walked).toContain('registry.targets.*.environment')
     expect(walked.filter((leaf) => leaf.split('.')[0] === 'allowProduction')).toEqual(['allowProduction'])
-    expect(CONFIG_MASKING_MAP.allowProduction).toBe('plain')
-    expect(classifyConfigPath(['allowProduction'])).toBe('plain')
+    expect(CONFIG_SCHEMA_LEAVES).toContain('allowProduction')
+    expect(isConfigSchemaPath(['allowProduction'])).toBe(true)
   })
 
   // 432-22 (D-12/D-18/D-22): the final strict leaf set. The count and the removed set are spelled
-  // by hand; the map/schema equality above is what makes a leaf without a masking class red here.
+  // by hand; the list/schema equality above is what makes an unlisted leaf red here.
   // 2026-10-07 (436-07, D-02): the two per-step planner limits add two leaves (92 to 94); the cell
   // name no longer carries the count, so a later leaf change moves only the number.
   // 2026-10-07 (436-08, D-05): the old refilling planner key's leaf is cut (94 to 93) and listed retired.
@@ -111,11 +110,12 @@ describe('config schema leaves', () => {
     expect(walked.filter((leaf) => leaf.startsWith('use.planner.max'))).toEqual(
       expect.arrayContaining(['use.planner.maxActions', 'use.planner.maxPlanningTurns']),
     )
-    expect(CONFIG_MASKING_MAP['use.planner.maxActions']).toBe('plain')
-    expect(CONFIG_MASKING_MAP['use.planner.maxPlanningTurns']).toBe('plain')
-    expect(Object.keys(CONFIG_MASKING_MAP).sort()).toEqual(walked)
+    expect(CONFIG_SCHEMA_LEAVES).toEqual(
+      expect.arrayContaining(['use.planner.maxActions', 'use.planner.maxPlanningTurns']),
+    )
+    expect([...CONFIG_SCHEMA_LEAVES].sort()).toEqual(walked)
     for (const leaf of walked) {
-      expect(CONFIG_MASKING_MAP[leaf as keyof typeof CONFIG_MASKING_MAP], leaf).toBeDefined()
+      expect((CONFIG_SCHEMA_LEAVES as readonly string[]).includes(leaf), leaf).toBe(true)
     }
     const retired = [
       'safety.trustMode',
@@ -130,7 +130,7 @@ describe('config schema leaves', () => {
       'use.planner.maxSubActions',
     ]
     expect(retired.filter(leaf => walked.includes(leaf))).toEqual([])
-    expect(retired.filter(leaf => leaf in CONFIG_MASKING_MAP)).toEqual([])
+    expect(retired.filter(leaf => (CONFIG_SCHEMA_LEAVES as readonly string[]).includes(leaf))).toEqual([])
     expect(walked.filter(leaf => leaf.split('.')[0] === 'safety')).toEqual([])
     expect(walked.filter(leaf => /^services\.(mcp|dashboard)\./.test(leaf)).sort()).toEqual([
       'services.dashboard.artifactsDir',

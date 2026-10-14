@@ -30,17 +30,9 @@ export {
   ConfigWriteRequestSchema,
   isPageWritableConfigPath,
 } from './config-write'
-// 2026-09-26, 429-03 D-08: the one masking map every config surface shares, and the schema's
-// leaf list derived from it.
-export type { ConfigLeafPattern, MaskingClass } from './masking'
-export {
-  CONFIG_MASKING_MAP,
-  CONFIG_SCHEMA_LEAVES,
-  classifyConfigPath,
-  configLeafOwner,
-  isConfigSchemaPath,
-  MASKING_CLASSES,
-} from './masking'
+// The published config schema's leaf list; 441-40 (D-29) deleted the masking map it came from.
+export type { ConfigLeafPattern } from './leaves'
+export { CONFIG_SCHEMA_LEAVES, configLeafOwner, isConfigSchemaPath } from './leaves'
 // 432 D-18: the production refusal's one sentence, shared by the run core and the live editor.
 export {
   ALLOW_PRODUCTION_OPT_IN,

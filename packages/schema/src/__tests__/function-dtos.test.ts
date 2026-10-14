@@ -26,9 +26,10 @@ import {
   RunsListInputSchema,
   RunsStartInputSchema,
   RunSummarySchema,
-  CONFIG_MASK_PLACEHOLDER,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '../index'
+
+const DECLARED_MARKER = '[secret:PW_441]'
 
 /** The complete exported function-DTO schema set, by the name the barrel publishes. */
 const functionSchemas: Record<string, z.ZodType> = {
@@ -99,7 +100,7 @@ function makeMaskedConfig() {
     configPath: 'agent-qa.config.yaml',
     entries: [
       { key: 'use.browser.headless', value: 'true', source: 'config-file', masked: false },
-      { key: 'llm.apiKey', value: CONFIG_MASK_PLACEHOLDER, source: 'env', masked: true },
+      { key: 'llm.apiKey', value: DECLARED_MARKER, source: 'env', masked: true },
     ],
   }
 }
@@ -127,12 +128,13 @@ describe('function DTO schemas are strict (D-16)', () => {
     expect(RunDetailSchema.safeParse({ ...makeRunDetail(), gateRun: false }).success).toBe(false)
   })
 
-  it('keeps every masked config entry declaring whether its value is a placeholder', () => {
+  // 441-40 (D-29): a masked entry's value is its declared marker; the config placeholder is deleted.
+  it('keeps every masked config entry declaring whether the declared mask changed its value', () => {
     const parsed = MaskedResolvedConfigSchema.parse(makeMaskedConfig())
     const secret = parsed.entries.find((entry) => entry.key === 'llm.apiKey')
 
     expect(secret?.masked).toBe(true)
-    expect(secret?.value).toBe(CONFIG_MASK_PLACEHOLDER)
+    expect(secret?.value).toBe(DECLARED_MARKER)
   })
 
   it('takes no arguments on the two listing ops', () => {

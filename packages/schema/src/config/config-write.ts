@@ -2,7 +2,7 @@
 // names one field by segments, never a dotted string, so a key holding a dot stays addressable
 // and an outside edit to a sibling field is never rewritten.
 import { z } from 'zod'
-import { isConfigSchemaPath } from './masking'
+import { isConfigSchemaPath } from './leaves'
 
 /**
  * What one change does to the field its path names.
@@ -34,7 +34,6 @@ export const CONFIG_WRITE_OPS = [
  * - `file_invalid`: the file does not parse as YAML.
  * - `path_not_found`: a `{ name }` selector names no entry.
  * - `validation_failed`: the merged config fails whole-config validation.
- * - `mask_written_back`: a value carries the mask placeholder (Plan 05's guard).
  * - `write_failed`: the atomic write itself failed.
  * - `field_changed`: an `expect` found the field changed since the page read it.
  * - `path_not_writable`: the path is not one this door may write or test.
@@ -44,7 +43,6 @@ export type ConfigWriteRefusal =
   | 'file_invalid'
   | 'path_not_found'
   | 'validation_failed'
-  | 'mask_written_back'
   | 'write_failed'
   | 'field_changed'
   | 'path_not_writable'
@@ -54,7 +52,6 @@ export const CONFIG_WRITE_REFUSALS = [
   'file_invalid',
   'path_not_found',
   'validation_failed',
-  'mask_written_back',
   'write_failed',
   'field_changed',
   'path_not_writable',

@@ -149,7 +149,6 @@ export type {
 } from './knowledge'
 export {
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
-  CONFIG_MASK_PLACEHOLDER,
   MaskedConfigEntrySchema,
   MaskedResolvedConfigSchema,
   ConfigGetInputSchema,

@@ -2,17 +2,15 @@
 //
 // Every value is rendered as written and passed through the host's declared-secret mask, and
 // nothing else: no path map, no URL reduction, no placeholder. The schema-derived visibility
-// oracle and the schema's own path map are still tested here until their own plans remove them.
+// oracle is still tested here until its own plan removes it; the schema's path map and its cells
+// were deleted in 441-40 (D-29).
 
 // The oracle is built from the real config schema on purpose — test files are excluded
 // from the arch specifier scan, so this proves the walk against the shipped tree without
 // relaxing the firewall the production code obeys.
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
-import {
-  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
-  classifyConfigPath,
-} from '@vostride/agent-qa-schema'
+import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { MaskFn } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
@@ -36,25 +34,6 @@ const CSS_SELECTOR_VALUE = '#cookie-banner'
 const OVER_MASK_PACKAGE_VALUE = '@acme/plugin-foo-SHOW-ME-9210'
 
 const visibility = buildConfigVisibilityOracle(AgentQaConfigSchema)
-
-/** A dot-path's segments, reading a purely numeric segment as an array index. */
-function segmentsOf(key: string): (string | number)[] {
-  return key.split('.').map((segment) => (/^\d+$/u.test(segment) ? Number(segment) : segment))
-}
-
-/** Ten credential key names drawn from OUTSIDE this repo's vocabulary. */
-const OUT_OF_VOCABULARY_CREDENTIAL_NAMES = [
-  'jwt',
-  'pem',
-  'pfx',
-  'dsn',
-  'otp',
-  'mnemonic',
-  'seedPhrase',
-  'connectionString',
-  'signingKey',
-  'hmacKey',
-] as const
 
 describe('buildConfigVisibilityOracle (the schema-derived rule)', () => {
   it('reads the config schema through its OUTPUT side, so ordinary keys stay visible', () => {
@@ -390,105 +369,6 @@ describe('no node kind outside the walker\'s vocabulary earns visibility (CR-02 
     expect(grown.classify('probeNode')).toBe('constrained')
     // …and the real schema's own controls, in the same file, are asserted constrained by the
     // oracle describe above.
-  })
-})
-
-describe('classifyConfigPath (the one map, re-targeting the retired name census)', () => {
-  it('classifies each secret-shaped key family secret by its schema path', () => {
-    // Each key is secret because of where it sits: inside a free-form record the map marks
-    // secret wholesale, at a path the map does not describe, or at `workspace.secretsFile`,
-    // which the map lists as secret.
-    for (const key of [
-      'registry.providers.acme.apiKey',
-      'registry.providers.acme.API_KEY',
-      'services.auth.token',
-      'services.auth.refreshToken',
-      'a.password',
-      'a.passphrase',
-      'a.clientSecret',
-      'a.credentials',
-      'a.privateKey',
-      'a.authorization',
-      'a.bearerToken',
-      'workspace.secretsFile',
-    ]) {
-      expect(classifyConfigPath(segmentsOf(key)), key).toBe('secret')
-    }
-  })
-
-  it('classifies short whole-segment credential names secret at undeclared paths', () => {
-    for (const key of [
-      'deploy.key',
-      'deploy.keys',
-      'deploy.auth',
-      'deploy.pass',
-      'deploy.pwd',
-      'deploy.pat',
-      'deploy.sig',
-      'deploy.cred',
-      'deploy.creds',
-    ]) {
-      expect(classifyConfigPath(segmentsOf(key)), key).toBe('secret')
-    }
-  })
-
-  it('decides by the whole path, so an ancestor word never masks a plain child', () => {
-    // The M-01 correction, kept: `plugins.auth.<n>.package` names code that runs in-process
-    // with full Node access, and the word `auth` two segments up does not hide it. The
-    // undeclared `deploy.creds.region` is secret because the map does not describe it, not
-    // because of the word `creds`.
-    expect(classifyConfigPath(segmentsOf('plugins.auth.0.package'))).toBe('plain')
-    expect(classifyConfigPath(segmentsOf('deploy.creds.region'))).toBe('secret')
-    expect(classifyConfigPath(segmentsOf('deploy.region'))).toBe('secret')
-  })
-
-  it('guesses nothing from a name: plain stays plain, undeclared stays secret', () => {
-    // The no-guessing claim, both directions. Plain schema leaves whose names contain
-    // credential words stay plain...
-    // 432-22 (D-12): the MCP and run-service token labels were three of these; their lists are
-    // deleted, so each is now an undeclared path and fails closed below like any other.
-    for (const key of [
-      'knowledge.contextBudgetTokens',
-      'services.mcp.port',
-      'allowProduction',
-      'plugins.auth.0.path',
-    ]) {
-      expect(classifyConfigPath(segmentsOf(key)), key).toBe('plain')
-    }
-    for (const key of [
-      'services.mcp.tokens.0.name',
-      'services.dashboard.runServiceTokens.0.name',
-      'services.dashboard.runServiceTokens.0.trustScope.org',
-    ]) {
-      expect(classifyConfigPath(segmentsOf(key)), key).toBe('secret')
-    }
-    // ...and undeclared paths are secret whatever they are called, including the ten
-    // out-of-vocabulary credential names and innocuous words.
-    for (const name of [...OUT_OF_VOCABULARY_CREDENTIAL_NAMES, 'region', 'label']) {
-      expect(classifyConfigPath(['deploy', name]), name).toBe('secret')
-      expect(classifyConfigPath(['registry', 'devices', 'pixel', 'match', name]), name)
-        .toBe('secret')
-    }
-  })
-
-  it('leaves ordinary configuration keys plain', () => {
-    for (const key of [
-      'workspace.testMatch',
-      'knowledge.dir',
-      'registry.llms.0.model',
-      'registry.llms.0.baseURL',
-      'services.dashboard.port',
-      'use.browser.headless',
-      // A token BUDGET is a count, not a credential, and the map says plain.
-      'knowledge.contextBudgetTokens',
-      // Phase 387 D-10: a workspace NAME. The plain half matters as much as the secret half —
-      // this is the row that catches over-masking a leaf the entity-card producer needs
-      // verbatim in order to render a link at all.
-      'services.dashboard.workspace',
-      'services.dashboard.baseUrl',
-    ]) {
-      expect(classifyConfigPath(segmentsOf(key)), key).toBe('plain')
-    }
   })
 })
 

@@ -953,7 +953,6 @@ const FIELD_WRITE_REFUSAL_WORDS: Readonly<Record<
   file_invalid: 'the file is not readable as YAML',
   path_not_found: 'a path the change names no longer resolves',
   validation_failed: 'the configuration it would produce is not valid',
-  mask_written_back: 'a value carries the mask placeholder',
   path_not_writable: 'a path the change names cannot be written',
 }
 

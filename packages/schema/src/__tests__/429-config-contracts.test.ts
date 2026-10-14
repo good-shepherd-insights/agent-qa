@@ -11,7 +11,6 @@ test('C429-CONFIG-WRITE-REFUSALS-EXACT', () => {
     'file_invalid',
     'path_not_found',
     'validation_failed',
-    'mask_written_back',
     'write_failed',
     'field_changed',
     'path_not_writable',
@@ -99,7 +98,7 @@ test('C432-CONFIG-WRITE-POLICY: the write policy admits allowProduction and refu
     'plugins.providers[].path',
   ])
   expect(api.isPageWritableConfigPath(['allowProduction'])).toBe(true)
-  expect(api.classifyConfigPath(['allowProduction'])).toBe('plain')
+  expect(api.isConfigSchemaPath(['allowProduction'])).toBe(true)
   const retired: api.ConfigPathSegment[][] = [
     ['safety'],
     ['safety', 'trustMode'],
@@ -186,46 +185,8 @@ test('PAGE-WRITABLE-EVERY-RENDERED-LEAF', () => {
   expect(api.isConfigSchemaPath(['use', 'bogus'])).toBe(false)
 })
 
-test('C429-MASKING-CLASSES-EXACT', () => {
-  expect(api.MASKING_CLASSES).toEqual(['secret', 'env-var-name', 'plain'])
-})
-
-test('CLASSIFY-KNOWN-ANSWERS', () => {
-  const cases: readonly [readonly (string | number)[], api.MaskingClass][] = [
-    // 432-22: the two env-var-name leaves left with the token lists; an unknown path fails closed.
-    [['services', 'mcp', 'tokens', 0, 'tokenEnvVar'], 'secret'],
-    [['services', 'dashboard', 'runServiceTokens', 0, 'tokenEnvVar'], 'secret'],
-    [['allowProduction'], 'plain'],
-    [['registry', 'llms', 0, 'providerHeaders', 'Authorization'], 'secret'],
-    [['registry', 'llms', 0, 'providerHeaders', 'x-trace'], 'secret'],
-    [['registry', 'providers', 'farm', 'accessKey'], 'secret'],
-    [['registry', 'providers', 'farm', 'nested', 'deep'], 'secret'],
-    [['registry', 'devices', 'pixel', 'match', 'udid'], 'secret'],
-    [['analytics', 'passRateScope', 'attributes', 'git.branch'], 'secret'],
-    [['workspace', 'secretsFile'], 'secret'],
-    [['knowledge', 'contextBudgetTokens'], 'plain'],
-    [['plugins', 'auth', 0, 'package'], 'plain'],
-    [['registry', 'llms', 0, 'baseURL'], 'plain'],
-    [['registry', 'llms', 0, 'name'], 'plain'],
-    [['use', 'timeout', 'step'], 'plain'],
-  ]
-  for (const [segments, expected] of cases) {
-    expect({ segments, class: api.classifyConfigPath(segments) }).toEqual({
-      segments,
-      class: expected,
-    })
-  }
-})
-
-test('CLASSIFY-UNKNOWN-FAILS-CLOSED', () => {
-  for (const segments of [['use', 'authState'], ['nope'], ['use', 'timeout', 'step', 'extra']]) {
-    expect({ segments, class: api.classifyConfigPath(segments) }).toEqual({
-      segments,
-      class: 'secret',
-    })
-  }
-})
-
+// 441-40 (D-29): the masking classes, the classifier and their cells are deleted with the map;
+// the leaf list, its schema-path test and its owner rule remain.
 test('LEAF-OWNER', () => {
   expect(api.configLeafOwner('registry.targets.*.url')).toBe('registry.targets')
   expect(api.configLeafOwner('workspace.testMatch[]')).toBe('workspace.testMatch')

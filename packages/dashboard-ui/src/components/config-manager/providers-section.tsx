@@ -1,7 +1,7 @@
 // DEVICE FARMS (429-19 · D-08, D-09, D-23, D-24 · UI-SPEC S8 "Device farms", E8).
 //
-// registry.providers is secret wholesale, so each farm lists its settings key by key and every
-// value is a SecretValue: shown as the server sent it, replaced explicitly. New settings and farms
+// Each farm lists its settings key by key and every value is a SecretValue: shown as the server
+// sent it (through the declared mask only, 441-40 D-29), replaced explicitly. New settings and farms
 // are typed into component state only and saved with an explicit button; deleting a farm acts at
 // once and offers Undo.
 
