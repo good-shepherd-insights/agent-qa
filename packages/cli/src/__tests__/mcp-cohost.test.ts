@@ -80,8 +80,9 @@ import { createServer } from 'node:http'
 import type { Server as NodeHttpServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { connect as netConnect } from 'node:net'
-import { readFileSync, statSync } from 'node:fs'
-import { dirname, resolve as resolvePath } from 'node:path'
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
@@ -228,8 +229,18 @@ beforeAll(async () => {
     auditSink,
   })
 
-  // 432-21 (D-12): no token is resolved; the masker is the environment's.
-  const masking = composeMcpMasking({ env: process.env })
+  // 2026-10-14 (441-07, D-06): the masker is the declared loader over a project config, as the
+  // dashboard composes it.
+  const projectRoot = mkdtempSync(join(tmpdir(), 'agent-qa-441-07-cohost-'))
+  const configPath = join(projectRoot, 'agent-qa.config.yaml')
+  writeFileSync(configPath, JSON.stringify({
+    workspace: {
+      testMatch: ['tests/**/*.yaml'], suiteMatch: ['suites/**/*.suite.yaml'],
+      hooksFile: 'hooks.yaml', envFile: '.env', secretsFile: '.env.secrets.local',
+    },
+  }))
+  writeFileSync(join(projectRoot, '.env.secrets.local'), '')
+  const masking = composeMcpMasking({ configPath })
 
   const server: NodeHttpServer = createServer(
     createMcpHttpRequestListener({
@@ -252,7 +263,7 @@ beforeAll(async () => {
     close: async () => {
       await new Promise<void>((closed) => server.close(() => closed()))
       sessions.dispose()
-      masking.dispose()
+      rmSync(projectRoot, { recursive: true, force: true })
     },
   }
 }, 60_000)
@@ -778,7 +789,10 @@ describe('the shipped dashboard composition wires and closes the endpoint', () =
     // which proves the same two handles are safe to leave unset.
     const shutdown = DASHBOARD_SOURCE.slice(DASHBOARD_SOURCE.indexOf('const shutdown = async ()'))
     expect(shutdown).toContain('mcpServer?.close()')
-    expect(shutdown).toContain('mcpMasking?.dispose()')
+    // 2026-10-14 (441-07, D-06): the declared mask holds nothing to dispose, so the second call is
+    // gone; what remains to pin is that the co-host composes that mask from the project's config.
+    expect(shutdown).not.toContain('mcpMasking')
+    expect(DASHBOARD_SOURCE).toContain('composeMcpMasking({ configPath: configFilePath })')
   })
 
   it('leaves every file under packages/dashboard-server untouched in the working tree'

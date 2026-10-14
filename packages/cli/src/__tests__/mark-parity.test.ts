@@ -50,6 +50,8 @@ function scratch(template: ReturnType<typeof markFixture>) {
   const config = AgentQaConfigSchema.parse(parse(readFileSync(configPath, 'utf8')))
   // 432-22 (D-15/D-22): `safety.trustMode` is deleted from the schema, so there is no trust to pin off.
   writeFileSync(configPath, JSON.stringify(config))
+  // 2026-10-14 (441-07, D-06): the MCP masker reads this project's declared secrets.
+  writeFileSync(join(root, '.env.secrets.local'), '')
   const agentQaRoot = join(root, '.agent-qa')
   const ledger = join(agentQaRoot, 'runs', slugBranch(template.handoff.runId), 'marks.jsonl')
   expect(existsSync(ledger)).toBe(false)
@@ -87,7 +89,7 @@ async function mcpDoor(scene: Scratch) {
   const composed = host.composeCliLocalAgent({ configPath: scene.configPath, agentQaRoot: scene.agentQaRoot,
     resolveExecutionContext: () => 'local-headless' })
   closers.push(() => composed.close())
-  const masking = composeMcpMasking({ env: {} })
+  const masking = composeMcpMasking({ configPath: scene.configPath })
   const server = createServer(createMcpHttpRequestListener({ registry: composed.registry,
     maskText: text => masking.mask(text) }))
   await new Promise<void>((resolve, reject) => {

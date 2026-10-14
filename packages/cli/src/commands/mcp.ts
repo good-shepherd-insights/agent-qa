@@ -55,13 +55,14 @@ import {
 } from '@modelcontextprotocol/server'
 import { buildAgentQaMcpServer, createAgentQaMcpNodeHandler } from '@vostride/agent-qa-mcp'
 import type { LiveLinkSupplier } from '@vostride/agent-qa-mcp'
-import { buildRunMaskingContext } from '@vostride/agent-qa-agent-local'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import pc from 'picocolors'
 import { dirname, resolve } from 'node:path'
 
 import { analyticsEvent, composeAnalyticsHost } from '../composition/analytics-host.js'
+import { createDeclaredSecretMask } from '../composition/declared-secrets.js'
+import type { DeclaredSecretMask } from '../composition/declared-secrets.js'
 import { composeCliLocalAgent } from '../composition/local-agent-host.js'
 import { resolveConfig } from '../config.js'
 
@@ -99,27 +100,10 @@ export const MCP_FUNCTION_CALLER: FunctionCaller = Object.freeze({
 /** How a request was refused before it reached any server instance. */
 export type McpHttpRefusal = 'host' | 'origin'
 
-/**
- * The masker this host composes (T-396-17).
- *
- * BUILT THROUGH THE RUN PATH'S OWN PRODUCER rather than assembled here — 395-04's sibling-input
- * law: the values this host hides and the values a run hides are then one set by construction
- * instead of two lists that agree today. The run's other two channels (a live secret store,
- * captured auth state) are run-scoped and do not exist in a server process.
- *
- * 2026-10-01 (432-21, D-12): THE DECLARED-TOKEN SEEDING IS DELETED with the token declarations.
- * This process holds no bearer credential of its own any more, so the masker is seeded from the
- * environment slice alone — the same seed every run takes. Environment secret masking itself is
- * unchanged (D-13): a `…_TOKEN`/`…_KEY` value in this process's environment is still hidden on
- * every channel this host writes.
- *
- * Exported so the MCPS-04 suite masks with the object the command masks with. A suite that built
- * its own masker would be asserting that ITS masker works.
- */
-export function composeMcpMasking(input: {
-  env: NodeJS.ProcessEnv
-}): ReturnType<typeof buildRunMaskingContext> {
-  return buildRunMaskingContext({ env: input.env })
+// 2026-10-14 (441-07, D-01): only the project's declared secrets are masked, never the environment.
+// 2026-10-14 (441-07, D-06): both transports and the dashboard's co-hosted endpoint mask with it.
+export function composeMcpMasking(input: { configPath: string }): DeclaredSecretMask {
+  return createDeclaredSecretMask(input.configPath)
 }
 
 /**
@@ -269,11 +253,11 @@ export function createMcpCommand(): Command {
         const liveLink = { dashboardBaseUrl: () => configuredDashboardBase }
 
         // See `composeMcpMasking` — the one masker both transports and the analytics port share.
-        const masking = composeMcpMasking({ env: process.env })
-        const maskText = (text: string) => masking.mask(text)
+        const declared = composeMcpMasking({ configPath })
+        const maskText = declared.mask
 
         // 398-10 (D-17/D-19/D-20): THIS COMMAND'S ANALYTICS COMPOSITION ROOT. Composed after the
-        // masking context above and pointed at it immediately, because this process's environment
+        // declared-secret mask above and pointed at it immediately, because the project's declared
         // secrets are exactly the values that must never ride an event off the machine.
         //
         // `config` may be `undefined` here — the read above is tolerant on purpose — and that is a
@@ -289,8 +273,8 @@ export function createMcpCommand(): Command {
         })
 
         const host = composeCliLocalAgent({
-          // 432-21 (D-12): no declared MCP token store to retain — the token declarations are no
-          // longer read, so the host's masking seeds are its own.
+          // 2026-10-14 (441-07, D-06): the host and the transport share one declared-secret loader.
+          declaredSecrets: declared,
           // 398-10 (D-11/D-18): the explain counter hooks bind against this port inside the
           // composition root, so `agent.explain` is countable over MCP exactly as it is in chat.
           analytics,
@@ -364,7 +348,6 @@ export function createMcpCommand(): Command {
         } finally {
           emitLifecycle('stopped')
           await host.close().catch(() => {})
-          masking.dispose()
           // The PORT's shutdown, not an ambient `flushAnalytics({ config })`. The v1 call drained a
           // process-global service this command never captured through; this one drains the object
           // this command composed, and releases the transport's timers so the process can exit.

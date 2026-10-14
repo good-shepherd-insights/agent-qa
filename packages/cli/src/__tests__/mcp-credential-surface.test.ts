@@ -98,7 +98,7 @@
 // recognise; the name arm knows the key names it enumerates. A value that is none of those three is
 // missed, and F2 drives exactly such a value all the way to the wire rather than describing it.
 // The mitigation is the PAIRING, not any one arm: a credential a person would actually hold is
-// either declared to this host (seeded — B, D), or shaped like one (E1), or written into a config
+// either declared in the secrets file (B, D), or shaped like one (E1), or written into a config
 // file, where the construction scan refuses the whole proposal (E3). Widening the shared credential
 // NAME census is not done here: it is 395's predicate, it decides what `config show` prints, and it
 // is pinned leaf-by-leaf by another suite. 397 adjudicates it; this file files the measurement.
@@ -168,18 +168,11 @@ import { composeCliLocalAgent } from '../composition/local-agent-host.js'
 // Each one exercises a DIFFERENT arm, and the file says which. Two share no arm with each other,
 // which is what stops a single mechanism from carrying every cell.
 
-/** Seeded by NAME SUFFIX through `sensitiveEnvSlice` — the run masker's environment arm. */
+// 2026-10-14 (441-07, D-01): the masker reads only the secrets file, where the three plants below
+// are declared. Their environment variables stay set because group E's scan still reads them.
 const ENV_VAR = 'AGENT_QA_396_06_FIXTURE_TOKEN'
 const ENV_PLANT = 'qeb4t7zmv1x8s3d0g5j2n9'
 
-/**
- * The second seeded plant. Until 2026-10-01 it was a declared MCP bearer token whose variable name
- * ended in no suffix `sensitiveEnvSlice` recognises, masked only because 396-05 seeded the masker
- * from the DECLARED entries. 432-21 (D-12) deleted the declared tokens and that seeding arm, so the
- * plant now reaches the masker through the environment arm under a DIFFERENT recognised suffix
- * (`_SECRET`, where `ENV_VAR` uses `_TOKEN`). Every claim below that covered "both seeded plants"
- * still covers two values; they now share one mechanism, which A2 states.
- */
 const TOKEN_VAR = 'AGENT_QA_396_06_FIXTURE_CRED_SECRET'
 const TOKEN_PLANT = 'wnk9j2p6r4y7c1f8h3l5b0'
 
@@ -189,7 +182,7 @@ const CONFIG_PLANT = 'sk-ant-api03-396zzsixCONFIGFIXTUREONLYnotarealkeyPP'
 /**
  * A credential whose value happens to be a VALID PROPOSAL ID, so it survives the SDK's input
  * validation and reaches an op that ECHOES it in a SUCCESS payload (`proposals.show` answers
- * `{kind:'not-found', proposalId}`). Seeded through the environment arm.
+ * `{kind:'not-found', proposalId}`). Declared in the secrets file.
  *
  * It exists because the mutation harness measured that no other cell in this file exercised the
  * generic handler's SUCCESS-path masking at all: every echoing channel here is a refusal, so
@@ -217,6 +210,12 @@ function fingerprintOutsideTheCodebase(value: string): string {
 }
 
 const CONFIG_FILE = 'agent-qa.config.yaml'
+const SECRETS_FILE = '.env.secrets.local'
+const DECLARED_PLANTS: Readonly<Record<string, string>> = {
+  PLANT_ENV_396: ENV_PLANT,
+  PLANT_TOKEN_396: TOKEN_PLANT,
+  PLANT_ECHO_396: ECHO_PLANT,
+}
 
 function seededConfig(extraLlmLines = ''): string {
   return `# agent-qa Configuration
@@ -336,6 +335,10 @@ async function openWorkspace(configBody: string): Promise<void> {
   agentQaRoot = join(root, '.agent-qa')
   mkdirSync(agentQaRoot, { recursive: true })
   writeFileSync(configPath, configBody)
+  writeFileSync(
+    join(root, SECRETS_FILE),
+    Object.entries(DECLARED_PLANTS).map(([name, value]) => `${name}=${value}\n`).join(''),
+  )
 
   git('init', '--quiet')
   git('config', 'user.name', 'agent-qa 396-06 credential surface')
@@ -345,19 +348,16 @@ async function openWorkspace(configBody: string): Promise<void> {
   git('add', '--', '.gitignore', CONFIG_FILE)
   git('commit', '--quiet', '-m', 'seed')
 
-  // THE ENVIRONMENT ARM IS PLANTED ON THE REAL `process.env`, because that is what the shipped host
-  // reads: `configScanSeeds: () => ({ env: sensitiveEnvSlice(process.env) })`. A stubbed object
-  // would have measured a seam this composition does not have.
+  // Group E's construction scan still reads these from the real `process.env`; the masker does not.
   process.env[ENV_VAR] = ENV_PLANT
   process.env[TOKEN_VAR] = TOKEN_PLANT
   process.env[ECHO_VAR] = ECHO_PLANT
 
-  host = composeCliLocalAgent({ agentQaRoot, configPath })
-
-  // THE PRODUCTION MASKER — the function the `mcp` command itself calls. A suite that built its own
-  // masker here would be asserting that ITS masker works, which is true and worthless. 432-21: it
-  // is seeded from the environment alone.
-  masking = composeMcpMasking({ env: process.env })
+  // THE PRODUCTION MASKER — the function the `mcp` command itself calls, shared with the host as the
+  // command shares it. A suite that built its own masker here would be asserting that ITS masker
+  // works, which is true and worthless.
+  masking = composeMcpMasking({ configPath })
+  host = composeCliLocalAgent({ agentQaRoot, configPath, declaredSecrets: masking })
 
   frames = []
   handler = createMcpHandler(() =>
@@ -365,7 +365,7 @@ async function openWorkspace(configBody: string): Promise<void> {
       registry: host!.registry,
       // 432-21 (D-12): the one tokenless caller; no stdio grant exists to resolve.
       caller: MCP_FUNCTION_CALLER,
-      maskText: (text: string) => masking!.mask(text),
+      maskText: masking!.mask,
     }),
   )
   const recordingFetch = (async (url: URL | string, init?: RequestInit) => {
@@ -388,7 +388,6 @@ afterEach(async () => {
   await client?.close().catch(() => {})
   await handler?.close().catch(() => {})
   await host?.close().catch(() => {})
-  masking?.dispose()
   client = undefined
   handler = undefined
   host = undefined
@@ -408,7 +407,10 @@ function headless<T>(fn: () => Promise<T>): Promise<T> {
 describe('A · the plants are what the ledger says they are (the non-vacuity gate)', () => {
   it('(A1) every plant is really where the fixture put it, and the bytes are the pinned bytes',
     () => {
-      expect(process.env[ENV_VAR], 'the environment arm was not planted').toBe(ENV_PLANT)
+      const declared = readFileSync(join(root, SECRETS_FILE), 'utf8')
+      for (const [name, value] of Object.entries(DECLARED_PLANTS)) {
+        expect(declared, `${name} was not declared`).toContain(`${name}=${value}\n`)
+      }
 
       // The fingerprints are computed here with `node:crypto` and pinned as literals. A plant edited
       // without its fingerprint being re-derived fails HERE, before any absence cell can pass for
@@ -428,14 +430,21 @@ describe('A · the plants are what the ledger says they are (the non-vacuity gat
       }
     })
 
-  it('(A2) the masker recognises exactly the two SEEDED plants, and nothing else', () => {
-    // 2026-10-01 (432-21, D-12): ONE ARM NOW, two suffixes. The declared-token arm is deleted, so
-    // both plants are seeded by the environment arm — `_TOKEN` and `_SECRET` — and groups B and D
-    // measure that arm on two values rather than two arms.
-    expect(masking!.mask(ENV_PLANT), 'the environment arm (_TOKEN) did not seed the masker')
-      .not.toContain(ENV_PLANT)
-    expect(masking!.mask(TOKEN_PLANT), 'the environment arm (_SECRET) did not seed the masker')
-      .not.toContain(TOKEN_PLANT)
+  it('(A2) the masker recognises exactly the two DECLARED plants, and nothing else', () => {
+    for (const [name, value] of Object.entries(DECLARED_PLANTS)) {
+      expect(masking!.mask(value), `${name} was not masked`).toBe(`[secret:${name}]`)
+    }
+
+    // 2026-10-14 (441-07, D-01): a value only the environment holds, under a credential-named
+    // variable, is not a declared secret and is not hidden.
+    expect(process.env[ENV_VAR]).toBe(ENV_PLANT)
+    process.env['AGENT_QA_441_07_ENV_ONLY_TOKEN'] = UNSEEDED_PLANT
+    try {
+      expect(masking!.mask(UNSEEDED_PLANT), 'an environment-only value was masked')
+        .toBe(UNSEEDED_PLANT)
+    } finally {
+      delete process.env['AGENT_QA_441_07_ENV_ONLY_TOKEN']
+    }
 
     // The discrimination that makes F1 a control rather than a coincidence: this value is NOT
     // masked, so a channel that returns it verbatim is returning what it was given.
@@ -444,8 +453,8 @@ describe('A · the plants are what the ledger says they are (the non-vacuity gat
   })
 })
 
-describe('B · no seeded credential reaches the wire through a read tool', () => {
-  it('(B1) the echoing read path masks both seeded plants, in the result AND in the frames',
+describe('B · no declared credential reaches the wire through a read tool', () => {
+  it('(B1) the echoing read path masks both declared plants, in the result AND in the frames',
     async () => {
       await headless(async () => {
         for (const plant of [ENV_PLANT, TOKEN_PLANT]) {
@@ -485,7 +494,7 @@ describe('B · no seeded credential reaches the wire through a read tool', () =>
     })
   })
 
-  it('(B2) the other read doors carry no window of either seeded plant either', async () => {
+  it('(B2) the other read doors carry no window of either declared plant either', async () => {
     await headless(async () => {
       for (const plant of [ENV_PLANT, TOKEN_PLANT]) {
         await call('agent_qa_get_entity', { ref: plant })
@@ -536,7 +545,7 @@ describe('D · the direct change answer renders the caller\'s target, and masks 
   // 2026-09-30, 432-12 (D-05/D-13): the apply refusal payload is gone with the apply tools. The
   // payload that now carries caller-supplied content back is the change tool's own answer: a typed
   // absence echoes the target it was asked about, through the one masked serialization.
-  it('(D1) neither the prose nor the structured answer carries a window of a seeded plant',
+  it('(D1) neither the prose nor the structured answer carries a window of a declared plant',
     async () => {
       await headless(async () => {
         for (const plant of [ENV_PLANT, TOKEN_PLANT]) {
@@ -617,7 +626,6 @@ describe('E · the config-write channel refuses to carry a credential at all', (
     await client?.close().catch(() => {})
     await handler?.close().catch(() => {})
     await host?.close().catch(() => {})
-    masking?.dispose()
     rmSync(root, { recursive: true, force: true })
     await openWorkspace(configWithShapedCredential())
 
@@ -669,7 +677,6 @@ describe('F · the controls, and the bound they measure', () => {
     await client?.close().catch(() => {})
     await handler?.close().catch(() => {})
     await host?.close().catch(() => {})
-    masking?.dispose()
     rmSync(root, { recursive: true, force: true })
     await openWorkspace(configWithOpaqueHeaderCredential())
 
@@ -707,7 +714,6 @@ describe('C441-MCP-DIFF', () => {
     await client?.close().catch(() => {})
     await handler?.close().catch(() => {})
     await host?.close().catch(() => {})
-    masking?.dispose()
     rmSync(root, { recursive: true, force: true })
     await openWorkspace(configWithOpaqueHeaderCredential())
     // 2026-10-14 (441-07, D-24): the plant needs no YAML quoting; D-03 masks raw values only.

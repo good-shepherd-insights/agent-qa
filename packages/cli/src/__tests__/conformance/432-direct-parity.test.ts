@@ -346,7 +346,7 @@ const DOORS: ReadonlyArray<readonly [string, Door]> = [
   }],
   ['MCP over HTTP', async (project, pattern) => {
     const host = composeCliLocalAgent({ agentQaRoot: project.agentQaRoot, configPath: project.configPath })
-    const masking = composeMcpMasking({ env: {} })
+    const masking = composeMcpMasking({ configPath: project.configPath })
     const handler = createMcpHandler(() => buildAgentQaMcpServer({
       registry: host.registry, caller: MCP_FUNCTION_CALLER, maskText: (text: string) => masking.mask(text),
     }))
@@ -362,7 +362,6 @@ const DOORS: ReadonlyArray<readonly [string, Door]> = [
       await client.close().catch(() => {})
       await handler.close().catch(() => {})
       await host.close().catch(() => {})
-      masking.dispose()
     }
   }],
   ['MCP over stdio (spawned)', async (project, pattern) => {

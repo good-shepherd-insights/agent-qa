@@ -533,7 +533,7 @@ beforeAll(async () => {
   // `registerAppResources`' third (bound) condition passes here at all.
   // 432-21 (D-12): the co-hosted endpoint is tokenless; the client below still sends a legacy
   // bearer, which the listener ignores.
-  const masking = composeMcpMasking({ env: process.env })
+  const masking = composeMcpMasking({ configPath })
   const mcpServer = createServer(
     createMcpHttpRequestListener({
       registry: host.registry as FunctionRegistry,
@@ -595,7 +595,6 @@ beforeAll(async () => {
       if (adapterUp) await adapter.cleanup().catch(() => undefined)
       await browser.close()
       await new Promise<void>((closed) => mcpServer.close(() => closed()))
-      masking.dispose()
       started.close()
       sessions.dispose()
       await host.close()

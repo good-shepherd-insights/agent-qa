@@ -158,7 +158,7 @@ interface McpDoor {
  */
 async function openMcpDoor(p: DiscoveryRunFixture): Promise<McpDoor> {
   const composed = composeCliLocalAgent({ configPath: p.configPath, agentQaRoot: p.agentQaRoot })
-  const masking = composeMcpMasking({ env: {} })
+  const masking = composeMcpMasking({ configPath: p.configPath })
   const server = createServer(createMcpHttpRequestListener({
     registry: composed.registry, maskText: (text) => masking.mask(text),
   }))

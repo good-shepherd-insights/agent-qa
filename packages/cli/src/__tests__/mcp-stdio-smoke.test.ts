@@ -76,6 +76,8 @@ function fixtureProject(legacyTokens = false): string {
     )}\n`,
     'utf8',
   )
+  // 2026-10-14 (441-07, D-06): the MCP masker reads this project's declared secrets.
+  writeFileSync(join(root, '.env.secrets.local'), '')
   mkdirSync(join(root, '.agent-qa'), { recursive: true })
   return root
 }

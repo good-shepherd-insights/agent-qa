@@ -246,22 +246,23 @@ beforeEach(() => {
   mkdirSync(agentQaRoot, { recursive: true })
   mkdirSync(knowledgeRoot, { recursive: true })
   writeFileSync(configPath, SEEDED_CONFIG)
+  // 2026-10-14 (441-07, D-06): the MCP masker reads this project's declared secrets.
+  writeFileSync(join(root, '.env.secrets.local'), '')
 
   git('init', '--quiet')
   git('config', 'user.name', 'agent-qa 432-12 change differential')
   git('config', 'user.email', 'change-differential@example.invalid')
   git('config', 'commit.gpgsign', 'false')
-  writeFileSync(join(root, '.gitignore'), '.agent-qa/\nagent-qa-knowledge/\n')
+  writeFileSync(join(root, '.gitignore'), '.agent-qa/\nagent-qa-knowledge/\n.env.secrets.local\n')
   git('add', '--', '.gitignore', CONFIG_FILE)
   git('commit', '--quiet', '-m', 'seed')
 
   host = composeCliLocalAgent({ agentQaRoot, configPath })
-  masking = composeMcpMasking({ env: {} })
+  masking = composeMcpMasking({ configPath })
 })
 
 afterEach(async () => {
   await host?.close().catch(() => {})
-  masking?.dispose()
   host = undefined
   masking = undefined
   rmSync(root, { recursive: true, force: true })

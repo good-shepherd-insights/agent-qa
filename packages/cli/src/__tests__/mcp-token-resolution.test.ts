@@ -19,8 +19,9 @@
 // `services.mcp.tokens`, `services.mcp.stdio.grantConfigWrite` and the token entry DTO are deleted,
 // so a declared block is refused by the strict parser with the normal unrecognized-key error.
 
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -97,7 +98,18 @@ describe('the listener reads no Authorization header (D-12)', () => {
       deps: {} as unknown as FunctionDeps,
       auditSink: { appendGuardrailAudit() {} } as unknown as CreateFunctionRegistryOptions['auditSink'],
     })
-    const mask = composeMcpMasking({ env: {} })
+    const root = mkdtempSync(join(tmpdir(), 'agent-qa-441-07-tokenless-'))
+    cleanups.push(async () => rmSync(root, { recursive: true, force: true }))
+    const configPath = join(root, 'agent-qa.config.yaml')
+    writeFileSync(configPath, JSON.stringify(AgentQaConfigSchema.parse({
+      workspace: {
+        testMatch: ['tests/**/*.yaml'], suiteMatch: ['suites/**/*.suite.yaml'],
+        hooksFile: 'hooks.yaml', envFile: '.env', secretsFile: '.env.secrets.local',
+      },
+      use: { mobile: { appState: 'preserve' } },
+    })))
+    writeFileSync(join(root, '.env.secrets.local'), '')
+    const mask = composeMcpMasking({ configPath })
     const server: Server = createServer(createMcpHttpRequestListener({ registry, maskText: (text) => mask.mask(text) }))
     await new Promise<void>((ready) => server.listen(0, '127.0.0.1', ready))
     cleanups.push(() => new Promise<void>((closed) => server.close(() => closed())))
@@ -133,20 +145,6 @@ describe('the listener reads no Authorization header (D-12)', () => {
     const wire = frames.join('\n')
     expect(wire).not.toContain('invalid_token')
     expect(wire).not.toContain(PLANTED)
-  })
-})
-
-// RE-SPELLED from 'the resolved values reach the masker by declaration, not by luck': nothing is
-// declared any more, and environment secret masking is what remains (D-13).
-describe('the MCP masker is seeded from the environment alone', () => {
-  it('masks a suffix-recognised environment secret, and takes no declared-token argument', () => {
-    const masking = composeMcpMasking({ env: { AGENT_QA_432_21_PROBE_TOKEN: PLANTED } })
-    try {
-      expect(masking.mask(`leaked ${PLANTED}`)).not.toContain(PLANTED)
-    } finally {
-      masking.dispose()
-    }
-    expect(composeMcpMasking.length).toBe(1)
   })
 })
 

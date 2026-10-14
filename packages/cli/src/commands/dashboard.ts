@@ -1473,14 +1473,11 @@ async function startDashboardBackedServices(
     // `tokenEnvVar` could not take a serving dashboard down; with no dereference left, that ordering
     // hazard is gone with it.
     const mcpPlan = mcpMountPlanFor(config)
-    let mcpMasking: ReturnType<typeof composeMcpMasking> | undefined
     let mcpServer: NodeHttpServer | undefined
     if (mcpPlan.mount) {
-      // The MCP masker, composed exactly as `agent-qa mcp` composes it: `buildRunMaskingContext`
-      // over this process's environment. Separate from the dashboard's own masking context on
-      // purpose — it masks what this endpoint writes.
-      mcpMasking = composeMcpMasking({ env: process.env })
-      const mcpMaskText = (text: string): string => mcpMasking!.mask(text)
+      // The MCP masker, composed exactly as `agent-qa mcp` composes it: the declared-secret loader
+      // over this project's config. It masks what this endpoint writes.
+      const mcpMaskText = composeMcpMasking({ configPath: configFilePath }).mask
       // Clamped inside `mcpMountPlanFor`, so the port a cell drives is the port this binds.
       const mcpPort = mcpPlan.port
       mcpServer = createServer(
@@ -1515,10 +1512,7 @@ async function startDashboardBackedServices(
       // which is exactly the state the shutdown path's `mcpServer?.close()` already handles.
       const mcpMount = await mountCoHostedMcp({ server: mcpServer, port: mcpPort })
       mcpServer = mcpMount.server
-      if (mcpMount.server === undefined) {
-        mcpMasking.dispose()
-        mcpMasking = undefined
-      } else {
+      if (mcpMount.server !== undefined) {
         console.log(pc.dim(
           `MCP endpoint listening on http://${MCP_HTTP_BIND_HOST}:${String(mcpMount.boundPort)}/ `
           + '(live view attached).',
@@ -1542,7 +1536,6 @@ async function startDashboardBackedServices(
       // own — it is a socket this process bound, and a shutdown that left it listening would leave
       // an endpoint over a registry whose door is closing underneath it.
       mcpServer?.close()
-      mcpMasking?.dispose()
       // 402-01: unregister the session observer and drop every retained handle. Without it the
       // run door's observer set keeps a closure alive that keeps this map alive that keeps every
       // finished run's bus alive.

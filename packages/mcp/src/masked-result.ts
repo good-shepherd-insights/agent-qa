@@ -32,18 +32,18 @@
 //     const serialized = JSON.stringify(output) ?? 'null'   // escapes " as \" , \ as \\ , \n , \t
 //     const text = maskText(serialized)                     // literal substring replacement
 //
-// `maskText` is `createMaskingContext().mask` (`packages/safety/src/masking/context.ts`), which is
-// `out.split(value).join(placeholder)` — a LITERAL substring replacement of the registered raw
-// values. `JSON.stringify` escapes `"`, `\` and every C0 control character, so for a registered
-// credential containing one of those bytes the raw value DOES NOT OCCUR in the document the masker
-// scans. The masker matched nothing and the credential reached the caller verbatim — and, because
-// this module answers both channels from the same bytes, it reached BOTH of them. Measured:
+// `maskText` is the host's declared-secret mask (`SecretRedactor` in the runner package), a
+// LITERAL replacement of the declared raw values. `JSON.stringify` escapes `"`, `\` and every C0
+// control character, so for a registered credential containing one of those bytes the raw value
+// DOES NOT OCCUR in the document the masker scans. The masker matched nothing and the credential
+// reached the caller verbatim — and, because this module answers both channels from the same
+// bytes, it reached BOTH of them. Measured:
 //
 //     raw:        sk-live"abc\def
 //     serialized: {"token":"sk-live\"abc\\def"}
 //     raw value present in the scanned document? false
 //
-// The phase verifier drove the real `buildRunMaskingContext` masker over six inputs and recorded
+// The phase verifier drove the then-shipped environment masker over six inputs and recorded
 // four of five shapes leaking verbatim on both channels, including a `*_CREDENTIALS`-style JSON
 // blob — an entirely ordinary environment value (a password with a quote in it, a service-account
 // blob). The corpus in place at the time could not see it: every credential plant was alphanumeric,
@@ -51,8 +51,8 @@
 // without quoted-string-after-`from`: the arch dep lint reads that shape as an import specifier.)
 //
 // SO THE MASKER IS NEVER HANDED A SERIALIZATION. `maskJsonDocument` below walks the JSON value and
-// masks every STRING LEAF and every OBJECT KEY — the raw bytes an operator's environment actually
-// holds — and only then serializes. The standing corpus for the class is
+// masks every STRING LEAF and every OBJECT KEY — the raw bytes an operator declared — and only
+// then serializes. The standing corpus for the class is
 // `__tests__/masked-serialization.test.ts`, which drives the shipped masker over a value containing
 // a quote, one containing a backslash, one containing a control character, and a JSON blob.
 // ─────────────────────────────────────────────────────────────────────────────────────────────

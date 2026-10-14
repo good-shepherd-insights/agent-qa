@@ -262,7 +262,7 @@ async function mcpReader(p: { configPath: string; agentQaRoot: string }) {
   const composed = host.composeCliLocalAgent({ configPath: p.configPath, agentQaRoot: p.agentQaRoot })
   cleanups.push(() => composed.close())
   // 432-21 (D-12): tokenless. The client below still sends a legacy reader bearer, which is ignored.
-  const masking = composeMcpMasking({ env: {} })
+  const masking = composeMcpMasking({ configPath: p.configPath })
   const server = createServer(createMcpHttpRequestListener({
     registry: composed.registry, maskText: (text) => masking.mask(text),
   }))

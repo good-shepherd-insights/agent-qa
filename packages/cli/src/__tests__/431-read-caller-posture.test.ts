@@ -66,6 +66,8 @@ function project() {
     use: { mobile: { appState: 'preserve' } },
   })
   writeFileSync(configPath, JSON.stringify(config))
+  // 2026-10-14 (441-07, D-06): the MCP masker reads this project's declared secrets.
+  writeFileSync(join(root, '.env.secrets.local'), '')
   const runId = asRunId(generateRunId())
   const { sha } = new FsEvidenceArtifactStore({ root: agentQaRoot, runId }).persistDecisionScreenshot(PNG)
   return { root, agentQaRoot, configPath, config, runId, sha }
@@ -78,7 +80,7 @@ async function httpHost() {
     resolveExecutionContext: () => 'local-headless',
   })
   cleanups.push(() => host.close())
-  const mask = composeMcpMasking({ env: {} })
+  const mask = composeMcpMasking({ configPath: p.configPath })
   const server: Server = createServer(createMcpHttpRequestListener({
     registry: host.registry, maskText: (text) => mask.mask(text),
   }))

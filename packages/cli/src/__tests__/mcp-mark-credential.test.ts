@@ -48,12 +48,14 @@ async function harness() {
     use: { mobile: { appState: 'preserve' } },
   })
   writeFileSync(fixture.configPath, JSON.stringify(config))
+  // 2026-10-14 (441-07, D-06): the MCP masker reads this project's declared secrets.
+  writeFileSync(join(fixture.root, '.env.secrets.local'), '')
   const host = composeCliLocalAgent({
     agentQaRoot: fixture.agentQaRoot, configPath: fixture.configPath,
     resolveExecutionContext: () => 'local-headless',
   })
   cleanups.push(() => host.close())
-  const mask = composeMcpMasking({ env: {} })
+  const mask = composeMcpMasking({ configPath: fixture.configPath })
   const refusals: McpHttpRefusal[] = []
   const server: Server = createServer(createMcpHttpRequestListener({
     registry: host.registry, maskText: text => mask.mask(text),

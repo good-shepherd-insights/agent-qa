@@ -90,6 +90,7 @@ export interface AgentQaMcpServerDeps {
    * field of it is a credential this package reads.
    */
   readonly caller: FunctionCaller
+  // 2026-10-14 (441-07, D-06): `maskText` is the host's declared-secret mask.
   /**
    * How text leaving this process is masked (threat T-396-01).
    *

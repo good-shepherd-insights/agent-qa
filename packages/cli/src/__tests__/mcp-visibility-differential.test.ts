@@ -8,8 +8,8 @@
 // 2026-10-01 (432-21, D-12/D-13): THE BEARER IS DELETED TOO. The listener reads no `Authorization`
 // header, so the "tokens" below are legacy header values a pre-432 client might still send, and
 // every one of them — and none — is the same caller. Group 9's Host and Origin guards are unchanged;
-// its bearer cells are re-spelled to "never read, never echoed", and its masking cells now seed the
-// production masker from the environment (the declared-token seeding, leg K1, is deleted).
+// its bearer cells are re-spelled to "never read, never echoed". 2026-10-14 (441-07, D-01): its
+// masking cells declare their plant in the project's secrets file, the only thing the masker reads.
 //
 // WHAT THIS SUITE IS AND WHY IT IS DRIVEN. Every cell below speaks to a REAL loopback socket, over
 // a REAL `Authorization` header, against the production `createMcpHttpRequestListener` composed
@@ -99,8 +99,8 @@ const AUTHORING_SCOPES = ['test-write', 'run', 'read'] as const
 
 /**
  * The legacy bearer values a pre-432 client might present. None is read. `PLANTED_RO` is ALSO
- * seeded into the masker's environment under a `…_TOKEN` name (432-21), so the masking cells in
- * group 9 measure the environment masking D-13 keeps.
+ * declared in the project's secrets file (441-07), so the masking cells in group 9 measure the
+ * declared masking D-01 keeps.
  */
 const PLANTED_CFG = 'zz-396-05-cfg-credential-8c14ae'
 const PLANTED_RO = 'zz-396-05-ro-credential-3b90fd'
@@ -149,6 +149,7 @@ function workspace(): { root: string; configPath: string; agentQaRoot: string } 
     )}\n`,
     'utf8',
   )
+  writeFileSync(join(root, '.env.secrets.local'), `AGENT_QA_396_RO_TOKEN=${PLANTED_RO}\n`, 'utf8')
   const agentQaRoot = join(root, '.agent-qa')
   mkdirSync(agentQaRoot, { recursive: true })
   return { root, configPath, agentQaRoot }
@@ -162,10 +163,9 @@ beforeAll(async () => {
   })
 
   // THE PRODUCTION MASKER, not a stand-in. `composeMcpMasking` is the function the `mcp` command
-  // itself calls. 432-21 (D-12): it is seeded from the environment alone; this suite hands it ONE
-  // suffix-recognised secret, so a masking cell below passes only on that value's masking.
-  const masking = composeMcpMasking({ env: { AGENT_QA_396_RO_TOKEN: PLANTED_RO } })
-  const maskText = (text: string): string => masking.mask(text)
+  // itself calls. The project declares ONE secret, so a masking cell below passes only on that
+  // value's masking.
+  const maskText = composeMcpMasking({ configPath: where.configPath }).mask
 
   const server = createServer(
     createMcpHttpRequestListener({ registry: host.registry, maskText }),

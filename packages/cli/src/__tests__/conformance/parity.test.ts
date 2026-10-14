@@ -2533,7 +2533,7 @@ async function callOnProjectMcp(
   args: Record<string, unknown>,
 ): Promise<ParityToolAnswer> {
   const host = composeCliLocalAgent({ agentQaRoot: project.agentQaRoot, configPath: project.configPath })
-  const masking = composeMcpMasking({ env: {} })
+  const masking = composeMcpMasking({ configPath: project.configPath })
   const handler = createMcpHandler(() => buildAgentQaMcpServer({
     registry: host.registry,
     caller: MCP_FUNCTION_CALLER,
@@ -2561,7 +2561,6 @@ async function callOnProjectMcp(
     await client.close().catch(() => {})
     await handler.close().catch(() => {})
     await host.close().catch(() => {})
-    masking.dispose()
   }
 }
 
