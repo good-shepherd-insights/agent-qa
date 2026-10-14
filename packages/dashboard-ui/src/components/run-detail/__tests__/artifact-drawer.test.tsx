@@ -2,13 +2,10 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { generateRunId } from '@vostride/agent-qa-ids'
-import { maskedMarker } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ArtifactDrawer, type ArtifactDrawerTab } from '../artifact-drawer'
 import type { RunArtifactResponse, RunRow } from '@/lib/api'
 import { DRAWER_COPY, DRAWER_TITLE_FALLBACK } from '@/lib/drawer-view'
-import { copyTextOf } from '@/lib/display-text'
-import { maskedLabel } from '../masked-chip'
 import { ArtifactConfigTab } from '../artifact-config-tab'
 import type { ComponentType } from 'react'
 
@@ -221,7 +218,7 @@ describe('run-context drawer', () => {
 
   it('DRAWER-COPY-RUN-ID', () => {
     const data = response()
-    data.run = { ...run, id: `${run.id} ${maskedMarker('secret')}` }
+    data.run = { ...run, id: `${run.id} [secret:RUN_TOKEN]` }
     data.artifact!.runId = data.run.id
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
@@ -230,18 +227,19 @@ describe('run-context drawer', () => {
     const copy = details.querySelector<HTMLButtonElement>(`[aria-label="${DRAWER_COPY.copyRunId}"]`)
     expect(copy).not.toBeNull()
     act(() => copy!.click())
-    expect(writeText).toHaveBeenCalledExactlyOnceWith(copyTextOf(data.run.id))
-    expect(details.textContent).not.toContain(maskedMarker('secret'))
+    expect(writeText).toHaveBeenCalledExactlyOnceWith(data.run.id)
+    expect(details.textContent).toContain(data.run.id)
+    expect(details.querySelector('[data-masked]')).toBeNull()
   })
 
-  it('masks header producer text and degrades absent names and config', () => {
+  it('shows header producer text as stored and degrades absent names and config', () => {
     const data = response()
-    data.run = { ...run, name: `Checkout ${maskedMarker('email')}` }
-    data.artifact!.payload.config = { runtime: { targetName: maskedMarker('secret') } }
+    data.run = { ...run, name: 'Checkout as qa-person@example.com' }
+    data.artifact!.payload.config = { runtime: { targetName: '[secret:TARGET_HOST]' } }
     const header = mount(data).querySelector('[data-slot="sheet-header"]')!
-    expect(header.textContent).toContain(`Checkout ${maskedLabel('email')}`)
-    expect(header.textContent).toContain(maskedLabel('secret'))
-    expect(header.textContent).not.toContain(maskedMarker('secret'))
+    expect(header.textContent).toContain('Checkout as qa-person@example.com')
+    expect(header.textContent).toContain('[secret:TARGET_HOST]')
+    expect(header.querySelector('[data-masked]')).toBeNull()
     data.run = { ...run, name: '' }
     data.artifact!.payload.config = undefined
     const absent = mount(data).querySelector('[data-slot="sheet-header"]')!
@@ -253,9 +251,9 @@ describe('run-context drawer', () => {
     expect(mount(null, { loading: true }).textContent).toContain('Loading artifact data...')
     expect(mount(null).textContent).toContain('Artifact data is not available for this run')
     const onRetry = vi.fn()
-    const drawer = mount(null, { error: maskedMarker('secret'), onRetry })
+    const drawer = mount(null, { error: 'Read failed for [secret:API_TOKEN]', onRetry })
     expect(drawer.textContent).toContain('Could not load artifact data')
-    expect(drawer.textContent).toContain(maskedLabel('secret'))
+    expect(drawer.textContent).toContain('Read failed for [secret:API_TOKEN]')
     const retry = Array.from(drawer.querySelectorAll('button')).find(button => button.textContent === DRAWER_COPY.retry)
     expect(retry).toBeDefined()
     act(() => retry!.click())

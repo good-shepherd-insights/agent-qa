@@ -2,9 +2,7 @@ import { ChevronRight, Copy } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import type { RunArtifactRow } from '@/lib/api'
-import { copyTextOf } from '@/lib/display-text'
 import { captureStateOf, DRAWER_COPY, RUN_ARTIFACT_KIND_LABELS } from '@/lib/drawer-view'
-import { MaskedText } from './masked-text'
 
 export function ArtifactTechnicalDetails({ runId, artifact }: {
   runId: string
@@ -20,9 +18,9 @@ export function ArtifactTechnicalDetails({ runId, artifact }: {
         <dl className="mt-4 grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-4 gap-y-2 text-xs">
           <dt className="text-muted-foreground">{DRAWER_COPY.runId}</dt>
           <dd className="flex min-w-0 items-start gap-2 break-all font-mono">
-            <span className="min-w-0 flex-1"><MaskedText text={runId} /></span>
+            <span className="min-w-0 flex-1">{runId}</span>
             <Button type="button" variant="ghost" size="icon-sm" aria-label={DRAWER_COPY.copyRunId}
-              onClick={() => { void navigator.clipboard?.writeText(copyTextOf(runId)) }}>
+              onClick={() => { void navigator.clipboard?.writeText(runId) }}>
               <Copy className="size-3.5" />
             </Button>
           </dd>
@@ -33,7 +31,7 @@ export function ArtifactTechnicalDetails({ runId, artifact }: {
           {captureStateOf(artifact) === 'sealed' ? (
             <>
               <dt className="text-muted-foreground">{DRAWER_COPY.captureSealedAt}</dt>
-              <dd className="break-all"><MaskedText text={artifact.finalizedAt!} /></dd>
+              <dd className="break-all">{artifact.finalizedAt}</dd>
             </>
           ) : null}
         </dl>

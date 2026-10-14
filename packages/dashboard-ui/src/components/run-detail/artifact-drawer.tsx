@@ -15,7 +15,6 @@ import { captureStateOf, DRAWER_COPY, DRAWER_TITLE_FALLBACK, ranAgainstParts } f
 import { ArtifactTestTab } from "./artifact-test-tab"
 import { ArtifactConfigTab } from "./artifact-config-tab"
 import { ArtifactTechnicalDetails } from "./artifact-technical-details"
-import { MaskedText } from "./masked-text"
 
 export type ArtifactDrawerTab = "test" | "config"
 
@@ -59,7 +58,7 @@ function ErrorState({ error, onRetry }: { error: string; onRetry: () => void }) 
           <p className="mt-1 text-sm text-muted-foreground">
             Retry the request. If it continues, verify the dashboard server can read run artifacts.
           </p>
-          <p className="mt-2 break-words font-mono text-xs text-red-500"><MaskedText text={error} /></p>
+          <p className="mt-2 break-words font-mono text-xs text-red-500">{error}</p>
           <Button className="mt-3" size="sm" variant="outline" onClick={onRetry}>
             {DRAWER_COPY.retry}
           </Button>
@@ -130,8 +129,8 @@ export function ArtifactDrawer({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-[min(820px,92vw)] sm:max-w-none gap-0 overflow-hidden p-0">
         <SheetHeader className="border-b px-4 py-3 pr-12">
-          <SheetTitle className="text-base leading-snug font-medium line-clamp-2"><MaskedText text={title} /></SheetTitle>
-          <SheetDescription className="truncate text-xs"><MaskedText text={description} /></SheetDescription>
+          <SheetTitle className="text-base leading-snug font-medium line-clamp-2">{title}</SheetTitle>
+          <SheetDescription className="truncate text-xs">{description}</SheetDescription>
         </SheetHeader>
 
         {artifact && captureStateOf(artifact) === 'unsealed' ? (

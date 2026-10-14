@@ -1,51 +1,16 @@
-// THE RUN'S FAILURE SUMMARY, AS A PERSON READS IT (405-14 · DETL-02, D-10, T-405-40/41/42/43).
+// The run's failure summary, as stored (405-14 · DETL-02; 441 D-28): a declared value reads as the
+// `[secret:<name>]` the run wrote, as plain text.
 //
-// `failureSummary` IS A PRODUCER STRING, and this component is the last render site on the rebuilt
-// page that painted one raw. The provenance is `member-group.tsx`'s, restated because it is the
-// whole reason this file exists:
+// The clipboard carries what was rendered and nothing else (T-405-43): the preview while the banner
+// is collapsed, the whole summary once it has been expanded.
 //
-//   `generateFailureSummary` (runner) → `projectTestFinished`, which routes the string through
-//   `maskPayloadStrings` BY NAME, so it carries `<SECRET_n>` / `<EMAIL_n>` at rest → the dashboard
-//   subscriber writes it to `runs.failure_summary` → `GET /api/runs/:id` serves it as stored,
-//   restoring nothing (441 D-07) → here.
-//
-// Rendered raw, the marker's delimiter reaches a text node a person reads — precisely the state
-// 405-11's third truth and its prohibition forbid. 405-12 fixed the identical defect one row away
-// in `sub-action-tree-item.tsx`; this one could not be MEASURED until 405-14 built a failing-run
-// producer, because 405-09's populated run passes and the banner never rendered. WINDOWS #287.
-//
-// THE PARSE PRECEDES THE BUDGET. `truncateMaskedText` splits first and spends the word budget over
-// SEGMENTS, so a marker is one word and is either kept whole or dropped whole. The page-local
-// helper this replaces truncated the raw string on whitespace and handed the renderer a suffix of a
-// producer sentence; `lib/masked-text.ts` records why that ordering was wrong even though today's
-// marker spelling made it harmless.
-//
-// THE CLIPBOARD IS A SECOND MEDIUM A PERSON READS, SO IT GETS THE SAME RULE (T-405-43). What
-// `copyTextOf` writes is the sentence the reader just looked at — the PREVIEW while the banner is
-// collapsed, the whole summary once it has been expanded — with each marker replaced by the
-// PUBLISHED label its chip shows, never the marker-bearing string the seam produced.
-//
-// BOTH HALVES OF THAT RULE ARE LOAD-BEARING, AND THE SECOND ONE WAS MEASURED MISSING. A copy button
-// that pasted `␟masked:…␟` into a bug report would move the leak off the page rather than close
-// it, and the pasted text is read by exactly the people a redaction is kept from. A copy button
-// that pasted the FULL summary out of a COLLAPSED banner does the same thing with a RESTORED
-// credential: the display seam restores `<SECRET_n>` for the human reading the page, and on the
-// failing-run fixture the restored value sits at word 23 — three words past the preview budget — so
-// one click on a banner that never showed it put it on the clipboard. Measured on real Chromium
-// against the shipped bundle before this was fixed: 21 words / 170 chars on the page, 47 words /
-// 351 chars on the clipboard, the fixture's credential at word 24 of a string the reader never saw,
-// and byte-identical output from the expanded state because the argument ignored the banner's state
-// entirely. THE CLIPBOARD CARRIES WHAT WAS RENDERED AND NOTHING ELSE.
-//
-// TEXT NODES AND ELEMENTS, NEVER MARKUP (T-405-42): there is no `dangerouslySetInnerHTML` here or in
-// `MaskedText` below it, and a jsdom cell feeds this component markup and asserts no element.
+// Text nodes, never markup (T-405-42): there is no `dangerouslySetInnerHTML` here, and a jsdom cell
+// feeds this component markup and asserts no element.
 
 import { useState } from "react"
 import { AlertCircle, Check, ChevronRight, Copy } from "lucide-react"
 
-import { MaskedText } from "@/components/run-detail/masked-text"
-import { copyTextOf } from "@/lib/display-text"
-import { truncateMaskedText } from "@/lib/masked-text"
+import { truncateText } from "@/lib/display-text"
 import { cn } from "@/lib/utils"
 
 /**
@@ -91,7 +56,7 @@ const COPY_ANNOUNCEMENT: Record<CopyStatus, string> = {
 export function FailureBanner({ summary }: { summary: string }) {
   const [open, setOpen] = useState(false)
   const [copyStatus, setCopyStatus] = useState<CopyStatus>("idle")
-  const preview = truncateMaskedText(summary, FAILURE_BANNER_PREVIEW_WORDS)
+  const preview = truncateText(summary, FAILURE_BANNER_PREVIEW_WORDS)
 
   // WHAT IS RENDERED, NOT WHAT WAS PRESSED. `data-failure-banner-state` is the attribute every DOM
   // cell reads to say which of the two claims it is making, so it has to describe the TEXT on the
@@ -107,11 +72,9 @@ export function FailureBanner({ summary }: { summary: string }) {
     setTimeout(() => setCopyStatus("idle"), 2000)
   }
 
-  // THE SAME EXPRESSION AS THE RENDER, SPELLED OUT RATHER THAN HOISTED. `copyTextOf` is handed the
-  // exact string `MaskedText` below is handed, so the clipboard cannot carry a word the page did
-  // not. It is written out at both sites on purpose: both sites spell the same expression, so the
-  // clipboard provably carries what the page renders, and a change to one that the other does not
-  // mirror shows in review instead of hiding behind a hoisted `const rendered`.
+  // THE SAME EXPRESSION AS THE RENDER, SPELLED OUT RATHER THAN HOISTED, so the clipboard carries
+  // exactly what the page renders and a change to one site that the other does not mirror shows in
+  // review.
   //
   // THE CHECK MARK MEANS THE WRITE RESOLVED, AND NOTHING ELSE. `writeText` returns a promise that
   // rejects with `NotAllowedError` whenever the document is not focused or the permission was
@@ -122,7 +85,7 @@ export function FailureBanner({ summary }: { summary: string }) {
   // property access threw a `TypeError` inside the click handler. Optional-chained, awaited and
   // caught — `artifact-drawer.tsx`'s `copyText` idiom, with the outcome kept rather than dropped.
   const handleCopy = () => {
-    const written = navigator.clipboard?.writeText(copyTextOf(open ? summary : preview.text))
+    const written = navigator.clipboard?.writeText(open ? summary : preview.text)
     if (written === undefined) {
       announce("failed")
       return
@@ -142,7 +105,7 @@ export function FailureBanner({ summary }: { summary: string }) {
           data-failure-banner-text
           className="flex-1 text-sm text-foreground/80 select-text"
         >
-          <MaskedText text={open ? summary : preview.text} />
+          {open ? summary : preview.text}
         </span>
         <button
           data-failure-banner-copy

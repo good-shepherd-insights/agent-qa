@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
 // Real durable rows, registry dispatch and HTTP adapter. No sanitizer mock.
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -24,7 +24,6 @@ import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   MarkReceiptSchema,
-  maskedMarker,
   type CompletedRunHandoff,
   type MarkReceipt,
   type RunDetailProjection,
@@ -209,23 +208,11 @@ describe('423 guarded human read', () => {
   })
 })
 
-// Labels are read from their published UI source, independently of the conversion under test.
-function publishedLabel(name: string): string {
-  const source = readFileSync(join(PACKAGES_ROOT, 'dashboard-ui/src/lib/run-detail-view.ts'), 'utf8')
-  const match = new RegExp(`export const ${name} = (["'])(.*?)\\1`).exec(source)
-  if (!match) throw new Error(`Published label missing: ${name}`)
-  return match[2]!
-}
-
-const SECRET_LABEL = publishedLabel('MASKED_SECRET_LABEL')
-const EMAIL_LABEL = publishedLabel('MASKED_EMAIL_LABEL')
-const KEY = `key ${maskedMarker('secret')} <EMAIL_81>`
-const VALUE = `normal ${maskedMarker('email')} <SECRET_82> [secret]`
-const NESTED = JSON.stringify({ [KEY]: [VALUE, { note: maskedMarker('secret') }] })
-const DISPLAY_KEY = `key [${SECRET_LABEL}] [${EMAIL_LABEL}]`
-const DISPLAY_VALUE = `normal [${EMAIL_LABEL}] [${SECRET_LABEL}] [secret]`
-const DISPLAY_NESTED = JSON.stringify({ [DISPLAY_KEY]: [DISPLAY_VALUE, { note: `[${SECRET_LABEL}]` }] })
-const STORED_NAME = `Name ${maskedMarker('secret')} ${maskedMarker('email')} <SECRET_99>`
+// 2026-10-14 (441-37, D-28, D-20): the drawer shows and copies stored text as written.
+const KEY = 'key [secret:API_KEY] <EMAIL_81>'
+const VALUE = 'normal [secret:PASSWORD] <SECRET_82> [secret]'
+const NESTED = JSON.stringify({ [KEY]: [VALUE, { note: '[secret:API_KEY]' }] })
+const STORED_NAME = 'Name [secret:API_KEY] <SECRET_99>'
 
 describe('423 rendered run-detail sinks', () => {
   let fixture: Awaited<ReturnType<typeof startFixture>>
@@ -255,14 +242,14 @@ describe('423 rendered run-detail sinks', () => {
     await fixture?.close()
   })
 
-  it('SINK-CLIPBOARD: values and nested JSON keys use display labels', async () => {
+  it('SINK-CLIPBOARD: values and nested JSON keys are copied as stored', async () => {
     await page.getByRole('button', { name: 'Copy JSON', exact: true }).click()
     const copied = await page.evaluate(() => (window as unknown as { copied: string }).copied)
     expect.soft(JSON.parse(copied)).toEqual({
-      [DISPLAY_KEY]: DISPLAY_VALUE, nested: DISPLAY_NESTED,
+      [KEY]: VALUE, nested: NESTED,
       normal: 'Readable normal value', auth: AUTH_STATE,
     })
-    expect.soft(copied).not.toMatch(/<SECRET_|<EMAIL_|␟masked:/u)
+    expect.soft(copied).not.toMatch(/␟masked:/u)
     const rows = page.getByRole('dialog').locator('tr')
     const normal = rows.filter({ hasText: 'Readable normal value' })
     await normal.getByRole('button').click()
@@ -271,7 +258,7 @@ describe('423 rendered run-detail sinks', () => {
     const nested = rows.filter({ has: page.locator('th', { hasText: /^nested$/ }) })
     await nested.getByRole('button').click()
     expect.soft(await page.evaluate(() => (window as unknown as { copied: string }).copied))
-      .toBe(DISPLAY_NESTED)
+      .toBe(NESTED)
   })
 
   it('SINK-TITLE: document title is the stored run name as written', async () => {
@@ -279,22 +266,19 @@ describe('423 rendered run-detail sinks', () => {
     expect(await page.title()).not.toContain(AUTH_TOKEN)
   })
 
-  it('SINK-DOM: drawer values, keys and accessible attributes never expose markers, and a stored auth-state value shows as written', async () => {
+  it('SINK-DOM: drawer values, keys and accessible attributes show stored text, and a stored auth-state value shows as written', async () => {
     const dialog = page.getByRole('dialog')
     const text = await dialog.innerText()
     expect.soft(text).toContain('Readable normal value')
-    expect.soft(text).toContain(SECRET_LABEL)
-    expect.soft(text).toContain(EMAIL_LABEL)
-    expect.soft(text).toContain('[secret]')
-    // 441-15 (D-07, D-20): no server pass rewrites an old run's numbered placeholder, so the chip
-    // lane shows it as the text it is.
-    expect.soft(text).not.toMatch(/␟masked:/u)
-    expect.soft(text).toContain('<SECRET_82>')
+    expect.soft(text).toContain(KEY)
+    expect.soft(text).toContain(VALUE)
     expect.soft(text).toContain(AUTH_STATE)
+    expect.soft(text).not.toMatch(/␟masked:/u)
+    expect.soft(await dialog.locator('[data-masked]').count()).toBe(0)
     const attrs = await dialog.evaluate((element) => Array.from(element.querySelectorAll('*'))
       .flatMap((node) => Array.from(node.attributes).map((attribute) => attribute.value)).join('\n'))
-    expect.soft(attrs).not.toMatch(/<SECRET_|<EMAIL_|␟masked:/u)
-    expect.soft(await dialog.getByRole('button', { name: `Copy ${DISPLAY_KEY} value`, exact: true }).count()).toBe(1)
+    expect.soft(attrs).not.toContain(AUTH_TOKEN)
+    expect.soft(await dialog.getByRole('button', { name: `Copy ${KEY} value`, exact: true }).count()).toBe(1)
   })
 })
 

@@ -1,7 +1,5 @@
 import { Copy } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { copyTextOf } from "@/lib/display-text"
-import { MaskedText } from "./masked-text"
 
 function sortedAttributeEntries(attributes: Record<string, string>) {
   return Object.entries(attributes).sort(([left], [right]) => {
@@ -13,7 +11,7 @@ function sortedAttributeEntries(attributes: Record<string, string>) {
 }
 
 function copyText(value: string) {
-  void navigator.clipboard?.writeText(copyTextOf(value))
+  void navigator.clipboard?.writeText(value)
 }
 
 export function ArtifactAttributeRows({ attributes }: { attributes: Record<string, string> }) {
@@ -47,16 +45,16 @@ export function ArtifactAttributeRows({ attributes }: { attributes: Record<strin
             {entries.map(([key, value]) => (
               <tr key={key} className="border-b border-border/70 last:border-b-0">
                 <th className="w-[240px] align-top px-3 py-2 text-left font-mono text-xs font-medium text-muted-foreground">
-                  {copyTextOf(key)}
+                  {key}
                 </th>
                 <td className="align-top px-3 py-2">
                   <div className="flex min-w-0 items-start gap-2">
-                    <span className="min-w-0 flex-1 break-all font-mono text-xs text-foreground"><MaskedText text={value} /></span>
+                    <span className="min-w-0 flex-1 break-all font-mono text-xs text-foreground">{value}</span>
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon-sm"
-                      aria-label={`Copy ${copyTextOf(key)} value`}
+                      aria-label={`Copy ${key} value`}
                       title="Copy value"
                       onClick={() => copyText(value)}
                     >

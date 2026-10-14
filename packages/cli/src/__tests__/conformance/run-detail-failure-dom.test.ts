@@ -32,14 +32,14 @@
 // nothing, so a second process would read exactly what the first one does. Cell (3e) reads the
 // banner's text on the FIRST process, which is the fact this file needs.
 //
-// THE CLIPBOARD IS MEASURED HERE TOO, AND ON THE SHIPPED BUNDLE (3g · T-405-43). The copy button
-// is a SECOND medium a person reads a redaction in, and until this cell existed the only thing
-// asserting it was a jsdom cell nothing had ever taken a fact away from. What it caught the first
-// time it ran on real Chromium: with the banner COLLAPSED, the page carried 21 words and the
-// clipboard carried 47, including the fixture's restored credential at word 24 — a value the reader
-// was never shown, one click away from a bug report. The cell therefore reads the clipboard back
-// through `navigator.clipboard.readText()` after clicking copy in the TRUNCATED state, which is why
-// this file's browser context is granted `clipboard-read`/`clipboard-write`.
+// THE CLIPBOARD IS MEASURED HERE TOO, AND ON THE SHIPPED BUNDLE (3g · T-405-43). With the banner
+// COLLAPSED it once carried 47 words against 21 on the page, including a value the reader was never
+// shown. The cell reads the clipboard back through `navigator.clipboard.readText()` after clicking
+// copy in the TRUNCATED state, which is why this file's browser context is granted
+// `clipboard-read`/`clipboard-write`.
+//
+// THE DECLARED MARKER IS TEXT (441 D-28). The run stores a declared value as `[secret:<name>]`, and
+// the banner and the artifact drawer show that string as written, with no chip (C441-DISPLAY).
 //
 // WHAT A RED ON (3f) MEANS, STATED BEFORE ANYONE IS TEMPTED. `runs.failure_summary` is an at-rest
 // sink no PASSING run ever writes, so this file's scan covers ground 405-12's cannot. If a planted
@@ -49,7 +49,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { MASKED_MARKER_DELIMITER, PLACEHOLDER_PATTERN, maskedMarker, slugBranch } from '@vostride/agent-qa-schema'
+import { slugBranch } from '@vostride/agent-qa-schema'
 import { chromium } from 'playwright-core'
 import type { Browser, BrowserContext, Page } from 'playwright-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -176,16 +176,8 @@ function publishedConstant(relativePath: string, name: string): string {
   return unescapeStringBody(entry[2] as string)
 }
 
+// The two chip labels, read only by the helper's own cells below.
 const MASKED_EMAIL_LABEL = publishedConstant('lib/run-detail-view.ts', 'MASKED_EMAIL_LABEL')
-
-/**
- * The chip a `SECRET` placeholder this host cannot restore paints, read by CONSTANT at last.
- *
- * This is the read WINDOWS #297 blocked. It is a redaction spelling like the email label, so it
- * joins the set `normaliseRedactions` collapses below — the fixture's own credential IS restored,
- * so no secret chip appears on this page today, and the point of reading it by constant rather than
- * typing it is that the day one does, both media are compared on the label the page actually shows.
- */
 const MASKED_SECRET_LABEL = publishedConstant('lib/run-detail-view.ts', 'MASKED_SECRET_LABEL')
 
 // ── THE HELPER'S OWN CELL (WINDOWS #297). It is outside the drive's `describe` deliberately: it
@@ -210,47 +202,8 @@ describe('publishedConstant reads a constant whatever quotes it carries (WINDOWS
   })
 })
 
-/** A fresh, non-global copy of the placeholder pattern — `PLACEHOLDER_PATTERN` carries `lastIndex`. */
-const placeholderRe = (): RegExp => new RegExp(PLACEHOLDER_PATTERN.source, 'u')
-
-/** What a redaction collapses to on both sides of (3g)'s comparison. Not a producible string. */
-const REDACTION_SENTINEL = '<<REDACTION>>'
-
-/**
- * One string with every SPELLING of a redaction collapsed to a single sentinel.
- *
- * (3g) COMPARES TWO MEDIA THAT SPELL THE SAME REDACTION DIFFERENTLY BY DESIGN: the page paints a
- * marker as a CHIP whose text is the published label, and the clipboard writes the same label in
- * BRACKETS, because a bracket-less label in a pasted sentence would read as the producer's own
- * words. Comparing the raw strings would therefore red on the difference the design asks for.
- *
- * IT IS ALSO WHAT KEEPS (3g) A SINGLE-FACT CELL. Mutation leg M4 replaces the banner's `MaskedText`
- * render with the raw string, so the page then carries the MARKER where it used to carry a chip —
- * and (3g) has no business moving under a mutation of the chip painting, which is (3c)/(3d)'s fact.
- * Collapsing the marker spelling too leaves exactly one thing for this cell to lose: whether the
- * clipboard carries the same WORDS the page did.
- *
- * The labels are read off the page's own chips rather than typed here, plus BOTH published labels,
- * each read by constant. `MASKED_SECRET_LABEL` is double-quoted at `lib/run-detail-view.ts` (it
- * contains an apostrophe) and `publishedConstant` could once read only single-quoted constants;
- * that was WR-11 / WINDOWS #297 and it is fixed above, so the chip texts are no longer the only
- * source available to this cell.
- */
-function normaliseRedactions(text: string, labels: readonly string[]): string {
-  const spellings = [
-    ...new Set(
-      [...labels, MASKED_EMAIL_LABEL, MASKED_SECRET_LABEL].filter((label) => label !== ''),
-    ),
-  ]
-  let out = text
-  // The BRACKETED form first, whole: a bare-label pass run first would leave the brackets behind.
-  for (const label of spellings) out = out.split(`[${label}]`).join(REDACTION_SENTINEL)
-  for (const label of spellings) out = out.split(label).join(REDACTION_SENTINEL)
-  for (const category of ['secret', 'email'] as const) {
-    out = out.split(maskedMarker(category)).join(REDACTION_SENTINEL)
-  }
-  return out
-}
+/** The declared value as the run stores it, and as every surface shows it (441 D-28). */
+const DECLARED_SECRET_MARKER = `[secret:${POPULATED_SECRET_NAME}]`
 
 /** One response the browser actually received, as the cells that read it consume it. */
 interface RecordedResponse {
@@ -277,8 +230,6 @@ interface BannerState {
   readonly renderedText: string
   /** Every `data-masked` category INSIDE the banner, in document order. */
   readonly maskedCategories: readonly string[]
-  /** Every `[data-masked]` chip's visible text, inside the banner. */
-  readonly maskedChipText: readonly string[]
   /** Every non-blank text node under `<body>` — the medium a person reads. */
   readonly textNodes: readonly string[]
   /** `document.body.innerText`, for the whole-page containment questions. */
@@ -312,6 +263,8 @@ interface PageObservation {
   readonly clipboardCopyStatus?: string
   readonly truncated: BannerState
   readonly full: BannerState
+  /** The artifact drawer, opened with `i` after the banner was read. */
+  readonly drawer: DrawerObservation
   /** Every response this page received. */
   readonly responses: readonly RecordedResponse[]
   /** What the failure view says about circularity on THIS run (422 D-17/D-19/D-20). */
@@ -339,6 +292,18 @@ interface CircularityObservation {
   /** `GET /api/runs/:id/analysis`'s body, bounded — the wire half of the claim. */
   readonly analysisBody?: string
   /** Why the verdict block never attached, when it never did. Recorded, never thrown. */
+  readonly waitFailure?: string
+}
+
+/** The artifact drawer as the page painted it, with the suite member's raw YAML expanded. */
+interface DrawerObservation {
+  /** The drawer's `innerText` once the member's raw YAML is open. */
+  readonly text: string
+  /** The member's raw YAML block's own text. */
+  readonly rawYaml: string
+  /** How many `[data-masked]` elements the WHOLE page holds with the drawer open. */
+  readonly maskedElements: number
+  /** Why the drawer or its raw YAML never appeared, when it did not. Recorded, never thrown. */
   readonly waitFailure?: string
 }
 
@@ -407,6 +372,9 @@ function context(): string {
     + `failure: ${observed?.clipboardFailure ?? '(none)'}`,
     `clipboard text: ${JSON.stringify((observed?.clipboard ?? '').slice(0, 800))}`,
     `rendered text (truncated): ${JSON.stringify((observed?.truncated.renderedText ?? '').slice(0, 800))}`,
+    `drawer: wait failure: ${observed?.drawer.waitFailure?.split('\n')[0] ?? '(none)'}; `
+    + `masked elements: ${String(observed?.drawer.maskedElements ?? 0)}`,
+    `drawer raw yaml: ${JSON.stringify((observed?.drawer.rawYaml ?? '').slice(0, 600))}`,
     `page api traffic: ${
       (observed?.responses ?? [])
         .filter((response) => response.url.includes('/api/'))
@@ -447,11 +415,7 @@ function visit(): PageObservation {
 }
 
 /**
- * Harvest one banner state: the attribute, the chips inside it, and every text node on the page.
- *
- * THE CHIPS ARE SCOPED TO THE BANNER and the text-node scan is not, deliberately. "Is there an
- * email chip in the banner" is a claim about this component; "does a delimiter reach a text node"
- * is a claim about the page a person is looking at, and a leak two elements away is still a leak.
+ * Harvest one banner state: the attribute, any chip inside it, and every text node on the page.
  */
 async function harvestBanner(page: Page): Promise<BannerState> {
   return page.evaluate(() => {
@@ -470,7 +434,6 @@ async function harvestBanner(page: Page): Promise<BannerState> {
       bannerText: (banner?.textContent ?? ''),
       renderedText: (banner?.querySelector('[data-failure-banner-text]')?.textContent ?? ''),
       maskedCategories: masked.map((element) => element.getAttribute('data-masked') ?? '?'),
-      maskedChipText: masked.map((element) => (element.textContent ?? '').trim()),
       textNodes: nodes,
       bodyText: document.body.innerText,
     }
@@ -637,6 +600,8 @@ async function observeFailureBanner(
       }
     })
 
+    const drawer = await observeArtifactDrawer(page)
+
     // Every refusal body read before the observation is handed back, so the record is complete.
     await Promise.all(pendingBodies)
 
@@ -656,6 +621,7 @@ async function observeFailureBanner(
       ...(clipboardCopyStatus === undefined ? {} : { clipboardCopyStatus }),
       truncated,
       full,
+      drawer,
       responses,
     }
   } finally {
@@ -663,7 +629,40 @@ async function observeFailureBanner(
   }
 }
 
-describe('the shipped dashboard paints a FAILED run\'s summary through the masking seam (405-14, WINDOWS #287)', () => {
+/**
+ * Open the artifact drawer with its `i` shortcut, expand the suite member's raw YAML and read it.
+ *
+ * The run's test source is captured through the run's mask, so the member's step reads with the
+ * stored `[secret:<name>]` the drawer shows as written (441 D-28).
+ */
+async function observeArtifactDrawer(page: Page): Promise<DrawerObservation> {
+  let waitFailure: string | undefined
+  const record = (error: unknown) => {
+    waitFailure ??= error instanceof Error ? error.message : String(error)
+  }
+  await page.evaluate(() => { (document.activeElement as HTMLElement | null)?.blur() })
+  await page.keyboard.press('i')
+  const dialog = page.getByRole('dialog')
+  const members = dialog.locator('[data-drawer-section="suite-members"]')
+  await members.waitFor({ state: 'visible', timeout: PAGE_BUDGET_MS }).catch(record)
+  for (const name of ['Member snapshots', 'Raw member YAML']) {
+    if (waitFailure !== undefined) break
+    await members.getByRole('button', { name, exact: true }).first()
+      .click({ timeout: PAGE_BUDGET_MS }).catch(record)
+  }
+  const raw = members.locator('pre')
+  if (waitFailure === undefined) {
+    await raw.first().waitFor({ state: 'visible', timeout: PAGE_BUDGET_MS }).catch(record)
+  }
+  return {
+    text: (await dialog.count()) > 0 ? await dialog.first().innerText() : '',
+    rawYaml: (await raw.count()) > 0 ? (await raw.first().textContent()) ?? '' : '',
+    maskedElements: await page.locator('[data-masked]').count(),
+    ...(waitFailure === undefined ? {} : { waitFailure }),
+  }
+}
+
+describe('the shipped dashboard paints a FAILED run\'s summary as stored text (405-14, WINDOWS #287)', () => {
   beforeAll(async () => {
     if (process.platform === 'win32') {
       recorded.failure = WINDOWS_REFUSAL
@@ -851,8 +850,8 @@ describe('the shipped dashboard paints a FAILED run\'s summary through the maski
     // the toggle's `useState(false)` alone, which made `truncated` a compile-time constant on
     // mount: this cell would have gone on passing with the truncation deleted outright. The two
     // assertions below are the fact the sentence above claims — the preview really is SHORTER than
-    // the full text, and it really was cut — and mutation leg M6 (`truncateMaskedText` returns its
-    // input unchanged) is the measurement that this cell can lose them.
+    // the full text, and it really was cut — and mutation leg M6 (`truncateText` returns its input
+    // unchanged) is the measurement that this cell can lose them.
     expect(
       observed.truncated.bannerText.length,
       'the truncated banner is not shorter than the expanded one, so no truncation happened. The '
@@ -861,39 +860,26 @@ describe('the shipped dashboard paints a FAILED run\'s summary through the maski
     ).toBeLessThan(observed.full.bannerText.length)
     expect(
       observed.truncated.bannerText,
-      'the truncated banner carries no ellipsis, which `truncateMaskedText` appends if and only if '
+      'the truncated banner carries no ellipsis, which `truncateText` appends if and only if '
       + `it cut something — so the preview was never over the budget.${context()}`,
     ).toContain('...')
   })
 
-  it('(3c) truncated state: the email is shown as written, and no marker or placeholder reaches a text node', () => {
+  it('(3c) truncated state: the email is shown as written', () => {
     const observed = visit()
-
-    const delimited = observed.truncated.textNodes.filter(
-      (text) => text.includes(MASKED_MARKER_DELIMITER),
-    )
-    expect(
-      delimited,
-      'a masked-marker delimiter reached a text node a person reads, in the TRUNCATED state. This '
-      + 'is the exact leak WINDOWS #287 was opened about: the banner painting a producer string '
-      + `without the chip seam, or the truncation cutting a marker apart.${context()}`,
-    ).toEqual([])
-
-    const raw = observed.truncated.textNodes.filter((text) => placeholderRe().test(text))
-    expect(
-      raw,
-      `a raw masking placeholder reached a text node in the TRUNCATED state.${context()}`,
-    ).toEqual([])
-
     expect(
       observed.truncated.bodyText.includes(POPULATED_EMAIL),
       'the planted address is not shown as written in the truncated banner. The fixture plants the '
       + 'email inside the preview budget deliberately; if the sentence drifted past the budget, fix '
       + `the FIXTURE, never the budget (D-23).${context()}`,
     ).toBe(true)
+    expect(
+      observed.truncated.maskedCategories,
+      `the truncated banner painted a masked-value chip; stored text is shown as written (D-28).${context()}`,
+    ).toEqual([])
   })
 
-  it('(3d) full state: the same four facts hold after the banner is expanded', () => {
+  it('(3d) full state: the same facts hold after the banner is expanded', () => {
     const observed = visit()
     expect(
       observed.toggled,
@@ -907,28 +893,10 @@ describe('the shipped dashboard paints a FAILED run\'s summary through the maski
       observed.full.state,
       `the banner did not reach its full state after the toggle was clicked.${context()}`,
     ).toBe('full')
-
     expect(
       observed.full.maskedCategories,
-      `the expanded banner painted an email chip for an address the run recorded as written.${context()}`,
-    ).not.toContain('email')
-
-    const delimited = observed.full.textNodes.filter(
-      (text) => text.includes(MASKED_MARKER_DELIMITER),
-    )
-    expect(
-      delimited,
-      'a masked-marker delimiter reached a text node in the FULL state. The expanded banner renders '
-      + 'the WHOLE summary; a leak here and not in the preview means only the truncated branch goes '
-      + `through the seam.${context()}`,
+      `the expanded banner painted a masked-value chip; stored text is shown as written (D-28).${context()}`,
     ).toEqual([])
-
-    const raw = observed.full.textNodes.filter((text) => placeholderRe().test(text))
-    expect(
-      raw,
-      `a raw masking placeholder reached a text node in the FULL state.${context()}`,
-    ).toEqual([])
-
     expect(
       observed.full.bodyText.includes(POPULATED_EMAIL),
       `the planted address is not shown as written once the banner is expanded (D-23).${context()}`,
@@ -1025,10 +993,7 @@ describe('the shipped dashboard paints a FAILED run\'s summary through the maski
     ).not.toBe('')
 
     // THE FACT. The fixture plants the env credential at word 23 — three words past the preview
-    // budget, so it is NOT on a collapsed page. It was on the clipboard anyway: `copyTextOf` was handed the whole
-    // summary regardless of state, and one click on a banner that never showed the credential put
-    // 47 words on the clipboard against 21 on the page. A pasted bug report is read by exactly the
-    // people a redaction is kept from, restored or not.
+    // budget, so it is NOT on a collapsed page, and so it must not be on the clipboard either.
     expect(
       clipboard.includes(POPULATED_SECRET_VALUE),
       'the env credential is on the clipboard, copied from a COLLAPSED banner that never '
@@ -1040,28 +1005,50 @@ describe('the shipped dashboard paints a FAILED run\'s summary through the maski
       'the planted address is not on the clipboard as written. The collapsed banner renders it at '
       + `word 16, so the clipboard carries it as the page showed it (D-23).${context()}`,
     ).toBe(true)
-    expect(
-      clipboard.includes(MASKED_MARKER_DELIMITER),
-      'a masked-marker delimiter is on the clipboard — the copy path is writing the seam\'s '
-      + `marker-bearing string rather than the published label its chip shows.${context()}`,
-    ).toBe(false)
-    expect(
-      placeholderRe().test(clipboard),
-      `a raw masking placeholder is on the clipboard.${context()}`,
-    ).toBe(false)
 
     // AND IT IS THE RENDERED SENTENCE, WORD FOR WORD — the containment above cannot see a copy that
-    // carries three EXTRA words none of which happened to be planted. Both sides are normalised so
-    // that the two media's different spellings of the same redaction (a chip's bare label on the
-    // page, the same label in brackets on the clipboard, the marker itself under mutation M4) do
-    // not read as a difference; what is left to compare is the WORDS.
-    const labels = observed.truncated.maskedChipText
+    // carries three EXTRA words none of which happened to be planted.
     expect(
-      normaliseRedactions(clipboard, labels),
+      clipboard,
       'the clipboard is not the sentence the collapsed banner rendered. A copy that carries more '
       + 'than the page did is the defect this cell exists for; a copy that carries LESS would mean '
       + `the copy path is truncating a second time.${context()}`,
-    ).toBe(normaliseRedactions(observed.truncated.renderedText, labels))
+    ).toBe(observed.truncated.renderedText)
+  })
+
+  describe('C441-DISPLAY', () => {
+    it('a failed run shows a declared marker as text in its banner and artifact drawer', () => {
+      const observed = visit()
+      expect(
+        observed.truncated.renderedText,
+        'the collapsed banner does not show the declared value\'s stored `[secret:<name>]` as text. '
+        + `The failing step references the value declared in the fixture's secrets file (D-28).${context()}`,
+      ).toContain(DECLARED_SECRET_MARKER)
+      expect(
+        observed.truncated.textNodes.some((text) => text.includes(DECLARED_SECRET_MARKER)),
+        `no text node holds the stored marker as written.${context()}`,
+      ).toBe(true)
+      expect(
+        observed.drawer.waitFailure,
+        `the artifact drawer or its suite member's raw YAML never appeared.${context()}`,
+      ).toBeUndefined()
+      expect(
+        observed.drawer.rawYaml,
+        'the artifact drawer\'s member YAML does not show the stored marker as written. The run '
+        + `captures its test source through its own mask (D-28).${context()}`,
+      ).toContain(DECLARED_SECRET_MARKER)
+      expect(observed.drawer.text, context()).toContain(DECLARED_SECRET_MARKER)
+      expect(
+        observed.drawer.maskedElements,
+        `the page painted a masked-value chip with the drawer open (D-28).${context()}`,
+      ).toBe(0)
+      expect(observed.drawer.text, context()).not.toMatch(/masked (?:secret|email)/u)
+      expect(observed.truncated.bodyText, context()).not.toMatch(/masked (?:secret|email)/u)
+      expect(
+        (observed.drawer.text + observed.full.bannerText).includes(POPULATED_DECLARED_SECRET_VALUE),
+        `the declared value is IN CLEAR in the banner or the drawer.${context()}`,
+      ).toBe(false)
+    })
   })
 
   // ── 422 D-17/D-19/D-20: THE CIRCULARITY EVIDENCE, ON THE RUN THIS FILE ACTUALLY DRIVES.
