@@ -20,6 +20,7 @@ import { join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { DEFAULT_PARALLEL_WORKERS, resolveEffectiveWorkers } from '@vostride/agent-qa-schema'
 
 import { CliRunInputError } from '../cli-run-input-error.js'
@@ -181,6 +182,7 @@ describe('the chain: the resolved count → the RunConfig the shell reads', () =
       knowledgeRoot: join(configDir, 'knowledge'),
       ports: {} as never,
       maskingContext: {} as never,
+      secretRedactor: new SecretRedactor(new SecretStore()),
       members: [],
       executor: (() => { throw new Error('unreachable in this cell') }) as never,
       configDigests: { config: 'c', source: 's' } as never,

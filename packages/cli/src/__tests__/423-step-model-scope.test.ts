@@ -187,6 +187,7 @@ async function executePath(path: 'DIRECT' | 'SUITE' | 'COMPOSED', options: { mis
       mintRunId: () => runId, isMintedRunId: () => true,
       assembleRun: async context => {
         const assembly = await assembleCliRun({ ...context, knowledgeRoot: produced.knowledgeRoot, maskingContext: masking,
+          secretRedactor: produced.secretRedactor,
           members: produced.members,
           executor: options.missingRunId ? (member, ctx) => produced.executor(member, { ...ctx, runId: undefined }) : produced.executor,
           configDigests: produced.configDigests,

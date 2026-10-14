@@ -1181,10 +1181,6 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
     ).toEqual([])
 
     expect(
-      page.bodyText.includes(POPULATED_EMAIL),
-      `the planted address is VISIBLE on the page — the email lane is not masked.${context()}`,
-    ).toBe(false)
-    expect(
       page.bodyText.includes(POPULATED_DECLARED_SECRET_VALUE),
       'the DECLARED step secret is visible on the page. The runner\'s `SecretRedactor` rewrites it '
       + 'to `[secret:<name>]` before anything is recorded, so it can never legitimately be restored '
@@ -1192,17 +1188,17 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
       + `${context()}`,
     ).toBe(false)
 
-    // THE MASKING-SEEDED CREDENTIAL IS SCOPED TO THE VERDICT BLOCK, DELIBERATELY, AND THE REASON IS
-    // A CELL ONE FILE AWAY. The display seam RESTORES `<SECRET_n>` for the person reading this page
-    // — `run-detail-failure-dom.test.ts` (3e) asserts the restored value IS inside the expanded
-    // failure banner, and the sub-action's plan carries it for the same reason. A whole-page
-    // assertion here would therefore contradict a green cell that measures ratified behaviour. What
+    // THE ENV CREDENTIAL AND THE EMAIL ARE SCOPED TO THE VERDICT BLOCK, DELIBERATELY, AND THE REASON
+    // IS A CELL ONE FILE AWAY. Neither is a declared secret, so the run records both as written and
+    // the page shows them in the planner's reasoning (D-23) — `run-detail-failure-dom.test.ts` (3e)
+    // asserts the credential IS inside the expanded failure banner. A whole-page assertion here
+    // would therefore contradict a green cell that measures ratified behaviour. What
     // is this file's to claim is the ANALYSIS's sentence: it quotes the fixture's STEP TEXT, which
     // carries no value at all, so a planted credential turning up inside the block means the author
     // quoted a field it should not have. That is a finding to STOP and report, not a scan to widen.
     expect(
       page.verdictBlockText.includes(POPULATED_SECRET_VALUE),
-      'the masking-seeded credential is INSIDE the authored verdict block. The sentence quotes the '
+      'the env credential is INSIDE the authored verdict block. The sentence quotes the '
       + 'failing step\'s text, which carries no value; a credential here means the author grounded '
       + `its quote in a field that holds one.${context()}`,
     ).toBe(false)

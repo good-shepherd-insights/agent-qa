@@ -81,6 +81,8 @@ export interface InProcessFixtureInput {
    * Ignored when `omitSecretsFile` is set; the two knobs answer opposite questions.
    */
   readonly plantedSecret?: string
+  /** The one step every test the fixture writes carries, in place of the default `Verify` step (441-12). */
+  readonly stepText?: string
   /** Write a test file that parses to ZERO runnable tests (the RUNX-06 door). */
   readonly emptyTestFile?: boolean
   /**
@@ -195,6 +197,9 @@ export const PLANTED_SECRET_NAME = 'AGENT_QA_PLANTED_SECRET'
  * control differ in one field and nothing else.
  */
 export function createInProcessFixture(input: InProcessFixtureInput): InProcessFixture {
+  const step = input.stepText === undefined
+    ? '  - Verify the page says "Example"'
+    : `  - ${JSON.stringify(input.stepText)}`
   const project = realpathSync(mkdtempSync(join(tmpdir(), 'in-process-run-')))
   mkdirSync(join(project, 'tests'), { recursive: true })
   mkdirSync(join(project, 'suites'), { recursive: true })
@@ -268,7 +273,7 @@ export function createInProcessFixture(input: InProcessFixtureInput): InProcessF
           'name: the standalone test',
           `target: ${IN_PROCESS_TARGET_NAME}`,
           'steps:',
-          '  - Verify the page says "Example"',
+          step,
           '',
         ].join('\n'),
   )
@@ -281,7 +286,7 @@ export function createInProcessFixture(input: InProcessFixtureInput): InProcessF
         'name: the second target\'s test',
         `target: ${SECOND_TARGET_NAME}`,
         'steps:',
-        '  - Verify the page says "Example"',
+        step,
         '',
       ].join('\n'),
     )
@@ -294,7 +299,7 @@ export function createInProcessFixture(input: InProcessFixtureInput): InProcessF
       'name: the suite member',
       `target: ${IN_PROCESS_TARGET_NAME}`,
       'steps:',
-      '  - Verify the page says "Example"',
+      step,
       '',
     ].join('\n'),
   )
@@ -307,7 +312,7 @@ export function createInProcessFixture(input: InProcessFixtureInput): InProcessF
         'name: the second suite member',
         `target: ${IN_PROCESS_TARGET_NAME}`,
         'steps:',
-        '  - Verify the page says "Example"',
+        step,
         '',
       ].join('\n'),
     )

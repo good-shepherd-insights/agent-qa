@@ -2445,6 +2445,10 @@ export async function produceSuiteRunMembers(
   const runId = input.runId
   const opts: RunOptions = input.opts ?? ({} as RunOptions)
   const variableContext = input.variableContext
+  const suiteRunSecretRedactor = variableContext?.secretRedactor
+  if (suiteRunSecretRedactor === undefined) {
+    throw new Error('This suite run has no secrets redactor; its records cannot be masked, so it was not started.')
+  }
   const hooksContext = input.hooksContext
   const analytics = input.analytics
   const activeSuiteDbs = input.activeSuiteDbs ?? new Set<any>()
@@ -3614,6 +3618,7 @@ export async function produceSuiteRunMembers(
     ),
     ...(buildTag === undefined ? {} : { buildTag }),
     logger: { setRunId: () => { /* the suite path stamps its loggers per prepared suite */ } },
+    secretRedactor: suiteRunSecretRedactor,
     maskingSeed: {
       ...(variableContext?.secretStore === undefined ? {} : { secretStore: variableContext.secretStore }),
       authStatePayloads,
@@ -3819,6 +3824,11 @@ export interface ProducedCliRunMembers {
    * prepared suite and has no run-level one, so this is optional rather than a no-op stub.
    */
   readonly logger?: CliRunLoggerHandle
+  /**
+   * The run's redactor over the secrets read at its start (441-12, D-06/D-11). The drive puts it on
+   * `RunConfig.secretRedactor`, and the shell masks every bus event with it.
+   */
+  readonly secretRedactor: SecretRedactorPort
   /**
    * What the ONE masking context must be seeded with beyond the secret store. Only the suite half
    * has any (its statically-resolved auth-state payloads), and the drive folds it in.
@@ -4691,6 +4701,7 @@ export async function produceDirectRunMembers(
     ),
     ...(singleBuildTag === undefined ? {} : { buildTag: singleBuildTag }),
     logger,
+    secretRedactor: runtimeSecrets.secretRedactor,
     maskingSeed: { secretStore: runtimeSecrets.secretStore },
     bindRunContext: ({ maskingContext, safetyHooks }) => {
       singleMaskingContext = maskingContext

@@ -1,12 +1,10 @@
-// D-09 synthetic-masking proof (CONTEXT.md mandates this phase). Drives a full run whose evidence
-// carries a planted secret in every string field that can reach durable telemetry — the started
-// step text (plan text), the finalized step's verifier reasoning (error/reasoning text), and the
-// per-test result the handoff synthesizes evidence from — then proves that a SYNTHETIC
-// MaskingContext scrubs the secret from ALL THREE sinks with zero further wiring: the bus payloads,
-// the serialized event-log lines, and the CompletedRunHandoff. The IDENTITY context passes the
-// secret through unchanged — proving 361 does NOT seed the real context (that is 362's SEAM-01;
-// the sink/assembly already route every payload through `masking.mask`, so seeding alone activates
-// masking). Also pins the two run-shape invariants: no chip-event type is ever emitted, and
+// D-09 synthetic-masking proof. Drives a full run whose evidence carries a planted secret in every
+// string field that can reach durable telemetry — the started step text (plan text), the finalized
+// step's verifier reasoning (error/reasoning text), and the per-test result the handoff synthesizes
+// evidence from — then proves that the run's SecretRedactor (`RunConfig.secretRedactor`, 441-12
+// D-06/D-11) scrubs the secret from ALL THREE sinks: the bus payloads, the serialized event-log
+// lines, and the CompletedRunHandoff. A run with no redactor passes the secret through unchanged.
+// Also pins the two run-shape invariants: no chip-event type is ever emitted, and
 // `runFinished.disposition` is `'detached'`.
 //
 // WINDOWS #305 · DETL-04: BOTH arms of the handoff assembly mask. The first describe drives an
@@ -22,6 +20,7 @@ import { describe, expect, it } from 'vitest'
 import { startRun } from '../shell.js'
 import type { MemberTestExecutor, RunConfig } from '../shell.js'
 import type { EventLogPort, HandoffStorePort } from '../ports.js'
+import type { SecretRedactorPort } from '../../loop/ports.js'
 import type {
   Action,
   CompletedRunHandoff,
@@ -33,23 +32,19 @@ import type {
 } from '@vostride/agent-qa-schema'
 import { asRef } from '@vostride/agent-qa-schema'
 import { makeEmptyServedBrief } from '../../loop/evidence.js'
+import { SecretRedactor, SecretStore } from '../../loop/secrets.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 
 const SECRET = 'S3CR3T-hunter2-token'
 
 const SCOPE: ScopeKey = { tier: 'suite', key: 'checkout' }
 
-/** Replaces the planted secret — the shape 362 seeds. */
-const SYNTHETIC: MaskingContext = {
-  mask: (text: string) => text.replaceAll(SECRET, '[masked]'),
-  unmask: (text: string) => text,
-}
+/** The run's redactor over the planted secret, declared as MASK_PROOF. */
+const SYNTHETIC: SecretRedactorPort = new SecretRedactor(new SecretStore({ MASK_PROOF: SECRET }))
+const MARKER = '[secret:MASK_PROOF]'
 
-/** Identity — the pre-362 default: the secret must survive untouched. */
-const IDENTITY: MaskingContext = {
-  mask: (text: string) => text,
-  unmask: (text: string) => text,
-}
+/** No redactor: the secret must survive untouched. */
+const IDENTITY: SecretRedactorPort | undefined = undefined
 
 const CHIP_EVENT_TYPES = [
   'analysisStarted', 'analysisCompleted', 'analysisFailed',
@@ -172,7 +167,7 @@ const carveOutExecutor: MemberTestExecutor = async (member, ctx) => {
 }
 
 function configWith(
-  masking: MaskingContext,
+  secretRedactor: SecretRedactorPort | undefined,
   eventLog: EventLogPort,
   executor: MemberTestExecutor = secretExecutor,
 ): RunConfig {
@@ -184,13 +179,13 @@ function configWith(
     configDigests: { suiteConfigDigest: 'suite-d', testConfigDigest: 'test-d' },
     members: [{ testId: 'a', name: 'test a', filePath: 'a.test.ts' }],
     executor,
-    masking,
+    ...(secretRedactor === undefined ? {} : { secretRedactor }),
     ports: { handoffStore: makeHandoffStore(), eventLog },
   }
 }
 
 async function runOnce(
-  masking: MaskingContext,
+  secretRedactor: SecretRedactorPort | undefined,
   executor: MemberTestExecutor = secretExecutor,
 ): Promise<{
   envelopes: RunEventEnvelope[]
@@ -200,7 +195,7 @@ async function runOnce(
   types: Set<string>
 }> {
   const log = makeCapturingEventLog()
-  const session = startRun(configWith(masking, log.port, executor))
+  const session = startRun(configWith(secretRedactor, log.port, executor))
   const envelopes: RunEventEnvelope[] = []
   session.subscribe(1, event => envelopes.push(event))
   const { handoff } = await session.done
@@ -214,7 +209,7 @@ async function runOnce(
 }
 
 describe('D-09 synthetic masking proof', () => {
-  it('a synthetic MaskingContext scrubs the secret from bus payloads, event-log lines, AND the handoff', async () => {
+  it('a synthetic redactor scrubs the secret from bus payloads, event-log lines, AND the handoff', async () => {
     const { envelopes, logLines, handoffJson } = await runOnce(SYNTHETIC)
 
     // (a) every subscribed envelope payload is secret-free.
@@ -230,7 +225,7 @@ describe('D-09 synthetic masking proof', () => {
     expect(handoffJson).not.toContain(SECRET)
 
     // Sanity: the mask actually fired (redaction marker present in the masked handoff).
-    expect(handoffJson).toContain('[masked]')
+    expect(handoffJson).toContain(MARKER)
   })
 
   it('the identity context passes the secret through unchanged (361 does NOT seed the real context)', async () => {
@@ -256,7 +251,7 @@ describe('D-09 synthetic masking proof', () => {
 // WINDOWS #305 · DETL-04 — the REAL-evidence arm of the assembly. Every cell here drives a step
 // that CARRIES §A8 evidence, which is the arm `assemblePerTestOutcome` copied verbatim into the
 // durable artifact. There is no second detector anywhere in this block: the only masker is the
-// run's own `config.masking.mask`, the same object `projectTestFinished` routes `failureSummary`
+// run's own `config.secretRedactor`, the same mask `projectTestFinished` routes `failureSummary`
 // through in the same shell frame.
 describe('WINDOWS #305 — real step evidence is masked AT REST by the assembly', () => {
   it('masks the verifier reasoning, the sub-action plan and the captured error the handoff records', async () => {
@@ -264,15 +259,15 @@ describe('WINDOWS #305 — real step evidence is masked AT REST by the assembly'
     const subAction = handoff.tests[0].steps[0].subActions[0]
 
     expect(handoffJson).not.toContain(SECRET)
-    expect(handoff.tests[0].steps[0].verifierVerdict.reasoning).toBe('verifier observed [masked]')
-    expect(subAction.plan).toBe('dismiss the banner naming [masked]')
-    expect(subAction.result.error).toBe('Cannot acknowledge: [masked] rejected')
+    expect(handoff.tests[0].steps[0].verifierVerdict.reasoning).toBe(`verifier observed ${MARKER}`)
+    expect(subAction.plan).toBe(`dismiss the banner naming ${MARKER}`)
+    expect(subAction.result.error).toBe(`Cannot acknowledge: ${MARKER} rejected`)
   })
 
   it('carries the redaction marker rather than dropping the narration', async () => {
     const { handoffJson } = await runOnce(SYNTHETIC, realEvidenceExecutor)
 
-    expect(handoffJson).toContain('[masked]')
+    expect(handoffJson).toContain(MARKER)
   })
 
   it('the identity context leaves real evidence untouched — SEEDING alone activates masking', async () => {
@@ -293,7 +288,7 @@ describe('WINDOWS #305 — real step evidence is masked AT REST by the assembly'
 
 // Owner decision 2026-09-26 (2), G-428-2: a live row shows a step's real text before the step
 // starts, so the member's authored step texts ride testStarted. They are authored content, not
-// identity, so the shell masks them with the run's ONE context, the same one the member's event
+// identity, so the shell masks them with the run's redactor, the same mask the member's event
 // sink masks stepStarted.stepText with. Entry i must equal step i's announced text byte for byte.
 const STEP_TEXTS = ['open the page', `type ${SECRET} into Password`] as const
 
@@ -310,13 +305,13 @@ const announcingExecutor: MemberTestExecutor = async (member, ctx) => {
   }
 }
 
-async function runWithStepTexts(masking: MaskingContext): Promise<{
+async function runWithStepTexts(secretRedactor: SecretRedactorPort | undefined): Promise<{
   testStarted: RunEventEnvelope[]
   stepStarted: RunEventEnvelope[]
 }> {
   const log = makeCapturingEventLog()
   const session = startRun({
-    ...configWith(masking, log.port, announcingExecutor),
+    ...configWith(secretRedactor, log.port, announcingExecutor),
     members: [
       {
         testId: 'a',
@@ -348,13 +343,76 @@ describe('G-428-2 — testStarted.stepTexts is masked like stepStarted.stepText'
     for (const event of [...masked.testStarted, ...masked.stepStarted]) {
       expect(JSON.stringify(event.payload)).not.toContain(SECRET)
     }
-    expect(JSON.stringify(masked.testStarted[0].payload)).toContain('[masked]')
-    expect(announced[1]).toContain('[masked]')
+    expect(JSON.stringify(masked.testStarted[0].payload)).toContain(MARKER)
+    expect(announced[1]).toContain(MARKER)
 
     const identity = await runWithStepTexts(IDENTITY)
     const rawTexts = (identity.testStarted[0].payload as { stepTexts?: readonly string[] }).stepTexts
     expect(rawTexts).toEqual([...STEP_TEXTS])
     expect(identity.stepStarted.map(event => (event.payload as { stepText: string }).stepText))
       .toEqual([...STEP_TEXTS])
+  })
+})
+
+// 441-12 (D-06, D-11): a run's bus events are masked by the run's own redactor and nothing else.
+// The email in the step text is not a declared value, so it is published as written.
+const DECLARED_STEP_TEXT = 'Sign in as qa@example.com with Hunter-42-zz'
+const RECORDS_REDACTOR = new SecretRedactor(new SecretStore({ PW_441: 'Hunter-42-zz' }))
+
+async function runRecords(config: Partial<RunConfig>): Promise<RunEventEnvelope[]> {
+  const log = makeCapturingEventLog()
+  const announce: MemberTestExecutor = async (member, ctx) => {
+    ctx.events.stepStarted({ stepIndex: 0, stepText: DECLARED_STEP_TEXT })
+    return {
+      name: member.testId,
+      filePath: `${member.testId}.test.ts`,
+      status: 'passed',
+      steps: [{ name: DECLARED_STEP_TEXT, status: 'passed', duration: 1 }],
+      duration: 1,
+    }
+  }
+  const session = startRun({
+    ...configWith(undefined, log.port, announce),
+    members: [{ testId: 'a', name: 'test a', filePath: 'a.test.ts', totalSteps: 1, stepTexts: [DECLARED_STEP_TEXT] }],
+    ...config,
+  })
+  const envelopes: RunEventEnvelope[] = []
+  session.subscribe(1, event => envelopes.push(event))
+  await session.done
+  return envelopes
+}
+
+function publishedStepTexts(envelopes: RunEventEnvelope[]): { started: unknown; announced: unknown[] } {
+  return {
+    started: (envelopes.find(event => event.type === 'testStarted')!.payload as { stepTexts?: readonly string[] }).stepTexts,
+    announced: envelopes
+      .filter(event => event.type === 'stepStarted')
+      .map(event => (event.payload as { stepText: string }).stepText),
+  }
+}
+
+describe('C441-RUN-RECORDS', () => {
+  it('run events mask a declared value by name and leave undeclared values', async () => {
+    const envelopes = await runRecords({ secretRedactor: RECORDS_REDACTOR })
+    const { started, announced } = publishedStepTexts(envelopes)
+
+    expect(started).toEqual(['Sign in as qa@example.com with [secret:PW_441]'])
+    expect(announced).toEqual(['Sign in as qa@example.com with [secret:PW_441]'])
+    for (const envelope of envelopes) {
+      expect(JSON.stringify(envelope.payload)).not.toContain('Hunter-42-zz')
+    }
+  })
+
+  it('a masking context on RunConfig is not read', async () => {
+    const rewritesEmail: MaskingContext = {
+      mask: (text: string) => text.replaceAll('qa@example.com', '<EMAIL_1>'),
+      unmask: (text: string) => text,
+    }
+    const envelopes = await runRecords({ masking: rewritesEmail, secretRedactor: RECORDS_REDACTOR })
+    const { started, announced } = publishedStepTexts(envelopes)
+
+    expect(started).toEqual(['Sign in as qa@example.com with [secret:PW_441]'])
+    expect(announced).toEqual(['Sign in as qa@example.com with [secret:PW_441]'])
+    expect(envelopes.some(envelope => JSON.stringify(envelope.payload).includes('<EMAIL_1>'))).toBe(false)
   })
 })

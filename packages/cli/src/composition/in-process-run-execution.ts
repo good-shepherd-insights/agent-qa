@@ -621,6 +621,7 @@ export async function runInProcessCliRun(
         knowledgeRoot: produced.knowledgeRoot,
         ports: assemblyContext.ports,
         maskingContext,
+        secretRedactor: produced.secretRedactor,
         members: produced.members,
         executor: produced.executor,
         configDigests: produced.configDigests,

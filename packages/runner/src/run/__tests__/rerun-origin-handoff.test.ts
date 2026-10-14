@@ -2,12 +2,12 @@ import { describe, expect, it, vi } from 'vitest'
 import type { LanguageModel } from 'ai'
 import { asRunId, canonicalJson, guardCompletedRunHandoff, screenStateHash, sha256hex } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, StepEvidence, RunEventEnvelope } from '@vostride/agent-qa-schema'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { startRun } from '../shell.js'
 import type { RunConfig, RunMemberDescriptor } from '../ports.js'
 import { runMemberTest } from '../member-runner.js'
 import { assemblePerTestOutcome } from '../handoff-assembly.js'
 import { makeEmptyServedBrief } from '../../loop/evidence.js'
+import { SecretRedactor, SecretStore } from '../../loop/secrets.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import type { TestResult, StepResult } from '../../result.js'
 
@@ -46,8 +46,7 @@ async function execute(options: {
   finalFailure?: boolean
   secondMember?: boolean
 } = {}) {
-  const masking = createMaskingContext()
-  masking.register(secret)
+  const secretRedactor = new SecretRedactor(new SecretStore({ ORIGIN_420: secret }))
   const planner = { plan: vi.fn() }
   const adapterExecute = vi.fn(async () => ({ success: true }))
   const events: RunEventEnvelope[] = []
@@ -56,7 +55,7 @@ async function execute(options: {
   const member = { testId: 'origin member', name: 'Origin', filePath: 'origin.yaml',
     baselineProbe: options.baselineProbe }
   const config: RunConfig = {
-    runId, scope, buildOrdinal: 7, executionContext: 'ci', masking,
+    runId, scope, buildOrdinal: 7, executionContext: 'ci', secretRedactor,
     configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
     members: [member, ...(options.secondMember
       ? [{ ...member, testId: 'healthy member', baselineProbe: { status: 200, elapsedMs: 1 } }]
@@ -88,7 +87,7 @@ async function execute(options: {
   expect(saved).not.toBe('')
   const loaded = guardCompletedRunHandoff(JSON.parse(saved))
   expect(loaded).toEqual(JSON.parse(JSON.stringify(completion.handoff)))
-  return { loaded, completion, events, results, planner, adapterExecute, masking }
+  return { loaded, completion, events, results, planner, adapterExecute, secretRedactor }
 }
 
 describe('420 original retry handoff', () => {
@@ -165,7 +164,7 @@ describe('420 original retry handoff', () => {
   it('assembly without shell classification cannot invent an origin verdict', async () => {
     const f = await execute()
     const assembled = assemblePerTestOutcome({ testId: 'origin member', name: 'Origin', filePath: 'origin.yaml' },
-      f.results[0], 'healed', { testIndex: 0, scope, buildOrdinal: 7, mask: f.masking.mask })
+      f.results[0], 'healed', { testIndex: 0, scope, buildOrdinal: 7, mask: text => f.secretRedactor.redactString(text) })
     expect(assembled).not.toHaveProperty('rerunOrigin')
   })
 })

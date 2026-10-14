@@ -166,7 +166,7 @@ for (const path of ['suite', 'direct'] as const) {
       mintRunId: () => runId, isMintedRunId: () => true,
       assembleRun: async context => {
         const assembly = await assembleCliRun({
-          ...context, knowledgeRoot: produced.knowledgeRoot, maskingContext: masking,
+          ...context, knowledgeRoot: produced.knowledgeRoot, maskingContext: masking, secretRedactor: produced.secretRedactor,
           members: produced.members, executor: produced.executor, configDigests: produced.configDigests,
           product: produced.product, warn: () => {},
         })

@@ -29,6 +29,7 @@ import type {
 } from '../ports.js'
 import { POST_VERDICT_STEP_BUDGET_MS } from '../ports.js'
 import type { EvidenceArtifactStorePort } from '../../loop/ports.js'
+import { SecretRedactor, SecretStore } from '../../loop/secrets.js'
 import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { RunArtifactStageInput, RunArtifactFinalizeInput } from '@vostride/agent-qa-schema'
 import type { StepResult, TestResult } from '../../result.js'
@@ -492,10 +493,7 @@ describe('handoff — exactly one per run (SESSION-05, D-13/D-17)', () => {
 
 describe('363 D-01 — enriched testStarted / testFinished payloads', () => {
   const SECRET = 'SECRET-42'
-  const masking = {
-    mask: (text: string) => text.replaceAll(SECRET, '[masked]'),
-    unmask: (text: string) => text,
-  }
+  const secretRedactor = new SecretRedactor(new SecretStore({ SECRET_42: SECRET }))
 
   it('testStarted carries the member descriptor parity fields when present', async () => {
     const members: RunMemberDescriptor[] = [
@@ -542,7 +540,7 @@ describe('363 D-01 — enriched testStarted / testFinished payloads', () => {
   })
 
   // G-428-2 (owner decision 2026-09-26 (2)): the descriptor's raw step texts ride testStarted in
-  // step order, masked by this describe's context.
+  // step order, masked by this describe's redactor.
   it('STEP-TEXTS-ON-TESTSTARTED', async () => {
     const members: RunMemberDescriptor[] = [
       {
@@ -553,14 +551,14 @@ describe('363 D-01 — enriched testStarted / testFinished payloads', () => {
         stepTexts: ['Open the login page', `Type ${SECRET} into Password`, 'Submit the form'],
       },
     ]
-    const session = startRun(baseConfig({ masking, members, executor: scriptedExecutor({}, []) }))
+    const session = startRun(baseConfig({ secretRedactor, members, executor: scriptedExecutor({}, []) }))
     const events = drain(session)
     await done(session)
 
     const started = events.find(e => e.type === 'testStarted')!
     expect((started.payload as { stepTexts?: readonly string[] }).stepTexts).toEqual([
       'Open the login page',
-      'Type [masked] into Password',
+      'Type [secret:SECRET_42] into Password',
       'Submit the form',
     ])
     expect(JSON.stringify(started.payload)).not.toContain(SECRET)
@@ -578,7 +576,7 @@ describe('363 D-01 — enriched testStarted / testFinished payloads', () => {
       failureSummary: `crashed on ${SECRET}`,
     }
     const session = startRun(
-      baseConfig({ masking, members: [{ testId: 'a', name: 'test a', filePath: 'a.test.ts' }], executor: scriptedExecutor({ a: result }, []) }),
+      baseConfig({ secretRedactor, members: [{ testId: 'a', name: 'test a', filePath: 'a.test.ts' }], executor: scriptedExecutor({ a: result }, []) }),
     )
     const events = drain(session)
     await done(session)
@@ -587,7 +585,7 @@ describe('363 D-01 — enriched testStarted / testFinished payloads', () => {
     const payload = finished.payload as Record<string, unknown>
     expect(payload.durationMs).toBe(987)
     expect(payload.retryCount).toBe(2)
-    expect(payload.failureSummary).toBe('crashed on [masked]')
+    expect(payload.failureSummary).toBe('crashed on [secret:SECRET_42]')
     expect(JSON.stringify(payload)).not.toContain(SECRET)
   })
 

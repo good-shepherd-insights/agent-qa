@@ -462,9 +462,7 @@ export interface RunPorts {
  * touches fs or providers (validate:arch stays clean) — hence NO fs/provider/discovery-shaped
  * members here. A future cloud RPC surface reuses this same resolved-config contract.
  *
- * `masking` is OPTIONAL (identity when absent, pre-362): 362's masking-context seeding
- * supplies the real redactor with zero further wiring. `members`/`ports` shapes are pinned
- * by the Wave-0 `run-shell.test.ts` scaffold.
+ * `members`/`ports` shapes are pinned by the Wave-0 `run-shell.test.ts` scaffold.
  */
 export interface RunConfig {
   runId: RunId
@@ -499,7 +497,14 @@ export interface RunConfig {
   gateRun?: true
   members: readonly RunMemberDescriptor[]
   executor: MemberTestExecutor
+  /** Unread since 441-12: the shell masks with `secretRedactor`. 441-19 deletes it. */
   masking?: MaskingContext
+  /**
+   * The run's redactor over the secrets its producer read at the run's start (441-12, D-06/D-11).
+   * Every bus event, and so `events.jsonl` and the dashboard rows, is masked with it and nothing
+   * else. Absent ⇒ the run's events are published as written.
+   */
+  secretRedactor?: SecretRedactorPort
   runBudgetMs?: number
   ports?: RunPorts
   /**

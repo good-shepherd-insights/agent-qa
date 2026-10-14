@@ -65,6 +65,8 @@ export interface CliRunAssemblyInput {
   /** The durable ports the core built under `<configDir>/.agent-qa` (Pitfall 5). */
   readonly ports: RunPersistencePorts
   readonly maskingContext: RunMaskingContext
+  /** The redactor the producer read at the run's start; the shell masks every bus event with it (441-12). */
+  readonly secretRedactor: NonNullable<RunConfig['secretRedactor']>
   readonly members: readonly RunMemberDescriptor[]
   readonly executor: MemberTestExecutor
   readonly configDigests: ConfigDigests
@@ -172,6 +174,7 @@ export async function assembleCliRun(
     members,
     executor: input.executor,
     masking: input.maskingContext,
+    secretRedactor: input.secretRedactor,
     ports: input.ports,
     ...(quarantined.length > 0 ? { quarantined } : {}),
     ...(input.workers !== undefined && input.workers > 1 ? { workers: input.workers } : {}),

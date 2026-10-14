@@ -11,6 +11,7 @@ import { prepareMisdirectionEvidence } from '../misdirection-tail.js'
 import { readMisdirectionRunState } from '../misdirection-run-state.js'
 import { DRAIN_BUDGET_MS } from '@vostride/agent-qa-agent-local'
 import { generateRunId } from '@vostride/agent-qa-ids'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { ownPostVerdictContinuation, postVerdictPendingPath } from '../post-verdict-continuation.js'
 import { runPostRunTail } from '../post-run-tail.js'
 import { defaultPostRunGuardrailPolicy } from '../curation-tail.js'
@@ -83,6 +84,7 @@ it.each(['settles', 'host deadline expires', 'abort', 'detached tail', 'framewor
       product: fixture.targetName, configDir: fixture.project, configFilePath: fixture.configPath,
       knowledgeRoot: join(fixture.project, 'knowledge'), targetClass: 'local',
       targetNames: [fixture.targetName], productionTargetNames: [], allowProduction: false, memberProbeUrls: [],
+      secretRedactor: new SecretRedactor(new SecretStore()),
       bindRunContext: ({ maskingContext }) => { dispose = vi.spyOn(maskingContext, 'dispose') }, applyAssembly: () => undefined,
       bindSession: () => undefined, takeFrameworkError: () => mode === 'framework error' ? new Error('fixture framework failure') : undefined,
       getCurationModelDeps: () => undefined,

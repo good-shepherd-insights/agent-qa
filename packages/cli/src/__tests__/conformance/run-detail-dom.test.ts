@@ -155,7 +155,6 @@ function publishedConstant(relativePath: string, name: string): string {
   return entry[1] as string
 }
 
-const MASKED_EMAIL_LABEL = publishedConstant('lib/run-detail-view.ts', 'MASKED_EMAIL_LABEL')
 const TOKENS_NOT_MEASURED_LABEL = publishedConstant('lib/run-detail-view.ts', 'TOKENS_NOT_MEASURED_LABEL')
 
 /**
@@ -911,14 +910,13 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
     expect(observed.screenStateChip).toBeUndefined()
   })
 
-  it('(2a) the masking-seeded secret is VISIBLE on the page, and no placeholder reaches a text node', () => {
+  it('(2a) the env credential is VISIBLE on the page as written, and no placeholder reaches a text node', () => {
     const observed = firstVisit()
     expect(
       observed.bodyText.includes(POPULATED_SECRET_VALUE),
-      'the real value the run masked into a `<SECRET_n>` placeholder is NOT visible on run detail. '
-      + 'The display-unmask seam re-derives candidates from this host\'s current sources and '
-      + 'restores by keyed digest identity; an absent value means the seam did not run, the sidecar '
-      + `is missing, or the host key no longer matches.${context()}`,
+      'the `_SECRET`-named environment credential is NOT visible on run detail. It is not a '
+      + 'declared secret, so the run records it as written and the page shows it as written '
+      + `(D-07, D-23).${context()}`,
     ).toBe(true)
 
     const raw = observed.textNodes.filter((text) => placeholderRe().test(text))
@@ -934,14 +932,11 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
       + `parser and the seam have drifted apart.${context()}`,
     ).toEqual([])
 
-    // THE TWO LANES SHARE ONE SENTENCE, and this is where that is held. Cell (2e) is about lane
-    // (B) alone and must stay green under a mutation that only breaks restoration; the claim that
-    // the two are being compared on the SAME producer string belongs to the restore cell, because
-    // restoration is what makes them differ. Without it, (2a) and (2e) could drift onto two
-    // unrelated strings and both go on passing about nothing in particular.
+    // THE TWO VALUES SHARE ONE SENTENCE, and this is where that is held: without it, (2a) and (2e)
+    // could drift onto two unrelated strings and both go on passing about nothing in particular.
     expect(
       observed.planText,
-      'the restored value and the declared lane\'s named marker are not in the same recorded '
+      'the env credential and the declared lane\'s named marker are not in the same recorded '
       + 'sentence, so cells (2a) and (2e) are no longer contrasting two lanes of one string. The '
       + `fixture plants both in the planner's reasoning.${context()}`,
     ).toContain(POPULATED_SECRET_VALUE)
@@ -952,7 +947,7 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
     ).toContain(DECLARED_SECRET_MARKER)
   })
 
-  it('(2b) the masked side holds: neither planted value is in the SSE frames, the log or the database', () => {
+  it('(2b) the declared value is in neither the SSE frames, the log nor the database, and the email and the env credential are there as written', () => {
     driveOk()
     expect(
       recorded.sseFrames,
@@ -967,46 +962,49 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
       `no runtime database file was found to scan — a clean scan of nothing is not a claim.${context()}`,
     ).toBeGreaterThan(0)
 
+    expect(
+      (recorded.sseFrames ?? '').includes(POPULATED_DECLARED_SECRET_VALUE),
+      `the declared step secret appears IN CLEAR in the run-stream frames the local door served.${context()}`,
+    ).toBe(false)
+    expect(
+      (recorded.eventsLog ?? '').includes(POPULATED_DECLARED_SECRET_VALUE),
+      `the declared step secret appears IN CLEAR in this run's events.jsonl.${context()}`,
+    ).toBe(false)
+    expect(
+      (recorded.dbBytes ?? Buffer.alloc(0)).includes(Buffer.from(POPULATED_DECLARED_SECRET_VALUE, 'utf8')),
+      'the declared step secret appears IN CLEAR in the dashboard\'s own SQLite bytes '
+      + `(${recorded.scannedDbFiles.join(', ')}).${context()}`,
+    ).toBe(false)
+
+    // Undeclared values are recorded as written (D-01, D-12, D-23).
     for (const [what, value] of [
-      ['the masking-seeded credential', POPULATED_SECRET_VALUE],
-      ['the declared step secret', POPULATED_DECLARED_SECRET_VALUE],
+      ['the env credential', POPULATED_SECRET_VALUE],
       ['the planted email address', POPULATED_EMAIL],
     ] as const) {
       expect(
         (recorded.sseFrames ?? '').includes(value),
-        `${what} appears IN CLEAR in the run-stream frames the local door served.${context()}`,
-      ).toBe(false)
+        `${what} is not in the run-stream frames as written.${context()}`,
+      ).toBe(true)
       expect(
         (recorded.eventsLog ?? '').includes(value),
-        `${what} appears IN CLEAR in this run's events.jsonl.${context()}`,
-      ).toBe(false)
-      expect(
-        (recorded.dbBytes ?? Buffer.alloc(0)).includes(Buffer.from(value, 'utf8')),
-        `${what} appears IN CLEAR in the dashboard's own SQLite bytes `
-        + `(${recorded.scannedDbFiles.join(', ')}).${context()}`,
-      ).toBe(false)
+        `${what} is not in this run's events.jsonl as written.${context()}`,
+      ).toBe(true)
     }
   })
 
-  it('(2c) the email renders as a typed masked chip, never as an address', () => {
+  it('(2c) the email renders as written, with no chip', () => {
     const observed = firstVisit()
     expect(
-      observed.maskedCategories,
-      'the page painted no `[data-masked="email"]` chip. The address is minted lazily into an '
-      + '`<EMAIL_n>` placeholder by the detector inside `mask()`, and the seam has no source to '
-      + `restore it from — so a chip is the only honest rendering.${context()}`,
-    ).toContain('email')
-    expect(
-      observed.maskedChipText.join(' | '),
-      `the email chip does not carry the published label.${context()}`,
-    ).toContain(MASKED_EMAIL_LABEL)
-    expect(
       observed.bodyText.includes(POPULATED_EMAIL),
-      `the planted address is VISIBLE on the page — the email lane is not masked.${context()}`,
-    ).toBe(false)
+      `the planted address is not shown as written on the page (D-23).${context()}`,
+    ).toBe(true)
+    expect(
+      observed.maskedCategories,
+      `the page painted a \`[data-masked="email"]\` chip for an address the run recorded as written.${context()}`,
+    ).not.toContain('email')
   })
 
-  it('(2d) after the dashboard is killed and respawned, the value is still restored (D-08)', () => {
+  it('(2d) after the dashboard is killed and respawned, the env credential is still shown as written', () => {
     driveOk()
     expect(
       recorded.respawned,
@@ -1019,10 +1017,8 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
     ).toBeDefined()
     expect(
       (observed as PageObservation).bodyText.includes(POPULATED_SECRET_VALUE),
-      'a process that never saw this run execute could not put the value back. The run\'s masking '
-      + 'map died with the first process, so this reading is the whole of D-08: what the page shows '
-      + 'is RE-DERIVED from the host\'s current sources and matched against the run\'s recorded '
-      + `digests, not remembered.${context()}`,
+      'the env credential is not shown as written by a dashboard that never saw this run execute; '
+      + `the run recorded it as written, so the page reads it from the record (D-07).${context()}`,
     ).toBe(true)
     const raw = (observed as PageObservation).textNodes.filter((text) => placeholderRe().test(text))
     expect(

@@ -47,6 +47,7 @@ import {
   POPULATED_DECLARED_SECRET_VALUE,
   POPULATED_EMAIL,
   POPULATED_RUN_ANCHORED_BUILDS,
+  POPULATED_SECRET_NAME,
   POPULATED_SECRET_VALUE,
   RUN_BUDGET_MS,
   drivePopulatedRun,
@@ -312,41 +313,47 @@ describe('the shipped binary produces a populated, masked run (405-09)', () => {
     ).toBeGreaterThan(0)
   })
 
-  it('carries both masking categories in a sub-action plan on the wire', () => {
+  it('carries the declared marker and the email and env credential as written in a sub-action plan on the wire', () => {
     const plans = subActions(recorded.drive?.envelopes ?? [])
       .map((payload) => (typeof payload.plan === 'string' ? payload.plan : ''))
+    for (const [what, value] of [
+      ['the declared marker', `[secret:${POPULATED_SECRET_NAME}]`],
+      ['the planted email address', POPULATED_EMAIL],
+      ['the env credential', POPULATED_SECRET_VALUE],
+    ] as const) {
+      expect(
+        plans.some((plan) => plan.includes(value)),
+        `no sub-action \`plan\` carried ${what}. The planner's reasoning carries all three; the run `
+        + `masks the declared value by name and records the others as written (D-06, D-23). `
+        + `plans: ${JSON.stringify(plans)}${context()}`,
+      ).toBe(true)
+    }
     expect(
-      plans.some((plan) => plan.includes('<SECRET_')),
-      'no sub-action `plan` carried a `<SECRET_` placeholder. The value the masking context seeds '
-      + 'from the credential-shaped environment variable is planted verbatim in the planner\'s '
-      + `reasoning, so an absent placeholder means the seed or the projection stopped masking. `
-      + `plans: ${JSON.stringify(plans)}${context()}`,
-    ).toBe(true)
-    expect(
-      plans.some((plan) => plan.includes('<EMAIL_')),
-      'no sub-action `plan` carried an `<EMAIL_` placeholder. The address is planted in the same '
-      + `reasoning and is minted lazily by the email detector inside \`mask()\`. `
-      + `plans: ${JSON.stringify(plans)}${context()}`,
-    ).toBe(true)
+      plans.filter((plan) => plan.includes('<SECRET_') || plan.includes('<EMAIL_')),
+      `a sub-action \`plan\` carried a masking-context placeholder.${context()}`,
+    ).toEqual([])
   })
 
-  it('never writes either planted value in clear, in the log or the database', () => {
+  it('never writes the declared value in clear, in the log or the database', () => {
     const eventsLog = recorded.eventsLog
     expect(
       eventsLog,
       `the run wrote no \`events.jsonl\` to scan at ${recorded.runDir ?? '(no run dir)'}${context()}`,
     ).toBeDefined()
 
+    expect(
+      (eventsLog ?? '').includes(POPULATED_DECLARED_SECRET_VALUE),
+      'the declared step secret appears IN CLEAR in this run\'s events.jsonl — the masked side of '
+      + `D-11 is broken for the artifact a person installs.${context()}`,
+    ).toBe(false)
     for (const [what, value] of [
-      ['the masking-seeded credential', POPULATED_SECRET_VALUE],
-      ['the declared step secret', POPULATED_DECLARED_SECRET_VALUE],
+      ['the env credential', POPULATED_SECRET_VALUE],
       ['the planted email address', POPULATED_EMAIL],
     ] as const) {
       expect(
         (eventsLog ?? '').includes(value),
-        `${what} appears IN CLEAR in this run's events.jsonl — the masked side of D-11 is broken `
-        + `for the artifact a person installs.${context()}`,
-      ).toBe(false)
+        `${what} is not in this run's events.jsonl as written (D-01, D-12, D-23).${context()}`,
+      ).toBe(true)
     }
 
     const dbBytes = recorded.dbBytes
@@ -354,17 +361,11 @@ describe('the shipped binary produces a populated, masked run (405-09)', () => {
       recorded.scannedDbFiles.length,
       `no runtime database file was found to scan — a clean scan of nothing is not a claim.${context()}`,
     ).toBeGreaterThan(0)
-    for (const [what, value] of [
-      ['the masking-seeded credential', POPULATED_SECRET_VALUE],
-      ['the declared step secret', POPULATED_DECLARED_SECRET_VALUE],
-      ['the planted email address', POPULATED_EMAIL],
-    ] as const) {
-      expect(
-        (dbBytes ?? Buffer.alloc(0)).includes(Buffer.from(value, 'utf8')),
-        `${what} appears IN CLEAR in the dashboard's own SQLite bytes `
-        + `(${recorded.scannedDbFiles.join(', ')}).${context()}`,
-      ).toBe(false)
-    }
+    expect(
+      (dbBytes ?? Buffer.alloc(0)).includes(Buffer.from(POPULATED_DECLARED_SECRET_VALUE, 'utf8')),
+      'the declared step secret appears IN CLEAR in the dashboard\'s own SQLite bytes '
+      + `(${recorded.scannedDbFiles.join(', ')}).${context()}`,
+    ).toBe(false)
   })
 
   it('answered every request the shipped run made, and refused none', () => {

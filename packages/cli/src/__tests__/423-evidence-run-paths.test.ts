@@ -132,7 +132,7 @@ for (const path of ['COMPOSED', 'DIRECT'] as const) {
       assembleRun: async context => {
         store = context.ports.evidenceArtifacts
         const assembly = await assembleCliRun({
-          ...context, knowledgeRoot: produced.knowledgeRoot, maskingContext: masking,
+          ...context, knowledgeRoot: produced.knowledgeRoot, maskingContext: masking, secretRedactor: produced.secretRedactor,
           members: produced.members, executor: produced.executor, configDigests: produced.configDigests,
           product: produced.product, warn: () => {},
         })

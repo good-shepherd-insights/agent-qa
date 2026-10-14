@@ -182,7 +182,7 @@ export interface TestStartedPayload {
   /**
    * 2026-09-26, owner decision (2), G-428-2. The same 363 D-01 additive-optional footing as the
    * fields above: the member's authored step texts, in step order, so a live row can show a step's
-   * real text before the step starts. Masked at the producer by the run's MaskingContext, exactly
+   * real text before the step starts. Masked at the producer by the run's redactor, exactly
    * as `stepStarted.stepText` is, so entry i equals step i's announced text. Absent from older
    * producers and recorded runs; a consumer that ignores it loses nothing but the pending text.
    */

@@ -7,7 +7,7 @@ import { guardRunAnalysisArtifact, slugBranch, type RunDetailProjection } from '
 import { chromium, type BrowserContext, type Page } from 'playwright-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { capture, recordingFixture, zoomFixtureTab, type RecordingFixture } from './recording-dom-fixture.js'
-import { populatedRunSpawnEnv, POPULATED_SECRET_ENV_VAR, POPULATED_SECRET_VALUE } from './populated-run-fixture.js'
+import { populatedRunSpawnEnv, POPULATED_SECRET_ENV_VAR } from './populated-run-fixture.js'
 import { cleanupTempRoots, reserveEphemeralPort, spawnDashboard, trackTempRoot } from './spawned-chat.js'
 
 // Real producer + shipped bundle. Only historical/orphan test arrangements edit the temporary
@@ -24,16 +24,17 @@ let timeline: { box: Box; track: Box; thumb: Box; text: string; markers: number;
 const tabs: Array<{ width: number; document: number; viewport: number; scroll: number; client: number; moved: number; triggers: Array<{ box: Box; count?: Box; contentFits: boolean }> }> = []
 const lightboxes: Array<{ width: number; document: number; viewport: number; height: number; image: Box; dialog: Box; close: Box; notePadding: string[]; loaded: boolean }> = []
 let notice: { dismiss: Box; viewport: number; explanation: Box; pane: Box; lines: number; textWidth: number; font: string; totalTextWidth: number; message: string; text: Box; lineBoxes: Box[]; icon: Box } | undefined
-let chips: Array<{ chip: Box; row: Box; clip: Box; text: string; visible: boolean }> = []
+let inputTexts: Array<{ width: number; text: Box; row: Box; clip: Box; content: string; visible: boolean }> = []
 
-async function measureChips(page: Page) {
+async function measureInputText(page: Page) {
   const fill = page.locator('[data-sub-action] [data-action-family="input"]').first()
   await fill.scrollIntoViewIfNeeded()
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
-  chips.push(...await page.locator('[data-sub-action] [data-masked]').evaluateAll(elements => {
+  inputTexts.push(...await fill.locator('.truncate').evaluateAll(elements => {
     const box = (element: Element) => { const r = element.getBoundingClientRect(); return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: r.width, height: r.height } }
-    return elements.map(chip => ({ chip: box(chip), row: box(chip.closest('[data-sub-action]')!),
-      clip: box(chip.closest('.truncate')!), text: chip.textContent ?? '', visible: getComputedStyle(chip).visibility !== 'hidden' }))
+    return elements.map(text => ({ width: innerWidth, text: box(text), row: box(text.closest('[data-sub-action]')!),
+      clip: box(text.closest('[data-action-family]')!), content: (text.textContent ?? '').trim(),
+      visible: getComputedStyle(text).visibility !== 'hidden' && text.getBoundingClientRect().width > 0 }))
   }))
 }
 
@@ -78,8 +79,8 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
       if (!settled) throw new Error('Post-run writer did not settle')
       await fixture.dashboard.stop()
       const env = populatedRunSpawnEnv()
-      // A cold reader without the original environment cannot restore this synthetic credential.
-      // Its genuine fill value must now render as a complete MaskedChip, never plaintext.
+      // A cold reader without the original environment: the fill value is not a declared secret,
+      // so the run recorded it as typed and the page renders it as written (D-12, D-23).
       delete env[POPULATED_SECRET_ENV_VAR]
       const port = await reserveEphemeralPort()
       reader = await spawnDashboard(fixture.project.root, fixture.project.configPath, port, 60_000, env)
@@ -105,15 +106,14 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
       })
       await capture(page, 'timeline-400')
       await measureTabs(page, 'tab-strip-400')
-      await measureChips(page)
-      if ((await page.locator('body').textContent())?.includes(POPULATED_SECRET_VALUE)) throw new Error('Synthetic credential was not masked')
-      await capture(page, 'masked-chip-400')
+      await measureInputText(page)
+      await capture(page, 'input-text-400')
       await page.setViewportSize({ width: 1280, height: 800 })
-      await measureChips(page)
-      await capture(page, 'masked-chip-desktop')
+      await measureInputText(page)
+      await capture(page, 'input-text-desktop')
       await page.setViewportSize({ width: 1920, height: 800 })
-      await measureChips(page)
-      await capture(page, 'masked-chip-wide-control')
+      await measureInputText(page)
+      await capture(page, 'input-text-wide-control')
       await page.setViewportSize({ width: 400, height: 800 })
 
       // Density and real browser zoom are separate checks. The temporary MV3 extension exists
@@ -219,7 +219,7 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
         await page.getByRole('button', { name: 'Close screenshot', exact: true }).click()
         await page.locator('[data-player-lightbox]').waitFor({ state: 'hidden' })
       }
-      if (process.env.AGENT_QA_424_CAPTURE_DIR) writeFileSync(join(process.env.AGENT_QA_424_CAPTURE_DIR, 'layout-observation.json'), JSON.stringify({ timeline, tabs, zoom, notice, lightboxes, chips }, null, 2))
+      if (process.env.AGENT_QA_424_CAPTURE_DIR) writeFileSync(join(process.env.AGENT_QA_424_CAPTURE_DIR, 'layout-observation.json'), JSON.stringify({ timeline, tabs, zoom, notice, lightboxes, inputTexts }, null, 2))
       await context.close()
     } catch (error) { failures.drive = String(error) }
   }, 360_000)
@@ -279,12 +279,12 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
       expect(lightbox.notePadding).toEqual(['32px', '32px'])
     }
   })
-  it('LAYOUT-MASKED-CHIP-TRUNCATION', () => {
-    expect(chips.length, JSON.stringify(failures)).toBeGreaterThan(0)
-    expect(chips.some(entry => entry.visible && inside(entry.chip, entry.clip)), 'Wide control must show a whole chip; hiding every chip is not a fix').toBe(true)
-    for (const entry of chips) {
-      expect(entry.text).toBeTruthy()
-      expect(!entry.visible || !overlaps(entry.chip, entry.clip) || (inside(entry.chip, entry.row) && inside(entry.chip, entry.clip)), JSON.stringify(entry)).toBe(true)
+  it('LAYOUT-INPUT-TEXT-TRUNCATION', () => {
+    expect(inputTexts.map(entry => entry.width).sort((a, b) => a - b), JSON.stringify(failures)).toEqual([400, 1280, 1920])
+    for (const entry of inputTexts) {
+      expect(entry.visible, JSON.stringify(entry)).toBe(true)
+      expect(entry.content, JSON.stringify(entry)).toBeTruthy()
+      expect(inside(entry.text, entry.row) && inside(entry.text, entry.clip), JSON.stringify(entry)).toBe(true)
     }
   })
 })

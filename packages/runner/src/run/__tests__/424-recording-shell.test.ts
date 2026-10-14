@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest'
 import type { RecordingEntry, RunEventEnvelope, TestFinishedPayload } from '@vostride/agent-qa-schema'
 import { startRun, type RunConfig } from '../shell.js'
+import { SecretRedactor, SecretStore } from '../../loop/secrets.js'
 
 const recording: RecordingEntry = {
   state: 'present', contentType: 'video/webm', byteLength: 123, durationMs: 56,
@@ -14,7 +15,7 @@ async function run(failFast = false) {
     runId: 'synthetic-recording-shell' as RunConfig['runId'],
     scope: { tier: 'suite', key: 'synthetic' }, executionContext: 'local-headless',
     buildOrdinal: 1, configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
-    masking: { mask: text => text.replaceAll('synthetic-secret', '[secret]'), unmask: text => text },
+    secretRedactor: new SecretRedactor(new SecretStore({ SYNTHETIC_424: 'synthetic-secret' })),
     members: ['first', 'second'].map(testId => ({ testId, name: testId, filePath: 'synthetic.yaml',
       ...(failFast ? { failFastGroup: 'group' } : {}) })),
     executor: async member => {
@@ -39,7 +40,7 @@ test('REC-SHELL-TESTFINISHED-CARRIES: recording survives the real bus mask walk 
   const { terminals } = await run()
   expect(terminals).toHaveLength(2)
   expect(terminals[0].recording).toEqual(recording)
-  expect(terminals[0].failureSummary).toBe('[secret]')
+  expect(terminals[0].failureSummary).toBe('[secret:SYNTHETIC_424]')
   expect(terminals[1]).not.toHaveProperty('recording')
 })
 

@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { FsEventLog, RUN_EVIDENCE_BLOBS_SUBDIR, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
 import type { AuditSink, GuardrailAuditRow } from '@vostride/agent-qa-safety'
@@ -573,6 +574,7 @@ describe('buildRunPorts — onSubscriberFault destination (403-13)', () => {
       knowledgeRoot: join(configDir, 'knowledge'),
       ports: buildRunPorts({ configDir, runId }),
       maskingContext: {} as never,
+      secretRedactor: new SecretRedactor(new SecretStore()),
       members: [],
       executor: (() => { throw new Error('unreachable in this cell') }) as never,
       configDigests: { config: 'c', source: 's' } as never,

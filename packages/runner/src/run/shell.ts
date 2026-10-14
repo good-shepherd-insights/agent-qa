@@ -32,7 +32,6 @@
 
 import type {
   MaskFn,
-  MaskingContext,
   MemberTestOutcome,
   PerTestOutcome,
   PostProcessingDisposition,
@@ -55,6 +54,7 @@ import type { MemberEvidenceContext, PostVerdictOutcome, RunConfig, RunTimerPort
 import { POST_VERDICT_STEP_BUDGET_MS } from './ports.js'
 import type { RunMemberDescriptor } from './ports.js'
 import type { TestResult } from '../result.js'
+import { redactSecretValue } from '../loop/secrets.js'
 
 // Re-export the port contracts the Wave-0 `run-shell.test.ts` imports through `../shell.js`.
 export type {
@@ -63,12 +63,6 @@ export type {
   MemberTestExecutor,
   MemberTestRunContext,
 } from './ports.js'
-
-/** Identity masking used pre-362 when no run-scope MaskingContext is seeded (D-09). */
-const IDENTITY_MASKING: MaskingContext = {
-  mask: (text: string) => text,
-  unmask: (text: string) => text,
-}
 
 /**
  * The budget's own answer, as a VALUE rather than a rejection (404 D-10).
@@ -160,8 +154,7 @@ function memberHandleIndex(member: RunMemberDescriptor, index: number): number {
  * publishes the verdict, or when `runFinished` is last.
  */
 export function startRun(config: RunConfig): RunSession {
-  const masking = config.masking ?? IDENTITY_MASKING
-  const mask: MaskFn = (text: string) => masking.mask(text)
+  const mask: MaskFn = (text) => redactSecretValue(text, config.secretRedactor)
   const ports = config.ports ?? {}
   const timer = ports.timer
 
@@ -302,7 +295,7 @@ export function startRun(config: RunConfig): RunSession {
       // Absent optionals are omitted via conditional spread so no undefined-hole survives round-trip.
       // Every field but stepTexts is structural identity (not a captured stream) — unmasked, matching
       // testId/name. stepTexts (G-428-2) is authored step content, so it is masked here by `mask`, the
-      // same MaskingContext the member's event sink below masks stepStarted.stepText with.
+      // same run redactor the member's event sink below masks stepStarted.stepText with.
       bus.publish('testStarted', {
         testId: member.testId,
         testIndex,
@@ -322,7 +315,8 @@ export function startRun(config: RunConfig): RunSession {
       if (runController.signal.aborted) memberController.abort()
       else runController.signal.addEventListener('abort', onRunAbort, { once: true })
 
-      const events = createMemberEventSink({ bus, masking, testIndex })
+      // 2026-10-14 (441-12): an adapter over the run's mask until the sink takes `mask` itself.
+      const events = createMemberEventSink({ bus, masking: { mask, unmask: (text) => text }, testIndex })
       let evidenceContext: MemberEvidenceContext | undefined
 
       // Race the executor against member-abort (SESSION-04). A member wedged on a genuinely-

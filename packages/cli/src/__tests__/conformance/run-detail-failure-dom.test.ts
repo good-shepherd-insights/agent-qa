@@ -61,6 +61,7 @@ import {
   POPULATED_EMAIL,
   POPULATED_FAILURE_STEP_TEXT,
   POPULATED_RUN_ANCHORED_BUILDS,
+  POPULATED_SECRET_NAME,
   POPULATED_SECRET_VALUE,
   RUN_BUDGET_MS,
   drivePopulatedRun,
@@ -794,7 +795,7 @@ describe('the shipped dashboard paints a FAILED run\'s summary through the maski
     cleanupTempRoots()
   })
 
-  it('(3a) the producer: the shipped binary really failed this run, with a masked summary on the wire', () => {
+  it('(3a) the producer: the shipped binary really failed this run, with the declared marker and the email as written in its summary on the wire', () => {
     driveOk()
     expect(
       recorded.drive?.finished,
@@ -817,12 +818,19 @@ describe('the shipped dashboard paints a FAILED run\'s summary through the maski
       `the \`testFinished\` payload carried no \`failureSummary\` string.${context()}`,
     ).toBe('string')
     expect(
-      placeholderRe().test(summary as string),
-      'the failure summary on the wire carries NO masking placeholder, so this file would be '
-      + 'measuring a banner with nothing to mask. `projectTestFinished` routes the summary through '
-      + '`maskPayloadStrings` by name; an unmasked summary means the projection stopped masking it '
-      + `or the planted values stopped reaching it.${context()}`,
-    ).toBe(true)
+      summary,
+      'the failure summary on the wire carries no declared marker. `projectTestFinished` routes the '
+      + 'summary through the run\'s redactor; a summary without the marker means the projection '
+      + `stopped masking it or the declared value stopped reaching it.${context()}`,
+    ).toContain(`[secret:${POPULATED_SECRET_NAME}]`)
+    expect(
+      summary,
+      `the failure summary on the wire does not carry the planted email as written (D-23).${context()}`,
+    ).toContain(POPULATED_EMAIL)
+    expect(
+      (summary as string).includes(POPULATED_DECLARED_SECRET_VALUE),
+      `the declared step secret is IN CLEAR in the failure summary on the wire.${context()}`,
+    ).toBe(false)
   })
 
   it('(3b) the banner rendered on the shipped bundle, in its truncated state', () => {
@@ -860,19 +868,8 @@ describe('the shipped dashboard paints a FAILED run\'s summary through the maski
     ).toContain('...')
   })
 
-  it('(3c) truncated state: the email is a typed chip, and no marker or placeholder reaches a text node', () => {
+  it('(3c) truncated state: the email is shown as written, and no marker or placeholder reaches a text node', () => {
     const observed = visit()
-    expect(
-      observed.truncated.maskedCategories,
-      'the truncated banner painted no `[data-masked="email"]` chip. The fixture plants the email '
-      + 'inside the preview budget deliberately; an absent chip means the banner is rendering the '
-      + 'summary raw, the truncation dropped the marker, or the fixture\'s sentence drifted past '
-      + `the budget — and the drift is fixed in the FIXTURE, never by widening the budget.${context()}`,
-    ).toContain('email')
-    expect(
-      observed.truncated.maskedChipText.join(' | '),
-      `the email chip in the banner does not carry the published label.${context()}`,
-    ).toContain(MASKED_EMAIL_LABEL)
 
     const delimited = observed.truncated.textNodes.filter(
       (text) => text.includes(MASKED_MARKER_DELIMITER),
@@ -892,8 +889,10 @@ describe('the shipped dashboard paints a FAILED run\'s summary through the maski
 
     expect(
       observed.truncated.bodyText.includes(POPULATED_EMAIL),
-      `the planted address is VISIBLE on the page — the email lane is not masked.${context()}`,
-    ).toBe(false)
+      'the planted address is not shown as written in the truncated banner. The fixture plants the '
+      + 'email inside the preview budget deliberately; if the sentence drifted past the budget, fix '
+      + `the FIXTURE, never the budget (D-23).${context()}`,
+    ).toBe(true)
   })
 
   it('(3d) full state: the same four facts hold after the banner is expanded', () => {
@@ -913,9 +912,8 @@ describe('the shipped dashboard paints a FAILED run\'s summary through the maski
 
     expect(
       observed.full.maskedCategories,
-      'the expanded banner painted no `[data-masked="email"]` chip. The full text is a superset of '
-      + `the preview, so a chip present truncated and absent expanded is a render fork.${context()}`,
-    ).toContain('email')
+      `the expanded banner painted an email chip for an address the run recorded as written.${context()}`,
+    ).not.toContain('email')
 
     const delimited = observed.full.textNodes.filter(
       (text) => text.includes(MASKED_MARKER_DELIMITER),
@@ -935,32 +933,30 @@ describe('the shipped dashboard paints a FAILED run\'s summary through the maski
 
     expect(
       observed.full.bodyText.includes(POPULATED_EMAIL),
-      `the planted address is VISIBLE once the banner is expanded.${context()}`,
-    ).toBe(false)
+      `the planted address is not shown as written once the banner is expanded (D-23).${context()}`,
+    ).toBe(true)
   })
 
-  it('(3e) full state: the masking-seeded credential is restored INSIDE the banner (D-08/D-09)', () => {
+  it('(3e) full state: the env credential is shown as written INSIDE the banner, and not in the preview', () => {
     const observed = visit()
     expect(
       observed.full.bannerText.includes(POPULATED_SECRET_VALUE),
-      'the real value the run masked into a `<SECRET_n>` placeholder is NOT in the expanded '
-      + 'banner. `run.failureSummary` arrives through the `GET /api/runs/:id` arm that crosses '
-      + '`unmaskTreeForDisplay`, so the banner sits on the restore lane like every other producer '
-      + 'string on this page; an absent value means the summary is being served off a path that '
-      + `does not cross the seam, or the seam stopped restoring.${context()}`,
+      'the `_SECRET`-named environment credential is NOT in the expanded banner. It is not a '
+      + 'declared secret, so the run records it as written in `run.failureSummary` and the banner '
+      + `shows it as written (D-07, D-23).${context()}`,
     ).toBe(true)
     // AND IT IS OUTSIDE THE PREVIEW, which is what makes (3c) and (3e) two claims. The fixture puts
     // the credential past the word budget on purpose; if it drifted into the preview, the truncated
     // cell would be asserting about a string that already carries everything.
     expect(
       observed.truncated.bannerText.includes(POPULATED_SECRET_VALUE),
-      'the masking-seeded credential is already visible in the TRUNCATED banner, so the preview is '
+      'the env credential is already visible in the TRUNCATED banner, so the preview is '
       + 'not shorter than the full text in the way the fixture\'s word arithmetic says it is. Fix '
       + `the fixture's sentence, not this cell.${context()}`,
     ).toBe(false)
   })
 
-  it('(3f) at rest on a FAILING run: no planted value in the SSE frames, the events log or the database', () => {
+  it('(3f) at rest on a FAILING run: the declared value is in neither the SSE frames, the events log nor the database, and the email and the env credential are there as written', () => {
     driveOk()
     expect(
       recorded.sseFrames,
@@ -978,25 +974,34 @@ describe('the shipped dashboard paints a FAILED run\'s summary through the maski
     // `runs.failure_summary` IS A SINK NO PASSING RUN EVER WROTE, so this scan covers ground the
     // passing-run differential cannot. A red here is a NEW DETL-02 at-rest finding: report the sink
     // and the value. It is not an occasion to narrow the scan.
+    expect(
+      (recorded.sseFrames ?? '').includes(POPULATED_DECLARED_SECRET_VALUE),
+      `the declared step secret appears IN CLEAR in the run-stream frames of a FAILING run.${context()}`,
+    ).toBe(false)
+    expect(
+      (recorded.eventsLog ?? '').includes(POPULATED_DECLARED_SECRET_VALUE),
+      `the declared step secret appears IN CLEAR in this failing run's events.jsonl.${context()}`,
+    ).toBe(false)
+    expect(
+      (recorded.dbBytes ?? Buffer.alloc(0)).includes(Buffer.from(POPULATED_DECLARED_SECRET_VALUE, 'utf8')),
+      'the declared step secret appears IN CLEAR in the dashboard\'s own SQLite bytes '
+      + `(${recorded.scannedDbFiles.join(', ')}) — `
+      + `\`runs.failure_summary\` is the sink a passing run never writes.${context()}`,
+    ).toBe(false)
+
+    // Undeclared values are recorded as written (D-01, D-12, D-23).
     for (const [what, value] of [
-      ['the masking-seeded credential', POPULATED_SECRET_VALUE],
-      ['the declared step secret', POPULATED_DECLARED_SECRET_VALUE],
+      ['the env credential', POPULATED_SECRET_VALUE],
       ['the planted email address', POPULATED_EMAIL],
     ] as const) {
       expect(
         (recorded.sseFrames ?? '').includes(value),
-        `${what} appears IN CLEAR in the run-stream frames of a FAILING run.${context()}`,
-      ).toBe(false)
+        `${what} is not in the run-stream frames of this failing run as written.${context()}`,
+      ).toBe(true)
       expect(
         (recorded.eventsLog ?? '').includes(value),
-        `${what} appears IN CLEAR in this failing run's events.jsonl.${context()}`,
-      ).toBe(false)
-      expect(
-        (recorded.dbBytes ?? Buffer.alloc(0)).includes(Buffer.from(value, 'utf8')),
-        `${what} appears IN CLEAR in the dashboard's own SQLite bytes `
-        + `(${recorded.scannedDbFiles.join(', ')}) — `
-        + `\`runs.failure_summary\` is the sink a passing run never writes.${context()}`,
-      ).toBe(false)
+        `${what} is not in this failing run's events.jsonl as written.${context()}`,
+      ).toBe(true)
     }
   })
 
@@ -1021,22 +1026,22 @@ describe('the shipped dashboard paints a FAILED run\'s summary through the maski
       `the copy button reported a resolved write and the clipboard is EMPTY.${context()}`,
     ).not.toBe('')
 
-    // THE FACT. The display seam restores `<SECRET_n>` for the human reading the page, and the
-    // fixture plants the restored value at word 23 — three words past the preview budget, so it is
-    // NOT on a collapsed page. It was on the clipboard anyway: `copyTextOf` was handed the whole
+    // THE FACT. The fixture plants the env credential at word 23 — three words past the preview
+    // budget, so it is NOT on a collapsed page. It was on the clipboard anyway: `copyTextOf` was handed the whole
     // summary regardless of state, and one click on a banner that never showed the credential put
     // 47 words on the clipboard against 21 on the page. A pasted bug report is read by exactly the
     // people a redaction is kept from, restored or not.
     expect(
       clipboard.includes(POPULATED_SECRET_VALUE),
-      'the RESTORED credential is on the clipboard, copied from a COLLAPSED banner that never '
+      'the env credential is on the clipboard, copied from a COLLAPSED banner that never '
       + 'showed it. The clipboard is a second medium a person reads: it carries what was RENDERED '
       + `and nothing else.${context()}`,
     ).toBe(false)
     expect(
       clipboard.includes(POPULATED_EMAIL),
-      `the planted address is on the clipboard in the clear.${context()}`,
-    ).toBe(false)
+      'the planted address is not on the clipboard as written. The collapsed banner renders it at '
+      + `word 16, so the clipboard carries it as the page showed it (D-23).${context()}`,
+    ).toBe(true)
     expect(
       clipboard.includes(MASKED_MARKER_DELIMITER),
       'a masked-marker delimiter is on the clipboard — the copy path is writing the seam\'s '

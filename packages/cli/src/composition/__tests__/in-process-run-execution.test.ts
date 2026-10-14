@@ -292,7 +292,7 @@ import {
   runInProcessCliRun,
 } from '../in-process-run-execution.js'
 import type { CliRunOutcome } from '../in-process-run-execution.js'
-import { auditRows, buildOrdinalsExist, eventTypes, runDirs } from './in-process-run-fixture.js'
+import { PLANTED_SECRET_NAME, auditRows, buildOrdinalsExist, eventTypes, runDirs } from './in-process-run-fixture.js'
 // 405-02 (D-08): the sidecar READER, reached through the same composition hop the drive's writer
 // uses — `runner-local` is not a package a cli file may name (FUNC-02) and a test file is not
 // exempt from that firewall.
@@ -859,6 +859,55 @@ describe('a dashboard-launched run leaves a masking-digests sidecar (405-02, D-0
       expect(existsSync(keyFile)).toBe(true)
       expect(statSync(keyFile).mode & 0o777).toBe(0o600)
       expect(readFileSync(sidecarPath).includes(key.toString('hex'))).toBe(false)
+    } finally {
+      await target.close()
+    }
+  }, 120_000)
+})
+
+// ---------------------------------------------------------------------------
+// 441-12 (D-06, D-11): a run's records are masked by the redactor its producer read, and only by it
+// ---------------------------------------------------------------------------
+
+/** Every line of the one run's `events.jsonl`, as written. */
+function eventLines(fixture: { project: string; suitePattern: string }): string[] {
+  const dirs = runDirs(fixture as never)
+  expect(dirs).toHaveLength(1)
+  return readFileSync(join(dirs[0]!, 'events.jsonl'), 'utf8').split('\n').filter((line) => line !== '')
+}
+
+/** The one step text the run's one `testStarted` recorded. */
+function onlyStepText(lines: readonly string[]): string {
+  const stepTexts = lines
+    .map((line) => JSON.parse(line) as { type: string; payload: { stepTexts?: string[] } })
+    .filter((event) => event.type === 'testStarted')
+    .flatMap((event) => event.payload.stepTexts ?? [])
+  expect(stepTexts).toHaveLength(1)
+  return stepTexts[0]!
+}
+
+describe('C441-RUN-RECORDS', () => {
+  it("an in-process run's events.jsonl holds the declared marker and the email as written", async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const plantedSecret = 'zq7-planted-run-records-441'
+      const fixture = createInProcessFixture({
+        origin: target.origin,
+        environment: 'local',
+        plantedSecret,
+        stepText: `Sign in as qa@example.com with ${plantedSecret}`,
+      })
+      try {
+        await runInProcessCliRun(
+          { ...fixtureOptions(fixture), executionContext: 'local-headless' },
+          { patterns: [fixture.testPattern] },
+        )
+      } catch { /* the member's framework error on the pinned empty browsers root */ }
+
+      const lines = eventLines(fixture)
+      expect(onlyStepText(lines)).toBe(`Sign in as qa@example.com with [secret:${PLANTED_SECRET_NAME}]`)
+      expect(lines.filter((line) => line.includes(plantedSecret))).toEqual([])
     } finally {
       await target.close()
     }
