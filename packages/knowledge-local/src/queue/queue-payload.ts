@@ -172,8 +172,9 @@ const candidateSeedShape = {
   scope: scopeSchema,
   buildOrdinal: z.number().int().nonnegative(),
   executionContext: executionContextSchema,
-  secretFlagged: z.boolean(),
-  injectionFlagged: z.boolean(),
+  // 2026-10-15 (441-24, D-26): unread; 441-50 deletes both.
+  secretFlagged: z.boolean().optional(),
+  injectionFlagged: z.boolean().optional(),
   kind: bundleKindSchema,
   subtype: factSubtypeSchema.optional(),
   /**

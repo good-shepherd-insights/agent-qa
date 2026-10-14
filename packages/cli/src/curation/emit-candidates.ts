@@ -29,7 +29,6 @@ import {
   type StepEvidence,
   type SubActionEvidence,
 } from '@vostride/agent-qa-schema'
-import { scan } from '@vostride/agent-qa-safety'
 
 import {
   actionRefs,
@@ -59,15 +58,6 @@ type CaptureElementEvidence =
   CurationCandidateProjection['captureEvidence']['elements'][number]
 type CaptureStepInteraction =
   CurationCandidateProjection['stepInteractions'][number]
-
-type CandidateInjectionEvidence = Pick<
-  CurationCandidateProjection,
-  | 'anchors'
-  | 'summarySeed'
-  | 'bodySeed'
-  | 'distilledObservations'
-  | 'captureEvidence'
->
 
 const SHA256_HEX = /^[0-9a-f]{64}$/
 
@@ -188,34 +178,6 @@ function stepInteractions(steps: readonly StepEvidence[]): CaptureStepInteractio
   })
 }
 
-function candidateEvidenceText(evidence: CandidateInjectionEvidence): string {
-  return canonicalJson({
-    summarySeed: evidence.summarySeed,
-    bodySeed: evidence.bodySeed,
-    anchors: evidence.anchors,
-    distilledObservations: evidence.distilledObservations,
-    captureEvidence: {
-      elements: evidence.captureEvidence.elements.map((element) => ({
-        stepIndex: element.stepIndex,
-        elementRef: element.elementRef,
-        role: element.role,
-        name: element.name,
-        nameNormalized: element.nameNormalized,
-        ...(element.inputType === undefined ? {} : { inputType: element.inputType }),
-      })),
-    },
-  })
-}
-
-function candidateInjectionFlag(
-  evidence: CandidateInjectionEvidence,
-  policy: GuardrailPolicy,
-): boolean {
-  return scan(candidateEvidenceText(evidence), policy).fired.some(
-    (detection) => detection.detector === 'injectionShape',
-  )
-}
-
 function commonFields(
   handoff: CompletedRunHandoff,
   input: {
@@ -231,31 +193,22 @@ function commonFields(
     steps: readonly StepEvidence[]
     artifactDescriptors: CurationArtifactDescriptor[]
   },
-  policy: GuardrailPolicy,
 ): CurationCandidateProjection {
-  const evidence = {
-    anchors: input.anchors,
-    summarySeed: input.summarySeed,
-    bodySeed: input.bodySeed,
-    distilledObservations: input.observations,
-    captureEvidence: captureEvidence(input.steps),
-  }
   return {
     sourceRunId: handoff.runId,
     scope: handoff.scope,
     buildOrdinal: handoff.buildOrdinal,
     executionContext: handoff.executionContext,
     secretFlagged: input.secretFlagged,
-    injectionFlagged: candidateInjectionFlag(evidence, policy),
     kind: input.kind,
     ...(input.subtype === undefined ? {} : { subtype: input.subtype }),
     ...(input.rootCauseClass === undefined
       ? {}
       : { rootCauseClass: input.rootCauseClass }),
-    anchors: evidence.anchors,
-    summarySeed: evidence.summarySeed,
-    bodySeed: evidence.bodySeed,
-    distilledObservations: evidence.distilledObservations,
+    anchors: input.anchors,
+    summarySeed: input.summarySeed,
+    bodySeed: input.bodySeed,
+    distilledObservations: input.observations,
     evidenceToken: deriveEvidenceToken({
       attributingObservationId: input.attributingObservationId,
       anchor: input.anchors[0]!,
@@ -263,7 +216,7 @@ function commonFields(
     }),
     attributingObservationId: input.attributingObservationId,
     artifactDescriptors: input.artifactDescriptors,
-    captureEvidence: evidence.captureEvidence,
+    captureEvidence: captureEvidence(input.steps),
     stepInteractions: stepInteractions(input.steps),
     emittedAt: new Date(handoff.endedAt).toISOString(),
   }
@@ -285,7 +238,6 @@ function projectFact(
   handoff: CompletedRunHandoff,
   test: PerTestOutcome,
   step: StepEvidence,
-  policy: GuardrailPolicy,
 ): CurationCandidateProjection | undefined {
   if (!step.verifierVerdict.pass) return undefined
   const resolved = resolvedElementEvidence(step)
@@ -356,7 +308,6 @@ function projectFact(
       steps: [step],
       artifactDescriptors: stepArtifactDescriptors(step),
     },
-    policy,
   )
 }
 
@@ -382,7 +333,6 @@ function projectMeasurements(
   handoff: CompletedRunHandoff,
   test: PerTestOutcome,
   step: StepEvidence,
-  policy: GuardrailPolicy,
   mask: MaskFn | undefined,
 ): CurationCandidateProjection[] {
   if (!step.verifierVerdict.pass) return []
@@ -428,7 +378,6 @@ function projectMeasurements(
         steps: [step],
         artifactDescriptors: stepArtifactDescriptors(step),
       },
-      policy,
     )
   })
 }
@@ -442,7 +391,6 @@ function isLearnableCaution(
 function projectCaution(
   handoff: CompletedRunHandoff,
   test: PerTestOutcome,
-  policy: GuardrailPolicy,
 ): CurationCandidateProjection | undefined {
   const rootCause = test.rootCause
   if (rootCause === undefined || !isLearnableCaution(rootCause.class)) return undefined
@@ -490,7 +438,6 @@ function projectCaution(
         stepIndex,
       ),
     },
-    policy,
   )
 }
 
@@ -836,7 +783,6 @@ function trajectoryStep(step: StepEvidence, mask: MaskFn | undefined): Procedure
 function projectProcedureTarget(
   handoff: CompletedRunHandoff,
   test: PerTestOutcome,
-  policy: GuardrailPolicy,
   mask: MaskFn | undefined,
 ): CurationCandidateProjection | undefined {
   if (test.outcome !== 'passed') return undefined
@@ -921,7 +867,6 @@ function projectProcedureTarget(
       steps: test.steps,
       artifactDescriptors,
     },
-    policy,
   )
 }
 
@@ -933,11 +878,12 @@ function projectProcedureTarget(
  */
 export function projectProcedureTargets(
   handoff: CompletedRunHandoff,
-  policy: GuardrailPolicy,
+  // 2026-10-15 (441-24, D-26): unread; 441-27-2 deletes it with its test callers.
+  _policy?: GuardrailPolicy,
   mask?: MaskFn,
 ): CurationCandidateProjection[] {
   return handoff.tests.flatMap((test) => {
-    const target = projectProcedureTarget(handoff, test, policy, mask)
+    const target = projectProcedureTarget(handoff, test, mask)
     return target === undefined ? [] : [target]
   })
 }
@@ -945,22 +891,23 @@ export function projectProcedureTargets(
 /** Pure post-verdict projection. Host artifact bytes are resolved only by the emit wrapper. */
 export function projectCurationCandidates(
   handoff: CompletedRunHandoff,
-  policy: GuardrailPolicy,
+  // 2026-10-15 (441-24, D-26): unread; 441-27-2 deletes it with its test callers.
+  _policy?: GuardrailPolicy,
   mask?: MaskFn,
 ): CurationCandidateProjection[] {
   return [
     ...handoff.tests.flatMap((test) => {
       const factsAndMeasurements = test.steps.flatMap((step) => {
-        const fact = projectFact(handoff, test, step, policy)
+        const fact = projectFact(handoff, test, step)
         return [
           ...(fact === undefined ? [] : [fact]),
-          ...projectMeasurements(handoff, test, step, policy, mask),
+          ...projectMeasurements(handoff, test, step, mask),
         ]
       })
-      const caution = projectCaution(handoff, test, policy)
+      const caution = projectCaution(handoff, test)
       return [...factsAndMeasurements, ...(caution === undefined ? [] : [caution])]
     }),
-    ...projectProcedureTargets(handoff, policy, mask),
+    ...projectProcedureTargets(handoff, undefined, mask),
   ]
 }
 
@@ -970,7 +917,8 @@ export interface EmitCurationCandidatesOptions {
   runDir: string
   /** Absolute agent-qa-knowledge root that owns the durable queue. */
   knowledgeRoot: string
-  policy: GuardrailPolicy
+  // 2026-10-15 (441-24, D-26): unread; 441-27-2 deletes it with its test callers.
+  policy?: GuardrailPolicy
   mask?: MaskFn
 }
 
@@ -1030,7 +978,7 @@ export function emitCurationCandidates(opts: EmitCurationCandidatesOptions): Emi
     refused: 0,
     details: [],
   }
-  for (const projected of projectCurationCandidates(opts.handoff, opts.policy, opts.mask)) {
+  for (const projected of projectCurationCandidates(opts.handoff, undefined, opts.mask)) {
     const artifactSources = bindArtifactSources(projected, opts.runDir)
     let outcome: EmitCandidateOutcome
     try {

@@ -94,7 +94,6 @@ import type {
   UnknownResolutionIntent,
 } from './disposition.js'
 import { assessEmbeddingInput } from './embed-gate.js'
-import { assertRestrictedFallbackDelta } from './fallback.js'
 
 export { assemblePromotionGateInput } from '../promotion-gate-input.js'
 
@@ -182,18 +181,10 @@ export type CommitCurationOutcome =
   | ({ kind: 'applied' } & CommittedBundleResult)
   | ({ kind: 'downgraded'; reason: string; original: Delta } & CommittedBundleResult)
   | ({ kind: 'converted-confirm' } & CommittedBundleResult)
-  | {
-      kind: 'withheld'
-      reason: 'injection-restricted'
-      bundleId?: RecordId
-      bundleDir?: string
-      promotionHoldReason?: PromotionGateHoldReason
-      promotionPath?: PromotionPath
-    }
   | { kind: 'abandoned-stale-epoch'; observedEpoch: number }
   | {
       kind: 'failed'
-      reason: 'restricted-fallback' | 'identity-collision' | 'append-failed'
+      reason: 'identity-collision' | 'append-failed'
       collisionReason?: Extract<
         PublishBundleOutcome,
         { kind: 'identity-collision' }
@@ -939,38 +930,6 @@ function mutationTarget(delta: Delta): RecordId | undefined {
   return undefined
 }
 
-function unreachableRestrictedDelta(delta: never): never {
-  throw new TypeError(`unsupported injection-restricted delta: ${canonicalJson(delta)}`)
-}
-
-function restrictedInjectionDelta(delta: Delta, job: CommitCurationJob): Delta {
-  const envelope = {
-    origin: delta.origin,
-    scope: delta.scope,
-    citedIds: [],
-    ...(delta.authorship === undefined ? {} : { authorship: delta.authorship }),
-  }
-
-  switch (delta.kind) {
-    case 'Add':
-      return { kind: 'Add', ...envelope, bundle: delta.bundle }
-    case 'MintUnknown':
-      return {
-        kind: 'MintUnknown',
-        ...envelope,
-        conflict: { recordIds: [], kind: delta.conflict.kind },
-      }
-    case 'Supersede':
-      return { kind: 'Add', ...envelope, bundle: delta.newBundle }
-    case 'Confirm':
-    case 'Deprecate':
-    case 'Noop':
-      return { kind: 'Add', ...envelope, bundle: syntheticDraft(job) }
-    default:
-      return unreachableRestrictedDelta(delta)
-  }
-}
-
 /**
  * The one serialized mutation boundary: fresh epoch, disposition, intent, fresh epoch, publish,
  * append-only lifecycle, canonical index projection, intent clear, and queue completion.
@@ -985,15 +944,6 @@ export function commitCurationDelta(
   if (beforeWork !== undefined) return beforeWork
   assertCaptureSafePayload(job)
 
-  if (checkpoint.authorship.path === 'deterministic-fallback') {
-    try {
-      assertRestrictedFallbackDelta(checkpoint.delta)
-    } catch {
-      markDone(deps, job)
-      return { kind: 'failed', reason: 'restricted-fallback' }
-    }
-  }
-
   const authoredDraft = draftForDelta(checkpoint.delta, job) ?? syntheticDraft(job)
   const embedding = renderEmbeddingInput({
     summary: authoredDraft.summary,
@@ -1003,25 +953,13 @@ export function commitCurationDelta(
   const embedGate = assessEmbeddingInput({
     renderedEmbeddingInput: embedding,
     llmAuthoredFields: [authoredDraft.summary, authoredDraft.body],
-    secretFlaggedAtEmit: job.payload.secretFlagged,
+    secretFlaggedAtEmit: job.payload.secretFlagged === true,
     policy: deps.policy,
   })
-  const injectionRestricted =
-    job.payload.injectionFlagged
-    || embedGate.detections.some((detection) => detection.detector === 'injectionShape')
-  const dispositionDelta = injectionRestricted
-    ? restrictedInjectionDelta(checkpoint.delta, job)
-    : checkpoint.delta
-  const dispositionCheckpoint: AuthoredDeltaCheckpoint = {
-    ...checkpoint,
-    delta: dispositionDelta,
-    neighborIds: injectionRestricted ? [] : checkpoint.neighborIds,
-    preconditions: injectionRestricted ? [] : checkpoint.preconditions,
-  }
   const disposed = disposeDelta({
     ...(deps.priors === undefined ? {} : { priors: deps.priors }),
-    delta: dispositionDelta,
-    checkpoint: dispositionCheckpoint,
+    delta: checkpoint.delta,
+    checkpoint,
     profile: deps.profile,
     knowledgeRoot: deps.knowledgeRoot,
     candidate: {
@@ -1112,7 +1050,7 @@ export function commitCurationDelta(
     lifecycle: 'bundling',
     // Persist the parseable widened singleton so crash recovery replays through the
     // one authoredCheckpointSchema recovery boundary.
-    authored: widenAuthoredDeltaCheckpoint(dispositionCheckpoint),
+    authored: widenAuthoredDeltaCheckpoint(checkpoint),
   })
 
   try {
@@ -1151,7 +1089,6 @@ export function commitCurationDelta(
           ...((draft as CheckpointDraft).needsEnrichment === true
             ? { needsEnrichment: true }
             : {}),
-          ...(injectionRestricted ? { withheld: true } : {}),
         },
         copiedArtifacts: preCopy,
         evidenceIncomplete: preCopy.evidenceIncomplete,
@@ -1223,7 +1160,7 @@ export function commitCurationDelta(
             candidateId: job.candidateId,
             authority,
             lifecycle: 'committing',
-            authored: widenAuthoredDeltaCheckpoint(dispositionCheckpoint),
+            authored: widenAuthoredDeltaCheckpoint(checkpoint),
           })
           const effect = (
             recordId: string,
@@ -1692,16 +1629,6 @@ export function commitCurationDelta(
             deltaKind: delta.kind,
             ...(promotionHoldReason === undefined ? {} : { promotionHoldReason }),
             ...(promotionPath === undefined ? {} : { promotionPath }),
-          }
-          if (injectionRestricted) {
-            return {
-              kind: 'withheld',
-              reason: 'injection-restricted',
-              bundleId: result.bundleId,
-              bundleDir: result.bundleDir,
-              ...(promotionHoldReason === undefined ? {} : { promotionHoldReason }),
-              ...(promotionPath === undefined ? {} : { promotionPath }),
-            }
           }
           if (convertedConfirm && disposed.kind !== 'downgraded') {
             return { kind: 'converted-confirm', ...result }

@@ -41,8 +41,6 @@ export type CurationJobView = Pick<
   | 'buildOrdinal'
   | 'attributingObservationId'
   | 'executionContext'
-  | 'secretFlagged'
-  | 'injectionFlagged'
   | 'captureReceipt'
 >
 

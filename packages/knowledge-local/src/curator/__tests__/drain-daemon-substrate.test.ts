@@ -914,38 +914,6 @@ describe('drainQueue daemon substrate', () => {
     expect(listQueuedCandidates(knowledgeRoot)).toEqual([enqueued.entryId])
   })
 
-  it('requeues a nonterminal withheld outcome with its authored checkpoint', async () => {
-    const candidateId = enqueue('withheld-nonterminal', 'ci')
-    const report = await drainQueue({
-      knowledgeRoot,
-      auditBaseDir,
-      author: scriptedAuthor(),
-      executionContext: 'ci',
-      policy,
-      maintenance: 'skip',
-      operations: {
-        ...maintenanceFreeOperations(),
-        commitCurationDelta: () => ({ kind: 'withheld', reason: 'injection-restricted' }),
-      },
-    })
-
-    expect(report).toMatchObject({
-      withheld: 1,
-      requeued: 1,
-      failures: 0,
-      remaining: 1,
-      remainingWork: { queued: 1, claimedNonterminal: 0, quarantined: 0 },
-    })
-    const state = readJobState(knowledgeRoot, candidateId)
-    expect(state).toMatchObject({
-      kind: 'parsed',
-      state: { lifecycle: 'queued' },
-    })
-    if (state.kind !== 'parsed') throw new Error('expected parsed requeued state')
-    expect(state.state.authored).toBeDefined()
-    expect(listQueuedCandidates(knowledgeRoot)).toEqual([candidateId])
-  })
-
   it('omits every maintenance mutation when the daemon cadence owns the tail', async () => {
     const writerMutation = join(root, 'writer-pass-mutated')
     const gcMutation = join(root, 'gc-mutated')

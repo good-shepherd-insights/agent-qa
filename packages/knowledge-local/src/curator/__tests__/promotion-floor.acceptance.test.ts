@@ -353,7 +353,7 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
     expect(deriveBundleTrust(bundle).status).toBe('candidate')
   })
 
-  it('refuses procedure kind and injection-withheld content under zero-model fallback', async () => {
+  it('refuses procedure kind and commits a once-flagged row under zero-model fallback', async () => {
     // D-06 (381-02): the restricted fallback NEVER authors procedures. A procedure-extraction
     // job under zero-model fallback disposes as a Noop — no bundle is written at all.
     const { report: procedureReport } = await drainWithoutModel({
@@ -376,14 +376,14 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
     expect(loadedBundles()).toHaveLength(0)
 
     rmSync(knowledgeRoot, { recursive: true, force: true })
-    const { report } = await drainWithoutModel(selectorProjection('withheld', {
+    // 2026-10-15 (441-24, D-26): an old row still carrying the flag takes the normal path.
+    const { report } = await drainWithoutModel(selectorProjection('flagged', {
       injectionFlagged: true,
     }))
-    expect(report).toMatchObject({ withheld: 1 })
-    const withheld = onlyBundle().bundle
-    expect(withheld.provenance).toMatchObject({ withheld: true })
-    expect(withheld.events.some(({ type }) => type === 'promoted')).toBe(false)
-    expect(deriveBundleTrust(withheld).status).toBe('candidate')
+    expect(report).toMatchObject({ committed: 1, withheld: 0 })
+    const flagged = onlyBundle().bundle
+    expect(flagged.provenance).not.toHaveProperty('withheld')
+    expectFallbackAuthorship(flagged)
   })
 
   it('keeps evidence-complete fallback output candidate in a propose-only context', async () => {

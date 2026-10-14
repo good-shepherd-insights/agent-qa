@@ -278,6 +278,7 @@ function addressFields(
     scope: delta.scope,
     buildOrdinal,
     executionContext: config.executionContext,
+    // 2026-10-15 (441-24): unread; part of the pinned port address until 441-50.
     secretFlagged: false,
     injectionFlagged: false,
     kind,
@@ -418,7 +419,6 @@ function completed(outcome: CommitCurationOutcome): boolean {
     || outcome.kind === 'downgraded'
     || outcome.kind === 'converted-confirm'
     || outcome.kind === 'noop'
-    || (outcome.kind === 'withheld' && outcome.reason === 'injection-restricted')
 }
 
 function promotionBuildOrdinal(

@@ -60,11 +60,7 @@ function normalizeSecretRedactions(text: string): string {
   return redacted
 }
 
-/**
- * Applies SAFE-02 to the exact persisted embedding rendering and every LLM-authored field.
- * Detector matching stays exclusively in the governed safety package; injectionShape remains a
- * reported SAFE-03 routing signal and never enters the dense-suppression decision by itself.
- */
+/** Applies SAFE-02 to the exact persisted embedding rendering and every LLM-authored field. */
 export function assessEmbeddingInput(input: AssessEmbeddingInput): EmbedGateVerdict {
   const scans = [input.renderedEmbeddingInput, ...input.llmAuthoredFields]
     .map((text) => scan(text, input.policy))

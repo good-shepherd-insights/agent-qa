@@ -446,8 +446,6 @@ function jobView(
     buildOrdinal: payload.buildOrdinal,
     attributingObservationId: payload.attributingObservationId,
     executionContext: payload.executionContext ?? fallbackExecutionContext,
-    secretFlagged: payload.secretFlagged,
-    injectionFlagged: payload.injectionFlagged,
     captureReceipt: payload.captureReceipt,
   }
 }
@@ -798,9 +796,6 @@ function mapCommitOutcome(
       report.downgraded += 1
       countDeprecation(report, outcome.deltaKind)
       return 'continue'
-    case 'withheld':
-      report.withheld += 1
-      return 'continue'
     case 'noop':
       // Counted and named, never fatal — the complete predicate must not gate on this.
       report.noops += 1
@@ -842,16 +837,15 @@ function mapCommitOutcome(
 }
 
 function isSuccessfulTerminalCommitOutcome(outcome: CommitCurationOutcome): boolean {
-  // These kinds return only after markDone for a non-deferred delta. `withheld` and `failed`
-  // also describe branches that can exit before queue completion, so their names alone are not
-  // sufficient evidence for a lifecycle fact.
+  // These kinds return only after markDone for a non-deferred delta. `failed` also describes
+  // branches that can exit before queue completion, so its name alone is not sufficient evidence
+  // for a lifecycle fact.
   switch (outcome.kind) {
     case 'applied':
     case 'converted-confirm':
     case 'downgraded':
     case 'noop':
       return true
-    case 'withheld':
     case 'failed':
     case 'abandoned-stale-epoch':
     case 'requeue-resynthesis':
@@ -1194,12 +1188,6 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
           continue
         }
         if (outcome.kind === 'failed') anySliceFailed = true
-        if (
-          outcome.kind === 'withheld'
-          && operations.readJobState(options.knowledgeRoot, claimed.candidateId).kind !== 'absent'
-        ) {
-          anySliceFailed = true
-        }
         const mapped = mapCommitOutcome(
           result,
           outcome,

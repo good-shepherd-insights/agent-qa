@@ -76,7 +76,10 @@ describe('421 judge panel walls', () => {
     // Re-blessed 2026-10-15 (Phase 441 plan 42, D-15): the ledger SHRANK by one entry —
     // packages/cli/src/wm-flush.ts -> @vostride/agent-qa-safety, whose only import (the flush's
     // committed-egress scan) 441-42 deleted. Nothing was added; the digest was recomputed from that ledger.
-    expect(digest(read('packages/arch/src/lint/surface-firewall-ledger.ts'))).toBe('b1e4a5af7ba79877c0f09f5ba16251fc910f795834b9a7fe954244a2770a95b8')
+    // Re-blessed 2026-10-15 (Phase 441 plan 24, D-26): the ledger SHRANK by one entry —
+    // packages/cli/src/curation/emit-candidates.ts -> @vostride/agent-qa-safety, whose only import
+    // (the emit-time injection scan) 441-24 deleted. Nothing was added; the digest was recomputed.
+    expect(digest(read('packages/arch/src/lint/surface-firewall-ledger.ts'))).toBe('25891214923004508e1ae3de01b9ce074cfd2c1037f067288c7fcd001a0bfa28')
     for (const text of ["import { loadJudgeCalibrationEvidence as data } from '@vostride/agent-qa-eval-local'",
       "const data = await import('@vostride/agent-qa-eval-local')"]) {
       const hits = calibrationImports({ file: 'packages/cli/src/judge-new.ts', text })

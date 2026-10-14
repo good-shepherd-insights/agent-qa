@@ -116,10 +116,9 @@ export function resolveReviewTarget(
  *
  * `authorship` is deliberately UNSET, and the reason is a real gap rather than a preference.
  * `CurationAuthorshipPath` is `llm | llm-repaired | deterministic-fallback` — there is no member
- * meaning "a person decided this". `deterministic-fallback` is the closest in spirit and is
- * REFUSED for `Deprecate` by `assertRestrictedFallbackDelta`, whose job is to stop model judgment
- * masquerading as deterministic authorship; measured, not assumed (`restricted-fallback`, both
- * mutating verbs). So the deltas carry no authorship and the bridge's own default applies, and
+ * meaning "a person decided this". `deterministic-fallback` is the closest in spirit, but it names
+ * the code-built fallback, which never authors a `Deprecate`, so claiming it would misstate who
+ * decided. So the deltas carry no authorship and the bridge's own default applies, and
  * the human attribution lives where it is actually true: `origin: 'user'` on the committed delta. Widening the authorship vocabulary is a
  * curator-contract change with a trust-fold blast radius; 391, which owns the review engine and
  * the standing-grant model, is where a `human` path belongs. Recorded in `.planning/WINDOWS.md`.

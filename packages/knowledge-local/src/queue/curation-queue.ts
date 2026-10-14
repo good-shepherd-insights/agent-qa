@@ -728,8 +728,10 @@ function finalizeProjection(
       scope: projection.scope,
       buildOrdinal: projection.buildOrdinal,
       executionContext: projection.executionContext,
-      secretFlagged: projection.secretFlagged,
-      injectionFlagged: projection.injectionFlagged,
+      ...(projection.secretFlagged === undefined ? {} : { secretFlagged: projection.secretFlagged }),
+      ...(projection.injectionFlagged === undefined
+        ? {}
+        : { injectionFlagged: projection.injectionFlagged }),
       kind: projection.kind,
       ...(projection.subtype === undefined ? {} : { subtype: projection.subtype }),
       ...(projection.rootCauseClass === undefined

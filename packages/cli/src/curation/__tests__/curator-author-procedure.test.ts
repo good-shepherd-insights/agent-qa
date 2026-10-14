@@ -392,8 +392,6 @@ function procedureJob(overrides: Partial<CurationJobView> = {}): CurationJobView
     buildOrdinal: 42,
     attributingObservationId: 'run-1:test-0:step-0',
     executionContext: 'local-interactive',
-    secretFlagged: true,
-    injectionFlagged: false,
     captureReceipt: {
       regions: [
         {
@@ -428,7 +426,6 @@ function factJob(): CurationJobView {
     ],
     summarySeed: 'The checkout button submits the order',
     bodySeed: 'Use the resolved checkout button after the cart is complete.',
-    secretFlagged: false,
     captureReceipt: { regions: [], interactions: [], omissions: [], redactions: [] },
   })
 }
@@ -1412,7 +1409,6 @@ describe('C438-PROCEDURE-WRITE', () => {
         { t: 'flow', name: seed.flowName },
         { t: 'page', route: WRITE_PAGE },
       ],
-      secretFlagged: false,
       captureReceipt: {
         regions: [],
         interactions: [
@@ -1643,7 +1639,6 @@ describe('C438-HEALED-BODY', () => {
         { t: 'flow', name: seed.flowName },
         { t: 'page', route: HEALED_PAGE },
       ],
-      secretFlagged: false,
       captureReceipt: { regions: [], interactions: [], omissions: [], redactions: [] },
     })
     const outcome = await author([proposal])(job, [])

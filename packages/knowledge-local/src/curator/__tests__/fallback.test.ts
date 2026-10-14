@@ -54,8 +54,6 @@ function job(overrides: Partial<FallbackJobFixture> = {}): FallbackJobFixture {
     distilledObservations: [],
     scope,
     buildOrdinal: 42,
-    secretFlagged: false,
-    injectionFlagged: false,
     attributingObservationId: 'run-1:test-0:step-0',
     executionContext: 'local-headless',
     captureReceipt: { regions: [], interactions: [], omissions: [], redactions: [] },

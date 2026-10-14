@@ -291,12 +291,6 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     reason: 'candidate emission writes knowledge directly; moves behind the curate-memory job',
   },
   {
-    file: 'packages/cli/src/curation/emit-candidates.ts',
-    specifier: '@vostride/agent-qa-safety',
-    clearedBy: '388',
-    reason: 'candidate emission writes knowledge directly; moves behind the curate-memory job',
-  },
-  {
     file: 'packages/cli/src/devices.ts',
     specifier: '@vostride/agent-qa-core',
     clearedBy: '395',
