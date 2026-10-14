@@ -485,6 +485,17 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     expect((await applyReview({ agentQaRoot, knowledgeRoot, proposalId })).outcome).toBe('policy-materialize-refused')
   })
 
+  it('C441-COMMITTED a policy file with credential-shaped text is applied as written', async () => {
+    const body = 'Pay with 4242 4242 4242 4242 and send Bearer abc123def456ghi789'
+    const recordId = publishPolicy(body)
+    const result = await applyReview({ agentQaRoot, knowledgeRoot, proposalId: proposeAccept(recordId) })
+    expect(result.outcome).toBe('applied')
+    expect(result.commitReceipt?.policy).toEqual({ recordId, scope: 'apply-storefront',
+      relPath: 'policies/apply-storefront.md', outcome: 'written' })
+    expect(readFileSync(join(knowledgeRoot, 'policies/apply-storefront.md'), 'utf8'))
+      .toContain(`<!-- agent-qa:policy ${recordId} -->\n### Checkout rule\n${body}\n`)
+  })
+
   /**
    * How many bundle DIRECTORIES exist, measured off the filesystem rather than off the fold.
    *

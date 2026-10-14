@@ -769,6 +769,5 @@ export { appendMarkEvidence, MARK_EVIDENCE_TOKEN_PREFIX, type AppendMarkEvidence
   type AppendMarkEvidenceOutcome } from './feedback/mark-evidence.js'
 export { markEvidenceEvent, planMarkEvidence, projectMarkEvidenceOutcome, type MarkEvidenceEffect,
   type MarkEvidencePlan, type MarkEvidenceTarget, type PlanMarkEvidenceInput } from './feedback/mark-evidence-plan.js'
-export { materializePolicy, policySectionMarkers, policyShelfPath, PolicyTextRefusedError,
-  POLICY_MATERIALIZE_EGRESS_CHANNEL } from './policy/materialize.js'
+export { materializePolicy, policySectionMarkers, policyShelfPath, PolicyTextRefusedError } from './policy/materialize.js'
 export type { MaterializePolicyInput, MaterializeOutcome } from './policy/materialize.js'

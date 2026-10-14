@@ -1,16 +1,9 @@
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
-import { slugBranch, type GuardrailPolicy } from '@vostride/agent-qa-schema'
-import {
-  assertCommittedEgressSafe, CommittedEgressBlockedError, defaultGuardrailPolicyInput,
-  loadGuardrailPolicy, type AuditSink,
-} from '@vostride/agent-qa-safety'
-import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
+import { slugBranch } from '@vostride/agent-qa-schema'
 import { assertWithinKnowledgeRoot } from '../knowledge-containment.js'
 import { withCurrentWriterAuthority, type CurrentWriterAuthority } from '../lease/writer-lease.js'
 import { stripPolicyHtmlComments } from '../serving/policy-ladder.js'
-
-export const POLICY_MATERIALIZE_EGRESS_CHANNEL = 'policy-materialize'
 
 export class PolicyTextRefusedError extends Error {
   constructor() {
@@ -35,21 +28,19 @@ export interface MaterializePolicyInput {
   scope: string
   ruleText: string
   title?: string
-  policy?: GuardrailPolicy
-  auditSink?: AuditSink
-  auditBaseDir: string
+  // 2026-10-15 (441-41, D-15): unread since the committed-egress check went; 441-53 deletes it.
+  auditBaseDir?: string
   /** Recovery validates a previously authored section and must never recreate a missing one. */
   existingOnly?: boolean
 }
 
-export type MaterializeOutcome =
-  | { kind: 'written' | 'unchanged'; relPath: string; sectionBytes: number }
-  | { kind: 'egress-blocked'; detections: { label: string; detector: string }[] }
+export type MaterializeOutcome = { kind: 'written' | 'unchanged'; relPath: string; sectionBytes: number }
 
 /**
  * The authored shelf is append-only under the caller's writer lease. An existing section ID
  * always wins, including when its human-edited body differs. Never rewrite that body.
  * commitArtifacts governs binary bundle artifacts, not policy text or git commits.
+ * The authored text is written as given; no detector scans it (Phase 441, D-15).
  */
 export function materializePolicy(input: MaterializePolicyInput): MaterializeOutcome {
   return withCurrentWriterAuthority(input.knowledgeRoot, input.writerAuthority, () => materializeUnderAuthority(input))
@@ -92,16 +83,6 @@ function materializeUnderAuthority(input: MaterializePolicyInput): MaterializeOu
   if (seen.has(input.recordId)) return { kind: 'unchanged', relPath, sectionBytes }
   if (input.existingOnly) throw new PolicyTextRefusedError()
   const text = `${exists ? '' : `# Policies — ${input.scope}\n`}${section}`
-  try {
-    assertCommittedEgressSafe([{ label: `policy:${input.recordId}`, text, origin: 'user' }], {
-      policy: input.policy ?? loadGuardrailPolicy(defaultGuardrailPolicyInput),
-      channel: POLICY_MATERIALIZE_EGRESS_CHANNEL,
-      auditSink: input.auditSink ?? new JsonlAuditSink(input.auditBaseDir),
-    })
-  } catch (error) {
-    if (!(error instanceof CommittedEgressBlockedError)) throw error
-    return { kind: 'egress-blocked', detections: error.blocked.map(({ label, detector }) => ({ label, detector })) }
-  }
   // 419-POLICY-WRITER: materialize directory
   mkdirSync(dirname(path), { recursive: true })
   const staged = `${path}.pending`

@@ -2,10 +2,20 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import type { GuardrailAuditRow } from '@vostride/agent-qa-safety'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { materializePolicy, PolicyTextRefusedError, policyShelfPath } from '../materialize.js'
 import { acquireWriterLease, releaseLease, WriterAuthorityLostError } from '../../lease/writer-lease.js'
+
+// 441-41: the stage open is the seam inside the transaction now that no audit sink is called.
+const stageHook = vi.hoisted(() => ({ beforeStage: undefined as (() => void) | undefined }))
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  const openSync = ((...args: Parameters<typeof actual.openSync>) => {
+    if (String(args[0]).endsWith('.pending')) stageHook.beforeStage?.()
+    return actual.openSync(...args)
+  }) as typeof actual.openSync
+  return { ...actual, openSync, default: { ...actual, openSync } }
+})
 
 describe('materializePolicy sovereign authored shelf', () => {
   let root: string
@@ -16,7 +26,10 @@ describe('materializePolicy sovereign authored shelf', () => {
     if (lease.kind !== 'acquired') throw new Error('lease unavailable')
     writerAuthority = lease
   })
-  afterEach(() => { rmSync(root, { recursive: true, force: true }) })
+  afterEach(() => {
+    stageHook.beforeStage = undefined
+    rmSync(root, { recursive: true, force: true })
+  })
   function input(ruleText = 'Dismiss the cookie banner first') {
     return { knowledgeRoot: root, recordId: 'policy-fixture', scope: 'shop', ruleText,
       auditBaseDir: join(root, 'runtime'), writerAuthority }
@@ -44,18 +57,18 @@ describe('materializePolicy sovereign authored shelf', () => {
   })
   it('holds the current authority transaction throughout the actual read/check/write', () => {
     let attempted = false
-    const auditSink = { appendGuardrailAudit() {
+    stageHook.beforeStage = () => {
       attempted = true
       // A second process with the exact current credentials cannot release the lease
-      // between the egress check and publication: it must contend on the same transaction.
+      // between the shelf read and publication: it must contend on the same transaction.
       const child = spawnSync(process.execPath, ['--input-type=module', '-e',
         'import { releaseLease } from "./dist/index.js"; releaseLease(JSON.parse(process.argv[1]))',
         JSON.stringify({ knowledgeRoot: root, leaseId: writerAuthority.leaseId })],
       { cwd: new URL('../../..', import.meta.url), encoding: 'utf8', timeout: 5000 })
       expect(child.status).not.toBe(0)
       expect(child.stderr).toContain('MutationLockBusyError')
-    } }
-    expect(materializePolicy({ ...input('Contact owner@example.com'), auditSink }).kind).toBe('written')
+    }
+    expect(materializePolicy(input('Contact owner@example.com')).kind).toBe('written')
     expect(attempted).toBe(true)
     expect(readFileSync(policyShelfPath(root, 'shop'), 'utf8')).toContain('Contact owner@example.com')
     expect(releaseLease({ knowledgeRoot: root, leaseId: writerAuthority.leaseId }).kind).toBe('released')
@@ -82,20 +95,27 @@ describe('materializePolicy sovereign authored shelf', () => {
     expect(() => materializePolicy({ ...input(), title: delimiter })).toThrow(PolicyTextRefusedError)
     expect(() => materializePolicy({ ...input(), recordId: delimiter })).toThrow(PolicyTextRefusedError)
   })
-  it('overrides REDACT once with user-origin audit and refuses BLOCK before a write', () => {
-    const rows: GuardrailAuditRow[] = []
-    const auditSink = { appendGuardrailAudit(row: GuardrailAuditRow) { rows.push(row) } }
-    const text = 'Contact owner@example.com before checkout'
-    expect(materializePolicy({ ...input(text), auditSink }).kind).toBe('written')
-    expect(readFileSync(policyShelfPath(root, 'shop'), 'utf8')).toContain(text)
-    expect(rows).toEqual([expect.objectContaining({ channel: 'policy-materialize:policy:policy-fixture',
-      overridden: true, origin: 'user', detector: 'email' })])
-    rows.length = 0
-    const before = readFileSync(policyShelfPath(root, 'shop'))
-    expect(materializePolicy({ ...input('Use card 4111 1111 1111 1111'), recordId: 'policy-blocked', auditSink }))
-      .toMatchObject({ kind: 'egress-blocked' })
-    expect(readFileSync(policyShelfPath(root, 'shop'))).toEqual(before)
-    expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ channel: 'policy-materialize:policy:policy-blocked', action: 'block' })
+})
+
+describe('C441-COMMITTED', () => {
+  let root: string
+  let writerAuthority: { leaseId: string; epoch: number }
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'policy-c441-committed-'))
+    const lease = acquireWriterLease(root)
+    if (lease.kind !== 'acquired') throw new Error('lease unavailable')
+    writerAuthority = lease
+  })
+  afterEach(() => { rmSync(root, { recursive: true, force: true }) })
+
+  it('a policy file with credential-shaped text is materialized as written', () => {
+    const ruleText = 'Pay with 4242 4242 4242 4242 and send Bearer abc123def456ghi789'
+    const outcome = materializePolicy({ knowledgeRoot: root, recordId: 'policy-c441', scope: 'shop',
+      ruleText, title: 'Card 4111 1111 1111 1111', writerAuthority })
+    expect(outcome).toMatchObject({ kind: 'written', relPath: join('policies', 'shop.md') })
+    expect(readFileSync(policyShelfPath(root, 'shop'), 'utf8')).toBe('# Policies — shop\n\n'
+      + '<!-- agent-qa:policy policy-c441 -->\n### Card 4111 1111 1111 1111\n'
+      + `${ruleText}\n<!-- /agent-qa:policy policy-c441 -->\n`)
+    expect(releaseLease({ knowledgeRoot: root, leaseId: writerAuthority.leaseId }).kind).toBe('released')
   })
 })

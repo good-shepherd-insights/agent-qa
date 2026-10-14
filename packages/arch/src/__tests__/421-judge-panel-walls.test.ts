@@ -19,17 +19,20 @@ const digest = (text: string) => createHash('sha256').update(text).digest('hex')
 // Phase 424 plan 11's disposition: that release's public first-frame metadata is what the
 // local-web recording witnesses read. The cli digest below was recomputed from that tree
 // by this wall's own expression. No other pin moved and no ownership edge was widened.
+// Re-blessed 2026-10-15 for knowledge-local only (441-41, D-15): both of its pins moved because
+// its @vostride/agent-qa-safety-local edge was REMOVED with the last JsonlAuditSink import. Both
+// digests were recomputed by this wall's own expression; no edge was added.
 const dependencyPins = {
   eval: '3dfdd67ac8febb33dc7f7d027408677ff5f7852b02c6df15d221b5395c9b5371',
   'eval-local': '2a080fb9e46b9858ba6d8f2fb2739fa273db8d458e9ca9ed17545389c0d0216d',
-  'knowledge-local': '65a609c2ac046b32cde426e3b4d7d7752dc432995c65f333f93a7c97f946ff3c',
+  'knowledge-local': 'a88a5eaa4fb407dbfc466da9ffae57698962ca15abf7b3bceb800ee6c4a57243',
   'agent-local': 'b2e720e8c49b10e5882523a1cffdfa8e502619dd3e1e799e1078eba3dc6d01d0',
   cli: '0087836ed2fd263ec5e779e5a1abd44803b5787e33b2714d58037da9c8274d5b',
 }
 const internalPins: Record<string, string> = {
   eval: 'f09db8107041e27d15929be67224e779d7ecaca3b45594f7c63cee45c9c200ed',
   'eval-local': 'deedee0b56409517d1fca91bbe7f4b7c56984409290a66d6beddccbaaa843f45',
-  'knowledge-local': '1fb4bd85868bfa9e2497d7462fd3ccb7cc66f1f2042db976379a0bfb9f7d6087',
+  'knowledge-local': '5410ce22c0e1e698cc2040f8652231ea72b48313430d1d289e9c1a38442fb955',
   'agent-local': 'ffe54e4e45a22c4544b49e376470cea3421d2b9e03f0bd903755b0af711db469',
   cli: '72c3719b1219ba5143c261ebbdf966e1bab08190d422b9cc261c7bb09218b248',
 }

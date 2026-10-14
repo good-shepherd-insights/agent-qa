@@ -493,9 +493,7 @@ async function applyPolicyArm(
   } catch (error) {
     if (!(error instanceof PolicyTextRefusedError)) throw error
   }
-  if (materialized === undefined || materialized.kind === 'egress-blocked') {
-    return { kind: 'policy-materialize-refused' }
-  }
+  if (materialized === undefined) return { kind: 'policy-materialize-refused' }
   const reference: Delta = {
     kind: 'Supersede', origin: 'user', scope, citedIds: [asRecordId(recordId)],
     victimId: asRecordId(recordId), evidenceToken: asEvidenceToken(`policy-materialize:${change.id}`),

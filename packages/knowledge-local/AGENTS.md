@@ -12,7 +12,6 @@ the event-sourced bundle substrate beneath the agent and runner ports.
 - `package.json`
 - `src/index.ts`
 - `src/ownership-contract.ts`
-- `src/bundle-egress.ts`
 - `src/artifact-copy.ts`
 - `src/bundle-publish.ts` (later Phase 374 plan)
 - `src/bundle-append.ts` (later Phase 374 plan)
@@ -31,8 +30,7 @@ the event-sourced bundle substrate beneath the agent and runner ports.
   into those neutral packages.
 - Keep the read face aligned with `KnowledgeHintReader` and the write face
   aligned with `KnowledgePort`.
-- Route every committed knowledge-root text write through the bundle-egress
-  checkpoint before bytes reach the tree (KDIR-02).
+- Committed knowledge text is masked by its producer with the project's declared secrets (workspace.secretsFile) before it reaches this package; nothing here scans or blocks it (Phase 441, D-15).
 - Rewrite mutable committed files through a same-directory temp file and atomic
   rename; never use filesystem append APIs for committed bundle state.
 - This package does not implement `KnowledgePort`: the Phase 374 API is the

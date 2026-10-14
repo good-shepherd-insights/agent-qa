@@ -101,31 +101,6 @@ describe('agent-qa knowledge gates', () => {
   })
 
   it.each([
-    ['AKIAIOSFODNN7EXAMPLE', 'awsKey'],
-    ['Bearer synthetic-receipt-token', 'bearer'],
-    ['receipt-auditor@example.invalid', 'email'],
-  ])('refuses unsafe read output even when %s bypassed the receipt writer', async (raw, detector) => {
-    const { configPath, id, dir } = fixture()
-    const receipt = stampReceiptDigest({
-      schemaVersion: 1, kind: 'promotion', candidateId: id,
-      promotionPath: 'deterministic-verdict-floor', citedReceiptDigests: [],
-      producedAtOrdinal: 6, producedBy: { opId: raw },
-    })
-    // Model an externally edited, canonical and digest-valid part. Read-time
-    // protection must not assume that these bytes passed the production writer.
-    const bytes = `${canonicalJson(receipt)}\n`
-    writeFileSync(join(dir, 'evidence/gates.jsonl'), bytes)
-    expect(readGateReceipts(dir, id)).toEqual([receipt])
-    const error = `Committed egress blocked in part "knowledge.gates.list": ${detector}`
-    for (const args of [[id, '--json'], [id]]) {
-      await invoke(configPath, args, error)
-      expect(readFileSync(join(dir, 'evidence/gates.jsonl'), 'utf8')).toBe(bytes)
-    }
-    // The not-found arm also echoes caller-controlled record identifiers.
-    await invoke(configPath, [raw, '--json'], error)
-  })
-
-  it.each([
     { raw: 'AKIAIOSFODNN7EXAMPLE', defect: 'schema' },
     { raw: 'receipt-auditor@example.invalid', defect: 'schema' },
     { raw: 'Bearer synthetic-receipt-token', defect: 'JSON' },

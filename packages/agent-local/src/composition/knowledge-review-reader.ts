@@ -30,11 +30,6 @@ import {
 } from '@vostride/agent-qa-knowledge-local/reader'
 import type { KnowledgeReaderPort } from '@vostride/agent-qa-agent'
 import type { ResolvePromotionPosture, TrustPriorTable } from '@vostride/agent-qa-schema'
-import {
-  assertCommittedEgressSafe,
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 
 /**
  * Hand every entity id an output surfaced to the addressing ledger's sighting seam.
@@ -75,34 +70,21 @@ export function createKnowledgeReaderPort(
   }
 
   return {
-    // 2026-09-07, 417 D-01: forward the candidate DATA verbatim after the same egress check.
+    // 2026-09-07, 417 D-01: forward the candidate DATA verbatim. Since 441-41 (D-06) nothing here
+    // scans it; the chat and MCP doors mask declared values in every op result.
     async candidateInjection({ candidateId }) {
-      const dto = candidateInjectionFor({
+      return candidateInjectionFor({
         ...(input.resolveTrustPriors === undefined ? {} : { priors: input.resolveTrustPriors() }),
         knowledgeRoot: await input.resolveKnowledgeRoot(), candidateId,
       })
-      assertCommittedEgressSafe(
-        [{ label: 'knowledge.candidate.injection', text: JSON.stringify(dto) }],
-        { policy: loadGuardrailPolicy(defaultGuardrailPolicyInput) },
-      )
-      return dto
     },
     // 416 D-17: the caller supplied the identity; forward the reader's answer verbatim.
     async gateReceipts({ candidateId }) {
-      const dto = gateReceiptsFor({
+      return gateReceiptsFor({
         knowledgeRoot: await input.resolveKnowledgeRoot(),
         candidateId,
         resolvePromotionPosture: await input.resolvePromotionPosture?.(),
       })
-      // Producers mask before computing digests. Preserve that exact history, but
-      // refuse detector-visible plaintext even if disk bytes bypassed the writer.
-      // The shared default policy also refuses PII requiring redaction: mutating
-      // fields here would invalidate receipt digests. No credentials are read.
-      assertCommittedEgressSafe(
-        [{ label: 'knowledge.gates.list', text: JSON.stringify(dto) }],
-        { policy: loadGuardrailPolicy(defaultGuardrailPolicyInput) },
-      )
-      return dto
     },
     async listBundles() {
       const rows = listBundles(await input.resolveKnowledgeRoot(), input.resolveTrustPriors?.())

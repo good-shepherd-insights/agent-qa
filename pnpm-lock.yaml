@@ -735,9 +735,6 @@ importers:
       '@vostride/agent-qa-safety':
         specifier: workspace:*
         version: link:../safety
-      '@vostride/agent-qa-safety-local':
-        specifier: workspace:*
-        version: link:../safety-local
       '@vostride/agent-qa-schema':
         specifier: workspace:*
         version: link:../schema
