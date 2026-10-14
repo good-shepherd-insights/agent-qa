@@ -23,40 +23,14 @@
 //     than riding along; the key space is closed for the same reason the name is. Masking keys
 //     would put `run_id` one collision away from being renamed to a placeholder.
 //
-// The vocabulary is NOT defined here. `createAnalyticsMaskingContext` calls the safety package's
-// own `createMaskingContext` and seeds it through `seedMaskingContext` — the SAME function the run
-// masking context uses, handed the same three-channel sources contract. A regex deny-list written
-// beside this file would be a second answer to "what is a secret", in the package least likely to
-// be updated when the first answer changes; a cell forbids one.
+// 2026-10-14 (441-08, D-12): the host supplies the declared-secret mask; nothing here decides
+// what is a secret.
 
-import { createMaskingContext, seedMaskingContext } from '@vostride/agent-qa-safety'
-import type { MaskingSeedSources } from '@vostride/agent-qa-safety'
 import type { AnalyticsCapturePayload } from './port.js'
 
-/**
- * The only thing the seam needs from a masking context.
- *
- * Structural on purpose: the host binds the real seeded context, and a cell can bind a counting
- * stand-in, without either one having to be the safety package's concrete object. The seam does not
- * get to `register` — deciding what is a secret belongs to whoever seeded it.
- */
+/** The only thing the seam needs from a mask: the host binds the declared-secret mask here. */
 export interface AnalyticsMaskingContext {
   mask(text: string): string
-}
-
-/**
- * Build a masking context for the analytics send seam from the standard seed sources.
- *
- * The host passes the SAME `MaskingSeedSources` it builds for the run (the name-based sensitive env
- * slice, the run's secret store, captured auth-state values). Passing the sources rather than a list
- * of strings is what keeps this one seeding pipeline instead of two.
- */
-export function createAnalyticsMaskingContext(
-  sources: MaskingSeedSources,
-): AnalyticsMaskingContext & { register(value: string): void } {
-  const context = createMaskingContext()
-  seedMaskingContext(context, sources)
-  return context
 }
 
 /**

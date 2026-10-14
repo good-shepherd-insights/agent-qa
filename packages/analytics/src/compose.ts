@@ -55,7 +55,7 @@ export interface ComposeAnalyticsOptions {
   readonly projectKey?: string
   readonly projectHost?: string
   /**
-   * The seeded masking context the send seam applies (D-19, plan 06).
+   * The host's declared-secret mask, which the send seam applies (D-19, plan 06).
    *
    * It reaches only the opted-IN arm, and that is not a gap: the deny arm's transport sends nothing
    * at all, so there is no payload for a seam to stand in front of.

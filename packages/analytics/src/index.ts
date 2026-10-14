@@ -75,9 +75,9 @@ export {
 export type { AgentQaAnalyticsEvent, AnalyticsEventName } from './events.js'
 
 // The send seam. `maskEventForSend` is published so a later transport (a second sink, a batching
-// relay) composes the SAME seam rather than writing its own; `createAnalyticsMaskingContext` is how
-// a host hands over the seed sources it already builds for the run.
-export { createAnalyticsMaskingContext, maskEventForSend } from './masking-seam.js'
+// relay) composes the SAME seam rather than writing its own. The host hands it the declared-secret
+// mask.
+export { maskEventForSend } from './masking-seam.js'
 export type { AnalyticsMaskingContext } from './masking-seam.js'
 
 // The anonymous identity store, re-homed from `core` with its mechanics intact (plan 06, D-17).

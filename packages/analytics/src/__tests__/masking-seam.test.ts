@@ -18,11 +18,12 @@ import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { composeAnalytics } from '../compose.js'
 import { AgentQaAnalyticsEventSchema } from '../events.js'
-import { createAnalyticsMaskingContext, maskEventForSend } from '../masking-seam.js'
+import { maskEventForSend } from '../masking-seam.js'
 import { createPosthogTransport } from '../transports.js'
 import { packageSourceFiles, relativeToSrc, withoutComments } from './source-scan.js'
 import { startWireSink, type WireSink } from './wire-sink.js'
 import type { AgentQaAnalyticsEvent } from '../events.js'
+import type { AnalyticsMaskingContext } from '../masking-seam.js'
 import type { AnalyticsCapturePayload } from '../port.js'
 
 const PROJECT_KEY = 'phc_masking_seam'
@@ -31,16 +32,18 @@ const PROJECT_KEY = 'phc_masking_seam'
 // post-serialization scan for these exact bytes finds nothing.
 const PLANTED_SECRET = 'sk-live-"tok\nen"-9f3a-DEADBEEF'
 const ESCAPED_SECRET = JSON.stringify(PLANTED_SECRET).slice(1, -1)
-const MASK_TOKEN = '<SECRET_0>'
+const MASK_TOKEN = '[secret:PLANTED_API_KEY]'
 
-function seededContext(): ReturnType<typeof createAnalyticsMaskingContext> {
-  // Seeded through `seedMaskingContext`'s own sources contract — the SAME function the run masking
-  // context uses, handed a secret store, not a bespoke list of strings assembled here.
-  return createAnalyticsMaskingContext({
-    secretStore: {
-      forEachSecret: (callback) => callback('PLANTED_API_KEY', PLANTED_SECRET),
-    },
-  })
+// 2026-10-14 (441-08, D-12): a literal stand-in for SecretRedactor's raw, exact replacement; this
+// package depends on nothing that exports it.
+function declaredContext(
+  declared: Readonly<Record<string, string>> = { PLANTED_API_KEY: PLANTED_SECRET },
+): AnalyticsMaskingContext {
+  const entries = Object.entries(declared).sort(([, a], [, b]) => b.length - a.length)
+  return {
+    mask: (text) =>
+      entries.reduce((out, [name, value]) => out.split(value).join(`[secret:${name}]`), text),
+  }
 }
 
 function realEvent(): AgentQaAnalyticsEvent {
@@ -143,10 +146,10 @@ describe('masking at the send seam (D-19, T-398-06)', () => {
   // The violation cells: the secret must not reach the wire in any form
   // -------------------------------------------------------------------------------------------
 
-  it('a seeded secret planted as the distinct id is masked on the wire', async () => {
+  it('a declared secret planted as the distinct id is masked on the wire', async () => {
     const body = await sendThroughShippedPath(sink, {
       distinctId: PLANTED_SECRET,
-      maskingContext: seededContext(),
+      maskingContext: declaredContext(),
     })
 
     expect(body).not.toContain(PLANTED_SECRET)
@@ -157,7 +160,7 @@ describe('masking at the send seam (D-19, T-398-06)', () => {
     expect(body).toContain('agent-qa.init.completed')
   })
 
-  it('a seeded secret nested in objects and arrays is masked on the wire', async () => {
+  it('a declared secret nested in objects and arrays is masked on the wire', async () => {
     const payload: AnalyticsCapturePayload = {
       distinctId: 'u_clean-anchor-value-here-ok',
       event: {
@@ -169,7 +172,7 @@ describe('masking at the send seam (D-19, T-398-06)', () => {
       },
     } as AnalyticsCapturePayload
 
-    const body = await sendPayloadThroughTransport(sink, payload, seededContext())
+    const body = await sendPayloadThroughTransport(sink, payload, declaredContext())
 
     expect(body).not.toContain(PLANTED_SECRET)
     expect(body).not.toContain(ESCAPED_SECRET)
@@ -177,7 +180,7 @@ describe('masking at the send seam (D-19, T-398-06)', () => {
   })
 
   it('masking runs BEFORE serialization — the mask token sits where the value was, not around it', async () => {
-    const context = seededContext()
+    const context = declaredContext()
     const masked = maskEventForSend(
       {
         distinctId: PLANTED_SECRET,
@@ -202,7 +205,7 @@ describe('masking at the send seam (D-19, T-398-06)', () => {
 
     const withMasking = await sendThroughShippedPath(sink, {
       distinctId,
-      maskingContext: seededContext(),
+      maskingContext: declaredContext(),
     })
     const withoutMasking = await sendThroughShippedPath(sink, { distinctId })
 
@@ -216,9 +219,7 @@ describe('masking at the send seam (D-19, T-398-06)', () => {
   it('the event NAME is never rewritten, even when a registered secret collides with it', async () => {
     // A name is drawn from a closed literal set, so it cannot carry a user's data — and rewriting
     // it could only corrupt attribution. This pins the decision rather than leaving it to chance.
-    const context = createAnalyticsMaskingContext({
-      secretStore: { forEachSecret: (cb) => cb('COLLIDING', 'agent-qa.init.completed') },
-    })
+    const context = declaredContext({ COLLIDING: 'agent-qa.init.completed' })
     const masked = maskEventForSend(
       {
         distinctId: 'u_anchor-value-goes-right-here',
@@ -249,31 +250,35 @@ describe('masking at the send seam (D-19, T-398-06)', () => {
 
     expect(callSites).toEqual(['transports.ts'])
   })
+})
 
-  it('the seam imports the safety masking context — it does not mint a second deny-list', () => {
-    const seamSource = packageSourceFiles().find((file) => relativeToSrc(file) === 'masking-seam.ts')
-    expect(seamSource).toBeDefined()
-    const code = withoutComments(readFileSync(seamSource as string, 'utf8'))
+describe('C441-ANALYTICS', () => {
+  it('the shipped source imports nothing from the safety package and defines no regex over credential shapes', () => {
+    const internalImports = new Set<string>()
+    const regexes: string[] = []
+    let constructedRegexes = 0
+    const files = packageSourceFiles()
 
-    expect(code).toContain('@vostride/agent-qa-safety')
-    expect(code).toContain('seedMaskingContext')
-    expect(code).toContain('createMaskingContext')
-    // A regex literal or a constructed RegExp here would be the second deny-list this cell exists
-    // to forbid: the masking vocabulary is the seeded context's, not a pattern written beside it.
-    expect(code).not.toContain('new RegExp')
-    expect(code).not.toMatch(/=\s*\/[^/\s]/u)
-  })
+    for (const file of files) {
+      const code = withoutComments(readFileSync(file, 'utf8'))
+      for (const match of code.matchAll(/(?:\bfrom\s+|\bimport\(\s*)'(@vostride\/[^']+)'/gu)) {
+        internalImports.add(match[1] as string)
+      }
+      const literal = /[=(,:]\s*(\/(?![/*])(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\n\\[])+\/[a-z]*)/gu
+      for (const match of code.matchAll(literal)) {
+        regexes.push(`${relativeToSrc(file)} ${match[1] as string}`)
+      }
+      constructedRegexes += code.split('new RegExp').length - 1
+    }
 
-  it('the seeded context draws from seedMaskingContext sources, not from a hand-built list', () => {
-    const context = createAnalyticsMaskingContext({
-      secretStore: { forEachSecret: (cb) => cb('STORE_SECRET', 'store-secret-value-0001') },
-      env: { SOME_TOKEN: 'env-secret-value-0002' },
-      authState: { knownSensitiveStrings: ['auth-secret-value-0003'] },
-    })
-
-    // All three channels the sources contract defines, masked by the one context.
-    expect(context.mask('store-secret-value-0001')).not.toContain('store-secret-value-0001')
-    expect(context.mask('env-secret-value-0002')).not.toContain('env-secret-value-0002')
-    expect(context.mask('auth-secret-value-0003')).not.toContain('auth-secret-value-0003')
+    expect(files.map(relativeToSrc)).toContain('masking-seam.ts')
+    expect(internalImports).toContain('@vostride/agent-qa-schema')
+    expect([...internalImports].filter((name) => name.endsWith('-safety'))).toEqual([])
+    // The only two patterns are the semver range and the identity id scheme.
+    expect(regexes.sort()).toEqual([
+      String.raw`events.ts /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u`,
+      String.raw`identity.ts /^u_([a-z]+-){9}[a-z]+$/`,
+    ])
+    expect(constructedRegexes).toBe(0)
   })
 })

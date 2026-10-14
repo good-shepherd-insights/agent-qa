@@ -24,7 +24,8 @@ export const AGENT_QA_ANALYTICS_ALLOWED_RESPONSIBILITIES = [
   // would make the contract itself the second reader of the thing it forbids reading twice.
   'the opt-out decision: resolving the do-not-track environment convention or the config privacy '
     + 'flag ONCE, at composition, to a transport — never inside a send path',
-  'masking composed at the send seam, before any serialization-dependent matching',
+  'the send seam applying the host\'s declared-secret mask, before any serialization-dependent '
+    + 'matching',
   // 2026-08-17 (Phase 398 plan 06 task 3, D-17). Both lines describe things MOVED here from
   // `packages/core/src/analytics/`, and both are stated as contract-preserving on purpose: the
   // identity record is already on disk in every install, and the subscriber's bus-facing shape is
@@ -80,11 +81,7 @@ export const AGENT_QA_ANALYTICS_EXTERNAL_DEPENDENCIES = [
 // This list is checked against the package's REAL imports, so an entry added in anticipation of a
 // later plan is an offender rather than a placeholder.
 //
-// 2026-08-17 (Phase 398 plan 06, D-19). `safety` arrives here with the send seam, exactly as plan 03
-// said it would. It supplies `createMaskingContext` and `seedMaskingContext` — the SAME two
-// functions the run masking context is built from, not a copy. That direction is the whole point:
-// a masking vocabulary written inside this package would be a second answer to "what is a secret",
-// living in the package least likely to be updated when the first answer changes.
+// 2026-10-14 (441-08, D-12): `safety` leaves; the send seam applies the mask its host hands it.
 //
 // 2026-08-17 (Phase 398 plan 06 task 3, D-17). `schema` arrives with the run subscriber, and it is
 // a TYPE-ONLY read of the frozen bus envelope (§2.2) — the subscriber consumes a projection the
@@ -94,7 +91,6 @@ export const AGENT_QA_ANALYTICS_EXTERNAL_DEPENDENCIES = [
 export const AGENT_QA_ANALYTICS_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-ids',
   '@vostride/agent-qa-mcp',
-  '@vostride/agent-qa-safety',
   '@vostride/agent-qa-schema',
 ] as const
 
