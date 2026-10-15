@@ -117,6 +117,8 @@ export {
   distinctInFirstOccurrenceOrder,
   isConfigSchemaPath,
   isPageWritableConfigPath,
+  // 441 GAP2-D4: the marker_written_back refusal's one sentence.
+  MARKER_WRITTEN_BACK_SENTENCE,
   platformBase,
   platformConfigSchema,
   PLANNER_LIMIT_KEYS,

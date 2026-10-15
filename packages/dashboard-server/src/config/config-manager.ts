@@ -17,6 +17,8 @@ import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
 import {
   CONFIG_NAMED_ARRAYS,
   CONFIG_REVISION_ABSENT,
+  MARKER_WRITTEN_BACK_SENTENCE,
+  maskPayloadTree,
   type ConfigChange,
   type ConfigPathSegment,
   type ConfigWriteIssue,
@@ -214,7 +216,7 @@ export class ConfigManager {
         error: 'marker_written_back',
         issues: [{
           path: marked.path.map((segment) => (typeof segment === 'object' ? segment.name : segment)),
-          message: SHOWN_MARKER_SENTENCE,
+          message: MARKER_WRITTEN_BACK_SENTENCE,
         }],
       }
     }
@@ -297,7 +299,7 @@ export class ConfigManager {
     // 429-42 CR-01: every expect is checked against the file as read, before anything applies.
     const expects = changes.filter((change) => change.op === 'expect')
     for (const change of expects) {
-      if (!isDeepStrictEqual(expectedFieldValue(doc, change.path), change.value ?? null)) {
+      if (!expectHolds(doc, change.path, change.value ?? null, this.mask)) {
         return { kind: 'refused', error: 'field_changed', path: [...change.path] }
       }
     }
@@ -414,11 +416,8 @@ export class ConfigManager {
 // 441 GAP-D7 (CR-D01): a read shows a declared secret as `[secret:<name>]`. A change carrying that
 // text would write the marker over the real value, or address an entry by a name the file lacks.
 const SHOWN_MARKER = /\[secret:\w+\]/
-const SHOWN_MARKER_SENTENCE =
-  "This shows a declared secret as [secret:<name>], so it can't be saved here. "
-  + 'Change the value in your secrets file (workspace.secretsFile) instead.'
 
-function holdsShownMarker(value: unknown): boolean {
+export function holdsShownMarker(value: unknown): boolean {
   if (typeof value === 'string') return SHOWN_MARKER.test(value)
   if (Array.isArray(value)) return value.some(holdsShownMarker)
   if (value !== null && typeof value === 'object') {
@@ -435,8 +434,10 @@ function pathHoldsShownMarker(path: readonly ConfigPathSegment[]): boolean {
     : typeof segment === 'string' && SHOWN_MARKER.test(segment)))
 }
 
+// 441 GAP2-D4: an expect writes nothing, so only the ops that write are checked.
 function changeWithShownMarker(changes: readonly ConfigChange[]): ConfigChange | undefined {
   return changes.find((change) => {
+    if (change.op === 'expect') return false
     if (pathHoldsShownMarker(change.path)) return true
     if (change.op === 'move') return pathHoldsShownMarker(change.from)
     return change.op !== 'unset' && holdsShownMarker(change.value)
@@ -567,6 +568,23 @@ function expectedFieldValue(doc: Document, path: readonly ConfigPathSegment[]): 
   if (resolved === undefined) return null
   const state = fieldState(doc, resolved)
   return state.present ? state.value : null
+}
+
+// 441 GAP2-D4: the page builds an expect from the masked read, so it also holds when it equals the
+// field as the declared mask shows it. A mask that throws matches nothing.
+function expectHolds(
+  doc: Document,
+  path: readonly ConfigPathSegment[],
+  offered: unknown,
+  mask: MaskFn,
+): boolean {
+  const held = expectedFieldValue(doc, path)
+  if (isDeepStrictEqual(held, offered)) return true
+  try {
+    return isDeepStrictEqual(maskPayloadTree(held, mask), offered)
+  } catch {
+    return false
+  }
 }
 
 function restorePrior(doc: Document, prior: ConfigPrior): boolean {

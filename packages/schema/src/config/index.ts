@@ -29,6 +29,7 @@ export {
   ConfigUndoRequestSchema,
   ConfigWriteRequestSchema,
   isPageWritableConfigPath,
+  MARKER_WRITTEN_BACK_SENTENCE,
 } from './config-write'
 // The published config schema's leaf list; 441-40 (D-29) deleted the masking map it came from.
 export type { ConfigLeafPattern } from './leaves'

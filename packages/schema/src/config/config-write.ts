@@ -39,6 +39,7 @@ export const CONFIG_WRITE_OPS = [
  * - `path_not_writable`: the path is not one this door may write or test.
  * - `marker_written_back`: a value or path of the change holds a `[secret:<name>]` marker, which
  *   is how a read shows a declared secret, so writing it would replace the real value (441 GAP-D7).
+ *   Only ops that write are checked; an `expect` is not.
  */
 export type ConfigWriteRefusal =
   | 'invalid_write_input'
@@ -60,6 +61,12 @@ export const CONFIG_WRITE_REFUSALS = [
   'path_not_writable',
   'marker_written_back',
 ] as const satisfies readonly ConfigWriteRefusal[]
+
+// 441 GAP2-D4: the one sentence every write door answers `marker_written_back` with.
+export const MARKER_WRITTEN_BACK_SENTENCE =
+  "This holds [secret:<name>], the way a declared secret is shown, so it can't be saved here. "
+  + "Edit your config or test file directly instead, and don't copy [secret:<name>] into it; "
+  + "the secret's value stays in your secrets file."
 
 /**
  * The only arrays a `{ name }` segment may select inside. Selecting by name rather than index
