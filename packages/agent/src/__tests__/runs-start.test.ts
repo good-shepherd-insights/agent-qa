@@ -18,7 +18,6 @@
 
 import { CURRENT_HANDOFF_SCHEMA_VERSION, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, FunctionCaller, RunId, RunStartAcknowledgement } from '@vostride/agent-qa-schema'
-import type { AuditSink, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
 import { FunctionNotBoundError, UnknownFunctionError, invokeFunction } from '../functions/invoke.js'
@@ -61,25 +60,7 @@ function fakeDeps(): FunctionDeps {
   }
 }
 
-// 2026-10-01 (432-19, D-17): the audit port has one append, for guardrail rows, so this sink
-// records every row an invocation could write. The cells that asserted "no execution-audit row"
-// since 432-13 now assert "no audit row of any kind".
-interface CapturedSink {
-  sink: AuditSink
-  auditRows: () => readonly GuardrailAuditRow[]
-}
-
-function capturingSink(): CapturedSink {
-  const guardrailRows: GuardrailAuditRow[] = []
-  return {
-    sink: {
-      appendGuardrailAudit(row) {
-        guardrailRows.push(row)
-      },
-    },
-    auditRows: () => guardrailRows,
-  }
-}
+// 2026-10-15 (441-28, D-15): the registry takes no audit sink, so no cell captures audit rows.
 
 // 2026-10-01 (432-23, D-12): attribution only — a surface and an origin, no grant.
 const RUN_CALLER: FunctionCaller = {
@@ -87,17 +68,9 @@ const RUN_CALLER: FunctionCaller = {
   origin: 'agent',
 }
 
-/** Discards every row — for the cases that do not assert on the audit trail. */
-function noOpSink(): AuditSink {
-  return {
-    appendGuardrailAudit() {},
-  }
-}
-
-function registryWithRunsStart(auditSink?: AuditSink) {
+function registryWithRunsStart() {
   return createRegistryFromSpecs([runsListSpec, runsEventsSpec, runsStartSpec], {
     deps: fakeDeps(),
-    auditSink: auditSink ?? noOpSink(),
   })
 }
 
@@ -256,13 +229,10 @@ describe('runs.start is visibly unbound, never silently missing', () => {
   // binding refusal (D-11)'. No gate decides the attempt; the binding refusal is the whole answer,
   // named, and no decision row is written.
   it('C432-INVOKE-DIRECT: an unbound attempt refuses by name and records no decision row', async () => {
-    const audit = capturingSink()
-
-    const thrown = await invokeFunction(registryWithRunsStart(audit.sink), 'runs.start', {}, RUN_CALLER)
+    const thrown = await invokeFunction(registryWithRunsStart(), 'runs.start', {}, RUN_CALLER)
       .catch((error: unknown) => error)
 
     expect(thrown).toBeInstanceOf(FunctionNotBoundError)
-    expect(audit.auditRows()).toEqual([])
   })
 
   // RE-SPELLED 2026-10-01 (432-20, D-12) from 'refuses a caller lacking the run scope before it ever
@@ -270,14 +240,13 @@ describe('runs.start is visibly unbound, never silently missing', () => {
   // 2026-10-01 (432-23): no caller carries a scope at all, so the "lacking" caller is one that
   // differs from RUN_CALLER in every field a caller still has, and it meets the same answer.
   it('serves a caller lacking the run scope up to the same binding check', async () => {
-    const audit = capturingSink()
     const readOnlyCaller: FunctionCaller = {
       surface: 'mcp',
       origin: 'human',
     }
 
     const thrown = await invokeFunction(
-      registryWithRunsStart(audit.sink),
+      registryWithRunsStart(),
       'runs.start',
       {},
       readOnlyCaller,
@@ -285,16 +254,14 @@ describe('runs.start is visibly unbound, never silently missing', () => {
 
     expect(thrown).toBeInstanceOf(FunctionNotBoundError)
     expect((thrown as Error).name).not.toBe('FunctionScopeError')
-    expect(audit.auditRows()).toHaveLength(0)
   })
 
   // 432-23 (D-12): the scope came off the spec, and the binding refusal must not have gone with it.
   // Retried, from callers that differ in every field a caller still carries, the unbound start
-  // meets the same named refusal every time, writes no audit row, and never a permission error;
-  // the bound stream beside it answers each caller alike.
+  // meets the same named refusal every time, and never a permission error; the bound stream beside
+  // it answers each caller alike.
   it('C432-ALL-OPS-AVAILABLE: a retried unbound start refuses by binding alone for every caller', async () => {
-    const audit = capturingSink()
-    const registry = registryWithRunsStart(audit.sink)
+    const registry = registryWithRunsStart()
     const callers: readonly FunctionCaller[] = [
       RUN_CALLER,
       { surface: 'cli', origin: 'human' },
@@ -311,7 +278,6 @@ describe('runs.start is visibly unbound, never silently missing', () => {
       }
     }
     expect(names).toEqual(Array.from({ length: 6 }, () => 'FunctionNotBoundError'))
-    expect(audit.auditRows()).toEqual([])
 
     const declared = callers.map((caller) => registry.list(caller)
       .map((declaration) => [declaration.id, declaration.bindingStatus]))
@@ -326,9 +292,8 @@ describe('runs.start is visibly unbound, never silently missing', () => {
 
   // 432-24 (D-12): `runs.list` lost its scope too, so the bound read beside the unbound start is
   // now a migrated op as well. Retried from the same three callers it is SERVED every time — the
-  // port is reached once per attempt, every caller gets the same answer, and no audit row is written.
+  // port is reached once per attempt, and every caller gets the same answer.
   it('C432-ALL-OPS-AVAILABLE: a retried bound runs.list is served alike to every caller', async () => {
-    const audit = capturingSink()
     const deps = fakeDeps()
     let listCalls = 0
     const registry = createRegistryFromSpecs([runsListSpec, runsEventsSpec, runsStartSpec], {
@@ -336,7 +301,6 @@ describe('runs.start is visibly unbound, never silently missing', () => {
         ...deps,
         runs: { ...deps.runs, list: () => { listCalls += 1; return Promise.resolve([]) } },
       },
-      auditSink: audit.sink,
     })
     const callers: readonly FunctionCaller[] = [
       RUN_CALLER,
@@ -352,7 +316,6 @@ describe('runs.start is visibly unbound, never silently missing', () => {
     }
     expect(answers).toEqual(Array.from({ length: 6 }, () => []))
     expect(listCalls).toBe(6)
-    expect(audit.auditRows()).toEqual([])
   })
 
   it('refuses a DIRECT spec dispatch too, so no in-layer caller can slip past it', async () => {

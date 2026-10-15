@@ -120,7 +120,6 @@ async function digestOver(scene: {
     deps,
     // 2026-10-01 (432-35, D-12): no `resolveExecutionContext` registry option; the registry reads
     // no context (432-20).
-    auditSink: { appendGuardrailAudit() {} },
   })
   return await invokeFunction(
     registry,

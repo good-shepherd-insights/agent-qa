@@ -140,7 +140,6 @@ function registryWith(options: {
       ...(options.recurrence === undefined ? {} : { recurrence: options.recurrence }),
       ...(options.evidenceBlobs === undefined ? {} : { evidenceBlobs: options.evidenceBlobs }),
     }),
-    auditSink: { appendGuardrailAudit() {} },
   })
 }
 

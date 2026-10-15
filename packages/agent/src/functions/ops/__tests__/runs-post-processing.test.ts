@@ -135,7 +135,6 @@ function deps(overrides: Partial<FunctionDeps> = {}): FunctionDeps {
 function registryWith(postProcessing: PostProcessingReaderPort | undefined) {
   return createFunctionRegistry({
     deps: deps(postProcessing === undefined ? {} : { postProcessing }),
-    auditSink: { appendGuardrailAudit() {} },
   })
 }
 
@@ -402,7 +401,6 @@ async function statusWithHandoff(
         readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
       },
     }),
-    auditSink: { appendGuardrailAudit() {} },
   })
   const status = await invokeFunction(
     registry,

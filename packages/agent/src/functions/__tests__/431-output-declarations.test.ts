@@ -11,7 +11,6 @@ import {
   createOutputContract,
 } from '@vostride/agent-qa-schema'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
@@ -24,14 +23,11 @@ import type { FunctionDeps, FunctionSpec } from '../spec.js'
 
 const TARGET = { target: 'draft-2020-12' } as const
 
-const auditSink: AuditSink = { appendGuardrailAudit() {} }
-
 // 2026-10-01 (432-29, D-12): the retired `resolveExecutionContext` option and the retired
 // `grantedScopes`/`safeMode` caller fields are dropped; nothing read them.
 function options(deps: unknown = {}): CreateFunctionRegistryOptions {
   return {
     deps: { secretMask: (text: string) => text, ...(deps as object) } as FunctionDeps,
-    auditSink,
   }
 }
 

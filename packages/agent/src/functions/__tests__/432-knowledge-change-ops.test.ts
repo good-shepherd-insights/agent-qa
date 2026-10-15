@@ -13,7 +13,6 @@ import * as schema from '@vostride/agent-qa-schema'
 import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { ExecutionContext, FunctionCaller } from '@vostride/agent-qa-schema'
 import { getActiveExecutionContext, setActiveExecutionContextResolver } from '@vostride/agent-qa-safety'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
 import { FunctionInputError, UnknownFunctionError, invokeFunction } from '../invoke.js'
@@ -124,15 +123,12 @@ function deps(knowledgeReview: KnowledgeReviewPort): FunctionDeps {
   }
 }
 
-const SINK = { appendGuardrailAudit() {} } as unknown as AuditSink
-
 // 2026-10-02 (432-39, D-12): the registry takes no context.
 // 2026-10-03 (quick-261003-tsr, IN-06): the unread `_context` parameter is dropped; the cell that
 // varies the context sets it through the ambient resolver every reader of it uses.
 function registry(port: KnowledgeReviewPort) {
   return createFunctionRegistry({
     deps: deps(port),
-    auditSink: SINK,
   })
 }
 

@@ -265,7 +265,7 @@ function publicPathHost(options: {
     },
   } as unknown as FunctionDeps
 
-  const registry = createFunctionRegistry({ deps, auditSink: { appendGuardrailAudit() {} } })
+  const registry = createFunctionRegistry({ deps })
 
   return {
     counts,

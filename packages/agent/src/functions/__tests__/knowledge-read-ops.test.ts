@@ -460,7 +460,6 @@ describe('C432-ALL-OPS-AVAILABLE: the 432-26 knowledge verbs serve every caller'
         })
       },
     }
-    const auditRows: unknown[] = []
     const registry = createFunctionRegistry({
       deps: {
         ...deps({
@@ -475,7 +474,6 @@ describe('C432-ALL-OPS-AVAILABLE: the 432-26 knowledge verbs serve every caller'
         }),
         knowledgeReview,
       },
-      auditSink: { appendGuardrailAudit(row: unknown) { auditRows.push(row) } },
     })
     const callers: readonly FunctionCaller[] = [
       { surface: 'test', origin: 'agent' },
@@ -510,6 +508,5 @@ describe('C432-ALL-OPS-AVAILABLE: the 432-26 knowledge verbs serve every caller'
       { outcome: 'applied', verb: 'accept', operationId: 'accept-op-1', recordIds: ['rec-1'] },
       { outcome: 'applied', verb: 'reject', operationId: 'reject-op-1', recordIds: ['rec-1'] },
     ])
-    expect(auditRows).toEqual([])
   })
 })

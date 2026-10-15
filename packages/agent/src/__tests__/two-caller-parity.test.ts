@@ -32,7 +32,6 @@
 // would prove nothing about whether they are read.
 
 import * as safety from '@vostride/agent-qa-safety'
-import type { AuditSink, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
@@ -151,40 +150,15 @@ const DEPS: FunctionDeps = {
   },
 }
 
-// 2026-10-01 (432-19, D-17): the audit port has one append, for guardrail rows, so `take` drains
-// every row an invocation could write; "no decision row" is now "no row of any kind".
-interface CapturedSink {
-  sink: AuditSink
-  /** Drain the rows written since the last drain, so each case reads its own trail. */
-  take: () => readonly GuardrailAuditRow[]
-}
-
-function capturingSink(): CapturedSink {
-  let auditRows: GuardrailAuditRow[] = []
-  return {
-    sink: {
-      appendGuardrailAudit(row) {
-        auditRows.push(row)
-      },
-    },
-    take() {
-      const drained = auditRows
-      auditRows = []
-      return drained
-    },
-  }
-}
-
-const audit = capturingSink()
+// 2026-10-15 (441-28, D-15): the registry takes no audit sink, so no cell drains audit rows.
 
 /**
  * ONE registry instance, built over the REAL built-in capability set and shared by every
- * caller in this file. Nothing here is per-caller: there is exactly one spec map, one deps
- * record, and one audit sink, so a per-surface branch would have nowhere to live.
+ * caller in this file. Nothing here is per-caller: there is exactly one spec map and one deps
+ * record, so a per-surface branch would have nowhere to live.
  */
 const REGISTRY = createFunctionRegistry({
   deps: DEPS,
-  auditSink: audit.sink,
 })
 
 /** The shipped capability set, as both callers' listings are measured against it. */
@@ -329,10 +303,6 @@ const ALL_FUNCTION_IDS = [
   'runs.start',
 ] as const
 
-beforeEach(() => {
-  audit.take()
-})
-
 /** Read one field of a caller record by name, so the premise can be computed generically. */
 function field(caller: FunctionCaller, key: string): unknown {
   return (caller as unknown as Record<string, unknown>)[key]
@@ -354,18 +324,10 @@ describe('the premise: two records differing in exactly four fields', () => {
 describe('one shared path: the same op, the same dispatch, for both callers', () => {
   it('resolves runs.list identically for both callers, with identical audit trails', async () => {
     const resultA = (await invokeFunction(REGISTRY, 'runs.list', {}, CALLER_A)) as RunSummary[]
-    const rowsA = audit.take()
     const resultB = (await invokeFunction(REGISTRY, 'runs.list', {}, CALLER_B)) as RunSummary[]
-    const rowsB = audit.take()
 
     expect(resultA.map((summary) => summary.runId)).toEqual(['run-beta', 'run-alpha'])
     expect(resultB).toEqual(resultA)
-
-    // 432-13: no op gate, so neither caller's dispatch writes a decision row — the trails are
-    // identical because both are empty. Asserted as an equality, so a row that appeared for one
-    // caller and not the other would be a caller difference that is not data.
-    expect(rowsA).toEqual([])
-    expect(rowsB).toEqual(rowsA)
   })
 
   it('ignores the originating surface entirely — attribution is never a permission input', async () => {
@@ -375,19 +337,16 @@ describe('one shared path: the same op, the same dispatch, for both callers', ()
       {},
       { ...CALLER_A, surface: 'cli' },
     )) as RunSummary[]
-    const cliRows = audit.take()
     const asMcp = (await invokeFunction(
       REGISTRY,
       'runs.list',
       {},
       { ...CALLER_A, surface: 'mcp' },
     )) as RunSummary[]
-    const mcpRows = audit.take()
 
     // `if (caller.surface === ...)` is the anti-pattern this layer exists to abolish. The
     // proof that no such branch exists is that renaming the surface changes nothing at all.
     expect(asMcp).toEqual(asCli)
-    expect(mcpRows).toEqual(cliRows)
   })
 })
 
@@ -423,14 +382,9 @@ describe('no caller field filters the listing or the dispatch (432-20, D-12)', (
     // A_SAFE differs from A ONLY in safeMode. Both reach exactly the same refusal — the binding check.
     await expect(invokeFunction(REGISTRY, 'runs.start', {}, CALLER_A))
       .rejects.toBeInstanceOf(FunctionNotBoundError)
-    const rowsA = audit.take()
 
     await expect(invokeFunction(REGISTRY, 'runs.start', {}, CALLER_A_SAFE))
       .rejects.toBeInstanceOf(FunctionNotBoundError)
-    const rowsSafe = audit.take()
-
-    expect(rowsA).toEqual([])
-    expect(rowsSafe).toEqual(rowsA)
   })
 
   // RE-SPELLED 2026-10-01 (432-20, D-12) from 'refuses B server-side for the scope it lacks — the
@@ -441,7 +395,6 @@ describe('no caller field filters the listing or the dispatch (432-20, D-12)', (
 
     await expect(refusal).rejects.toBeInstanceOf(FunctionNotBoundError)
     await expect(refusal).rejects.not.toHaveProperty('missingScopes')
-    expect(audit.take()).toEqual([])
   })
 
   // RE-SPELLED 2026-10-01 (432-20, D-12) from 'gives A and B DIFFERENT refusals for the same id,
@@ -449,7 +402,6 @@ describe('no caller field filters the listing or the dispatch (432-20, D-12)', (
   it('gives A and B the SAME refusal for the same id — grants explain nothing', async () => {
     await expect(invokeFunction(REGISTRY, 'runs.start', {}, CALLER_A))
       .rejects.toBeInstanceOf(FunctionNotBoundError)
-    audit.take()
     await expect(invokeFunction(REGISTRY, 'runs.start', {}, CALLER_B))
       .rejects.toBeInstanceOf(FunctionNotBoundError)
   })
@@ -482,9 +434,6 @@ describe('a payload can claim nothing, and a record grants nothing (SC3 / 432-20
       await expect(invokeFunction(REGISTRY, 'runs.start', payload, CALLER_C))
         .rejects.toBeInstanceOf(FunctionInputError)
     }
-    // Input validation precedes dispatch, so none of these attempts is auditable as an
-    // execution at all.
-    expect(audit.take()).toEqual([])
   })
 
   // RE-SPELLED 2026-10-01 (432-20, D-12) from 'reads the composition-minted grants and nothing
@@ -524,14 +473,8 @@ const askTierSpec: FunctionSpec<Record<string, never>, { ok: true }> = {
 }
 
 describe('the credential flows to the gate untouched (D-13)', () => {
-  const askAudit = capturingSink()
   const askRegistry = createRegistryFromSpecs([askTierSpec as FunctionSpec], {
     deps: DEPS,
-    auditSink: askAudit.sink,
-  })
-
-  beforeEach(() => {
-    askAudit.take()
   })
 
   // RE-SPELLED 2026-09-30 (432-13) from 'never reads or rewrites it: A and B are refused
@@ -541,13 +484,9 @@ describe('the credential flows to the gate untouched (D-13)', () => {
   it('C432-INVOKE-DIRECT: never reads or rewrites it — A and B are served identically at a formerly ask-tier action', async () => {
     await expect(invokeFunction(askRegistry, 'synthetic.ask', {}, CALLER_A))
       .resolves.toEqual({ ok: true })
-    const rowsA = askAudit.take()
     await expect(invokeFunction(askRegistry, 'synthetic.ask', {}, CALLER_B))
       .resolves.toEqual({ ok: true })
-    const rowsB = askAudit.take()
 
-    expect(rowsA).toEqual([])
-    expect(rowsB).toEqual(rowsA)
     // And the object itself comes back out the way it went in — same reference, same value.
     expect(field(CALLER_A, 'credential')).toBe(CREDENTIAL)
     expect(field(CALLER_A, 'credential')).toEqual({ scope: { project: 'shop' } })
@@ -561,12 +500,11 @@ describe('the credential flows to the gate untouched (D-13)', () => {
   it('C432-NO-EVALUATE: is decisive nowhere — the gate that could read it is gone', async () => {
     expect(Object.keys(safety)).not.toContain('evaluate')
     expect(Object.keys(safety)).not.toContain('scopeMatches')
-    // Served with and without the credential, in every context, with no row either way.
+    // Served with and without the credential, in every context.
     await expect(invokeFunction(askRegistry, 'synthetic.ask', {}, CALLER_A)).resolves.toEqual({ ok: true })
     const uncredentialed = { ...CALLER_A, credential: undefined } as FunctionCaller
     await expect(invokeFunction(askRegistry, 'synthetic.ask', {}, uncredentialed))
       .resolves.toEqual({ ok: true })
-    expect(askAudit.take()).toEqual([])
   })
 })
 
@@ -614,7 +552,6 @@ const anyOriginSpec: FunctionSpec<Record<string, never>, { ok: true }> = {
 // the key (smuggled past the type since 432-39 deleted it) is served to an agent-origin caller
 // exactly as to a person.
 describe('a declared human-origin requirement is read by nothing (432-20, D-10/D-12)', () => {
-  const originAudit = capturingSink()
   let dispatches = 0
   const countedHumanOnly: FunctionSpec<Record<string, never>, { ok: true }> = {
     ...humanOnlySpec,
@@ -627,11 +564,10 @@ describe('a declared human-origin requirement is read by nothing (432-20, D-10/D
   }
   const originRegistry = createRegistryFromSpecs(
     [humanOnlySpec as FunctionSpec, anyOriginSpec as FunctionSpec, countedHumanOnly as FunctionSpec],
-    { deps: DEPS, auditSink: originAudit.sink },
+    { deps: DEPS },
   )
 
   beforeEach(() => {
-    originAudit.take()
     dispatches = 0
   })
 
@@ -666,14 +602,13 @@ describe('a declared human-origin requirement is read by nothing (432-20, D-10/D
   })
 
   // RE-SPELLED from 'refuses BEFORE dispatch: an origin-refused caller leaves no audit row and runs
-  // nothing'. Both origins now dispatch exactly once each, and neither writes a row.
+  // nothing'. Both origins now dispatch exactly once each.
   it('dispatches once per call for either origin and writes no audit row', async () => {
     await expect(invokeFunction(originRegistry, 'synthetic.human-only.counted', {}, CALLER_A_AGENT))
       .resolves.toEqual({ ok: true })
     await expect(invokeFunction(originRegistry, 'synthetic.human-only.counted', {}, CALLER_A))
       .resolves.toEqual({ ok: true })
     expect(dispatches).toBe(2)
-    expect(originAudit.take()).toEqual([])
   })
 
   // RE-SPELLED from 'refuses AFTER the scope check: a caller missing both is told about scopes
@@ -755,7 +690,7 @@ const PRESENTATION_AGENT: FunctionCaller = { surface: 'mcp', origin: 'agent' }
 describe('C432-ALL-OPS-AVAILABLE: every operation, every caller (432-20, D-12)', () => {
   it('reaches the same outcome for every registered op whoever calls, and never a permission refusal', async () => {
     const counted = countingDeps()
-    const registry = createFunctionRegistry({ deps: counted.deps, auditSink: audit.sink })
+    const registry = createFunctionRegistry({ deps: counted.deps })
     const ids = registry.list(PRESENTATION_AGENT).map((declaration) => declaration.id)
     expect(ids).toEqual([...ALL_FUNCTION_IDS])
 
@@ -775,7 +710,6 @@ describe('C432-ALL-OPS-AVAILABLE: every operation, every caller (432-20, D-12)',
       }
     }
     expect(permissionRefusals).toEqual([])
-    expect(audit.take()).toEqual([])
   })
 
   it('serves a bound read to both callers with identical results', async () => {
@@ -789,21 +723,20 @@ describe('C432-ALL-OPS-AVAILABLE: every operation, every caller (432-20, D-12)',
 describe('EDGE-02 PXH-SAFE-01/empty: empty and null input (432-20)', () => {
   it('refuses a null input to every op through its strict schema, with zero dependency calls', async () => {
     const counted = countingDeps()
-    const registry = createFunctionRegistry({ deps: counted.deps, auditSink: audit.sink })
+    const registry = createFunctionRegistry({ deps: counted.deps })
     for (const declaration of registry.list(PRESENTATION_AGENT)) {
       await expect(invokeFunction(registry, declaration.id, null, PRESENTATION_AGENT), declaration.id)
         .rejects.toBeInstanceOf(FunctionInputError)
       await expect(invokeFunction(registry, declaration.id, null, PRESENTATION_HUMAN), declaration.id)
         .rejects.toBeInstanceOf(FunctionInputError)
     }
-    // Zero reads, writes or starts: no port method was reached, and no audit row was written.
+    // Zero reads, writes or starts: no port method was reached.
     expect(counted.calls()).toBe(0)
-    expect(audit.take()).toEqual([])
   })
 
   it('refuses an empty input to an op with a required field with zero starts', async () => {
     const counted = countingDeps()
-    const registry = createFunctionRegistry({ deps: counted.deps, auditSink: audit.sink })
+    const registry = createFunctionRegistry({ deps: counted.deps })
     await expect(invokeFunction(registry, 'runs.get', {}, PRESENTATION_AGENT))
       .rejects.toBeInstanceOf(FunctionInputError)
     await expect(invokeFunction(registry, 'runs.start', null, PRESENTATION_AGENT))
@@ -814,7 +747,6 @@ describe('EDGE-02 PXH-SAFE-01/empty: empty and null input (432-20)', () => {
   it('answers an optional empty read with its typed empty shape for every caller', async () => {
     const emptyRegistry = createFunctionRegistry({
       deps: { ...DEPS, runs: { ...DEPS.runs, list: () => Promise.resolve([]) } },
-      auditSink: audit.sink,
     })
     for (const caller of [PRESENTATION_HUMAN, PRESENTATION_AGENT]) {
       await expect(invokeFunction(emptyRegistry, 'runs.list', {}, caller)).resolves.toEqual([])

@@ -18,7 +18,6 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
@@ -30,10 +29,6 @@ import { executableSource } from './op-source-scan.js'
 // 2026-10-01 (432-29, D-12): the retired `resolveExecutionContext` registry option, the retired
 // `grantedScopes` and `safeMode` caller fields and the synthetic spec's `requiredScopes` are
 // dropped; nothing read them.
-
-function noOpSink(): AuditSink {
-  return { appendGuardrailAudit() {} }
-}
 
 function caller(): FunctionCaller {
   return { surface: 'test', origin: 'human' }
@@ -75,7 +70,6 @@ describe('C432-INVOKE-DIRECT: dispatch composes no per-op disclosure (432-13)', 
       [echoDiscloseSpec(disclosed) as unknown as FunctionSpec],
       {
         deps: {} as unknown as FunctionDeps,
-        auditSink: noOpSink(),
       },
     )
 
@@ -104,7 +98,6 @@ describe('the complete set of disclose implementors, from two independently shap
   it('the REGISTRY lists no op carrying a disclose flag', () => {
     const registry = createFunctionRegistry({
       deps: {} as unknown as FunctionDeps,
-      auditSink: noOpSink(),
     })
     const declared = registry.list({
       surface: 'test',

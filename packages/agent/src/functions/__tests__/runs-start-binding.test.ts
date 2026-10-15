@@ -33,10 +33,6 @@ import type {
   RunStartAcknowledgement,
   RunsStartInput,
 } from '@vostride/agent-qa-schema'
-import type {
-  AuditSink,
-  GuardrailAuditRow,
-} from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
 import { FunctionNotBoundError, invokeFunction } from '../invoke.js'
@@ -289,24 +285,7 @@ function deps(overrides: Partial<FunctionDeps> = {}): FunctionDeps {
   }
 }
 
-// 2026-10-01 (432-19, D-17): the audit port has one append, for guardrail rows, so `rows` is every
-// row a start could write; the cells that asserted no execution-audit row now assert no row at all.
-interface CapturedSink {
-  sink: AuditSink
-  rows: () => readonly GuardrailAuditRow[]
-}
-
-function capturingSink(): CapturedSink {
-  const guardrailRows: GuardrailAuditRow[] = []
-  return {
-    sink: {
-      appendGuardrailAudit(row) {
-        guardrailRows.push(row)
-      },
-    },
-    rows: () => guardrailRows,
-  }
-}
+// 2026-10-15 (441-28, D-15): the registry takes no audit sink, so no cell captures audit rows.
 
 // 432-13: no standing-approval control is needed. The claims in this file are about BINDING, and
 // with no op gate an ask-tier capability reaches the binding check directly.
@@ -314,15 +293,9 @@ function capturingSink(): CapturedSink {
 // 2026-10-01 (432-29, D-12): the registries here no longer pass the retired
 // `resolveExecutionContext` option. Nothing in the registry or `invokeFunction` read it, so no
 // dispatch below ever depended on the context it named.
-function registryWith(
-  runInvocation: RunInvocationPort | undefined,
-  options: { auditSink?: AuditSink } = {},
-) {
+function registryWith(runInvocation: RunInvocationPort | undefined) {
   return createFunctionRegistry({
     deps: deps(runInvocation === undefined ? {} : { runInvocation }),
-    auditSink: options.auditSink ?? {
-      appendGuardrailAudit() {},
-    },
   })
 }
 
@@ -397,7 +370,6 @@ describe('bindingStatus is a fact about a COMPOSITION, computed (D-16)', () => {
     }
     const registry = createRegistryFromSpecs([eagerlyBound], {
       deps: deps(),
-      auditSink: { appendGuardrailAudit() {} },
     })
 
     await expect(invokeFunction(registry, RUNS_START_FUNCTION_ID, {}, RUN_CALLER))
@@ -422,16 +394,15 @@ describe('bindingStatus is a fact about a COMPOSITION, computed (D-16)', () => {
 // inverts: with no gate, even a mutating-shared descriptor dispatches in ci.
 // 2026-10-01 (432-29, D-12): neither cell hands the registry a context any more. The retired option
 // was unread, so dispatch takes no execution context at all, and "every context" and "in ci" hold
-// because there is no context input left to refuse on. Each context still gets its own dispatch,
-// recorder and sink below.
+// because there is no context input left to refuse on. Each context still gets its own dispatch
+// and recorder below.
 describe('mutating-local, proven through a DISPATCH (Pitfall 10 / D-16)', () => {
   it('allows AND runs in every execution context, fail-closed ones included', async () => {
     for (const context of EVERY_CONTEXT) {
-      const audit = capturingSink()
       const recorder = recordingInvocation()
 
       const acknowledgement = await invokeFunction(
-        registryWith(recorder.port, { auditSink: audit.sink }),
+        registryWith(recorder.port),
         RUNS_START_FUNCTION_ID,
         {},
         RUN_CALLER,
@@ -439,8 +410,6 @@ describe('mutating-local, proven through a DISPATCH (Pitfall 10 / D-16)', () => 
 
       expect(recorder.requests(), context).toHaveLength(1)
       expect(acknowledgement.runId, context).toBe('run-alpha')
-      // 432-13: no op gate, so no decision row.
-      expect(audit.rows(), context).toEqual([])
     }
   })
 
@@ -452,7 +421,6 @@ describe('mutating-local, proven through a DISPATCH (Pitfall 10 / D-16)', () => 
     }
     const registry = createRegistryFromSpecs([shared], {
       deps: deps({ runInvocation: recorder.port }),
-      auditSink: { appendGuardrailAudit() {} },
     })
 
     await expect(invokeFunction(registry, RUNS_START_FUNCTION_ID, {}, RUN_CALLER))

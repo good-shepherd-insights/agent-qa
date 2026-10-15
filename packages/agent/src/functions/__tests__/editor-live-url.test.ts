@@ -3,7 +3,6 @@
 
 import { EditorLiveUrlResultSchema } from '@vostride/agent-qa-schema'
 import type { FunctionCaller, LiveStreamDeclaration, LiveUrlSigner } from '@vostride/agent-qa-schema'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
 import { invokeFunction } from '../invoke.js'
@@ -27,8 +26,6 @@ const CALLER: FunctionCaller = {
   surface: 'test',
   origin: 'human',
 }
-
-const auditSink: AuditSink = { appendGuardrailAudit() {} }
 
 interface RecordingLiveView {
   readonly port: LiveViewPort
@@ -72,7 +69,6 @@ function registryWith(liveView: LiveViewPort | undefined): ReturnType<typeof cre
     deps: depsWith(liveView),
     // 2026-10-02 (432-36, D-12): no `resolveExecutionContext` registry option; the registry reads
     // no context (432-20).
-    auditSink,
   })
 }
 

@@ -18,7 +18,6 @@
 import { asSchema } from 'ai'
 import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
 import { createFunctionRegistry } from '../../functions/registry.js'
@@ -44,12 +43,6 @@ import {
   toToolName,
 } from '../tool-names.js'
 import { projectPlannerTools } from '../planner-tools.js'
-
-function noOpSink(): AuditSink {
-  return {
-    appendGuardrailAudit() {},
-  }
-}
 
 /**
  * The required deps, at their emptiest.
@@ -103,7 +96,7 @@ const PLANNER_CALLER: FunctionCaller = {
 }
 
 function registry() {
-  return createFunctionRegistry({ deps: emptyDeps(), auditSink: noOpSink() })
+  return createFunctionRegistry({ deps: emptyDeps() })
 }
 
 describe('tool-names: the dotted-id <-> provider-safe bijection (Pitfall 8)', () => {

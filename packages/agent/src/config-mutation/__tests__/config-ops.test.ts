@@ -345,7 +345,6 @@ function sha256(text: string): string {
 function registryFor(test: Harness) {
   return createFunctionRegistry({
     deps: test.deps,
-    auditSink: { appendGuardrailAudit() {} },
   })
 }
 
@@ -885,7 +884,6 @@ describe('the config action class is CLOSED, and the registry is where that is l
     const { configWrite: _dropped, ...withoutWriter } = test.deps as unknown as Record<string, unknown>
     const registry = createFunctionRegistry({
       deps: withoutWriter as unknown as FunctionDeps,
-      auditSink: { appendGuardrailAudit() {} },
     })
     const status = new Map(registry.list(CALLER).map((entry) => [entry.id, entry.bindingStatus]))
     for (const id of [

@@ -55,7 +55,6 @@ import type {
   CompletedRunHandoff,
   FunctionCaller,
 } from '@vostride/agent-qa-schema'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
 import { UnknownFunctionError, invokeFunction } from '../functions/invoke.js'
@@ -248,8 +247,10 @@ const RETIREMENT_REGISTER: readonly RetirementRow[] = Object.freeze([
   Object.freeze({
     block: 'noOpSink',
     kind: 'constant',
-    destination: 'retained here',
-    reason: 'this file asserts on coverage, never on the audit trail',
+    destination: 'retired → subject deleted',
+    reason:
+      'retained here until 441-28, which deleted the registry\'s audit-sink requirement it existed '
+      + 'to satisfy (D-15); this file asserts on coverage, never on an audit trail',
   }),
   Object.freeze({
     block: 'EVERY_ASK_STANDING_APPROVED',
@@ -419,17 +420,9 @@ const FULLY_GRANTED: FunctionCaller = {
   origin: 'human',
 }
 
-/** Discards every row: this file asserts on coverage, never on the audit trail. */
-function noOpSink(): AuditSink {
-  return {
-    appendGuardrailAudit() {},
-  }
-}
-
 function registry() {
   return createFunctionRegistry({
     deps: fakeDeps(),
-    auditSink: noOpSink(),
   })
 }
 

@@ -131,7 +131,6 @@ function deps(quarantine?: QuarantineOperationsPort): FunctionDeps {
 function registryWith(quarantine?: QuarantineOperationsPort) {
   return createFunctionRegistry({
     deps: deps(quarantine),
-    auditSink: { appendGuardrailAudit() {} },
   })
 }
 
@@ -323,14 +322,12 @@ describe('with a port bound, each op forwards and adds nothing of its own', () =
 //
 // The two writes once required `knowledge-write`. Retried from three callers that differ in surface
 // and origin, and that carry no scope at all, each write is served every time: the port is reached
-// once per attempt, every caller gets the same answer, and no audit row is written.
+// once per attempt, and every caller gets the same answer.
 describe('C432-ALL-OPS-AVAILABLE: the quarantine writes serve every caller', () => {
   it('C432-ALL-OPS-AVAILABLE: a retried add and release are served alike to every caller', async () => {
     const { port, added, released } = stubPort([])
-    const auditRows: unknown[] = []
     const registry = createFunctionRegistry({
       deps: deps(port),
-      auditSink: { appendGuardrailAudit(row: unknown) { auditRows.push(row) } },
     })
     const callers: readonly FunctionCaller[] = [
       CALLER,
@@ -352,6 +349,5 @@ describe('C432-ALL-OPS-AVAILABLE: the quarantine writes serve every caller', () 
       { kind: 'renewed', entry: entryState() },
       { kind: 'no-entry' },
     ]).flat())
-    expect(auditRows).toEqual([])
   })
 })

@@ -11,7 +11,6 @@ import type {
   LiveUrlClaims,
   LiveUrlSigner,
 } from '@vostride/agent-qa-schema'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -64,8 +63,6 @@ const CALLER: FunctionCaller = {
   origin: 'human',
 }
 
-const auditSink: AuditSink = { appendGuardrailAudit() {} }
-
 interface RecordingLiveView {
   readonly port: LiveViewPort
   readonly minted: string[]
@@ -100,7 +97,6 @@ function registryWith(liveView: LiveViewPort | undefined): ReturnType<typeof cre
     deps,
     // 2026-10-02 (432-36, D-12): no `resolveExecutionContext` registry option; the registry reads
     // no context (432-20).
-    auditSink,
   })
 }
 

@@ -29,7 +29,6 @@ import {
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -45,10 +44,6 @@ import type { FunctionDeclaration, FunctionDeps } from '../spec.js'
 const FULLY_GRANTED: FunctionCaller = {
   surface: 'test',
   origin: 'human',
-}
-
-function noOpSink(): AuditSink {
-  return { appendGuardrailAudit() {} }
 }
 
 /**
@@ -90,7 +85,7 @@ function listingDeps(): FunctionDeps {
 }
 
 function declarations(): readonly FunctionDeclaration[] {
-  return createFunctionRegistry({ deps: listingDeps(), auditSink: noOpSink() }).list(FULLY_GRANTED)
+  return createFunctionRegistry({ deps: listingDeps() }).list(FULLY_GRANTED)
 }
 
 /**

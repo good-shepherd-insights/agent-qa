@@ -21,7 +21,6 @@
 
 import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
-import type { AuditSink, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
@@ -115,15 +114,6 @@ function deps(overrides: Partial<FunctionDeps> = {}): FunctionDeps {
   }
 }
 
-function capturingSink(): AuditSink {
-  const guardrailRows: GuardrailAuditRow[] = []
-  return {
-    appendGuardrailAudit(row: GuardrailAuditRow) {
-      guardrailRows.push(row)
-    },
-  }
-}
-
 function registryOver(functionDeps: FunctionDeps) {
   // A FRESH spec object per registry: registration freezes what it is handed (WR-03), and two
   // registries sharing one frozen singleton would still be the same object — which is fine, and
@@ -131,7 +121,6 @@ function registryOver(functionDeps: FunctionDeps) {
   // two different statuses in two compositions, so the spec must genuinely be the same contract.
   return createRegistryFromSpecs([reviewBoundSpec as FunctionSpec], {
     deps: functionDeps,
-    auditSink: capturingSink(),
   })
 }
 
@@ -201,10 +190,9 @@ describe('the knowledgeReview optional dep', () => {
       },
     } as unknown as KnowledgeReviewPort
     const writer: FunctionCaller = CALLER
-    const sink = capturingSink()
-    const readOnly = createFunctionRegistry({ deps: deps(), auditSink: sink })
+    const readOnly = createFunctionRegistry({ deps: deps() })
     const bound = createFunctionRegistry({
-      deps: deps({ knowledgeReview: directPort }), auditSink: sink,
+      deps: deps({ knowledgeReview: directPort }),
     })
     const inputs = {
       'knowledge.accept': { target: { grain: 'record', recordId: 'rec-1' } },

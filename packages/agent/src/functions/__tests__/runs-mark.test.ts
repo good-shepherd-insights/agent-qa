@@ -68,7 +68,6 @@ function deps(feedback?: FeedbackPort): FunctionDeps {
 function host(feedback?: FeedbackPort) {
   return createFunctionRegistry({
     deps: deps(feedback),
-    auditSink: { appendGuardrailAudit() {} },
   })
 }
 

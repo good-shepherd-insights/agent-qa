@@ -15,7 +15,6 @@ import type {
   RunStatus,
   RunSummary,
 } from '@vostride/agent-qa-schema'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
 import { FunctionInputError, invokeFunction } from '../invoke.js'
@@ -29,8 +28,6 @@ const READER: FunctionCaller = {
   surface: 'test',
   origin: 'agent',
 }
-
-const NO_AUDIT: AuditSink = { appendGuardrailAudit() {} }
 
 function declaredMask(secrets: Record<string, string>): MaskFn {
   const redactor = new SecretRedactor(new SecretStore(secrets))
@@ -101,7 +98,6 @@ function harness(
   }
   const registry = createRegistryFromSpecs([runsListSpec], {
     deps: { runs, ...(secretMask === null ? {} : { secretMask }) } as unknown as FunctionDeps,
-    auditSink: NO_AUDIT,
     // 2026-10-02 (432-36, D-12): no `resolveExecutionContext` registry option; the registry reads
     // no context (432-20).
   })

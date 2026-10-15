@@ -113,7 +113,6 @@ function deps(authoringFunnel?: AuthoringFunnelPortLike): FunctionDeps {
 function registryWith(authoringFunnel?: AuthoringFunnelPortLike) {
   return createFunctionRegistry({
     deps: deps(authoringFunnel),
-    auditSink: { appendGuardrailAudit() {} },
   })
 }
 

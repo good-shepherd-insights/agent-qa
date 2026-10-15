@@ -216,11 +216,8 @@ const FOLD_REGISTRY = createRegistryFromSpecs(
   [authoringDraftWriteSpec as FunctionSpec, quarantineListSpec as FunctionSpec],
   {
     // Never dispatched through: this harness calls the ops itself and hands the registry only the
-    // RETURN path, which is where folds run. The sink exists because D-11 refuses a sinkless one.
+    // RETURN path, which is where folds run.
     deps: {} as unknown as FunctionDeps,
-    auditSink: {
-      appendGuardrailAudit: () => { /* nothing dispatches here */ },
-    },
   },
 )
 

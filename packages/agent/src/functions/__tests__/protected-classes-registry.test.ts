@@ -14,7 +14,6 @@ import {
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
 import { createFunctionRegistry } from '../registry.js'
@@ -69,14 +68,8 @@ const FULLY_GRANTED: FunctionCaller = {
   origin: 'human',
 }
 
-function noOpSink(): AuditSink {
-  return {
-    appendGuardrailAudit() {},
-  }
-}
-
 function declarations(): readonly FunctionDeclaration[] {
-  return createFunctionRegistry({ deps: listingDeps(), auditSink: noOpSink() }).list(FULLY_GRANTED)
+  return createFunctionRegistry({ deps: listingDeps() }).list(FULLY_GRANTED)
 }
 
 describe('the protected action classes name real registered ops', () => {

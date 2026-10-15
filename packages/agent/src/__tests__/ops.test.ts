@@ -678,7 +678,6 @@ describe('C432-ALL-OPS-AVAILABLE: the 432-27 gate read and auth writer serve eve
           Promise.reject(new Error('config.auth.set publishes field changes only')),
       },
     } as unknown as Partial<FunctionDeps>
-    const auditRows: unknown[] = []
     const registry = createFunctionRegistry({
       deps: fakeDeps({
         knowledge: fakeKnowledge({
@@ -691,7 +690,6 @@ describe('C432-ALL-OPS-AVAILABLE: the 432-27 gate read and auth writer serve eve
         }),
         ...configPorts,
       }),
-      auditSink: { appendGuardrailAudit(row: unknown) { auditRows.push(row) } },
     })
     const callers: readonly FunctionCaller[] = [
       { surface: 'test', origin: 'agent' },
@@ -729,6 +727,5 @@ describe('C432-ALL-OPS-AVAILABLE: the 432-27 gate read and auth writer serve eve
     expect(validations).toBe(6)
     expect(written).toEqual(Array.from({ length: 6 }, () =>
       [{ op: 'append', path: ['plugins', 'auth'], value: { package: '@acme/auth' } }]))
-    expect(auditRows).toEqual([])
   })
 })

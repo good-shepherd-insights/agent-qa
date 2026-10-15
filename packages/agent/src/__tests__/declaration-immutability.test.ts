@@ -31,7 +31,6 @@ import type {
   FunctionCaller,
   RiskActionDescriptor,
 } from '@vostride/agent-qa-schema'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import {
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   RunsGetInputSchema,
@@ -91,17 +90,9 @@ function fakeDeps(): FunctionDeps {
   }
 }
 
-/** The sink is a REQUIRED construction field (D-11); nothing here asserts on rows. */
-function noOpSink(): AuditSink {
-  return {
-    appendGuardrailAudit() {},
-  }
-}
-
 function buildRegistry() {
   return createFunctionRegistry({
     deps: fakeDeps(),
-    auditSink: noOpSink(),
   })
 }
 
@@ -309,7 +300,7 @@ describe('the disclose presence flag is projected from the spec (D-05)', () => {
       classify: () => ({ status: 'executed' as const, outcome: '' }),
       invoke: () => Promise.resolve({ ok: true as const }),
     } as unknown as FunctionSpec
-    const registry = createRegistryFromSpecs([legacy], { deps: fakeDeps(), auditSink: noOpSink() })
+    const registry = createRegistryFromSpecs([legacy], { deps: fakeDeps() })
     const [declaration] = registry.list(FULLY_GRANTED)
     expect(declaration, 'the legacy spec was not listed').toBeDefined()
     expect(Object.hasOwn(declaration!, 'discloses'), 'the retired flag rode through').toBe(false)
@@ -483,7 +474,6 @@ describe('C432-DECLARATION-KEYS: runtime declarations carry no permission metada
     } as FunctionSpec<Record<string, never>, { ok: true }>
     const registry = createRegistryFromSpecs([legacy as FunctionSpec], {
       deps: fakeDeps(),
-      auditSink: noOpSink(),
     })
     const [declaration] = registry.list(ZERO_SCOPE_CALLER)
     expect(Object.keys(declaration!).sort())

@@ -18,7 +18,6 @@ import type {
   RunEventType,
   RunId,
 } from '@vostride/agent-qa-schema'
-import type { AuditSink, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
 import { invokeFunction } from '../functions/invoke.js'
@@ -101,32 +100,7 @@ function eventsDeps(options: {
   }
 }
 
-// 2026-10-01 (432-19, D-17): the audit port has one append, for guardrail rows, so this sink
-// records every row an invocation could write. The cells that asserted "no execution-audit row"
-// since 432-13 now assert "no audit row of any kind".
-interface CapturedSink {
-  sink: AuditSink
-  auditRows: () => readonly GuardrailAuditRow[]
-}
-
-function capturingSink(): CapturedSink {
-  const guardrailRows: GuardrailAuditRow[] = []
-  return {
-    sink: {
-      appendGuardrailAudit(row) {
-        guardrailRows.push(row)
-      },
-    },
-    auditRows: () => guardrailRows,
-  }
-}
-
-/** Discards every row — for the cases that do not assert on the audit trail. */
-function noOpSink(): AuditSink {
-  return {
-    appendGuardrailAudit() {},
-  }
-}
+// 2026-10-15 (441-28, D-15): the registry takes no audit sink, so no cell captures audit rows.
 
 // 2026-10-01 (432-23, D-12): a caller is attribution only, a surface and an origin. The name is
 // kept for the cells below; it reads nothing and is granted nothing.
@@ -219,25 +193,20 @@ describe('runs.events through invokeFunction (D-11 one dispatch path)', () => {
   // every event reaches the caller through the one dispatch path.
   it('C432-INVOKE-DIRECT: a stream dispatch writes no audit row and yields every event', async () => {
     const spy = eventsDeps({ events: FIVE_EVENTS })
-    const audit = capturingSink()
     const registry = createRegistryFromSpecs([runsEventsSpec], {
       deps: spy.deps,
-      auditSink: audit.sink,
     })
 
     const result = await invokeFunction(registry, 'runs.events', { runId: RUN_ID }, READ_CALLER)
 
-    expect(audit.auditRows()).toEqual([])
     const events = await drain(result as FunctionStream<RunEventEnvelope>)
     expect(events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5])
-    expect(audit.auditRows()).toEqual([])
   })
 
   it('returns the async iterable itself rather than a zod-parsed unary DTO', async () => {
     const spy = eventsDeps({ events: FIVE_EVENTS })
     const registry = createRegistryFromSpecs([runsEventsSpec], {
       deps: spy.deps,
-      auditSink: noOpSink(),
     })
 
     const result = await invokeFunction(registry, 'runs.events', { runId: RUN_ID }, READ_CALLER)
@@ -251,7 +220,6 @@ describe('runs.events through invokeFunction (D-11 one dispatch path)', () => {
     const spy = eventsDeps({ events: FIVE_EVENTS })
     const registry = createRegistryFromSpecs([runsEventsSpec], {
       deps: spy.deps,
-      auditSink: noOpSink(),
     })
 
     await expect(

@@ -262,7 +262,7 @@ describe('423-37 runs.mark.preview contract (D-16/D-17)', () => {
 
     const reads = port(consequences())
     const { deps: bound, forbidden } = deps(reads)
-    const options = { deps: bound, auditSink: { appendGuardrailAudit() {} } }
+    const options = { deps: bound }
     const caller: FunctionCaller = { surface: 'mcp', origin: 'agent' }
     const registry = createRegistryFromSpecs([{ ...op }], options)
     expect(registry.list(caller).find(entry => entry.id === 'runs.mark.preview')?.bindingStatus).toBe('bound')

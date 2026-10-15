@@ -271,11 +271,10 @@ it('EVIDENCE-CONTRACT rejects crossed documents, extra fields and false ready st
 
 describe('C441-COLD-READ', () => {
   const caller = { surface: 'test', origin: 'agent' } as FunctionCaller
-  const auditSink = { appendGuardrailAudit() {} }
   const aria: EvidenceDocument = { schemaVersion: 1, kind: 'aria',
     tree: 'textbox "Password" value="Hunter-42-zz" for qa@example.com; cookie session=undeclared-cookie-441' }
   const readThroughRegistry = (deps: FunctionDeps, address: RunsEvidenceInput) =>
-    invokeFunction(createFunctionRegistry({ deps, auditSink }), 'runs.evidence', address, caller)
+    invokeFunction(createFunctionRegistry({ deps }), 'runs.evidence', address, caller)
 
   it('runs.evidence masks a stored document with the declared mask', async () => {
     const f = fixture('aria', aria, declaredMask({ PW_441: 'Hunter-42-zz' }))

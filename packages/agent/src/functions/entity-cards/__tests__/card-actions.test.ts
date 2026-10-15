@@ -33,7 +33,6 @@ import { ADVERTISED_FUNCTION_IDS, actionsForKind } from '../actions.js'
 import { entitiesGetSpec } from '../../ops/entities-get.js'
 import { entitiesResolveSpec } from '../../ops/entities-resolve.js'
 import { createFunctionRegistry } from '../../registry.js'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import type { FunctionDeps } from '../../spec.js'
 
 const SHORT_IDS = {
@@ -56,10 +55,6 @@ function descriptorFor(kind: EntityKind): EntityDescriptor {
 }
 
 const MEM_DESCRIPTOR = descriptorFor('MEM')
-
-const AUDIT_SINK: AuditSink = {
-  appendGuardrailAudit: () => undefined,
-}
 
 // 2026-10-02 (432-36, D-12): no `grantedScopes` or `safeMode` on the caller; the registry reads
 // neither (432-20), so every caller lists the whole default registry.
@@ -113,7 +108,6 @@ function deps(): FunctionDeps {
 function defaultRegistryIds(caller: FunctionCaller = FULL_CALLER): Set<string> {
   const registry = createFunctionRegistry({
     deps: deps(),
-    auditSink: AUDIT_SINK,
     // 2026-10-02 (432-36, D-12): no `resolveExecutionContext` registry option; the registry reads
     // no context (432-20).
   })

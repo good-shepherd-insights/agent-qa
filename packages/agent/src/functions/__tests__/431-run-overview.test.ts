@@ -6,7 +6,6 @@
 import { createHash } from 'node:crypto'
 
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   CurationSnapshotSchema,
@@ -57,8 +56,6 @@ const READER: FunctionCaller = {
   surface: 'test',
   origin: 'agent',
 }
-
-const NO_AUDIT: AuditSink = { appendGuardrailAudit() {} }
 
 const sha = (seed: string) => createHash('sha256').update(seed).digest('hex')
 
@@ -189,10 +186,7 @@ function harness(scene: Scene) {
     ...(scene.bindDetail === false ? {} : { runDetail: { read: detailRead } }),
     ...(scene.secretMask === null ? {} : { secretMask: scene.secretMask ?? identity }),
   }
-  const registry = createFunctionRegistry({
-    deps,
-    auditSink: NO_AUDIT,
-  })
+  const registry = createFunctionRegistry({ deps })
   return {
     registry,
     detailRead,
@@ -513,10 +507,7 @@ function multiHarness(scene: Multi, options: MultiOptions = {}) {
       },
     }),
   }
-  const registry = createFunctionRegistry({
-    deps,
-    auditSink: NO_AUDIT,
-  })
+  const registry = createFunctionRegistry({ deps })
   const call = (id: string, input: unknown) => invokeFunction(registry, id, input, READER)
   return {
     has,

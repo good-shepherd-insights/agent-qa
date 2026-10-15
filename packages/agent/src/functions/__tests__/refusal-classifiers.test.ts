@@ -347,11 +347,6 @@ describe('399.1 D-03 — the fail-closed wrapper, driven', () => {
       // The four required reader ports, never reached: the fold runs on the RETURN path and this
       // registry is only ever asked to look a spec up by id.
       deps: {} as unknown as FunctionDeps,
-      // The fold runs on the RETURN path, after the gate has audited; this sink exists only so the
-      // registry may be constructed at all (D-11 refuses a sinkless one).
-      auditSink: {
-        appendGuardrailAudit: () => { /* nothing dispatches here */ },
-      },
     },
   )
 
@@ -419,9 +414,6 @@ describe('399.1-04 D-03 — the fail-closed branches a shipped op cannot reach',
       } as unknown as FunctionSpec],
       {
         deps: {} as unknown as FunctionDeps,
-        auditSink: {
-          appendGuardrailAudit: () => { /* nothing dispatches here */ },
-        },
       },
     )
   }

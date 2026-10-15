@@ -527,8 +527,7 @@ describe('423 current content and fixed historical sections', () => {
 
   it('JOIN-NOT-BOUND: actual registry retains the read with typed enrichment absence and no unary fallback', async () => {
     const unary = vi.fn(async () => { throw new Error('unary fallback forbidden') })
-    const registry = createFunctionRegistry({ deps: deps({ knowledge: { showRecord: unary } }),
-      auditSink: { appendGuardrailAudit() {} } })
+    const registry = createFunctionRegistry({ deps: deps({ knowledge: { showRecord: unary } }) })
     const result = await invokeFunction(registry, 'runs.knowledge', { runId: RUN_ID },
       { surface: 'cli', origin: 'human' })
     expect(result).toHaveProperty('steps.0.served.channel2.0.contentAbsence', { reason: 'not-bound' })
@@ -1250,14 +1249,12 @@ describe('C432-ALL-OPS-AVAILABLE: the run knowledge reads serve every caller', (
     })
     const runReads = vi.fn(base.runs.get)
     const chainReads = vi.fn(base.postProcessing!.readChain)
-    const auditRows: unknown[] = []
     const registry = createFunctionRegistry({
       deps: {
         ...base,
         runs: { ...base.runs, get: runReads },
         postProcessing: { ...base.postProcessing!, readChain: chainReads },
       },
-      auditSink: { appendGuardrailAudit(row: unknown) { auditRows.push(row) } },
     })
     const callers = [
       { surface: 'test', origin: 'agent' },
@@ -1288,6 +1285,5 @@ describe('C432-ALL-OPS-AVAILABLE: the run knowledge reads serve every caller', (
     expect(reads[0]!.runs).toBeGreaterThan(0)
     expect(reads[0]!.chain).toBeGreaterThan(0)
     expect(reads).toEqual(Array.from({ length: 6 }, () => reads[0]))
-    expect(auditRows).toEqual([])
   })
 })

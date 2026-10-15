@@ -420,11 +420,7 @@ describe('C432-ALL-OPS-AVAILABLE: the 432-27 run reads serve every caller', () =
         },
       },
     }
-    const auditRows: unknown[] = []
-    const registry = createFunctionRegistry({
-      deps,
-      auditSink: { appendGuardrailAudit(row: unknown) { auditRows.push(row) } },
-    })
+    const registry = createFunctionRegistry({ deps })
     const callers: readonly FunctionCaller[] = [
       { surface: 'test', origin: 'agent' },
       { surface: 'cli', origin: 'human' },
@@ -460,6 +456,5 @@ describe('C432-ALL-OPS-AVAILABLE: the 432-27 run reads serve every caller', () =
       tests: [{ testIndex: 0, testId: 'test-checkout', name: { text: 'Checkout smoke' },
         steps: [{ stepIndex: 0, label: { text: 'Open the home page' }, status: 'passed' }] }],
     })
-    expect(auditRows).toEqual([])
   })
 })

@@ -229,7 +229,7 @@ describe('423-36 runs.marks.history contract (D-19)', () => {
 
     const reads = port({ kind: 'history', entries: sequenceB() })
     const { deps: bound, forbidden } = deps(reads)
-    const options = { deps: bound, auditSink: { appendGuardrailAudit() {} } }
+    const options = { deps: bound }
     const caller: FunctionCaller = { surface: 'mcp', origin: 'agent' }
     const registry = createRegistryFromSpecs([{ ...op } as FunctionSpec], options)
     expect(registry.list(caller).find(entry => entry.id === 'runs.marks.history')?.bindingStatus).toBe('bound')

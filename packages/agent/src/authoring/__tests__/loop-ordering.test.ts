@@ -541,7 +541,6 @@ describe('the loop has exactly one public entry', () => {
   it('registers no authoring op besides the evaluator and the loop', () => {
     const registry = createFunctionRegistry({
       deps: minimalDeps(),
-      auditSink: { appendGuardrailAudit() {} },
     })
 
     const authoringIds = registry

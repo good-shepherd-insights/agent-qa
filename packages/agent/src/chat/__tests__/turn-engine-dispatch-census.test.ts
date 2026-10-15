@@ -40,7 +40,6 @@ const AGENT: FunctionCaller = { surface: 'chat', origin: 'agent' }
 /** Every op the shipped registry declares; the deps are never dispatched through. */
 const REGISTRY_IDS: readonly string[] = createFunctionRegistry({
   deps: {} as unknown as FunctionDeps,
-  auditSink: { appendGuardrailAudit: () => { /* nothing dispatches here */ } },
 })
   .list(HUMAN)
   .map((declaration) => declaration.id)
