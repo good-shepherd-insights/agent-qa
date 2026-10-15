@@ -9240,6 +9240,246 @@
       "file": "packages/runner/src/loop/__tests__/loop.test.ts",
       "fullName": "C441-NO-HOOK-PORT a hook object left on the ports is never consulted; the action executes and its result is recorded redacted",
       "origin": "441 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/masking-provider-boundary.test.ts",
+      "fullName": "C441-GAP-EGRESS Rule 23, the D-10 refusal and step text reach the model with the template intact",
+      "origin": "441 GAP-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/masking-provider-boundary.test.ts",
+      "fullName": "C441-GAP-EGRESS a declared value hidden in a marker or template never reaches the model",
+      "origin": "441 GAP-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/masking-provider-boundary.test.ts",
+      "fullName": "C441-GAP-EGRESS a declared value used as an object key never reaches the model",
+      "origin": "441 GAP-D2"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/safety/src/egress/__tests__/masking-middleware.test.ts",
+      "fullName": "C441-GAP-EGRESS a template the mask names or leaves alone is sent verbatim, and the text around it is masked",
+      "origin": "441 GAP-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/safety/src/egress/__tests__/map-prompt-leaves.test.ts",
+      "fullName": "C441-GAP-EGRESS object keys in a tool-call input and a JSON tool result are masked",
+      "origin": "441 GAP-D2"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/safety/src/egress/__tests__/map-prompt-leaves.test.ts",
+      "fullName": "C441-GAP-EGRESS an own __proto__ key survives as a key",
+      "origin": "441 GAP-D2"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/safety/src/egress/__tests__/map-prompt-leaves.test.ts",
+      "fullName": "C441-GAP-EGRESS a class instance and an object with toJSON are walked as the JSON a provider receives",
+      "origin": "441 GAP-D2"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/safety/src/egress/__tests__/map-prompt-leaves.test.ts",
+      "fullName": "C441-GAP-EGRESS binary data is returned untouched and never passed to the mask",
+      "origin": "441 GAP-D2"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/safety/src/egress/__tests__/map-prompt-leaves.test.ts",
+      "fullName": "C441-GAP-EGRESS two keys that mask to one name refuse the request",
+      "origin": "441 GAP-D2"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/secrets.test.ts",
+      "fullName": "C441-GAP-REDACTOR a declared value written as a marker or template name is masked",
+      "origin": "441 GAP-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/secrets.test.ts",
+      "fullName": "C441-GAP-REDACTOR a declared-name marker or template is unchanged in behaviour, and masking twice changes nothing",
+      "origin": "441 GAP-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/run/__tests__/mask-payload-tree.test.ts",
+      "fullName": "C441-GAP-WALKER masks every object key and string leaf and leaves the input unchanged",
+      "origin": "441 GAP-D2"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/run/__tests__/mask-payload-tree.test.ts",
+      "fullName": "C441-GAP-WALKER keeps an own __proto__ key as an own key",
+      "origin": "441 GAP-D2"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/run/__tests__/mask-payload-tree.test.ts",
+      "fullName": "C441-GAP-WALKER refuses two keys of one object that mask to the same name, naming no value",
+      "origin": "441 GAP-D2"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/fn-command.test.ts",
+      "fullName": "C441-GAP-DISPLAY fn prints a declared value holding a quote and a backslash only as its marker",
+      "origin": "441 GAP-D3"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/441-chat-transcript.test.ts",
+      "fullName": "C441-GAP-TRANSCRIPT a declared value used as a payload key is masked in the session file and the turn result",
+      "origin": "441 GAP-D2"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/judge-panel-disclosure.test.ts",
+      "fullName": "C441-GAP-DISPLAY judge calibrate keeps numbers and DTO keys with a one-digit declared value and masks string leaves",
+      "origin": "441 GAP-D3"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/judge-calibration-composition.test.ts",
+      "fullName": "C441-GAP-DISPLAY the judge panel preview keeps its keys when a declared value is a key name and masks string leaves",
+      "origin": "441 GAP-D3"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/config.test.ts",
+      "fullName": "C441-GAP-CONFIG config set prints a declared value only as its marker and writes it as typed",
+      "origin": "441 GAP-D3"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/config.test.ts",
+      "fullName": "C441-GAP-CONFIG config set still writes without a secrets file and prints its line without the value",
+      "origin": "441 GAP-D3"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/441-gap-terminal.test.ts",
+      "fullName": "C441-GAP-DISPLAY the run's framework error line shows a declared value only as its marker",
+      "origin": "441 GAP-D3"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/post-run-tail.test.ts",
+      "fullName": "C441-GAP-DISPLAY a post-run tail warning shows a declared value only as its marker",
+      "origin": "441 GAP-D3"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/declared-secrets.test.ts",
+      "fullName": "C441-GAP-LOADER one mask follows the secrets file a rewritten config names",
+      "origin": "441 GAP-D3"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/declared-secrets.test.ts",
+      "fullName": "C441-GAP-LOADER a rewritten config that names no secrets file refuses",
+      "origin": "441 GAP-D3"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/441-gap-curation-seeds.test.ts",
+      "fullName": "C441-GAP-CURATION a fact candidate's seeds, anchors and natural keys are queued only masked",
+      "origin": "441 GAP-D4"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/441-gap-curation-seeds.test.ts",
+      "fullName": "C441-GAP-CURATION the fallback commits a fact through the real drain with no declared value under the knowledge root",
+      "origin": "441 GAP-D4"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/441-gap-curation-seeds.test.ts",
+      "fullName": "C441-GAP-CURATION a procedure seed masks target names, page routes and a typed declared value",
+      "origin": "441 GAP-D4"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/knowledge-local/src/curator/__tests__/procedure-extraction-disposition.test.ts",
+      "fullName": "C441-GAP-CURATION a step whose typed value is the named secret marker is refused as a masked literal",
+      "origin": "441 GAP-D4"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/knowledge-local/src/__tests__/purge.test.ts",
+      "fullName": "C441-GAP-OLD-DATA a purge completes past a pre-441 quarantined payload that names nothing purged",
+      "origin": "441 GAP-D8"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/knowledge-local/src/__tests__/purge.test.ts",
+      "fullName": "C441-GAP-OLD-DATA a pre-441 payload carrying the purged summary is swept with the purge",
+      "origin": "441 GAP-D8"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/adversarial-admission.test.ts",
+      "fullName": "C441-GAP-OLD-DATA a later refresh stages beside a pre-441 refresh record",
+      "origin": "441 GAP-D8"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/441-gap-dashboard-mask.test.ts",
+      "fullName": "C441-GAP-DASHBOARD a hook run answers its output, variables and network log with a declared value only as its marker",
+      "origin": "441 GAP-D5"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/441-gap-dashboard-mask.test.ts",
+      "fullName": "C441-GAP-DASHBOARD a hook run whose mask throws answers masking_unavailable and no hook output",
+      "origin": "441 GAP-D5"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/441-gap-dashboard-mask.test.ts",
+      "fullName": "C441-GAP-DASHBOARD an LLM connection test answers provider error text with a declared value only as its marker",
+      "origin": "441 GAP-D5"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/441-gap-dashboard-mask.test.ts",
+      "fullName": "C441-GAP-DASHBOARD the target list answers a name holding a declared value as its marker",
+      "origin": "441 GAP-D5"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/441-gap-dashboard-mask.test.ts",
+      "fullName": "C441-GAP-DASHBOARD with a mask that throws, the LLM test and the target list answer without provider text or names",
+      "origin": "441 GAP-D5"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/441-gap-dashboard-mask.test.ts",
+      "fullName": "C441-GAP-DASHBOARD config issue paths show a key holding a declared value as its marker",
+      "origin": "441 GAP-D5"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/441-gap-dashboard-mask.test.ts",
+      "fullName": "C441-GAP-CONFIG-WRITE a set whose value holds a shown marker is refused and the file is unchanged",
+      "origin": "441 GAP-D7"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/441-gap-dashboard-mask.test.ts",
+      "fullName": "C441-GAP-CONFIG-WRITE a path segment, selector, move source or value key holding a shown marker is refused and the file is unchanged",
+      "origin": "441 GAP-D7"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/441-gap-dashboard-mask.test.ts",
+      "fullName": "C441-GAP-CONFIG-WRITE an ordinary set with no marker still lands",
+      "origin": "441 GAP-D7"
     }
   ]
 }
