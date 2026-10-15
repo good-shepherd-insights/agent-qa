@@ -35,6 +35,7 @@ import type { Mock } from 'vitest'
 import { chainJobIdsForRun, renderVerdictSentence } from '@vostride/agent-qa-agent'
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
 import { composeLocalAgent, DIGEST_JOB_ID_SOURCE } from '@vostride/agent-qa-agent-local'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import {
@@ -663,6 +664,30 @@ describe('the extended exit line — everything else gets count + command (D-17,
     expect(line).not.toContain('proposals:')
     expect(line).not.toContain('marks:')
     expect(String(h.warn.mock.calls[0]![0])).toContain('the digest could not be composed')
+  })
+})
+
+describe('C441-GAP-DISPLAY', () => {
+  it('a post-run tail warning shows a declared value only as its marker', async () => {
+    const redactor = new SecretRedactor(SecretStore.fromEnvContent('PW_441=Hunter-42-zz\n'))
+    const h = harness({
+      runNextJob: pump([ANALYZE_COMPLETED]),
+      status: doneStatus(),
+      readRunDigest: vi.fn(async () => {
+        throw new Error('the digest for Hunter-42-zz could not be composed')
+      }),
+    })
+    const tail = runPostRunTail({
+      ...options(h),
+      mask: (text: string) => redactor.redactString(text),
+    })
+    await tail.drain()
+    await tail.finish()
+
+    const warnings = h.warn.mock.calls.map(([message]) => String(message))
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('[secret:PW_441]')
+    expect(warnings.join('\n')).not.toContain('Hunter-42-zz')
   })
 })
 
