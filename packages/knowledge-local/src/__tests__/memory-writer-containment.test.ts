@@ -101,8 +101,7 @@ function authority(): { leaseId: string; epoch: number } {
 }
 
 function storeConfig(): BundleStoreConfig {
-  return { knowledgeRoot, productKey: 'Containment Product', auditBaseDir: join(root, '.agent-qa'),
-    commitArtifacts: 'none' }
+  return { knowledgeRoot, productKey: 'Containment Product', commitArtifacts: 'none' }
 }
 
 function publish(summary: string): string {
@@ -150,8 +149,7 @@ const freshWriters: ReadonlyArray<readonly [string, readonly string[], () => unk
   ['bundles: publish a bundle', ['memory'], () => publish('fresh')],
   ['policies: materialize a policy', ['policies'], () =>
     materializePolicy({ knowledgeRoot, recordId: 'policy-containment', scope: 'shop',
-      ruleText: 'Dismiss the cookie banner first', auditBaseDir: join(root, '.agent-qa'),
-      writerAuthority: authority() })],
+      ruleText: 'Dismiss the cookie banner first', writerAuthority: authority() })],
 ]
 
 describe('every knowledge writer refuses a link out of the knowledge root (261003-mqc)', () => {

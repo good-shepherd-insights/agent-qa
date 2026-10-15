@@ -65,7 +65,6 @@ describe('inspectRecords canonical maintenance view', () => {
     return {
       knowledgeRoot,
       productKey,
-      auditBaseDir: join(root, '.agent-qa'),
       commitArtifacts: 'none',
     }
   }

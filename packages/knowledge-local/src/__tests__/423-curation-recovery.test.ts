@@ -4,7 +4,6 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { asEvidenceToken, asRecordId, type BundleDraft, type Delta } from '@vostride/agent-qa-schema'
-import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import * as bundleAppend from '../bundle-append.js'
 import { loadBundle } from '../bundle-read.js'
 import { commitCurationDelta, type CommitCurationDependencies, type CommitCurationJob } from '../curator/commit.js'
@@ -45,8 +44,8 @@ function commitFixture() {
   const lease = acquireWriterLease(root)
   if (lease.kind !== 'acquired') throw new Error('expected fresh lease')
   const authority = { leaseId: lease.leaseId, epoch: lease.epoch }
-  const deps: CommitCurationDependencies = { knowledgeRoot: root, auditBaseDir: join(root, 'audit'), epoch: lease.epoch,
-    profile: { mode: 'propose-only' }, drainState: { supersedesSeenByAnchorKey: new Map() }, policy: loadGuardrailPolicy(defaultGuardrailPolicyInput) }
+  const deps: CommitCurationDependencies = { knowledgeRoot: root, epoch: lease.epoch,
+    profile: { mode: 'propose-only' }, drainState: { supersedesSeenByAnchorKey: new Map() } }
   function draft(name: string): BundleDraft {
     return { kind: 'fact', subtype: 'selector', anchors: [{ t: 'el', role: 'button', name }, { t: 'page', route: '/checkout' }, { t: 'selector', literal: '[data-testid="checkout"]' }],
       scope: { tier: 'product', key: 'storefront' }, summary: `${name} selector`, body: `${name} verified`,
@@ -155,7 +154,7 @@ describe('423 curation effect recovery', () => {
     commitCurationDelta(f.deps, f.claimed, f.checkpoint(f.supersede))
     const row = f.rows()[0]!
     reopen(f)
-    const options = { knowledgeRoot: f.root, authority: f.authority, auditBaseDir: f.deps.auditBaseDir, receipt: row }
+    const options = { knowledgeRoot: f.root, authority: f.authority, receipt: row }
     expect(() => writeCurationEffectReceipt(options)).toThrow()
     expect(() => writeCurationEffectReceipt({ ...options, receipt: { ...row, sourceRunId: 'foreign' } })).toThrow()
     const newEffect = { recordId: 'fact-new', product: 'storefront', change: 'added' as const, atOrdinal: 44, evidenceToken: 'synthetic-new' }
@@ -234,7 +233,7 @@ describe('423 curation effect recovery', () => {
     const root = temporaryRoot()
     const authority = writer(root)
     const row = receipt()
-    writeCurationEffectReceipt({ knowledgeRoot: root, authority, auditBaseDir: join(root, 'audit'), receipt: row })
+    writeCurationEffectReceipt({ knowledgeRoot: root, authority, receipt: row })
     writeCommitIntent(root, { schemaVersion: 1, candidateId: row.candidateId, bundleId: row.recordId, deltaKind: 'Add', epoch: authority.epoch })
     clearCommitIntent(root, row.candidateId)
     writeJobState({ knowledgeRoot: root, authority, candidateId: row.candidateId, lifecycle: 'done' })
@@ -247,7 +246,7 @@ describe('423 curation effect recovery', () => {
     const root = temporaryRoot()
     const authority = writer(root)
     const row = receipt()
-    const options = { knowledgeRoot: root, authority, auditBaseDir: join(root, 'audit'), receipt: row }
+    const options = { knowledgeRoot: root, authority, receipt: row }
     writeCurationEffectReceipt(options)
     const dir = join(root, COMPLETED_EFFECTS_SUBDIR)
     const file = join(dir, readdirSync(dir)[0]!)
@@ -263,7 +262,7 @@ describe('423 curation effect recovery', () => {
     const root = temporaryRoot()
     const authority = writer(root)
     const row = receipt()
-    writeCurationEffectReceipt({ knowledgeRoot: root, authority, auditBaseDir: join(root, 'audit'), receipt: row })
+    writeCurationEffectReceipt({ knowledgeRoot: root, authority, receipt: row })
     const dir = join(root, COMPLETED_EFFECTS_SUBDIR)
     const canonical = join(dir, readdirSync(dir)[0]!)
     writeFileSync(join(dir, '.DS_Store'), 'Bud1')

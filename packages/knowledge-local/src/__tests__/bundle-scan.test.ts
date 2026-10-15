@@ -51,7 +51,6 @@ describe('IDX-02 authoritative degraded bundle scan', () => {
     return {
       knowledgeRoot,
       productKey,
-      auditBaseDir: join(root, '.agent-qa'),
       commitArtifacts: 'none',
     }
   }

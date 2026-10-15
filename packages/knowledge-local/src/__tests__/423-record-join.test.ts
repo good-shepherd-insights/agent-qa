@@ -55,8 +55,8 @@ function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-423-join-'))
   roots.push(root)
   const knowledgeRoot = join(root, 'knowledge')
-  const saved = publishBundle({ knowledgeRoot, productKey: 'join-fixture',
-    auditBaseDir: join(root, 'audit'), commitArtifacts: 'none' }, input)
+  const saved = publishBundle({ knowledgeRoot, productKey: 'join-fixture', commitArtifacts: 'none' },
+    input)
   if (saved.kind !== 'published') throw new Error(`fixture publication: ${saved.kind}`)
   return { root, knowledgeRoot, ...saved }
 }

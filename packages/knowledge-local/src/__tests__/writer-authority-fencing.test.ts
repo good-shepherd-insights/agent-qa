@@ -25,10 +25,6 @@ import {
   type MeasurementObservation,
   type RecordId,
 } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import * as publicSurface from '../index.js'
@@ -157,12 +153,10 @@ const PRODUCT = 'writer-authority-fencing'
 describe('writer authority and bundle publication are one indivisible protocol (CR-01)', () => {
   let root: string
   let knowledgeRoot: string
-  let auditBaseDir: string
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'knowledge-writer-authority-fencing-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
-    auditBaseDir = join(root, '.agent-qa')
   })
 
   afterEach(() => {
@@ -196,7 +190,6 @@ describe('writer authority and bundle publication are one indivisible protocol (
     return {
       knowledgeRoot,
       productKey: PRODUCT,
-      auditBaseDir,
       commitArtifacts: 'none',
       writerLeaseId: authority.leaseId,
       writerEpoch: authority.epoch,
@@ -381,11 +374,9 @@ describe('writer authority and bundle publication are one indivisible protocol (
   ): CommitCurationDependencies {
     return {
       knowledgeRoot,
-      auditBaseDir,
       epoch: authority.epoch,
       profile,
       drainState: { supersedesSeenByAnchorKey: new Map() },
-      policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
       ...overrides,
     }
   }

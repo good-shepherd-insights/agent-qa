@@ -216,7 +216,7 @@ describe('432 canary posture facts and holds never read the legacy inbox (D-05, 
     if (lease.kind !== 'acquired') throw new Error(lease.kind)
     const onPromotionOutcome = vi.fn()
     // The pre-432 store config also named a proposals root; nothing may be written under it.
-    const storeConfig = { knowledgeRoot, auditBaseDir: runtimeRoot, agentQaRoot: runtimeRoot,
+    const storeConfig = { knowledgeRoot, agentQaRoot: runtimeRoot,
       executionContext: 'local-interactive' as const, epoch: lease.epoch, writerLeaseId: lease.leaseId,
       sourceBuildOrdinal: 43, resolvePromotionPosture: () => resolvedPromotionPosture(), onPromotionOutcome }
     const store = createLocalKnowledgeStore(storeConfig)

@@ -8,10 +8,6 @@ import type {
   Delta,
   DistilledObservation,
 } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
@@ -63,14 +59,12 @@ const CONVERSION_EVIDENCE_TOKEN = 'rollback-promotion-conversion-evidence'
 describe('rollback-to-promotion public acceptance (PROM-01/DCAY-05)', () => {
   let root: string
   let knowledgeRoot: string
-  let auditBaseDir: string
   let epoch: number
   let leaseId: string
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'knowledge-rollback-promotion-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
-    auditBaseDir = join(root, '.agent-qa')
     mkdirSync(knowledgeRoot, { recursive: true })
     const lease = acquireWriterLease(knowledgeRoot)
     if (lease.kind !== 'acquired') throw new Error('expected a fresh writer lease')
@@ -88,7 +82,6 @@ describe('rollback-to-promotion public acceptance (PROM-01/DCAY-05)', () => {
     const published = publishBundle({
       knowledgeRoot,
       productKey: PRODUCT,
-      auditBaseDir,
       commitArtifacts: 'none',
       writerLeaseId: 'rollback-promotion-fixture',
     }, {
@@ -175,11 +168,9 @@ describe('rollback-to-promotion public acceptance (PROM-01/DCAY-05)', () => {
   function dependencies(): CommitCurationDependencies {
     return {
       knowledgeRoot,
-      auditBaseDir,
       epoch,
       profile: { mode: 'drain-to-active' },
       drainState: { supersedesSeenByAnchorKey: new Map() },
-      policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
     }
   }
 
@@ -245,7 +236,6 @@ describe('rollback-to-promotion public acceptance (PROM-01/DCAY-05)', () => {
     // (1) The rollback report retracts both effects of the conversion job.
     const report = rollbackCurationJob({
       knowledgeRoot,
-      auditBaseDir,
       curationJobId: job.candidateId,
       resolvedAtOrdinal: 44,
     })
@@ -291,7 +281,6 @@ describe('rollback-to-promotion public acceptance (PROM-01/DCAY-05)', () => {
     // conversion job's, and that job was rolled back.
     const store = createLocalKnowledgeStore({
       knowledgeRoot,
-      auditBaseDir,
       executionContext: 'local-interactive',
       epoch,
       writerLeaseId: leaseId,

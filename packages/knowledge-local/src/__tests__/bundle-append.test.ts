@@ -109,7 +109,6 @@ describe('bundle append atomic checkpoint units (D-11/BNDL-03)', () => {
     config = {
       knowledgeRoot: join(root, 'agent-qa-knowledge'),
       productKey: 'Example Store / production',
-      auditBaseDir: join(root, '.agent-qa'),
       commitArtifacts: 'none',
       writerLeaseId: 'lease-append-fixture',
     }

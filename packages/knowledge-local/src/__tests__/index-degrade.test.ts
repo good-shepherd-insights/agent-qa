@@ -61,7 +61,6 @@ describe('IDX-02 authoritative degradation ladder', () => {
     return {
       knowledgeRoot,
       productKey: PRODUCT,
-      auditBaseDir: join(root, '.agent-qa'),
       commitArtifacts: 'none',
     }
   }

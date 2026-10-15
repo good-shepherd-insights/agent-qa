@@ -110,7 +110,6 @@ describe('multi-profile vector forgetting acceptance', () => {
     return {
       knowledgeRoot,
       productKey,
-      auditBaseDir: join(root, '.agent-qa'),
       commitArtifacts: 'none',
     }
   }
@@ -638,7 +637,6 @@ describe('multi-profile vector forgetting acceptance', () => {
       knowledgeRoot,
       recordId: migrated.target.id,
       initiator: 'multi-profile-purge-user',
-      auditBaseDir: join(root, '.agent-qa'),
       purgedAtOrdinal: 43,
     })
     expect(first.kind).toBe('purged')
@@ -720,7 +718,6 @@ describe('multi-profile vector forgetting acceptance', () => {
         knowledgeRoot,
         recordId: migrated.target.id,
         initiator: 'multi-profile-purge-user',
-        auditBaseDir: join(root, '.agent-qa'),
         purgedAtOrdinal: 43,
       })
     }).toThrow(/schema-owned vec table/u)

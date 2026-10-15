@@ -633,7 +633,6 @@ function config(knowledgeRoot: string, productKey = PRODUCT): BundleStoreConfig 
   return {
     knowledgeRoot,
     productKey,
-    auditBaseDir: join(dirname(knowledgeRoot), '.agent-qa'),
     commitArtifacts: 'none',
   }
 }

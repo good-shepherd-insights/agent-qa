@@ -9,10 +9,6 @@ import {
   type OriginClass,
   type RecordId,
 } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -59,13 +55,11 @@ const EMPTY_RECONCILE = {
 
 let root: string
 let knowledgeRoot: string
-let auditBaseDir: string
 let gcWriterAuthority: WriterLeaseAuthority | undefined
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'knowledge-gc-'))
   knowledgeRoot = join(root, 'agent-qa-knowledge')
-  auditBaseDir = join(root, '.agent-qa')
   mkdirSync(knowledgeRoot, { recursive: true })
   gcWriterAuthority = undefined
 })
@@ -78,7 +72,6 @@ function config() {
   return {
     knowledgeRoot,
     productKey: PRODUCT,
-    auditBaseDir,
     commitArtifacts: 'none' as const,
   }
 }
@@ -376,7 +369,6 @@ describe('removeBundleProjectionRows scoping (WR-01)', () => {
 })
 
 describe('drain-tail GC diagnostics (DCAY-05)', () => {
-  const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
   const author = vi.fn<CuratorAuthor>()
 
   function baseOperations() {
@@ -397,10 +389,8 @@ describe('drain-tail GC diagnostics (DCAY-05)', () => {
     }
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive',
-      policy,
       operations: {
         ...baseOperations(),
         readRebuildRequest: () => {
@@ -443,11 +433,9 @@ describe('drain-tail GC diagnostics (DCAY-05)', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       budgetMs: 100,
       author,
       executionContext: 'local-interactive',
-      policy,
       now,
       operations: { ...baseOperations(), runKnowledgeGc: gc },
     })
@@ -468,10 +456,8 @@ describe('drain-tail GC diagnostics (DCAY-05)', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive',
-      policy,
       operations: baseOperations(),
     })
 
@@ -520,10 +506,8 @@ describe('drain-tail GC diagnostics (DCAY-05)', () => {
     }
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive',
-      policy,
       operations: {
         ...baseOperations(),
         runKnowledgeGc: () => summary,
@@ -546,10 +530,8 @@ describe('drain-tail GC diagnostics (DCAY-05)', () => {
     const cleanup = vi.fn(() => 0)
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive',
-      policy,
       operations: {
         ...baseOperations(),
         runKnowledgeGc: () => EMPTY_GC_SUMMARY,
@@ -565,10 +547,8 @@ describe('drain-tail GC diagnostics (DCAY-05)', () => {
   it('contains a GC failure as diagnostics without failing the drain', async () => {
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive',
-      policy,
       operations: {
         ...baseOperations(),
         runKnowledgeGc: () => {

@@ -5,7 +5,6 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { asEvidenceToken, asRecordId, CurationSnapshotSchema, type BundleDraft, type Delta, type RecordChange } from '@vostride/agent-qa-schema'
 import { diffSince } from '../diff-since.js'
-import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import * as bundleAppend from '../bundle-append.js'
 import { loadBundle } from '../bundle-read.js'
 import { commitCurationDelta, type CommitCurationDependencies, type CommitCurationJob } from '../curator/commit.js'
@@ -46,8 +45,8 @@ function commitFixture(executionContext: 'ci' | 'local-interactive' = 'ci') {
   const lease = acquireWriterLease(root)
   if (lease.kind !== 'acquired') throw new Error('expected fresh lease')
   const authority = { leaseId: lease.leaseId, epoch: lease.epoch }
-  const deps: CommitCurationDependencies = { knowledgeRoot: root, auditBaseDir: join(root, 'audit'), epoch: lease.epoch,
-    profile: { mode: 'propose-only' }, drainState: { supersedesSeenByAnchorKey: new Map() }, policy: loadGuardrailPolicy(defaultGuardrailPolicyInput) }
+  const deps: CommitCurationDependencies = { knowledgeRoot: root, epoch: lease.epoch,
+    profile: { mode: 'propose-only' }, drainState: { supersedesSeenByAnchorKey: new Map() } }
   function draft(name: string): BundleDraft {
     return { kind: 'fact', subtype: 'selector', anchors: [{ t: 'el', role: 'button', name }, { t: 'page', route: '/checkout' }, { t: 'selector', literal: '[data-testid="checkout"]' }],
       scope: { tier: 'product', key: 'storefront' }, summary: `${name} selector`, body: `${name} verified`,
@@ -148,8 +147,8 @@ describe('423 curation snapshot', () => {
   it('SNAPSHOT-ROWS-IN-DIFF finds every snapshot change in the real diff; only run-created records carry the run link', async () => {
     const f = fiveBucketFixture()
     const run = 'synthetic-run-43'
-    const report = await drainQueue({ knowledgeRoot: f.root, auditBaseDir: f.deps.auditBaseDir, lease: f.authority,
-      author: async () => ({ kind: 'fallback-required', reason: 'no-model' }), executionContext: 'ci', policy: f.deps.policy,
+    const report = await drainQueue({ knowledgeRoot: f.root, lease: f.authority,
+      author: async () => ({ kind: 'fallback-required', reason: 'no-model' }), executionContext: 'ci',
       maintenance: 'skip', sourceRunId: run })
     expect({ failures: report.failures, requeued: report.requeued, remaining: report.remaining })
       .toEqual({ failures: 0, requeued: 0, remaining: 0 })
@@ -213,11 +212,11 @@ describe('423 curation snapshot', () => {
     const original = bundleAppend.appendOutcomeEvent
     vi.spyOn(bundleAppend, 'appendOutcomeEvent').mockImplementation((config, id, event) => event.type === 'superseded' ? { kind: 'not-found' } : original(config, id, event))
     let claimed = false
-    const report = await drainQueue({ knowledgeRoot: f.root, auditBaseDir: f.deps.auditBaseDir, lease: f.authority,
+    const report = await drainQueue({ knowledgeRoot: f.root, lease: f.authority,
       author: async () => ({ kind: 'authored', deltas: [
         ...(mode === 'single' ? [] : [{ ...f.add, bundle: f.draft('Sibling') }]), f.supersede],
         authorship: f.checkpoint(f.supersede).authorship }),
-      executionContext: 'local-interactive', policy: f.deps.policy, maintenance: 'skip', sourceRunId: 'synthetic-run-43',
+      executionContext: 'local-interactive', maintenance: 'skip', sourceRunId: 'synthetic-run-43',
       operations: {
         claimNextJob: () => { if (claimed) return undefined; claimed = true; return f.claimed },
         commitCurationDelta: (deps, job, checkpoint) => commitCurationDelta(deps, job,
@@ -231,8 +230,8 @@ describe('423 curation snapshot', () => {
     expect(report.requeued).toBeGreaterThan(0)
     vi.restoreAllMocks()
     const author = vi.fn(async () => { throw new Error('retry must reuse authored checkpoint') })
-    const resumed = await drainQueue({ knowledgeRoot: f.root, auditBaseDir: f.deps.auditBaseDir, lease: f.authority,
-      author, executionContext: 'local-interactive', policy: f.deps.policy, maintenance: 'skip', sourceRunId: 'synthetic-run-43',
+    const resumed = await drainQueue({ knowledgeRoot: f.root, lease: f.authority,
+      author, executionContext: 'local-interactive', maintenance: 'skip', sourceRunId: 'synthetic-run-43',
       operations: { commitCurationDelta: (deps, job, checkpoint) => commitCurationDelta(deps, job,
         { ...checkpoint, neighborIds: [f.victim.bundleId] }) } })
     expect(author).not.toHaveBeenCalled()
@@ -250,9 +249,9 @@ describe('423 curation snapshot', () => {
       throw new TypeError('conflicting curation classification')
     })
     let claimed = false
-    const drained = drainQueue({ knowledgeRoot: f.root, auditBaseDir: f.deps.auditBaseDir, lease: f.authority,
+    const drained = drainQueue({ knowledgeRoot: f.root, lease: f.authority,
       author: async () => ({ kind: 'authored', deltas: [f.supersede], authorship: f.checkpoint(f.supersede).authorship }),
-      executionContext: 'local-interactive', policy: f.deps.policy, maintenance: 'skip', sourceRunId: 'synthetic-run-43',
+      executionContext: 'local-interactive', maintenance: 'skip', sourceRunId: 'synthetic-run-43',
       operations: {
         claimNextJob: () => { if (claimed) return undefined; claimed = true; return f.claimed },
         commitCurationDelta: (deps, job, checkpoint) => commitCurationDelta(deps, job,
@@ -299,7 +298,7 @@ describe('423 curation snapshot', () => {
     const confirm: Delta = { kind: 'Confirm', origin: 'agent', scope: f.add.scope, citedIds: [f.victim.bundleId], targetId: f.victim.bundleId,
       evidenceToken: asEvidenceToken(f.claimed.payload.evidenceToken) }
     expect(commitCurationDelta(f.deps, f.claimed, f.checkpoint(confirm)).kind).toBe('applied')
-    const config = { knowledgeRoot: f.root, productKey: 'storefront', auditBaseDir: f.deps.auditBaseDir,
+    const config = { knowledgeRoot: f.root, productKey: 'storefront',
       commitArtifacts: 'none' as const, writerLeaseId: f.authority.leaseId, writerEpoch: f.authority.epoch }
     const append = (event: Parameters<typeof bundleAppend.appendOutcomeEvent>[2]) =>
       expect(bundleAppend.appendOutcomeEvent(config, f.victim.bundleId, event).kind).toBe('appended')
@@ -322,7 +321,7 @@ describe('423 curation snapshot', () => {
     const fixed = snapshot(f, run)
     expect(fixed.breakdown).toEqual({ added: 1, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 })
     const fixedBytes = JSON.stringify(fixed)
-    const config = { knowledgeRoot: f.root, productKey: 'storefront', auditBaseDir: f.deps.auditBaseDir,
+    const config = { knowledgeRoot: f.root, productKey: 'storefront',
       commitArtifacts: 'none' as const, writerLeaseId: f.authority.leaseId, writerEpoch: f.authority.epoch }
     expect(bundleAppend.appendOutcomeEvent(config, f.victim.bundleId, { type: 'promoted', buildOrdinal: 60,
       evidenceToken: asEvidenceToken('later-promotion'), curationJobId: `promote:${f.victimJob.candidateId}` }).kind).toBe('appended')
@@ -344,8 +343,8 @@ describe('423 curation snapshot', () => {
     commitCurationDelta(f.deps, f.claimed, f.checkpoint(f.supersede))
     const receiptsDir = join(f.root, COMPLETED_EFFECTS_SUBDIR)
     for (const name of readdirSync(receiptsDir)) rmSync(join(receiptsDir, name))
-    const report = await drainQueue({ knowledgeRoot: f.root, auditBaseDir: f.deps.auditBaseDir, lease: f.authority,
-      author: async () => ({ kind: 'fallback-required', reason: 'no-model' }), executionContext: 'ci', policy: f.deps.policy,
+    const report = await drainQueue({ knowledgeRoot: f.root, lease: f.authority,
+      author: async () => ({ kind: 'fallback-required', reason: 'no-model' }), executionContext: 'ci',
       maintenance: 'skip', sourceRunId: 'synthetic-run-43' })
     expect(report.failures).toBe(0)
     expect(report.effects).toEqual([])
@@ -355,8 +354,8 @@ describe('423 curation snapshot', () => {
   it('ZERO-EFFECT-SNAPSHOT records an all-zero snapshot for a clean drain that committed nothing for the run', async () => {
     const f = commitFixture()
     commitCurationDelta(f.deps, f.claimed, f.checkpoint(f.supersede))
-    const report = await drainQueue({ knowledgeRoot: f.root, auditBaseDir: f.deps.auditBaseDir, lease: f.authority,
-      author: async () => ({ kind: 'fallback-required', reason: 'no-model' }), executionContext: 'ci', policy: f.deps.policy,
+    const report = await drainQueue({ knowledgeRoot: f.root, lease: f.authority,
+      author: async () => ({ kind: 'fallback-required', reason: 'no-model' }), executionContext: 'ci',
       maintenance: 'skip', sourceRunId: 'synthetic-run-zero' })
     expect({ kind: report.kind, failures: report.failures, requeued: report.requeued, remaining: report.remaining })
       .toEqual({ kind: 'drained', failures: 0, requeued: 0, remaining: 0 })
@@ -379,7 +378,7 @@ describe('423 curation snapshot', () => {
     }
     expect(commitCurationDelta(f.deps, f.claimed, f.checkpoint(confirm)).kind).toBe('applied')
     if (kind === 'deprecation') {
-      const config = { knowledgeRoot: f.root, productKey: 'storefront', auditBaseDir: f.deps.auditBaseDir,
+      const config = { knowledgeRoot: f.root, productKey: 'storefront',
         commitArtifacts: 'none' as const, writerLeaseId: f.authority.leaseId, writerEpoch: f.authority.epoch }
       expect(bundleAppend.appendOutcomeEvent(config, f.victim.bundleId, { type: 'deprecated', buildOrdinal: 44,
         evidenceToken: asEvidenceToken('canary-deprecation'), curationJobId: 'canary-job', observationId, reason: 'synthetic canary retirement' }).kind).toBe('appended')
@@ -390,8 +389,8 @@ describe('423 curation snapshot', () => {
     expect(linked.filter(change => change.observationId === observationId)).toHaveLength(1)
     const receiptsDir = join(f.root, COMPLETED_EFFECTS_SUBDIR)
     for (const name of readdirSync(receiptsDir)) rmSync(join(receiptsDir, name))
-    const report = await drainQueue({ knowledgeRoot: f.root, auditBaseDir: f.deps.auditBaseDir, lease: f.authority,
-      author: async () => ({ kind: 'fallback-required', reason: 'no-model' }), executionContext: 'ci', policy: f.deps.policy,
+    const report = await drainQueue({ knowledgeRoot: f.root, lease: f.authority,
+      author: async () => ({ kind: 'fallback-required', reason: 'no-model' }), executionContext: 'ci',
       maintenance: 'skip', sourceRunId: 'synthetic-run-43', observationIds: [observationId] })
     expect(report.failures).toBe(0)
     if (kind === 'deprecation') {
@@ -407,9 +406,9 @@ describe('423 curation snapshot', () => {
   it.each(['failure', 'requeue'] as const)('INCOMPLETE-DRAIN-NO-ZERO %s never records a zero-effect drain that did not finish cleanly', async (mode) => {
     const f = commitFixture('local-interactive')
     let claimed = false
-    const report = await drainQueue({ knowledgeRoot: f.root, auditBaseDir: f.deps.auditBaseDir, lease: f.authority,
+    const report = await drainQueue({ knowledgeRoot: f.root, lease: f.authority,
       author: async () => { throw new Error('synthetic author failure') },
-      executionContext: 'local-interactive', policy: f.deps.policy, maintenance: 'skip', sourceRunId: 'synthetic-run-zero',
+      executionContext: 'local-interactive', maintenance: 'skip', sourceRunId: 'synthetic-run-zero',
       operations: {
         claimNextJob: () => {
           if (mode === 'failure') throw new Error('synthetic claim failure')

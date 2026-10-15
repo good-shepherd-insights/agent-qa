@@ -45,7 +45,6 @@ describe('active embedding profile resolution', () => {
     const config: BundleStoreConfig = {
       knowledgeRoot,
       productKey: 'Static Floor Product',
-      auditBaseDir: join(root, '.agent-qa'),
       commitArtifacts: 'none',
     }
     const input: PublishBundleInput = {

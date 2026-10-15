@@ -20,7 +20,7 @@ const calibrated: TrustPriorTable = { 'agent-verified': { alpha: 2.7, beta: 0.3 
 const derive = deriveBundleTrust
 
 function persist(root: string, entry: typeof fixture.cases[number]) {
-  const config = { knowledgeRoot: join(root, 'knowledge'), productKey: 'baseline', auditBaseDir: join(root, 'audit'), commitArtifacts: 'none' as const }
+  const config = { knowledgeRoot: join(root, 'knowledge'), productKey: 'baseline', commitArtifacts: 'none' as const }
   const published = publishBundle(config, entry.input)
   if (published.kind !== 'published') throw new Error('prior projection fixture publication refused')
   for (const event of entry.appended) expect(appendOutcomeEvent(config, published.id, BundleOutcomeEventSchema.parse(event)).kind).toBe('appended')

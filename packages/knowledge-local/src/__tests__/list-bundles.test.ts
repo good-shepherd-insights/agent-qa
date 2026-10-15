@@ -60,7 +60,6 @@ describe('listBundles read-only bundle listing', () => {
     return {
       knowledgeRoot,
       productKey,
-      auditBaseDir: join(root, '.agent-qa'),
       commitArtifacts: 'none',
     }
   }

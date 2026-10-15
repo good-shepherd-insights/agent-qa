@@ -13,7 +13,6 @@ import { join } from 'node:path'
 
 import { canonicalJson, type Delta } from '@vostride/agent-qa-schema'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
-import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import { ARTIFACT_STEP_CAP_BYTES } from '../artifact-copy.js'
@@ -212,10 +211,8 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
     })
     return drainQueue({
       knowledgeRoot,
-      auditBaseDir: join(root, '.agent-qa'),
       author,
       executionContext: 'local-interactive',
-      policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
       operations: {
         readRebuildRequest: () => ({ present: false }),
         readIndexMaintenanceState: () => ({

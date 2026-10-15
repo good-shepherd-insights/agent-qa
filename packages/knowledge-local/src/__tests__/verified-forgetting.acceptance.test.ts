@@ -12,10 +12,6 @@ import {
   type Delta,
   type RecordId,
 } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const denseHarness = vi.hoisted(() => {
@@ -122,14 +118,12 @@ const DEPRECATION_ORDINAL = 105
 
 let root: string
 let knowledgeRoot: string
-let auditBaseDir: string
 let epoch: number
 let leaseId: string
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'knowledge-verified-forgetting-'))
   knowledgeRoot = join(root, 'agent-qa-knowledge')
-  auditBaseDir = join(root, '.agent-qa')
   scaffoldKnowledgeRoot(knowledgeRoot)
   const lease = acquireWriterLease(knowledgeRoot)
   if (lease.kind !== 'acquired') throw new Error('expected a fresh writer lease')
@@ -145,7 +139,6 @@ function config(): BundleStoreConfig {
   return {
     knowledgeRoot,
     productKey: PRODUCT,
-    auditBaseDir,
     commitArtifacts: 'none',
   }
 }
@@ -325,11 +318,9 @@ function dependencies(
 ): CommitCurationDependencies {
   return {
     knowledgeRoot,
-    auditBaseDir,
     epoch,
     profile: { mode: 'drain-to-active' },
     drainState: { supersedesSeenByAnchorKey: new Map() },
-    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
     ...(hooks === undefined ? {} : { hooks }),
   }
 }

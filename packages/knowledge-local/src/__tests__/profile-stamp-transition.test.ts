@@ -53,7 +53,6 @@ describe('embedding profile stamp transitions', () => {
     const config: BundleStoreConfig = {
       knowledgeRoot,
       productKey: 'Profile Transition Product',
-      auditBaseDir: join(root, '.agent-qa'),
       commitArtifacts: 'none',
     }
     const input: PublishBundleInput = {

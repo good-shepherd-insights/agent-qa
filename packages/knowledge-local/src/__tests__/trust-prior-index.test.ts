@@ -17,7 +17,7 @@ const prior = (alpha = 1.8): TrustPriorTable => ({ 'agent-observed': { alpha, be
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-prior-index-'))
   roots.push(root)
-  const config = { knowledgeRoot: join(root, 'knowledge'), productKey: 'fixture-storefront', auditBaseDir: join(root, 'audit'), commitArtifacts: 'none' as const }
+  const config = { knowledgeRoot: join(root, 'knowledge'), productKey: 'fixture-storefront', commitArtifacts: 'none' as const }
   const result = publishBundle(config, input)
   if (result.kind !== 'published') throw new Error('fixture refused')
   const lease = acquireWriterLease(config.knowledgeRoot)

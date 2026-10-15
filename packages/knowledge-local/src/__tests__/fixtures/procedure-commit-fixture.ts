@@ -3,10 +3,6 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { BundleDraft, Delta } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
@@ -27,7 +23,6 @@ export interface CommitFixtureProcedureOptions {
   /** Temp root that holds the `claimed/` staging dir; distinct from `knowledgeRoot`. */
   root: string
   knowledgeRoot: string
-  auditBaseDir?: string
   draft?: BundleDraft
   sourceRunId?: string
   buildOrdinal?: number
@@ -167,11 +162,9 @@ export function commitFixtureProcedure(options: CommitFixtureProcedureOptions) {
   }
   const dependencies: CommitCurationDependencies = {
     knowledgeRoot: options.knowledgeRoot,
-    auditBaseDir: options.auditBaseDir,
     epoch: authority.epoch,
     profile: { mode: 'drain-to-active' },
     drainState: { supersedesSeenByAnchorKey: new Map() },
-    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
   }
   return commitCurationDelta(dependencies, job, checkpoint)
 }

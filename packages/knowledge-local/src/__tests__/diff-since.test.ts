@@ -66,7 +66,6 @@ describe('diffSince deterministic maintenance history', () => {
     return {
       knowledgeRoot,
       productKey: 'shop',
-      auditBaseDir: join(root, '.agent-qa'),
       commitArtifacts: 'none',
     }
   }
@@ -76,7 +75,7 @@ describe('diffSince deterministic maintenance history', () => {
     const lease = acquireWriterLease(knowledgeRoot)
     if (lease.kind !== 'acquired') throw new Error('fixture lease unavailable')
     try {
-      const store = createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir: join(root, '.agent-qa'),
+      const store = createLocalKnowledgeStore({ knowledgeRoot,
         executionContext: 'local-interactive', writerLeaseId: lease.leaseId, epoch: lease.epoch,
         sourceBuildOrdinal: ordinal })
       await store.promote(recordId, [stampReceiptDigest({ schemaVersion: 1, gate: 3,
@@ -289,7 +288,6 @@ describe('diffSince deterministic maintenance history', () => {
       knowledgeRoot,
       recordId: purgedId,
       initiator: 'test-operator',
-      auditBaseDir: join(root, '.agent-qa'),
       purgedAtOrdinal: 21,
     })
 
@@ -330,7 +328,6 @@ describe('diffSince deterministic maintenance history', () => {
       knowledgeRoot,
       recordId: recordA,
       initiator: 'test-operator',
-      auditBaseDir: join(root, '.agent-qa'),
       purgedAtOrdinal: 101,
     })
     expect(firstPurge.kind).toBe('purged')
@@ -341,7 +338,6 @@ describe('diffSince deterministic maintenance history', () => {
       knowledgeRoot,
       recordId: recordB,
       initiator: 'test-operator',
-      auditBaseDir: join(root, '.agent-qa'),
       purgedAtOrdinal: 102,
     })
     expect(secondPurge.kind).toBe('purged')

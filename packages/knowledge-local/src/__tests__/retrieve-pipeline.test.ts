@@ -87,7 +87,6 @@ describe('RETR-01 composed retrieval pipeline', () => {
     return {
       knowledgeRoot,
       productKey: product,
-      auditBaseDir: join(root, '.agent-qa'),
       commitArtifacts: 'none',
     }
   }

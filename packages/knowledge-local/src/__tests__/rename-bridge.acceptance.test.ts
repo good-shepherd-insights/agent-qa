@@ -9,10 +9,6 @@ import {
   type Delta,
   type RecordId,
 } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
@@ -64,14 +60,12 @@ const NEW_ANCHORS = [NEW_ELEMENT, PAGE, SELECTOR] as const
 
 let root: string
 let knowledgeRoot: string
-let auditBaseDir: string
 let epoch: number
 let leaseId: string
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'knowledge-rename-bridge-'))
   knowledgeRoot = join(root, 'agent-qa-knowledge')
-  auditBaseDir = join(root, '.agent-qa')
   mkdirSync(knowledgeRoot, { recursive: true })
   const lease = acquireWriterLease(knowledgeRoot)
   if (lease.kind !== 'acquired') throw new Error('expected a fresh writer lease')
@@ -88,7 +82,6 @@ function publishVictim(): PublishedBundle {
     {
       knowledgeRoot,
       productKey: PRODUCT,
-      auditBaseDir,
       commitArtifacts: 'none',
     },
     {
@@ -136,7 +129,6 @@ function publishLexicalDistractors(): void {
       {
         knowledgeRoot,
         productKey: PRODUCT,
-        auditBaseDir,
         commitArtifacts: 'none',
       },
       {
@@ -259,11 +251,9 @@ function renameCheckpoint(
 function dependencies(): CommitCurationDependencies {
   return {
     knowledgeRoot,
-    auditBaseDir,
     epoch,
     profile: { mode: 'drain-to-active' },
     drainState: { supersedesSeenByAnchorKey: new Map() },
-    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
   }
 }
 

@@ -259,7 +259,6 @@ describe('observation graph rebuild integration', () => {
     return {
       knowledgeRoot,
       productKey,
-      auditBaseDir: join(root, '.agent-qa'),
       commitArtifacts: 'none',
     }
   }

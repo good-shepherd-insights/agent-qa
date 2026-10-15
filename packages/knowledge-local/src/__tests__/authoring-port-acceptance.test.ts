@@ -69,12 +69,10 @@ function runLinkedProvenance(): BundleProvenance {
 describe('createAuthoringReader through the public barrels (375-08 idiom)', () => {
   let root: string
   let knowledgeRoot: string
-  let auditBaseDir: string
 
   beforeEach(() => {
     root = join(tmpdir(), `authoring-port-acceptance-${randomUUID()}`)
     knowledgeRoot = join(root, 'agent-qa-knowledge')
-    auditBaseDir = join(root, '.agent-qa')
   })
 
   afterEach(() => {
@@ -85,7 +83,6 @@ describe('createAuthoringReader through the public barrels (375-08 idiom)', () =
     return {
       knowledgeRoot,
       productKey: PRODUCT,
-      auditBaseDir,
       commitArtifacts: 'none',
       writerLeaseId: 'authoring-acceptance',
     }

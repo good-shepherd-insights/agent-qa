@@ -67,10 +67,6 @@ import {
   enqueueArtifactFreeCandidateProjection,
   type ArtifactFreeCandidateProjectionInput,
 } from './fixtures/curation-candidate-fixture.js'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { asEvidenceToken, type RecordId } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -118,7 +114,6 @@ const fencedRemoveBundleProjectionRows = removeBundleProjectionRows as unknown a
   writerAuthority: WriterLeaseAuthority,
 ) => number
 
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 const NO_INDEX_MAINTENANCE = {
   indexAbsent: false,
   pendingEmbeddings: 0,
@@ -252,7 +247,6 @@ describe('queue and recovery writer-authority fencing (CR-02)', () => {
     const config = {
       knowledgeRoot,
       productKey: 'queue-authority-fencing',
-      auditBaseDir: join(root, '.agent-qa'),
       commitArtifacts: 'none' as const,
     }
     const generations = Array.from(
@@ -498,10 +492,8 @@ describe('queue and recovery writer-authority fencing (CR-02)', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir: join(root, '.agent-qa'),
       author,
       executionContext: 'local-headless',
-      policy,
       maintenance: 'skip',
       lease: stale,
       operations: {

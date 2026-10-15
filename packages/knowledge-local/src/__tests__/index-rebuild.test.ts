@@ -140,7 +140,6 @@ describe('IDX-01 derived-index rebuild projection', () => {
     return {
       knowledgeRoot,
       productKey,
-      auditBaseDir: join(root, '.agent-qa'),
       commitArtifacts: 'none',
     }
   }

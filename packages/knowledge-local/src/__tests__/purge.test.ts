@@ -234,7 +234,6 @@ describe('DCAY-05 sovereign purge', () => {
     return {
       knowledgeRoot,
       productKey,
-      auditBaseDir: join(root, '.agent-qa'),
       commitArtifacts: 'none',
     }
   }

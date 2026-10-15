@@ -159,7 +159,6 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
       {
         knowledgeRoot,
         productKey: 'fixture-storefront',
-        auditBaseDir: join(root, '.agent-qa'),
         commitArtifacts: 'none',
       },
       bundleInput(),
@@ -426,7 +425,6 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
       {
         knowledgeRoot,
         productKey: 'fixture-storefront',
-        auditBaseDir: join(root, '.agent-qa'),
         commitArtifacts: 'none',
         writerLeaseId: stale.leaseId,
       },
@@ -442,7 +440,6 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
         {
           knowledgeRoot,
           productKey: 'fixture-storefront',
-          auditBaseDir: join(root, '.agent-qa'),
           commitArtifacts: 'none',
           writerLeaseId: stale.leaseId,
           hooks: {
@@ -552,7 +549,6 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
       {
         knowledgeRoot,
         productKey: 'fixture-storefront',
-        auditBaseDir: join(root, '.agent-qa'),
         commitArtifacts: 'none',
         writerLeaseId: stale.leaseId,
       },
@@ -566,7 +562,6 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
         {
           knowledgeRoot,
           productKey: 'fixture-storefront',
-          auditBaseDir: join(root, '.agent-qa'),
           commitArtifacts: 'none',
           writerLeaseId: stale.leaseId,
           hooks: {

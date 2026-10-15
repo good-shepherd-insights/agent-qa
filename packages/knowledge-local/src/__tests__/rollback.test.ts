@@ -65,7 +65,6 @@ interface RollbackApi {
   resolveRollbackAffectedSet(input: Parameters<RollbackApi['rollbackCampaign']>[0]): RollbackReport['affected']
   rollbackCurationJob(input: {
     knowledgeRoot: string
-    auditBaseDir: string
     curationJobId: string
     resolvedAtOrdinal: number
     writerAuthority?: WriterLeaseAuthority
@@ -76,7 +75,6 @@ interface RollbackApi {
   }): RollbackReport
   rollbackCampaign(input: {
     knowledgeRoot: string
-    auditBaseDir: string
     resolvedAtOrdinal: number
     fromOrdinal?: number
     toOrdinal?: number
@@ -114,12 +112,10 @@ const SCOPE = { tier: 'product', key: PRODUCT } as const
 describe('DCAY-05 provenance-keyed rollback resolution', () => {
   let root: string
   let knowledgeRoot: string
-  let auditBaseDir: string
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'knowledge-rollback-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
-    auditBaseDir = join(root, '.agent-qa')
     mkdirSync(knowledgeRoot, { recursive: true })
   })
 
@@ -131,7 +127,6 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     return {
       knowledgeRoot,
       productKey,
-      auditBaseDir,
       commitArtifacts: 'none',
     }
   }
@@ -353,7 +348,6 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
 
     const report = rollbackApi().rollbackCurationJob({
       knowledgeRoot,
-      auditBaseDir,
       curationJobId: 'job-b',
       resolvedAtOrdinal: 20,
     })
@@ -403,7 +397,7 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
       originClass: 'agent-observed',
     })
 
-    const base = { knowledgeRoot, auditBaseDir, resolvedAtOrdinal: 20 }
+    const base = { knowledgeRoot, resolvedAtOrdinal: 20 }
     expect(rollbackApi().resolveRollbackAffectedSet({ ...base, fromOrdinal: 8 })
       .mintedBundleIds).toEqual([
       highAlphaVerified.id,
@@ -468,7 +462,6 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
 
     const report = rollbackApi().rollbackCurationJob({
       knowledgeRoot,
-      auditBaseDir,
       curationJobId: 'job-poisoned-add',
       resolvedAtOrdinal: 20,
     })
@@ -511,7 +504,6 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
 
     rollbackApi().rollbackCurationJob({
       knowledgeRoot,
-      auditBaseDir,
       curationJobId: 'job-cross-product-target',
       resolvedAtOrdinal: 20,
     })
@@ -541,7 +533,6 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
 
     const report = rollbackApi().rollbackCurationJob({
       knowledgeRoot,
-      auditBaseDir,
       curationJobId: 'job-confirm-poison',
       resolvedAtOrdinal: 20,
     })
@@ -623,7 +614,6 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
 
     const rollbackInput = {
       knowledgeRoot,
-      auditBaseDir,
       curationJobId: 'job-poisoned-supersede',
       resolvedAtOrdinal: 20,
     }
@@ -745,7 +735,6 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
 
     const report = rollbackApi().rollbackCurationJob({
       knowledgeRoot,
-      auditBaseDir,
       curationJobId: 'job-redacted-supersede',
       resolvedAtOrdinal: 20,
     })
@@ -800,7 +789,6 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
 
     const report = rollbackApi().rollbackCurationJob({
       knowledgeRoot,
-      auditBaseDir,
       curationJobId: 'job-thrash-unknown',
       resolvedAtOrdinal: 20,
     })
@@ -846,7 +834,6 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
 
     const report = rollbackApi().rollbackCurationJob({
       knowledgeRoot,
-      auditBaseDir,
       curationJobId: 'job-conversion',
       resolvedAtOrdinal: 20,
     })
@@ -906,7 +893,6 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
 
     const report = rollbackApi().rollbackCurationJob({
       knowledgeRoot,
-      auditBaseDir,
       curationJobId: 'job-cascade-keeper',
       resolvedAtOrdinal: 20,
     })
@@ -942,7 +928,6 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     })).toEqual({ kind: 'appended' })
     const baseInput = {
       knowledgeRoot,
-      auditBaseDir,
       curationJobId: 'job-promotion-preview-race',
       resolvedAtOrdinal: 20,
     }
@@ -988,7 +973,6 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
 
     const report = rollbackApi().rollbackCurationJob({
       knowledgeRoot,
-      auditBaseDir,
       curationJobId: 'job-survivor-keeper',
       resolvedAtOrdinal: 20,
     })
@@ -1027,7 +1011,6 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
 
     const report = rollbackApi().rollbackCurationJob({
       knowledgeRoot,
-      auditBaseDir,
       curationJobId: 'job-byte-victim',
       resolvedAtOrdinal: 20,
     })
@@ -1065,7 +1048,6 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     try {
       rollbackApi().rollbackCurationJob({
         knowledgeRoot,
-        auditBaseDir,
         curationJobId: 'job-causality-equal',
         resolvedAtOrdinal: 5,
       })
@@ -1086,7 +1068,6 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     // The strictly-later boundary N+1 succeeds with the existing behavior unchanged.
     const report = rollbackApi().rollbackCurationJob({
       knowledgeRoot,
-      auditBaseDir,
       curationJobId: 'job-causality-equal',
       resolvedAtOrdinal: 6,
     })
@@ -1107,7 +1088,6 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     try {
       rollbackApi().rollbackCurationJob({
         knowledgeRoot,
-        auditBaseDir,
         curationJobId: 'job-causality-lower',
         resolvedAtOrdinal: 4,
       })
@@ -1146,7 +1126,6 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     try {
       rollbackApi().rollbackCampaign({
         knowledgeRoot,
-        auditBaseDir,
         fromOrdinal: 1,
         resolvedAtOrdinal: 10,
       })
@@ -1177,7 +1156,6 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     })
     const rollbackInput = {
       knowledgeRoot,
-      auditBaseDir,
       curationJobId: 'job-replay-admission',
       resolvedAtOrdinal: 20,
     }
@@ -1218,7 +1196,6 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
 
     const report = rollbackApi().rollbackCurationJob({
       knowledgeRoot,
-      auditBaseDir,
       curationJobId: 'job-already-deprecated',
       resolvedAtOrdinal: 9,
     })
@@ -1237,7 +1214,6 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
 
     const report = rollbackApi().rollbackCurationJob({
       knowledgeRoot,
-      auditBaseDir,
       curationJobId: 'job-never-existed',
       resolvedAtOrdinal: 20,
     })
@@ -1270,7 +1246,6 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     expect(() =>
       rollbackApi().rollbackCurationJob({
         knowledgeRoot,
-        auditBaseDir,
         curationJobId: 'job-authority-after-resolution',
         resolvedAtOrdinal: 20,
         writerAuthority: authority,
@@ -1319,7 +1294,6 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     expect(() =>
       rollbackApi().rollbackCurationJob({
         knowledgeRoot,
-        auditBaseDir,
         curationJobId: 'job-authority-partial',
         resolvedAtOrdinal: 20,
         writerAuthority: authority,
@@ -1342,7 +1316,6 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     if (successor === undefined) throw new Error('expected successor writer authority')
     const resumed = rollbackApi().rollbackCurationJob({
       knowledgeRoot,
-      auditBaseDir,
       curationJobId: 'job-authority-partial',
       resolvedAtOrdinal: 20,
       writerAuthority: successor,

@@ -58,13 +58,11 @@ function walkFiles(root: string): string[] {
 describe('publishBundle staged committed publish (D-11/D-12/D-15)', () => {
   let root: string
   let knowledgeRoot: string
-  let auditBaseDir: string
   let artifactSource: string
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'knowledge-bundle-publish-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
-    auditBaseDir = join(root, '.agent-qa')
     artifactSource = join(root, 'fixture-artifact.bin')
     writeFileSync(artifactSource, makeArtifactFixture().bytes)
   })
@@ -77,7 +75,6 @@ describe('publishBundle staged committed publish (D-11/D-12/D-15)', () => {
     return {
       knowledgeRoot,
       productKey: 'Example Store / production',
-      auditBaseDir,
       commitArtifacts: 'none',
       ...overrides,
     }

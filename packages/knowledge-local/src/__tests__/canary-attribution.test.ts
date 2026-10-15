@@ -64,7 +64,6 @@ describe('canaryAttributionsFor joins served canary tuples to committed outcomes
     return {
       knowledgeRoot,
       productKey: 'shop',
-      auditBaseDir: join(root, '.agent-qa'),
       commitArtifacts: 'none',
     }
   }

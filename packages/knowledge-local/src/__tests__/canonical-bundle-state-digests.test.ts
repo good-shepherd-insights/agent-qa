@@ -24,8 +24,7 @@ describe('418 canonical bundle state digests', () => {
 
   function publish(screenStates: ScreenState[]) {
     const result = publishBundle({
-      knowledgeRoot, productKey: 'storefront', auditBaseDir: join(root, '.agent-qa'),
-      commitArtifacts: 'none',
+      knowledgeRoot, productKey: 'storefront', commitArtifacts: 'none',
     }, {
       draft: makeBundleDraftFixture(), discriminant: makeDiscriminantFixture(),
       originClass: 'agent-verified', createdAtOrdinal: 42, screenStates,

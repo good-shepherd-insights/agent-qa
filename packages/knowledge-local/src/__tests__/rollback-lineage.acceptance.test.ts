@@ -14,10 +14,6 @@ import {
   type Delta,
   type RecordId,
 } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
@@ -61,7 +57,6 @@ const ANCHORS: Anchor[] = [
 
 let root: string
 let knowledgeRoot: string
-let auditBaseDir: string
 let epoch: number
 let leaseId: string
 let writerAuthority: WriterLeaseAuthority
@@ -70,7 +65,6 @@ let jobSerial: number
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'knowledge-rollback-lineage-'))
   knowledgeRoot = join(root, 'agent-qa-knowledge')
-  auditBaseDir = join(root, '.agent-qa')
   mkdirSync(knowledgeRoot, { recursive: true })
   const lease = acquireWriterLease(knowledgeRoot)
   if (lease.kind !== 'acquired') throw new Error('expected a fresh writer lease')
@@ -92,7 +86,6 @@ function storeConfig() {
   return {
     knowledgeRoot,
     productKey: PRODUCT,
-    auditBaseDir,
     commitArtifacts: 'none' as const,
   }
 }
@@ -228,11 +221,9 @@ function drainState(): CommitCurationDependencies['drainState'] {
 function dependencies(): CommitCurationDependencies {
   return {
     knowledgeRoot,
-    auditBaseDir,
     epoch,
     profile: { mode: 'drain-to-active' },
     drainState: drainState(),
-    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
   }
 }
 
@@ -346,7 +337,6 @@ function lineage(asOfBuildOrdinal: number, windowBuilds = THRASH_WINDOW_BUILDS) 
 function rollbackJob(curationJobId: string, resolvedAtOrdinal: number) {
   return rollbackCurationJob({
     knowledgeRoot,
-    auditBaseDir,
     curationJobId,
     resolvedAtOrdinal,
   })

@@ -31,7 +31,6 @@ describe('BNDL-02 stable bundle identity over the live store', () => {
     config = {
       knowledgeRoot: join(root, 'agent-qa-knowledge'),
       productKey: 'identity-store',
-      auditBaseDir: join(root, '.agent-qa'),
       commitArtifacts: 'none',
     }
   })

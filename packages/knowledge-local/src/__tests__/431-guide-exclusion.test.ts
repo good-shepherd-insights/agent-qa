@@ -92,7 +92,6 @@ function publishRecord(root: string, knowledgeRoot: string, summary: string): { 
   const outcome = publishBundle({
     knowledgeRoot,
     productKey: PRODUCT,
-    auditBaseDir: join(root, '.agent-qa'),
     commitArtifacts: 'none',
     writerLeaseId: 'guide-exclusion',
   }, input)
