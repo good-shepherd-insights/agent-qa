@@ -7,7 +7,9 @@ import { join } from 'node:path'
 
 import { AGENT_ASK_FUNCTION_ID, invokeFunction } from '@vostride/agent-qa-agent'
 import type { JobModelCapability } from '@vostride/agent-qa-agent'
-import { createJsonlSessionLog, type ComposeLocalAgentInput } from '@vostride/agent-qa-agent-local'
+import {
+  createJsonlSessionLog, listSessions, type ComposeLocalAgentInput,
+} from '@vostride/agent-qa-agent-local'
 import {
   CHAT_SESSION_EVENT_KINDS, CHAT_TURN_STATUSES, CLAUSE_RECEIPT_STATUSES,
   type AgentAskResult, type MaskFn,
@@ -331,6 +333,82 @@ describe('C441-GAP2-TRANSCRIPT', () => {
     expect(switched.answer).toContain(MARKER)
     expect(sessionEvents('model_change')).toMatchObject([{ to: MARKER }])
     expect(JSON.stringify([result, switched])).not.toContain(DECLARED)
+    expect(sessionBytes()).not.toContain(DECLARED)
+  })
+})
+
+describe('C441-GAP3-TRANSCRIPT', () => {
+  const CHAT_MODEL_ID = `fixture:${DECLARED}`
+
+  const declaredIdChatModel = {
+    specificationVersion: 'v3',
+    provider: 'fixture',
+    modelId: CHAT_MODEL_ID,
+    supportedUrls: {},
+    doGenerate: () => Promise.reject(new Error('these cells never plan')),
+    doStream: (): never => {
+      throw new Error('these cells never stream')
+    },
+  }
+
+  // Every message goes to one host and one session, so the session's model state carries over.
+  async function chatTurns(
+    messages: readonly string[],
+    chatModel?: unknown,
+  ): Promise<AgentAskResult[]> {
+    const host = composeCliLocalAgent({
+      agentQaRoot, configPath, ...(chatModel === undefined ? {} : { chatModel: chatModel as never }),
+    })
+    try {
+      const results: AgentAskResult[] = []
+      let sessionId: string | undefined
+      for (const message of messages) {
+        const result = await runSafetyScope(
+          { executionContext: 'local-interactive' },
+          async () => await invokeFunction(
+            host.registry,
+            AGENT_ASK_FUNCTION_ID,
+            { message, ...(sessionId === undefined ? {} : { sessionId }) },
+            CLI_FUNCTION_CALLER,
+          ) as AgentAskResult,
+        )
+        sessionId = result.sessionId
+        results.push(result)
+      }
+      return results
+    } finally {
+      await host.close()
+    }
+  }
+
+  function modelChanges(): { source?: string; to?: string }[] {
+    return sessionEvents('model_change') as { source?: string; to?: string }[]
+  }
+
+  it('a /model whose name holds a declared value is recorded once, and two more turns record no switch', async () => {
+    const results = await chatTurns([`/model ${DECLARED}`, MESSAGE, MESSAGE])
+
+    expect(new Set(results.map((result) => result.sessionId)).size).toBe(1)
+    const changes = modelChanges()
+    expect(changes.filter((change) => change.source === 'config_reread')).toEqual([])
+    expect(changes).toHaveLength(1)
+    expect(changes[0]).toMatchObject({ source: 'verb', to: MARKER })
+    expect(sessionBytes()).not.toContain(DECLARED)
+  })
+
+  it('a chat model id holding a declared value is shown as its marker in the header and the listing', async () => {
+    await chatTurns([MESSAGE, MESSAGE], declaredIdChatModel)
+
+    const dir = join(agentQaRoot, 'sessions')
+    const files = readdirSync(dir).filter((name) => name.endsWith('.jsonl'))
+    expect(files).toHaveLength(1)
+    const header = JSON.parse(readFileSync(join(dir, files[0]!), 'utf8').split('\n')[0]!) as {
+      model?: string
+    }
+    expect(header.model).toBe(`fixture:${MARKER}`)
+    expect(listSessions(agentQaRoot).sessions.map((session) => session.model))
+      .toEqual([`fixture:${MARKER}`])
+    expect(modelChanges()).toEqual([])
     expect(sessionBytes()).not.toContain(DECLARED)
   })
 })
