@@ -1816,3 +1816,72 @@ describe('C441-CURATION', () => {
     }
   })
 })
+
+describe('C441-GAP2-CURATION', () => {
+  it('a typed value that only contains a declared value is never authored as the secret parameter', async () => {
+    const redactor = new SecretRedactor(new SecretStore({ PW: 'hunter2' }))
+    const handoff: CompletedRunHandoff = {
+      schemaVersion: 3,
+      runId: asRunId('r-c441-gap2-author'),
+      scope: { tier: 'product', key: 'storefront' },
+      buildOrdinal: 42,
+      executionContext: 'local-interactive',
+      aggregateVerdict: 'passed',
+      configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
+      startedAt: 1_750_000_000_000,
+      endedAt: 1_750_000_001_000,
+      tests: [{
+        testId: 'account::sign-in-extra',
+        testName: 'Sign in with the extra suffix',
+        testIndex: 0,
+        outcome: 'passed',
+        steps: [
+          guardrailStep({
+            stepIndex: 0,
+            stepText: 'Open the sign-in form',
+            ref: 'open',
+            name: 'Sign in',
+          }),
+          guardrailStep({
+            stepIndex: 1,
+            stepText: 'Type the password',
+            ref: 'password',
+            name: 'Password',
+            fillText: 'hunter2-extra',
+          }),
+        ],
+        filePath: 'account.spec.yaml',
+      }],
+    }
+    const [target] = projectCurationCandidates(handoff, (text) => redactor.redactString(text))
+      .filter((row) => row.kind === 'procedure')
+    const seed = parseProcedureTrajectorySeed(target!.bodySeed)
+    if (seed === undefined) throw new Error('expected a parseable trajectory seed')
+    const proposal = JSON.stringify({
+      candidates: [{
+        flowName: seed.flowName,
+        stepSpan: [0, 1],
+        parameters: [],
+        successAssertion: 'The password field holds the typed value',
+      }],
+    })
+
+    const outcome = await author([proposal])(
+      procedureJob({
+        bodySeed: canonicalJson(seed),
+        anchors: [
+          { t: 'flow', name: seed.flowName },
+          { t: 'page', route: F381451_PAGE },
+        ],
+      }),
+      [],
+    )
+    if (outcome.kind !== 'authored') throw new Error(`expected authored outcome, got ${outcome.kind}`)
+    const body = parseProcedureBody(addBundles(outcome.deltas)[0]!.body)
+
+    expect(body?.steps[1]?.action.values['text']).not.toEqual({ param: 'PW' })
+    expect(body?.steps[1]?.action.values['text']).toBe('[secret:PW]-extra')
+    expect(body?.parameters.map((parameter) => parameter.name)).not.toContain('PW')
+    expect(JSON.stringify(body)).not.toContain('hunter2')
+  })
+})

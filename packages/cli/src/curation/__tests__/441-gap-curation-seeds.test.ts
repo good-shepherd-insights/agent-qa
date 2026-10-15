@@ -77,6 +77,7 @@ function step(input: {
   target: ElementInfo
   url: string
   fillText?: string
+  interpolatedVariables?: { name: string; value: string }[]
 }): StepEvidence {
   const state = screen([input.target], input.url)
   const ref = input.target.ref
@@ -104,6 +105,9 @@ function step(input: {
       result: { success: true },
     }],
     verifierVerdict: { pass: true, reasoning: 'step verified' },
+    ...(input.interpolatedVariables === undefined
+      ? {}
+      : { interpolatedVariables: input.interpolatedVariables }),
   }
 }
 
@@ -274,5 +278,105 @@ describe('C441-GAP-CURATION', () => {
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+})
+
+const GAP2_PAGE = 'https://shop.example/sign-in'
+
+function maskOf(declared: Record<string, string>): (text: string) => string {
+  const redactor = new SecretRedactor(new SecretStore(declared))
+  return (text) => redactor.redactString(text)
+}
+
+function typedSlot(input: {
+  runId: string
+  declared: Record<string, string>
+  fillText: string
+  interpolatedVariables?: { name: string; value: string }[]
+}): { slot: unknown; payloads: CurationCandidatePayload[] } {
+  const root = mkdtempSync(join(tmpdir(), 'c441-gap2-curation-'))
+  try {
+    const knowledgeRoot = join(root, 'agent-qa-knowledge')
+    const runDir = join(root, 'runs', input.runId)
+    mkdirSync(runDir, { recursive: true })
+    const report = emitCurationCandidates({
+      handoff: run(input.runId, [
+        step({
+          stepIndex: 0,
+          stepText: 'Open the sign-in form',
+          target: element('open', 'Sign in'),
+          url: GAP2_PAGE,
+        }),
+        step({
+          stepIndex: 1,
+          stepText: 'Type the value',
+          target: element('field', 'Value', undefined, 'textbox'),
+          url: GAP2_PAGE,
+          fillText: input.fillText,
+          ...(input.interpolatedVariables === undefined
+            ? {}
+            : { interpolatedVariables: input.interpolatedVariables }),
+        }),
+      ]),
+      runDir,
+      knowledgeRoot,
+      mask: maskOf(input.declared),
+    })
+    const payloads = queuedPayloads(knowledgeRoot, report)
+    const procedure = payloads.find((row) => row.kind === 'procedure')
+    if (procedure === undefined) throw new Error('expected a queued procedure candidate')
+    const seed = parseProcedureTrajectorySeed(procedure.bodySeed)
+    if (seed === undefined) throw new Error('expected a parseable trajectory seed')
+    return { slot: seed.steps[1]?.action?.values['text'], payloads }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}
+
+describe('C441-GAP2-CURATION', () => {
+  it('a typed value that only contains a declared value is queued as a masked literal', () => {
+    const { slot, payloads } = typedSlot({
+      runId: 'r-c441-gap2-extra',
+      declared: { PW: 'hunter2' },
+      fillText: 'hunter2-extra',
+    })
+
+    expect(slot).toEqual({ observed: '[secret:PW]-extra', source: 'literal' })
+    expect(JSON.stringify(payloads)).not.toContain('hunter2')
+  })
+
+  it('a test variable whose value contains a declared value keeps its own binding', () => {
+    const { slot } = typedSlot({
+      runId: 'r-c441-gap2-email',
+      declared: { USER: 'qa-admin-42' },
+      fillText: 'qa-admin-42@example.com',
+      interpolatedVariables: [{ name: 'EMAIL', value: 'qa-admin-42@example.com' }],
+    })
+
+    expect(slot).toEqual({
+      observed: '[secret:USER]@example.com',
+      source: 'test-variable',
+      sourceName: 'EMAIL',
+    })
+  })
+
+  it('a template or marker with trailing text is not bound to the secret, and the whole value still is', () => {
+    const declared = { PW: 'hunter2' }
+
+    expect(typedSlot({
+      runId: 'r-c441-gap2-template',
+      declared,
+      fillText: '{{secret:PW}}-extra',
+    }).slot).toEqual({ observed: '[secret:PW]-extra', source: 'literal' })
+    expect(typedSlot({
+      runId: 'r-c441-gap2-marker',
+      declared,
+      fillText: '[secret:PW]-extra',
+    }).slot).toEqual({ observed: '[secret:PW]-extra', source: 'literal' })
+    expect(typedSlot({
+      runId: 'r-c441-gap2-whole',
+      declared,
+      fillText: 'hunter2',
+    }).slot).toEqual({ observed: '[secret:PW]', source: 'masked-secret', sourceName: 'PW' })
   })
 })
