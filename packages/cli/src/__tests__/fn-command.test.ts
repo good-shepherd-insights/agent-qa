@@ -1200,3 +1200,47 @@ describe('C441-GAP-DISPLAY', () => {
     }
   })
 })
+
+describe('C441-GAP2-DISPLAY', () => {
+  const roots: string[] = []
+  let originalExitCode: typeof process.exitCode
+
+  beforeEach(() => {
+    originalExitCode = process.exitCode
+  })
+
+  afterEach(() => {
+    process.exitCode = originalExitCode
+    for (const root of roots.splice(0)) {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fn runs.events --json keeps each line\'s seq and type and masks its payload', async () => {
+    const workspace = fixtureWorkspace(roots)
+    writeFileSync(join(workspace.root, '.env.secrets.local'), 'E_441=e\nPW_441=Hunter-42-zz\n', 'utf8')
+    seedEvents(workspace, 'run-alpha', fiveEvents().map((event) => ({
+      ...event, payload: { note: 'log in with Hunter-42-zz' } as never,
+    })))
+
+    const result = await invoke(workspace, [
+      'runs.events',
+      '--input',
+      JSON.stringify({ runId: 'run-alpha' }),
+      '--json',
+    ])
+
+    expect(result.stderr).toBe('')
+    expect(result.exitCode).toBeUndefined()
+    const lines = result.stdout.split('\n').filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+    expect(lines.map((line) => line.seq)).toEqual([1, 2, 3, 4, 5])
+    expect(lines.map((line) => line.type)).toEqual([
+      'runStarted', 'testStarted', 'stepStarted', 'testFinished', 'runFinished',
+    ])
+    expect(lines.map((line) => line.ts)).toEqual(fiveEvents().map((event) => event.ts))
+    expect(lines.map((line) => line.runId)).toEqual(Array(5).fill('run-alpha'))
+    expect(JSON.stringify(lines)).toContain('[secret:PW_441]')
+    expect(result.stdout).not.toContain('Hunter-42-zz')
+  })
+})

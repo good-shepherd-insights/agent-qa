@@ -7,12 +7,16 @@ import { join } from 'node:path'
 
 import { AGENT_ASK_FUNCTION_ID, invokeFunction } from '@vostride/agent-qa-agent'
 import type { JobModelCapability } from '@vostride/agent-qa-agent'
-import type { ComposeLocalAgentInput } from '@vostride/agent-qa-agent-local'
-import type { AgentAskResult, MaskFn } from '@vostride/agent-qa-schema'
+import { createJsonlSessionLog, type ComposeLocalAgentInput } from '@vostride/agent-qa-agent-local'
+import {
+  CHAT_SESSION_EVENT_KINDS, CHAT_TURN_STATUSES, CLAUSE_RECEIPT_STATUSES,
+  type AgentAskResult, type MaskFn,
+} from '@vostride/agent-qa-schema'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { runDaemonHost, type DaemonHostOperations } from '../../daemon/host.js'
+import { createDeclaredSecretMask } from '../declared-secrets.js'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
 
 const DECLARED = 'Hunter-42-zz'
@@ -270,5 +274,58 @@ describe('C441-GAP-TRANSCRIPT', () => {
     expect(sessionBytes()).not.toContain(DECLARED)
     expect(JSON.stringify(refused)).not.toContain(DECLARED)
     expect(JSON.stringify(answered)).not.toContain(DECLARED)
+  })
+})
+
+describe('C441-GAP2-TRANSCRIPT', () => {
+  beforeEach(() => {
+    writeFileSync(join(root, '.env.secrets.local'), `T_441=t\nPW_441=${DECLARED}\n`)
+  })
+
+  function sessionFileLines(): string[] {
+    const dir = join(agentQaRoot, 'sessions')
+    const files = readdirSync(dir).filter((name) => name.endsWith('.jsonl'))
+    expect(files).toHaveLength(1)
+    return readFileSync(join(dir, files[0]!), 'utf8').split('\n').filter((line) => line.trim() !== '')
+  }
+
+  it('a chat session written while a one-character value is declared re-opens with every event', async () => {
+    const answered = await sendInChat(MESSAGE).then((result) => result, (error: unknown) => error)
+
+    const lines = sessionFileLines()
+    const { sessionId } = JSON.parse(lines[0]!) as { sessionId: string }
+    const log = createJsonlSessionLog({
+      root: agentQaRoot, now: () => new Date(0).toISOString(), model: () => 'unbound', toolsetHash: () => 'unbound',
+    })
+    const reopened = await log.open(sessionId)
+    try {
+      expect(reopened.refusedLines).toEqual([])
+      expect(reopened.events).toHaveLength(lines.length - 1)
+      expect(reopened.events.find((event) => event.kind === 'user_message'))
+        .toMatchObject({ text: createDeclaredSecretMask(configPath).mask(MESSAGE) })
+      const turnId = reopened.events[0]?.turnId
+      for (const event of reopened.events) {
+        expect(CHAT_SESSION_EVENT_KINDS).toContain(event.kind)
+        expect(event.turnId).toBe(turnId)
+        expect(event.at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)
+      }
+      expect(answered).toMatchObject({ turnId })
+    } finally {
+      await reopened.close()
+    }
+    expect(sessionBytes()).not.toContain(DECLARED)
+  })
+
+  it('the turn result keeps its statuses as written and masks its answer and receipt clauses', async () => {
+    const result = await sendInChat(MESSAGE)
+
+    expect(CHAT_TURN_STATUSES).toContain(result.status)
+    expect(result.receipts).toHaveLength(1)
+    expect(CLAUSE_RECEIPT_STATUSES).toContain(result.receipts[0]?.status)
+    expect(sessionEvents('clause_receipt').map((event) => (event as { status?: string }).status))
+      .toEqual(result.receipts.map((receipt) => receipt.status))
+    expect(result.receipts[0]?.clause).toContain(MARKER)
+    expect(result.answer).toContain(MARKER)
+    expect(JSON.stringify(result)).not.toContain(DECLARED)
   })
 })
