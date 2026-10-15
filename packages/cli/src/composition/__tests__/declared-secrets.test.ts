@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   statSync,
   utimesSync,
@@ -169,6 +170,37 @@ describe('C441-LOADER', () => {
     loader.redactor().redactString('q^7')
 
     expect(filesUnder(root)).toEqual(before)
+  })
+})
+
+describe('C441-GAP-LOADER', () => {
+  it('one mask follows the secrets file a rewritten config names', () => {
+    const { root, configPath } = project(null, { secretsFile: 'a.secrets' })
+    writeFileSync(join(root, 'a.secrets'), 'A_441=alpha-value-1\n')
+    writeFileSync(join(root, 'bb.secrets'), 'B_441=bravo-value-22\n')
+    const { mask } = createDeclaredSecretMask(configPath)
+
+    expect(mask('alpha-value-1 bravo-value-22')).toBe('[secret:A_441] bravo-value-22')
+
+    const body = readFileSync(configPath, 'utf8')
+    writeFileSync(configPath, body.replace('secretsFile: a.secrets', 'secretsFile: bb.secrets'))
+
+    expect(mask('alpha-value-1 bravo-value-22')).toBe('alpha-value-1 [secret:B_441]')
+  })
+
+  it('a rewritten config that names no secrets file refuses', () => {
+    const { root, configPath } = project(null, { secretsFile: 'a.secrets' })
+    writeFileSync(join(root, 'a.secrets'), 'A_441=alpha-value-1\n')
+    const { mask } = createDeclaredSecretMask(configPath)
+
+    expect(mask('alpha-value-1')).toBe('[secret:A_441]')
+
+    const body = readFileSync(configPath, 'utf8')
+    writeFileSync(configPath, body.replace('  secretsFile: a.secrets\n', ''))
+
+    expect(refusalOf(() => mask('alpha-value-1')).lines).toEqual([
+      'Error: workspace.secretsFile is required. Run `agent-qa init` or set it in agent-qa.config.yaml.',
+    ])
   })
 })
 
