@@ -877,7 +877,6 @@ export interface BuildMemberRunConfigInput {
   workingMemory?: WorkingMemoryPort
   storageState?: StorageStatePort
   compressor?: ScreenshotCompressor
-  safetyHooks?: SafetyHookRunner
   knowledgeReader?: KnowledgeHintReader
   /** 407 D-13 — the composed rung, carried through untouched to the loop's evidence recorder. */
   knowledgeRetrievalRung?: Promise<RecordedRetrievalRung>
@@ -942,7 +941,6 @@ export function buildMemberRunConfig(input: BuildMemberRunConfigInput): MemberRu
     // otherwise) replaces the runner-local ceiling fallback on every tool-output value.
     guardBlob: guardToolOutput,
     compressor: input.compressor,
-    safetyHooks: input.safetyHooks,
     knowledgeReader: input.knowledgeReader,
     knowledgeRetrievalRung: input.knowledgeRetrievalRung,
     knowledgeBudgets: input.knowledgeBudgets,

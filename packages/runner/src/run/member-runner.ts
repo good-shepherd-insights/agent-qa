@@ -26,7 +26,6 @@ import type { LanguageModel } from 'ai'
 import type { StepModelScopeFactory, StepModelScopeKey } from './ports.js'
 import { computeToolSchemaDigest, RecordingEntrySchema } from '@vostride/agent-qa-schema'
 import type { DeclaredModelProfile, RecordingEntry } from '@vostride/agent-qa-schema'
-import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
 import type { Action, ActionResult, PlatformAdapter, RecordingCapability, RecordingStop, RuntimeAuthStateConfig } from '../platform.js'
 import type { AccessibilityViolation, StepResult, TestResult } from '../result.js'
 import type {
@@ -142,7 +141,6 @@ export interface MemberRunConfig {
   workingMemory?: WorkingMemoryPort
   storageState?: StorageStatePort
   compressor?: ScreenshotCompressor
-  safetyHooks?: SafetyHookRunner
   knowledgeReader?: KnowledgeHintReader
   knowledgeBudgets?: {
     brief: number
@@ -804,7 +802,6 @@ async function runMemberAttempt(
       workingMemory: config.workingMemory,
       storageState: config.storageState,
       compressor: config.compressor,
-      safetyHooks: config.safetyHooks,
       knowledgeReader: config.knowledgeReader,
       procedureFlow,
       carriedArtifacts,

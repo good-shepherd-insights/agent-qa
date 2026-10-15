@@ -1,9 +1,7 @@
 // Shared fakes for the runner loop test suite (353-04). Framework-free helpers: the
-// test files supply the it()/expect wrappers. Models a fake PlatformAdapter, a scripted
-// Planner/Verifier, and a structural SafetyHookRunner stub (RESEARCH Pitfall 2 — the
-// concrete HookRegistry is nominally typed, so the run-facing surface is stubbed here).
+// test files supply the it()/expect wrappers. Models a fake PlatformAdapter and a scripted
+// Planner/Verifier.
 import type { LanguageModel, LanguageModelUsage, ModelMessage } from 'ai'
-import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { PlatformAdapter, Action, ActionResult } from '../../platform.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
@@ -99,17 +97,6 @@ export function makeVerifier(results?: ScriptedVerdict[]): Verifier {
       call++
       return { verification: toVerificationResult(list[idx], { step, after, action }) }
     },
-  }
-}
-
-export function makeSafetyHooks(overrides: Partial<SafetyHookRunner> = {}): SafetyHookRunner {
-  return {
-    runContext: (context) => ({ context }),
-    runToolCall: (call) => ({ action: 'allow', call }),
-    runToolResult: (result) => ({ result }),
-    runProviderRequest: (params) => params,
-    runToolCallAsync: async (call) => ({ action: 'allow', call }),
-    ...overrides,
   }
 }
 

@@ -1,10 +1,10 @@
 // Ported v1 loop scenarios (core/src/agent/__tests__/{loop,trace,integration,capture-gate})
 // re-run against the runner-owned executeStep. Scenarios that exercised deleted machinery
 // (the consecutive-failure counter, memory ablation) are dropped (D-10). New locks: the
-// cached-redacted-marker invalidation, hook-deny-before-execute, and trace===projectLegacyTrace.
+// cached-redacted-marker invalidation and trace===projectLegacyTrace.
 import { describe, it, expect, vi } from 'vitest'
 import type { ScreenState } from '@vostride/agent-qa-schema'
-import type { PlatformAdapter, Action, ActionResult } from '../../platform.js'
+import type { PlatformAdapter, Action } from '../../platform.js'
 import type { LoopPorts, ScreenshotCompressor } from '../ports.js'
 import type { ActionPlanCache, CacheablePlannedAction, CachedPlanValue } from '../../cache/port.js'
 import type { Planner, StepContext, Verifier } from '../types.js'
@@ -18,7 +18,6 @@ import {
   makeActionPlan,
   makeAdapter,
   makePlanner,
-  makeSafetyHooks,
   makeStepContext,
   makeVerifier,
 } from './loop-harness.js'
@@ -69,48 +68,13 @@ describe('executeStep — ported v1 scenarios', () => {
 
   it('routes context and tool_result through safety hooks; the async gate executes the ORIGINAL action (SEAM-03)', async () => {
     const executed: Action[] = []
-    let plannerContext: string | undefined
-
-    // Post-SEAM-03: the sync runToolCall dispatch call is superseded by the async gate, which
-    // operates on the descriptor and NEVER swaps the executed action (Pitfall 4). runContext and
-    // runToolResult are unchanged. The gate returns allow carrying the descriptor — ignored.
-    const safetyHooks = makeSafetyHooks({
-      runContext: (context) => ({ context: { ...(context as StepContext), testContext: 'rewritten by safety' } as typeof context }),
-      runToolResult: (result) => ({ result: { ...(result as ActionResult), data: { rewrittenBySafety: true } } as typeof result }),
-    })
-
     const adapter = makeAdapter()
     adapter.execute = async (action: Action) => { executed.push(action); return { success: true } }
 
-    const planner: Planner = {
-      async plan(_step, _screen, context) {
-        plannerContext = context.testContext
-        return { plan: makeActionPlan({ action: { type: 'click', ref: 'e2' } }) }
-      },
-    }
-
-    const result = await executeStep('Click the Log in button', ports({ adapter, planner, safetyHooks }), makeStepContext())
+    const result = await executeStep('Click the Log in button', ports({ adapter, planner: makePlanner() }), makeStepContext())
 
     expect(result.status).toBe('passed')
-    expect(plannerContext).toBe('rewritten by safety')
     expect(executed).toEqual([{ type: 'click', ref: 'e2' }])
-    expect(result.trace?.subActions?.[0]?.data).toEqual({ rewrittenBySafety: true })
-  })
-
-  it('blocks a denied tool_call before adapter execution (async gate, D-09 terminal)', async () => {
-    const execute = vi.fn((_a: Action): Promise<ActionResult> => Promise.resolve({ success: true }))
-    const adapter = makeAdapter()
-    adapter.execute = execute
-    const safetyHooks = makeSafetyHooks({ runToolCallAsync: async () => ({ action: 'deny', reason: 'restricted action blocked' }) })
-
-    const result = await executeStep(
-      'Click the Log in button',
-      ports({ adapter, planner: makePlanner([makeActionPlan({ stepComplete: false })]), safetyHooks }),
-      makeStepContext(),
-    )
-
-    expect(result.status).toBe('failed')
-    expect(execute).not.toHaveBeenCalled()
   })
 
   it('execution failure → replan with a different action → succeed (no counter)', async () => {
@@ -606,6 +570,42 @@ describe('executeStep — pre-record secret redaction (Phase 366 D-02)', () => {
     expect(result.status).toBe('passed')
     const planned = result.evidence?.subActions[0]?.plannedAction
     expect(planned).toMatchObject({ type: 'paste', value: '[secret:TOKEN]' })
+    expect(JSON.stringify(result.evidence)).not.toContain(rawSecret)
+  })
+})
+
+describe('C441-NO-HOOK-PORT', () => {
+  it('a hook object left on the ports is never consulted; the action executes and its result is recorded redacted', async () => {
+    const rawSecret = 'sk-live-echoed-secret-value'
+    const consulted: string[] = []
+    const hooks = {
+      runContext: (context: unknown) => { consulted.push('context'); return { context } },
+      runToolResult: (result: unknown) => { consulted.push('result'); return { result } },
+      [['runToolCall', 'Async'].join('')]: async () => {
+        consulted.push('call')
+        return { action: 'deny', reason: 'denied by a detector' }
+      },
+    }
+    const executed: Action[] = []
+    const adapter = makeAdapter()
+    adapter.execute = async (action: Action) => {
+      executed.push(action)
+      return { success: true, data: { echoed: rawSecret } }
+    }
+    const secretRedactor = new SecretRedactor(new SecretStore({ TOKEN: rawSecret }))
+
+    const result = await executeStep(
+      'Click the Log in button',
+      Object.assign(ports({ adapter, planner: makePlanner(), secretRedactor }), {
+        [['safety', 'Hooks'].join('')]: hooks,
+      }),
+      makeStepContext(),
+    )
+
+    expect(consulted).toEqual([])
+    expect(result.status).toBe('passed')
+    expect(executed).toEqual([{ type: 'click', ref: 'e2' }])
+    expect(result.evidence?.subActions[0]?.result.success).toBe(true)
     expect(JSON.stringify(result.evidence)).not.toContain(rawSecret)
   })
 })

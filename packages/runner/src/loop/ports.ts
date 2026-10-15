@@ -28,7 +28,6 @@ import type {
   SubActionRecordedPayload,
 } from '@vostride/agent-qa-schema'
 import type { ConfigDigests } from '../run/ports.js'
-import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
 import type { PlatformAdapter } from '../platform.js'
 import type { KnowledgeHintReader } from '../knowledge-hint-reader.js'
 import type { ActionPlanCache } from '../cache/port.js'
@@ -344,8 +343,6 @@ export interface LoopPorts {
   beginMemoryTurn?: (scope?: ScopeKey, exposedIds?: readonly RecordId[]) => void
   /** Consume the successful direct reads served during the current live planning turn. */
   drainMemoryReadTraces?: () => ReadTrace[]
-  /** D-05 v48 safety seam (context/tool_call/tool_result); unpopulated until Phase 362. */
-  safetyHooks?: SafetyHookRunner
   plannerConfig?: PlannerConfig
   /** Wall-clock timeout for a single step (ms). 0 or undefined = no timeout. */
   stepTimeout?: number

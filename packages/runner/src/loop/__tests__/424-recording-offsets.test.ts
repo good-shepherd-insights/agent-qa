@@ -6,7 +6,7 @@ import type { LoopPorts } from '../ports.js'
 import { createRunEventBus } from '../../run/bus.js'
 import { createMemberEventSink } from '../../run/event-sink.js'
 import { SecretRedactor, SecretStore } from '../secrets.js'
-import { makeActionPlan, makeAdapter, makePlanner, makeStepContext, makeVerifier, makeSafetyHooks } from './loop-harness.js'
+import { makeActionPlan, makeAdapter, makePlanner, makeStepContext, makeVerifier } from './loop-harness.js'
 
 function fixture(path: 'live' | 'cache' | 'procedure' = 'live', zeroMs?: number) {
   const events: RunEventEnvelope[] = []
@@ -126,9 +126,6 @@ it('OFFSET-EQUAL-BOTH-PUBLISHED: a frozen clock retains both events in order', a
 it('ANNOTATION-AFTER-GATE: actual dispatch interval reaches evidence and bus without changing completion offset', async () => {
   const clock = vi.spyOn(performance, 'now').mockReturnValue(110)
   const f = fixture('live', 100)
-  f.ports.safetyHooks = makeSafetyHooks({ runToolCallAsync: async call => {
-    clock.mockReturnValue(200); return { action: 'allow', call }
-  } })
   const beginAnnotation = vi.fn(() => {
     const startMs = performance.now() - 100
     return () => ({ startMs, endMs: performance.now() - 100, scene: 'recorded-page' as const,
@@ -139,20 +136,10 @@ it('ANNOTATION-AFTER-GATE: actual dispatch interval reaches evidence and bus wit
   }, execute: async () => { clock.mockReturnValue(240); return { success: true, coordinates: { x: 40, y: 50 } } } }
   const result = await f.run()
   expect(beginAnnotation).toHaveBeenCalledOnce()
-  const witness = { startMs: 100, endMs: 140, scene: 'recorded-page', transform: 'identity', width: 390, height: 844 }
+  const witness = { startMs: 10, endMs: 140, scene: 'recorded-page', transform: 'identity', width: 390, height: 844 }
   expect(result.evidence?.subActions[0]?.result.annotation?.recording).toEqual(witness)
   expect(f.children()[0]?.result.annotation?.recording).toEqual(witness)
   expect(f.children()[0]?.recordingOffsetMs).toBe(140)
-})
-
-it('ANNOTATION-DENIED-ABSENT: policy denial never begins an execution witness', async () => {
-  const f = fixture()
-  const beginAnnotation = vi.fn()
-  f.ports.adapter = { ...f.ports.adapter, recording: { start: async () => ({}), stop: async () => undefined, beginAnnotation } }
-  f.ports.safetyHooks = makeSafetyHooks({ runToolCallAsync: async () => ({ action: 'deny', reason: 'denied' }) })
-  expect((await f.run()).status).toBe('failed')
-  expect(beginAnnotation).not.toHaveBeenCalled()
-  expect(f.children().every(child => child.result.annotation?.recording === undefined)).toBe(true)
 })
 
 it('ANNOTATION-RETRY-INTERVALS: failed and replanned attempts retain separate intervals', async () => {
