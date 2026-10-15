@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
+import { MARKER_WRITTEN_BACK_SENTENCE } from '@vostride/agent-qa-schema'
 import { formatConfigDebug, loadConfigFile, loadRequiredConfigFile, loadEnvOverrides, mergeConfigs, mergeWithTestConfig, mergeUseBlocks, resolveConfig } from '../config.js'
 import { readFile, writeFile, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -387,7 +388,7 @@ describe('resolveConfig', () => {
 async function runConfigCommand(
   dir: string,
   args: string[],
-): Promise<{ output: string; exitCode: number }> {
+): Promise<{ output: string; stdout: string; stderr: string; exitCode: number }> {
   const cwd = process.cwd()
   const exitCodeBefore = process.exitCode
   process.exitCode = undefined
@@ -400,7 +401,9 @@ async function runConfigCommand(
     const output = [...logSpy.mock.calls, ...errorSpy.mock.calls]
       .map((call) => call.join(' '))
       .join('\n')
-    return { output, exitCode: Number(process.exitCode ?? 0) }
+    const stdout = logSpy.mock.calls.map((call) => call.join(' ')).join('\n')
+    const stderr = errorSpy.mock.calls.map((call) => call.join(' ')).join('\n')
+    return { output, stdout, stderr, exitCode: Number(process.exitCode ?? 0) }
   } finally {
     process.chdir(cwd)
     process.exitCode = exitCodeBefore
@@ -520,5 +523,49 @@ describe('C441-GAP-CONFIG', () => {
     expect(output).toContain('use.buildTag saved to')
     expect(output).not.toContain('Hunter-42-zz')
     expect(exitCode).toBe(0)
+  })
+})
+
+describe('C441-GAP2-CONFIG', () => {
+  async function markerWorkspace(name: string): Promise<{ dir: string; before: string }> {
+    const dir = join(TMP_DIR, name)
+    await mkdir(dir, { recursive: true })
+    const config = makeValidConfig()
+    ;(config.use as Record<string, unknown>).buildTag = 'real-tag'
+    await writeFile(join(dir, 'agent-qa.config.yaml'), JSON.stringify(config))
+    await writeFile(join(dir, '.env.secrets.local'), 'PW_441=Hunter-42-zz\n')
+    return { dir, before: await readFile(join(dir, 'agent-qa.config.yaml'), 'utf-8') }
+  }
+
+  it('config set refuses a value holding a shown marker and leaves the file unchanged', async () => {
+    const { dir, before } = await markerWorkspace('set-gap2-value')
+
+    const { stdout, stderr, exitCode } = await runConfigCommand(dir, [
+      'set',
+      'use.buildTag',
+      '[secret:PW_441]',
+    ])
+
+    expect(exitCode).toBe(1)
+    expect(stderr).toContain('marker_written_back')
+    expect(stderr).toContain(MARKER_WRITTEN_BACK_SENTENCE)
+    expect(stdout).not.toContain('saved to')
+    expect(await readFile(join(dir, 'agent-qa.config.yaml'), 'utf-8')).toBe(before)
+  })
+
+  it('config set refuses a key path holding a shown marker and leaves the file unchanged', async () => {
+    const { dir, before } = await markerWorkspace('set-gap2-key')
+
+    const { stdout, stderr, exitCode } = await runConfigCommand(dir, [
+      'set',
+      'registry.targets.[secret:X]-web.url',
+      'https://shop.test',
+    ])
+
+    expect(exitCode).toBe(1)
+    expect(stderr).toContain('marker_written_back')
+    expect(stderr).toContain(MARKER_WRITTEN_BACK_SENTENCE)
+    expect(stdout).not.toContain('saved to')
+    expect(await readFile(join(dir, 'agent-qa.config.yaml'), 'utf-8')).toBe(before)
   })
 })
