@@ -189,8 +189,6 @@ function depsWith(options: { readonly withAnalysis: boolean }): FunctionDeps {
 function composeRegistry(options: { readonly withAnalysis: boolean }): FunctionRegistry {
   return createFunctionRegistry({
     deps: depsWith(options),
-    // Discards every row: this file asserts on the path, never on the audit trail.
-    auditSink: { appendGuardrailAudit() {} },
     // 2026-10-01 (432-35, D-12): no `resolveExecutionContext` registry option; the registry reads
     // no context (432-20).
   })

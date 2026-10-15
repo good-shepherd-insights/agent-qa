@@ -33,9 +33,7 @@ function fixture() {
   }
   // 432-13 (D-14): no confirm port — `invokeFunction` asks nobody. 432-14: no frame is entered
   // around the call either. 2026-10-02 (432-39, D-12): and the registry is handed no context.
-  const registry = createFunctionRegistry({ deps,
-    auditSink: { appendGuardrailAudit() {} },
-  })
+  const registry = createFunctionRegistry({ deps })
   const host: AgentHost = {
     runsPostProcessingFunctionId: 'test:post',
     runsEventsFunctionId: 'test:events', runsDetailFunctionId: 'test:detail',

@@ -47,7 +47,6 @@ it('REC-V3-ROW-READS-UNAVAILABLE-ORDINAL: cold registry reads only persisted v3 
         runs: { get: forbidden }, config: { getMasked: forbidden },
         evidenceBlobs: { read: forbidden },
       } as unknown as FunctionDeps,
-      auditSink: { appendGuardrailAudit() {} },
     })
     // 2026-10-01 (432-34, D-12): no `resolveExecutionContext` registry option and no `grantedScopes`
     // or `safeMode` on the caller; the registry reads none of them (432-20).

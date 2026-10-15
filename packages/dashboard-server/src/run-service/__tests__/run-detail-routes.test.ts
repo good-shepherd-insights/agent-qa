@@ -194,8 +194,6 @@ function composeRegistry(
 ): FunctionRegistry {
   return createFunctionRegistry({
     deps: depsWith(runDetail, evidenceBlobs, feedbackReads, secretMask),
-    // Discards every row: this file asserts on the path, never on the audit trail.
-    auditSink: { appendGuardrailAudit() {} },
   })
 }
 

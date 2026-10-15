@@ -272,7 +272,6 @@ describe('RUN-TARGET-HISTORY: runs.list filters on recorded targets, not current
           get: () => Promise.resolve(undefined),
         },
       } as never,
-      auditSink: { appendGuardrailAudit() {} } as never,
       // 2026-10-02 (432-38, D-12): no `resolveExecutionContext` registry option; the registry reads
       // no context (432-20).
     })

@@ -12,8 +12,8 @@
 // What this file keeps is the composed half of the claim, over the same three cases and the same
 // unknown-scope-key line: whatever state the old `grants.jsonl` is in — intact, revoked, damaged in
 // place or carrying a key the wire contract never admitted — the headless direct change is
-// dispatched exactly as it is with no file at all, no row is written, the listing verb is an unknown
-// function, and the file is left byte-identical.
+// dispatched exactly as it is with no file at all, the listing verb is an unknown function, and the
+// file is left byte-identical.
 //
 // THE SUBJECT is `knowledge.accept` over a record that was never published (432-17): it answers a
 // typed `target-not-found` without writing, so an invocation that resolves is the dispatch this file
@@ -39,7 +39,6 @@ import type {
   KnowledgeChangeOutput,
   MaskedResolvedConfig,
 } from '@vostride/agent-qa-schema'
-import type { AuditSink, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
@@ -99,23 +98,10 @@ const HUMAN: FunctionCaller = {
   origin: 'human',
 }
 
-// 2026-10-01 (432-19, D-17): the audit port has one append, for guardrail rows, so `rows` is every
-// row an invocation could write; "no execution-audit row" is now "no audit row of any kind".
-function capturingSink(): AuditSink & { rows: GuardrailAuditRow[] } {
-  const rows: GuardrailAuditRow[] = []
-  return {
-    rows,
-    appendGuardrailAudit(row: GuardrailAuditRow) {
-      rows.push(row)
-    },
-  }
-}
-
 describe('a grant ledger the build cannot fully read authorizes nothing, because nothing reads it', () => {
   let root: string
   let knowledgeRoot: string
   let agentQaRoot: string
-  let sink: ReturnType<typeof capturingSink>
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'grant-damage-'))
@@ -123,7 +109,6 @@ describe('a grant ledger the build cannot fully read authorizes nothing, because
     agentQaRoot = join(root, '.agent-qa')
     mkdirSync(agentQaRoot, { recursive: true })
     mkdirSync(knowledgeRoot, { recursive: true })
-    sink = capturingSink()
   })
 
   afterEach(() => {
@@ -148,7 +133,6 @@ describe('a grant ledger the build cannot fully read authorizes nothing, because
           resolveKnowledgeRoot: () => knowledgeRoot,
         }),
       },
-      auditSink: sink,
     })
   }
 
@@ -169,7 +153,6 @@ describe('a grant ledger the build cannot fully read authorizes nothing, because
   it('the control: with no ledger file at all, the headless invocation is dispatched, with no row', async () => {
     const answered = await headlessApply(host('local-headless'))
     expect(answered.outcome).toBe('target-not-found')
-    expect(sink.rows).toEqual([])
     expect(existsSync(ledger()), 'a ledger was created where none existed').toBe(false)
   })
 
@@ -180,7 +163,6 @@ describe('a grant ledger the build cannot fully read authorizes nothing, because
       writeFileSync(ledger(), bytes, 'utf8')
       const answered = await headlessApply(host('local-headless'))
       expect(answered.outcome).toBe('target-not-found')
-      expect(sink.rows).toEqual([])
       expect(readFileSync(ledger(), 'utf8')).toBe(bytes)
     })
 

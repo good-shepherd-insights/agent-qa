@@ -422,7 +422,6 @@ async function detail(db: DashboardDatabase, runId: string) {
       runDetail: createDashboardRunDetailReader(db),
       runs: { get: forbidden }, config: { getMasked: forbidden },
     } as unknown as FunctionDeps,
-    auditSink: { appendGuardrailAudit() {} },
   })
   // 2026-10-01 (432-35, D-12): no `resolveExecutionContext` registry option and no `grantedScopes`
   // or `safeMode` on the caller; the registry reads none of them (432-20).

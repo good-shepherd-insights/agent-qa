@@ -69,10 +69,6 @@ const REGISTRY_IDS = createFunctionRegistry({
   // Listing reads declarations only — no port is touched — so the layer needs nothing real
   // in order to enumerate itself.
   deps: {} as FunctionDeps,
-  // Required at construction (D-11), and inert here: listing never dispatches, so nothing
-  // is ever written to it. Declared inline so this source-only package keeps depending on
-  // nothing.
-  auditSink: { appendGuardrailAudit() {} },
 })
   // 432-20 (D-12): the tokenless caller shape. The listing is the same for every caller, so the
   // retired grant fields and the registry's retired context option are not supplied here.

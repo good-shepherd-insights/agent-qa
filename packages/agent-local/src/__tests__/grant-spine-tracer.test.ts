@@ -57,7 +57,6 @@ import {
   invokeFunction,
 } from '@vostride/agent-qa-agent'
 import type { FunctionRegistry } from '@vostride/agent-qa-agent'
-import type { AuditSink, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import {
   publishBundleForTest,
   type BundleStoreConfig,
@@ -101,30 +100,15 @@ const CALLER: FunctionCaller = {
   origin: 'agent',
 }
 
-/** Captures what the gate wrote, which is the only place `trustSource` is observable. */
-// 2026-10-01 (432-19, D-17): the audit port has one append, for guardrail rows, so `rows` is every
-// row an invocation could write; "no execution-audit row" is now "no audit row of any kind".
-function capturingSink(): AuditSink & { rows: GuardrailAuditRow[] } {
-  const rows: GuardrailAuditRow[] = []
-  return {
-    rows,
-    appendGuardrailAudit(row: GuardrailAuditRow) {
-      rows.push(row)
-    },
-  }
-}
-
 describe('a committed standing grant is consumed by nothing (432-13)', () => {
   let root: string
   let knowledgeRoot: string
   let agentQaRoot: string
-  let sink: ReturnType<typeof capturingSink>
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'grant-spine-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
     agentQaRoot = join(root, '.agent-qa')
-    sink = capturingSink()
   })
 
   afterEach(() => {
@@ -188,7 +172,6 @@ describe('a committed standing grant is consumed by nothing (432-13)', () => {
           resolveKnowledgeRoot: () => knowledgeRoot,
         }),
       },
-      auditSink: sink,
     })
   }
 
@@ -237,7 +220,6 @@ describe('a committed standing grant is consumed by nothing (432-13)', () => {
       CALLER,
     )) as KnowledgeChangeOutput
     expect(applied.outcome).toBe('applied')
-    expect(sink.rows).toEqual([])
 
     // ── LEG 2/3: a grant and then its revoke, as committed bytes. Neither is read.
     append([
@@ -260,11 +242,10 @@ describe('a committed standing grant is consumed by nothing (432-13)', () => {
     ])
 
     // The record is tombstoned now, so the same call answers the already-tombstoned state: the
-    // answer is dispatch's, and no gate row precedes it.
+    // answer is dispatch's.
     await expect(
       invokeFunction(registry, APPLY_FUNCTION_ID, input, CALLER),
     ).resolves.toBeDefined()
-    expect(sink.rows).toEqual([])
 
     // The committed artifact still holds BOTH events, in the order they happened.
     const committed = readFileSync(ledgerPath(), 'utf8')
@@ -300,7 +281,6 @@ describe('a committed standing grant is consumed by nothing (432-13)', () => {
       CALLER,
     )) as KnowledgeChangeOutput
     expect(applied.outcome).toBe('applied')
-    expect(sink.rows).toEqual([])
     expect(readFileSync(ledgerPath(), 'utf8'), 'the old ledger was rewritten').toBe(before)
   }, 60_000)
 })

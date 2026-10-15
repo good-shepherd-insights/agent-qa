@@ -175,7 +175,6 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
             }
           : {}),
       },
-      auditSink: { appendGuardrailAudit() {} } as never,
     })
   }
 
@@ -373,7 +372,6 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
           ...extra,
         } as Parameters<typeof createKnowledgeReview>[0]),
       },
-      auditSink: { appendGuardrailAudit() {} } as never,
     })
   }
 

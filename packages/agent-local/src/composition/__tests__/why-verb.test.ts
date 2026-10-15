@@ -245,9 +245,6 @@ describe('knowledge.brief.why answers from the persisted trace (387-06)', () => 
           get: () => Promise.resolve(undefined),
         },
       },
-      auditSink: {
-        appendGuardrailAudit() {},
-      } as never,
       // 2026-10-02 (432-38, D-12): no `resolveExecutionContext` registry option; the registry reads
       // no context (432-20).
     })

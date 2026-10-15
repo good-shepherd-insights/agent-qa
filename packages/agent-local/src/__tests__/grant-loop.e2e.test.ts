@@ -12,7 +12,7 @@
 // revoke runs with no confirmation) lost its subject. What is measured instead, over the same
 // composition: neither grant id is a capability of the host, every door refuses both as unknown
 // functions, a workspace's old `grants.jsonl` is left byte-identical, and a headless direct change
-// still runs with no confirmation and writes no decision row.
+// still runs with no confirmation.
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -36,7 +36,6 @@ import type {
   KnowledgeChangeOutput,
   MaskedResolvedConfig,
 } from '@vostride/agent-qa-schema'
-import type { AuditSink, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
@@ -78,30 +77,16 @@ const LEGACY_LEDGER_BYTES = [
   '',
 ].join('\n')
 
-// 2026-10-01 (432-19, D-17): the audit port has one append, for guardrail rows, so `rows` is every
-// row an invocation could write; "no execution-audit row" is now "no audit row of any kind".
-function capturingSink(): AuditSink & { rows: GuardrailAuditRow[] } {
-  const rows: GuardrailAuditRow[] = []
-  return {
-    rows,
-    appendGuardrailAudit(row: GuardrailAuditRow) {
-      rows.push(row)
-    },
-  }
-}
-
 describe('C432-NO-GRANT-OPS: the grant loop has no verbs left on the composed host', () => {
   let root: string
   let knowledgeRoot: string
   let agentQaRoot: string
-  let sink: ReturnType<typeof capturingSink>
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'grant-loop-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
     agentQaRoot = join(root, '.agent-qa')
     mkdirSync(agentQaRoot, { recursive: true })
-    sink = capturingSink()
   })
 
   afterEach(() => {
@@ -164,7 +149,6 @@ describe('C432-NO-GRANT-OPS: the grant loop has no verbs left on the composed ho
           resolveKnowledgeRoot: () => knowledgeRoot,
         }),
       },
-      auditSink: sink,
       // 432-13: no standing-approval reader and no confirm port — `invokeFunction` asks nobody.
     })
   }
@@ -217,12 +201,11 @@ describe('C432-NO-GRANT-OPS: the grant loop has no verbs left on the composed ho
         .rejects.toBeInstanceOf(UnknownFunctionError)
     }
     expect(readFileSync(legacyLedger(), 'utf8')).toBe(LEGACY_LEDGER_BYTES)
-    expect(sink.rows).toEqual([])
   }, 120_000)
 
   // RE-SPELLED 2026-10-01 (432-18): the headless revoke this cell drove is deleted. The surviving
-  // claim — a decision verb runs headless with no confirmation and writes no decision row — is
-  // measured on the direct change, beside an old ledger that names a grant for exactly that class.
+  // claim — a decision verb runs headless with no confirmation — is measured on the direct change,
+  // beside an old ledger that names a grant for exactly that class.
   it('C432-INVOKE-DIRECT: both decision verbs run in a headless context with no confirmation', async () => {
     plantLegacyLedger()
     const recordId = publish('headless')
@@ -234,7 +217,6 @@ describe('C432-NO-GRANT-OPS: the grant loop has no verbs left on the composed ho
       HUMAN,
     )) as KnowledgeChangeOutput
     expect(changed).toMatchObject({ outcome: 'applied', recordIds: [recordId] })
-    expect(sink.rows).toEqual([])
     expect(readFileSync(legacyLedger(), 'utf8')).toBe(LEGACY_LEDGER_BYTES)
   }, 120_000)
 })

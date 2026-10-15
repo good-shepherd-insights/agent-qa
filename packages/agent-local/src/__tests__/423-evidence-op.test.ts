@@ -90,8 +90,7 @@ it.each(['both', 'runDetail', 'evidenceBlobs'] as const)(
       ...(missing === 'both' || missing === 'runDetail' ? {} : { runDetail: { read: f.read } }),
       ...(missing === 'both' || missing === 'evidenceBlobs' ? {} : { evidenceBlobs: { read: f.forbidden } }),
     } as unknown as FunctionDeps
-    const registry = agent.createFunctionRegistry({ deps,
-      auditSink: { appendGuardrailAudit() {} } })
+    const registry = agent.createFunctionRegistry({ deps })
     try {
       expect(registry.list(caller).find(item => item.id === op)?.bindingStatus).toBe('unbound')
       expect(registry.list(caller).find(item => item.id === 'runs.detail')?.bindingStatus)
