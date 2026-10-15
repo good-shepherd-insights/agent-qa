@@ -79,8 +79,8 @@ describe('DashboardDatabase', () => {
     // a chain — it is the ONE terminal entry stamped at `SCHEMA_VERSION`, because no database is
     // ever migrated from an older shape (an older one is refused by name), so a chain of
     // intermediate versions would be sql nothing can ever walk.
-    it('SCHEMA_VERSION is 4', () => {
-      expect(SCHEMA_VERSION).toBe(4)
+    it('SCHEMA_VERSION is 5', () => {
+      expect(SCHEMA_VERSION).toBe(5)
     })
 
     it('MIGRATIONS is exactly one entry, stamped at the current schema version', () => {
@@ -141,6 +141,9 @@ describe('DashboardDatabase', () => {
         'memory_log',
         'test_id',
         'suite_id',
+        'owner_pid',
+        'owner_incarnation',
+        'owner_host',
       ])
       const names = columnNames('runs')
       expect(names).not.toContain('automation_name')
@@ -1081,5 +1084,66 @@ describe('DashboardDatabase', () => {
         .all() as { name: string }[]
       expect(indexes.map((index) => index.name)).not.toContain('idx_runs' + '_parent')
     })
+  })
+})
+
+const STAMPED_OWNER = { pid: 4242, incarnation: 'proc-starttime:7', host: 'h' }
+const inertProbe = { isAlive: () => true, incarnationOf: () => undefined }
+
+describe('C442-SCHEMA-V5', () => {
+  it('a fresh runs database opens at version 5 with the owner columns', () => {
+    expect(db['db'].pragma('user_version', { simple: true })).toBe(5)
+    const columns = columnNames('runs')
+    for (const name of ['owner_pid', 'owner_incarnation', 'owner_host']) expect(columns).toContain(name)
+  })
+
+  it('an owner-less running row is refused by the store', () => {
+    const raw = db['db']
+    expect(() => raw.prepare(
+      "INSERT INTO runs (id, name, status) VALUES ('ownerless', 'Ownerless', 'running')",
+    ).run()).toThrow(/CHECK constraint failed/)
+    expect(db.getRun('ownerless')).toBeUndefined()
+
+    const id = db.insertPendingRun({ name: 'Queued' })
+    expect(() => raw.prepare("UPDATE runs SET status = 'running' WHERE id = ?").run(id))
+      .toThrow(/CHECK constraint failed/)
+    expect(db.getRun(id)?.status).toBe('pending')
+  })
+})
+
+describe('C442-OWNER-STAMP', () => {
+  it('the queue flip stamps the dashboard', () => {
+    const owned = new DashboardDatabase({
+      dbPath: ':memory:',
+      runOwnership: { self: STAMPED_OWNER, probe: inertProbe },
+    })
+    try {
+      const byStatus = owned.insertPendingRun({ name: 'Flipped by status' })
+      const byUpdate = owned.insertPendingRun({ name: 'Flipped by update' })
+      expect(owned.readRunOwner(byStatus)).toBeUndefined()
+
+      owned.updateRunStatus(byStatus, 'running')
+      owned.updateRun(byUpdate, { status: 'running', startedAt: '2026-10-16T00:00:00.000Z' })
+
+      for (const id of [byStatus, byUpdate]) {
+        expect(owned.getRun(id)?.status).toBe('running')
+        expect(owned.readRunOwner(id)).toEqual(STAMPED_OWNER)
+        const row = owned.getRun(id) as unknown as Record<string, unknown>
+        for (const key of Object.keys(row)) expect(key.toLowerCase()).not.toContain('owner')
+      }
+    } finally {
+      owned.close()
+    }
+  })
+
+  it('a handle with no injected owner stamps this process on this host with no incarnation', () => {
+    const id = insertSampleRun({ status: 'running' })
+    expect(db.runOwnership.self.pid).toBe(process.pid)
+    expect(db.readRunOwner(id)).toEqual({
+      pid: process.pid,
+      incarnation: null,
+      host: db.runOwnership.self.host,
+    })
+    expect(db.readRunOwner(insertSampleRun({ status: 'passed' }))).toBeUndefined()
   })
 })

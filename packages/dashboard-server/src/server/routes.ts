@@ -1614,6 +1614,8 @@ const RUN_READS_WITHOUT_ROWS: ReadonlySet<string> = new Set([
   'insertRunArtifact',
   'listRunAttributeKeys',
   'listRunAttributeValues',
+  // 2026-10-16 (442-01, D-01): an owner (pid, incarnation, host), no run metadata.
+  'readRunOwner',
   'stageRunArtifact',
   'updateRun',
   'updateRunMetadata',

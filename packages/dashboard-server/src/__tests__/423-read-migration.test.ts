@@ -279,11 +279,10 @@ it('ARIA-MEMBER-PROXY: real member preserves child extras through buffering and 
   }
 })
 
-it('HISTORICAL-USAGE-ABSENT: upgraded populated v3 rows retain only their recorded token facts', async () => {
-  const raw = open('usage-history.db')
-  seedV3(raw)
-  raw.close()
-  const db = new DashboardDatabase({ dbPath: join(dir, 'usage-history.db') })
+it('HISTORICAL-USAGE-ABSENT: rows with only scalar token columns retain only their recorded token facts', async () => {
+  const dbPath = join(dir, 'usage-history.db')
+  seedHistoricalRowsIntoV5(dbPath)
+  const db = new DashboardDatabase({ dbPath })
   try {
     for (const id of ['old', 'old-null']) {
       const row = db.readRunDetailRows(id)!.steps[0]!
@@ -357,9 +356,7 @@ function open(name: string): DashboardSqliteDatabase {
   opened.push(db)
   return db
 }
-function seedV2(db: DashboardSqliteDatabase): void {
-  for (const sql of V2_SQL) db.exec(sql)
-  db.exec(`
+const HISTORICAL_ROWS = `
     INSERT INTO runs (id,name,status,metadata) VALUES ('old','Historical','passed','{"kept":true}');
     INSERT INTO runs (id,name,status) VALUES ('old-null','No optional facts','failed');
     INSERT INTO run_members (run_id,test_index,name,outcome) VALUES ('old',0,'member','passed');
@@ -372,20 +369,19 @@ function seedV2(db: DashboardSqliteDatabase): void {
     INSERT INTO execution_logs (id,run_id,type,name,phase,status,stdout) VALUES ('hook','old','hook','kept','setup','passed','output');
     INSERT INTO token_events (id,model_name,source,prompt_tokens) VALUES ('token','model','live-editor',9);
     INSERT INTO run_artifacts (run_id,kind,schema_version,payload) VALUES ('old','test',1,'{"kept":true}');
+`
+function seedV2(db: DashboardSqliteDatabase): void {
+  for (const sql of V2_SQL) db.exec(sql)
+  db.exec(`${HISTORICAL_ROWS}
     PRAGMA user_version = 2;
     PRAGMA foreign_keys = ON;
   `)
 }
-function seedV3(db: DashboardSqliteDatabase): void {
-  seedV2(db)
-  addV3FixtureColumns(db)
-}
-function addV3FixtureColumns(db: DashboardSqliteDatabase): void {
-  db.exec('ALTER TABLE run_steps ADD COLUMN evidence_json TEXT')
-  db.exec('ALTER TABLE run_steps ADD COLUMN variable_snapshot_json TEXT')
-  db.exec('ALTER TABLE run_steps ADD COLUMN model_usage_json TEXT')
-  db.exec('ALTER TABLE run_sub_actions ADD COLUMN evidence_state_json TEXT')
-  db.exec('PRAGMA user_version = 3')
+// 2026-10-16 (442-01, D-03): no older file is upgraded, so historical rows are seeded into v5.
+function seedHistoricalRowsIntoV5(dbPath: string, extraSql = ''): void {
+  new DashboardDatabase({ dbPath }).close()
+  const raw = createDashboardSqliteDatabase(dbPath)
+  try { raw.exec(HISTORICAL_ROWS + extraSql) } finally { raw.close() }
 }
 const tables = ['runs', 'run_members', 'run_steps', 'run_sub_actions', 'execution_logs', 'token_events', 'run_artifacts']
 function data(db: DashboardSqliteDatabase) {
@@ -403,15 +399,12 @@ function nullableColumns(db: DashboardSqliteDatabase): void {
     for (const name of names) expect(columns.find(column => column.name === name)).toMatchObject({ name, type: 'TEXT', notnull: 0, dflt_value: null })
   }
 }
-it('MIGRATION-FRESH: creates complete nullable v4 directly on a SQLite file', () => {
+it('MIGRATION-FRESH: creates complete nullable v5 directly on a SQLite file', () => {
   const db = open('fresh.db')
   runSqliteMigrations(db, MIGRATIONS, SCHEMA_VERSION)
-  expect(db.pragma('user_version', { simple: true })).toBe(4)
+  expect(db.pragma('user_version', { simple: true })).toBe(5)
   nullableColumns(db)
-  expect(MIGRATIONS[0]?.fromV3Sql).toEqual([
-    'ALTER TABLE run_members ADD COLUMN recording_json TEXT',
-    'ALTER TABLE run_sub_actions ADD COLUMN recording_offset_ms REAL',
-  ])
+  expect(Object.keys(MIGRATIONS[0]!).sort()).toEqual(['sql', 'version'])
   expect(db.pragma('foreign_keys', { simple: true })).toBe(1)
 })
 
@@ -456,17 +449,16 @@ function recorded() {
   return { step, child }
 }
 
-it('EVID-V2-HISTORY: refuses v2 untouched; v3 NULLs and new subscriber facts survive restart', async () => {
-  const raw = open('evidence.db')
+it('EVID-V2-HISTORY: refuses v2 untouched; historical NULLs and new subscriber facts survive restart', async () => {
+  const raw = open('refused-v2.db')
   seedV2(raw)
   const before = { data: data(raw), schema: schema(raw) }
-  expect(() => new DashboardDatabase({ dbPath: join(dir, 'evidence.db') })).toThrow('user_version 2')
+  expect(() => new DashboardDatabase({ dbPath: join(dir, 'refused-v2.db') })).toThrow('runs database version 2')
   expect({ data: data(raw), schema: schema(raw) }).toEqual(before)
   expect(raw.pragma('user_version', { simple: true })).toBe(2)
-  addV3FixtureColumns(raw)
   // A valid historical action, independent of new producer payloads.
-  raw.exec(`UPDATE run_sub_actions SET planned_action = '{"type":"navigate","to":"url","url":"https://example.invalid"}'`)
-  raw.close()
+  seedHistoricalRowsIntoV5(join(dir, 'evidence.db'),
+    `UPDATE run_sub_actions SET planned_action = '{"type":"navigate","to":"url","url":"https://example.invalid"}';`)
   const db = new DashboardDatabase({ dbPath: join(dir, 'evidence.db') })
   const { step, child } = recorded()
   try {
@@ -582,16 +574,10 @@ it('MIGRATION-V2-HISTORY: refuses v2 by name without changing schema, data or ve
   expect({ data: data(db), schema: schema(db) }).toEqual(before)
   expect(db.pragma('user_version', { simple: true })).toBe(2)
 })
-it('MIGRATION-REOPEN: a published v4 file reopens without executing DDL', () => {
+it('MIGRATION-REOPEN: a published v5 file reopens without executing DDL', () => {
   const db = open('reopen.db')
-  seedV2(db)
-  db.exec('ALTER TABLE run_steps ADD COLUMN evidence_json TEXT')
-  db.exec('ALTER TABLE run_steps ADD COLUMN variable_snapshot_json TEXT')
-  db.exec('ALTER TABLE run_steps ADD COLUMN model_usage_json TEXT')
-  db.exec('ALTER TABLE run_sub_actions ADD COLUMN evidence_state_json TEXT')
-  db.exec('ALTER TABLE run_members ADD COLUMN recording_json TEXT')
-  db.exec('ALTER TABLE run_sub_actions ADD COLUMN recording_offset_ms REAL')
-  db.exec('PRAGMA user_version = 4')
+  runSqliteMigrations(db, MIGRATIONS, SCHEMA_VERSION)
+  db.exec(HISTORICAL_ROWS)
   const before = data(db)
   db.close()
   const reopened = open('reopen.db')
@@ -601,7 +587,7 @@ it('MIGRATION-REOPEN: a published v4 file reopens without executing DDL', () => 
   expect(data(reopened)).toEqual(before)
   nullableColumns(reopened)
 })
-for (const [name, version] of [['V1', 1], ['FUTURE', 5], ['FUTURE', 17]] as const) {
+for (const [name, version] of [['V1', 1], ['FUTURE', 6], ['FUTURE', 17]] as const) {
   it(`MIGRATION-${name}-REFUSE: names unsupported version ${version} and leaves schema/data untouched`, () => {
     const db = open(`refuse-${version}.db`)
     seedV2(db)
@@ -612,80 +598,3 @@ for (const [name, version] of [['V1', 1], ['FUTURE', 5], ['FUTURE', 17]] as cons
     expect(db.pragma('user_version', { simple: true })).toBe(version)
   })
 }
-it('MIGRATION-ROLLBACK: failure after a real ALTER restores schema, version, data and foreign keys', () => {
-  const db = open('rollback.db')
-  seedV3(db)
-  const before = { data: data(db), schema: schema(db) }
-  const exec = db.exec.bind(db)
-  let altered = false
-  vi.spyOn(db, 'exec').mockImplementation(sql => {
-    exec(sql)
-    if (sql.startsWith('ALTER TABLE')) {
-      altered = true
-      expect(db.pragma('foreign_keys', { simple: true })).toBe(0)
-      throw new Error('injected failure after ALTER')
-    }
-  })
-  expect(() => runSqliteMigrations(db, MIGRATIONS, 4)).toThrow('injected failure after ALTER')
-  expect(altered).toBe(true)
-  expect({ data: data(db), schema: schema(db) }).toEqual(before)
-  expect(db.pragma('user_version', { simple: true })).toBe(3)
-  expect(db.pragma('foreign_keys', { simple: true })).toBe(1)
-  db.close()
-  const reopened = open('rollback.db')
-  expect({ data: data(reopened), schema: schema(reopened) }).toEqual(before)
-  expect(reopened.pragma('user_version', { simple: true })).toBe(3)
-})
-
-it('MIGRATION-ROLLBACK: version stamp shares the same transaction as both recording ALTERs', () => {
-  const db = open('rollback-stamp.db')
-  seedV3(db)
-  const before = { data: data(db), schema: schema(db) }
-  const pragma = db.pragma.bind(db)
-  vi.spyOn(db, 'pragma').mockImplementation((sql, options) => {
-    const value = pragma(sql, options)
-    if (sql === 'user_version = 4') {
-      nullableColumns(db)
-      expect(pragma('user_version', { simple: true })).toBe(4)
-      throw new Error('injected failure after version stamp')
-    }
-    return value
-  })
-  expect(() => runSqliteMigrations(db, MIGRATIONS, 4)).toThrow('injected failure after version stamp')
-  expect({ data: data(db), schema: schema(db) }).toEqual(before)
-  expect(db.pragma('user_version', { simple: true })).toBe(3)
-  expect(db.pragma('foreign_keys', { simple: true })).toBe(1)
-})
-
-it('MIGRATION-RACE-IDEMPOTENT: a second opener that read version 3 before the first migrated adds nothing and throws nothing', () => {
-  const first = open('race.db')
-  seedV3(first)
-  const before = data(first)
-  const second = open('race.db')
-  const pragma = second.pragma.bind(second)
-  let staleReads = 0
-  vi.spyOn(second, 'pragma').mockImplementation((sql, options) => {
-    if (sql === 'user_version' && staleReads === 0) {
-      staleReads += 1
-      const observed = pragma(sql, options)
-      runSqliteMigrations(first, MIGRATIONS, 4)
-      expect(observed).toBe(3)
-      return 3
-    }
-    return pragma(sql, options)
-  })
-  expect(() => runSqliteMigrations(second, MIGRATIONS, 4)).not.toThrow()
-  expect(staleReads).toBe(1)
-  expect(first.pragma('user_version', { simple: true })).toBe(4)
-  expect(pragma('user_version', { simple: true })).toBe(4)
-  for (const [table, names] of [
-    ['run_steps', ['evidence_json', 'variable_snapshot_json', 'model_usage_json']],
-    ['run_sub_actions', ['evidence_state_json']],
-  ] as const) {
-    const columns = (second.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(column => column.name)
-    for (const name of names) expect(columns.filter(column => column === name)).toHaveLength(1)
-  }
-  nullableColumns(second)
-  const after = data(second)
-  for (const table of tables) expect(after[table]).toHaveLength(before[table]!.length)
-})

@@ -534,3 +534,41 @@ describe('createDashboardRunIngest', () => {
     expect(source).not.toMatch(/import[^\n]*\bReporter\b[^\n]*agent-qa-core/)
   })
 })
+
+describe('C442-OWNER-STAMP', () => {
+  it('the ingest stamps its own row', () => {
+    const self = { pid: 4242, incarnation: 'proc-starttime:7', host: 'h' }
+    const owned = new DashboardDatabase({
+      dbPath: ':memory:',
+      runOwnership: { self, probe: { isAlive: () => true, incarnationOf: () => undefined } },
+    })
+    try {
+      const insertedId = 'r_insert-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
+      const inserted = createDashboardRunIngest({
+        db: owned, sourceSnapshot: testSource(), attributes, correlationEnv: { runId: insertedId },
+      })
+      inserted.handler(ev(insertedId, 'runStarted', {}))
+
+      const adoptedId = 'r_adopt-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
+      owned.insertPendingRun({ id: adoptedId, name: 'Queued', attributes })
+      expect(owned.readRunOwner(adoptedId)).toBeUndefined()
+      const adopted = createDashboardRunIngest({
+        db: owned, sourceSnapshot: testSource(), attributes, correlationEnv: { runId: adoptedId },
+      })
+      adopted.handler(ev(adoptedId, 'runStarted', {}))
+
+      const minted = createDashboardRunIngest({ db: owned, sourceSnapshot: testSource(), attributes })
+      minted.handler(ev('run-bus', 'runStarted', {}))
+      const mintedId = owned.getRuns().map(run => run.id).find(id => id !== insertedId && id !== adoptedId)
+
+      const ids = [insertedId, adoptedId, mintedId]
+      expect(ids.every(id => id !== undefined)).toBe(true)
+      for (const id of ids) {
+        expect(owned.getRun(id!)?.status).toBe('running')
+        expect(owned.readRunOwner(id!)).toEqual(self)
+      }
+    } finally {
+      owned.close()
+    }
+  })
+})

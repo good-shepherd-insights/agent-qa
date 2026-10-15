@@ -25,7 +25,7 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { DashboardDatabase, runSqliteMigrations } from '../db/database.js'
+import { DashboardDatabase, RunsDatabaseVersionRefusedError, runSqliteMigrations } from '../db/database.js'
 import { createDashboardSqliteDatabase } from '../db/sqlite.js'
 import { MIGRATIONS, SCHEMA_VERSION } from '../db/schema.js'
 
@@ -65,13 +65,13 @@ function writeV1Database(dbPath: string): void {
   }
 }
 
-describe('a fresh dashboard database opens at v4 (424 D-13)', () => {
-  it('stamps user_version 4 and creates the three bus-shaped projection tables', () => {
+describe('a fresh dashboard database opens at v5 (442 D-03)', () => {
+  it('stamps user_version 5 and creates the three bus-shaped projection tables', () => {
     const db = new DashboardDatabase({ dbPath: join(workDir, 'fresh.db') })
     try {
       const raw = db as unknown as { db: { pragma(q: string, o?: { simple?: boolean }): unknown; prepare(sql: string): { all(): unknown[] } } }
-      expect(raw.db.pragma('user_version', { simple: true })).toBe(4)
-      expect(SCHEMA_VERSION).toBe(4)
+      expect(raw.db.pragma('user_version', { simple: true })).toBe(5)
+      expect(SCHEMA_VERSION).toBe(5)
 
       const tables = (raw.db
         .prepare("SELECT name FROM sqlite_master WHERE type='table'")
@@ -114,10 +114,11 @@ describe('an older or newer database is refused BY NAME, never migrated (D-02)',
     const dbPath = join(workDir, 'legacy-v1.db')
     writeV1Database(dbPath)
 
-    expect(() => new DashboardDatabase({ dbPath })).toThrow(/Remove the dashboard database/)
-    // And it names BOTH versions, so an operator knows which file and which build.
-    expect(() => new DashboardDatabase({ dbPath })).toThrow(/user_version 1/)
-    expect(() => new DashboardDatabase({ dbPath })).toThrow(/schema version 4/)
+    // 2026-10-16 (442-01, D-03): the refusal names the file, its version and the remedy.
+    expect(() => new DashboardDatabase({ dbPath })).toThrow(RunsDatabaseVersionRefusedError)
+    expect(() => new DashboardDatabase({ dbPath })).toThrow(dbPath)
+    expect(() => new DashboardDatabase({ dbPath })).toThrow(/runs database version 1\)/)
+    expect(() => new DashboardDatabase({ dbPath })).toThrow(/Delete it and run again/)
   })
 
   it('leaves the refused v1 file exactly as it found it', () => {
@@ -141,16 +142,17 @@ describe('an older or newer database is refused BY NAME, never migrated (D-02)',
   })
 
   it('still refuses a database from a FUTURE build with the not-compatible message', () => {
-    const dbPath = join(workDir, 'future-v5.db')
+    const dbPath = join(workDir, 'future-v6.db')
     const seed = createDashboardSqliteDatabase(dbPath)
     try {
-      seed.exec('PRAGMA user_version = 5')
+      seed.exec('PRAGMA user_version = 6')
     } finally {
       seed.close()
     }
 
     expect(() => new DashboardDatabase({ dbPath }))
-      .toThrow(/user_version 5 is not compatible with schema version 4/)
+      .toThrow(/user_version 6 is not compatible with schema version 5/)
+    expect(() => new DashboardDatabase({ dbPath })).toThrow(`${dbPath}: `)
   })
 })
 

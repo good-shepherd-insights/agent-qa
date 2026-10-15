@@ -13,7 +13,7 @@ import type {
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
 
-// 423-25 (R-26): measurement of a SYNTHETIC finalized-v4 fixture. Nothing here is a production
+// 423-25 (R-26): measurement of a SYNTHETIC finalized-v5 fixture. Nothing here is a production
 // maximum, a snapshot cap or an input to the locked inline/blob layout (D-03/D-07/D-08).
 const LABEL = 'SYNTHETIC fixture measurement; not a production maximum, cap or layout input'
 const RUN_ID = 'synthetic-row-budget-run'
@@ -33,7 +33,7 @@ interface Snapshot {
 }
 interface Measurements {
   fresh: { before: Snapshot; after: Snapshot; categories: Record<string, number>; eventBytes: Record<string, number>; coldSteps: number }
-  historical: { v3: Snapshot; v4: Snapshot; absentFields: string[] }
+  historical: { v3: Snapshot; v3Refused: Snapshot; v5: Snapshot; absentFields: string[] }
   network: { blobBytes: number; bodyBytes: { request: number; response: number }; stepEvidenceBytes: number; bodyInDatabase: boolean; secretInBlob: boolean; secretInDatabase: boolean }
   dbstatError?: string
 }
@@ -100,7 +100,7 @@ type Evidence = NonNullable<StepFinalizedPayload['evidence']>
 const verdict = { pass: true, reasoning: 'synthetic verifier verdict' }
 
 async function freshFixture(root: string) {
-  const path = join(root, 'fresh-v4.db')
+  const path = join(root, 'fresh-v5.db')
   new DashboardDatabase({ dbPath: path }).close()
   const before = snapshot(path)
   const redactor = new SecretRedactor(new SecretStore({ ROW_BUDGET_SECRET: SECRET }))
@@ -214,7 +214,7 @@ async function freshFixture(root: string) {
   } finally { cold.close() }
 
   const blob = Buffer.from(store.getBlob(networkRef.sha)!)
-  const databaseBytes = Buffer.concat(readdirSync(root).filter(name => name.startsWith('fresh-v4.db'))
+  const databaseBytes = Buffer.concat(readdirSync(root).filter(name => name.startsWith('fresh-v5.db'))
     .map(name => readFileSync(join(root, name))))
   const bodyMarker = FILLER.repeat(8)
   return {
@@ -257,22 +257,26 @@ const V2_SQL = [
   "CREATE INDEX IF NOT EXISTS idx_run_artifacts_finalized ON run_artifacts(finalized_at)",
 ]
 
+function insertHistoricalRows(raw: { exec(sql: string): void; prepare(sql: string): { run(...values: unknown[]): unknown } }) {
+  raw.exec(`INSERT INTO runs (id,name,status) VALUES ('historical','Synthetic historical run','passed')`)
+  const step = raw.prepare(`INSERT INTO run_steps (run_id,test_index,step_index,step_text,cache_status,verifier_verdict,
+    self_heal_occurred,brief_digest,status,duration_ms,prompt_tokens,completion_tokens,total_tokens)
+    VALUES ('historical',0,?,?,'miss','{"pass":true,"reasoning":"synthetic historical"}',0,?,'passed',10,?,?,?)`)
+  const child = raw.prepare(`INSERT INTO run_sub_actions (run_id,test_index,step_index,sub_action_index,plan,planned_action,
+    result,screen_state_hash,artifact_refs) VALUES ('historical',0,?,0,'synthetic plan',
+    '{"type":"navigate","to":"url","url":"https://example.invalid"}','{"success":true}',?,'[]')`)
+  for (let index = 0; index < 50; index++) {
+    step.run(index, `Synthetic historical step ${index}`, `synthetic-digest-${index}`, 100 + index, 7, 107 + index)
+    child.run(index, `synthetic-hash-${index}`)
+  }
+}
+
 function historicalFixture(root: string) {
   const path = join(root, 'historical-v2.db')
   const raw = createDashboardSqliteDatabase(path)
   try {
     for (const sql of V2_SQL) raw.exec(sql)
-    raw.exec(`INSERT INTO runs (id,name,status) VALUES ('historical','Synthetic historical run','passed')`)
-    const step = raw.prepare(`INSERT INTO run_steps (run_id,test_index,step_index,step_text,cache_status,verifier_verdict,
-      self_heal_occurred,brief_digest,status,duration_ms,prompt_tokens,completion_tokens,total_tokens)
-      VALUES ('historical',0,?,?,'miss','{"pass":true,"reasoning":"synthetic historical"}',0,?,'passed',10,?,?,?)`)
-    const child = raw.prepare(`INSERT INTO run_sub_actions (run_id,test_index,step_index,sub_action_index,plan,planned_action,
-      result,screen_state_hash,artifact_refs) VALUES ('historical',0,?,0,'synthetic plan',
-      '{"type":"navigate","to":"url","url":"https://example.invalid"}','{"success":true}',?,'[]')`)
-    for (let index = 0; index < 50; index++) {
-      step.run(index, `Synthetic historical step ${index}`, `synthetic-digest-${index}`, 100 + index, 7, 107 + index)
-      child.run(index, `synthetic-hash-${index}`)
-    }
+    insertHistoricalRows(raw)
     raw.exec('PRAGMA user_version = 2')
   } finally { raw.close() }
   const refused = snapshot(path)
@@ -286,7 +290,7 @@ function historicalFixture(root: string) {
     } finally { reader.close() }
   }
   const before = history()
-  expect(() => new DashboardDatabase({ dbPath: path })).toThrow('user_version 2')
+  expect(() => new DashboardDatabase({ dbPath: path })).toThrow('runs database version 2')
   expect(snapshot(path)).toEqual(refused)
   expect(history()).toEqual(before)
   const historical = createDashboardSqliteDatabase(path)
@@ -298,7 +302,14 @@ function historicalFixture(root: string) {
     historical.exec('PRAGMA user_version = 3')
   } finally { historical.close() }
   const v3 = snapshot(path)
-  const db = new DashboardDatabase({ dbPath: path })
+  // 2026-10-16 (442-01, D-03): a v3 file is refused too, so the historical rows are read from v5.
+  expect(() => new DashboardDatabase({ dbPath: path })).toThrow('runs database version 3')
+  const v3Refused = snapshot(path)
+  const seededPath = join(root, 'historical-v5.db')
+  new DashboardDatabase({ dbPath: seededPath }).close()
+  const seeded = createDashboardSqliteDatabase(seededPath)
+  try { insertHistoricalRows(seeded) } finally { seeded.close() }
+  const db = new DashboardDatabase({ dbPath: seededPath })
   const absentFields: string[] = []
   try {
     const rows = db.readRunDetailRows('historical')!
@@ -308,13 +319,13 @@ function historicalFixture(root: string) {
     if (rows.steps.every(row => !('modelUsage' in row))) absentFields.push('modelUsage')
     if (rows.subActions.every(row => !('ariaEvidence' in row))) absentFields.push('ariaEvidence')
   } finally { db.close() }
-  return { v3, v4: snapshot(path), absentFields }
+  return { v3, v3Refused, v5: snapshot(seededPath), absentFields }
 }
 
 async function measureFixtures(root: string): Promise<Measurements> {
   const { fresh, network } = await freshFixture(root)
   const historical = historicalFixture(root)
-  const dbstatError = [fresh.before, fresh.after, historical.v3, historical.v4].find(item => item.dbstatError)?.dbstatError
+  const dbstatError = [fresh.before, fresh.after, historical.v3, historical.v5].find(item => item.dbstatError)?.dbstatError
   return { fresh, historical, network, ...(dbstatError === undefined ? {} : { dbstatError }) }
 }
 
@@ -328,11 +339,11 @@ function report(cell: string, value: unknown): void {
   console.info(cell, JSON.stringify({ label: LABEL, ...value as object }))
 }
 
-it('ROW-BUDGET-LOGICAL: finalized v4 rows report UTF-8 logical value bytes per table, column and category', () => {
+it('ROW-BUDGET-LOGICAL: finalized v5 rows report UTF-8 logical value bytes per table, column and category', () => {
   const { before, after, categories, eventBytes, coldSteps } = measured.fresh
   report('ROW-BUDGET-LOGICAL', { categories, eventBytes, coldSteps, before: before.logical, after: after.logical,
-    historicalV3: measured.historical.v3.logical, historicalV4: measured.historical.v4.logical })
-  expect(after.userVersion).toBe(4)
+    historicalV3: measured.historical.v3.logical, historicalV5: measured.historical.v5.logical })
+  expect(after.userVersion).toBe(5)
   expect(coldSteps).toBe(6)
   for (const table of TABLES) {
     expect(before.logical[table].rows).toBe(0)
@@ -349,25 +360,25 @@ it('ROW-BUDGET-LOGICAL: finalized v4 rows report UTF-8 logical value bytes per t
   expect(categories['variables-large']).toBeGreaterThan(40_000)
   expect(categories['network-32kib']).toBeLessThan(NETWORK_BODY_MAX_BYTES)
   for (const column of ['evidence_json', 'variable_snapshot_json', 'model_usage_json']) {
-    expect(measured.historical.v4.logical.run_steps.columns[column]).toBe(0)
+    expect(measured.historical.v5.logical.run_steps.columns[column]).toBe(0)
   }
 })
 
-it('ROW-BUDGET-PAGES: PRAGMA page_size and page_count before and after insertion, fresh v4 and populated v3-to-v4 with v2 refused', () => {
+it('ROW-BUDGET-PAGES: PRAGMA page_size and page_count before and after insertion, fresh v5 with populated v2 and v3 refused', () => {
   const { fresh, historical } = measured
   report('ROW-BUDGET-PAGES', {
     fresh: { before: fresh.before.pages, after: fresh.after.pages,
       deltaPages: fresh.after.pages.pageCount - fresh.before.pages.pageCount,
       deltaBytes: fresh.after.pages.bytes - fresh.before.pages.bytes },
-    historical: { v3: historical.v3.pages, v4: historical.v4.pages,
-      deltaPages: historical.v4.pages.pageCount - historical.v3.pages.pageCount },
+    historical: { v3: historical.v3.pages, v3Refused: historical.v3Refused.pages, v5: historical.v5.pages },
   })
   expect(fresh.before.pages.pageSize).toBeGreaterThan(0)
   expect(fresh.after.pages.pageSize).toBe(fresh.before.pages.pageSize)
   expect(fresh.after.pages.pageCount).toBeGreaterThan(fresh.before.pages.pageCount)
   expect(fresh.after.pages.bytes).toBe(fresh.after.pages.pageSize * fresh.after.pages.pageCount)
   expect(historical.v3.userVersion).toBe(3)
-  expect(historical.v4.userVersion).toBe(4)
+  expect(historical.v3Refused).toEqual(historical.v3)
+  expect(historical.v5.userVersion).toBe(5)
   expect(historical.v3.pages.pageCount).toBeGreaterThan(0)
   expect(historical.absentFields).toEqual(['evidence', 'variableSnapshot', 'modelUsage', 'ariaEvidence'])
 })
@@ -378,7 +389,7 @@ it('ROW-BUDGET-PAYLOAD: dbstat page, payload and unused bytes for run_steps and 
   }
   const { fresh, historical } = measured
   report('ROW-BUDGET-PAYLOAD', { fresh: { before: fresh.before.btrees, after: fresh.after.btrees },
-    historical: { v3: historical.v3.btrees, v4: historical.v4.btrees } })
+    historical: { v3: historical.v3.btrees, v3Refused: historical.v3Refused.btrees } })
   for (const table of TABLES) {
     const after = fresh.after.btrees[table]!
     expect(after.pages).toBeGreaterThan(0)
@@ -386,7 +397,7 @@ it('ROW-BUDGET-PAYLOAD: dbstat page, payload and unused bytes for run_steps and 
     expect(after.bytes).toBe(after.pages * fresh.after.pages.pageSize)
     expect(after.unusedBytes).toBeGreaterThanOrEqual(0)
     expect(after.payloadBytes).toBeGreaterThan(fresh.before.btrees[table]!.payloadBytes)
-    expect(historical.v4.btrees[table]!.payloadBytes).toBe(historical.v3.btrees[table]!.payloadBytes)
+    expect(historical.v3Refused.btrees[table]!.payloadBytes).toBe(historical.v3.btrees[table]!.payloadBytes)
   }
   expect(fresh.after.btrees.run_steps!.overflowPages).toBeGreaterThan(0)
 })

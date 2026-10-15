@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { MIGRATIONS, SCHEMA_VERSION, type DashboardMigration } from './schema.js'
+import { defaultRunOwnership, type RunOwner, type RunOwnership } from './run-owner.js'
 import {
   DEFAULT_AGENT_QA_RUNS_DB_PATH,
   generateRunId,
@@ -332,14 +333,8 @@ export function runSqliteMigrations(
   migrations: readonly DashboardMigration[],
   schemaVersion: number,
 ): void {
-  const currentVersion = db.pragma('user_version', { simple: true }) as number
-  if (currentVersion > schemaVersion) throw incompatibleVersionError(currentVersion, schemaVersion)
-  if (currentVersion === schemaVersion) return
+  if (assertSupportedUserVersion(db, schemaVersion) === schemaVersion) return
 
-  const upgradingV3 = currentVersion === 3 && schemaVersion === 4
-  if (currentVersion !== 0 && !upgradingV3) throw unmigratedVersionError(currentVersion, schemaVersion)
-
-  // One current fresh-schema entry, with its explicitly approved v3 additions.
   const runnableMigrations = migrations.filter(migration => migration.version <= schemaVersion)
   const terminal = runnableMigrations.length === 1 ? runnableMigrations[0] : undefined
   if (terminal === undefined || terminal.version !== schemaVersion) {
@@ -350,60 +345,84 @@ export function runSqliteMigrations(
     )
   }
 
-  const statements = upgradingV3 ? terminal.fromV3Sql : terminal.sql
-  if (statements === undefined) {
-    throw new Error('Missing approved SQLite user_version 3 to schema version 4 migration')
-  }
-
   db.pragma('foreign_keys = OFF')
   try {
     const runAll = db.transaction(() => {
-      if (upgradingV3) {
-        // The version read above happened before the write lock. Another opener may have
-        // finished this upgrade in between, so the decision is re-made under the lock.
-        const lockedVersion = db.pragma('user_version', { simple: true }) as number
-        if (lockedVersion === schemaVersion) return
-        if (lockedVersion > schemaVersion) throw incompatibleVersionError(lockedVersion, schemaVersion)
-        if (lockedVersion !== 3) throw unmigratedVersionError(lockedVersion, schemaVersion)
-      }
-      for (const sql of statements) {
+      for (const sql of terminal.sql) {
         db.exec(sql)
       }
       db.pragma(`user_version = ${terminal.version}`)
-    }, { immediate: upgradingV3 })
+    })
     runAll()
   } finally {
     db.pragma('foreign_keys = ON')
   }
 }
 
-function incompatibleVersionError(version: number, schemaVersion: number): Error {
-  return new Error(
-    `SQLite database user_version ${version} is not compatible with schema version ${schemaVersion}. `
-    + 'Remove the dashboard database or use a compatible agent-qa version.',
-  )
+class UnsupportedUserVersionError extends Error {
+  constructor(
+    readonly version: number,
+    readonly schemaVersion: number,
+  ) {
+    super(
+      version > schemaVersion
+        ? `SQLite database user_version ${version} is not compatible with schema version ${schemaVersion}. `
+          + 'Remove the dashboard database or use a compatible agent-qa version.'
+        : `SQLite database user_version ${version} predates schema version ${schemaVersion}, `
+          + 'and this build performs no migration for that version. '
+          + 'Remove the dashboard database or use a compatible agent-qa version.',
+    )
+    this.name = 'UnsupportedUserVersionError'
+  }
 }
 
-function unmigratedVersionError(version: number, schemaVersion: number): Error {
-  return new Error(
-    `SQLite database user_version ${version} predates schema version ${schemaVersion}, `
-    + 'and this build performs no migration for that version. '
-    + 'Remove the dashboard database or use a compatible agent-qa version.',
-  )
+function assertSupportedUserVersion(db: DashboardSqliteDatabase, schemaVersion: number): number {
+  const currentVersion = db.pragma('user_version', { simple: true }) as number
+  if (currentVersion !== 0 && currentVersion !== schemaVersion) {
+    throw new UnsupportedUserVersionError(currentVersion, schemaVersion)
+  }
+  return currentVersion
+}
+
+export class RunsDatabaseVersionRefusedError extends Error {
+  readonly dbPath: string
+  readonly version: number
+
+  constructor(dbPath: string, refusal: UnsupportedUserVersionError) {
+    super(
+      refusal.version < refusal.schemaVersion
+        ? `${dbPath} was written by an older agent-qa (runs database version ${refusal.version}). `
+          + 'Delete it and run again; agent-qa creates a new one.'
+        : `${dbPath}: ${refusal.message}`,
+    )
+    this.name = 'RunsDatabaseVersionRefusedError'
+    this.dbPath = dbPath
+    this.version = refusal.version
+  }
 }
 
 export class DashboardDatabase {
   private db: DashboardSqliteDatabase
+  readonly runOwnership: RunOwnership
 
-  constructor({ dbPath = DASHBOARD_DB_PATH_FALLBACK }: { dbPath?: string } = {}) {
+  constructor({
+    dbPath = DASHBOARD_DB_PATH_FALLBACK,
+    runOwnership = defaultRunOwnership(),
+  }: { dbPath?: string; runOwnership?: RunOwnership } = {}) {
+    this.runOwnership = runOwnership
     mkdirSync(dirname(dbPath), { recursive: true })
     this.db = createDashboardSqliteDatabase(dbPath)
     try {
-      this.db.pragma('journal_mode = WAL')
       this.db.pragma('busy_timeout = 5000')
+      // 2026-10-16 (442-01, D-03): refuse before WAL mode rewrites the file header.
+      assertSupportedUserVersion(this.db, SCHEMA_VERSION)
+      this.db.pragma('journal_mode = WAL')
       this.runMigrations()
     } catch (error) {
       this.db.close()
+      if (error instanceof UnsupportedUserVersionError) {
+        throw new RunsDatabaseVersionRefusedError(resolve(dbPath), error)
+      }
       throw error
     }
   }
@@ -432,9 +451,10 @@ export class DashboardDatabase {
     suiteId?: string
   }): string {
     const id = run.id || generateRunId()
+    const owner = run.status === 'running' ? this.runOwnership.self : undefined
     const stmt = this.db.prepare(`
-      INSERT INTO runs (id, name, file_path, status, duration, attributes, environment, metadata, started_at, ended_at, failure_summary, platform, test_file_content, model_name, llm_provider, test_id, suite_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO runs (id, name, file_path, status, duration, attributes, environment, metadata, started_at, ended_at, failure_summary, platform, test_file_content, model_name, llm_provider, test_id, suite_id, owner_pid, owner_incarnation, owner_host)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     stmt.run(
       id,
@@ -454,6 +474,9 @@ export class DashboardDatabase {
       run.llmProvider ?? null,
       run.testId ?? null,
       run.suiteId ?? null,
+      owner?.pid ?? null,
+      owner?.incarnation ?? null,
+      owner?.host ?? null,
     )
     return id
   }
@@ -476,6 +499,11 @@ export class DashboardDatabase {
     const values: unknown[] = []
     if (updates.name !== undefined) { fields.push('name = ?'); values.push(updates.name) }
     if (updates.status !== undefined) { fields.push('status = ?'); values.push(updates.status) }
+    if (updates.status === 'running') {
+      const { pid, incarnation, host } = this.runOwnership.self
+      fields.push('owner_pid = ?', 'owner_incarnation = ?', 'owner_host = ?')
+      values.push(pid, incarnation, host)
+    }
     if (updates.duration !== undefined) { fields.push('duration = ?'); values.push(updates.duration) }
     if (updates.startedAt !== undefined) { fields.push('started_at = ?'); values.push(updates.startedAt) }
     if (updates.endedAt !== undefined) { fields.push('ended_at = ?'); values.push(updates.endedAt) }
@@ -567,7 +595,14 @@ export class DashboardDatabase {
   }
 
   updateRunStatus(id: string, status: string): void {
-    this.db.prepare('UPDATE runs SET status = ? WHERE id = ?').run(status, id)
+    if (status !== 'running') {
+      this.db.prepare('UPDATE runs SET status = ? WHERE id = ?').run(status, id)
+      return
+    }
+    const { pid, incarnation, host } = this.runOwnership.self
+    this.db.prepare(
+      'UPDATE runs SET status = ?, owner_pid = ?, owner_incarnation = ?, owner_host = ? WHERE id = ?',
+    ).run(status, pid, incarnation, host, id)
   }
 
   // ---- The v2 bus-shaped projection (Phase 405 plan 01, D-01) ---------------------------------
@@ -948,6 +983,14 @@ export class DashboardDatabase {
       limit: opts.limit,
       offset: opts.offset,
     })
+  }
+
+  readRunOwner(id: string): RunOwner | undefined {
+    const row = this.db.prepare(
+      'SELECT owner_pid, owner_incarnation, owner_host FROM runs WHERE id = ? AND owner_pid IS NOT NULL',
+    ).get(id) as { owner_pid: number; owner_incarnation: string | null; owner_host: string | null } | undefined
+    if (row === undefined) return undefined
+    return { pid: row.owner_pid, incarnation: row.owner_incarnation, host: row.owner_host ?? '' }
   }
 
   getRun(id: string): RunRow | undefined {

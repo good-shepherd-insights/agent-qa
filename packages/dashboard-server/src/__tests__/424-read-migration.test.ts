@@ -1,8 +1,9 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { runSqliteMigrations } from '../db/database.js'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { DashboardDatabase, RunsDatabaseVersionRefusedError, runSqliteMigrations } from '../db/database.js'
 import { createDashboardSqliteDatabase, type DashboardSqliteDatabase } from '../db/sqlite.js'
 import { MIGRATIONS, SCHEMA_VERSION } from '../db/schema.js'
 
@@ -191,10 +192,10 @@ function nullableColumns(db: DashboardSqliteDatabase): void {
   }
 }
 
-it('MIGRATION-FRESH: creates v4 directly on an empty SQLite file', () => {
+it('MIGRATION-FRESH: creates v5 directly on an empty SQLite file', () => {
   const db = open('fresh.db')
   runSqliteMigrations(db, MIGRATIONS, SCHEMA_VERSION)
-  expect(db.pragma('user_version', { simple: true })).toBe(4)
+  expect(db.pragma('user_version', { simple: true })).toBe(5)
   nullableColumns(db)
   expect(db.pragma('foreign_keys', { simple: true })).toBe(1)
 })
@@ -205,35 +206,13 @@ it('MIGRATION-COLUMNS-NULLABLE: both recording columns have no defaults or const
   nullableColumns(db)
 })
 
-it('MIGRATION-V3-HISTORY: keeps every prior row and NULL with fresh schema and index parity', () => {
-  const db = open('history.db')
-  seedV3(db)
-  const before = data(db)
-  const transaction = vi.spyOn(db, 'transaction')
-  runSqliteMigrations(db, MIGRATIONS, SCHEMA_VERSION)
-  expect(db.pragma('user_version', { simple: true })).toBe(4)
-  expect(transaction).toHaveBeenCalledWith(expect.any(Function), { immediate: true })
-  nullableColumns(db)
-  const after = data(db)
-  for (const table of tables) {
-    const additions = table === 'run_members' ? { recording_json: null }
-      : table === 'run_sub_actions' ? { recording_offset_ms: null } : {}
-    expect(after[table]).toEqual(before[table]!.map(row => ({ ...row as object, ...additions })))
-  }
-  const fresh = open('compare.db')
-  runSqliteMigrations(fresh, MIGRATIONS, SCHEMA_VERSION)
-  expect(schema(db)).toEqual(schema(fresh))
-  expect(db.prepare("SELECT name, sql FROM sqlite_master WHERE type='index' ORDER BY name").all())
-    .toEqual(fresh.prepare("SELECT name, sql FROM sqlite_master WHERE type='index' ORDER BY name").all())
-  expect(db.pragma('foreign_key_check')).toEqual([])
-})
-
-it('MIGRATION-REOPEN: a published v4 file reopens without DDL or data changes', () => {
+it('MIGRATION-REOPEN: a published v5 file reopens without DDL or data changes', () => {
   const db = open('reopen.db')
-  seedV3(db)
-  db.exec('ALTER TABLE run_members ADD COLUMN recording_json TEXT')
-  db.exec('ALTER TABLE run_sub_actions ADD COLUMN recording_offset_ms REAL')
-  db.exec('PRAGMA user_version = 4')
+  runSqliteMigrations(db, MIGRATIONS, SCHEMA_VERSION)
+  db.exec(`
+    INSERT INTO runs (id,name,status,metadata) VALUES ('old','Historical','passed','{"kept":true}');
+    INSERT INTO run_members (run_id,test_index,name,outcome,recording_json) VALUES ('old',0,'member','passed',NULL);
+  `)
   const before = { data: data(db), schema: schema(db) }
   db.close()
   const reopened = open('reopen.db')
@@ -244,7 +223,7 @@ it('MIGRATION-REOPEN: a published v4 file reopens without DDL or data changes', 
 })
 
 for (const [name, version] of [
-  ['V1-REFUSE', 1], ['FUTURE-REFUSE', 5], ['FUTURE-REFUSE', 17], ['V2-DISPOSITION', 2],
+  ['V1-REFUSE', 1], ['FUTURE-REFUSE', 6], ['FUTURE-REFUSE', 17], ['V2-DISPOSITION', 2],
 ] as const) {
   it(`MIGRATION-${name}: names unsupported version ${version} without changing schema or data`, () => {
     const db = open(`refuse-${version}.db`)
@@ -263,52 +242,52 @@ for (const [name, version] of [
   })
 }
 
-it('MIGRATION-ROLLBACK: failure after the first real ALTER restores schema, version and data', () => {
-  const db = open('rollback.db')
-  seedV3(db)
-  const before = { data: data(db), schema: schema(db) }
-  const exec = db.exec.bind(db)
-  let altered = false
-  vi.spyOn(db, 'exec').mockImplementation(sql => {
-    exec(sql)
-    if (sql.startsWith('ALTER TABLE')) {
-      altered = true
-      expect(db.pragma('foreign_keys', { simple: true })).toBe(0)
-      throw new Error('injected failure after ALTER')
+function writeOldFile(name: string, version: 3 | 4): string {
+  const path = join(dir, name)
+  const db = createDashboardSqliteDatabase(path)
+  try {
+    seedV3(db)
+    if (version === 4) {
+      db.exec('ALTER TABLE run_members ADD COLUMN recording_json TEXT')
+      db.exec('ALTER TABLE run_sub_actions ADD COLUMN recording_offset_ms REAL')
+      db.exec('PRAGMA user_version = 4')
     }
-  })
-  expect(() => runSqliteMigrations(db, MIGRATIONS, SCHEMA_VERSION)).toThrow('injected failure after ALTER')
-  expect(altered).toBe(true)
-  expect({ data: data(db), schema: schema(db) }).toEqual(before)
-  expect(db.pragma('user_version', { simple: true })).toBe(3)
-  expect(db.pragma('foreign_keys', { simple: true })).toBe(1)
-  db.close()
-  const reopened = open('rollback.db')
-  expect({ data: data(reopened), schema: schema(reopened) }).toEqual(before)
-  expect(reopened.pragma('user_version', { simple: true })).toBe(3)
-})
+  } finally { db.close() }
+  return path
+}
 
-it('MIGRATION-RACE-IDEMPOTENT: a second opener re-reads v4 under the lock and adds nothing', () => {
-  const first = open('race.db')
-  seedV3(first)
-  const second = open('race.db')
-  const pragma = second.pragma.bind(second)
-  let staleReads = 0
-  vi.spyOn(second, 'pragma').mockImplementation((sql, options) => {
-    if (sql === 'user_version' && staleReads === 0) {
-      staleReads += 1
-      const observed = pragma(sql, options)
-      runSqliteMigrations(first, MIGRATIONS, SCHEMA_VERSION)
-      expect(observed).toBe(3)
-      return observed
-    }
-    return pragma(sql, options)
+const sha256 = (path: string): string => createHash('sha256').update(readFileSync(path)).digest('hex')
+
+describe('C442-SCHEMA-V5', () => {
+  for (const version of [4, 3] as const) {
+    it(`a version ${version} file is refused naming the file and left untouched`, () => {
+      const path = writeOldFile(`old-v${version}.db`, version)
+      const before = sha256(path)
+      let refusal: unknown
+      try {
+        new DashboardDatabase({ dbPath: path }).close()
+      } catch (error) {
+        refusal = error
+      }
+      expect(refusal).toBeInstanceOf(RunsDatabaseVersionRefusedError)
+      const message = (refusal as Error).message
+      expect(message).toContain(path)
+      expect(message).toContain(`version ${version}`)
+      expect(message).toContain('Delete it and run again')
+      expect(sha256(path)).toBe(before)
+      expect(existsSync(`${path}-wal`)).toBe(false)
+      const reader = open(`old-v${version}.db`)
+      expect(reader.pragma('user_version', { simple: true })).toBe(version)
+    })
+  }
+
+  it('a newer file is refused naming the file', () => {
+    const path = join(dir, 'newer.db')
+    const db = createDashboardSqliteDatabase(path)
+    try { db.exec('PRAGMA user_version = 6') } finally { db.close() }
+    const before = sha256(path)
+    expect(() => new DashboardDatabase({ dbPath: path })).toThrow(RunsDatabaseVersionRefusedError)
+    expect(() => new DashboardDatabase({ dbPath: path })).toThrow(path)
+    expect(sha256(path)).toBe(before)
   })
-  const exec = vi.spyOn(second, 'exec')
-  expect(() => runSqliteMigrations(second, MIGRATIONS, SCHEMA_VERSION)).not.toThrow()
-  expect(staleReads).toBe(1)
-  expect(pragma('user_version', { simple: true })).toBe(4)
-  expect(exec).not.toHaveBeenCalled()
-  expect(data(second)).toEqual(data(first))
-  nullableColumns(second)
 })

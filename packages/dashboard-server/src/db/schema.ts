@@ -28,22 +28,17 @@
 // subscriber's `hookFinished` arm → the hook panel), `token_events` (the live-editor ws handler →
 // the insights page — D-20's verdict, measured, not assumed), and the construction-data columns on
 // `runs` that the queue and the settle path write.
-// 424 D-13: v4 permits exactly one additive upgrade from v3.
-export const SCHEMA_VERSION = 4
+// 2026-10-16 (442-01, D-03): v5 adds the run owner; v3 and v4 files are refused, never upgraded.
+export const SCHEMA_VERSION = 5
 
 export interface DashboardMigration {
   version: number
   sql: string[]
-  fromV3Sql?: string[]
 }
 
 export const MIGRATIONS: DashboardMigration[] = [
   {
-    version: 4,
-    fromV3Sql: [
-      'ALTER TABLE run_members ADD COLUMN recording_json TEXT',
-      'ALTER TABLE run_sub_actions ADD COLUMN recording_offset_ms REAL',
-    ],
+    version: 5,
     sql: [
       `CREATE TABLE IF NOT EXISTS runs (
         id TEXT PRIMARY KEY,
@@ -67,7 +62,11 @@ export const MIGRATIONS: DashboardMigration[] = [
         error_log TEXT,
         memory_log TEXT,
         test_id TEXT,
-        suite_id TEXT
+        suite_id TEXT,
+        owner_pid INTEGER,
+        owner_incarnation TEXT,
+        owner_host TEXT,
+        CHECK (status <> 'running' OR owner_pid IS NOT NULL)
       )`,
       `CREATE TABLE IF NOT EXISTS execution_logs (
         id TEXT PRIMARY KEY,
