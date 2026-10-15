@@ -134,18 +134,34 @@ function mapToolResultContentPart(part: ToolResultContentPart, fn: LeafFn): Tool
 }
 
 function mapJsonLike<T>(value: T, fn: LeafFn): T {
-  if (typeof value === 'string') return fn(value) as T
-  if (Array.isArray(value)) return value.map((item) => mapJsonLike(item, fn)) as T
-  if (isPlainObject(value)) {
-    const result: Record<string, unknown> = {}
-    for (const [key, item] of Object.entries(value)) result[key] = mapJsonLike(item, fn)
-    return result as T
-  }
-  return value
+  return mapJsonValue(value, fn, true) as T
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== 'object' || value === null) return false
-  const proto = Object.getPrototypeOf(value)
-  return proto === Object.prototype || proto === null
+// Walks the JSON a provider receives: keys are masked like values, toJSON runs once, any other
+// object is its own enumerable entries, and binary data is returned untouched (441 D-21).
+function mapJsonValue(value: unknown, fn: LeafFn, callToJson: boolean): unknown {
+  if (typeof value === 'string') return fn(value)
+  if (typeof value !== 'object' || value === null) return value
+  if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) return value
+  if (Array.isArray(value)) return value.map((item) => mapJsonValue(item, fn, true))
+  const toJson = (value as { toJSON?: unknown }).toJSON
+  if (callToJson && typeof toJson === 'function') {
+    return mapJsonValue(toJson.call(value), fn, false)
+  }
+
+  const result: Record<string, unknown> = {}
+  for (const [key, item] of Object.entries(value)) {
+    const maskedKey = fn(key)
+    if (Object.hasOwn(result, maskedKey)) {
+      throw new Error('two keys of one object mask to the same name')
+    }
+    // Defined, not assigned, so an own `__proto__` key stays data.
+    Object.defineProperty(result, maskedKey, {
+      value: mapJsonValue(item, fn, true),
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    })
+  }
+  return result
 }
