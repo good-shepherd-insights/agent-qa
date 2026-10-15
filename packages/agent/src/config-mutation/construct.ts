@@ -954,6 +954,9 @@ const FIELD_WRITE_REFUSAL_WORDS: Readonly<Record<
   path_not_found: 'a path the change names no longer resolves',
   validation_failed: 'the configuration it would produce is not valid',
   path_not_writable: 'a path the change names cannot be written',
+  marker_written_back:
+    'a value or path the change names holds a [secret:<name>] marker, so it was not written; '
+    + 'change it in the secrets file instead',
 }
 
 function fieldWriteRefusal(

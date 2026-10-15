@@ -47,6 +47,7 @@ test('C429-CONFIG-WRITE-REFUSALS-EXACT', () => {
     | 'write_failed'
     | 'field_changed'
     | 'path_not_writable'
+    | 'marker_written_back'
   expectTypeOf<ConfigWriteRefusal>().toEqualTypeOf<Expected>()
   expectTypeOf<(typeof CONFIG_WRITE_REFUSALS)[number]>().toEqualTypeOf<Expected>()
   expectTypeOf<Exclude<ConfigWriteRefusal, Expected>>().toEqualTypeOf<never>()

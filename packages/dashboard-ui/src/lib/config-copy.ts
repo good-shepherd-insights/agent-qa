@@ -366,6 +366,9 @@ export const CONNECT_REFUSAL_COPY = {
   write_failed: COULD_NOT_SAVE_MODEL,
   field_changed: COULD_NOT_SAVE_MODEL,
   path_not_writable: COULD_NOT_SAVE_MODEL,
+  marker_written_back:
+    "This shows a declared secret as [secret:<name>], so it can't be saved here. "
+    + 'Change the value in your secrets file (workspace.secretsFile) instead.',
   connect_failed: COULD_NOT_SAVE_MODEL,
   cross_site_refused: "This page isn't allowed to change the config.",
 } as const satisfies Record<ConnectRefusalCode, string>

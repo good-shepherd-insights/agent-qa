@@ -37,6 +37,8 @@ export const CONFIG_WRITE_OPS = [
  * - `write_failed`: the atomic write itself failed.
  * - `field_changed`: an `expect` found the field changed since the page read it.
  * - `path_not_writable`: the path is not one this door may write or test.
+ * - `marker_written_back`: a value or path of the change holds a `[secret:<name>]` marker, which
+ *   is how a read shows a declared secret, so writing it would replace the real value (441 GAP-D7).
  */
 export type ConfigWriteRefusal =
   | 'invalid_write_input'
@@ -46,6 +48,7 @@ export type ConfigWriteRefusal =
   | 'write_failed'
   | 'field_changed'
   | 'path_not_writable'
+  | 'marker_written_back'
 // prettier-ignore
 export const CONFIG_WRITE_REFUSALS = [
   'invalid_write_input',
@@ -55,6 +58,7 @@ export const CONFIG_WRITE_REFUSALS = [
   'write_failed',
   'field_changed',
   'path_not_writable',
+  'marker_written_back',
 ] as const satisfies readonly ConfigWriteRefusal[]
 
 /**

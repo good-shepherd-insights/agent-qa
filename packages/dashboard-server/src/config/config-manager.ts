@@ -207,6 +207,17 @@ export class ConfigManager {
     changes: readonly ConfigChange[],
     options: { capturePriors?: boolean } = {},
   ): Promise<ApplyChangesOutcome> {
+    const marked = changeWithShownMarker(changes)
+    if (marked !== undefined) {
+      return {
+        kind: 'refused',
+        error: 'marker_written_back',
+        issues: [{
+          path: marked.path.map((segment) => (typeof segment === 'object' ? segment.name : segment)),
+          message: SHOWN_MARKER_SENTENCE,
+        }],
+      }
+    }
     return this.serialized(() => this.applyChangesOnce(changes, options.capturePriors === true))
   }
 
@@ -398,6 +409,38 @@ export class ConfigManager {
     )
     return isLink ? await realpath(this.configPath) : this.configPath
   }
+}
+
+// 441 GAP-D7 (CR-D01): a read shows a declared secret as `[secret:<name>]`. A change carrying that
+// text would write the marker over the real value, or address an entry by a name the file lacks.
+const SHOWN_MARKER = /\[secret:\w+\]/
+const SHOWN_MARKER_SENTENCE =
+  "This shows a declared secret as [secret:<name>], so it can't be saved here. "
+  + 'Change the value in your secrets file (workspace.secretsFile) instead.'
+
+function holdsShownMarker(value: unknown): boolean {
+  if (typeof value === 'string') return SHOWN_MARKER.test(value)
+  if (Array.isArray(value)) return value.some(holdsShownMarker)
+  if (value !== null && typeof value === 'object') {
+    return Object.entries(value).some(
+      ([key, entry]) => SHOWN_MARKER.test(key) || holdsShownMarker(entry),
+    )
+  }
+  return false
+}
+
+function pathHoldsShownMarker(path: readonly ConfigPathSegment[]): boolean {
+  return path.some((segment) => (typeof segment === 'object'
+    ? SHOWN_MARKER.test(segment.name)
+    : typeof segment === 'string' && SHOWN_MARKER.test(segment)))
+}
+
+function changeWithShownMarker(changes: readonly ConfigChange[]): ConfigChange | undefined {
+  return changes.find((change) => {
+    if (pathHoldsShownMarker(change.path)) return true
+    if (change.op === 'move') return pathHoldsShownMarker(change.from)
+    return change.op !== 'unset' && holdsShownMarker(change.value)
+  })
 }
 
 // 441 GAP-D5: a key segment is config text, so it passes the declared mask with the message.
