@@ -36,7 +36,6 @@ import { chainJobIdsForRun, renderVerdictSentence } from '@vostride/agent-qa-age
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
 import { composeLocalAgent, DIGEST_JOB_ID_SOURCE } from '@vostride/agent-qa-agent-local'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import {
   asRunId,
@@ -818,7 +817,7 @@ describe('425 D-20 — the chain-terminal line a real snapshot-bearing run print
     }
 
     const report = await runSafetyScope(
-      { maskingContext: createMaskingContext(), executionContext: 'local-headless' },
+      { executionContext: 'local-headless' },
       async () => {
         await enqueueThroughTheStep({
           runId: CHAIN_RUN_ID,
@@ -920,7 +919,7 @@ describe('425 D-20 — the chain-terminal line a real snapshot-bearing run print
     }
 
     const report = await runSafetyScope(
-      { maskingContext: createMaskingContext(), executionContext: 'local-headless' },
+      { executionContext: 'local-headless' },
       async () => {
         await enqueueThroughTheStep({
           runId: zeroRun,

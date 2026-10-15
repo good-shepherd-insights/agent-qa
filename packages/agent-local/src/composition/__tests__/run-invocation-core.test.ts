@@ -441,7 +441,7 @@ const AMBIENT_RESOLVERS = [
   'getActiveExecutionContext',
   'setActiveExecutionContextResolver',
   ['getActive', 'AuditSink'].join(''),
-  'setActiveAuditSinkResolver',
+  ['setActive', 'AuditSinkResolver'].join(''),
   'runSafetyScope',
   'AsyncLocalStorage',
 ] as const

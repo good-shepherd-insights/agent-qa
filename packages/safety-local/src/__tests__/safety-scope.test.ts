@@ -1,56 +1,40 @@
 import { describe, expect, it } from 'vitest'
 
-import {
-  createMaskingContext,
-  getActiveExecutionContext,
-  getActiveMaskingContext,
-} from '@vostride/agent-qa-safety'
+import { getActiveExecutionContext } from '@vostride/agent-qa-safety'
 
 import * as surface from '../index'
 import { detectExecutionContext } from '../execution-context-detector'
 import { runSafetyScope } from '../safety-scope'
 
+// 2026-10-15 (441-33, D-12): the scope carries no masking member, so each cell below keeps its
+// title and asserts the execution context only.
 describe('runSafetyScope', () => {
   it('resolves the full bundle inside the scope, across awaits (Test 1)', async () => {
-    const ctx = createMaskingContext()
+    await runSafetyScope({ executionContext: 'cloud' }, async () => {
+      expect(getActiveExecutionContext()).toBe('cloud')
 
-    await runSafetyScope(
-      { maskingContext: ctx, executionContext: 'cloud' },
-      async () => {
-        expect(getActiveMaskingContext()).toBe(ctx)
-        expect(getActiveExecutionContext()).toBe('cloud')
+      await Promise.resolve()
 
-        await Promise.resolve()
-
-        expect(getActiveMaskingContext()).toBe(ctx)
-        expect(getActiveExecutionContext()).toBe('cloud')
-      },
-    )
+      expect(getActiveExecutionContext()).toBe('cloud')
+    })
   })
 
   it('falls back outside any scope: masking undefined, ctx=detector, sink=memoized default (Test 2)', () => {
-    expect(getActiveMaskingContext()).toBeUndefined()
     expect(getActiveExecutionContext()).toBe(detectExecutionContext())
   })
 
   it('restores the outer bundle after an inner scope returns (Test 3)', () => {
-    const outer = createMaskingContext()
-    const inner = createMaskingContext()
-
-    runSafetyScope({ maskingContext: outer, executionContext: 'ci' }, () => {
-      expect(getActiveMaskingContext()).toBe(outer)
+    runSafetyScope({ executionContext: 'ci' }, () => {
       expect(getActiveExecutionContext()).toBe('ci')
 
-      runSafetyScope({ maskingContext: inner, executionContext: 'cloud' }, () => {
-        expect(getActiveMaskingContext()).toBe(inner)
+      runSafetyScope({ executionContext: 'cloud' }, () => {
         expect(getActiveExecutionContext()).toBe('cloud')
       })
 
-      expect(getActiveMaskingContext()).toBe(outer)
       expect(getActiveExecutionContext()).toBe('ci')
     })
 
-    expect(getActiveMaskingContext()).toBeUndefined()
+    expect(getActiveExecutionContext()).toBe(detectExecutionContext())
   })
 
   it('returns fn() result, including resolved async values (Test 4)', async () => {
@@ -65,33 +49,20 @@ describe('runSafetyScope', () => {
   })
 
   it('keeps interleaved sibling scopes isolated — D-02 concurrent-run clobber fix (Test 6)', async () => {
-    const ctxA = createMaskingContext()
-    const ctxB = createMaskingContext()
-
     await Promise.all([
-      runSafetyScope(
-        { maskingContext: ctxA, executionContext: 'ci' },
-        async () => {
-          expect(getActiveMaskingContext()).toBe(ctxA)
-          expect(getActiveExecutionContext()).toBe('ci')
-          await Promise.resolve()
-          expect(getActiveMaskingContext()).toBe(ctxA)
-          expect(getActiveExecutionContext()).toBe('ci')
-        },
-      ),
-      runSafetyScope(
-        { maskingContext: ctxB, executionContext: 'cloud' },
-        async () => {
-          expect(getActiveMaskingContext()).toBe(ctxB)
-          expect(getActiveExecutionContext()).toBe('cloud')
-          await Promise.resolve()
-          expect(getActiveMaskingContext()).toBe(ctxB)
-          expect(getActiveExecutionContext()).toBe('cloud')
-        },
-      ),
+      runSafetyScope({ executionContext: 'ci' }, async () => {
+        expect(getActiveExecutionContext()).toBe('ci')
+        await Promise.resolve()
+        expect(getActiveExecutionContext()).toBe('ci')
+      }),
+      runSafetyScope({ executionContext: 'cloud' }, async () => {
+        expect(getActiveExecutionContext()).toBe('cloud')
+        await Promise.resolve()
+        expect(getActiveExecutionContext()).toBe('cloud')
+      }),
     ])
 
-    expect(getActiveMaskingContext()).toBeUndefined()
+    expect(getActiveExecutionContext()).toBe(detectExecutionContext())
   })
 
   it('is exported from the safety-local barrel (reachability)', () => {
@@ -99,10 +70,9 @@ describe('runSafetyScope', () => {
   })
 
   // 2026-10-15 (441-44, D-15): moved from the deleted jsonl-audit-sink.test.ts with the sink class
-  // gone from the roster.
+  // gone from the roster. 2026-10-15 (441-33, D-12): the ambient masking resolver left the roster.
   it('exports only the fingerprint helper, masking scope binding and its ambient resolver, and execution-context detector', () => {
     expect(Object.keys(surface).sort()).toEqual([
-      'ambientMaskingContextResolver',
       'detectExecutionContext',
       'fingerprint',
       'runSafetyScope',

@@ -8,8 +8,7 @@ This package is the host-adapter home for the safety kernel. It owns the host
 APIs the browser-safe `@vostride/agent-qa-safety` package deliberately excludes:
 the `AsyncLocalStorage` safety-scope binding (`runSafetyScope`), the host
 `process`-reading execution-context detector, and the `fingerprint` helper. Key
-exports: `runSafetyScope`, `ambientMaskingContextResolver`,
-`detectExecutionContext`, `fingerprint`.
+exports: `runSafetyScope`, `detectExecutionContext`, `fingerprint`.
 
 ## Read First
 

@@ -10,12 +10,12 @@ import {
   type DrainReport,
 } from '@vostride/agent-qa-knowledge-local'
 import { createModel, type ModelProfile, type ResolvedModelAuth } from '@vostride/agent-qa-model'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import {
   HANDOFF_FILE,
   RUNS_SUBDIR,
   loadCompletedRunHandoff,
 } from '@vostride/agent-qa-runner-local'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { parseProcedureBody } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
@@ -53,7 +53,6 @@ import {
  */
 
 const RUN_ID = 'r_corner-river-elle-deep-prompt-reduce-masked-ilia-bob-cone'
-const PROBE_EMAIL = 'qa.user+381@example.com'
 const SCOPE_KEY = 'local-form'
 /** sha-256 of the live run's handoff.json bytes at demo/init/.agent-qa/runs/<RUN_ID>/. */
 const LIVE_HANDOFF_SHA256 =
@@ -68,14 +67,14 @@ const fixtureDir = join(
 )
 
 /**
- * The live run's mask at tail time: the model-bound email pass had already minted the
- * placeholder for the probe value during planning (the recorded plannedAction carries
- * `<EMAIL_0>`), and run.ts hands that context's mask to the tail.
+ * The run's mask at tail time is the declared-secret mask (441 D-06). The recorded plannedAction
+ * still carries the `<EMAIL_0>` an older build minted, which is literal text now (441 D-20), and
+ * PROBE_USER is not a declared value, so this mask declares none.
+ * 2026-10-15 (441-33, D-12): was the deleted masking context, primed with the probe email.
  */
 function liveMask(): (text: string) => string {
-  const context = createMaskingContext()
-  context.mask(PROBE_EMAIL)
-  return (text) => context.mask(text)
+  const redactor = new SecretRedactor(SecretStore.empty())
+  return (text) => redactor.redactString(text)
 }
 
 interface StagedRoots {

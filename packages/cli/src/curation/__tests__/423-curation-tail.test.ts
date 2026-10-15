@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
 import { composeLocalAgent, LOCAL_CURATION_CAPABILITIES, DIGEST_JOB_ID_SOURCE, type ComposeLocalAgentInput } from '@vostride/agent-qa-agent-local'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { asRecordId, asRunId, CURRENT_HANDOFF_SCHEMA_VERSION, CurationSnapshotSchema, type CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import * as tailModule from '../curation-tail.js'
@@ -202,7 +201,7 @@ describe('423 curation tail snapshot', () => {
       return host as never
     }
     const configPath = join(root, 'agent-qa.config.yaml')
-    const served = await runSafetyScope({ maskingContext: createMaskingContext(), executionContext: 'local-headless' }, async () => {
+    const served = await runSafetyScope({ executionContext: 'local-headless' }, async () => {
       await enqueueThroughTheStep({ runId: zeroRun, agentQaRoot: root, configPath, composeHost: () => composeHost() })
       const tail = runPostRunTail({ runId: zeroRun, agentQaRoot: root, configPath,
         knowledgeConfig: { dir: 'knowledge' }, configDir: root,

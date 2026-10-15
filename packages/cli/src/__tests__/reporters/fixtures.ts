@@ -1,13 +1,15 @@
 // Shared fixture for the reporter subscriber suites (Plan 363-07).
 //
-// One masking context + one canonical envelope stream, built from the REAL schema
-// envelope/payload types (never hand-rolled shapes). Masked placeholders are planted
+// One declared-secret mask + one canonical envelope stream, built from the REAL schema
+// envelope/payload types (never hand-rolled shapes). Masked markers are planted
 // exactly where the sink would put them: a step `error`, a `hookFinished` variable
 // value, and a `testFinished.failureSummary`. Every reporter prints them as they are
 // (441 D-07: nothing restores a value).
+// 2026-10-15 (441-33, D-12): the mask is the runner's declared `SecretRedactor`, not the deleted
+// masking context, so the markers read `[secret:<name>]`.
 
-import { createMaskingContext } from '@vostride/agent-qa-safety'
-import type { MaskingContext, QuarantineAppliedEntry } from '@vostride/agent-qa-schema'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
+import type { MaskFn, QuarantineAppliedEntry } from '@vostride/agent-qa-schema'
 import type {
   HookFinishedPayload,
   HookStartedPayload,
@@ -24,7 +26,7 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 export interface ReporterFixture {
-  ctx: MaskingContext
+  mask: MaskFn
   stepSecret: string
   hookSecret: string
   summarySecret: string
@@ -42,10 +44,10 @@ export function buildReporterFixture(): ReporterFixture {
   const hookSecret = 'hook-pw-444555666777'
   const summarySecret = 'sk-live-SUMMARY-888999000'
 
-  const ctx = createMaskingContext()
-  ctx.register(stepSecret)
-  ctx.register(hookSecret)
-  ctx.register(summarySecret)
+  const redactor = new SecretRedactor(
+    new SecretStore({ STEP_TOKEN: stepSecret, HOOK_PW: hookSecret, SUMMARY_TOKEN: summarySecret }),
+  )
+  const mask: MaskFn = (text) => redactor.redactString(text)
 
   let seq = 0
   const runId = 'run-fixture-1'
@@ -93,7 +95,7 @@ export function buildReporterFixture(): ReporterFixture {
     briefDigest: 'digest',
     status: 'failed',
     durationMs: 800,
-    error: ctx.mask(`Timeout waiting for token ${stepSecret}`),
+    error: mask(`Timeout waiting for token ${stepSecret}`),
   }
 
   const hookStarted: HookStartedPayload = {
@@ -112,7 +114,7 @@ export function buildReporterFixture(): ReporterFixture {
     durationMs: 300,
     stdout: '',
     stderr: '',
-    variables: { TOKEN: ctx.mask(hookSecret), REGION: 'us-east-1' },
+    variables: { TOKEN: mask(hookSecret), REGION: 'us-east-1' },
     kind: 'hook',
   }
 
@@ -152,7 +154,7 @@ export function buildReporterFixture(): ReporterFixture {
     briefDigest: 'digest',
     status: 'failed',
     durationMs: 1_200,
-    error: ctx.mask('Element not found'),
+    error: mask('Element not found'),
   }
 
   const test1Finished: TestFinishedPayload = {
@@ -160,7 +162,7 @@ export function buildReporterFixture(): ReporterFixture {
     testIndex: 1,
     outcome: 'failed',
     durationMs: 1_500,
-    failureSummary: ctx.mask(`Checkout failed near ${summarySecret}`),
+    failureSummary: mask(`Checkout failed near ${summarySecret}`),
   }
 
   const verdict: VerdictPayload = { verdict: 'failed' }
@@ -194,7 +196,7 @@ export function buildReporterFixture(): ReporterFixture {
     env('runFinished', { ...runFinished, finalSeq: seq }),
   ]
 
-  return { ctx, stepSecret, hookSecret, summarySecret, envelopes }
+  return { mask, stepSecret, hookSecret, summarySecret, envelopes }
 }
 
 /**

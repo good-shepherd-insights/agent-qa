@@ -42,8 +42,8 @@ describe('createJunitReporter', () => {
 
   it('stays MASKED — placeholders preserved, originals never written (D-11)', async () => {
     const { xml, fixture } = await runJunit()
-    // the placeholder token survives XML-escaping (rendered as &lt;SECRET_n&gt;)
-    expect(xml).toMatch(/SECRET_\d+/)
+    // the declared marker survives XML-escaping (441-33: `[secret:<name>]`, not the old `<SECRET_n>`)
+    expect(xml).toMatch(/\[secret:\w+\]/)
     expect(xml).not.toContain(fixture.stepSecret)
     expect(xml).not.toContain(fixture.hookSecret)
     expect(xml).not.toContain(fixture.summarySecret)

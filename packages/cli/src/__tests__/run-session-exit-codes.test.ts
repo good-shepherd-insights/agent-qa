@@ -124,9 +124,10 @@ describe('the suite path runs inside runSafetyScope and masks with its own redac
     expect(count(driveSource, 'runSafetyScope(')).toBe(1)
     expect(count(runSource, 'runSafetyScope(')).toBe(0)
     // 441-19 (D-12): the run seed helper is deleted; neither site reaches its primitives either.
+    // 441-33 (D-12): the primitives are deleted too, so their names are spelled in parts.
     for (const source of [driveSource, runSource]) {
-      expect(count(source, 'createMaskingContext(')).toBe(0)
-      expect(count(source, 'seedMaskingContext(')).toBe(0)
+      expect(count(source, ['create', 'MaskingContext('].join(''))).toBe(0)
+      expect(count(source, ['seed', 'MaskingContext('].join(''))).toBe(0)
     }
     // 441-58 (D-06): the producer's redactor reaches the ONE assembler, which puts it on RunConfig;
     // no masking context is handed over or set.
@@ -207,7 +208,7 @@ describe('the single-test path activates the seams with no identity mint remaini
     // 441-19 (D-12): the seed helper is deleted, so its primitives are what stays pinned absent.
     const registrarCall = ['buildRunSafety', 'Hooks('].join('')
     for (const source of [driveSource, runSource]) {
-      expect(count(source, 'createMaskingContext(')).toBe(0)
+      expect(count(source, ['create', 'MaskingContext('].join(''))).toBe(0)
       expect(count(source, registrarCall)).toBe(0)
     }
   })

@@ -33,7 +33,7 @@ describe('createWireReporter', () => {
     const reporter = createWireReporter({ write: capture.write })
     for (const envelope of fixture.envelopes) reporter.handler(envelope)
     const output = capture.output()
-    expect(output).toMatch(/<SECRET_\d+>/)
+    expect(output).toMatch(/\[secret:\w+\]/)
     expect(output).not.toContain(fixture.stepSecret)
     expect(output).not.toContain(fixture.hookSecret)
     expect(output).not.toContain(fixture.summarySecret)

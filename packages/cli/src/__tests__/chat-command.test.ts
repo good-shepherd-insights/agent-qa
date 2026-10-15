@@ -456,7 +456,7 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
     }
     // 2026-10-14 (441-06, D-07): printed text crosses the declared mask and nothing restores it.
     expect(source).toContain('declaredSecrets.mask')
-    for (const restore of ['unmask', 'createMaskingContext']) {
+    for (const restore of ['unmask', ['create', 'MaskingContext'].join('')]) {
       expect({ restore, present: source.includes(restore) }).toEqual({ restore, present: false })
     }
   })

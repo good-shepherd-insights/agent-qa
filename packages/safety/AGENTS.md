@@ -4,20 +4,21 @@ Inherit the root `agent-qa/AGENTS.md` branding, security, and release rules.
 
 ## Scope
 
-This package is the browser-safe safety kernel. It owns the masking, guardrail,
-and policy contracts, the first-party interception-hook registrar, and the
-egress seam. Key exports: `createMaskingProviderRequestHook`,
-`createGuardrailProviderRequestHook`, `GuardrailBlockError`,
-`registerFirstPartySafetyHooks`, `classifyRisk`, and `scan`. The execution
-policy gate and its confirm ports were deleted in Phase 432 (D-15).
+This package is the browser-safe safety kernel. It owns the prompt walker, the
+declared-secret masking middleware, the risk classifier, the execution-context
+seam and the data delimiters. Key exports: `mapPromptLeaves`,
+`createMaskingMiddleware`, `classifyRisk`, and `wrapAppObservedData`. The
+execution policy gate and its confirm ports were deleted in Phase 432 (D-15);
+the masking context, the guardrails, the hook registrar and the audit port were
+deleted in Phase 441 (D-12, D-15).
 
 ## Read First
 
 - `package.json`
 - `src/index.ts`
-- `src/hooks/first-party.ts`
+- `src/egress/masking-middleware.ts`
+- `src/egress/map-prompt-leaves.ts`
 - `src/policy/risk-classifier.ts`
-- `src/masking/egress-hook.ts`
 
 ## Commands
 
@@ -30,13 +31,11 @@ policy gate and its confirm ports were deleted in Phase 432 (D-15).
 - This package is browser-safe and uses NO host APIs: no `fs`, no `process`, no
   database, no `AsyncLocalStorage`. Host adapters live in
   `@vostride/agent-qa-safety-local`; safety never depends on safety-local.
-- Keep the AI-SDK-derived interception-hook interfaces here rather than in
+- Keep the AI-SDK-derived `ProviderRequestParams` type here rather than in
   `@vostride/agent-qa-schema`, because `@ai-sdk/*` types are not browser-safe
   (the deliberate SAFE-02 override). Schema stays host-free and SDK-free.
-- Keep `registerFirstPartySafetyHooks` the only public registration path; the raw
-  hook registry construction stays private (D-03).
-- Export safety contracts through the package root; do not leak private registry
-  or ownership internals.
+- Export safety contracts through the package root; do not leak ownership
+  internals.
 
 ## Verification
 

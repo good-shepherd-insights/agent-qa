@@ -168,7 +168,7 @@ describe('C441-DISPLAY', () => {
 
   it('the console reporter prints a numbered placeholder unchanged and restores nothing', () => {
     const { output, secrets } = renderFixture(true)
-    const placeholder = secrets.ctx.mask(secrets.stepSecret)
+    const placeholder = secrets.mask(secrets.stepSecret)
     expect(placeholder).not.toBe(secrets.stepSecret)
     expect(output).toContain(`Timeout waiting for token ${placeholder}`)
     for (const secret of [secrets.stepSecret, secrets.hookSecret, secrets.summarySecret]) {

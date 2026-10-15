@@ -19,7 +19,6 @@ import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   guardCompletedRunHandoff,
 } from '@vostride/agent-qa-schema'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 import type { RunConfig, RunMemberDescriptor } from '../ports.js'
 import type { TestResult } from '../../result.js'
 import {
@@ -29,6 +28,7 @@ import {
   skippedPerTestOutcome,
 } from '../handoff-assembly.js'
 import { makeEmptyServedBrief } from '../../loop/evidence.js'
+import { SecretRedactor, SecretStore } from '../../loop/secrets.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import { startRun } from '../shell.js'
 
@@ -370,9 +370,11 @@ describe('StepEvidence.planSource marker (D-12)', () => {
 })
 
 // WINDOWS #305 · DETL-04 — masked-at-rest narration on the REAL-evidence arm. The masker here is
-// the product's OWN `createMaskingContext()`, seeded by `register`, so every assertion is against
-// the one `MaskFn` a run threads from `shell.ts` into both `assemblePerTestOutcome` and
+// the product's OWN declared-secret `SecretRedactor`, over two declared values, so every assertion
+// is against the one `MaskFn` a run threads from `shell.ts` into both `assemblePerTestOutcome` and
 // `projectTestFinished` — never a stand-in that could answer "is this a secret" differently.
+// 2026-10-15 (441-33, D-01/D-12): was the deleted masking context, which also minted `<EMAIL_n>`
+// for undeclared emails; the email is now a declared value, so each field is still masked.
 describe('WINDOWS #305 — real step evidence is masked at rest (DETL-04)', () => {
   const CREDENTIAL = 'zz-405-populated-secret-7f3a91c2'
   const EMAIL = 'qa-person@example.com'
@@ -393,9 +395,10 @@ describe('WINDOWS #305 — real step evidence is masked at rest (DETL-04)', () =
   }
 
   function seededMask(): MaskFn {
-    const context = createMaskingContext()
-    context.register(CREDENTIAL)
-    return (text: string) => context.mask(text)
+    const redactor = new SecretRedactor(
+      new SecretStore({ OPERATOR_TOKEN: CREDENTIAL, LOGIN_USER: EMAIL }),
+    )
+    return (text: string) => redactor.redactString(text)
   }
 
   function realEvidence(): StepEvidence {
@@ -495,15 +498,15 @@ describe('WINDOWS #305 — real step evidence is masked at rest (DETL-04)', () =
     const step = assembleOnce(seededMask())
     const subAction = step.subActions[0]
 
-    expect(step.verifierVerdict.reasoning).toBe('verifier read <EMAIL_0> in the notice')
+    expect(step.verifierVerdict.reasoning).toBe('verifier read [secret:LOGIN_USER] in the notice')
     expect(subAction.plan).toBe(
-      'Type <SECRET_0> into the field the notice names for <EMAIL_0>',
+      'Type [secret:OPERATOR_TOKEN] into the field the notice names for [secret:LOGIN_USER]',
     )
     expect(subAction.result.error).toBe(
-      'Cannot acknowledge: the notice names <EMAIL_0> as contact, the operator credential <SECRET_0> was refused',
+      'Cannot acknowledge: the notice names [secret:LOGIN_USER] as contact, the operator credential [secret:OPERATOR_TOKEN] was refused',
     )
-    expect(subAction.result.data).toEqual({ echoed: 'server saw <EMAIL_0>' })
-    expect(subAction.result.metadata).toEqual({ header: 'authorization <SECRET_0>' })
+    expect(subAction.result.data).toEqual({ echoed: 'server saw [secret:LOGIN_USER]' })
+    expect(subAction.result.metadata).toEqual({ header: 'authorization [secret:OPERATOR_TOKEN]' })
   })
 
   it('leaves stepText, plannedAction and interpolatedVariables BYTE-IDENTICAL (the G-381-3 carve-out)', () => {
@@ -562,7 +565,7 @@ describe('WINDOWS #305 — real step evidence is masked at rest (DETL-04)', () =
     const handoff = assembleHandoff(config, [outcome], 'failed', { startedAt: 1, endedAt: 2 })
     const reloaded = guardCompletedRunHandoff(JSON.parse(JSON.stringify(handoff)))
 
-    expect(reloaded.tests[0].steps[0].subActions[0].result.error).toContain('<EMAIL_0>')
+    expect(reloaded.tests[0].steps[0].subActions[0].result.error).toContain('[secret:LOGIN_USER]')
     expect(reloaded.tests[0].steps[0].stepText).toBe(STEP_TEXT)
   })
 })
