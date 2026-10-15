@@ -9774,6 +9774,30 @@
       "file": "packages/cli/src/__tests__/masking-provider-boundary.test.ts",
       "fullName": "C441-GAP3-EGRESS a declared brace value inside a template never reaches the provider",
       "origin": "441 GAP3-D3"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval/src/extract/__tests__/corpus-text-mask.test.ts",
+      "fullName": "C441-GAP4-CORPUS a prompt tier holding a one-character declared value is masked, its tier and brief digests are recomputed over the masked text, and the brief still guards",
+      "origin": "441 GAP4-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval/src/extract/__tests__/corpus-text-mask.test.ts",
+      "fullName": "C441-GAP4-CORPUS a brief whose digests and run date hold a one-character declared value but whose text does not is returned byte-identical in both modes",
+      "origin": "441 GAP4-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval/src/extract/__tests__/corpus-text-mask.test.ts",
+      "fullName": "C441-GAP4-CORPUS in everyLeaf mode a served brief keeps exactly its digest, date, enum, literal and minted-id paths, and every other string leaf holding a declared value changes",
+      "origin": "441 GAP4-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/441-gap4-eval-corpus.test.ts",
+      "fullName": "C441-GAP4-CORPUS under a one-character declared value, eval seed seeds a run whose lossless served brief holds it and a false-pass mark on that run is marked, while its free text commits only as the marker",
+      "origin": "441 GAP4-D1"
     }
   ]
 }
