@@ -86,7 +86,6 @@ async function startFixture(
       secretMask: mask,
       ...extraDeps?.(runId),
     } as FunctionDeps,
-    auditSink: { appendGuardrailAudit() {} },
     // 2026-10-02 (432-36, D-12): no `resolveExecutionContext` registry option; the registry reads
     // no context (432-20).
   })

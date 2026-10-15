@@ -51,7 +51,6 @@ import {
   RUNS_MARKS_HISTORY_FUNCTION_ID,
   RUNS_START_FUNCTION_ID,
   type ChatResolverTable,
-  type CreateFunctionRegistryOptions,
   type FunctionDeclaration,
   type FunctionDeps,
   type FunctionRegistry,
@@ -190,21 +189,8 @@ export const CONFORMANCE_CENSUS_CALLER: FunctionCaller = Object.freeze({
 // shipped `MCP_FUNCTION_CALLER`; a cell that must show a retired field is unread builds its own
 // smuggled caller (a cast) and hands it in, so the smuggle is visible where the claim is made.
 
-/**
- * The gate-facing seams a verdict leg supplies, and the whole of them (397-04).
- *
- * Every member is a PORT `createFunctionRegistry` already publishes, forwarded untouched. Nothing
- * here widens what a registry is; what it does is let a cell that asks the gate a question state
- * the conditions it is asking under instead of inheriting them from the process.
- */
-export interface ConformanceRegistryOptions {
-  // 2026-10-02 (432-37, D-12): no `resolveExecutionContext` member. It only forwarded the
-  // registry's retired, unread option, and no caller has passed it since 432-36.
-  // 432-13 (D-14/D-15): no standing-approval reader and no confirm — `invokeFunction` asks nobody,
-  // and the registry no longer accepts either.
-  /** The composition's audit sink; absent discards. No op gate writes through it since 432-13. */
-  readonly auditSink?: CreateFunctionRegistryOptions['auditSink']
-}
+// 2026-10-15 (441-29, D-15): no `ConformanceRegistryOptions`. Its last member forwarded the
+// registry's audit sink, which the registry no longer accepts, so the registry is built from deps.
 
 /**
  * The built-in registry, with empty deps.
@@ -219,13 +205,9 @@ export interface ConformanceRegistryOptions {
  * that gets past the gate here reaches a dependency that does not exist and stops. No cell in this
  * suite can write a file, start a run or commit anything.
  */
-export function conformanceRegistry(options: ConformanceRegistryOptions = {}): FunctionRegistry {
-  const auditSink = options.auditSink ?? ({
-    appendGuardrailAudit() {},
-  } as unknown as CreateFunctionRegistryOptions['auditSink'])
+export function conformanceRegistry(): FunctionRegistry {
   return createFunctionRegistry({
     deps: {} as unknown as FunctionDeps,
-    auditSink,
   })
 }
 
@@ -301,13 +283,10 @@ export async function withMcpClient<Answer>(
   // 2026-10-02 (432-39, D-12): the caller the server is built over. Absent, the shipped tokenless
   // `MCP_FUNCTION_CALLER`; a cell proving a retired field is unread passes its own smuggled caller.
   caller: FunctionCaller = MCP_FUNCTION_CALLER,
-  // The ports of the registry this server is built over (397-04). 2026-10-02 (432-37): only the
-  // audit sink is left; no member states a context, because the registry reads none (432-20).
-  registryOptions: ConformanceRegistryOptions = {},
 ): Promise<Answer> {
   const handler = createMcpHandler(() =>
     buildAgentQaMcpServer({
-      registry: conformanceRegistry(registryOptions),
+      registry: conformanceRegistry(),
       caller,
       maskText: (text: string) => text,
     }),

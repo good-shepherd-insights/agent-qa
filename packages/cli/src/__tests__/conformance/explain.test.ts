@@ -71,7 +71,6 @@ function explainRegistry(port: CapabilityCatalogPort): FunctionRegistry {
     deps: { capabilityCatalog: port } as unknown as Parameters<
       typeof createFunctionRegistry
     >[0]['deps'],
-    auditSink: { appendGuardrailAudit() {} },
     // 2026-10-01 (432-31, D-12): the pinned `resolveExecutionContext` registry option is dropped.
     // The registry never read it (no op gate decides in a context), so the answer was already the
     // same on a laptop and on a runner.
@@ -394,7 +393,6 @@ describe('a composition with no catalog port refuses BY NAME (D-09)', () => {
     // data still SOUNDS like an explain, so the honest report is a refusal naming the capability.
     const registry = createFunctionRegistry({
       deps: {} as unknown as Parameters<typeof createFunctionRegistry>[0]['deps'],
-      auditSink: { appendGuardrailAudit() {} },
     })
     await expect(
       invokeFunction(registry, EXPLAIN_FUNCTION_ID, { query: 'what can you do' }, CONFORMANCE_CENSUS_CALLER),

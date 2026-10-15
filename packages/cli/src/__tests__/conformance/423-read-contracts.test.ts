@@ -308,7 +308,7 @@ async function openDurableScene() {
     secretMask: mask,
   } as unknown as FunctionDeps
   // 2026-10-01 (432-31): the retired, unread `resolveExecutionContext` registry option is dropped.
-  const registry = createFunctionRegistry({ deps, auditSink: { appendGuardrailAudit() {} } })
+  const registry = createFunctionRegistry({ deps })
   const agentHost = composeDashboardAgentHost({ registry } as LocalAgentHost)
   const doors = await openDoors({ registry, agentHost, db, maskText: mask })
   return { root, db, runId, excludedRunId, authPlaceholder, allowedPlaceholder, doors, snapshot,

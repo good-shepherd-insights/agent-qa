@@ -104,7 +104,6 @@ import {
   registryDeclarations,
   registryOpIds,
   withMcpClient,
-  type ConformanceRegistryOptions,
   type ResolverOpTarget,
   type SurfaceEnumeration,
 } from './adapters.js'
@@ -331,10 +330,8 @@ async function gateAnswerFor(
   opId: string,
   input: unknown,
   caller: Parameters<typeof invokeFunction>[3],
-  // 2026-10-01 (432-31): no retired `resolveExecutionContext` registry option by default.
-  options: ConformanceRegistryOptions = {},
 ): Promise<GateAnswer> {
-  const registry = conformanceRegistry(options)
+  const registry = conformanceRegistry()
   try {
     await invokeFunction(registry, opId, input, caller)
     return { kind: 'allowed-dispatched', missingScopes: [] }
