@@ -632,8 +632,11 @@ function assertRuntime(kind: NonNullable<ReturnLeg['runtime']>): void {
 
 describe('C432-RETURN: every removed approval and permission member reds by name on its return', () => {
   it('UNIVERSE-FLOORS: every region reads real code, so no leg can pass over an empty scan', () => {
+    // 2026-10-15 (441-44, D-15): safety-local keeps five production files once the audit sink class
+    // is deleted, so its floor is four; every other region still reads more than five.
+    const floorOf = (region: string): number => (region === SAFETY_LOCAL ? 4 : 5)
     for (const region of [SERVER, UI, SAFETY, SAFETY_LOCAL, AGENT, AGENT_LOCAL, KNOWLEDGE, SCHEMA, 'cli/src/', 'mcp/src/']) {
-      expect(filesOf(region).length, `${region} scanned nothing`).toBeGreaterThan(5)
+      expect(filesOf(region).length, `${region} scanned nothing`).toBeGreaterThan(floorOf(region))
     }
     for (const leg of RETURN_LEGS) {
       for (const region of leg.regions ?? []) {

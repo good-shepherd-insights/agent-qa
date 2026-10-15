@@ -7,7 +7,7 @@
 //
 //   <root>/runs/<slug(runId)>/events.jsonl
 //
-// D-06 append discipline (the safety-local JsonlAuditSink verbatim): synchronous, fsync-free,
+// D-06 append discipline: synchronous, fsync-free, mkdir-recursive then one appendFileSync of
 // exactly one JSON line per envelope — the file is crash-safe up to the last completed append.
 // The runId directory component is slugged traversal-safe (the T-360-03 `slugBranch` idiom) so a
 // planner-supplied `../..`-shaped runId can never escape the runs root (T-361-01). The read leg
@@ -48,7 +48,7 @@ export class FsEventLog implements EventLogPort {
   }
 
   append(envelope: RunEventEnvelope): void {
-    // JsonlAuditSink discipline: mkdir-recursive then a single appendFileSync of one line.
+    // D-06: mkdir-recursive then a single synchronous appendFileSync of one line.
     mkdirSync(this.dir, { recursive: true })
     appendFileSync(this.file, `${JSON.stringify(envelope)}\n`)
   }

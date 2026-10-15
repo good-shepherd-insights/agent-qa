@@ -130,7 +130,7 @@ export interface BaselineProbeResult {
 
 /**
  * The JSONL event-log seam (D-05/D-06). BOTH legs are SYNC and fire-and-forget — the bus
- * NEVER awaits telemetry (the JsonlAuditSink discipline; D-06/D-07). `append` persists one
+ * NEVER awaits telemetry (a synchronous one-line append; D-06/D-07). `append` persists one
  * envelope per emitted event; a throw degrades the bus to memory-only with a single
  * `runWarning` (D-07). `read(fromSeq)` supplies older-than-window envelopes for deep replay.
  * The runner-local `FsEventLog` (Plan 07) implements this against `events.jsonl`.
@@ -240,7 +240,7 @@ export const POST_VERDICT_STEP_BUDGET_MS = 5_000
  * The D-08 run-artifact persistence seam: a runner-owned port whose only implementation is the
  * runner-local `FsRunArtifactStore` (the 356/361 port-in-runner/impl-in-runner-local precedent).
  * BOTH legs are SYNC and fire-and-forget — the shell NEVER awaits artifact persistence, and a
- * throw degrades with a `runWarning`, never gates the verdict (the JsonlAuditSink/handoff
+ * throw degrades with a `runWarning`, never gates the verdict (the event-log/handoff
  * discipline; D-07). The store writes ONE `artifact.json` into the SAME
  * `<root>/runs/<slug(runId)>/` family as `events.jsonl`/`handoff.json` (one self-contained run
  * directory). `stage(document)` persists the config + source snapshot once after `runStarted`;

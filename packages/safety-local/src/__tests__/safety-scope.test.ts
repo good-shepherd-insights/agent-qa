@@ -97,4 +97,15 @@ describe('runSafetyScope', () => {
   it('is exported from the safety-local barrel (reachability)', () => {
     expect(surface.runSafetyScope).toBe(runSafetyScope)
   })
+
+  // 2026-10-15 (441-44, D-15): moved from the deleted jsonl-audit-sink.test.ts with the sink class
+  // gone from the roster.
+  it('exports only the fingerprint helper, masking scope binding and its ambient resolver, and execution-context detector', () => {
+    expect(Object.keys(surface).sort()).toEqual([
+      'ambientMaskingContextResolver',
+      'detectExecutionContext',
+      'fingerprint',
+      'runSafetyScope',
+    ])
+  })
 })

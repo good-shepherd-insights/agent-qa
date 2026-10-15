@@ -6,16 +6,15 @@ Inherit the root `agent-qa/AGENTS.md` branding, security, and release rules.
 
 This package is the host-adapter home for the safety kernel. It owns the host
 APIs the browser-safe `@vostride/agent-qa-safety` package deliberately excludes:
-the filesystem `JsonlAuditSink` (guardrail rows), the `AsyncLocalStorage` safety-scope binding
-(`runSafetyScope`), the host `process`-reading execution-context detector, and
-the `fingerprint` helper. Key exports: `JsonlAuditSink`, `runSafetyScope`,
-`ambientMaskingContextResolver`, `detectExecutionContext`, `fingerprint`.
+the `AsyncLocalStorage` safety-scope binding (`runSafetyScope`), the host
+`process`-reading execution-context detector, and the `fingerprint` helper. Key
+exports: `runSafetyScope`, `ambientMaskingContextResolver`,
+`detectExecutionContext`, `fingerprint`.
 
 ## Read First
 
 - `package.json`
 - `src/index.ts`
-- `src/jsonl-audit-sink.ts`
 - `src/safety-scope.ts`
 - `src/execution-context-detector.ts`
 
@@ -32,8 +31,6 @@ the `fingerprint` helper. Key exports: `JsonlAuditSink`, `runSafetyScope`,
 - Enforce the direction firewall: safety-local depends on safety and never the
   reverse. The browser-safe kernel stays storage-neutral; concrete host sinks and
   scope binding land here.
-- Keep the `JsonlAuditSink` the filesystem implementation of the neutral
-  `AuditSink` port defined in safety; do not push host details back upstream.
 - Export host adapters through the package root; do not leak private file or
   process handles.
 
