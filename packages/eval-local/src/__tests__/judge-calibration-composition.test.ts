@@ -316,6 +316,42 @@ describe('C441-GAP2-JUDGE', () => {
     expect(masked).toEqual({ ...gap, entries: [{ ...gap.entries[0], name: '[secret:INSPECT_441]-judge' }] })
   })
 })
+
+describe('C441-GAP3-JUDGE', () => {
+  const shortValueMask = () => {
+    const declared = new SecretRedactor(SecretStore.fromEnvContent(
+      'JUDGE_API_KEY=fixture-private-api-key\nPIN=0'))
+    return (text: string) => declared.redactString(text)
+  }
+
+  it('a judge calibration commit under a one-character declared value is committed and returns only masked text', async () => {
+    const f = fixture([{}, {}], undefined, false, [1])
+    const mask = shortValueMask()
+    f.input.mask = mask
+
+    const result = await runJudgeCalibration({ kind: 'probe', probe: f.input, commit: true })
+
+    expect(result.kind).toBe('committed')
+    if (result.kind !== 'committed') throw new Error('expected publication')
+    expect(local.maskJudgeCalibrationText(result, mask)).toEqual(result)
+    const identity = core.createPanelIdentity(f.input.members.map(m => m.profile.model))
+    const reread = publication.readJudgeCalibration({ ...f.input, identity })
+    expect(reread.kind).toBe('loaded')
+    expect(local.maskJudgeCalibrationText(reread, mask)).toEqual({ kind: 'loaded', artifact: result.artifact })
+  })
+
+  it('the dry-run preview under the same mask is still masked', async () => {
+    const f = fixture([{}, {}], undefined, false, [1])
+    const mask = shortValueMask()
+    f.input.mask = mask
+
+    const preview = await runJudgeCalibration({ kind: 'probe', probe: f.input })
+
+    expect(preview.kind).toBe('dry-run')
+    expect(JSON.stringify(preview)).toContain('[secret:PIN]')
+    expect(local.maskJudgeCalibrationText(preview, mask)).toEqual(preview)
+  })
+})
 function addEvidence(project: string, index: number, model: core.CassetteModelReceipt, members: readonly string[], ambiguous = false, excluded = false, stepText?: string) {
   const root = join(project, '.agent-qa')
   const committedRoot = join(project, 'agent-qa-eval')

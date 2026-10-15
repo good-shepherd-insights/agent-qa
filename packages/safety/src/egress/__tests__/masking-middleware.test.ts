@@ -153,3 +153,33 @@ describe('C441-GAP2-EGRESS', () => {
     ])
   })
 })
+
+describe('C441-GAP3-EGRESS', () => {
+  async function sentLeaf(mask: (text: string) => string, text: string): Promise<string> {
+    const model = recorder()
+    const wrapped = wrapLanguageModel({ model, middleware: createMaskingMiddleware(mask) })
+    await wrapped.doGenerate({
+      prompt: [{ role: 'user', content: [{ type: 'text', text }] }],
+    } as unknown as ProviderRequestParams)
+    const message = model.doGenerateCalls[0]!.prompt[0]!
+    if (message.role !== 'user' || message.content[0]?.type !== 'text') {
+      throw new Error('expected a text leaf')
+    }
+    return message.content[0].text
+  }
+
+  it('a declared value inside a template\'s own text is never sent, and the template is not restored', async () => {
+    for (const [name, value] of [['B', '}'], ['B', '{{'], ['X', 'W}']] as const) {
+      const mask = alternationMask({ PW: 'hunter2', [name]: value })
+      const leaf = await sentLeaf(mask, 'type {{secret:PW}} now')
+      expect(leaf, value).not.toContain('{{secret:PW}}')
+      expect(leaf, value).not.toContain(value)
+      expect(leaf, value).not.toContain('hunter2')
+    }
+  })
+
+  it('with no declared value inside it, the template is still sent verbatim', async () => {
+    expect(await sentLeaf(alternationMask({ PW: 'hunter2' }), 'type {{secret:PW}} now'))
+      .toBe('type {{secret:PW}} now')
+  })
+})

@@ -281,3 +281,20 @@ describe('C441-GAP2-EGRESS', () => {
     expect(JSON.stringify(captured())).not.toContain('v-key-0417')
   })
 })
+
+describe('C441-GAP3-EGRESS', () => {
+  it('a declared brace value inside a template never reaches the provider', async () => {
+    for (const [name, value] of [['B', '}'], ['B', '{{'], ['X', 'W}']] as const) {
+      const redactor = new SecretRedactor(new SecretStore({ PW: 'hunter2', [name]: value }))
+      const { captured, model } = createCapturingModel((text) => redactor.redactString(text))
+
+      await model.doGenerate(promptRequest('type {{secret:PW}} now'))
+
+      const text = capturedUserText(captured())
+      expect(text, value).not.toContain('{{secret:PW}}')
+      expect(text, value).not.toContain(value)
+      expect(JSON.stringify(captured()), value).not.toContain('hunter2')
+      if (value === 'W}') expect(JSON.stringify(captured())).not.toContain(value)
+    }
+  })
+})
