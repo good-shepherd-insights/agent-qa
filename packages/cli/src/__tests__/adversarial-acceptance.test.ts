@@ -158,7 +158,6 @@ function fixture() {
     plan,
     cassettes: [{ cassette: seed, blobs: extracted.blobs }],
     committedRoot,
-    seedingOutputBaseDir: join(f.agentQaRoot, 'eval', 'audit', 'acceptance-seed'),
   })
   expect(seeded.refusals).toEqual([])
   expect(seeded.seededCount).toBe(1)
@@ -354,7 +353,6 @@ describe('422 acceptance — the documented surface, the whole loop, and the ref
       committedRoot: f.committedRoot,
       product: 'default',
       batchDigest: staged.batchDigest!,
-      seedingOutputBaseDir: join(f.agentQaRoot, 'eval/audit/seed/acceptance'),
       afterCaseCommitted: () => {
         committed += 1
         if (committed === 1) throw new Error('acceptance interruption')

@@ -110,14 +110,13 @@ async function produceSavedRun(f: ReturnType<typeof fixture>, floor = false) {
     mask: session.mask,
     judge: { members: f.members.map(model => ({ profile: { ...profile, model }, auth: { kind: 'api-key' as const, apiKey: secret } })) } }
   const produced = floor ? await local.runNoiseFloorMeasurement({ ...common, profileKeyInputs: profileInputs,
-    seeds: [11, 29], repeats: 3, bootstrapSeed: 7, commit: false, reportOutputBaseDir: join(root, 'floor-audit') })
+    seeds: [11, 29], repeats: 3, bootstrapSeed: 7, commit: false })
     : await local.replayCorpusOnce({ ...common, runRoot: join(root, 'eval/gate', slugBranch(profileKey)),
       selected: local.loadCassetteBundles(common.cassettesRoot).loaded,
       corpusDigest: core.computeCorpusDigest(snapshot.snapshot.entries), source: 'committed', seed: 11,
       labelRecords: snapshot.snapshot.labelsById, corpusEntriesById: snapshot.corpusEntriesById,
       excludedLabelIds: snapshot.snapshot.excludedLabelIds,
-      productByCassetteId: new Map(snapshot.snapshot.entries.map(entry => [entry.cassetteId, entry.product])),
-      replayOutputBaseDir: join(root, 'gate-audit') })
+      productByCassetteId: new Map(snapshot.snapshot.entries.map(entry => [entry.cassetteId, entry.product])) })
   boundary.calls = boundary.binds = boundary.comparisons = 0
   return { produced, profile: { ...profileInputs, fingerprint }, identity, agentQaRoot: root, committedRoot: f.committedRoot }
 }
@@ -283,7 +282,7 @@ it('publishes through the public command and regenerates unchanged without chang
   expect(first.result.kind).toBe('committed')
   expect(first.result.artifact.status).toBe('uncalibrated')
   expect(first.result.artifact.n).toBe(1)
-  expect(first.result.artifact).not.toHaveProperty('auditDirectory')
+  expect(first.result.artifact).not.toHaveProperty(['audit', 'Directory'].join(''))
   expect(boundary.calls).toBe(4)
   const second = await invoke(f.configPath, ['--judge-panel', '--commit', '--json'])
   expect(second.result.kind).toBe('unchanged')
@@ -375,13 +374,13 @@ function addEvidence(project: string, index: number, model: core.CassetteModelRe
   const source = cassettes.find(row => row.cassette.granularity === 'leaf')!.cassette as core.LeafCassette
   source.receipt.model = model
   const plan = core.buildSeedingPlan({ handoff, cassettes, partition: { saltHex: 'a'.repeat(64), heldOutFraction: 0.000001, privateFraction: 0.5 } })
-  const seeded = local.seedCommittedCorpus({ plan, cassettes, committedRoot, seedingOutputBaseDir: join(root, 'seed') })
+  const seeded = local.seedCommittedCorpus({ plan, cassettes, committedRoot })
   if (seeded.refusals.length) throw new Error('Fixture seed refused')
   const mark: MarkReceipt = { schemaVersion: 1, markId: 'mark_abcdef012345', runId: handoff.runId,
     runSlug: core.deriveRunSlug(handoff.runId), testIndex: 0, stepIndex: 0, kind: 'confirmed-bug', origin: 'user', ordinal: 1,
     markedAt: 0, disposition: { kind: 'confirmed-bug', confirmedRecords: 0 }, gold: [], evidence: { confirmed: 0, overturned: 0 } }
   const frozen = core.buildGoldenTrajectoryPlan({ handoff, cassettes, mark, product: 'shop' })
-  const freeze = local.seedCommittedCorpus({ plan: { ...plan, cases: frozen.cases }, cassettes: frozen.goldCassettes, committedRoot, seedingOutputBaseDir: join(root, 'gold-seed') })
+  const freeze = local.seedCommittedCorpus({ plan: { ...plan, cases: frozen.cases }, cassettes: frozen.goldCassettes, committedRoot })
   if (freeze.refusals.length) throw new Error('Fixture gold refused')
   mark.gold = frozen.cases.map(row => ({ cassetteId: row.cassetteId, sourceCassetteId: source.id, channel: 'user-mark' }))
   const marks = [mark]

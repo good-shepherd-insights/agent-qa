@@ -139,7 +139,6 @@ function fixture() {
       plan,
       cassettes: [{ cassette: seed, blobs: extracted.blobs }],
       committedRoot,
-      seedingOutputBaseDir: join(f.agentQaRoot, 'eval', 'audit', 'probe-seed'),
     }).refusals,
   ).toEqual([])
   return { ...f, committedRoot, seed }
@@ -250,7 +249,6 @@ async function stage(f: Fixture, s: EvalSession, opts: StageOptions = {}) {
         author,
         executionContext: s.executionContext,
         mask: s.mask,
-        auditDir: join(f.agentQaRoot, 'eval', 'audit', 'adversarial-probe'),
         onCallAttempted: binding.onCallAttempted,
         createModelImpl: stub.createModelImpl,
         generateTextImpl: stub.generateTextImpl,

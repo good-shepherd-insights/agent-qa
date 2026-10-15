@@ -122,7 +122,6 @@ function fixture() {
       plan,
       cassettes: [{ cassette: seed, blobs: extracted.blobs }],
       committedRoot,
-      seedingOutputBaseDir: join(f.agentQaRoot, 'eval', 'audit', 'admit-seed'),
     }).refusals,
   ).toEqual([])
   return { ...f, committedRoot, seed }

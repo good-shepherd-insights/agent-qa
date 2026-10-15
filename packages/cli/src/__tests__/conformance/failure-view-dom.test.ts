@@ -453,7 +453,6 @@ interface MarkHarvest {
   previewStatus?: number
   responseStatus?: number
   responseBody?: unknown
-  freezeAudit?: unknown[]
   confirmFrames: Array<{ event: string; data: string }>
   markedAtWithinDrive: boolean
   /** 432-42 (D-25): the new history entry's text, its controls and its applied line. */
@@ -514,15 +513,6 @@ async function observeMark(context_: BrowserContext, origin: string, runId: stri
       document.querySelectorAll('[role="dialog"],[aria-modal]').length)
     if (reply === undefined) throw new Error('mark route returned no response')
     harvest.responseBody = await reply.json()
-    if (reply.status() >= 500) {
-      // Preserve the real freeze boundary's own audit before fixture teardown removes it.
-      const goldenRoot = join(runDir, '..', '..', 'eval', 'golden')
-      harvest.freezeAudit = existsSync(goldenRoot) ? readdirSync(goldenRoot).flatMap(markId => {
-        const audit = join(goldenRoot, markId, 'guardrail_audit.jsonl')
-        return existsSync(audit) ? readFileSync(audit, 'utf8').trim().split('\n')
-          .filter(Boolean).map(line => JSON.parse(line) as unknown) : []
-      }) : []
-    }
     const result = RunsMarkOutcomeSchema.parse(harvest.responseBody)
     if (result.kind !== 'marked') throw new Error(`mark did not persist: ${result.kind}`)
     harvest.disposition = result.receipt.disposition

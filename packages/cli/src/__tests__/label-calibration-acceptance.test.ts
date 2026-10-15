@@ -372,7 +372,7 @@ function rerunFixture(existingOriginal = true) {
   }) }]
   if (existingOriginal) {
     const initial = seedCommittedCorpus({ plan: originalPlan, cassettes: originalExtraction,
-      committedRoot, seedingOutputBaseDir: join(f.agentQaRoot, 'eval', 'audit', 'original') })
+      committedRoot })
     expect(initial.refusals).toEqual([])
     expect(initial.seededCount).toBe(1)
   }

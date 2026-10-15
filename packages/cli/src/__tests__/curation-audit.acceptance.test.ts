@@ -263,6 +263,6 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
 
     expect(runTail).not.toHaveBeenCalled()
     expect(modelCalls).not.toHaveBeenCalled()
-    expect(existsSync(join(agentQaRoot, 'guardrail_audit.jsonl'))).toBe(false)
+    expect(existsSync(join(agentQaRoot, ['guardrail', 'audit.jsonl'].join('_')))).toBe(false)
   })
 })

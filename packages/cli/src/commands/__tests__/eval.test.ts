@@ -845,7 +845,7 @@ describe('runFloorVerb — recorded protocol and write-once measurement', () => 
       const result = await measure({ ...input, commit: false })
       result.artefact.axes.headline.aggregateFloor = 0
       return { ...result, committed: local.writeNoiseFloorArtefact({ artefact: result.artefact,
-        committedRoot: input.committedRoot, reportOutputBaseDir: input.reportOutputBaseDir }) }
+        committedRoot: input.committedRoot }) }
     })
     const refused = await runFloorVerb(fixture.session, { ...fixture.opts, commit: true })
     expect(refused.committed).toMatchObject({ kind: 'refused', refusal: { kind: 'zero-floor-without-explanation' } })
@@ -1689,7 +1689,7 @@ async function setScoreJudgeBlock(
   await runCassetteReplay({
     cassette: bundle.cassette, artifacts: bundle.artifacts, ...planner,
     modelOverrides: replayStub(planner.profile.model).overrides,
-    clock: { now: () => 100 }, replayOutputBaseDir: join(root, 'eval', 'report-fixture-audit'),
+    clock: { now: () => 100 },
     mask: (text: string) => text,
     recordStore: new FsReplayRecordStore({ root }), scoreStore: new FsScoreStore({ root }),
     ...(judge === undefined ? {} : { judge: {
@@ -3775,7 +3775,6 @@ function commitFixtureReport(
     report,
     markdown: `# fixture report ${batchKey}\n`,
     committedRoot: resolve(dir, 'agent-qa-eval'),
-    reportOutputBaseDir: join(dir, '.agent-qa', 'eval', 'audit', 'report', batchKey),
   })
   expect(outcome.kind).toBe('committed')
 }
@@ -4206,7 +4205,6 @@ describe('runReportVerb --from-committed — reviewed designation without replay
     const otherReport = buildEvalReport([])
     const outcome = commitEvalReport({
       report: otherReport, markdown: '# other committed fixture\n', committedRoot,
-      reportOutputBaseDir: join(tmpRoot, 'other-report-audit'),
     })
     expect(outcome.kind).toBe('committed')
     const pointerPath = `reports/baselines/${slugBranch(first.profileKey!)}.json`

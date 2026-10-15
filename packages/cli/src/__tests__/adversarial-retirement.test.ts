@@ -178,7 +178,6 @@ function fixture() {
     plan,
     cassettes: [{ cassette: seed, blobs: extracted.blobs }],
     committedRoot,
-    seedingOutputBaseDir: join(f.agentQaRoot, 'eval', 'audit', 'tracer-seed'),
   })
   expect(seeded.refusals).toEqual([])
   expect(seeded.seededCount).toBe(1)

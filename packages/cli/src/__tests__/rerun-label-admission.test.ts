@@ -50,7 +50,7 @@ function fixture(existingOriginal = true) {
   }) }]
   if (existingOriginal) {
     const initial = seedCommittedCorpus({ plan: originalPlan, cassettes: originalExtraction,
-      committedRoot, seedingOutputBaseDir: join(f.agentQaRoot, 'eval', 'audit', 'original') })
+      committedRoot })
     expect(initial.refusals).toEqual([])
     expect(initial.seededCount).toBe(1)
   }
@@ -105,7 +105,7 @@ describe('420 member admission through actual seed', () => {
     const legacy = structuredClone(result.census)
     delete legacy.products.default!.labelAudit
     expect(commitCensus({ census: legacy, markdown: renderCensusMarkdown(legacy),
-      committedRoot: f.committedRoot, censusOutputBaseDir: join(f.agentQaRoot, 'eval', 'audit') }).kind).toBe('committed')
+      committedRoot: f.committedRoot }).kind).toBe('committed')
     const before = bytes(f.committedRoot)
     expect((await runCensusVerb(session, { commit: true })).committed?.kind).toBe('write-conflict')
     expect(bytes(f.committedRoot)).toEqual(before)
@@ -157,8 +157,7 @@ describe('420 member admission through actual seed', () => {
     const f = fixture(false)
     const record = projectRunExclusion({ runId: f.handoff.runId, runSlug: deriveRunSlug(f.handoff.runId),
       product: 'default', verdicts: [{ class: 'flake', producer: 'deterministic-classifier' }], analysisDigest: 'a'.repeat(64) })
-    expect(writeRunExclusion({ record, committedRoot: f.committedRoot,
-      seedingOutputBaseDir: join(f.agentQaRoot, 'eval', 'audit') }).kind).toBe('written')
+    expect(writeRunExclusion({ record, committedRoot: f.committedRoot }).kind).toBe('written')
     const before = bytes(f.committedRoot)
     const report = await runSeedVerb(await resolveEvalSession({ configPath: f.configPath }))
     expect(report).toMatchObject({ handoffsSeeded: 0, runsAdmitted: [],
@@ -190,8 +189,7 @@ describe('420 member admission through actual seed', () => {
       .replace(/\.json$/, `--revision-${revision.revision!.id}.json`)
     writeFileSync(path, committedFileText({ occupied: true }))
     const before = bytes(f.committedRoot)
-    const report = seedCommittedCorpus({ plan, cassettes: [], committedRoot: f.committedRoot,
-      seedingOutputBaseDir: join(f.agentQaRoot, 'eval', 'audit') })
+    const report = seedCommittedCorpus({ plan, cassettes: [], committedRoot: f.committedRoot })
     expect(report.refusals).toContainEqual(expect.objectContaining({ cassetteId: f.original.id,
       kind: 'write-conflict' }))
     expect(bytes(f.committedRoot)).toEqual(before)

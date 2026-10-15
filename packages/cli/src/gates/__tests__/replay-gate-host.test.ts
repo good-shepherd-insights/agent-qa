@@ -409,12 +409,12 @@ describe('417 DATA replay gate bridge', () => {
       const identity = await evalSession.resolveGateProfileIdentity(session, plannerOverrides)
       const { judgeMemberModelIds: _members, ...floorIdentity } = identity
       expect(local.writeNoiseFloorArtefact({ artefact: { ...f.artefact, ...floorIdentity },
-        committedRoot: f.committedRoot, reportOutputBaseDir: join(root, 'floor-audit') }).kind).toBe('written')
+        committedRoot: f.committedRoot }).kind).toBe('written')
       const runRoot = join(deps.agentQaRoot, 'eval/gate', slugBranch(identity.profileKey))
       await local.replayCorpusOnce({ selected: f.selected, cassettesRoot: f.cassettesRoot, agentQaRoot: deps.agentQaRoot,
         runRoot, profile: familyStubProfile('gpt-fixture'), auth: noneAuth, modelOverrides: plannerOverrides,
         judge: { members: ids.map(id => ({ profile: familyStubProfile(id), auth: noneAuth, modelOverrides: judgeOverrides })) },
-        seed: 11, k: 1, mask: (text: string) => text, replayOutputBaseDir: runRoot, source: 'committed', corpusDigest: f.corpusDigest })
+        seed: 11, k: 1, mask: (text: string) => text, source: 'committed', corpusDigest: f.corpusDigest })
       warmed = true
       for (const judge of judges) judge.captured.length = 0
       auth.mockClear()

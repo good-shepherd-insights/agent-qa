@@ -74,10 +74,9 @@ type Fixture = ReturnType<typeof createInProcessFixture>
 /**
  * The OP-level gate's rows, which land somewhere else entirely.
  *
- * `composeLocalAgent` gives the registry a `JsonlAuditSink(agentQaRoot)`; the core gets a per-run
- * sink under `runs/<slug(runId)>/`. Two sinks, two files — which is why "the two gates never merge"
- * is a structural property here rather than a convention, and why this helper exists beside
- * `auditRows` (the run-dir reader) instead of being folded into it.
+ * The registry's file was `execution_audit.jsonl` under `agentQaRoot`; the core's was under
+ * `runs/<slug(runId)>/`. Two files — which is why this helper exists beside `auditRows` (the
+ * run-dir reader) instead of being folded into it.
  */
 function opAuditRows(fixture: Fixture): GateAuditRow[] {
   const path = join(fixture.agentQaRoot, 'execution_audit.jsonl')

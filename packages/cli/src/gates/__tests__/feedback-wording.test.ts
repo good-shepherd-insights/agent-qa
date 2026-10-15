@@ -35,7 +35,7 @@ describe('419 bounded feedback wording', () => {
     session.config.use = { ...session.config.use, llm: 'fixture' }
     model = vi.fn<typeof createModel>(() => ({}) as ReturnType<typeof createModel>)
     input = { plan, config: session.config, executionContext: 'ci', mask: declaredMask,
-      auditDir: join(root, 'word-audit'), createModelForTest: model }
+      createModelForTest: model }
     vi.spyOn(llm, 'resolveModelAuth').mockResolvedValue({ kind: 'unauthenticated', credentialKey: 'fixture', provider: 'openai-compatible', optional: true, message: 'controlled fixture' })
     vi.mocked(generateText).mockReset()
   })

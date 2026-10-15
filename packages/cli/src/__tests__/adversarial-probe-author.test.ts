@@ -146,7 +146,6 @@ function authorInput(
     author,
     executionContext: {} as composition.EvalSession['executionContext'],
     mask: session().mask,
-    auditDir: '/fixture/.agent-qa/eval/audit/adversarial',
     createModelImpl: stub.createModelImpl,
     generateTextImpl: stub.generateTextImpl,
     ...extra,

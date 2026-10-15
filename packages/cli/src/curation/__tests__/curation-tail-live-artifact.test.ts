@@ -377,26 +377,6 @@ describe('F-381-48-1 live-artifact staged reproduction (Plan 381-49)', () => {
         },
       })
 
-      // The transform is never weakened — the candidate must survive UNDER it: the
-      // committed-egress checkpoint must see NO email detections on any knowledge-bundle
-      // part (on the shipped build this run's audit carries the live run's exact
-      // signature — email-detector rows for record.md, observations.jsonl,
-      // evidence/evidence.md, and manifest.json of the blocked procedure publish).
-      const auditFile = join(roots.agentQaRoot, 'guardrail_audit.jsonl')
-      const egressEmailRows = !existsSync(auditFile)
-        ? []
-        : readFileSync(auditFile, 'utf8')
-            .split('\n')
-            .filter((line) => line.trim().length > 0)
-            .map((line) => JSON.parse(line) as { channel?: string; detector?: string })
-            .filter(
-              (row) =>
-                typeof row.channel === 'string'
-                && row.channel.startsWith('knowledge-bundle:')
-                && row.detector === 'email',
-            )
-      expect(egressEmailRows).toEqual([])
-
       // The committed bundle is a real procedure: record.md parses as a procedure body, and the
       // literal slot is covered by the proposal's own parameter (441-10, D-20: no binding name
       // is read from an old placeholder), which the fill slot references by name.

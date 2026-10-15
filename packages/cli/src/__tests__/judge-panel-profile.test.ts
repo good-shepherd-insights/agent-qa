@@ -79,12 +79,10 @@ it('forwards the same full declaration through measured-floor recovery without a
     artefact: { corpusDigest: 'fixture' }, notices: [],
   } as unknown as Awaited<ReturnType<typeof local.runNoiseFloorMeasurement>>)
   await runFloorVerb(s, { fromMeasured: 'measured.fixture.json' })
-  const identity = await resolveGateProfileIdentity(s)
   expect(capture.mock.calls[0][0].profileKeyInputs).toMatchObject({
     judgeModelId: createPanelIdentity(['claude-judge', 'gemini-judge']).judgeModelId,
     judgeVersion: JUDGE_CONFIG.judgeVersion,
   })
-  expect(capture.mock.calls[0][0].reportOutputBaseDir).toContain(slugBranch(identity.profileKey))
   expect(llm.resolveModelAuth).not.toHaveBeenCalled()
 })
 
@@ -139,7 +137,7 @@ async function comparisonFixture() {
     corpusDigest, partitionVersion: 1, seeds: [11, 29], repeats: 3, bootstrapSeed: 17,
     runs: [11, 11, 11, 29].map((seed, index) => ({ index, seed, report, vectors, wallClockMs: 0 })),
     splitByCassetteId: new Map(), censusByProduct: { fixture: { natural: 24, heldOutShared: 0, heldOutPrivate: 0 } } })
-  return { s, identity, report, decisions, pointer, floor, committedRoot: join(root, 'agent-qa-eval'), reportOutputBaseDir: join(root, 'audit') }
+  return { s, identity, report, decisions, pointer, floor, committedRoot: join(root, 'agent-qa-eval') }
 }
 
 it('keeps a panel incomparable until its own floor and baseline are committed, then compares offline', async () => {

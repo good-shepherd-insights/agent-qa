@@ -1,12 +1,10 @@
 // Phase 372-04 — eval-session-composition behaviors (D-03 flag precedence, 441 D-06 declared
-// mask, D-07 eval-scoped audit dirs, D-03/D-10 judge preflight, D-08 typed errors).
+// mask, D-03/D-10 judge preflight, D-08 typed errors).
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
-import { slugBranch } from '@vostride/agent-qa-runner-local'
 import {
-  evalAuditDir,
   resolveEvalJudge,
   resolveEvalSession,
   resolveReplayPlanner,
@@ -148,14 +146,6 @@ describe('C441-EGRESS', () => {
 
     expect(() => session.mask('Hunter-42-zz'))
       .toThrow('A key-only eval session has no declared secrets to mask with')
-  })
-})
-
-describe('evalAuditDir — per-invocation eval audit dirs (D-07)', () => {
-  it('roots under .agent-qa/eval/audit/<verb>/<slugBranch(key)> and never under runs', () => {
-    const dir = evalAuditDir('/cfg', 'replay', 'abc/def')
-    expect(dir).toBe(resolve('/cfg', '.agent-qa', 'eval', 'audit', 'replay', slugBranch('abc/def')))
-    expect(dir).not.toContain('runs')
   })
 })
 
