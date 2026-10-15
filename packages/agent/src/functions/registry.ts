@@ -80,27 +80,6 @@ export class OutputRepresentationMismatchError extends Error {
   }
 }
 
-/**
- * Thrown at construction when the registry is handed no usable audit sink (D-11).
- *
- * The type-level requirement below binds only the callers `tsc` gets to see. This is the
- * same guarantee stated as a RUNTIME property, so it also holds for an in-workspace cast
- * and for a plain-JS consumer of the published package.
- *
- * 432-13: `invokeFunction` no longer writes an execution-audit row (there is no op gate), so the
- * sink is a construction contract only. 2026-10-01 (432-19, D-17): the audit contract is the
- * guardrail contract, so a usable sink is one with a callable `appendGuardrailAudit`.
- */
-export class MissingAuditSinkError extends Error {
-  constructor(readonly detail: string) {
-    super(
-      `createRegistryFromSpecs requires a usable AuditSink (D-11): ${detail}. ` +
-        'Every composition names the sink its audit rows land in.',
-    )
-    this.name = 'MissingAuditSinkError'
-  }
-}
-
 /** The capabilities every composition of this layer registers. */
 const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   runsListSpec as FunctionSpec,
@@ -343,15 +322,8 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
 export interface CreateFunctionRegistryOptions {
   /** Host-backed implementations the ops read through; built at the composition root. */
   deps: FunctionDeps
-  /**
-   * The composition's audit sink.
-   *
-   * REQUIRED, on the same discipline `FunctionDeps` uses (see spec.ts), and required at RUNTIME
-   * too: `createRegistryFromSpecs` throws {@link MissingAuditSinkError} when the sink is absent or
-   * its guardrail append method is not callable. Since 432-13 no op gate writes through it, and
-   * since 432-19 there is no execution-audit writer to require.
-   */
-  auditSink: AuditSink
+  /** Unread since 441-28 (D-15): nothing writes a guardrail audit row; 441-29 deletes it. */
+  auditSink?: AuditSink
   // 2026-10-02 (432-39, D-12): no `resolveExecutionContext` member. No op gate has decided in an
   // execution context since 432-13, nothing here read the option, and the fixtures that passed it
   // stopped by 432-39. A host's live context still reaches a run's record and the knowledge review
@@ -477,26 +449,6 @@ function declarationView(spec: FunctionSpec, deps: FunctionDeps): FunctionDeclar
 }
 
 /**
- * Refuse a construction that names no usable audit sink (BL-03 / D-11).
- *
- * One check at the ONE seam that populates the internals record, covering the three live
- * routes together: the field omitted or cast past the type, and a hollow object whose
- * append method is absent or not callable. The method is probed rather than the shape
- * asserted.
- */
-function requireAuditSink(supplied: AuditSink | undefined | null): AuditSink {
-  if (supplied === undefined || supplied === null) {
-    throw new MissingAuditSinkError('no sink was supplied')
-  }
-  if (typeof supplied.appendGuardrailAudit !== 'function') {
-    throw new MissingAuditSinkError(
-      'the supplied sink does not implement a callable appendGuardrailAudit method',
-    )
-  }
-  return supplied
-}
-
-/**
  * INTERNAL: registry construction over an explicit spec set. Exported for tests and
  * future in-layer compositions, and deliberately absent from the package barrel — a
  * surface that could supply its own specs could mint capabilities the catalog never
@@ -509,9 +461,6 @@ export function createRegistryFromSpecs(
   specs: readonly FunctionSpec[],
   options: CreateFunctionRegistryOptions,
 ): FunctionRegistry {
-  // Before anything is registered: a composition that names no usable sink does not come to exist.
-  requireAuditSink(options.auditSink as AuditSink | undefined | null)
-
   const byId = new Map<string, FunctionSpec>()
   for (const spec of specs) {
     if (byId.has(spec.id)) {

@@ -191,7 +191,6 @@ import {
   loadCompletedRunHandoff,
   slugBranch,
 } from '@vostride/agent-qa-runner-local'
-import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
 import {
   admitAnalysisArtifactForRun,
   ANALYSIS_FILE,
@@ -3280,7 +3279,7 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // 2026-10-01 (432-17, D-05): no config proposal filer is bound; the six config ops write in
       // the call through `configWrite`.
     },
-    auditSink: new JsonlAuditSink(input.agentQaRoot),
+    // 2026-10-15 (441-28, D-15): no audit sink; the guardrail audit went with the guardrails.
     // 432-13 (D-14/D-15): no standing-approval reader, confirm port or session deny overlay reaches
     // the registry — `invokeFunction` asks nobody. 432-18 deleted the grant reader with the ledger.
     // 2026-10-02 (432-39, D-12): the host's execution-context answer is no longer forwarded here.

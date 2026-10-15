@@ -20,7 +20,6 @@ import type {
   FunctionCaller,
   RunSummary,
 } from '@vostride/agent-qa-schema'
-import type { AuditSink, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
@@ -33,7 +32,6 @@ import {
 import { runsListSpec } from '../functions/ops/runs-list.js'
 import {
   DuplicateFunctionIdError,
-  MissingAuditSinkError,
   createRegistryFromSpecs,
 } from '../functions/registry.js'
 import type { CreateFunctionRegistryOptions } from '../functions/registry.js'
@@ -104,25 +102,7 @@ function spyDeps(documents: readonly CompletedRunHandoff[] = []): SpyDeps {
   }
 }
 
-// 2026-10-01 (432-19, D-17): the audit port has one append, for guardrail rows, so this sink
-// records every row an invocation could write. The cells that asserted "no execution-audit row"
-// since 432-13 now assert "no audit row of any kind".
-interface CapturedSink {
-  sink: AuditSink
-  auditRows: () => readonly GuardrailAuditRow[]
-}
-
-function capturingSink(): CapturedSink {
-  const guardrailRows: GuardrailAuditRow[] = []
-  return {
-    sink: {
-      appendGuardrailAudit(row) {
-        guardrailRows.push(row)
-      },
-    },
-    auditRows: () => guardrailRows,
-  }
-}
+// 2026-10-15 (441-28, D-15): the registry takes no audit sink, so no cell captures audit rows.
 
 /** A caller smuggling a retired scope set and safe-mode flag past the type (432-39): both unread. */
 function caller(grantedScopes: readonly string[], safeMode = false): FunctionCaller {
@@ -173,36 +153,13 @@ const authoringDraftWriteSpec = {
   invoke: () => Promise.resolve({ ok: true as const }),
 } as FunctionSpec<Record<string, never>, { ok: true }>
 
-/** Discards every row. Cases that ASSERT on rows pass an explicit `capturingSink` instead. */
-function noOpSink(): AuditSink {
-  return {
-    appendGuardrailAudit() {},
-  }
-}
-
 function registryOptions(
   overrides: Partial<CreateFunctionRegistryOptions> = {},
 ): CreateFunctionRegistryOptions {
   return {
     deps: spyDeps().deps,
-    auditSink: noOpSink(),
     ...overrides,
   }
-}
-
-/**
- * The D-11 compile pin: a composition without an audit sink must not typecheck.
- *
- * Never called — its whole job is to be compiled. The `@ts-expect-error` fails if the
- * omission ever stops being an error, so making `auditSink` optional again breaks this
- * typecheck rather than silently restoring the unaudited fast path.
- */
-function _sinklessCompositionIsATypeError(): void {
-  createRegistryFromSpecs(
-    [runsListSpec],
-    // @ts-expect-error auditSink is REQUIRED (D-11) — a sinkless composition cannot exist.
-    { deps: spyDeps().deps },
-  )
 }
 
 describe('invokeFunction pipeline', () => {
@@ -230,25 +187,19 @@ describe('invokeFunction pipeline', () => {
   // required scopes'. The scope check is deleted: the same caller is served, exactly once.
   it('serves a caller whose grants do not cover the declared scopes, dispatching once', async () => {
     const deps = spyDeps()
-    const audit = capturingSink()
-    const registry = createRegistryFromSpecs(
-      [runsListSpec],
-      registryOptions({ deps: deps.deps, auditSink: audit.sink }),
-    )
+    const registry = createRegistryFromSpecs([runsListSpec], registryOptions({ deps: deps.deps }))
 
     await expect(invokeFunction(registry, 'runs.list', {}, caller([]))).resolves.toEqual([])
     expect(deps.listCalls()).toBe(1)
-    expect(audit.auditRows()).toHaveLength(0)
   })
 
   // RE-SPELLED 2026-10-01 (432-20, D-12) from 'refuses a run+read caller at a test-write op, naming
   // the missing scope (394 T-394-01)'. No scope is named because none is read.
   it('serves a run+read caller at a test-write op — the declared scopes are not read', async () => {
     const deps = spyDeps()
-    const audit = capturingSink()
     const registry = createRegistryFromSpecs(
       [authoringDraftWriteSpec as FunctionSpec],
-      registryOptions({ deps: deps.deps, auditSink: audit.sink }),
+      registryOptions({ deps: deps.deps }),
     )
 
     await expect(invokeFunction(
@@ -257,7 +208,6 @@ describe('invokeFunction pipeline', () => {
       {},
       caller(['run', 'read']),
     )).resolves.toEqual({ ok: true })
-    expect(audit.auditRows()).toHaveLength(0)
   })
 
   it('lets a caller holding test-write through the same op', async () => {
@@ -283,17 +233,12 @@ describe('invokeFunction pipeline', () => {
   // a decision.
   it('C432-INVOKE-DIRECT: a read dispatches exactly once and writes no execution-audit row', async () => {
     const deps = spyDeps([handoff('run-beta', 12), handoff('run-alpha', 11)])
-    const audit = capturingSink()
-    const registry = createRegistryFromSpecs(
-      [runsListSpec],
-      registryOptions({ deps: deps.deps, auditSink: audit.sink }),
-    )
+    const registry = createRegistryFromSpecs([runsListSpec], registryOptions({ deps: deps.deps }))
 
     const result = (await invokeFunction(registry, 'runs.list', {}, caller(['read']))) as RunSummary[]
 
     expect(result.map((summary) => summary.runId)).toEqual(['run-beta', 'run-alpha'])
     expect(deps.listCalls()).toBe(1)
-    expect(audit.auditRows()).toEqual([])
   })
 
   it('yields an empty list when the injected reader has no runs', async () => {
@@ -331,9 +276,8 @@ describe('C432-INVOKE-DIRECT — invokeFunction dispatches with no gate (432-13)
     'C432-INVOKE-DIRECT: a mutating-shared op in %s returns once with no confirm port and no audit row',
     async (context) => {
       const invocations = { count: 0 }
-      const audit = capturingSink()
       const registry = createRegistryFromSpecs([markLikeSpec(invocations) as FunctionSpec], {
-        ...registryOptions({ auditSink: audit.sink }),
+        ...registryOptions(),
         // 432-39: the deleted context option, smuggled past the type; nothing reads a context.
         resolveExecutionContext: () => context,
       } as CreateFunctionRegistryOptions)
@@ -343,8 +287,6 @@ describe('C432-INVOKE-DIRECT — invokeFunction dispatches with no gate (432-13)
       ).resolves.toEqual({ ok: true })
 
       expect(invocations.count).toBe(1)
-      // No decision was taken, so none was recorded.
-      expect(audit.auditRows()).toEqual([])
     },
   )
 
@@ -374,11 +316,7 @@ describe('C432-INVOKE-DIRECT — invokeFunction dispatches with no gate (432-13)
 describe('432-20 (D-12): retry and refusal order with no permission check', () => {
   it('C432-ALL-OPS-AVAILABLE: a retry after an input refusal dispatches exactly once, for a grantless caller', async () => {
     const deps = spyDeps()
-    const audit = capturingSink()
-    const registry = createRegistryFromSpecs(
-      [runsListSpec],
-      registryOptions({ deps: deps.deps, auditSink: audit.sink }),
-    )
+    const registry = createRegistryFromSpecs([runsListSpec], registryOptions({ deps: deps.deps }))
     const grantless: FunctionCaller = { surface: 'test', origin: 'agent' }
 
     await expect(invokeFunction(registry, 'runs.list', { unexpected: true }, grantless))
@@ -387,7 +325,6 @@ describe('432-20 (D-12): retry and refusal order with no permission check', () =
     await expect(invokeFunction(registry, 'runs.list', {}, grantless)).resolves.toEqual([])
     await expect(invokeFunction(registry, 'runs.list', {}, grantless)).resolves.toEqual([])
     expect(deps.listCalls()).toBe(2)
-    expect(audit.auditRows()).toHaveLength(0)
   })
 
   it('refuses an unknown id before input, and input before binding, for every caller shape', async () => {
@@ -416,58 +353,10 @@ describe('createRegistryFromSpecs', () => {
     }
   })
 
-  /**
-   * The D-11 audit guarantee as a RUNTIME property, beside the compile pin above (BL-03).
-   *
-   * The pin only binds callers `tsc` gets to see. Round 2 executed both routes it does not
-   * cover — an in-workspace cast, and any plain-JS consumer of the published package — and
-   * found that a sinkless registry CONSTRUCTED, dispatched, and wrote zero rows with no
-   * diagnostic. `packages/safety`'s gate optional-chains the sink for its other callers, so
-   * the refusal belongs at the one seam that populates the internals record instead.
-   */
-  it('refuses a sinkless construction at runtime, not only at the type level', () => {
-    expect(() => createRegistryFromSpecs([runsListSpec], {
-      deps: spyDeps().deps,
-      auditSink: undefined as unknown as AuditSink,
-    })).toThrow(MissingAuditSinkError)
-  })
-
-  it('refuses a hollow sink: a typed, attributable error rather than an opaque TypeError', () => {
-    expect(() => createRegistryFromSpecs([runsListSpec], {
-      deps: spyDeps().deps,
-      auditSink: {} as unknown as AuditSink,
-    })).toThrow(MissingAuditSinkError)
-  })
-
-  it('refuses a sink whose append methods are present but not callable', () => {
-    expect(() => createRegistryFromSpecs([runsListSpec], {
-      deps: spyDeps().deps,
-      auditSink: {
-        appendGuardrailAudit: 'not a function',
-      } as unknown as AuditSink,
-    })).toThrow(MissingAuditSinkError)
-  })
-
-  // 2026-10-01 (432-19, D-17): the construction contract is the guardrail append. A sink that
-  // offers only the deleted execution-audit append is hollow, and one with only the guardrail
-  // append is complete.
-  it('C432-AUDIT-UNREAD: requires the guardrail append and nothing else', () => {
-    expect(() => createRegistryFromSpecs([runsListSpec], {
-      deps: spyDeps().deps,
-      auditSink: { appendExecutionAudit() {} } as unknown as AuditSink,
-    })).toThrow(MissingAuditSinkError)
-    expect(() => createRegistryFromSpecs([runsListSpec], {
-      deps: spyDeps().deps,
-      auditSink: { appendGuardrailAudit() {} },
-    })).not.toThrow()
-  })
-
+  // 2026-10-15 (441-28, D-15): the four cells that refused a missing or hollow audit sink are
+  // deleted with the requirement; a registry is built from its deps alone.
   it('constructs normally for every compliant composition', () => {
     expect(() => createRegistryFromSpecs([runsListSpec], registryOptions())).not.toThrow()
-    expect(() => createRegistryFromSpecs(
-      [runsListSpec],
-      registryOptions({ auditSink: capturingSink().sink }),
-    )).not.toThrow()
   })
 
   // RE-SPELLED 2026-10-01 (432-20, D-12) from 'hides non-read capabilities from a safe-mode
