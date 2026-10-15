@@ -3811,3 +3811,394 @@ their signatures did not.
 The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
 verdict are recorded in `.planning/phases/440-authoring-intent/440-RECORD.md` § Gap closure round
 5 rather than quoted here, so no agent-qa commit follows it.
+
+## 2026-10-15 — Phase 441: Declared-secret masking (V2-EXEC-03)
+
+This section appends to the register and rewrites no earlier section; the one change it makes to
+older text is the dated correction below, which points at four 2026-10-02 rows without editing
+them. Phase 441 made one rule true: only the values in the file `workspace.secretsFile` names are
+masked, by raw exact match whatever their length, and each shows as `[secret:<name>]` everywhere
+text leaves the process or is written. Nothing restores a value, and nothing else is masked,
+detected or blocked. Everything that did more was deleted: the safety masking context and its
+numbered placeholders, its seeding from the environment and auth state, auth-state redaction, the
+digest sidecar and host key, every display unmask, the masked-value marker vocabulary and its
+chips, the network header mask, the debug log's regex redactor, curation's capture blacklist, the
+config path map and key-name check, the config reveal, every guardrail (the model-request scan,
+the stream scan, the committed-egress check, the construction scan, the authoring credential
+screen), the guardrail policy and its audit, the safety hook framework, the prompt-injection flag
+and curation's flagged path. What stayed is the runner's `SecretRedactor`, now the one masking
+function, and the seams that carry its mask. The section follows the 2026-10-02 Phase 432 shape.
+Dated 2026-10-15; written by 441-35.
+
+### The ruling
+
+> V2-EXEC-03: Only declared secrets are masked, everywhere, including the public CLI `ask` and
+> `chat` paths outside a run (amended 2026-10-12, reconciliation 23).
+>
+> - **What is masked.** Only the values in `workspace.secretsFile`, by raw exact match whatever
+>   their length, shown as `[secret:<name>]`.
+> - **Where.** Model requests, run records and logs, session events, receipt clauses and derived
+>   transcript fields, the dashboard, MCP results, analytics payloads, the cache key and the
+>   terminal.
+> - **Never restored.** Nothing restores a value.
+> - **Nothing else.** Emails, auth state, environment variables, `envFile` values and undeclared
+>   credential-shaped text are not masked, and nothing is detected or blocked.
+> - **What is removed.** The guardrails, their audit and config, the `MaskingContext`, auth-state
+>   redaction, the digest sidecar and every unmask path. The runner's `SecretRedactor` is the one
+>   masking function.
+> - **The proof.** A fixture secrets file runs through the real composition for a run, `ask` and
+>   `chat`, and every persisted byte and model request is read. No declared value appears. An
+>   email, an env credential and an undeclared card number and token pass through unchanged, and
+>   ordinary content stays useful.
+> - **Folded candidate.** 396-06 #3 (a credential reaching MCP config-change diffs) is
+>   re-verified for a declared secret, and fixed if it reproduces.
+
+From `.planning/REQUIREMENTS.md`. Reconciliation 23 (2026-10-12) records the owner's decision from
+the Phase 441 discussion (2026-10-11 and 2026-10-12). It supersedes V2-EXEC-03's 2026-10-05 text
+("configured secrets and emails use the existing masking; credential-shaped text that is not
+configured uses the existing guardrail detectors"), execution-safety §3 (egress guardrails), §4
+(reversible masking with numbered placeholders and unmasking for human output) and the guardrail
+half of §6, and READY-FUT-05, and it lists what must not come back: automatic detection (regex,
+entropy or name heuristics), auto-registration from the environment, cookies or storage, numbered
+placeholders that need a value map, restoring masked values for display, and blocking a model
+request on its content. Its evidence: on the built safety package with the default policy,
+`Enter card 4242 4242 4242 4242 and pay` was blocked (Stripe's standard test card), and
+`Log in as qa@example.com` reached the model as `<REDACTED:email>`.
+
+The owner, verbatim, as `.planning/phases/441-declared-secret-masking/441-CONTEXT.md` records it:
+
+> No internal mapping of any secret. Only what's declared by the user. (D-01)
+
+> DO NOT SKIP ANYTHING (D-02, on removing the 4-character floor)
+
+> I am a fan of less code, simpler and cleaner things. (D-11)
+
+> As I said secrets mentioned in the secret file is expected to leak. So users are already advised
+> to put temp secrets. (D-18)
+
+> remove it as a half baked solution would cause more issues. We will either build a new one or
+> use anything famous. (D-26, on `injectionShape`)
+
+The two decisions the owner added at planning (2026-10-12), as CONTEXT records them:
+
+- **D-28: Three more masks of undeclared values are removed.** Each keeps only the declared-secret
+  mask: network evidence's credential-header masking (`NETWORK_CREDENTIAL_HEADERS` turned into
+  `maskedMarker('secret')`), the regex redactor in the opt-in LLM debug log (`SECRET_PATTERNS`),
+  and curation's capture blacklist (`CAPTURE_BLACKLIST_NAME_PATTERNS` turned into
+  `<REDACTED:capture-blacklist>`). With their last producers gone, the `␟masked:…␟` vocabulary
+  and the dashboard's masked-value chips go too. The dashboard shows `[secret:<name>]` as text.
+- **D-29: Config output has no masks of its own.** The config path map goes (`CONFIG_MASKING_MAP`,
+  `MaskingClass`, `createMaskedConfigReader`, with their users in cli and dashboard-server and the
+  dashboard's 4-character floor). The credential key-name check goes (`isCredentialEntry`, so the
+  whole of `credential-entry.ts`), with its redaction of `config show` and the run `--debug`
+  tables and its two `config set` refusals. Config text that reaches the terminal, the dashboard
+  or the model passes through the declared-secret mask like any other text.
+
+**This file names retired tokens literally**, as the 2026-09-02 section explains for the whole
+register. `DELETION-INVENTORY.md` sits outside every census region; inside them, the 441 census
+spells each needle as two halves.
+
+### How this inventory is measured
+
+| Instrument | What it claims | Where |
+|---|---|---|
+| the census | 20 legs, `C441-RETURN-01`..`20`, each scanning its regions through the 432/436 lexer (comments blanked; strings, templates and regex literals kept) for 230 needles, 2 patterns and 28 absent paths, so a removed masker, restore path, marker vocabulary, redactor, guardrail, audit writer or hook seam returning to production source reds by name. `C441-SAFETY-SURFACE` pins the safety and safety-local barrels' value exports. `C441-UNIVERSE-FLOORS`, `C441-LEXER-CONTROL`, `C441-PLANTED-POSITIVE` (249 plants, every leg red as code and green as a comment or a kept name) and `C441-SELF-MATCH`. 25 cells, in `validate:arch`. | `packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts` (441-34 `10f615bce`, `8e95d1ad6`) |
+| the gate list | 174 `C441-` cells listed in `scripts/gate/inputs/regressions.json` after the 1366 rows listed at `6de55acde` (which are unchanged and in order except two in-place renames, below), each with its `441 D-NN` origin, so `gate:local` must execute and pass every one | `scripts/gate/inputs/regressions.json` (441-35 `d59dbf568`) |
+| `validate:safety` (a) | the declared-secret masking middleware is the last element of `createModel`'s per-call middleware and is given `createModel`'s mask: 6 cells, one over the real registry source and five held-out offenders | `packages/safety/src/__tests__/validate-safety.test.ts` (441-04 `6b54dd945`, `605f2a8f7`) |
+| the proof | the spawned `agent-qa run`, `ask` and `chat` over a secrets file holding a 3-character and a long value, every model request and every byte under the hermetic root scanned, and the D-23 twin | `packages/cli/src/__tests__/conformance/441-declared-secret-proof.test.ts` (441-06, 441-13) |
+
+**Both ends of the derivation, stated so it can be re-run.** Baseline
+`6de55acde` (agent-qa `version-0.2`, Phase 440's final SHA). Closing SHA `d59dbf568` (441-35's gate
+list commit, the parent of this section's commit). `git -C agent-qa diff --shortstat
+6de55acde d59dbf568`: 984 files changed, 14,507 insertions, 34,953 deletions (under `packages/`:
+975 files, +13,403/−34,870). `--diff-filter=D`: 94 files deleted, 44 production modules (3,450
+lines) and 50 test files (8,389 lines). `--diff-filter=A`: 13 files added (`cli/src/composition/
+declared-secrets.ts`, `safety/src/egress/masking-middleware.ts`, `schema/src/config/leaves.ts`,
+`agent/src/functions/ops/secret-mask.ts` and nine test files). 142 commits, every one signed
+(`%G?` = `G`): two curation fixes that precede 441-01's base and come from no 441 plan
+(`00b8289dc`, `256cbb6b9`; the first added `cli/src/gates/__tests__/mark-noise-floor-fallback.test.ts`,
+which 441-52 later swept), 139 from 441-01 to 441-60 and 441-35's gate list. The deleted-file
+table below is derived from `git -C agent-qa log --diff-filter=D --name-only 6de55acde..d59dbf568`,
+not transcribed from a summary. The per-token counts are 441-34's (`441-34-SUMMARY.md` § Needles):
+production files holding each needle at `6de55acde` and at `8e95d1ad6`, measured from a
+full-context `git diff --no-renames` because `git grep` is outside this phase's allowed command
+shapes, comments included; the code count with comments blanked is 0 for every needle at
+`8e95d1ad6`. Between `8e95d1ad6` and `d59dbf568` agent-qa changed only by 441-46's documentation
+(two skill copies and references, two READMEs, the init pointer, the scaffold comment, the
+dashboard help string, `docs/adversarial-split.md` and one schema comment) and 441-35's gate list,
+and the census runs again in the record gate.
+
+### What was deleted
+
+#### Files deleted
+
+The census column names the leg whose absent path or needles cover the file.
+
+| File (under `packages/`) | Lines at baseline | Deleting commit | Census leg | Return cell |
+|---|---|---|---|---|
+| `safety/src/masking/context.ts` | 130 | `f544714c3` (441-33) | 01 (absent `safety/src/masking/`) | `C441-RETURN-01` |
+| `safety/src/masking/seed.ts` | 28 | `f544714c3` (441-33) | 01 | `C441-RETURN-01` |
+| `safety/src/masking/detectors.ts` | 16 | `f544714c3` (441-33) | 01 | `C441-RETURN-01` |
+| `safety/src/masking/human-output.ts` | 6 | `f544714c3` (441-33) | 01 | `C441-RETURN-01` |
+| `safety/src/masking/resolver.ts` | 13 | `f544714c3` (441-33) | 01 | `C441-RETURN-01` |
+| `safety/src/masking/categories.ts` | 5 | `f544714c3` (441-33) | 01 | `C441-RETURN-01` |
+| `safety/src/masking/egress-hook.ts` | 14 | `5a1985175` (441-33) | 01 | `C441-RETURN-01` |
+| `schema/src/safety/masking.ts` | 4 | `736fba50a` (441-45) | 02 | `C441-RETURN-02` |
+| `cli/src/composition/display-unmask.ts` | 177 | `dd8922486` (441-15) | 05 | `C441-RETURN-05` |
+| `dashboard-server/src/masking/display-tree.ts` | 60 | `8b3793084` (441-15) | 05 | `C441-RETURN-05` |
+| `runner-local/src/masking-sidecar.ts` | 198 | `2c2edde48` (441-48) | 05 | `C441-RETURN-05` |
+| `schema/src/run/masked-marker.ts` | 87 | `54ce62dfd` (441-38) | 06 | `C441-RETURN-06` |
+| `dashboard-ui/src/lib/masked-text.ts` | 99 | `7fb5955b2` (441-38) | 06 | `C441-RETURN-06` |
+| `dashboard-ui/src/components/run-detail/masked-chip.tsx` | 48 | `7fb5955b2` (441-38) | 06 | `C441-RETURN-06` |
+| `dashboard-ui/src/components/run-detail/masked-text.tsx` | 34 | `7fb5955b2` (441-38) | 06 | `C441-RETURN-06` |
+| `runner/src/hooks/redaction.ts` | 237 | `1881a89b8` (441-05) | 07 | `C441-RETURN-07` |
+| `core/src/auth-state/redaction.ts` | 11 | `1881a89b8` (441-05) | 07 | `C441-RETURN-07` |
+| `knowledge-local/src/curator/capture-blacklist.ts` | 235 | `d6e1f9ea4` (441-25) | 10 | `C441-RETURN-10` |
+| `schema/src/action/credential-fields.ts` | 20 | `9aaddd409` (441-25) | 10 | `C441-RETURN-10` |
+| `agent/src/config-mutation/credential-entry.ts` | 158 | `5a2c811b2` (441-20) | 11 (also 15: `valueLooksLikeCredential`) | `C441-RETURN-11` |
+| `schema/src/config/masking.ts` | 245 | `a049ccd6b` (441-40) | 11 | `C441-RETURN-11` |
+| `safety/src/guardrail/detectors.ts` | 317 | `f544714c3` (441-33) | 12 (absent `safety/src/guardrail/`) | `C441-RETURN-12` |
+| `safety/src/guardrail/scan.ts` | 138 | `f544714c3` (441-33) | 12 | `C441-RETURN-12` |
+| `safety/src/guardrail/luhn.ts` | 27 | `f544714c3` (441-33) | 12 | `C441-RETURN-12` |
+| `safety/src/guardrail/egress-hook.ts` | 47 | `5a1985175` (441-33) | 12 | `C441-RETURN-12` |
+| `safety/src/guardrail/stream-scan.ts` | 187 | `5a1985175` (441-33) | 12 | `C441-RETURN-12` |
+| `safety/src/guardrail/policy-loader.ts` | 30 | `f544714c3` (441-33) | 12 (also 13) | `C441-RETURN-12`, `-13` |
+| `safety/src/guardrail/committed-egress.ts` | 111 | `f544714c3` (441-33) | 12 (also 14) | `C441-RETURN-12`, `-14` |
+| `safety/src/guardrail/construction-scan.ts` | 187 | `f544714c3` (441-33) | 12 (also 15) | `C441-RETURN-12`, `-15` |
+| `eval/src/cassette/egress.ts` | 33 | `f544714c3` (441-33) | 12 | `C441-RETURN-12` (`cassetteEgressText`) |
+| `schema/src/safety/guardrail-policy.ts` | 23 | `736fba50a` (441-45) | 13 | `C441-RETURN-13` |
+| `knowledge-local/src/bundle-egress.ts` | 50 | `c14a0945f` (441-22) | 14 | `C441-RETURN-14` |
+| `schema/src/safety/scan.ts` | 7 | `736fba50a` (441-45) | 15 | `C441-RETURN-15` |
+| `schema/src/safety/content-origin.ts` | 6 | `736fba50a` (441-45) | 15 | `C441-RETURN-15` |
+| `knowledge-local/src/curator/embed-gate.ts` | 83 | `b0dde79d7` (441-24) | 16 | `C441-RETURN-16` |
+| `safety-local/src/jsonl-audit-sink.ts` | 19 | `37cc19c49` (441-44) | 18 | `C441-RETURN-18` |
+| `safety/src/ports/audit-sink.ts` | 21 | `f544714c3` (441-33) | 18 | `C441-RETURN-18` |
+| `safety/src/policy/audit-sink-resolver.ts` | 13 | `f544714c3` (441-33) | 18 | `C441-RETURN-18` |
+| `safety/src/hooks/registry.ts` | 128 | `5a1985175` (441-33) | 19 (absent `safety/src/hooks/`) | `C441-RETURN-19` |
+| `safety/src/hooks/first-party.ts` | 84 | `5a1985175` (441-33) | 19 | `C441-RETURN-19` |
+| `safety/src/hooks/interfaces.ts` | 46 | `5a1985175` (441-33) | 19 | `C441-RETURN-19` |
+| `safety/src/hooks/capability.ts` | 19 | `5a1985175` (441-33) | 19 | `C441-RETURN-19` |
+| `safety/src/egress/provider-request-middleware.ts` | 21 | `5a1985175` (441-33) | 19 | `C441-RETURN-19` |
+| `schema/src/safety/hook-results.ts` | 28 | `736fba50a` (441-45) | 19 | `C441-RETURN-19` |
+
+The 50 deleted test files went with their subjects, each in the commit that deleted the subject:
+`efd1c5979` (441-03) `agent/src/authoring/__tests__/secret-guardrail.test.ts` (355);
+`1881a89b8` (441-05) `core/src/auth-state/__tests__/redaction.test.ts` (148); `46859e653`
+(441-47) `eval/src/replay/__tests__/guard-block-refusal.test.ts` (75); `8b3793084` (441-15)
+`dashboard-server/src/masking/__tests__/display-tree.test.ts` (96); `dd8922486` (441-15)
+`cli/src/composition/__tests__/display-unmask.test.ts` (345); `2c2edde48` (441-48)
+`runner-local/src/__tests__/masking-sidecar.test.ts` (165); `7fb5955b2` (441-38) the two
+`masked-text` tests in `dashboard-ui` (95, 220); `54ce62dfd` (441-38)
+`schema/src/__tests__/masked-marker.test.ts` (122); `5a2c811b2` (441-20)
+`agent/src/config-mutation/__tests__/credential-entry.test.ts` (216); `3000eeca0` (441-20)
+`cli/src/composition/__tests__/429-masking-parity.test.ts` (138); `27d014a02` (441-49)
+`dashboard-server/src/__tests__/routes.config-reveal.test.ts` (308); `c14a0945f` (441-22)
+`knowledge-local/src/__tests__/bundle-egress.test.ts` (61) and `committed-egress-proof.test.ts`
+(179); `6783e329d` (441-24) `cli/src/__tests__/curation-injection-safety.acceptance.test.ts`
+(382); `b0dde79d7` (441-24) `knowledge-local/src/curator/__tests__/embed-gate.test.ts` (143);
+`eb586581a` (441-25) `cli/src/__tests__/curation-capture-safety.acceptance.test.ts` (314);
+`d6e1f9ea4` (441-25) `knowledge-local/src/curator/__tests__/capture-blacklist.test.ts` (299);
+`9eb10d2b7` (441-60) `runner/src/loop/__tests__/gate-dispatch.test.ts` (159); `37cc19c49` (441-44)
+`safety-local/src/__tests__/jsonl-audit-sink.test.ts` (252) and `readline-confirm.test.ts` (42);
+`5a1985175` (441-33) eleven safety tests (`guardrail/__tests__/{analyze-run-red-seam,egress-hook,
+stream-scan}`, `hooks/__tests__/{first-party,registry}`, `masking/__tests__/egress-hook`,
+`policy/__tests__/{gate-remedies,gate,pin-deny,scenario-contract}`,
+`ports/__tests__/confirm-surface.test-d.ts`); `f544714c3` (441-33) seventeen safety and eval tests
+(`eval/src/cassette/__tests__/egress`, `safety/src/__tests__/masking-snapshot`,
+`guardrail/__tests__/{committed-egress,construction-scan,detectors,injection-shape,luhn,
+policy-loader}`, `masking/__tests__/{cache-key-floor,context,context.test-d,detectors,
+never-persisted,seed,unmask-boundary}`, `policy/__tests__/{audit-sink-resolver,scope}`,
+`ports/__tests__/policy-ports`). Their per-file cell counts and claim transfers are in each
+deleting plan's summary. No deleted file held a cell listed in `regressions.json`.
+
+#### Members removed from surviving files, by census leg
+
+Counts are production files holding the needle, `6de55acde` → `8e95d1ad6` (441-34's measurement);
+the full needle table, 230 needles with their counts, is in `441-34-SUMMARY.md` § Needles.
+
+| Leg | Members (representative needles, b → h) | Removing plans and commits |
+|---|---|---|
+| 01 safety masker | `createMaskingContext` 20 → 0, `getActiveMaskingContext` 13 → 0, `seedMaskingContext` 9 → 0, `unmaskForHumanOutput` 20 → 0, `detectEmails` 4 → 0 and the ambient resolver | callers: 441-14 `d30104a1e`, `36c191e06`; 441-16 `fb8013d4e`; 441-19 `e20eabecb`; module: 441-33 `5a1985175`, `f544714c3` |
+| 02 context type and restore member | `MaskingContext` 30 → 0; the `unmask:` member and `.unmask(` calls 4 → 0, 1 → 0 | 441-58 `f011a8f0a`; 441-13 `7c2767637`; 441-45 `736fba50a` |
+| 03 numbered placeholders, generic marker | `<SECRET_` 22 → 6 and `<EMAIL_` 11 → 1 (the remaining hits are comments that describe old runs), `PLACEHOLDER_PATTERN` 7 → 0, the runner's generic `[secret]` value marker | 441-01 `028bd4843`, `0ac642a3d`; 441-10 `c5b02cc41`; 441-38 `54ce62dfd` |
+| 04 run seed | `buildRunMaskingContext` 11 → 0, `sensitiveEnvSlice` 6 → 0, `extractAuthStateSensitiveStrings` 3 → 0, `createAnalyticsMaskingContext` 2 → 0, the door-side `mergedSecretStore`, `bindMaskingSecrets`, `mintedSecretStore` | 441-08 `b26d8dcf1`; 441-19 `e20eabecb`, `bc865a992`; 441-58 `e2020665b`, `f011a8f0a`; 441-48 `44e6cb197` |
+| 05 display restore and sidecar | `unmaskTreeForDisplay` 7 → 0, `createDisplayUnmasker`, `markUnrestorablePlaceholders`, the digest helpers, `masking-digests.json` 3 → 0 | 441-15 `8b3793084`, `dd8922486`; 441-48 `2c2edde48` |
+| 06 marker vocabulary and chips | `maskedMarker` 17 → 0, `MaskedText` 31 → 0, `copyTextOf` 12 → 0, the U+241F `masked:` opener 2 → 0, the chip labels | 441-17 `5808c6933`, `882e4d703`; 441-37 `9e22a9085`, `de7fb1dc7`; 441-38 `7fb5955b2`, `54ce62dfd` |
+| 07 auth-state redaction | `redactAuthStateValue` 10 → 0, `AUTH_STATE_REDACTION_MARKER` 4 → 0 | 441-05 `d2e40c08d`, `1881a89b8` |
+| 08 network header mask | `NETWORK_CREDENTIAL_HEADERS` 3 → 0, `NetworkCredentialHeader` 2 → 0 | 441-59 `3306b8be8` |
+| 09 debug log redactor | `SECRET_PATTERNS` 1 → 0 | 441-36 `8fba37697` |
+| 10 capture blacklist and receipt | `captureReceipt` 8 → 0, `capture-blacklist` 8 → 0, `isCredentialValueField` 5 → 0, the trajectory slot's `targetRef` | 441-25 `eb586581a`, `9aaddd409`, `d6e1f9ea4` |
+| 11 config masks and reveal | `CONFIG_MASKING_MAP` 3 → 0, `classifyConfigPath` 7 → 0, `isCredentialEntry` 5 → 0, `CONFIG_MASK_PLACEHOLDER` 9 → 0, `/api/config/reveal` 3 → 0, `revealAt`, `RevealState` | 441-20 `5a2c811b2`, `3000eeca0`; 441-21 `ebc2a757e`; 441-49 `27d014a02`, `49d6030a6`; 441-40 `566fbadad`, `a049ccd6b` |
+| 12 guardrail detectors and scans | `GuardrailBlockError` 4 → 0, `createGuardrailProviderRequestHook` 4 → 0, `createGuardrailStreamScan` 3 → 0, `findDetectorMatches` 6 → 0, `injectionShape` 11 → 0 | 441-36 `dada2e9fa`; 441-47 `46859e653`; 441-24 `6783e329d`; 441-33 |
+| 13 guardrail policy | `loadGuardrailPolicy` 22 → 0, `defaultGuardrailPolicyInput` 22 → 0, `GuardrailPolicy` 36 → 0, `computeAdversarialPolicyDigest` 3 → 0 | 441-26 `b4cb5a95d`; 441-27 `2f0dde5f8`; 441-53 `31519ed5c`, `0801b50c8`; 441-45 |
+| 14 committed-egress checkpoint | `assertCommittedEgressSafe` 21 → 0, `CommittedEgressBlockedError` 15 → 0, `egress-blocked` 28 → 0, the egress channels | 441-12 `fe03af3ab`; 441-22 `c14a0945f`, `3b370137e`; 441-41 `47948dfae`, `f32ef045a`; 441-23 `66b4585ce`, `ef6f7de7a`; 441-42 `c35bdcada`, `b9b000d67`, `30ca6afdd` |
+| 15 construction scan, config credential check | `configScan` 9 → 0, `guardrail-hit` 5 → 0, `ConfigScanFinding` 5 → 0, `valueLooksLikeCredential` 1 → 0, `ScanResult` 5 → 0 | 441-18 `f75fb434c`, `9a1853e1c`; 441-39 `92829dedb`, `79871c436`; 441-20 `5a2c811b2`; 441-45 `736fba50a` |
+| 16 injection path and embed gate | `injectionFlagged` 8 → 0, `secretFlagged` 8 → 0, `restrictedInjectionDelta` 1 → 0, `assessEmbeddingInput` 2 → 0, `injection-restricted` 2 → 0, `restricted-fallback` 2 → 0 | 441-24 `6783e329d`, `b0dde79d7`; 441-50 `99013e58d` |
+| 17 authoring credential screen | `screenDraftForCredentials` 4 → 0, `DraftSecretRefusedError` 2 → 0 | 441-03 `efd1c5979`, `d27aeffaf` |
+| 18 guardrail audit | `JsonlAuditSink` 24 → 0, `appendGuardrailAudit` 8 → 0, `buildRunAuditSink` 6 → 0, `auditBaseDir` 22 → 0, `AuditSink` 22 → 1 (a comment), the eval audit locations | 441-31 `d6dea21ec`, `769512dbc`; 441-43 `53cce12a5`, `8b439aa4f`; 441-32 `42a880516`, `7c7eadf14`; 441-26, 441-51, 441-52, 441-53; 441-56 and 441-57; 441-28, 441-29, 441-54 (the registry's sink); 441-44 `2d8bbc279`, `37cc19c49` |
+| 19 hook framework and loop hook port | `registerFirstPartySafetyHooks` 4 → 0, `SafetyHookRunner` 9 → 0, `safetyHooks` 7 → 0, `buildRunSafetyHooks` 3 → 0, `policyDenial`, `runToolCallAsync` | 441-30 `6be6fe152`, `0b2fb86f3`; 441-60 `9eb10d2b7`, `0c944cb9b`; 441-33 `5a1985175` |
+| 20 cold-read masking scope | `withReadScope` 3 → 0, `COLD_READ_SCOPE_FUNCTION_IDS` 2 → 0, `createColdReadMaskingSources` 2 → 0 | 441-16 `7ced26a49`, `fb8013d4e` |
+
+Four dependency edges went with their last import: analytics → `@vostride/agent-qa-safety`
+(441-08), eval-local → `@vostride/agent-qa-safety-local` (441-32), knowledge-local →
+`@vostride/agent-qa-safety-local` (441-41), and the agent and cli runtime edges to
+`@vostride/agent-qa-safety`, which became devDependencies for tests that import kept exports
+(441-29, 441-43; 441-45 closed both as intended). `pnpm-lock.yaml`: +6/−15, each edit made by hand
+and verified with `install --offline --frozen-lockfile`. The conformance golden's
+`ConfigChangeAnswer` digests moved once, when the config-change answer lost its `guardrail-hit`
+arm (441-39 `92829dedb`).
+
+#### Registered gate rows renamed in place
+
+The 1366 rows listed at `6de55acde` are still listed, in order. Two were renamed in the same commit
+as their subject, file and origin unchanged:
+
+- `C436-PROMPT Rule 23 is byte-unchanged` → `C436-PROMPT Rule 23 is the 441 one-line secrets rule`
+  (436 D-26; 441-01 `0ac642a3d`).
+- `C438-PROCEDURE-WRITE passes the written name and row through the active masking context` →
+  `C438-PROCEDURE-WRITE passes the written name and row through the tail's mask` (438 D-11; 441-10
+  `2f86a5278`).
+
+No listed row was removed or moved to another file.
+
+### What was RETAINED, and why
+
+| Item | Where (at `d59dbf568`) | Why kept | What pins it |
+|---|---|---|---|
+| `SecretRedactor` and `SecretStore`: one compiled pass, longest value first, `[secret:<first-declared name>]`, templates named, existing markers kept | `runner/src/loop/secrets.ts` | the one masking function (D-11); 441-01 decision 1 | `C441-REDACTOR` (9 cells) |
+| `{{secret:<name>}}`, filled locally at dispatch | the runner's template resolution | how a test types a secret (D-09) | `C441-DISPATCH-REFUSAL the template form still types the real value` |
+| `[secret:<name>]`, the marker | everything that writes or prints | D-05 | the proof cells |
+| the literal-marker refusal (`literalSecretMarkerRefusal`) at dispatch and at the three authoring draft sites | `runner/src/loop/secrets.ts`, the runner loop, `agent/src/authoring/` | D-10 | `C441-DISPATCH-REFUSAL` (7), `C441-DRAFT-MARKER` (11) |
+| the host loader `createDeclaredSecretMask(configPath)`, re-read on `(mtimeMs, size, ino)` change, refusing with `DeclaredSecretsUnavailableError` | `cli/src/composition/declared-secrets.ts` (new) | how `ask`, `chat`, MCP, analytics, the daemon and the dashboard reach the mask (441-01 decision 5) | `C441-LOADER` (5) |
+| `createMaskingMiddleware(mask)` and `mapPromptLeaves`, last in `createModel`'s per-call middleware | `safety/src/egress/masking-middleware.ts` (new), `safety/src/egress/map-prompt-leaves.ts`, `model/src/registry.ts` | model egress masks with the caller's mask (441-01 decision 6); binary and base64 data never reaches the mask (D-21) | `C441-EGRESS` (20), `validate:safety` (a) |
+| `runSafetyScope`, with the execution context only | `safety-local/src/safety-scope.ts` | Open Question 5: the execution context is a durable field; its audit and masking members went in 441-44 and 441-33 | `C441-SAFETY-SURFACE` |
+| `classifyRisk` and `TIER_ORDER` | `safety/src/policy/` | eval scoring reads the tiers (432's reason) | `C432-EVAL-RISK-PARITY`, `C441-SAFETY-SURFACE` |
+| the data delimiters and memory's L3 DATA framing (`wrapAppObservedData`, `APP_OBSERVED_DATA_OPEN`/`CLOSE`) | `safety/src/serving/data-delimiters.ts` | prompt framing, not a detector (D-26 "What stays") | `C441-SAFETY-SURFACE` |
+| the curation posture `'no-masker'` / `'masker-active'` | cli curation | Pitfall 6: removing it changes who curates; `'masker-active'` now means a declared mask is bound (441-01 decision 10) | `C441-CURATION the post-run tail declares masker-active exactly when it holds a mask` |
+| the analytics structural seam (`AnalyticsMaskingContext`, its leaf walk) | `analytics/src/masking-seam.ts` | the analytics hosts hand it the declared mask; the package itself imports nothing from safety | `C441-ANALYTICS` (4) |
+| `maskRecordContent` and `MaskFn` | `schema/src/functions/record-join.ts`, `schema/src/run/bus-projections.ts` | every consumer takes a `MaskFn` (441-01 decision 4) | census kept-name control |
+| the config reader names (`getMasked`, `MaskedResolvedConfig`, `MaskedConfigEntry`) | `schema/src/config/`, cli, agent | their output now passes through the declared mask only; renaming them is churn | census kept-name control; `C441-CONFIG` (15) |
+| the config leaf list `CONFIG_SCHEMA_LEAVES` | `schema/src/config/leaves.ts` (new) | the plain leaf list the map became (441-01 decision 16) | the config editor cells |
+| the D-18 raw fields: the handoff's screen state, `stepText`, `plannedAction`, `interpolatedVariables`, the cache's `fill` text | runner, schema | D-18: saved unmasked by design and never scanned; the cache still refuses a step that uses a secret | the proof's D-18 path blanking (441-13) |
+| `assertRestrictedFallbackDelta` | `knowledge-local/src/curator/fallback.ts` | its commit-side caller went in 441-24 (leg 16); whether the defence returns under another reason is 441's review's (deferred) | its own `fallback.test.ts` cells |
+
+### What degrades, stated plainly
+
+- **An undeclared credential of any kind is not masked anywhere.** An email, a cookie or
+  localStorage value, saved auth state, an environment variable of any name (including
+  `ANTHROPIC_API_KEY`, `GH_TOKEN` and `*_PASSWORD`), an `envFile` value, a card number, an AWS key
+  and a bearer token reach the model, the records, the transcript, the dashboard, MCP and the
+  terminal as written (D-01, D-23).
+- **No request and no committed file is scanned or blocked.** A model request is sent whatever it
+  holds; knowledge bundles, receipts, policy files, quarantine rows, eval reports, seeds,
+  adversarial cases and the working-memory flush are written as authored (D-15).
+- **Curation treats every candidate the same.** Instruction-shaped text is authored, committed and
+  embedded through the normal path; there is no prompt-injection defence until READY-FUT-07 (D-26,
+  D-27). Curated DOM and accessibility snapshots carry only the declared mask; screenshots are
+  copied byte for byte (D-28, D-21).
+- **The dashboard has no reveal.** A declared value is shown as `[secret:<name>]` and cannot be
+  shown as the value (D-07, D-29).
+- **Config output shows values as written, except declared ones.** `config show`, the run
+  `--debug` tables, the dashboard config editor and `config.get` show an undeclared
+  credential-named or credential-shaped value as written. `config set` accepts any key and value.
+- **A short declared value masks every occurrence.** A 1-character or 3-character value is masked
+  wherever it appears, ordinary words included (D-02).
+- **Matching is raw and exact.** A URL-encoded, JSON-escaped, base64 or case-changed form of a
+  declared value is not masked (D-03; `C441-REDACTOR encoded and case-changed forms are not masked`).
+- **A value declared after a run is not masked in that run's stored text.** Records are masked at
+  write; the dashboard serves stored text (441-01 decision 13).
+- **Known text paths that skip the mask**, open for 441's review: `config set`'s success line
+  echoes the written value; curation's fact and caution seeds copy element names and root-cause
+  text without the mask. MCP answers a generic "Internal server error" when the secrets file is
+  missing (fail-closed, but the cause is hidden).
+
+### Persisted values the narrowed contract governs
+
+No migration and no compatibility code (D-20).
+
+| Persisted value | Disposition | Evidence |
+|---|---|---|
+| old `<SECRET_n>` / `<EMAIL_n>` placeholders, the runner's old generic `[secret]` marker and `␟masked:…␟` markers in existing `events.jsonl`, handoffs, session JSONL and `runs.db` | **Shown as stored text.** Nothing converts, chips or restores them. | `failure-banner.test.tsx` `FailureBanner old marker text renders as written` (441-38); `SECRET-PLACEHOLDER-AS-TEXT: an old <SECRET_n> placeholder is shown as written, with no chip` (441-37); `step-name-pills.test.tsx` `shows an old run's numbered placeholder in a DURABLE step text as the characters it holds` (441-17); `C441-DISPLAY the console reporter prints a numbered placeholder unchanged and restores nothing`; `C441-CURATION a numbered email placeholder from an old run is literal text` |
+| `<root>/runs/<id>/masking-digests.json` and `<root>/masking-key` | **Left on disk, never read.** No code writes or reads a digest or a host key (441-48). | `C441-RETURN-05` (`masking-digests.json`, `MASKING_HOST_KEY_FILE`) |
+| `guardrail_audit.jsonl` in `.agent-qa/`, `.agent-qa/runs/<id>/` and under `.agent-qa/eval/audit/` | **Left on disk, never read.** Nothing writes or reads one (441-31, 441-32, 441-43, 441-44). | `C441-RUN-RECORDS a completed run leaves no guardrail audit file in its run directory`; `C441-RUN-RECORDS an eval replay and its adjudication write no guardrail audit file`; `C441-RETURN-18` |
+| curation queue rows (`memory/queue/`) carrying a `captureReceipt` (every row written before 441-25) or `secretFlagged` / `injectionFlagged` (before 441-50) | **Read as malformed and skipped.** The payload stays `.strict()` at queue version 2; `queuedPayloads` skips the row and the drain quarantines it and carries on. | `curation queue atomic emit drop (CUR-04/T-378-07..09) C441-CURATION a queue row with a capture receipt is skipped as malformed` (441-25); `… C441-CURATION a queue row with the retired flags is skipped as malformed` (441-50) |
+| the candidate content address (`candidateId`, and `curationJobId` in bundle outcome lines) | **Moved twice**: when the receipt left the address (441-25) and when the two flags left it (441-50). The same evidence gets a different id; committed bundles keep their old ids. `416-v51-reference.json`'s six pinned ids were re-spelled both times (`fact/door2-canary` `dd7e34f3…` → `032f723f…`, `fact/door3-drain` `0c7ea57b…` → `e7312cfd…`, `caution/door3-drain` `7c1f8aeb…` → `66345bc4…`, `fact/door1-promote` `fd3b9e3c…` → `d6aab49f…`, `caution/door1-promote` `93b33945…` → `42755dbf…`, `caution/door2-canary` `c82bbf54…` → `f3c3bbc4…`, the second move's values). | `416-v51-reference.test.ts`, `promotion-floor.acceptance.test.ts` (441-25 `d6e1f9ea4`, 441-50 `99013e58d`) |
+| `artifacts.json` (`ArtifactsIndexSchema`) whose skipped-artifact `reason` is `'capture-blacklist'` | **Fails the schema.** The reason left the enum (441-25). | read from 441-25's change; not pinned by a cell |
+| procedure trajectory value slots carrying `targetRef` | **Undecodable.** `trajectoryValueSlotSchema` is strict and lost the key (441-25), so `parseProcedureTrajectorySeed` returns `undefined` and the extraction author answers `fallback-required` (`malformed`), which the fallback disposes as a Noop. Such seeds sit only in pre-441-25 queue rows, which are already skipped for their receipt. | read from `cli/src/curation/emit-candidates.ts` and `curator-author.ts` at `d59dbf568`; not pinned by a cell |
+| adversarial refresh records (`<agentQaRoot>/eval/adversarial-state/<product>/<digest>.json`) carrying `policyDigest` or a `'refused'` tuple outcome | **Read as malformed.** The strict schema refuses `policyDigest`, and `readAdversarialRefreshRecords` throws on it as on any malformed record (441-53). A record for the same refresh now has a different file name. The probe store's `'refused'` completion outcome is unchanged. | `C441-COMMITTED adversarial admission needs no guardrail policy` (its legacy-record leg) |
+| bundle provenance `withheld: true`, stamped before 441-24 | **Still read.** The optional field stays in `schema/src/knowledge/bundle-files.ts` and the promotion gate still holds such a bundle as `withheld`; no writer stamps it now. | read from code at `d59dbf568`; not pinned by a cell |
+| the retired outcome reasons `egress-blocked`, `injection-restricted`, `restricted-fallback` and the commit outcome `withheld` | **Not persisted.** They were return values of the commit, store, drain and seeding paths; no production code names them (`C441-RETURN-14`, `-16`). `DrainReport.withheld` stays and is always 0 (deferred). | 441-22, 441-24, 441-42 |
+| action-cache entries keyed before 441-09 | **May miss.** The key now folds step text through the declared mask instead of the masking context, so a step whose text held an email or an environment-seeded value keys differently and is planned again. No entry is rewritten. | inferred from 441-09's change; not observed by a cell |
+| chat session files holding a value typed before 441, or an undeclared value | **Left as typed.** No history rewrite (D-19); no purge (out of scope). | `C441-CHAT an undeclared credential typed in chat is stored as typed` |
+
+There is no user-facing guardrail or masking config key to retire: the guardrail policy input was
+in code only, and `safety.*` was cut in 432 (441-RESEARCH § Runtime State Inventory).
+
+### Correction to the 2026-10-02 retained rows
+
+The Phase 432 section lists as retained four things Phase 441 deleted. The rows are kept as written;
+this is their dated pointer.
+
+- Members table, `appendExecutionAudit` row: "`JsonlAuditSink` …, now the guardrail append only".
+  `JsonlAuditSink` was deleted in 441-44 (`37cc19c49`).
+- What was RETAINED, "the guardrail audit: `AuditSink`, `JsonlAuditSink.appendGuardrailAudit`,
+  `guardrail_audit.jsonl`" and "`registerFirstPartySafetyHooks`' masking and guardrail middleware":
+  deleted in 441-33 (`5a1985175`, `f544714c3`) and 441-44; the model path's masking is now
+  `createMaskingMiddleware`, still pinned last by `validate:safety` (a).
+- What was RETAINED, "the `env-var-name` masking class" in `schema/src/config/masking.ts`: the file
+  was deleted in 441-40 (`a049ccd6b`).
+- Persisted values, "`guardrail_audit.jsonl` — Actively retained": no row is appended now; old files
+  are left unread (above).
+
+### The instruments that notice a return
+
+- **`pnpm validate:arch`** runs the 441 census beside the earlier ones (412, 430, 432 and 436 to
+  439 among them):
+  `C441-RETURN-01` to `C441-RETURN-20`, `C441-SAFETY-SURFACE`, and the instruments
+  `C441-UNIVERSE-FLOORS`, `C441-LEXER-CONTROL`, `C441-PLANTED-POSITIVE` and `C441-SELF-MATCH`. A
+  returning masker, restore path, marker, redactor, guardrail, policy, egress check, scan, flag,
+  audit writer, hook seam or cold-read scope reds by name on the commit that adds it.
+- **`pnpm validate:safety`** (a): the declared-secret masking middleware is last in `createModel`
+  and given its mask.
+- **The 434 gate** (`pnpm run gate:local`) must execute and pass all 174 listed `C441-` cells, each
+  with its `441 D-NN` origin: `C441-REDACTOR` 9, `C441-DISPATCH-REFUSAL` 7, `C441-PROMPTS` 3,
+  `C441-DRAFT-MARKER` 11, `C441-LOADER` 5, `C441-EGRESS` 20, `C441-DEBUG-LOG` 4,
+  `C441-HOOK-OUTPUT` 3, `C441-CHAT` 5, `C441-PROOF` 5, `C441-NOTHING-ELSE` 3, `C441-MCP-DIFF` 1,
+  `C441-ANALYTICS` 4, `C441-RUN-RECORDS` 14, `C441-NETWORK` 2, `C441-DISPLAY` 9, `C441-COLD-READ` 3,
+  `C441-CONFIG-SCAN` 4, `C441-CONFIG` 15, `C441-COMMITTED` 10, `C441-CAPTURE` 1, `C441-CURATION` 8,
+  `C441-RETURN` 25, `C441-SKILL` 2, `C441-NO-HOOK-PORT` 1. The proof (`C441-PROOF`) and its twin
+  (`C441-NOTHING-ELSE`) red if a declared value reaches a request or a byte on disk, or if an
+  undeclared value is masked or a request blocked.
+- **Fifteen more `C441-` cells run in the ordinary package suites but are not in the gate list**,
+  because they sit under older describes and their full names do not start with `C441-`: two in
+  `cli` (`run-detail-dom.test.ts`, `run-detail-failure-dom.test.ts`, `C441-DISPLAY`), five in
+  `knowledge-local/src/__tests__/curation-queue.test.ts` (`C441-CAPTURE` 3, `C441-CURATION` 2), six
+  in `curator/__tests__/commit.test.ts` and one in `curator/__tests__/drain.test.ts`
+  (`C441-CURATION`), and one in `review/__tests__/apply-review.test.ts` (`C441-COMMITTED`). They are
+  named in `441-RECORD.md`.
+
+### Not observed, stated as such
+
+- **No live model ran.** Every cell uses a stub or scripted model; the proof's run leg drives the
+  shipped binary against its own page and a recording model proxy.
+- **The hosted quickstart** (`vostride.com/docs/agent-qa/quickstart`) is outside agent-qa and was
+  not edited; it does not yet state the rule (the owner's manual follow-up).
+- **No user workspace was migrated or inspected.** The persisted-value dispositions above are what
+  the cells and the code at `d59dbf568` show for files written in the old formats, not an
+  observation of a real project.
+- **A real coding-agent session over MCP, and a person clicking through the dashboard,** were not
+  performed; the MCP and dashboard cells stand in for them.
+
+### Reconciliation
+
+Reconciliation 23 (2026-10-12) in `.planning/REQUIREMENTS.md` amended V2-EXEC-03 before planning
+(and was widened the same day to remove `injectionShape` and add READY-FUT-07), and
+`spec/v2/execution-safety.md` (its dated block) and `spec/v2/release-readiness.md` (V2-EXEC-03 and
+§4.1) were amended the same day. What was built matches it, so no new reconciliation was needed.
+
+### Gate at the time of writing
+
+The record gate runs on the commit that adds this section, which is Phase 441's final agent-qa SHA.
+Its legs, counts and verdict are recorded in
+`.planning/phases/441-declared-secret-masking/441-RECORD.md` § Gate rather than quoted here, so no
+agent-qa commit follows the gate run.
