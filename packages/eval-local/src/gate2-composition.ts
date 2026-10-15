@@ -21,14 +21,14 @@ import {
   type SeedingPlan,
   type ReplaySample,
 } from '@vostride/agent-qa-eval'
-import { BENEFITS, distilledScreenStateDigest, slugBranch, type Benefit, type CrossCheck } from '@vostride/agent-qa-schema'
+import { BENEFITS, distilledScreenStateDigest, slugBranch, type Benefit, type CrossCheck, type MaskFn } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 import { loadCompletedRunHandoff, RUNS_SUBDIR, HANDOFF_FILE } from '@vostride/agent-qa-runner-local'
 import { FsRunArtifactSource } from './artifact-source.js'
 import { loadCassetteBundle } from './cassette-loader.js'
 import { loadCassetteBundles } from './replay-sweep.js'
 import { cassetteProductPartition } from './replay-batch-assembly.js'
-import { seedCommittedCorpus, type SeedingRefusal, type SeedingBatchReport } from './seeding-composition.js'
+import { requireCorpusMask, seedCommittedCorpus, type SeedingRefusal, type SeedingBatchReport } from './seeding-composition.js'
 import { readCommittedCorpus } from './committed-corpus-source.js'
 import {
   locateTargetCassettes,
@@ -213,7 +213,10 @@ export interface AdmitStagedFeedbackResult {
 }
 export async function admitStagedFeedback(input: {
   agentQaRoot: string; committedRoot: string; product?: string; dryRun: boolean
+  /** 441 GAP3-D1: required. A staged case still holding a declared value is refused by the writer. */
+  mask: MaskFn
 }): Promise<AdmitStagedFeedbackResult> {
+  requireCorpusMask(input.mask, 'admitStagedFeedback')
   const previous = readCommittedCorpusDigest(input)
   if (previous.kind !== 'digest') throw new TypeError('feedback corpus unavailable')
   const entries = listStagedFeedback(input)
@@ -233,7 +236,7 @@ export async function admitStagedFeedback(input: {
     result.writesStarted = true
     let seeded: SeedingBatchReport | undefined
     try {
-      seeded = seedCommittedCorpus({ batches, committedRoot: input.committedRoot })
+      seeded = seedCommittedCorpus({ batches, committedRoot: input.committedRoot, mask: input.mask })
     } catch {
       result.failures.push({ phase: 'write', reason: 'seeding-unavailable' })
     }

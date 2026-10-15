@@ -1348,7 +1348,8 @@ export async function runSeedFromFeedbackVerb(session: EvalSession, opts: {
     // Read standing DATA before the operator's write. Gate3 has no digest and is never invented stale.
     const receipts = opts.knowledgeRoot !== undefined && opts.readStandingGateReceipts !== undefined
       ? opts.readStandingGateReceipts({ knowledgeRoot: opts.knowledgeRoot }) : []
-    const result = await admitStagedFeedback({ ...opts, committedRoot: resolve(session.configDir, 'agent-qa-eval') })
+    const result = await admitStagedFeedback({ ...opts, committedRoot: resolve(session.configDir, 'agent-qa-eval'),
+      mask: committedCorpusMask(session) })
     const selected = opts.dryRun ? result.entries : result.admitted
     const entries = selected.map(entry => ({ cassetteId: entry.extracted.cassette.id, product: entry.product,
       split: 'natural' as const, source: 'canary-feedback' as const, benefit: entry.benefit,
@@ -1580,6 +1581,7 @@ export async function runAdversarialVerb(
           ? opts.readStandingGateReceipts({ knowledgeRoot: opts.knowledgeRoot }) : []
       },
       ...(opts.dryRun === undefined ? {} : { dryRun: opts.dryRun }),
+      mask: committedCorpusMask(session),
     })
     // Derived, never assumed. A refusal that never started writing moved nothing, so it stales
     // nothing — `null` is reserved for the one genuinely unknown case: writes began and the
@@ -2467,6 +2469,7 @@ export async function runSeedVerb(
         plan,
         cassettes: extraction.cassettes,
         committedRoot,
+        mask,
       })
       for (const skip of report.softEvidence?.skips ?? []) {
         result.notices.push(`SOFT evidence ${skip.runId}/${skip.testIndex}/${skip.stepIndex}/${skip.attempt}: ${skip.reason}`)

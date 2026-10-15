@@ -40,6 +40,8 @@ import {
   makeLocalV2Handoff,
 } from './fixtures/local-handoff-fixture.js'
 
+const NO_DECLARED_SECRETS = (text: string) => text
+
 const PRODUCT = 'default'
 
 /**
@@ -174,6 +176,7 @@ describe('openCorpusReader on the /reader subpath (414 D-18/D-19/D-20, ROOT-10 S
       plan,
       cassettes,
       committedRoot: root,
+      mask: NO_DECLARED_SECRETS,
     })
     writePartitionManifest({
       manifest: projectPartitionManifest({

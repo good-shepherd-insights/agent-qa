@@ -53,6 +53,8 @@ import {
 } from './fixtures/replay-fixtures.js'
 import { incrementingClock } from './fixtures/floor-fixtures.js'
 
+const NO_DECLARED_SECRETS = (text: string) => text
+
 const roots: string[] = []
 function fixture(options?: Parameters<typeof writeGate1Fixture>[1]) {
   const root = mkdtempSync(join(tmpdir(), 'gate1-'))
@@ -125,7 +127,7 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
       correctedExpectation: 'Choose Cancel', correctedAction: { type: 'click', ref: asRef('e-other') },
       disposition: { kind: 'confirmed-bug', confirmedRecords: 0 }, gold: [], evidence: { confirmed: 0, overturned: 0 } }
     const frozen = evalLocal.freezeGoldenTrajectory({ agentQaRoot: f.agentQaRoot, committedRoot: f.committedRoot,
-      product: 'alpha', mark, handoff })
+      product: 'alpha', mark, handoff, mask: NO_DECLARED_SECRETS })
     if (frozen.kind !== 'frozen') throw new Error(JSON.stringify(frozen))
     await new evalLocal.FsMarkLedger({ root: f.agentQaRoot, runId }).append({ ...mark, gold: frozen.cases })
     const corpus = evalLocal.readActiveCommittedCorpus(f.committedRoot, f.agentQaRoot)

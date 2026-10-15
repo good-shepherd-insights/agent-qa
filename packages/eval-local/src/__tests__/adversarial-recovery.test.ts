@@ -51,6 +51,8 @@ import {
   makeLocalV2Handoff,
 } from './fixtures/local-handoff-fixture.js'
 
+const NO_DECLARED_SECRETS = (text: string) => text
+
 const roots: string[] = []
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
@@ -147,6 +149,7 @@ function fixture(count = SEED_COUNT): Fixture {
       plan,
       cassettes: [{ cassette: seed, blobs: extracted.blobs }],
       committedRoot,
+      mask: NO_DECLARED_SECRETS,
     })
     expect(seeded.refusals).toEqual([])
     seedIds.push(seed.id)

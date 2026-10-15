@@ -50,6 +50,8 @@ import {
   makeLocalV2Handoff,
 } from './fixtures/local-handoff-fixture.js'
 
+const NO_DECLARED_SECRETS = (text: string) => text
+
 /**
  * The 414-05 shared partition vector (Plan 01 replaced buildSeedingPlan's old
  * `handoffPath` input with `partition` DATA). Same salt and fractions as
@@ -277,6 +279,7 @@ describe('committed-root proofs (ROOT-02 / GUARD-FUT-04, D-13, D-15)', () => {
       plan,
       cassettes,
       committedRoot: root,
+      mask: NO_DECLARED_SECRETS,
     })
   }
 

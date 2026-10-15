@@ -29,6 +29,8 @@ import {
   makeLocalV2Handoff,
 } from './fixtures/local-handoff-fixture.js'
 
+const NO_DECLARED_SECRETS = (text: string) => text
+
 /** The 414-05 shared partition vector — the same one the read-leg cells use. */
 const TEST_PARTITION = {
   saltHex: 'a3f'.repeat(21).concat('b'),
@@ -85,6 +87,7 @@ describe('readGatePostureFor (414 D-15, ROOT-10)', () => {
       plan,
       cassettes,
       committedRoot: root,
+      mask: NO_DECLARED_SECRETS,
     })
   })
 

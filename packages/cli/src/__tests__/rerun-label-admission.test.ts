@@ -10,6 +10,7 @@ import { committedLabelPath, FsRunArtifactSource, readCommittedCorpus, readRunEx
 import { files, markFixture } from '../gates/__tests__/feedback-fixture.js'
 import { resolveEvalSession, runSeedVerb, runCensusVerb } from '../eval-session-composition.js'
 
+const NO_DECLARED_SECRETS = (text: string) => text
 const roots: string[] = []
 const fractions = { heldOutFraction: 0.4, privateFraction: 0.5 }
 const partition = { ...fractions, saltHex: '0'.repeat(64) }
@@ -50,7 +51,7 @@ function fixture(existingOriginal = true) {
   }) }]
   if (existingOriginal) {
     const initial = seedCommittedCorpus({ plan: originalPlan, cassettes: originalExtraction,
-      committedRoot })
+      committedRoot, mask: NO_DECLARED_SECRETS })
     expect(initial.refusals).toEqual([])
     expect(initial.seededCount).toBe(1)
   }
@@ -189,7 +190,7 @@ describe('420 member admission through actual seed', () => {
       .replace(/\.json$/, `--revision-${revision.revision!.id}.json`)
     writeFileSync(path, committedFileText({ occupied: true }))
     const before = bytes(f.committedRoot)
-    const report = seedCommittedCorpus({ plan, cassettes: [], committedRoot: f.committedRoot })
+    const report = seedCommittedCorpus({ plan, cassettes: [], committedRoot: f.committedRoot, mask: NO_DECLARED_SECRETS })
     expect(report.refusals).toContainEqual(expect.objectContaining({ cassetteId: f.original.id,
       kind: 'write-conflict' }))
     expect(bytes(f.committedRoot)).toEqual(before)

@@ -64,6 +64,8 @@ import {
   makeLocalV2Handoff,
 } from './fixtures/local-handoff-fixture.js'
 
+const NO_DECLARED_SECRETS = (text: string) => text
+
 const PRODUCT = 'default'
 
 /**
@@ -271,6 +273,7 @@ describe('readCommittedCorpus / listCommittedReports / listBaselinePointers (413
       plan,
       cassettes,
       committedRoot: root,
+      mask: NO_DECLARED_SECRETS,
     })
   })
 

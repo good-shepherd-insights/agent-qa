@@ -9,8 +9,10 @@
 // `eval adversarial --admit --batch <digest>` branch. An operator reviews real
 // injection-shaped text before it can enter a git-tracked root.
 //
-// Content law (441 D-15): staged and admitted cases are committed as authored, with no content
-// check; the operator's review of the exact bytes is the gate.
+// Content law (441 D-15, GAP3-D1): staged and admitted cases are committed as authored, and the
+// operator's review of the exact bytes is the gate. The one check is the declared mask: admission
+// never rewrites reviewed bytes, so a staged case that still holds a declared value raw is refused
+// by the seeding writer and reported as an `unmasked-declared-value` staging skip.
 //
 // Exact-byte law (D-02): the reviewed manifest pins the sha256 of each staged document, and
 // the batch digest is a function of those pins. Admission re-reads the staged bytes, re-hashes
@@ -68,7 +70,7 @@ import {
   type SeedingPlan,
   type StandaloneLabelRecord,
 } from '@vostride/agent-qa-eval'
-import { slugBranch } from '@vostride/agent-qa-schema'
+import { slugBranch, type MaskFn } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
 import {
@@ -93,7 +95,7 @@ import { committedBlobPath, committedCassettePath, committedCorpusPath, committe
 import { openCorpusReader } from './corpus-reader.js'
 import { readCommittedCorpus } from './committed-corpus-source.js'
 import { readCommittedCorpusDigest } from './gate2-composition.js'
-import { seedCommittedCorpus, type SeedingBatchReport } from './seeding-composition.js'
+import { requireCorpusMask, seedCommittedCorpus, type SeedingBatchReport } from './seeding-composition.js'
 
 /** Local staging root for reviewable adversarial batches (D-01, beside `eval/feedback`). */
 export const ADVERSARIAL_STAGING_SUBDIR = 'eval/adversarial'
@@ -227,6 +229,8 @@ export interface AdversarialStagingSkip {
     | 'seed-provenance-mismatch'
     /** This id is already committed with DIFFERENT bytes. History wins; nothing is overwritten. */
     | 'committed-conflict'
+    /** 441 GAP3-D1: a reviewed string still holds a declared value raw; the writer refused it. */
+    | 'unmasked-declared-value'
 }
 
 // ---------------------------------------------------------------------------
@@ -463,6 +467,8 @@ export interface RefreshAdversarialSplitInput {
    * interrupt it between cases. A throw here is treated exactly like a real IO failure.
    */
   afterCaseCommitted?: (cassetteId: string) => void
+  /** 441 GAP3-D1: the workspace's declared-secret mask, passed to the seeding writer. Required. */
+  mask: MaskFn
 }
 
 /**
@@ -1591,11 +1597,14 @@ export function listStagedAdversarial(input: {
  * The order is deliberate: integrity first (nothing is trusted because it is on disk), then
  * blob resolution, then the one sanctioned seeding writer, then a byte-verification of what
  * actually landed. Only a case whose committed bytes equal the reviewed bytes counts as
- * admitted; the reviewed bytes are committed as authored (441 D-15).
+ * admitted; the reviewed bytes are committed as authored (441 D-15), and the writer refuses a
+ * case that still holds a declared value raw under the required mask (441 GAP3-D1), which this
+ * reports as an `unmasked-declared-value` staging skip. No other content check runs.
  */
 export function refreshAdversarialSplit(
   input: RefreshAdversarialSplitInput,
 ): RefreshAdversarialSplitResult {
+  requireCorpusMask(input.mask, 'refreshAdversarialSplit')
   const base = { product: input.product, batchDigest: input.batchDigest, admitted: [], unchanged: [],
     refusals: [], remaining: [], stagingSkips: [], writesStarted: false, kind: 'refused' as const }
   if (!LOWER_HEX_64.test(input.batchDigest)) return { ...base, reason: 'batch-not-found' }
@@ -1833,6 +1842,7 @@ function refreshAdversarialSplitOwned(input: RefreshAdversarialSplitInput): Refr
       report = seedCommittedCorpus({
         batches: [{ plan, cassettes }],
         committedRoot: input.committedRoot,
+        mask: input.mask,
       }).reports[0]
     } catch {
       report = undefined
@@ -1841,9 +1851,11 @@ function refreshAdversarialSplitOwned(input: RefreshAdversarialSplitInput): Refr
       stagingSkips.push({
         cassetteId: row.cassette.id,
         seedCassetteId: row.manifestCase.seedCassetteId,
-        reason: report?.refusals.some(refusal => refusal.kind === 'write-conflict') === true
-          ? 'committed-conflict'
-          : 'text-hash-mismatch',
+        reason: report?.refusals.some(refusal => refusal.kind === 'unmasked-declared-value') === true
+          ? 'unmasked-declared-value'
+          : report?.refusals.some(refusal => refusal.kind === 'write-conflict') === true
+            ? 'committed-conflict'
+            : 'text-hash-mismatch',
       })
       continue
     }

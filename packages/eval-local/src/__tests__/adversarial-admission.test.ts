@@ -51,6 +51,7 @@ import {
   makeLocalV2Handoff,
 } from './fixtures/local-handoff-fixture.js'
 
+const NO_DECLARED_SECRETS = (text: string) => text
 const roots: string[] = []
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
@@ -139,6 +140,7 @@ function fixture(count: number): Fixture {
         plan,
         cassettes: [{ cassette: seed, blobs: extracted.blobs }],
         committedRoot,
+        mask: NO_DECLARED_SECRETS,
       }).refusals,
     ).toEqual([])
     seedIds.push(seed.id)
@@ -169,6 +171,7 @@ function admit(
     batchDigest,
     ...(opts.afterCaseCommitted === undefined ? {} : { afterCaseCommitted: opts.afterCaseCommitted }),
     ...(opts.dryRun === undefined ? {} : { dryRun: opts.dryRun }),
+    mask: NO_DECLARED_SECRETS,
   })
 }
 
@@ -365,6 +368,7 @@ describe('C441-COMMITTED', () => {
       committedRoot: f.committedRoot,
       product: 'default',
       batchDigest: staged.batchDigest!,
+      mask: NO_DECLARED_SECRETS,
     })
     expect(admitted.kind).toBe('admitted')
     expect(committedIds(f.committedRoot)).toEqual(reviewed)

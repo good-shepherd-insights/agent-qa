@@ -12,6 +12,7 @@ import * as publication from '../judge-calibration-source.js'
 import { makeLocalV2Handoff, LOCAL_FIXTURE_BLOB_BYTES } from './fixtures/local-handoff-fixture.js'
 import { capturingStub, judgeGenerateResult } from './fixtures/replay-fixtures.js'
 
+const NO_DECLARED_SECRETS = (text: string) => text
 const binds = vi.hoisted(() => ({ count: 0, fail: false }))
 const redactor = new SecretRedactor(SecretStore.fromEnvContent('JUDGE_API_KEY=fixture-private-api-key'))
 vi.mock('../judge-binding.js', async original => {
@@ -334,13 +335,14 @@ function addEvidence(project: string, index: number, model: core.CassetteModelRe
   const source = cassettes.find(row => row.cassette.granularity === 'leaf')!.cassette as core.LeafCassette
   source.receipt.model = model
   const plan = core.buildSeedingPlan({ handoff, cassettes, partition: { saltHex: 'a'.repeat(64), heldOutFraction: 0.000001, privateFraction: 0.5 } })
-  const seeded = local.seedCommittedCorpus({ plan, cassettes, committedRoot })
+  const seeded = local.seedCommittedCorpus({ plan, cassettes, committedRoot, mask: NO_DECLARED_SECRETS })
   if (seeded.refusals.length) throw new Error('Fixture seed refused')
   const mark: MarkReceipt = { schemaVersion: 1, markId: 'mark_abcdef012345', runId: handoff.runId,
     runSlug: core.deriveRunSlug(handoff.runId), testIndex: 0, stepIndex: 0, kind: excluded ? 'false-pass' : 'confirmed-bug', origin: 'user', ordinal: 1,
     markedAt: 0, disposition: { kind: 'confirmed-bug', confirmedRecords: 0 }, gold: [], evidence: { confirmed: 0, overturned: 0 } }
   const frozen = core.buildGoldenTrajectoryPlan({ handoff, cassettes, mark, product: 'shop' })
-  const freeze = local.seedCommittedCorpus({ plan: { ...plan, cases: frozen.cases }, cassettes: frozen.goldCassettes, committedRoot })
+  const freeze = local.seedCommittedCorpus({ plan: { ...plan, cases: frozen.cases }, cassettes: frozen.goldCassettes, committedRoot,
+    mask: NO_DECLARED_SECRETS })
   if (freeze.refusals.length) throw new Error('Fixture gold refused')
   mark.gold = frozen.cases.map(row => ({ cassetteId: row.cassetteId, sourceCassetteId: source.id, channel: row.labelRecord.label.sourceChannel as 'user-mark' | 'overturned-verdict' }))
   const marks = [mark]

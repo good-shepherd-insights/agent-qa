@@ -8,6 +8,7 @@ import { afterEach, expect, it } from 'vitest'
 import * as local from '../index.js'
 import { makeLocalV2Handoff, LOCAL_FIXTURE_BLOB_BYTES } from './fixtures/local-handoff-fixture.js'
 
+const NO_DECLARED_SECRETS = (text: string) => text
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 function verdict(producer: Verdict['producer'], classification: Verdict['class']): Verdict {
@@ -29,7 +30,7 @@ function fixture() {
   new FsEvidenceArtifactStore({ root, runId: handoff.runId }).persistDecisionScreenshot(LOCAL_FIXTURE_BLOB_BYTES)
   const cassettes = core.extractRunCassettes({ handoff, artifacts: new local.FsRunArtifactSource({ root, runId: handoff.runId }) }).cassettes
   const plan = core.buildSeedingPlan({ handoff, cassettes, partition: { saltHex: 'a'.repeat(64), heldOutFraction: 0.000001, privateFraction: 0.5 } })
-  const seeded = local.seedCommittedCorpus({ plan, cassettes, committedRoot })
+  const seeded = local.seedCommittedCorpus({ plan, cassettes, committedRoot, mask: NO_DECLARED_SECRETS })
   if (seeded.refusals.length) throw new Error('Fixture seeding refused')
   const marks: MarkReceipt[] = []
   for (const step of member.steps) {
@@ -37,7 +38,8 @@ function fixture() {
       runSlug: core.deriveRunSlug(handoff.runId), testIndex: 0, stepIndex: step.stepIndex, kind: 'confirmed-bug',
       origin: 'user', ordinal: step.stepIndex + 1, markedAt: 0, disposition: { kind: 'confirmed-bug', confirmedRecords: 0 },
       gold: [], evidence: { confirmed: 0, overturned: 0 } }
-    const frozen = local.freezeGoldenTrajectory({ agentQaRoot: root, committedRoot, product: 'shop', handoff, mark })
+    const frozen = local.freezeGoldenTrajectory({ agentQaRoot: root, committedRoot, product: 'shop', handoff, mark,
+      mask: NO_DECLARED_SECRETS })
     if (frozen.kind !== 'frozen') throw new Error('Fixture gold refused')
     marks.push({ ...mark, gold: frozen.cases })
   }

@@ -39,6 +39,8 @@ import {
   makeLocalV2Handoff,
 } from './fixtures/local-handoff-fixture.js'
 
+const NO_DECLARED_SECRETS = (text: string) => text
+
 const PRODUCT = 'default'
 
 /** The 414-05 shared partition vector — same salt and fractions as the sibling suites. */
@@ -145,6 +147,7 @@ describe('414 ROOT-07 — relocation: the split and the exclusion set are functi
       plan,
       cassettes,
       committedRoot: rootA,
+      mask: NO_DECLARED_SECRETS,
     })
     writePartitionManifest({
       manifest: projectPartitionManifest({

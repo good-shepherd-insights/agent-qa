@@ -6,10 +6,11 @@ import {
   deriveCensus,
   extractRunCassettes,
   markedDecisionCount,
+  maskCorpusText,
   renderCensusMarkdown,
   resolveMarkedDecisions,
 } from '@vostride/agent-qa-eval'
-import type { CompletedRunHandoff, MarkReceipt } from '@vostride/agent-qa-schema'
+import type { CompletedRunHandoff, MarkReceipt, MaskFn } from '@vostride/agent-qa-schema'
 
 import { FsRunArtifactSource } from './artifact-source.js'
 import { commitCensus } from './census-committing.js'
@@ -20,7 +21,7 @@ import {
   readPartitionManifests,
   readRunExclusions,
 } from './committed-corpus-source.js'
-import { seedCommittedCorpus, type SeedingRefusal } from './seeding-composition.js'
+import { requireCorpusMask, seedCommittedCorpus, type SeedingRefusal } from './seeding-composition.js'
 
 export interface FreezeGoldenTrajectoryInput {
   agentQaRoot: string
@@ -30,6 +31,8 @@ export interface FreezeGoldenTrajectoryInput {
   handoff: CompletedRunHandoff
   supersedes?: string
   priorGold?: MarkReceipt['gold']
+  /** 441 GAP3-D1: the declared mask the run and the mark's correction are frozen under. */
+  mask: MaskFn
 }
 
 export type FreezeOutcome =
@@ -40,16 +43,21 @@ export type FreezeOutcome =
   | { kind: 'no-leaf-cassette' }
 
 export function freezeGoldenTrajectory(input: FreezeGoldenTrajectoryInput): FreezeOutcome {
-  const targets = resolveMarkedDecisions(input.handoff, input.mark, input.mark.kind)
+  requireCorpusMask(input.mask, 'freezeGoldenTrajectory')
+  // 441 GAP3-D1: the whole freeze reads the masked run and the masked correction. No later read
+  // compares the frozen correction with the stored mark, so masking it moves no identity.
+  const handoff = maskCorpusText(input.handoff, input.mask)
+  const mark = maskCorpusText(input.mark, input.mask)
+  const targets = resolveMarkedDecisions(handoff, mark, mark.kind)
   if ('refusal' in targets) return { kind: 'step-not-found', stepCount: targets.stepCount }
-  const decisionCount = markedDecisionCount(input.handoff, targets)
-  if (input.mark.correctedAction !== undefined && decisionCount !== 1) return { kind: 'ambiguous-correction', decisionCount }
+  const decisionCount = markedDecisionCount(handoff, targets)
+  if (mark.correctedAction !== undefined && decisionCount !== 1) return { kind: 'ambiguous-correction', decisionCount }
 
   const extracted = extractRunCassettes({
-    handoff: input.handoff,
-    artifacts: new FsRunArtifactSource({ root: input.agentQaRoot, runId: input.handoff.runId }),
+    handoff,
+    artifacts: new FsRunArtifactSource({ root: input.agentQaRoot, runId: handoff.runId }),
   })
-  const plan = buildGoldenTrajectoryPlan({ ...input, cassettes: extracted.cassettes })
+  const plan = buildGoldenTrajectoryPlan({ ...input, handoff, mark, cassettes: extracted.cassettes })
   if (plan.cases.length === 0) return { kind: 'no-leaf-cassette' }
   if (plan.skipped.length > 0) {
     return { kind: 'refused', refusals: plan.skipped.map(({ cassetteId }) => ({ cassetteId, kind: 'missing-cassette' })) }
@@ -67,6 +75,7 @@ export function freezeGoldenTrajectory(input: FreezeGoldenTrajectoryInput): Free
     },
     cassettes: plan.goldCassettes,
     committedRoot: input.committedRoot,
+    mask: input.mask,
   })
   if (seeded.refusals.length > 0) return { kind: 'refused', refusals: seeded.refusals }
 

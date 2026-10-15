@@ -60,6 +60,7 @@ import {
 const ACCEPTANCE_SCRIPT = new URL('../../../../scripts/422-acceptance.mjs', import.meta.url)
 const DOC = new URL('../../../../docs/adversarial-split.md', import.meta.url)
 
+const NO_DECLARED_SECRETS = (text: string) => text
 const roots: string[] = []
 
 beforeEach(() => {
@@ -158,6 +159,7 @@ function fixture() {
     plan,
     cassettes: [{ cassette: seed, blobs: extracted.blobs }],
     committedRoot,
+    mask: NO_DECLARED_SECRETS,
   })
   expect(seeded.refusals).toEqual([])
   expect(seeded.seededCount).toBe(1)
@@ -357,6 +359,7 @@ describe('422 acceptance — the documented surface, the whole loop, and the ref
         committed += 1
         if (committed === 1) throw new Error('acceptance interruption')
       },
+      mask: NO_DECLARED_SECRETS,
     })
 
     expect(partial.kind).toBe('partial')

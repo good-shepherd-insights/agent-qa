@@ -52,6 +52,7 @@ import {
   type EvalSession,
 } from '../eval-session-composition.js'
 
+const NO_DECLARED_SECRETS = (text: string) => text
 const roots: string[] = []
 
 beforeEach(() => {
@@ -139,6 +140,7 @@ function fixture() {
       plan,
       cassettes: [{ cassette: seed, blobs: extracted.blobs }],
       committedRoot,
+      mask: NO_DECLARED_SECRETS,
     }).refusals,
   ).toEqual([])
   return { ...f, committedRoot, seed }

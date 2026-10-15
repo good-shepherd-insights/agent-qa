@@ -22,6 +22,8 @@ import { committedCassettePath, committedCorpusPath, committedLabelPath, committ
 import { seedCommittedCorpus } from '../seeding-composition.js'
 import { LOCAL_FIXTURE_BLOB_BYTES, makeLocalV2Handoff } from './fixtures/local-handoff-fixture.js'
 
+const NO_DECLARED_SECRETS = (text: string) => text
+
 describe('freezeGoldenTrajectory', () => {
   let root: string
   let committedRoot: string
@@ -29,7 +31,7 @@ describe('freezeGoldenTrajectory', () => {
   let mark: MarkReceipt
   const product = 'default'
   const freeze = () => freezeGoldenTrajectory({
-    agentQaRoot: root, committedRoot, product, handoff, mark,
+    agentQaRoot: root, committedRoot, product, handoff, mark, mask: NO_DECLARED_SECRETS,
   })
   const extract = () => extractRunCassettes({ handoff, artifacts: new FsRunArtifactSource({ root, runId: handoff.runId }) }).cassettes
   const paths = (id: string) => [committedCassettePath(product, id), committedLabelPath(product, id), committedCorpusPath(product, id)]
@@ -84,7 +86,7 @@ describe('freezeGoldenTrajectory', () => {
     const plan = buildSeedingPlan({ handoff, cassettes, partition: { saltHex: 'a'.repeat(64), heldOutFraction: 0.000001, privateFraction: 0.5 } })
     expect(plan.cases).toHaveLength(1)
     expect(plan.cases[0]!.corpusEntry.split).toBe('natural')
-    expect(seedCommittedCorpus({ plan, cassettes, committedRoot }).refusals).toEqual([])
+    expect(seedCommittedCorpus({ plan, cassettes, committedRoot, mask: NO_DECLARED_SECRETS }).refusals).toEqual([])
     const files = paths(plan.cases[0]!.cassetteId)
     const before = hashes(files)
     const commitUnmarked = () => {
@@ -185,7 +187,8 @@ describe('freezeGoldenTrajectory', () => {
     await ledger.append({ ...mark, gold: first.cases })
     const history = hashes(first.cases.flatMap(item => paths(item.cassetteId)))
     mark = { ...mark, kind: 'confirmed-bug', ordinal: 2, markId: 'mark_1123456789ab', supersedes: mark.markId }
-    const second = freezeGoldenTrajectory({ agentQaRoot: root, committedRoot, product, handoff, mark, priorGold: first.cases })
+    const second = freezeGoldenTrajectory({ agentQaRoot: root, committedRoot, product, handoff, mark, priorGold: first.cases,
+      mask: NO_DECLARED_SECRETS })
     if (second.kind !== 'frozen') throw new Error(JSON.stringify(second))
     await ledger.append({ ...mark, gold: second.cases })
     const active = () => readActiveCommittedCorpus(committedRoot, root)

@@ -9,6 +9,7 @@ import * as api from '../index.js'
 import { committedCassettePath, committedCorpusPath, committedLabelPath } from '../committed-root-store.js'
 import { makeLocalV2Handoff, LOCAL_FIXTURE_BLOB_BYTES } from './fixtures/local-handoff-fixture.js'
 
+const NO_DECLARED_SECRETS = (text: string) => text
 const roots: string[] = []
 afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 function write(root: string, path: string, text: string) { const full = join(root, path); mkdirSync(dirname(full), { recursive: true }); writeFileSync(full, text); return full }
@@ -127,7 +128,7 @@ it('refuses a real gold mark published after capture without mixing staged weigh
   expect(await f.invoke({ commit: true, onBoundary: stage => {
     if (stage !== 'before-marker') return
     const frozen = api.freezeGoldenTrajectory({ agentQaRoot: f.agentQaRoot, committedRoot: f.committedRoot,
-      product: 'shop', handoff: f.handoff, mark })
+      product: 'shop', handoff: f.handoff, mark, mask: NO_DECLARED_SECRETS })
     expect(frozen.kind).toBe('frozen')
     if (frozen.kind !== 'frozen') throw new Error('gold publication refused')
     write(f.agentQaRoot, `runs/${f.handoff.runId}/marks.jsonl`, JSON.stringify({ ...mark, gold: frozen.cases }) + '\n')

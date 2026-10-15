@@ -33,6 +33,8 @@ import {
   makeLocalV2Handoff,
 } from './fixtures/local-handoff-fixture.js'
 
+const NO_DECLARED_SECRETS = (text: string) => text
+
 const roots: string[] = []
 afterEach(() => {
   vi.restoreAllMocks()
@@ -123,6 +125,7 @@ function fixture(count: number): Fixture {
         plan,
         cassettes: [{ cassette: seed, blobs: extracted.blobs }],
         committedRoot,
+        mask: NO_DECLARED_SECRETS,
       }).refusals,
     ).toEqual([])
     seedIds.push(seed.id)
@@ -153,6 +156,7 @@ function admit(
     batchDigest,
     ...(opts.afterCaseCommitted === undefined ? {} : { afterCaseCommitted: opts.afterCaseCommitted }),
     ...(opts.dryRun === undefined ? {} : { dryRun: opts.dryRun }),
+    mask: NO_DECLARED_SECRETS,
   })
 }
 
@@ -190,7 +194,7 @@ describe('422 adversarial retirement integrity and recovery', () => {
     const before = tree(f.committedRoot)
     const failure = new TypeError('standing knowledge receipt schema is unavailable')
     expect(() => refreshAdversarialSplit({ ...f,
-      beforeWrites: () => { throw failure },
+      beforeWrites: () => { throw failure }, mask: NO_DECLARED_SECRETS,
     })).toThrow(failure)
     expect(tree(f.committedRoot)).toEqual(before)
     expect(existsSync(f.lock)).toBe(false)
@@ -428,7 +432,7 @@ const local = await import(input.module)
 try {
   let paused = false
   const result = input.mode === 'retire' ? local.retireStagedAdversarialBatch(input)
-    : local.refreshAdversarialSplit({ ...input,
+    : local.refreshAdversarialSplit({ ...input, mask: text => text,
       afterCaseCommitted: input.entered ? id => {
         if (!paused) { paused = true; signal(input.entered, { id, owner: JSON.parse(fs.readFileSync(input.lock + '/owner.json', 'utf8')) }); wait(input.release); if (input.stopAfterHold) throw new Error('stop') }
       } : undefined })

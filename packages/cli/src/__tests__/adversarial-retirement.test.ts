@@ -65,6 +65,7 @@ function byMutator(left: { mutator?: string }, right: { mutator?: string }): num
   return String(left.mutator).localeCompare(String(right.mutator))
 }
 
+const NO_DECLARED_SECRETS = (text: string) => text
 const roots: string[] = []
 
 beforeEach(() => {
@@ -178,6 +179,7 @@ function fixture() {
     plan,
     cassettes: [{ cassette: seed, blobs: extracted.blobs }],
     committedRoot,
+    mask: NO_DECLARED_SECRETS,
   })
   expect(seeded.refusals).toEqual([])
   expect(seeded.seededCount).toBe(1)

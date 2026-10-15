@@ -38,6 +38,8 @@ import {
   makeLocalV2Handoff,
 } from './fixtures/local-handoff-fixture.js'
 
+const NO_DECLARED_SECRETS = (text: string) => text
+
 const roots: string[] = []
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
@@ -115,6 +117,7 @@ function fixture(opts: { seedText?: string } = {}) {
     plan,
     cassettes: [{ cassette: seed, blobs: extracted.blobs }],
     committedRoot,
+    mask: NO_DECLARED_SECRETS,
   })
   expect(seeded.refusals).toEqual([])
   return { root, committedRoot, agentQaRoot, handoff, seed }
@@ -138,6 +141,7 @@ function refresh(f: ReturnType<typeof fixture>, batchDigest: string) {
     committedRoot: f.committedRoot,
     product: 'default',
     batchDigest,
+    mask: NO_DECLARED_SECRETS,
   })
 }
 

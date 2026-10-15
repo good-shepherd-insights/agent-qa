@@ -50,6 +50,7 @@ const TEST_PARTITION = {
   privateFraction: 0.5,
 } as const
 const PRODUCT = 'default'
+const NO_DECLARED_SECRETS = (text: string) => text
 
 function fullArtifacts(): ArtifactSource {
   const entries = new Map<string, Uint8Array>([[LOCAL_FIXTURE_BLOB_SHA, LOCAL_FIXTURE_BLOB_BYTES]])
@@ -162,6 +163,7 @@ describe('seedCommittedCorpus (ROOT-02, D-13/D-14/D-15/D-16/D-17)', () => {
       plan: overrides.plan ?? plan,
       cassettes: overrides.cassettes ?? cassettes,
       committedRoot: root,
+      mask: NO_DECLARED_SECRETS,
     })
   }
 
@@ -359,6 +361,7 @@ describe('413 SC2 — lossless proof text is committed as recorded, its declared
       plan,
       cassettes: seedCassettes,
       committedRoot: root,
+      mask: NO_DECLARED_SECRETS,
     })
   }
 
@@ -418,7 +421,7 @@ describe('C441-COMMITTED', () => {
       if (cassette.granularity !== 'leaf') throw new Error('fixture case must be a leaf')
       cassette.input.stateBefore.tree += '\n- text "Card 4242 4242 4242 4242 with Bearer abc123def456ghi789"'
 
-      const report = seedCommittedCorpus({ plan, cassettes, committedRoot: root })
+      const report = seedCommittedCorpus({ plan, cassettes, committedRoot: root, mask: NO_DECLARED_SECRETS })
 
       expect(report.refusals.map((refusal) => refusal.kind).join(', ')).toBe('')
       const committed = readFileSync(join(root, casePaths(cassette.id).cassette), 'utf8')

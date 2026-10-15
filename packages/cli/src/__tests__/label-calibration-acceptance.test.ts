@@ -33,6 +33,7 @@ const { actionGenerateResult, respondingStub, noneAuth, stubProfile } = await im
 const { incrementingClock } = await import(new URL('../../../eval-local/src/__tests__/fixtures/floor-fixtures.js', import.meta.url).href)
 const actualCreateModel = model.createModel
 let fixtureModels = false
+const NO_DECLARED_SECRETS = (text: string) => text
 const roots: string[] = []
 const terminals: Array<PassThrough | Writable> = []
 const bytes = (root: string) => files(root).map(path => [path, readFileSync(path).toString('hex')])
@@ -372,7 +373,7 @@ function rerunFixture(existingOriginal = true) {
   }) }]
   if (existingOriginal) {
     const initial = seedCommittedCorpus({ plan: originalPlan, cassettes: originalExtraction,
-      committedRoot })
+      committedRoot, mask: NO_DECLARED_SECRETS })
     expect(initial.refusals).toEqual([])
     expect(initial.seededCount).toBe(1)
   }

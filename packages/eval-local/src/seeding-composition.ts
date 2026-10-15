@@ -6,8 +6,11 @@
 //
 // Composition law (ROOT-02):
 //   - Every committed TEXT write — gitignore, root marker, contracts projections, cassette, label
-//     record, corpus entry — is committed as authored (441 D-15: no egress check). Cassette text
-//     arrives masked with the run's declared secrets from record time, and nothing else masks it.
+//     record, corpus entry — is committed as authored (441 D-15: no egress check). 441 GAP3-D1: a
+//     case's D-18 text (step text, screen state, planned action) is masked with the declared
+//     secrets before the case is built (maskCorpusText over the handoff, before extraction), and
+//     this writer requires that mask and refuses a case any of whose committed strings it would
+//     still change (`unmasked-declared-value`). The declared mask is the only check.
 //   - The atomic unit is the CASE: cassette + label record + corpus entry land together or not at
 //     all, and a refused case never aborts the batch (D-14).
 //   - Write-once (D-17): all of a case's text paths are PREVIEWED against the store before any
@@ -27,6 +30,7 @@ import {
   canonicalJson,
   committedFileText,
   contractFileName,
+  maskCorpusText,
   projectJudgeConfigContract,
   projectMatcherConfigContract,
   runExclusionCore,
@@ -40,6 +44,7 @@ import type {
   SeedingPlan,
   SilverExclusion,
 } from '@vostride/agent-qa-eval'
+import type { MaskFn } from '@vostride/agent-qa-schema'
 
 import {
   COMMITTED_GITIGNORE_TEXT,
@@ -62,11 +67,25 @@ export interface SeedCommittedCorpusInput {
   cassettes: readonly ExtractedCassette[]
   /** Explicit absolute committed-root path — `<configDir>/agent-qa-eval` for the 372 CLI. */
   committedRoot: string
+  /** 441 GAP3-D1: the workspace's declared-secret mask. Required; a missing one throws first. */
+  mask: MaskFn
 }
 
 export type SeedingRefusal =
   | { cassetteId: string; kind: 'write-conflict'; path: string }
   | { cassetteId: string; kind: 'missing-cassette' }
+  /** A committed string of the case still holds a declared value raw; nothing of it is written. */
+  | { cassetteId: string; kind: 'unmasked-declared-value' }
+
+/** 441 GAP3-D1: every committed-corpus entry point requires the mask before anything is read or written. */
+export function requireCorpusMask(mask: unknown, caller: string): asserts mask is MaskFn {
+  if (typeof mask !== 'function') throw new TypeError(`${caller} requires the declared-secret mask`)
+}
+
+function holdsUnmaskedDeclaredValue(documents: readonly unknown[], mask: MaskFn): boolean {
+  return documents.some(document =>
+    committedFileText(maskCorpusText(document, mask, { everyLeaf: true })) !== committedFileText(document))
+}
 
 export interface SeedingReport {
   supersededOriginalCount: number
@@ -116,6 +135,9 @@ export function seedCommittedCorpus(input: SeedCommittedCorpusBatchInput): Seedi
 // Keep the original signature last: existing ReturnType/Parameters consumers retain their contract.
 export function seedCommittedCorpus(input: SeedCommittedCorpusInput): SeedingReport
 export function seedCommittedCorpus(input: SeedCommittedCorpusInput | SeedCommittedCorpusBatchInput): SeedingReport | SeedingBatchReport {
+  requireCorpusMask(input.mask, 'seedCommittedCorpus')
+  // A mask that cannot mask (a key-only session's) throws here, before the scaffold.
+  input.mask('')
   if ('batches' in input) {
     return { reports: input.batches.map(batch => executeSeedingPlan({ ...input, ...batch })) }
   }
@@ -153,6 +175,10 @@ function executeSeedingPlan(input: SeedCommittedCorpusInput): SeedingReport {
     const extracted = cassettesById.get(cassetteId)
     if (extracted === undefined) {
       refusals.push({ cassetteId, kind: 'missing-cassette' })
+      continue
+    }
+    if (holdsUnmaskedDeclaredValue([extracted.cassette, planCase.labelRecord, planCase.corpusEntry], input.mask)) {
+      refusals.push({ cassetteId, kind: 'unmasked-declared-value' })
       continue
     }
 
@@ -210,6 +236,10 @@ function executeSeedingPlan(input: SeedCommittedCorpusInput): SeedingReport {
   for (const revision of input.plan.labelRevisions ?? []) {
     const cassetteId = revision.cassetteId
     if (!revision.revision) throw new Error('label-only seeding operation requires a revision identity')
+    if (holdsUnmaskedDeclaredValue([revision], input.mask)) {
+      refusals.push({ cassetteId, kind: 'unmasked-declared-value' })
+      continue
+    }
     const path = committedLabelPath(product, cassetteId)
       .replace(/\.json$/, `--revision-${revision.revision.id}.json`)
     const text = committedFileText(revision)

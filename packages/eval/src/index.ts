@@ -280,6 +280,7 @@ export type {
 } from './extract/procedure'
 export { extractRunCassettes } from './extract/extract-run'
 export { maskCorpusText } from './extract/corpus-text-mask'
+export type { MaskCorpusTextOptions } from './extract/corpus-text-mask'
 export type {
   EmittedCassetteSummary,
   ExtractedCassette,

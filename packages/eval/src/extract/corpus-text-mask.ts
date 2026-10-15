@@ -84,6 +84,39 @@ const KEPT_ACTION_PATHS: { readonly [T in Action['type']]: readonly string[] } =
 const TEXT_MEMBERS = new Set(['stepText', 'goldValue', 'correctedExpectation'])
 const ACTION_MEMBERS = new Set(['plannedAction', 'goldAction', 'correctedAction'])
 
+// The `everyLeaf` check's closed members of a committed cassette, label record and corpus entry:
+// minted identifiers, digests and enum- or literal-typed members. Honored only for string leaves
+// (or string arrays), and never inside recorded exchanges.
+const CLOSED_MEMBERS = new Set([
+  'schemaVersion', 'id', 'runId', 'runSlug', 'testId', 'cassetteId', 'pairedCassetteId', 'seedCassetteId',
+  'sourceCassetteId', 'predecessorId', 'generationId', 'supersedes', 'markId', 'attributedObservationId',
+  'unresolvedAnchorRef', 'captured_at',
+  'blobs', 'missingBlobShas', 'sha', 'promptInputHash', 'screenStateHash', 'pairedScreenStateHash',
+  'toolSchemaDigest', 'memoryBriefDigest', 'briefDigest', 'bodyDigest', 'receiptDigest', 'evidenceDigest',
+  'originalEvidenceDigest', 'corpusDigest', 'tableHash',
+  'granularity', 'status', 'kind', 'sourceChannel', 'tier', 'relation', 'quarantine', 'split',
+  'heldOutVisibility', 'targetEnvironment', 'source', 'verdictSource', 'capabilityTier', 'mutator',
+  'producer', 'class', 'subtype', 'op', 'outcome', 'opClass', 't', 'direction', 'detailLevel', 'truncation',
+  'verdict', 'benefit',
+])
+
+export interface MaskCorpusTextOptions {
+  /**
+   * Also mask every other string leaf except the closed members: the committed-corpus writer's
+   * check that no committed string still holds a declared value raw.
+   */
+  everyLeaf?: boolean
+}
+
+interface Scope {
+  everyLeaf: boolean
+  closedHonored: boolean
+}
+
+function isClosedLeaf(value: Json): boolean {
+  return typeof value === 'string' || (Array.isArray(value) && value.every(item => typeof item === 'string'))
+}
+
 function isRecord(value: Json): value is Record<string, Json> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -148,26 +181,29 @@ function maskAnchor(value: Json, mask: MaskFn): Json {
     key === 'role' || key === 'ordinal' || key === 'ref' ? item : maskLeaves(item, mask))
 }
 
-function maskMember(key: string, item: Json, mask: MaskFn): Json {
+function maskMember(key: string, item: Json, mask: MaskFn, scope: Scope): Json {
   if (key === 'rerunOrigin') return item
   if (TEXT_MEMBERS.has(key)) return maskLeaves(item, mask)
   if (key === 'stateBefore') return maskScreenState(item, mask)
   if (ACTION_MEMBERS.has(key)) return maskAction(item, mask)
   if (key === 'goldAnchor') return maskAnchor(item, mask)
   if (key === 'equivalenceSet' && Array.isArray(item)) return item.map(anchor => maskAnchor(anchor, mask))
-  return walk(item, mask)
+  if (scope.everyLeaf && scope.closedHonored && CLOSED_MEMBERS.has(key) && isClosedLeaf(item)) return item
+  if (scope.everyLeaf && key === 'exchanges') return walk(item, mask, { everyLeaf: true, closedHonored: false })
+  return walk(item, mask, scope)
 }
 
-function walk(value: Json, mask: MaskFn): Json {
-  if (Array.isArray(value)) return value.map(item => walk(item, mask))
-  if (isRecord(value)) return mapEntries(value, (key, item) => maskMember(key, item, mask))
+function walk(value: Json, mask: MaskFn, scope: Scope): Json {
+  if (typeof value === 'string') return scope.everyLeaf ? mask(value) : value
+  if (Array.isArray(value)) return value.map(item => walk(item, mask, scope))
+  if (isRecord(value)) return mapEntries(value, (key, item) => maskMember(key, item, mask, scope))
   return value
 }
 
 /** Mask the D-18 text of a handoff, cassette or label record; pure, and it never renames a key. */
-export function maskCorpusText<T>(value: T, mask: MaskFn): T {
+export function maskCorpusText<T>(value: T, mask: MaskFn, options: MaskCorpusTextOptions = {}): T {
   if (typeof mask !== 'function') {
     throw new TypeError('maskCorpusText requires the declared-secret mask')
   }
-  return walk(value, mask) as T
+  return walk(value, mask, { everyLeaf: options.everyLeaf === true, closedHonored: true }) as T
 }

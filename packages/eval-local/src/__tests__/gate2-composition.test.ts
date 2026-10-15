@@ -15,6 +15,7 @@ import { stageFeedbackEntry, isNovelState, listStagedFeedback, admitStagedFeedba
 import * as seeding from '../seeding-composition.js'
 import { committedCorpusPath, committedLabelPath } from '../committed-root-store.js'
 
+const NO_DECLARED_SECRETS = (text: string) => text
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 
@@ -28,7 +29,7 @@ function feedbackInput(f: ReturnType<typeof fixture>, route = 'novel') {
     candidateId: f.line.id, stateDigest: distilledScreenStateDigest(f.step.subActions[0]!.stateBefore) }
 }
 function admissionInput(f: ReturnType<typeof fixture>, dryRun = false) {
-  return { agentQaRoot: f.agentQaRoot, committedRoot: f.committedRoot, dryRun }
+  return { agentQaRoot: f.agentQaRoot, committedRoot: f.committedRoot, dryRun, mask: NO_DECLARED_SECRETS }
 }
 
 describe('418 feedback staging and explicit admission', () => {
