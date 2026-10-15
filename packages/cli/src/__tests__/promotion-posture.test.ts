@@ -165,7 +165,7 @@ describe('buildPromotionPostureResolver', () => {
     const f = await rarePath({ now: 15 })
     const knowledgeRoot = join(f.dir, 'knowledge')
     const agentQaRoot = join(f.dir, '.agent-qa')
-    const appendConfig = { knowledgeRoot, auditBaseDir: agentQaRoot, productKey: candidate.product,
+    const appendConfig = { knowledgeRoot, productKey: candidate.product,
       commitArtifacts: 'none' as const, writerLeaseId: 'fixture' }
     const anchor = { t: 'el' as const, role: 'button', name: 'Checkout', ordinal: 0 }
     const seeded = publishBundleForTest(appendConfig, {
@@ -211,7 +211,7 @@ describe('buildPromotionPostureResolver', () => {
     const currentCandidate = { ...candidate, id: seeded.id }
     const lease = acquireWriterLease(knowledgeRoot)
     if (lease.kind !== 'acquired') throw new Error(lease.kind)
-    const store = createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir: agentQaRoot,
+    const store = createLocalKnowledgeStore({ knowledgeRoot,
       writerLeaseId: lease.leaseId, epoch: lease.epoch, executionContext: 'local-interactive',
       sourceBuildOrdinal: 15, resolvePromotionPosture: resolved.resolve })
     // The posture reads, including the corrupt file beside them, and carries no inbox marker.

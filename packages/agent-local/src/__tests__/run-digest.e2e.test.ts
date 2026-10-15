@@ -228,7 +228,6 @@ describe('the per-run digest, over the composed host (PROP-04 / D-16 / D-18)', (
     return {
       knowledgeRoot,
       productKey: 'Digest E2E Product',
-      auditBaseDir: agentQaRoot,
       commitArtifacts: 'none',
     }
   }

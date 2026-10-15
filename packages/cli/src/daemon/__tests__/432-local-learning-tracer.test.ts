@@ -89,7 +89,6 @@ function seedActive(project: Project, anchors: Anchor[], seed: string): RecordId
   const published = publishBundle({
     knowledgeRoot: project.knowledgeRoot,
     productKey: PRODUCT,
-    auditBaseDir: project.agentQaRoot,
     commitArtifacts: 'none',
     writerLeaseId: `432-seed-${seed}`,
   }, {

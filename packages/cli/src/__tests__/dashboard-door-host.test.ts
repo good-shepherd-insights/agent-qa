@@ -292,7 +292,6 @@ function seedCardUrlBundle(project: { root: string; knowledgeRoot: string }): st
   const config: BundleStoreConfig = {
     knowledgeRoot: project.knowledgeRoot,
     productKey: CARD_URL_PRODUCT,
-    auditBaseDir: join(project.root, '.agent-qa'),
     commitArtifacts: 'none',
   }
   const input: PublishBundleInput = {

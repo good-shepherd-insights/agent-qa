@@ -240,7 +240,6 @@ function seedKnowledgeBundle(workspace: FixtureWorkspace): string {
     {
       knowledgeRoot: workspace.knowledgeRoot,
       productKey: 'shop',
-      auditBaseDir: workspace.runtimeRoot,
       commitArtifacts: 'none',
     },
     {

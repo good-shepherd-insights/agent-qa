@@ -128,7 +128,6 @@ describe('D-01: a list verb sights every entity it surfaces (387-06)', () => {
     const config: BundleStoreConfig = {
       knowledgeRoot,
       productKey: PRODUCT,
-      auditBaseDir: agentQaRoot,
       commitArtifacts: 'none',
     }
     const outcome = publishBundleForTest(config, bundleInput(name, createdAtOrdinal))
@@ -298,7 +297,6 @@ describe('D-01: a list verb sights every entity it surfaces (387-06)', () => {
       knowledgeRoot,
       recordId: asRecordId(doomedId),
       initiator: 'list-sighting-fixture',
-      auditBaseDir: agentQaRoot,
       purgedAtOrdinal: 21,
     })
     expect(purged.kind).toBe('purged')

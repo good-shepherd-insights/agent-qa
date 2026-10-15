@@ -454,7 +454,6 @@ function bundleStoreFor(
   return {
     knowledgeRoot: join(project.root, 'agent-qa-knowledge'),
     productKey: POPULATED_TARGET_NAME,
-    auditBaseDir: project.agentQaRoot,
     commitArtifacts: 'none',
     writerLeaseId,
     policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),

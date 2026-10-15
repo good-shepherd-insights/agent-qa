@@ -251,8 +251,8 @@ describe('canary seam public integration (PROM-02/SC5 substrate)', () => {
     const root = mkdtempSync(join(tmpdir(), `agent-qa-canary-seam-${randomUUID()}-`))
     roots.push(root)
     const knowledgeRoot = join(root, 'agent-qa-knowledge')
-    const auditBaseDir = join(root, '.agent-qa')
-    const runDir = join(auditBaseDir, 'runs', 'run-canary-seam-live-shape')
+    const agentQaRoot = join(root, '.agent-qa')
+    const runDir = join(agentQaRoot, 'runs', 'run-canary-seam-live-shape')
     mkdirSync(join(knowledgeRoot, 'policies'), { recursive: true })
     mkdirSync(runDir, { recursive: true })
     writeFileSync(join(knowledgeRoot, 'policies', 'global.md'), `${POLICY_TEXT}\n`, 'utf8')
@@ -260,7 +260,6 @@ describe('canary seam public integration (PROM-02/SC5 substrate)', () => {
     const storeConfig: BundleStoreConfig = {
       knowledgeRoot,
       productKey: PRODUCT,
-      auditBaseDir,
       commitArtifacts: 'none',
       writerLeaseId: 'canary-seam-seed',
       policy,
@@ -327,7 +326,6 @@ describe('canary seam public integration (PROM-02/SC5 substrate)', () => {
     })
     const firstDrain = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive',
       policy,
@@ -369,7 +367,6 @@ describe('canary seam public integration (PROM-02/SC5 substrate)', () => {
 
     const replayDrain = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive',
       policy,
@@ -397,15 +394,14 @@ describe('canary seam public integration (PROM-02/SC5 substrate)', () => {
     const root = mkdtempSync(join(tmpdir(), `agent-qa-canary-restart-${randomUUID()}-`))
     roots.push(root)
     const knowledgeRoot = join(root, 'agent-qa-knowledge')
-    const auditBaseDir = join(root, '.agent-qa')
-    const runDir = join(auditBaseDir, 'runs', 'run-canary-seam-live-shape')
+    const agentQaRoot = join(root, '.agent-qa')
+    const runDir = join(agentQaRoot, 'runs', 'run-canary-seam-live-shape')
     mkdirSync(join(knowledgeRoot, 'policies'), { recursive: true })
     mkdirSync(runDir, { recursive: true })
 
     const storeConfig: BundleStoreConfig = {
       knowledgeRoot,
       productKey: PRODUCT,
-      auditBaseDir,
       commitArtifacts: 'none',
       writerLeaseId: 'canary-restart-seed',
       policy,

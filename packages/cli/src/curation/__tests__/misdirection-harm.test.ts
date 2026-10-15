@@ -781,10 +781,8 @@ describe('422-16 — the harmed outcome through the ACTUAL writer', () => {
     const root = mkdtempSync(join(tmpdir(), 'agent-qa-422-16-store-'))
     roots.push(root)
     const knowledgeRoot = join(root, 'agent-qa-knowledge')
-    const auditBaseDir = join(root, '.agent-qa')
     const appendConfig = {
       knowledgeRoot,
-      auditBaseDir,
       productKey: 'storefront',
       commitArtifacts: 'none' as const,
       writerLeaseId: 'fixture',
@@ -848,7 +846,6 @@ describe('422-16 — the harmed outcome through the ACTUAL writer', () => {
     if (lease.kind !== 'acquired') throw new Error(lease.kind)
     const store = createLocalKnowledgeStore({
       knowledgeRoot,
-      auditBaseDir,
       executionContext: 'local-interactive',
       epoch: lease.epoch,
       writerLeaseId: lease.leaseId,

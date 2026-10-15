@@ -113,7 +113,6 @@ async function seedRecord(where: Fixture): Promise<string> {
     {
       knowledgeRoot: where.knowledgeRoot,
       productKey: 'Delegate Product',
-      auditBaseDir: where.agentQaRoot,
       commitArtifacts: 'none',
     },
     {

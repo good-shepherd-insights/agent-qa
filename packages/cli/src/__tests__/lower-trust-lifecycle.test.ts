@@ -24,8 +24,8 @@ async function setup() {
   config.eval = { gate2: { maxLowerTrustPerScope: 1 } }
   writeFileSync(configPath, JSON.stringify(config))
   const knowledgeRoot = join(root, 'agent-qa-knowledge')
-  const auditBaseDir = join(root, '.agent-qa')
-  const appendConfig = { knowledgeRoot, auditBaseDir, productKey: scope.key,
+  const agentQaRoot = join(root, '.agent-qa')
+  const appendConfig = { knowledgeRoot, productKey: scope.key,
     commitArtifacts: 'none' as const, writerLeaseId: 'fixture' }
   function seed(name: string) {
     const anchor = { t: 'el' as const, role: 'button', name, ordinal: 0 }
@@ -51,14 +51,14 @@ async function setup() {
   if (lease.kind !== 'acquired') throw new Error(lease.kind)
   const replay = vi.fn(() => { throw new Error('automatic replay forbidden') })
   let ordinal = 15
-  const posture = await buildPromotionPostureResolver({ configPath, knowledgeRoot, agentQaRoot: auditBaseDir,
+  const posture = await buildPromotionPostureResolver({ configPath, knowledgeRoot, agentQaRoot,
     replayGate: { runReplayGate: replay }, currentBuildOrdinal: () => ordinal,
     canaryFacts: LOCAL_CURATION_CAPABILITIES.readCanaryPostureFacts,
     lowerTrustShares: LOCAL_CURATION_CAPABILITIES.readLowerTrustShares })
   if (posture.kind !== 'ready') throw new Error(JSON.stringify(posture))
   const corpusDigest = posture.host.corpusDigest
   const reports = vi.fn()
-  const storeConfig = { knowledgeRoot, auditBaseDir, executionContext: 'local-interactive' as const,
+  const storeConfig = { knowledgeRoot, executionContext: 'local-interactive' as const,
     epoch: lease.epoch, writerLeaseId: lease.leaseId, sourceBuildOrdinal: ordinal,
     resolvePromotionPosture: posture.resolve, onPromotionOutcome: reports }
   const store = () => createLocalKnowledgeStore({ ...storeConfig, sourceBuildOrdinal: ordinal })
@@ -83,7 +83,7 @@ async function setup() {
   })
   const reader = () => openKnowledgeReader({ knowledgeRoot, product: scope.key, scopeDefaults: { asOfBuild: ordinal } })
   await store().promote(seeded.id, [gate1()])
-  return { root, configPath, knowledgeRoot, appendConfig, seeded, seed, store, gate1, read, outcome,
+  return { root, configPath, knowledgeRoot, agentQaRoot, appendConfig, seeded, seed, store, gate1, read, outcome,
     reader, replay, reports, posture, storeConfig, advance: () => { ordinal += 1 } }
 }
 
@@ -135,7 +135,7 @@ describe('418 lower-trust active lifecycle through real store, resolver and serv
   it('keeps lower-trust authority beside a legacy pending inconsistency file, which is never read', async () => {
     const f = await setup()
     f.advance()
-    const inbox = join(f.appendConfig.auditBaseDir, 'proposals')
+    const inbox = join(f.agentQaRoot, 'proposals')
     mkdirSync(inbox, { recursive: true })
     writeFileSync(join(inbox, 'prop_0123456789abcdef.json'), JSON.stringify({ schemaVersion: 1,
       proposalId: 'prop_0123456789abcdef', verb: 'accept', targetRef: { grain: 'record', recordId: f.seeded.id },

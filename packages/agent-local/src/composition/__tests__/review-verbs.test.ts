@@ -99,7 +99,6 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
     return {
       knowledgeRoot,
       productKey: 'Review Verbs Product',
-      auditBaseDir: agentQaRoot,
       commitArtifacts: 'none',
     }
   }

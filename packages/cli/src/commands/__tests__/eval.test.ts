@@ -2008,7 +2008,7 @@ async function feedbackVerbFixture() {
     '../../../../knowledge-local/src/curator/__tests__/fixtures/promotion-floor-fixture.js', import.meta.url,
   ).href)
   const knowledgeRoot = join(dir, 'knowledge')
-  const knowledge = createPromotionFloorFixture({ knowledgeRoot, auditBaseDir: agentQaRoot })
+  const knowledge = createPromotionFloorFixture({ knowledgeRoot })
   const { published } = knowledge.publishHeldCandidate('feedback')
   const digest = computeCorpusDigest(readCommittedCorpus(committedRoot).snapshot.entries)
   expect(appendGateReceipt(knowledge.outcomeAppendConfig(), published.id, completeGate1Receipt(published.id, { corpusDigest: digest }))).toEqual({ kind: 'appended' })

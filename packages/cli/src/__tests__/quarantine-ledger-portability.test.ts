@@ -282,7 +282,7 @@ function driveCrossingUnder(env: Checkout): string {
         quarantined: [],
       }),
       extractAnchors: exercisedAnchors,
-      quarantine: { now: NOW, auditBaseDir: env.agentQaRoot },
+      quarantine: { now: NOW },
     })
   }
   return identity
@@ -440,7 +440,6 @@ describe('the human write verbs mint the identity the reader joins on (390-12 / 
   function verbsUnder(env: Checkout): ReturnType<typeof createQuarantineOperations> {
     return createQuarantineOperations({
       resolveKnowledgeRoot: () => env.knowledgeRoot,
-      auditBaseDir: env.agentQaRoot,
       // Wall-clock purity by argument: the verbs read this and nothing else.
       now: () => NOW,
       mintIdentityPath: (filePath: string) => workspaceRelativeIdentityPath(env.configDir, filePath),

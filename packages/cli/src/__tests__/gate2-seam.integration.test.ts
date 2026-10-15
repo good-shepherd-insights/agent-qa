@@ -263,10 +263,10 @@ describe('418 credited canary Gate-2 seam', () => {
       const root = mkdtempSync(join(tmpdir(), 'agent-qa-negative-seam-'))
       roots.push(root)
       const knowledgeRoot = join(root, 'knowledge')
-      const auditBaseDir = join(root, '.agent-qa')
+      const agentQaRoot = join(root, '.agent-qa')
       const runDir = join(root, 'run')
       mkdirSync(runDir, { recursive: true })
-      const config: BundleStoreConfig = { knowledgeRoot, auditBaseDir, productKey: PRODUCT,
+      const config: BundleStoreConfig = { knowledgeRoot, productKey: PRODUCT,
         writerLeaseId: 'negative-seed', commitArtifacts: 'none', policy }
       const published = publishBundle(config, { ...candidateInput(),
         screenStates: [{ ...screen(), url: mode === 'no-root-stale'
@@ -301,7 +301,7 @@ describe('418 credited canary Gate-2 seam', () => {
         observationId, origin: 'agent-verified' }
       const configPath = join(root, 'agent-qa.config.yaml')
       writeFileSync(configPath, 'workspace:\n  testMatch: [tests/**/*.yaml]\n  suiteMatch: [suites/**/*.suite.yaml]\n  hooksFile: hooks.yaml\n  envFile: .env\n  secretsFile: .env.secrets.local\nuse:\n  mobile:\n    appState: preserve\n')
-      const host = createCanaryAblationForHost({ configPath, agentQaRoot: auditBaseDir })
+      const host = createCanaryAblationForHost({ configPath, agentQaRoot })
       const ablate = vi.spyOn(host, 'ablate')
       const corpusDigest = vi.spyOn(host, 'corpusDigest')
       if (mode === 'eval-bound') corpusDigest.mockResolvedValue({ kind: 'digest', corpusDigest: DIGEST })
@@ -322,7 +322,7 @@ describe('418 credited canary Gate-2 seam', () => {
       if (mode === 'eval-bound') expect(payload.corpusDigest).toBe(DIGEST)
       else expect(payload).not.toHaveProperty('corpusDigest')
       const author = vi.fn<CuratorAuthor>(async () => { throw new Error('negative canary must not call author') })
-      expect(await drainQueue({ knowledgeRoot, auditBaseDir, author, executionContext: 'local-interactive',
+      expect(await drainQueue({ knowledgeRoot, author, executionContext: 'local-interactive',
         policy, maintenance: 'skip', ...(mode === 'eval-bound' ? { resolvePromotionPosture: bound } : {}) }))
         .toMatchObject({ jobsProcessed: 1, committed: 1, failures: 0 })
       expect(author).not.toHaveBeenCalled()
@@ -340,10 +340,9 @@ describe('418 credited canary Gate-2 seam', () => {
     const root = mkdtempSync(join(tmpdir(), 'agent-qa-gate2-seam-'))
     roots.push(root)
     const knowledgeRoot = join(root, 'knowledge')
-    const auditBaseDir = join(root, 'audit')
     const runDir = join(root, 'run')
     mkdirSync(runDir, { recursive: true })
-    const config: BundleStoreConfig = { knowledgeRoot, auditBaseDir, productKey: PRODUCT,
+    const config: BundleStoreConfig = { knowledgeRoot, productKey: PRODUCT,
       writerLeaseId: 'gate2-seed', commitArtifacts: 'none', policy }
     const published = publishBundle(config, candidateInput())
     if (published.kind !== 'published') throw new Error(published.kind)
@@ -378,7 +377,7 @@ describe('418 credited canary Gate-2 seam', () => {
     const payload = JSON.parse(readFileSync(join(knowledgeRoot, 'memory/queue/queued', entry, 'payload.json'), 'utf8'))
     expect(payload).toMatchObject({ schemaVersion: 3, benefit: 'exercised-benefited', corpusDigest: DIGEST })
     const author = vi.fn<CuratorAuthor>(async () => { throw new Error('no author for canaries') })
-    const drain = () => drainQueue({ knowledgeRoot, auditBaseDir, author, executionContext: 'local-interactive',
+    const drain = () => drainQueue({ knowledgeRoot, author, executionContext: 'local-interactive',
       policy, resolvePromotionPosture: bound, maintenance: 'skip' })
     const report = await drain()
     expect(report).toMatchObject({ kind: 'drained', jobsProcessed: 1, committed: 1, failures: 0 })

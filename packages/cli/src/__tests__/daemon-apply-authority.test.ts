@@ -87,7 +87,6 @@ async function seedRecord(where: Paths): Promise<string> {
     {
       knowledgeRoot: where.knowledgeRoot,
       productKey: 'Daemon Authority Product',
-      auditBaseDir: where.agentQaRoot,
       commitArtifacts: 'none',
     },
     {

@@ -572,7 +572,7 @@ async function driveRun(env: Harness, script: RunScript, now = NOW): Promise<Dri
     handoff,
     runDir,
     extractAnchors: exercisedAnchors,
-    quarantine: { now, auditBaseDir: env.agentQaRoot },
+    quarantine: { now },
   })
 
   return {

@@ -539,9 +539,9 @@ const SHOP_CONFIG = [
   '',
 ].join('\n')
 
-function publishCandidate(knowledgeRoot: string, agentQaRoot: string, name: string): string {
+function publishCandidate(knowledgeRoot: string, name: string): string {
   const outcome = publishBundleForTest(
-    { knowledgeRoot, productKey: 'Door Matrix', auditBaseDir: agentQaRoot, commitArtifacts: 'none' },
+    { knowledgeRoot, productKey: 'Door Matrix', commitArtifacts: 'none' },
     {
       draft: {
         kind: 'fact',
@@ -574,9 +574,9 @@ describe('C432-DOOR-NONPRODUCTION: the knowledge and config changes every door r
     writeFileSync(join(root, 'agent-qa.config.yaml'), SHOP_CONFIG)
     const agentQaRoot = join(root, '.agent-qa')
     const knowledgeRoot = join(root, 'agent-qa-knowledge')
-    const accepted = publishCandidate(knowledgeRoot, agentQaRoot, 'Accept')
-    const rejected = publishCandidate(knowledgeRoot, agentQaRoot, 'Reject')
-    const forgotten = publishCandidate(knowledgeRoot, agentQaRoot, 'Forget')
+    const accepted = publishCandidate(knowledgeRoot, 'Accept')
+    const rejected = publishCandidate(knowledgeRoot, 'Reject')
+    const forgotten = publishCandidate(knowledgeRoot, 'Forget')
     const host = composeCliLocalAgent({ agentQaRoot, configPath: join(root, 'agent-qa.config.yaml') })
     try {
       const { value: answers, stdinReads } = await atDoor({ root, agentQaRoot }, async () => ({

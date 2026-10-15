@@ -301,7 +301,6 @@ export async function runPausedDrainerFixture(): Promise<void> {
   try {
     await drainQueue({
       knowledgeRoot,
-      auditBaseDir: agentQaRoot,
       author: currentAuthor(fixture),
       executionContext: 'local-interactive',
       policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),

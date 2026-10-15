@@ -138,7 +138,6 @@ function seedStore(workspace: FixtureWorkspace): { factId: string; cautionId: st
   const config: BundleStoreConfig = {
     knowledgeRoot: workspace.knowledgeRoot,
     productKey: PRODUCT,
-    auditBaseDir: workspace.runtimeRoot,
     commitArtifacts: 'none',
   }
   const fact = publishBundle(config, bundleInput({

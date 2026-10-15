@@ -135,7 +135,6 @@ describe('a committed standing grant is consumed by nothing (432-13)', () => {
     return {
       knowledgeRoot,
       productKey: 'Grant Spine Product',
-      auditBaseDir: agentQaRoot,
       commitArtifacts: 'none',
     }
   }

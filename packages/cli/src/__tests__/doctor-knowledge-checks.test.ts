@@ -463,7 +463,7 @@ describe('createKnowledgeChecks', () => {
   it('discloses actual on-disk shares through the production doctor facts binding without replay or writes', async () => {
     const project = makeProject()
     promotionHostProof(project.configPath)
-    const appendConfig = { knowledgeRoot: project.knowledgeRoot, auditBaseDir: project.agentQaRoot,
+    const appendConfig = { knowledgeRoot: project.knowledgeRoot,
       productKey: 'storefront', commitArtifacts: 'none' as const, writerLeaseId: 'fixture' }
     for (let index = 0; index < 4; index += 1) {
       const name = ['alpha', 'beta', 'gamma', 'delta'][index]!

@@ -540,7 +540,6 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
   async function drainPositiveProcedureCanary() {
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir: agentQaRoot,
       author: async () => {
         throw new Error('canary jobs must never reach the Curator author')
       },

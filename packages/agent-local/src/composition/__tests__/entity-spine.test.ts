@@ -120,7 +120,6 @@ describe('the entity spine through composeLocalAgent (387-01)', () => {
     const config: BundleStoreConfig = {
       knowledgeRoot,
       productKey: PRODUCT,
-      auditBaseDir: agentQaRoot,
       commitArtifacts: 'none',
     }
     const outcome = publishBundleForTest(config, bundleInput(name, createdAtOrdinal))

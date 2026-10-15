@@ -255,12 +255,12 @@ describe('composeLocalAgent (D-15)', () => {
 
   it('416 promotes through the caller held lease and records one floor line', async () => {
     const knowledgeRoot = join(root, 'knowledge')
-    const fixture = createPromotionFloorFixture({ knowledgeRoot, auditBaseDir: agentQaRoot })
+    const fixture = createPromotionFloorFixture({ knowledgeRoot })
     const lease = LOCAL_CURATION_CAPABILITIES.maintenance.acquireWriterLease(knowledgeRoot)
     if (lease.kind !== 'acquired') throw new Error('expected test authority')
     try {
       const { draft, published } = fixture.publishHeldCandidate('composition')
-      const input = { knowledgeRoot, auditBaseDir: agentQaRoot, executionContext: 'local-interactive' as const,
+      const input = { knowledgeRoot, executionContext: 'local-interactive' as const,
         lease: { leaseId: lease.leaseId, epoch: lease.epoch }, sourceBuildOrdinal: 46 }
       const store = createLocalKnowledgeStore({ ...input, writerLeaseId: lease.leaseId, epoch: lease.epoch })
       await store.commit([{ kind: 'Confirm', origin: 'agent', scope: draft.scope,
@@ -286,7 +286,7 @@ describe('composeLocalAgent (D-15)', () => {
 
   it('416 forwards the host posture factory through composition to the gates reader', async () => {
     const knowledgeRoot = join(root, 'knowledge')
-    const fixture = createPromotionFloorFixture({ knowledgeRoot, auditBaseDir: agentQaRoot })
+    const fixture = createPromotionFloorFixture({ knowledgeRoot })
     const { published } = fixture.publishHeldCandidate('reader-composition')
     const resolver = vi.fn(() => resolvedPromotionPosture({ replayGateAvailable: false }))
     const factory = vi.fn(async () => resolver)

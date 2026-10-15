@@ -31,7 +31,7 @@ export function completeGate1Receipt(
   })
 }
 
-export function createPromotionFloorFixture({ knowledgeRoot }: { knowledgeRoot: string; auditBaseDir?: string }) {
+export function createPromotionFloorFixture({ knowledgeRoot }: { knowledgeRoot: string }) {
   function publishHeldCandidate(seed: string) {
     const displayName = `Held checkout ${seed}`
     const normalizedName = displayName.toLowerCase()

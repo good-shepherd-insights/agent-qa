@@ -212,7 +212,6 @@ describe('resolveRunQuarantineSnapshot (D-16)', () => {
   // file passes between them below — the writer is driven entirely through the real port.
 
   describe('a human quarantine.add against this reader (WR-01)', () => {
-    let auditBaseDir: string
     const ADD_NOW = '2026-08-15T10:00:00.000Z'
     /** ADD_NOW + the pinned 30-day default lifetime — still suppressing at RUN_START_NOW. */
     const ADDED_EXPIRY = '2026-09-14T10:00:00.000Z'
@@ -221,18 +220,9 @@ describe('resolveRunQuarantineSnapshot (D-16)', () => {
     const TEST_FILE = 'tests/checkout.yaml'
     const TEST_NAME = 'checkout completes'
 
-    beforeEach(async () => {
-      auditBaseDir = await mkdtemp(join(tmpdir(), 'quarantine-snapshot-audit-'))
-    })
-
-    afterEach(async () => {
-      await rm(auditBaseDir, { recursive: true, force: true })
-    })
-
     function verbs(): ReturnType<typeof createQuarantineOperations> {
       return createQuarantineOperations({
         resolveKnowledgeRoot: () => knowledgeRoot,
-        auditBaseDir,
         now: () => ADD_NOW,
         // 390-12: this pin is about the PRODUCT partition, and its fixture already speaks the
         // canonical `tests/checkout.yaml`, so a passthrough leaves what it measures unchanged. The

@@ -1045,7 +1045,6 @@ describe('emitCurationCandidates atomic queue drop (CUR-04)', () => {
       {
         knowledgeRoot: join(fixture.root, 'committed-knowledge'),
         productKey: 'storefront',
-        auditBaseDir: join(fixture.root, '.agent-qa-commit'),
         commitArtifacts: 'none',
       },
       {
@@ -1141,7 +1140,6 @@ describe('emitCurationCandidates atomic queue drop (CUR-04)', () => {
         {
           knowledgeRoot: servingRoot,
           productKey: 'storefront',
-          auditBaseDir: join(fixture.root, '.agent-qa-ordinal-caution'),
           commitArtifacts: 'none',
         },
         {

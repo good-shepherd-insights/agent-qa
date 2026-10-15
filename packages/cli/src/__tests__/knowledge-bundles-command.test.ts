@@ -163,7 +163,6 @@ function seedTwoBundles(workspace: FixtureWorkspace): { factId: string; cautionI
   const config: BundleStoreConfig = {
     knowledgeRoot: workspace.knowledgeRoot,
     productKey: PRODUCT,
-    auditBaseDir: workspace.runtimeRoot,
     commitArtifacts: 'none',
   }
   const fact = publishBundle(config, bundleInput({

@@ -25,7 +25,7 @@ function fixture() {
   roots.push(root)
   const knowledgeRoot = join(root, 'knowledge')
   const saved = publishBundleForTest({ knowledgeRoot, productKey: 'port-join',
-    auditBaseDir: join(root, 'audit'), commitArtifacts: 'none' }, {
+    commitArtifacts: 'none' }, {
     draft: { kind: 'fact', subtype: 'selector',
       anchors: [{ t: 'el', role: 'Button', name: '購入' }],
       scope: { tier: 'product', key: 'port-join' }, summary: '購入 e\u0301 🧪', body: 'Read the recorded 購入 control.',

@@ -219,7 +219,6 @@ describe('knowledge composition acceptance (D-14/SC1)', () => {
     const storeConfig: BundleStoreConfig = {
       knowledgeRoot,
       productKey: PRODUCT,
-      auditBaseDir: join(root, '.agent-qa'),
       commitArtifacts: 'none',
       writerLeaseId: 'composition-reader-seed',
       policy,

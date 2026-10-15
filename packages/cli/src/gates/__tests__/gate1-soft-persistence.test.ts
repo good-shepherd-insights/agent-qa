@@ -32,7 +32,7 @@ it.each(['gold', 'near-gold', 'silver'] as const)(
     roots.push(root)
     const f = writeGate1Fixture(root)
     const knowledgeRoot = join(root, 'agent-qa-knowledge')
-    const published = createPromotionFloorFixture({ knowledgeRoot, auditBaseDir: f.agentQaRoot })
+    const published = createPromotionFloorFixture({ knowledgeRoot })
       .publishHeldCandidate('soft').published
     f.injection.candidateId = published.id
     await warmGateRoot(f, respondingStub(gate1Responder(f)))

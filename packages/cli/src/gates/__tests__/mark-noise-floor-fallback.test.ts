@@ -36,7 +36,7 @@ describe('a first gold-freezing mark', () => {
     expect(resolution).toEqual({ kind: 'no-noise-floor', committedRoot })
     const lease = acquireWriterLease(f.knowledgeRoot)
     if (lease.kind !== 'acquired') throw new Error(lease.kind)
-    const store = createLocalKnowledgeStore({ knowledgeRoot: f.knowledgeRoot, auditBaseDir: f.agentQaRoot,
+    const store = createLocalKnowledgeStore({ knowledgeRoot: f.knowledgeRoot,
       writerLeaseId: lease.leaseId, epoch: lease.epoch, executionContext: 'local-interactive', sourceBuildOrdinal: 43,
       resolvePromotionPosture: promotionPostureResolverForHost(resolution, warn) })
     await expect(store.promote(f.published.id)).resolves.toMatchObject({ kind: 'promoted', promotionPath: 'deterministic-verdict-floor' })
