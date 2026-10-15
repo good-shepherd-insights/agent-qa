@@ -57,7 +57,6 @@ import {
   SUITE_FINGERPRINTS_TABLE,
 } from '@vostride/agent-qa-knowledge-local'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import type { AuditSink } from '@vostride/agent-qa-safety'
 import {
   asRef,
@@ -85,8 +84,6 @@ const PASSING_FILE = 'tests/checkout.yaml'
 const PASSING_NAME = 'checkout completes the payment sheet'
 const FAILING_FILE = 'tests/login.yaml'
 const FAILING_NAME = 'login accepts a returning customer'
-
-const POLICY = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 
 /** The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here. */
 const MINT_IDENTITY = (filePath: string): string => filePath
@@ -546,13 +543,11 @@ describe('leg-4-curation-candidates-emitted — knowledge curation still consume
       handoff: flagged.handoff,
       runDir: flagged.runDir,
       knowledgeRoot: flagged.knowledgeRoot,
-      policy: POLICY,
     })
     const plainReport = emitCurationCandidates({
       handoff: plain.handoff,
       runDir: plain.runDir,
       knowledgeRoot: plain.knowledgeRoot,
-      policy: POLICY,
     })
 
     expect(flaggedReport.enqueued).toBeGreaterThan(0)

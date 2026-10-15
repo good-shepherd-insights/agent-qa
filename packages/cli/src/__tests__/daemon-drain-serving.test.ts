@@ -36,10 +36,6 @@ import {
 } from '@vostride/agent-qa-knowledge-local'
 import type { KnowledgeHintReader } from '@vostride/agent-qa-runner'
 import { RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import type { AuditSink } from '@vostride/agent-qa-safety'
 import type {
   CompletedRunHandoff,
@@ -314,7 +310,6 @@ function startProductionDrainHost(options: {
     config: CONFIG,
     model: () => MODEL,
     author: options.author,
-    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
     operations,
     logger: { info: vi.fn(), error: vi.fn() },
   })
@@ -414,7 +409,6 @@ function startScheduledHost(options: {
     config: CONFIG,
     model: () => MODEL,
     author: () => async () => ({ kind: 'fallback-required', reason: 'no-model' }),
-    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
     operations,
     logger: { info: vi.fn(), error: vi.fn() },
   })
@@ -543,7 +537,6 @@ describe('daemon curation serving tracer', () => {
       config: CONFIG,
       model: () => MODEL,
       author: () => author,
-      policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
       operations: hostOperations,
       logger: { info: vi.fn(), error: vi.fn() },
     })
@@ -570,7 +563,6 @@ describe('daemon curation serving tracer', () => {
       knowledgeConfig: { dir: paths.knowledgeRoot },
       configDir: paths.root,
       auditSink: {} as AuditSink,
-      policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
       log: { warn: vi.fn(), info: vi.fn() },
       operations: {
         loadCompletedRunHandoff: () => handoff,

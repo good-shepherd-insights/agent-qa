@@ -23,7 +23,6 @@ import {
   asRunId,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   type CompletedRunHandoff,
-  type GuardrailPolicy,
   type PostProcessingStatus,
   type RunEventEnvelope,
   type Verdict,
@@ -190,7 +189,6 @@ export async function runRealTail(input: {
     knowledgeConfig: { dir: input.knowledgeRoot },
     configDir: input.agentQaRoot,
     auditSink: {} as AuditSink,
-    policy: {} as GuardrailPolicy,
     log: {
       warn: (message: string) => { warn.push(message) },
       info: (message: string) => { info.push(message) },

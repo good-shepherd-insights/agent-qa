@@ -14,10 +14,6 @@ import {
   drainQueue,
   readWriterLease,
 } from '@vostride/agent-qa-knowledge-local'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 
 import { DAEMON_EVENTS_FILE } from '../../daemon/events.js'
 import { runDaemonHost, type DaemonHostOperations } from '../../daemon/host.js'
@@ -148,7 +144,6 @@ export async function runReclaimingDaemonFixture(): Promise<void> {
     config: CONFIG,
     model: () => MODEL,
     author: () => author,
-    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
     operations: {
       acquireWriterLease: (root: string) => {
         const startedAtNs = process.hrtime.bigint()

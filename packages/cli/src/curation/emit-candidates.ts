@@ -20,7 +20,6 @@ import {
   type CompletedRunHandoff,
   type DistilledObservation,
   type FactSubtype,
-  type GuardrailPolicy,
   type MaskFn,
   type PerTestOutcome,
   type Platform,
@@ -806,8 +805,6 @@ function projectProcedureTarget(
  */
 export function projectProcedureTargets(
   handoff: CompletedRunHandoff,
-  // 2026-10-15 (441-24, D-26): unread; 441-27-2 deletes it with its test callers.
-  _policy?: GuardrailPolicy,
   mask?: MaskFn,
 ): CurationCandidateProjection[] {
   return handoff.tests.flatMap((test) => {
@@ -819,8 +816,6 @@ export function projectProcedureTargets(
 /** Pure post-verdict projection. Host artifact bytes are resolved only by the emit wrapper. */
 export function projectCurationCandidates(
   handoff: CompletedRunHandoff,
-  // 2026-10-15 (441-24, D-26): unread; 441-27-2 deletes it with its test callers.
-  _policy?: GuardrailPolicy,
   mask?: MaskFn,
 ): CurationCandidateProjection[] {
   return [
@@ -835,7 +830,7 @@ export function projectCurationCandidates(
       const caution = projectCaution(handoff, test)
       return [...factsAndMeasurements, ...(caution === undefined ? [] : [caution])]
     }),
-    ...projectProcedureTargets(handoff, undefined, mask),
+    ...projectProcedureTargets(handoff, mask),
   ]
 }
 
@@ -845,8 +840,6 @@ export interface EmitCurationCandidatesOptions {
   runDir: string
   /** Absolute agent-qa-knowledge root that owns the durable queue. */
   knowledgeRoot: string
-  // 2026-10-15 (441-24, D-26): unread; 441-27-2 deletes it with its test callers.
-  policy?: GuardrailPolicy
   mask?: MaskFn
 }
 
@@ -906,7 +899,7 @@ export function emitCurationCandidates(opts: EmitCurationCandidatesOptions): Emi
     refused: 0,
     details: [],
   }
-  for (const projected of projectCurationCandidates(opts.handoff, undefined, opts.mask)) {
+  for (const projected of projectCurationCandidates(opts.handoff, opts.mask)) {
     const artifactSources = bindArtifactSources(projected, opts.runDir)
     let outcome: EmitCandidateOutcome
     try {

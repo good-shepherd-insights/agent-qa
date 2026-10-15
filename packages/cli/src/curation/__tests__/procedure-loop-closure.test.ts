@@ -38,10 +38,6 @@ import {
   RUNS_SUBDIR,
   slugBranch,
 } from '@vostride/agent-qa-runner-local'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
 import {
   RunKnowledgeProjectionSchema,
@@ -74,7 +70,6 @@ import { emitCanaryOutcomes } from '../emit-canary-outcomes.js'
 type CuratorModel = ReturnType<typeof createModel>
 type GenerateResult = Awaited<ReturnType<CuratorModel['doGenerate']>>
 
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 const PRODUCT = 'loop-shop'
 const FLOW = 'checkout::sign-in-and-buy'
 const FILE_PATH = 'tests/checkout/sign-in-and-buy.test.ts'
@@ -372,7 +367,6 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
       configDir: root,
       auditSink: new JsonlAuditSink(agentQaRoot),
       modelDeps: { profile: scriptedProfile(), auth: noAuth },
-      policy,
       log: { warn: (message) => warnings.push(message) },
       operations: { buildCuratorAuthor: () => fixtureAuthor },
     })
@@ -449,7 +443,6 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
       configDir: fixtureRoot,
       auditSink: new JsonlAuditSink(fixtureAgentQaRoot),
       modelDeps: { profile: scriptedProfile(), auth: noAuth },
-      policy,
       log: { warn: (message) => warnings.push(message) },
       operations: {
         buildCuratorAuthor: () => isolatedAuthor,
@@ -544,7 +537,6 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
         throw new Error('canary jobs must never reach the Curator author')
       },
       executionContext: 'local-interactive',
-      policy,
     })
     expect(report).toMatchObject({ kind: 'drained', committed: 1, failures: 0 })
   }
@@ -1268,7 +1260,7 @@ describe('which drafts induce is a recorded decision, not an accident (394-11, D
   const onlyTest = base.tests[0]!
 
   it('induces EXACTLY ONE procedure-extraction target from one verified pass', () => {
-    const targets = projectProcedureTargets(base, policy)
+    const targets = projectProcedureTargets(base)
     expect(targets).toHaveLength(1)
     expect(targets[0]?.kind).toBe('procedure')
   })
@@ -1280,12 +1272,12 @@ describe('which drafts induce is a recorded decision, not an accident (394-11, D
     // exactly the trajectory this projection is about. So the run of a rejected draft is this
     // handoff, and the count must not move.
     const gateRunHandoff: CompletedRunHandoff = { ...base, schemaVersion: 4, gateRun: true }
-    const targets = projectProcedureTargets(gateRunHandoff, policy)
+    const targets = projectProcedureTargets(gateRunHandoff)
     expect(targets).toHaveLength(1)
     expect(targets[0]?.kind).toBe('procedure')
     // And the induced candidate is the SAME one, not a degraded sibling: a narrowing that kept a
     // target while stripping its trajectory would satisfy a count-only assertion.
-    expect(targets[0]?.bodySeed).toBe(projectProcedureTargets(base, policy)[0]?.bodySeed)
+    expect(targets[0]?.bodySeed).toBe(projectProcedureTargets(base)[0]?.bodySeed)
   })
 
   it('discriminates on the axes it does have, so the cell above is not a function that never says no', () => {
@@ -1296,12 +1288,12 @@ describe('which drafts induce is a recorded decision, not an accident (394-11, D
       ...base,
       tests: [{ ...onlyTest, outcome: 'failed' }],
     }
-    expect(projectProcedureTargets(failed, policy)).toHaveLength(0)
+    expect(projectProcedureTargets(failed)).toHaveLength(0)
     const singleStep: CompletedRunHandoff = {
       ...base,
       tests: [{ ...onlyTest, steps: onlyTest.steps.slice(0, 1) }],
     }
-    expect(projectProcedureTargets(singleStep, policy)).toHaveLength(0)
+    expect(projectProcedureTargets(singleStep)).toHaveLength(0)
   })
 
   it('has ONE producer: every procedure candidate in the whole projection comes through it', () => {
@@ -1309,9 +1301,9 @@ describe('which drafts induce is a recorded decision, not an accident (394-11, D
     // `projectProcedureTargets` and compared against every procedure-kind candidate the whole
     // post-run projection yields — so a second induction path anywhere in the fold shows up as a
     // candidate this function did not produce.
-    const whole = projectCurationCandidates(base, policy)
+    const whole = projectCurationCandidates(base)
       .filter((candidate) => candidate.kind === 'procedure')
-    const induced = projectProcedureTargets(base, policy)
+    const induced = projectProcedureTargets(base)
     expect(whole).toHaveLength(induced.length)
     expect(whole.map((candidate) => candidate.bodySeed))
       .toEqual(induced.map((candidate) => candidate.bodySeed))

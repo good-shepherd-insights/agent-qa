@@ -46,7 +46,6 @@ import type {
   SubActionEvidence,
 } from '@vostride/agent-qa-schema'
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
-import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 
 /**
  * THE DRIVE'S MOCK CARRIES NO `original()`, AND THAT IS LOAD-BEARING (measured, not preferred).
@@ -349,7 +348,6 @@ async function daemonRunOptions() {
     config: TEST_CONFIG,
     model: () => TEST_MODEL,
     author: () => async () => ({ kind: 'fallback-required' as const, reason: 'no-model' as const }),
-    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
     operations,
     logger: { info: () => undefined, error: () => undefined },
   } as unknown as Parameters<typeof runDaemonHost>[0])

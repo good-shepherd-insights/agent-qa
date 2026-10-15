@@ -62,8 +62,6 @@ export interface ComposeCliPostRunTailInput {
    */
   readonly mask?: RunCurationTailOptions['mask']
   readonly modelDeps?: RunCurationTailOptions['modelDeps']
-  // 2026-10-13 (441-27, D-15): unread; 441-27-2 deletes it with its test callers.
-  readonly policy?: RunCurationTailOptions['policy']
   readonly signal?: RunCurationTailOptions['signal']
   readonly log: RunCurationTailOptions['log']
   /** What the shell's post-verdict step reported about the durable hand-off (404 D-05). */

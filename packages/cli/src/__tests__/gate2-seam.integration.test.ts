@@ -44,10 +44,6 @@ import {
   type StepEvidence,
   type SubActionEvidence,
 } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -65,7 +61,6 @@ const CANDIDATE_ANCHOR: Anchor = {
   name: 'Checkout',
   ordinal: 0,
 }
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 
 function element(): ElementInfo {
   return {
@@ -267,7 +262,7 @@ describe('418 credited canary Gate-2 seam', () => {
       const runDir = join(root, 'run')
       mkdirSync(runDir, { recursive: true })
       const config: BundleStoreConfig = { knowledgeRoot, productKey: PRODUCT,
-        writerLeaseId: 'negative-seed', commitArtifacts: 'none', policy }
+        writerLeaseId: 'negative-seed', commitArtifacts: 'none' }
       const published = publishBundle(config, { ...candidateInput(),
         screenStates: [{ ...screen(), url: mode === 'no-root-stale'
           ? 'https://fixture.invalid/earlier-cart' : 'https://fixture.invalid/cart' }] })
@@ -323,7 +318,7 @@ describe('418 credited canary Gate-2 seam', () => {
       else expect(payload).not.toHaveProperty('corpusDigest')
       const author = vi.fn<CuratorAuthor>(async () => { throw new Error('negative canary must not call author') })
       expect(await drainQueue({ knowledgeRoot, author, executionContext: 'local-interactive',
-        policy, maintenance: 'skip', ...(mode === 'eval-bound' ? { resolvePromotionPosture: bound } : {}) }))
+        maintenance: 'skip', ...(mode === 'eval-bound' ? { resolvePromotionPosture: bound } : {}) }))
         .toMatchObject({ jobsProcessed: 1, committed: 1, failures: 0 })
       expect(author).not.toHaveBeenCalled()
       expect(listQueuedCandidates(knowledgeRoot)).toEqual([])
@@ -343,7 +338,7 @@ describe('418 credited canary Gate-2 seam', () => {
     const runDir = join(root, 'run')
     mkdirSync(runDir, { recursive: true })
     const config: BundleStoreConfig = { knowledgeRoot, productKey: PRODUCT,
-      writerLeaseId: 'gate2-seed', commitArtifacts: 'none', policy }
+      writerLeaseId: 'gate2-seed', commitArtifacts: 'none' }
     const published = publishBundle(config, candidateInput())
     if (published.kind !== 'published') throw new Error(published.kind)
     const score = { baseline: 0.5, candidate: 0.8, delta: 0.3, floor: 0.1, n: 10 }
@@ -378,7 +373,7 @@ describe('418 credited canary Gate-2 seam', () => {
     expect(payload).toMatchObject({ schemaVersion: 3, benefit: 'exercised-benefited', corpusDigest: DIGEST })
     const author = vi.fn<CuratorAuthor>(async () => { throw new Error('no author for canaries') })
     const drain = () => drainQueue({ knowledgeRoot, author, executionContext: 'local-interactive',
-      policy, resolvePromotionPosture: bound, maintenance: 'skip' })
+      resolvePromotionPosture: bound, maintenance: 'skip' })
     const report = await drain()
     expect(report).toMatchObject({ kind: 'drained', jobsProcessed: 1, committed: 1, failures: 0 })
     expect(report.promotions).toEqual([{ candidateId: published.id,

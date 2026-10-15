@@ -391,8 +391,6 @@ export interface RunPostRunTailOptions extends Pick<
   | 'auditSink'
   | 'mask'
   | 'modelDeps'
-  // 2026-10-13 (441-27, D-15): unread; 441-27-2 deletes it with its test callers.
-  | 'policy'
   | 'signal'
   | 'log'
 > {

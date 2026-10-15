@@ -30,7 +30,6 @@ import type {
   KnowledgeBundleSummary,
   KnowledgeGatesListResult,
 } from '@vostride/agent-qa-schema'
-import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 
 vi.mock('@vostride/agent-qa-agent-local', async (original) => {
   const actual = await original<typeof import('@vostride/agent-qa-agent-local')>()
@@ -314,7 +313,6 @@ async function startDaemon() {
     config: TEST_CONFIG,
     model: () => TEST_MODEL,
     author: () => async () => ({ kind: 'fallback-required' as const, reason: 'no-model' as const }),
-    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
     operations,
     logger: { info: () => undefined, error: () => undefined },
   } as unknown as Parameters<typeof runDaemonHost>[0])

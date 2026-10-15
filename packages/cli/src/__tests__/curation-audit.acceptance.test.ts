@@ -15,10 +15,6 @@ import {
 } from '@vostride/agent-qa-model'
 import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import { RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -183,7 +179,6 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
       configDir: root,
       auditSink,
       modelDeps: { profile: resolvedProfile, auth: noneAuth },
-      policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
       log: { warn: vi.fn() },
       operations: {
         loadCompletedRunHandoff: () => completeAuditHandoff(),

@@ -40,10 +40,6 @@ import {
   type DistilledObservation,
   type ServedBrief,
 } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -52,7 +48,6 @@ import { CURATION_TAIL_RECEIPT_FILE, runCurationTail } from '../curation/curatio
 
 const PRODUCT = 'composition-storefront'
 const BUILD_ORDINAL = 52
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 
 function committedFixtureInput(): PublishBundleInput {
   const draft: BundleDraft = {
@@ -221,7 +216,6 @@ describe('knowledge composition acceptance (D-14/SC1)', () => {
       productKey: PRODUCT,
       commitArtifacts: 'none',
       writerLeaseId: 'composition-reader-seed',
-      policy,
     }
     const published = publishBundle(storeConfig, committedFixtureInput())
     if (published.kind !== 'published') {
@@ -314,7 +308,6 @@ describe('knowledge composition acceptance (D-14/SC1)', () => {
       knowledgeConfig: { dir: 'agent-qa-knowledge' },
       configDir: root,
       auditSink: new JsonlAuditSink(agentQaRoot),
-      policy,
       log: { warn },
     })
 

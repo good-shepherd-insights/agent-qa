@@ -8,10 +8,6 @@ import {
 import type { KnowledgeHintReader } from '@vostride/agent-qa-runner'
 import { RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import type { AuditSink } from '@vostride/agent-qa-safety'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import { expect } from 'vitest'
 
@@ -63,7 +59,6 @@ export async function runOneShotLeg(): Promise<void> {
     configDir: root,
     auditSink: {} as AuditSink,
     modelDeps: {} as NonNullable<RunCurationTailOptions['modelDeps']>,
-    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
     log: { warn: (message) => warnings.push(message) },
     operations: {
       loadCompletedRunHandoff: () => handoff,

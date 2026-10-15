@@ -35,7 +35,6 @@ import {
   asRunId,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   type CompletedRunHandoff,
-  type GuardrailPolicy,
   type Verdict,
 } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -201,7 +200,6 @@ function fixture(): Fixture {
         knowledgeConfig: { dir: 'knowledge' },
         configDir: agentQaRoot,
         auditSink: {} as AuditSink,
-        policy: {} as GuardrailPolicy,
         log: { warn: (message: string) => warn(message) },
         operations: {
           resolveKnowledgeRoot: () => knowledgeRoot,

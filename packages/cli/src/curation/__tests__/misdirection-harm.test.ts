@@ -509,9 +509,6 @@ describe('422-16 D-20 — flipped evidence emits harm independently of the class
       evidenceRow(base, { recordId: SIBLING, crossCheck: 'held', decisionOrdinal: 1 }),
     ])
     const info = vi.fn()
-    const { defaultGuardrailPolicyInput, loadGuardrailPolicy } = await import(
-      '@vostride/agent-qa-safety'
-    )
     const operations: Partial<CurationTailOperations> = {
       runSafetyScope: (_scope, fn) => fn(),
       emitCurationCandidates: () => ({
@@ -544,7 +541,6 @@ describe('422-16 D-20 — flipped evidence emits harm independently of the class
       knowledgeRoot: '/tmp/agent-qa-knowledge',
       agentQaRoot: runDir,
       auditSink: { appendGuardrailAudit: () => undefined },
-      policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
       operations,
       log: { warn: vi.fn(), info },
     })

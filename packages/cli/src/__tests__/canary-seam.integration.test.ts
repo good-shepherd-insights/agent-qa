@@ -39,10 +39,6 @@ import {
   type StepEvidence,
   type SubActionEvidence,
 } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -59,7 +55,6 @@ const CANDIDATE_ANCHOR: Anchor = {
   name: 'Checkout',
   ordinal: 0,
 }
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 
 function element(): ElementInfo {
   return {
@@ -262,7 +257,6 @@ describe('canary seam public integration (PROM-02/SC5 substrate)', () => {
       productKey: PRODUCT,
       commitArtifacts: 'none',
       writerLeaseId: 'canary-seam-seed',
-      policy,
     }
     const published = publishBundle(storeConfig, candidateInput())
     if (published.kind !== 'published') {
@@ -328,7 +322,6 @@ describe('canary seam public integration (PROM-02/SC5 substrate)', () => {
       knowledgeRoot,
       author,
       executionContext: 'local-interactive',
-      policy,
     })
 
     expect(firstDrain).toMatchObject({
@@ -369,7 +362,6 @@ describe('canary seam public integration (PROM-02/SC5 substrate)', () => {
       knowledgeRoot,
       author,
       executionContext: 'local-interactive',
-      policy,
     })
     const loadedAfterReplay = loadBundle(published.dir)
     if (loadedAfterReplay.kind !== 'loaded') {
@@ -404,7 +396,6 @@ describe('canary seam public integration (PROM-02/SC5 substrate)', () => {
       productKey: PRODUCT,
       commitArtifacts: 'none',
       writerLeaseId: 'canary-restart-seed',
-      policy,
     }
     const published = publishBundle(storeConfig, candidateInput())
     if (published.kind !== 'published') {

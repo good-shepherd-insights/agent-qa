@@ -32,7 +32,6 @@ import {
   asRunId,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   type CompletedRunHandoff,
-  type GuardrailPolicy,
   type PostProcessingStatus,
   type RunEventEnvelope,
   type Verdict,
@@ -211,7 +210,6 @@ function fixture(behaviour: {
         knowledgeConfig: { dir: 'knowledge' },
         configDir: agentQaRoot,
         auditSink: {} as AuditSink,
-        policy: {} as GuardrailPolicy,
         log: {
           warn: (message: string) => warn(message),
           info: (message: string) => info(message),

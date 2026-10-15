@@ -15,13 +15,9 @@ import {
   RUNS_SUBDIR,
   loadCompletedRunHandoff,
 } from '@vostride/agent-qa-runner-local'
-import {
-  createMaskingContext,
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
+import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
-import { parseProcedureBody, type GuardrailPolicy } from '@vostride/agent-qa-schema'
+import { parseProcedureBody } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
 import { CURATION_TAIL_RECEIPT_FILE, runCurationTail } from '../curation-tail.js'
@@ -71,12 +67,6 @@ const fixtureDir = join(
   'fixtures',
   'f-381-48-1-run',
 )
-
-function livePolicy(): GuardrailPolicy {
-  // The exact live composition: run.ts wires the tail with
-  // loadGuardrailPolicy(defaultGuardrailPolicyInput), never a permissive test policy.
-  return loadGuardrailPolicy(defaultGuardrailPolicyInput)
-}
 
 /**
  * The live run's mask at tail time: the model-bound email pass had already minted the
@@ -228,7 +218,7 @@ describe('F-381-48-1 live-artifact staged reproduction (Plan 381-49)', () => {
 
   it('stage P: the real handoff projects exactly one procedure candidate whose old placeholder reads as literal text', () => {
     const handoff = loadCompletedRunHandoff(join(fixtureDir, HANDOFF_FILE))
-    const projections = projectCurationCandidates(handoff, livePolicy())
+    const projections = projectCurationCandidates(handoff)
     const procedures = projections.filter((candidate) => candidate.kind === 'procedure')
     expect(procedures).toHaveLength(1)
 
@@ -245,8 +235,7 @@ describe('F-381-48-1 live-artifact staged reproduction (Plan 381-49)', () => {
   it('stage E: the procedure candidate enqueues (never silently coalesces) on a cold knowledge root', () => {
     const roots = stageRoots()
     const handoff = loadCompletedRunHandoff(join(roots.runDir, HANDOFF_FILE))
-    const policy = livePolicy()
-    const projections = projectCurationCandidates(handoff, policy)
+    const projections = projectCurationCandidates(handoff)
     const procedureIndex = projections.findIndex(
       (candidate) => candidate.kind === 'procedure',
     )
@@ -256,7 +245,6 @@ describe('F-381-48-1 live-artifact staged reproduction (Plan 381-49)', () => {
       handoff,
       runDir: roots.runDir,
       knowledgeRoot: roots.knowledgeRoot,
-      policy,
     })
     // Emit outcomes arrive in projection order; the detail at the procedure's index IS
     // the procedure candidate's outcome. 'coalesced' on this COLD root would itself be
@@ -275,8 +263,8 @@ describe('F-381-48-1 live-artifact staged reproduction (Plan 381-49)', () => {
     async () => {
       const roots = stageRoots()
       const { warns, log } = warnCapture()
-      // REAL defaultOperations: no operations override at all. Policy, mask,
-      // and audit sink mirror run-session-composition.ts.
+      // REAL defaultOperations: no operations override at all. Mask and audit
+      // sink mirror run-session-composition.ts.
       await runCurationTail({
         runId: RUN_ID,
         agentQaRoot: roots.agentQaRoot,
@@ -284,7 +272,6 @@ describe('F-381-48-1 live-artifact staged reproduction (Plan 381-49)', () => {
         configDir: roots.configDir,
         auditSink: new JsonlAuditSink(roots.agentQaRoot),
         mask: liveMask(),
-        policy: livePolicy(),
         log,
       })
 
@@ -327,7 +314,6 @@ describe('F-381-48-1 live-artifact staged reproduction (Plan 381-49)', () => {
         auditSink: new JsonlAuditSink(roots.agentQaRoot),
         mask: liveMask(),
         modelDeps: { profile: scriptedProfile(), auth: scriptedAuth },
-        policy: livePolicy(),
         log,
         operations: {
           // The ONLY seams touched: the PROCEDURE author's model is scripted with the

@@ -59,7 +59,6 @@ import {
   asRunId,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   type CompletedRunHandoff,
-  type GuardrailPolicy,
   type PostProcessingStatus,
   type RunEventEnvelope,
   type Verdict,
@@ -241,7 +240,6 @@ function fixture(): Fixture {
         knowledgeConfig: { dir: 'knowledge' },
         configDir: agentQaRoot,
         auditSink: {} as AuditSink,
-        policy: {} as GuardrailPolicy,
         // The PRODUCTION log object, not a double. Every post-run line's channel is therefore
         // run.ts's choice and not this file's, which is what makes the stdout comparison a
         // statement about the product.

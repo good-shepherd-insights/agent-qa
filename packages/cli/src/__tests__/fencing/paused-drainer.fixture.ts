@@ -13,10 +13,6 @@ import {
   type CuratorAuthor,
 } from '@vostride/agent-qa-knowledge-local'
 import { publishBundleForTest as publishBundle } from '@vostride/agent-qa-knowledge-local'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { canonicalJson } from '@vostride/agent-qa-schema'
 
 import { DRAIN_SESSION_RECEIPTS_FILE } from '../../daemon/drain-receipts.js'
@@ -303,7 +299,6 @@ export async function runPausedDrainerFixture(): Promise<void> {
       knowledgeRoot,
       author: currentAuthor(fixture),
       executionContext: 'local-interactive',
-      policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
       maintenance: 'skip',
       operations: { commitCurationDelta: wrappedCommit },
     })

@@ -37,11 +37,7 @@ import {
   type StepContext,
 } from '@vostride/agent-qa-runner'
 import { RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-  type AuditSink,
-} from '@vostride/agent-qa-safety'
+import type { AuditSink } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
 import { runCurationTail } from '../curation-tail.js'
@@ -1350,8 +1346,7 @@ describe('C438-PROCEDURE-WRITE', () => {
   }
 
   function writeSeed(mask?: (text: string) => string): ProcedureTrajectorySeed {
-    const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
-    const [target] = projectCurationCandidates(invoiceRun(), policy, mask).filter(
+    const [target] = projectCurationCandidates(invoiceRun(), mask).filter(
       (row) => row.kind === 'procedure',
     )
     const seed = parseProcedureTrajectorySeed(target!.bodySeed)
@@ -1562,8 +1557,7 @@ describe('C438-HEALED-BODY', () => {
         filePath: 'editor.spec.yaml',
       }],
     }
-    const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
-    const [target] = projectCurationCandidates(run, policy).filter(
+    const [target] = projectCurationCandidates(run).filter(
       (row) => row.kind === 'procedure',
     )
     const seed = parseProcedureTrajectorySeed(target!.bodySeed)
@@ -1661,7 +1655,6 @@ describe('C441-CURATION', () => {
   const DECLARED = 'Hunter-42-zz'
   const EMAIL = 'qa@example.com'
   const PAGE = 'https://shop.example/account'
-  const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 
   function declaredMask(): (text: string) => string {
     const redactor = new SecretRedactor(new SecretStore({ PW_441: DECLARED }))
@@ -1750,7 +1743,6 @@ describe('C441-CURATION', () => {
         configDir: root,
         auditSink: {} as AuditSink,
         mask: declaredMask(),
-        policy,
         log: { warn: () => undefined },
         authority: { leaseId: 'c441-lease', epoch: 1 },
         operations: {
@@ -1809,7 +1801,7 @@ describe('C441-CURATION', () => {
       const runDir = join(root, 'runs', 'r-c441-measurement')
       mkdirSync(runDir, { recursive: true })
       const report = emitCurationCandidates({
-        handoff, runDir, knowledgeRoot, policy, mask: declaredMask(),
+        handoff, runDir, knowledgeRoot, mask: declaredMask(),
       })
       const payloads = queuedPayloads(knowledgeRoot, [report])
       const measurement = payloads.find((row) =>

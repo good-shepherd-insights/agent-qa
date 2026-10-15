@@ -21,7 +21,6 @@ import {
   rebuildIndex,
   type LoadedBundle,
 } from '@vostride/agent-qa-knowledge-local'
-import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import {
   asEvidenceToken,
   BundleOutcomeEventSchema,
@@ -257,7 +256,6 @@ function startDaemon(project: Project, author: CuratorAuthor) {
     config: CONFIG,
     model: () => MODEL,
     author: () => author,
-    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
     operations,
     logger: { info: vi.fn(), error: vi.fn() },
   })

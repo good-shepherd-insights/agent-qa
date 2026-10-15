@@ -20,10 +20,6 @@ import type {
   LocalAgentHost,
 } from '@vostride/agent-qa-agent-local'
 import { DEFAULT_EMBEDDING_PROFILE } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { CURATION_QUEUE_POLL_MS, MAINTENANCE_CADENCE_MS } from '../daemon/host.js'
@@ -481,7 +477,6 @@ function startHarness(
     config: CONFIG,
     model: () => MODEL,
     author: () => async () => ({ kind: 'fallback-required', reason: 'no-model' }),
-    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
     operations,
     logger: { info: vi.fn(), error: (message) => errors.push(message) },
   })

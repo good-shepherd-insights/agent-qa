@@ -51,7 +51,6 @@ import type {
 import {
   asRunId,
   DEFAULT_EMBEDDING_PROFILE,
-  type GuardrailPolicy,
 } from '@vostride/agent-qa-schema'
 
 import { analyticsRunId } from '@vostride/agent-qa-analytics'
@@ -316,8 +315,6 @@ export interface DaemonHostOptions {
   analysisTokenBudget?: ComposeLocalAgentInput['analysisTokenBudget']
   /** Lazy so an idle daemon does not resolve curation credentials until work appears. */
   author?: () => CuratorAuthor | Promise<CuratorAuthor>
-  // 2026-10-13 (441-27, D-15): unread; 441-27-2 deletes it with its test callers.
-  policy?: GuardrailPolicy
   /** Explicit test/embedding override; it wins over the production Plan 08 binding. */
   runExecution?: RunExecutionPort
   /** Exact resolved project config path. Presence binds the production run executor. */

@@ -53,7 +53,6 @@ import {
 import type {
   Anchor,
   CompletedRunHandoff,
-  GuardrailPolicy,
   RunDigest,
   Verdict,
 } from '@vostride/agent-qa-schema'
@@ -197,7 +196,6 @@ function fixture(): Fixture {
         knowledgeConfig: { dir: 'knowledge' },
         configDir: agentQaRoot,
         auditSink: {} as AuditSink,
-        policy: {} as GuardrailPolicy,
         log: {
           warn: (message: string) => warn(message),
           info: (message: string) => info(message),

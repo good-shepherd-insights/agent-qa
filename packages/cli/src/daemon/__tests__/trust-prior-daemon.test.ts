@@ -3,7 +3,6 @@ import { dirname, join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { calibrateLabels, canonicalJson } from '@vostride/agent-qa-eval'
 import { sha256hex } from '@vostride/agent-qa-schema'
-import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import type { ComposeLocalAgentInput } from '@vostride/agent-qa-agent-local'
 import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import { createInProcessFixture } from '../../composition/__tests__/in-process-run-fixture.js'
@@ -79,7 +78,7 @@ async function start(f: ReturnType<typeof project>, legacy = false) {
   const running = runDaemonHost({ agentQaRoot: f.agentQaRoot, knowledgeRoot: join(f.project, 'knowledge'),
     ...(legacy ? {} : { configPath: f.configPath }),
     config: { getMasked: async () => ({ schemaVersion: 1, configPath: f.configPath, entries: [] }) },
-    model: () => model, author: authorFactory, policy: loadGuardrailPolicy(defaultGuardrailPolicyInput), operations,
+    model: () => model, author: authorFactory, operations,
     logger: { info: vi.fn(), error: message => errors.push(message) } })
   await vi.waitFor(() => expect(server).toBeDefined())
   return { input: hostInput!, authorFactory, model, drainQueue, runMaintenanceTail, errors,

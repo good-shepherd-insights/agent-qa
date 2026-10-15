@@ -64,10 +64,6 @@ import {
 // agreement over an empty set, which is the failure the non-vacuity block below exists to catch.
 import { canaryOutcomeObservationId } from '@vostride/agent-qa-knowledge-local/reader'
 import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
-import {
   BundleOutcomeEventSchema,
   CURATION_BREAKDOWN_BUCKETS,
   CURATION_BUCKET_PRECEDENCE,
@@ -456,7 +452,6 @@ function bundleStoreFor(
     productKey: POPULATED_TARGET_NAME,
     commitArtifacts: 'none',
     writerLeaseId,
-    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
   }
 }
 

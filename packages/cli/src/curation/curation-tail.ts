@@ -34,7 +34,6 @@ import type { AuditSink } from '@vostride/agent-qa-safety'
 import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
 import type {
   ExecutionContext,
-  GuardrailPolicy,
   CurationSnapshot,
   MaskFn,
   ResolvePromotionPosture,
@@ -150,8 +149,6 @@ export interface RunCurationTailOptions {
   mask?: MaskFn
   /** The exact already-resolved planner profile and auth used by the run. */
   modelDeps?: CurationTailModelDeps
-  // 2026-10-13 (441-27, D-15): unread; 441-27-2 deletes it with its test callers.
-  policy?: GuardrailPolicy
   signal?: AbortSignal
   log: CurationTailLogger
   /** 388-02: the sweep runs under the post-run tail's held lease when there is one. */
@@ -466,8 +463,6 @@ export interface CurateCompletedRunInput {
   agentQaRoot: string
   auditSink: AuditSink
   mask?: MaskFn
-  // 2026-10-13 (441-27, D-15): unread; 441-27-2 deletes it with its test callers.
-  policy?: GuardrailPolicy
   modelDeps?: CurationTailModelDeps
   /** An already-resolved author wins over `modelDeps`; a standing host holds one per process. */
   author?: CurationAuthorCapability
