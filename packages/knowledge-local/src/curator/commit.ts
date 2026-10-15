@@ -18,7 +18,6 @@ import type {
   BundleRelation,
   Delta,
   EvidenceToken,
-  GuardrailPolicy,
   PromotionGateHoldReason,
   PromotionPath,
   RecordId,
@@ -101,13 +100,9 @@ export interface CommitCurationJob extends ClaimedCurationJob {
 
 export interface CommitCurationDependencies {
   knowledgeRoot: string
-  // 2026-10-15 (441-26, D-15): this and `policy` are unread since the committed-egress check
-  // went; 441-53 deletes them.
-  auditBaseDir?: string
   epoch: number
   profile: DispositionProfile
   drainState: DispositionDrainState
-  policy?: GuardrailPolicy
   /** Host-resolved posture as data; absent means the v51 floor. */
   resolvePromotionPosture?: ResolvePromotionPosture
   priors?: TrustPriorTable
@@ -867,8 +862,6 @@ export function commitCurationDelta(
         ? {
             procedureEvidence: {
               distilledObservations: job.payload.distilledObservations,
-              artifactInventory: job.payload.artifactInventory,
-              candidateDir: job.candidateDir,
             },
           }
         : {}),

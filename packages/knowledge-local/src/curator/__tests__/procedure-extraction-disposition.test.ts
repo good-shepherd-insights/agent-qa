@@ -105,8 +105,6 @@ function makeEvidence(
 ): ProcedureDispositionEvidence {
   return {
     distilledObservations: makeObservations(),
-    artifactInventory: [],
-    candidateDir: join(root, 'claimed', 'candidate'),
     ...overrides,
   }
 }

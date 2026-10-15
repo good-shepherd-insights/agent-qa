@@ -177,8 +177,6 @@ export class QuarantineIdentityRefusedError extends Error {
 export interface QuarantineOperationsOptions {
   /** The committed knowledge root. A FACTORY, because the CLI host resolves it asynchronously. */
   resolveKnowledgeRoot: () => Promise<string> | string
-  // 2026-10-15 (441-41, D-15): unread since the committed-egress check went; 441-53 deletes it.
-  auditBaseDir?: string
   /** The ONLY way wall clock enters these verbs. Required — see the module head. */
   now: () => string
   /**

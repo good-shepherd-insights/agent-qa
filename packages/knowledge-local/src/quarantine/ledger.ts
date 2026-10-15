@@ -306,11 +306,6 @@ export function foldQuarantineLedgerState(
   })
 }
 
-export interface QuarantineAppendOptions {
-  // 2026-10-15 (441-41, D-15): unread since the committed-egress check went; 441-53 deletes it.
-  auditBaseDir?: string
-}
-
 /** What an append answers: how many lines it wrote. */
 export type QuarantineAppendOutcome = { kind: 'appended'; lines: number }
 
@@ -334,7 +329,6 @@ export type QuarantineAppendOutcome = { kind: 'appended'; lines: number }
 export function appendQuarantineEvents(
   knowledgeRoot: string,
   events: readonly QuarantineLedgerEvent[],
-  _opts: QuarantineAppendOptions = {},
 ): QuarantineAppendOutcome {
   if (events.length === 0) return { kind: 'appended', lines: 0 }
 

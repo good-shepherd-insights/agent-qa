@@ -25,7 +25,6 @@ import type {
   CurationAuthorship,
   Delta,
   ExecutionContext,
-  GuardrailPolicy,
   GateReceipt,
   GateReceiptRecordOutcome,
   PromotionGateHoldReason,
@@ -91,9 +90,6 @@ export interface CanaryAuthorityHooks {
 
 export interface CreateLocalKnowledgeStoreConfig {
   knowledgeRoot: string
-  // 2026-10-15 (441-26, D-15): this and `policy` are unread since the committed-egress check
-  // went; 441-53 deletes them.
-  auditBaseDir?: string
   executionContext: ExecutionContext
   /** The holder's fresh lease epoch. Defaults to a fresh disk read for composition roots. */
   epoch?: number
@@ -106,7 +102,6 @@ export interface CreateLocalKnowledgeStoreConfig {
    * fabricated id. It is required precisely so no code path can omit it and fall back to one.
    */
   writerLeaseId: string
-  policy?: GuardrailPolicy
   /** Port calls lack a run ordinal; callers with run context should supply it. */
   sourceBuildOrdinal?: number
   sourceRunId?: string
@@ -335,10 +330,9 @@ function currentAuthority(
  *
  * WHAT MAKES IT SAFE — the port path has no on-disk consumer of the claimed form, each half
  * verified by reading:
- *   - procedure drafts, the ONE disposition reader of `job.candidateDir`
- *     (`disposition.ts` procedureEvidence), are refused by `commitWithProfile` BEFORE this
- *     function is called, pinned by knowledge-store.test.ts's "rejects before materializing any
- *     claimed candidate" case;
+ *   - disposition reads no `job.candidateDir` (441-53), and procedure drafts are refused by
+ *     `commitWithProfile` BEFORE this function is called, pinned by knowledge-store.test.ts's
+ *     "rejects before materializing any claimed candidate" case;
  *   - `addressFields` sets `artifactInventory: []`, so `commit.ts`'s `artifactInputs` maps over
  *     an empty list and `preCopyArtifacts` copies nothing;
  *   - every completed outcome ends in `markDone` → `writeJobState('done')` →

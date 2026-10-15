@@ -94,8 +94,6 @@ export interface RollbackHooks {
 
 interface RollbackBaseInput {
   knowledgeRoot: string
-  // 2026-10-15 (441-26, D-15): unread since the committed-egress check went; 441-53 deletes it.
-  auditBaseDir?: string
   resolvedAtOrdinal: number
   /** Governed maintenance callers fence this exact lease at every mutation boundary. */
   writerAuthority?: WriterLeaseAuthority

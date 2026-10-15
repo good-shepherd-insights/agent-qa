@@ -28,8 +28,6 @@ export interface MaterializePolicyInput {
   scope: string
   ruleText: string
   title?: string
-  // 2026-10-15 (441-41, D-15): unread since the committed-egress check went; 441-53 deletes it.
-  auditBaseDir?: string
   /** Recovery validates a previously authored section and must never recreate a missing one. */
   existingOnly?: boolean
 }

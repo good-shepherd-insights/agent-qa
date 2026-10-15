@@ -213,8 +213,6 @@ export interface QuarantineDetectionOptions {
    * is what lets both expiry and the ladder be pinned one step either side.
    */
   now: string
-  // 2026-10-15 (441-41, D-15): unread since the committed-egress check went; 441-53 deletes it.
-  auditBaseDir?: string
 }
 
 export interface FoldRunOutcomesOptions {

@@ -23,7 +23,6 @@ import {
 import type {
   BundleIdentityCore,
   BundleManifest,
-  GuardrailPolicy,
   RecordId,
 } from '@vostride/agent-qa-schema'
 
@@ -43,15 +42,11 @@ export interface BundleStoreConfig {
   /** Absolute committed-root path. Deliberately no working-directory default. */
   knowledgeRoot: string
   productKey: string
-  // 2026-10-15 (441-22, 441-26, D-15): this and `policy` are unread since the committed-egress
-  // check went; 441-53 deletes them.
-  auditBaseDir?: string
   commitArtifacts: 'none' | 'thumbnails'
   /** Active writer identity used to attribute crash-left staging trees. */
   writerLeaseId?: string
   /** Fencing epoch embedded in reader-invisible staging names. */
   writerEpoch?: number
-  policy?: GuardrailPolicy
   hooks?: {
     /** Test/chaos seam after all staged bytes exist but before the visibility rename. */
     beforePublishRename?: () => void

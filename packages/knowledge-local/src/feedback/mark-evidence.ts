@@ -10,8 +10,6 @@ export { MARK_EVIDENCE_TOKEN_PREFIX, type AppendMarkEvidenceOutcome } from './ma
 
 export interface AppendMarkEvidenceInput {
   knowledgeRoot: string
-  // 2026-10-15 (441-22, D-15): unread since the committed-egress check went; 441-53 deletes it.
-  auditBaseDir?: string
   executionContext: ExecutionContext
   lease: { leaseId: string; epoch: number }
   mark: Pick<MarkReceipt, 'markId' | 'runId' | 'kind'>

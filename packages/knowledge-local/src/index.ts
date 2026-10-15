@@ -90,7 +90,6 @@ export {
   readQuarantineLedger,
 } from './quarantine/ledger.js'
 export type {
-  QuarantineAppendOptions,
   QuarantineAppendOutcome,
   QuarantineLedgerRead,
   RefusedQuarantineLine,

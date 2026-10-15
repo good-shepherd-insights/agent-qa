@@ -12,7 +12,6 @@ import {
   type Delta,
   type DeltaOrigin,
   type DistilledObservation,
-  type GuardrailPolicy,
   type MeasurementObservation,
   type ProcedureBodyPayload,
   type RecordId,
@@ -28,7 +27,6 @@ import {
 } from '../bundle-read.js'
 import { enumerateBundleDirs } from '../bundle-scan.js'
 import { snapshotTrustPriors } from '../promotion-gate-input.js'
-import type { CurationCandidateArtifact } from '../queue/queue-payload.js'
 import type { AuthoredDeltaCheckpoint, DispositionProfile } from './author-contract.js'
 import {
   SCOPE_BURST_THRESHOLD,
@@ -55,18 +53,10 @@ export { canaryOutcomeObservationId } from '../serving/canary-observation-id.js'
 
 /**
  * 381-03 (PROC-01 D-02/D-03): the verified queue evidence the procedure-extraction wall
- * validates against. Everything here is code-derived queue truth — distilled observations and
- * the claimed artifact inventory — never LLM text.
+ * validates against. It is code-derived queue truth — distilled observations — never LLM text.
  */
 export interface ProcedureDispositionEvidence {
   distilledObservations: readonly DistilledObservation[]
-  artifactInventory: readonly CurationCandidateArtifact[]
-  /** Claimed candidate directory the inventory's relative paths resolve against. */
-  candidateDir: string
-  // 2026-10-15 (441-22, 441-26, D-15): both unread since the committed-egress check went;
-  // 441-53 deletes them.
-  policy?: GuardrailPolicy
-  auditBaseDir?: string
 }
 
 export interface DispositionCandidateContext {

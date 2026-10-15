@@ -7,7 +7,6 @@ import {
 import { dirname, isAbsolute, join } from 'node:path'
 
 import { canonicalJson, sha256hex } from '@vostride/agent-qa-schema'
-import type { GuardrailPolicy } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
 import { fsyncDirectory } from '../durable-fs.js'
@@ -106,10 +105,6 @@ export interface WriteCurationEffectReceiptOptions {
   knowledgeRoot: string
   authority: CurrentWriterAuthority
   receipt: CurationEffectReceipt
-  // 2026-10-15 (441-22, 441-26, D-15): both unread since the committed-egress check went;
-  // 441-53 deletes them.
-  policy?: GuardrailPolicy
-  auditBaseDir?: string
 }
 
 /** @internal Caller already holds the existing root writer authority section. */

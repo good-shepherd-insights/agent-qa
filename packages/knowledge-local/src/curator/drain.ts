@@ -7,7 +7,6 @@ import {
   type CanaryOutcome,
   type ExecutionContext,
   type FactSubtype,
-  type GuardrailPolicy,
   type IndexEntry,
   type PromotionGateHoldReason,
   type PromotionPath,
@@ -245,16 +244,12 @@ export interface DrainOptions {
   sourceRunId?: string
   observationIds?: readonly string[]
   knowledgeRoot: string
-  // 2026-10-15 (441-26, D-15): this and `policy` are unread since the committed-egress check
-  // went; 441-53 deletes them.
-  auditBaseDir?: string
   /** `unbounded` is reserved for a standing host whose process lifetime is the boundary. */
   budgetMs?: number | 'unbounded'
   /** Standing writer authority owned by the caller; drainQueue never mutates its lifecycle. */
   lease?: { leaseId: string; epoch: number }
   author: CuratorAuthor
   executionContext: ExecutionContext
-  policy?: GuardrailPolicy
   /** Host-resolved posture; daemon sessions pass worker-required capability here. */
   embeddingCapability?: AcquireEmbedderOutcome
   /** Built once per drain on the host; synchronous per candidate inside the gate. */

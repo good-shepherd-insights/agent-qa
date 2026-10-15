@@ -183,8 +183,6 @@ export interface PurgeRecordInput {
   recordId: RecordId
   /** Caller-owned sovereign identity; Phase 382 supplies the confirmed user identity. */
   initiator: string
-  // 2026-10-15 (441-22, D-15): unread since the committed-egress check went; 441-53 deletes it.
-  auditBaseDir?: string
   /** Runtime-counter reservation used for a fresh destruction receipt; resumes reuse intent. */
   purgedAtOrdinal?: number
   /** Governed maintenance callers fence this exact lease at every mutation boundary. */
