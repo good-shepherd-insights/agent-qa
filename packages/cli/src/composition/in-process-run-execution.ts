@@ -80,7 +80,7 @@ import {
   releaseUntakenPostVerdictLease,
   type PostVerdictHandoff,
 } from '../curation/post-verdict-step.js'
-import { attachRunSubscribers, buildRunSafetyHooks } from '../run-session-composition.js'
+import { attachRunSubscribers } from '../run-session-composition.js'
 import {
   isMintedCliRunId,
   mintCliRunId,
@@ -425,12 +425,8 @@ export async function runInProcessCliRun(
     configDir: produced.configDir,
     runId,
   })
-  // 432-13/432-14/432-19: nothing in a run asks and no gate is registered, so the registrar is
-  // handed the run's audit sink and nothing else.
-  const { safetyHooks } = buildRunSafetyHooks({
-    auditSink,
-  })
-  produced.bindRunContext({ safetyHooks })
+  // 2026-10-15 (441-30, D-12/D-15): no per-run hook registrar is built or bound; the run's loop
+  // gets no hook port.
 
   let quarantined: readonly QuarantineAppliedEntry[] = []
   let startedSession: RunSession | undefined

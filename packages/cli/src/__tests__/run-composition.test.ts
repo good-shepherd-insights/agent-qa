@@ -4,14 +4,12 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import { describe, it, expect, vi } from 'vitest'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
 import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
 import type { RunSubscriberHandle } from '@vostride/agent-qa-agent-local'
 import * as runSessionComposition from '../run-session-composition.js'
 import {
   attachRunSubscribers,
-  buildRunSafetyHooks,
 } from '../run-session-composition.js'
 import { QUARANTINE_TEST_ANNOTATION } from '../reporters/console-reporter.js'
 import { JUNIT_QUARANTINE_MARKER_BLOCK } from '../reporters/junit-reporter.js'
@@ -210,7 +208,7 @@ describe('the CLI run-session module exports presentation ONLY (385-08 / D-13)',
       // differently at each. It is presentation in the same sense the reporters are: something a
       // host attaches to the bus and flushes, which a headless drainer would substitute.
       'buildAnalyticsRunSubscriber',
-      'buildRunSafetyHooks',
+      // 2026-10-15 (441-30, D-12/D-15): the per-run hook registrar's assembly left.
       // 2026-10-01 (432-19): 'buildUnmaskingConfirm' left with the confirm port it decorated.
       // 2026-10-02 (432-42, D-14): 'createLivePauseController' left with the pause seam it built.
     ].sort())
@@ -222,58 +220,5 @@ describe('the CLI run-session module exports presentation ONLY (385-08 / D-13)',
   })
 })
 
-// Control 2 — the confirm nesting the dissection had to re-plumb. Before the move, the human
-// unmasking decorator wrapped the timing decorator, so the interval `confirmPausedMs()` reports is
-// the person's deliberation and not the host's rendering of the question. The composition now owns
-// the timing and the host hands its decoration in, which is precisely the seam where that order can
-// invert without anything failing to compile. Pinned observably: the live seam burns wall-clock in
-// `pauseLive`, so if the decoration ever ends up INSIDE the timing, that burn lands in the total.
-// RE-SPELLED 2026-09-30 (432-13): neither decorator is built any more — the run hooks read no
-// presentation confirm — so the host decoration never runs and nothing is ever timed. The claim that
-// survives is the one this cell guarded: host rendering never lands in `confirmPausedMs()`.
-// RE-SPELLED 2026-10-02 (432-42, D-14): the supplier is deleted, so nothing measures a pause at all;
-// the legacy live controller rides as a smuggle and its burn is never run.
-describe('human decoration composes OUTSIDE the pause timing (385-08 / D-10 / D-11)', () => {
-  it('does not count the host prompt rendering against the measured human pause', async () => {
-    const PAUSE_BURN_MS = 60
-    const ctx = createMaskingContext()
-    ctx.register('sk-live-NESTING-0987654321')
-
-    let burned = 0
-    const live = {
-      bind() {},
-      pauseLive() {
-        burned += 1
-        const until = Date.now() + PAUSE_BURN_MS
-        while (Date.now() < until) { /* deliberate synchronous burn inside the host decoration */ }
-      },
-      resumeLive() { /* no-op */ },
-    }
-
-    const auditSink = {
-      appendGuardrailAudit() { /* no-op */ },
-    }
-
-    let asked = 0
-    // 2026-10-01 (432-14, D-03): the hooks input declares none of these any more; they arrive only
-    // as excess fields smuggled past the type, and nothing reads them.
-    const smuggled = {
-      trustMode: false,
-      confirm: { surface: 'tty-prompt' as const, ask: async () => { asked += 1; return true } },
-      maskingContext: ctx,
-      live,
-      executionContext: 'local-interactive',
-    }
-    const built = buildRunSafetyHooks({
-      auditSink,
-      ...smuggled,
-    })
-
-    await built.safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
-
-    // The port was never asked, so no decoration ran, and no pause supplier exists to time anything.
-    expect(asked).toBe(0)
-    expect(burned).toBe(0)
-    expect(Object.keys(built)).toEqual(['safetyHooks'])
-  })
-})
+// 2026-10-15 (441-30, D-12/D-15): Control 2, the describe 'human decoration composes OUTSIDE the
+// pause timing (385-08 / D-10 / D-11)', is deleted with the per-run hook registrar it drove.

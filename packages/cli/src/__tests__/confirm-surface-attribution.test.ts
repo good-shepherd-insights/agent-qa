@@ -31,11 +31,9 @@
 
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
-import { buildRunAuditSink } from '@vostride/agent-qa-agent-local'
-import { RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -43,7 +41,6 @@ import {
   CLI_FUNCTION_CALLER,
   composeCliLocalAgent,
 } from '../composition/local-agent-host.js'
-import { buildRunSafetyHooks } from '../run-session-composition.js'
 
 // 2026-10-03 (quick-261003-tsr, IN-16): every temporary root a cell makes is removed after it.
 const roots: string[] = []
@@ -56,8 +53,6 @@ function tempDir(prefix: string): string {
   roots.push(root)
   return root
 }
-
-const ASK_TIER_ACTION = { name: 'delete_record', recognized: true } as const
 
 /** The confirm shape an old host bound (safety no longer publishes it, 432-19). */
 interface ConfirmPort {
@@ -91,44 +86,8 @@ function auditRowsIfAny(dir: string): LegacyExecutionAuditRow[] {
   }
 }
 
-// RE-SPELLED 2026-09-30 (432-13). Was 'a %s port behind two decorators still lands its own surface
-// on the row': `buildRunSessionSafetyHooks` no longer reads `presentation.confirm`, so no decorator
-// stack is built over the port and the port is never asked. The in-run hook still classifies the
-// action and records its own decision; what it cannot do any more is reach a person.
-// RE-SPELLED 2026-10-01 (432-14, D-03): the hook input no longer declares a confirm port, a masking
-// decorator or trust, so a port can only be smuggled past the type as an excess field. The cell
-// does exactly that and pins that nothing reads it.
-describe('a decorator forwards the surface of the port it wraps', () => {
-  it.each(['tty-prompt', 'browser-click'] as const)(
-    'a %s port handed to the run hooks is never asked, and no prompted row lands',
-    async (surface) => {
-      const configDir = tempDir('confirm-surface-')
-      const runId = `r_decorated-${surface}`
-      const auditSink = buildRunAuditSink({
-        configDir,
-        runId,
-      })
-      const calls: string[] = []
-
-      const smuggled = { confirm: recording(surface, calls), trustMode: true, executionContext: 'local-interactive' }
-      const built = buildRunSafetyHooks({
-        auditSink,
-        ...smuggled,
-      })
-      const { safetyHooks } = built
-
-      await safetyHooks.runToolCallAsync({ ...ASK_TIER_ACTION })
-
-      expect(calls).toEqual([])
-      // 2026-10-02 (432-42, D-14): no pause supplier is returned (it always answered 0).
-      expect(Object.keys(built)).toEqual(['safetyHooks'])
-      const rows = auditRowsIfAny(join(resolve(configDir, '.agent-qa'), RUNS_SUBDIR, slugBranch(runId)))
-      // 432-19: no row of any outcome lands, because nothing writes the execution-audit trail.
-      expect(rows).toEqual([])
-      expect(rows.map((row) => row.trustSource)).not.toContain(surface)
-    },
-  )
-})
+// 2026-10-15 (441-30, D-12/D-15): the describe 'a decorator forwards the surface of the port it
+// wraps' is deleted with the per-run hook registrar it drove.
 
 describe('the two-port seam names the port that actually answered', () => {
   // `compose-local-agent.ts` resolves `chatConfirmPort ?? input.confirm` once, at composition time,

@@ -137,15 +137,8 @@ describe('the suite path runs inside runSafetyScope and masks with its own redac
   })
 
   it('threads the per-run SafetyHookRunner into the suite member executor', () => {
-    // The runner is BUILT once, in the drive, and BOUND back into the producer that owns the member
-    // closures — so both halves are pinned: one construction, and a `safetyHooks:` still reaching
-    // the suite member config in `run.ts`.
-    expect(count(driveSource, 'buildRunSafetyHooks(')).toBe(1)
-    expect(count(runSource, 'buildRunSafetyHooks(')).toBe(0)
+    // 441-30 (D-12/D-15): the drive builds and binds no runner; what is left is the producers' slot.
     expect(count(runSource, 'safetyHooks:')).toBeGreaterThanOrEqual(1)
-    // The drive binds it back into the producer that owns the member closures, and BOTH producers
-    // in `run.ts` implement that binding — so the runner still reaches the suite member executor.
-    expect(driveSource).toContain('produced.bindRunContext({ safetyHooks })')
     expect(count(runSource, 'bindRunContext: ({ safetyHooks }) =>')).toBe(2)
   })
 
@@ -212,13 +205,16 @@ describe('the single-test path activates the seams with no identity mint remaini
     expect(count(compositionSource, 'buildIdentityMasking')).toBe(0)
   })
 
-  it('builds no run MaskingContext at either site, and the SafetyHookRunner once in the drive', () => {
-    // 441-58 (D-06): no site builds a run masking context; the hooks are built once, in the drive.
+  // RE-TITLED 2026-10-15 (441-30, D-12/D-15): was 'builds no run MaskingContext at either site, and
+  // the SafetyHookRunner once in the drive'. The drive builds no hook registrar either.
+  it('builds no run MaskingContext and no hook registrar at either site', () => {
+    // 441-58 (D-06): no site builds a run masking context.
     // 441-19 (D-12): the seed helper is deleted, so its primitives are what stays pinned absent.
-    expect(count(driveSource, 'createMaskingContext(')).toBe(0)
-    expect(count(driveSource, 'buildRunSafetyHooks(')).toBe(1)
-    expect(count(runSource, 'createMaskingContext(')).toBe(0)
-    expect(count(runSource, 'buildRunSafetyHooks(')).toBe(0)
+    const registrarCall = ['buildRunSafety', 'Hooks('].join('')
+    for (const source of [driveSource, runSource]) {
+      expect(count(source, 'createMaskingContext(')).toBe(0)
+      expect(count(source, registrarCall)).toBe(0)
+    }
   })
 
   it('threads the run context + hooks into the single-test runTest config', () => {

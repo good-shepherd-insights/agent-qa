@@ -16,10 +16,7 @@ import {
 } from '@vostride/agent-qa-agent-local'
 // 385-08 (D-13): every assertion below is unchanged. The only edit this dissection made to this
 // suite is the path each symbol is named through — which is itself the evidence that the move was
-// a move, since the same expectations still hold over the relocated code. `buildRunSafetyHooks`
-// alone still resolves here: it is the CLI's assembly of the readline default and the human-output
-// decorator over the relocated registrar.
-import { buildRunSafetyHooks } from '../run-session-composition.js'
+// a move, since the same expectations still hold over the relocated code.
 import { assembleCliRun } from '../composition/run-assembly.js'
 
 // 2026-10-03 (quick-261003-tsr, IN-16): every temporary root a cell makes is removed after it.
@@ -296,81 +293,7 @@ describe('buildRunAuditSink (D-12 — path identity with FsEventLog)', () => {
   })
 })
 
-// ---- (9) per-run safety-hooks registrar (D-01/D-15/D-10/D-11) ------------------------------
-
-describe('buildRunSafetyHooks (D-01/D-15/D-10 — per-run registrar invocation)', () => {
-  // RE-SPELLED 2026-10-01 (432-19, D-15/D-17) from 'denies a destructive descriptor in a fail-closed
-  // ci context AND appends a stamped execution row (D-01)'. The in-run gate hook and the execution
-  // row are deleted: the descriptor passes, and the run directory gets no execution trail.
-  it('C432-RETAINED-SAFETY: allows a destructive descriptor in ci and writes no execution row (D-01)', async () => {
-    const configDir = tempDir('run-hooks-')
-    const runId = 'r_hooks-deny'
-    const auditSink = buildRunAuditSink({ configDir, runId })
-    const { safetyHooks } = buildRunSafetyHooks({ auditSink })
-
-    const action = { name: 'delete_record', recognized: true }
-    expect(await safetyHooks.runToolCallAsync(action)).toEqual({ action: 'allow', call: action })
-
-    const runDir = join(resolve(configDir, '.agent-qa'), RUNS_SUBDIR, slugBranch(runId))
-    expect(existsSync(join(runDir, 'execution_audit.jsonl'))).toBe(false)
-  })
-
-  // RE-SPELLED 2026-09-30 (432-13, D-15): was 'allows the same dispatch under session trustMode'.
-  // Trust no longer reaches the in-run hook, so the flag changes nothing: the dispatch answers
-  // exactly as it does without it.
-  // 2026-10-01 (432-14, D-03): the input no longer declares trust, so the flag can only arrive as an
-  // excess field smuggled past the type — and the answer is still the one without it.
-  // 2026-10-01 (432-19): with no gate the answer is `allow` either way and neither writes a row.
-  it('ignores session trustMode: the same dispatch answers as it does without it (432-13)', async () => {
-    const answer = async (trustMode: boolean) => {
-      const configDir = tempDir('run-hooks-')
-      const runId = `r_hooks-trust-${String(trustMode)}`
-      const auditSink = buildRunAuditSink({ configDir, runId })
-      const smuggled = { trustMode, executionContext: 'ci' }
-      const { safetyHooks } = buildRunSafetyHooks({ auditSink, ...smuggled })
-      const result = await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
-      const runDir = join(resolve(configDir, '.agent-qa'), RUNS_SUBDIR, slugBranch(runId))
-      return { action: result.action, executionTrail: existsSync(join(runDir, 'execution_audit.jsonl')) }
-    }
-    const trusted = await answer(true)
-    expect(trusted).toEqual(await answer(false))
-    expect(trusted).toEqual({ action: 'allow', executionTrail: false })
-  })
-
-  // RE-SPELLED 2026-09-30 (432-13, D-10): was 'accumulates awaited confirm time'. No confirm is
-  // handed to the registrar, so the port is never asked and no time is ever paused.
-  // 2026-10-01 (432-14, D-03): the CLI producer no longer declares a confirm either; a port can only
-  // be smuggled in as an excess field, and it is still never asked.
-  // 2026-10-02 (432-42, D-14): the always-zero `confirmPausedMs` supplier is deleted, so the second
-  // half of the claim is now its absence from the hooks' return. RE-TITLED 2026-10-03
-  // (quick-261003-tsr, IN-14): was 'never asks the confirm it is handed; confirmPausedMs() stays 0
-  // (432-13)'.
-  it('never asks the confirm it is handed, and returns no pause supplier (432-13)', async () => {
-    const configDir = tempDir('run-hooks-')
-    const runId = 'r_hooks-pause'
-    const auditSink = buildRunAuditSink({ configDir, runId })
-    let asked = 0
-    // 432-19: safety publishes no confirm port; the shape an old host bound, spelled locally.
-    const confirm = {
-      surface: 'tty-prompt' as const,
-      ask: async () => {
-        asked += 1
-        return true
-      },
-    }
-    const smuggled = { confirm, trustMode: false, executionContext: 'local-interactive' }
-    const built = buildRunSafetyHooks({
-      auditSink,
-      ...smuggled,
-    })
-    const { safetyHooks } = built
-
-    await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
-    await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
-    expect(asked).toBe(0)
-    expect(Object.keys(built), 'the hooks still return a pause supplier').toEqual(['safetyHooks'])
-  })
-})
+// ---- (9) per-run safety-hooks registrar: deleted 441-30 (D-12/D-15) with its three cells ------
 
 // 403-13 (WR-06, LIVE-03): a SUBSCRIBER's fault has a NAMED destination on the shipped composition,
 // and the port is CARRIED across the RunPersistencePorts -> RunPorts hop at run-assembly.ts:175 —

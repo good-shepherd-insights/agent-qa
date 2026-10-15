@@ -3530,6 +3530,14 @@ export async function produceSuiteRunMembers(
     suitePlannerMembers,
   )
 
+  // 433-29 (G-433-5): the suite's own source and config, masked with the run's redactor. The channel
+  // replays to late listeners, so they are emitted here rather than when the drive bound the run.
+  for (const prepared of preparedSuites) {
+    if (isSnapshotRecord(prepared.suiteArtifact)) {
+      suiteSnapshots.emit(maskRunArtifactSnapshot(prepared.suiteArtifact, { mask: suiteRunMask }))
+    }
+  }
+
   return {
     members,
     executor,
@@ -3565,12 +3573,6 @@ export async function produceSuiteRunMembers(
     })(),
     bindRunContext: ({ safetyHooks }) => {
       runSafetyHooks = safetyHooks
-      // 433-29 (G-433-5): the suite's own source and config, masked with the run's redactor.
-      for (const prepared of preparedSuites) {
-        if (isSnapshotRecord(prepared.suiteArtifact)) {
-          suiteSnapshots.emit(maskRunArtifactSnapshot(prepared.suiteArtifact, { mask: suiteRunMask }))
-        }
-      }
     },
     onMemberSnapshot: suiteSnapshots.subscribe,
     applyAssembly: ({ buildOrdinal, quarantined }) => {

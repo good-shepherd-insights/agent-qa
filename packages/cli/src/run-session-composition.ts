@@ -17,9 +17,7 @@
 // module. Everything below is on the presentation side of it because a headless drainer would have
 // to substitute something else for each one.
 
-import type { AuditSink, SafetyHookRunner } from '@vostride/agent-qa-safety'
 import type { QuarantineAppliedEntry } from '@vostride/agent-qa-schema'
-import { buildRunSessionSafetyHooks } from '@vostride/agent-qa-agent-local'
 import type {
   AttachableRunSession,
   RunSubscriberHandle,
@@ -49,22 +47,8 @@ const REPLAY_FROM_START = 1
 // unmasked the action name on a confirm prompt for a person to read; nothing in a run asks any more,
 // so there is no prompt to unmask and no port to decorate.
 
-/**
- * The CLI's assembly of the per-run safety hooks.
- *
- * 2026-10-01 (432-14, D-03/D-14): IT SUPPLIES NOTHING THE REGISTRAR DOES NOT READ. It used to add
- * the two things the host-neutral registrar refused to assume — a confirm channel (readline unless
- * the caller injected one) and the human-output unmasking decorator over it — plus the session
- * trust flag. 432-13 stopped the registrar reading all three; this is their last producer, so they
- * are gone here too, and the call carries the run's audit sink and context and nothing else.
- */
-export function buildRunSafetyHooks(input: {
-  auditSink: AuditSink
-}): { safetyHooks: SafetyHookRunner } {
-  return buildRunSessionSafetyHooks({
-    auditSink: input.auditSink,
-  })
-}
+// 2026-10-15 (441-30, D-12/D-15): the per-run hook registrar's CLI assembly is deleted. Its hooks
+// carried only the masking and guardrail provider hooks this phase removes, so a run binds none.
 
 /**
  * The run-completion analytics subscriber, built from the host's composed port (398-10, D-17/D-20).
