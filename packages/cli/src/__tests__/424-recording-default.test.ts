@@ -158,7 +158,6 @@ for (const path of ['suite', 'direct'] as const) {
           },
           variableContext: { envFileVars: {}, inlineVars: {}, cliVars: {}, userRunAttributes: {}, secretStore, secretRedactor },
         } as SuiteRunMemberProductionInput)
-    produced.bindRunContext({ safetyHooks: undefined as never })
     const core = createRunInvocationCore({
       configPath: configFilePath, agentQaRoot: join(root, '.agent-qa'), executionContext: 'ci',
       resolveTargetDeclaration: () => ({ targetClass: 'local', targetNames: ['fixture'], productionTargetNames: [] }),

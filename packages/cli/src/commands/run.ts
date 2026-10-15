@@ -82,7 +82,6 @@ import {
 } from '../run-session-composition.js'
 import { composeAnalyticsHost } from '../composition/analytics-host.js'
 import type { CliAnalyticsHost } from '../composition/analytics-host.js'
-import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
 import {
   runVerdictFirstCurationTail,
   type CurationTailModelDeps,
@@ -2444,9 +2443,6 @@ export async function produceSuiteRunMembers(
   const { readFile } = await import('node:fs/promises')
   const path = await import('node:path')
 
-  // SEAM-03 (362-06): the per-run SafetyHookRunner, bound by the drive after this producer returns
-  // and read at call time by the member closures below.
-  let runSafetyHooks: SafetyHookRunner | undefined
   let activeRunSession: { cancel(): void } | undefined
   void activeRunSession
   const suiteSnapshots = createRunArtifactSnapshotChannel()
@@ -3393,16 +3389,14 @@ export async function produceSuiteRunMembers(
             workingMemory: suiteConfig.workingMemory,
             storageState: suiteConfig.storageState,
             compressor: suiteConfig.compressor,
-            // SEAM-03 (D-04): the per-run SafetyHookRunner (read at call time — bindings predate the mint).
-            safetyHooks: runSafetyHooks,
             knowledgeReader: prepared.knowledge?.reader,
             // 407 D-13: the rung this run was SERVED on, resolved once when the composition
             // opened and carried into every step's evidence — so a run served on the static
             // floor stays labelled that way forever, even after the host is fixed.
             knowledgeRetrievalRung: prepared.knowledge?.retrievalRung,
             knowledgeBudgets: prepared.knowledge?.budgets,
-            // Read at call time, like `runSafetyHooks` above: these bindings are constructed before
-            // the gate, and the ordinal is assigned by the assembler the core calls after it.
+            // Read at call time: these bindings are constructed before the gate, and the ordinal is
+            // assigned by the assembler the core calls after it.
             knowledgeAsOfBuild: suiteBuildOrdinal,
             recordLedger: prepared.knowledge?.recordLedger,
             beginMemoryTurn: prepared.knowledge?.beginMemoryTurn,
@@ -3531,7 +3525,7 @@ export async function produceSuiteRunMembers(
   )
 
   // 433-29 (G-433-5): the suite's own source and config, masked with the run's redactor. The channel
-  // replays to late listeners, so they are emitted here rather than when the drive bound the run.
+  // replays to late listeners, so they are emitted once, as the producer returns.
   for (const prepared of preparedSuites) {
     if (isSnapshotRecord(prepared.suiteArtifact)) {
       suiteSnapshots.emit(maskRunArtifactSnapshot(prepared.suiteArtifact, { mask: suiteRunMask }))
@@ -3571,9 +3565,6 @@ export async function produceSuiteRunMembers(
         attributes: withDb.suiteAttributes,
       }
     })(),
-    bindRunContext: ({ safetyHooks }) => {
-      runSafetyHooks = safetyHooks
-    },
     onMemberSnapshot: suiteSnapshots.subscribe,
     applyAssembly: ({ buildOrdinal, quarantined }) => {
       suiteBuildOrdinal = buildOrdinal
@@ -3635,15 +3626,13 @@ export async function produceSuiteRunMembers(
  * into a new module will be refused by `pnpm validate:arch`, not by a review comment.
  *
  * WHAT IT DOES NOT DO. It does not resolve an execution context (the DOOR does, D-07), it does not
- * register signal handlers, it does not build the audit sink or the safety hooks (the drive does,
- * once, and hands the hooks back through `bindRunContext`), and it cannot terminate its host: the
- * one refusal it makes is a `CliRunInputError`.
+ * register signal handlers, it does not build the audit sink (the drive does, once), and it cannot
+ * terminate its host: the one refusal it makes is a `CliRunInputError`.
  *
- * THE LATE-BOUND SLOTS ARE THE SHIPPED SEMANTICS, PRESERVED. `safetyHooks`, the
- * build ordinal and the quarantine set were `let`s the command assigned after the member closure was
- * defined and the closure read at CALL time — because the ordinal does not exist until the assembler
- * has advanced it, which happens after the gate. `bindRunContext` and `applyAssembly` are those same
- * two assignments, named.
+ * THE LATE-BOUND SLOTS ARE THE SHIPPED SEMANTICS, PRESERVED. The build ordinal and the quarantine
+ * set were `let`s the command assigned after the member closure was defined and the closure read at
+ * CALL time — because the ordinal does not exist until the assembler has advanced it, which happens
+ * after the gate. `applyAssembly` is that assignment, named.
  */
 export interface DirectRunMemberProductionInput {
   readonly resolveTrustPriors?: ResolveTrustPriors
@@ -3778,8 +3767,6 @@ export interface ProducedCliRunMembers {
    * execute, and it cannot precede the verdict because the ordinal is a durable write.
    */
   bindKnowledge?(buildOrdinal: number): void
-  /** The drive's safety hooks, bound before the run starts. */
-  bindRunContext(input: { safetyHooks: SafetyHookRunner }): void
   /** The assembler's results, bound after the gate allowed the run and before `startRun`. */
   applyAssembly(input: { buildOrdinal: number; quarantined: readonly QuarantineAppliedEntry[] }): void
   /** The started session. Since 433-35 a member's framework error fails the run rather than cancelling it. */
@@ -3827,7 +3814,7 @@ export async function produceDirectRunMembers(
   const directRunProduct = input.product
   const singleRunMask: MaskFn = (text) => runtimeSecrets.secretRedactor.redactString(text)
 
-  // The late-bound slots the run's own lifecycle fills. `singleSafetyHooks`, `singleRunProduct` and `singleBuildOrdinal` are declared with the block
+  // The late-bound slots the run's own lifecycle fills. `singleRunProduct` and `singleBuildOrdinal` are declared with the block
   // below, exactly where the command declared them; these two are new only in the sense that the
   // command held them in its own scope.
   let frameworkError: unknown | undefined
@@ -3847,8 +3834,6 @@ export async function produceDirectRunMembers(
 
   // Wire action cache from config (logger wired after LogManager creation below)
   let actionCache: import('@vostride/agent-qa-runner').ActionPlanCache | undefined
-  // SEAM-03 (362-06): the per-run SafetyHookRunner, bound by the drive and read at call time.
-  let singleSafetyHooks: SafetyHookRunner | undefined
   let singleCurationModelDeps: CurationTailModelDeps | undefined
   let singleRunProduct = 'unknown'
   let singleBuildOrdinal = 0
@@ -4314,7 +4299,6 @@ export async function produceDirectRunMembers(
         cache: effectiveCacheEnabled ? actionCache : undefined,
         // D-08/Q10: the sharp compressor injected from the composition root (sharp left core).
         compressor: buildScreenshotCompressor(logger?.createScopedLogger('adapter')),
-        safetyHooks: singleSafetyHooks,
         knowledgeReader: knowledge.reader,
         // 407 D-13: see the suite door above — one resolve per run, carried, never re-probed.
         knowledgeRetrievalRung: knowledge.retrievalRung,
@@ -4596,9 +4580,6 @@ export async function produceDirectRunMembers(
     ...(singleBuildTag === undefined ? {} : { buildTag: singleBuildTag }),
     logger,
     secretRedactor: runtimeSecrets.secretRedactor,
-    bindRunContext: ({ safetyHooks }) => {
-      singleSafetyHooks = safetyHooks
-    },
     applyAssembly: ({ buildOrdinal, quarantined }) => {
       singleBuildOrdinal = buildOrdinal
       singleQuarantined = quarantined

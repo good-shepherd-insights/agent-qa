@@ -82,7 +82,11 @@ describe('421 judge panel walls', () => {
     // Re-blessed 2026-10-15 (Phase 441 plan 30, D-12/D-15): the ledger SHRANK by one entry —
     // packages/cli/src/run-session-composition.ts -> @vostride/agent-qa-safety, whose only import
     // (the per-run hook registrar's types) 441-30 deleted. Nothing was added; the digest was recomputed.
-    expect(digest(read('packages/arch/src/lint/surface-firewall-ledger.ts'))).toBe('d86dabc6043cd78c298b9445d8b58bf4121863bc15e3c8c5d8c546e9a2513d7d')
+    // Re-blessed again 2026-10-15 (Phase 441 plan 30, D-12/D-15): the ledger SHRANK by one more entry —
+    // packages/cli/src/commands/run.ts -> @vostride/agent-qa-safety, whose only import (the hook
+    // runner type of the producers' late-bound slots) 441-30 deleted. Nothing was added; the digest
+    // was recomputed.
+    expect(digest(read('packages/arch/src/lint/surface-firewall-ledger.ts'))).toBe('93677ecee781fdb8ff7ae798edc5be25d943f580e5b3f68696f92f58be98a608')
     for (const text of ["import { loadJudgeCalibrationEvidence as data } from '@vostride/agent-qa-eval-local'",
       "const data = await import('@vostride/agent-qa-eval-local')"]) {
       const hits = calibrationImports({ file: 'packages/cli/src/judge-new.ts', text })

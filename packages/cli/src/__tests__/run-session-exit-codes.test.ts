@@ -109,9 +109,8 @@ describe('both CLI run paths exit through the verdict map (T-361-08)', () => {
   })
 })
 
-// (b) 362-06 SEAM-01/03 — the suite (multi-member) path runs inside `runSafetyScope` and threads the
-// per-run SafetyHookRunner into the member executor. 441-58 (D-06): the run masks with its producer's
-// redactor, and no run masking context is seeded.
+// (b) 362-06 SEAM-01/03 — the suite (multi-member) path runs inside `runSafetyScope`. 441-58 (D-06):
+// the run masks with its producer's redactor, and no run masking context is seeded.
 describe('the suite path runs inside runSafetyScope and masks with its own redactor (SEAM-01/03, 362-06)', () => {
   // RE-SPELLED 2026-09-30 (432-13, D-14/D-15): was 'registers the --trust-session flag and reads
   // config.safety?.trustMode'. Nothing asks, so there is nothing for trust to satisfy.
@@ -136,11 +135,8 @@ describe('the suite path runs inside runSafetyScope and masks with its own redac
     expect(count(assemblySource, 'masking:')).toBe(0)
   })
 
-  it('threads the per-run SafetyHookRunner into the suite member executor', () => {
-    // 441-30 (D-12/D-15): the drive builds and binds no runner; what is left is the producers' slot.
-    expect(count(runSource, 'safetyHooks:')).toBeGreaterThanOrEqual(1)
-    expect(count(runSource, 'bindRunContext: ({ safetyHooks }) =>')).toBe(2)
-  })
+  // 2026-10-15 (441-30, D-12/D-15): the cell that pinned the hook runner reaching the suite member
+  // executor is deleted with the producers' late-bound slot.
 
   it('closes the run out from a finally, after the producer finalises, exactly once',
     () => {
@@ -190,8 +186,7 @@ describe('both handleShutdown paths arm + clear a bounded force-exit backstop (S
 
 // (f) 362-06 SEAM-01/03 — the single-test path (the 363 demo path) activates the SAME seams with the
 // SAME helpers (Pitfall 7): BOTH startRun sites are wrapped in runSafetyScope, no identity mint
-// remains anywhere in production composition, the run MaskingContext + SafetyHookRunner reach the
-// single-test runTest config, and trust reaches the gate only via the flag/config channel (D-15).
+// remains anywhere in production composition, and no trust reaches a run (D-15).
 describe('the single-test path activates the seams with no identity mint remaining (SEAM-01/03, 362-06)', () => {
   it('wraps BOTH run bodies in runSafetyScope', () => {
     // There is ONE run body now and both paths enter it, which is what "both are wrapped" meant.
@@ -205,8 +200,8 @@ describe('the single-test path activates the seams with no identity mint remaini
     expect(count(compositionSource, 'buildIdentityMasking')).toBe(0)
   })
 
-  // RE-TITLED 2026-10-15 (441-30, D-12/D-15): was 'builds no run MaskingContext at either site, and
-  // the SafetyHookRunner once in the drive'. The drive builds no hook registrar either.
+  // RE-TITLED 2026-10-15 (441-30, D-12/D-15): the old title said the hook runner was built once in
+  // the drive. The drive builds no hook registrar either.
   it('builds no run MaskingContext and no hook registrar at either site', () => {
     // 441-58 (D-06): no site builds a run masking context.
     // 441-19 (D-12): the seed helper is deleted, so its primitives are what stays pinned absent.
@@ -217,9 +212,8 @@ describe('the single-test path activates the seams with no identity mint remaini
     }
   })
 
-  it('threads the run context + hooks into the single-test runTest config', () => {
-    expect(runSource).toContain('safetyHooks: singleSafetyHooks')
-  })
+  // 2026-10-15 (441-30, D-12/D-15): the cell 'threads the run context + hooks into the single-test
+  // runTest config' is deleted with the single-test producer's late-bound slot.
 
   // RE-SPELLED 2026-09-30 (432-13): was 'routes trust to the gate only via --trust-session /
   // config.safety.trustMode'. No trust reaches a run at all now; the env-var guards stay.

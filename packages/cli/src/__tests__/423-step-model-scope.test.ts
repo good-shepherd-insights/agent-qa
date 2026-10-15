@@ -179,7 +179,6 @@ async function executePath(path: 'DIRECT' | 'SUITE' | 'COMPOSED', options: { mis
           },
           variableContext: { envFileVars: {}, inlineVars: {}, cliVars: {}, userRunAttributes: {}, secretStore, secretRedactor },
         } as SuiteRunMemberProductionInput)
-    produced.bindRunContext({ safetyHooks: undefined as never })
     const core = createRunInvocationCore({
       configPath: configFilePath, agentQaRoot: join(project, '.agent-qa'), executionContext: 'ci',
       resolveTargetDeclaration: () => ({ targetClass: 'local', targetNames: ['fixture'], productionTargetNames: [] }),

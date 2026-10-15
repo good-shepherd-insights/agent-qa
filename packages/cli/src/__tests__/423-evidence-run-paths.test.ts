@@ -117,7 +117,6 @@ for (const path of ['COMPOSED', 'DIRECT'] as const) {
           },
           variableContext: { envFileVars: {}, inlineVars: {}, cliVars: {}, userRunAttributes: {}, secretStore, secretRedactor },
         } as SuiteRunMemberProductionInput)
-    produced.bindRunContext({ safetyHooks: undefined as never })
     const dbPath = join(root, 'dashboard.db')
     const db = new DashboardDatabase({ dbPath })
     const ingest = createDashboardRunIngest({ db, correlationEnv: { runId } })

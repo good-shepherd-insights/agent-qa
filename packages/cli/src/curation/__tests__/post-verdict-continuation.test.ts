@@ -83,7 +83,7 @@ it.each(['settles', 'host deadline expires', 'abort', 'detached tail', 'framewor
       knowledgeRoot: join(fixture.project, 'knowledge'), targetClass: 'local',
       targetNames: [fixture.targetName], productionTargetNames: [], allowProduction: false, memberProbeUrls: [],
       secretRedactor: new SecretRedactor(new SecretStore()),
-      bindRunContext: () => undefined, applyAssembly: () => undefined,
+      applyAssembly: () => undefined,
       bindSession: () => undefined, takeFrameworkError: () => mode === 'framework error' ? new Error('fixture framework failure') : undefined,
       getCurationModelDeps: () => undefined,
     }),
