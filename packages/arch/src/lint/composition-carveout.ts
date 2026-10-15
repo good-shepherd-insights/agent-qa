@@ -46,8 +46,8 @@ export const COMPOSITION_ONLY_PACKAGES: Readonly<Record<string, string>> = {
   '@vostride/agent-qa-model': 'token-accounting ceilings and the canonical tool-output compaction',
   '@vostride/agent-qa-runner': 'the member run config the composition assembles and the ports it fills',
   '@vostride/agent-qa-runner-local': 'the concrete run persistence adapters and the screenshot compressor',
-  '@vostride/agent-qa-safety': 'the masking seed pipeline and the per-run first-party hook registration',
-  '@vostride/agent-qa-safety-local': 'execution-context detection and the run-rooted jsonl audit sink',
+  '@vostride/agent-qa-safety': 'the execution-context resolver the composition installs and reads',
+  '@vostride/agent-qa-safety-local': 'execution-context detection and the run-safety scope',
   '@vostride/agent-qa-web': 'the accessibility check, loaded on demand for web adapters only',
 }
 

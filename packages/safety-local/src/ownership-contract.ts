@@ -3,17 +3,17 @@ import type { OwnershipContract } from '@vostride/agent-qa-arch'
 export const AGENT_QA_SAFETY_LOCAL_PACKAGE_NAME = '@vostride/agent-qa-safety-local'
 export const AGENT_QA_SAFETY_LOCAL_PACKAGE_DIR = 'packages/safety-local'
 export const AGENT_QA_SAFETY_LOCAL_PACKAGE_CLASSES = ['storageImplementation'] as const
+// 2026-10-15 (441-45, D-12/D-15): the responsibilities are the ones that remain after 441-33 and
+// 441-44.
 export const AGENT_QA_SAFETY_LOCAL_ALLOWED_RESPONSIBILITIES = [
-  'local JSONL guardrail audit writer implementation behind the safety AuditSink port',
-  'local guardrail configuration loader implementation for execution safety',
-  'filesystem access for local safety audit and guardrail configuration adapters',
-  'local AsyncLocalStorage run-safety scope binding behind the safety masking-context, execution-context, and audit-sink resolver seams',
+  'local AsyncLocalStorage run-safety scope binding behind the safety execution-context resolver seam',
   'host execution-context detection behind the safety resolver seam',
+  'one-way fingerprint helper',
 ] as const
 export const AGENT_QA_SAFETY_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
   'provider invocation ownership',
   'execution-safety policy decision logic',
-  'masking or guardrail detection semantics',
+  'masking or secret detection semantics',
   'agent decision or planning logic',
 ] as const
 export const AGENT_QA_SAFETY_LOCAL_EXTERNAL_DEPENDENCIES = [] as const

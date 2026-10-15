@@ -2,7 +2,7 @@
   "name": "@vostride/agent-qa-safety-local",
   "version": "0.1.21",
   "private": false,
-  "description": "StorageImplementation shell for local safety audit writers and guardrail configuration adapters in agent-qa.",
+  "description": "StorageImplementation shell for the local run-safety scope and execution-context detection in agent-qa.",
   "keywords": [
     "agent-qa",
     "testing",

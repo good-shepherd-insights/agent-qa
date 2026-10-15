@@ -4,13 +4,18 @@ Inherit the root `agent-qa/AGENTS.md` branding, security, and release rules.
 
 ## Scope
 
-This package is the browser-safe safety kernel. It owns the prompt walker, the
-declared-secret masking middleware, the risk classifier, the execution-context
-seam and the data delimiters. Key exports: `mapPromptLeaves`,
-`createMaskingMiddleware`, `classifyRisk`, and `wrapAppObservedData`. The
-execution policy gate and its confirm ports were deleted in Phase 432 (D-15);
-the masking context, the guardrails, the hook registrar and the audit port were
-deleted in Phase 441 (D-12, D-15).
+This package is the browser-safe safety kernel. It owns four things:
+
+- the provider-request prompt walker and the declared-secret masking middleware
+  factory: `mapPromptLeaves`, `createMaskingMiddleware` and the
+  `ProviderRequestParams` type;
+- the deterministic static risk-tier classifier and its destructive name
+  lexicon: `classifyRisk` and `TIER_ORDER`;
+- the neutral execution-context resolver seam: `getActiveExecutionContext`,
+  `resolveExecutionContext`, `setActiveExecutionContextResolver`, and the
+  `ExecutionContextResolver` and `ExecutionContextSignals` types;
+- the app-observed data delimiters: `wrapAppObservedData`,
+  `APP_OBSERVED_DATA_OPEN` and `APP_OBSERVED_DATA_CLOSE`.
 
 ## Read First
 
@@ -19,6 +24,8 @@ deleted in Phase 441 (D-12, D-15).
 - `src/egress/masking-middleware.ts`
 - `src/egress/map-prompt-leaves.ts`
 - `src/policy/risk-classifier.ts`
+- `src/policy/execution-context.ts`
+- `src/serving/data-delimiters.ts`
 
 ## Commands
 
@@ -31,6 +38,9 @@ deleted in Phase 441 (D-12, D-15).
 - This package is browser-safe and uses NO host APIs: no `fs`, no `process`, no
   database, no `AsyncLocalStorage`. Host adapters live in
   `@vostride/agent-qa-safety-local`; safety never depends on safety-local.
+- `createMaskingMiddleware(mask)` applies the declared mask it is handed to
+  every prompt leaf and decides nothing itself. `createModel` keeps it last in
+  its middleware array, and `pnpm run validate:safety` checks that.
 - Keep the AI-SDK-derived `ProviderRequestParams` type here rather than in
   `@vostride/agent-qa-schema`, because `@ai-sdk/*` types are not browser-safe
   (the deliberate SAFE-02 override). Schema stays host-free and SDK-free.

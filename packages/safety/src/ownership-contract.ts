@@ -3,24 +3,17 @@ import type { OwnershipContract } from '@vostride/agent-qa-arch'
 export const AGENT_QA_SAFETY_PACKAGE_NAME = '@vostride/agent-qa-safety'
 export const AGENT_QA_SAFETY_PACKAGE_DIR = 'packages/safety'
 export const AGENT_QA_SAFETY_PACKAGE_CLASSES = ['providerNeutral', 'storageNeutral'] as const
+// 2026-10-15 (441-45, D-12/D-15): the responsibilities are the ones that remain after 441-33.
 export const AGENT_QA_SAFETY_ALLOWED_RESPONSIBILITIES = [
-  'provider-neutral and storage-neutral safety hook framework contracts',
-  'egress-scan and policy seam contracts for execution safety engines',
-  'storage-neutral audit sink port for guardrail audit rows',
-  'run-scoped reversible masking context with stable per-run placeholders',
-  'provider-request egress masking hook, neutral run-scope resolver seam, and known-value seeding',
-  'deterministic egress guardrail detector and scan engine',
-  'guardrail policy load boundary (parse-or-throw, fail closed)',
-  'buffering streaming egress guardrail scan with block-to-redact promotion',
-  'reusable fail-closed committed-egress pre-write checkpoint with audited user-authored override',
-  'pure construction-time secret scan over surfaced artifact bytes, seeded from the masking sources',
+  'provider-request prompt walker and declared-secret masking middleware factory',
   'neutral execution-context resolver seam',
   'deterministic static risk-tier classifier and destructive name lexicon',
+  'app-observed data delimiters',
 ] as const
 export const AGENT_QA_SAFETY_FORBIDDEN_RESPONSIBILITIES = [
   'filesystem, database, or process access',
   'provider invocation ownership',
-  'concrete audit writer or guardrail config-loader implementations',
+  'concrete host adapters',
   'local runtime persistence',
 ] as const
 export const AGENT_QA_SAFETY_EXTERNAL_DEPENDENCIES = ['ai'] as const
