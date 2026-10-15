@@ -27,7 +27,6 @@ export interface AttachableRunSession {
 }
 
 // 2026-10-01 (432-14, D-03/D-14): `RunPresentationPorts` is deleted. It carried the human confirm
-// channel and the host's human-decoration hook, which 432-13 stopped reading and whose last host
-// producer (the CLI's `buildRunSafetyHooks`) stops supplying here. Nothing in a run asks a person,
-// so the composition is handed no presentation capability at all; the reporter and live-line
-// vocabulary above is what a host still attaches over.
+// channel and the host's human-decoration hook. Nothing in a run asks a person, so the composition
+// is handed no presentation capability at all; the reporter and live-line vocabulary above is what
+// a host still attaches over.

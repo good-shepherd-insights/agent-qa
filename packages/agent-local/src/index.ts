@@ -25,7 +25,6 @@ export {
   buildMemberRunConfig,
   buildRunAuditSink,
   buildRunPorts,
-  buildRunSessionSafetyHooks,
   buildScreenshotCompressor,
   buildSuiteMemberExecutor,
   registerAdapterLiveStream,
@@ -42,7 +41,6 @@ export {
 } from './composition/run-composition.js'
 export type {
   BuildMemberRunConfigInput,
-  BuildRunSessionSafetyHooksInput,
   OpenRunKnowledgeCompositionInput,
   RetrievalRungResolver,
   RunConfigDigests,

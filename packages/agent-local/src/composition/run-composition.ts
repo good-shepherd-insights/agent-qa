@@ -2,12 +2,11 @@
 //
 // This is the dissected majority of what used to be a 1035-line composition helper inside the CLI.
 // Nothing here was rewritten: the digest mint, the persistence-port construction, the suite
-// lifecycle, the stamped audit sink, the safety-hook registration and
-// the member run-config assembly are the same code, moved. What changed is WHERE it lives and what
-// it is allowed to assume, and only one thing was actually taken away — the readline default on the
-// confirm seam, which became a presentation port (see presentation-ports.ts for the rule that
-// decided every symbol's side of the line). Since 432-13 nothing reads that port: a run asks nobody,
-// and 432-14 deleted the port with its last producer.
+// lifecycle, the stamped audit sink and the member run-config assembly are the same code, moved.
+// What changed is WHERE it lives and what it is allowed to assume, and only one thing was actually
+// taken away — the readline default on the confirm seam, which became a presentation port (see
+// presentation-ports.ts for the rule that decided every symbol's side of the line). Since 432-13
+// nothing reads that port: a run asks nobody, and 432-14 deleted the port with its last producer.
 //
 // Why it moved: 386's daemon has to build a real RunConfig without importing a CLI. A composition
 // that lives inside one surface is a composition every other host has to re-derive, and two hosts
@@ -20,8 +19,7 @@
 
 import { createHash } from 'node:crypto'
 import { dirname, isAbsolute, resolve } from 'node:path'
-import { registerFirstPartySafetyHooks } from '@vostride/agent-qa-safety'
-import type { AuditSink, SafetyHookRunner } from '@vostride/agent-qa-safety'
+import type { AuditSink } from '@vostride/agent-qa-safety'
 import { detectExecutionContext, JsonlAuditSink } from '@vostride/agent-qa-safety-local'
 import { guardToolOutput } from '@vostride/agent-qa-model'
 import type { TokenAccounting } from '@vostride/agent-qa-model'
@@ -738,43 +736,6 @@ export function buildRunAuditSink(input: {
  */
 export function runDirFor(input: { configDir: string; runId: string }): string {
   return resolve(input.configDir, '.agent-qa', RUNS_SUBDIR, slugBranch(input.runId))
-}
-
-// ---- (8) per-run safety-hooks registrar (D-01/D-11; approval removed 432-13) ---------------------
-//
-// D-01: the loop's SafetyHookRunner is a SECOND, per-run registerFirstPartySafetyHooks() invocation
-// at the composition root with DIRECT deps (the model registry's deps-less call stays untouched).
-// It carries the stamped per-run sink and the resolved execution context, so the masking and
-// guardrail middleware and their audit rows are the run's own.
-//
-// 432-13 (D-14/D-15): NOTHING IN A RUN ASKS. The host's presentation confirm, its human decorator and
-// the session trust flag are no longer read, and no confirm port is handed to the registrar — the
-// in-test tool actions it gates are allowed or restricted by their own class and never reach an ask.
-// 432-14 (D-03): the input narrows to what the registrar reads. The presentation contract and the
-// trust flag are deleted with their last producer. 2026-10-02 (432-42, D-14): the always-zero
-// `confirmPausedMs` supplier is deleted too, with the runner's pause credit it fed.
-//
-// 2026-10-01 (432-19, D-15): the registrar no longer registers the execution gate, so it reads no
-// execution context. The run still resolves the context and stamps it where it is a durable field
-// (handoffs, bus events, run DTOs); it no longer reaches the safety registrar.
-
-export interface BuildRunSessionSafetyHooksInput {
-  auditSink: AuditSink
-}
-
-/**
- * Perform the D-01 per-run `registerFirstPartySafetyHooks` invocation and return the loop's
- * `SafetyHookRunner`: masking before guardrail, both writing the run's own guardrail rows. No gate
- * is registered (432-19), so no in-run action can wait on a person.
- */
-export function buildRunSessionSafetyHooks(
-  input: BuildRunSessionSafetyHooksInput,
-): { safetyHooks: SafetyHookRunner } {
-  const { registry } = registerFirstPartySafetyHooks({
-    auditSink: input.auditSink,
-  })
-
-  return { safetyHooks: registry }
 }
 
 // ---- (9) member-run-config builder — the D-05 cutover onto runMemberTest (363-11) ------------
