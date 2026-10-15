@@ -533,6 +533,26 @@ function artifactDigests(matches: readonly ResolvedBundle[]): Set<string> {
   return digests
 }
 
+function looselyCarriesPurgedContent(
+  payload: unknown,
+  seeds: ReadonlySet<string>,
+  digests: ReadonlySet<string>,
+): boolean {
+  if (typeof payload !== 'object' || payload === null) return false
+  const loose = payload as Record<string, unknown>
+  const seedMatch = [loose['summarySeed'], loose['bodySeed']].some(
+    (seed) => typeof seed === 'string' && seeds.has(seed),
+  )
+  const inventory: unknown[] = Array.isArray(loose['artifactInventory'])
+    ? loose['artifactInventory']
+    : []
+  return seedMatch || inventory.some((artifact) => {
+    if (typeof artifact !== 'object' || artifact === null) return false
+    const digest = (artifact as Record<string, unknown>)['sha256']
+    return typeof digest === 'string' && digests.has(digest)
+  })
+}
+
 /**
  * D-14/CR-03 deletion authority: a queue payload is destroyed iff it carries the purged content
  * or curation-job lineage — candidateId lineage, exact seed equality, or artifact digest
@@ -602,8 +622,14 @@ export function resolveQueueSweepTargets(
       continue
     }
 
-    if (!curationCandidate.success && !canaryOutcome.success) {
-      throw new PurgeQueueIdentityError(candidateDir, 'payload does not match a known queue schema')
+    // 2026-10-15 (441-64, CR-C01, D-20): a payload matching no current schema was written before
+    // Phase 441. It is read loosely for the purged content and otherwise left in place.
+    if (
+      !curationCandidate.success
+      && !canaryOutcome.success
+      && looselyCarriesPurgedContent(payload, seeds, digests)
+    ) {
+      targets.push({ candidateDir, candidateId })
     }
   }
   return targets.sort((left, right) =>

@@ -211,9 +211,10 @@ function recordText(record: AdversarialRefreshRecord): string {
  * Every published refresh record for one product, in file-name order.
  *
  * An absent tree is an empty history, not a failure — the first refresh on a host has no state
- * and must not be told the store is broken. A PRESENT but malformed record IS a failure: this
- * is the evidence a later refresh skips seeds on, so a record it cannot read is never silently
- * dropped.
+ * and must not be told the store is broken. A record that fails the strict schema (one written
+ * before Phase 441 carries a policy digest) is absent too: D-20 migrates nothing (441-64, CR-C02).
+ * Unparseable bytes, and a record that parses but whose digest name or product does not match,
+ * are still failures.
  */
 export function readAdversarialRefreshRecords(input: {
   agentQaRoot: string
@@ -231,17 +232,17 @@ export function readAdversarialRefreshRecords(input: {
     })
     .map(entry => entry.name)
     .sort()
-  return names.map(name => {
-    const record = recordSchema.parse(
-      JSON.parse(readFileSync(join(dir, name), 'utf8')),
-    ) as AdversarialRefreshRecord
+  return names.flatMap(name => {
+    const parsed = recordSchema.safeParse(JSON.parse(readFileSync(join(dir, name), 'utf8')))
+    if (!parsed.success) return []
+    const record = parsed.data as AdversarialRefreshRecord
     if (`${adversarialRefreshRecordDigest(record)}.json` !== name) {
       throw new TypeError('adversarial refresh record identity mismatch')
     }
     if (slugBranch(record.product) !== slugBranch(input.product)) {
       throw new TypeError('adversarial refresh record product mismatch')
     }
-    return record
+    return [record]
   })
 }
 
