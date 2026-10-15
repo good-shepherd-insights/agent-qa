@@ -197,7 +197,7 @@ import {
   asJobId,
   DEFAULT_EMBEDDING_PROFILE,
   guardRunAnalysisArtifact,
-  maskPayloadStrings,
+  maskPayloadTree,
   sha256hex16,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -2615,7 +2615,8 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
   if (input.chatModel !== undefined) chatModelsByName.set(composedChatModelName, input.chatModel)
 
   // 2026-10-14 (441-06, D-06): session events, op results and turn results carry the declared mask.
-  const maskChatProjection = <T>(value: T): T => maskPayloadStrings(value, input.mask)
+  // 2026-10-15 (441-62, WR-B05): keys too, since an op result's keys can be data.
+  const maskChatProjection = <T>(value: T): T => maskPayloadTree(value, input.mask)
 
   const chatSessionLog = createJsonlSessionLog({
     root: input.agentQaRoot,

@@ -14,7 +14,7 @@
 import { dirname, resolve } from 'node:path'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
-import { maskPayloadStrings } from '@vostride/agent-qa-schema'
+import { maskPayloadTree } from '@vostride/agent-qa-schema'
 import type {
   ActionRef,
   EntityCard,
@@ -85,9 +85,9 @@ function declaredSecretsFor(command: Command): DeclaredSecretMask {
 }
 
 // 2026-10-14 (441-14, D-07): everything this file prints is masked and never restored; JSON is
-// masked leaf by leaf before it is serialized.
+// masked leaf by leaf before it is serialized. 2026-10-15 (441-62, IN-A07): keys too.
 function emitJson(mask: MaskFn, value: unknown): void {
-  console.log(JSON.stringify(maskPayloadStrings(value, mask), null, 2))
+  console.log(JSON.stringify(maskPayloadTree(value, mask), null, 2))
 }
 
 function emitHuman(mask: MaskFn, text: string): void {
