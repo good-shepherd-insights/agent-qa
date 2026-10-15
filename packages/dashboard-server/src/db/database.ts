@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { MIGRATIONS, SCHEMA_VERSION, type DashboardMigration } from './schema.js'
-import { defaultRunOwnership, type RunOwner, type RunOwnership } from './run-owner.js'
+import {
+  defaultRunOwnership,
+  orphanSummary,
+  type RunOwner,
+  type RunOwnership,
+} from './run-owner.js'
 import {
   DEFAULT_AGENT_QA_RUNS_DB_PATH,
   generateRunId,
@@ -991,6 +996,71 @@ export class DashboardDatabase {
     ).get(id) as { owner_pid: number; owner_incarnation: string | null; owner_host: string | null } | undefined
     if (row === undefined) return undefined
     return { pid: row.owner_pid, incarnation: row.owner_incarnation, host: row.owner_host ?? '' }
+  }
+
+  listRunningRunOwners(): Array<{ id: string; startedAt?: string; owner: RunOwner }> {
+    const rows = this.db.prepare(
+      "SELECT id, started_at, owner_pid, owner_incarnation, owner_host FROM runs WHERE status = 'running' ORDER BY rowid",
+    ).all() as Array<{
+      id: string
+      started_at: string | null
+      owner_pid: number
+      owner_incarnation: string | null
+      owner_host: string | null
+    }>
+    return rows.map(row => ({
+      id: row.id,
+      ...(row.started_at ? { startedAt: row.started_at } : {}),
+      owner: { pid: row.owner_pid, incarnation: row.owner_incarnation, host: row.owner_host ?? '' },
+    }))
+  }
+
+  // 2026-10-16 (442-01, D-04): one compare-and-set on the stamped owner; never read-then-write.
+  finalizeOwnRun(id: string, updates: {
+    status: 'failed' | 'cancelled'
+    endedAt: string
+    duration?: number
+    failureSummary?: string
+  }): boolean {
+    const fields = ['status = ?', 'ended_at = ?']
+    const values: unknown[] = [updates.status, updates.endedAt]
+    if (updates.duration !== undefined) { fields.push('duration = ?'); values.push(updates.duration) }
+    if (updates.failureSummary !== undefined) {
+      fields.push('failure_summary = ?')
+      values.push(updates.failureSummary)
+    }
+    const { pid, incarnation, host } = this.runOwnership.self
+    const result = this.db.prepare(`
+      UPDATE runs SET ${fields.join(', ')}
+      WHERE id = ? AND status = 'running' AND owner_pid = ? AND owner_incarnation IS ? AND owner_host = ?
+    `).run(...values, id, pid, incarnation, host)
+    return Number(result.changes) === 1
+  }
+
+  finalizeOrphanRun(id: string, owner: RunOwner): boolean {
+    const summary = orphanSummary(owner.pid)
+    const endedAt = new Date().toISOString()
+    const result = this.db.prepare(`
+      UPDATE runs SET status = 'failed', failure_summary = ?, ended_at = ?,
+        duration = COALESCE(
+          MAX(0, CAST(ROUND((julianday(?) - julianday(started_at)) * 86400000) AS INTEGER)),
+          duration
+        )
+      WHERE id = ? AND status = 'running' AND owner_pid = ? AND owner_incarnation IS ? AND owner_host = ?
+    `).run(summary, endedAt, endedAt, id, owner.pid, owner.incarnation, owner.host)
+    if (Number(result.changes) !== 1) return false
+    try {
+      const duration = (this.db.prepare('SELECT duration FROM runs WHERE id = ?').get(id) as
+        { duration: number } | undefined)?.duration ?? 0
+      const artifact = this.getRunArtifact(id)
+      if (artifact && !artifact.finalizedAt) {
+        this.finalizeRunArtifact(id, {
+          errors: [{ code: 'owner-gone', phase: 'orphan-cleanup', message: summary }],
+          runtime: { status: 'failed', duration },
+        })
+      }
+    } catch { /* the row is final; the artifact write is best-effort */ }
+    return true
   }
 
   getRun(id: string): RunRow | undefined {

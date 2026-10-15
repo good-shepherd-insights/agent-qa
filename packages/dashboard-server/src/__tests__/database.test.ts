@@ -1147,3 +1147,113 @@ describe('C442-OWNER-STAMP', () => {
     expect(db.readRunOwner(insertSampleRun({ status: 'passed' }))).toBeUndefined()
   })
 })
+
+describe('C442-ORPHAN', () => {
+  const OTHER_OWNER = { pid: 5151, incarnation: 'proc-starttime:9', host: 'h' }
+  let dir: string
+  let first: DashboardDatabase
+  let second: DashboardDatabase
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'agent-qa-442-orphan-'))
+    const dbPath = join(dir, 'runs.db')
+    first = new DashboardDatabase({ dbPath, runOwnership: { self: STAMPED_OWNER, probe: inertProbe } })
+    second = new DashboardDatabase({ dbPath, runOwnership: { self: OTHER_OWNER, probe: inertProbe } })
+  })
+
+  afterEach(() => {
+    first.close()
+    second.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  function runningRow(handle: DashboardDatabase): string {
+    const startedAt = new Date(Date.now() - 60_000).toISOString()
+    const id = handle.insertRun({ name: 'Owned run', status: 'running', duration: 0, startedAt, endedAt: startedAt })
+    handle.insertRunArtifact({ runId: id, kind: 'test' })
+    expect(handle.getRun(id)?.status).toBe('running')
+    return id
+  }
+
+  function snapshotOf(handle: DashboardDatabase, id: string): string {
+    return JSON.stringify({
+      row: handle.getRun(id),
+      owner: handle.readRunOwner(id),
+      artifact: handle.getRunArtifact(id),
+    })
+  }
+
+  it('an orphan is finalized failed with the plain sentence', () => {
+    const id = runningRow(first)
+    const owner = second.readRunOwner(id)
+    expect(owner).toEqual(STAMPED_OWNER)
+
+    expect(second.finalizeOrphanRun(id, owner!)).toBe(true)
+
+    const sentence = 'The process running this run (pid 4242) ended before it finished.'
+    const row = first.getRun(id)!
+    expect(row.status).toBe('failed')
+    expect(row.failureSummary).toBe(sentence)
+    expect(row.duration).toBeGreaterThan(0)
+    expect(row.endedAt).not.toBe(row.startedAt)
+    const artifact = first.getRunArtifact(id)!
+    expect(artifact.finalizedAt).not.toBeNull()
+    expect(artifact.payload.errors).toEqual([
+      { code: 'owner-gone', phase: 'orphan-cleanup', message: sentence },
+    ])
+    expect(artifact.payload.runtime).toMatchObject({ status: 'failed', duration: row.duration })
+  })
+
+  it('exactly one finalizer wins a race', () => {
+    const endedAt = new Date().toISOString()
+    const ownFirst = runningRow(first)
+    const owner = first.readRunOwner(ownFirst)!
+    expect(second.finalizeOwnRun(ownFirst, { status: 'cancelled', endedAt })).toBe(false)
+    expect(first.getRun(ownFirst)?.status).toBe('running')
+    expect(first.finalizeOwnRun(ownFirst, { status: 'cancelled', endedAt })).toBe(true)
+    expect(first.finalizeOwnRun(ownFirst, { status: 'failed', endedAt })).toBe(false)
+    expect(second.finalizeOrphanRun(ownFirst, owner)).toBe(false)
+    expect(first.getRun(ownFirst)).toMatchObject({ status: 'cancelled', failureSummary: null })
+    expect(first.getRunArtifact(ownFirst)?.finalizedAt).toBeNull()
+
+    const orphanFirst = runningRow(first)
+    expect(second.finalizeOrphanRun(orphanFirst, owner)).toBe(true)
+    const afterOrphan = snapshotOf(first, orphanFirst)
+    expect(first.finalizeOwnRun(orphanFirst, { status: 'cancelled', endedAt })).toBe(false)
+    expect(second.finalizeOrphanRun(orphanFirst, owner)).toBe(false)
+    expect(snapshotOf(first, orphanFirst)).toBe(afterOrphan)
+
+    const untouched = runningRow(first)
+    const before = snapshotOf(first, untouched)
+    for (const stranger of [
+      { ...owner, pid: owner.pid + 1 },
+      { ...owner, incarnation: 'proc-starttime:other' },
+      { ...owner, incarnation: null },
+      { ...owner, host: 'another-host' },
+    ]) {
+      expect(second.finalizeOrphanRun(untouched, stranger)).toBe(false)
+    }
+    expect(snapshotOf(first, untouched)).toBe(before)
+
+    second.updateRun(untouched, { status: 'running' })
+    expect(first.readRunOwner(untouched)).toEqual(OTHER_OWNER)
+    expect(first.finalizeOrphanRun(untouched, owner)).toBe(false)
+    expect(first.finalizeOwnRun(untouched, { status: 'cancelled', endedAt })).toBe(false)
+    expect(first.getRun(untouched)?.status).toBe('running')
+  })
+
+  it('the sweeps find nothing to do on an empty table', () => {
+    expect(first.listRunningRunOwners()).toEqual([])
+    first.insertPendingRun({ name: 'Queued' })
+    first.insertRun({
+      name: 'Done', status: 'passed', duration: 1, startedAt: '2026-10-16T00:00:00.000Z',
+      endedAt: '2026-10-16T00:00:01.000Z',
+    })
+    expect(first.listRunningRunOwners()).toEqual([])
+
+    const id = runningRow(first)
+    expect(second.listRunningRunOwners()).toEqual([
+      { id, startedAt: first.getRun(id)!.startedAt, owner: STAMPED_OWNER },
+    ])
+  })
+})

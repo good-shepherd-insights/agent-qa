@@ -18,13 +18,29 @@ export interface RunOwnership {
 
 export type RunOwnerState = 'self' | 'alive' | 'gone' | 'unknown'
 
-export function classifyRunOwner(_owner: RunOwner, _ownership: RunOwnership): RunOwnerState {
-  return 'unknown'
+// 2026-10-16 (442-01, D-02): gone only on proof (a dead pid or a changed start time); else unknown.
+export function classifyRunOwner(owner: RunOwner, ownership: RunOwnership): RunOwnerState {
+  const { self, probe } = ownership
+  if (owner.host !== self.host) return 'unknown'
+  if (owner.pid === self.pid && owner.incarnation === self.incarnation) return 'self'
+  let alive: boolean
+  try {
+    alive = probe.isAlive(owner.pid)
+  } catch {
+    return 'unknown'
+  }
+  if (!alive) return 'gone'
+  if (owner.incarnation === null) return 'unknown'
+  const current = probe.incarnationOf(owner.pid)
+  if (current === undefined) return 'unknown'
+  return current === owner.incarnation ? 'alive' : 'gone'
 }
 
-export const orphanSummary = (_pid: number): string => ''
+export const orphanSummary = (pid: number): string =>
+  `The process running this run (pid ${pid}) ended before it finished.`
 
-export const ownedElsewhere = (_pid: number): string => ''
+export const ownedElsewhere = (pid: number): string =>
+  `This run belongs to another agent-qa process (pid ${pid}). Stop it there with Ctrl+C.`
 
 function signalZeroIsAlive(pid: number): boolean {
   try {

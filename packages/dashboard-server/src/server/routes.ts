@@ -1616,6 +1616,11 @@ const RUN_READS_WITHOUT_ROWS: ReadonlySet<string> = new Set([
   'listRunAttributeValues',
   // 2026-10-16 (442-01, D-01): an owner (pid, incarnation, host), no run metadata.
   'readRunOwner',
+  // 2026-10-16 (442-01, D-04): ids and owners only, no run metadata.
+  'listRunningRunOwners',
+  // 2026-10-16 (442-01, D-04): compare-and-set writes that return a boolean.
+  'finalizeOrphanRun',
+  'finalizeOwnRun',
   'stageRunArtifact',
   'updateRun',
   'updateRunMetadata',
