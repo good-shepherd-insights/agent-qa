@@ -137,6 +137,7 @@ import {
   runReleaseGate,
   runLabelCalibration,
   runJudgeCalibration,
+  maskJudgeCalibrationText,
   seedCommittedCorpus,
   sweepCassetteReplays,
   writeBaselinePointer,
@@ -174,7 +175,6 @@ import {
   ANALYSIS_FILE,
   admitAnalysisArtifactForRun,
   guardRunAnalysisArtifact,
-  maskPayloadStrings,
   resolveRunVerdicts,
   sha256hex,
 } from '@vostride/agent-qa-schema'
@@ -935,8 +935,7 @@ export async function runJudgeCalibrateVerb(session: EvalSession, opts: {
       mask: session.mask } }
     : { kind: 'capability-gap', reason: preflight.reason, minN: preflight.minN,
       publication: context, commit: opts.commit, replace: opts.replace })
-  // 441-62 (CR-A02): string leaves only; the DTO's keys and numbers are never masked.
-  return maskPayloadStrings({ ...result, entries: preflight.entries }, session.mask)
+  return maskJudgeCalibrationText({ ...result, entries: preflight.entries }, session.mask)
 }
 
 export type JudgeCalibrateVerbResult = Awaited<ReturnType<typeof runJudgeCalibrateVerb>>

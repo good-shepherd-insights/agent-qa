@@ -6,7 +6,7 @@ import {
   type JudgeCalibrationMinimum, type JudgeTargetedCalibrationDisclosure, type UsageAggregator,
 } from '@vostride/agent-qa-eval'
 import type { ModelProfile } from '@vostride/agent-qa-model'
-import { maskPayloadStrings, type MaskFn } from '@vostride/agent-qa-schema'
+import type { MaskFn } from '@vostride/agent-qa-schema'
 import { bindJudgePanel, type JudgeBindingInput } from './judge-binding.js'
 import { loadJudgeCalibrationEvidence } from './judge-calibration-evidence-source.js'
 import { createJudgeCalibrationArtifact, publishJudgeCalibration, JudgeCalibrationEvidenceError,
@@ -18,6 +18,36 @@ export type RunJudgeCalibrationResult = Awaited<ReturnType<typeof runJudgePanelC
       minN: number; minNSource: JudgeCalibrationMinimum['source']; n: 0; identity?: JudgeCalibrationReadInput['identity'];
       cost: { callBound: number; usage: { calls: number } }; artifactDisposition: 'not-created';
       judgeTargeted: JudgeTargetedCalibrationDisclosure }
+
+// 441-68 (GAP2-D6): the only paths whose declared type is a closed string-literal union. `[]` is
+// an array element. Top-level `reason` and `artifact.reason` are unions only in the capability-gap
+// arm, so they are added per arm below; everywhere else they are free text.
+const JUDGE_CALIBRATION_VOCABULARY_PATHS = [
+  'kind', 'status', 'minNSource', 'artifactDisposition',
+  'judgeTargeted.basis', 'judgeTargeted.source', 'judgeTargeted.reason',
+  'entries[].credential', 'entries[].failures[]',
+  'rows[].kind', 'rows[].reason', 'rows[].axis',
+  'artifact.status', 'artifact.minNSource',
+  'artifact.judgeTargeted.basis', 'artifact.judgeTargeted.source', 'artifact.judgeTargeted.reason',
+] as const
+
+export function maskJudgeCalibrationText<T>(value: T, mask: MaskFn): T {
+  const kept = new Set<string>(JUDGE_CALIBRATION_VOCABULARY_PATHS)
+  const top = value as { kind?: unknown; artifact?: { status?: unknown } } | null
+  if (top?.kind === 'capability-gap') kept.add('reason')
+  if (top?.artifact?.status === 'capability-gap') kept.add('artifact.reason')
+  return maskJudgeLeaves(value, '', kept, mask) as T
+}
+
+function maskJudgeLeaves(value: unknown, path: string, kept: ReadonlySet<string>, mask: MaskFn): unknown {
+  if (typeof value === 'string') return kept.has(path) ? value : mask(value)
+  if (Array.isArray(value)) return value.map(entry => maskJudgeLeaves(entry, `${path}[]`, kept, mask))
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) =>
+      [key, maskJudgeLeaves(entry, path ? `${path}.${key}` : key, kept, mask)]))
+  }
+  return value
+}
 
 /** Publication routing is separate from the forced probe, so a missing composite does no IO. */
 export async function runJudgeCalibration(input: {
@@ -73,8 +103,7 @@ export async function runJudgePanelCalibration(input: RunJudgePanelCalibrationIn
     if ([input.replayProfile.model, ...input.members.map(member => member.profile.model)]
       .some(id => input.mask(id) !== id)) throw new Error('Unsafe model identity')
     const preview = await executeJudgePanelCalibration(input)
-    // 441-62 (CR-A02): string leaves only; the DTO's keys and numbers are never masked.
-    return maskPayloadStrings(preview, input.mask)
+    return maskJudgeCalibrationText(preview, input.mask)
   } catch {
     throw new Error('Judge calibration probe failed; retry.')
   }
