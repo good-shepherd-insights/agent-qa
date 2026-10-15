@@ -4,8 +4,8 @@
 // refuse, identify, refuse production, assemble, start, await — so every cell here is about the
 // order or about what the order lets through. The member EXECUTOR is a double, because a real one
 // needs a browser and a model; everything else is the shipped path: the real
-// `createRunInvocationCore`, the real `startRun`, the real `FsEventLog`/`FsHandoffStore` under a
-// real `<configDir>/.agent-qa` root, and a real `JsonlAuditSink` reading back off disk.
+// `createRunInvocationCore`, the real `startRun`, and the real `FsEventLog`/`FsHandoffStore` under a
+// real `<configDir>/.agent-qa` root, read back off disk.
 //
 // 2026-09-30 (432-13, D-14/D-15): THE CORE ASKS NOBODY. The run-start `evaluate()`, its confirm port
 // and its session trust are gone; production is the one refusal of a well-formed request. The deny
@@ -165,9 +165,9 @@ function artifactDigests(runDir: string): Record<string, string> {
 /**
  * Every audit row the run dir holds, from either trail (432-13: the core writes none).
  *
- * 2026-10-01 (432-19, D-17): `execution_audit.jsonl` has no writer at all, and the run's guardrail
- * rows land in `guardrail_audit.jsonl`. Both are read so "no row" means no row of any kind, and a
- * returning execution-audit writer would be seen here.
+ * 2026-10-01 (432-19, D-17): `execution_audit.jsonl` has no writer at all, and since 441-31 (D-15)
+ * neither has `guardrail_audit.jsonl`. Both are read so "no row" means no row of any kind, and a
+ * returning writer of either would be seen here.
  */
 function recordedAuditRows(runId: string): Array<Record<string, unknown>> {
   const slug = runId.replaceAll('/', '-')
@@ -519,7 +519,6 @@ describe('the core hygiene census (D-02 / D-07, pinned to the core file)', () =>
     expect(refusal).toBeGreaterThan(0)
     expect(execute.split('refuseProductionWithoutOptIn(').length - 1).toBe(1)
     expect(refusal).toBeGreaterThan(execute.indexOf('options.resolveTargetDeclaration(request)'))
-    expect(refusal).toBeLessThan(execute.indexOf('buildRunAuditSink('))
     expect(execute.indexOf('await evaluate(')).toBe(-1)
     expect(refusal).toBeLessThan(execute.indexOf('buildRunPorts('))
     expect(refusal).toBeLessThan(execute.indexOf('options.assembleRun('))
@@ -732,5 +731,33 @@ describe('the invocation core — the identity step refuses before anything (CR-
     expect(code).not.toMatch(/\.catch\s*\(/)
     // Non-vacuity: the stripper left the file's actual code behind.
     expect(code).toContain('refuseProductionWithoutOptIn(runId, declaration)')
+  })
+})
+
+// 441-31 (D-15): the core hands a run no guardrail audit sink. The assembler writes a row to any
+// sink its context offers, as a door that opened its run under that sink would; the old key is
+// spelled in parts.
+describe('C441-RUN-RECORDS', () => {
+  it('a completed run leaves no guardrail audit file in its run directory', async () => {
+    const inner = recordingAssembler()
+    const retiredKey = ['audit', 'Sink'].join('')
+    const core = makeCore({
+      targetClass: 'local',
+      mintRunId: () => 'run_with_no_audit_file',
+      assemble: (context) => {
+        const offered = (context as unknown as Record<string, unknown>)[retiredKey] as
+          | { appendGuardrailAudit(row: Record<string, unknown>): unknown }
+          | undefined
+        offered?.appendGuardrailAudit({ action: 'pass', channel: 'planner' })
+        return inner.assemble(context)
+      },
+    })
+
+    const started = await core.execute({})
+
+    const runDir = join(agentQaRoot(), 'runs', String(started.runId))
+    expect(recordedEvents(String(started.runId)).map((event) => event.type)).toContain('runFinished')
+    expect(existsSync(join(runDir, 'handoff.json'))).toBe(true)
+    expect(readdirSync(runDir)).not.toContain('guardrail_audit.jsonl')
   })
 })

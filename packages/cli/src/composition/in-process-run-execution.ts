@@ -50,8 +50,8 @@ import type {
   RunsStartInput,
 } from '@vostride/agent-qa-schema'
 // `@vostride/agent-qa-safety` vocabulary is not nameable from a cli file written after 2026-07-28
-// (FUNC-02, and the ledger only shrinks); the audit sink type is reached by indexing the core's own
-// options type, which the composition root publishes.
+// (FUNC-02, and the ledger only shrinks); the audit sink type is reached through the return type of
+// the composition root's own builder.
 //
 // `runSafetyScope` and `mapVerdictToExitCode` reach this file through the
 // composition root's `run-drive-vocabulary` module (401-11) — the drive RUNS the run, so it has to
@@ -67,10 +67,7 @@ import {
   runSafetyScope,
 } from '@vostride/agent-qa-agent-local'
 import { waitForPostVerdictContinuation } from '../curation/post-verdict-continuation.js'
-import type {
-  RunExecutionContext,
-  RunInvocationCoreOptions,
-} from '@vostride/agent-qa-agent-local'
+import type { RunExecutionContext } from '@vostride/agent-qa-agent-local'
 
 import { assembleCliRun } from './run-assembly.js'
 import type { CurationWriterAuthority } from '../curation/curation-tail.js'
@@ -151,7 +148,7 @@ export interface CliRunVerdictContext {
   /** The verdict's own exit code, before any door-level fold (`--all`, a pending cancel). */
   readonly exitCode: number
   readonly mask: MaskFn
-  readonly auditSink: NonNullable<RunInvocationCoreOptions['auditSink']>
+  readonly auditSink: ReturnType<typeof buildRunAuditSink>
   readonly configDir: string
   readonly configFilePath: string
   /**
@@ -455,7 +452,6 @@ export async function runInProcessCliRun(
     // core with no default, so this line is not a policy this door chose — its absence is a
     // compile error.
     isMintedRunId: isMintedCliRunId,
-    auditSink,
     // A CONFIG READ, NEVER A PROBE. The producer resolved the declared class before anything could
     // touch a target.
     //

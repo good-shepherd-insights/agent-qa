@@ -28,7 +28,6 @@
 import { existsSync } from 'node:fs'
 import { dirname } from 'node:path'
 
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import type {
   RunId,
   RunSession,
@@ -37,7 +36,7 @@ import type {
 import { startRun } from '@vostride/agent-qa-runner'
 import type { PostVerdictPort, RunConfig } from '@vostride/agent-qa-runner'
 
-import { buildRunAuditSink, buildRunPorts, runDirFor } from './run-composition.js'
+import { buildRunPorts, runDirFor } from './run-composition.js'
 import type { RunExecutionContext, RunPersistencePorts } from './run-composition.js'
 import { buildProductionRefusal } from './run-risk.js'
 import type { RunTargetClass } from './run-risk.js'
@@ -143,10 +142,8 @@ export class RunIdNotMintedError extends Error {
  * satisfies that read with a PRIOR run's record. So the refusal has to land before the record is
  * touched at all — which is why it sits in the identity step, above assembly.
  *
- * THE TEST IS THE RUN'S OWN DIRECTORY, derived through `runDirFor` — the same composition
- * `buildRunAuditSink` uses — because every artifact a collision could tamper with lives inside it.
- * (2026-10-01, 432-19: the run no longer writes `execution_audit.jsonl`; its guardrail rows and
- * events are what a collision would still tamper with.)
+ * THE TEST IS THE RUN'S OWN DIRECTORY, derived through `runDirFor` — the same composition the
+ * run's ports use — because every artifact a collision could tamper with lives inside it.
  * Asking after `handoff.json` alone would let a run that crashed before writing one be silently
  * appended to.
  */
@@ -267,8 +264,6 @@ export interface RunAssemblyContext {
   readonly request: RunsStartInput
   /** The context the door carried — the same value, so a run cannot record a different one. */
   readonly executionContext: RunExecutionContext
-  /** The per-run stamped audit sink the run's guardrail rows land in. ONE sink per run, not two. */
-  readonly auditSink: AuditSink
   /** The durable ports, rooted at `<configDir>/.agent-qa` (Pitfall 5 — the evidence check's root). */
   readonly ports: RunPersistencePorts
   /** `dirname(agentQaRoot)` — the project directory the config sits in. */
@@ -350,12 +345,6 @@ export interface RunInvocationCoreOptions {
    */
   readonly isMintedRunId: (value: string) => boolean
   /**
-   * The per-run audit sink. Absent ⇒ built here from the run's own dir, so the run's guardrail rows
-   * land beside its events. A door that already built one (the CLI needs it for `runSafetyScope`
-   * before it calls in) passes the SAME instance rather than making a second one.
-   */
-  readonly auditSink?: AuditSink
-  /**
    * Notified with the started session, synchronously, before the core awaits it (D-09's bridge
    * hook). Subscribers attach here; the bus replays from seq 1, so nothing is missed.
    */
@@ -419,12 +408,12 @@ export function createRunInvocationCore(
       //   SHAPE — is this an id this system would have minted? The predicate is injected, because
       //     the canonical shape lives in a package this one does not depend on.
       //   FREEDOM — does it already name a run? Asked against the run's OWN directory, through the
-      //     same `runDirFor` the audit sink is rooted at.
+      //     same `runDirFor` the run's ports are rooted at.
       //
-      // ORDER IS THE CONTROL. Both refusals sit above the declaration resolve, above the audit sink
-      // and above assembly — so a refused request leaves no audit row, no run directory, no
-      // build-ordinal bump and, above all, not one byte changed in the run it named. A refusal that
-      // half-wrote into somebody else's run directory would be the defect performing itself.
+      // ORDER IS THE CONTROL. Both refusals sit above the declaration resolve and above assembly —
+      // so a refused request leaves no run directory, no build-ordinal bump and, above all, not one
+      // byte changed in the run it named. A refusal that half-wrote into somebody else's run
+      // directory would be the defect performing itself.
       if (request.runId !== undefined) {
         refuseUnavailableRunId({
           configDir,
@@ -439,18 +428,11 @@ export function createRunInvocationCore(
       const declaration = await options.resolveTargetDeclaration(request)
       const targetClass = declaration.targetClass
 
-      // (3a) PRODUCTION, BEFORE ANY EFFECT (432-03, D-18). Above the audit sink, the persistence
-      // ports and assembly, so a refused production run leaves no run directory, no audit row, no
-      // probe, no build ordinal and no adapter. It asks nothing and offers nothing: the config opts
-      // in, or the run does not start. Since 432-13 it is the only refusal of a well-formed request.
+      // (3a) PRODUCTION, BEFORE ANY EFFECT (432-03, D-18). Above the persistence ports and
+      // assembly, so a refused production run leaves no run directory, no probe, no build ordinal
+      // and no adapter. It asks nothing and offers nothing: the config opts in, or the run does not
+      // start. Since 432-13 it is the only refusal of a well-formed request.
       refuseProductionWithoutOptIn(runId, declaration)
-
-      const auditSink =
-        options.auditSink ??
-        buildRunAuditSink({
-          configDir,
-          runId,
-        })
 
       // (4) Assembly — the first line that may touch the target, and it is below every refusal.
       const ports = buildRunPorts({ configDir, runId })
@@ -462,7 +444,6 @@ export function createRunInvocationCore(
         runId,
         request,
         executionContext: options.executionContext,
-        auditSink,
         ports: {
           ...ports,
           ...(postVerdict === undefined ? {} : { postVerdict }),
