@@ -32,6 +32,6 @@
     "source": "workspace.secretsFile",
     "marker": "[secret:<name>]",
     "template": "{{secret:<name>}}",
-    "advice": "Only the values in workspace.secretsFile are masked, and nothing else is. Use temporary, limited test credentials."
+    "advice": "Only the values in workspace.secretsFile are masked, and nothing else is. The one exception: the dashboard's model connection check keeps the key or header value it is testing out of the provider's error message. Use temporary, limited test credentials."
   }
 }

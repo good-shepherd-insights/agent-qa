@@ -48,7 +48,8 @@ Put test credentials in the secrets file that `workspace.secretsFile` names (`in
 `.env.secrets.local`). Only the values in that file are secrets: agent-qa shows each one as
 `[secret:<name>]` and never restores it, and a test types one with `{{secret:<name>}}`. Nothing else
 is masked, and screenshots and recordings are not masked, so use temporary, limited test
-credentials.
+credentials. The one exception: the dashboard's model connection check keeps the key or header
+value it is testing out of the provider's error message.
 
 Start the dashboard, complete auth, and run tests from the UI:
 

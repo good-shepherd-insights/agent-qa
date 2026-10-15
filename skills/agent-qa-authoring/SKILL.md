@@ -70,7 +70,9 @@ metadata:
 - To type a secret in a step, write `{{secret:<name>}}`. Never write `[secret:<name>]` in a step: it
   would type the placeholder, so the action is refused.
 - Nothing else is masked: not `workspace.envFile` values, environment variables, cookies, saved auth
-  state or emails, and not screenshots or recordings. Use temporary, limited test credentials.
+  state or emails, and not screenshots or recordings. The one exception: the dashboard's model
+  connection check keeps the key or header value it is testing out of the provider's error message.
+  Use temporary, limited test credentials.
 
 ## Do Not
 
