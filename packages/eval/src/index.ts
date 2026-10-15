@@ -279,6 +279,7 @@ export type {
   ProcedureDecisionInput,
 } from './extract/procedure'
 export { extractRunCassettes } from './extract/extract-run'
+export { maskCorpusText } from './extract/corpus-text-mask'
 export type {
   EmittedCassetteSummary,
   ExtractedCassette,

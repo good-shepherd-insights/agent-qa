@@ -25,8 +25,9 @@
  * the ISO capture time and the target environment and pass them in.
  */
 import { actionDidNotFail, screenStateHash, sha256hex } from '@vostride/agent-qa-schema'
-import type { CompletedRunHandoff, MarkReceipt, PerTestOutcome, Verdict } from '@vostride/agent-qa-schema'
+import type { CompletedRunHandoff, MarkReceipt, MaskFn, PerTestOutcome, Verdict } from '@vostride/agent-qa-schema'
 import { canonicalJson } from '../canonical-json'
+import { maskCorpusText } from '../extract/corpus-text-mask'
 import { computeCorpusDigest } from '../census/corpus-digest'
 import type { CommittedCorpusSnapshot } from '../census/derive-census'
 import { collectSoftPopulation, type SoftPopulation } from './soft-population'
@@ -107,6 +108,12 @@ export interface BuildSeedingPlanInput {
   /** D-04 target environment, resolved by the caller. Omitted when unknown. */
   targetEnvironment?: TargetEnvironment
   params?: SeedingParams
+  /**
+   * 441 GAP3-D1: the declared mask the caller extracted `cassettes` under. A rerun's original
+   * decision is re-projected through it, after its raw digests are checked, so it compares
+   * equal to a committed case extracted from a masked run.
+   */
+  mask?: MaskFn
 }
 
 function requireLeaf(
@@ -151,8 +158,10 @@ function matchesOriginal(input: BuildSeedingPlanInput, member: PerTestOutcome, d
     || decision.testId !== member.testId || decision.testIndex !== member.testIndex
     || decision.evidence.stepIndex !== decision.stepIndex) return false
   const address = { testIndex: decision.testIndex, stepIndex: decision.stepIndex, decisionOrdinal: decision.decisionOrdinal }
-  const inputLeg = projectInputLeg({ handoffTest: member, step: decision.evidence, subAction, ...address })
-  const receipt = assembleReceipt({ inputLeg, step: decision.evidence, subAction, handoff: input.handoff })
+  const step = input.mask === undefined ? decision.evidence : maskCorpusText(decision.evidence, input.mask)
+  const projected = step.subActions[decision.decisionOrdinal]!
+  const inputLeg = projectInputLeg({ handoffTest: member, step, subAction: projected, ...address })
+  const receipt = assembleReceipt({ inputLeg, step, subAction: projected, handoff: input.handoff })
   const provenance = projectSilverLabelRecord({ cassette, runId: decision.runId }).provenance
   const { rerun: _rerun, ...recordProvenance } = record.provenance
   return cassette.runId === decision.runId && cassette.testId === decision.testId
@@ -160,13 +169,13 @@ function matchesOriginal(input: BuildSeedingPlanInput, member: PerTestOutcome, d
     && cassette.decisionOrdinal === address.decisionOrdinal
     && canonicalJson(cassette.input) === canonicalJson(inputLeg)
     && canonicalJson(cassette.receipt) === canonicalJson(receipt)
-    && canonicalJson(cassette.sidecar) === canonicalJson(projectSidecarLeg({ subAction }).leg)
+    && canonicalJson(cassette.sidecar) === canonicalJson(projectSidecarLeg({ subAction: projected }).leg)
     && canonicalJson(cassette.label) === canonicalJson(projectLabelLeg({
       // 422-12: the original extraction projected the ORIGINAL attempt's root cause onto the
       // label, and `rerunOrigin.rootCause` is that same recorded verdict. Reconstructing
       // without it would read every post-422 cassette of a member that HAD a root cause as a
       // mismatch, and retire nothing.
-      step: decision.evidence, subAction, rootCause: member.rerunOrigin?.rootCause,
+      step, subAction: projected, rootCause: member.rerunOrigin?.rootCause,
     }))
     && canonicalJson(record.label) === canonicalJson(cassette.label)
     && canonicalJson(recordProvenance) === canonicalJson(provenance)

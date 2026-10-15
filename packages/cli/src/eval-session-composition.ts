@@ -44,6 +44,7 @@ import {
   guardCampaignManifest,
   JUDGE_CONFIG,
   judgeIdentitySchema,
+  maskCorpusText,
   partitionParamsOf,
   projectBaselinePointer,
   projectDecisionVectorsDocument,
@@ -187,6 +188,7 @@ import type {
 import type { SecretStore } from '@vostride/agent-qa-runner'
 import type { AgentQaConfig } from '@vostride/agent-qa-core'
 import { loadConfigFile, resolveConfig } from './config.js'
+import { createDeclaredSecretMask } from './composition/declared-secrets.js'
 import { listTargets, resolveTarget } from './targets.js'
 import { hasNoiseFloorArtefacts } from './curation/promotion-posture.js'
 export { renderCensusMarkdown }
@@ -358,6 +360,15 @@ export async function resolveEvalSession(input: {
     mask: (text) => redactor.redactString(text),
     executionContext: resolveRunExecutionContext(),
   }
+}
+
+// 441 GAP3-D1: every write into the committed eval corpus masks with the workspace's declared
+// secrets, read from the config even for a key-only session (whose own `mask` throws by design).
+// A missing secrets file throws DeclaredSecretsUnavailableError, so the write fails closed.
+function committedCorpusMask(session: EvalSession): MaskFn {
+  const declared = createDeclaredSecretMask(session.configPath)
+  declared.redactor()
+  return declared.mask
 }
 
 /**
@@ -2413,12 +2424,17 @@ export async function runSeedVerb(
         throw new Error('seed incoming handoff evidence could not be positively verified')
       }
       // Only filter AFTER the full incoming bytes have matched the guarded persisted handoff.
-      const admittedHandoff = { ...handoff, tests: handoff.tests.filter(member => testIndexes.has(member.testIndex)) }
+      // 441 GAP3-D1: the D-18 text is masked before extraction, so every committed hash is
+      // computed over committed text.
+      const mask = committedCorpusMask(session)
+      const admittedHandoff = maskCorpusText(
+        { ...handoff, tests: handoff.tests.filter(member => testIndexes.has(member.testIndex)) }, mask)
       const populationHandoffs = evidence.handoffs.map(source => {
         if (source.runId === handoff.runId) return admittedHandoff
         const sourceAnalysis = readRunAnalysisArtifact(runsRoot, slugBranch(source.runId), source.runId, result.notices)
         const verdicts = resolveSeedMemberVerdicts(sourceAnalysis.artifact, source)
-        return { ...source, tests: source.tests.filter(member => admitSeedMember(member, verdicts.get(member.testIndex))) }
+        return maskCorpusText(
+          { ...source, tests: source.tests.filter(member => admitSeedMember(member, verdicts.get(member.testIndex))) }, mask)
       })
       const manifest = manifests.get(product)
       if (manifest === undefined) {
@@ -2445,6 +2461,7 @@ export async function runSeedVerb(
         params: {
           ...(silverPerTestCap !== undefined ? { silverPerTestCap } : {}),
         },
+        mask,
       })
       report = seedCommittedCorpus({
         plan,
