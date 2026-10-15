@@ -8,6 +8,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { parseModuleStatements, readClause } from '../lint/evaluate-pin.js'
 
 const PACKAGES_DIR = fileURLToPath(new URL('../../../', import.meta.url))
 const THIS_FILE = fileURLToPath(import.meta.url)
@@ -340,7 +341,163 @@ const RETURN_LEGS: readonly ReturnLeg[] = [
       },
     ],
   },
+  {
+    subject: 'the config masks and the config reveal',
+    absent: ['agent/src/config-mutation/credential-entry.ts', 'schema/src/config/masking.ts'],
+    scans: [{
+      regions: ALL,
+      needles: [
+        ['CONFIG_MASKING', '_MAP'], ['Masking', 'Class'], ['MASKING', '_CLASSES'], ['classifyConfig', 'Path'],
+        ['createMaskedConfig', 'Reader'], ['isMaskedConfig', 'Path'], ['CREDENTIAL_BEARING', '_URL_LEAVES'],
+        ['isCredentialBearing', 'UrlField'], ['isCredential', 'Entry'], ['CONFIG_MASK', '_PLACEHOLDER'],
+        ['MASK_WRITTEN', '_BACK'], ['carriesMask', 'Placeholder'], ['revealConfig', 'Value'],
+        ['ConfigReveal', 'RequestSchema'], ['/api/config/rev', 'eal'], ['reveal', 'At'], ['Reveal', 'Outcome'],
+        ['registerConfigReveal', 'Route'], ['ConfigRev', 'ealRequest'], ['ConfigRev', 'ealResult'],
+        ['reveal_not', '_secret'], ['reveal_not', '_found'], ['showValue', 'Name'], ['hideValue', 'Name'],
+        ['Reveal', 'State'], ['REVEAL', '_STATES'], ['REVEAL_FAILED', '_TEXT'],
+      ],
+    }],
+  },
+  {
+    subject: 'the guardrail detectors and scans',
+    absent: ['safety/src/guardrail/', 'eval/src/cassette/egress.ts'],
+    scans: [{
+      regions: ALL,
+      needles: [
+        ['GuardrailBlock', 'Error'], ['createGuardrailProvider', 'RequestHook'], ['createGuardrailStream', 'Scan'],
+        ['findDetector', 'Matches'], ['injection', 'Shape'], ['cassetteEgress', 'Text'],
+      ],
+    }],
+  },
+  {
+    subject: 'the guardrail policy',
+    absent: ['schema/src/safety/guardrail-policy.ts'],
+    scans: [{
+      regions: ALL,
+      needles: [
+        ['loadGuardrail', 'Policy'], ['defaultGuardrail', 'PolicyInput'], ['GuardrailConfig', 'Error'],
+        ['guardrailPolicy', 'Schema'], ['loadAdversarialGuardrail', 'Policy'], ['defaultPostRunGuardrail', 'Policy'],
+        ['loadDefaultGuardrail', 'Policy'], ['Guardrail', 'Policy'], ['GuardrailDetector', 'Family'],
+        ['computeAdversarialPolicy', 'Digest'],
+      ],
+    }],
+  },
+  {
+    subject: 'the committed-egress checkpoint',
+    absent: ['knowledge-local/src/bundle-egress.ts'],
+    scans: [{
+      regions: ALL,
+      needles: [
+        ['assertCommittedEgress', 'Safe'], ['CommittedEgressBlocked', 'Error'], ['egress-bl', 'ocked'],
+        ['Blocked', 'Detection'], ['checkpointCommitted', 'Parts'], ['BundleEgress', 'Options'], ['BundleEgress', 'Outcome'],
+        ['KNOWLEDGE_BUNDLE', '_EGRESS_CHANNEL'], ['POLICY_MATERIALIZE', '_EGRESS_CHANNEL'],
+        ['QUARANTINE_LEDGER', '_EGRESS_CHANNEL'], ['QuarantineWrite', 'BlockedError'], ['ADVERSARIAL', '_EGRESS_CHANNEL'],
+        ['FEEDBACK', '_EGRESS_CHANNEL'], ['REPORT', '_EGRESS_CHANNEL'], ['SEEDING', '_EGRESS_CHANNEL'],
+      ],
+    }],
+  },
+  {
+    subject: 'the construction scan and the config credential-value check',
+    absent: ['schema/src/safety/scan.ts', 'schema/src/safety/content-origin.ts'],
+    scans: [{
+      regions: ALL,
+      needles: [
+        ['scanConstructed', 'Artifact'], ['CONSTRUCTION_SCAN', '_DETECTORS'], ['config', 'Scan'], ['configSc', 'anSeeds'],
+        ['valueLooksLike', 'Credential'], ['guardrail', '-hit'], ['scan', 'Findings'], ['ConfigScanPort', 'Like'],
+        ['ConfigScan', 'Finding'], ['ConfigScanFind', 'ingSchema'], ['Scan', 'Result'], ['Scan', 'Action'],
+        ['Content', 'Origin'],
+      ],
+    }],
+  },
+  {
+    subject: 'the curation injection path and the embed gate',
+    absent: ['knowledge-local/src/curator/embed-gate.ts'],
+    scans: [{
+      regions: ALL,
+      needles: [
+        ['injection', 'Flagged'], ['secret', 'Flagged'], ['restrictedInjection', 'Delta'], ['assessEmbedding', 'Input'],
+        ['AssessEmbedding', 'Input'], ['EmbedGate', 'Detection'], ['EmbedGate', 'Verdict'],
+        ['EMBED_GATE_REDACTION', '_PLACEHOLDER'], ['injection-rest', 'ricted'], ['restricted-fall', 'back'],
+      ],
+    }],
+  },
+  {
+    subject: 'the authoring credential screen',
+    scans: [{
+      regions: ALL,
+      needles: [
+        ['screenDraftFor', 'Credentials'], ['DraftSecretRefused', 'Error'], ['CREDENTIAL_DETECTOR', '_FAMILIES'],
+        ['CredentialDetector', 'Family'],
+      ],
+    }],
+  },
+  {
+    subject: 'the guardrail audit',
+    absent: [
+      'safety-local/src/jsonl-audit-sink.ts',
+      'safety/src/ports/audit-sink.ts',
+      'safety/src/policy/audit-sink-resolver.ts',
+    ],
+    scans: [{
+      regions: ALL,
+      needles: [
+        ['appendGuardrail', 'Audit'], ['JsonlAudit', 'Sink'], ['guardrail', '_audit'], ['GuardrailAudit', 'Row'],
+        ['MissingAudit', 'SinkError'], ['buildRunAudit', 'Sink'], ['stampAudit', 'Sink'], ['createCurationAudit', 'Sink'],
+        ['getActiveAudit', 'Sink'], ['setActiveAudit', 'SinkResolver'], ['audit', 'BaseDir'], ['replayOutput', 'BaseDir'],
+        ['seedingOutput', 'BaseDir'], ['reportOutput', 'BaseDir'], ['censusOutput', 'BaseDir'], ['evalAudit', 'Dir'],
+        ['QuarantineAppend', 'Options'], ['Audit', 'Sink'],
+      ],
+    }],
+  },
+  {
+    subject: 'the hook framework and the loop hook port',
+    absent: [
+      'safety/src/hooks/',
+      'safety/src/egress/provider-request-middleware.ts',
+      'schema/src/safety/hook-results.ts',
+    ],
+    scans: [
+      {
+        regions: ALL,
+        needles: [
+          ['registerFirstPartySafety', 'Hooks'], ['SafetyHook', 'Runner'], ['buildRunSessionSafety', 'Hooks'],
+          ['BuildRunSessionSafetyHooks', 'Input'], ['buildRunSafety', 'Hooks'], ['createProviderRequest', 'Middleware'],
+          ['safety', 'Hooks'], ['FIRST_', 'PARTY'], ['FirstPartyHook', 'Error'], ['FirstPartySafety', 'Deps'],
+          ['Hook', 'Registry'], ['ToolCallHookAllow', 'Result'], ['ToolCallHookMutate', 'Result'],
+          ['ToolCallHookDeny', 'Result'], ['ToolCallHook', 'Result'], ['ToolResultHook', 'Result'], ['ContextHook', 'Result'],
+        ],
+      },
+      { regions: [RUNNER], needles: [['policy', 'Denial'], ['runToolCall', 'Async'], ['runTool', 'Result'], ['.run', 'Context(']] },
+      { regions: [CLI], needles: [['bindRun', 'Context']] },
+    ],
+  },
+  {
+    subject: 'the cold-read masking scope',
+    scans: [{
+      regions: ALL,
+      needles: [
+        ['withRead', 'Scope'], ['COLD_READ_SCOPE', '_FUNCTION_IDS'], ['readMasking', 'Sources'],
+        ['createColdReadMasking', 'Sources'],
+      ],
+    }],
+  },
 ]
+
+const SAFETY_SURFACE: ReadonlyArray<readonly [string, readonly string[]]> = [
+  ['safety/src/index.ts', [
+    'APP_OBSERVED_DATA_CLOSE', 'APP_OBSERVED_DATA_OPEN', 'TIER_ORDER', 'classifyRisk', 'createMaskingMiddleware',
+    'getActiveExecutionContext', 'mapPromptLeaves', 'resolveExecutionContext', 'setActiveExecutionContextResolver',
+    'wrapAppObservedData',
+  ]],
+  ['safety-local/src/index.ts', ['detectExecutionContext', 'fingerprint', 'runSafetyScope']],
+]
+
+const KEPT_NAMES = [
+  joined(['Analytics', joined(MASKING_CONTEXT)]), 'maskRecordContent', 'MaskFn', 'getMasked', 'MaskedResolvedConfig',
+  'MaskedConfigEntry', 'createMaskingMiddleware', 'mapPromptLeaves', 'runSafetyScope', 'AdversarialRefusal',
+  'assertRestrictedFallbackDelta', 'agentQaRoot', 'withheld',
+]
+const KEPT_LITERALS = ["'no-masker'", "'masker-active'"]
 
 const cellId = (index: number): string => `C441-RETURN-${String(index + 1).padStart(2, '0')}`
 
@@ -361,7 +518,7 @@ describe('C441-RETURN — the declared-secret deletion census (441 D-17)', () =>
         expect((scan.needles?.length ?? 0) + (scan.patterns?.length ?? 0), `${cellId(index)} has an empty scan`).toBeGreaterThan(0)
       }
     })
-    expect(RETURN_LEGS.length).toBe(10)
+    expect(RETURN_LEGS.length).toBe(20)
     expect(new Set(RETURN_LEGS.map((leg) => leg.subject)).size).toBe(RETURN_LEGS.length)
   })
 
@@ -370,6 +527,18 @@ describe('C441-RETURN — the declared-secret deletion census (441 D-17)', () =>
       const found = findings(leg, PRODUCTION)
       expect(found, `${leg.subject} returned:\n${found.join('\n')}`).toEqual([])
     })
+  })
+
+  it('C441-SAFETY-SURFACE: the safety and safety-local barrels export exactly the values 441-33 kept', () => {
+    for (const [barrel, expected] of SAFETY_SURFACE) {
+      const source = readFileSync(join(PACKAGES_DIR, barrel)).toString('utf8')
+      const statements = parseModuleStatements(source).filter((statement) => statement.keyword === 'export')
+      expect(statements.length, `${barrel} has no export statement`).toBeGreaterThan(0)
+      expect(statements.filter((statement) => readClause(statement.clause).wholeModule), `${barrel} re-exports a whole module`).toEqual([])
+      const values = statements.flatMap((statement) => readClause(statement.clause).valueNames).sort()
+      expect(values, barrel).toEqual([...expected].sort())
+      expect(codeOf(source), `${barrel} declares a value of its own`).not.toMatch(/\bexport\s+(default|const|let|var|function|class|enum|async)\b/)
+    }
   })
 })
 
@@ -419,7 +588,18 @@ describe('C441-RETURN census instruments', () => {
         }
       }
     })
-    expect(plants).toBeGreaterThan(100)
+    expect(plants).toBeGreaterThan(240)
+
+    const kept = [...KEPT_NAMES.map((name) => `export const ${name} = 1`), ...KEPT_LITERALS.map((literal) => `export const posture = ${literal}`)].join('\n')
+    RETURN_LEGS.forEach((leg, index) => {
+      for (const scan of leg.scans) {
+        expect(findings(leg, planted(plantPath(scan.regions[0]!), kept)), `${cellId(index)} trips on a kept name`).toEqual([])
+      }
+    })
+    const valuesOf = (source: string): string[] => parseModuleStatements(source).flatMap((statement) => readClause(statement.clause).valueNames)
+    expect(valuesOf(`export { classifyRisk } from './policy/risk-classifier'\nexport { ${joined(['createMaskin', 'gContext'])} } from './masking/context'`))
+      .toEqual(['classifyRisk', joined(['createMaskin', 'gContext'])])
+    expect(valuesOf("export type { ProviderRequestParams } from './egress/map-prompt-leaves'")).toEqual([])
 
     const contextLeg = RETURN_LEGS[1]!
     const keptSeam = `export interface Analytics${joined(MASKING_CONTEXT)} { readonly mask: (text: string) => string }`
@@ -438,7 +618,7 @@ describe('C441-RETURN census instruments', () => {
     const own = readFileSync(THIS_FILE).toString('utf8')
     expect(existsSync(join(PACKAGES_DIR, OWN)), 'the self path is wrong').toBe(true)
     const needles = RETURN_LEGS.flatMap((leg) => leg.scans.flatMap((scan) => (scan.needles ?? []).map(joined)))
-    expect(needles.length).toBeGreaterThan(80)
+    expect(needles.length).toBeGreaterThan(200)
     const spelled = needles.filter((needle) => own.includes(needle))
     expect(spelled, `this file spells what it forbids: ${spelled.join(', ')}`).toEqual([])
     const scanned = PRODUCTION.files([...new Set([...RETURN_LEGS.flatMap((leg) => leg.scans.flatMap((scan) => scan.regions)), ...ALL])])
