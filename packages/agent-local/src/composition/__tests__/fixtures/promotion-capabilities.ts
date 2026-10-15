@@ -31,7 +31,7 @@ export function completeGate1Receipt(
   })
 }
 
-export function createPromotionFloorFixture({ knowledgeRoot, auditBaseDir }: { knowledgeRoot: string; auditBaseDir: string }) {
+export function createPromotionFloorFixture({ knowledgeRoot }: { knowledgeRoot: string; auditBaseDir?: string }) {
   function publishHeldCandidate(seed: string) {
     const displayName = `Held checkout ${seed}`
     const normalizedName = displayName.toLowerCase()
@@ -61,7 +61,6 @@ export function createPromotionFloorFixture({ knowledgeRoot, auditBaseDir }: { k
     const published = publishBundleForTest({
       knowledgeRoot,
       productKey: 'storefront',
-      auditBaseDir,
       commitArtifacts: 'none',
       writerLeaseId: 'promotion-floor-fixture',
     }, {

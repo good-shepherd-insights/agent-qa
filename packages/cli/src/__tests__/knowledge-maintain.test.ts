@@ -396,7 +396,6 @@ function seedBundle(
   const config: BundleStoreConfig = {
     knowledgeRoot: workspace.knowledgeRoot,
     productKey: product,
-    auditBaseDir: workspace.runtimeRoot,
     commitArtifacts: 'none',
   }
   const published = publishBundle(config, bundleInput(options))
@@ -1386,7 +1385,6 @@ describe('knowledge maintenance commands', () => {
 
     expect(result.exitCode).toBeUndefined()
     expect(commandHarness.rollbackCurationJobInputs).toHaveLength(1)
-    expect(commandHarness.rollbackCurationJobInputs[0]?.auditBaseDir).toBe(workspace.runtimeRoot)
     expect(existsSync(join(workspace.root, 'docs', '.agent-qa'))).toBe(false)
   })
 
@@ -1583,7 +1581,6 @@ describe('knowledge maintenance commands', () => {
         knowledgeRoot: workspace.knowledgeRoot,
         recordId: asRecordId(bundle.id),
         initiator: 'legacy-intent-fixture',
-        auditBaseDir: workspace.runtimeRoot,
         purgedAtOrdinal: BUILD_ORDINAL + 1,
         hooks: {
           afterIntentWritten: () => {
@@ -1739,7 +1736,6 @@ describe('knowledge maintenance commands', () => {
       {
         knowledgeRoot: workspace.knowledgeRoot,
         productKey: secondaryProduct,
-        auditBaseDir: workspace.runtimeRoot,
         commitArtifacts: 'none',
       },
       asRecordId(secondary.id),
@@ -1983,7 +1979,6 @@ describe('knowledge maintenance commands', () => {
     const config: BundleStoreConfig = {
       knowledgeRoot: workspace.knowledgeRoot,
       productKey: PRODUCT,
-      auditBaseDir: workspace.runtimeRoot,
       commitArtifacts: 'none',
     }
     expect(appendOutcomeEvent(config, asRecordId(bundle.id), {

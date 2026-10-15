@@ -1730,7 +1730,6 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         report = await operations.drainQueue({
           priors: resolveTrustPriors?.(),
           knowledgeRoot: input.knowledgeRoot,
-          auditBaseDir: input.agentQaRoot,
           budgetMs: deadlineMs === undefined ? 'unbounded' : Math.max(0, deadlineMs - operations.now()),
           lease: { leaseId: acquired.leaseId, epoch: acquired.epoch },
           author: sessionCuration.author,

@@ -158,7 +158,6 @@ export interface KnowledgePaths {
   configPath: string
   knowledgeRoot: string
   runtimeRoot: string
-  auditBaseDir: string
 }
 
 type OutputStream = 'stdout' | 'stderr'
@@ -245,7 +244,6 @@ async function resolveKnowledgePaths(command: Command): Promise<KnowledgePaths> 
   return {
     knowledgeRoot,
     runtimeRoot,
-    auditBaseDir: runtimeRoot,
     configPath,
   }
 }
@@ -454,7 +452,6 @@ async function drainInline(
     priors: resolveTrustPriors(),
     ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }),
     knowledgeRoot: paths.knowledgeRoot,
-    auditBaseDir: paths.auditBaseDir,
     author: FALLBACK_CURATOR_AUTHOR,
     executionContext: resolveRunExecutionContext(),
     policy: loadDefaultGuardrailPolicy(),
@@ -1074,7 +1071,6 @@ function rollbackInput(
 ): RollbackCurationJobInput | RollbackCampaignInput {
   const base = {
     knowledgeRoot: paths.knowledgeRoot,
-    auditBaseDir: paths.auditBaseDir,
     resolvedAtOrdinal,
     ...(writerAuthority === undefined ? {} : { writerAuthority }),
     ...(expectedAffectedSetFingerprint === undefined
@@ -1382,7 +1378,6 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
               knowledgeRoot: paths.knowledgeRoot,
               recordId,
               initiator: `cli:${userInfo().username}`,
-              auditBaseDir: paths.auditBaseDir,
               writerAuthority,
               expectedAffectedSetFingerprint: underLeaseFingerprint,
               ...(purgedAtOrdinal === undefined ? {} : { purgedAtOrdinal }),

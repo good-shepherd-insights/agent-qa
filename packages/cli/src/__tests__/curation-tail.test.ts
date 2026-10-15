@@ -550,7 +550,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
     await runCurationTail(baseOptions(successfulOperations({ drainQueue }), {
       resolvePromotionPosture: resolver, log: { warn: vi.fn(), info },
     }))
-    expect(drainQueue).toHaveBeenCalledWith(expect.objectContaining({ resolvePromotionPosture: resolver, auditBaseDir: agentQaRoot }))
+    expect(drainQueue).toHaveBeenCalledWith(expect.objectContaining({ resolvePromotionPosture: resolver }))
     // 2026-09-30, 432-10 D-05/D-22: the drain is handed no proposals root.
     expect(drainQueue.mock.calls[0]![0]).not.toHaveProperty('agentQaRoot')
     expect(info.mock.calls.map(([message]) => message).filter(message => message.startsWith('curation: '))).toEqual([
@@ -666,9 +666,8 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
         })
         expect(options).not.toHaveProperty('excluded')
         expect(options.extractAnchors).toBeTypeOf('function')
-        // 390 D-08: the tail reads the drain's wall clock ONCE and hands it down as data, and
-        // names the audit location explicitly — the fold and the ladder read no clock of their own.
-        expect(options.quarantine?.auditBaseDir).toBe(agentQaRoot)
+        // 390 D-08: the tail reads the drain's wall clock ONCE and hands it down as data — the
+        // fold and the ladder read no clock of their own.
         expect(options.quarantine?.now).toMatch(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/)
         return { kind: 'applied', tests: 1, ...NO_DETECTION }
       },
@@ -681,7 +680,6 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
         order.push('drain')
         expect(options).toMatchObject({
           knowledgeRoot,
-          auditBaseDir: agentQaRoot,
           author,
           executionContext: completed.executionContext,
           policy,

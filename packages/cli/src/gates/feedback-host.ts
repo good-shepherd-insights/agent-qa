@@ -196,7 +196,7 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
           const lease = held === undefined ? curation.maintenance.acquireWriterLease(knowledgeRoot) : { kind: 'acquired' as const, ...held }
           if (lease.kind !== 'acquired') throw new Error(`Mark evidence writer lease ${lease.kind}; gold landed, no mark receipt appended`)
           try {
-            const evidence = await curation.appendMarkEvidence({ knowledgeRoot, auditBaseDir: deps.agentQaRoot,
+            const evidence = await curation.appendMarkEvidence({ knowledgeRoot,
               executionContext: session.executionContext, lease: { leaseId: lease.leaseId, epoch: lease.epoch },
               mark, servedRecordIds, handoff,
               includeAlreadyAppended: true,

@@ -72,7 +72,6 @@ describe('417 DATA replay gate bridge', () => {
     knowledgeRoot = join(root, 'agent-qa-knowledge')
     const fixture = createPromotionFloorFixture({
       knowledgeRoot,
-      auditBaseDir: join(root, '.agent-qa'),
     })
     const published = fixture.publishHeldCandidate('rg').published
     candidateId = published.id
@@ -224,7 +223,6 @@ describe('417 DATA replay gate bridge', () => {
     )
     expect(deps.curation!.recordGateReceipt).toHaveBeenCalledWith(
       expect.objectContaining({
-        auditBaseDir: runtimeRoot,
         knowledgeRoot,
       }),
     )
@@ -464,7 +462,6 @@ describe('417 DATA replay gate bridge', () => {
     try {
       const store = createLocalKnowledgeStore({
         knowledgeRoot,
-        auditBaseDir: deps.agentQaRoot,
         executionContext: 'local-interactive',
         writerLeaseId: lease.leaseId,
         epoch: lease.epoch,
@@ -517,7 +514,6 @@ describe('417 DATA replay gate bridge', () => {
         {
           knowledgeRoot,
           productKey: 'storefront',
-          auditBaseDir: deps.agentQaRoot,
           commitArtifacts: 'none',
           writerLeaseId: '417-kind-fixture',
         },
@@ -556,7 +552,6 @@ describe('417 DATA replay gate bridge', () => {
       try {
         const store = createLocalKnowledgeStore({
           knowledgeRoot,
-          auditBaseDir: deps.agentQaRoot,
           executionContext: 'local-interactive',
           writerLeaseId: lease.leaseId,
           epoch: lease.epoch,

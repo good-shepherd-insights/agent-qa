@@ -481,7 +481,7 @@ export interface LocalKnowledgeMaintenanceCapabilities {
 }
 
 interface ReceiptWriterInput extends Pick<CreateLocalKnowledgeStoreConfig,
-  'knowledgeRoot' | 'auditBaseDir' | 'executionContext' | 'policy' | 'resolvePromotionPosture' | 'resolveTrustPriors' | 'sourceBuildOrdinal' | 'sourceRunId'> {
+  'knowledgeRoot' | 'executionContext' | 'policy' | 'resolvePromotionPosture' | 'resolveTrustPriors' | 'sourceBuildOrdinal' | 'sourceRunId'> {
   /** The caller already holds this authority; these capabilities never acquire a lease. */
   lease: { leaseId: string; epoch: number }
 }
@@ -498,7 +498,6 @@ export interface PromoteWithReceiptsInput extends ReceiptWriterInput {
 function receiptWriter(input: ReceiptWriterInput) {
   return createLocalKnowledgeStore({
     knowledgeRoot: input.knowledgeRoot,
-    auditBaseDir: input.auditBaseDir,
     executionContext: input.executionContext,
     writerLeaseId: input.lease.leaseId,
     epoch: input.lease.epoch,
@@ -2910,7 +2909,6 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     quarantine: {
       list: async () => (await createQuarantineOperations({
         resolveKnowledgeRoot: input.knowledgeRoot,
-        auditBaseDir: input.agentQaRoot,
         now: () => clock.now(),
         mintIdentityPath: input.mintQuarantineIdentityPath,
         ...(input.resolveWriterAuthority === undefined
@@ -3117,7 +3115,6 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       ...(input.feedbackReads === undefined ? {} : { feedbackReads: input.feedbackReads }),
       quarantine: createQuarantineOperations({
         resolveKnowledgeRoot: input.knowledgeRoot,
-        auditBaseDir: input.agentQaRoot,
         now: () => clock.now(),
         mintIdentityPath: input.mintQuarantineIdentityPath,
         ...(input.resolveWriterAuthority === undefined

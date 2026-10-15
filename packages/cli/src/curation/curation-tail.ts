@@ -763,7 +763,6 @@ export async function curateCompletedRun(
           extractAnchors: exercisedAnchors,
           quarantine: {
             now: new Date(tailStartedAtMs).toISOString(),
-            auditBaseDir: input.agentQaRoot,
           },
         })
         logQuarantineDisposition(receiptIdentity.runId, fold.quarantine, input.log)
@@ -792,7 +791,6 @@ export async function curateCompletedRun(
         priors: input.resolveTrustPriors?.(),
         ...(input.resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture: input.resolvePromotionPosture }),
         knowledgeRoot: input.knowledgeRoot,
-        auditBaseDir: input.agentQaRoot,
         author,
         executionContext: input.handoff.executionContext,
         policy: input.policy,

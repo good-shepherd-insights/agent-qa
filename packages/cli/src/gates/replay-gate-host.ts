@@ -204,7 +204,6 @@ export function createReplayGateHost(deps: ReplayGateHostDeps): ReplayGateHost {
         receipt,
         lease: { leaseId: borrowed.leaseId, epoch: borrowed.epoch },
         knowledgeRoot,
-        auditBaseDir: deps.agentQaRoot,
         executionContext: deps.session.executionContext,
         sourceBuildOrdinal: receipt.producedAtOrdinal,
         ...(deps.resolvePromotionPosture === undefined
@@ -231,7 +230,6 @@ export function createReplayGateHost(deps: ReplayGateHostDeps): ReplayGateHost {
         receipt,
         lease: { leaseId: lease.leaseId, epoch: lease.epoch },
         knowledgeRoot,
-        auditBaseDir: deps.agentQaRoot,
         executionContext: deps.session.executionContext,
         sourceBuildOrdinal: receipt.producedAtOrdinal,
         ...(deps.resolvePromotionPosture === undefined

@@ -482,7 +482,6 @@ describe('daemon curation serving tracer', () => {
     const drainQueue = vi.fn<DaemonHostOperations['drainQueue']>(async (options) => {
       expect(options).toMatchObject({
         knowledgeRoot: paths.knowledgeRoot,
-        auditBaseDir: paths.agentQaRoot,
         budgetMs: 'unbounded',
         executionContext: 'local-headless',
         maintenance: 'skip',
@@ -757,7 +756,6 @@ describe('daemon curation serving tracer', () => {
             configPath: join(paths.agentQaRoot, '..', 'agent-qa.config.yaml'),
             knowledgeRoot: paths.knowledgeRoot,
             runtimeRoot: paths.agentQaRoot,
-            auditBaseDir: paths.agentQaRoot,
           },
           {},
           (text) => text,

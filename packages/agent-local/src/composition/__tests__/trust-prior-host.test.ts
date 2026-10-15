@@ -60,7 +60,7 @@ describe('neutral host prior passthrough', () => {
   })
 
   it('receipt and promotion writers receive the same resolver', async () => {
-    const input = { knowledgeRoot: root, auditBaseDir: root, executionContext: 'local-interactive' as const,
+    const input = { knowledgeRoot: root, executionContext: 'local-interactive' as const,
       lease: { leaseId: 'fixture', epoch: 1 }, resolveTrustPriors }
     await LOCAL_CURATION_CAPABILITIES.recordGateReceipt({ ...input, receipt: {} as never })
     await LOCAL_CURATION_CAPABILITIES.promoteWithReceipts({ ...input, candidateId: 'missing' as never })
@@ -84,7 +84,7 @@ describe('neutral host prior passthrough', () => {
     await createKnowledgeReader(() => root).inspectRecords({ filter: {} })
     await createKnowledgeReview({ agentQaRoot: root, resolveKnowledgeRoot: () => root })
       .change({ verb: 'forget', input: { target: { grain: 'record', recordId: 'missing' } } })
-    await LOCAL_CURATION_CAPABILITIES.recordGateReceipt({ knowledgeRoot: root, auditBaseDir: root,
+    await LOCAL_CURATION_CAPABILITIES.recordGateReceipt({ knowledgeRoot: root,
       executionContext: 'local-interactive', lease: { leaseId: 'fixture', epoch: 1 }, receipt: {} as never })
     expect(vi.mocked(reader.inspectRecords).mock.calls[0]![0]).not.toHaveProperty('priors')
     expect(vi.mocked(writer.applyExplicitReview).mock.calls[0]![0]).not.toHaveProperty('resolveTrustPriors')
