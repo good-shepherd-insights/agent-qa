@@ -75,7 +75,7 @@ it.each([
         if (malformed) writeFileSync(join(f.project, 'agent-qa-eval/labels/calibration.json'), '{"private":"invalid replacement"}')
         else artifact(f.project, 0.25)
         await input.afterVerdict!({ verdict: 'passed', exitCode: input.freezeVerdict!('passed'), runId: request.runId, configDir: f.project,
-          configFilePath: f.configPath, auditSink: {}, postVerdict: { takeAcquiredLease: () => undefined } } as never)
+          configFilePath: f.configPath, postVerdict: { takeAcquiredLease: () => undefined } } as never)
         return { runId: request.runId, exitCode: 0 } as never
       } finally { await produced.finalize?.() }
     })

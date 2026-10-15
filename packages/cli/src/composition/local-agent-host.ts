@@ -408,7 +408,6 @@ function createComposedRunExecution(input: {
                 configDir: context.configDir,
                 configFilePath: context.configFilePath,
                 knowledgeConfig: inputs.config.knowledge,
-                auditSink: context.auditSink,
                 mask: context.mask,
                 // LOG, NEVER PRINT. The tail's close-out line and digest block are CLI outputs, and
                 // this door serves `agent-qa fn --json` (stdout is the JSON document) and the MCP

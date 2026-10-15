@@ -52,7 +52,7 @@ export interface ComposeCliPostRunTailInput {
   /** The project's resolved config file. */
   readonly configFilePath: string
   readonly knowledgeConfig: RunCurationTailOptions['knowledgeConfig']
-  readonly auditSink: RunCurationTailOptions['auditSink']
+  readonly auditSink?: RunCurationTailOptions['auditSink']
   /**
    * The declared mask, when the caller has one.
    *
@@ -95,7 +95,7 @@ export function composeCliPostRunTail(input: ComposeCliPostRunTailInput): PostRu
     configPath: resolve(input.configFilePath),
     knowledgeConfig: input.knowledgeConfig,
     configDir: input.configDir,
-    auditSink: input.auditSink,
+    ...(input.auditSink === undefined ? {} : { auditSink: input.auditSink }),
     log: input.log,
     ...(input.mask === undefined ? {} : { mask: input.mask }),
     ...(input.modelDeps === undefined ? {} : { modelDeps: input.modelDeps }),

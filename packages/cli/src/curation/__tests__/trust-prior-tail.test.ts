@@ -161,7 +161,7 @@ it.each([false, true])('carries the selected local snapshot into its delayed tai
     const invocation = drive.mock.calls[0]![0]
     writeFileSync(join(selected.project, 'agent-qa-eval/labels/calibration.json'), '{"private":"malformed replacement"}')
     await invocation.postRunTail!({ runId: 'fixture-run', configDir: selected.project, configFilePath: selected.configPath,
-      auditSink: {}, postVerdict: { takeAcquiredLease: () => undefined } } as never)
+      postVerdict: { takeAcquiredLease: () => undefined } } as never)
     const ready = composed.mock.calls[0]![0].trustPriors
     if (!otherProject) expect(ready?.resolve).toBe(local.resolveTrustPriors)
     expect(ready?.resolve).toBe(invocation.resolveTrustPriors)

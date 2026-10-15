@@ -50,8 +50,7 @@ import type {
   RunsStartInput,
 } from '@vostride/agent-qa-schema'
 // `@vostride/agent-qa-safety` vocabulary is not nameable from a cli file written after 2026-07-28
-// (FUNC-02, and the ledger only shrinks); the audit sink type is reached through the return type of
-// the composition root's own builder.
+// (FUNC-02, and the ledger only shrinks).
 //
 // `runSafetyScope` and `mapVerdictToExitCode` reach this file through the
 // composition root's `run-drive-vocabulary` module (401-11) — the drive RUNS the run, so it has to
@@ -61,7 +60,6 @@ import {
   DRAIN_BUDGET_MS,
   REFUSED_RUN_REQUEST_FIELDS,
   RunRequestFieldRefusedError,
-  buildRunAuditSink,
   createRunInvocationCore,
   mapVerdictToExitCode,
   runSafetyScope,
@@ -148,7 +146,6 @@ export interface CliRunVerdictContext {
   /** The verdict's own exit code, before any door-level fold (`--all`, a pending cancel). */
   readonly exitCode: number
   readonly mask: MaskFn
-  readonly auditSink: ReturnType<typeof buildRunAuditSink>
   readonly configDir: string
   readonly configFilePath: string
   /**
@@ -418,12 +415,8 @@ export async function runInProcessCliRun(
   const warnByName = options.warn ?? ((): void => { /* a door with no renderer drops the line */ })
   const mask: MaskFn = (text) => produced.secretRedactor.redactString(text)
 
-  const auditSink = buildRunAuditSink({
-    configDir: produced.configDir,
-    runId,
-  })
   // 2026-10-15 (441-30, D-12/D-15): no per-run hook registrar is built or bound; the run's loop
-  // gets no hook port.
+  // gets no hook port. 441-31 (D-15): and no guardrail audit sink is built for it.
 
   let quarantined: readonly QuarantineAppliedEntry[] = []
   let startedSession: RunSession | undefined
@@ -598,7 +591,7 @@ export async function runInProcessCliRun(
     completion.then(() => undefined, () => undefined).finally(closeOutRun)
 
   return await runSafetyScope(
-    { auditSink, executionContext: options.executionContext },
+    { executionContext: options.executionContext },
     async (): Promise<CliRunOutcome> => {
       try {
         // The core refuses, assembles, starts and awaits the run. A production refusal throws
@@ -635,7 +628,6 @@ export async function runInProcessCliRun(
           verdict,
           exitCode,
           mask,
-          auditSink,
           configDir: produced.configDir,
           configFilePath: produced.configFilePath,
           postVerdict: postVerdictHandoff ?? UNCOMPOSED_POST_VERDICT,

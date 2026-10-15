@@ -841,7 +841,7 @@ it.each((['direct', 'suite'] as const).flatMap(mode =>
       if (state === 'failed') await finishPreparation()
       pendingPath = postVerdictPendingPath({ ...f.input, runId })
       const exitCode = await input.afterVerdict!({ verdict: 'failed', exitCode: input.freezeVerdict!('failed'), runId, configDir: f.input.project,
-        configFilePath: f.input.configPath, auditSink: {}, postVerdict: step.handoff,
+        configFilePath: f.input.configPath, postVerdict: step.handoff,
         postVerdictDeadlineMs: Date.now() - 1 } as never)
       expect(existsSync(pendingPath)).toBe(state !== 'skipped' && state !== 'settled-before-finish')
       expect(existsSync(join(runDir, 'curation-tail-receipt.json'))).toBe(false)

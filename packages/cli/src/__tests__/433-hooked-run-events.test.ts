@@ -104,8 +104,8 @@ vi.mock('@vostride/agent-qa-runner-local', async (importOriginal) => ({
   },
   nextBuildOrdinal: mockNextBuildOrdinal,
   DockerHookExecutor: class { async execute(hook: unknown, ctx: unknown) { return mockHookExecute(hook, ctx) } },
-  // 362-06: the run paths now construct buildRunAuditSink (run-session-composition) which roots the
-  // per-run JsonlAuditSink via the shared run-dir slug — expose both so the mock stays complete.
+  // The run composition's `runDirFor` roots the run's own directory via the shared run-dir slug —
+  // expose both so the mock stays complete.
   RUNS_SUBDIR: 'runs',
   slugBranch: (name: string) => String(name),
 }))

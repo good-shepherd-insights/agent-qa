@@ -145,7 +145,7 @@ export interface RunCurationTailOptions {
   agentQaRoot: string
   knowledgeConfig: { dir: string }
   configDir: string
-  auditSink: AuditSink
+  auditSink?: AuditSink
   mask?: MaskFn
   /** The exact already-resolved planner profile and auth used by the run. */
   modelDeps?: CurationTailModelDeps
@@ -461,7 +461,7 @@ export interface CurateCompletedRunInput {
   handoff: ReturnType<typeof loadCompletedRunHandoff>
   knowledgeRoot: string
   agentQaRoot: string
-  auditSink: AuditSink
+  auditSink?: AuditSink
   mask?: MaskFn
   modelDeps?: CurationTailModelDeps
   /** An already-resolved author wins over `modelDeps`; a standing host holds one per process. */

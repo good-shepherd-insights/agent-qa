@@ -1949,7 +1949,7 @@ async function executeSuites(
           )
           return frozenExitCode
         },
-        afterVerdict: async ({ exitCode: verdictExitCode, mask, auditSink, postVerdict, postVerdictDeadlineMs }) => {
+        afterVerdict: async ({ exitCode: verdictExitCode, mask, postVerdict, postVerdictDeadlineMs }) => {
           // 388-02 D-01: ONE shared post-run tail serves both of this command's tail sites
           // (Pitfall 1). 404 D-05: the ENQUEUE is no longer one of its legs — the shell's
           // post-verdict step performed it before `runFinished`, on this door and on every other,
@@ -1964,7 +1964,6 @@ async function executeSuites(
             configDir,
             configFilePath,
             knowledgeConfig: config.knowledge,
-            auditSink,
             mask,
             ...(produced.getCurationModelDeps() === undefined
               ? {}
@@ -5134,7 +5133,7 @@ export function createRunCommand(): Command {
                   verdictExitCode !== 0 ? verdictExitCode : (suitesFailed ? 1 : 0)
                 return frozenExitCode
               },
-              afterVerdict: async ({ exitCode, mask, auditSink, postVerdict, postVerdictDeadlineMs }) => {
+              afterVerdict: async ({ exitCode, mask, postVerdict, postVerdictDeadlineMs }) => {
                 // 388-02: the same shared tail as the multi-suite site above, and the same 404
                 // D-05 posture — the enqueue happened in the shell, so this handle has two legs.
                 const postRunTail = composeCliPostRunTail({
@@ -5146,7 +5145,6 @@ export function createRunCommand(): Command {
                   configDir,
                   configFilePath,
                   knowledgeConfig: config.knowledge,
-                  auditSink,
                   mask,
                   ...(produced.getCurationModelDeps() === undefined
                     ? {}

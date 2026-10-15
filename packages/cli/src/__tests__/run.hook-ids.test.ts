@@ -109,8 +109,8 @@ vi.mock('@vostride/agent-qa-runner-local', () => ({
   // 363-04: the run paths construct DockerHookExecutor here (D-06); runHooks is mocked so execute
   // is never actually invoked, but the constructor must exist.
   DockerHookExecutor: class { async execute() { return { success: true, variables: {}, output: '', stdout: '', stderr: '', duration: 0 } } },
-  // 362-06: the run paths now construct buildRunAuditSink (run-session-composition) which roots the
-  // per-run JsonlAuditSink via the shared run-dir slug — expose both so the mock stays complete.
+  // The run composition's `runDirFor` roots the run's own directory via the shared run-dir slug —
+  // expose both so the mock stays complete.
   RUNS_SUBDIR: 'runs',
   slugBranch: (name: string) => String(name),
 }))
