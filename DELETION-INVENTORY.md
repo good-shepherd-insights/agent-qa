@@ -4318,3 +4318,155 @@ from the raw handoff (D-18); this is open for 441's review.
 The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
 verdict are recorded in `.planning/phases/441-declared-secret-masking/441-RECORD.md` § Gate and the
 SHA in § Final SHA, rather than quoted here, so no agent-qa commit follows it.
+
+### Gap closure round 2 (441-67 to 441-70), 2026-10-15
+
+This subsection appends to the Phase 441 section and rewrites none of it, including the round 1
+subsection above; written by 441-70. It follows the round 1 gap review (2026-10-15), whose findings
+the orchestrator decided as GAP2-D1 to GAP2-D8 on 2026-10-15, with the owner's delegation. GAP2-D8
+comes from the security re-audit's flag 5. Every commit below is in agent-qa on `version-0.2` and
+signed. Every new cell is listed in `scripts/gate/inputs/regressions.json` with its `441 GAP2-D<n>`
+origin, after the 1580 rows listed at `61cc568fd`, which are unchanged and in order. Four registered
+cells were re-aimed under their kept names, as recorded below; no row was edited.
+
+**What each decision changed**
+
+- **GAP2-D1, a literal that contains a declared value is not a secret parameter (CR-G01).**
+  `trajectoryValueClassification` (`cli/src/curation/emit-candidates.ts`) now takes the raw and the
+  masked value and decides in order: a raw value equal to a test variable keeps that variable's
+  binding; a masked value that is exactly one `[secret:NAME]` or `{{secret:NAME}}` binds `NAME`;
+  any other secret form is a `literal`; `{{env:` is an unnamed test variable; everything else is a
+  `literal`. The two secret-name patterns are anchored to the whole value. With `PW=hunter2`, a typed
+  `hunter2-extra` is queued as the literal `[secret:PW]-extra`, never authored as `{ param: 'PW' }`.
+  441-67 `1660c2c72`, `206560e61`. Cells: `C441-GAP2-CURATION` (4).
+- **GAP2-D2, text bound for a model is masked whole before a template is restored (WR-G01).**
+  `createMaskingMiddleware`'s module-private leaf function (`maskKeepingTemplates`,
+  `safety/src/egress/masking-middleware.ts`) sends `mask(text)` and puts a `{{secret:NAME}}` token
+  back only when its name holds no declared value, the mask names or keeps it, masking piece by
+  piece equals the whole pass, and the cut-brace probes over the whole text before and after the
+  token find no declared value across its braces. No export, call site or barrel changed. 441-67
+  `c0a774cbb`, `2c7241109`. Cells: `C441-GAP2-EGRESS` (3).
+- **GAP2-D6, judge calibration keeps its discriminants and masks its free text (WR-G02, CR-A02's
+  rest).** The new eval-local export `maskJudgeCalibrationText(value, mask)`
+  (`eval-local/src/judge-calibration-composition.ts`, exported from its `index.ts`) masks every string
+  leaf except at a fixed list of type paths whose declared type is a closed string-literal union,
+  chosen per arm from the raw top-level `kind` and `artifact.status`, never by a bare key name. The
+  kept paths are `kind`, `status`, `minNSource`, `artifactDisposition`, `reason` (capability-gap arm
+  only), `judgeTargeted.basis`, `.source` and `.reason`, `entries[].credential`,
+  `entries[].failures[]`, `rows[].kind`, `.reason` and `.axis`, and `artifact.status`,
+  `.minNSource`, `.reason` (gap arm only) and `.judgeTargeted.*`. The judge panel preview and the
+  cli's `runJudgeCalibrateVerb` return through it; neither imports `maskPayloadStrings` now.
+  `eval calibrate --judge-panel` prints the capability gap instead of throwing when a declared value
+  spells part of `capability-gap`. 441-68 `2f75a1e42`, `7538cd702`. Cells: `C441-GAP2-JUDGE` (4).
+- **GAP2-D3, chat and the `fn` stream keep their structure (WR-G06).** `maskChatProjection` is
+  deleted from `agent-local/src/composition/compose-local-agent.ts`. Session events, op answers and
+  turn results are projected member by member through module-private rule tables: text members pass
+  the mask, data subtrees (`clause_result.payload`, an op answer's `payload`) pass
+  `maskPayloadTree`, closed-vocabulary and minted members (`kind`, `turnId`, `at`, statuses, op ids,
+  origins, stages, hashes, counts) and every key are written as they are, and a member no table
+  names is masked as a tree. `fn.ts`'s `streamLine` keeps each `--json` stream line's `seq`, `ts`,
+  `runId` and `type` keys; `seq`, `ts` and `type` keep their values, `runId` passes the mask and the
+  rest passes `maskPayloadTree`. 441-68 `d78adddfa`, `e7244d6f5`. Cells: `C441-GAP2-TRANSCRIPT` (2),
+  `C441-GAP2-DISPLAY` (1).
+- **GAP2-D4, an `expect` is compared, never refused as a write-back (WR-G04).**
+  `changeWithShownMarker` (`dashboard-server/src/config/config-manager.ts`) skips `expect` ops,
+  path and value. `expectHolds` passes an expect that deep-equals the field as the file holds it, or
+  the field passed through `maskPayloadTree` with the declared mask; a mask that throws matches
+  nothing, and anything else refuses `field_changed` as before. Deleting a model while a judge name
+  holds a declared value now lands, and the judges list stays raw in the file. Every
+  `marker_written_back` refusal uses the new schema sentence, and the agent's
+  `FIELD_WRITE_REFUSAL_WORDS.marker_written_back` tells chat and MCP to edit the config file
+  directly. 441-69 `4945742f4`, `887331b5c`, `17bb918dc`. Cells: `C441-GAP2-WRITE-BACK` (3).
+- **GAP2-D5, a masked target is never saved into a test or suite file (WR-G03).** `POST /api/tests`,
+  `PUT /api/tests/:id`, `POST /api/suites` and `PUT /api/suites/:id`
+  (`dashboard-server/src/server/routes.ts`) check the content's `target` after the presence checks
+  and before the id lookup, validation or any write, and answer `422 marker_written_back` with the
+  sentence when it holds `[secret:<name>]`. The predicate is `holdsShownMarker`, now a module export
+  of `config-manager.ts` (the package barrel does not re-export it). `ApiError` takes the server's
+  sentence as its message for this reason, so both editors show it. 441-69 `d5f68ddb6`, `28efbe900`.
+  Cells: `C441-GAP2-TEST-SAVE` (4).
+- **GAP2-D8, `config set` refuses a shown marker (security re-audit flag 5).** `setAction`
+  (`cli/src/commands/config.ts`) refuses a key or value matching `[secret:<name>]` before the config
+  file is read, prints `config set refused (marker_written_back): <sentence>` on stderr, exits 1 and
+  never echoes the value. The success path and 441-63's masked line are unchanged. 441-69
+  `7ad7142b9`, `17bb918dc`. Cells: `C441-GAP2-CONFIG` (2).
+
+**Re-aimed registered cells (names kept).** `C441-GAP-DISPLAY judge calibrate keeps numbers and DTO
+keys with a one-digit declared value and masks string leaves` now expects `minNSource: 'default'`
+and asserts a masked judge model id; `C441-GAP-DISPLAY the judge panel preview keeps its keys when a
+declared value is a key name and masks string leaves` now expects `status: 'uncalibrated'` and
+asserts a masked recorded model id (441-68). `C441-GAP-CONFIG-WRITE a set whose value holds a shown
+marker is refused and the file is unchanged` and `C441-GAP-CONFIG-WRITE a path segment, selector,
+move source or value key holding a shown marker is refused and the file is unchanged` now expect
+`MARKER_WRITTEN_BACK_SENTENCE`, and the second no longer lists the expect-led change set, because an
+expect writes nothing (441-69).
+
+#### Contracts and persisted values
+
+| Contract or persisted value | Disposition | Evidence |
+|---|---|---|
+| `MARKER_WRITTEN_BACK_SENTENCE` | **New export of `@vostride/agent-qa-schema`** (`schema/src/config/config-write.ts`, re-exported from the config barrel and the root barrel beside `CONFIG_WRITE_REFUSALS`). The one sentence for `ConfigManager`, the test and suite save refusal, `config set` and `CONNECT_REFUSAL_COPY.marker_written_back`: it tells the person to edit the config or test file directly and not to copy the marker; the secret's value stays in the secrets file. | `C441-GAP2-WRITE-BACK a set whose value holds a marker is still refused, with a sentence naming the config file` |
+| `maskJudgeCalibrationText` | **New export of `@vostride/agent-qa-eval-local`.** The judge-calibration DTO keeps its closed-vocabulary values raw at the type paths listed above and masks every other string leaf, including refused, busy, input-drift and publication-failed reasons, judge names, model ids, identities and paths. | `C441-GAP2-JUDGE` (4) |
+| `marker_written_back` | **Covers ops that write only.** An `expect` is compared in the file's space or the masked space, never refused. **It now also covers** the dashboard's test and suite saves (`422`, target only) and `agent-qa config set` (exit 1, before the file is read). Chat and MCP config writes keep it through `ConfigManager`. | `C441-GAP2-WRITE-BACK` (3), `C441-GAP2-TEST-SAVE` (4), `C441-GAP2-CONFIG` (2) |
+| procedure slots and committed procedures | **A typed value is bound to a secret only when it is exactly one marker or template.** A literal that contains a declared value is queued as a masked literal and refused at disposition by the masked-literal check, so such a procedure candidate no longer commits. A raw value equal to a test variable keeps the variable's binding even when it is also a declared value (open below). | `C441-GAP2-CURATION` (4) |
+| chat session files (`*.jsonl`) | **Events keep their structural keys and closed-vocabulary values.** A session file written between 441-62 and 441-68 while a short declared value renamed its keys stays unreadable: those lines are refused on reopen as before, with no migration (D-20). Files written since 441-68 re-open with every event. | `C441-GAP2-TRANSCRIPT a chat session written while a one-character value is declared re-opens with every event` |
+| `fn runs.events --json` lines | **Keep `seq`, `ts`, `runId` and `type` keys**, so `seq` stays a resume token; `runId`'s value is masked. | `C441-GAP2-DISPLAY` (1) |
+| the config file after a model delete | **The judges list stays raw** when the page's expect-led change set lands. | `C441-GAP2-WRITE-BACK deleting a model while a judge name holds a declared value lands and leaves the judges raw` |
+| test and suite files | **Never receive a `[secret:<name>]` target from the dashboard**; nothing is written on refusal. | `C441-GAP2-TEST-SAVE` (3 server cells) |
+
+**`KEY_42` (441-67).** With `PIN=42` and a declared name `KEY_42`, user text
+`use {{secret:KEY_42}} now` reaches the model as `use [secret:KEY_42] now`, the same marker every
+record, log and terminal line shows (D-05 names a marker after the secret's own name). Neither the
+template nor the value reaches the provider, but the `42` inside the name still appears in that
+marker everywhere. Declared names that hold other declared values are not renamed; this is open for
+441's review, and the cli and safety `C441-GAP2-EGRESS` cells pin the rendering.
+
+#### Supersedes
+
+- **Round 1's `marker_written_back` remedy** (Contracts and persisted values, round 1): the refusal
+  no longer covers `expect` ops, and its words no longer say to change the value in the secrets file
+  (`workspace.secretsFile`). They say to edit the config or test file directly
+  (`MARKER_WRITTEN_BACK_SENTENCE`), and the agent's words say the same for chat and MCP.
+- **Round 1's `maskPayloadTree` over whole chat envelopes** (GAP-D2's bullet, "the chat projection
+  (`maskChatProjection`)"): the chat projection is per member; `maskPayloadTree` masks only the data
+  subtrees, and keys and closed-vocabulary members are written as they are. The `fn --json` stream
+  keeps its four structural keys the same way.
+- **Round 1's template rule** (GAP-D1's bullet, "a token is sent verbatim when the mask only names
+  it"): a token is restored only where restoring re-sends no declared value.
+- **Round 1's judge-calibration masking** (GAP-D3's bullet, "masks the string leaves of its
+  structure"): closed-vocabulary paths stay raw.
+- **Round 1's procedure-seed classification** (GAP-D4's bullet, "so a typed declared value becomes a
+  `masked-secret` slot"): only a value that is exactly one marker or template does.
+- **The 434 gate count** (round 1's Supersedes): the gate list holds 237 `C441-` cells, the 214
+  above and 23 `C441-GAP2-` cells (`C441-GAP2-CURATION` 4, `C441-GAP2-EGRESS` 3,
+  `C441-GAP2-JUDGE` 4, `C441-GAP2-TRANSCRIPT` 2, `C441-GAP2-DISPLAY` 1, `C441-GAP2-WRITE-BACK` 3,
+  `C441-GAP2-TEST-SAVE` 4, `C441-GAP2-CONFIG` 2).
+
+#### Deferred
+
+Not fixed in round 2, by the orchestrator's scope (owner delegated), and recorded as open entries in
+`.planning/phases/441-declared-secret-masking/deferred-items.md`:
+
+- WR-G05: masked guards and page, element and selector anchors are compared with raw live state at
+  replay, so a procedure or fact on a route or element holding a declared value always misses
+  (fail-closed).
+- WR-G07: the pre-441 skips in `knowledge purge` and the adversarial refresh reader accept any
+  schema failure, not only the legacy shape.
+- WR-G08: a Files-section save naming a secrets file that does not exist makes every later mask
+  call throw, which locks the dashboard's config page out.
+- WR-C03's rest: `mask?` is still optional on the curation queue and `artifact-copy.ts`, and
+  `knowledge-local/AGENTS.md` is unchanged.
+- IN-G01 to IN-G04: three key-masking walkers with three semantics; no `{{secret:` line in the
+  authoring compile and repair prompts; run-door lines printed before the redactor is bound; a key
+  collision in a hook-run answer reported as `masking_unavailable`.
+- WR-D03's live-editor half, still open.
+- From the round's own plans: the `KEY_42` marker naming; a test variable whose value is exactly a
+  declared value committed as a `string` parameter; judge-calibration closed unions that are still
+  masked; a masked-space `expect` on a number or boolean field whose text is a declared value.
+
+**Gate**
+
+The round's record gate measures agent-qa HEAD after this subsection lands, and it also closes
+round 1's carried record gate. Its legs, counts and verdict are recorded in
+`.planning/phases/441-declared-secret-masking/441-RECORD.md` § Gate and the SHA in § Final SHA,
+rather than quoted here, so no agent-qa commit follows it.
