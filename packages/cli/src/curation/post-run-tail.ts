@@ -536,6 +536,14 @@ const PUMP_EXIT_STARVES_OWN_CHAIN: Record<ChainPumpExit, boolean> = {
 }
 
 export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
+  // 2026-10-15 (441-63, WR-A06): every line this tail logs, or hands a leg to log, is masked.
+  const mask = opts.mask ?? ((text: string) => text)
+  const log: RunPostRunTailOptions['log'] = {
+    warn: (message) => opts.log.warn(mask(message)),
+    ...(opts.log.info === undefined
+      ? {}
+      : { info: (message: string) => opts.log.info?.(mask(message)) }),
+  }
   // Read at composition; surface refusal inside each leg's verdict-preserving catch.
   const trustPriors = opts.trustPriors ?? buildTrustPriorsResolver({ configPath: opts.configPath })
   const snapshot = () => {
@@ -571,7 +579,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
     return state === 'unbound' ? 'failed' : state
   }
   let observingLateFailure = false
-  const discloseFailure = () => opts.log.warn(opts.postVerdict?.failureDetail
+  const discloseFailure = () => log.warn(opts.postVerdict?.failureDetail
     ?? `Run ${opts.runId}: preparation/enqueue failed or was refused. Analysis is not queued.`)
   let drainOutcome: PostRunDrainOutcome = 'not-attempted'
   let jobsRun = 0
@@ -602,7 +610,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
       currentBuildOrdinal: product => latestBuildOrdinal({ root: opts.agentQaRoot, product }),
     })
     return posturePromise.then(posture => promotionPostureResolverForHost(
-      posture, message => opts.log.warn(message), currentBuildOrdinal,
+      posture, message => log.warn(message), currentBuildOrdinal,
       scope?.tier === 'product' ? scope.key : null,
     ))
   }
@@ -640,7 +648,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
       ...(heldAuthority === undefined ? {} : { authority: heldAuthority }),
       ...(deadlineMs === undefined ? {} : { deadlineMs }),
       ...(opts.signal === undefined ? {} : { signal: opts.signal }),
-      log: opts.log,
+      log,
     })
     // WR-03: the fold already told us whether it wrote a receipt. Dropping `complete` here is
     // what let `incompleteWarning` print "curation incomplete; it will resume" while the
@@ -707,7 +715,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         }
         const recovery = await ops().recoverPendingPostVerdictContinuations({
           agentQaRoot: opts.agentQaRoot, configPath: opts.configPath, knowledgeRoot: root,
-          deadlineMs: drainDeadlineMs, log: opts.log,
+          deadlineMs: drainDeadlineMs, log,
           ...(opts.signal === undefined ? {} : { signal: opts.signal }),
         })
         preparationRecoveryPending = recovery.some((result) => result.pending)
@@ -717,7 +725,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         // those reads throws must not send the exception past `runVerdictFirstCurationTail` into
         // the command's framework catch (JOBQ-06).
         drainOutcome = 'not-attempted'
-        opts.log.warn(drainFailureWarning(opts.runId, error))
+        log.warn(drainFailureWarning(opts.runId, error))
         return
       }
       let acquiredLeaseId: string | undefined
@@ -894,7 +902,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
           ...(opts.mask === undefined ? {} : { mask: opts.mask }),
           ...(opts.modelDeps === undefined ? {} : { modelDeps: opts.modelDeps }),
           ...(opts.signal === undefined ? {} : { signal: opts.signal }),
-          log: opts.log,
+          log,
           authority: heldAuthority,
           deadlineMs: drainDeadlineMs,
         })
@@ -908,7 +916,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         // modules will not compose ATTEMPTED nothing. Read off `openedHost` rather than off a
         // second flag, because that variable already records exactly the fact being asked about.
         drainOutcome = openedHost === undefined ? 'not-attempted' : 'threw'
-        opts.log.warn(drainFailureWarning(opts.runId, error))
+        log.warn(drainFailureWarning(opts.runId, error))
       } finally {
         heldAuthority = undefined
         // THE ONE RELEASE, ON EVERY PATH OUT (CR-01). `acquiredLeaseId` is set in the same breath
@@ -938,7 +946,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
     async finish(input: { readonly detached?: boolean } = {}): Promise<void> {
       const actualEnqueue = enqueueOutcome()
       if (opts.postVerdict !== undefined && actualEnqueue === undefined) {
-        opts.log.info?.(`Run ${opts.runId}: preparation pending; analysis is not yet queued. Durable intent: ${opts.postVerdict.pendingPath}. The next local run or daemon drain resumes eligible pending preparation.`)
+        log.info?.(`Run ${opts.runId}: preparation pending; analysis is not yet queued. Durable intent: ${opts.postVerdict.pendingPath}. The next local run or daemon drain resumes eligible pending preparation.`)
         if (!observingLateFailure && opts.postVerdict.completion !== undefined) {
           observingLateFailure = true
           void opts.postVerdict.completion.then(() => {
@@ -949,7 +957,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
       }
       if (opts.postVerdict !== undefined && actualEnqueue === 'failed') { discloseFailure(); return }
       if (opts.postVerdict !== undefined && actualEnqueue === 'skipped') {
-        opts.log.info?.(`Run ${opts.runId}: post-run analysis intentionally skipped.`)
+        log.info?.(`Run ${opts.runId}: post-run analysis intentionally skipped.`)
         return
       }
       if (input.detached === true && drainOutcome === 'not-attempted') {
@@ -1028,7 +1036,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
           try {
             digestRead = { value: await ops().readRunDigest(openedHost, opts.runId) }
           } catch (error) {
-            opts.log.warn(digestReadFailureWarning(opts.runId, error))
+            log.warn(digestReadFailureWarning(opts.runId, error))
             digestRead = { value: undefined }
           }
         }
@@ -1048,7 +1056,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         if (!analyzeRunCompleted) return
         const digest = await readDigest(openedHost)
         if (digest === undefined || digest.lines.length === 0) return
-        opts.log.info?.(digest.lines.join('\n'))
+        log.info?.(digest.lines.join('\n'))
       }
       // 404 D-05: the step's answer, not this file's. Nothing is queued and the step's own
       // `post-run-enqueue-failed` warning has already said everything true about this run, so a
@@ -1060,7 +1068,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         // exactly the posture that most needs a line about work left queued (388-04 D-08).
         openedHost = openHost()
       } catch (error) {
-        opts.log.warn(summaryFailureWarning(opts.runId, error))
+        log.warn(summaryFailureWarning(opts.runId, error))
         return
       }
       try {
@@ -1071,7 +1079,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
           // 418 D-04: diagnostics come from this run's validated durable v4 receipt;
           // older/missing receipts keep the pre-v4 line. Notification vocabulary is unchanged.
           const receipt = readCurationTailReceipt(completedRunDir(opts.agentQaRoot, opts.runId))
-          opts.log.info?.(renderChainTerminalLine(status.notification,
+          log.info?.(renderChainTerminalLine(status.notification,
             { ...(receipt?.runId === opts.runId ? receipt : {}),
               trustPriorDisclosure: snapshot().disclosure,
               // 422 D-14/D-19: two disclosure reads, both read-only, both on the leg that has the
@@ -1086,7 +1094,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         // gains the pending-proposal count and the exact fetch command (the whole digest is
         // one copy-paste away); when it did, the digest prints one line down and a pointer
         // would be noise. EITHER/OR, one story.
-        opts.log.info?.(
+        log.info?.(
           renderPostProcessingSummaryLine(status, postureOf(drainOutcome), snapshot().disclosure)
           + (analyzeRunCompleted
             ? ''
@@ -1094,7 +1102,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         )
         await printDigestBlock(openedHost)
       } catch (error) {
-        opts.log.warn(summaryFailureWarning(opts.runId, error))
+        log.warn(summaryFailureWarning(opts.runId, error))
       } finally {
         try {
           // Idempotent, and the detach leg's only close: this leg opened the store and the

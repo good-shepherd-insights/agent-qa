@@ -541,6 +541,14 @@ function formatFrameworkError(message: string): FormattedFrameworkError {
   }
 }
 
+// 2026-10-15 (441-63, CR-A03): the terminal copy is masked like the copy written to the database.
+export function frameworkErrorTerminalLine(
+  message: string,
+  redactor: SecretRedactorPort | undefined,
+): string {
+  return redactSecretValue(formatFrameworkError(message).displayMessage, redactor)
+}
+
 export interface RunOptions {
   browser?: string
   platform?: string
@@ -5225,7 +5233,7 @@ export function createRunCommand(): Command {
         // EXIT 2, NOT 1. `1` is "the tests failed", and a denial must never read as a failing
         // suite: nothing ran. `2` is this command's existing "no verdict was produced" code.
         if (err instanceof RunDeniedError) {
-          console.error(pc.red(`Run denied: ${err.reason}`))
+          console.error(pc.red(redactSecretValue(`Run denied: ${err.reason}`, _crashSecretRedactor)))
           await drainAnalytics()
           process.exit(2)
         }
@@ -5239,14 +5247,14 @@ export function createRunCommand(): Command {
         //
         // EXIT 2 on `RunDeniedError`'s reasoning: `1` is "the tests failed", and nothing ran.
         if (err instanceof RunIdNotMintedError || err instanceof RunIdAlreadyInUseError) {
-          console.error(pc.red(err.message))
+          console.error(pc.red(redactSecretValue(err.message, _crashSecretRedactor)))
           await drainAnalytics()
           process.exit(2)
         }
         const errMsg = err instanceof Error ? err.message : String(err)
         const errStack = err instanceof Error ? err.stack ?? '' : ''
         const formattedError = formatFrameworkError(errMsg)
-        console.error(pc.red(formattedError.displayMessage))
+        console.error(pc.red(frameworkErrorTerminalLine(errMsg, _crashSecretRedactor)))
         const crashRunIdsPrinted = new Set<string>()
 
         if (_crashDb) {
