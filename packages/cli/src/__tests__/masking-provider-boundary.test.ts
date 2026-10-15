@@ -205,4 +205,46 @@ describe('C441-GAP-EGRESS', () => {
     expect(capturedUserText(captured())).toContain('{{secret:PW}}')
     expect(JSON.stringify(captured())).not.toContain('hunter2')
   })
+
+  it('a declared value used as an object key never reaches the model', async () => {
+    const value = 'qa-admin-42'
+    const redactor = new SecretRedactor(SecretStore.fromEnvContent(`USER=${value}`))
+    const { captured, model } = createCapturingModel((text) => redactor.redactString(text))
+
+    await model.doGenerate({
+      prompt: [
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'call-1',
+              toolName: 'fill',
+              input: { map: { [value]: 1 } },
+            },
+          ],
+        },
+      ],
+    })
+    expect(JSON.stringify(captured())).toContain('"[secret:USER]":1')
+    expect(JSON.stringify(captured())).not.toContain(value)
+
+    await model.doGenerate({
+      prompt: [
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'call-1',
+              toolName: 'read',
+              output: { type: 'json', value: { localStorage: { [`session:${value}`]: 'x' } } },
+            },
+          ],
+        },
+      ],
+    })
+    expect(JSON.stringify(captured())).toContain('"session:[secret:USER]":"x"')
+    expect(JSON.stringify(captured())).not.toContain(value)
+  })
 })
