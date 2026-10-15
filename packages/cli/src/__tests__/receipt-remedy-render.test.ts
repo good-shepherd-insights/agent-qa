@@ -52,7 +52,10 @@ describe('C432-PLAIN-REFUSAL: a refused run prints a plain reason and suggests n
     const branch = code.slice(code.indexOf('if (err instanceof RunDeniedError) {'))
     expect(branch.length).toBeGreaterThan(0)
     const body = branch.slice(0, branch.indexOf('process.exit(2)'))
-    expect(body).toContain('console.error(pc.red(`Run denied: ${err.reason}`))')
+    // 2026-10-15 (441-63, CR-A03): the same sentence, through the run's redactor.
+    expect(body).toContain(
+      'console.error(pc.red(redactSecretValue(`Run denied: ${err.reason}`, _crashSecretRedactor)))',
+    )
     // One print, of the reason alone.
     expect(body.match(/console\.error/g) ?? []).toHaveLength(1)
   })
