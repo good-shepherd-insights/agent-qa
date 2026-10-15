@@ -8,6 +8,7 @@ import {
   createSuiteFile,
   createTestFile,
   fetchSuiteFiles,
+  updateTestFile,
 } from '@/lib/api'
 
 let originalFetch: typeof fetch
@@ -138,6 +139,33 @@ describe('ApiError propagation through postJson', () => {
       if (err.message !== 'Suite file not found') return false
       return true
     })
+  })
+})
+
+describe('C441-GAP2-TEST-SAVE', () => {
+  it('a test save refused as marker_written_back rejects with the sentence as its message', async () => {
+    const sentence = 'This holds [secret:<name>], the way a declared secret is shown.'
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 422,
+        statusText: 'Unprocessable Entity',
+        json: async () => ({ error: 'marker_written_back', message: sentence }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        json: async () => ({ error: 'invalid_test_file', message: 'Line 3 repeats a key' }),
+      }) as unknown as typeof fetch
+
+    const refused = await updateTestFile('t_x', 'target: x\n').catch((err: unknown) => err)
+    expect(refused).toBeInstanceOf(ApiError)
+    expect((refused as ApiError).message).toBe(sentence)
+    expect((refused as ApiError).payload?.error).toBe('marker_written_back')
+
+    const other = await updateTestFile('t_x', 'target: x\n').catch((err: unknown) => err)
+    expect((other as ApiError).message).toBe('invalid_test_file')
   })
 })
 
