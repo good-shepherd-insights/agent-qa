@@ -7,7 +7,7 @@ import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import { canonicalJson, misdirectionSourceDigest, sha256hex } from '@vostride/agent-qa-schema'
 import { completedRunHandoffPath, defaultCurationTailOperations } from './curation-tail.js'
-import { buildRunAuditSink, runSafetyScope } from '@vostride/agent-qa-agent-local'
+import { runSafetyScope } from '@vostride/agent-qa-agent-local'
 import type { PostVerdictHandoff, PostVerdictStepOptions } from './post-verdict-step.js'
 import { readRunCanaryPolicy } from './canary-run-state.js'
 
@@ -331,11 +331,10 @@ export async function recoverPendingPostVerdictContinuations(input: RecoverPendi
         await resolveEvalSession({ configPath: input.configPath })
         // Expired discovery must not start a new producer after its caller returned.
         if (Date.now() >= input.deadlineMs || input.signal?.aborted) return
-        const auditSink = buildRunAuditSink({ configDir: dirname(input.configPath), runId })
         const { createPostVerdictStep } = await import('./post-verdict-step.js')
         const step = createPostVerdictStep({ ...bound, detach: true })
         handoff = step.handoff
-        await runSafetyScope({ auditSink, executionContext: 'local-headless' },
+        await runSafetyScope({ executionContext: 'local-headless' },
           async () => await step.port.run({} as Parameters<typeof step.port.run>[0]))
       })()
       const settled = await waitForPostVerdictContinuation(completion, input.deadlineMs, input.signal)

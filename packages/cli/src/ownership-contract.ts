@@ -70,7 +70,9 @@ export const AGENT_QA_CLI_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-model',
   '@vostride/agent-qa-runner',
   '@vostride/agent-qa-runner-local',
-  '@vostride/agent-qa-safety',
+  // 2026-10-15 (Phase 441 plan 43, D-15): the safety package is GONE from this list. Its last
+  // shipped import was `curation/curation-tail.ts`'s audit sink type, deleted with the curation
+  // audit sink. This package's tests still import it, so it stays as a devDependency.
   '@vostride/agent-qa-safety-local',
   '@vostride/agent-qa-schema',
   '@vostride/agent-qa-web',

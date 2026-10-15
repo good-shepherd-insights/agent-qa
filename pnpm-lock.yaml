@@ -277,9 +277,6 @@ importers:
       '@vostride/agent-qa-runner-local':
         specifier: workspace:*
         version: link:../runner-local
-      '@vostride/agent-qa-safety':
-        specifier: workspace:*
-        version: link:../safety
       '@vostride/agent-qa-safety-local':
         specifier: workspace:*
         version: link:../safety-local
@@ -320,6 +317,9 @@ importers:
       '@vostride/agent-qa-arch':
         specifier: workspace:*
         version: link:../arch
+      '@vostride/agent-qa-safety':
+        specifier: workspace:*
+        version: link:../safety
       glob:
         specifier: 13.0.6
         version: 13.0.6

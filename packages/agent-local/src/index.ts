@@ -23,7 +23,6 @@ export type LocalPersistenceStore = PersistencePort
 // database is a second writer nobody arbitrated.
 export {
   buildMemberRunConfig,
-  buildRunAuditSink,
   buildRunPorts,
   buildScreenshotCompressor,
   buildSuiteMemberExecutor,
@@ -36,7 +35,6 @@ export {
   resolveBuildTagSetting,
   resolveRunBuildOrdinal,
   resolveRunExecutionContext,
-  stampAuditSink,
   toMemberTest,
 } from './composition/run-composition.js'
 export type {

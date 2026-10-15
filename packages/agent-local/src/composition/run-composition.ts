@@ -2,7 +2,7 @@
 //
 // This is the dissected majority of what used to be a 1035-line composition helper inside the CLI.
 // Nothing here was rewritten: the digest mint, the persistence-port construction, the suite
-// lifecycle, the stamped audit sink and the member run-config assembly are the same code, moved.
+// lifecycle and the member run-config assembly are the same code, moved.
 // What changed is WHERE it lives and what it is allowed to assume, and only one thing was actually
 // taken away — the readline default on the confirm seam, which became a presentation port (see
 // presentation-ports.ts for the rule that decided every symbol's side of the line). Since 432-13
@@ -19,8 +19,7 @@
 
 import { createHash } from 'node:crypto'
 import { dirname, isAbsolute, resolve } from 'node:path'
-import type { AuditSink } from '@vostride/agent-qa-safety'
-import { detectExecutionContext, JsonlAuditSink } from '@vostride/agent-qa-safety-local'
+import { detectExecutionContext } from '@vostride/agent-qa-safety-local'
 import { guardToolOutput } from '@vostride/agent-qa-model'
 import type { TokenAccounting } from '@vostride/agent-qa-model'
 import type {
@@ -684,45 +683,8 @@ export function buildSuiteMemberExecutor(input: {
 // ---- (6) masking seed pipeline: deleted 441-19 (D-12). A run masks only through its producer's
 // `SecretRedactor`, built from the declared secrets; nothing seeds from the environment or auth state.
 
-// ---- (7) per-run stamped audit sink — stampAuditSink / buildRunAuditSink (D-12/D-13) ---------
-//
-// D-13: the run stamps correlation at ONE composition-root site — a thin wrapper that injects runId
-// into every row before append so rows are self-describing (SEAM-02 is literal
-// in the row, no joins). The stamp WINS over any pre-existing row field (RESEARCH Open Q3): spread
-// the row FIRST, stamp AFTER. D-12: the sink is a JsonlAuditSink rooted at the SAME
-// .agent-qa/runs/<slug(runId)>/ directory FsEventLog uses (slugBranch reuse — path forking is the
-// failure mode), so a completed run is one self-contained directory.
-
-/**
- * Wrap an AuditSink so every appended row carries `runId` (D-13). Stamp-wins: the row is spread
- * first and the stamp applied after, so a stale row field never survives. The void-or-promise
- * return of the inner sink is preserved.
- *
- * 2026-10-01 (432-19, D-17): guardrail rows are the only rows. The execution-audit row, the one
- * that also carried the execution context, is deleted with the gate, so the context is no longer
- * stamped here; the run still records it on its handoff, events and DTOs.
- */
-export function stampAuditSink(inner: AuditSink, runId: string): AuditSink {
-  return {
-    appendGuardrailAudit(row) {
-      return inner.appendGuardrailAudit({ ...row, runId })
-    },
-  }
-}
-
-/**
- * Build the per-run stamped audit sink (D-12/D-13). A `JsonlAuditSink` rooted at the EXACT run dir
- * `FsEventLog`/`FsHandoffStore` write to — `<configDir>/.agent-qa/runs/<slugBranch(runId)>/` — so
- * guardrail_audit.jsonl lands beside events.jsonl + handoff.json. The
- * slug is `slugBranch` from runner-local (the exact slug the event log uses); path forking would
- * scatter a run's evidence. The sink is wrapped by `stampAuditSink` so every row is correlated.
- */
-export function buildRunAuditSink(input: {
-  configDir: string
-  runId: string
-}): AuditSink {
-  return stampAuditSink(new JsonlAuditSink(runDirFor(input)), input.runId)
-}
+// ---- (7) per-run stamped audit sink: deleted 441-43 (D-15). Neither a run nor a curation fold
+// writes a guardrail audit row, so a run directory holds no audit file beside its events.
 
 /**
  * The one composition of a run's own directory (401-20, CR-04).

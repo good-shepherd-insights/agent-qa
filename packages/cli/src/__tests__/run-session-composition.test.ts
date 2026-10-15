@@ -2,17 +2,14 @@ import { afterEach, describe, it, expect } from 'vitest'
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { FsEventLog, RUN_EVIDENCE_BLOBS_SUBDIR, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
+import { RUN_EVIDENCE_BLOBS_SUBDIR, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
-import type { AuditSink, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import {
   computeRunConfigDigests,
   buildRunPorts,
   buildMemberRunConfig,
   createSuiteLifecycle,
   resolveRunExecutionContext,
-  stampAuditSink,
-  buildRunAuditSink,
 } from '@vostride/agent-qa-agent-local'
 // 385-08 (D-13): every assertion below is unchanged. The only edit this dissection made to this
 // suite is the path each symbol is named through — which is itself the evidence that the move was
@@ -239,59 +236,7 @@ describe('resolveRunExecutionContext (delegates to safety-local)', () => {
   })
 })
 
-// ---- (8) per-run stamped audit sink (D-12/D-13) --------------------------------------------
-
-// D-13 (RESEARCH Open Q3): the stamp WINS over any pre-existing row runId — correlation is authored
-// at the single composition-root stamping site, not by callers.
-// 2026-10-01 (432-19, D-17): the execution row (which also carried the context) is deleted with the
-// gate; the guardrail row is the only row, and it is stamped with the run id.
-describe('stampAuditSink (D-13 — stamp-wins correlation)', () => {
-  it('overrides row runId on guardrail rows, the only rows there are', async () => {
-    const guardRows: GuardrailAuditRow[] = []
-    const inner: AuditSink = {
-      appendGuardrailAudit(row) {
-        guardRows.push(row)
-      },
-    }
-    const stamped = stampAuditSink(inner, 'run-1')
-
-    await stamped.appendGuardrailAudit({ runId: 'STALE', action: 'redact' })
-
-    expect(guardRows).toEqual([{ runId: 'run-1', action: 'redact' }])
-    expect(Object.keys(stamped)).toEqual(['appendGuardrailAudit'])
-  })
-})
-
-// D-12: the per-run sink writes into the SAME .agent-qa/runs/<slug(runId)>/ directory FsEventLog
-// uses — the paths cannot fork (a completed run is one self-contained directory).
-describe('buildRunAuditSink (D-12 — path identity with FsEventLog)', () => {
-  // RE-SPELLED 2026-10-01 (432-19, D-17) from 'writes execution_audit.jsonl in the exact dir
-  // FsEventLog writes events.jsonl'. The execution trail has no writer; the guardrail trail is the
-  // run's audit file and lands in the same directory.
-  it('writes guardrail_audit.jsonl in the exact dir FsEventLog writes events.jsonl, and no execution trail', async () => {
-    const configDir = tempDir('run-audit-')
-    const runId = 'r_audit-path-check'
-    const sink = buildRunAuditSink({ configDir, runId })
-
-    await sink.appendGuardrailAudit({ action: 'pass', channel: 'planner' })
-
-    const root = resolve(configDir, '.agent-qa')
-    new FsEventLog({ root, runId }).append({
-      seq: 1,
-      ts: 0,
-      runId,
-      type: 'runWarning',
-      payload: { code: 'x', message: 'x' },
-    } as never)
-
-    const runDir = join(root, RUNS_SUBDIR, slugBranch(runId))
-    expect(existsSync(join(runDir, 'guardrail_audit.jsonl'))).toBe(true)
-    expect(existsSync(join(runDir, 'events.jsonl'))).toBe(true)
-    expect(existsSync(join(runDir, 'execution_audit.jsonl'))).toBe(false)
-    const row = JSON.parse(readFileSync(join(runDir, 'guardrail_audit.jsonl'), 'utf-8').trim()) as Record<string, unknown>
-    expect(row).toMatchObject({ runId, action: 'pass', channel: 'planner' })
-  })
-})
+// ---- (8) per-run stamped audit sink: deleted 441-43 (D-15) with its two cells ----------------
 
 // ---- (9) per-run safety-hooks registrar: deleted 441-30 (D-12/D-15) with its three cells ------
 

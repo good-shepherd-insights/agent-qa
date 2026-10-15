@@ -2476,14 +2476,7 @@ export function postRunCapabilities(
   }
 }
 
-/**
- * Compose the local agent host.
- *
- * The registry's audit sink is rooted at the PROJECT root (`<agentQaRoot>`), not inside a per-run
- * directory: a capability call is not scoped to any run, and several of them (config reads, registry
- * listings) happen with no run in existence. 2026-10-01 (432-19, D-17): the sink writes guardrail
- * rows only; no execution-audit row is written for an invocation.
- */
+/** Compose the local agent host. */
 /**
  * The two callers chat mints, one per stage (392, RESEARCH Pitfall 1 / 391 D-06).
  *

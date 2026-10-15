@@ -22,19 +22,23 @@ const digest = (text: string) => createHash('sha256').update(text).digest('hex')
 // Re-blessed 2026-10-15 for knowledge-local only (441-41, D-15): both of its pins moved because
 // its @vostride/agent-qa-safety-local edge was REMOVED with the last JsonlAuditSink import. Both
 // digests were recomputed by this wall's own expression; no edge was added.
+// Re-blessed 2026-10-15 for cli only (441-43, D-15): both of its pins moved because its
+// @vostride/agent-qa-safety edge was REMOVED with curation-tail.ts's audit sink type, its last
+// shipped import. Its tests still import the package, so it moved to devDependencies. Both digests
+// were recomputed by this wall's own expression; no edge was added.
 const dependencyPins = {
   eval: '3dfdd67ac8febb33dc7f7d027408677ff5f7852b02c6df15d221b5395c9b5371',
   'eval-local': '2a080fb9e46b9858ba6d8f2fb2739fa273db8d458e9ca9ed17545389c0d0216d',
   'knowledge-local': 'a88a5eaa4fb407dbfc466da9ffae57698962ca15abf7b3bceb800ee6c4a57243',
   'agent-local': 'b2e720e8c49b10e5882523a1cffdfa8e502619dd3e1e799e1078eba3dc6d01d0',
-  cli: '0087836ed2fd263ec5e779e5a1abd44803b5787e33b2714d58037da9c8274d5b',
+  cli: '0ac4708d4e07a047da6119c6e393ee62432597aff39b2ce8786d9f4a48445f0a',
 }
 const internalPins: Record<string, string> = {
   eval: 'f09db8107041e27d15929be67224e779d7ecaca3b45594f7c63cee45c9c200ed',
   'eval-local': 'deedee0b56409517d1fca91bbe7f4b7c56984409290a66d6beddccbaaa843f45',
   'knowledge-local': '5410ce22c0e1e698cc2040f8652231ea72b48313430d1d289e9c1a38442fb955',
   'agent-local': 'ffe54e4e45a22c4544b49e376470cea3421d2b9e03f0bd903755b0af711db469',
-  cli: '72c3719b1219ba5143c261ebbdf966e1bab08190d422b9cc261c7bb09218b248',
+  cli: '1817c1a2602f85746c3c86e448f2633444dca109f8bb97397947941af699923a',
 }
 const local = 'packages/eval-local/src/'
 const sources = [...globSync('packages/*/src/**/*.{ts,tsx}', { cwd: root })]
@@ -86,7 +90,10 @@ describe('421 judge panel walls', () => {
     // packages/cli/src/commands/run.ts -> @vostride/agent-qa-safety, whose only import (the hook
     // runner type of the producers' late-bound slots) 441-30 deleted. Nothing was added; the digest
     // was recomputed.
-    expect(digest(read('packages/arch/src/lint/surface-firewall-ledger.ts'))).toBe('93677ecee781fdb8ff7ae798edc5be25d943f580e5b3f68696f92f58be98a608')
+    // Re-blessed 2026-10-15 (Phase 441 plan 43, D-15): the ledger SHRANK by one entry —
+    // packages/cli/src/curation/curation-tail.ts -> @vostride/agent-qa-safety, whose only import
+    // (the audit sink type) 441-43 deleted. Nothing was added; the digest was recomputed.
+    expect(digest(read('packages/arch/src/lint/surface-firewall-ledger.ts'))).toBe('a59f9dffb057cf69ab9dd64363f10e3bf4c1172732bab5f301426cfc010aa4a9')
     for (const text of ["import { loadJudgeCalibrationEvidence as data } from '@vostride/agent-qa-eval-local'",
       "const data = await import('@vostride/agent-qa-eval-local')"]) {
       const hits = calibrationImports({ file: 'packages/cli/src/judge-new.ts', text })

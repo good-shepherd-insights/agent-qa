@@ -262,12 +262,6 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
   },
   {
     file: 'packages/cli/src/curation/curation-tail.ts',
-    specifier: '@vostride/agent-qa-safety',
-    clearedBy: '388',
-    reason: 'the post-run curation tail runs in-process today; moves behind the analyze-run job chain',
-  },
-  {
-    file: 'packages/cli/src/curation/curation-tail.ts',
     specifier: '@vostride/agent-qa-safety-local',
     clearedBy: '388',
     reason: 'the post-run curation tail runs in-process today; moves behind the analyze-run job chain',

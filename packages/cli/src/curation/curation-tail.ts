@@ -30,8 +30,7 @@ import {
   loadCompletedRunHandoff,
   slugBranch,
 } from '@vostride/agent-qa-runner-local'
-import type { AuditSink } from '@vostride/agent-qa-safety'
-import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
+import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import type {
   ExecutionContext,
   CurationSnapshot,
@@ -141,7 +140,7 @@ export interface RunCurationTailOptions {
   /** 418 D-13: reuse prepared identity but bind each swept handoff's own ordinal. */
   resolvePromotionPostureForRun?: (buildOrdinal: number, scope?: ScopeKey) => Promise<ResolvePromotionPosture | undefined>
   runId: string
-  /** Absolute `.agent-qa` runtime root shared by the run handoff and curation audit. */
+  /** Absolute `.agent-qa` runtime root the run handoff lives under. */
   agentQaRoot: string
   knowledgeConfig: { dir: string }
   configDir: string
@@ -227,11 +226,6 @@ export function completedRunsRoot(agentQaRoot: string): string {
  */
 export function completedRunEventsPath(agentQaRoot: string, runId: string): string {
   return join(completedRunDir(agentQaRoot, runId), EVENTS_FILE)
-}
-
-/** The project-level audit sink a fold outside a run's own tail records against. */
-export function createCurationAuditSink(agentQaRoot: string): AuditSink {
-  return new JsonlAuditSink(agentQaRoot)
 }
 
 export function listCompletedRunDirs(agentQaRoot: string): string[] {
@@ -460,7 +454,6 @@ export interface CurateCompletedRunInput {
   handoff: ReturnType<typeof loadCompletedRunHandoff>
   knowledgeRoot: string
   agentQaRoot: string
-  auditSink?: AuditSink
   mask?: MaskFn
   modelDeps?: CurationTailModelDeps
   /** An already-resolved author wins over `modelDeps`; a standing host holds one per process. */
@@ -689,7 +682,6 @@ export async function curateCompletedRun(
     : Math.max(0, input.deadlineMs - tailStartedAtMs)
   await operations.runSafetyScope(
     {
-      auditSink: input.auditSink,
       // SAFE-01: posture is persisted run truth, never an ambient re-detection.
       executionContext: input.handoff.executionContext,
     },
