@@ -59,3 +59,41 @@ describe('C441-EGRESS', () => {
     expect(sent.providerOptions).toEqual(providerOptions)
   })
 })
+
+const stubMask = (text: string): string =>
+  text
+    .replaceAll('{{secret:X}}', '[secret:X]')
+    .replaceAll('{{secret:Z}}', '[secret:other]')
+    .replaceAll('raw-stand-in', '[secret:X]')
+
+describe('C441-GAP-EGRESS', () => {
+  it('a template the mask names or leaves alone is sent verbatim, and the text around it is masked', async () => {
+    const params = {
+      prompt: [
+        { role: 'system', content: 'use {{secret:X}} verbatim, never raw-stand-in' },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'type {{secret:X}} then {{secret:Y}} or {{secret:Z}}; raw-stand-in' },
+          ],
+        },
+      ],
+    } as unknown as ProviderRequestParams
+
+    const model = recorder()
+    const wrapped = wrapLanguageModel({ model, middleware: createMaskingMiddleware(stubMask) })
+    await wrapped.doGenerate(params)
+
+    const sent = model.doGenerateCalls[0]!
+    expect(sent.prompt).toEqual([
+      { role: 'system', content: 'use {{secret:X}} verbatim, never [secret:X]' },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'type {{secret:X}} then {{secret:Y}} or [secret:other]; [secret:X]' },
+        ],
+      },
+    ])
+    expect(JSON.stringify(sent.prompt)).not.toContain('raw-stand-in')
+  })
+})

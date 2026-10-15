@@ -1,7 +1,12 @@
 // The captured provider boundary of a run-shaped createModel (C441-EGRESS). 2026-10-15 (441-30,
 // D-12/D-15): the stamped-audit integration proof is deleted with the per-run hook registrar.
 
-import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
+import {
+  SecretRedactor,
+  SecretStore,
+  buildSystemPrompt,
+  literalSecretMarkerRefusal,
+} from '@vostride/agent-qa-runner'
 import { createModel } from '@vostride/agent-qa-model'
 import type { ResolvedModelAuth } from '@vostride/agent-qa-model'
 import { describe, expect, it } from 'vitest'
@@ -101,5 +106,91 @@ describe('C441-EGRESS', () => {
       `file=[secret:MY_SERVICE_SECRET] env=${envSecret} cookie=${cookieSecret}`,
     )
     expect(JSON.stringify(captured())).not.toContain(fileSecret)
+  })
+})
+
+type CapturedPrompt = CapturedCallOptions['prompt']
+
+function conversationRequest(input: {
+  system: string
+  user: string
+  toolCallInput: Record<string, unknown>
+  toolErrorText: string
+}): CapturedCallOptions {
+  const prompt: CapturedPrompt = [
+    { role: 'system', content: input.system },
+    { role: 'user', content: [{ type: 'text', text: input.user }] },
+    {
+      role: 'assistant',
+      content: [
+        { type: 'tool-call', toolCallId: 'call-1', toolName: 'fill', input: input.toolCallInput },
+      ],
+    },
+    {
+      role: 'tool',
+      content: [
+        {
+          type: 'tool-result',
+          toolCallId: 'call-1',
+          toolName: 'fill',
+          output: { type: 'error-text', value: input.toolErrorText },
+        },
+      ],
+    },
+  ]
+  return { prompt }
+}
+
+function capturedSystemText(captured: CapturedCallOptions | undefined): string {
+  const message = captured?.prompt.find((entry) => entry.role === 'system')
+  if (message?.role !== 'system') throw new Error('expected captured system message')
+  return message.content
+}
+
+function capturedToolErrorText(captured: CapturedCallOptions | undefined): string {
+  const message = captured?.prompt.find((entry) => entry.role === 'tool')
+  if (message?.role !== 'tool') throw new Error('expected captured tool message')
+  const part = message.content[0]
+  if (part?.type !== 'tool-result' || part.output.type !== 'error-text') {
+    throw new Error('expected captured error-text tool result')
+  }
+  return part.output.value
+}
+
+function capturedUserTextIn(captured: CapturedCallOptions | undefined): string {
+  const message = captured?.prompt.find((entry) => entry.role === 'user')
+  if (message?.role !== 'user') throw new Error('expected captured user message')
+  const part = message.content[0]
+  if (part?.type !== 'text') throw new Error('expected captured text part')
+  return part.text
+}
+
+describe('C441-GAP-EGRESS', () => {
+  it('Rule 23, the D-10 refusal and step text reach the model with the template intact', async () => {
+    const value = 'hunter2-gap-61'
+    const redactor = new SecretRedactor(SecretStore.fromEnvContent(`PW=${value}`))
+    const { captured, model } = createCapturingModel((text) => redactor.redactString(text))
+    const system = buildSystemPrompt()
+    const refusal = literalSecretMarkerRefusal({ text: '[secret:PW]' })
+    expect(refusal).toBeDefined()
+
+    await model.doGenerate(
+      conversationRequest({
+        system,
+        user: `Type {{secret:PW}} into the field; the old code was ${value}`,
+        toolCallInput: { text: '[secret:PW]' },
+        toolErrorText: refusal!,
+      }),
+    )
+
+    expect(capturedSystemText(captured())).toBe(system)
+    expect(capturedSystemText(captured())).toContain('use {{secret:NAME}} verbatim')
+    expect(capturedUserTextIn(captured())).toBe(
+      'Type {{secret:PW}} into the field; the old code was [secret:PW]',
+    )
+    expect(capturedToolErrorText(captured()).endsWith('Use {{secret:PW}} to type the secret.')).toBe(
+      true,
+    )
+    expect(JSON.stringify(captured())).not.toContain(value)
   })
 })
