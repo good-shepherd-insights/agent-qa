@@ -111,23 +111,6 @@ function makeEvidence(
 ): ProcedureDispositionEvidence {
   return {
     distilledObservations: makeObservations(),
-    captureReceipt: {
-      regions: [
-        {
-          stepIndex: 1,
-          elementRef: 'e-sign-in',
-          role: 'textbox',
-          normalizedName: 'password',
-          reason: 'credential-name',
-        },
-      ],
-      interactions: [0, 1, 2].map((stepIndex) => ({
-        stepIndex,
-        elementRef: 'e-sign-in',
-      })),
-      omissions: [],
-      redactions: [],
-    },
     artifactInventory: [],
     candidateDir: join(root, 'claimed', 'candidate'),
     policy,
@@ -421,9 +404,6 @@ describe('C441-CAPTURE', () => {
     }
     const delta = addDelta({ body: serializeProcedureBody(payload) })
 
-    expect(makeEvidence().captureReceipt.regions).toEqual([
-      expect.objectContaining({ stepIndex: 1, reason: 'credential-name' }),
-    ])
     expect(dispose(delta)).toMatchObject({ kind: 'apply', delta })
   })
 })
@@ -470,23 +450,6 @@ describe('procedure extraction commit path — artifact cap & egress backstop (A
         role,
         originalName,
       })),
-      captureReceipt: {
-        regions: [
-          {
-            stepIndex: 1,
-            elementRef: screenStates[1]!.elements[0]!.ref,
-            role: 'textbox',
-            normalizedName: 'password',
-            reason: 'credential-name',
-          },
-        ],
-        interactions: [0, 1, 2].map((stepIndex) => ({
-          stepIndex,
-          elementRef: screenStates[stepIndex]!.elements[0]!.ref,
-        })),
-        omissions: [],
-        redactions: [],
-      },
       emittedAt: '2026-07-15T10:00:00.000Z',
     })
     const candidateId = candidateContentAddress(fields)

@@ -13,7 +13,6 @@ import type { ArtifactRef, MaskFn } from '@vostride/agent-qa-schema'
 
 export const ARTIFACT_STEP_CAP_BYTES = 2 * 1024 * 1024
 export const ARTIFACT_RUN_CAP_BYTES = 25 * 1024 * 1024
-export const ARTIFACT_VALUE_REDACTION_PLACEHOLDER = '<REDACTED:capture-blacklist>'
 
 export interface ArtifactCopyInput {
   ref: ArtifactRef
@@ -21,8 +20,6 @@ export interface ArtifactCopyInput {
   stepIndex: number
   role?: string
   originalName?: string
-  /** Exact values to replace before hashing and copying a textual DOM/AX snapshot. */
-  redactValues?: readonly string[]
 }
 
 export interface CopiedArtifact {
@@ -46,15 +43,15 @@ export interface SkippedArtifact<Reason extends string = ArtifactCopySkipReason>
   reason: Reason
 }
 
-export interface ArtifactCopyResult<AdditionalReason extends string = never> {
+export interface ArtifactCopyResult {
   copied: CopiedArtifact[]
-  skipped: SkippedArtifact<ArtifactCopySkipReason | AdditionalReason>[]
+  skipped: SkippedArtifact[]
   evidenceIncomplete: boolean
 }
 
-export interface ArtifactCopyOptions<AdditionalReason extends string = never> {
-  /** Pre-copy filter refusals retained in the same inventory as copy-time refusals. */
-  preSkipped?: readonly SkippedArtifact<ArtifactCopySkipReason | AdditionalReason>[]
+export interface ArtifactCopyOptions {
+  /** Pre-copy refusals retained in the same inventory as copy-time refusals. */
+  preSkipped?: readonly SkippedArtifact[]
   mask?: MaskFn
 }
 
@@ -80,18 +77,6 @@ function copiedRow(
   }
 }
 
-function redactArtifactValues(bytes: Buffer, values: readonly string[] | undefined): Buffer {
-  if (values === undefined || values.length === 0) return bytes
-
-  let text = bytes.toString('utf8')
-  for (const value of [...new Set(values)].filter(Boolean).sort((left, right) =>
-    right.length - left.length || left.localeCompare(right),
-  )) {
-    text = text.split(value).join(ARTIFACT_VALUE_REDACTION_PLACEHOLDER)
-  }
-  return Buffer.from(text)
-}
-
 function maskTextArtifact(bytes: Buffer, role: string | undefined, mask: MaskFn | undefined): Buffer {
   if (mask === undefined || role === undefined || !TEXT_ARTIFACT_ROLES.has(role)) return bytes
   return Buffer.from(mask(bytes.toString('utf8')))
@@ -104,15 +89,13 @@ function skippedRow(
   return { ref: input.ref, stepIndex: input.stepIndex, reason }
 }
 
-export function copyArtifacts<AdditionalReason extends string = never>(
+export function copyArtifacts(
   inputs: readonly ArtifactCopyInput[],
   destArtifactsDir: string,
-  options: ArtifactCopyOptions<AdditionalReason> = {},
-): ArtifactCopyResult<AdditionalReason> {
+  options: ArtifactCopyOptions = {},
+): ArtifactCopyResult {
   const copied: CopiedArtifact[] = []
-  const skipped: SkippedArtifact<ArtifactCopySkipReason | AdditionalReason>[] = [
-    ...(options.preSkipped ?? []),
-  ]
+  const skipped: SkippedArtifact[] = [...(options.preSkipped ?? [])]
   const copiedBytesByStep = new Map<number, number>()
   let copiedBytesForRun = 0
 
@@ -140,11 +123,7 @@ export function copyArtifacts<AdditionalReason extends string = never>(
       continue
     }
 
-    const copyBytes = maskTextArtifact(
-      redactArtifactValues(sourceBytes, input.redactValues),
-      input.role,
-      options.mask,
-    )
+    const copyBytes = maskTextArtifact(sourceBytes, input.role, options.mask)
     const copiedRef = copyBytes.equals(sourceBytes)
       ? input.ref
       : { ...input.ref, sha: byteSha(copyBytes) }

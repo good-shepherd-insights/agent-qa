@@ -11,7 +11,7 @@ import {
 
 export type ArtifactFreeCandidateProjectionInput = Omit<
   CurationCandidateProjection,
-  'artifactDescriptors' | 'captureEvidence' | 'stepInteractions'
+  'artifactDescriptors'
 >
 
 export interface EnqueueArtifactFreeCandidateProjectionOptions {
@@ -39,8 +39,6 @@ export function enqueueArtifactFreeCandidateProjection(
     projection: candidateProjectionFixture({
       ...input.projectionInput,
       artifactDescriptors: [],
-      captureEvidence: { elements: [] },
-      stepInteractions: [],
     }),
     artifactSources: [],
   })

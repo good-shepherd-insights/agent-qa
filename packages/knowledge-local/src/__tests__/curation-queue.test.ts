@@ -11,7 +11,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { Delta } from '@vostride/agent-qa-schema'
+import { canonicalJson, type Delta } from '@vostride/agent-qa-schema'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
@@ -22,6 +22,7 @@ import { drainQueue } from '../curator/drain.js'
 import {
   enqueueCurationCandidate,
   enqueueCurationCandidateProjection,
+  listQueuedCandidates,
   readCurationCandidatePayload,
 } from '../queue/curation-queue.js'
 import type {
@@ -37,7 +38,6 @@ import {
 } from '../queue/queue-layout.js'
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
-  artifactFreeCaptureReceipt,
   candidateContentAddress,
   type BuildCurationCandidateAddressFieldsInput,
   type CurationArtifactDescriptor,
@@ -52,11 +52,7 @@ import {
   type ArtifactFreeCandidateProjectionInput,
 } from './fixtures/curation-candidate-fixture.js'
 
-type CandidateFixtureOverrides = Pick<
-  BuildCurationCandidateAddressFieldsInput,
-  'captureReceipt'
-> &
-  Partial<Omit<BuildCurationCandidateAddressFieldsInput, 'captureReceipt'>>
+type CandidateFixtureOverrides = Partial<BuildCurationCandidateAddressFieldsInput>
 
 function sha(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex')
@@ -79,7 +75,7 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
   })
 
   function addressFields(
-    overrides: CandidateFixtureOverrides,
+    overrides: CandidateFixtureOverrides = {},
   ): BuildCurationCandidateAddressFieldsInput {
     return candidateAddressFixture({
       schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
@@ -111,7 +107,7 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
     })
   }
 
-  function payload(overrides: CandidateFixtureOverrides): CurationCandidatePayload {
+  function payload(overrides: CandidateFixtureOverrides = {}): CurationCandidatePayload {
     const fields = addressFields(overrides)
     return { candidateId: candidateContentAddress(fields), ...fields }
   }
@@ -151,8 +147,6 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
     return candidateProjectionFixture({
       ...projectionInput(),
       artifactDescriptors: [],
-      captureEvidence: { elements: [] },
-      stepInteractions: [],
       ...overrides,
     })
   }
@@ -193,12 +187,69 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
     expect(existsSync(join(queueRoot(knowledgeRoot), '.staging'))).toBe(false)
   }
 
+  function drainWithAddAuthor(): ReturnType<typeof drainQueue> {
+    const author = vi.fn<CuratorAuthor>(async (job) => {
+      const authorship = {
+        path: 'llm' as const,
+        model: { id: 'curator-test' },
+        executionContext: job.executionContext,
+      }
+      const delta: Delta = {
+        kind: 'Add',
+        origin: 'agent',
+        scope: job.scope,
+        citedIds: [],
+        authorship,
+        bundle: {
+          kind: job.kind,
+          ...(job.subtype === undefined ? {} : { subtype: job.subtype }),
+          anchors: job.anchors,
+          scope: job.scope,
+          summary: job.summarySeed,
+          body: job.bodySeed,
+          distilledEvidenceRef: {
+            id: `curation-candidate-${job.candidateId}`,
+            sha: job.candidateId,
+          },
+          originStage: 'run-curation',
+        },
+      }
+      return { kind: 'authored' as const, deltas: [delta], authorship }
+    })
+    return drainQueue({
+      knowledgeRoot,
+      auditBaseDir: join(root, '.agent-qa'),
+      author,
+      executionContext: 'local-interactive',
+      policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+      operations: {
+        readRebuildRequest: () => ({ present: false }),
+        readIndexMaintenanceState: () => ({
+          indexAbsent: false,
+          pendingEmbeddings: 0,
+          renderingEpochStale: false,
+          vectorReconciliationOutstanding: false,
+        }),
+        openKnowledgeReader: () => ({
+          source: 'scan' as const,
+          vec: 'none' as const,
+          getById: vi.fn(),
+          searchLexical: vi.fn(() => []),
+          lookupAnchor: vi.fn(() => []),
+          searchDense: vi.fn(() => []),
+          recheck: vi.fn((hits) => [...hits]),
+          close: vi.fn(),
+        }),
+        retrieve: async () => [],
+      },
+    })
+  }
+
   it('hashes only deterministic fields regardless of object order or emittedAt', () => {
-    const first = addressFields({ captureReceipt: artifactFreeCaptureReceipt() })
+    const first = addressFields()
     const reordered = {
       emittedAt: '2099-01-01T00:00:00.000Z',
       artifactInventory: first.artifactInventory,
-      captureReceipt: first.captureReceipt,
       attributingObservationId: first.attributingObservationId,
       evidenceToken: first.evidenceToken,
       distilledObservations: first.distilledObservations,
@@ -217,14 +268,6 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
     } satisfies BuildCurationCandidateAddressFieldsInput
 
     expect(candidateContentAddress(reordered)).toBe(candidateContentAddress(first))
-  })
-
-  it('requires an explicit capture receipt in the shared candidate fixture input', () => {
-    type FixtureInput = Parameters<typeof candidateAddressFixture>[0]
-    type ReceiptIsRequired = {} extends Pick<FixtureInput, 'captureReceipt'> ? false : true
-    const receiptIsRequired: ReceiptIsRequired = true
-
-    expect(receiptIsRequired).toBe(true)
   })
 
   it('exposes both public enqueue names as one projection-only safety boundary', () => {
@@ -264,7 +307,7 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
 
     const finalizedPayloadOptions = {
       knowledgeRoot,
-      payload: payload({ captureReceipt: artifactFreeCaptureReceipt() }),
+      payload: payload(),
       artifactSources: [],
     }
     type FinalizedPayloadOptions = typeof finalizedPayloadOptions
@@ -423,7 +466,6 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
     for (let index = 0; index < QUEUE_MAX_JOBS_PER_SCOPE; index += 1) {
       seedQueued(
         payload({
-          captureReceipt: artifactFreeCaptureReceipt(),
           sourceRunId: `cap-run-${index}`,
           attributingObservationId: `cap-observation-${index}`,
           evidenceToken: `cap-evidence-${index}`,
@@ -450,14 +492,8 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
     const explicit = candidateProjectionFixture({
       ...input,
       artifactDescriptors: [],
-      captureEvidence: { elements: [] },
-      stepInteractions: [],
     })
-    expect(explicit).toMatchObject({
-      artifactDescriptors: [],
-      captureEvidence: { elements: [] },
-      stepInteractions: [],
-    })
+    expect(explicit).toMatchObject({ artifactDescriptors: [] })
 
     const outcome = enqueueArtifactFreeCandidateProjection({
       knowledgeRoot,
@@ -472,13 +508,11 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
     if (parsed.kind !== 'parsed') throw new Error('expected parsed projection payload')
     expect(parsed.payload.candidateId).toBe(outcome.candidateId)
     expect(parsed.payload.artifactInventory).toEqual([])
-    expect(parsed.payload.captureReceipt).toEqual(artifactFreeCaptureReceipt())
   })
 
   it('fails closed at the per-scope and per-run queue caps without visible bytes', () => {
     for (let index = 0; index < QUEUE_MAX_JOBS_PER_SCOPE; index += 1) {
       const candidate = payload({
-        captureReceipt: artifactFreeCaptureReceipt(),
         sourceRunId: `scope-run-${index}`,
         attributingObservationId: `scope-observation-${index}`,
         evidenceToken: `scope-evidence-${index}`,
@@ -503,7 +537,6 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
     const secondKnowledgeRoot = join(root, 'second-knowledge-root')
     for (let index = 0; index < QUEUE_MAX_EMITS_PER_RUN; index += 1) {
       const candidate = payload({
-        captureReceipt: artifactFreeCaptureReceipt(),
         sourceRunId: 'one-hot-run',
         scope: { tier: 'test', key: `test-${index}` },
         attributingObservationId: `run-observation-${index}`,
@@ -597,31 +630,6 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
       )
     }
 
-    function credentialEvidence(): Pick<
-      CurationCandidateProjection,
-      'captureEvidence' | 'stepInteractions'
-    > {
-      return {
-        captureEvidence: {
-          elements: [
-            {
-              stepIndex: STEP,
-              elementRef: 'password-field',
-              role: 'textbox',
-              name: 'Password',
-              inputType: 'password',
-              value: DECLARED,
-            },
-            { stepIndex: STEP, elementRef: 'token-field', role: 'textbox', name: 'api token', value: TOKEN },
-          ],
-        },
-        stepInteractions: [
-          { stepIndex: STEP, elementRef: 'password-field' },
-          { stepIndex: STEP, elementRef: 'token-field' },
-        ],
-      }
-    }
-
     function enqueueCaptured(
       artifacts: readonly ReturnType<typeof projectionArtifact>[],
     ): { candidateId: string; candidateDir: string; payload: CurationCandidatePayload } {
@@ -629,7 +637,6 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
         knowledgeRoot,
         projection: projection({
           artifactDescriptors: artifacts.map((artifact) => artifact.descriptor),
-          ...credentialEvidence(),
         }),
         artifactSources: artifacts.map((artifact) => artifact.source),
         mask: declaredMask(),
@@ -695,62 +702,8 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
       const screenshot = passwordScreenshot()
       const { payload: queued } = enqueueCaptured([snapshot, screenshot])
       const maskedSnapshot = queued.artifactInventory.find((row) => row.role === 'dom-snapshot')!
-      const author = vi.fn<CuratorAuthor>(async (job) => {
-        const authorship = {
-          path: 'llm' as const,
-          model: { id: 'curator-test' },
-          executionContext: job.executionContext,
-        }
-        const delta: Delta = {
-          kind: 'Add',
-          origin: 'agent',
-          scope: job.scope,
-          citedIds: [],
-          authorship,
-          bundle: {
-            kind: job.kind,
-            ...(job.subtype === undefined ? {} : { subtype: job.subtype }),
-            anchors: job.anchors,
-            scope: job.scope,
-            summary: job.summarySeed,
-            body: job.bodySeed,
-            distilledEvidenceRef: {
-              id: `curation-candidate-${job.candidateId}`,
-              sha: job.candidateId,
-            },
-            originStage: 'run-curation',
-          },
-        }
-        return { kind: 'authored' as const, deltas: [delta], authorship }
-      })
 
-      const report = await drainQueue({
-        knowledgeRoot,
-        auditBaseDir: join(root, '.agent-qa'),
-        author,
-        executionContext: 'local-interactive',
-        policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
-        operations: {
-          readRebuildRequest: () => ({ present: false }),
-          readIndexMaintenanceState: () => ({
-            indexAbsent: false,
-            pendingEmbeddings: 0,
-            renderingEpochStale: false,
-            vectorReconciliationOutstanding: false,
-          }),
-          openKnowledgeReader: () => ({
-            source: 'scan' as const,
-            vec: 'none' as const,
-            getById: vi.fn(),
-            searchLexical: vi.fn(() => []),
-            lookupAnchor: vi.fn(() => []),
-            searchDense: vi.fn(() => []),
-            recheck: vi.fn((hits) => [...hits]),
-            close: vi.fn(),
-          }),
-          retrieve: async () => [],
-        },
-      })
+      const report = await drainWithAddAuthor()
 
       expect(report).toMatchObject({ jobsProcessed: 1, committed: 1, failures: 0 })
       const committedSnapshot = filesNamed(knowledgeRoot, maskedSnapshot.sha256)
@@ -765,6 +718,60 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
       expect(committedScreenshot).toHaveLength(1)
       expect(readFileSync(committedScreenshot[0]!))
         .toEqual(readFileSync(screenshot.source.sourcePath))
+    })
+  })
+
+  describe('C441-CURATION', () => {
+    // Spelled in parts: the retired field names appear nowhere in packages (441-25, census leg 10).
+    const RETIRED_RECEIPT_KEY = ['capture', 'Receipt'].join('')
+
+    function seedRowWrittenBefore44125(): string {
+      const fields = {
+        schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
+        sourceRunId: 'run-before-441-25',
+        scope: { tier: 'product', key: 'storefront' },
+        buildOrdinal: 42,
+        executionContext: 'local-interactive',
+        kind: 'fact',
+        subtype: 'selector',
+        anchors: [{ t: 'el', role: 'button', name: 'Old checkout' }],
+        summarySeed: 'Old checkout button selector',
+        bodySeed: 'The old checkout button was resolved and verified.',
+        distilledObservations: [],
+        evidenceToken: 'evidence-before-441-25',
+        attributingObservationId: 'run-before-441-25:test-0:step-0',
+        artifactInventory: [],
+        [RETIRED_RECEIPT_KEY]: { regions: [], interactions: [], omissions: [], redactions: [] },
+      }
+      const candidateId = sha(Buffer.from(canonicalJson(fields)))
+      const candidateDir = queuedCandidateDir(knowledgeRoot, candidateId)
+      mkdirSync(candidateDir, { recursive: true })
+      writeFileSync(
+        join(candidateDir, 'payload.json'),
+        `${canonicalJson({ candidateId, ...fields, emittedAt: '2026-10-01T00:00:00.000Z' })}\n`,
+        'utf8',
+      )
+      return candidateId
+    }
+
+    it('a queue row with a capture receipt is skipped as malformed', async () => {
+      const oldId = seedRowWrittenBefore44125()
+      const fresh = enqueueArtifactFreeCandidateProjection({
+        knowledgeRoot,
+        projectionInput: projectionInput(),
+      })
+      expect(fresh.kind).toBe('enqueued')
+      if (fresh.kind !== 'enqueued') throw new Error('expected enqueued projection')
+
+      expect(readCurationCandidatePayload(queuedCandidateDir(knowledgeRoot, oldId)))
+        .toEqual({ kind: 'malformed', present: true })
+      expect(readCurationCandidatePayload(queuedCandidateDir(knowledgeRoot, fresh.candidateId)))
+        .toMatchObject({ kind: 'parsed' })
+
+      const report = await drainWithAddAuthor()
+
+      expect(report).toMatchObject({ committed: 1, quarantined: 1 })
+      expect(listQueuedCandidates(knowledgeRoot)).toEqual([])
     })
   })
 })

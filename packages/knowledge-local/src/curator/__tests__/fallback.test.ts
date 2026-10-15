@@ -56,7 +56,6 @@ function job(overrides: Partial<FallbackJobFixture> = {}): FallbackJobFixture {
     buildOrdinal: 42,
     attributingObservationId: 'run-1:test-0:step-0',
     executionContext: 'local-headless',
-    captureReceipt: { regions: [], interactions: [], omissions: [], redactions: [] },
     ...overrides,
   }
 }

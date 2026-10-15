@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
   LEASE_HEARTBEAT_TTL_MS,
-  artifactFreeCaptureReceipt,
   buildCurationCandidateAddressFields,
   candidateContentAddress,
   curationCandidatePayloadSchema,
@@ -130,7 +129,6 @@ function candidate(
     evidenceToken: `dual-host-evidence-${suffix}-${identitySalt}`,
     attributingObservationId: `${FIXTURE_RUN_ID}:${suffix}:${identitySalt}`,
     artifactInventory: [],
-    captureReceipt: artifactFreeCaptureReceipt(),
     emittedAt: '2026-07-30T00:00:00.000Z',
   })
   const payload = curationCandidatePayloadSchema.parse({

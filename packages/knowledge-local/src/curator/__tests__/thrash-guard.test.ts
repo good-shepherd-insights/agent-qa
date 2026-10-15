@@ -29,7 +29,6 @@ import {
   CURATION_QUEUE_SCHEMA_VERSION,
   applyIndexDeltaForBundle,
   appendOutcomeEvent,
-  artifactFreeCaptureReceipt,
   candidateContentAddress,
   commitCurationDelta,
   deriveBundleTrust,
@@ -195,7 +194,6 @@ function job(generation: number, buildOrdinal: number): CommitCurationJob {
     evidenceToken: `thrash-evidence-${generation}-${buildOrdinal}`,
     attributingObservationId: `thrash-observation-${generation}-${buildOrdinal}`,
     artifactInventory: [],
-    captureReceipt: artifactFreeCaptureReceipt(),
     emittedAt: '2026-07-16T00:00:00.000Z',
   })
   const payload = { candidateId: candidateContentAddress(fields), ...fields }
@@ -465,7 +463,6 @@ function burstJob(index: number, buildOrdinal: number): CommitCurationJob {
     evidenceToken: `burst-evidence-${index}-${buildOrdinal}`,
     attributingObservationId: `burst-observation-${index}-${buildOrdinal}`,
     artifactInventory: [],
-    captureReceipt: artifactFreeCaptureReceipt(),
     emittedAt: '2026-07-16T00:00:00.000Z',
   })
   const payload = { candidateId: candidateContentAddress(fields), ...fields }

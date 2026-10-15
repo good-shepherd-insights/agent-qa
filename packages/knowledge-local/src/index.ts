@@ -449,16 +449,12 @@ export type {
 } from './rebuild-marker.js'
 export {
   CURATION_QUEUE_SCHEMA_VERSION,
-  artifactFreeCaptureReceipt,
   buildCurationCandidateAddressFields,
   candidateContentAddress,
   curationArtifactDescriptorSchema,
   curationArtifactRoleSchema,
-  curationCandidateOmissionSchema,
   curationCandidatePayloadSchema,
   curationCandidateProjectionSchema,
-  curationCandidateRedactionSchema,
-  curationCaptureReceiptSchema,
 } from './queue/queue-payload.js'
 export type {
   BuildCurationCandidateAddressFieldsInput,
@@ -466,11 +462,8 @@ export type {
   CurationArtifactRole,
   CurationCandidateAddressFields,
   CurationCandidateArtifact,
-  CurationCandidateOmission,
   CurationCandidatePayload,
   CurationCandidateProjection,
-  CurationCandidateRedaction,
-  CurationCaptureReceipt,
 } from './queue/queue-payload.js'
 export {
   CLAIMED_SUBDIR,

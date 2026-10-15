@@ -389,26 +389,6 @@ function procedureJob(overrides: Partial<CurationJobView> = {}): CurationJobView
     buildOrdinal: 42,
     attributingObservationId: 'run-1:test-0:step-0',
     executionContext: 'local-interactive',
-    captureReceipt: {
-      regions: [
-        {
-          stepIndex: 2,
-          elementRef: 'password',
-          role: 'textbox',
-          normalizedName: 'password',
-          inputType: 'password',
-          reason: 'password-input',
-        },
-      ],
-      interactions: [
-        { stepIndex: 0, elementRef: 'open' },
-        { stepIndex: 1, elementRef: 'email' },
-        { stepIndex: 2, elementRef: 'password' },
-        { stepIndex: 3, elementRef: 'submit' },
-      ],
-      omissions: [],
-      redactions: [],
-    },
     ...overrides,
   }
 }
@@ -423,7 +403,6 @@ function factJob(): CurationJobView {
     ],
     summarySeed: 'The checkout button submits the order',
     bodySeed: 'Use the resolved checkout button after the cart is complete.',
-    captureReceipt: { regions: [], interactions: [], omissions: [], redactions: [] },
   })
 }
 
@@ -1387,16 +1366,6 @@ describe('C438-PROCEDURE-WRITE', () => {
         { t: 'flow', name: seed.flowName },
         { t: 'page', route: WRITE_PAGE },
       ],
-      captureReceipt: {
-        regions: [],
-        interactions: [
-          { stepIndex: 0, elementRef: 'e2' },
-          { stepIndex: 1, elementRef: 'b2' },
-          { stepIndex: 2, elementRef: 's1' },
-        ],
-        omissions: [],
-        redactions: [],
-      },
     })
   }
 
@@ -1617,7 +1586,6 @@ describe('C438-HEALED-BODY', () => {
         { t: 'flow', name: seed.flowName },
         { t: 'page', route: HEALED_PAGE },
       ],
-      captureReceipt: { regions: [], interactions: [], omissions: [], redactions: [] },
     })
     const outcome = await author([proposal])(job, [])
     if (outcome.kind !== 'authored') throw new Error(`expected authored outcome, got ${outcome.kind}`)

@@ -59,7 +59,6 @@ import {
   writeJobStateWithinCurrentAuthority,
 } from './job-state.js'
 import {
-  artifactFreeCaptureReceipt,
   buildCurationCandidateAddressFields,
   candidateContentAddress,
   CURATION_QUEUE_SCHEMA_VERSION,
@@ -673,7 +672,6 @@ function finalizeProjection(
       evidenceToken: projection.evidenceToken,
       attributingObservationId: projection.attributingObservationId,
       artifactInventory,
-      captureReceipt: artifactFreeCaptureReceipt(),
       emittedAt: projection.emittedAt,
     })
     const candidateId = candidateContentAddress(fields)

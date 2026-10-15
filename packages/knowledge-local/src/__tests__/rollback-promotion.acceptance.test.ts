@@ -16,7 +16,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
-  artifactFreeCaptureReceipt,
   candidateContentAddress,
   commitCurationDelta,
   createLocalKnowledgeStore,
@@ -144,7 +143,6 @@ describe('rollback-to-promotion public acceptance (PROM-01/DCAY-05)', () => {
       evidenceToken: CONVERSION_EVIDENCE_TOKEN,
       attributingObservationId: 'rollback-promotion-conversion-observation',
       artifactInventory: [],
-      captureReceipt: artifactFreeCaptureReceipt(),
       emittedAt: '2026-07-17T00:00:00.000Z',
     })
     const payload = { candidateId: candidateContentAddress(fields), ...fields }

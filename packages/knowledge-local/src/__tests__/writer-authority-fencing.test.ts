@@ -44,7 +44,6 @@ import {
 import { candidateAddressFixture } from './fixtures/curation-candidate-fixture.js'
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
-  artifactFreeCaptureReceipt,
   candidateContentAddress,
   type BuildCurationCandidateAddressFieldsInput,
 } from '../queue/queue-payload.js'
@@ -342,7 +341,6 @@ describe('writer authority and bundle publication are one indivisible protocol (
       evidenceToken: `measurement-evidence-${buildOrdinal}-${value}`,
       attributingObservationId: `measurement-observation-${buildOrdinal}-${value}`,
       artifactInventory: [],
-      captureReceipt: artifactFreeCaptureReceipt(),
       emittedAt: '2026-07-31T10:00:00.000Z',
     } satisfies BuildCurationCandidateAddressFieldsInput)
     const payload = {

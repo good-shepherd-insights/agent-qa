@@ -213,7 +213,6 @@ const skippedArtifactIndexEntrySchema = z.object({
     'run-cap',
     'pruned-source',
     'sha-mismatch',
-    'capture-blacklist',
   ]),
 }).strict()
 

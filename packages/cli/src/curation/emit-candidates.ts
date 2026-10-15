@@ -53,10 +53,6 @@ interface MeasurementSeed {
 
 type CurationArtifactDescriptor =
   CurationCandidateProjection['artifactDescriptors'][number]
-type CaptureElementEvidence =
-  CurationCandidateProjection['captureEvidence']['elements'][number]
-type CaptureStepInteraction =
-  CurationCandidateProjection['stepInteractions'][number]
 
 const SHA256_HEX = /^[0-9a-f]{64}$/
 
@@ -129,54 +125,6 @@ function stepArtifactDescriptors(step: StepEvidence): CurationArtifactDescriptor
   })
 }
 
-function captureEvidence(steps: readonly StepEvidence[]): {
-  elements: CaptureElementEvidence[]
-} {
-  return {
-    elements: steps.flatMap((step) =>
-      step.subActions.flatMap((subAction) =>
-        subAction.stateBefore.elements.map((element) => ({
-          stepIndex: step.stepIndex,
-          elementRef: element.ref,
-          role: element.role,
-          name: element.name,
-          nameNormalized: element.nameNormalized,
-          ...(element.attributes.type === undefined
-            ? {}
-            : { inputType: element.attributes.type }),
-          ...(element.value === undefined ? {} : { value: element.value }),
-        })),
-      ),
-    ),
-  }
-}
-
-function stepInteractions(steps: readonly StepEvidence[]): CaptureStepInteraction[] {
-  const interactions = steps.flatMap((step) =>
-    step.subActions.flatMap((subAction) =>
-      actionRefs(subAction).map((elementRef) => ({
-        stepIndex: step.stepIndex,
-        elementRef,
-      })),
-    ),
-  )
-  interactions.sort((left, right) =>
-    left.stepIndex - right.stepIndex
-    || (left.elementRef < right.elementRef
-      ? -1
-      : left.elementRef > right.elementRef
-        ? 1
-        : 0),
-  )
-  const seen = new Set<string>()
-  return interactions.filter((interaction) => {
-    const key = `${interaction.stepIndex}\u0000${interaction.elementRef}`
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
-}
-
 function commonFields(
   handoff: CompletedRunHandoff,
   input: {
@@ -189,7 +137,6 @@ function commonFields(
     observations: DistilledObservation[]
     attributingObservationId: string
     secretFlagged: boolean
-    steps: readonly StepEvidence[]
     artifactDescriptors: CurationArtifactDescriptor[]
   },
 ): CurationCandidateProjection {
@@ -215,8 +162,6 @@ function commonFields(
     }),
     attributingObservationId: input.attributingObservationId,
     artifactDescriptors: input.artifactDescriptors,
-    captureEvidence: captureEvidence(input.steps),
-    stepInteractions: stepInteractions(input.steps),
     emittedAt: new Date(handoff.endedAt).toISOString(),
   }
 }
@@ -304,7 +249,6 @@ function projectFact(
       observations: [observation],
       attributingObservationId: id,
       secretFlagged: step.cacheStatus === 'bypass',
-      steps: [step],
       artifactDescriptors: stepArtifactDescriptors(step),
     },
   )
@@ -374,7 +318,6 @@ function projectMeasurements(
         observations: [observation],
         attributingObservationId: id,
         secretFlagged: step.cacheStatus === 'bypass',
-        steps: [step],
         artifactDescriptors: stepArtifactDescriptors(step),
       },
     )
@@ -431,7 +374,6 @@ function projectCaution(
       observations: [observation],
       attributingObservationId: id,
       secretFlagged: producingSteps.some((step) => step.cacheStatus === 'bypass'),
-      steps: producingSteps,
       artifactDescriptors: artifactDescriptorsForRefs(
         rootCause.evidence.citedArtifacts,
         stepIndex,
@@ -857,7 +799,6 @@ function projectProcedureTarget(
         test.steps[0]!.stepIndex,
       ),
       secretFlagged: test.steps.some((step) => step.cacheStatus === 'bypass'),
-      steps: test.steps,
       artifactDescriptors,
     },
   )

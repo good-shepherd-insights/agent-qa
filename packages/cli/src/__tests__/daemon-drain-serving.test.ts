@@ -155,8 +155,6 @@ function enqueueRealCandidate(
       evidenceToken: `evidence-${seed}`,
       attributingObservationId: `observation-${seed}`,
       artifactDescriptors: [],
-      captureEvidence: { elements: [] },
-      stepInteractions: [],
       emittedAt: '2026-07-30T00:00:00.000Z',
     },
     artifactSources: [],

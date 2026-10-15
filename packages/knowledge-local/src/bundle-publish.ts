@@ -62,10 +62,8 @@ export interface BundleStoreConfig {
 export interface PublishBundleInput
   extends Omit<RenderBundlePartsInput, 'copiedArtifacts' | 'evidenceIncomplete'> {
   artifacts: readonly ArtifactCopyInput[]
-  /** Refusals already decided by the Curator's required pre-copy safety pass. */
-  preSkippedArtifacts?: readonly SkippedArtifact<
-    ArtifactCopySkipReason | 'capture-blacklist'
-  >[]
+  /** Refusals already decided by the Curator's pre-copy pass. */
+  preSkippedArtifacts?: readonly SkippedArtifact<ArtifactCopySkipReason>[]
 }
 
 export type PublishBundleOutcome =
@@ -264,7 +262,7 @@ export function stageBundle(
   mkdirSync(stagingDir, { recursive: true })
 
   try {
-    const copiedArtifacts = copyArtifacts<'capture-blacklist'>(
+    const copiedArtifacts = copyArtifacts(
       artifacts,
       join(stagingDir, 'artifacts'),
       { preSkipped: preSkippedArtifacts },

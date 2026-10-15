@@ -446,7 +446,6 @@ function jobView(
     buildOrdinal: payload.buildOrdinal,
     attributingObservationId: payload.attributingObservationId,
     executionContext: payload.executionContext ?? fallbackExecutionContext,
-    captureReceipt: payload.captureReceipt,
   }
 }
 

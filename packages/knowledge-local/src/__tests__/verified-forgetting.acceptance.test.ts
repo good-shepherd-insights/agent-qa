@@ -70,7 +70,6 @@ import {
   CURATION_QUEUE_SCHEMA_VERSION,
   INDEX_SCHEMA_VERSION,
   acquireWriterLease,
-  artifactFreeCaptureReceipt,
   candidateContentAddress,
   commitCurationDelta,
   deriveBundleTrust,
@@ -270,7 +269,6 @@ function deprecationJob(identity: string): CommitCurationJob {
     evidenceToken: `verified-forgetting-${identity}-evidence`,
     attributingObservationId: `verified-forgetting-${identity}:step-0`,
     artifactInventory: [],
-    captureReceipt: artifactFreeCaptureReceipt(),
     emittedAt: '2026-07-16T00:00:00.000Z',
   })
   const payload = {

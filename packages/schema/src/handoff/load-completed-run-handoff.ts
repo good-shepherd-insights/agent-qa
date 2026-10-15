@@ -113,8 +113,8 @@ function hasCompleteElementShape(value: unknown): boolean {
 
 /**
  * Validates a `subActions` element against the consumer-dereferenced surface: actionRefs
- * applies the `in` operator to `plannedAction`, resolvedElementEvidence/captureEvidence
- * walk `stateBefore.elements`, and resolvedActionRefs flatMaps `grounding.attempts` for
+ * applies the `in` operator to `plannedAction`, resolvedElementEvidence walks
+ * `stateBefore.elements`, and resolvedActionRefs flatMaps `grounding.attempts` for
  * EVERY subAction — so a present `grounding` must be a non-array object and present
  * `attempts` an array of non-array objects (absence stays legal: the consumer's `?? []`
  * handles it; attempt interiors stay unvalidated because the consumer's `outcome`
@@ -714,9 +714,9 @@ function hasMisdirectionSidecarShape(value: unknown, handoff: Record<string, unk
  * normalize-anchor.ts) — stays unvalidated at this load boundary: workingMemory,
  * decision context, stagnation, cycle, planning failure, stateAfter interiors beyond
  * url, `grounding.descriptor` and attempt interiors (stage/outcome/resolvedRef value
- * types), and element state/bounds/hierarchy; element name/value are read by
- * captureEvidence (emit-candidates.ts) but only carried without string operations,
- * so they stay unvalidated as read-but-crash-safe reads.
+ * types), and element state/bounds/hierarchy; element name/value stay unvalidated as
+ * read-but-crash-safe reads (2026-10-15, 441-25: the curation capture copy that carried
+ * them is gone).
  */
 function hasCompleteHandoffShape(value: unknown): boolean {
   if (!isNonArrayObject(value)) return false

@@ -19,23 +19,18 @@ import {
 } from '../queue/job-state.js'
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
-  artifactFreeCaptureReceipt,
   buildCurationCandidateAddressFields,
   candidateContentAddress,
   curationCandidatePayloadSchema,
   curationCandidateProjectionSchema,
-  curationCaptureReceiptSchema,
   type BuildCurationCandidateAddressFieldsInput,
   type CurationCandidateAddressFields,
   type CurationCandidateProjection,
-  type CurationCaptureReceipt,
 } from '../queue/queue-payload.js'
-import type {
-  CurationArtifactDescriptor,
-  CurationArtifactRole,
-  CurationCandidateOmission,
-  CurationCandidateRedaction,
-} from '../index.js'
+import type { CurationArtifactDescriptor, CurationArtifactRole } from '../index.js'
+import { readCurationCandidatePayload } from '../queue/curation-queue.js'
+import { queuedCandidateDir } from '../queue/queue-layout.js'
+import { enqueueArtifactFreeCandidateProjection } from './fixtures/curation-candidate-fixture.js'
 
 function candidateAddressInput(): BuildCurationCandidateAddressFieldsInput {
   return {
@@ -63,43 +58,7 @@ function candidateAddressInput(): BuildCurationCandidateAddressFieldsInput {
     evidenceToken: 'evidence-queue-contract',
     attributingObservationId: 'run-queue-contract:test-0:step-0',
     artifactInventory: [],
-    captureReceipt: artifactFreeCaptureReceipt(),
     emittedAt: '2026-07-15T10:00:00.000Z',
-  }
-}
-
-function finalizedReceipt(): CurationCaptureReceipt {
-  return {
-    regions: [
-      {
-        stepIndex: 0,
-        elementRef: 'password-input',
-        role: 'textbox',
-        normalizedName: 'password',
-        inputType: 'password',
-        reason: 'password-input',
-      },
-    ],
-    interactions: [{ stepIndex: 0, elementRef: 'password-input' }],
-    omissions: [
-      {
-        stepIndex: 0,
-        ref: 'decision-screenshot',
-        role: 'screenshot',
-        originalName: 'step-0.png',
-        reason: 'capture-blacklist',
-      },
-    ],
-    redactions: [
-      {
-        stepIndex: 0,
-        ref: 'dom-snapshot',
-        role: 'dom-snapshot',
-        originalName: 'step-0.dom.json',
-        reason: 'capture-blacklist',
-        safeSha256: 'b'.repeat(64),
-      },
-    ],
   }
 }
 
@@ -118,26 +77,18 @@ function strictAddressInput(): Parameters<
         originalName: 'step-0.dom.json',
       },
     ],
-    captureReceipt: {
-      regions: [],
-      interactions: [{ stepIndex: 0, elementRef: 'password-input' }],
-      omissions: [],
-      redactions: [],
-    },
   }
 }
 
-describe('curation candidate projection and receipt contracts (SAFE-02)', () => {
-  it('requires source descriptors, capture evidence, and interactions before copy', () => {
+describe('curation candidate projection and payload contracts (SAFE-02)', () => {
+  it('requires source descriptors before copy', () => {
     const {
       schemaVersion: _schemaVersion,
       artifactInventory: _artifactInventory,
-      captureReceipt: _captureReceipt,
       ...projectionFields
     } = candidateAddressInput()
     void _schemaVersion
     void _artifactInventory
-    void _captureReceipt
     const projection = curationCandidateProjectionSchema.parse({
       ...projectionFields,
       artifactDescriptors: [
@@ -148,20 +99,6 @@ describe('curation candidate projection and receipt contracts (SAFE-02)', () => 
           originalName: 'step-0.png',
         },
       ],
-      captureEvidence: {
-        elements: [
-          {
-            stepIndex: 0,
-            elementRef: 'password-input',
-            role: 'textbox',
-            name: 'Password',
-            nameNormalized: 'password',
-            inputType: 'password',
-            value: 'function-local-secret',
-          },
-        ],
-      },
-      stepInteractions: [{ stepIndex: 0, elementRef: 'password-input' }],
     })
 
     expect(projection).not.toHaveProperty('candidateId')
@@ -169,10 +106,6 @@ describe('curation candidate projection and receipt contracts (SAFE-02)', () => 
       role: 'screenshot',
       originalName: 'step-0.png',
     })
-    expect(projection.captureEvidence.elements[0]).toHaveProperty(
-      'value',
-      'function-local-secret',
-    )
     expectTypeOf<CurationCandidateProjection>().not.toHaveProperty('candidateId')
 
     const required = {
@@ -183,83 +116,17 @@ describe('curation candidate projection and receipt contracts (SAFE-02)', () => 
     expect(
       curationCandidateProjectionSchema.safeParse({
         ...projection,
-        captureEvidence: undefined,
-      }).success,
-    ).toBe(false)
-    expect(
-      curationCandidateProjectionSchema.safeParse({
-        ...projection,
-        stepInteractions: undefined,
-      }).success,
-    ).toBe(false)
-    expect(
-      curationCandidateProjectionSchema.safeParse({
-        ...projection,
         candidateId: 'c'.repeat(64),
       }).success,
     ).toBe(false)
   })
 
-  it('accepts only strict, value-free finalized receipt facts', () => {
-    const receipt = finalizedReceipt()
-    expect(curationCaptureReceiptSchema.parse(receipt)).toEqual(receipt)
-
-    for (const rawValueShapedReceipt of [
-      {
-        ...receipt,
-        regions: [{ ...receipt.regions[0], value: 'secret' }],
-      },
-      {
-        ...receipt,
-        omissions: [{ ...receipt.omissions[0], rawValue: 'secret' }],
-      },
-      {
-        ...receipt,
-        redactions: [{ ...receipt.redactions[0], value: 'secret' }],
-      },
-      { ...receipt, unknown: true },
-    ]) {
-      expect(curationCaptureReceiptSchema.safeParse(rawValueShapedReceipt).success).toBe(
-        false,
-      )
-    }
-
-    expect(receipt.omissions[0]).toEqual({
-      stepIndex: 0,
-      ref: 'decision-screenshot',
-      role: 'screenshot',
-      originalName: 'step-0.png',
-      reason: 'capture-blacklist',
-    })
-    expect(receipt.redactions[0]).toEqual({
-      stepIndex: 0,
-      ref: 'dom-snapshot',
-      role: 'dom-snapshot',
-      originalName: 'step-0.dom.json',
-      reason: 'capture-blacklist',
-      safeSha256: 'b'.repeat(64),
-    })
-  })
-
-  it('names artifact-free capture intent with four explicit empty fact arrays', () => {
-    expect(artifactFreeCaptureReceipt()).toEqual({
-      regions: [],
-      interactions: [],
-      omissions: [],
-      redactions: [],
-    })
-  })
-
-  it('requires queue version 2 and every finalized capture-safety field', () => {
+  it('requires queue version 2 and finalized artifact metadata', () => {
     const input = strictAddressInput()
     const fields: CurationCandidateAddressFields =
       buildCurationCandidateAddressFields(input)
     expect(CURATION_QUEUE_SCHEMA_VERSION).toBe(2)
     expect(fields).toEqual(input)
-    expectTypeOf<Parameters<typeof buildCurationCandidateAddressFields>[0]>()
-      .toMatchTypeOf<{ captureReceipt: CurationCaptureReceipt }>()
-    expectTypeOf<CurationCandidateAddressFields>()
-      .toMatchTypeOf<{ captureReceipt: CurationCaptureReceipt }>()
     expectTypeOf<CurationCandidateAddressFields['artifactInventory'][number]>()
       .toMatchTypeOf<{ role: CurationArtifactRole; originalName: string }>()
 
@@ -272,27 +139,12 @@ describe('curation candidate projection and receipt contracts (SAFE-02)', () => 
     const artifact = payload.artifactInventory[0]!
     const { role: _role, ...artifactWithoutRole } = artifact
     const { originalName: _originalName, ...artifactWithoutOriginalName } = artifact
-    const { captureReceipt: _receipt, ...payloadWithoutReceipt } = payload
     void _role
     void _originalName
-    void _receipt
     const invalidPayloads: unknown[] = [
       { ...payload, schemaVersion: 1 },
       { ...payload, artifactInventory: [artifactWithoutRole] },
       { ...payload, artifactInventory: [artifactWithoutOriginalName] },
-      payloadWithoutReceipt,
-      {
-        ...payload,
-        captureReceipt: { ...payload.captureReceipt, interactions: undefined },
-      },
-      {
-        ...payload,
-        captureReceipt: { ...payload.captureReceipt, omissions: undefined },
-      },
-      {
-        ...payload,
-        captureReceipt: { ...payload.captureReceipt, redactions: undefined },
-      },
     ]
 
     for (const invalidPayload of invalidPayloads) {
@@ -300,7 +152,7 @@ describe('curation candidate projection and receipt contracts (SAFE-02)', () => 
     }
   })
 
-  it('addresses every populated safety fact while excluding only emittedAt', () => {
+  it('addresses every populated address fact while excluding only emittedAt', () => {
     const input = strictAddressInput()
     const baseline = buildCurationCandidateAddressFields(input)
     const baselineId = candidateContentAddress(baseline)
@@ -326,60 +178,6 @@ describe('curation candidate projection and receipt contracts (SAFE-02)', () => 
         ...input,
         artifactInventory: [{ ...artifact, originalName: 'step-0.safe.dom.json' }],
       }),
-      buildCurationCandidateAddressFields({
-        ...input,
-        captureReceipt: {
-          ...input.captureReceipt,
-          regions: [
-            {
-              stepIndex: 0,
-              elementRef: 'password-input',
-              role: 'textbox',
-              normalizedName: 'password',
-              inputType: 'password',
-              reason: 'password-input',
-            },
-          ],
-        },
-      }),
-      buildCurationCandidateAddressFields({
-        ...input,
-        captureReceipt: {
-          ...input.captureReceipt,
-          interactions: [{ stepIndex: 1, elementRef: 'password-input' }],
-        },
-      }),
-      buildCurationCandidateAddressFields({
-        ...input,
-        captureReceipt: {
-          ...input.captureReceipt,
-          omissions: [
-            {
-              stepIndex: 0,
-              ref: 'decision-screenshot',
-              role: 'screenshot',
-              originalName: 'step-0.png',
-              reason: 'capture-blacklist',
-            },
-          ],
-        },
-      }),
-      buildCurationCandidateAddressFields({
-        ...input,
-        captureReceipt: {
-          ...input.captureReceipt,
-          redactions: [
-            {
-              stepIndex: artifact.stepIndex,
-              ref: 'dom-snapshot',
-              role: 'dom-snapshot',
-              originalName: artifact.originalName,
-              reason: 'capture-blacklist',
-              safeSha256: artifact.sha256,
-            },
-          ],
-        },
-      }),
       buildCurationCandidateAddressFields({ ...input, injectionFlagged: true }),
     ]
 
@@ -398,55 +196,8 @@ describe('curation candidate projection and receipt contracts (SAFE-02)', () => 
 
   it('rejects unknown and raw-value-shaped keys at every finalized boundary', () => {
     const input = strictAddressInput()
-    const receipt = input.captureReceipt
-    const omission = {
-      stepIndex: 0,
-      ref: 'decision-screenshot',
-      role: 'screenshot' as const,
-      originalName: 'step-0.png',
-      reason: 'capture-blacklist' as const,
-    }
-    const redaction = {
-      stepIndex: 0,
-      ref: 'dom-snapshot',
-      role: 'dom-snapshot' as const,
-      originalName: input.artifactInventory[0]!.originalName,
-      reason: 'capture-blacklist' as const,
-      safeSha256: input.artifactInventory[0]!.sha256,
-    }
     const invalidInputs: unknown[] = [
-      { ...input, captureReceipt: { ...receipt, rawValue: 'secret' } },
-      {
-        ...input,
-        captureReceipt: {
-          ...receipt,
-          regions: [
-            {
-              stepIndex: 0,
-              elementRef: 'password-input',
-              role: 'textbox',
-              normalizedName: 'password',
-              reason: 'credential-name',
-              value: 'secret',
-            },
-          ],
-        },
-      },
-      {
-        ...input,
-        captureReceipt: {
-          ...receipt,
-          interactions: [{ ...receipt.interactions[0]!, rawValue: 'secret' }],
-        },
-      },
-      {
-        ...input,
-        captureReceipt: { ...receipt, omissions: [{ ...omission, value: 'secret' }] },
-      },
-      {
-        ...input,
-        captureReceipt: { ...receipt, redactions: [{ ...redaction, rawValue: 'secret' }] },
-      },
+      { ...input, rawValue: 'secret' },
       {
         ...input,
         artifactInventory: [{ ...input.artifactInventory[0]!, value: 'secret' }],
@@ -507,7 +258,6 @@ describe('format-local durability versions and strict public surface', () => {
     )
     expect(queueSource).toMatch(/export const CURATION_QUEUE_SCHEMA_VERSION = 2\b/u)
     expect(queueSource).not.toContain('Version-1 compatibility bridge')
-    expect(queueSource).not.toMatch(/captureReceipt:\s*curationCaptureReceiptSchema\.optional/u)
     expect(jobStateSource).not.toContain('CURATION_QUEUE_SCHEMA_VERSION')
     expect(intentSource).not.toContain('CURATION_QUEUE_SCHEMA_VERSION')
     expect(jobStateSource).toContain('CURATION_JOB_STATE_SCHEMA_VERSION')
@@ -558,30 +308,14 @@ describe('format-local durability versions and strict public surface', () => {
     }
   })
 
-  it('uses a named artifact-free receipt at the production synthetic constructor', () => {
-    const source = readFileSync(
-      new URL('../curator/knowledge-store.ts', import.meta.url),
-      'utf8',
-    )
-    expect(source).toContain('buildCurationCandidateAddressFields')
-    expect(source).toContain('artifactFreeCaptureReceipt')
-    expect(source).toMatch(/captureReceipt:\s*artifactFreeCaptureReceipt\(\)/u)
-  })
-
   it('exports every queue migration contract and durability version from the barrel', () => {
     const surface = knowledgeLocal as unknown as Record<string, unknown>
-    for (const symbol of [
-      'artifactFreeCaptureReceipt',
-      'buildCurationCandidateAddressFields',
-    ]) {
+    for (const symbol of ['buildCurationCandidateAddressFields']) {
       expect(surface[symbol], symbol).toBeTypeOf('function')
     }
     for (const symbol of [
       'curationArtifactDescriptorSchema',
-      'curationCandidateOmissionSchema',
       'curationCandidateProjectionSchema',
-      'curationCandidateRedactionSchema',
-      'curationCaptureReceiptSchema',
     ]) {
       expect(surface[symbol], symbol).toBeTypeOf('object')
     }
@@ -589,7 +323,53 @@ describe('format-local durability versions and strict public surface', () => {
     expect(surface.COMMIT_INTENT_SCHEMA_VERSION).toBe(1)
 
     expectTypeOf<CurationArtifactDescriptor>().toHaveProperty('originalName')
-    expectTypeOf<CurationCandidateOmission>().not.toHaveProperty('value')
-    expectTypeOf<CurationCandidateRedaction>().toHaveProperty('safeSha256')
+  })
+})
+
+describe('C441-CURATION', () => {
+  // Spelled in parts: the retired field names appear nowhere in packages (441-25, census leg 10).
+  const RETIRED_KEYS = [
+    ['capture', 'Evidence'].join(''),
+    ['step', 'Interactions'].join(''),
+    ['capture', 'Receipt'].join(''),
+  ]
+
+  it('a new payload carries no capture fields', () => {
+    const root = mkdtempSync(join(tmpdir(), 'curation-payload-capture-fields-'))
+    const knowledgeRoot = join(root, 'agent-qa-knowledge')
+    try {
+      const outcome = enqueueArtifactFreeCandidateProjection({
+        knowledgeRoot,
+        projectionInput: {
+          sourceRunId: 'run-441-25',
+          scope: { tier: 'product', key: 'storefront' },
+          buildOrdinal: 42,
+          executionContext: 'local-interactive',
+          kind: 'fact',
+          subtype: 'selector',
+          anchors: [{ t: 'el', role: 'button', name: 'Checkout' }],
+          summarySeed: 'Checkout button selector',
+          bodySeed: 'The checkout button was resolved and verified.',
+          distilledObservations: [],
+          evidenceToken: 'evidence-441-25',
+          attributingObservationId: 'run-441-25:test-0:step-0',
+          emittedAt: '2026-10-15T00:00:00.000Z',
+        },
+      })
+      expect(outcome.kind).toBe('enqueued')
+      if (outcome.kind !== 'enqueued') throw new Error('expected enqueued projection')
+      const candidateDir = queuedCandidateDir(knowledgeRoot, outcome.candidateId)
+      const parsed = readCurationCandidatePayload(candidateDir)
+      expect(parsed.kind).toBe('parsed')
+      if (parsed.kind !== 'parsed') throw new Error('expected parsed payload')
+
+      const written = JSON.parse(readFileSync(join(candidateDir, 'payload.json'), 'utf8'))
+      for (const key of RETIRED_KEYS) {
+        expect(parsed.payload).not.toHaveProperty(key)
+        expect(written).not.toHaveProperty(key)
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })

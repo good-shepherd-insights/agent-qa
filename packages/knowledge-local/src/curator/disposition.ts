@@ -28,10 +28,7 @@ import {
 } from '../bundle-read.js'
 import { enumerateBundleDirs } from '../bundle-scan.js'
 import { snapshotTrustPriors } from '../promotion-gate-input.js'
-import type {
-  CurationCandidateArtifact,
-  CurationCaptureReceipt,
-} from '../queue/queue-payload.js'
+import type { CurationCandidateArtifact } from '../queue/queue-payload.js'
 import type { AuthoredDeltaCheckpoint, DispositionProfile } from './author-contract.js'
 import {
   SCOPE_BURST_THRESHOLD,
@@ -58,12 +55,11 @@ export { canaryOutcomeObservationId } from '../serving/canary-observation-id.js'
 
 /**
  * 381-03 (PROC-01 D-02/D-03): the verified queue evidence the procedure-extraction wall
- * validates against. Everything here is code-derived queue truth — distilled observations,
- * the finalized §A8 capture receipt, and the claimed artifact inventory — never LLM text.
+ * validates against. Everything here is code-derived queue truth — distilled observations and
+ * the claimed artifact inventory — never LLM text.
  */
 export interface ProcedureDispositionEvidence {
   distilledObservations: readonly DistilledObservation[]
-  captureReceipt: CurationCaptureReceipt
   artifactInventory: readonly CurationCandidateArtifact[]
   /** Claimed candidate directory the inventory's relative paths resolve against. */
   candidateDir: string

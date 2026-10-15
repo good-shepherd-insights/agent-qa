@@ -7,7 +7,6 @@ import { enqueueCanaryOutcome } from '../canary-queue.js'
 import { queuedRoot } from '../queue-layout.js'
 
 import {
-  artifactFreeCaptureReceipt,
   buildCurationCandidateAddressFields,
   candidateContentAddress,
   curationCandidatePayloadSchema,
@@ -202,7 +201,6 @@ describe('Pin 3 canary outcome payload', () => {
       evidenceToken: 'evidence-existing-curation',
       attributingObservationId: 'run-existing-curation:test-0:step-0',
       artifactInventory: [],
-      captureReceipt: artifactFreeCaptureReceipt(),
       emittedAt: '2026-07-17T10:00:00.000Z',
     })
     const payload = { candidateId: candidateContentAddress(fields), ...fields }

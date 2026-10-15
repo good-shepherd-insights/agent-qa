@@ -253,7 +253,7 @@ describe('projectCurationCandidates (CUR-04/SAFE-01)', () => {
     ])
   })
 
-  it('carries raw state evidence, exact interactions, and closed artifact descriptors', () => {
+  it('carries closed artifact descriptors and no captured field values', () => {
     const password = {
       ...element('password', 'Account password', { type: 'password' }),
       role: 'textbox',
@@ -271,22 +271,8 @@ describe('projectCurationCandidates (CUR-04/SAFE-01)', () => {
       policy,
     )
 
-    expect(candidate?.captureEvidence).toEqual({
-      elements: [
-        {
-          stepIndex: 0,
-          elementRef: 'password',
-          role: 'textbox',
-          name: 'Account password',
-          nameNormalized: 'account password',
-          inputType: 'password',
-          value: 'correct horse battery staple',
-        },
-      ],
-    })
-    expect(candidate?.stepInteractions).toEqual([
-      { stepIndex: 0, elementRef: 'password' },
-    ])
+    // 2026-10-15 (441-25, D-28): the projection no longer copies element values or interactions.
+    expect(JSON.stringify(candidate)).not.toContain('correct horse battery staple')
     expect(candidate?.artifactDescriptors).toEqual([
       {
         ref: evidence.decisionScreenshotRef,

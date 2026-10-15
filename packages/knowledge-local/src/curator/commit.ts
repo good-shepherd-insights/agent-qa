@@ -28,11 +28,7 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import { copyArtifacts } from '../artifact-copy.js'
-import type {
-  ArtifactCopyInput,
-  ArtifactCopyResult,
-  SkippedArtifact,
-} from '../artifact-copy.js'
+import type { ArtifactCopyInput, ArtifactCopyResult } from '../artifact-copy.js'
 import {
   appendMeasurementObservation,
   appendOutcomeEvent,
@@ -423,92 +419,6 @@ function artifactInputs(job: CommitCurationJob): ArtifactCopyInput[] {
   }))
 }
 
-function receiptInteractionMatchesRegion(
-  region: CommitCurationJob['payload']['captureReceipt']['regions'][number],
-  interaction: CommitCurationJob['payload']['captureReceipt']['interactions'][number],
-): boolean {
-  return region.stepIndex === interaction.stepIndex
-    && (interaction.elementRef === undefined || interaction.elementRef === region.elementRef)
-}
-
-function captureSafePayloadError(): TypeError {
-  return new TypeError('claimed job has an inconsistent capture-safe payload')
-}
-
-/** Defense-in-depth over value-free queue facts; raw capture classification stays queue-owned. */
-function assertCaptureSafePayload(job: CommitCurationJob): void {
-  const { artifactInventory, captureReceipt } = job.payload
-  const interactedBlacklistedSteps = new Set(
-    captureReceipt.regions
-      .filter((region) =>
-        captureReceipt.interactions.some((interaction) =>
-          receiptInteractionMatchesRegion(region, interaction),
-        ),
-      )
-      .map((region) => region.stepIndex),
-  )
-  const declaredDescriptorRefs = new Set<string>()
-
-  for (const omission of captureReceipt.omissions) {
-    if (
-      !interactedBlacklistedSteps.has(omission.stepIndex)
-      || omission.role === 'dom-snapshot'
-      || omission.role === 'ax-snapshot'
-      || declaredDescriptorRefs.has(omission.ref)
-    ) {
-      throw captureSafePayloadError()
-    }
-    declaredDescriptorRefs.add(omission.ref)
-  }
-
-  for (const redaction of captureReceipt.redactions) {
-    const safeArtifact = artifactInventory.find((artifact) =>
-      artifact.sha256 === redaction.safeSha256
-      && artifact.stepIndex === redaction.stepIndex
-      && artifact.role === redaction.role
-      && artifact.originalName === redaction.originalName,
-    )
-    if (
-      !interactedBlacklistedSteps.has(redaction.stepIndex)
-      || safeArtifact === undefined
-      || declaredDescriptorRefs.has(redaction.ref)
-    ) {
-      throw captureSafePayloadError()
-    }
-    declaredDescriptorRefs.add(redaction.ref)
-  }
-
-  for (const artifact of artifactInventory) {
-    if (
-      interactedBlacklistedSteps.has(artifact.stepIndex)
-      && (artifact.role === 'screenshot' || artifact.role === 'opaque-evidence')
-    ) {
-      throw captureSafePayloadError()
-    }
-  }
-}
-
-function omissionPreSkipped(
-  job: CommitCurationJob,
-): SkippedArtifact<'capture-blacklist'>[] {
-  return job.payload.captureReceipt.omissions.map((omission) => ({
-    ref: {
-      id: omission.ref,
-      sha: sha256hex(canonicalJson({
-        schemaVersion: 1,
-        kind: 'capture-blacklist-omission',
-        stepIndex: omission.stepIndex,
-        ref: omission.ref,
-        role: omission.role,
-        originalName: omission.originalName,
-        reason: omission.reason,
-      })),
-    },
-    stepIndex: omission.stepIndex,
-    reason: omission.reason,
-  }))
-}
-
 /**
  * Pre-copy the job's artifacts into the preflight dir — and touch the filesystem only if it has
  * artifacts to copy.
@@ -526,24 +436,22 @@ function omissionPreSkipped(
  * PROVABLY INERT FOR THE DRAIN, which is the sibling-input half. A drain job's `candidateDir` is
  * a real directory that the queue wrote long before commit, its artifacts dir is created by this
  * call only to be removed by `commitCurationDelta`'s `finally`, and the result returned here for
- * an empty input list is the same object `copyArtifacts` builds for one: nothing copied, the
- * pre-skipped omissions passed straight through, and `evidenceIncomplete` derived from them by
- * the same rule. A job WITH artifacts is untouched by this branch.
+ * an empty input list is the same object `copyArtifacts` builds for one: nothing copied, nothing
+ * skipped, and evidence complete. A job WITH artifacts is untouched by this branch.
  */
 function preCopyArtifacts(
   job: CommitCurationJob,
   preflightDir: string,
-): ArtifactCopyResult<'capture-blacklist'> {
+): ArtifactCopyResult {
   const inputs = artifactInputs(job)
-  const preSkipped = omissionPreSkipped(job)
   if (inputs.length === 0) {
-    return { copied: [], skipped: preSkipped, evidenceIncomplete: preSkipped.length > 0 }
+    return { copied: [], skipped: [], evidenceIncomplete: false }
   }
-  return copyArtifacts(inputs, join(preflightDir, 'artifacts'), { preSkipped })
+  return copyArtifacts(inputs, join(preflightDir, 'artifacts'))
 }
 
 function publisherArtifacts(
-  preCopy: ArtifactCopyResult<'capture-blacklist'>,
+  preCopy: ArtifactCopyResult,
   preflightDir: string,
 ): ArtifactCopyInput[] {
   return preCopy.copied.map((artifact) => ({
@@ -938,7 +846,6 @@ export function commitCurationDelta(
   deps = { ...deps, ...(deps.priors === undefined ? {} : { priors: snapshotTrustPriors(deps.priors) }) }
   const beforeWork = staleEpoch(deps)
   if (beforeWork !== undefined) return beforeWork
-  assertCaptureSafePayload(job)
 
   const disposed = disposeDelta({
     ...(deps.priors === undefined ? {} : { priors: deps.priors }),
@@ -960,7 +867,6 @@ export function commitCurationDelta(
         ? {
             procedureEvidence: {
               distilledObservations: job.payload.distilledObservations,
-              captureReceipt: job.payload.captureReceipt,
               artifactInventory: job.payload.artifactInventory,
               candidateDir: job.candidateDir,
               policy: deps.policy,

@@ -58,7 +58,6 @@ function job(overrides: Partial<CurationJobView> = {}): CurationJobView {
     buildOrdinal: 42,
     attributingObservationId: 'run-1:test-0:step-2',
     executionContext: 'local-interactive',
-    captureReceipt: { regions: [], interactions: [], omissions: [], redactions: [] },
     ...overrides,
   }
 }

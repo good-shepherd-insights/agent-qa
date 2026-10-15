@@ -18,7 +18,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
   acquireWriterLease,
-  artifactFreeCaptureReceipt,
   candidateContentAddress,
   commitCurationDelta,
   deriveBundleTrust,
@@ -200,7 +199,6 @@ function replacementJob(): CommitCurationJob {
     evidenceToken: 'rename-bridge-evidence',
     attributingObservationId: 'rename-bridge-run:test-0:step-0',
     artifactInventory: [],
-    captureReceipt: artifactFreeCaptureReceipt(),
     emittedAt: '2026-07-16T00:00:00.000Z',
   })
   const payload = {

@@ -1283,8 +1283,6 @@ describe('DCAY-05 sovereign purge', () => {
             originalName: 'record-copy.bin',
           },
         ],
-        captureEvidence: { elements: [] },
-        stepInteractions: [],
       }),
       artifactSources: [
         { artifactId: 'queue-digest-match-artifact', sourcePath },

@@ -128,23 +128,6 @@ export function commitFixtureProcedure(options: CommitFixtureProcedureOptions) {
       role,
       originalName,
     })),
-    captureReceipt: {
-      regions: [
-        {
-          stepIndex: 1,
-          elementRef: screenStates[1]!.elements[0]!.ref,
-          role: 'textbox',
-          normalizedName: 'password',
-          reason: 'credential-name',
-        },
-      ],
-      interactions: artifacts.map(({ stepIndex }) => ({
-        stepIndex,
-        elementRef: screenStates[stepIndex]!.elements[0]!.ref,
-      })),
-      omissions: [],
-      redactions: [],
-    },
     emittedAt: '2026-07-15T10:00:00.000Z',
   })
 

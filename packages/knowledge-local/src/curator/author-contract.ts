@@ -22,11 +22,7 @@ import type { CurationCandidatePayload } from '../queue/queue-payload.js'
 
 export const AUTHORED_CHECKPOINT_SCHEMA_VERSION = 1
 
-/**
- * The deterministic author-facing projection of one durable queue payload. `captureReceipt`
- * rides along so the procedure-extraction author can derive guard descriptors and D-03
- * forced parameterization from finalized §A8 evidence, never from LLM text.
- */
+/** The deterministic author-facing projection of one durable queue payload. */
 export type CurationJobView = Pick<
   CurationCandidatePayload,
   | 'candidateId'
@@ -41,7 +37,6 @@ export type CurationJobView = Pick<
   | 'buildOrdinal'
   | 'attributingObservationId'
   | 'executionContext'
-  | 'captureReceipt'
 >
 
 /** One retrieval hit as shown to the author through a small integer alias. */

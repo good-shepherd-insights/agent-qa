@@ -54,7 +54,6 @@ import { claimedCandidateDir } from '../queue/queue-layout.js'
 import { snapshotTrustPriors } from '../promotion-gate-input.js'
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
-  artifactFreeCaptureReceipt,
   buildCurationCandidateAddressFields,
   candidateContentAddress,
 } from '../queue/queue-payload.js'
@@ -292,7 +291,6 @@ function addressFields(
     evidenceToken: syntheticEvidenceToken(delta),
     attributingObservationId: `knowledge-port:${sha256hex(canonicalJson(delta))}`,
     artifactInventory: [],
-    captureReceipt: artifactFreeCaptureReceipt(),
     emittedAt: '1970-01-01T00:00:00.000Z',
   })
 }

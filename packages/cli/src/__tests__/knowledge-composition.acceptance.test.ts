@@ -187,8 +187,6 @@ function queueProjection(runId: string): CurationCandidateProjection {
     evidenceToken: 'composition-writer-evidence',
     attributingObservationId: 'composition-writer-observation',
     artifactDescriptors: [],
-    captureEvidence: { elements: [] },
-    stepInteractions: [],
     emittedAt: '2026-07-22T00:00:00.000Z',
   }
 }

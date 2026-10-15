@@ -155,8 +155,6 @@ function enqueueRunCandidate(project: Project, executionContext: ExecutionContex
       evidenceToken: `evidence-432-${executionContext}`,
       attributingObservationId: `observation-432-${executionContext}`,
       artifactDescriptors: [],
-      captureEvidence: { elements: [] },
-      stepInteractions: [],
       emittedAt: '2026-09-29T00:00:00.000Z',
     },
     artifactSources: [],

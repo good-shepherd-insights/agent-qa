@@ -73,71 +73,6 @@ export const curationArtifactDescriptorSchema = z
   })
   .strict()
 
-const captureElementEvidenceSchema = z
-  .object({
-    stepIndex: z.number().int().nonnegative(),
-    elementRef: z.string().min(1),
-    role: z.string().min(1),
-    name: z.string(),
-    nameNormalized: z.string().optional(),
-    inputType: z.string().optional(),
-    /** Raw values are legal only in this function-local, pre-copy projection. */
-    value: z.string().optional(),
-  })
-  .strict()
-
-const captureEvidenceSchema = z
-  .object({ elements: z.array(captureElementEvidenceSchema) })
-  .strict()
-
-const captureStepInteractionSchema = z
-  .object({
-    stepIndex: z.number().int().nonnegative(),
-    elementRef: z.string().min(1).optional(),
-  })
-  .strict()
-
-const curationCaptureRegionSchema = z
-  .object({
-    stepIndex: z.number().int().nonnegative(),
-    elementRef: z.string().min(1),
-    role: z.string().min(1),
-    normalizedName: z.string(),
-    inputType: z.string().optional(),
-    reason: z.enum(['password-input', 'credential-name']),
-  })
-  .strict()
-
-export const curationCandidateOmissionSchema = z
-  .object({
-    stepIndex: z.number().int().nonnegative(),
-    ref: z.string().min(1),
-    role: curationArtifactRoleSchema,
-    originalName: z.string().min(1),
-    reason: z.literal('capture-blacklist'),
-  })
-  .strict()
-
-export const curationCandidateRedactionSchema = z
-  .object({
-    stepIndex: z.number().int().nonnegative(),
-    ref: z.string().min(1),
-    role: z.enum(['dom-snapshot', 'ax-snapshot']),
-    originalName: z.string().min(1),
-    reason: z.literal('capture-blacklist'),
-    safeSha256: z.string().regex(SHA256_HEX),
-  })
-  .strict()
-
-export const curationCaptureReceiptSchema = z
-  .object({
-    regions: z.array(curationCaptureRegionSchema),
-    interactions: z.array(captureStepInteractionSchema),
-    omissions: z.array(curationCandidateOmissionSchema),
-    redactions: z.array(curationCandidateRedactionSchema),
-  })
-  .strict()
-
 const artifactInventoryEntryShape = {
   relativePath: z.string().regex(/^artifacts\/[0-9a-f]{64}$/),
   sha256: z.string().regex(SHA256_HEX),
@@ -194,7 +129,6 @@ const addressShape = {
   schemaVersion: z.literal(CURATION_QUEUE_SCHEMA_VERSION),
   ...candidateSeedShape,
   artifactInventory: z.array(artifactInventoryEntrySchema),
-  captureReceipt: curationCaptureReceiptSchema,
   /** Diagnostic only; wall-clock metadata is excluded from queue identity. */
   emittedAt: z.string(),
 } as const
@@ -203,8 +137,6 @@ export const curationCandidateProjectionSchema = z
   .object({
     ...candidateSeedShape,
     artifactDescriptors: z.array(curationArtifactDescriptorSchema),
-    captureEvidence: captureEvidenceSchema,
-    stepInteractions: z.array(captureStepInteractionSchema),
     /** Diagnostic only; queue finalization excludes wall-clock metadata from identity. */
     emittedAt: z.string(),
   })
@@ -277,7 +209,6 @@ function validateAddressSemantics(
       role: z.infer<typeof curationArtifactRoleSchema>
       originalName: string
     }[]
-    captureReceipt: z.infer<typeof curationCaptureReceiptSchema>
   },
   ctx: z.RefinementCtx,
 ): void {
@@ -292,24 +223,6 @@ function validateAddressSemantics(
       })
     }
     paths.add(artifact.relativePath)
-  }
-
-  for (const [index, redaction] of value.captureReceipt.redactions.entries()) {
-    const safeArtifact = value.artifactInventory.find(
-      (artifact) => artifact.sha256 === redaction.safeSha256,
-    )
-    if (
-      safeArtifact === undefined
-      || safeArtifact.stepIndex !== redaction.stepIndex
-      || safeArtifact.role !== redaction.role
-      || safeArtifact.originalName !== redaction.originalName
-    ) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['captureReceipt', 'redactions', index, 'safeSha256'],
-        message: 'redaction safe digest must identify matching finalized artifact metadata',
-      })
-    }
   }
 }
 
@@ -348,24 +261,9 @@ export type CurationArtifactDescriptor = z.infer<
 export type CurationCandidateProjection = z.infer<
   typeof curationCandidateProjectionSchema
 >
-export type CurationCaptureReceipt = z.infer<typeof curationCaptureReceiptSchema>
-export type CurationCandidateOmission = z.infer<
-  typeof curationCandidateOmissionSchema
->
-export type CurationCandidateRedaction = z.infer<
-  typeof curationCandidateRedactionSchema
->
 export type BuildCurationCandidateAddressFieldsInput = CurationCandidateAddressFields
 
-/** Explicit source-truth marker for candidates that have no run artifacts by construction. */
-export function artifactFreeCaptureReceipt(): CurationCaptureReceipt {
-  return { regions: [], interactions: [], omissions: [], redactions: [] }
-}
-
-/**
- * Constructs strict version-2 fields with a complete finalized receipt and descriptor metadata
- * for every copied artifact.
- */
+/** Constructs strict version-2 fields with descriptor metadata for every copied artifact. */
 export function buildCurationCandidateAddressFields(
   input: BuildCurationCandidateAddressFieldsInput,
 ): CurationCandidateAddressFields {
@@ -375,8 +273,7 @@ export function buildCurationCandidateAddressFields(
 /**
  * Hashes every payload field except derived candidateId and diagnostic emittedAt. Identity covers
  * schema/run/scope/ordinal/posture flags, candidate kind/subtype, anchors and seeds, distilled
- * observations, evidence attribution, the complete artifact inventory, and the complete
- * finalized capture receipt.
+ * observations, evidence attribution, and the complete artifact inventory.
  */
 export function candidateContentAddress(fields: CurationCandidateAddressFields): string {
   const parsed = curationCandidateAddressFieldsSchema.parse(fields)

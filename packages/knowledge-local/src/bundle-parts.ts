@@ -70,7 +70,7 @@ export interface RenderBundlePartsInput {
   initialEvents: readonly BundleOutcomeEvent[]
   relations: readonly BundleRelation[]
   provenance: BundleProvenanceInput
-  copiedArtifacts: ArtifactCopyResult<'capture-blacklist'>
+  copiedArtifacts: ArtifactCopyResult
   evidenceIncomplete: boolean
   evidenceMarkdown?: string
   distilledObservations?: readonly DistilledObservation[]
@@ -146,7 +146,7 @@ function renderProvenance(
 }
 
 export function renderArtifactIndex(
-  copiedArtifacts: ArtifactCopyResult<'capture-blacklist'>,
+  copiedArtifacts: ArtifactCopyResult,
 ): ArtifactsIndex {
   return {
     schemaVersion: BUNDLE_SCHEMA_VERSION,

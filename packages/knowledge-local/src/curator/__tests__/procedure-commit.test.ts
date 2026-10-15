@@ -125,23 +125,6 @@ describe('D-02 procedure-kind commit mint contract', () => {
         role,
         originalName,
       })),
-      captureReceipt: {
-        regions: [
-          {
-            stepIndex: 1,
-            elementRef: screenStates[1]!.elements[0]!.ref,
-            role: 'textbox',
-            normalizedName: 'password',
-            reason: 'credential-name',
-          },
-        ],
-        interactions: artifacts.map(({ stepIndex }) => ({
-          stepIndex,
-          elementRef: screenStates[stepIndex]!.elements[0]!.ref,
-        })),
-        omissions: [],
-        redactions: [],
-      },
       emittedAt: '2026-07-15T10:00:00.000Z',
     })
     expect(
@@ -155,23 +138,6 @@ describe('D-02 procedure-kind commit mint contract', () => {
       { stepIndex: 1, role: 'dom-snapshot', originalName: 'procedure-step-1.dom.json' },
       { stepIndex: 2, role: 'opaque-evidence', originalName: 'procedure-step-2.txt' },
     ])
-    expect(fields.captureReceipt).toMatchObject({
-      regions: [
-        {
-          stepIndex: 1,
-          role: 'textbox',
-          normalizedName: 'password',
-          reason: 'credential-name',
-        },
-      ],
-      interactions: [
-        { stepIndex: 0 },
-        { stepIndex: 1 },
-        { stepIndex: 2 },
-      ],
-      omissions: [],
-      redactions: [],
-    })
     const candidateId = candidateContentAddress(fields)
     const candidateDir = join(root, 'claimed', candidateId)
     const artifactsDir = join(candidateDir, 'artifacts')

@@ -23,7 +23,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
   appendOutcomeEvent,
-  artifactFreeCaptureReceipt,
   candidateContentAddress,
   commitCurationDelta,
   deriveBundleTrust,
@@ -193,7 +192,6 @@ function claimedJob(generation: number, buildOrdinal: number, label: string): Co
     evidenceToken: `rollback-lineage-evidence-${label}-${jobSerial}`,
     attributingObservationId: `rollback-lineage-observation-${label}-${jobSerial}`,
     artifactInventory: [],
-    captureReceipt: artifactFreeCaptureReceipt(),
     emittedAt: '2026-07-17T00:00:00.000Z',
   })
   const payload = { candidateId: candidateContentAddress(fields), ...fields }
