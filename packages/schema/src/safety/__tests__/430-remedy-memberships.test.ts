@@ -91,7 +91,9 @@ describe('the remedy memberships, exact (430 D-06)', () => {
   it('C432-430-R12-ANSWER-CONFIRM-ABSENT: no schema source declares the confirm-answering remedy, so no door, the dashboard included, is its member', () => {
     const sources = schemaProductionSources()
     // Non-vacuity: the walk read real sources, the remedy module's old home among them.
-    expect(sources.filter((file) => file.startsWith(REMEDY_HOME)).length).toBeGreaterThan(3)
+    // 2026-10-15 (441-45): the floor is the three safety sources left after the masking, guardrail,
+    // scan, content-origin and hook-result contracts were deleted.
+    expect(sources.filter((file) => file.startsWith(REMEDY_HOME)).length).toBeGreaterThan(2)
     expect(sources).toContain(`${REMEDY_HOME}risk-tier.ts`)
     const hits = kindDeclarations(ANSWER_CONFIRM_KIND)
     expect(hits, `the confirm-answering remedy returned:\n${hits.join('\n')}`).toEqual([])
@@ -100,7 +102,7 @@ describe('the remedy memberships, exact (430 D-06)', () => {
   // 430 R13 (was C430-REMEDY-MEMBERSHIPS-EXACT / C430-DASHBOARD-PROJECTION-EMPTY for this kind).
   it('C432-430-R13-SESSION-PIN-ABSENT: no schema source declares the session-pin finality remedy, so no door, the dashboard included, is its member', () => {
     const sources = schemaProductionSources()
-    expect(sources.filter((file) => file.startsWith(REMEDY_HOME)).length).toBeGreaterThan(3)
+    expect(sources.filter((file) => file.startsWith(REMEDY_HOME)).length).toBeGreaterThan(2)
     expect(sources).toContain(`${REMEDY_HOME}risk-tier.ts`)
     const hits = kindDeclarations(SESSION_PIN_FINAL_KIND)
     expect(hits, `the session-pin finality remedy returned:\n${hits.join('\n')}`).toEqual([])

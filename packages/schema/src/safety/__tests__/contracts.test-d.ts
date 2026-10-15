@@ -1,15 +1,5 @@
 import { expectTypeOf } from 'vitest'
-import type {
-  ContextHookResult,
-  ExecutionContext,
-  MaskingContext,
-  RiskTier,
-  ScanAction,
-  ScanResult,
-  ToolCallHookDenyResult,
-  ToolCallHookResult,
-  ToolResultHookResult,
-} from '../../index'
+import type { ExecutionContext, RiskTier } from '../../index'
 
 // 2026-10-01 (432-19, D-15). The exact-shape pin on `ExecutionPolicyResult` (verdict, reason, tier,
 // remedies, neutral reason) and its three invalid-member cells retire with the gate: the result, its
@@ -27,39 +17,9 @@ expectTypeOf<RiskTier>().toEqualTypeOf<
 // @ts-expect-error riskTier is the five-member execution-risk union.
 export const invalidRiskTier: RiskTier = 'shared'
 
-// A deny result carries a reason and nothing a gate decided: no policy result rides it.
-expectTypeOf<ToolCallHookDenyResult>().toEqualTypeOf<{ action: 'deny'; reason: string }>()
-
-expectTypeOf<ScanResult['action']>().toEqualTypeOf<ScanAction>()
-expectTypeOf<ScanResult>().toEqualTypeOf<{
-  action: ScanAction
-  detector?: string
-  redactedFingerprint?: string
-}>()
-expectTypeOf<MaskingContext>().toMatchTypeOf<{
-  mask(text: string): string
-  unmask(text: string): string
-}>()
+// 2026-10-15 (441-45, D-12/D-15): the hook-result, scan and masking-context pins are deleted with
+// their contracts.
 expectTypeOf<ExecutionContext>().toEqualTypeOf<'local-interactive' | 'local-headless' | 'ci' | 'cloud'>()
-
-const allowedToolCall: ToolCallHookResult<{ name: string }> = {
-  action: 'allow',
-  call: { name: 'inspect' },
-}
-const mutatedToolCall: ToolCallHookResult<{ name: string }> = {
-  action: 'mutate',
-  mutated: { name: 'safe-inspect' },
-}
-const deniedToolCall: ToolCallHookResult = {
-  action: 'deny',
-  reason: 'restricted action',
-}
-
-expectTypeOf(allowedToolCall.action).toEqualTypeOf<'allow'>()
-expectTypeOf(mutatedToolCall.action).toEqualTypeOf<'mutate'>()
-expectTypeOf(deniedToolCall.action).toEqualTypeOf<'deny'>()
-expectTypeOf<ToolResultHookResult<string>>().toEqualTypeOf<{ result: string }>()
-expectTypeOf<ContextHookResult<readonly string[]>>().toEqualTypeOf<{ context: readonly string[] }>()
 
 // 2026-10-01 (432-22, D-03/D-12): C432-NO-TRUST-CONTRACT. The trust-scope wire projection leaves with
 // the run-service token DTO it parsed for; the caller types and their key set stay until 432-39.

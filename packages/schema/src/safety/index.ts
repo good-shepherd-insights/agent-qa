@@ -23,16 +23,5 @@ export {
 // 432-18 (D-14/D-15): the grant ledger, the protected-class set and the grant op contracts are
 // deleted. 432-22 (D-12): the trust-scope wire projection (`grant-ops.ts`) is deleted with the
 // run-service token DTO, its last consumer.
-export type { ScanAction, ScanResult } from './scan'
-export type { ContentOrigin } from './content-origin'
-export type { MaskingContext } from './masking'
-export { guardrailPolicySchema } from './guardrail-policy'
-export type { GuardrailPolicy, GuardrailDetectorFamily } from './guardrail-policy'
-export type {
-  ToolCallHookAllowResult,
-  ToolCallHookMutateResult,
-  ToolCallHookDenyResult,
-  ToolCallHookResult,
-  ToolResultHookResult,
-  ContextHookResult,
-} from './hook-results'
+// 2026-10-15 (441-45, D-12/D-15): the masking context, guardrail policy, scan, content-origin and
+// hook-result contracts are deleted with the safety modules that implemented them (441-33).

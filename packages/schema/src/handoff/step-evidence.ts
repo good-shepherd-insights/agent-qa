@@ -286,9 +286,9 @@ export interface StepEvidence {
    * adds no exposure. Secret material cannot enter the channel by construction:
    * `interpolateVariables` never resolves `{{secret:...}}`.
    *
-   * DELIBERATELY NOT MASKED. Masking would buy zero confidentiality (see above) while
-   * actively breaking the consumer: `mask()` (`safety/src/masking/context.ts:46-48`)
-   * transforms emails UNCONDITIONALLY and registration-free, and the run's env-name seed
+   * DELIBERATELY NOT MASKED. Masking would buy zero confidentiality (see above), and when
+   * this was written it actively broke the consumer: the run masker (deleted 441-33, D-12)
+   * transformed emails UNCONDITIONALLY and registration-free, and the run's env-name seed
    * (deleted 441-19, D-12) registered ordinary env vars by NAME
    * (`_KEY`/`_TOKEN`/`_SECRET`/`_PASSWORD`/… suffixes, `ANTHROPIC_`/`OPENAI_`/`GH_`/…
    * prefixes). An email-valued username binding — the canonical login case — or any

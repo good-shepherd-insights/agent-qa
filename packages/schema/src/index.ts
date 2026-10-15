@@ -1476,7 +1476,8 @@ export type {
 } from './entity/index'
 
 // 342 safety contracts
-export { guardrailPolicySchema } from './safety/index'
+// 2026-10-15 (441-45, D-12/D-15): the guardrail policy schema, the masking context, the scan, the
+// content origin and the hook results are deleted; the risk tier and the disclosure scrub remain.
 // 2026-10-01 (432-18, D-14/D-15/D-22): the standing-grant ledger's event vocabulary and guards are
 // deleted with the ledger. `STANDING_APPROVAL_SCOPE` moved to `trust-credential.ts` (432-18) and was
 // deleted with the MCP bearer credential that carried it (432-21, D-12).
@@ -1499,22 +1500,7 @@ export {
 // port are deleted. 2026-10-01 (432-22, D-12): the trust-scope wire projection leaves with its last
 // consumer, the run-service token DTO. 2026-10-02 (432-39, D-12): the `TrustScope` and
 // `TrustCredential` caller types are deleted with the caller's `credential` member.
-export type {
-  RiskActionDescriptor,
-  RiskTier,
-  ScanAction,
-  ScanResult,
-  ContentOrigin,
-  MaskingContext,
-  GuardrailPolicy,
-  GuardrailDetectorFamily,
-  ToolCallHookAllowResult,
-  ToolCallHookMutateResult,
-  ToolCallHookDenyResult,
-  ToolCallHookResult,
-  ToolResultHookResult,
-  ContextHookResult,
-} from './safety/index'
+export type { RiskActionDescriptor, RiskTier } from './safety/index'
 // 392 CHAT-01/CHAT-05, D-14/D-18/D-24: the conversational surface's whole vocabulary — the session
 // log's event grammar and header, the per-clause turn receipts, the `agent.ask` contracts, and the
 // session-log port. Minted here rather than beside the turn engine because every one of them has
