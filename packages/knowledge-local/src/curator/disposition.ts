@@ -1170,13 +1170,13 @@ function disposeProcedureExtraction(input: DisposeDeltaInput): string | undefine
 }
 
 /**
- * Handoff evidence is masked-before-record (T-353-08): secrets surface as `<SECRET_n>`/
- * `<EMAIL_n>` placeholders (or an unexpanded `{{secret:...}}` template) and test variables
- * as `{{env:...}}` templates. The emit fold labels value sources on this same contract; any
- * such observed value surviving as a committed literal is a D-03 structural reject — the
- * secret param type only protects values that stay `{ param }` referenced (T-381-02/07).
+ * 2026-10-15 (441-64, WR-C01): a declared secret is the `[secret:NAME]` marker or an unexpanded
+ * `{{secret:...}}` template; a test variable is a `{{env:...}}` template. The emit fold labels
+ * value sources on this same contract; any such observed value surviving as a committed literal
+ * is a D-03 structural reject — the secret param type only protects values that stay `{ param }`
+ * referenced (T-381-02/07).
  */
-const MASKED_SECRET_VALUE_PATTERN = /<(?:SECRET|EMAIL)_\d+>|\{\{\s*secret:/
+const MASKED_SECRET_VALUE_PATTERN = /\[secret:\w+\]|\{\{\s*secret:/
 const TEST_VARIABLE_VALUE_PATTERN = /\{\{\s*env:/
 
 /**

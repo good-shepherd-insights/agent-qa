@@ -13,6 +13,7 @@ import {
   canonicalJson,
   DISTILLED_OBSERVATION_SCHEMA_VERSION,
   deriveEvidenceToken,
+  maskPayloadStrings,
   procedureJsonValueSchema,
   type Anchor,
   type ArtifactRef,
@@ -662,7 +663,7 @@ function tidyName(name: string): string {
 /**
  * The strict identity replay re-finds (438 D-11): role, the exact observed name and, on the lane
  * the planner stated, the stated row words recorded in the step's evidence (already redacted).
- * Name and row pass the caller's mask like the rest of the body. No position is written.
+ * Both names and the row pass the caller's mask like the rest of the body. No position is written.
  */
 function trajectoryTargets(
   subAction: SubActionEvidence,
@@ -688,7 +689,7 @@ function trajectoryTargets(
     targets[key] = {
       ref,
       role: element.role,
-      nameNormalized: element.nameNormalized,
+      nameNormalized: maskedProse(element.nameNormalized, mask),
       name: maskedProse(element.name, mask),
       ...(row === undefined || row === '' ? {} : { row: maskedProse(row, mask) }),
     }
@@ -699,14 +700,18 @@ function trajectoryTargets(
 function trajectoryValues(
   subAction: SubActionEvidence,
   interpolated: readonly { name: string; value: string }[] | undefined,
+  mask: MaskFn | undefined,
 ): Record<string, z.infer<typeof trajectoryValueSlotSchema>> | undefined {
   const values: Record<string, z.infer<typeof trajectoryValueSlotSchema>> = {}
   const action = subAction.plannedAction as unknown as Record<string, unknown>
-  for (const [key, value] of Object.entries(action)) {
+  for (const [key, raw] of Object.entries(action)) {
     if (key === 'type' || ACTION_REF_KEYS.includes(key)) continue
     // CR-01/T-381-52: one lossy field invalidates the whole action. Silently dropping a value
     // would author replay behavior different from the verified trajectory.
-    if (!jsonRepresentable(value)) return undefined
+    if (!jsonRepresentable(raw)) return undefined
+    // 2026-10-15 (441-64, CR-A04): a typed declared value becomes its marker before it is
+    // classified, so it is forced into a {param} reference and never committed as a literal.
+    const value = mask === undefined ? raw : maskPayloadStrings(raw, mask)
     const composite = isCompositeJsonValue(value)
     // T-381-50: D-03's parameter union is scalar-only, so masked/env material nested inside a
     // composite cannot be made safe by forced parameterization. Reject it before authoring.
@@ -737,7 +742,7 @@ function trajectoryStep(step: StepEvidence, mask: MaskFn | undefined): Procedure
   const values =
     completing === undefined
       ? undefined
-      : trajectoryValues(completing, step.interpolatedVariables)
+      : trajectoryValues(completing, step.interpolatedVariables, mask)
   // Replay evaluates the page guard before executing the action (D-10), so this route must
   // describe the pre-action page. Recording a navigation destination made healthy steps miss
   // their guards and fed false staleness negatives into the D-05/D-11 confirmation ladder.
@@ -756,7 +761,7 @@ function trajectoryStep(step: StepEvidence, mask: MaskFn | undefined): Procedure
             values,
           },
         }),
-    ...(route === undefined ? {} : { pageRoute: route }),
+    ...(route === undefined ? {} : { pageRoute: maskedProse(route, mask) }),
   }
 }
 
