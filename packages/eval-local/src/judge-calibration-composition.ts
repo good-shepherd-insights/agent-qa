@@ -69,7 +69,8 @@ export async function runJudgeCalibration(input: {
   }
   if (input.kind === 'probe' && !input.commit) return runJudgePanelCalibration(input.probe)
   try {
-    const preview = input.kind === 'probe' ? await runJudgePanelCalibration(input.probe) : undefined
+    // 441 GAP3-D2: publication and drift are decided on the raw probe; only the return is masked.
+    const preview = input.kind === 'probe' ? await probeJudgePanelCalibration(input.probe) : undefined
     const context: JudgeCalibrationReadInput = input.kind === 'probe'
       ? { ...input.probe, identity: preview!.identity, minN: input.probe.minN ?? resolveJudgeCalibrationMinimum() }
       : input.publication!
@@ -79,7 +80,8 @@ export async function runJudgeCalibration(input: {
     // The post-probe reread must prove the snapshot actually measured, not a newer one.
     if (preview && (['profileKey', 'corpusDigest', 'goldSetDigest', 'replayEvidenceDigest', 'evidenceDigest'] as const)
       .some(key => artifact[key] !== preview[key])) return { kind: 'input-drift' as const, reason: 'Judge calibration evidence changed during the probe; retry.' }
-    return await publishJudgeCalibration({ ...context, artifact, replace: input.replace })
+    const published = await publishJudgeCalibration({ ...context, artifact, replace: input.replace })
+    return input.kind === 'probe' ? maskJudgeCalibrationText(published, input.probe.mask) : published
   } catch (error) { return { kind: 'refused' as const, reason: 'Judge calibration evidence unavailable or invalid; inspect the selected corpus and saved replays.',
     ...(error instanceof JudgeCalibrationEvidenceError ? { skippedCounts: error.skippedCounts } : {}) } }
 }
@@ -97,13 +99,21 @@ export interface RunJudgePanelCalibrationInput {
 
 /** Operator-only forced probe. Credentials and source action content never enter its DTO. */
 export async function runJudgePanelCalibration(input: RunJudgePanelCalibrationInput) {
+  const preview = await probeJudgePanelCalibration(input)
+  try {
+    return maskJudgeCalibrationText(preview, input.mask)
+  } catch {
+    throw new Error('Judge calibration probe failed; retry.')
+  }
+}
+
+async function probeJudgePanelCalibration(input: RunJudgePanelCalibrationInput) {
   try {
     if (input.members.length < 2) throw new Error('Explicit panel required')
     // Never manufacture a replacement canonical identity from a secret-bearing ID.
     if ([input.replayProfile.model, ...input.members.map(member => member.profile.model)]
       .some(id => input.mask(id) !== id)) throw new Error('Unsafe model identity')
-    const preview = await executeJudgePanelCalibration(input)
-    return maskJudgeCalibrationText(preview, input.mask)
+    return await executeJudgePanelCalibration(input)
   } catch {
     throw new Error('Judge calibration probe failed; retry.')
   }

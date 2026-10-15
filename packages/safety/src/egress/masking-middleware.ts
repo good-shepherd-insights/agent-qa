@@ -36,15 +36,17 @@ function keepsTemplate(
 ): boolean {
   const token = parts[index]!
   const name = token.slice('{{secret:'.length, -'}}'.length)
-  if (mask(name) !== name) return false
   const alone = mask(token)
   if (alone !== token && alone !== `[secret:${name}]`) return false
   // A token cut by one brace is neither a template nor a marker, so the mask can only find a
-  // declared value in it: one that starts inside the token and ends after it, or the reverse.
-  const before = parts.slice(0, index).join('')
-  const after = parts.slice(index + 1).join('')
+  // declared value in it. 441 GAP3-D3: every proper substring of the token lies in one of the two
+  // cuts, so a value inside the token's own text is seen here; the edge probes below see one that
+  // starts inside the token and ends after it, or the reverse.
   const head = token.slice(0, -1)
   const tail = token.slice(1)
+  if (mask(head) !== head || mask(tail) !== tail) return false
+  const before = parts.slice(0, index).join('')
+  const after = parts.slice(index + 1).join('')
   return (
     mask(before + head) === mask(before) + mask(head)
     && mask(tail + after) === mask(tail) + mask(after)
