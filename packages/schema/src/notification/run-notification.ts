@@ -92,7 +92,7 @@ export interface RunNotificationVerdictSummary {
  * A stage record carries its STATUS and, for curation, the counts it committed. It carries NO
  * failure text, and that absence is a decision rather than an omission (404 D-21, T-404-01):
  * this row is stamped by whichever process drains the chain, INCLUDING the daemon's pump, which
- * folds with no run masking context at all (388 D-06's `no-masker` posture). A reason stored
+ * can fold with no declared mask bound (388 D-06's `no-masker` posture). A reason stored
  * here therefore could not be guaranteed masked at the moment it was written, and this row is
  * read by surfaces that render it directly — so a secret that reached the column would reach a
  * screen. The masked, bounded reason (`CHIP_ERROR_MAX_LENGTH`) lives instead on the in-process

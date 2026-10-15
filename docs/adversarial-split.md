@@ -12,7 +12,7 @@ admission is one reviewed batch.
 
 ## Staging, review and admission (D-01, D-02, D-04)
 
-Staging derives concrete bytes and scans them. It is safe to run repeatedly:
+Staging derives concrete bytes. It is safe to run repeatedly:
 
 ```sh
 agent-qa --config agent-qa.config.yaml eval adversarial --dry-run
@@ -20,12 +20,9 @@ agent-qa --config agent-qa.config.yaml eval adversarial --product default
 agent-qa --config agent-qa.config.yaml eval adversarial --product default --json
 ```
 
-`--dry-run` derives, scans and reports without staging: no batch directory, no refresh-state
-record, no durable reservation and no provider call. It is **not** inert on disk. The scan it
-performs is a real scan, so its decisions are appended to the guardrail audit —
-`.agent-qa/eval/audit/adversarial/<product>/guardrail_audit.jsonl` gains a row per detector hit,
-exactly as a plain stage would. That is deliberate: an unaudited scan would be a worse default
-than an audited one. Nothing a git-tracked root can see is touched by either mode.
+`--dry-run` derives and reports without staging: no batch directory, no refresh-state record, no
+durable reservation and no provider call. Nothing a git-tracked root can see is touched by either
+mode.
 
 A plain stage writes one batch and prints the digest to hand back:
 
@@ -141,8 +138,7 @@ Four counts are printed separately and are not summable:
 | `unchanged <id>` | already committed byte-identically; moved no digest (D-04) |
 | `remaining <id>` | reviewed and not yet committed — nonzero only on a partial admission |
 
-`refused <id>: <detector> <action>` is a guardrail decision (below). `settled refusal` is a
-refusal an earlier refresh already decided under this policy: disclosed, never re-asserted.
+No case is refused for what it contains: staging and admission scan nothing (below).
 `skipped <id>: <reason>` is a staging-side integrity skip — `blob-unresolvable`,
 `blob-hash-mismatch`, `text-hash-mismatch`, `manifest-digest-mismatch`,
 `path-identity-mismatch`, `seed-label-unavailable`, `seed-provenance-mismatch` or
@@ -158,38 +154,25 @@ When writes began and some reviewed cases did not land, the verb says so and lea
 place with the re-run command. The correct response is to resolve the reported filesystem issue
 and re-run the same `--admit --batch`, not to re-stage.
 
-## The loaded guardrail policy, and what a refusal is (D-03)
+## What a refusal is (D-03)
 
-Generation-time scanning and the admission checkpoint are the *same* call —
-`assertCommittedEgressSafe` on channel `eval-adversarial`, with the host's **loaded** policy.
-Neither leg defaults a policy, so a host that tightens its policy between staging and admission
-binds at admission on bytes staged under the old setting. Three documents are scanned per case:
-the cassette's scan view, the label record and the corpus entry. The corpus entry carries the
-authoring model's configured id, so a credential embedded in a model id is scanned with
-everything else.
+Staging and admission do not scan a case. Every case, deterministic or authored by a probe, is
+staged and then committed exactly as reviewed, so an injection-shaped name or a card-shaped digit
+run reaches replay as data, which is the point of an adversarial case. What stops a case is
+integrity, not content: a staging-side skip before review, and `staging-integrity`,
+`batch-not-found` or a retirement record at admission.
 
-With the shipped default `injectionShape: route`, an injection-shaped name is **audited and
-committed**: a row lands in `.agent-qa/eval/audit/adversarial/<product>/guardrail_audit.jsonl`
-with `channel: eval-adversarial…`, `detector: injectionShape`, `action: route`. `route` is the
-signal, not a refusal — the whole point of an injection probe is that it reaches replay as data.
+**A replay refusal is never a regression.** A committed cassette that cannot be replayed is a
+typed replay refusal, counted under refusals. A changed refusal population exits **2**; exit 1 is
+reserved for a measured regression against a comparable baseline.
 
-A `block`, or a non-user `redact` hit (secrets, card-shaped digit runs, emails), is a typed
-refusal row `{ cassetteId, seedCassetteId, generator, detector, action }` on the staging report.
-It is never a thrown error and never becomes a cassette. An operator whose policy sets
-`injectionShape: 'block'` refuses the injection family wholesale, and the report says which
-detector did it.
-
-**A guardrail block is never a regression: both guardrail routes produce the same
-`guard-failed` replay refusal.** A changed refusal population exits **2**; exit 1 is reserved
-for a measured regression against a comparable baseline.
-
-| Where the block happens | What is recorded | What `eval gate` says |
+| Where it happens | What is recorded | What `eval gate` says |
 | --- | --- | --- |
-| Loading a committed adversarial cassette (a guard rejection) | the `guard-failed` **replay refusal** | `refusal-population-differs` → exit 2 |
-| During replay, when the request-hook guardrail throws `GuardrailBlockError` | the same `guard-failed` **replay refusal** for that cassette, classified by `instanceof` in `replay-run.ts`; the cassette's samples are discarded | `refusal-population-differs` → exit 2 |
+| Loading a cassette: its version or structure fails the cassette guard, or its bytes cannot be read or parsed | the `guard-failed` or `parse-failed` **replay refusal** | `refusal-population-differs` → exit 2 |
+| Before replay: the cassette is not complete | the `completeness` **replay refusal** | `refusal-population-differs` → exit 2 |
+| Rebuilding the decision: a blob is missing, the brief cannot be rendered, or a recorded tool name collides with an action tool | the `missing-blob`, `unrenderable-brief` or `action-tool-collision` **replay refusal** | `refusal-population-differs` → exit 2 |
 | Infrastructure: any other planning-turn throw (provider outage, auth) | a **harness error**, counted in `harnessErrorCount` | `harness-errors` → exit 2 |
 
-Gap-closure plan 422-26 closed the request-hook route: its block is counted under refusals.
 An operator seeing `harness-errors` is looking at infrastructure, never at a refused probe.
 
 ## Caps, and where each one came from (D-04, D-11, D-14, D-18)
@@ -302,9 +285,9 @@ absent rather than written as zero.
 An authored response that yields no cassette is a typed `probe refused` row —
 `seed-request-mismatch`, `request-prompt-stale`, `probe-text-empty`, `probe-text-too-long`,
 `probe-text-not-a-name`, `probe-usage-invalid` or `probe-identity-unchanged`. A response that
-reaches a cassette is scanned on the same channel with the same loaded policy as every
-deterministic case; a probe is the one case in this pipeline whose text was written by a model
-just asked to author bait, so scanning it through a gentler path would invert the priority.
+reaches a cassette is staged and admitted like every deterministic case: as authored, with no
+scan. It is the one case in this pipeline whose text was written by a model just asked to author
+bait, which is why a person reviews the batch before admitting it.
 
 **The configured judge may author probes aimed at itself, and this is disclosed rather than
 prevented.** A probe perturbs only the surface — the gold stays the seed's — and the judge is
@@ -490,9 +473,6 @@ committed by any job:
 .agent-qa/eval/adversarial/<product>/<batchDigest>/        reviewable batches
 .agent-qa/eval/adversarial-state/                          refresh records and settled tuples
 .agent-qa/eval/adversarial-probes/                         probe reservations and completions
-.agent-qa/eval/audit/adversarial/<product>/                the eval-adversarial guardrail audit
-.agent-qa/eval/audit/adversarial-probe/<product>/          the probe authoring audit
-.agent-qa/eval/audit/seed/adversarial/                     admission's seeding output
 ```
 
 `scripts/413-eval-root-hygiene.sh` (`pnpm run validate:eval-root-hygiene`) scans the whole
@@ -512,7 +492,7 @@ The date is the decision date (`422-CONTEXT.md`); the notes were written during 
 | # | Reconciliation | D | Stated above in |
 |---|---|---|---|
 | 1 | The job stages; `eval adversarial --admit --batch` is the only committer. `PROPOSAL_KINDS` stays three | D-01, D-02 | Staging, review and admission |
-| 2 | The channel runs the host's LOADED policy; refusals are typed data and never regressions | D-03 | The loaded guardrail policy |
+| 2 | Refusals are typed data and never regressions; since Phase 441 no case is scanned for its content | D-03 | What a refusal is |
 | 3 | Additive `mutator` / `tableVersion` / `tableHash` / `authoringModel` / `promptVersion` and the `derivedFrom` label marker — no corpus or label schema bump | D-05, D-06, D-11 | Immutable generations; LLM probes |
 | 4 | `GENERATOR_KINDS` (6) and `LabelSourceChannel` (4) NOT widened; `AdversarialMutator` is the new closed set, and `PROBE_RESERVATION_STATUSES` shipped as `unattempted \| interrupted \| completed` | D-05, D-06 | Immutable generations; LLM probes |
 | 5 | "Capable" is 421 D-14's preflight verbatim; the `no-probe-model` gap set is closed and costs zero calls | D-09 | LLM probes |
@@ -524,9 +504,9 @@ The date is the decision date (`422-CONTEXT.md`); the notes were written during 
 | 11 | The retired-kind quarantine word `unreadable_kind`; no store version bump | D-16 | The retired-kind quarantine |
 | 12 | The local adversarial audit anatomy, and hygiene coverage of admitted entries by construction | — | Local audit anatomy |
 
-The divergence recorded as WINDOWS #432 is closed by gap-closure plan 422-26. Cell (A5) and
-`guard-block-refusal.test.ts` prove that a request-hook guardrail block is the `guard-failed`
-refusal D-03 specifies, counted under refusals and inconclusive at exit 2 with no regression.
+The divergence recorded as WINDOWS #432 was closed by gap-closure plan 422-26. Phase 441 removed
+the request-hook block it covered, so an unclassified planning-turn throw during replay is a
+harness error.
 
 ## What this documentation does and does not establish
 
