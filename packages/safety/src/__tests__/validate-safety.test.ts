@@ -2,18 +2,16 @@ import { existsSync, globSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { registerFirstPartySafetyHooks } from '../hooks/first-party'
-import { GuardrailConfigError } from '../guardrail/policy-loader'
 
 // SAFE-03 release gate (D-04). This is the closing enforcement conformance gate,
-// wired into the release plan beside validate:tools/validate:arch. It carries three
+// wired into the release plan beside validate:tools/validate:arch. It carries these
 // per-check-tailored detections:
 //   (a) STRUCTURAL — createModel's per-call middleware array ends with ...MIDDLEWARE and
 //       then createMaskingMiddleware(mask), with createModel's own MaskFn (441 D-06, E7).
-//   (b) BEHAVIORAL — the first-party registrar fails closed on bad guardrail config
-//       (T-350-15, GUARD-04 hoisted to the release gate).
 //   (c) STATIC import firewall — no LLM-context builder imports the audit surface
 //       (T-350-16); see Task 2 below.
+// 2026-10-15 (441-33, D-15): (b), the registrar's fail-closed guardrail policy load, is deleted
+// with the registrar.
 // The (a) egress-bypass check covers the model-egress chokepoint today; it extends to
 // committed-egress consumer paths (knowledge/issue bundles, CI diff, cassettes) as M2/MC
 // derive them via assertCommittedEgressSafe (deferred, not this plan).
@@ -200,19 +198,6 @@ describe('SAFE-03 (a) structural seam pinning', () => {
     expect(findSeamStructuralOffenders(FIXTURE_FOREIGN_MASK, 'fixture')).toEqual([
       `${MASKING_LAST} createMaskingMiddleware((text) => text)`,
     ])
-  })
-})
-
-// ---------------------------------------------------------------------------
-// check (b): behavioral fail-closed proof at the composed seam
-// ---------------------------------------------------------------------------
-
-describe('SAFE-03 (b) behavioral fail-closed', () => {
-  it('throws GuardrailConfigError when the registrar is wired with an invalid guardrail policy', () => {
-    // Pass garbage explicitly — never monkeypatch defaultGuardrailPolicyInput (Pitfall 6).
-    expect(() =>
-      registerFirstPartySafetyHooks({ guardrailPolicyInput: { detectors: 'garbage' } }),
-    ).toThrow(GuardrailConfigError)
   })
 })
 

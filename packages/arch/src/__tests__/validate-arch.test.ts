@@ -937,7 +937,6 @@ describe('validate:arch run pins after the gate (432-19, D-03/D-15)', () => {
     }
     // Non-vacuity: the census reads the barrel's real values, which still include the classifier.
     expect(barrelValues).toContain('classifyRisk')
-    expect(barrelValues).toContain('registerFirstPartySafetyHooks')
   })
 
   // RE-TITLED 2026-10-03 (quick-261003-tsr, IN-38): was '…the census fires on every form a returning

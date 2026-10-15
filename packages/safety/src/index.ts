@@ -1,5 +1,5 @@
+export { mapPromptLeaves } from './egress/map-prompt-leaves'
 export { createMaskingMiddleware } from './egress/masking-middleware'
-export { createProviderRequestMiddleware } from './egress/provider-request-middleware'
 export {
   assertCommittedEgressSafe,
   CommittedEgressBlockedError,
@@ -18,23 +18,14 @@ export {
 // rather than by key name — and re-deriving those regexes in the cli would be a second answer to
 // "what does a credential look like", which is precisely the drift this phase keeps paying for.
 export { findDetectorMatches } from './guardrail/detectors'
-export { createGuardrailProviderRequestHook, GuardrailBlockError } from './guardrail/egress-hook'
 export {
   defaultGuardrailPolicyInput,
   GuardrailConfigError,
   loadGuardrailPolicy,
 } from './guardrail/policy-loader'
 export { scan } from './guardrail/scan'
-export { createGuardrailStreamScan } from './guardrail/stream-scan'
-// Raw registry construction (HookRegistry class + createHookRegistry factory) is
-// intentionally NOT re-exported (D-03): registration capability leaves the public
-// surface so registerFirstPartySafetyHooks is the only public registration path.
-// Hook TYPE exports below grant no registration capability and stay public.
-export { registerFirstPartySafetyHooks } from './hooks/first-party'
-export { FirstPartyHookError } from './hooks/capability'
 export { createMaskingContext } from './masking/context'
 export { detectEmails } from './masking/detectors'
-export { createMaskingProviderRequestHook } from './masking/egress-hook'
 export { getActiveMaskingContext, setActiveMaskingContextResolver } from './masking/resolver'
 export { getActiveAuditSink, setActiveAuditSinkResolver } from './policy/audit-sink-resolver'
 export { unmaskForHumanOutput } from './masking/human-output'
@@ -64,17 +55,7 @@ export type {
   ConstructionScanPart,
   ConstructionScanReport,
 } from './guardrail/construction-scan'
-export type {
-  AsyncToolCallHook,
-  ContextHook,
-  HookRegistryOptions,
-  ProviderRequestHook,
-  ProviderRequestParams,
-  SafetyHookRunner,
-  ToolCallHook,
-  ToolResultHook,
-} from './hooks/interfaces'
-export type { FirstPartySafetyDeps, FirstPartySafetyHooks } from './hooks/first-party'
+export type { ProviderRequestParams } from './egress/map-prompt-leaves'
 export type { MaskCategory } from './masking/categories'
 // 405-02 (D-08): the row `snapshotRegistered()` reports. Type-only — the enumeration exists for
 // the run-scoped digest sidecar writer, which turns each value into a keyed HMAC and never

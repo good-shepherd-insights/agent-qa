@@ -1,4 +1,7 @@
-import type { ProviderRequestParams } from '../hooks/interfaces'
+import type { LanguageModelMiddleware } from 'ai'
+
+export type ProviderRequestParams =
+  Parameters<NonNullable<LanguageModelMiddleware['transformParams']>>[0]['params']
 
 type LeafFn = (text: string) => string
 type PromptMessage = ProviderRequestParams['prompt'][number]
@@ -12,7 +15,8 @@ type FileContentPart = Extract<UserContentPart | AssistantContentPart, { type: '
 type ToolResultOutput = Extract<AssistantContentPart, { type: 'tool-result' }>['output']
 type ToolResultContentPart = Extract<ToolResultOutput, { type: 'content' }>['value'][number]
 
-// The one AI-SDK V3 prompt walker; binary file and image data never reach `fn` (441 D-21).
+// The AI-SDK V3 prompt walker the masking middleware delegates to; binary file and image data
+// never reach `fn` (441 D-21).
 export function mapPromptLeaves(params: ProviderRequestParams, fn: LeafFn): ProviderRequestParams {
   // Only params.prompt is run content. Top-level headers carry provider auth, while
   // stopSequences, tools, responseFormat, and providerOptions are caller/transport config

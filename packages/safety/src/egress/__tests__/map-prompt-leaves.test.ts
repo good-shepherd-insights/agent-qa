@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { ProviderRequestParams } from '../../hooks/interfaces'
-import { mapPromptLeaves } from '../map-prompt-leaves'
+import { mapPromptLeaves, type ProviderRequestParams } from '../map-prompt-leaves'
 
 const identity = (text: string): string => text
 const bang = (text: string): string => `${text}!`
