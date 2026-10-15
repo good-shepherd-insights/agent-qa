@@ -36,10 +36,6 @@ import type {
   ScreenState,
   TrustPriorTable,
 } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 
 import { appendGateReceipt, appendOutcomeEvent, appendPromotionReceipt, type AppendOutcome } from '../bundle-append.js'
 import { deriveBundleTrust, loadBundle, readGateReceipts } from '../bundle-read.js'
@@ -95,7 +91,9 @@ export interface CanaryAuthorityHooks {
 
 export interface CreateLocalKnowledgeStoreConfig {
   knowledgeRoot: string
-  auditBaseDir: string
+  // 2026-10-15 (441-26, D-15): this and `policy` are unread since the committed-egress check
+  // went; 441-53 deletes them.
+  auditBaseDir?: string
   executionContext: ExecutionContext
   /** The holder's fresh lease epoch. Defaults to a fresh disk read for composition roots. */
   epoch?: number
@@ -490,16 +488,13 @@ function buildLocalKnowledgeStore(
 ): KnowledgePort {
   const priors = snapshotTrustPriors(config.resolveTrustPriors?.())
   const operation = config.operations?.commitCurationDelta ?? commitCurationDelta
-  const policy = config.policy ?? loadGuardrailPolicy(defaultGuardrailPolicyInput)
 
   function bundleStoreConfig(productKey: string): BundleStoreConfig {
     return {
       knowledgeRoot: config.knowledgeRoot,
       productKey,
-      auditBaseDir: config.auditBaseDir,
       commitArtifacts: 'none',
       writerLeaseId: config.writerLeaseId,
-      policy,
     }
   }
 
@@ -698,11 +693,9 @@ function buildLocalKnowledgeStore(
       const outcome = operation(
         {
           knowledgeRoot: config.knowledgeRoot,
-          auditBaseDir: config.auditBaseDir,
           epoch: currentAuthority(config).epoch,
           profile,
           drainState,
-          policy,
           ...(priors === undefined ? {} : { priors }),
           ...(config.resolvePromotionPosture === undefined
             ? {}

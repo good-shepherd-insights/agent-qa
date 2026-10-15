@@ -101,11 +101,13 @@ export interface CommitCurationJob extends ClaimedCurationJob {
 
 export interface CommitCurationDependencies {
   knowledgeRoot: string
-  auditBaseDir: string
+  // 2026-10-15 (441-26, D-15): this and `policy` are unread since the committed-egress check
+  // went; 441-53 deletes them.
+  auditBaseDir?: string
   epoch: number
   profile: DispositionProfile
   drainState: DispositionDrainState
-  policy: GuardrailPolicy
+  policy?: GuardrailPolicy
   /** Host-resolved posture as data; absent means the v51 floor. */
   resolvePromotionPosture?: ResolvePromotionPosture
   priors?: TrustPriorTable
@@ -479,11 +481,9 @@ function storeConfig(
   return {
     knowledgeRoot: deps.knowledgeRoot,
     productKey,
-    auditBaseDir: deps.auditBaseDir,
     commitArtifacts: 'none',
     writerLeaseId,
     writerEpoch: deps.epoch,
-    policy: deps.policy,
     ...(Object.keys(hooks).length === 0 ? {} : { hooks }),
   }
 }
@@ -785,8 +785,8 @@ function finishCommitWithinCurrentAuthority(
       ...(deps.priors === undefined ? {} : { priors: deps.priors }),
     })
     writeCurationEffectReceiptWithinCurrentAuthority({ knowledgeRoot: deps.knowledgeRoot,
-      authority: { leaseId: job.leaseId, epoch: deps.epoch }, auditBaseDir: deps.auditBaseDir,
-      policy: deps.policy, receipt: receiptForEffect(job.candidateId, observation, effect),
+      authority: { leaseId: job.leaseId, epoch: deps.epoch },
+      receipt: receiptForEffect(job.candidateId, observation, effect),
     })
   }
   deps.hooks?.afterEffectReceiptsWritten?.()
@@ -869,8 +869,6 @@ export function commitCurationDelta(
               distilledObservations: job.payload.distilledObservations,
               artifactInventory: job.payload.artifactInventory,
               candidateDir: job.candidateDir,
-              policy: deps.policy,
-              auditBaseDir: deps.auditBaseDir,
             },
           }
         : {}),

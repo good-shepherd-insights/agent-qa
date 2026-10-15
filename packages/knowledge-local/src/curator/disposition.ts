@@ -63,8 +63,9 @@ export interface ProcedureDispositionEvidence {
   artifactInventory: readonly CurationCandidateArtifact[]
   /** Claimed candidate directory the inventory's relative paths resolve against. */
   candidateDir: string
-  policy: GuardrailPolicy
-  // 2026-10-15 (441-22, D-15): unread since the committed-egress check went; 441-53 deletes it.
+  // 2026-10-15 (441-22, 441-26, D-15): both unread since the committed-egress check went;
+  // 441-53 deletes them.
+  policy?: GuardrailPolicy
   auditBaseDir?: string
 }
 

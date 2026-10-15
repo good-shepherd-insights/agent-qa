@@ -102,16 +102,14 @@ export function listCurationEffectReceipts(knowledgeRoot: string): CurationEffec
     .map((entry) => parseReceipt(readFileSync(join(dir, entry.name), 'utf8'), entry.name))
 }
 
-// 2026-10-15 (441-22, D-15): unread since the committed-egress check went; 441-26 removes it.
-export interface BundleEgressOptions {
-  policy?: GuardrailPolicy
-  auditBaseDir?: string
-}
-
-export interface WriteCurationEffectReceiptOptions extends BundleEgressOptions {
+export interface WriteCurationEffectReceiptOptions {
   knowledgeRoot: string
   authority: CurrentWriterAuthority
   receipt: CurationEffectReceipt
+  // 2026-10-15 (441-22, 441-26, D-15): both unread since the committed-egress check went;
+  // 441-53 deletes them.
+  policy?: GuardrailPolicy
+  auditBaseDir?: string
 }
 
 /** @internal Caller already holds the existing root writer authority section. */

@@ -47,7 +47,6 @@ import {
   isCurationEffectCommitted,
   receiptForEffect,
   writeCurationEffectReceiptWithinCurrentAuthority,
-  type BundleEgressOptions,
 } from './curation-effect-receipt.js'
 
 export interface ReconcileOnDrainStartHooks {
@@ -66,8 +65,6 @@ export interface ReconcileOnDrainStartDependencies {
   applyIndexDelta(intent: CommitIntent): void
   deriveIndexRowFromBundle(bundleId: string): void
   hooks?: ReconcileOnDrainStartHooks
-  // 2026-10-15 (441-22, D-15): unread since the committed-egress check went; 441-26 removes it.
-  egress?: BundleEgressOptions
 }
 
 export interface ReconcileReport {
@@ -292,7 +289,6 @@ function reconcileOnDrainStartWithinCurrentAuthority(
         writeCurationEffectReceiptWithinCurrentAuthority({
           knowledgeRoot: deps.knowledgeRoot,
           authority: deps.writerAuthority,
-          ...deps.egress,
           receipt: receiptForEffect(intent.candidateId, intent.observation, effect),
         })
         committed += 1

@@ -43,7 +43,8 @@ export interface BundleStoreConfig {
   /** Absolute committed-root path. Deliberately no working-directory default. */
   knowledgeRoot: string
   productKey: string
-  // 2026-10-15 (441-22, D-15): unread since the committed-egress check went; 441-53 deletes it.
+  // 2026-10-15 (441-22, 441-26, D-15): this and `policy` are unread since the committed-egress
+  // check went; 441-53 deletes them.
   auditBaseDir?: string
   commitArtifacts: 'none' | 'thumbnails'
   /** Active writer identity used to attribute crash-left staging trees. */

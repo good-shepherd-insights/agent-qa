@@ -10,10 +10,6 @@ import {
   type CurationAuthorship,
   type Delta,
 } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -51,7 +47,7 @@ import {
 import { readJobState, writeJobState } from '../../queue/job-state.js'
 import { parseAuthoredCheckpoint } from '../author-contract.js'
 import type { CurationJobView, CuratorAuthor, NeighborRecord } from '../author-contract.js'
-import type { CommitCurationOutcome } from '../commit.js'
+import { commitCurationDelta, type CommitCurationOutcome } from '../commit.js'
 import * as knowledgeStore from '../knowledge-store.js'
 import { canaryOutcomeContentAddress, type CanaryOutcomePayloadV2 } from '../../canary-emit.js'
 import { queuedCandidateDir } from '../../queue/queue-layout.js'
@@ -63,7 +59,6 @@ import {
   type DrainOperations,
 } from '../drain.js'
 
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 const EMPTY_RECONCILE: ReconcileReport = {
   intentsCleared: 0,
   intentsReplayed: 0,
@@ -84,12 +79,10 @@ const NO_INDEX_MAINTENANCE = {
 describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
   let root: string
   let knowledgeRoot: string
-  let auditBaseDir: string
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'knowledge-curator-drain-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
-    auditBaseDir = join(root, '.agent-qa')
   })
 
   afterEach(() => {
@@ -200,7 +193,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
     scaffoldKnowledgeRoot(knowledgeRoot)
     const draft = makeBundleDraftFixture()
     const published = publishBundle({
-      knowledgeRoot, productKey: 'storefront', auditBaseDir, commitArtifacts: 'none',
+      knowledgeRoot, productKey: 'storefront', commitArtifacts: 'none',
     }, {
       draft, discriminant: makeDiscriminantFixture(), originClass: 'agent-verified',
       createdAtOrdinal: 42, screenStates: [], initialEvents: [], relations: [], artifacts: [],
@@ -242,8 +235,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
     const lifecycle = vi.fn()
     try {
       const report = await drainQueue({
-        knowledgeRoot, auditBaseDir, author,
-        executionContext: 'local-interactive', policy, maintenance: 'skip',
+        knowledgeRoot, author,
+        executionContext: 'local-interactive', maintenance: 'skip',
         onJobLifecycle: lifecycle,
       })
       expect(report).toMatchObject({ committed: 1, quarantined: 0, failures: 0 })
@@ -263,8 +256,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       mkdirSync(queuedDir, { recursive: true })
       writeFileSync(join(queuedDir, 'payload.json'), canonicalJson({ ...payload, attribution: 'Altered after queueing' }))
       const tampered = await drainQueue({
-        knowledgeRoot, auditBaseDir, author, executionContext: 'local-interactive',
-        policy, maintenance: 'skip',
+        knowledgeRoot, author, executionContext: 'local-interactive',
+        maintenance: 'skip',
       })
       expect(tampered).toMatchObject({ committed: 0, quarantined: 1, failures: 1 })
       expect(tampered.failureDetails).toEqual([
@@ -284,10 +277,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive',
-      policy,
       operations: noWriterPass(),
     })
 
@@ -337,10 +328,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive',
-      policy,
       operations,
     })
 
@@ -364,10 +353,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive',
-      policy,
       operations: {
         ...noWriterPass(),
         heartbeatLease: () => {
@@ -407,10 +394,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive',
-      policy,
       now,
       operations: {
         ...noWriterPass(),
@@ -467,10 +452,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive',
-      policy,
       operations: {
         ...noWriterPass(),
         openKnowledgeReader: open,
@@ -542,10 +525,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
     }
     const options = {
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive' as const,
-      policy,
       operations: {
         ...noWriterPass(),
         openKnowledgeReader: () => fakeReader(),
@@ -605,10 +586,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
     })
     const options = {
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive' as const,
-      policy,
       operations: {
         ...noWriterPass(),
         openKnowledgeReader: () => fakeReader(),
@@ -693,10 +672,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
     })
     const options = {
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive' as const,
-      policy,
       operations: {
         ...noWriterPass(),
         openKnowledgeReader: () => fakeReader(),
@@ -758,10 +735,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive',
-      policy,
       signal: controller.signal,
       operations: {
         ...noWriterPass(),
@@ -808,10 +783,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive',
-      policy,
       operations: {
         ...noWriterPass(),
         openKnowledgeReader: () => fakeReader(),
@@ -849,10 +822,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive',
-      policy,
       operations: {
         ...noWriterPass(),
         openKnowledgeReader: () => fakeReader(),
@@ -894,10 +865,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive',
-      policy,
       operations: {
         ...noWriterPass(),
         openKnowledgeReader: () => fakeReader(),
@@ -942,10 +911,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive',
-      policy,
       operations: {
         ...noWriterPass(),
         openKnowledgeReader: () => fakeReader(),
@@ -1009,10 +976,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
     const vectorlessCommit = vi.fn(completingCommit())
     const options = {
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive' as const,
-      policy,
       operations: {
         ...noWriterPass(),
         openKnowledgeReader: () => fakeReader(),
@@ -1083,10 +1048,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author: vi.fn<CuratorAuthor>(),
       executionContext: 'local-interactive',
-      policy,
       operations,
     })
 
@@ -1110,10 +1073,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author: vi.fn<CuratorAuthor>(),
       executionContext: 'local-interactive',
-      policy,
       operations,
     })
 
@@ -1148,10 +1109,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author: vi.fn<CuratorAuthor>(),
       executionContext: 'local-interactive',
-      policy,
       operations,
     })
 
@@ -1170,7 +1129,6 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       {
         knowledgeRoot,
         productKey: 'Writer Maintenance Product',
-        auditBaseDir,
         commitArtifacts: 'none',
       },
       {
@@ -1219,10 +1177,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       })
     const options = {
       knowledgeRoot,
-      auditBaseDir,
       author: vi.fn<CuratorAuthor>(),
       executionContext: 'local-interactive' as const,
-      policy,
       operations: { acquireEmbedder: acquire },
     }
 
@@ -1300,10 +1256,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive',
-      policy,
       now,
       operations: {
         openKnowledgeReader: () => fakeReader(),
@@ -1323,10 +1277,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author: vi.fn<CuratorAuthor>(),
       executionContext: 'local-interactive',
-      policy,
       operations: {
         acquireEmbedder: async () => ({ kind: 'lexical-only' }),
         rebuildIndex: async () => {
@@ -1345,6 +1297,36 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
 
   it('barrel-exports the daemon-stable drain seam', () => {
     expect(knowledgeLocal.drainQueue).toBe(drainQueue)
+  })
+
+  it('the drain commits a candidate with no policy and no audit location', async () => {
+    const candidateId = enqueue('no-guardrail-options')
+    const author = vi.fn<CuratorAuthor>(async (job) => {
+      const claimed = { payload: job, candidateId: job.candidateId } as ClaimedCurationJob
+      return { kind: 'authored', deltas: [addDelta(claimed)], authorship: authorship(claimed) }
+    })
+    const commit = vi.fn<DrainOperations['commitCurationDelta']>(commitCurationDelta)
+
+    const report = await drainQueue({
+      knowledgeRoot,
+      author,
+      executionContext: 'local-interactive',
+      operations: {
+        ...noWriterPass(),
+        openKnowledgeReader: () => fakeReader(),
+        retrieve: async () => [],
+        commitCurationDelta: commit,
+      },
+    })
+
+    expect(report).toMatchObject({ jobsProcessed: 1, committed: 1, failures: 0 })
+    expect(commit).toHaveBeenCalledTimes(1)
+    const deps = commit.mock.calls[0]![0]
+    expect(deps).not.toHaveProperty(['audit', 'BaseDir'].join(''))
+    expect(deps).not.toHaveProperty('policy')
+    expect(commit.mock.results[0]!.value).toMatchObject({ kind: 'applied', deltaKind: 'Add' })
+    expect(readJobState(knowledgeRoot, candidateId).kind).toBe('absent')
+    expect(listQueuedCandidates(knowledgeRoot)).toEqual([])
   })
 
   describe('C441-CURATION', () => {
@@ -1367,10 +1349,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
 
       const report = await drainQueue({
         knowledgeRoot,
-        auditBaseDir,
         author,
         executionContext: 'local-interactive',
-        policy,
         operations: {
           ...noWriterPass(),
           openKnowledgeReader: () => fakeReader(),

@@ -94,7 +94,8 @@ export interface RollbackHooks {
 
 interface RollbackBaseInput {
   knowledgeRoot: string
-  auditBaseDir: string
+  // 2026-10-15 (441-26, D-15): unread since the committed-egress check went; 441-53 deletes it.
+  auditBaseDir?: string
   resolvedAtOrdinal: number
   /** Governed maintenance callers fence this exact lease at every mutation boundary. */
   writerAuthority?: WriterLeaseAuthority
@@ -204,9 +205,6 @@ function assertOrdinal(value: number, label: string): void {
 function assertBaseInput(input: RollbackBaseInput): void {
   if (!isAbsolute(input.knowledgeRoot)) {
     throw new TypeError('rollback knowledgeRoot must be absolute')
-  }
-  if (!isAbsolute(input.auditBaseDir)) {
-    throw new TypeError('rollback auditBaseDir must be absolute')
   }
   if (
     input.writerAuthority !== undefined
@@ -694,7 +692,6 @@ function bundleConfig(
   return {
     knowledgeRoot: input.knowledgeRoot,
     productKey,
-    auditBaseDir: input.auditBaseDir,
     commitArtifacts: 'none',
     ...(input.writerAuthority === undefined
       ? {}

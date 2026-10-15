@@ -23,10 +23,6 @@ import {
   type MeasurementBaseline,
   type MeasurementObservation,
 } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -97,14 +93,12 @@ function collidingPublication(): PublishBundleOutcome {
 describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-03)', () => {
   let root: string
   let knowledgeRoot: string
-  let auditBaseDir: string
   let epoch: number
   let leaseId: string
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'knowledge-curator-commit-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
-    auditBaseDir = join(root, '.agent-qa')
     const lease = acquireWriterLease(knowledgeRoot)
     if (lease.kind !== 'acquired') throw new Error('expected a fresh writer lease')
     epoch = lease.epoch
@@ -266,7 +260,6 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     const config = {
       knowledgeRoot,
       productKey: 'storefront',
-      auditBaseDir,
       commitArtifacts: 'none' as const,
       writerLeaseId: claimed.leaseId,
     }
@@ -364,11 +357,9 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
   ): CommitCurationDependencies {
     return {
       knowledgeRoot,
-      auditBaseDir,
       epoch,
       profile,
       drainState: { supersedesSeenByAnchorKey: new Map() },
-      policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
       ...overrides,
     }
   }
@@ -398,10 +389,8 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     return {
       knowledgeRoot,
       productKey: 'storefront',
-      auditBaseDir,
       commitArtifacts: 'none',
       writerLeaseId: 'promotion-retraction-fixture',
-      policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
     }
   }
 
@@ -857,7 +846,6 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
   it('keeps bridge-minted payloads without durable observations in the candidate bucket', async () => {
     const store = createLocalKnowledgeStore({
       knowledgeRoot,
-      auditBaseDir,
       executionContext: 'local-interactive',
       epoch,
       writerLeaseId: leaseId,
@@ -1466,11 +1454,9 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     )
     const store = createLocalKnowledgeStore({
       knowledgeRoot,
-      auditBaseDir,
       executionContext: 'local-interactive',
       epoch,
       writerLeaseId: leaseId,
-      policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
       operations: { commitCurationDelta: operation },
     })
 
@@ -1493,11 +1479,9 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     )
     const store = createLocalKnowledgeStore({
       knowledgeRoot,
-      auditBaseDir,
       executionContext: 'local-interactive',
       epoch,
       writerLeaseId: leaseId,
-      policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
       operations: { commitCurationDelta: operation },
     })
 
@@ -1510,7 +1494,6 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
   it('discharges the Phase 380 canary stub with the typed missing-target refusal', async () => {
     const store = createLocalKnowledgeStore({
       knowledgeRoot,
-      auditBaseDir,
       executionContext: 'ci',
       epoch,
       writerLeaseId: leaseId,

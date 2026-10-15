@@ -124,7 +124,6 @@ interface ReviewChange {
 
 /** The write context. The execution context is the actual one, never spoofed. */
 interface ReviewWriter {
-  readonly agentQaRoot: string
   readonly knowledgeRoot: string
   readonly executionContext: ExecutionContext
   /** Stamped as a Gate-3 receipt's `producedBy.opId`: the op that made this explicit change. */
@@ -328,7 +327,6 @@ function reviewStore(
 ) {
   return createExplicitReviewStore({
     knowledgeRoot: writer.knowledgeRoot,
-    auditBaseDir: writer.agentQaRoot,
     executionContext: writer.executionContext,
     epoch: lease.epoch,
     writerLeaseId: lease.leaseId,
@@ -489,7 +487,7 @@ async function applyPolicyArm(
   try {
     materialized = materializePolicy({ knowledgeRoot: writer.knowledgeRoot, recordId,
       scope: scope.tier === 'global' ? 'global' : scope.key, ruleText: bundle.body,
-      title: bundle.summary, auditBaseDir: writer.agentQaRoot, writerAuthority: authority })
+      title: bundle.summary, writerAuthority: authority })
   } catch (error) {
     if (!(error instanceof PolicyTextRefusedError)) throw error
   }
@@ -574,8 +572,7 @@ async function recoverPolicyArm(
   })
   const materialized = materializePolicy({ knowledgeRoot: writer.knowledgeRoot, recordId,
     scope: committed.shelfScope, ruleText: committed.victim.bundle.body,
-    title: committed.victim.bundle.summary, auditBaseDir: writer.agentQaRoot,
-    writerAuthority: authority, existingOnly: true })
+    title: committed.victim.bundle.summary, writerAuthority: authority, existingOnly: true })
   if (materialized.kind !== 'unchanged') throw new Error('Committed policy section is unavailable')
   if (!committed.hasReceipt) await reviewStore(writer, change, authority).recordGateReceipt(committed.receipt)
   const commitReceipt: CommitReceipt = { schemaVersion: 1, proposalId: change.id,
@@ -848,7 +845,6 @@ export async function applyExplicitReview(input: ApplyExplicitReviewInput): Prom
   }
   const priors = snapshotTrustPriors(input.resolveTrustPriors?.())
   const writer: ReviewWriter = {
-    agentQaRoot: input.agentQaRoot,
     knowledgeRoot: input.knowledgeRoot,
     executionContext: input.executionContext,
     opId: input.opId,
