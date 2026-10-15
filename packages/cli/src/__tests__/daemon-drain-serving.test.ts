@@ -132,10 +132,7 @@ function enqueueRealCandidate(
       sourceRunId: `run-${seed}`,
       scope: { tier: 'product', key: 'storefront' },
       buildOrdinal: 42,
-      executionContext,
-      secretFlagged: false,
-      injectionFlagged: false,
-      kind: 'fact',
+      executionContext,      kind: 'fact',
       subtype: 'selector',
       anchors: [
         { t: 'el', role: 'button', name: seed, ordinal: 0 },

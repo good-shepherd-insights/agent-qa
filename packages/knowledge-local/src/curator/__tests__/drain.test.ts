@@ -104,10 +104,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       sourceRunId: `run-${seed}`,
       scope: { tier: 'product', key: 'storefront' },
       buildOrdinal: 42,
-      executionContext: 'local-interactive',
-      secretFlagged: false,
-      injectionFlagged: false,
-      kind: 'fact',
+      executionContext: 'local-interactive',      kind: 'fact',
       subtype: 'selector',
       anchors: [{ t: 'el', role: 'button', name: seed }],
       summarySeed: `${seed} selector`,
@@ -1356,7 +1353,6 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       enqueue('instruction-shaped', {
         summarySeed: override,
         bodySeed: `${override} in body`,
-        injectionFlagged: true,
       })
       const seen: CurationJobView[] = []
       const author = vi.fn<CuratorAuthor>(async (job) => {
@@ -1385,8 +1381,6 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       expect(report).toMatchObject({ jobsProcessed: 1, committed: 1, withheld: 0, failures: 0 })
       expect(seen).toHaveLength(1)
       expect(seen[0]!.summarySeed).toBe(override)
-      expect(seen[0]).not.toHaveProperty('injectionFlagged')
-      expect(seen[0]).not.toHaveProperty('secretFlagged')
     })
   })
 })

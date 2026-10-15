@@ -107,9 +107,6 @@ const candidateSeedShape = {
   scope: scopeSchema,
   buildOrdinal: z.number().int().nonnegative(),
   executionContext: executionContextSchema,
-  // 2026-10-15 (441-24, D-26): unread; 441-50 deletes both.
-  secretFlagged: z.boolean().optional(),
-  injectionFlagged: z.boolean().optional(),
   kind: bundleKindSchema,
   subtype: factSubtypeSchema.optional(),
   /**
@@ -272,7 +269,7 @@ export function buildCurationCandidateAddressFields(
 
 /**
  * Hashes every payload field except derived candidateId and diagnostic emittedAt. Identity covers
- * schema/run/scope/ordinal/posture flags, candidate kind/subtype, anchors and seeds, distilled
+ * schema/run/scope/ordinal/execution context, candidate kind/subtype, anchors and seeds, distilled
  * observations, evidence attribution, and the complete artifact inventory.
  */
 export function candidateContentAddress(fields: CurationCandidateAddressFields): string {

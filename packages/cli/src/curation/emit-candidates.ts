@@ -136,7 +136,6 @@ function commonFields(
     bodySeed: string
     observations: DistilledObservation[]
     attributingObservationId: string
-    secretFlagged: boolean
     artifactDescriptors: CurationArtifactDescriptor[]
   },
 ): CurationCandidateProjection {
@@ -145,7 +144,6 @@ function commonFields(
     scope: handoff.scope,
     buildOrdinal: handoff.buildOrdinal,
     executionContext: handoff.executionContext,
-    secretFlagged: input.secretFlagged,
     kind: input.kind,
     ...(input.subtype === undefined ? {} : { subtype: input.subtype }),
     ...(input.rootCauseClass === undefined
@@ -248,7 +246,6 @@ function projectFact(
       bodySeed,
       observations: [observation],
       attributingObservationId: id,
-      secretFlagged: step.cacheStatus === 'bypass',
       artifactDescriptors: stepArtifactDescriptors(step),
     },
   )
@@ -317,7 +314,6 @@ function projectMeasurements(
         bodySeed: `Verified ${measurement.metric} value: ${measurement.value}.`,
         observations: [observation],
         attributingObservationId: id,
-        secretFlagged: step.cacheStatus === 'bypass',
         artifactDescriptors: stepArtifactDescriptors(step),
       },
     )
@@ -373,7 +369,6 @@ function projectCaution(
       bodySeed: `${rootCause.class}: ${rootCause.evidence.rationale}`,
       observations: [observation],
       attributingObservationId: id,
-      secretFlagged: producingSteps.some((step) => step.cacheStatus === 'bypass'),
       artifactDescriptors: artifactDescriptorsForRefs(
         rootCause.evidence.citedArtifacts,
         stepIndex,
@@ -798,7 +793,6 @@ function projectProcedureTarget(
         test.testIndex,
         test.steps[0]!.stepIndex,
       ),
-      secretFlagged: test.steps.some((step) => step.cacheStatus === 'bypass'),
       artifactDescriptors,
     },
   )

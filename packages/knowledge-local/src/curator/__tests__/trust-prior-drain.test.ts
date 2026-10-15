@@ -35,8 +35,7 @@ function fixture() {
   const auditBaseDir = join(root, 'audit')
   const queued = enqueueArtifactFreeCandidateProjection({ knowledgeRoot, projectionInput: {
     sourceRunId: 'prior-drain-run', scope: { tier: 'product', key: 'storefront' },
-    buildOrdinal: 42, executionContext: 'local-interactive', secretFlagged: false,
-    injectionFlagged: false, kind: 'fact', subtype: 'content',
+    buildOrdinal: 42, executionContext: 'local-interactive', kind: 'fact', subtype: 'content',
     anchors: [{ t: 'el', role: 'button', name: 'Checkout' }],
     summarySeed: 'Checkout content', bodySeed: 'Checkout is available.',
     distilledObservations: [], evidenceToken: 'prior-drain-evidence',

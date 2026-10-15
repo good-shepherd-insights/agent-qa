@@ -39,8 +39,6 @@ function candidateAddressInput(): BuildCurationCandidateAddressFieldsInput {
     scope: { tier: 'product', key: 'storefront' },
     buildOrdinal: 42,
     executionContext: 'local-interactive',
-    secretFlagged: false,
-    injectionFlagged: false,
     kind: 'fact',
     subtype: 'selector',
     anchors: [{ t: 'el', role: 'button', name: 'Checkout' }],
@@ -178,7 +176,7 @@ describe('curation candidate projection and payload contracts (SAFE-02)', () => 
         ...input,
         artifactInventory: [{ ...artifact, originalName: 'step-0.safe.dom.json' }],
       }),
-      buildCurationCandidateAddressFields({ ...input, injectionFlagged: true }),
+      buildCurationCandidateAddressFields({ ...input, executionContext: 'ci' }),
     ]
 
     for (const variant of variants) {
@@ -333,6 +331,52 @@ describe('C441-CURATION', () => {
     ['step', 'Interactions'].join(''),
     ['capture', 'Receipt'].join(''),
   ]
+  const RETIRED_FLAGS = [['secret', 'Flagged'].join(''), ['injection', 'Flagged'].join('')]
+
+  it('a new payload carries neither flag', () => {
+    const {
+      schemaVersion: _schemaVersion,
+      artifactInventory: _artifactInventory,
+      ...projectionFields
+    } = candidateAddressInput()
+    void _schemaVersion
+    void _artifactInventory
+    for (const key of RETIRED_FLAGS) {
+      expect(
+        curationCandidateProjectionSchema.safeParse({
+          ...projectionFields,
+          artifactDescriptors: [],
+          [key]: true,
+        }).success,
+        key,
+      ).toBe(false)
+      expect(
+        () => buildCurationCandidateAddressFields({ ...candidateAddressInput(), [key]: true }),
+        key,
+      ).toThrow()
+    }
+
+    const root = mkdtempSync(join(tmpdir(), 'curation-payload-flags-'))
+    const knowledgeRoot = join(root, 'agent-qa-knowledge')
+    try {
+      const outcome = enqueueArtifactFreeCandidateProjection({
+        knowledgeRoot,
+        projectionInput: { ...projectionFields, emittedAt: '2026-10-15T00:00:00.000Z' },
+      })
+      expect(outcome.kind).toBe('enqueued')
+      if (outcome.kind !== 'enqueued') throw new Error('expected enqueued projection')
+      const candidateDir = queuedCandidateDir(knowledgeRoot, outcome.candidateId)
+      const parsed = readCurationCandidatePayload(candidateDir)
+      if (parsed.kind !== 'parsed') throw new Error('expected parsed payload')
+      const written = JSON.parse(readFileSync(join(candidateDir, 'payload.json'), 'utf8'))
+      for (const key of RETIRED_FLAGS) {
+        expect(parsed.payload).not.toHaveProperty(key)
+        expect(written).not.toHaveProperty(key)
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
 
   it('a new payload carries no capture fields', () => {
     const root = mkdtempSync(join(tmpdir(), 'curation-payload-capture-fields-'))

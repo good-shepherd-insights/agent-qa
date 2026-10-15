@@ -126,7 +126,7 @@ const freshWriters: ReadonlyArray<readonly [string, readonly string[], () => unk
   ['queue: enqueue a curation candidate', ['memory', 'memory/queue'], () =>
     enqueueArtifactFreeCandidateProjection({ knowledgeRoot, projectionInput: {
       sourceRunId: 'run-containment', scope: { tier: 'product', key: 'storefront' }, buildOrdinal: 42,
-      executionContext: 'local-interactive', secretFlagged: false, injectionFlagged: false, kind: 'fact',
+      executionContext: 'local-interactive', kind: 'fact',
       subtype: 'selector', anchors: [{ t: 'el', role: 'button', name: 'containment' }],
       summarySeed: 'containment selector', bodySeed: 'containment was resolved and verified.',
       distilledObservations: [{ schemaVersion: 1, step: { naturalKey: 'containment-step', ordinal: 0 },

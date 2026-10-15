@@ -99,10 +99,7 @@ function candidate(
     sourceRunId: FIXTURE_RUN_ID,
     scope: { tier: 'product', key: FIXTURE_PRODUCT },
     buildOrdinal,
-    executionContext,
-    secretFlagged: false,
-    injectionFlagged: false,
-    kind: 'fact',
+    executionContext,    kind: 'fact',
     subtype: 'selector',
     anchors: [
       {

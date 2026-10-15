@@ -73,10 +73,7 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
       sourceRunId: `run-promotion-${seed}`,
       scope: { tier: 'product', key: 'storefront' },
       buildOrdinal: 42,
-      executionContext: 'local-interactive',
-      secretFlagged: false,
-      injectionFlagged: false,
-      kind: 'fact',
+      executionContext: 'local-interactive',      kind: 'fact',
       subtype: 'selector',
       anchors: [
         { t: 'el', role: 'button', name: `Checkout ${seed}`, ordinal: 0 },
@@ -107,10 +104,7 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
       sourceRunId: `run-promotion-${seed}`,
       scope: { tier: 'product', key: 'storefront' },
       buildOrdinal: 42,
-      executionContext: 'local-interactive',
-      secretFlagged: false,
-      injectionFlagged: false,
-      kind: 'caution',
+      executionContext: 'local-interactive',      kind: 'caution',
       rootCauseClass: 'timeout',
       anchors: [{ t: 'error', message: 'checkout confirmation timed out' }],
       summarySeed: 'Checkout confirmation can time out',
@@ -376,10 +370,8 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
     expect(loadedBundles()).toHaveLength(0)
 
     rmSync(knowledgeRoot, { recursive: true, force: true })
-    // 2026-10-15 (441-24, D-26): an old row still carrying the flag takes the normal path.
-    const { report } = await drainWithoutModel(selectorProjection('flagged', {
-      injectionFlagged: true,
-    }))
+    // 2026-10-15 (441-50, D-26): the once-flagged row now carries no flag and takes the normal path.
+    const { report } = await drainWithoutModel(selectorProjection('flagged'))
     expect(report).toMatchObject({ committed: 1, withheld: 0 })
     const flagged = onlyBundle().bundle
     expect(flagged.provenance).not.toHaveProperty('withheld')

@@ -14,6 +14,7 @@ import { isAbsolute, join } from 'node:path'
 import {
   candidateContentAddress,
   curationCandidatePayloadSchema,
+  curationCandidateProjectionSchema,
   openKnowledgeReader,
   rebuildIndex,
   queuedCandidateDir,
@@ -235,10 +236,8 @@ describe('projectCurationCandidates (CUR-04/SAFE-01)', () => {
       executionContext: 'local-interactive',
       scope: { tier: 'product', key: 'storefront' },
       buildOrdinal: 42,
-      secretFlagged: false,
       attributingObservationId: 'run-emit-1:test-0:step-0',
     })
-    expect(candidate).not.toHaveProperty('injectionFlagged')
     expect(candidate).not.toHaveProperty('candidateId')
     expect(candidate).not.toHaveProperty('artifactInventory')
     expect(candidate?.distilledObservations).toEqual([
@@ -409,7 +408,12 @@ describe('projectCurationCandidates (CUR-04/SAFE-01)', () => {
     expect(second).toEqual(first)
     expect(first).not.toHaveLength(0)
     expect(first.every((candidate) => candidate.executionContext === 'ci')).toBe(true)
-    expect(first.every((candidate) => candidate.secretFlagged)).toBe(true)
+    // 2026-10-15 (441-50, D-26/D-27): a cache-bypassed step no longer marks the candidate.
+    expect(first.flatMap((candidate) => Object.keys(candidate))
+      .filter((key) => key.endsWith('Flagged'))).toEqual([])
+    for (const candidate of first) {
+      expect(curationCandidateProjectionSchema.safeParse(candidate).success).toBe(true)
+    }
     expect(first.every((candidate) => !('candidateId' in candidate))).toBe(true)
     expect(first.every((candidate) => !('artifactInventory' in candidate))).toBe(true)
   })
@@ -424,7 +428,6 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
     name: string
     afterUrl?: string
     fillText?: string
-    cacheStatus?: StepEvidence['cacheStatus']
     pass?: boolean
   }): StepEvidence {
     const el = element(input.ref, input.name)
@@ -442,7 +445,6 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
       {
         stepIndex: input.stepIndex,
         stepText: input.stepText,
-        ...(input.cacheStatus === undefined ? {} : { cacheStatus: input.cacheStatus }),
         ...(input.pass === false
           ? { verifierVerdict: { pass: false, reasoning: 'step failed' } }
           : {}),
@@ -519,30 +521,6 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
       .filter((row) => row.kind === 'procedure')
     expect(first).toHaveLength(1)
     expect(second).toEqual(first)
-  })
-
-  it('OR-folds the secret flag across covered steps', () => {
-    const secretSteps = signInSteps()
-    secretSteps[1] = flowStep({
-      stepIndex: 1,
-      stepText: 'Enter the account email',
-      ref: 'email',
-      name: 'Email',
-      fillText: 'user@example.com',
-      cacheStatus: 'bypass',
-    })
-    const [secretTarget] = projectCurationCandidates(
-      handoff([testOutcome({ testId: 'auth::sign-in' }, secretSteps)]),
-      policy,
-    ).filter((row) => row.kind === 'procedure')
-    const [plainTarget] = projectCurationCandidates(
-      handoff([testOutcome({ testId: 'auth::sign-in' }, signInSteps())]),
-      policy,
-    ).filter((row) => row.kind === 'procedure')
-
-    expect(secretTarget?.secretFlagged).toBe(true)
-    expect(plainTarget?.secretFlagged).toBe(false)
-    expect(secretTarget).not.toHaveProperty('injectionFlagged')
   })
 
   it('carries a code-built trajectory seed whose slots label masked-secret sources', () => {

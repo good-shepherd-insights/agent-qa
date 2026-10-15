@@ -164,10 +164,7 @@ function queueProjection(runId: string): CurationCandidateProjection {
     sourceRunId: runId,
     scope: { tier: 'product', key: PRODUCT },
     buildOrdinal: BUILD_ORDINAL,
-    executionContext: 'ci',
-    secretFlagged: false,
-    injectionFlagged: false,
-    kind: 'fact',
+    executionContext: 'ci',    kind: 'fact',
     subtype: 'selector',
     anchors: [
       { t: 'el', role: 'button', name: 'Review order', ordinal: 0 },

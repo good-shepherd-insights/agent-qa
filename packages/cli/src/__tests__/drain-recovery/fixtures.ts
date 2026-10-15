@@ -51,10 +51,7 @@ export function enqueueRealCandidate(knowledgeRoot: string, seed: string): strin
       sourceRunId: `run-${seed}`,
       scope: { tier: 'product', key: 'storefront' },
       buildOrdinal: 42,
-      executionContext: 'local-headless',
-      secretFlagged: false,
-      injectionFlagged: false,
-      kind: 'fact',
+      executionContext: 'local-headless',      kind: 'fact',
       subtype: 'selector',
       anchors: [
         { t: 'el', role: 'button', name: seed, ordinal: 0 },

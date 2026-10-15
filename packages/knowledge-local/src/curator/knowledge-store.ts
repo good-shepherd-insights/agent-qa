@@ -277,9 +277,6 @@ function addressFields(
     scope: delta.scope,
     buildOrdinal,
     executionContext: config.executionContext,
-    // 2026-10-15 (441-24): unread; part of the pinned port address until 441-50.
-    secretFlagged: false,
-    injectionFlagged: false,
     kind,
     ...(kind === 'fact'
       ? { subtype: subtype ?? 'content' }

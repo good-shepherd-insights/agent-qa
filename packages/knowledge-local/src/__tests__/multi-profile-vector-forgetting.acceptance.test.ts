@@ -342,10 +342,7 @@ describe('multi-profile vector forgetting acceptance', () => {
         sourceRunId: 'multi-profile-purge-queue-run',
         scope: { tier: 'product', key: 'multi-profile-purge' },
         buildOrdinal: 80,
-        executionContext: 'local-interactive',
-        secretFlagged: false,
-        injectionFlagged: false,
-        kind: 'fact',
+        executionContext: 'local-interactive',        kind: 'fact',
         subtype: 'selector',
         anchors: [
           { t: 'el', role: 'Button', name: 'Target record' },

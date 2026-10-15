@@ -123,10 +123,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       sourceRunId: 'run-commit-1',
       scope: { tier: 'product', key: 'storefront' },
       buildOrdinal: 42,
-      executionContext: 'local-interactive',
-      secretFlagged: false,
-      injectionFlagged: false,
-      kind: 'fact',
+      executionContext: 'local-interactive',      kind: 'fact',
       subtype: 'selector',
       anchors: checkoutAnchors,
       summarySeed: 'Checkout button selector',
@@ -1415,19 +1412,12 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
 
     it('a payload with no injection flag parses', () => {
       const fields = addressFields()
-      const { secretFlagged: _secret, injectionFlagged: _injection, ...withoutFlags } = fields
       const current = curationCandidatePayloadSchema.safeParse({
-        candidateId: candidateContentAddress(withoutFlags),
-        ...withoutFlags,
+        candidateId: candidateContentAddress(fields),
+        ...fields,
       })
       expect(current.success).toBe(true)
-      expect(current.data).not.toHaveProperty('injectionFlagged')
-
-      const old = { ...withoutFlags, secretFlagged: true, injectionFlagged: true }
-      expect(curationCandidatePayloadSchema.safeParse({
-        candidateId: candidateContentAddress(old),
-        ...old,
-      }).success).toBe(true)
+      expect(Object.keys(current.data ?? {}).filter((key) => key.endsWith('Flagged'))).toEqual([])
     })
 
     it('an authored bundle with credential-shaped text is embedded and indexed as written', async () => {
@@ -1436,7 +1426,6 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       const claimed = job({
         summarySeed: 'Checkout authorization header',
         bodySeed: body,
-        secretFlagged: true,
         evidenceToken: 'credential-shaped-evidence',
         attributingObservationId: 'credential-shaped-observation',
       })
