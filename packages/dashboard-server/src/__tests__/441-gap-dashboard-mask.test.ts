@@ -5,11 +5,30 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { mockRunHook } = vi.hoisted(() => ({ mockRunHook: vi.fn() }))
+const { mockRunHook, mockResolveLLMAuth, mockGenerateText } = vi.hoisted(() => ({
+  mockRunHook: vi.fn(),
+  mockResolveLLMAuth: vi.fn(),
+  mockGenerateText: vi.fn(),
+}))
 
 vi.mock('@vostride/agent-qa-runner-local', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@vostride/agent-qa-runner-local')>()),
   DockerHookExecutor: class { execute(...args: unknown[]) { return mockRunHook(...args) } },
+}))
+
+vi.mock('@vostride/agent-qa-core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@vostride/agent-qa-core')>()),
+  resolveLLMAuth: mockResolveLLMAuth,
+}))
+
+vi.mock('@vostride/agent-qa-model', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@vostride/agent-qa-model')>()),
+  createModel: vi.fn(() => ({})),
+}))
+
+vi.mock('ai', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('ai')>()),
+  generateText: mockGenerateText,
 }))
 
 import { ConfigManager, readConfigValues } from '../config/index.js'
@@ -135,6 +154,62 @@ async function hookWorkspace(): Promise<{
   }
 }
 
+const SAVED_HEADER = 'sk-header-saved-441'
+const SAVED_BASE_URL = 'https://proxy.example/v1'
+const LLM_TEST_HEADERS: IncomingHttpHeaders = { 'content-type': 'application/json', host: '127.0.0.1:4317' }
+
+const BASE_LINES = [
+  'workspace:',
+  '  testMatch:',
+  '    - tests/**/*.yaml',
+  '  suiteMatch:',
+  '    - suites/**/*.suite.yaml',
+  '  hooksFile: hooks.yaml',
+  '  envFile: .env',
+  '  secretsFile: .env.secrets.local',
+  'registry:',
+  '  llms:',
+  '    - name: proxy',
+  '      provider: anthropic-compatible',
+  '      model: claude-proxy',
+  `      baseURL: ${SAVED_BASE_URL}`,
+  '      providerHeaders:',
+  `        X-Org: ${SAVED_HEADER}`,
+  '  targets:',
+  `    qa-${VALUE}:`,
+  '      platform: web',
+  '      url: https://shop.test',
+  'use:',
+  '  llm: proxy',
+  '  mobile:',
+  '    appState: preserve',
+  '',
+]
+
+async function configWorkspace(lines: readonly string[] = BASE_LINES): Promise<{
+  configManager: ConfigManager
+  configPath: string
+}> {
+  const dir = await mkdtemp(join(tmpdir(), 'agent-qa-441-gap-config-'))
+  tempDirs.push(dir)
+  const configPath = join(dir, 'agent-qa.config.yaml')
+  await writeFile(configPath, lines.join('\n'))
+  return { configManager: new ConfigManager(configPath, (text) => text), configPath }
+}
+
+function testConnection(router: ReturnType<typeof createRouter>): Promise<MockResponse> {
+  return invokeRoute(router, '/api/llm/test', {
+    method: 'POST',
+    headers: LLM_TEST_HEADERS,
+    body: JSON.stringify({
+      configName: 'proxy',
+      provider: 'anthropic-compatible',
+      model: 'claude-proxy',
+      baseURL: SAVED_BASE_URL,
+    }),
+  })
+}
+
 function runHook(router: ReturnType<typeof createRouter>): Promise<MockResponse> {
   return invokeRoute(router, `/api/hooks/${HOOK_ID}/run`, {
     method: 'POST',
@@ -196,5 +271,72 @@ describe('C441-GAP-DASHBOARD', () => {
     expect(JSON.parse(res.body)).toEqual({ error: 'masking_unavailable' })
     expect(res.body).not.toContain(VALUE)
     expect(res.body).not.toContain('logged in')
+  })
+
+  it('an LLM connection test answers provider error text with a declared value only as its marker', async () => {
+    mockResolveLLMAuth.mockResolvedValue({ kind: 'unauthenticated', message: 'Testing without a saved credential.' })
+    mockGenerateText.mockRejectedValue(Object.assign(
+      new Error(`upstream echoed ${VALUE} and header ${SAVED_HEADER}`),
+      { statusCode: 502 },
+    ))
+    const router = createRouter({ db: ROUTER_DB_STUB, ...await configWorkspace(), declaredSecretMask: declaredMask })
+
+    const res = await testConnection(router)
+
+    expect(res.status).toBe(200)
+    expect(res.body).not.toContain(VALUE)
+    expect(res.body).not.toContain(SAVED_HEADER)
+    expect(JSON.parse(res.body)).toMatchObject({
+      success: false,
+      error: 'provider_error',
+      message: `Connection failed. upstream echoed ${MARKER} and header [redacted]`,
+      details: `upstream echoed ${MARKER} and header [redacted]`,
+    })
+  })
+
+  it('the target list answers a name holding a declared value as its marker', async () => {
+    const router = createRouter({ db: ROUTER_DB_STUB, ...await configWorkspace(), declaredSecretMask: declaredMask })
+
+    const res = await invokeRoute(router, '/api/config/targets')
+
+    expect(res.status).toBe(200)
+    expect(JSON.parse(res.body)).toEqual({ targets: [`qa-${MARKER}`] })
+  })
+
+  it('with a mask that throws, the LLM test and the target list answer without provider text or names', async () => {
+    mockResolveLLMAuth.mockResolvedValue({ kind: 'unauthenticated', message: 'Testing without a saved credential.' })
+    mockGenerateText.mockRejectedValue(Object.assign(new Error(`upstream echoed ${VALUE}`), { statusCode: 502 }))
+    const router = createRouter({ db: ROUTER_DB_STUB, ...await configWorkspace(), declaredSecretMask: throwingMask })
+
+    const tested = await testConnection(router)
+    expect(tested.status).toBe(200)
+    expect(JSON.parse(tested.body)).toMatchObject({ success: false, error: 'provider_error', message: 'Connection failed.' })
+    expect(JSON.parse(tested.body)).not.toHaveProperty('details')
+    expect(tested.body).not.toContain('upstream')
+
+    const targets = await invokeRoute(router, '/api/config/targets')
+    expect(targets.status).toBe(500)
+    expect(JSON.parse(targets.body)).toEqual({ error: 'masking_unavailable' })
+  })
+
+  // The target key is not a valid name, so the issue sits on the key holding the declared value.
+  it('config issue paths show a key holding a declared value as its marker', async () => {
+    const { configPath } = await configWorkspace()
+    const manager = new ConfigManager(configPath, declaredMask)
+
+    const refused = await manager.applyChanges([
+      { op: 'set', path: ['registry', 'targets', `qa-${VALUE}`, 'platform'], value: 'nope' },
+    ])
+    expect(refused.kind).toBe('refused')
+    if (refused.kind !== 'refused') return
+    expect(refused.error).toBe('validation_failed')
+    expect(JSON.stringify(refused)).not.toContain(VALUE)
+    expect((refused.issues ?? []).some((issue) => issue.path.includes(`qa-${MARKER}`)), JSON.stringify(refused.issues)).toBe(true)
+
+    const read = await manager.readMasked()
+    expect(read.kind).toBe('ok')
+    if (read.kind !== 'ok') return
+    expect(JSON.stringify(read.fileIssues)).not.toContain(VALUE)
+    expect(read.fileIssues.some((issue) => issue.path.includes(`qa-${MARKER}`)), JSON.stringify(read.fileIssues)).toBe(true)
   })
 })
