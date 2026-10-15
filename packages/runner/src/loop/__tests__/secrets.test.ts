@@ -188,6 +188,26 @@ describe('C441-REDACTOR', () => {
   })
 })
 
+describe('C441-GAP-REDACTOR', () => {
+  const redactor = () => new SecretRedactor(new SecretStore({ PW: 'hunter2' }))
+
+  it('a declared value written as a marker or template name is masked', () => {
+    const masked = redactor().redactString('page shows [secret:hunter2] and {{secret:hunter2}}')
+    expect(masked).not.toContain('hunter2')
+    expect(masked).toBe('page shows [secret:[secret:PW]] and [secret:[secret:PW]]')
+  })
+
+  it('a declared-name marker or template is unchanged in behaviour, and masking twice changes nothing', () => {
+    const once = redactor().redactString(
+      'keep [secret:PW], name {{secret:PW}}, hide [secret:hunter2] and {{secret:hunter2}}',
+    )
+    expect(once).toBe(
+      'keep [secret:PW], name [secret:PW], hide [secret:[secret:PW]] and [secret:[secret:PW]]',
+    )
+    expect(redactor().redactString(once)).toBe(once)
+  })
+})
+
 describe('C441-DISPATCH-REFUSAL', () => {
   it('only a bracketed secret name is a literal marker', () => {
     for (const text of ['[secret:]', '[secret:a-b]', '{{secret:A}}', 'plain text']) {

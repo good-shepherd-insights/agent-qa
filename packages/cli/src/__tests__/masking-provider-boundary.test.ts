@@ -193,4 +193,16 @@ describe('C441-GAP-EGRESS', () => {
     )
     expect(JSON.stringify(captured())).not.toContain(value)
   })
+
+  it('a declared value hidden in a marker or template never reaches the model', async () => {
+    const redactor = new SecretRedactor(SecretStore.fromEnvContent('PW=hunter2'))
+    const { captured, model } = createCapturingModel((text) => redactor.redactString(text))
+
+    await model.doGenerate(
+      promptRequest('use {{secret:hunter2}} or [secret:hunter2] or {{secret:PW}}'),
+    )
+
+    expect(capturedUserText(captured())).toContain('{{secret:PW}}')
+    expect(JSON.stringify(captured())).not.toContain('hunter2')
+  })
 })
