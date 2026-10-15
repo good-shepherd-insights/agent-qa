@@ -525,21 +525,27 @@ const TEST_VARIABLE_PATTERN = /\{\{\s*env:/
  * (SECRET_TEMPLATE_RE / REDACTED_SECRET_MARKER_RE — the authority). Mirrored rather than
  * imported: the CLI curation fold must not depend on the runner's loop internals.
  * Both carry the secret NAME only; no secret VALUE is ever read here (D-08 names-not-values).
+ * 2026-10-15 (441-67, GAP2-D1): anchored, so only a whole-value form names a secret.
  */
-const SECRET_TEMPLATE_NAME_PATTERN = /\{\{\s*secret:(\w+)\s*\}\}/
-const SECRET_MARKER_NAME_PATTERN = /\[secret:(\w+)\]/
+const SECRET_TEMPLATE_NAME_PATTERN = /^\{\{\s*secret:(\w+)\s*\}\}$/
+const SECRET_MARKER_NAME_PATTERN = /^\[secret:(\w+)\]$/
 
+/**
+ * The secret a value IS: the name of a value that is exactly one `[secret:NAME]` marker or
+ * one `{{secret:NAME}}` template. A value that merely contains one names nothing, because
+ * replay fills the whole slot with the secret (CR-G01).
+ */
 function secretSourceName(observed: string): string | undefined {
   const name =
-    SECRET_TEMPLATE_NAME_PATTERN.exec(observed)?.[1]
-    ?? SECRET_MARKER_NAME_PATTERN.exec(observed)?.[1]
+    SECRET_MARKER_NAME_PATTERN.exec(observed)?.[1]
+    ?? SECRET_TEMPLATE_NAME_PATTERN.exec(observed)?.[1]
   // Case is preserved verbatim: the committed parameter name must equal the binding name
   // the consult-time availability set carries, and that set is case-sensitive.
   return name
 }
 
 /**
- * Names the live binding behind an observed value by EXACT string equality against the
+ * Names the live binding behind a RAW observed value by EXACT string equality against the
  * step's interpolation provenance (Plan 381-41). Ties break to the lexicographically
  * smallest name so the authored parameter name is deterministic across runs.
  *
@@ -549,34 +555,38 @@ function secretSourceName(observed: string): string | undefined {
  * WHOLE slot, not for the embedded region. Such slots stay literal-source (D-03).
  *
  * The equality is shape-insensitive on purpose: email-valued and credential-named bindings
- * are the canonical login shapes, not edge cases, and they only stay matchable while 381-41
- * records provenance unmasked against a likewise-unmasked plannedAction.
+ * are the canonical login shapes, not edge cases. Provenance is recorded unmasked, so it is
+ * compared with the unmasked value (441-67, GAP2-D1).
  */
 function testVariableSourceName(
-  observed: string,
+  raw: string,
   interpolated: readonly { name: string; value: string }[] | undefined,
 ): string | undefined {
   if (interpolated === undefined) return undefined
   let best: string | undefined
   for (const pair of interpolated) {
-    if (pair.value !== observed) continue
+    if (pair.value !== raw) continue
     if (best === undefined || pair.name < best) best = pair.name
   }
   return best
 }
 
+// 2026-10-15 (441-67, GAP2-D1): provenance is decided on the raw value; a secret binding needs
+// the whole masked value to be one marker or template. Any other secret form keeps the slot a
+// literal, which the disposition's masked-literal check then refuses.
 function trajectoryValueClassification(
-  observed: string,
+  raw: string,
+  masked: string,
   interpolated: readonly { name: string; value: string }[] | undefined,
 ): { source: 'literal' | 'test-variable' | 'masked-secret'; sourceName?: string } {
-  if (MASKED_VALUE_PATTERN.test(observed)) {
-    const sourceName = secretSourceName(observed)
-    if (sourceName !== undefined) return { source: 'masked-secret', sourceName }
-    return { source: 'masked-secret' }
+  const variableName = testVariableSourceName(raw, interpolated)
+  if (variableName !== undefined) return { source: 'test-variable', sourceName: variableName }
+  const secretName = secretSourceName(masked)
+  if (secretName !== undefined) return { source: 'masked-secret', sourceName: secretName }
+  if (MASKED_VALUE_PATTERN.test(raw) || MASKED_VALUE_PATTERN.test(masked)) {
+    return { source: 'literal' }
   }
-  if (TEST_VARIABLE_PATTERN.test(observed)) return { source: 'test-variable' }
-  const sourceName = testVariableSourceName(observed, interpolated)
-  if (sourceName !== undefined) return { source: 'test-variable', sourceName }
+  if (TEST_VARIABLE_PATTERN.test(raw)) return { source: 'test-variable' }
   return { source: 'literal' }
 }
 
@@ -709,8 +719,9 @@ function trajectoryValues(
     // CR-01/T-381-52: one lossy field invalidates the whole action. Silently dropping a value
     // would author replay behavior different from the verified trajectory.
     if (!jsonRepresentable(raw)) return undefined
-    // 2026-10-15 (441-64, CR-A04): a typed declared value becomes its marker before it is
-    // classified, so it is forced into a {param} reference and never committed as a literal.
+    // 2026-10-15 (441-64, CR-A04; 441-67, GAP2-D1): the slot records the masked value. A value
+    // that is exactly a declared value becomes its marker and is forced into a {param}
+    // reference; one that only contains it stays a masked literal.
     const value = mask === undefined ? raw : maskPayloadStrings(raw, mask)
     const composite = isCompositeJsonValue(value)
     // T-381-50: D-03's parameter union is scalar-only, so masked/env material nested inside a
@@ -729,8 +740,8 @@ function trajectoryValues(
       // Masking placeholders and variable templates are string phenomena. Numbers and booleans
       // therefore remain literal-source while preserving their original JSON scalar type; JSON
       // composites are admitted only after the fail-closed scan above and remain literal-source.
-      ...(!composite && typeof value === 'string'
-        ? trajectoryValueClassification(value, interpolated)
+      ...(!composite && typeof value === 'string' && typeof raw === 'string'
+        ? trajectoryValueClassification(raw, value, interpolated)
         : { source: 'literal' as const }),
     }
   }
