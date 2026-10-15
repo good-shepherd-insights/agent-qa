@@ -374,12 +374,34 @@ describe('C441-COMMITTED', () => {
     expect(Object.keys(records[0]!)).not.toContain('policyDigest')
     expect(records[0]!.tableVersion).toBe(staged.tableVersion)
 
-    // D-20: a record written before 441-53 carries a policy digest, is not migrated, and the
-    // strict record schema reads it as malformed.
+    // D-20: a record written before 441-53 carries a policy digest and is not migrated.
+    // 2026-10-15 (441-64, CR-C02): the reader skips it as absent instead of throwing.
     const legacy = { ...records[0]!, policyDigest: '1'.repeat(64) }
     const dir = join(realpathSync(f.agentQaRoot), ADVERSARIAL_STATE_SUBDIR, 'default')
     writeFileSync(join(dir, `${'e'.repeat(64)}.json`), `${JSON.stringify(legacy)}\n`)
-    expect(() => readAdversarialRefreshRecords({ agentQaRoot: f.agentQaRoot, product: 'default' }))
-      .toThrow()
+    expect(readAdversarialRefreshRecords({ agentQaRoot: f.agentQaRoot, product: 'default' }))
+      .toEqual(records)
+  })
+})
+
+describe('C441-GAP-OLD-DATA', () => {
+  it('a later refresh stages beside a pre-441 refresh record', async () => {
+    const f = fixture(1)
+    const first = await stage(f, 'confusable')
+    expect(admit(f, first.batchDigest!).kind).toBe('admitted')
+    const [current] = readAdversarialRefreshRecords({
+      agentQaRoot: f.agentQaRoot,
+      product: 'default',
+    })
+    const legacy = { ...current!, policyDigest: '1'.repeat(64) }
+    const dir = join(realpathSync(f.agentQaRoot), ADVERSARIAL_STATE_SUBDIR, 'default')
+    writeFileSync(join(dir, `${'e'.repeat(64)}.json`), `${JSON.stringify(legacy)}\n`)
+
+    await expect(stageAdversarialProposal({
+      agentQaRoot: f.agentQaRoot,
+      committedRoot: f.committedRoot,
+      product: 'default',
+      mutators: ['invisible'],
+    })).resolves.toMatchObject({ kind: 'staged' })
   })
 })

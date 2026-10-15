@@ -37,6 +37,7 @@ import { enqueueCanaryOutcome, canaryOutcomeContentAddress } from '../canary-emi
 import { LEASE_FILE, LEASE_HEARTBEAT_TTL_MS } from '../lease/writer-lease.js'
 import * as purgeModule from '../purge.js'
 import { writeJobStateWithinCurrentAuthority } from '../queue/job-state.js'
+import { quarantinedCandidateDir } from '../queue/queue-layout.js'
 import {
   candidateProjectionFixture,
   enqueueArtifactFreeCandidateProjection,
@@ -2609,5 +2610,99 @@ describe('DCAY-05 sovereign purge', () => {
       expect(existsSync(target.dir)).toBe(true)
       expect(existsSync(join(knowledgeRoot, 'memory', 'receipts'))).toBe(false)
     })
+  })
+})
+
+describe('C441-GAP-OLD-DATA', () => {
+  let root: string
+  let knowledgeRoot: string
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'knowledge-purge-old-data-'))
+    knowledgeRoot = join(root, 'agent-qa-knowledge')
+    scaffoldKnowledgeRoot(knowledgeRoot)
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  function publishTarget(identity: string): PublishedBundle {
+    const outcome = publishBundle(
+      { knowledgeRoot, productKey: PRODUCT, commitArtifacts: 'none' },
+      {
+        draft: makeBundleDraftFixture({
+          anchors: [
+            { t: 'el', role: 'button', name: `Old data ${identity}` },
+            { t: 'page', route: `/purge/old-data/${identity}` },
+            { t: 'platform', platform: 'web' },
+          ],
+          scope: { tier: 'product', key: PRODUCT },
+          summary: `${identity} purge fixture`,
+          body: `${identity} records the content exercised by the purge contract.`,
+        }),
+        discriminant: {
+          kind: 'fact',
+          subtype: 'selector',
+          elementRef: { role: 'fixture', name: identity },
+        },
+        originClass: 'agent-verified',
+        createdAtOrdinal: 42,
+        screenStates: [makeScreenStateFixture()],
+        initialEvents: [],
+        relations: [],
+        provenance: {
+          mode: 'run-linked',
+          runId: `old-data-${identity}-run`,
+          testId: `old-data-${identity}-test`,
+          stepIndex: 0,
+          sourceBuildOrdinal: 42,
+        },
+        artifacts: [],
+      },
+    )
+    if (outcome.kind !== 'published') throw new Error(`expected ${identity} publication`)
+    return outcome
+  }
+
+  function plantPre441Payload(dir: string, candidateId: string, summarySeed: string): void {
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'payload.json'), `${JSON.stringify({
+      schemaVersion: 2,
+      candidateId,
+      kind: 'fact',
+      summarySeed,
+      bodySeed: 'A pre-441 queue body.',
+      anchors: [{ t: 'platform', platform: 'web' }],
+      artifactInventory: [],
+      secretFlagged: false,
+      injectionFlagged: false,
+      captureReceipt: { kind: 'none' },
+    })}\n`, 'utf8')
+  }
+
+  it('a purge completes past a pre-441 quarantined payload that names nothing purged', () => {
+    const target = publishTarget('quarantined-survivor')
+    const candidateId = 'd'.repeat(64)
+    const quarantined = quarantinedCandidateDir(knowledgeRoot, candidateId)
+    plantPre441Payload(quarantined, candidateId, 'An unrelated pre-441 summary')
+
+    expect(purgeApi().purgeRecord({ knowledgeRoot, recordId: target.id, initiator: 'user' }).kind)
+      .toBe('purged')
+    expect(existsSync(target.dir)).toBe(false)
+    expect(existsSync(join(quarantined, 'payload.json'))).toBe(true)
+  })
+
+  it('a pre-441 payload carrying the purged summary is swept with the purge', () => {
+    const target = publishTarget('legacy-seed-match')
+    const loaded = knowledgeLocal.loadBundle(target.dir)
+    if (loaded.kind !== 'loaded') throw new Error('expected a loaded target bundle')
+    const candidateId = 'f'.repeat(64)
+    const queued = knowledgeLocal.queuedCandidateDir(knowledgeRoot, candidateId)
+    plantPre441Payload(queued, candidateId, loaded.bundle.summary)
+
+    expect(purgeApi().purgeRecord({ knowledgeRoot, recordId: target.id, initiator: 'user' }).kind)
+      .toBe('purged')
+    expect(existsSync(queued)).toBe(false)
   })
 })
