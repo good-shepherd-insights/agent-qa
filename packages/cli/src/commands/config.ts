@@ -4,7 +4,7 @@ import { parseDocument, Document } from 'yaml'
 import { existsSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
-import type { MaskFn } from '@vostride/agent-qa-schema'
+import { MARKER_WRITTEN_BACK_SENTENCE, type MaskFn } from '@vostride/agent-qa-schema'
 
 import {
   createDeclaredSecretMask,
@@ -21,6 +21,9 @@ import {
 } from '../config.js'
 
 const DEFAULT_CONFIG_FILE = 'agent-qa.config.yaml'
+
+// 441 GAP2-D8: how `config show` prints a declared secret. Written back, it would replace the value.
+const SHOWN_MARKER = /\[secret:\w+\]/
 
 /**
  * The path the person named, read off the ROOT program (395-24 · WR-03).
@@ -109,6 +112,14 @@ async function setAction(key: string, value: string | undefined, command: Comman
   const resolved = await getValue(key, value)
   if (!resolved) {
     console.error(pc.red('No value provided.'))
+    return
+  }
+  // Refused before the file is read; the value is never echoed.
+  if (SHOWN_MARKER.test(key) || SHOWN_MARKER.test(resolved)) {
+    console.error(
+      pc.red(`config set refused (marker_written_back): ${MARKER_WRITTEN_BACK_SENTENCE}`),
+    )
+    process.exitCode = 1
     return
   }
 
