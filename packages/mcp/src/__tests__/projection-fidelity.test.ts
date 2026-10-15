@@ -39,7 +39,6 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { createMcpHandler } from '@modelcontextprotocol/server'
 import {
   createFunctionRegistry,
-  type CreateFunctionRegistryOptions,
   type FunctionDeclaration,
   type FunctionDeps,
   type FunctionRegistry,
@@ -82,10 +81,7 @@ interface AdvertisedTool {
 
 /** See `mapping-bump-guard.test.ts` for why empty deps are the honest fixture for a listing. */
 function builtInRegistry(): FunctionRegistry {
-  const auditSink = {
-    appendGuardrailAudit() {},
-  } as unknown as CreateFunctionRegistryOptions['auditSink']
-  return createFunctionRegistry({ deps: {} as unknown as FunctionDeps, auditSink })
+  return createFunctionRegistry({ deps: {} as unknown as FunctionDeps })
 }
 
 function callerWith(grantedScopes: readonly string[]): FunctionCaller {

@@ -26,7 +26,6 @@ import {
   RUNS_EVENTS_FUNCTION_ID,
   RUNS_LIVE_URL_FUNCTION_ID,
   validateLiveUrlToken,
-  type CreateFunctionRegistryOptions,
   type FunctionDeps,
   type FunctionRegistry,
   type LiveViewPort,
@@ -160,14 +159,9 @@ function fixtureRegistry(options: FixtureOptions = {}): {
         : [],
   }
 
-  const auditSink = {
-    appendGuardrailAudit() {},
-  } as unknown as CreateFunctionRegistryOptions['auditSink']
-
   return {
     registry: createFunctionRegistry({
       deps: { runs, liveView } as unknown as FunctionDeps,
-      auditSink,
     }),
     clock,
   }

@@ -50,7 +50,6 @@ import {
   RUNS_LIVE_URL_FUNCTION_ID,
   createFunctionRegistry,
   validateLiveUrlToken,
-  type CreateFunctionRegistryOptions,
   type FunctionDeps,
   type FunctionRegistry,
   type LiveViewPort,
@@ -149,14 +148,9 @@ function fixtureRegistry(handles: readonly number[] = [0, 1]): {
       runId === FIXTURE_RUN_ID && fromSeq <= 1 ? [runStartedEnvelope(handles)] : [],
   }
 
-  const auditSink = {
-    appendGuardrailAudit() {},
-  } as unknown as CreateFunctionRegistryOptions['auditSink']
-
   return {
     registry: createFunctionRegistry({
       deps: { runs, liveView } as unknown as FunctionDeps,
-      auditSink,
     }),
     minted,
   }

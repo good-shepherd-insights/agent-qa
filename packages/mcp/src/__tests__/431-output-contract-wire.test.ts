@@ -14,7 +14,6 @@ import { createMcpHandler, McpServer } from '@modelcontextprotocol/server'
 import type { CallToolResult } from '@modelcontextprotocol/server'
 import {
   createFunctionRegistry,
-  type CreateFunctionRegistryOptions,
   type FunctionDeps,
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
@@ -38,7 +37,6 @@ const caller: FunctionCaller = {
   // 432-21 (D-12): no credential; the mark tool's handler reads none.
   // 2026-10-01 (432-34, D-12): no `grantedScopes` or `safeMode` either; nothing reads them (432-20).
 }
-const auditSink = { appendGuardrailAudit() {} } as unknown as CreateFunctionRegistryOptions['auditSink']
 
 function handoff(runId: string, endedAt: number): CompletedRunHandoff {
   return {
@@ -57,7 +55,7 @@ function handoff(runId: string, endedAt: number): CompletedRunHandoff {
 
 function registryOver(recorded: readonly CompletedRunHandoff[]): FunctionRegistry {
   const deps = { runs: { list: () => Promise.resolve([...recorded]) }, secretMask: (text: string) => text } as unknown as FunctionDeps
-  return createFunctionRegistry({ deps, auditSink })
+  return createFunctionRegistry({ deps })
 }
 
 const openClients: Client[] = []

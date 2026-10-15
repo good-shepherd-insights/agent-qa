@@ -21,7 +21,6 @@ import type { CallToolResult } from '@modelcontextprotocol/server'
 import {
   createFunctionRegistry,
   invokeFunction,
-  type CreateFunctionRegistryOptions,
   type FunctionDeps,
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
@@ -81,8 +80,6 @@ function lookup(blobs: Blobs, runId: RunId, sha: string): EvidenceBlobLookup {
   return bytes === undefined ? { status: 'blob_absent' } : { status: 'found', bytes }
 }
 
-const auditSink = { appendGuardrailAudit() {} } as unknown as CreateFunctionRegistryOptions['auditSink']
-
 function registryOver(blobs: Blobs): FunctionRegistry {
   const evidenceBlobs = {
     read: (runId: RunId, sha: string) => Promise.resolve(lookup(blobs, runId, sha)),
@@ -99,7 +96,7 @@ function registryOver(blobs: Blobs): FunctionRegistry {
     list: () => Promise.resolve([]),
     readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' }),
   }
-  return createFunctionRegistry({ deps: { evidenceBlobs, runs } as unknown as FunctionDeps, auditSink })
+  return createFunctionRegistry({ deps: { evidenceBlobs, runs } as unknown as FunctionDeps })
 }
 
 // 2026-10-02 (432-38, D-12): no `grantedScopes` or `safeMode` on the caller; the registry and the
@@ -438,7 +435,6 @@ describe('EVIDENCE-ISOLATION (EDGE-18)', () => {
           },
         },
       } as unknown as FunctionDeps,
-      auditSink,
     })
     const alpha = await connect(registry)
     const beta = await connect(registry)

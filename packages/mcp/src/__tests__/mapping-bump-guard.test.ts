@@ -94,7 +94,6 @@
 
 import {
   createFunctionRegistry,
-  type CreateFunctionRegistryOptions,
   type FunctionDeclaration,
   type FunctionDeps,
   type FunctionRegistry,
@@ -130,10 +129,7 @@ import { V1_TOOL_MIGRATION_MAP, type V1MigrationArm } from '../migration-map.js'
  * port that is not there.
  */
 function builtInRegistry(): FunctionRegistry {
-  const auditSink = {
-    appendGuardrailAudit() {},
-  } as unknown as CreateFunctionRegistryOptions['auditSink']
-  return createFunctionRegistry({ deps: {} as unknown as FunctionDeps, auditSink })
+  return createFunctionRegistry({ deps: {} as unknown as FunctionDeps })
 }
 
 /** Every scope, and not safe mode: this suite asks what the CATALOGUE holds, not what a caller sees. */

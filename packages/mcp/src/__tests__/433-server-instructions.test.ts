@@ -13,7 +13,6 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { createMcpHandler } from '@modelcontextprotocol/server'
 import {
   createFunctionRegistry,
-  type CreateFunctionRegistryOptions,
   type FunctionDeps,
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
@@ -22,14 +21,10 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import * as barrel from '../index.js'
 
-const auditSink = {
-  appendGuardrailAudit() {},
-} as unknown as CreateFunctionRegistryOptions['auditSink']
-
 const CALLER: FunctionCaller = { surface: 'mcp', origin: 'agent' }
 
 function registry(): FunctionRegistry {
-  return createFunctionRegistry({ deps: {} as unknown as FunctionDeps, auditSink })
+  return createFunctionRegistry({ deps: {} as unknown as FunctionDeps })
 }
 
 const deps = () => ({ registry: registry(), caller: CALLER, maskText: (text: string) => text })

@@ -27,7 +27,7 @@ import { existsSync } from 'node:fs'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { createMcpHandler } from '@modelcontextprotocol/server'
 import { FunctionInputError, createFunctionRegistry, invokeFunction } from '@vostride/agent-qa-agent'
-import type { CreateFunctionRegistryOptions, FunctionDeps } from '@vostride/agent-qa-agent'
+import type { FunctionDeps } from '@vostride/agent-qa-agent'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -135,10 +135,6 @@ function directDeps(answer: (request: { verb: string, input: Record<string, unkn
   return { calls, deps }
 }
 
-const directSink = {
-  appendGuardrailAudit() {},
-} as unknown as CreateFunctionRegistryOptions['auditSink']
-
 const directClients: Client[] = []
 afterEach(async () => {
   for (const client of directClients.splice(0)) await client.close().catch(() => {})
@@ -152,7 +148,7 @@ interface Wire {
 
 /** A real client over the shipped factory; `modern` pins the 2026 wire and declares elicitation. */
 async function wire(deps: FunctionDeps, modern = false): Promise<Wire> {
-  const registry = createFunctionRegistry({ deps, auditSink: directSink })
+  const registry = createFunctionRegistry({ deps })
   const handler = createMcpHandler(() => buildAgentQaMcpServer({
     registry, caller: TOKENLESS, maskText: (text: string) => text.replaceAll(PLANTED, '<SECRET>'),
   }))
@@ -293,7 +289,7 @@ describe('C432-MCP-NO-ELICITATION: no confirmation input, no elicitation, no app
   it('C432-MCP-NO-ELICITATION: the refuse-and-teach module is gone, and the op layer takes no confirmation', async () => {
     expect(existsSync(new URL('../apply-refusal.ts', import.meta.url))).toBe(false)
     const port = directDeps(() => ({ outcome: 'applied' }))
-    const registry = createFunctionRegistry({ deps: port.deps, auditSink: directSink })
+    const registry = createFunctionRegistry({ deps: port.deps })
     const refusal = await invokeFunction(registry, 'knowledge.accept', {
       target: RECORD_TARGET, confirmed: true,
     }, TOKENLESS).then(() => undefined, (error: unknown) => error)

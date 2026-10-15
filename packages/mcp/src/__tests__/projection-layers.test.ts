@@ -19,11 +19,7 @@
 import { Client } from '@modelcontextprotocol/client'
 import { InMemoryTransport } from '@modelcontextprotocol/server'
 import { createFunctionRegistry } from '@vostride/agent-qa-agent'
-import type {
-  CreateFunctionRegistryOptions,
-  FunctionDeps,
-  FunctionRegistry,
-} from '@vostride/agent-qa-agent'
+import type { FunctionDeps, FunctionRegistry } from '@vostride/agent-qa-agent'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
@@ -61,17 +57,12 @@ function spec(overrides: Partial<ProjectedOpSpec> = {}): ProjectedOpSpec {
 
 // ---- C432-TOKENLESS-CATALOG (432-20, D-12) — re-spelled from 'visibleToCaller (D-05)' ----------
 
-const auditSink = {
-  appendGuardrailAudit() {},
-} as unknown as CreateFunctionRegistryOptions['auditSink']
-
 /** A real registry over every built-in op, with a knowledge reader that answers an empty list. */
 function realRegistry(): FunctionRegistry {
   return createFunctionRegistry({
     deps: {
       knowledge: { listBundles: () => Promise.resolve([]) },
     } as unknown as FunctionDeps,
-    auditSink,
   })
 }
 

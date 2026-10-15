@@ -134,7 +134,6 @@ import type { AddressInfo } from 'node:net'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import {
   createFunctionRegistry,
-  type CreateFunctionRegistryOptions,
   type FunctionDeps,
   type FunctionRegistry,
   type LiveViewPort,
@@ -299,10 +298,6 @@ function fixtureRegistry(): { readonly registry: FunctionRegistry; readonly mint
     },
   }
 
-  const auditSink = {
-    appendGuardrailAudit() {},
-  } as unknown as CreateFunctionRegistryOptions['auditSink']
-
   const deps = {
     runs: {
       list: () => Promise.resolve([handoff(FIXTURE_RUN_ID)]),
@@ -337,7 +332,7 @@ function fixtureRegistry(): { readonly registry: FunctionRegistry; readonly mint
     liveView,
   } as unknown as FunctionDeps
 
-  return { registry: createFunctionRegistry({ deps, auditSink }), minted }
+  return { registry: createFunctionRegistry({ deps }), minted }
 }
 
 // 2026-10-01 (432-21, D-12): the tokenless MCP caller every request is served as — no scope set,

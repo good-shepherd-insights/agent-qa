@@ -32,7 +32,6 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { createMcpHandler } from '@modelcontextprotocol/server'
 import {
   createFunctionRegistry,
-  type CreateFunctionRegistryOptions,
   type FunctionDeps,
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
@@ -97,10 +96,6 @@ const RECORDED: ReadonlyMap<string, CompletedRunHandoff> = new Map([
  * decoration under test — the ops are the shipped ones and their outputs are the shipped shapes.
  */
 function fixtureRegistry(): FunctionRegistry {
-  const auditSink = {
-    appendGuardrailAudit() {},
-  } as unknown as CreateFunctionRegistryOptions['auditSink']
-
   const deps = {
     runs: {
       list: () => Promise.resolve([...RECORDED.values()]),
@@ -115,7 +110,7 @@ function fixtureRegistry(): FunctionRegistry {
     secretMask: (text: string) => text,
   } as unknown as FunctionDeps
 
-  return createFunctionRegistry({ deps, auditSink })
+  return createFunctionRegistry({ deps })
 }
 
 // 2026-10-02 (432-38, D-12): no `grantedScopes` (the former `CALLER_SCOPES`) or `safeMode` on the

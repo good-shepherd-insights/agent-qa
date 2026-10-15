@@ -71,7 +71,6 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { createMcpHandler } from '@modelcontextprotocol/server'
 import {
   createFunctionRegistry,
-  type CreateFunctionRegistryOptions,
   type FunctionDeclaration,
   type FunctionDeps,
   type FunctionRegistry,
@@ -120,13 +119,9 @@ const callerWith = (grantedScopes: readonly string[]): FunctionCaller => ({
 
 const identity = (text: string): string => text
 
-const auditSink = {
-  appendGuardrailAudit() {},
-} as unknown as CreateFunctionRegistryOptions['auditSink']
-
 /** See `mapping-bump-guard.test.ts`: empty deps are the honest fixture for a LISTING. */
 function builtInRegistry(): FunctionRegistry {
-  return createFunctionRegistry({ deps: {} as unknown as FunctionDeps, auditSink })
+  return createFunctionRegistry({ deps: {} as unknown as FunctionDeps })
 }
 
 const openServers: NodeHttpServer[] = []
@@ -341,7 +336,7 @@ function liveRegistry(): FunctionRegistry {
     liveView,
   } as unknown as FunctionDeps
 
-  return createFunctionRegistry({ deps, auditSink })
+  return createFunctionRegistry({ deps })
 }
 
 /**

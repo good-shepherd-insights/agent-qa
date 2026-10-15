@@ -26,7 +26,6 @@ import { createMcpHandler } from '@modelcontextprotocol/server'
 import {
   createFunctionRegistry,
   invokeFunction,
-  type CreateFunctionRegistryOptions,
   type FunctionDeclaration,
   type FunctionDeps,
   type FunctionRegistry,
@@ -104,14 +103,9 @@ const CANONICAL_CONTRACTS: Readonly<Record<string, CanonicalContract>> = {
   },
 }
 
-const auditSink = {
-  appendGuardrailAudit() {},
-} as unknown as CreateFunctionRegistryOptions['auditSink']
-
 function registryWith(deps: Record<string, unknown> = {}): FunctionRegistry {
   return createFunctionRegistry({
     deps: { secretMask: (text: string) => text, ...deps } as unknown as FunctionDeps,
-    auditSink,
   })
 }
 
@@ -384,8 +378,7 @@ describe('MCP-TOOLS-ADVERTISED on a real tools/list', () => {
 // 432-13 (C432-INVOKE-DIRECT): the witness was the op gate's audit row, which no call writes any
 // more. 2026-10-14 (441-16, D-12): the registry's read-scope seam that replaced it is deleted, so the
 // witness is the first port each bound op reads — distinct per op, so it still names the op REACHED,
-// past every refusal. Any audit row that does land is still recorded, so a gate that came back
-// would show up here as an extra entry.
+// past every refusal.
 const FIRST_PORT: Record<string, readonly ['runs' | 'knowledge', string]> = {
   'knowledge.bundles.list': ['knowledge', 'listBundles'],
   'knowledge.records.inspect': ['knowledge', 'inspectRecords'],
@@ -396,13 +389,6 @@ const FIRST_PORT: Record<string, readonly ['runs' | 'knowledge', string]> = {
 }
 
 function auditedRegistry(audited: string[], deps: Record<string, unknown> = {}): FunctionRegistry {
-  const sink = {
-    appendExecutionAudit(row: unknown) {
-      const action = (row as { action?: unknown }).action
-      audited.push(`audit:${typeof action === 'string' ? action : JSON.stringify(row)}`)
-    },
-    appendGuardrailAudit() {},
-  } as unknown as CreateFunctionRegistryOptions['auditSink']
   const ports: Record<string, Record<string, unknown>> = {
     runs: { ...(deps.runs as Record<string, unknown> | undefined) },
     knowledge: { ...(deps.knowledge as Record<string, unknown> | undefined) },
@@ -417,7 +403,6 @@ function auditedRegistry(audited: string[], deps: Record<string, unknown> = {}):
   }
   return createFunctionRegistry({
     deps: { ...deps, ...ports } as unknown as FunctionDeps,
-    auditSink: sink,
   })
 }
 
