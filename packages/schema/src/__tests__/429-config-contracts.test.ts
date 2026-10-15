@@ -14,6 +14,7 @@ test('C429-CONFIG-WRITE-REFUSALS-EXACT', () => {
     'write_failed',
     'field_changed',
     'path_not_writable',
+    'marker_written_back',
   ])
 })
 
