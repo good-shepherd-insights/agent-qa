@@ -384,32 +384,32 @@ describe('resolveConfig', () => {
   })
 })
 
-describe('C441-CONFIG', () => {
-  async function runConfigCommand(
-    dir: string,
-    args: string[],
-  ): Promise<{ output: string; exitCode: number }> {
-    const cwd = process.cwd()
-    const exitCodeBefore = process.exitCode
-    process.exitCode = undefined
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    try {
-      process.chdir(dir)
-      const { createConfigCommand } = await import('../commands/config.js')
-      await createConfigCommand().parseAsync(['node', 'config', ...args], { from: 'node' })
-      const output = [...logSpy.mock.calls, ...errorSpy.mock.calls]
-        .map((call) => call.join(' '))
-        .join('\n')
-      return { output, exitCode: Number(process.exitCode ?? 0) }
-    } finally {
-      process.chdir(cwd)
-      process.exitCode = exitCodeBefore
-      logSpy.mockRestore()
-      errorSpy.mockRestore()
-    }
+async function runConfigCommand(
+  dir: string,
+  args: string[],
+): Promise<{ output: string; exitCode: number }> {
+  const cwd = process.cwd()
+  const exitCodeBefore = process.exitCode
+  process.exitCode = undefined
+  const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+  const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    process.chdir(dir)
+    const { createConfigCommand } = await import('../commands/config.js')
+    await createConfigCommand().parseAsync(['node', 'config', ...args], { from: 'node' })
+    const output = [...logSpy.mock.calls, ...errorSpy.mock.calls]
+      .map((call) => call.join(' '))
+      .join('\n')
+    return { output, exitCode: Number(process.exitCode ?? 0) }
+  } finally {
+    process.chdir(cwd)
+    process.exitCode = exitCodeBefore
+    logSpy.mockRestore()
+    errorSpy.mockRestore()
   }
+}
 
+describe('C441-CONFIG', () => {
   it('config show prints an undeclared credential-named value as written and a declared value as its marker', async () => {
     const dir = join(TMP_DIR, 'show-441')
     await mkdir(dir, { recursive: true })
@@ -481,5 +481,44 @@ describe('C441-CONFIG', () => {
     expect(table).toContain('services.cache.dir')
     expect(table).toContain('sk-env-only-441-cache')
     expect(table).not.toContain('<redacted>')
+  })
+})
+
+describe('C441-GAP-CONFIG', () => {
+  it('config set prints a declared value only as its marker and writes it as typed', async () => {
+    const dir = join(TMP_DIR, 'set-gap-declared')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'agent-qa.config.yaml'), JSON.stringify(makeValidConfig()))
+    await writeFile(join(dir, '.env.secrets.local'), 'PW_441=Hunter-42-zz\n')
+
+    const { output, exitCode } = await runConfigCommand(dir, [
+      'set',
+      'use.buildTag',
+      'Hunter-42-zz',
+    ])
+
+    const written = await readFile(join(dir, 'agent-qa.config.yaml'), 'utf-8')
+    expect(written).toContain('Hunter-42-zz')
+    expect(output).toContain('use.buildTag = [secret:PW_441] saved to')
+    expect(output).not.toContain('Hunter-42-zz')
+    expect(exitCode).toBe(0)
+  })
+
+  it('config set still writes without a secrets file and prints its line without the value', async () => {
+    const dir = join(TMP_DIR, 'set-gap-missing')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'agent-qa.config.yaml'), JSON.stringify(makeValidConfig()))
+
+    const { output, exitCode } = await runConfigCommand(dir, [
+      'set',
+      'use.buildTag',
+      'Hunter-42-zz',
+    ])
+
+    const written = await readFile(join(dir, 'agent-qa.config.yaml'), 'utf-8')
+    expect(written).toContain('Hunter-42-zz')
+    expect(output).toContain('use.buildTag saved to')
+    expect(output).not.toContain('Hunter-42-zz')
+    expect(exitCode).toBe(0)
   })
 })
