@@ -97,3 +97,59 @@ describe('C441-GAP-EGRESS', () => {
     expect(JSON.stringify(sent.prompt)).not.toContain('raw-stand-in')
   })
 })
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+// Built like the record mask: one left-to-right alternation, the template form first, then the
+// declared values longest first.
+function alternationMask(declared: Record<string, string>): (text: string) => string {
+  const nameByValue = new Map(Object.entries(declared).map(([name, value]) => [value, name]))
+  const values = [...nameByValue.keys()].sort((a, b) => b.length - a.length).map(escapeRegExp)
+  const pattern = new RegExp([String.raw`\{\{secret:(\w+)\}\}`, ...values].join('|'), 'g')
+  return (text) =>
+    text.replace(pattern, (match: string, name: string | undefined) =>
+      `[secret:${name ?? nameByValue.get(match)}]`)
+}
+
+describe('C441-GAP2-EGRESS', () => {
+  it('a declared value against a template or inside its name is never sent raw, and a clean template still is', async () => {
+    const mask = alternationMask({ PW: 'ab{', TAIL: '}tail9', PIN: '42', KEY_42: 'v-key-0417' })
+    const params = {
+      prompt: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'ab{{secret:PW}}' },
+            { type: 'text', text: '{{secret:PW}}tail9 end' },
+            { type: 'text', text: 'use {{secret:KEY_42}} now' },
+            { type: 'text', text: 'type {{secret:X}} now' },
+          ],
+        },
+      ],
+    } as unknown as ProviderRequestParams
+
+    const model = recorder()
+    const wrapped = wrapLanguageModel({ model, middleware: createMaskingMiddleware(mask) })
+    await wrapped.doGenerate(params)
+
+    const sent = model.doGenerateCalls[0]!
+    const json = JSON.stringify(sent.prompt)
+    expect(json).not.toContain('ab{')
+    expect(json).not.toContain('}tail9')
+    expect(json).not.toContain('{{secret:KEY_42}}')
+    expect(json).not.toContain('v-key-0417')
+    expect(sent.prompt).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '[secret:PW]{secret:PW}}' },
+          { type: 'text', text: '[secret:PW]tail9 end' },
+          { type: 'text', text: 'use [secret:KEY_42] now' },
+          { type: 'text', text: 'type {{secret:X}} now' },
+        ],
+      },
+    ])
+  })
+})

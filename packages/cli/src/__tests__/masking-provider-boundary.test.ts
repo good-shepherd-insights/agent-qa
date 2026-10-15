@@ -248,3 +248,36 @@ describe('C441-GAP-EGRESS', () => {
     expect(JSON.stringify(captured())).not.toContain(value)
   })
 })
+
+describe('C441-GAP2-EGRESS', () => {
+  it('a declared value against a template brace is never sent raw', async () => {
+    const redactor = new SecretRedactor(new SecretStore({ PW: 'ab{', TAIL: '}tail9' }))
+    const { captured, model } = createCapturingModel((text) => redactor.redactString(text))
+
+    await model.doGenerate({
+      prompt: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'ab{{secret:PW}}' },
+            { type: 'text', text: '{{secret:PW}}tail9 end' },
+          ],
+        },
+      ],
+    })
+
+    expect(JSON.stringify(captured())).not.toContain('ab{')
+    expect(JSON.stringify(captured())).not.toContain('}tail9')
+  })
+
+  it('a template whose name holds a declared value is not sent verbatim', async () => {
+    const redactor = new SecretRedactor(new SecretStore({ PIN: '42', KEY_42: 'v-key-0417' }))
+    const { captured, model } = createCapturingModel((text) => redactor.redactString(text))
+
+    await model.doGenerate(promptRequest('use {{secret:KEY_42}} now'))
+
+    expect(capturedUserText(captured())).toBe('use [secret:KEY_42] now')
+    expect(JSON.stringify(captured())).not.toContain('{{secret:KEY_42}}')
+    expect(JSON.stringify(captured())).not.toContain('v-key-0417')
+  })
+})
