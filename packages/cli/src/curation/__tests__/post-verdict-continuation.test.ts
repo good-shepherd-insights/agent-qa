@@ -14,7 +14,6 @@ import { generateRunId } from '@vostride/agent-qa-ids'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { ownPostVerdictContinuation, postVerdictPendingPath } from '../post-verdict-continuation.js'
 import { runPostRunTail } from '../post-run-tail.js'
-import { defaultPostRunGuardrailPolicy } from '../curation-tail.js'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { createPostVerdictStep, recordCanaryPolicy } from '../post-verdict-step.js'
@@ -269,7 +268,7 @@ async function startOwnedChild(f: ReturnType<typeof continuationFixture>, window
 async function terminalRecover(f: ReturnType<typeof continuationFixture>, caps: MisdirectionPreparationCapabilities) {
   const tail = runPostRunTail({ runId: generateRunId(), agentQaRoot: f.input.agentQaRoot,
     configPath: f.input.configPath, configDir: f.input.project, knowledgeConfig: { dir: 'knowledge' },
-    auditSink: { emit: () => undefined } as never, policy: defaultPostRunGuardrailPolicy(),
+    auditSink: { emit: () => undefined } as never,
     log: { warn: () => undefined }, operations: {
       resolveKnowledgeRoot: () => f.input.knowledgeRoot,
       recoverPendingPostVerdictContinuations: (input) => recoverPendingPostVerdictContinuations({ ...input, misdirection: caps }),
@@ -658,7 +657,7 @@ it('terminal drain discovers recorded pending work before an unrelated empty FIF
   await expect(f.own({ prepare: async () => { throw new Error('interrupted before prepare') } })).rejects.toThrow()
   const tail = runPostRunTail({ runId: generateRunId(), agentQaRoot: f.input.agentQaRoot,
     configPath: f.input.configPath, configDir: f.input.project, knowledgeConfig: { dir: 'knowledge' },
-    auditSink: { emit: () => undefined } as never, policy: defaultPostRunGuardrailPolicy(),
+    auditSink: { emit: () => undefined } as never,
     log: { warn: () => undefined }, operations: {
       acquireWriterLease: (() => ({ kind: 'held', holder: { pid: process.pid } })) as never,
       nudgeDaemon: async () => undefined,

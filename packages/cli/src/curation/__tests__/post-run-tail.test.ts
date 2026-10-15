@@ -28,7 +28,6 @@ import { emptyCanaryCreditCounters } from '../canary-credit.js'
 import {
   completedRunDir,
   CURATION_TAIL_RECEIPT_FILE,
-  defaultPostRunGuardrailPolicy,
   readCurationTailReceipt,
 } from '../curation-tail.js'
 import type { Mock } from 'vitest'
@@ -47,7 +46,6 @@ import {
 import type {
   AnalysisGetOutput,
   CompletedRunHandoff,
-  GuardrailPolicy,
   PostProcessingStatus,
   RunDigest,
   RunEventEnvelope,
@@ -375,7 +373,6 @@ function options(h: Harness): RunPostRunTailOptions {
     configDir,
     auditSink: {} as AuditSink,
     mask: (text: string) => text,
-    policy: {} as GuardrailPolicy,
     log: {
       warn: (message: string) => h.warn(message),
       info: (message: string) => h.info(message),
@@ -837,7 +834,6 @@ describe('425 D-20 — the chain-terminal line a real snapshot-bearing run print
           knowledgeConfig: { dir: 'knowledge' },
           configDir: root,
           auditSink: {} as AuditSink,
-          policy: {} as GuardrailPolicy,
           log: { warn: (m: string) => warn(m), info: (m: string) => info(m) },
           operations: {
             resolveKnowledgeRoot: () => knowledge,
@@ -941,7 +937,6 @@ describe('425 D-20 — the chain-terminal line a real snapshot-bearing run print
           knowledgeConfig: { dir: 'knowledge' },
           configDir: root,
           auditSink: {} as AuditSink,
-          policy: defaultPostRunGuardrailPolicy(),
           log: { warn: () => undefined, info: (m: string) => info(m) },
           operations: {
             resolveKnowledgeRoot: () => knowledge,

@@ -7,13 +7,6 @@
 //   knowledge root      the CLI's own config helper, which is where every other verb resolves it
 //   build ordinals      the local composition's build-ordinal edge (agent-local composition)
 //   masking helpers     the agent barrel's re-exports, exactly as the `fn` invoker takes them
-//   guardrail policy    `loadDefaultGuardrailPolicy` on the local daemon capabilities, which
-//                       already existed and which this file already destructures two names off
-//
-// The last one is worth naming explicitly: the policy load did not need a new export invented
-// for it. A surface that loads the default guardrail policy itself is a surface that can load a
-// DIFFERENT one, and the composition has been the single answer to "which policy is in force"
-// since 385 — this file just stopped asking the question twice.
 
 import { randomUUID } from 'node:crypto'
 import { readdirSync } from 'node:fs'
@@ -95,7 +88,6 @@ const {
 const { drainQueue } = LOCAL_CURATION_CAPABILITIES
 const {
   countRemainingCurationWork,
-  loadDefaultGuardrailPolicy,
   readWriterLease,
 } = LOCAL_DAEMON_CAPABILITIES
 
@@ -454,7 +446,6 @@ async function drainInline(
     knowledgeRoot: paths.knowledgeRoot,
     author: FALLBACK_CURATOR_AUTHOR,
     executionContext: resolveRunExecutionContext(),
-    policy: loadDefaultGuardrailPolicy(),
     onJobLifecycle: (event) => {
       seenCandidateIds.add(event.candidateId)
       // The lease is only readable as OURS while the drain holds it, and a durable boundary is

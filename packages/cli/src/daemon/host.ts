@@ -316,7 +316,7 @@ export interface DaemonHostOptions {
   analysisTokenBudget?: ComposeLocalAgentInput['analysisTokenBudget']
   /** Lazy so an idle daemon does not resolve curation credentials until work appears. */
   author?: () => CuratorAuthor | Promise<CuratorAuthor>
-  /** Shipped guardrail policy applied to every daemon-authored curation pass. */
+  // 2026-10-13 (441-27, D-15): unread; 441-27-2 deletes it with its test callers.
   policy?: GuardrailPolicy
   /** Explicit test/embedding override; it wins over the production Plan 08 binding. */
   runExecution?: RunExecutionPort
@@ -1648,11 +1648,8 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     if (initialCandidates.length === 0 && !receiptRequired) return
     // Fail fast, before publishing a session start this host cannot serve. The late-arrival path
     // repeats the same named check at its own resolution point below.
-    if (
-      initialCandidates.length > 0
-      && (input.author === undefined || input.policy === undefined)
-    ) {
-      throw new Error('Daemon curation requires an author factory and guardrail policy')
+    if (initialCandidates.length > 0 && input.author === undefined) {
+      throw new Error('Daemon curation requires an author factory')
     }
 
     const seenCandidateIds = new Set(initialCandidates)
@@ -1678,19 +1675,17 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
      * first observed candidate, whenever it appears; `authorPromise` still memoizes the factory to
      * at most one invocation per process.
      */
-    let curation: { author: CuratorAuthor; policy: GuardrailPolicy; resolvePromotionPosture?: ResolvePromotionPosture } | undefined
+    let curation: { author: CuratorAuthor; resolvePromotionPosture?: ResolvePromotionPosture } | undefined
     const resolveCuration = async (): Promise<{
       author: CuratorAuthor
-      policy: GuardrailPolicy
       resolvePromotionPosture?: ResolvePromotionPosture
     }> => {
       const factory = input.author
-      const policy = input.policy
-      if (factory === undefined || policy === undefined) {
-        throw new Error('Daemon curation requires an author factory and guardrail policy')
+      if (factory === undefined) {
+        throw new Error('Daemon curation requires an author factory')
       }
       const resolvePromotionPosture = await resolveHostPromotionPosture()
-      return { author: await (authorPromise ??= Promise.resolve(factory())), policy,
+      return { author: await (authorPromise ??= Promise.resolve(factory())),
         ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }) }
     }
     if (initialCandidates.length > 0) curation = await resolveCuration()
@@ -1735,7 +1730,6 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           author: sessionCuration.author,
           ...(sessionCuration.resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture: sessionCuration.resolvePromotionPosture }),
           executionContext: 'local-headless',
-          policy: sessionCuration.policy,
           embeddingCapability,
           maintenance: 'skip',
           onJobLifecycle: (event) => {
@@ -2282,10 +2276,9 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         candidateProse: 'no-masker',
         ...misdirectionPostureCapability({ agentQaRoot: input.agentQaRoot }),
         curateRun: async ({ runId: curatedRunId, deadlineMs }) => {
-          const policy = input.policy
           const factory = input.author
-          if (factory === undefined || policy === undefined) {
-            throw new Error('Daemon curation requires an author factory and guardrail policy')
+          if (factory === undefined) {
+            throw new Error('Daemon curation requires an author factory')
           }
           const curationOperations = { ...defaultCurationTailOperations(),
             ...(input.configPath === undefined ? {} : { canaryAblation: createCanaryAblationForHost({
@@ -2305,7 +2298,6 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
             knowledgeRoot: input.knowledgeRoot,
             agentQaRoot: input.agentQaRoot,
             auditSink: createCurationAuditSink(input.agentQaRoot),
-            policy,
             author: await (authorPromise ??= Promise.resolve(factory())),
             authority: { leaseId: acquired.leaseId, epoch: acquired.epoch },
             ...(deadlineMs === undefined ? {} : { deadlineMs }),

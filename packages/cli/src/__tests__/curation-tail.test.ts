@@ -37,7 +37,6 @@ import {
   guardCompletedRunHandoff,
   type CanaryOutcome,
   type CompletedRunHandoff,
-  type GuardrailPolicy,
   type QuarantineLedgerEvent,
   type StepEvidence,
 } from '@vostride/agent-qa-schema'
@@ -59,7 +58,6 @@ const knowledgeRoot = '/workspace/project/agent-qa-knowledge'
 const runId = 'run-curation-tail'
 const auditSink = {} as AuditSink
 const mask = (text: string) => text
-const policy = {} as GuardrailPolicy
 const modelDeps = {} as RunCurationTailOptions['modelDeps']
 
 describe('418 v4 canary receipt contract', () => {
@@ -391,7 +389,6 @@ function baseOptions(
     auditSink,
     mask,
     modelDeps,
-    policy,
     log: { warn: vi.fn() },
     operations,
     ...overrides,
@@ -613,9 +610,8 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
           handoff: completed,
           runDir: join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId)),
           knowledgeRoot,
-          policy,
         })
-        expect(options.policy).toBe(policy)
+        expect(options).not.toHaveProperty('policy')
         return {
           enqueued: 0,
           coalesced: 0,
@@ -682,10 +678,9 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
           knowledgeRoot,
           author,
           executionContext: completed.executionContext,
-          policy,
           signal: controller.signal,
         })
-        expect(options.policy).toBe(policy)
+        expect(options).not.toHaveProperty('policy')
         return {
           kind: 'drained',
           jobsProcessed: 0,

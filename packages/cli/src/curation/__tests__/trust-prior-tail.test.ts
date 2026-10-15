@@ -8,7 +8,6 @@ import { sha256hex } from '@vostride/agent-qa-schema'
 import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
 import { DIGEST_JOB_ID_SOURCE } from '@vostride/agent-qa-agent-local'
 import { markFixture } from '../../gates/__tests__/feedback-fixture.js'
-import { defaultPostRunGuardrailPolicy } from '../curation-tail.js'
 import { defaultPostRunTailOperations, type PostRunTailHostInput, type PostRunTailOperations } from '../post-run-tail.js'
 import { composeCliPostRunTail } from '../post-run-tail-composition.js'
 import { createKnowledgeCommand } from '../../commands/knowledge.js'
@@ -88,7 +87,7 @@ function tail(f: ReturnType<typeof fixture>, held = false) {
   }
   const handle = composeCliPostRunTail({ runId: f.handoff.runId, configDir: f.root, configFilePath: f.configPath,
     knowledgeConfig: { dir: 'agent-qa-knowledge' }, auditSink: { emit: vi.fn() } as never,
-    policy: defaultPostRunGuardrailPolicy(), log: { warn, info }, operations: ops })
+    log: { warn, info }, operations: ops })
   return { handle, fold, sweep, release, acquire, nudge, warn, info, hostInput: () => hostInput! }
 }
 

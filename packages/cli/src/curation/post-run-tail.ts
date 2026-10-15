@@ -379,7 +379,7 @@ function projectProposalGate1(payload: unknown): ProposalGate1Disclosure {
  *
  * `Pick` rather than a restatement: every one of these fields is handed straight through to
  * the per-run fold, and a second declaration of them would be a second place for `auditSink`
- * or `policy` to drift from what the fold actually consumes.
+ * or `mask` to drift from what the fold actually consumes.
  */
 export interface RunPostRunTailOptions extends Pick<
   RunCurationTailOptions,
@@ -391,6 +391,7 @@ export interface RunPostRunTailOptions extends Pick<
   | 'auditSink'
   | 'mask'
   | 'modelDeps'
+  // 2026-10-13 (441-27, D-15): unread; 441-27-2 deletes it with its test callers.
   | 'policy'
   | 'signal'
   | 'log'
@@ -639,7 +640,6 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
       agentQaRoot: opts.agentQaRoot,
       auditSink: opts.auditSink,
       ...(opts.mask === undefined ? {} : { mask: opts.mask }),
-      policy: opts.policy,
       ...(opts.modelDeps === undefined ? {} : { modelDeps: opts.modelDeps }),
       ...(heldAuthority === undefined ? {} : { authority: heldAuthority }),
       ...(deadlineMs === undefined ? {} : { deadlineMs }),
@@ -898,7 +898,6 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
           auditSink: opts.auditSink,
           ...(opts.mask === undefined ? {} : { mask: opts.mask }),
           ...(opts.modelDeps === undefined ? {} : { modelDeps: opts.modelDeps }),
-          policy: opts.policy,
           ...(opts.signal === undefined ? {} : { signal: opts.signal }),
           log: opts.log,
           authority: heldAuthority,

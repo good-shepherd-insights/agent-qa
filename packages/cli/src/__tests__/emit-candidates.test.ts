@@ -38,10 +38,6 @@ import {
   type SubActionEvidence,
   type Verdict,
 } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const queueSpy = vi.hoisted(() => ({
@@ -86,7 +82,6 @@ import {
 } from '../curation/emit-candidates.js'
 
 const ARTIFACT_SHA = 'a'.repeat(64)
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 
 function element(ref: string, name: string, attributes: Record<string, string> = {}): ElementInfo {
   return {
@@ -228,7 +223,7 @@ function handoff(
 
 describe('projectCurationCandidates (CUR-04/SAFE-01)', () => {
   it('projects one PASS-verified resolved element into a selector fact and observation', () => {
-    const [candidate] = projectCurationCandidates(handoff(), policy)
+    const [candidate] = projectCurationCandidates(handoff())
 
     expect(candidate).toMatchObject({
       kind: 'fact',
@@ -267,7 +262,6 @@ describe('projectCurationCandidates (CUR-04/SAFE-01)', () => {
 
     const [candidate] = projectCurationCandidates(
       handoff([testOutcome({}, [step({}, [evidence])])]),
-      policy,
     )
 
     // 2026-10-15 (441-25, D-28): the projection no longer copies element values or interactions.
@@ -317,7 +311,7 @@ describe('projectCurationCandidates (CUR-04/SAFE-01)', () => {
       handoff([testOutcome({}, [multipleResolved])]),
       handoff([testOutcome({ outcome: 'failed' }, [failed])]),
     ]) {
-      expect(projectCurationCandidates(candidateHandoff, policy).filter((row) => row.kind === 'fact'))
+      expect(projectCurationCandidates(candidateHandoff).filter((row) => row.kind === 'fact'))
         .toEqual([])
     }
   })
@@ -344,7 +338,6 @@ describe('projectCurationCandidates (CUR-04/SAFE-01)', () => {
 
     const candidates = projectCurationCandidates(
       handoff([testOutcome({}, [reported, asserted])]),
-      policy,
     ).filter((row) => row.subtype === 'measurement')
 
     expect(candidates).toHaveLength(2)
@@ -367,7 +360,7 @@ describe('projectCurationCandidates (CUR-04/SAFE-01)', () => {
         [],
       ),
     )
-    const cautionCandidates = projectCurationCandidates(handoff(learnable), policy)
+    const cautionCandidates = projectCurationCandidates(handoff(learnable))
     expect(cautionCandidates).toHaveLength(3)
     expect(cautionCandidates.every((candidate) => candidate.kind === 'caution')).toBe(true)
     expect(cautionCandidates.map((candidate) => candidate.rootCauseClass)).toEqual([
@@ -393,7 +386,7 @@ describe('projectCurationCandidates (CUR-04/SAFE-01)', () => {
         [],
       ),
     ])
-    expect(projectCurationCandidates(unknownOnly, policy)).toEqual([])
+    expect(projectCurationCandidates(unknownOnly)).toEqual([])
   })
 
   it('stamps handoff posture and bypass secrecy while remaining deeply deterministic', () => {
@@ -402,8 +395,8 @@ describe('projectCurationCandidates (CUR-04/SAFE-01)', () => {
       { executionContext: 'ci' },
     )
 
-    const first = projectCurationCandidates(input, policy)
-    const second = projectCurationCandidates(input, policy)
+    const first = projectCurationCandidates(input)
+    const second = projectCurationCandidates(input)
 
     expect(second).toEqual(first)
     expect(first).not.toHaveLength(0)
@@ -477,7 +470,6 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
         testOutcome({ testId: 'auth::sign-in', testIndex: 0 }, signInSteps()),
         testOutcome({ testId: 'cart::pay', testIndex: 1, outcome: 'failed' }, failing),
       ]),
-      policy,
     )
     const targets = candidates.filter((row) => row.kind === 'procedure')
 
@@ -508,16 +500,15 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
           flowStep({ stepIndex: 1, stepText: 'B', ref: 'b', name: 'B' }),
         ]),
       ]),
-      policy,
     )
     expect(candidates.filter((row) => row.kind === 'procedure')).toEqual([])
   })
 
   it('re-targets on every projection run with no repetition threshold (D-01)', () => {
     const input = handoff([testOutcome({ testId: 'auth::sign-in' }, signInSteps())])
-    const first = projectCurationCandidates(input, policy)
+    const first = projectCurationCandidates(input)
       .filter((row) => row.kind === 'procedure')
-    const second = projectCurationCandidates(input, policy)
+    const second = projectCurationCandidates(input)
       .filter((row) => row.kind === 'procedure')
     expect(first).toHaveLength(1)
     expect(second).toEqual(first)
@@ -534,7 +525,6 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
     })
     const [target] = projectCurationCandidates(
       handoff([testOutcome({ testId: 'auth::sign-in' }, steps)]),
-      policy,
     ).filter((row) => row.kind === 'procedure')
 
     const seed = parseProcedureTrajectorySeed(target!.bodySeed)
@@ -591,7 +581,6 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
 
     const [target] = projectCurationCandidates(
       handoff([testOutcome({ testId: 'checkout::typed-scalars' }, steps)]),
-      policy,
     ).filter((row) => row.kind === 'procedure')
     const seed = parseProcedureTrajectorySeed(target!.bodySeed)
 
@@ -636,7 +625,6 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
 
     const [target] = projectCurationCandidates(
       handoff([testOutcome({ testId: 'checkout::composite-values' }, steps)]),
-      policy,
     ).filter((row) => row.kind === 'procedure')
     const seed = parseProcedureTrajectorySeed(target!.bodySeed)
 
@@ -663,7 +651,6 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
 
     const [target] = projectCurationCandidates(
       handoff([testOutcome({ testId: 'auth::unrepresentable' }, steps)]),
-      policy,
     ).filter((row) => row.kind === 'procedure')
     const seed = JSON.parse(target!.bodySeed) as {
       steps: Array<{ action?: unknown }>
@@ -685,7 +672,6 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
 
     const [target] = projectCurationCandidates(
       handoff([testOutcome({ testId: 'auth::masked-composite' }, steps)]),
-      policy,
     ).filter((row) => row.kind === 'procedure')
     const seed = JSON.parse(target!.bodySeed) as {
       steps: Array<{ action?: unknown }>
@@ -712,7 +698,6 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
     }
     const [target] = projectCurationCandidates(
       handoff([testOutcome({ testId: input.testId }, steps)]),
-      policy,
     ).filter((row) => row.kind === 'procedure')
     return parseProcedureTrajectorySeed(target!.bodySeed)
   }
@@ -803,7 +788,6 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
 
     const [target] = projectCurationCandidates(
       handoff([testOutcome({ testId: 'auth::marker-composite' }, steps)]),
-      policy,
     ).filter((row) => row.kind === 'procedure')
     const seed = JSON.parse(target!.bodySeed) as { steps: Array<{ action?: unknown }> }
 
@@ -831,7 +815,6 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
     })
     const [target] = projectCurationCandidates(
       handoff([testOutcome({ testId: 'auth::sign-in' }, steps)]),
-      policy,
     ).filter((row) => row.kind === 'procedure')
 
     const seed = parseProcedureTrajectorySeed(target!.bodySeed)
@@ -881,7 +864,6 @@ describe('C441-CURATION', () => {
     ]
     const [target] = projectCurationCandidates(
       handoff([testOutcome({ testId: 'auth::c441-slot' }, steps)]),
-      policy,
     ).filter((row) => row.kind === 'procedure')
     return parseProcedureTrajectorySeed(target!.bodySeed)?.steps[1]?.action?.values['text']
   }
@@ -916,7 +898,6 @@ describe('emitCurationCandidates atomic queue drop (CUR-04)', () => {
     runDir: string
     knowledgeRoot: string
     handoff: CompletedRunHandoff
-    policy: typeof policy
   } {
     const root = mkdtempSync(join(tmpdir(), 'agent-qa-emit-candidates-'))
     roots.push(root)
@@ -942,7 +923,6 @@ describe('emitCurationCandidates atomic queue drop (CUR-04)', () => {
       runDir,
       knowledgeRoot,
       handoff: handoff([testOutcome({}, [resolvedStep])]),
-      policy,
     }
   }
 
@@ -1308,7 +1288,6 @@ describe('emitCurationCandidates atomic queue drop (CUR-04)', () => {
       handoff: handoff([testOutcome({}, [first, second])]),
       runDir: fixture.runDir,
       knowledgeRoot: fixture.knowledgeRoot,
-      policy,
     }
 
     const report = emitCurationCandidates(input)
@@ -1372,7 +1351,7 @@ describe('emitCurationCandidates atomic queue drop (CUR-04)', () => {
       }
 
       const report = emitCurationCandidates({ ...fixture, handoff: input })
-      const projected = projectCurationCandidates(input, fixture.policy)
+      const projected = projectCurationCandidates(input)
 
       // The one-outcome-per-candidate invariant, now observable per kind: projected
       // count per kind == details of that kind, and the outcome split sums to it.

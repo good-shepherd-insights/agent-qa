@@ -37,9 +37,7 @@ import {
 import { ENTITY_INDEX_SWEEP_INTERVAL_MS } from '@vostride/agent-qa-agent-local'
 import type { CuratorAuthor } from '@vostride/agent-qa-agent-local'
 import {
-  defaultGuardrailPolicyInput,
   getActiveExecutionContext,
-  loadGuardrailPolicy,
   resolveExecutionContext,
   setActiveExecutionContextResolver,
 } from '@vostride/agent-qa-safety'
@@ -462,7 +460,6 @@ function drainHostHarness(options: {
     config: TEST_CONFIG,
     model: () => TEST_MODEL,
     ...(options.author === undefined ? {} : { author: options.author }),
-    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
     operations,
     logger: { info: vi.fn(), error: (message) => errors.push(message) },
   })
@@ -818,7 +815,6 @@ describe('runDaemonHost — D-09 execution-posture pin (386-04 #2)', () => {
         knowledgeRoot: paths.knowledgeRoot,
         config: TEST_CONFIG,
         model: () => TEST_MODEL,
-        policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
         operations: harness.operations,
         logger: { info: vi.fn(), error: vi.fn() },
       })
@@ -3300,7 +3296,7 @@ describe('drain session authorship at every arrival time', () => {
     expect(authorFactory).toHaveBeenCalledTimes(1)
     expect(harness.drainCalls).toHaveLength(1)
     expect(harness.drainCalls[0]?.author).toBe(author)
-    expect(harness.drainCalls[0]?.policy).toBeDefined()
+    expect(harness.drainCalls[0]).not.toHaveProperty('policy')
     expect(harness.receipts).toHaveLength(1)
     expect(harness.receipts[0]).toMatchObject({
       candidateIds: [LATE_CANDIDATE_ID],
@@ -3338,7 +3334,7 @@ describe('drain session authorship at every arrival time', () => {
     expect(harness.drainCalls).toEqual([])
     expect(harness.receipts).toEqual([])
     expect(harness.errors.join('\n')).toContain(
-      'Daemon curation requires an author factory and guardrail policy',
+      'Daemon curation requires an author factory',
     )
   })
 

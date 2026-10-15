@@ -9,10 +9,7 @@
 //
 // A COMPOSITION, NOT A POLICY. Everything here is either handed in or DERIVED from something handed
 // in; nothing is chosen. The two derivations are the two every caller was doing anyway:
-// `agentQaRoot` is `<configDir>/.agent-qa` and `configPath` is the resolved config file. The one
-// default — the guardrail policy — is the expression both `run.ts` sites already used, reached
-// through `curation-tail.ts` because that is the file ledgered to name the gate package (see
-// `defaultPostRunGuardrailPolicy`).
+// `agentQaRoot` is `<configDir>/.agent-qa` and `configPath` is the resolved config file.
 //
 // WHAT IT DOES NOT DO. It does not drain, finish, or decide who pumps. It hands back the SAME
 // `PostRunTailHandle` the tail has always returned, and the caller drives its two legs — because
@@ -22,18 +19,15 @@
 //
 // Import discipline (FUNC-02): a file written today may name only `agent`, `agent-local`,
 // `analytics` and `schema` across package boundaries, and the ledger only ever shrinks. This file
-// names `schema` for two types and nothing else; the guardrail policy, the audit sink type and the
-// masking context all arrive through relative modules that are already ledgered for them.
+// names `schema` for two types and nothing else; the audit sink type and the mask arrive through
+// relative modules that are already ledgered for them.
 
 import { createCanaryAblationForHost } from '../gates/canary-ablation-host.js'
 import { resolve } from 'node:path'
 
 import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
 
-import {
-  defaultPostRunGuardrailPolicy,
-  type RunCurationTailOptions,
-} from './curation-tail.js'
+import type { RunCurationTailOptions } from './curation-tail.js'
 import {
   runPostRunTail,
   type PostRunEnqueueOutcome,
@@ -68,7 +62,7 @@ export interface ComposeCliPostRunTailInput {
    */
   readonly mask?: RunCurationTailOptions['mask']
   readonly modelDeps?: RunCurationTailOptions['modelDeps']
-  /** A caller's own policy. Absent ⇒ `defaultPostRunGuardrailPolicy()`, the shipped expression. */
+  // 2026-10-13 (441-27, D-15): unread; 441-27-2 deletes it with its test callers.
   readonly policy?: RunCurationTailOptions['policy']
   readonly signal?: RunCurationTailOptions['signal']
   readonly log: RunCurationTailOptions['log']
@@ -104,7 +98,6 @@ export function composeCliPostRunTail(input: ComposeCliPostRunTailInput): PostRu
     knowledgeConfig: input.knowledgeConfig,
     configDir: input.configDir,
     auditSink: input.auditSink,
-    policy: input.policy ?? defaultPostRunGuardrailPolicy(),
     log: input.log,
     ...(input.mask === undefined ? {} : { mask: input.mask }),
     ...(input.modelDeps === undefined ? {} : { modelDeps: input.modelDeps }),

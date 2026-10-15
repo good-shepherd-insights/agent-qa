@@ -212,7 +212,6 @@ export function createDaemonCommand(deps: DaemonCommandDeps = DEFAULT_DEPS): Com
           // resolution as the model binding above (386 D-15) — no second config surface.
           analysisTokenBudget: () => resolveCliAnalysisTokenBudget(configPath),
           author: () => resolveDaemonCuratorAuthor(configPath),
-          policy: LOCAL_DAEMON_CAPABILITIES.loadDefaultGuardrailPolicy(),
         })
         // The daemon runs until a signal closes it, so this is the one drain point: everything it
         // captured while dispatching is flushed here, and the transport's timers are released so

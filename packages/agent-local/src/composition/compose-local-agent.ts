@@ -179,9 +179,7 @@ import type { ServedRecordFacts } from '@vostride/agent-qa-knowledge-local'
 export type { ServedRecordFacts, MarkTriage, ApplyFeedbackInput } from '@vostride/agent-qa-knowledge-local'
 import { ReplayIncompleteError } from '@vostride/agent-qa-runner'
 import {
-  defaultGuardrailPolicyInput,
   getActiveExecutionContext,
-  loadGuardrailPolicy,
   setActiveExecutionContextResolver,
 } from '@vostride/agent-qa-safety'
 import {
@@ -421,7 +419,6 @@ export interface LocalDaemonCapabilities {
     expected: OwnedEmbedderWorkerRegistration,
   ) => ReturnType<typeof removeEmbedderWorkerRegistration>
   readonly resetEmbedderCapability: () => void
-  readonly loadDefaultGuardrailPolicy: () => ReturnType<typeof loadGuardrailPolicy>
   readonly pinLocalHeadlessExecutionContext: () => void
 }
 
@@ -455,7 +452,6 @@ export const LOCAL_DAEMON_CAPABILITIES: LocalDaemonCapabilities = Object.freeze(
   verifyEmbedderWorkerIncarnation,
   removeEmbedderWorkerRegistration,
   resetEmbedderCapability: () => resetEmbedderCapability(DEFAULT_EMBEDDING_PROFILE),
-  loadDefaultGuardrailPolicy: () => loadGuardrailPolicy(defaultGuardrailPolicyInput),
   pinLocalHeadlessExecutionContext: () => {
     setActiveExecutionContextResolver(() => 'local-headless')
   },
@@ -481,7 +477,7 @@ export interface LocalKnowledgeMaintenanceCapabilities {
 }
 
 interface ReceiptWriterInput extends Pick<CreateLocalKnowledgeStoreConfig,
-  'knowledgeRoot' | 'executionContext' | 'policy' | 'resolvePromotionPosture' | 'resolveTrustPriors' | 'sourceBuildOrdinal' | 'sourceRunId'> {
+  'knowledgeRoot' | 'executionContext' | 'resolvePromotionPosture' | 'resolveTrustPriors' | 'sourceBuildOrdinal' | 'sourceRunId'> {
   /** The caller already holds this authority; these capabilities never acquire a lease. */
   lease: { leaseId: string; epoch: number }
 }
@@ -501,7 +497,6 @@ function receiptWriter(input: ReceiptWriterInput) {
     executionContext: input.executionContext,
     writerLeaseId: input.lease.leaseId,
     epoch: input.lease.epoch,
-    ...(input.policy === undefined ? {} : { policy: input.policy }),
     ...(input.resolveTrustPriors === undefined ? {} : { resolveTrustPriors: input.resolveTrustPriors }),
     ...(input.resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture: input.resolvePromotionPosture }),
     ...(input.sourceBuildOrdinal === undefined ? {} : { sourceBuildOrdinal: input.sourceBuildOrdinal }),

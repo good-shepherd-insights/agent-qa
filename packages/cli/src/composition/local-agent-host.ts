@@ -638,10 +638,10 @@ export interface ComposeCliLocalAgentInput {
   /**
    * What the post-run chain's real handlers may do (388 D-01).
    *
-   * A passthrough, deliberately: `curateRun` needs the writer lease, a knowledge root, a
-   * guardrail policy and the run's curation author, and the only place in this process where
-   * all four already meet is the run tail that holds them. Composing one here would be a
-   * second assembly of the same four facts.
+   * A passthrough, deliberately: `curateRun` needs the writer lease, a knowledge root and the
+   * run's curation author, and the only place in this process where all three already meet is
+   * the run tail that holds them. Composing one here would be a second assembly of the same
+   * three facts.
    */
   postRun?: {
     curateRun: (input: {

@@ -30,11 +30,7 @@ import {
   loadCompletedRunHandoff,
   slugBranch,
 } from '@vostride/agent-qa-runner-local'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-  type AuditSink,
-} from '@vostride/agent-qa-safety'
+import type { AuditSink } from '@vostride/agent-qa-safety'
 import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
 import type {
   ExecutionContext,
@@ -154,7 +150,8 @@ export interface RunCurationTailOptions {
   mask?: MaskFn
   /** The exact already-resolved planner profile and auth used by the run. */
   modelDeps?: CurationTailModelDeps
-  policy: GuardrailPolicy
+  // 2026-10-13 (441-27, D-15): unread; 441-27-2 deletes it with its test callers.
+  policy?: GuardrailPolicy
   signal?: AbortSignal
   log: CurationTailLogger
   /** 388-02: the sweep runs under the post-run tail's held lease when there is one. */
@@ -469,7 +466,8 @@ export interface CurateCompletedRunInput {
   agentQaRoot: string
   auditSink: AuditSink
   mask?: MaskFn
-  policy: GuardrailPolicy
+  // 2026-10-13 (441-27, D-15): unread; 441-27-2 deletes it with its test callers.
+  policy?: GuardrailPolicy
   modelDeps?: CurationTailModelDeps
   /** An already-resolved author wins over `modelDeps`; a standing host holds one per process. */
   author?: CurationAuthorCapability
@@ -706,7 +704,6 @@ export async function curateCompletedRun(
         handoff: input.handoff,
         runDir: input.runDir,
         knowledgeRoot: input.knowledgeRoot,
-        policy: input.policy,
         ...(input.mask === undefined ? {} : { mask: input.mask }),
       })
       // 381-50: visibility never gates — the summary line is additive diagnosis
@@ -793,7 +790,6 @@ export async function curateCompletedRun(
         knowledgeRoot: input.knowledgeRoot,
         author,
         executionContext: input.handoff.executionContext,
-        policy: input.policy,
         ...(input.authority === undefined ? {} : { lease: input.authority }),
         ...(budgetMs === undefined ? {} : { budgetMs }),
         ...(input.signal === undefined ? {} : { signal: input.signal }),
@@ -1048,7 +1044,6 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
         agentQaRoot: opts.agentQaRoot,
         auditSink: opts.auditSink,
         ...(opts.mask === undefined ? {} : { mask: opts.mask }),
-        policy: opts.policy,
         ...(opts.modelDeps === undefined ? {} : { modelDeps: opts.modelDeps }),
         ...(opts.authority === undefined ? {} : { authority: opts.authority }),
         ...(opts.deadlineMs === undefined ? {} : { deadlineMs: opts.deadlineMs }),
@@ -1070,24 +1065,6 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
       if (opts.signal?.aborted === true) return
     }
   }
-}
-
-/**
- * The ONE guardrail policy the post-run legs fold under (404 D-06).
- *
- * IT LIVES HERE BECAUSE OF THE FIREWALL, and that is a real constraint rather than filing. FUNC-02
- * lets a `packages/cli` file name only `agent`, `agent-local`, `analytics` and `schema` unless it
- * carries an exact ledger entry, and the ledger ONLY EVER SHRINKS — a file written today can never
- * join it. This file is ledgered for `@vostride/agent-qa-safety`; `post-run-tail-composition.ts`
- * is not and never will be. So the one composition helper every host's tail goes through resolves
- * its default policy by calling this, rather than by naming the gate package itself.
- *
- * IT IS THE SAME EXPRESSION BOTH `run.ts` SITES USED, moved rather than re-chosen:
- * `loadGuardrailPolicy(defaultGuardrailPolicyInput)`. A caller with a policy of its own still
- * passes one; this is what an absent one resolves to, in one place instead of per site.
- */
-export function defaultPostRunGuardrailPolicy(): GuardrailPolicy {
-  return loadGuardrailPolicy(defaultGuardrailPolicyInput)
 }
 
 export interface RunVerdictFirstCurationTailOptions {

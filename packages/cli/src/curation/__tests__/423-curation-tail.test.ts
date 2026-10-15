@@ -48,7 +48,7 @@ function fixture(over: Record<string, unknown> = {}) {
   } as unknown as Partial<tailModule.CurationTailOperations>
   const input = { runDir: root, handoff: { runId: RUN_ID, schemaVersion: 5, buildOrdinal: 42,
     executionContext: 'local-headless', scope: { tier: 'product', key: 'storefront' } },
-    knowledgeRoot: join(root, 'knowledge'), agentQaRoot: root, auditSink: {}, policy: {},
+    knowledgeRoot: join(root, 'knowledge'), agentQaRoot: root, auditSink: {},
     authority: { leaseId: 'lease', epoch: 1 }, log: { warn: vi.fn(), info }, operations,
   } as unknown as tailModule.CurateCompletedRunInput
   return { root, input, drainQueue, info, canaryDetail }
@@ -83,7 +83,7 @@ describe('423 curation tail snapshot', () => {
     mkdirSync(f.input.knowledgeRoot, { recursive: true })
     const drainQueue = vi.fn(LOCAL_CURATION_CAPABILITIES.drainQueue)
     const { authority: _fake, ...unleased } = f.input
-    const input = { ...unleased, policy: tailModule.defaultPostRunGuardrailPolicy(),
+    const input = { ...unleased,
       operations: { ...f.input.operations, drainQueue } } as tailModule.CurateCompletedRunInput
     const first = await tailModule.curateCompletedRun(input)
     expect(first).toMatchObject({ complete: true, drainKind: 'drained', curated: 0, deprecated: 0 })
@@ -170,7 +170,7 @@ describe('423 curation tail snapshot', () => {
       readPostProcessingStatus: async () => ({ kind: 'ready' }), readRunDigest: async () => ({}), now: () => 1000,
     } as unknown as PostRunTailOperations
     await runPostRunTail({ runId: RUN_ID, agentQaRoot: root, configPath: join(root, 'agent-qa.config.yaml'),
-      knowledgeConfig: { dir: 'knowledge' }, configDir: root, auditSink: {}, policy: {},
+      knowledgeConfig: { dir: 'knowledge' }, configDir: root, auditSink: {},
       log: { warn: () => undefined }, operations } as never).drain()
     expect(await bound!.curateRun({ runId: RUN_ID, executionContext: 'local-headless' })).toHaveProperty('snapshot', snapshot)
     expect(bound!.resolveClaimAuthority?.()).toBeUndefined()
@@ -206,7 +206,7 @@ describe('423 curation tail snapshot', () => {
       await enqueueThroughTheStep({ runId: zeroRun, agentQaRoot: root, configPath, composeHost: () => composeHost() })
       const tail = runPostRunTail({ runId: zeroRun, agentQaRoot: root, configPath,
         knowledgeConfig: { dir: 'knowledge' }, configDir: root, auditSink: {} as AuditSink,
-        policy: tailModule.defaultPostRunGuardrailPolicy(), log: { warn: () => undefined, info: () => undefined },
+        log: { warn: () => undefined, info: () => undefined },
         operations: { resolveKnowledgeRoot: () => knowledge, runCurationTail: async () => undefined,
           composeHost } as unknown as PostRunTailOperations } as never)
       await tail.drain()
@@ -319,7 +319,6 @@ async function startDaemon() {
     config: TEST_CONFIG,
     model: () => TEST_MODEL,
     author: () => async () => ({ kind: 'fallback-required' as const, reason: 'no-model' as const }),
-    policy: tailModule.defaultPostRunGuardrailPolicy(),
     operations,
     logger: { info: () => undefined, error: () => undefined },
   } as unknown as Parameters<typeof runDaemonHost>[0])

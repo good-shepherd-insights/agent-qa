@@ -22,7 +22,7 @@ import { promotionHostProof } from './promotion-host-proof.js'
 import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
 import { DIGEST_JOB_ID_SOURCE } from '@vostride/agent-qa-agent-local'
 import type { AuditSink } from '@vostride/agent-qa-safety'
-import type { GuardrailPolicy, ResolvePromotionPosture } from '@vostride/agent-qa-schema'
+import type { ResolvePromotionPosture } from '@vostride/agent-qa-schema'
 
 import { runVerdictFirstCurationTail } from '../curation/curation-tail.js'
 import {
@@ -136,7 +136,6 @@ function options(h: Harness): RunPostRunTailOptions {
     configDir,
     auditSink: {} as AuditSink,
     mask: (text: string) => text,
-    policy: {} as GuardrailPolicy,
     log: { warn: (message: string) => h.warn(message) },
     operations: h.operations,
   }
@@ -575,7 +574,6 @@ describe('the tail can never reach the exit code (JOBQ-06)', () => {
       knowledgeConfig: { dir: 'agent-qa-knowledge' },
       configDir,
       auditSink: {} as AuditSink,
-      policy: {} as GuardrailPolicy,
       log: { warn: (message: string) => warn(message) },
       operations: exploding,
     })
