@@ -259,6 +259,23 @@ describe('C441-EGRESS', () => {
     expect(recorded).not.toContain('Hunter-42-zz')
   })
 })
+
+describe('C441-GAP-DISPLAY', () => {
+  it('the judge panel preview keeps its keys when a declared value is a key name and masks string leaves', async () => {
+    const f = fixture()
+    const declared = new SecretRedactor(SecretStore.fromEnvContent(
+      'JUDGE_API_KEY=fixture-private-api-key\nKEY_441=kind\nSTATUS_441=uncalibrated'))
+    f.input.mask = text => declared.redactString(text)
+
+    const preview = await runJudgePanelCalibration(f.input)
+
+    expect(preview.kind).toBe('dry-run')
+    expect(Object.keys(preview)).toContain('kind')
+    expect(JSON.stringify(preview)).not.toContain('"[secret:KEY_441]":')
+    expect(preview.status).toBe('[secret:STATUS_441]')
+    expect(preview.minN).toBe(20)
+  })
+})
 function addEvidence(project: string, index: number, model: core.CassetteModelReceipt, members: readonly string[], ambiguous = false, excluded = false, stepText?: string) {
   const root = join(project, '.agent-qa')
   const committedRoot = join(project, 'agent-qa-eval')

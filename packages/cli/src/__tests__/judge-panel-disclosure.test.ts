@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, cpSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -199,4 +199,22 @@ it('does not select calibration for a later config with a different actual repla
   const result = await runReportVerb(f.session)
   expect(result.report.judge?.calibration).toEqual({ status: 'uncalibrated', n: 0, provenance: 'unavailable' })
   expect(reader.read).not.toHaveBeenCalled()
+})
+
+describe('C441-GAP-DISPLAY', () => {
+  it('judge calibrate keeps numbers and DTO keys with a one-digit declared value and masks string leaves', async () => {
+    const f = await fixture()
+    writeFileSync(join(f.root, 'fixture.secrets'), 'PIN_441=0\nPW_441=pa"ss\n')
+    const session = await resolveEvalSession({ configPath: f.session.configPath })
+
+    const result = await runJudgeCalibrateVerb(session)
+
+    expect(result).toMatchObject({ kind: 'capability-gap', reason: 'no-credential', minN: 20, n: 0,
+      cost: { callBound: 0, usage: { calls: 0 } } })
+    expect(Object.keys(result).filter(key => key.includes('[secret:'))).toEqual([])
+    const shown = JSON.stringify(result)
+    expect(shown).toContain('[secret:PIN_441]')
+    expect(shown).not.toContain('pa"ss')
+    expect(shown).not.toContain('pa\\"ss')
+  })
 })
