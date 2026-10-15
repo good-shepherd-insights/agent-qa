@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { IncomingMessage, type IncomingHttpHeaders, type ServerResponse } from 'node:http'
 import { Socket } from 'node:net'
@@ -491,5 +492,39 @@ describe('C441-GAP2-WRITE-BACK', () => {
     expect(message).toContain('Edit your config or test file directly')
     expect(message).not.toMatch(/change the value in your secrets file/i)
     expect(await readFile(configPath, 'utf-8')).toBe(before)
+  })
+})
+
+describe('C441-GAP3-WRITE-BACK', () => {
+  const revisionOf = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
+
+  it('replaceDocument refuses a document that adds a shown marker and leaves the file unchanged', async () => {
+    const { configPath } = await configWorkspace(WRITE_LINES)
+    const manager = new ConfigManager(configPath, declaredMask)
+    const before = await readFile(configPath)
+    const next = new TextEncoder().encode(
+      before.toString('utf-8').replace('  llm: proxy', '  llm: proxy-[secret:X]'),
+    )
+
+    const outcome = await manager.replaceDocument(revisionOf(before), next)
+
+    expect(outcome).toEqual({
+      kind: 'refused',
+      error: 'marker_written_back',
+      message: MARKER_WRITTEN_BACK_SENTENCE,
+    })
+    expect(await readFile(configPath, 'utf-8')).toBe(before.toString('utf-8'))
+  })
+
+  it('replaceDocument writes a document that keeps a marker its current bytes already hold, as often', async () => {
+    const { configPath } = await configWorkspace(['# owner note: [secret:X] stays', ...WRITE_LINES])
+    const manager = new ConfigManager(configPath, declaredMask)
+    const before = await readFile(configPath)
+    const nextText = before.toString('utf-8').replace('appState: preserve', 'appState: reset')
+
+    const outcome = await manager.replaceDocument(revisionOf(before), new TextEncoder().encode(nextText))
+
+    expect(outcome).toMatchObject({ kind: 'ok' })
+    expect(await readFile(configPath, 'utf-8')).toBe(nextText)
   })
 })

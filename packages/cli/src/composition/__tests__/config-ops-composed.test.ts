@@ -698,3 +698,45 @@ describe('retained control: config.undo.propose still files its own proposal unt
     expect(existsSync(join(root, '.agent-qa', 'proposals'))).toBe(false)
   })
 })
+
+describe('C441-GAP3-WRITE-BACK', () => {
+  const MARKED_HOOK = { name: '[secret:X]-login', runtime: 'node', file: 'hooks/[secret:X]-login.ts' }
+
+  // The fields arm's marker_written_back clause, read off a real refusal on the same host.
+  async function fieldsArmRefusal(): Promise<{ reason: unknown; clause: string }> {
+    const fields = await viaHost('config.field.set', { path: 'workspace.envFile', value: '[secret:X].env' })
+    expect(fields).toMatchObject({ outcome: 'refused', reason: 'write-refused' })
+    const clause = /as it now stands: (.+?)(?: \(at [^)]*\))?, so nothing was written\.$/
+      .exec(String(fields.detail))?.[1]
+    expect(clause).toContain('[secret:<name>]')
+    return { reason: fields.reason, clause: clause ?? '' }
+  }
+
+  it('config.hook.add whose name and file hold a shown marker is refused in the fields arm\'s words, and nothing is written',
+    async () => {
+      writeFileSync(join(root, '.env.secrets.local'), '')
+      const hooksBefore = readFileSync(join(root, 'hooks.yaml'), 'utf8')
+      const { reason, clause } = await fieldsArmRefusal()
+
+      const answer = await viaHost('config.hook.add', MARKED_HOOK)
+
+      expect(answer).toEqual({
+        outcome: 'refused',
+        reason,
+        detail: `hooks.yaml refused this change as it now stands: ${clause}, so nothing was written.`,
+      })
+      expect(readFileSync(join(root, 'hooks.yaml'), 'utf8')).toBe(hooksBefore)
+      expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG)
+    })
+
+  it('config.hook.add with a shown marker in a project with no hooks file leaves it absent', async () => {
+    writeFileSync(join(root, '.env.secrets.local'), '')
+    rmSync(join(root, 'hooks.yaml'))
+
+    const answer = await viaHost('config.hook.add', MARKED_HOOK)
+
+    expect(answer).toMatchObject({ outcome: 'refused', reason: 'write-refused' })
+    expect(existsSync(join(root, 'hooks.yaml'))).toBe(false)
+    expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG)
+  })
+})
