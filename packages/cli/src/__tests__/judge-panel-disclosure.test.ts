@@ -204,16 +204,68 @@ it('does not select calibration for a later config with a different actual repla
 describe('C441-GAP-DISPLAY', () => {
   it('judge calibrate keeps numbers and DTO keys with a one-digit declared value and masks string leaves', async () => {
     const f = await fixture()
-    writeFileSync(join(f.root, 'fixture.secrets'), 'PIN_441=0\nPW_441=pa"ss\nSRC_441=default\n')
+    writeFileSync(join(f.root, 'fixture.secrets'), 'PIN_441=0\nPW_441=pa"ss\nSRC_441=default\nID_441=panel:claude\n')
     const session = await resolveEvalSession({ configPath: f.session.configPath })
 
     const result = await runJudgeCalibrateVerb(session)
 
     expect(result).toMatchObject({ kind: 'capability-gap', reason: 'no-credential', minN: 20, n: 0,
-      cost: { callBound: 0, usage: { calls: 0 } }, minNSource: '[secret:SRC_441]' })
+      cost: { callBound: 0, usage: { calls: 0 } }, minNSource: 'default' })
     expect(Object.keys(result).filter(key => key.includes('[secret:'))).toEqual([])
+    expect('identity' in result && result.identity?.judgeModelId).toBe('[secret:ID_441]-sonnet-4-5+gemini-2.5-pro')
     const shown = JSON.stringify(result)
     expect(shown).not.toContain('pa"ss')
     expect(shown).not.toContain('pa\\"ss')
+    expect(shown).not.toContain('panel:claude')
+  })
+})
+
+describe('C441-GAP2-JUDGE', () => {
+  async function gapFixture(secrets: string) {
+    const f = await fixture()
+    const config = JSON.parse(readFileSync(f.session.configPath, 'utf8'))
+    config.registry.llms[1].name = 'reviewer-gap-one'
+    config.eval.judges = ['reviewer-gap-one', 'b']
+    writeFileSync(f.session.configPath, JSON.stringify(config))
+    writeFileSync(join(f.root, 'fixture.secrets'), secrets)
+    return f
+  }
+
+  it('eval calibrate --judge-panel prints the capability gap when a declared value spells part of its status', async () => {
+    const f = await gapFixture('GAP_441=gap\n')
+    const { Command } = await import('commander')
+    const { createEvalCommand } = await import('../commands/eval.js')
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const exitCode = process.exitCode
+    process.exitCode = undefined
+    try {
+      const program = new Command('agent-qa').option('--config <path>').addCommand(createEvalCommand()).exitOverride()
+      await program.parseAsync(['--config', f.session.configPath, 'eval', 'calibrate', '--judge-panel'], { from: 'user' })
+      const lines = log.mock.calls.map(row => row.join(' '))
+      expect(lines.some(line => line.startsWith('judge panel: capability-gap'))).toBe(true)
+      expect(lines).toContain('capability gap: no-credential')
+      expect(error).not.toHaveBeenCalled()
+      expect(process.exitCode).toBeUndefined()
+    } finally {
+      process.exitCode = exitCode
+    }
+  })
+
+  it('judge calibrate returns its discriminants as written and masks a judge name and the panel identity', async () => {
+    const f = await gapFixture('GAP_441=gap\nPANEL_441=panel:claude-sonnet-4-5\n')
+    const session = await resolveEvalSession({ configPath: f.session.configPath })
+
+    const result = await runJudgeCalibrateVerb(session)
+
+    expect(result).toMatchObject({ kind: 'capability-gap', status: 'capability-gap', reason: 'no-credential',
+      minNSource: 'default', artifactDisposition: 'not-created',
+      judgeTargeted: { basis: 'raw', source: 'unavailable', reason: 'not-read' } })
+    expect(result.entries?.map(entry => entry.name)).toEqual(['reviewer-[secret:GAP_441]-one', 'b'])
+    expect(result.entries?.map(entry => entry.credential)).toEqual(['resolution-failed', 'resolution-failed'])
+    expect('identity' in result && result.identity?.judgeModelId).toBe('[secret:PANEL_441]+gemini-2.5-pro')
+    const shown = JSON.stringify(result)
+    expect(shown).not.toContain('reviewer-gap-one')
+    expect(shown).not.toContain('panel:claude-sonnet-4-5')
   })
 })

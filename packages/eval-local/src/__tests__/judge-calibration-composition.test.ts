@@ -262,7 +262,7 @@ describe('C441-EGRESS', () => {
 
 describe('C441-GAP-DISPLAY', () => {
   it('the judge panel preview keeps its keys when a declared value is a key name and masks string leaves', async () => {
-    const f = fixture()
+    const f = fixture([{ resolvedModelId: 'uncalibrated-recorder' }])
     const declared = new SecretRedactor(SecretStore.fromEnvContent(
       'JUDGE_API_KEY=fixture-private-api-key\nKEY_441=kind\nSTATUS_441=uncalibrated'))
     f.input.mask = text => declared.redactString(text)
@@ -272,8 +272,47 @@ describe('C441-GAP-DISPLAY', () => {
     expect(preview.kind).toBe('dry-run')
     expect(Object.keys(preview)).toContain('kind')
     expect(JSON.stringify(preview)).not.toContain('"[secret:KEY_441]":')
-    expect(preview.status).toBe('[secret:STATUS_441]')
+    expect(preview.status).toBe('uncalibrated')
     expect(preview.minN).toBe(20)
+    expect(preview.rows.map(row => row.recordedModelId)).toEqual(['[secret:STATUS_441]-recorder'])
+  })
+})
+
+describe('C441-GAP2-JUDGE', () => {
+  it('the judge panel preview keeps its status and row kinds as written and masks a recorded model id', async () => {
+    const f = fixture([{}, { resolvedModelId: 'recorded-tedious-model' }])
+    const declared = new SecretRedactor(SecretStore.fromEnvContent(
+      'JUDGE_API_KEY=fixture-private-api-key\nTED_441=ted'))
+    f.input.mask = text => declared.redactString(text)
+
+    const preview = await runJudgePanelCalibration(f.input)
+
+    expect(preview.status).toBe('uncalibrated')
+    expect(preview.rows.map(row => row.kind).sort()).toEqual(['attempted', 'not-invoked'])
+    expect(preview.rows.flatMap(row => row.recordedModelId === undefined ? [] : [row.recordedModelId]))
+      .toEqual(['recorded-[secret:TED_441]ious-model'])
+    expect(JSON.stringify(preview)).not.toContain('tedious')
+  })
+
+  it('keeps a value raw only at a closed-vocabulary path of its arm, never by a bare key name', () => {
+    const declared = new SecretRedactor(SecretStore.fromEnvContent(
+      'INSPECT_441=inspect\nCRED_441=credential'))
+    const mask = (text: string) => declared.redactString(text)
+
+    const refused = local.maskJudgeCalibrationText({ kind: 'refused', reason:
+      'Judge calibration evidence unavailable or invalid; inspect the selected corpus and saved replays.' }, mask)
+    expect(refused.kind).toBe('refused')
+    expect(refused.reason).toContain('[secret:INSPECT_441]')
+    expect(refused.reason).not.toContain('inspect')
+
+    const gap = { kind: 'capability-gap' as const, status: 'capability-gap' as const, reason: 'no-credential' as const,
+      minN: 20, minNSource: 'default' as const, n: 0, artifactDisposition: 'not-created' as const,
+      cost: { callBound: 0, usage: { calls: 0 } },
+      judgeTargeted: { basis: 'raw' as const, source: 'unavailable' as const, reason: 'not-read' as const },
+      entries: [{ index: 0, name: 'inspect-judge', families: [], credential: 'resolution-failed' as const,
+        failures: ['config-unresolved', 'no-credential'] as const }] }
+    const masked = local.maskJudgeCalibrationText(gap, mask)
+    expect(masked).toEqual({ ...gap, entries: [{ ...gap.entries[0], name: '[secret:INSPECT_441]-judge' }] })
   })
 })
 function addEvidence(project: string, index: number, model: core.CassetteModelReceipt, members: readonly string[], ambiguous = false, excluded = false, stepText?: string) {
