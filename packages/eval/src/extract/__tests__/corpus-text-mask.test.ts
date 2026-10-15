@@ -1,4 +1,14 @@
-import { asRef, screenStateHash, sha256hex, type CompletedRunHandoff, type Verdict } from '@vostride/agent-qa-schema'
+import {
+  asRecordId,
+  asRef,
+  computeBriefDigest,
+  guardLosslessServedBrief,
+  screenStateHash,
+  sha256hex,
+  type CompletedRunHandoff,
+  type ServedBrief,
+  type Verdict,
+} from '@vostride/agent-qa-schema'
 import type { LeafCassette } from '../../index'
 import {
   buildSeedingPlan,
@@ -169,5 +179,209 @@ describe('C441-GAP3-CORPUS', () => {
 
     expect(plan.retirementCounts).toEqual({ superseded: 1, missing: 0, conflict: 0 })
     expect(plan.labelRevisions).toMatchObject([{ cassetteId: original.id, quarantine: 'rerun-overturned' }])
+  })
+})
+
+function stamp(brief: ServedBrief): ServedBrief {
+  return { ...brief, briefDigest: computeBriefDigest(brief) }
+}
+
+function losslessBrief(turn: {
+  runDate: string
+  contextTier: string
+  volatileTier: string
+  policyL0?: string
+  learnedL1?: string
+  learnedL2?: string
+}): ServedBrief {
+  const policyL0 = turn.policyL0 ?? ''
+  return stamp({
+    scope: { tier: 'suite', key: 'checkout' },
+    asOfBuild: 3,
+    budget: 0,
+    truncation: 'none',
+    channel1: [],
+    channel2: [],
+    channel3: [],
+    briefDigest: '',
+    proof: {
+      schemaVersion: 1,
+      completeness: 'lossless',
+      recordCap: 0,
+      combinedBudget: 0,
+      admissionEvents: [],
+      promptTurns: [{
+        ordinal: 0,
+        turnOrdinal: 0,
+        runDate: turn.runDate,
+        policyL0,
+        learnedL1: turn.learnedL1 ?? '',
+        learnedL2: turn.learnedL2 ?? '',
+        contextTier: turn.contextTier,
+        volatileTier: turn.volatileTier,
+        policyDigest: sha256hex(policyL0),
+        contextTierDigest: sha256hex(turn.contextTier),
+        volatileTierDigest: sha256hex(turn.volatileTier),
+      }],
+    },
+  })
+}
+
+function stringLeaves(value: unknown, path = ''): [string, string][] {
+  if (typeof value === 'string') return [[path, value]]
+  if (Array.isArray(value)) return value.flatMap((item, index) => stringLeaves(item, `${path}[${index}]`))
+  if (typeof value === 'object' && value !== null) {
+    return Object.entries(value).flatMap(([key, item]) => stringLeaves(item, path === '' ? key : `${path}.${key}`))
+  }
+  return []
+}
+
+function changedPaths(before: unknown, after: unknown): string[] {
+  const next = new Map(stringLeaves(after))
+  return stringLeaves(before).filter(([path, text]) => next.get(path) !== text).map(([path]) => path).sort()
+}
+
+describe('C441-GAP4-CORPUS', () => {
+  it('a prompt tier holding a one-character declared value is masked, its tier and brief digests are recomputed over the masked text, and the brief still guards', () => {
+    const cases = [['7', '2026-10-17'], ['0', '2026-10-16']] as const
+    for (const [value, runDate] of cases) {
+      const mask = recordMask({ PIN: value })
+      const brief = losslessBrief({
+        runDate,
+        contextTier: `Keypad with ${value} keys`,
+        volatileTier: `Current date: ${runDate}`,
+        policyL0: 'Prefer the keypad',
+        learnedL1: 'L1 — critical cautions:\nObservation: Wait for the banner',
+      })
+      expect(() => guardLosslessServedBrief(brief)).not.toThrow()
+
+      const masked = maskCorpusText({ servedBrief: brief }, mask).servedBrief
+      const raw = brief.proof!.promptTurns[0]!
+      const turn = masked.proof!.promptTurns[0]!
+      for (const tier of [turn.contextTier, turn.volatileTier]) {
+        expect(tier).toContain('[secret:PIN]')
+        expect(tier).not.toContain(value)
+      }
+      expect(turn.contextTierDigest).toBe(sha256hex(turn.contextTier))
+      expect(turn.volatileTierDigest).toBe(sha256hex(turn.volatileTier))
+      expect(turn.contextTierDigest).not.toBe(raw.contextTierDigest)
+      expect(masked.briefDigest).toBe(computeBriefDigest(masked))
+      expect(masked.briefDigest).not.toBe(brief.briefDigest)
+      for (const member of ['policyL0', 'learnedL1', 'learnedL2', 'policyDigest', 'runDate'] as const) {
+        expect(turn[member]).toBe(raw[member])
+      }
+      expect(() => guardLosslessServedBrief(masked)).not.toThrow()
+      const committed = { servedBrief: masked }
+      expect(JSON.stringify(maskCorpusText(committed, mask, { everyLeaf: true }))).toBe(JSON.stringify(committed))
+    }
+  })
+
+  it('a brief whose digests and run date hold a one-character declared value but whose text does not is returned byte-identical in both modes', () => {
+    const mask = recordMask({ PIN: '7' })
+    const brief = losslessBrief({
+      runDate: '2026-10-17',
+      contextTier: 'Keypad shown',
+      volatileTier: 'Current date: withheld',
+      policyL0: 'Use the keypad',
+    })
+    const turn = brief.proof!.promptTurns[0]!
+    for (const derived of [brief.briefDigest, turn.policyDigest, turn.contextTierDigest, turn.volatileTierDigest, turn.runDate]) {
+      expect(derived).toContain('7')
+    }
+    const doc = { servedBrief: brief }
+    expect(JSON.stringify(maskCorpusText(doc, mask))).toBe(JSON.stringify(doc))
+    expect(JSON.stringify(maskCorpusText(doc, mask, { everyLeaf: true }))).toBe(JSON.stringify(doc))
+
+    const placeholder = {
+      servedBrief: {
+        ...brief,
+        briefDigest: '1'.repeat(64),
+        proof: {
+          ...brief.proof!,
+          promptTurns: [{
+            ...turn,
+            runDate: '2026-10-16',
+            policyDigest: '1'.repeat(64),
+            contextTierDigest: '1'.repeat(64),
+            volatileTierDigest: '1'.repeat(64),
+          }],
+        },
+      },
+    }
+    for (const options of [{}, { everyLeaf: true }]) {
+      expect(JSON.stringify(maskCorpusText(placeholder, mask, options))).toBe(JSON.stringify(placeholder))
+    }
+  })
+
+  it('in everyLeaf mode a served brief keeps exactly its digest, date, enum, literal and minted-id paths, and every other string leaf holding a declared value changes', () => {
+    const mask = recordMask({ PIN: '7' })
+    const base = losslessBrief({
+      runDate: '2026-10-17',
+      contextTier: 'Keypad with [secret:PIN] keys',
+      volatileTier: 'Current date: 2026-10-1[secret:PIN]',
+      policyL0: 'Policy 7',
+      learnedL1: 'Caution 7',
+      learnedL2: 'Fact 7',
+    })
+    const brief = stamp({
+      ...base,
+      scope: { tier: 'suite', key: 'checkout-7' },
+      truncation: 'served 7 of 9 records',
+      channel1: [{
+        id: asRecordId('rec-7a'), kind: 'fact', summary: 'Pay with card 7', trust: 0.7,
+        status: 'active', servedAsCanary: false, tier: 'L2',
+      }],
+      channel2: [{ id: asRecordId('rec-7b'), detailLevel: 'detail-7', bodyDigest: sha256hex('body 7') }],
+      channel3: [{
+        id: asRecordId('rec-7c'),
+        summary: 'Caution 7',
+        anchors: [
+          { t: 'page', route: '/pay/7' },
+          { t: 'flow', name: 'Checkout 7' },
+          { t: 'el', role: 'key-7', name: 'Key 7', ordinal: 7 },
+          { t: 'platform', platform: 'web' },
+          { t: 'selector', literal: '#key-7' },
+          { t: 'error', message: 'Error 7' },
+        ],
+      }],
+      proof: {
+        ...base.proof!,
+        admissionEvents: [{
+          ordinal: 0, turnOrdinal: 0, surface: 'brief-line', id: asRecordId('rec-7a'),
+          sourceId: 'source-7', clusterKey: 'cluster-7', renderedCost: 7, chargeRepeated: false,
+        }],
+      },
+    })
+    expect(() => guardLosslessServedBrief(brief)).not.toThrow()
+    const kept = [
+      'briefDigest', 'channel1[0].id', 'channel2[0].id', 'channel2[0].bodyDigest', 'channel3[0].id',
+      'proof.admissionEvents[0].id', 'proof.promptTurns[0].runDate', 'proof.promptTurns[0].policyDigest',
+      'proof.promptTurns[0].contextTierDigest', 'proof.promptTurns[0].volatileTierDigest',
+    ]
+    const before = new Map(stringLeaves(brief))
+    for (const path of kept) expect(before.get(path), path).toContain('7')
+
+    const checked = maskCorpusText({ servedBrief: brief }, mask, { everyLeaf: true }).servedBrief
+
+    expect(changedPaths(brief, checked)).toEqual([
+      'scope.key', 'truncation', 'channel1[0].summary', 'channel2[0].detailLevel', 'channel3[0].summary',
+      'channel3[0].anchors[0].route', 'channel3[0].anchors[1].name', 'channel3[0].anchors[2].role',
+      'channel3[0].anchors[2].name', 'channel3[0].anchors[4].literal', 'channel3[0].anchors[5].message',
+      'proof.admissionEvents[0].sourceId', 'proof.admissionEvents[0].clusterKey',
+      'proof.promptTurns[0].policyL0', 'proof.promptTurns[0].learnedL1', 'proof.promptTurns[0].learnedL2',
+    ].sort())
+    const after = new Map(stringLeaves(checked))
+    for (const path of kept) expect(after.get(path), path).toBe(before.get(path))
+
+    const rawTier = losslessBrief({
+      runDate: '2026-10-17',
+      contextTier: 'Keypad ready',
+      volatileTier: 'Current date: 2026-10-17',
+      policyL0: 'Prefer the keypad',
+    })
+    const rechecked = maskCorpusText({ servedBrief: rawTier }, mask, { everyLeaf: true }).servedBrief
+    expect(changedPaths(rawTier, rechecked)).toEqual([
+      'briefDigest', 'proof.promptTurns[0].volatileTier', 'proof.promptTurns[0].volatileTierDigest',
+    ])
   })
 })
