@@ -16,6 +16,16 @@ export interface RunOwnership {
   readonly probe: RunOwnerProbe
 }
 
+export type RunOwnerState = 'self' | 'alive' | 'gone' | 'unknown'
+
+export function classifyRunOwner(_owner: RunOwner, _ownership: RunOwnership): RunOwnerState {
+  return 'unknown'
+}
+
+export const orphanSummary = (_pid: number): string => ''
+
+export const ownedElsewhere = (_pid: number): string => ''
+
 function signalZeroIsAlive(pid: number): boolean {
   try {
     process.kill(pid, 0)

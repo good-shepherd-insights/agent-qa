@@ -1,0 +1,109 @@
+import { describe, expect, it } from 'vitest'
+import {
+  classifyRunOwner,
+  defaultRunOwnership,
+  orphanSummary,
+  ownedElsewhere,
+  type RunOwner,
+  type RunOwnerProbe,
+  type RunOwnership,
+} from '../run-owner.js'
+
+const HOST = 'host-a'
+const SELF: RunOwner = { pid: 100, incarnation: 'start:100', host: HOST }
+
+interface FakeProcess {
+  alive: boolean | 'throws'
+  incarnation?: string
+}
+
+function ownershipOver(processes: Record<number, FakeProcess>): {
+  ownership: RunOwnership
+  probed: number[]
+} {
+  const probed: number[] = []
+  const probe: RunOwnerProbe = {
+    isAlive(pid) {
+      probed.push(pid)
+      const entry = processes[pid]
+      if (entry?.alive === 'throws') throw Object.assign(new Error('EINVAL'), { code: 'EINVAL' })
+      return entry?.alive === true
+    },
+    incarnationOf: (pid) => processes[pid]?.incarnation,
+  }
+  return { ownership: { self: SELF, probe }, probed }
+}
+
+describe('C442-OWNER-CLASSIFY', () => {
+  it("answers self for this process's own pid and start time", () => {
+    const { ownership } = ownershipOver({ 100: { alive: true, incarnation: 'start:100' } })
+    expect(classifyRunOwner({ ...SELF }, ownership)).toBe('self')
+  })
+
+  it('answers gone for a dead pid', () => {
+    const { ownership, probed } = ownershipOver({})
+    expect(classifyRunOwner({ pid: 200, incarnation: 'start:200', host: HOST }, ownership)).toBe('gone')
+    expect(probed.join()).toBe('200')
+  })
+
+  it('answers gone for a live pid whose start time differs from the stamp', () => {
+    const { ownership } = ownershipOver({ 200: { alive: true, incarnation: 'start:reused' } })
+    expect(classifyRunOwner({ pid: 200, incarnation: 'start:200', host: HOST }, ownership)).toBe('gone')
+  })
+
+  it('answers alive for a live pid with the stamped start time', () => {
+    const { ownership } = ownershipOver({ 200: { alive: true, incarnation: 'start:200' } })
+    expect(classifyRunOwner({ pid: 200, incarnation: 'start:200', host: HOST }, ownership)).toBe('alive')
+  })
+
+  it('answers unknown when the start time of a live pid cannot be read', () => {
+    const { ownership } = ownershipOver({ 200: { alive: true } })
+    expect(classifyRunOwner({ pid: 200, incarnation: 'start:200', host: HOST }, ownership)).toBe('unknown')
+  })
+
+  it('answers unknown for a live pid stamped with no start time', () => {
+    const { ownership } = ownershipOver({ 200: { alive: true, incarnation: 'start:200' } })
+    expect(classifyRunOwner({ pid: 200, incarnation: null, host: HOST }, ownership)).toBe('unknown')
+  })
+
+  it('answers unknown when the liveness probe throws', () => {
+    const { ownership, probed } = ownershipOver({ 200: { alive: 'throws' } })
+    expect(classifyRunOwner({ pid: 200, incarnation: 'start:200', host: HOST }, ownership)).toBe('unknown')
+    expect(probed.join()).toBe('200')
+  })
+
+  it('answers unknown for an owner on another host even when its pid is dead here', () => {
+    const { ownership, probed } = ownershipOver({})
+    expect(classifyRunOwner({ pid: 200, incarnation: 'start:200', host: 'host-b' }, ownership)).toBe('unknown')
+    expect(classifyRunOwner({ ...SELF, host: 'host-b' }, ownership)).toBe('unknown')
+    expect(probed.join()).toBe('')
+  })
+
+  it('does not answer self for its own pid with a different start time', () => {
+    const { ownership } = ownershipOver({ 100: { alive: true, incarnation: 'start:100' } })
+    const verdict = classifyRunOwner({ pid: 100, incarnation: 'start:earlier', host: HOST }, ownership)
+    expect(verdict).not.toBe('self')
+    expect(verdict).toBe('gone')
+  })
+
+  it('the default ownership never answers alive or gone for a live pid', () => {
+    const ownership = defaultRunOwnership()
+    const host = ownership.self.host
+    expect(ownership.self.pid).toBe(process.pid)
+    expect(classifyRunOwner({ pid: process.pid, incarnation: null, host }, ownership)).toBe('self')
+    const live = [process.pid, process.ppid]
+    for (const pid of live) {
+      for (const incarnation of ['start:any', null]) {
+        if (pid === process.pid && incarnation === null) continue
+        expect(classifyRunOwner({ pid, incarnation, host }, ownership)).toBe('unknown')
+      }
+    }
+  })
+
+  it('the orphan and owned-elsewhere sentences name the pid', () => {
+    expect(orphanSummary(4242)).toBe('The process running this run (pid 4242) ended before it finished.')
+    expect(ownedElsewhere(4242)).toBe(
+      'This run belongs to another agent-qa process (pid 4242). Stop it there with Ctrl+C.',
+    )
+  })
+})
