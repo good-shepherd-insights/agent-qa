@@ -20,6 +20,9 @@ const MARKER = '[secret:PW_441]'
 const UNDECLARED = 'sk-PROBE-123456'
 const TYPED = `use ${DECLARED} with ${UNDECLARED}`
 const MESSAGE = `/fn knowledge.record.show ${JSON.stringify({ recordId: TYPED })}`
+const KEYED_INPUT_MESSAGE =
+  `/fn knowledge.record.show ${JSON.stringify({ [DECLARED]: 1, recordId: 'x' })}`
+const KEYED_RESULT_MESSAGE = `/fn runs.detail ${JSON.stringify({ runId: 'run-keyed' })}`
 
 const CONFIG = `workspace:
   testMatch:
@@ -213,5 +216,59 @@ describe('C441-CHAT', () => {
     const mask = await daemonMask(false)
 
     expect(mask?.(TYPED)).toBe(TYPED)
+  })
+})
+
+// The recorded objects runs.detail serves are open records, so an op result can hold a data key.
+const KEYED_RUN_DETAIL: NonNullable<Parameters<typeof composeCliLocalAgent>[0]['runDetail']> = {
+  read: () => Promise.resolve({
+    runId: 'run-keyed',
+    members: [],
+    steps: [],
+    subActions: [{
+      testIndex: 0,
+      stepIndex: 0,
+      subActionIndex: 0,
+      plan: 'fill the form',
+      plannedAction: { type: 'fill', [DECLARED]: 'x' },
+      result: { success: true },
+      screenStateHash: 'hash',
+    }],
+  } as never),
+}
+
+async function sendInChat(
+  message: string,
+  runDetail?: typeof KEYED_RUN_DETAIL,
+): Promise<AgentAskResult> {
+  const host = composeCliLocalAgent({
+    agentQaRoot, configPath, ...(runDetail === undefined ? {} : { runDetail }),
+  })
+  try {
+    return await runSafetyScope(
+      { executionContext: 'local-interactive' },
+      async () => await invokeFunction(
+        host.registry, AGENT_ASK_FUNCTION_ID, { message }, CLI_FUNCTION_CALLER,
+      ) as AgentAskResult,
+    )
+  } finally {
+    await host.close()
+  }
+}
+
+describe('C441-GAP-TRANSCRIPT', () => {
+  it('a declared value used as a payload key is masked in the session file and the turn result', async () => {
+    const refused = await sendInChat(KEYED_INPUT_MESSAGE)
+    const answered = await sendInChat(KEYED_RESULT_MESSAGE, KEYED_RUN_DETAIL)
+
+    const persisted = sessionEvents('clause_result')
+    expect(persisted).toHaveLength(1)
+    const detail = persisted[0]?.payload as {
+      readonly subActions?: ReadonlyArray<{ readonly plannedAction?: object }>
+    } | undefined
+    expect(Object.keys(detail?.subActions?.[0]?.plannedAction ?? {})).toContain(MARKER)
+    expect(sessionBytes()).not.toContain(DECLARED)
+    expect(JSON.stringify(refused)).not.toContain(DECLARED)
+    expect(JSON.stringify(answered)).not.toContain(DECLARED)
   })
 })
