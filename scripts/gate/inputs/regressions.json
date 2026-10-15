@@ -9618,6 +9618,162 @@
       "file": "packages/cli/src/__tests__/config.test.ts",
       "fullName": "C441-GAP2-CONFIG config set refuses a key path holding a shown marker and leaves the file unchanged",
       "origin": "441 GAP2-D8"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval/src/extract/__tests__/corpus-text-mask.test.ts",
+      "fullName": "C441-GAP3-CORPUS a one-character declared value masks the free text of a run and keeps its closed vocabulary, so every cassette still guards",
+      "origin": "441 GAP3-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval/src/extract/__tests__/corpus-text-mask.test.ts",
+      "fullName": "C441-GAP3-CORPUS maskCorpusText renames no key, leaves numbers alone, reaches nested screen states and self-heal actions, and leaves rerunOrigin byte-identical",
+      "origin": "441 GAP3-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval/src/extract/__tests__/corpus-text-mask.test.ts",
+      "fullName": "C441-GAP3-CORPUS a rerun whose original decision text holds a declared value still retires its masked original silver label",
+      "origin": "441 GAP3-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/441-gap3-eval-corpus.test.ts",
+      "fullName": "C441-GAP3-CORPUS eval seed commits a declared value from the step text, the screen state and the typed text only as its marker",
+      "origin": "441 GAP3-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/441-gap3-eval-corpus.test.ts",
+      "fullName": "C441-GAP3-CORPUS every hash a seeded case commits is computed over the committed text, never over the raw screen state",
+      "origin": "441 GAP3-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/441-gap3-eval-corpus.test.ts",
+      "fullName": "C441-GAP3-CORPUS a gold freeze from a mark commits a declared value in the marked step only as its marker",
+      "origin": "441 GAP3-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/441-gap3-corpus-writer.test.ts",
+      "fullName": "C441-GAP3-CORPUS the corpus writer refuses a case whose screen state still holds a declared value raw and writes none of it",
+      "origin": "441 GAP3-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/441-gap3-corpus-writer.test.ts",
+      "fullName": "C441-GAP3-CORPUS the same run masked before extraction seeds its case, and the committed cassette holds only the marker",
+      "origin": "441 GAP3-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/441-gap3-corpus-writer.test.ts",
+      "fullName": "C441-GAP3-CORPUS the corpus writer refuses a declared value left raw outside the step text, screen state and action",
+      "origin": "441 GAP3-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/441-gap3-corpus-writer.test.ts",
+      "fullName": "C441-GAP3-CORPUS seedCommittedCorpus without a mask throws before it writes anything",
+      "origin": "441 GAP3-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/441-gap3-corpus-writer.test.ts",
+      "fullName": "C441-GAP3-CORPUS adversarial admission skips a staged case that still holds a declared value as unmasked-declared-value",
+      "origin": "441 GAP3-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/441-gap3-corpus-writer.test.ts",
+      "fullName": "C441-GAP3-CORPUS feedback staging writes a declared value in the target screen state only as its marker",
+      "origin": "441 GAP3-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/441-gap3-corpus-writer.test.ts",
+      "fullName": "C441-GAP3-CORPUS a masked staged feedback entry is admitted, and the committed root holds no declared value",
+      "origin": "441 GAP3-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/441-gap3-corpus-writer.test.ts",
+      "fullName": "C441-GAP3-CORPUS a feedback entry staged unmasked, as a pre-fix stage holds it, is refused at admission and commits nothing raw",
+      "origin": "441 GAP3-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/441-gap3-corpus-writer.test.ts",
+      "fullName": "C441-GAP3-CORPUS stageFeedbackEntry without a mask throws before it creates the staging directory",
+      "origin": "441 GAP3-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/441-gap-dashboard-mask.test.ts",
+      "fullName": "C441-GAP3-WRITE-BACK replaceDocument refuses a document that adds a shown marker and leaves the file unchanged",
+      "origin": "441 GAP3-D5"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/441-gap-dashboard-mask.test.ts",
+      "fullName": "C441-GAP3-WRITE-BACK replaceDocument writes a document that keeps a marker its current bytes already hold, as often",
+      "origin": "441 GAP3-D5"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/config-ops-composed.test.ts",
+      "fullName": "C441-GAP3-WRITE-BACK config.hook.add whose name and file hold a shown marker is refused in the fields arm's words, and nothing is written",
+      "origin": "441 GAP3-D5"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/config-ops-composed.test.ts",
+      "fullName": "C441-GAP3-WRITE-BACK config.hook.add with a shown marker in a project with no hooks file leaves it absent",
+      "origin": "441 GAP3-D5"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/441-chat-transcript.test.ts",
+      "fullName": "C441-GAP3-TRANSCRIPT a /model whose name holds a declared value is recorded once, and two more turns record no switch",
+      "origin": "441 GAP3-D4"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/441-chat-transcript.test.ts",
+      "fullName": "C441-GAP3-TRANSCRIPT a chat model id holding a declared value is shown as its marker in the header and the listing",
+      "origin": "441 GAP3-D4"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/judge-calibration-composition.test.ts",
+      "fullName": "C441-GAP3-JUDGE a judge calibration commit under a one-character declared value is committed and returns only masked text",
+      "origin": "441 GAP3-D2"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/judge-calibration-composition.test.ts",
+      "fullName": "C441-GAP3-JUDGE the dry-run preview under the same mask is still masked",
+      "origin": "441 GAP3-D2"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/safety/src/egress/__tests__/masking-middleware.test.ts",
+      "fullName": "C441-GAP3-EGRESS a declared value inside a template's own text is never sent, and the template is not restored",
+      "origin": "441 GAP3-D3"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/safety/src/egress/__tests__/masking-middleware.test.ts",
+      "fullName": "C441-GAP3-EGRESS with no declared value inside it, the template is still sent verbatim",
+      "origin": "441 GAP3-D3"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/masking-provider-boundary.test.ts",
+      "fullName": "C441-GAP3-EGRESS a declared brace value inside a template never reaches the provider",
+      "origin": "441 GAP3-D3"
     }
   ]
 }
