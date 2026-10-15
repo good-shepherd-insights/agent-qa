@@ -160,10 +160,7 @@ export class ConfigManager {
     const parsed = AgentQaConfigSchema.safeParse(normalizeForValidation(read.config))
     const fileIssues = parsed.success
       ? []
-      : parsed.error.issues.map((issue) => ({
-        path: issue.path.map((key) => (typeof key === 'number' ? key : String(key))),
-        message: this.mask(issue.message),
-      }))
+      : parsed.error.issues.map((issue) => maskedIssue(issue, this.mask))
     const lines = fileLines(this.mask(read.raw))
     return { kind: 'ok', config, revision: read.revision, lines, fileIssues }
   }
@@ -355,10 +352,7 @@ export class ConfigManager {
       return {
         kind: 'refused',
         error: 'validation_failed',
-        issues: parsed.error.issues.map((issue) => ({
-          path: issue.path.map((key) => (typeof key === 'number' ? key : String(key))),
-          message: this.mask(issue.message),
-        })),
+        issues: parsed.error.issues.map((issue) => maskedIssue(issue, this.mask)),
       }
     }
 
@@ -403,6 +397,17 @@ export class ConfigManager {
       },
     )
     return isLink ? await realpath(this.configPath) : this.configPath
+  }
+}
+
+// 441 GAP-D5: a key segment is config text, so it passes the declared mask with the message.
+function maskedIssue(
+  issue: { path: readonly PropertyKey[]; message: string },
+  mask: MaskFn,
+): ConfigWriteIssue {
+  return {
+    path: issue.path.map((key) => (typeof key === 'number' ? key : mask(String(key)))),
+    message: mask(issue.message),
   }
 }
 

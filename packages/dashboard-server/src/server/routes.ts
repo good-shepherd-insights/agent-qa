@@ -3675,9 +3675,17 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
           const registry = configObj.registry as Record<string, unknown> | undefined
           const targets = registry?.targets as Record<string, unknown> | undefined
           const names = targets ? Object.keys(targets) : []
-          json(res, { targets: names })
+          const shown = withDeclaredMask(declaredMask, (mask) => names.map((name) => mask(name)))
+          if (shown === undefined) {
+            json(res, { error: 'masking_unavailable' }, 500)
+            return
+          }
+          json(res, { targets: shown })
         } catch (err: unknown) {
-          json(res, { error: err instanceof Error ? err.message : 'Failed to read targets' }, 500)
+          const message = err instanceof Error
+            ? withDeclaredMask(declaredMask, (mask) => mask(err.message))
+            : undefined
+          json(res, { error: message ?? 'Failed to read targets' }, 500)
         }
       })()
       return
@@ -4340,9 +4348,12 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
           } catch (err: unknown) {
             const connectionTimeoutMs = llmConnectionTestTimeoutMs(llmConfig)
             const { message: rawProviderMessage, statusCode } = extractProviderError(err)
-            const providerMessage = withoutSavedValues(rawProviderMessage, savedHeaderValues)
-            const errorClass = classifyProviderError(providerMessage, statusCode)
-            const message = providerErrorSentence(errorClass, providerMessage)
+            const unsavedMessage = withoutSavedValues(rawProviderMessage, savedHeaderValues)
+            const providerMessage = withDeclaredMask(declaredMask, (mask) => mask(unsavedMessage))
+            const errorClass = classifyProviderError(providerMessage ?? unsavedMessage, statusCode)
+            const message = providerMessage === undefined
+              ? providerErrorSentence(errorClass, '').trimEnd()
+              : providerErrorSentence(errorClass, providerMessage)
 
             jsonNoCors(res, {
               success: false,
@@ -4350,7 +4361,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
               message,
               timeoutMs: connectionTimeoutMs,
               ...(statusCode ? { statusCode } : {}),
-              ...(message !== providerMessage ? { details: providerMessage } : {}),
+              ...(providerMessage !== undefined && message !== providerMessage ? { details: providerMessage } : {}),
               ...(unauthenticated ? { unauthenticated: true, authMessage } : {}),
             })
           }
