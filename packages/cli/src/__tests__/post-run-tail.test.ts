@@ -21,7 +21,6 @@ import { promotionHostProof } from './promotion-host-proof.js'
 
 import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
 import { DIGEST_JOB_ID_SOURCE } from '@vostride/agent-qa-agent-local'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import type { ResolvePromotionPosture } from '@vostride/agent-qa-schema'
 
 import { runVerdictFirstCurationTail } from '../curation/curation-tail.js'
@@ -134,7 +133,6 @@ function options(h: Harness): RunPostRunTailOptions {
     configPath,
     knowledgeConfig: { dir: 'agent-qa-knowledge' },
     configDir,
-    auditSink: {} as AuditSink,
     mask: (text: string) => text,
     log: { warn: (message: string) => h.warn(message) },
     operations: h.operations,
@@ -573,7 +571,6 @@ describe('the tail can never reach the exit code (JOBQ-06)', () => {
       configPath,
       knowledgeConfig: { dir: 'agent-qa-knowledge' },
       configDir,
-      auditSink: {} as AuditSink,
       log: { warn: (message: string) => warn(message) },
       operations: exploding,
     })

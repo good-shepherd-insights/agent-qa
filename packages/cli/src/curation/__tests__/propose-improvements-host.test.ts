@@ -387,7 +387,6 @@ describe('the post-run tail hands its own host the lease it takes (422 D-14)', (
       configPath: join(root, 'agent-qa.config.yaml'),
       knowledgeConfig: { dir: 'knowledge' },
       configDir: root,
-      auditSink: {},
       log: { warn: () => undefined },
       operations,
     } as unknown as Parameters<typeof runPostRunTail>[0])
@@ -712,7 +711,6 @@ describe('the fold forwards the ids its COMMITTED receipt names (422 D-13)', () 
       handoff: { runId: RUN_ID, schemaVersion: 5, scope: { tier: 'product', key: PRODUCT } } as never,
       knowledgeRoot: join(root, 'knowledge'),
       agentQaRoot: join(root, '.agent-qa'),
-      auditSink: {} as never,
       authority: { leaseId: 'l', epoch: 1 },
       log: { warn: () => undefined },
       operations,

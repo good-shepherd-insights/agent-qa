@@ -19,8 +19,8 @@
 //
 // Import discipline (FUNC-02): a file written today may name only `agent`, `agent-local`,
 // `analytics` and `schema` across package boundaries, and the ledger only ever shrinks. This file
-// names `schema` for two types and nothing else; the audit sink type and the mask arrive through
-// relative modules that are already ledgered for them.
+// names `schema` for two types and nothing else; the mask arrives through relative modules that
+// are already ledgered for it.
 
 import { createCanaryAblationForHost } from '../gates/canary-ablation-host.js'
 import { resolve } from 'node:path'
@@ -52,7 +52,6 @@ export interface ComposeCliPostRunTailInput {
   /** The project's resolved config file. */
   readonly configFilePath: string
   readonly knowledgeConfig: RunCurationTailOptions['knowledgeConfig']
-  readonly auditSink?: RunCurationTailOptions['auditSink']
   /**
    * The declared mask, when the caller has one.
    *
@@ -95,7 +94,6 @@ export function composeCliPostRunTail(input: ComposeCliPostRunTailInput): PostRu
     configPath: resolve(input.configFilePath),
     knowledgeConfig: input.knowledgeConfig,
     configDir: input.configDir,
-    ...(input.auditSink === undefined ? {} : { auditSink: input.auditSink }),
     log: input.log,
     ...(input.mask === undefined ? {} : { mask: input.mask }),
     ...(input.modelDeps === undefined ? {} : { modelDeps: input.modelDeps }),

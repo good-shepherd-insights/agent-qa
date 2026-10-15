@@ -18,7 +18,6 @@ import { invokeFunction, RUNS_POST_PROCESSING_FUNCTION_ID } from '@vostride/agen
 import { composeLocalAgent, DIGEST_JOB_ID_SOURCE } from '@vostride/agent-qa-agent-local'
 import type { LocalAgentHost, LocalAgentJobs } from '@vostride/agent-qa-agent-local'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import {
   asRunId,
   CURRENT_HANDOFF_SCHEMA_VERSION,
@@ -188,7 +187,6 @@ export async function runRealTail(input: {
     configPath: join(input.agentQaRoot, 'agent-qa.config.yaml'),
     knowledgeConfig: { dir: input.knowledgeRoot },
     configDir: input.agentQaRoot,
-    auditSink: {} as AuditSink,
     log: {
       warn: (message: string) => { warn.push(message) },
       info: (message: string) => { info.push(message) },

@@ -15,7 +15,6 @@ import {
 } from '@vostride/agent-qa-model'
 import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import { RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -168,7 +167,6 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
   })
 
   function tailOptions(
-    auditSink: JsonlAuditSink,
     modelCalls: ReturnType<typeof vi.fn<(options: CallOptions) => void>>,
   ): RunCurationTailOptions {
     const resolvedProfile = profile()
@@ -177,7 +175,6 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
       agentQaRoot,
       knowledgeConfig: { dir: knowledgeRoot },
       configDir: root,
-      auditSink,
       modelDeps: { profile: resolvedProfile, auth: noneAuth },
       log: { warn: vi.fn() },
       operations: {
@@ -224,9 +221,8 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
 
   it('curates through the tail\'s createModel call once and writes its receipt', async () => {
     const modelCalls = vi.fn<(options: CallOptions) => void>()
-    const sink = new JsonlAuditSink(agentQaRoot)
 
-    await runCurationTail(tailOptions(sink, modelCalls))
+    await runCurationTail(tailOptions(modelCalls))
 
     expect(modelCalls).toHaveBeenCalledOnce()
     const bundles = enumerateBundleDirs(knowledgeRoot)
@@ -252,15 +248,14 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
       candidateIds: [],
     })
 
-    await runCurationTail(tailOptions(sink, modelCalls))
+    await runCurationTail(tailOptions(modelCalls))
     expect(modelCalls).toHaveBeenCalledOnce()
     expect(enumerateBundleDirs(knowledgeRoot)).toHaveLength(1)
   })
 
   it('records no curation egress when --detach skips the tail', async () => {
     const modelCalls = vi.fn<(options: CallOptions) => void>()
-    const sink = new JsonlAuditSink(agentQaRoot)
-    const runTail = vi.fn(() => runCurationTail(tailOptions(sink, modelCalls)))
+    const runTail = vi.fn(() => runCurationTail(tailOptions(modelCalls)))
 
     await expect(
       runVerdictFirstCurationTail({ exitCode: 0, detach: true, runTail }),

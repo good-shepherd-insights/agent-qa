@@ -61,7 +61,7 @@ function tail(f: ReturnType<typeof markFixture>, snapshot: ReturnType<typeof tru
     readRunDigest: async () => ({ markChanges: [] }),
   } as unknown as PostRunTailOperations
   const handle = composeCliPostRunTail({ runId: f.handoff.runId, configDir: f.root, configFilePath: f.configPath,
-    knowledgeConfig: { dir: 'agent-qa-knowledge' }, auditSink: {} as never, log: { info, warn }, operations, trustPriors: snapshot })
+    knowledgeConfig: { dir: 'agent-qa-knowledge' }, log: { info, warn }, operations, trustPriors: snapshot })
   return { handle, info, warn }
 }
 it.each(['done', 'failed', 'partial', 'handed-off'] as const)('keeps old and fresh host disclosure and numerical reader consistent for %s', async mode => {

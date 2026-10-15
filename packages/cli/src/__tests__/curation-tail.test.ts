@@ -29,9 +29,6 @@ import type {
   DeterministicRootCauseClass,
   KnowledgeHintReader,
 } from '@vostride/agent-qa-runner'
-import type {
-  AuditSink,
-} from '@vostride/agent-qa-safety'
 import {
   CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
   guardCompletedRunHandoff,
@@ -56,7 +53,6 @@ const agentQaRoot = '/workspace/project/.agent-qa'
 const configDir = '/workspace/project'
 const knowledgeRoot = '/workspace/project/agent-qa-knowledge'
 const runId = 'run-curation-tail'
-const auditSink = {} as AuditSink
 const mask = (text: string) => text
 const modelDeps = {} as RunCurationTailOptions['modelDeps']
 
@@ -386,7 +382,6 @@ function baseOptions(
     agentQaRoot,
     knowledgeConfig: { dir: 'agent-qa-knowledge' },
     configDir,
-    auditSink,
     mask,
     modelDeps,
     log: { warn: vi.fn() },
@@ -599,7 +594,6 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
         order.push('scope')
         expect(ambientExecutionContext).not.toBe(completed.executionContext)
         expect(bundle).toEqual({
-          auditSink,
           executionContext: completed.executionContext,
         })
         return fn()

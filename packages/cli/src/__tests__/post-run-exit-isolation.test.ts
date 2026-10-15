@@ -54,7 +54,6 @@ import {
 } from '@vostride/agent-qa-agent-local'
 import { mapVerdictToExitCode } from '@vostride/agent-qa-runner'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import {
   asRunId,
   CURRENT_HANDOFF_SCHEMA_VERSION,
@@ -239,7 +238,6 @@ function fixture(): Fixture {
         configPath: join(agentQaRoot, 'agent-qa.config.yaml'),
         knowledgeConfig: { dir: 'knowledge' },
         configDir: agentQaRoot,
-        auditSink: {} as AuditSink,
         // The PRODUCTION log object, not a double. Every post-run line's channel is therefore
         // run.ts's choice and not this file's, which is what makes the stdout comparison a
         // statement about the product.

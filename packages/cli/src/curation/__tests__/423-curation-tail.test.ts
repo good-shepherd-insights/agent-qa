@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
 import { composeLocalAgent, LOCAL_CURATION_CAPABILITIES, DIGEST_JOB_ID_SOURCE, type ComposeLocalAgentInput } from '@vostride/agent-qa-agent-local'
-import { createMaskingContext, type AuditSink } from '@vostride/agent-qa-safety'
+import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { asRecordId, asRunId, CURRENT_HANDOFF_SCHEMA_VERSION, CurationSnapshotSchema, type CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import * as tailModule from '../curation-tail.js'
@@ -48,7 +48,7 @@ function fixture(over: Record<string, unknown> = {}) {
   } as unknown as Partial<tailModule.CurationTailOperations>
   const input = { runDir: root, handoff: { runId: RUN_ID, schemaVersion: 5, buildOrdinal: 42,
     executionContext: 'local-headless', scope: { tier: 'product', key: 'storefront' } },
-    knowledgeRoot: join(root, 'knowledge'), agentQaRoot: root, auditSink: {},
+    knowledgeRoot: join(root, 'knowledge'), agentQaRoot: root,
     authority: { leaseId: 'lease', epoch: 1 }, log: { warn: vi.fn(), info }, operations,
   } as unknown as tailModule.CurateCompletedRunInput
   return { root, input, drainQueue, info, canaryDetail }
@@ -170,7 +170,7 @@ describe('423 curation tail snapshot', () => {
       readPostProcessingStatus: async () => ({ kind: 'ready' }), readRunDigest: async () => ({}), now: () => 1000,
     } as unknown as PostRunTailOperations
     await runPostRunTail({ runId: RUN_ID, agentQaRoot: root, configPath: join(root, 'agent-qa.config.yaml'),
-      knowledgeConfig: { dir: 'knowledge' }, configDir: root, auditSink: {},
+      knowledgeConfig: { dir: 'knowledge' }, configDir: root,
       log: { warn: () => undefined }, operations } as never).drain()
     expect(await bound!.curateRun({ runId: RUN_ID, executionContext: 'local-headless' })).toHaveProperty('snapshot', snapshot)
     expect(bound!.resolveClaimAuthority?.()).toBeUndefined()
@@ -205,7 +205,7 @@ describe('423 curation tail snapshot', () => {
     const served = await runSafetyScope({ maskingContext: createMaskingContext(), executionContext: 'local-headless' }, async () => {
       await enqueueThroughTheStep({ runId: zeroRun, agentQaRoot: root, configPath, composeHost: () => composeHost() })
       const tail = runPostRunTail({ runId: zeroRun, agentQaRoot: root, configPath,
-        knowledgeConfig: { dir: 'knowledge' }, configDir: root, auditSink: {} as AuditSink,
+        knowledgeConfig: { dir: 'knowledge' }, configDir: root,
         log: { warn: () => undefined, info: () => undefined },
         operations: { resolveKnowledgeRoot: () => knowledge, runCurationTail: async () => undefined,
           composeHost } as unknown as PostRunTailOperations } as never)

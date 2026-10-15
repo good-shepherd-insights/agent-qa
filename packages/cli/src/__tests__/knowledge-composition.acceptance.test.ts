@@ -40,7 +40,6 @@ import {
   type DistilledObservation,
   type ServedBrief,
 } from '@vostride/agent-qa-schema'
-import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { buildMemberRunConfig, constructKnowledgeReader } from '@vostride/agent-qa-agent-local'
@@ -307,7 +306,6 @@ describe('knowledge composition acceptance (D-14/SC1)', () => {
       agentQaRoot,
       knowledgeConfig: { dir: 'agent-qa-knowledge' },
       configDir: root,
-      auditSink: new JsonlAuditSink(agentQaRoot),
       log: { warn },
     })
 

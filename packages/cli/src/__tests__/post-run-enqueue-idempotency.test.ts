@@ -30,7 +30,6 @@ import {
   type LocalAgentHost,
 } from '@vostride/agent-qa-agent-local'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import {
   asRunId,
   CURRENT_HANDOFF_SCHEMA_VERSION,
@@ -199,7 +198,6 @@ function fixture(): Fixture {
         configPath: join(agentQaRoot, 'agent-qa.config.yaml'),
         knowledgeConfig: { dir: 'knowledge' },
         configDir: agentQaRoot,
-        auditSink: {} as AuditSink,
         log: { warn: (message: string) => warn(message) },
         operations: {
           resolveKnowledgeRoot: () => knowledgeRoot,

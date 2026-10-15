@@ -378,8 +378,8 @@ function projectProposalGate1(payload: unknown): ProposalGate1Disclosure {
  * The tail's inputs, taken FROM the v51 tail's own option type.
  *
  * `Pick` rather than a restatement: every one of these fields is handed straight through to
- * the per-run fold, and a second declaration of them would be a second place for `auditSink`
- * or `mask` to drift from what the fold actually consumes.
+ * the per-run fold, and a second declaration of them would be a second place for `mask` to
+ * drift from what the fold actually consumes.
  */
 export interface RunPostRunTailOptions extends Pick<
   RunCurationTailOptions,
@@ -388,7 +388,6 @@ export interface RunPostRunTailOptions extends Pick<
   | 'agentQaRoot'
   | 'knowledgeConfig'
   | 'configDir'
-  | 'auditSink'
   | 'mask'
   | 'modelDeps'
   | 'signal'
@@ -636,7 +635,6 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
       handoff,
       knowledgeRoot,
       agentQaRoot: opts.agentQaRoot,
-      auditSink: opts.auditSink,
       ...(opts.mask === undefined ? {} : { mask: opts.mask }),
       ...(opts.modelDeps === undefined ? {} : { modelDeps: opts.modelDeps }),
       ...(heldAuthority === undefined ? {} : { authority: heldAuthority }),
@@ -893,7 +891,6 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
           agentQaRoot: opts.agentQaRoot,
           knowledgeConfig: opts.knowledgeConfig,
           configDir: opts.configDir,
-          auditSink: opts.auditSink,
           ...(opts.mask === undefined ? {} : { mask: opts.mask }),
           ...(opts.modelDeps === undefined ? {} : { modelDeps: opts.modelDeps }),
           ...(opts.signal === undefined ? {} : { signal: opts.signal }),

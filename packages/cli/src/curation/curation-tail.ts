@@ -145,7 +145,6 @@ export interface RunCurationTailOptions {
   agentQaRoot: string
   knowledgeConfig: { dir: string }
   configDir: string
-  auditSink?: AuditSink
   mask?: MaskFn
   /** The exact already-resolved planner profile and auth used by the run. */
   modelDeps?: CurationTailModelDeps
@@ -1037,7 +1036,6 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
         handoff,
         knowledgeRoot,
         agentQaRoot: opts.agentQaRoot,
-        auditSink: opts.auditSink,
         ...(opts.mask === undefined ? {} : { mask: opts.mask }),
         ...(opts.modelDeps === undefined ? {} : { modelDeps: opts.modelDeps }),
         ...(opts.authority === undefined ? {} : { authority: opts.authority }),

@@ -36,7 +36,7 @@ import { chainJobIdsForRun, renderVerdictSentence } from '@vostride/agent-qa-age
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
 import { composeLocalAgent, DIGEST_JOB_ID_SOURCE } from '@vostride/agent-qa-agent-local'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import { createMaskingContext, type AuditSink } from '@vostride/agent-qa-safety'
+import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import {
   asRunId,
@@ -371,7 +371,6 @@ function options(h: Harness): RunPostRunTailOptions {
     configPath,
     knowledgeConfig: { dir: 'agent-qa-knowledge' },
     configDir,
-    auditSink: {} as AuditSink,
     mask: (text: string) => text,
     log: {
       warn: (message: string) => h.warn(message),
@@ -833,7 +832,6 @@ describe('425 D-20 — the chain-terminal line a real snapshot-bearing run print
           configPath: join(root, 'agent-qa.config.yaml'),
           knowledgeConfig: { dir: 'knowledge' },
           configDir: root,
-          auditSink: {} as AuditSink,
           log: { warn: (m: string) => warn(m), info: (m: string) => info(m) },
           operations: {
             resolveKnowledgeRoot: () => knowledge,
@@ -936,7 +934,6 @@ describe('425 D-20 — the chain-terminal line a real snapshot-bearing run print
           configPath: join(root, 'agent-qa.config.yaml'),
           knowledgeConfig: { dir: 'knowledge' },
           configDir: root,
-          auditSink: {} as AuditSink,
           log: { warn: () => undefined, info: (m: string) => info(m) },
           operations: {
             resolveKnowledgeRoot: () => knowledge,

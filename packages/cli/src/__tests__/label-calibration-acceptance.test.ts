@@ -203,7 +203,7 @@ it('adopts a real prior generation in new bundle/index hosts and matches report,
       readRunDigest: async () => ({ markChanges: [] }),
     } as unknown as PostRunTailOperations
     const tail = composeCliPostRunTail({ runId: f.handoff.runId, configDir: f.root, configFilePath: f.configPath,
-      knowledgeConfig: { dir: 'agent-qa-knowledge' }, auditSink: {} as never,
+      knowledgeConfig: { dir: 'agent-qa-knowledge' },
       log: { info, warn: vi.fn() }, operations, trustPriors: fresh })
     await tail.drain(); await tail.finish()
     expect(tail.report().drain).toBe(mode === 'handed-off' ? 'handed-off' : 'drained')

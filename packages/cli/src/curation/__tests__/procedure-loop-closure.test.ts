@@ -38,7 +38,6 @@ import {
   RUNS_SUBDIR,
   slugBranch,
 } from '@vostride/agent-qa-runner-local'
-import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
 import {
   RunKnowledgeProjectionSchema,
   asRef,
@@ -365,7 +364,6 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
       agentQaRoot,
       knowledgeConfig: { dir: 'agent-qa-knowledge' },
       configDir: root,
-      auditSink: new JsonlAuditSink(agentQaRoot),
       modelDeps: { profile: scriptedProfile(), auth: noAuth },
       log: { warn: (message) => warnings.push(message) },
       operations: { buildCuratorAuthor: () => fixtureAuthor },
@@ -441,7 +439,6 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
       agentQaRoot: fixtureAgentQaRoot,
       knowledgeConfig: { dir: 'agent-qa-knowledge' },
       configDir: fixtureRoot,
-      auditSink: new JsonlAuditSink(fixtureAgentQaRoot),
       modelDeps: { profile: scriptedProfile(), auth: noAuth },
       log: { warn: (message) => warnings.push(message) },
       operations: {

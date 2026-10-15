@@ -36,7 +36,6 @@ import {
 } from '@vostride/agent-qa-knowledge-local'
 import type { KnowledgeHintReader } from '@vostride/agent-qa-runner'
 import { RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import type {
   CompletedRunHandoff,
   CurationAuthorship,
@@ -562,7 +561,6 @@ describe('daemon curation serving tracer', () => {
       agentQaRoot: paths.agentQaRoot,
       knowledgeConfig: { dir: paths.knowledgeRoot },
       configDir: paths.root,
-      auditSink: {} as AuditSink,
       log: { warn: vi.fn(), info: vi.fn() },
       operations: {
         loadCompletedRunHandoff: () => handoff,

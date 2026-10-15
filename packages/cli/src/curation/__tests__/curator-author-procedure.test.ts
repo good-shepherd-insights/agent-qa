@@ -37,7 +37,6 @@ import {
   type StepContext,
 } from '@vostride/agent-qa-runner'
 import { RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
 import { runCurationTail } from '../curation-tail.js'
@@ -1741,7 +1740,6 @@ describe('C441-CURATION', () => {
         agentQaRoot,
         knowledgeConfig: { dir: 'agent-qa-knowledge' },
         configDir: root,
-        auditSink: {} as AuditSink,
         mask: declaredMask(),
         log: { warn: () => undefined },
         authority: { leaseId: 'c441-lease', epoch: 1 },

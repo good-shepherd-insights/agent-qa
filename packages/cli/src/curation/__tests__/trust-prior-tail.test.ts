@@ -86,7 +86,7 @@ function tail(f: ReturnType<typeof fixture>, held = false) {
     readPostProcessingStatus: async () => ({ runId: f.handoff.runId, analysis: 'pending', curation: 'pending' }) as never,
   }
   const handle = composeCliPostRunTail({ runId: f.handoff.runId, configDir: f.root, configFilePath: f.configPath,
-    knowledgeConfig: { dir: 'agent-qa-knowledge' }, auditSink: { emit: vi.fn() } as never,
+    knowledgeConfig: { dir: 'agent-qa-knowledge' },
     log: { warn, info }, operations: ops })
   return { handle, fold, sweep, release, acquire, nudge, warn, info, hostInput: () => hostInput! }
 }

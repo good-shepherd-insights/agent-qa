@@ -15,7 +15,6 @@ import {
 } from '@vostride/agent-qa-knowledge-local'
 import type { KnowledgeHintReader } from '@vostride/agent-qa-runner'
 import { RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import { expect } from 'vitest'
 
@@ -164,7 +163,6 @@ export async function runDaemonLeg(): Promise<void> {
     agentQaRoot,
     knowledgeConfig: { dir: knowledgeRoot },
     configDir: root,
-    auditSink: {} as AuditSink,
     modelDeps: {} as NonNullable<RunCurationTailOptions['modelDeps']>,
     log: { warn: (message) => warnings.push(message) },
     operations: {

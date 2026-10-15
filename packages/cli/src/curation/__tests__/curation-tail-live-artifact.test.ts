@@ -16,7 +16,6 @@ import {
   loadCompletedRunHandoff,
 } from '@vostride/agent-qa-runner-local'
 import { createMaskingContext } from '@vostride/agent-qa-safety'
-import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
 import { parseProcedureBody } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
@@ -270,7 +269,6 @@ describe('F-381-48-1 live-artifact staged reproduction (Plan 381-49)', () => {
         agentQaRoot: roots.agentQaRoot,
         knowledgeConfig: roots.knowledgeConfig,
         configDir: roots.configDir,
-        auditSink: new JsonlAuditSink(roots.agentQaRoot),
         mask: liveMask(),
         log,
       })
@@ -311,7 +309,6 @@ describe('F-381-48-1 live-artifact staged reproduction (Plan 381-49)', () => {
         agentQaRoot: roots.agentQaRoot,
         knowledgeConfig: roots.knowledgeConfig,
         configDir: roots.configDir,
-        auditSink: new JsonlAuditSink(roots.agentQaRoot),
         mask: liveMask(),
         modelDeps: { profile: scriptedProfile(), auth: scriptedAuth },
         log,

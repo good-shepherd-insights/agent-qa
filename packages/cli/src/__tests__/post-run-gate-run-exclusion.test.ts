@@ -57,7 +57,6 @@ import {
   SUITE_FINGERPRINTS_TABLE,
 } from '@vostride/agent-qa-knowledge-local'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import {
   asRef,
   asRunId,
