@@ -1151,3 +1151,52 @@ describe('C441-DISPLAY', () => {
     expect(result.stderr).toContain('Create the file before running tests.')
   })
 })
+
+describe('C441-GAP-DISPLAY', () => {
+  const roots: string[] = []
+  let originalExitCode: typeof process.exitCode
+
+  beforeEach(() => {
+    originalExitCode = process.exitCode
+  })
+
+  afterEach(() => {
+    process.exitCode = originalExitCode
+    for (const root of roots.splice(0)) {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fn prints a declared value holding a quote and a backslash only as its marker', async () => {
+    const workspace = fixtureWorkspace(roots)
+    writeFileSync(join(workspace.root, '.env.secrets.local'), 'PW_441=pa"ss\\x\n', 'utf8')
+    seedRuns(workspace, [
+      handoff({
+        runId: 'run-escaped',
+        buildOrdinal: 3,
+        aggregateVerdict: 'failed',
+        tests: [{
+          testId: 'test-1',
+          testName: 'log in with pa"ss\\x',
+          filePath: 'tests/login.yaml',
+          testIndex: 0,
+          outcome: 'failed',
+          steps: [],
+        }],
+      }),
+    ])
+    const args = ['runs.get', '--input', JSON.stringify({ runId: 'run-escaped' })]
+
+    const human = await invoke(workspace, args)
+    const json = await invoke(workspace, [...args, '--json'])
+
+    for (const result of [human, json]) {
+      const printed = `${result.stdout}\n${result.stderr}`
+      expect(result.exitCode).toBeUndefined()
+      expect(result.stdout).toContain('log in with [secret:PW_441]')
+      expect(printed).not.toContain('pa"ss')
+      expect(printed).not.toContain('pa\\"ss')
+      expect(printed).not.toContain('ss\\\\x')
+    }
+  })
+})
