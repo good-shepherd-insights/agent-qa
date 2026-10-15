@@ -223,7 +223,13 @@ export class ApiError extends Error {
   readonly missingTests?: Array<{ index: number; test: string; id: string }>
 
   constructor(status: number, statusText: string, payload: Record<string, unknown> | null) {
+    // 441 GAP2-D5: a refused write-back carries the sentence the editors show.
+    const writeBackSentence =
+      payload?.error === 'marker_written_back' && typeof payload.message === 'string'
+        ? payload.message
+        : undefined
     const message =
+      writeBackSentence ||
       (payload && typeof payload.error === 'string' && payload.error) ||
       (payload && typeof payload.message === 'string' && payload.message) ||
       `API error ${status}: ${statusText}`

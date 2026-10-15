@@ -9,6 +9,7 @@ import type { JobQueue } from '../queue/job-queue.js'
 import { extractTestFileMetadata, type SupportedPlatform, type TestFileManager } from '../tests/test-file-manager.js'
 import type { SuiteFileManager } from '../tests/suite-file-manager.js'
 import { readConfigValues, type ConfigManager } from '../config/index.js'
+import { holdsShownMarker } from '../config/config-manager.js'
 import { createUndoStore, UNDO_RETENTION_MS } from '../config/undo-store.js'
 import { HookRegistryManager, isHookRegistryMutationError } from '../hooks/hook-registry-manager.js'
 import { readJsonBody } from './body-parser.js'
@@ -26,6 +27,7 @@ import {
   classifyProviderError,
   extractProviderError,
   LlmCredentialMoveRequestSchema,
+  MARKER_WRITTEN_BACK_SENTENCE,
   maskPayloadStrings,
   maskPayloadTree,
   parseHandleParam,
@@ -236,6 +238,28 @@ function withDeclaredMask<T>(mask: MaskFn | undefined, build: (mask: MaskFn) => 
   } catch {
     return undefined
   }
+}
+
+// 441 GAP2-D5 (WR-G03): the target list answers masked names, so a save whose target holds one
+// would write the marker into the file. A suite that does not parse is left to validation.
+function suiteFileTarget(content: string): unknown {
+  try {
+    const parsed: unknown = parseYaml(content)
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
+    return (parsed as Record<string, unknown>).target
+  } catch {
+    return undefined
+  }
+}
+
+function refusedShownMarkerTarget(res: ServerResponse, target: unknown): boolean {
+  if (!holdsShownMarker(target)) return false
+  json(res, {
+    error: 'marker_written_back',
+    message: MARKER_WRITTEN_BACK_SENTENCE,
+    issues: [{ path: ['target'], message: MARKER_WRITTEN_BACK_SENTENCE }],
+  }, 422)
+  return true
 }
 
 // The product provider an auth.json entry belongs to, mapped the way GET /api/auth/status maps it.
@@ -3152,6 +3176,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             json(res, { error: 'Both path and content are required' }, 400)
             return
           }
+          if (refusedShownMarkerTarget(res, suiteFileTarget(body.content))) return
           const validation = await suiteFileManager.validate(body.content)
           if (!validation.valid) {
             json(res, {
@@ -3204,6 +3229,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             json(res, { error: 'Content is required' }, 400)
             return
           }
+          if (refusedShownMarkerTarget(res, suiteFileTarget(body.content))) return
           const found = await suiteFileManager.findBySuiteId(sId)
           if (!found) {
             notFound(res, 'Suite not found')
@@ -3307,6 +3333,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             json(res, { error: 'Both path and content are required' }, 400)
             return
           }
+          if (refusedShownMarkerTarget(res, extractTestFileMetadata(body.content).targetName)) return
           const validation = await testFileManager.validate(body.content)
           if (!validation.valid) {
             json(res, { error: 'invalid_test_file', errors: validation.errors }, 400)
@@ -3363,6 +3390,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             json(res, { error: 'Content is required' }, 400)
             return
           }
+          if (refusedShownMarkerTarget(res, extractTestFileMetadata(body.content).targetName)) return
           const found = await testFileManager.findByTestId(tId)
           if (!found) {
             notFound(res, 'Test not found')
