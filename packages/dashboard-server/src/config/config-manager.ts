@@ -139,7 +139,7 @@ export async function readConfigValues(manager: ConfigManager): Promise<Record<s
 }
 
 export class ConfigManager {
-  constructor(private configPath: string, private mask: MaskFn) {}
+  constructor(private configPath: string, readonly mask: MaskFn) {}
 
   // 429-05 Pitfall 3: a half-edited file is named, never served as the partial config yaml recovers.
   async readWithRevision(): Promise<ConfigReadOutcome> {

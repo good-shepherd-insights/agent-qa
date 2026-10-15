@@ -26,6 +26,8 @@ import {
   classifyProviderError,
   extractProviderError,
   LlmCredentialMoveRequestSchema,
+  maskPayloadStrings,
+  maskPayloadTree,
   parseHandleParam,
   providerErrorSentence,
   RecordChangeSchema,
@@ -33,6 +35,7 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   EditorLiveUrlResult,
+  MaskFn,
   PostProcessingStatus,
   RunServiceReadiness,
   RunSession,
@@ -223,6 +226,16 @@ function withoutSavedValues(text: string, savedValues: readonly string[]): strin
     .filter((value) => value.length >= MIN_REDACTED_HEADER_LENGTH)
     .sort((a, b) => b.length - a.length)
     .reduce((redacted, value) => redacted.split(value).join(TEST_REDACTED), text)
+}
+
+// 441 GAP-D5: undefined when no declared mask is bound or it throws, so a caller leaves the text out.
+function withDeclaredMask<T>(mask: MaskFn | undefined, build: (mask: MaskFn) => T): T | undefined {
+  if (mask === undefined) return undefined
+  try {
+    return build(mask)
+  } catch {
+    return undefined
+  }
 }
 
 // The product provider an auth.json entry belongs to, mapped the way GET /api/auth/status maps it.
@@ -1923,6 +1936,9 @@ interface RouterDeps {
   suiteFileManager?: SuiteFileManager
   configManager?: ConfigManager
   configPath?: string
+  // 441 GAP-D5: hook output, provider error text and target names leave through this mask. Absent,
+  // the router uses the config manager's; with neither, those answers carry no such text.
+  declaredSecretMask?: MaskFn
 
   llmConfig?: DashboardRuntimeLLMConfig
   authFetch?: typeof globalThis.fetch
@@ -2006,6 +2022,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
     ? dbOrDeps as RouterDeps
     : { db: dbOrDeps as DashboardDatabase }
   const { executionBackend, jobQueue, testFileManager, suiteFileManager, configManager, workspacePaths, llmConfig, authFetch, sessionManager } = deps
+  const declaredMask = deps.declaredSecretMask ?? configManager?.mask
   // CR-02 (401-18): the response layer reads run rows through the projection, never raw. The host's
   // own reconciliation and the queue keep `deps.db` — see `withResponseSafeRunReads`.
   const db = withResponseSafeRunReads(deps.db)
@@ -4502,6 +4519,10 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
               return
             }
 
+            if (declaredMask === undefined) {
+              json(res, { error: 'masking_unavailable' }, 503)
+              return
+            }
             const workspaceEnv = await readWorkspaceEnvVars(workspacePaths)
             const result = await new DockerHookExecutor().execute(resolvedHook, {
               env: {
@@ -4513,28 +4534,45 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             const networkLogs = summarizeHookNetworkLogs(
               (result as { networkLogs?: Array<{ url: string; method: string; status: number; startTime: number; endTime: number }> }).networkLogs,
             )
+            const shown = withDeclaredMask(declaredMask, (mask) => ({
+              ...maskPayloadStrings({
+                output: result.output,
+                stdout: result.stdout,
+                stderr: result.stderr,
+                error: result.error ?? null,
+              }, mask),
+              variables: maskPayloadTree(result.variables, mask),
+              networkLogs: networkLogs.map((entry) => ({ ...entry, url: mask(entry.url) })),
+            }))
+            if (shown === undefined) {
+              json(res, { error: 'masking_unavailable' }, 503)
+              return
+            }
 
             json(res, {
               success: result.success,
               status: result.success ? 'passed' : 'failed',
               executedAt: new Date().toISOString(),
               duration: result.duration,
-              output: result.output,
-              stdout: result.stdout,
-              stderr: result.stderr,
-              error: result.error ?? null,
-              variables: result.variables,
+              output: shown.output,
+              stdout: shown.stdout,
+              stderr: shown.stderr,
+              error: shown.error,
+              variables: shown.variables,
               sandbox: {
                 runtime: resolvedHook.runtime,
                 image: RUNTIME_IMAGE_MAP[resolvedHook.runtime],
                 networkMode: resolvedHook.network ? 'enabled' : 'disabled',
                 dockerVersion: null,
-                networkLogsAvailable: networkLogs.length > 0,
-                networkLogs,
+                networkLogsAvailable: shown.networkLogs.length > 0,
+                networkLogs: shown.networkLogs,
               },
             } satisfies import('../hooks/hook-registry-types.js').HookRunResponse)
           } catch (err: unknown) {
-            json(res, { error: err instanceof Error ? err.message : 'Failed to run hook' }, 500)
+            const message = err instanceof Error
+              ? withDeclaredMask(declaredMask, (mask) => mask(err.message))
+              : undefined
+            json(res, { error: message ?? 'Failed to run hook' }, 500)
           }
         })
         .catch(() => json(res, { error: 'Invalid request body' }, 400))

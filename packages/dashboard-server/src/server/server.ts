@@ -616,6 +616,7 @@ export async function startServer(opts: StartServerOptions): Promise<{
     suiteFileManager,
     configManager,
     configPath: resolvedConfigPath,
+    declaredSecretMask: opts.declaredSecretMask,
     llmConfig,
     authFetch,
     sessionManager,
