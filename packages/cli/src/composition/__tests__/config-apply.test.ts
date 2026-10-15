@@ -183,7 +183,6 @@ function registryFor() {
 
   return createFunctionRegistry({
     deps,
-    auditSink: { appendGuardrailAudit() {} },
     // 2026-10-02 (432-39, D-12): no confirm port and no execution-context option. An accept
     // dispatches directly in every context; the registry takes neither seam any more.
   })

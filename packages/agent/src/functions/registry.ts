@@ -6,7 +6,6 @@
 // therefore has exactly one way to run a capability: `invokeFunction`'s validated dispatch.
 // Since 432-13 that path asks nobody (no gate, confirm port, grant reader or deny overlay).
 
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 
 import { toOutputProjection, toSchemaProjection } from './declaration-projection.js'
@@ -322,8 +321,6 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
 export interface CreateFunctionRegistryOptions {
   /** Host-backed implementations the ops read through; built at the composition root. */
   deps: FunctionDeps
-  /** Unread since 441-28 (D-15): nothing writes a guardrail audit row; 441-29 deletes it. */
-  auditSink?: AuditSink
   // 2026-10-02 (432-39, D-12): no `resolveExecutionContext` member. No op gate has decided in an
   // execution context since 432-13, nothing here read the option, and the fixtures that passed it
   // stopped by 432-39. A host's live context still reaches a run's record and the knowledge review

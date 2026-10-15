@@ -113,14 +113,8 @@ function register(agentQaRoot: string, socketPath: string): void {
   })
 }
 
-interface TestAuditRow extends Record<string, unknown> {
-  readonly action?: string
-  readonly verdict?: string
-}
-
 interface TestRegistryFixture {
   readonly registry: FunctionRegistry
-  readonly auditRows: TestAuditRow[]
 }
 
 interface FnInvocationResult {
@@ -190,7 +184,6 @@ async function registryFixture(
       options: Record<string, unknown>,
     ): FunctionRegistry
   }
-  const auditRows: TestAuditRow[] = []
   const registry = registryModule.createRegistryFromSpecs(specs, {
     deps: {
       runs: {
@@ -211,17 +204,10 @@ async function registryFixture(
       },
       config: TEST_CONFIG,
     },
-    // 2026-10-01 (432-19, D-17): the audit port has one append, for guardrail rows, so `auditRows`
-    // records every row an invocation could write.
-    auditSink: {
-      appendGuardrailAudit(row: TestAuditRow) {
-        auditRows.push(row)
-      },
-    },
     // 2026-10-01 (432-32): no `resolveExecutionContext` registry option and no `requiredScopes`
     // on the synthetic specs; the registry reads neither.
   })
-  return { registry, auditRows }
+  return { registry }
 }
 
 async function startRegistryServer(
@@ -941,7 +927,7 @@ describe('daemon /invoke endpoint semantic parity', () => {
   // retired claim (the neutral reason crossing `wireError`) has no producer left to carry.
   it('dispatches an ask-tier op identically in process and over the wire, with no audit row', async () => {
     const semantic = await semanticModules()
-    const { registry, auditRows } = await registryFixture([
+    const { registry } = await registryFixture([
       {
         id: 'synthetic.ask',
         summary: 'A mutating-shared fixture the daemon local-headless posture dispatches directly.',
@@ -960,7 +946,6 @@ describe('daemon /invoke endpoint semantic parity', () => {
     await expect(
       semantic.invokeFunction(registry, 'synthetic.ask', {}, DAEMON_FUNCTION_CALLER),
     ).resolves.toEqual({ ok: true })
-    expect(auditRows.splice(0)).toEqual([])
 
     const { agentQaRoot } = await startRegistryServer(
       'ask-deny',
@@ -972,7 +957,6 @@ describe('daemon /invoke endpoint semantic parity', () => {
       functionId: 'synthetic.ask',
       input: {},
     })).resolves.toEqual({ ok: true })
-    expect(auditRows.splice(0)).toEqual([])
   })
 })
 

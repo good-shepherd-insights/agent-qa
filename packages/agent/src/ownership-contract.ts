@@ -34,9 +34,10 @@ export const AGENT_QA_AGENT_EXTERNAL_DEPENDENCIES = ['ai', 'zod'] as const
 // event-log replay contract (`EventLogPort.read` / `ReplayIncompleteError`) rather than
 // restating it, so the resume-token semantics cannot fork between the two. Runner is
 // itself providerNeutral + storageNeutral, so the direction rule stays satisfied.
+// 2026-10-15 (441-29, D-15): `@vostride/agent-qa-safety` is gone; its last import was the
+// registry's `AuditSink` option. Agent tests still read it, so it stays a devDependency.
 export const AGENT_QA_AGENT_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-runner',
-  '@vostride/agent-qa-safety',
   '@vostride/agent-qa-schema',
 ] as const
 

@@ -41,9 +41,6 @@ importers:
       '@vostride/agent-qa-runner':
         specifier: workspace:*
         version: link:../runner
-      '@vostride/agent-qa-safety':
-        specifier: workspace:*
-        version: link:../safety
       '@vostride/agent-qa-schema':
         specifier: workspace:*
         version: link:../schema
@@ -63,6 +60,9 @@ importers:
       '@vostride/agent-qa-model':
         specifier: workspace:*
         version: link:../model
+      '@vostride/agent-qa-safety':
+        specifier: workspace:*
+        version: link:../safety
       tsup:
         specifier: ~8.5.1
         version: 8.5.1(jiti@2.6.1)(postcss@8.5.13)(typescript@6.0.3)(yaml@2.8.4)

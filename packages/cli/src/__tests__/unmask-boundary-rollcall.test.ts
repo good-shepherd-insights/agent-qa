@@ -632,8 +632,6 @@ function dashboardRunRollCall(): Promise<DashboardRunRollCall> {
         createDashboardRunDetailReader(db),
         createEvidenceBlobReader({ agentQaRoot: TMP_ROOT }),
       ),
-      // Discards every row: this file asserts on emitted bytes, never on the audit trail.
-      auditSink: { appendGuardrailAudit() {} },
       // 2026-10-02 (432-37, D-12): no `resolveExecutionContext` registry option; the registry reads
       // no context (432-20).
     })

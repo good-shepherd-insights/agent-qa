@@ -88,7 +88,6 @@ import { fileURLToPath } from 'node:url'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import {
   createFunctionRegistry,
-  type CreateFunctionRegistryOptions,
   type FunctionDeps,
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
@@ -205,10 +204,6 @@ beforeAll(async () => {
     origin: () => boundOrigin,
   })
 
-  const auditSink = {
-    appendGuardrailAudit() {},
-  } as unknown as CreateFunctionRegistryOptions['auditSink']
-
   // THE LIVE-VIEW-BOUND REGISTRY. This is the whole difference between this endpoint and the
   // standalone one: `runs.liveurl` is BOUND here, so `registerAppResources`' third condition passes
   // and the App registers at all (plan 01 decision D-A).
@@ -223,7 +218,6 @@ beforeAll(async () => {
       },
       liveView: liveView.liveView,
     } as unknown as FunctionDeps,
-    auditSink,
   })
 
   // 2026-10-14 (441-07, D-06): the masker is the declared loader over a project config, as the

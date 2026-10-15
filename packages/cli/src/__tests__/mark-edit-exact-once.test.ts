@@ -130,7 +130,7 @@ function editHost(configPath: string, options: { crashAfterWrite: boolean }) {
       openEvaluation: () => Promise.reject(new Error('an edit opens no evaluation')),
     },
   } as unknown as FunctionDeps
-  const registry = createFunctionRegistry({ deps, auditSink: { appendGuardrailAudit() {} } })
+  const registry = createFunctionRegistry({ deps })
   return {
     counts,
     invokeAuthoringDraftEdit: async (draftInput: unknown) => AuthoringDraftEditOutputSchema.parse(

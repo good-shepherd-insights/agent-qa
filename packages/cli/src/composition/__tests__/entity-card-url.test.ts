@@ -17,7 +17,6 @@
 import { createFunctionRegistry, invokeFunction } from '@vostride/agent-qa-agent'
 import type { FunctionDeps } from '@vostride/agent-qa-agent'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import type {
   EntityCard,
   EntityDescriptor,
@@ -38,10 +37,6 @@ const declaredRedactor = new SecretRedactor(SecretStore.fromEnvContent(`PW_441=$
 const CALLER: FunctionCaller = {
   surface: 'cli',
   origin: 'agent',
-}
-
-const AUDIT_SINK: AuditSink = {
-  appendGuardrailAudit: () => undefined,
 }
 
 const DESCRIPTOR: EntityDescriptor = {
@@ -105,7 +100,6 @@ function depsFor(configPath: string): FunctionDeps {
 async function cardFor(dashboard: Record<string, unknown>): Promise<EntityCard> {
   const registry = createFunctionRegistry({
     deps: depsFor(writeConfig(dashboard)),
-    auditSink: AUDIT_SINK,
     // 2026-10-02 (432-36, D-12): no `resolveExecutionContext` registry option; the registry reads
     // no context (432-20).
   })

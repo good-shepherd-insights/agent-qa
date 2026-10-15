@@ -181,7 +181,6 @@ function harness(emission: string, options: { readonly beforeAnswer?: () => void
   return {
     registry: createFunctionRegistry({
       deps,
-      auditSink: { appendGuardrailAudit() {} },
     }),
     runStarts: () => runStarts,
   }

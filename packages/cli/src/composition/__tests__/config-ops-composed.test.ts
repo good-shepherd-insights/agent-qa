@@ -140,7 +140,6 @@ function registry() {
 
   return createFunctionRegistry({
     deps,
-    auditSink: { appendGuardrailAudit() {} },
   })
 }
 

@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url'
 
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { createFunctionRegistry } from '@vostride/agent-qa-agent'
-import type { CreateFunctionRegistryOptions, FunctionDeps } from '@vostride/agent-qa-agent'
+import type { FunctionDeps } from '@vostride/agent-qa-agent'
 import * as schemaApi from '@vostride/agent-qa-schema'
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -96,7 +96,6 @@ describe('the listener reads no Authorization header (D-12)', () => {
   async function listener(): Promise<URL> {
     const registry = createFunctionRegistry({
       deps: {} as unknown as FunctionDeps,
-      auditSink: { appendGuardrailAudit() {} } as unknown as CreateFunctionRegistryOptions['auditSink'],
     })
     const root = mkdtempSync(join(tmpdir(), 'agent-qa-441-07-tokenless-'))
     cleanups.push(async () => rmSync(root, { recursive: true, force: true }))

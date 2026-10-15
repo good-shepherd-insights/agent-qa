@@ -200,7 +200,6 @@ function registryFor(overrides: Partial<FunctionDeps> = {}) {
 
   return createFunctionRegistry({
     deps,
-    auditSink: { appendGuardrailAudit() {} },
   })
 }
 

@@ -75,7 +75,6 @@ const EDIT_BRIEF: AuthoringDraftEditInput = {
 function benchAt(_ctx: ExecutionContext) {
   return createFunctionRegistry({
     deps: {} as unknown as FunctionDeps,
-    auditSink: { appendGuardrailAudit() {} },
   })
 }
 
