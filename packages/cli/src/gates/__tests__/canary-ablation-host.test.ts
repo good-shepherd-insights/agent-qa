@@ -40,6 +40,8 @@ afterEach(() => {
 describe('418 lazy canary host bridge', () => {
   it('binds real zero-call staging and novelty through the session to the local feedback tree', async () => {
     const f = fixture()
+    // 441 GAP3-D1: staging masks with the declared secrets, so the workspace needs its secrets file.
+    writeFileSync(join(f.root, '.env.secrets.local'), '')
     const corpus = writeGate1Fixture(f.root, { targetInCorpus: false, handoffForTarget: true, proofBrief: true })
     renameSync(corpus.committedRoot, join(f.root, 'agent-qa-eval'))
     const handoffPath = join(f.agentQaRoot, 'runs', slugBranch(corpus.injection.target.runId), 'handoff.json')

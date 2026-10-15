@@ -13,6 +13,7 @@ import {
   committedFileText,
   deriveRunSlug,
   extractRunCassettes,
+  maskCorpusText,
   projectCorpusEntry,
   projectSilverLabelRecord,
   resolveProductPartition,
@@ -70,6 +71,8 @@ export interface StageFeedbackEntryInput extends FeedbackStateInput {
   attributedObservationId: string
   benefit: Benefit
   candidateId: string
+  /** 441 GAP3-D1: required. The staged cassette is extracted from the masked run. */
+  mask: MaskFn
 }
 export type StageFeedbackEntryResult =
   | { kind: 'staged'; dir: string }
@@ -116,6 +119,7 @@ export function isNovelState(input: FeedbackStateInput): boolean {
 }
 
 export async function stageFeedbackEntry(input: StageFeedbackEntryInput): Promise<StageFeedbackEntryResult> {
+  requireCorpusMask(input.mask, 'stageFeedbackEntry')
   let temporary: string | undefined
   try {
     const dir = feedbackDir(input)
@@ -127,7 +131,10 @@ export async function stageFeedbackEntry(input: StageFeedbackEntryInput): Promis
     const handoff = loadCompletedRunHandoff(join(input.agentQaRoot, RUNS_SUBDIR, slugBranch(input.target.runId), HANDOFF_FILE))
     if (handoff.runId !== input.target.runId || resolveProductPartition(handoff.scope) !== input.product
       || handoff.tests.find(test => test.testId === input.target.testId)?.isRerun === true) return { kind: 'target-unavailable' }
-    const extraction = extractRunCassettes({ handoff, artifacts: new FsRunArtifactSource({ root: input.agentQaRoot, runId: handoff.runId }) })
+    // 441 GAP3-D1: extract from the masked run. The digest comparisons below stay as they are, so a
+    // target whose route or element names hold a declared value answers target-unavailable.
+    const extraction = extractRunCassettes({ handoff: maskCorpusText(handoff, input.mask),
+      artifacts: new FsRunArtifactSource({ root: input.agentQaRoot, runId: handoff.runId }) })
     const matches = extraction.cassettes.filter((entry): entry is ExtractedCassette & { cassette: LeafCassette } =>
       entry.cassette.granularity === 'leaf' && entry.cassette.runId === input.target.runId
       && entry.cassette.input.testId === input.target.testId && entry.cassette.stepIndex === input.target.stepIndex)

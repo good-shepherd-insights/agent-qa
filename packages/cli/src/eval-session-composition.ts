@@ -1307,10 +1307,11 @@ export function isFeedbackStateNovel(session: EvalSession, input: { agentQaRoot:
   if (digest.kind !== 'digest') throw new TypeError('feedback corpus unavailable')
   return isNovelState({ ...input, committedRoot: resolve(session.configDir, 'agent-qa-eval') })
 }
-export async function runFeedbackStaging(session: EvalSession, input: Omit<StageFeedbackEntryInput, 'committedRoot'>) {
+export async function runFeedbackStaging(session: EvalSession, input: Omit<StageFeedbackEntryInput, 'committedRoot' | 'mask'>) {
   const digest = readCanaryCorpusDigest(session)
   if (digest.kind !== 'digest') return digest
-  return stageFeedbackEntry({ ...input, committedRoot: resolve(session.configDir, 'agent-qa-eval') })
+  return stageFeedbackEntry({ ...input, committedRoot: resolve(session.configDir, 'agent-qa-eval'),
+    mask: committedCorpusMask(session) })
 }
 
 export interface SeedFromFeedbackVerbResult {

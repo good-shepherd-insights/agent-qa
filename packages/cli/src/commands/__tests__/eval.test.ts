@@ -886,6 +886,7 @@ describe('runFloorVerb — recorded protocol and write-once measurement', () => 
 
 const BLOB_BYTES = Uint8Array.from(Buffer.from('agent-qa eval extract fixture blob\n', 'utf8'))
 const SUITE_SCOPE: ScopeKey = { tier: 'suite', key: 'eval-cli' }
+const NO_DECLARED_SECRETS = (text: string) => text
 
 // 414 D-07 — a TEST fixture value, not a plan-authored production default; production has no
 // default and every fresh test root is its own first partition.
@@ -2001,7 +2002,8 @@ async function feedbackVerbFixture() {
     new FsHandoffStore({ root: agentQaRoot, runId }).save(handoff)
     expect(await stageFeedbackEntry({ agentQaRoot, committedRoot, product: `feedback-${index}`,
       target: { runId, testId: handoff.tests[0]!.testId, stepIndex: 0 }, stateDigest: distilledScreenStateDigest(state),
-      candidateId: `fixture-candidate-${index}`, attributedObservationId: `fixture-observation-${index}`, benefit: index === 0 ? 'rode-along' : 'exercised-harmed' })).toMatchObject({ kind: 'staged' })
+      candidateId: `fixture-candidate-${index}`, attributedObservationId: `fixture-observation-${index}`, benefit: index === 0 ? 'rode-along' : 'exercised-harmed',
+      mask: NO_DECLARED_SECRETS })).toMatchObject({ kind: 'staged' })
   }
   const { createPromotionFloorFixture, completeGate1Receipt } = await import(new URL(
     '../../../../knowledge-local/src/curator/__tests__/fixtures/promotion-floor-fixture.js', import.meta.url,

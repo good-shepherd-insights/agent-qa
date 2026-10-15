@@ -26,7 +26,8 @@ function feedbackInput(f: ReturnType<typeof fixture>, route = 'novel') {
   return { agentQaRoot: f.agentQaRoot, committedRoot: f.committedRoot,
     product: f.handoff.scope.key, target: { runId: String(f.handoff.runId), testId: f.handoff.tests[0]!.testId, stepIndex: 0 },
     attributedObservationId: 'fixture-feedback-observation', benefit: 'rode-along' as const,
-    candidateId: f.line.id, stateDigest: distilledScreenStateDigest(f.step.subActions[0]!.stateBefore) }
+    candidateId: f.line.id, stateDigest: distilledScreenStateDigest(f.step.subActions[0]!.stateBefore),
+    mask: NO_DECLARED_SECRETS }
 }
 function admissionInput(f: ReturnType<typeof fixture>, dryRun = false) {
   return { agentQaRoot: f.agentQaRoot, committedRoot: f.committedRoot, dryRun, mask: NO_DECLARED_SECRETS }
