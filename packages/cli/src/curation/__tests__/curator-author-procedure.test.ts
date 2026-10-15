@@ -198,8 +198,8 @@ function trajectorySeed(): ProcedureTrajectorySeed {
             ref: { ref: 'email', role: 'textbox', nameNormalized: 'email', name: 'Email' },
           },
           values: {
-            text: { observed: 'user@example.com', source: 'literal', targetRef: 'email' },
-            clearMode: { observed: 'replace', source: 'literal', targetRef: 'email' },
+            text: { observed: 'user@example.com', source: 'literal' },
+            clearMode: { observed: 'replace', source: 'literal' },
           },
         },
         pageRoute: '/login',
@@ -218,9 +218,9 @@ function trajectorySeed(): ProcedureTrajectorySeed {
             },
           },
           values: {
-            text: { observed: '<SECRET_0>', source: 'masked-secret', targetRef: 'password' },
-            clearMode: { observed: 'replace', source: 'literal', targetRef: 'password' },
-            submit: { observed: true, source: 'literal', targetRef: 'password' },
+            text: { observed: '<SECRET_0>', source: 'masked-secret' },
+            clearMode: { observed: 'replace', source: 'literal' },
+            submit: { observed: true, source: 'literal' },
           },
         },
         pageRoute: '/login',
@@ -257,7 +257,6 @@ function compositeTrajectorySeed(): ProcedureTrajectorySeed {
       files: {
         observed: ['a.png', 'b.pdf'],
         source: 'literal',
-        targetRef: 'upload',
       },
     },
   } as unknown as NonNullable<ProcedureTrajectorySeed['steps'][number]['action']>
@@ -313,13 +312,11 @@ function sourcedSeed(): ProcedureTrajectorySeed {
     observed: 'qa.user@example.com',
     source: 'test-variable',
     sourceName: 'PROBE_USER',
-    targetRef: 'email',
   } as never
   seed.steps[2]!.action!.values['text'] = {
     observed: '[secret:PROBE_TOKEN]',
     source: 'masked-secret',
     sourceName: 'PROBE_TOKEN',
-    targetRef: 'password',
   } as never
   return seed
 }
@@ -582,23 +579,6 @@ function addBundles(deltas: Delta[]) {
 }
 
 describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
-  it('defines credential sensitivity only for action value fields', async () => {
-    const schema = await import('@vostride/agent-qa-schema') as typeof import('@vostride/agent-qa-schema') & {
-      isCredentialValueField?: (actionType: string, field: string) => boolean
-    }
-
-    expect(schema.isCredentialValueField).toBeTypeOf('function')
-    if (schema.isCredentialValueField === undefined) return
-
-    expect(schema.isCredentialValueField('fill', 'text')).toBe(true)
-    expect(schema.isCredentialValueField('fill', 'clearMode')).toBe(false)
-    expect(schema.isCredentialValueField('fill', 'submit')).toBe(false)
-    expect(schema.isCredentialValueField('paste', 'value')).toBe(true)
-    expect(schema.isCredentialValueField('select', 'value')).toBe(true)
-    expect(schema.isCredentialValueField('click', 'text')).toBe(false)
-    expect(schema.isCredentialValueField('hover', 'value')).toBe(false)
-  })
-
   it('yields whole-flow and sub-flow Add deltas whose bodies round-trip the codec', async () => {
     const outcome = await author([wholeFlowPlusSubFlow])(procedureJob(), [])
 
@@ -710,7 +690,6 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
     seed.steps[1]!.action!.values['submit'] = {
       observed: true,
       source: 'literal',
-      targetRef: 'email',
     }
     const proposal = JSON.stringify({
       candidates: [
@@ -1143,7 +1122,6 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
       observed: 'tok-live-9f3a2b',
       source: 'test-variable',
       sourceName: 'PROBE_TOKEN',
-      targetRef: 'email',
     } as never
     const proposal = JSON.stringify({
       candidates: [

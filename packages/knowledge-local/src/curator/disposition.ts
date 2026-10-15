@@ -1,7 +1,6 @@
 import {
   canonicalJson,
   decideMeasurementDrift,
-  isCredentialValueField,
   isReplayableActionShape,
   parseProcedureBody,
   foldMeasurements,
@@ -1174,7 +1173,7 @@ function disposeProcedureExtraction(input: DisposeDeltaInput): string | undefine
     }
   }
 
-  const secretReject = procedureSecretLiteralReject(covered, evidence.captureReceipt)
+  const secretReject = procedureSecretLiteralReject(covered)
   if (secretReject !== undefined) return secretReject
 
   const bindingReject = procedureBindingIntegrityReject(payload)
@@ -1194,30 +1193,17 @@ const MASKED_SECRET_VALUE_PATTERN = /<(?:SECRET|EMAIL)_\d+>|\{\{\s*secret:/
 const TEST_VARIABLE_VALUE_PATTERN = /\{\{\s*env:/
 
 /**
- * D-03 rule 2. Two independent signals, both fail closed: (1) the literal's own content
- * matches the masking contract in any field; (2) the finalized capture receipt marks a
- * masked credential region on the covered step's ordinal and its credential value field
- * survived as a literal. CR-03 keeps behavioral replay options literal: treating clearMode,
- * submit, or durations as secrets would force invalid parameterization upstream.
+ * D-03 rule 2: a literal whose own content matches the masking contract fails closed.
+ * 2026-10-15 (441-25, D-28): the field a value was typed into never makes it secret.
  */
 function procedureSecretLiteralReject(
   covered: readonly CoveredProcedureStep[],
-  captureReceipt: CurationCaptureReceipt,
 ): string | undefined {
-  const maskedStepOrdinals = new Set(
-    captureReceipt.regions.map((region) => region.stepIndex),
-  )
-  for (const { step, observation } of covered) {
-    for (const [field, slot] of Object.entries(step.action.values)) {
+  for (const { step } of covered) {
+    for (const slot of Object.values(step.action.values)) {
       if (typeof slot !== 'string') continue
       if (MASKED_SECRET_VALUE_PATTERN.test(slot)) return 'procedure-masked-secret-literal'
       if (TEST_VARIABLE_VALUE_PATTERN.test(slot)) return 'procedure-test-variable-literal'
-      if (
-        maskedStepOrdinals.has(observation.step.ordinal)
-        && isCredentialValueField(step.action.type, field)
-      ) {
-        return 'procedure-masked-secret-literal'
-      }
     }
   }
   return undefined

@@ -19,7 +19,6 @@ import type {
 } from '@vostride/agent-qa-model'
 import {
   deriveEvidenceToken,
-  isCredentialValueField,
   isReplayableActionShape,
   serializeProcedureBody,
 } from '@vostride/agent-qa-schema'
@@ -733,15 +732,6 @@ function extractionMessages(seed: ProcedureTrajectorySeed): ModelMessage[] {
   ]
 }
 
-/** stepIndex\u0000elementRef keys of every masked capture region (D-03 receipt evidence). */
-function secretRegionKeys(job: CurationJobView): Set<string> {
-  return new Set(
-    job.captureReceipt.regions.map(
-      (region) => `${region.stepIndex}\u0000${region.elementRef}`,
-    ),
-  )
-}
-
 interface BuiltCandidate {
   payload: ProcedureBodyPayload
   pageRoutes: string[]
@@ -810,7 +800,6 @@ function reserveForcedParameterName(base: string, usedNames: Set<string>): strin
  * INTERIOR non-replayable step still rejects the candidate (contiguity, D-02).
  */
 function buildCandidatePayload(
-  job: CurationJobView,
   seed: ProcedureTrajectorySeed,
   candidate: ExtractionCandidate,
 ): CandidateBuild {
@@ -844,7 +833,6 @@ function buildCandidatePayload(
     )
   }
 
-  const regionKeys = secretRegionKeys(job)
   const appliesIndex = new Map<string, string>()
   for (const parameter of candidate.parameters) {
     for (const target of parameter.appliesTo) {
@@ -946,12 +934,7 @@ function buildCandidatePayload(
     for (const [field, slot] of Object.entries(step.action.values)) {
       const observed = slot.observed
       const composite = isCompositeObserved(observed)
-      const secretByReceipt =
-        typeof observed === 'string'
-        && slot.targetRef !== undefined
-        && regionKeys.has(`${step.ordinal}\u0000${slot.targetRef}`)
-        && isCredentialValueField(step.action.type, field)
-      const secretSlot = slot.source === 'masked-secret' || secretByReceipt
+      const secretSlot = slot.source === 'masked-secret'
       const claimed = appliesIndex.get(`${step.ordinal}\u0000${field}`)
       // The committed name is the binding name whenever the evidence knows one (G-381-3);
       // a proposal's own name survives only for slots with no source binding.
@@ -1128,7 +1111,7 @@ function parseExtractionOutput(
   const deltas: Delta[] = []
   const rejections: string[] = []
   for (const [index, candidate] of proposal.data.candidates.entries()) {
-    const build = buildCandidatePayload(job, seed, candidate)
+    const build = buildCandidatePayload(seed, candidate)
     if (!build.ok) {
       rejections.push(`candidate ${index} (${candidate.flowName}): ${build.reason}`)
       continue

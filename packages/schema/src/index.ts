@@ -1061,10 +1061,6 @@ export {
   NON_REPLAYABLE_ACTION_TYPES,
   isReplayableActionShape,
 } from './action/replayability'
-export {
-  CREDENTIAL_VALUE_FIELDS,
-  isCredentialValueField,
-} from './action/credential-fields'
 
 // 384 function-layer contract vocabulary (D-13/D-16): the caller record and the seed op DTOs
 // surfaces type against under the import firewall. 2026-10-02 (432-39, D-10/D-12): the

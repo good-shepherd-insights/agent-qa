@@ -13,7 +13,6 @@ import {
   canonicalJson,
   DISTILLED_OBSERVATION_SCHEMA_VERSION,
   deriveEvidenceToken,
-  isCredentialValueField,
   procedureJsonValueSchema,
   type Anchor,
   type ArtifactRef,
@@ -479,7 +478,6 @@ const trajectoryValueSlotSchema = z
     // parameter to exactly this name so consult-time fillability (D-08, which matches on
     // binding NAMES) succeeds. Absent when the source is an anonymous literal.
     sourceName: z.string().min(1).optional(),
-    targetRef: z.string().min(1).optional(),
   })
   .strict()
 
@@ -717,7 +715,6 @@ function trajectoryValues(
 ): Record<string, z.infer<typeof trajectoryValueSlotSchema>> | undefined {
   const values: Record<string, z.infer<typeof trajectoryValueSlotSchema>> = {}
   const action = subAction.plannedAction as unknown as Record<string, unknown>
-  const primaryRef = typeof action['ref'] === 'string' ? action['ref'] : undefined
   for (const [key, value] of Object.entries(action)) {
     if (key === 'type' || ACTION_REF_KEYS.includes(key)) continue
     // CR-01/T-381-52: one lossy field invalidates the whole action. Silently dropping a value
@@ -743,10 +740,6 @@ function trajectoryValues(
       ...(!composite && typeof value === 'string'
         ? trajectoryValueClassification(value, interpolated)
         : { source: 'literal' as const }),
-      ...(primaryRef !== undefined
-        && isCredentialValueField(subAction.plannedAction.type, key)
-        ? { targetRef: primaryRef }
-        : {}),
     }
   }
   return values

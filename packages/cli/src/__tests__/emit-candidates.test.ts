@@ -587,7 +587,6 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
       observed: '[secret:ACCOUNT_PASSWORD]',
       source: 'masked-secret',
       sourceName: 'ACCOUNT_PASSWORD',
-      targetRef: 'password',
     })
     expect(filled?.action?.values['clearMode']).toEqual({
       observed: 'replace',
@@ -765,7 +764,6 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
       observed: 'probe-user-7',
       source: 'test-variable',
       sourceName: 'PROBE_USER',
-      targetRef: 'email',
     })
   })
 
@@ -795,7 +793,6 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
     expect(seed?.steps[1]?.action?.values['text']).toEqual({
       observed: 'prefix-probe-user-7-suffix',
       source: 'literal',
-      targetRef: 'email',
     })
   })
 
@@ -856,7 +853,6 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
     expect(seed?.steps[1]?.action?.values['text']).toEqual({
       observed: 'user@example.com',
       source: 'literal',
-      targetRef: 'email',
     })
   })
 
@@ -931,14 +927,13 @@ describe('C441-CURATION', () => {
       observed: '[secret:LOGIN_PW]',
       source: 'masked-secret',
       sourceName: 'LOGIN_PW',
-      targetRef: 'login',
     })
   })
 
   it('a numbered email placeholder from an old run is literal text', () => {
     expect(
       slotValue('<EMAIL_0>', [{ name: 'PROBE_USER', value: 'qa.user+381@example.com' }]),
-    ).toEqual({ observed: '<EMAIL_0>', source: 'literal', targetRef: 'login' })
+    ).toEqual({ observed: '<EMAIL_0>', source: 'literal' })
   })
 })
 

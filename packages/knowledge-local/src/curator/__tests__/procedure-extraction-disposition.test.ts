@@ -375,36 +375,6 @@ describe('procedure extraction disposition — binding integrity & secrets (D-03
     expect(outcome).toEqual({ kind: 'noop', reason: 'procedure-param-undeclared' })
   })
 
-  it('rejects a masked-region step whose value slot survives as a string literal', () => {
-    const payload = makeProcedureBodyPayloadFixture()
-    payload.parameters = payload.parameters.filter(({ name }) => name !== 'password')
-    payload.steps[1] = {
-      ...payload.steps[1]!,
-      action: {
-        ...payload.steps[1]!.action,
-        type: 'fill',
-        values: { text: 'hunter2', clearMode: 'replace', submit: true },
-      },
-    }
-    const outcome = dispose(addDelta({ body: serializeProcedureBody(payload) }))
-    expect(outcome).toEqual({ kind: 'noop', reason: 'procedure-masked-secret-literal' })
-  })
-
-  it('allows literal fill behavior when receipt-marked credential text remains parameterized', () => {
-    const payload = makeProcedureBodyPayloadFixture()
-    payload.steps[1] = {
-      ...payload.steps[1]!,
-      action: {
-        ...payload.steps[1]!.action,
-        type: 'fill',
-        values: { text: { param: 'password' }, clearMode: 'replace', submit: true },
-      },
-    }
-    const delta = addDelta({ body: serializeProcedureBody(payload) })
-
-    expect(dispose(delta)).toMatchObject({ kind: 'apply', delta })
-  })
-
   it('rejects a masked placeholder value surviving as a literal on any step', () => {
     const payload = makeProcedureBodyPayloadFixture()
     payload.parameters = payload.parameters.filter(({ name }) => name !== 'email')
@@ -434,6 +404,27 @@ describe('procedure extraction disposition — binding integrity & secrets (D-03
     )
     const outcome = dispose(addDelta({ body }))
     expect(outcome).toEqual({ kind: 'noop', reason: 'procedure-body-unparseable' })
+  })
+})
+
+describe('C441-CAPTURE', () => {
+  it('a value typed into a credential-type field is not secret by its field type', () => {
+    const payload = makeProcedureBodyPayloadFixture()
+    payload.parameters = payload.parameters.filter(({ name }) => name !== 'password')
+    payload.steps[1] = {
+      ...payload.steps[1]!,
+      action: {
+        ...payload.steps[1]!.action,
+        type: 'fill',
+        values: { text: 'hunter2', clearMode: 'replace', submit: true },
+      },
+    }
+    const delta = addDelta({ body: serializeProcedureBody(payload) })
+
+    expect(makeEvidence().captureReceipt.regions).toEqual([
+      expect.objectContaining({ stepIndex: 1, reason: 'credential-name' }),
+    ])
+    expect(dispose(delta)).toMatchObject({ kind: 'apply', delta })
   })
 })
 

@@ -239,7 +239,6 @@ describe('F-381-48-1 live-artifact staged reproduction (Plan 381-49)', () => {
     expect(seed!.steps[0]!.action?.values['text']).toEqual({
       observed: '<EMAIL_0>',
       source: 'literal',
-      targetRef: 'e2',
     })
   })
 
