@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { IncomingMessage, type IncomingHttpHeaders, type ServerResponse } from 'node:http'
 import { Socket } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -34,6 +34,7 @@ vi.mock('ai', async (importOriginal) => ({
 import { ConfigManager, readConfigValues } from '../config/index.js'
 import { createRouter } from '../server/routes.js'
 import { resolveWorkspacePaths, type ResolvedWorkspacePaths } from '@vostride/agent-qa-core'
+import type { ConfigChange } from '@vostride/agent-qa-schema'
 
 const VALUE = 'Hunter-42-zz'
 const MARKER = '[secret:PW_441]'
@@ -338,5 +339,79 @@ describe('C441-GAP-DASHBOARD', () => {
     if (read.kind !== 'ok') return
     expect(JSON.stringify(read.fileIssues)).not.toContain(VALUE)
     expect(read.fileIssues.some((issue) => issue.path.includes(`qa-${MARKER}`)), JSON.stringify(read.fileIssues)).toBe(true)
+  })
+})
+
+const SHOWN_MARKER_MESSAGE =
+  "This shows a declared secret as [secret:<name>], so it can't be saved here. "
+  + 'Change the value in your secrets file (workspace.secretsFile) instead.'
+
+const WRITE_LINES = [
+  ...BASE_LINES.slice(0, 16),
+  '  targets:',
+  '    web:',
+  '      platform: web',
+  '      url: https://admin:real-pass@host',
+  'use:',
+  '  llm: proxy',
+  '  mobile:',
+  '    appState: preserve',
+  '',
+]
+
+describe('C441-GAP-CONFIG-WRITE', () => {
+  async function writeWorkspace(): Promise<{ manager: ConfigManager; configPath: string; before: string }> {
+    const { configPath } = await configWorkspace(WRITE_LINES)
+    return { manager: new ConfigManager(configPath, declaredMask), configPath, before: await readFile(configPath, 'utf-8') }
+  }
+
+  it('a set whose value holds a shown marker is refused and the file is unchanged', async () => {
+    const { manager, configPath, before } = await writeWorkspace()
+    const path = ['registry', 'targets', 'web', 'url']
+
+    const outcome = await manager.applyChanges([{ op: 'set', path, value: `https://admin:${MARKER}@host/new` }])
+
+    expect(outcome).toEqual({
+      kind: 'refused',
+      error: 'marker_written_back',
+      issues: [{ path, message: SHOWN_MARKER_MESSAGE }],
+    })
+    expect(await readFile(configPath, 'utf-8')).toBe(before)
+  })
+
+  it('a path segment, selector, move source or value key holding a shown marker is refused and the file is unchanged', async () => {
+    const { manager, configPath, before } = await writeWorkspace()
+    const refusedChanges: ConfigChange[][] = [
+      [{ op: 'set', path: ['registry', 'targets', '[secret:X]-web', 'url'], value: 'https://shop.test' }],
+      [{ op: 'unset', path: ['registry', 'targets', '[secret:X]-web'] }],
+      [{ op: 'expect', path: ['use', 'llm'], value: '[secret:X]' }, { op: 'set', path: ['use', 'llm'], value: 'proxy' }],
+      [{ op: 'set', path: ['registry', 'llms', { name: '[secret:X]' }, 'model'], value: 'claude-next' }],
+      [{
+        op: 'move',
+        from: ['registry', 'llms', { name: 'proxy' }, 'providerHeaders', '[secret:X]'],
+        path: ['registry', 'llms', { name: 'proxy' }, 'providerHeaders', 'X-New'],
+      }],
+      [{ op: 'set', path: ['registry', 'targets', 'shop'], value: { platform: 'web', url: 'https://shop.test', '[secret:X]': 'x' } }],
+    ]
+
+    for (const changes of refusedChanges) {
+      const outcome = await manager.applyChanges(changes)
+      expect(outcome, JSON.stringify(changes)).toMatchObject({ kind: 'refused', error: 'marker_written_back' })
+      if (outcome.kind !== 'refused') continue
+      expect(outcome.issues).toHaveLength(1)
+      expect(outcome.issues?.[0]?.message).toBe(SHOWN_MARKER_MESSAGE)
+      expect(await readFile(configPath, 'utf-8')).toBe(before)
+    }
+  })
+
+  it('an ordinary set with no marker still lands', async () => {
+    const { manager, configPath } = await writeWorkspace()
+
+    const outcome = await manager.applyChanges([
+      { op: 'set', path: ['registry', 'targets', 'web', 'url'], value: 'https://admin:new-pass@host' },
+    ])
+
+    expect(outcome.kind).toBe('ok')
+    expect(await readFile(configPath, 'utf-8')).toContain('url: https://admin:new-pass@host')
   })
 })
