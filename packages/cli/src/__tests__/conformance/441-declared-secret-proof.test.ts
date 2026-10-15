@@ -633,6 +633,11 @@ describe('C441-PROOF', () => {
           expect(body.includes(value), `a model request carried ${value}`).toBe(false)
         }
       }
+      const sentText = bodies.join('\n')
+      expect(sentText.includes('{{secret:SHORT_441}}'), 'the step template reached the model')
+        .toBe(true)
+      expect(sentText.includes('use {{secret:NAME}} verbatim'), 'Rule 23 reached the model')
+        .toBe(true)
 
       const runDir = runDirectory(project, runId)
       const classes = {
