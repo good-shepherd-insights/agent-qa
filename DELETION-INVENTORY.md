@@ -4202,3 +4202,119 @@ The record gate runs on Phase 441's final agent-qa SHA, which
 `.planning/phases/441-declared-secret-masking/441-RECORD.md` § Final SHA names. Its legs, counts and
 verdict, including a first red run on the commit that added this section, are recorded in that
 file's § Gate rather than quoted here, so no agent-qa commit follows the gate run.
+
+### Gap closure round 1 (441-61 to 441-66), 2026-10-15
+
+This subsection appends to the Phase 441 section and rewrites none of it; written by 441-66. It
+follows `.planning/phases/441-declared-secret-masking/441-VERIFICATION.md` (agent-qa `1a913e426`,
+6 of 10 truths), whose gaps the orchestrator decided as GAP-D1 to GAP-D9 on 2026-10-15, with the
+owner's delegation. Every commit below is in agent-qa on `version-0.2` and signed. Every new cell is
+listed in `scripts/gate/inputs/regressions.json` with its `441 GAP-D<n>` origin, after the 1540
+rows listed at `1a913e426`, which are unchanged and in order. Three registered cells were re-aimed
+under their kept names: `C441-EGRESS a JSON tool result is walked leaf by leaf` (its key is now
+expected masked), `C441-PROOF run masks both declared values in every model request, record and
+terminal line` (two assertions added) and `C441-COMMITTED adversarial admission needs no guardrail
+policy` (its legacy leg now expects the old record to be skipped).
+
+**What each decision changed**
+
+- **GAP-D1, templates reach the model (VERIFICATION truth 6, CR-B01, WR-B01).** The template rule
+  lives once, inside `createMaskingMiddleware`
+  (`safety/src/egress/masking-middleware.ts`): each string leaf on its way to a model is split on
+  `{{secret:<name>}}`, the text between tokens is masked, and a token is sent verbatim when the mask
+  only names it. No mask call site changed. Records, logs and the terminal still turn the template
+  into `[secret:<name>]`. `SecretRedactor.redactString` now also masks a declared value written as
+  the name inside an undeclared marker or template (`[secret:hunter2]` becomes
+  `[secret:[secret:PW]]`). 441-61. Cells: `C441-GAP-EGRESS` (3), `C441-GAP-REDACTOR` (2).
+- **GAP-D2, object keys are masked (truth 7, CR-B02, WR-B05, IN-A07).** The prompt walker
+  (`mapJsonLike`) masks object keys, walks `toJSON` results and class instances as the JSON a
+  provider receives, returns binary untouched and refuses two keys that mask to one name. The new
+  schema walk `maskPayloadTree` does the same for documents whose keys are data: `fn` output, the
+  chat projection (`maskChatProjection`) and the `entities`, `knowledge read` and
+  `knowledge maintain` `--json` emitters. 441-61, 441-62. Cells: `C441-GAP-EGRESS` (6),
+  `C441-GAP-WALKER` (3), `C441-GAP-TRANSCRIPT` (1).
+- **GAP-D3, the terminal (truth 8, CR-A01, CR-A02, CR-A03, T-441-45, WR-A06, WR-A02, WR-D03).**
+  `fn` masks the result's structure before it serializes. Judge calibration (cli and eval-local)
+  masks the string leaves of its structure, never serialized JSON. `config set` prints its success
+  line through `createDeclaredSecretMask(configPath).mask`, and without a usable mask it prints the
+  line without the value; the write always stands. The run's framework-error, run-denied and run-id
+  refusal lines go through the run's redactor. The post-run tail masks every line it logs and every
+  log it hands on. `createDeclaredSecretMask` re-resolves `workspace.secretsFile` when the config
+  file changes. 441-62, 441-63. Cells: `C441-GAP-DISPLAY` (5), `C441-GAP-CONFIG` (2),
+  `C441-GAP-LOADER` (2).
+- **GAP-D4, curation seeds (truth 9, T-441-25, T-441-50, CR-A04, WR-C03, WR-C01).** Fact, caution
+  and measurement seeds are composed, then masked whole. Anchors and observations are masked by
+  their text members before the evidence token and the content address are derived, so the
+  deterministic fallback commits only masked text. The procedure seed masks target names, page
+  routes and every observed value before classification, so a typed declared value becomes a
+  `masked-secret` slot. The disposition's literal check matches `[secret:<name>]`. 441-64. Cells:
+  `C441-GAP-CURATION` (4).
+- **GAP-D5, dashboard answers (truth 10's leak half, WR-D04).** The router receives the declared
+  mask (`RouterDeps.declaredSecretMask`). The registry hook-run answer (output, stdout, stderr,
+  error, variable keys and values, network log URLs), the LLM connection test's message and
+  details, `GET /api/config/targets` names and config issue paths are masked. Without a usable mask,
+  each leaves the text out rather than answer it raw. 441-65. Cells: `C441-GAP-DASHBOARD` (6).
+- **GAP-D6, the two kept dashboard redactions (truth 10's "nothing else" half, IN-D01).** No code
+  changed. The exception is below, and the skill (both copies), the contracts reference (both
+  copies), `README.md` and the cli README now name it wherever they say nothing else is masked.
+  441-66 `b58044d14`.
+- **GAP-D7, a shown marker is never written back (CR-D01).** `ConfigManager.applyChanges` refuses a
+  change whose path, selector name, move source, value leaf or value key holds `[secret:<name>]`,
+  before the file is read, with the new refusal `marker_written_back`. The dashboard, chat and MCP
+  config writes share it. 441-65. Cells: `C441-GAP-CONFIG-WRITE` (3).
+- **GAP-D8, pre-441 data (SC6's caveat, CR-C01, CR-C02).** `knowledge purge` reads a queue payload
+  that matches no current schema loosely and leaves it in place unless it names purged content;
+  non-JSON bytes still refuse. `readAdversarialRefreshRecords` skips a record that fails the strict
+  schema. 441-64. Cells: `C441-GAP-OLD-DATA` (3).
+
+#### Retained as a deliberate exception (GAP-D6)
+
+| Item | Where | What it masks | Why kept |
+|---|---|---|---|
+| `withoutSavedValues` | `dashboard-server/src/server/routes.ts` | the LLM connection test's saved header values, each at least four characters (`MIN_REDACTED_HEADER_LENGTH`), replaced with `[redacted]` in the provider's error text before the declared mask runs | it stops a key or header the person is testing being echoed back to the browser |
+| `withoutSecret` | `dashboard-server/src/server/llm-connect-route.ts` | the key typed into the connect flow, replaced in the provider's error text | the same: the typed key under test is not echoed to the browser |
+
+Both mask undeclared values, so they are the one exception to "nothing else is masked". VERIFICATION
+truth 10's "nothing else is masked, and the runner's `SecretRedactor` is the one masking function"
+half is accepted by an override in `441-VERIFICATION.md` (orchestrator, owner delegated, GAP-D6).
+`C441-GAP-DASHBOARD an LLM connection test answers provider error text with a declared value only as
+its marker` also pins the `[redacted]` saved header.
+
+#### Contracts and persisted values
+
+| Contract or persisted value | Disposition | Evidence |
+|---|---|---|
+| `ConfigWriteRefusal` / `CONFIG_WRITE_REFUSALS` | **Gains `marker_written_back`.** The page's `CONNECT_REFUSAL_COPY` and the agent's `FIELD_WRITE_REFUSAL_WORDS` carry its words. A refusal on a change addressed by a `{ name }` selector shows as the general "Not saved" message, not under the field (open). | `C441-GAP-CONFIG-WRITE` (3); `C429-CONFIG-WRITE-REFUSALS-EXACT` |
+| `maskPayloadTree` | **New export of `@vostride/agent-qa-schema`** (run barrel and root barrel), beside `maskPayloadStrings`, which keeps its values-only behaviour for run records and bus projections. | `C441-GAP-WALKER` (3) |
+| dashboard answers with no usable mask | **Answer without the text.** The hook run answers `503 masking_unavailable`; the target list answers `500 masking_unavailable`; the LLM test answers its class sentence with no provider text and no details. | `C441-GAP-DASHBOARD` (6) |
+| the candidate content address | **Moves only for evidence that holds a declared value.** Anchors and observations are masked before the address is built. No `416-v51-reference.json` id moved and nothing was re-spelled in 441-64: its fixtures declare no value. | `416-v51-reference.test.ts`, `promotion-floor.acceptance.test.ts` (unchanged, 441-64 `80ea9c47d`) |
+| curation queue payloads written before Phase 441 that match no current schema | **Skipped by `knowledge purge`** (D-20). Left in place unless their candidate id, a seed or an artifact digest names purged content, which sweeps them. The drain still skips and quarantines them, as recorded above. | `C441-GAP-OLD-DATA` (2 purge cells) |
+| adversarial refresh records written before Phase 441 (carrying `policyDigest`) | **Treated as absent** (D-20). `readAdversarialRefreshRecords` skips them; a record whose digest name or product does not match still throws. | `C441-GAP-OLD-DATA a later refresh stages beside a pre-441 refresh record`; the re-aimed `C441-COMMITTED` cell |
+| curation queue rows and committed fact, caution and procedure bundles written after this round | **Hold a declared value only as `[secret:<name>]`** in seeds, anchors, natural keys, target names, page routes and observed values. Rows and bundles written before the round are not rewritten. | `C441-GAP-CURATION` (4) |
+
+The derived index (`memory/index/knowledge.db`, gitignored) still stores a run's exercised anchors
+from the raw handoff (D-18); this is open for 441's review.
+
+#### Supersedes
+
+- **"Known text paths that skip the mask"** (What degrades, above): `config set`'s echo is closed
+  (441-63) and curation's fact and caution seeds are closed (441-64). MCP's generic "Internal server
+  error" on a missing secrets file stays open.
+- **The loader row's re-read sentence** (What was RETAINED, above): the loader now also re-resolves
+  `workspace.secretsFile` when the config file's `(mtimeMs, size, ino)` changes, keys its content
+  cache on the path and the file's stat, and never caches a failed resolve; a config that drops the
+  setting refuses (441-63).
+- **"An undeclared credential of any kind is not masked anywhere"** (What degrades, above): except
+  the two GAP-D6 redactions above.
+- **The adversarial refresh row** (Persisted values, above): such a record is now skipped, not read
+  as malformed and thrown on (441-64).
+- **The 434 gate count** (The instruments, above): the gate list holds 214 `C441-` cells, the 174
+  above and 40 `C441-GAP-` cells (`C441-GAP-EGRESS` 9, `C441-GAP-REDACTOR` 2, `C441-GAP-WALKER` 3,
+  `C441-GAP-TRANSCRIPT` 1, `C441-GAP-DISPLAY` 5, `C441-GAP-CONFIG` 2, `C441-GAP-LOADER` 2,
+  `C441-GAP-CURATION` 4, `C441-GAP-OLD-DATA` 3, `C441-GAP-DASHBOARD` 6, `C441-GAP-CONFIG-WRITE` 3).
+
+**Gate**
+
+The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
+verdict are recorded in `.planning/phases/441-declared-secret-masking/441-RECORD.md` § Gate and the
+SHA in § Final SHA, rather than quoted here, so no agent-qa commit follows it.
