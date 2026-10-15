@@ -63,7 +63,8 @@ export interface ReplayCorpusOnceInput {
   mask: RunCassetteReplayInput['mask']
   seed: number
   k?: number
-  replayOutputBaseDir: string
+  // 441-32: unread since the replay audit sink went (D-15); 441-57 deletes it.
+  replayOutputBaseDir?: string
   source: string
   /** Digest of the committed snapshot supplying this run, when the caller read one. */
   corpusDigest?: string
@@ -222,7 +223,6 @@ export async function runNoiseFloorMeasurement(
       mask: input.mask,
       seed,
       k: 1,
-      replayOutputBaseDir: join(input.reportOutputBaseDir, `r${index}`),
       source: 'committed',
       corpusDigest,
       productByCassetteId,
@@ -366,7 +366,6 @@ export async function replayCorpusOnce(
     seed: input.seed,
     judge: input.judge,
     mask: input.mask,
-    replayOutputBaseDir: input.replayOutputBaseDir,
     recordStore,
     scoreStore,
     replaysRoot,

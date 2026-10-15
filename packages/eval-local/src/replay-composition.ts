@@ -15,8 +15,7 @@
 //     server through unmodified production planner code.
 //   - Model selection derives ONLY from the caller-supplied profile, never the recorded id (D-03):
 //     recorded vs replayed ids are both stamped on the result, neither is enforced.
-//   - Every model request is masked with the caller's declared mask (441 D-06); the replay runs
-//     inside runSafetyScope with a replay-scoped JsonlAuditSink under the replay output dir.
+//   - Every model request is masked with the caller's declared mask (441 D-06).
 
 import {
   adjudicateCassetteScore,
@@ -61,7 +60,6 @@ import type {
 } from '@vostride/agent-qa-model'
 import { LLMPlanner, buildTools, defaultRegistry } from '@vostride/agent-qa-runner'
 import type { DeclaredModelProfile, MaskFn, ScreenState } from '@vostride/agent-qa-schema'
-import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
 
 import { bindJudgePanel, bindJudgePort } from './judge-binding.js'
 import type { JudgeBindingInput } from './judge-binding.js'
@@ -95,9 +93,9 @@ export interface RunCassetteReplayInput {
   seed?: number
   /** k-sample escalation seam (D-10). Defaults to the imported neverEscalate — never re-minted. */
   escalationPredicate?: ReplayEscalationPredicate
-  /** Replay-scoped audit-sink base dir (the JsonlAuditSink lands guardrail/execution rows here). */
-  replayOutputBaseDir: string
-  /** Optional persistence: when supplied, the outcome is saved after the safety scope closes (D-12). */
+  // 441-32: unread since the replay audit sink went (D-15); 441-57 deletes it.
+  replayOutputBaseDir?: string
+  /** Optional persistence: when supplied, the outcome is saved after the replay returns (D-12). */
   recordStore?: FsReplayRecordStore
   /**
    * Optional D-13 score persistence: when supplied and the outcome is a ReplayResult (refusals are
@@ -341,10 +339,6 @@ export async function runCassetteReplay(
   // Host wall-clock behind the eval-core ReplayClock port (eval core bans host time APIs).
   const clock: ReplayClock = input.clock ?? { now: () => performance.now() }
 
-  // A replay-scoped JsonlAuditSink under the replay output dir. The executionContext is omitted
-  // so the live host detector resolves it.
-  const auditSink = new JsonlAuditSink(input.replayOutputBaseDir)
-
   const engineInput: ReplayCassetteInput = {
     cassette: input.cassette,
     artifacts: input.artifacts,
@@ -356,17 +350,14 @@ export async function runCassetteReplay(
     escalationPredicate: input.escalationPredicate ?? neverEscalate,
   }
 
-  // The ENTIRE engine invocation runs inside runSafetyScope so the ALS bundle propagates to
-  // every plan() → createModel egress call.
-  const outcome: ReplayCassetteOutcome =
-    await runSafetyScope({ auditSink }, () => replayCassette(engineInput))
+  const outcome: ReplayCassetteOutcome = await replayCassette(engineInput)
 
   if (input.recordStore !== undefined) {
     input.recordStore.save(outcome)
   }
 
   // Write ordering is strict and load-bearing (OQ-2/D-05, Pitfall 2): recordStore.save → score
-  // (sync, eval core) → adjudicate (async, its OWN safety scope) → diffs over the FINAL score →
+  // (sync, eval core) → adjudicate (async) → diffs over the FINAL score →
   // exactly ONE scoreStore.save. The record store recreates the cassette dir in full (rm + mkdir),
   // so the file-scoped score write MUST land after it — never before — or a re-run would wipe the
   // fresh score.json. Refusals save a record but never a score (they are counted in reports
@@ -413,23 +404,15 @@ export async function runCassetteReplay(
       : single === undefined ? undefined
       : bindJudgePort(observedBinding(single))
 
-    // The judge safety scope (Pitfall 1): the replay scope closed before scoring, so adjudication
-    // gets its OWN replay-scoped JsonlAuditSink and its audit rows land under the replay output
-    // dir (JUDGE-03). Adjudication runs UNCONDITIONALLY so every tie is stamped with its
-    // disposition even when no port exists (D-06/D-10/D-12); the pure scoreCassetteReplay output
-    // itself stays untouched.
-    const judgeAuditSink = new JsonlAuditSink(input.replayOutputBaseDir)
-    const adjudicated = await runSafetyScope(
-      { auditSink: judgeAuditSink },
-      () =>
-        adjudicateCassetteScore({
-          cassette: scoringCassette,
-          outcome,
-          score,
-          eligibility,
-          ...(port !== undefined ? { port } : {}),
-        }),
-    )
+    // Adjudication runs UNCONDITIONALLY so every tie is stamped with its disposition even when
+    // no port exists (D-06/D-10/D-12); the pure scoreCassetteReplay output itself stays untouched.
+    const adjudicated = await adjudicateCassetteScore({
+      cassette: scoringCassette,
+      outcome,
+      score,
+      eligibility,
+      ...(port !== undefined ? { port } : {}),
+    })
 
     input.scoreStore.save({
       cassetteId: input.cassette.id,

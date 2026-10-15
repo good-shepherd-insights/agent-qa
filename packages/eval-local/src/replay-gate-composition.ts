@@ -592,7 +592,6 @@ export async function removalFlipsOutcome(
           declaredBriefDelta: withRecord ? withDelta : withoutDelta,
           k: 1,
           seed: seeds[index]!,
-          replayOutputBaseDir: input.gate1Dir,
           modelCallObservation: {
             onProviderCall: () => {
               result.modelCalls++
@@ -1001,7 +1000,6 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
       k: 1,
       seed: baseline.seed,
       declaredBriefDelta: plan.plan.delta,
-      replayOutputBaseDir: gate1Dir,
       recordStore: new FsReplayRecordStore({ root: input.agentQaRoot, outputDir }),
       scoreStore: new FsScoreStore({ root: input.agentQaRoot, outputDir }),
     })

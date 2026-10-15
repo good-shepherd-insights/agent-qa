@@ -49,7 +49,8 @@ export interface SweepCassetteReplaysInput {
   seed?: number
   judge?: RunCassetteReplayInput['judge']
   mask: RunCassetteReplayInput['mask']
-  replayOutputBaseDir: string
+  // 441-32: unread since the replay audit sink went (D-15); 441-57 deletes it.
+  replayOutputBaseDir?: string
   recordStore: FsReplayRecordStore
   scoreStore: FsScoreStore
   /** The explicit output root shared by the caller's record and score stores. */
@@ -67,8 +68,8 @@ export interface SweepCassetteReplaysResult {
 }
 
 /**
- * Run the selected batch through the one sanctioned replay composition. Persistence and audit
- * roots come from the caller so repeat runs can retain independent records. Refusals and thrown
+ * Run the selected batch through the one sanctioned replay composition. Persistence roots
+ * come from the caller so repeat runs can retain independent records. Refusals and thrown
  * harness errors remain data; one broken cassette never aborts the rest of the batch.
  */
 export async function sweepCassetteReplays(
@@ -97,7 +98,6 @@ export async function sweepCassetteReplays(
         ...(input.seed !== undefined ? { seed: input.seed } : {}),
         ...(input.judge !== undefined ? { judge: input.judge } : {}),
         mask: input.mask,
-        replayOutputBaseDir: input.replayOutputBaseDir,
         recordStore: input.recordStore,
         scoreStore: input.scoreStore,
       })

@@ -1038,6 +1038,56 @@ describe('C441-EGRESS', () => {
   })
 })
 
+describe('C441-RUN-RECORDS', () => {
+  const tempRoots: string[] = []
+
+  afterEach(async () => {
+    await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+  })
+
+  it('an eval replay and its adjudication write no guardrail audit file', async () => {
+    const storeRoot = await mkdtemp(join(tmpdir(), 'c441-eval-audit-'))
+    tempRoots.push(storeRoot)
+    const auditFile = ['guardrail', 'audit.jsonl'].join('_')
+    const cwdAudit = join(process.cwd(), '.agent-qa', auditFile)
+    const cwdBefore = existsSync(cwdAudit) ? readFileSync(cwdAudit, 'utf8') : undefined
+    const { cassette, artifacts } = extractLeaf(midBandHandoff())
+    const replayStub = keyedCapturingStub(() => fillGenerateResult(CANDIDATE_FILL_TEXT), REPLAY_MODEL_ID)
+    const judgeStub = keyedCapturingStub(() => judgeGenerateResult('equivalent', 'high'), JUDGE_MODEL_ID)
+
+    const outcome = await runCassetteReplay({
+      cassette,
+      artifacts,
+      profile: familyStubProfile(REPLAY_MODEL_ID),
+      auth: noneAuth,
+      modelOverrides: { languageModels: replayStub.languageModels },
+      recordStore: new FsReplayRecordStore({ root: storeRoot }),
+      scoreStore: new FsScoreStore({ root: storeRoot }),
+      judge: {
+        profile: familyStubProfile(JUDGE_MODEL_ID),
+        auth: noneAuth,
+        modelOverrides: { languageModels: judgeStub.languageModels },
+      },
+      mask: (text: string) => text,
+    })
+
+    if (!('granularity' in outcome)) throw new Error('expected a replay result, got a refusal')
+    expect(replayStub.captured).toHaveLength(1)
+    expect(judgeStub.captured).toHaveLength(2)
+    const files = readdirSync(storeRoot, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+    expect(files).toContain(REPLAY_RECORD_FILE)
+    expect(files).toContain(SCORE_FILE)
+    expect(files).not.toContain(auditFile)
+    const scoreFile = readdirSync(storeRoot, { recursive: true, withFileTypes: true })
+      .find((entry) => entry.isFile() && entry.name === SCORE_FILE)!
+    const persisted = JSON.parse(readFileSync(join(scoreFile.parentPath, scoreFile.name), 'utf8')) as ScoreRecord
+    expect(leafDecisionScore(persisted).kind).toBe('scored')
+    expect(existsSync(cwdAudit) ? readFileSync(cwdAudit, 'utf8') : undefined).toBe(cwdBefore)
+  })
+})
+
 export {
   STUB_MODEL_ID,
   actionGenerateResult,

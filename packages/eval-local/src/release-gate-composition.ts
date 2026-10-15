@@ -47,7 +47,8 @@ export type ReleaseGateMode =
       mask: RunCassetteReplayInput['mask']
       seed: number
       cassettesRoot: string
-      replayOutputBaseDir: string
+      // 441-32: unread since the replay audit sink went (D-15); 441-57 deletes it.
+      replayOutputBaseDir?: string
       onProgress?: (line: string) => void
     }
   | {
@@ -187,7 +188,6 @@ export async function runReleaseGate(input: RunReleaseGateInput): Promise<RunRel
         mask: mode.mask,
         seed: mode.seed,
         k: 1,
-        replayOutputBaseDir: mode.replayOutputBaseDir,
         source: 'committed',
         corpusDigest,
         productByCassetteId: new Map(corpus.snapshot.entries.map(entry => [entry.cassetteId, entry.product])),

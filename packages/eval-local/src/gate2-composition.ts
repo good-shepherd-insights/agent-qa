@@ -434,7 +434,6 @@ export async function ablateCanaryStep(
     declaredBriefDelta: removal.delta,
     k: 1,
     seed: input.baseSeed,
-    replayOutputBaseDir: gate2Dir,
     modelCallObservation: {
       onProviderCall: () => {
         modelCalls++

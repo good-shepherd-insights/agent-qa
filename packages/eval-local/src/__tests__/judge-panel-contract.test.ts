@@ -60,8 +60,7 @@ it('censuses the completed replay/Gate/operator binding and safety routes', () =
   }
   expect(binders.sort()).toEqual(['packages/eval-local/src/judge-calibration-composition.ts', 'packages/eval-local/src/replay-composition.ts'])
   for (const [path, inner] of [['replay-composition.ts', 'adjudicateCassetteScore'], ['judge-calibration-composition.ts', 'adjudicatePanelComparison']]) {
-    const scopes = calls(source(`packages/eval-local/src/${path}`)).filter(call => call.expression.getText() === 'runSafetyScope')
-    expect(scopes.some(scope => scope.arguments[1] && calls(scope.arguments[1]).some(call => call.expression.getText() === inner))).toBe(true)
+    expect(calls(source(`packages/eval-local/src/${path}`)).some(call => call.expression.getText() === inner)).toBe(true)
   }
   const gate = calls(source('packages/eval-local/src/replay-gate-composition.ts'))
   expect(gate.filter(call => call.expression.getText() === 'runCassetteReplay')).toHaveLength(2)

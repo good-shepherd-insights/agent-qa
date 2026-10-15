@@ -731,8 +731,7 @@ export async function runReplayVerb(
   const judgeResolution = await resolveEvalJudge(session)
   if (judgeResolution.notice !== undefined) notices.push(judgeResolution.notice)
 
-  // (6) the replay loop, in sorted id order, everything under the ONE batchKey audit dir (D-07).
-  const replayBaseDir = evalAuditDir(session.configDir, 'replay', batchKey)
+  // (6) the replay loop, in sorted id order (D-07).
   const recordStore = new FsReplayRecordStore({ root: agentQaRoot })
   const scoreStore = new FsScoreStore({ root: agentQaRoot })
   let modelCalls = 0
@@ -752,7 +751,6 @@ export async function runReplayVerb(
           }
         : {}),
       mask: session.mask,
-      replayOutputBaseDir: replayBaseDir,
       recordStore,
       scoreStore,
       replaysRoot,
@@ -2108,7 +2106,6 @@ export async function runGateVerb(
       judge: withJudgeOverrides(judgeResolution.judge, opts.judgeOverrides),
       mask: session.mask,
       seed, cassettesRoot: resolveCassettesRoot(session, 'committed').cassettesRoot,
-      replayOutputBaseDir: evalAuditDir(session.configDir, 'gate', profileKey),
       onProgress: line => process.stderr.write(line + '\n'),
     }
   }
