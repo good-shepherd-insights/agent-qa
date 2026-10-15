@@ -34,7 +34,7 @@ vi.mock('ai', async (importOriginal) => ({
 import { ConfigManager, readConfigValues } from '../config/index.js'
 import { createRouter } from '../server/routes.js'
 import { resolveWorkspacePaths, type ResolvedWorkspacePaths } from '@vostride/agent-qa-core'
-import type { ConfigChange } from '@vostride/agent-qa-schema'
+import { MARKER_WRITTEN_BACK_SENTENCE, type ConfigChange } from '@vostride/agent-qa-schema'
 
 const VALUE = 'Hunter-42-zz'
 const MARKER = '[secret:PW_441]'
@@ -342,10 +342,6 @@ describe('C441-GAP-DASHBOARD', () => {
   })
 })
 
-const SHOWN_MARKER_MESSAGE =
-  "This shows a declared secret as [secret:<name>], so it can't be saved here. "
-  + 'Change the value in your secrets file (workspace.secretsFile) instead.'
-
 const WRITE_LINES = [
   ...BASE_LINES.slice(0, 16),
   '  targets:',
@@ -374,7 +370,7 @@ describe('C441-GAP-CONFIG-WRITE', () => {
     expect(outcome).toEqual({
       kind: 'refused',
       error: 'marker_written_back',
-      issues: [{ path, message: SHOWN_MARKER_MESSAGE }],
+      issues: [{ path, message: MARKER_WRITTEN_BACK_SENTENCE }],
     })
     expect(await readFile(configPath, 'utf-8')).toBe(before)
   })
@@ -384,7 +380,6 @@ describe('C441-GAP-CONFIG-WRITE', () => {
     const refusedChanges: ConfigChange[][] = [
       [{ op: 'set', path: ['registry', 'targets', '[secret:X]-web', 'url'], value: 'https://shop.test' }],
       [{ op: 'unset', path: ['registry', 'targets', '[secret:X]-web'] }],
-      [{ op: 'expect', path: ['use', 'llm'], value: '[secret:X]' }, { op: 'set', path: ['use', 'llm'], value: 'proxy' }],
       [{ op: 'set', path: ['registry', 'llms', { name: '[secret:X]' }, 'model'], value: 'claude-next' }],
       [{
         op: 'move',
@@ -399,7 +394,7 @@ describe('C441-GAP-CONFIG-WRITE', () => {
       expect(outcome, JSON.stringify(changes)).toMatchObject({ kind: 'refused', error: 'marker_written_back' })
       if (outcome.kind !== 'refused') continue
       expect(outcome.issues).toHaveLength(1)
-      expect(outcome.issues?.[0]?.message).toBe(SHOWN_MARKER_MESSAGE)
+      expect(outcome.issues?.[0]?.message).toBe(MARKER_WRITTEN_BACK_SENTENCE)
       expect(await readFile(configPath, 'utf-8')).toBe(before)
     }
   })
@@ -413,5 +408,88 @@ describe('C441-GAP-CONFIG-WRITE', () => {
 
     expect(outcome.kind).toBe('ok')
     expect(await readFile(configPath, 'utf-8')).toContain('url: https://admin:new-pass@host')
+  })
+})
+
+const JUDGE_VALUE = 'qa'
+const JUDGE_MARKER = '[secret:X]'
+const judgeMask = (text: string): string => text.split(JUDGE_VALUE).join(JUDGE_MARKER)
+
+function judgeLines(firstJudge: string): string[] {
+  const llm = (name: string): string[] => [
+    `    - name: ${name}`,
+    '      provider: anthropic-compatible',
+    '      model: claude-judge',
+    `      baseURL: ${SAVED_BASE_URL}`,
+  ]
+  return [
+    ...BASE_LINES.slice(0, 8),
+    'registry:',
+    '  llms:',
+    ...llm(firstJudge),
+    ...llm('judge-two'),
+    ...llm('spare'),
+    'eval:',
+    '  judges:',
+    `    - ${firstJudge}`,
+    '    - judge-two',
+    'use:',
+    '  mobile:',
+    '    appState: preserve',
+    '',
+  ]
+}
+
+// The change set the page's model delete builds from the masked read (judgeChangesAfterDelete).
+const DELETE_SPARE: ConfigChange[] = [
+  { op: 'expect', path: ['eval', 'judge'], value: null },
+  { op: 'expect', path: ['eval', 'judges'], value: [`judge-${JUDGE_MARKER}-1`, 'judge-two'] },
+  { op: 'unset', path: ['registry', 'llms', { name: 'spare' }] },
+]
+
+describe('C441-GAP2-WRITE-BACK', () => {
+  async function judgeWorkspace(): Promise<{ manager: ConfigManager; configPath: string }> {
+    const { configPath } = await configWorkspace(judgeLines('judge-qa-1'))
+    return { manager: new ConfigManager(configPath, judgeMask), configPath }
+  }
+
+  it('deleting a model while a judge name holds a declared value lands and leaves the judges raw', async () => {
+    const { manager, configPath } = await judgeWorkspace()
+
+    const outcome = await manager.applyChanges(DELETE_SPARE)
+
+    expect(outcome).toMatchObject({ kind: 'ok' })
+    const after = await readFile(configPath, 'utf-8')
+    expect(after).not.toContain('name: spare')
+    expect(after).toContain('  judges:\n    - judge-qa-1\n    - judge-two\n')
+    expect(after).not.toContain(JUDGE_MARKER)
+  })
+
+  it('an expect whose masked value no longer matches the file still refuses field_changed', async () => {
+    const { manager, configPath } = await judgeWorkspace()
+    await writeFile(configPath, judgeLines('judge-qa-9').join('\n'))
+    const before = await readFile(configPath, 'utf-8')
+
+    const outcome = await manager.applyChanges(DELETE_SPARE)
+
+    expect(outcome).toEqual({ kind: 'refused', error: 'field_changed', path: ['eval', 'judges'] })
+    expect(await readFile(configPath, 'utf-8')).toBe(before)
+  })
+
+  it('a set whose value holds a marker is still refused, with a sentence naming the config file', async () => {
+    const { manager, configPath } = await judgeWorkspace()
+    const before = await readFile(configPath, 'utf-8')
+
+    const outcome = await manager.applyChanges([
+      { op: 'set', path: ['eval', 'judges'], value: [`judge-${JUDGE_MARKER}-1`] },
+    ])
+
+    expect(outcome).toMatchObject({ kind: 'refused', error: 'marker_written_back' })
+    if (outcome.kind !== 'refused') return
+    const message = outcome.issues?.[0]?.message
+    expect(message).toBe(MARKER_WRITTEN_BACK_SENTENCE)
+    expect(message).toContain('Edit your config or test file directly')
+    expect(message).not.toMatch(/change the value in your secrets file/i)
+    expect(await readFile(configPath, 'utf-8')).toBe(before)
   })
 })
