@@ -944,6 +944,7 @@ function runShippedCli(...args: string[]): { status: number | null; combined: st
 describe('a healthy config\'s values are shown and written as they are (395-20 · F-03)', () => {
   it('(K4a) an ordinary value still WRITES and still says so — the no-over-redaction control', () => {
     seedConfig(WELL_FORMED_CONFIG)
+    seedSecretsFile()
 
     const { status, combined } = runShippedCli('config', 'set', 'use.timeout.step', '45s')
 
@@ -987,6 +988,7 @@ const STAGING_ONLY_VALUE = 'staging-sentinel-value-395-24'
 describe('the config verbs read and write the file --config names (395-24 · WR-03)', () => {
   it('(W3) `--config staging.yaml config set` writes STAGING and leaves the default byte-identical', () => {
     seedConfig(WELL_FORMED_CONFIG)
+    seedSecretsFile()
     const stagingPath = join(root, 'staging.yaml')
     writeFileSync(stagingPath, `${WELL_FORMED_CONFIG}${STAGING_ONLY_KEY}: ${STAGING_ONLY_VALUE}\n`)
     const defaultBefore = readFileSync(configPath, 'utf8')

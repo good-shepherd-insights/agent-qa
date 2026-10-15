@@ -145,7 +145,17 @@ async function setAction(key: string, value: string | undefined, command: Comman
   // THE SENTENCE NAMES THE FILE THAT CHANGED, not the default. Rendered exactly as the person typed
   // it (WR-07's discipline: a person-facing path is the one they can read), so the unflagged road
   // still says `agent-qa.config.yaml` and the flagged road says what it actually wrote.
-  console.log(pc.green(`\u2713 ${key} = ${resolved} saved to ${configPath}`))
+  // 2026-10-15 (441-63, T-441-45): the line goes through the declared mask; without one it drops
+  // the value rather than refusing a write that already happened.
+  let line = `\u2713 ${key} saved to ${configPath}`
+  try {
+    line = createDeclaredSecretMask(configPath).mask(
+      `\u2713 ${key} = ${resolved} saved to ${configPath}`,
+    )
+  } catch {
+    // keep the value-free line
+  }
+  console.log(pc.green(line))
 }
 
 async function showAction(command: Command): Promise<void> {
