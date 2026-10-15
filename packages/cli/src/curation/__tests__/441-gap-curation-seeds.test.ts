@@ -1,0 +1,222 @@
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import {
+  curationCandidatePayloadSchema,
+  queuedCandidateDir,
+  type CurationCandidatePayload,
+} from '@vostride/agent-qa-knowledge-local'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
+import { FsHandoffStore } from '@vostride/agent-qa-runner-local'
+import {
+  asRef,
+  asRunId,
+  type CompletedRunHandoff,
+  type ElementInfo,
+  type ScreenState,
+  type StepEvidence,
+} from '@vostride/agent-qa-schema'
+import { describe, expect, it } from 'vitest'
+
+import { runCurationTail } from '../curation-tail.js'
+import { emitCurationCandidates, type EmitReport } from '../emit-candidates.js'
+
+const DECLARED = 'qa-admin-42'
+const MARKER = '[secret:USER_441]'
+const SCOPE_KEY = 'storefront'
+const PAGE = `https://shop.example/account?user=${DECLARED}`
+const TAIL_TIMEOUT_MS = 180_000
+
+function declaredMask(): (text: string) => string {
+  const redactor = new SecretRedactor(new SecretStore({ USER_441: DECLARED }))
+  return (text) => redactor.redactString(text)
+}
+
+function element(ref: string, name: string, testId?: string): ElementInfo {
+  return {
+    ref: asRef(ref),
+    role: 'button',
+    name,
+    nameNormalized: name.toLowerCase(),
+    bounds: { x: 10, y: 20, width: 100, height: 40 },
+    center: { x: 60, y: 40 },
+    state: { enabled: true, focused: false, visible: true, clickable: true },
+    labels: {},
+    attributes: testId === undefined ? {} : { 'data-testid': testId },
+  }
+}
+
+function screen(elements: ElementInfo[], url: string): ScreenState {
+  return {
+    platform: 'web',
+    tree: elements.map((entry) => `${entry.role} ${entry.name}`).join('\n'),
+    elements,
+    refMap: Object.fromEntries(
+      elements.map((entry) => [entry.ref, { bounds: entry.bounds!, center: entry.center! }]),
+    ),
+    url,
+    timestamp: 1_750_000_000_000,
+    metadata: {
+      captureMode: 'textOnly',
+      coordSpace: 'viewport',
+      viewportWidth: 1_280,
+      viewportHeight: 720,
+      scroll: { offsetX: 0, offsetY: 0, contentWidth: 1_280, contentHeight: 1_440 },
+    },
+  }
+}
+
+function step(input: {
+  stepIndex: number
+  stepText: string
+  target: ElementInfo
+  url: string
+  fillText?: string
+}): StepEvidence {
+  const state = screen([input.target], input.url)
+  const ref = input.target.ref
+  return {
+    stepIndex: input.stepIndex,
+    stepText: input.stepText,
+    cacheStatus: 'miss',
+    servedBrief: {
+      scope: { tier: 'product', key: SCOPE_KEY },
+      asOfBuild: 42,
+      budget: 1_000,
+      truncation: 'none',
+      channel1: [],
+      channel2: [],
+      channel3: [],
+      briefDigest: 'brief-digest',
+    },
+    subActions: [{
+      plan: `Use ${ref}`,
+      plannedAction: input.fillText === undefined
+        ? { type: 'click', ref }
+        : { type: 'fill', ref, text: input.fillText, clearMode: 'replace', submit: false },
+      stateBefore: state,
+      stateAfter: state,
+      result: { success: true },
+    }],
+    verifierVerdict: { pass: true, reasoning: 'step verified' },
+  }
+}
+
+function run(runId: string, steps: StepEvidence[]): CompletedRunHandoff {
+  return {
+    schemaVersion: 3,
+    runId: asRunId(runId),
+    scope: { tier: 'product', key: SCOPE_KEY },
+    buildOrdinal: 42,
+    executionContext: 'local-interactive',
+    aggregateVerdict: 'passed',
+    configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
+    startedAt: 1_750_000_000_000,
+    endedAt: 1_750_000_001_000,
+    tests: [{
+      testId: 'account::open-admin',
+      testName: 'Open the admin account',
+      testIndex: 0,
+      outcome: 'passed',
+      steps,
+      filePath: 'account.spec.yaml',
+    }],
+  }
+}
+
+function factRun(runId: string): CompletedRunHandoff {
+  return run(runId, [
+    step({
+      stepIndex: 0,
+      stepText: 'Open the admin account',
+      target: element('admin', DECLARED, DECLARED),
+      url: PAGE,
+    }),
+  ])
+}
+
+function queuedPayloads(knowledgeRoot: string, report: EmitReport): CurationCandidatePayload[] {
+  return report.details.map((detail) => {
+    if (detail.candidateId === undefined) {
+      throw new Error(`candidate not queued: ${detail.outcome.kind}`)
+    }
+    return curationCandidatePayloadSchema.parse(JSON.parse(readFileSync(
+      join(queuedCandidateDir(knowledgeRoot, detail.candidateId), 'payload.json'),
+      'utf8',
+    )))
+  })
+}
+
+function filesUnder(dir: string): string[] {
+  return readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(entry.parentPath, entry.name))
+}
+
+describe('C441-GAP-CURATION', () => {
+  it("a fact candidate's seeds, anchors and natural keys are queued only masked", () => {
+    const root = mkdtempSync(join(tmpdir(), 'c441-gap-fact-'))
+    try {
+      const knowledgeRoot = join(root, 'agent-qa-knowledge')
+      const runDir = join(root, 'runs', 'r-c441-gap-fact')
+      mkdirSync(runDir, { recursive: true })
+      const report = emitCurationCandidates({
+        handoff: factRun('r-c441-gap-fact'),
+        runDir,
+        knowledgeRoot,
+        mask: declaredMask(),
+      })
+
+      const payloads = queuedPayloads(knowledgeRoot, report)
+      const fact = payloads.find((row) => row.kind === 'fact')
+      if (fact === undefined) throw new Error('expected a queued fact candidate')
+      expect(fact.summarySeed).toBe(`button "${MARKER}" selector [data-testid="${MARKER}"]`)
+      expect(fact.bodySeed).toBe(`Verified button "${MARKER}" at [data-testid="${MARKER}"].`)
+      expect(fact.anchors).toContainEqual({ t: 'selector', literal: `[data-testid="${MARKER}"]` })
+      expect(fact.anchors.find((anchor) => anchor.t === 'el')).toMatchObject({ name: MARKER })
+      expect(fact.distilledObservations[0]?.element?.naturalKey).toContain(MARKER)
+      expect(fact.distilledObservations[0]?.locator?.selector).toBe(`[data-testid="${MARKER}"]`)
+      expect(fact.distilledObservations[0]?.surface?.naturalKey)
+        .toBe(`https://shop.example/account?user=${MARKER}`)
+      expect(JSON.stringify(payloads)).not.toContain(DECLARED)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it(
+    'the fallback commits a fact through the real drain with no declared value under the knowledge root',
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), 'c441-gap-drain-'))
+      try {
+        const handoff = factRun('r-c441-gap-drain')
+        const agentQaRoot = join(root, '.agent-qa')
+        const knowledgeRoot = join(root, 'agent-qa-knowledge')
+        mkdirSync(knowledgeRoot, { recursive: true })
+        new FsHandoffStore({ root: agentQaRoot, runId: String(handoff.runId) }).save(handoff)
+        const warns: string[] = []
+        await runCurationTail({
+          runId: String(handoff.runId),
+          agentQaRoot,
+          knowledgeConfig: { dir: 'agent-qa-knowledge' },
+          configDir: root,
+          mask: declaredMask(),
+          log: { warn: (message: string) => warns.push(message) },
+        })
+
+        expect(warns.filter((line) => line.includes('incomplete'))).toEqual([])
+        const bundlesDir = join(knowledgeRoot, 'memory', SCOPE_KEY, 'bundles')
+        const facts = readdirSync(bundlesDir).filter((name) => name.startsWith('fact-'))
+        expect(facts).toHaveLength(1)
+        expect(readFileSync(join(bundlesDir, facts[0]!, 'record.md'), 'utf8')).toContain(MARKER)
+        const leaked = filesUnder(knowledgeRoot).filter((file) =>
+          file.includes(DECLARED) || readFileSync(file, 'utf8').includes(DECLARED))
+        expect(leaked).toEqual([])
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    },
+    TAIL_TIMEOUT_MS,
+  )
+})
