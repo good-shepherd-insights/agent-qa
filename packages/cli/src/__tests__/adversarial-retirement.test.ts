@@ -134,15 +134,6 @@ function tree(root: string): Record<string, string> {
   )
 }
 
-function guardrailRows(agentQaRoot: string, product = 'default'): { channel: string; action: string; detector: string }[] {
-  const file = join(agentQaRoot, 'eval/audit/adversarial', product, 'guardrail_audit.jsonl')
-  if (!existsSync(file)) return []
-  return readFileSync(file, 'utf8')
-    .split('\n')
-    .filter(line => line.trim() !== '')
-    .map(line => JSON.parse(line) as { channel: string; action: string; detector: string })
-}
-
 /**
  * A committed root holding exactly ONE proof-backed natural leaf with a resolvable gold
  * anchor and a real blob in its closure — the D-07 seed population, minimal.

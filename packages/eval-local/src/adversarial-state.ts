@@ -6,19 +6,16 @@
 // however, starves the corpus: the seeds are selected in one deterministic order, so unless
 // something on disk records that a leading seed is DONE, the same leading seeds are re-selected
 // every time and the seeds behind them are never reached. Staged and committed cassette ids
-// cover the seeds that produced a variant. They say nothing about the ones that produced a
-// REFUSAL or an inapplicability — and those are exactly the seeds that would monopolise the cap
-// forever, because they leave no trace to skip.
+// cover the seeds that produced a variant. They say nothing about the ones that produced an
+// inapplicability — and those are exactly the seeds that would monopolise the cap forever,
+// because they leave no trace to skip.
 //
-// The key (D-08). A completed `(seed, mutator)` tuple is settled for the table GENERATION and
-// the guardrail POLICY it was decided under, and for nothing else:
-//
-//   * a `tableVersion` bump is a NEW generation. Its ids are different ids, so its tuples are
-//     open again — and it retires nothing: `derivedAdversarialCassetteIds` spans every
-//     generation, so an id committed under generation 1 is never re-derived beneath a later one.
-//   * a POLICY change reopens refusals, because "the host blocked this" is a statement about a
-//     policy and not about the bytes. A tightening and a loosening are both policy changes, and
-//     both deserve a fresh decision.
+// The key (D-08). A completed `(seed, mutator)` tuple is settled for the table GENERATION it was
+// decided under, and for nothing else: a `tableVersion` bump is a NEW generation. Its ids are
+// different ids, so its tuples are open again — and it retires nothing:
+// `derivedAdversarialCassetteIds` spans every generation, so an id committed under generation 1
+// is never re-derived beneath a later one. Since 441-53 (D-15) no guardrail policy scopes a
+// tuple; a record written before then carries a policy digest and is read as malformed (D-20).
 //
 // Publication (S3, canary-run-state). A record is named by its own content digest and linked
 // into place write-once, with the file and its directory fsynced. Two refreshes racing over one
@@ -47,7 +44,7 @@ import {
   type AdversarialMutator,
   type ProbeGeneratorKind,
 } from '@vostride/agent-qa-eval'
-import { slugBranch, type GuardrailPolicy } from '@vostride/agent-qa-schema'
+import { slugBranch } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
 /**
@@ -71,14 +68,12 @@ const digestField = z.string().regex(LOWER_HEX_64)
 /**
  * What a completed `(seed, mutator)` tuple resolved to.
  *
- * All three are COMPLETED work. `derived` produced reviewable bytes; `refused` was blocked by
- * the loaded policy before 441-42 and is only read back from older records; `inapplicable` is
- * the generator's own typed statement that the family
- * cannot act on this seed. A tuple that is merely DEFERRED (`cap-exceeded`) or that was already
- * settled earlier (`already-derived`) is not an outcome and never lands here — recording either
- * would settle work nobody did.
+ * Both are COMPLETED work. `derived` produced reviewable bytes; `inapplicable` is the
+ * generator's own typed statement that the family cannot act on this seed. A tuple that is
+ * merely DEFERRED (`cap-exceeded`) or that was already settled earlier (`already-derived`) is not
+ * an outcome and never lands here — recording either would settle work nobody did.
  */
-export type AdversarialTupleOutcome = 'derived' | 'refused' | 'inapplicable'
+export type AdversarialTupleOutcome = 'derived' | 'inapplicable'
 
 export interface AdversarialRefreshTuple {
   seedCassetteId: string
@@ -86,7 +81,7 @@ export interface AdversarialRefreshTuple {
   /** The derived id this tuple addresses — stable across outcomes, because it is a function of the generation, not of the result (D-08). */
   cassetteId: string
   outcome: AdversarialTupleOutcome
-  /** The firing detector for `refused`, the inapplicability reason for `inapplicable`; absent for `derived`. */
+  /** The inapplicability reason for `inapplicable`; absent for `derived`. */
   detail?: string
 }
 
@@ -107,8 +102,6 @@ export interface AdversarialRefreshRecord {
   product: string
   /** The frozen table generation these outcomes were decided under. */
   tableVersion: number
-  /** The loaded guardrail policy these refusals were decided under. */
-  policyDigest: string
   /** The committed corpus digest this refresh read its seeds from. */
   sourceDigest: string
   cap: AdversarialSeedCap
@@ -125,7 +118,7 @@ const tupleSchema = z.object({
   seedCassetteId: z.string().min(1),
   mutator: z.enum(ADVERSARIAL_MUTATORS),
   cassetteId: z.string().min(1),
-  outcome: z.enum(['derived', 'refused', 'inapplicable']),
+  outcome: z.enum(['derived', 'inapplicable']),
   detail: z.string().min(1).optional(),
 }).strict()
 
@@ -133,7 +126,6 @@ const recordSchema = z.object({
   schemaVersion: z.literal(ADVERSARIAL_STATE_SCHEMA_VERSION),
   product: z.string().min(1),
   tableVersion: z.number().int().nonnegative(),
-  policyDigest: digestField,
   sourceDigest: digestField,
   cap: z.object({
     value: z.number().int().positive(),
@@ -144,17 +136,6 @@ const recordSchema = z.object({
   seedIds: z.array(z.string().min(1)),
   tuples: z.array(tupleSchema),
 }).strict()
-
-/**
- * The digest of the LOADED policy (D-03/D-04).
- *
- * Refusals are settled against this value, so it must move whenever the decision would. It is
- * taken over the whole resolved policy rather than over one detector's action: an allowlist
- * entry changes what a detector sees just as surely as the detector's action does.
- */
-export function computeAdversarialPolicyDigest(policy: GuardrailPolicy): string {
-  return createHash('sha256').update(canonicalJson(policy), 'utf8').digest('hex')
-}
 
 /** The record's own content address — its file name, and the whole of its identity. */
 export function adversarialRefreshRecordDigest(record: AdversarialRefreshRecord): string {
@@ -313,15 +294,15 @@ export function publishAdversarialRefreshRecord(input: {
 }
 
 /**
- * The `(seed, mutator)` tuples already decided under THIS generation and THIS policy.
+ * The `(seed, mutator)` tuples already decided under THIS generation.
  *
- * A refresh skips these, which is what lets its cap reach the seeds behind them. Scoping by
- * both keys is the whole contract: neither a new generation nor a new policy inherits a
- * decision that was not made about it.
+ * A refresh skips these, which is what lets its cap reach the seeds behind them. Scoping by the
+ * generation is the whole contract: a new generation does not inherit a decision that was not
+ * made about it.
  */
 export function settledAdversarialTuples(
   records: readonly AdversarialRefreshRecord[],
-  scope: { tableVersion: number; policyDigest: string },
+  scope: { tableVersion: number },
 ): ReadonlySet<string> {
   return new Set(settledAdversarialTupleIndex(records, scope).keys())
 }
@@ -335,12 +316,11 @@ export function settledAdversarialTuples(
  */
 export function settledAdversarialTupleIndex(
   records: readonly AdversarialRefreshRecord[],
-  scope: { tableVersion: number; policyDigest: string },
+  scope: { tableVersion: number },
 ): ReadonlyMap<string, AdversarialRefreshTuple> {
   const settled = new Map<string, AdversarialRefreshTuple>()
   for (const record of records) {
     if (record.tableVersion !== scope.tableVersion) continue
-    if (record.policyDigest !== scope.policyDigest) continue
     for (const tuple of record.tuples) {
       settled.set(adversarialTupleKey(tuple.seedCassetteId, tuple.mutator), tuple)
     }
@@ -349,7 +329,7 @@ export function settledAdversarialTupleIndex(
 }
 
 /**
- * Every id this product has EVER derived, across all generations and policies.
+ * Every id this product has EVER derived, across all generations.
  *
  * Unscoped on purpose (D-08): a generation bump creates new ids beside the old, and the old
  * ones are committed history. Re-deriving one would address bytes that already exist, so this

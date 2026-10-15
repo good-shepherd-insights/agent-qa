@@ -46,7 +46,6 @@ import { asRunId, computeBriefDigest, type LosslessServedBriefProofV1 } from '@v
 import {
   ADVERSARIAL_STAGING_SUBDIR,
   adversarialProbeTupleKey,
-  loadAdversarialGuardrailPolicy,
   stageAdversarialProposal,
   type StageAdversarialProposalResult,
 } from '../adversarial-composition.js'
@@ -71,8 +70,6 @@ const roots: string[] = []
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
-
-const POLICY = loadAdversarialGuardrailPolicy()
 
 const AUTHOR: AuthoringModel = { id: 'fixture-probe-author-42206', family: 'fixture-family' }
 const OTHER_AUTHOR: AuthoringModel = { id: 'fixture-second-author-42206', family: 'second-family' }
@@ -256,7 +253,6 @@ async function stage(
     agentQaRoot: f.agentQaRoot,
     committedRoot: f.committedRoot,
     product: 'default',
-    policy: POLICY,
     // One deterministic family keeps the batch small; the authored half is what is under test.
     mutators: ['confusable'],
     ...(opts.author === undefined

@@ -47,7 +47,6 @@ import {
   seedCommittedCorpus,
 } from '@vostride/agent-qa-eval-local'
 import { openCorpusReader } from '@vostride/agent-qa-eval-local/reader'
-import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 
 import { markFixture } from '../gates/__tests__/feedback-fixture.js'
 import { createEvalCommand } from '../commands/eval.js'
@@ -181,20 +180,6 @@ function tree(root: string): Record<string, string> {
         return [relative(root, path), readFileSync(path).toString('base64')]
       }),
   )
-}
-
-/**
- * The host's loaded policy (read only for its digest; 441-53 removes it). Built from `defaultGuardrailPolicyInput` on
- * purpose: a hand-spelled detector map would drift from the shipped default the moment a
- * detector family is added, and this instrument would then be asserting against a policy no
- * host loads.
- */
-function hostPolicy(over: Partial<Record<string, string>> = {}) {
-  const base = defaultGuardrailPolicyInput as { detectors: Record<string, string>; allowlist: string[] }
-  return loadGuardrailPolicy({
-    detectors: { ...base.detectors, injectionShape: 'route', ...over },
-    allowlist: [...base.allowlist],
-  })
 }
 
 async function stage(
@@ -369,7 +354,6 @@ describe('422 acceptance — the documented surface, the whole loop, and the ref
       committedRoot: f.committedRoot,
       product: 'default',
       batchDigest: staged.batchDigest!,
-      policy: hostPolicy(),
       seedingOutputBaseDir: join(f.agentQaRoot, 'eval/audit/seed/acceptance'),
       afterCaseCommitted: () => {
         committed += 1

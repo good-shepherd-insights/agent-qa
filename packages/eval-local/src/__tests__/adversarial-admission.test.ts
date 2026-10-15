@@ -20,7 +20,7 @@
 // Membership is fixed by the manifest, not by the corpus: a case staged WHILE an admission is
 // running belongs to a different batch digest and is not admitted, not counted, and not
 // retired. Nothing here derives anything — admission never calls the generator.
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -37,11 +37,11 @@ import {
 import { asRunId, computeBriefDigest, type LosslessServedBriefProofV1 } from '@vostride/agent-qa-schema'
 import {
   listStagedAdversarial,
-  loadAdversarialGuardrailPolicy,
   refreshAdversarialSplit,
   stageAdversarialProposal,
   type AdversarialAdmissionResult,
 } from '../adversarial-composition.js'
+import { ADVERSARIAL_STATE_SUBDIR, readAdversarialRefreshRecords } from '../adversarial-state.js'
 import { readCommittedCorpus } from '../committed-corpus-source.js'
 import { committedCassettePath } from '../committed-root-store.js'
 import { seedCommittedCorpus } from '../seeding-composition.js'
@@ -55,8 +55,6 @@ const roots: string[] = []
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
-
-const POLICY = loadAdversarialGuardrailPolicy()
 
 function proof(): LosslessServedBriefProofV1 {
   return {
@@ -154,7 +152,6 @@ async function stage(f: Fixture, mutator: 'confusable' | 'invisible' = 'confusab
     agentQaRoot: f.agentQaRoot,
     committedRoot: f.committedRoot,
     product: 'default',
-    policy: POLICY,
     mutators: [mutator],
   })
   expect(staged.kind).toBe('staged')
@@ -171,7 +168,6 @@ function admit(
     committedRoot: f.committedRoot,
     product: 'default',
     batchDigest,
-    policy: POLICY,
     seedingOutputBaseDir: join(f.agentQaRoot, 'eval', 'audit', 'admission-admit'),
     ...(opts.afterCaseCommitted === undefined ? {} : { afterCaseCommitted: opts.afterCaseCommitted }),
     ...(opts.dryRun === undefined ? {} : { dryRun: opts.dryRun }),
@@ -349,5 +345,44 @@ describe('422 adversarial admission — fixed batch, recoverable commit', () => 
       listStagedAdversarial({ agentQaRoot: f.agentQaRoot, product: 'default' })
         .map(row => row.manifest.batchDigest),
     ).toEqual([laterBatch.batchDigest])
+  })
+})
+
+// 441 D-15/D-20 (landed in 441-53): a refresh is decided and recorded with no guardrail policy.
+describe('C441-COMMITTED', () => {
+  it('adversarial admission needs no guardrail policy', async () => {
+    const f = fixture(1)
+    const staged = await stageAdversarialProposal({
+      agentQaRoot: f.agentQaRoot,
+      committedRoot: f.committedRoot,
+      product: 'default',
+      mutators: ['confusable'],
+    })
+    expect(staged.kind).toBe('staged')
+    const reviewed = staged.staged.map(row => row.cassetteId).sort()
+    expect(reviewed.length).toBeGreaterThan(0)
+
+    const admitted = refreshAdversarialSplit({
+      agentQaRoot: f.agentQaRoot,
+      committedRoot: f.committedRoot,
+      product: 'default',
+      batchDigest: staged.batchDigest!,
+      seedingOutputBaseDir: join(f.agentQaRoot, 'eval', 'audit', 'admission-admit'),
+    })
+    expect(admitted.kind).toBe('admitted')
+    expect(committedIds(f.committedRoot)).toEqual(reviewed)
+
+    const records = readAdversarialRefreshRecords({ agentQaRoot: f.agentQaRoot, product: 'default' })
+    expect(records).toHaveLength(1)
+    expect(Object.keys(records[0]!)).not.toContain('policyDigest')
+    expect(records[0]!.tableVersion).toBe(staged.tableVersion)
+
+    // D-20: a record written before 441-53 carries a policy digest, is not migrated, and the
+    // strict record schema reads it as malformed.
+    const legacy = { ...records[0]!, policyDigest: '1'.repeat(64) }
+    const dir = join(realpathSync(f.agentQaRoot), ADVERSARIAL_STATE_SUBDIR, 'default')
+    writeFileSync(join(dir, `${'e'.repeat(64)}.json`), `${JSON.stringify(legacy)}\n`)
+    expect(() => readAdversarialRefreshRecords({ agentQaRoot: f.agentQaRoot, product: 'default' }))
+      .toThrow()
   })
 })

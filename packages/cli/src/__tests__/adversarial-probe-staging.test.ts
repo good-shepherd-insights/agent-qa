@@ -233,7 +233,6 @@ function capturingStub(textFor: (kind: string) => string) {
 interface StageOptions {
   capability?: AdversarialProbeCapability
   maxProbeCalls?: number
-  policy?: Parameters<typeof runAdversarialVerb>[1]['policy']
   dryRun?: boolean
   text?: (kind: string) => string
 }
@@ -245,7 +244,6 @@ async function stage(f: Fixture, s: EvalSession, opts: StageOptions = {}) {
     product: 'default',
     ...(opts.capability === undefined ? {} : { probeCapability: opts.capability }),
     ...(opts.maxProbeCalls === undefined ? {} : { maxProbeCalls: opts.maxProbeCalls }),
-    ...(opts.policy === undefined ? {} : { policy: opts.policy }),
     ...(opts.dryRun === undefined ? {} : { dryRun: opts.dryRun }),
     bindProbeAuthor: (author, binding) =>
       createAdversarialProbeAuthor({

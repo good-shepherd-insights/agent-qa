@@ -20,7 +20,6 @@ import { asRunId, computeBriefDigest, type LosslessServedBriefProofV1 } from '@v
 import {
   retireStagedAdversarialBatch,
   listStagedAdversarial,
-  loadAdversarialGuardrailPolicy,
   refreshAdversarialSplit,
   stageAdversarialProposal,
   type AdversarialAdmissionResult,
@@ -40,8 +39,6 @@ afterEach(() => {
   syncBuiltinESMExports()
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
-
-const POLICY = loadAdversarialGuardrailPolicy()
 
 function proof(): LosslessServedBriefProofV1 {
   return {
@@ -139,7 +136,6 @@ async function stage(f: Fixture, mutator: 'confusable' | 'invisible' = 'confusab
     agentQaRoot: f.agentQaRoot,
     committedRoot: f.committedRoot,
     product: 'default',
-    policy: POLICY,
     mutators: [mutator],
   })
   expect(staged.kind).toBe('staged')
@@ -156,7 +152,6 @@ function admit(
     committedRoot: f.committedRoot,
     product: 'default',
     batchDigest,
-    policy: POLICY,
     seedingOutputBaseDir: join(f.agentQaRoot, 'eval', 'audit', 'admission-admit'),
     ...(opts.afterCaseCommitted === undefined ? {} : { afterCaseCommitted: opts.afterCaseCommitted }),
     ...(opts.dryRun === undefined ? {} : { dryRun: opts.dryRun }),
@@ -196,7 +191,7 @@ describe('422 adversarial retirement integrity and recovery', () => {
     const f = await stagedFixture(1)
     const before = tree(f.committedRoot)
     const failure = new TypeError('standing knowledge receipt schema is unavailable')
-    expect(() => refreshAdversarialSplit({ ...f, policy: POLICY,
+    expect(() => refreshAdversarialSplit({ ...f,
       seedingOutputBaseDir: join(f.agentQaRoot, 'eval/audit/error-boundary'),
       beforeWrites: () => { throw failure },
     })).toThrow(failure)
@@ -229,7 +224,7 @@ describe('422 adversarial retirement integrity and recovery', () => {
     expect(tree(join(f.agentQaRoot, 'eval/adversarial-state'))).toEqual(spend)
     expect(listStagedAdversarial(f)).toEqual([])
     expect(listStagedAdversarial({ ...f, includeRetired: true })).toHaveLength(1)
-    expect((await stageAdversarialProposal({ ...f, policy: POLICY, mutators: ['confusable'] })).kind).toBe('nothing-derived')
+    expect((await stageAdversarialProposal({ ...f, mutators: ['confusable'] })).kind).toBe('nothing-derived')
     expect(tree(join(f.agentQaRoot, 'eval/adversarial-state'))).toEqual(spend)
   })
 
@@ -246,7 +241,7 @@ describe('422 adversarial retirement integrity and recovery', () => {
   it('keeps real probe reservations and completions spent without reauthoring after retirement', async () => {
     const f = fixture(1)
     const author = vi.fn(async () => ({ text: 'Continue to the reviewed control', usage: { promptTokens: 101, completionTokens: 11 } }))
-    const options = { ...f, product: 'default', policy: POLICY, mutators: ['confusable'] as const,
+    const options = { ...f, product: 'default', mutators: ['confusable'] as const,
       probeAuthor: { author }, authoringModel: { id: 'fixture-retirement-author', family: 'fixture-family' } }
     const staged = await stageAdversarialProposal(options)
     expect(staged.spend.modelCalls).toBe(2)
@@ -436,7 +431,7 @@ const local = await import(input.module)
 try {
   let paused = false
   const result = input.mode === 'retire' ? local.retireStagedAdversarialBatch(input)
-    : local.refreshAdversarialSplit({ ...input, policy: local.loadAdversarialGuardrailPolicy(),
+    : local.refreshAdversarialSplit({ ...input,
       seedingOutputBaseDir: input.agentQaRoot + '/eval/audit/child-admit',
       afterCaseCommitted: input.entered ? id => {
         if (!paused) { paused = true; signal(input.entered, { id, owner: JSON.parse(fs.readFileSync(input.lock + '/owner.json', 'utf8')) }); wait(input.release); if (input.stopAfterHold) throw new Error('stop') }

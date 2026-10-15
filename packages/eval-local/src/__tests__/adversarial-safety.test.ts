@@ -1,7 +1,7 @@
 // 422-01-T2 — the same-byte safety boundary.
 //
 // Staging produces reviewable bytes; admission must commit THOSE bytes or nothing. First the
-// content side: the reviewed bytes are committed as authored, whatever the host policy says
+// content side: the reviewed bytes are committed as authored, with no content check
 // (441 D-15). Then the BYTE side: every way an operator (or anything with write access to the
 // audit dir) can alter what was reviewed — each of the three serialized documents, the
 // manifest itself, the blob closure, the file kind — must produce a refusal BEFORE the
@@ -22,11 +22,9 @@ import {
   type SeedingPlan,
 } from '@vostride/agent-qa-eval'
 import { computeBriefDigest, type LosslessServedBriefProofV1 } from '@vostride/agent-qa-schema'
-import { loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import {
   ADVERSARIAL_MANIFEST_FILE,
   computeAdversarialBatchDigest,
-  loadAdversarialGuardrailPolicy,
   refreshAdversarialSplit,
   stageAdversarialProposal,
   type AdversarialBatchManifest,
@@ -43,20 +41,6 @@ import {
 const roots: string[] = []
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
-})
-
-const ROUTE_POLICY = loadAdversarialGuardrailPolicy()
-const BLOCK_POLICY = loadGuardrailPolicy({
-  detectors: {
-    awsKey: 'block',
-    creditCard: 'block',
-    pemKey: 'block',
-    bearer: 'redact',
-    apiKey: 'redact',
-    email: 'redact',
-    injectionShape: 'block',
-  },
-  allowlist: [],
 })
 
 function proof(): LosslessServedBriefProofV1 {
@@ -142,7 +126,6 @@ async function stageInjection(f: ReturnType<typeof fixture>) {
     agentQaRoot: f.agentQaRoot,
     committedRoot: f.committedRoot,
     product: 'default',
-    policy: ROUTE_POLICY,
     mutators: ['injection-template'],
   })
   expect(staged.kind).toBe('staged')
@@ -150,13 +133,12 @@ async function stageInjection(f: ReturnType<typeof fixture>) {
   return staged
 }
 
-function refresh(f: ReturnType<typeof fixture>, batchDigest: string, policy = ROUTE_POLICY) {
+function refresh(f: ReturnType<typeof fixture>, batchDigest: string) {
   return refreshAdversarialSplit({
     agentQaRoot: f.agentQaRoot,
     committedRoot: f.committedRoot,
     product: 'default',
     batchDigest,
-    policy,
     seedingOutputBaseDir: join(f.agentQaRoot, 'eval', 'audit', 'safety-admit'),
   })
 }
@@ -186,7 +168,7 @@ describe('422 adversarial same-byte safety boundary', () => {
     const staged = await stageInjection(f)
     const before = corpusDigest(f.committedRoot)
 
-    const admitted = refresh(f, staged.batchDigest!, BLOCK_POLICY)
+    const admitted = refresh(f, staged.batchDigest!)
 
     expect(admitted.kind).toBe('admitted')
     expect(admitted.refusals).toEqual([])

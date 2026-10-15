@@ -8,11 +8,10 @@
 // does not apply — because nothing on disk records that the tuple was already decided. The cap then spends itself, refresh after refresh, on work already done.
 //
 // The fix is a durable per-product refresh record: every completed (seed, mutator) outcome is
-// settled for the generation and the guardrail policy it was decided under, so a later refresh
-// skips it and reaches the seeds behind it. The two keys are deliberate. A TABLE-VERSION bump
-// is a new generation whose tuples are open again — and it retires nothing, so an id committed
-// under generation 1 is never re-derived. A POLICY change reopens settled tuples (441-53
-// removes the policy key).
+// settled for the generation it was decided under, so a later refresh skips it and reaches the
+// seeds behind it. A TABLE-VERSION bump is a new generation whose tuples are open again — and
+// it retires nothing, so an id committed under generation 1 is never re-derived. No guardrail
+// policy scopes a tuple (441 D-15).
 //
 // The records are published write-once, named by their own content digest, so two refreshes
 // racing over one unchanged corpus publish one identical record rather than two histories.
@@ -32,14 +31,12 @@ import {
 } from '@vostride/agent-qa-eval'
 import { asRunId, computeBriefDigest, type LosslessServedBriefProofV1 } from '@vostride/agent-qa-schema'
 import {
-  loadAdversarialGuardrailPolicy,
   stageAdversarialProposal,
   type StageAdversarialProposalResult,
 } from '../adversarial-composition.js'
 import {
   ADVERSARIAL_STATE_SUBDIR,
   adversarialRefreshRecordDigest,
-  computeAdversarialPolicyDigest,
   derivedAdversarialCassetteIds,
   publishAdversarialRefreshRecord,
   readAdversarialRefreshRecords,
@@ -58,8 +55,6 @@ const roots: string[] = []
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
-
-const ROUTE_POLICY = loadAdversarialGuardrailPolicy()
 
 /** More eligible seeds than the default cap, so the overflow is real rather than notional. */
 const SEED_COUNT = 10
@@ -166,7 +161,6 @@ async function stage(
   f: Fixture,
   opts: {
     mutators: readonly ('confusable' | 'injection-template')[]
-    policy?: Parameters<typeof stageAdversarialProposal>[0]['policy']
     maxSeeds?: number
     maxSeedsSource?: 'flag' | 'config'
     product?: string
@@ -177,7 +171,6 @@ async function stage(
     agentQaRoot: f.agentQaRoot,
     committedRoot: opts.committedRoot ?? f.committedRoot,
     product: opts.product ?? 'default',
-    policy: opts.policy ?? ROUTE_POLICY,
     mutators: opts.mutators,
     ...(opts.maxSeeds === undefined ? {} : { maxSeeds: opts.maxSeeds }),
     ...(opts.maxSeedsSource === undefined ? {} : { maxSeedsSource: opts.maxSeedsSource }),
@@ -219,7 +212,6 @@ describe('422 adversarial refresh bounding and recovery', () => {
     expect(records[0]).toMatchObject({
       product: 'default',
       tableVersion: ADVERSARIAL_TABLE_VERSION,
-      policyDigest: computeAdversarialPolicyDigest(ROUTE_POLICY),
       sourceDigest: first.sourceDigest,
       cap: { value: 8, source: 'default' },
       eligibleSeeds: SEED_COUNT,
@@ -280,12 +272,10 @@ describe('422 adversarial refresh bounding and recovery', () => {
   })
 
   it('keeps every older committed id while a new table generation reopens its tuples', async () => {
-    const policyDigest = computeAdversarialPolicyDigest(ROUTE_POLICY)
     const record: AdversarialRefreshRecord = {
       schemaVersion: 1,
       product: 'default',
       tableVersion: 1,
-      policyDigest,
       sourceDigest: 'a'.repeat(64),
       cap: { value: 8, source: 'default' },
       eligibleSeeds: 1,
@@ -293,24 +283,21 @@ describe('422 adversarial refresh bounding and recovery', () => {
       seedIds: ['cassette-seed'],
       tuples: [
         { seedCassetteId: 'cassette-seed', mutator: 'confusable', cassetteId: 'gen1-derived', outcome: 'derived' },
-        { seedCassetteId: 'cassette-seed', mutator: 'invisible', cassetteId: 'gen1-refused', outcome: 'refused', detail: 'injectionShape' },
+        { seedCassetteId: 'cassette-seed', mutator: 'invisible', cassetteId: 'gen1-inapplicable', outcome: 'inapplicable', detail: 'target-name-empty' },
       ],
     }
 
-    // Same generation, same policy: both tuples are settled and neither is reconsidered.
+    // Same generation: both tuples are settled and neither is reconsidered.
     // The key joins on U+001F for the reason the draw key does: no component can contain
     // it, so (a, bc) and (ab, c) can never collide into one settled tuple.
-    expect([...settledAdversarialTuples([record], { tableVersion: 1, policyDigest })].sort())
+    expect([...settledAdversarialTuples([record], { tableVersion: 1 })].sort())
       .toEqual(['cassette-seed\u001Fconfusable', 'cassette-seed\u001Finvisible'])
 
-    // A bumped generation addresses NEW ids beside the old ones, so its tuples are open...
-    expect(settledAdversarialTuples([record], { tableVersion: 2, policyDigest }).size).toBe(0)
-    // ...and a new policy reopens them within the same generation.
-    expect(settledAdversarialTuples([record], { tableVersion: 1, policyDigest: 'b'.repeat(64) }).size)
-      .toBe(0)
+    // A bumped generation addresses NEW ids beside the old ones, so its tuples are open.
+    expect(settledAdversarialTuples([record], { tableVersion: 2 }).size).toBe(0)
 
-    // But an id already derived is NEVER retired, whatever the generation or the policy: it is
-    // committed history, and re-deriving it would address bytes that already exist.
+    // But an id already derived is NEVER retired, whatever the generation: it is committed
+    // history, and re-deriving it would address bytes that already exist.
     expect([...derivedAdversarialCassetteIds([record])]).toEqual(['gen1-derived'])
   })
 

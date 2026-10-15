@@ -68,19 +68,14 @@ import {
   type SeedingPlan,
   type StandaloneLabelRecord,
 } from '@vostride/agent-qa-eval'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-  type AuditSink,
-} from '@vostride/agent-qa-safety'
-import { slugBranch, type GuardrailPolicy } from '@vostride/agent-qa-schema'
+import { type AuditSink } from '@vostride/agent-qa-safety'
+import { slugBranch } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
 import {
   adversarialRefreshRecordDigest,
   adversarialTupleKey,
   completeProbeCall,
-  computeAdversarialPolicyDigest,
   derivedAdversarialCassetteIds,
   probeReservationOf,
   publishAdversarialRefreshRecord,
@@ -210,11 +205,8 @@ export interface AdversarialRefusal {
 }
 
 /**
- * A refusal a PREVIOUS refresh already recorded under this same policy (D-04).
- *
- * Its own channel on purpose: re-listing it among `refusals` would assert that a detector fired
- * during THIS refresh, when nothing was scanned. It names the identities and the detector, never
- * the refused surface text — the same discipline `AdversarialRefusal` keeps.
+ * A refusal a previous refresh recorded. Nothing produces one since 441-53 (D-15): the refresh
+ * record no longer holds a refused tuple, so the field stays empty.
  */
 export interface AdversarialSettledRefusal {
   seedCassetteId: string
@@ -342,8 +334,6 @@ export interface StageAdversarialProposalInput {
   agentQaRoot: string
   committedRoot: string
   product: string
-  /** Read only for its digest, which keys settled tuples (441-53 removes it). */
-  policy: GuardrailPolicy
   auditSink?: AuditSink
   mutators?: readonly AdversarialMutator[]
   /** D-04: the per-refresh NOVEL-seed cap; absent resolves to the recorded default. */
@@ -413,7 +403,7 @@ export interface StageAdversarialProposalResult {
   eligibleSeeds: number
   /** The durable refresh record this refresh published, if it published one. */
   stateRecordDigest?: string
-  /** Refusals a previous refresh settled under this policy; disclosed, never re-asserted. */
+  /** Always empty since 441-53 (D-15). */
   settledRefusals: readonly AdversarialSettledRefusal[]
   /**
    * D-09: why this host authored no probes.
@@ -463,8 +453,6 @@ export interface RefreshAdversarialSplitInput {
   product: string
   /** The reviewed batch digest the operator named; exact, never "the latest". */
   batchDigest: string
-  /** Unread (441-53 removes it). */
-  policy: GuardrailPolicy
   auditSink?: AuditSink
   seedingOutputBaseDir: string
   dryRun?: boolean
@@ -949,7 +937,6 @@ export async function stageAdversarialProposal(
   const posture = readCommittedCorpusDigest({ committedRoot: input.committedRoot })
   if (posture.kind !== 'digest') return { ...empty, kind: 'nothing-derived' }
   const sourceDigest = posture.corpusDigest
-  const policyDigest = computeAdversarialPolicyDigest(input.policy)
 
   const reader = openCorpusReader(input.committedRoot)
   const entries = reader.listEntries(input.product)
@@ -995,7 +982,7 @@ export async function stageAdversarialProposal(
       }
     }
   }
-  // ...and so is anything a previous refresh recorded, under ANY generation or policy (D-08).
+  // ...and so is anything a previous refresh recorded, under ANY generation (D-08).
   const records = readAdversarialRefreshRecords({
     agentQaRoot: input.agentQaRoot,
     product: input.product,
@@ -1003,24 +990,21 @@ export async function stageAdversarialProposal(
   for (const id of derivedAdversarialCassetteIds(records)) existingCassetteIds.add(id)
   const settled = settledAdversarialTupleIndex(records, {
     tableVersion: ADVERSARIAL_TABLE_VERSION,
-    policyDigest,
   })
 
   // The seed-level filter the cap depends on. A seed whose every requested tuple is already
-  // decided — derived, refused or explicitly inapplicable — is NOT novel, and letting it into
-  // the generator would spend a cap slot to re-reach a conclusion already on disk. That is the
+  // decided — derived or explicitly inapplicable — is NOT novel, and letting it into the
+  // generator would spend a cap slot to re-reach a conclusion already on disk. That is the
   // starvation this plan exists to remove: without it the leading seeds are re-selected forever
   // and the seeds behind them are never reached.
   //
   // A dropped seed is DISCLOSED, never silently forgotten: an empty batch with no rows cannot
   // be told apart from a refresh that never ran. Derived and inapplicable settlements re-report
-  // through the generator's own closed vocabulary; a settled REFUSAL gets its own channel,
-  // because re-announcing it as a refusal would claim a detector fired on this run when none did.
+  // through the generator's own closed vocabulary.
   const requested = ADVERSARIAL_MUTATORS.filter(
     mutator => input.mutators === undefined || input.mutators.includes(mutator),
   )
   const settledSkips: AdversarialSeedSkip[] = []
-  const settledRefusals: AdversarialSettledRefusal[] = []
   const seeds = candidates.filter(seed => {
     const decided: { mutator: AdversarialMutator; tuple?: AdversarialRefreshTuple }[] = []
     let novel = false
@@ -1044,14 +1028,6 @@ export async function stageAdversarialProposal(
     }
     if (novel) return true
     for (const row of decided) {
-      if (row.tuple?.outcome === 'refused') {
-        settledRefusals.push({
-          seedCassetteId: seed.cassette.id,
-          mutator: row.mutator,
-          ...(row.tuple.detail === undefined ? {} : { detector: row.tuple.detail }),
-        })
-        continue
-      }
       settledSkips.push({
         seedCassetteId: seed.cassette.id,
         mutator: row.mutator,
@@ -1401,7 +1377,6 @@ export async function stageAdversarialProposal(
     schemaVersion: 1,
     product: input.product,
     tableVersion: ADVERSARIAL_TABLE_VERSION,
-    policyDigest,
     sourceDigest,
     cap,
     eligibleSeeds,
@@ -1426,7 +1401,7 @@ export async function stageAdversarialProposal(
     sourceDigest,
     cap,
     eligibleSeeds,
-    settledRefusals,
+    settledRefusals: [],
     ...probeDisclosure,
     interruptedProbeCalls,
     ...(authoringModel === undefined ? {} : { authoringModel }),
@@ -2011,19 +1986,6 @@ function stagedCaseOf(manifestCase: AdversarialBatchManifestCase): StagedAdversa
     ...(manifestCase.tableEntryId === undefined ? {} : { tableEntryId: manifestCase.tableEntryId }),
     ...(manifestCase.promptVersion === undefined ? {} : { promptVersion: manifestCase.promptVersion }),
   }
-}
-
-/**
- * The host's guardrail policy for adversarial refreshes, read only for its digest (441-53 removes it).
- *
- * It lives HERE rather than in the CLI because the FUNC-02 surface firewall does not let the
- * eval composition root name `@vostride/agent-qa-safety`, and the ledger only ever shrinks.
- * eval-local already depends on the gate package, so the loader is a legitimate eval-local
- * function rather than a re-export that would widen this package's surface with foreign
- * symbols. It does not INVENT a policy: an absent host override resolves to the shipped default.
- */
-export function loadAdversarialGuardrailPolicy(input?: unknown): GuardrailPolicy {
-  return loadGuardrailPolicy(input ?? defaultGuardrailPolicyInput)
 }
 
 /** Re-exported for callers that only need the derived provenance shape. */

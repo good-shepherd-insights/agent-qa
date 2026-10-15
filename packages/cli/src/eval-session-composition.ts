@@ -108,7 +108,6 @@ import {
   admitStagedFeedback,
   ADVERSARIAL_STAGING_SUBDIR,
   listStagedAdversarial,
-  loadAdversarialGuardrailPolicy,
   refreshAdversarialSplit,
   retireStagedAdversarialBatch,
   resolveAdversarialProbeCallCap,
@@ -1388,8 +1387,8 @@ export async function runSeedFromFeedbackVerb(session: EvalSession, opts: {
 // — this whole path makes no model call at all, which is why the session is resolved
 // key-only by the command layer.
 //
-// The policy is loaded here only for its digest, which keys settled tuples (441-53 removes it);
-// staged and admitted cases are committed as authored (441 D-15).
+// No guardrail policy is loaded: staged and admitted cases are committed as authored, and a
+// refresh settles its tuples by table generation alone (441 D-15).
 // ---------------------------------------------------------------------------
 
 export { ADVERSARIAL_STAGING_SUBDIR }
@@ -1431,7 +1430,7 @@ export interface AdversarialVerbResult {
   /** Reviewed members that have not landed — nonzero on a partial admission. */
   remaining: readonly StagedAdversarialCase[]
   refusals: readonly AdversarialRefusal[]
-  /** Refusals a previous refresh settled under this policy; disclosed, never re-asserted. */
+  /** Always empty since 441-53 (D-15). */
   settledRefusals: StageAdversarialProposalResult['settledRefusals']
   stagingSkips: readonly AdversarialStagingSkip[]
   skips: StageAdversarialProposalResult['skips']
@@ -1511,8 +1510,6 @@ export interface AdversarialVerbOptions {
     author: AdversarialProbeAuthorSelection,
     binding: AdversarialProbeAuthorBinding,
   ) => ProbeAuthorPort
-  /** Test seam for the loaded policy; production loads the host's. */
-  policy?: import('@vostride/agent-qa-schema').GuardrailPolicy
   auditSink?: import('@vostride/agent-qa-safety-local').JsonlAuditSink
   knowledgeRoot?: string
   readStandingGateReceipts?: typeof LOCAL_CURATION_CAPABILITIES.readStandingGateReceipts
@@ -1576,7 +1573,6 @@ export async function runAdversarialVerb(
     const reason = digest.kind === 'no-eval-root' ? 'no-eval-root' : 'corpus-unavailable'
     return { ...base, kind: 'refused', reason }
   }
-  const policy = opts.policy ?? loadAdversarialGuardrailPolicy()
   const auditSink =
     opts.auditSink ??
     new JsonlAuditSink(join(opts.agentQaRoot, 'eval/audit/adversarial', slugBranch(product)))
@@ -1593,7 +1589,6 @@ export async function runAdversarialVerb(
       committedRoot,
       product,
       batchDigest: opts.batch,
-      policy,
       auditSink,
       seedingOutputBaseDir: evalAuditDir(session.configDir, 'seed', 'adversarial'),
       beforeWrites: () => {
@@ -1644,7 +1639,6 @@ export async function runAdversarialVerb(
     agentQaRoot: opts.agentQaRoot,
     committedRoot,
     product,
-    policy,
     auditSink,
     ...(opts.mutators === undefined ? {} : { mutators: opts.mutators }),
     // Only a NON-default cap is pushed down: the composition owns the recorded default, and
