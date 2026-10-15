@@ -353,7 +353,7 @@ describe('procedure extraction disposition — binding integrity & secrets (D-03
     payload.parameters = payload.parameters.filter(({ name }) => name !== 'email')
     payload.steps[0] = {
       ...payload.steps[0]!,
-      action: { ...payload.steps[0]!.action, values: { text: '<SECRET_1>' } },
+      action: { ...payload.steps[0]!.action, values: { text: '[secret:PW]' } },
     }
     const outcome = dispose(addDelta({ body: serializeProcedureBody(payload) }))
     expect(outcome).toEqual({ kind: 'noop', reason: 'procedure-masked-secret-literal' })
@@ -395,6 +395,25 @@ describe('C441-CAPTURE', () => {
     const delta = addDelta({ body: serializeProcedureBody(payload) })
 
     expect(dispose(delta)).toMatchObject({ kind: 'apply', delta })
+  })
+})
+
+describe('C441-GAP-CURATION', () => {
+  it('a step whose typed value is the named secret marker is refused as a masked literal', () => {
+    const payload = makeProcedureBodyPayloadFixture()
+    payload.parameters = payload.parameters.filter(({ name }) => name !== 'password')
+    payload.steps[1] = {
+      ...payload.steps[1]!,
+      action: {
+        ...payload.steps[1]!.action,
+        type: 'fill',
+        values: { text: '[secret:PW]', clearMode: 'replace', submit: true },
+      },
+    }
+    const outcome = dispose(addDelta({ body: serializeProcedureBody(payload) }))
+
+    expect({ kind: outcome.kind, reason: 'reason' in outcome ? outcome.reason : undefined })
+      .toEqual({ kind: 'noop', reason: 'procedure-masked-secret-literal' })
   })
 })
 

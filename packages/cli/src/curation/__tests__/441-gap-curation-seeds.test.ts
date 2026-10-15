@@ -20,7 +20,11 @@ import {
 import { describe, expect, it } from 'vitest'
 
 import { runCurationTail } from '../curation-tail.js'
-import { emitCurationCandidates, type EmitReport } from '../emit-candidates.js'
+import {
+  emitCurationCandidates,
+  parseProcedureTrajectorySeed,
+  type EmitReport,
+} from '../emit-candidates.js'
 
 const DECLARED = 'qa-admin-42'
 const MARKER = '[secret:USER_441]'
@@ -33,10 +37,10 @@ function declaredMask(): (text: string) => string {
   return (text) => redactor.redactString(text)
 }
 
-function element(ref: string, name: string, testId?: string): ElementInfo {
+function element(ref: string, name: string, testId?: string, role = 'button'): ElementInfo {
   return {
     ref: asRef(ref),
-    role: 'button',
+    role,
     name,
     nameNormalized: name.toLowerCase(),
     bounds: { x: 10, y: 20, width: 100, height: 40 },
@@ -221,4 +225,54 @@ describe('C441-GAP-CURATION', () => {
     },
     TAIL_TIMEOUT_MS,
   )
+
+  it('a procedure seed masks target names, page routes and a typed declared value', () => {
+    const root = mkdtempSync(join(tmpdir(), 'c441-gap-procedure-'))
+    try {
+      const knowledgeRoot = join(root, 'agent-qa-knowledge')
+      const runDir = join(root, 'runs', 'r-c441-gap-procedure')
+      mkdirSync(runDir, { recursive: true })
+      const upper = DECLARED.toUpperCase()
+      const handoff = run('r-c441-gap-procedure', [
+        step({
+          stepIndex: 0,
+          stepText: 'Open the admin account',
+          target: element('open', upper),
+          url: PAGE,
+        }),
+        step({
+          stepIndex: 1,
+          stepText: 'Type the admin user',
+          target: element('user', upper, undefined, 'textbox'),
+          url: PAGE,
+          fillText: DECLARED,
+        }),
+      ])
+      const report = emitCurationCandidates({
+        handoff,
+        runDir,
+        knowledgeRoot,
+        mask: declaredMask(),
+      })
+
+      const payloads = queuedPayloads(knowledgeRoot, report)
+      const procedure = payloads.find((row) => row.kind === 'procedure')
+      if (procedure === undefined) throw new Error('expected a queued procedure candidate')
+      const seed = parseProcedureTrajectorySeed(procedure.bodySeed)
+      if (seed === undefined) throw new Error('expected a parseable trajectory seed')
+      const route = `https://shop.example/account?user=${MARKER}`
+      expect(seed.steps.map((entry) => entry.pageRoute)).toEqual([route, route])
+      expect(seed.steps.map((entry) => entry.action?.targets['ref']?.nameNormalized))
+        .toEqual([MARKER, MARKER])
+      expect(seed.steps[1]?.action?.values['text']).toEqual({
+        observed: MARKER,
+        source: 'masked-secret',
+        sourceName: 'USER_441',
+      })
+      expect(JSON.stringify(procedure)).not.toContain(DECLARED)
+      expect(JSON.stringify(payloads)).not.toContain(DECLARED)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
 })
