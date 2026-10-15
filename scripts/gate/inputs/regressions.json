@@ -9480,6 +9480,144 @@
       "file": "packages/dashboard-server/src/__tests__/441-gap-dashboard-mask.test.ts",
       "fullName": "C441-GAP-CONFIG-WRITE an ordinary set with no marker still lands",
       "origin": "441 GAP-D7"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/441-gap-curation-seeds.test.ts",
+      "fullName": "C441-GAP2-CURATION a typed value that only contains a declared value is queued as a masked literal",
+      "origin": "441 GAP2-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/441-gap-curation-seeds.test.ts",
+      "fullName": "C441-GAP2-CURATION a test variable whose value contains a declared value keeps its own binding",
+      "origin": "441 GAP2-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/441-gap-curation-seeds.test.ts",
+      "fullName": "C441-GAP2-CURATION a template or marker with trailing text is not bound to the secret, and the whole value still is",
+      "origin": "441 GAP2-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/curator-author-procedure.test.ts",
+      "fullName": "C441-GAP2-CURATION a typed value that only contains a declared value is never authored as the secret parameter",
+      "origin": "441 GAP2-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/safety/src/egress/__tests__/masking-middleware.test.ts",
+      "fullName": "C441-GAP2-EGRESS a declared value against a template or inside its name is never sent raw, and a clean template still is",
+      "origin": "441 GAP2-D2"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/masking-provider-boundary.test.ts",
+      "fullName": "C441-GAP2-EGRESS a declared value against a template brace is never sent raw",
+      "origin": "441 GAP2-D2"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/masking-provider-boundary.test.ts",
+      "fullName": "C441-GAP2-EGRESS a template whose name holds a declared value is not sent verbatim",
+      "origin": "441 GAP2-D2"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/judge-panel-disclosure.test.ts",
+      "fullName": "C441-GAP2-JUDGE eval calibrate --judge-panel prints the capability gap when a declared value spells part of its status",
+      "origin": "441 GAP2-D6"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/judge-panel-disclosure.test.ts",
+      "fullName": "C441-GAP2-JUDGE judge calibrate returns its discriminants as written and masks a judge name and the panel identity",
+      "origin": "441 GAP2-D6"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/judge-calibration-composition.test.ts",
+      "fullName": "C441-GAP2-JUDGE the judge panel preview keeps its status and row kinds as written and masks a recorded model id",
+      "origin": "441 GAP2-D6"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/judge-calibration-composition.test.ts",
+      "fullName": "C441-GAP2-JUDGE keeps a value raw only at a closed-vocabulary path of its arm, never by a bare key name",
+      "origin": "441 GAP2-D6"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/441-chat-transcript.test.ts",
+      "fullName": "C441-GAP2-TRANSCRIPT a chat session written while a one-character value is declared re-opens with every event",
+      "origin": "441 GAP2-D3"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/441-chat-transcript.test.ts",
+      "fullName": "C441-GAP2-TRANSCRIPT the turn result keeps its statuses as written and masks its answer and receipt clauses",
+      "origin": "441 GAP2-D3"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/fn-command.test.ts",
+      "fullName": "C441-GAP2-DISPLAY fn runs.events --json keeps each line's seq and type and masks its payload",
+      "origin": "441 GAP2-D3"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/441-gap-dashboard-mask.test.ts",
+      "fullName": "C441-GAP2-WRITE-BACK deleting a model while a judge name holds a declared value lands and leaves the judges raw",
+      "origin": "441 GAP2-D4"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/441-gap-dashboard-mask.test.ts",
+      "fullName": "C441-GAP2-WRITE-BACK an expect whose masked value no longer matches the file still refuses field_changed",
+      "origin": "441 GAP2-D4"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/441-gap-dashboard-mask.test.ts",
+      "fullName": "C441-GAP2-WRITE-BACK a set whose value holds a marker is still refused, with a sentence naming the config file",
+      "origin": "441 GAP2-D4"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/441-gap2-test-save.test.ts",
+      "fullName": "C441-GAP2-TEST-SAVE a test save whose target holds a shown marker is refused and nothing is written",
+      "origin": "441 GAP2-D5"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/441-gap2-test-save.test.ts",
+      "fullName": "C441-GAP2-TEST-SAVE a suite save whose target holds a shown marker is refused and nothing is written",
+      "origin": "441 GAP2-D5"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/441-gap2-test-save.test.ts",
+      "fullName": "C441-GAP2-TEST-SAVE a test with a clean target is still created",
+      "origin": "441 GAP2-D5"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/lib/__tests__/api.test.ts",
+      "fullName": "C441-GAP2-TEST-SAVE a test save refused as marker_written_back rejects with the sentence as its message",
+      "origin": "441 GAP2-D5"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/config.test.ts",
+      "fullName": "C441-GAP2-CONFIG config set refuses a value holding a shown marker and leaves the file unchanged",
+      "origin": "441 GAP2-D8"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/config.test.ts",
+      "fullName": "C441-GAP2-CONFIG config set refuses a key path holding a shown marker and leaves the file unchanged",
+      "origin": "441 GAP2-D8"
     }
   ]
 }
