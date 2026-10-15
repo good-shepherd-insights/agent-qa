@@ -223,6 +223,7 @@ function isBufferLike(value: unknown): value is Buffer {
 
 export class SecretRedactor implements SecretRedactorPort {
   private readonly pattern: RegExp
+  private readonly valuePattern: RegExp | undefined
   private readonly nameByValue = new Map<string, string>()
 
   constructor(private readonly store: SecretStore) {
@@ -234,20 +235,40 @@ export class SecretRedactor implements SecretRedactorPort {
     for (const [name, value] of entries) {
       if (!this.nameByValue.has(value)) this.nameByValue.set(value, name)
     }
-    const alternatives = [String.raw`\{\{secret:(\w+)\}\}`, String.raw`(\[secret:\w+\])`]
-    for (const value of this.nameByValue.keys()) alternatives.push(escapeRegExp(value))
+    const values = [...this.nameByValue.keys()].map(escapeRegExp)
+    const alternatives = [
+      String.raw`\{\{secret:(\w+)\}\}`,
+      String.raw`(\[secret:(\w+)\])`,
+      ...values,
+    ]
     this.pattern = new RegExp(alternatives.join('|'), 'g')
+    this.valuePattern = values.length > 0 ? new RegExp(values.join('|'), 'g') : undefined
   }
 
   redactString(value: string): string {
     return value.replace(
       this.pattern,
-      (match: string, templateName: string | undefined, marker: string | undefined) => {
+      (
+        match: string,
+        templateName: string | undefined,
+        marker: string | undefined,
+        markerName: string | undefined,
+      ) => {
+        const name = templateName ?? markerName
+        if (name !== undefined && !this.store.has(name)) {
+          const maskedName = this.maskValues(name)
+          if (maskedName !== name) return `[secret:${maskedName}]`
+        }
         if (templateName !== undefined) return `[secret:${templateName}]`
         if (marker !== undefined) return marker
         return `[secret:${this.nameByValue.get(match)}]`
       },
     )
+  }
+
+  private maskValues(text: string): string {
+    if (this.valuePattern === undefined) return text
+    return text.replace(this.valuePattern, (match) => `[secret:${this.nameByValue.get(match)}]`)
   }
 
   redactValue(value: unknown): unknown {
