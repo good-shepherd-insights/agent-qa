@@ -8196,6 +8196,1050 @@
       "file": "packages/agent/src/functions/__tests__/440-public-path.test.ts",
       "fullName": "C440-VALUE-COMPILE a stated badge number beside a month-name date is refused at compile when the draft changes it",
       "origin": "440 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/secrets.test.ts",
+      "fullName": "C441-REDACTOR a raw declared value becomes its named marker",
+      "origin": "441 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/secrets.test.ts",
+      "fullName": "C441-REDACTOR a one-character and a three-character value are masked",
+      "origin": "441 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/secrets.test.ts",
+      "fullName": "C441-REDACTOR the longest value wins when one value holds another",
+      "origin": "441 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/secrets.test.ts",
+      "fullName": "C441-REDACTOR masking twice changes nothing",
+      "origin": "441 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/secrets.test.ts",
+      "fullName": "C441-REDACTOR touching values mask as two markers",
+      "origin": "441 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/secrets.test.ts",
+      "fullName": "C441-REDACTOR two names sharing one value take the first-declared name",
+      "origin": "441 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/secrets.test.ts",
+      "fullName": "C441-REDACTOR an empty value is skipped and a whitespace-only value is masked",
+      "origin": "441 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/secrets.test.ts",
+      "fullName": "C441-REDACTOR an empty store still names templates and masks nothing else",
+      "origin": "441 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/secrets.test.ts",
+      "fullName": "C441-REDACTOR encoded and case-changed forms are not masked",
+      "origin": "441 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/441-literal-marker.test.ts",
+      "fullName": "C441-DISPATCH-REFUSAL a fill whose value is the masked placeholder never reaches the app",
+      "origin": "441 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/441-literal-marker.test.ts",
+      "fullName": "C441-DISPATCH-REFUSAL a navigation or descriptor holding the placeholder is refused the same way",
+      "origin": "441 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/441-literal-marker.test.ts",
+      "fullName": "C441-DISPATCH-REFUSAL the template form still types the real value",
+      "origin": "441 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/441-literal-marker.test.ts",
+      "fullName": "C441-DISPATCH-REFUSAL an undeclared template still fails as before",
+      "origin": "441 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/441-literal-marker.test.ts",
+      "fullName": "C441-DISPATCH-REFUSAL the refusal names only the marker",
+      "origin": "441 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/secrets.test.ts",
+      "fullName": "C441-DISPATCH-REFUSAL only a bracketed secret name is a literal marker",
+      "origin": "441 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/secrets.test.ts",
+      "fullName": "C441-DISPATCH-REFUSAL the first marker in walk order names the refusal",
+      "origin": "441 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/prompts-secrets.test.ts",
+      "fullName": "C441-PROMPTS Rule 23 is one line that names both forms and how to type a secret",
+      "origin": "441 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/prompts-secrets.test.ts",
+      "fullName": "C441-PROMPTS no prompt names a numbered placeholder",
+      "origin": "441 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/prompts-secrets.test.ts",
+      "fullName": "C441-PROMPTS the requested-conditions tokenizer keeps the two secret forms as single tokens",
+      "origin": "441 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/441-draft-marker.test.ts",
+      "fullName": "C441-DRAFT-MARKER the loop refuses a draft whose step would type a masked placeholder",
+      "origin": "441 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/441-draft-marker.test.ts",
+      "fullName": "C441-DRAFT-MARKER the loop refuses a placeholder in the test name and the context",
+      "origin": "441 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/441-draft-marker.test.ts",
+      "fullName": "C441-DRAFT-MARKER accepts a draft that reaches a secret BY NAME through the interpolation form",
+      "origin": "441 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/441-draft-marker.test.ts",
+      "fullName": "C441-DRAFT-MARKER the loop accepts card numbers, bearer tokens, AWS-key shapes, emails and instruction text",
+      "origin": "441 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/441-draft-marker.test.ts",
+      "fullName": "C441-DRAFT-MARKER accepts an ordinary fixture email — the most common step the product authors",
+      "origin": "441 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/441-draft-marker.test.ts",
+      "fullName": "C441-DRAFT-MARKER accepts an instruction-override string as ordinary step text",
+      "origin": "441 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/repair-draft-marker.test.ts",
+      "fullName": "C441-DRAFT-MARKER a repair patch that writes a masked placeholder spends the iteration and starts no probe",
+      "origin": "441 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/repair-draft-marker.test.ts",
+      "fullName": "C441-DRAFT-MARKER a repair loop of placeholder patches exits through the exhausted arm with no receipt",
+      "origin": "441 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/repair-draft-marker.test.ts",
+      "fullName": "C441-DRAFT-MARKER a clean repair patch stays on its path",
+      "origin": "441 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/repair-draft-marker.test.ts",
+      "fullName": "C441-DRAFT-MARKER the context root is checked at repair and through authoring.draft.edit",
+      "origin": "441 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/repair-draft-marker.test.ts",
+      "fullName": "C441-DRAFT-MARKER authoring.draft.edit accepts the template form and a card number",
+      "origin": "441 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/declared-secrets.test.ts",
+      "fullName": "C441-LOADER the mask names each value declared in workspace.secretsFile",
+      "origin": "441 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/declared-secrets.test.ts",
+      "fullName": "C441-LOADER nothing outside the secrets file is masked",
+      "origin": "441 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/declared-secrets.test.ts",
+      "fullName": "C441-LOADER a changed file is re-read and an unchanged one is not",
+      "origin": "441 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/declared-secrets.test.ts",
+      "fullName": "C441-LOADER a missing, unreadable or invalid secrets file refuses with the run's sentences",
+      "origin": "441 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/declared-secrets.test.ts",
+      "fullName": "C441-LOADER the loader writes nothing",
+      "origin": "441 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/eval-session-composition.test.ts",
+      "fullName": "C441-EGRESS the eval session masks with its secrets file and nothing else",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/eval-session-composition.test.ts",
+      "fullName": "C441-EGRESS a key-only session refuses to mask",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/llm-utils.test.ts",
+      "fullName": "C441-EGRESS the chat model sends a declared value as its named marker",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/llm-utils.test.ts",
+      "fullName": "C441-EGRESS the job model masks with the same loader",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/masking-provider-boundary.test.ts",
+      "fullName": "C441-EGRESS a run-shaped model masks the declared value and nothing else",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/declared-secrets.test.ts",
+      "fullName": "C441-EGRESS a declared value reaches a recording model as its named marker",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/gates/__tests__/feedback-wording.test.ts",
+      "fullName": "C441-EGRESS feedback wording sends a declared value as its named marker",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/safety/src/egress/__tests__/map-prompt-leaves.test.ts",
+      "fullName": "C441-EGRESS a value with a quote inside a tool-call input is masked",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/safety/src/egress/__tests__/map-prompt-leaves.test.ts",
+      "fullName": "C441-EGRESS a JSON tool result is walked leaf by leaf",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/safety/src/egress/__tests__/map-prompt-leaves.test.ts",
+      "fullName": "C441-EGRESS binary and base64 data is never passed to the mask",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/safety/src/egress/__tests__/map-prompt-leaves.test.ts",
+      "fullName": "C441-EGRESS URLs and text parts are still masked",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/safety/src/egress/__tests__/masking-middleware.test.ts",
+      "fullName": "C441-EGRESS the middleware rewrites only through the injected function",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/model/src/__tests__/masking-egress.test.ts",
+      "fullName": "C441-EGRESS createModel masks a prompt with the mask it was given, after every other middleware",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/model/src/__tests__/masking-egress.test.ts",
+      "fullName": "C441-EGRESS a model built with the identity mask sends text unchanged",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/model/src/__tests__/masking-egress.test.ts",
+      "fullName": "C441-EGRESS respondingModelId is masked with the injected mask",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/model/src/__tests__/masking-egress.test.ts",
+      "fullName": "C441-EGRESS no detector blocks or redacts a model request",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/model/src/__tests__/masking-egress.test.ts",
+      "fullName": "C441-EGRESS a stream reaches the caller unscanned",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/judge-calibration-composition.test.ts",
+      "fullName": "C441-EGRESS judge calibration masks with its input mask",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/replay-composition.test.ts",
+      "fullName": "C441-EGRESS replayed planner requests mask a declared value and keep an email",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/replay-composition.test.ts",
+      "fullName": "C441-EGRESS judge requests are masked with the same mask",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/model/src/__tests__/debug-logging.test.ts",
+      "fullName": "C441-DEBUG-LOG the debug log prints no request header",
+      "origin": "441 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/model/src/__tests__/debug-logging.test.ts",
+      "fullName": "C441-DEBUG-LOG the debug log prints a provider error URL without its query",
+      "origin": "441 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/model/src/__tests__/debug-logging.test.ts",
+      "fullName": "C441-DEBUG-LOG a key-shaped value in a provider body or message is not printed",
+      "origin": "441 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/model/src/__tests__/debug-logging.test.ts",
+      "fullName": "C441-DEBUG-LOG the provider error keeps its structured fields",
+      "origin": "441 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/__tests__/log-manager.test.ts",
+      "fullName": "C441-HOOK-OUTPUT log entries mask a declared value and keep everything else",
+      "origin": "441 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner-local/src/__tests__/hook-executor.test.ts",
+      "fullName": "C441-HOOK-OUTPUT hook output masks a declared value by name",
+      "origin": "441 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner-local/src/__tests__/hook-executor.test.ts",
+      "fullName": "C441-HOOK-OUTPUT hook output keeps an undeclared auth-state value and auth-like keys",
+      "origin": "441 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/441-chat-transcript.test.ts",
+      "fullName": "C441-CHAT a declared secret typed in chat is masked in user_message and clause_receipt",
+      "origin": "441 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/441-chat-transcript.test.ts",
+      "fullName": "C441-CHAT an undeclared credential typed in chat is stored as typed",
+      "origin": "441 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/441-chat-transcript.test.ts",
+      "fullName": "C441-CHAT the op result and the turn result are masked with the same mask",
+      "origin": "441 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/441-chat-transcript.test.ts",
+      "fullName": "C441-CHAT the daemon composes its host with the declared mask for its config path",
+      "origin": "441 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/441-chat-transcript.test.ts",
+      "fullName": "C441-CHAT a daemon host composed with no config path passes the identity",
+      "origin": "441 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/441-declared-secret-proof.test.ts",
+      "fullName": "C441-PROOF ask masks both declared values in what it writes and prints",
+      "origin": "441 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/441-declared-secret-proof.test.ts",
+      "fullName": "C441-PROOF ask refuses at start when the secrets file cannot be read",
+      "origin": "441 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/441-declared-secret-proof.test.ts",
+      "fullName": "C441-PROOF chat masks both declared values in every model request, the transcript and the terminal",
+      "origin": "441 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/441-declared-secret-proof.test.ts",
+      "fullName": "C441-PROOF chat refuses at start when the secrets file cannot be read",
+      "origin": "441 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/441-declared-secret-proof.test.ts",
+      "fullName": "C441-PROOF run masks both declared values in every model request, record and terminal line",
+      "origin": "441 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/441-declared-secret-proof.test.ts",
+      "fullName": "C441-NOTHING-ELSE ask and chat leave every undeclared value unchanged and block nothing",
+      "origin": "441 D-23"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/441-declared-secret-proof.test.ts",
+      "fullName": "C441-NOTHING-ELSE an empty secrets file changes nothing, and encoded or case-changed forms of a declared value are not masked",
+      "origin": "441 D-23"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/441-declared-secret-proof.test.ts",
+      "fullName": "C441-NOTHING-ELSE a run leaves every undeclared value unchanged and blocks nothing",
+      "origin": "441 D-23"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/mcp-credential-surface.test.ts",
+      "fullName": "C441-MCP-DIFF a declared secret in a config-change diff reaches MCP as its named marker",
+      "origin": "441 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/analytics-host.test.ts",
+      "fullName": "C441-ANALYTICS a declared value in an analytics property leaves as its named marker",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/analytics-host.test.ts",
+      "fullName": "C441-ANALYTICS an environment-only value is not masked in an analytics payload",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/analytics-host.test.ts",
+      "fullName": "C441-ANALYTICS a mask that throws drops the event",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/analytics/src/__tests__/masking-seam.test.ts",
+      "fullName": "C441-ANALYTICS the shipped source imports nothing from the safety package and defines no regex over credential shapes",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/run/__tests__/423-read-finalization.test.ts",
+      "fullName": "C441-RUN-RECORDS ARIA, console, accessibility and variable evidence mask a declared value and keep the rest",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/run/__tests__/423-read-finalization.test.ts",
+      "fullName": "C441-RUN-RECORDS evidence is withheld when the member has no redactor",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/run/__tests__/masking-proof.test.ts",
+      "fullName": "C441-RUN-RECORDS run events mask a declared value by name and leave undeclared values",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/cache/__tests__/key-floor.test.ts",
+      "fullName": "C441-RUN-RECORDS the cache key folds the masked step text",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/assert-value.test.ts",
+      "fullName": "C441-RUN-RECORDS an assertValue on a declared value records its marker in the outcome and the step result",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/assert-value.test.ts",
+      "fullName": "C441-RUN-RECORDS an assertValue is judged on the raw read",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/assert-value.test.ts",
+      "fullName": "C441-RUN-RECORDS a network read is judged per raw entry and recorded masked",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/assert-value.test.ts",
+      "fullName": "C441-RUN-RECORDS a declared value with a quote or backslash in a storage map is recorded by name, never in its JSON-escaped form",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/working-memory-loop.test.ts",
+      "fullName": "C441-RUN-RECORDS the loop records a declared value by name and leaves undeclared values",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/in-process-run-execution.test.ts",
+      "fullName": "C441-RUN-RECORDS an in-process run's events.jsonl holds the declared marker and the email as written",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/in-process-run-execution.test.ts",
+      "fullName": "C441-RUN-RECORDS a run masks with the secrets read at its own start",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/in-process-run-execution.test.ts",
+      "fullName": "C441-RUN-RECORDS two runs from different secrets files each mask with their own",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/replay-composition.test.ts",
+      "fullName": "C441-RUN-RECORDS an eval replay and its adjudication write no guardrail audit file",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent-local/src/composition/__tests__/run-invocation-core.test.ts",
+      "fullName": "C441-RUN-RECORDS a completed run leaves no guardrail audit file in its run directory",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/run/__tests__/423-network-policy.test.ts",
+      "fullName": "C441-NETWORK an undeclared credential header is recorded as captured",
+      "origin": "441 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/run/__tests__/423-network-policy.test.ts",
+      "fullName": "C441-NETWORK a declared value in a header or a body is masked by name",
+      "origin": "441 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/fn-command.test.ts",
+      "fullName": "C441-DISPLAY fn prints a declared value in an op result as its named marker",
+      "origin": "441 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/fn-command.test.ts",
+      "fullName": "C441-DISPLAY fn refuses at start when the secrets file cannot be read",
+      "origin": "441 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/unmask-boundary-rollcall.test.ts",
+      "fullName": "C441-DISPLAY entities refuses at start when the secrets file cannot be read",
+      "origin": "441 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/unmask-boundary-rollcall.test.ts",
+      "fullName": "C441-DISPLAY knowledge read refuses at start when the secrets file cannot be read",
+      "origin": "441 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/unmask-boundary-rollcall.test.ts",
+      "fullName": "C441-DISPLAY knowledge maintain refuses at start when the secrets file cannot be read",
+      "origin": "441 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/reporters/console-reporter.test.ts",
+      "fullName": "C441-DISPLAY the console reporter prints the masked payload as it is",
+      "origin": "441 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/reporters/console-reporter.test.ts",
+      "fullName": "C441-DISPLAY the console reporter prints a numbered placeholder unchanged and restores nothing",
+      "origin": "441 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/run-service/__tests__/run-detail-routes.test.ts",
+      "fullName": "C441-DISPLAY the human door serves a stored marker unchanged",
+      "origin": "441 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/run-service/__tests__/run-detail-routes.test.ts",
+      "fullName": "C441-DISPLAY no dashboard route restores or rewrites stored text",
+      "origin": "441 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/423-runs-evidence.test.ts",
+      "fullName": "C441-COLD-READ runs.evidence masks a stored document with the declared mask",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/423-runs-evidence.test.ts",
+      "fullName": "C441-COLD-READ runs.evidence answers masking-unavailable without a mask",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/__tests__/runs-post-processing.test.ts",
+      "fullName": "C441-COLD-READ runs.post-processing withholds without a mask",
+      "origin": "441 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/config-mutation/__tests__/construct-blocked.test.ts",
+      "fullName": "C441-CONFIG-SCAN C441-CONFIG-SCAN a credential-shaped value in a free-text field is written",
+      "origin": "441 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/config-mutation/__tests__/construct-blocked.test.ts",
+      "fullName": "C441-CONFIG-SCAN C441-CONFIG-SCAN a config that already carries a credential-shaped value still yields its diff",
+      "origin": "441 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/config-mutation/__tests__/construct-blocked.test.ts",
+      "fullName": "C441-CONFIG-SCAN C441-CONFIG-SCAN a reference field still refuses a value that is not a reference, naming the secrets file",
+      "origin": "441 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/mcp-credential-surface.test.ts",
+      "fullName": "C441-CONFIG-SCAN C441-CONFIG-SCAN a credential-shaped value written through the composed host is applied and the file holds it",
+      "origin": "441 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/config.test.ts",
+      "fullName": "C441-CONFIG config show prints an undeclared credential-named value as written and a declared value as its marker",
+      "origin": "441 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/config.test.ts",
+      "fullName": "C441-CONFIG config show refuses at start when the secrets file cannot be read",
+      "origin": "441 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/config.test.ts",
+      "fullName": "C441-CONFIG config set writes a credential-named key and a credential-shaped value",
+      "origin": "441 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/config.test.ts",
+      "fullName": "C441-CONFIG the --debug table masks with the run's declared secrets",
+      "origin": "441 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/dashboard-door-security.test.ts",
+      "fullName": "C441-CONFIG the dashboard command binds the declared mask",
+      "origin": "441 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/entity-card-url.test.ts",
+      "fullName": "C441-CONFIG a card url keeps the base path prefix as written",
+      "origin": "441 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/masked-config.test.ts",
+      "fullName": "C441-CONFIG a declared value is masked and flagged in the config.get view",
+      "origin": "441 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/masked-config.test.ts",
+      "fullName": "C441-CONFIG an undeclared credential-shaped value and a URL with userinfo are shown as written and not flagged",
+      "origin": "441 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/hooks/__tests__/use-config-autosave.test.tsx",
+      "fullName": "C441-CONFIG the editor does not write back a field it showed masked",
+      "origin": "441 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/hooks/__tests__/use-config-autosave.test.tsx",
+      "fullName": "C441-CONFIG a landed write shows the value as written, whatever its path",
+      "origin": "441 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/config-manager/__tests__/model-row.test.tsx",
+      "fullName": "C441-CONFIG the model row does not resend a header shown as a marker",
+      "origin": "441 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/config-manager/__tests__/secret-value.test.tsx",
+      "fullName": "C441-CONFIG the secret field shows the server's text and offers no reveal",
+      "origin": "441 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/config-manager.test.ts",
+      "fullName": "C441-CONFIG the config editor shows an undeclared credential as written and a declared value as its marker",
+      "origin": "441 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/config-manager.test.ts",
+      "fullName": "C441-CONFIG a validation message shows a declared value as its marker",
+      "origin": "441 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/config-manager.test.ts",
+      "fullName": "C441-CONFIG there is no reveal route",
+      "origin": "441 D-29"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/wm-flush.test.ts",
+      "fullName": "C441-COMMITTED the working-memory flush masks a declared value and keeps the rest",
+      "origin": "441 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/knowledge-local/src/__tests__/bundle-append.test.ts",
+      "fullName": "C441-COMMITTED a bundle with credential-shaped text is committed as written",
+      "origin": "441 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/knowledge-local/src/__tests__/bundle-append.test.ts",
+      "fullName": "C441-COMMITTED a purge receipt and a curation effect receipt with the same text are written",
+      "origin": "441 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/knowledge-local/src/policy/__tests__/materialize.test.ts",
+      "fullName": "C441-COMMITTED a policy file with credential-shaped text is materialized as written",
+      "origin": "441 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/knowledge-local/src/quarantine/__tests__/ledger.test.ts",
+      "fullName": "C441-COMMITTED a quarantine ledger row with credential-shaped text is appended as written",
+      "origin": "441 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/knowledge-local/src/quarantine/__tests__/ledger.test.ts",
+      "fullName": "C441-COMMITTED quarantine.add with the same text answers entered and the row reads back as written",
+      "origin": "441 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/adversarial-admission.test.ts",
+      "fullName": "C441-COMMITTED adversarial admission needs no guardrail policy",
+      "origin": "441 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/committed-root-proof.test.ts",
+      "fullName": "C441-COMMITTED an eval report with credential-shaped text is committed as written",
+      "origin": "441 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/committed-root-proof.test.ts",
+      "fullName": "C441-COMMITTED a baseline pointer with the same text is written",
+      "origin": "441 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval-local/src/__tests__/seeding-composition.test.ts",
+      "fullName": "C441-COMMITTED a seeded cassette with credential-shaped text is committed",
+      "origin": "441 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/knowledge-local/src/curator/__tests__/procedure-extraction-disposition.test.ts",
+      "fullName": "C441-CAPTURE a value typed into a credential-type field is not secret by its field type",
+      "origin": "441 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/curator-author.test.ts",
+      "fullName": "C441-CURATION an instruction-shaped candidate is authored with the normal instructions",
+      "origin": "441 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/emit-candidates.test.ts",
+      "fullName": "C441-CURATION a secret slot still names its source",
+      "origin": "441 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/emit-candidates.test.ts",
+      "fullName": "C441-CURATION a numbered email placeholder from an old run is literal text",
+      "origin": "441 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/curator-author-procedure.test.ts",
+      "fullName": "C441-CURATION the curation tail masks candidate prose with the mask it is handed",
+      "origin": "441 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/curator-author-procedure.test.ts",
+      "fullName": "C441-CURATION a passed assertValue's measurement seed carries the declared marker",
+      "origin": "441 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/misdirection-posture-binding.test.ts",
+      "fullName": "C441-CURATION the post-run tail declares masker-active exactly when it holds a mask",
+      "origin": "441 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/knowledge-local/src/__tests__/queue-payload.test.ts",
+      "fullName": "C441-CURATION a new payload carries neither flag",
+      "origin": "441 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/knowledge-local/src/__tests__/queue-payload.test.ts",
+      "fullName": "C441-CURATION a new payload carries no capture fields",
+      "origin": "441 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN — the declared-secret deletion census (441 D-17) C441-UNIVERSE-FLOORS: every region reads real code, so no leg can pass over an empty scan",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN — the declared-secret deletion census (441 D-17) C441-RETURN-01: the safety masker stays deleted",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN — the declared-secret deletion census (441 D-17) C441-RETURN-02: the masking context type and its restore member stays deleted",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN — the declared-secret deletion census (441 D-17) C441-RETURN-03: the numbered placeholders and the generic redaction marker stays deleted",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN — the declared-secret deletion census (441 D-17) C441-RETURN-04: the run masking seed stays deleted",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN — the declared-secret deletion census (441 D-17) C441-RETURN-05: the display restore and the digest sidecar stays deleted",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN — the declared-secret deletion census (441 D-17) C441-RETURN-06: the masked-value marker vocabulary and its chips stays deleted",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN — the declared-secret deletion census (441 D-17) C441-RETURN-07: the auth-state redaction stays deleted",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN — the declared-secret deletion census (441 D-17) C441-RETURN-08: the network header mask stays deleted",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN — the declared-secret deletion census (441 D-17) C441-RETURN-09: the debug log regex redactor stays deleted",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN — the declared-secret deletion census (441 D-17) C441-RETURN-10: the capture blacklist and its receipt stays deleted",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN — the declared-secret deletion census (441 D-17) C441-RETURN-11: the config masks and the config reveal stays deleted",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN — the declared-secret deletion census (441 D-17) C441-RETURN-12: the guardrail detectors and scans stays deleted",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN — the declared-secret deletion census (441 D-17) C441-RETURN-13: the guardrail policy stays deleted",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN — the declared-secret deletion census (441 D-17) C441-RETURN-14: the committed-egress checkpoint stays deleted",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN — the declared-secret deletion census (441 D-17) C441-RETURN-15: the construction scan and the config credential-value check stays deleted",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN — the declared-secret deletion census (441 D-17) C441-RETURN-16: the curation injection path and the embed gate stays deleted",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN — the declared-secret deletion census (441 D-17) C441-RETURN-17: the authoring credential screen stays deleted",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN — the declared-secret deletion census (441 D-17) C441-RETURN-18: the guardrail audit stays deleted",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN — the declared-secret deletion census (441 D-17) C441-RETURN-19: the hook framework and the loop hook port stays deleted",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN — the declared-secret deletion census (441 D-17) C441-RETURN-20: the cold-read masking scope stays deleted",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN — the declared-secret deletion census (441 D-17) C441-SAFETY-SURFACE: the safety and safety-local barrels export exactly the values 441-33 kept",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN census instruments C441-LEXER-CONTROL: comments are blanked, strings, templates and regex literals are kept",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN census instruments C441-PLANTED-POSITIVE: every leg fails on a planted return and stays green on a planted comment",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/441-declared-secret-masking-deleted.test.ts",
+      "fullName": "C441-RETURN census instruments C441-SELF-MATCH: this file spells none of the needles it assembles, and lies outside every region it scans",
+      "origin": "441 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/skills.test.ts",
+      "fullName": "C441-SKILL each authoring skill copy states the declared-secrets rule and the advice",
+      "origin": "441 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/skills.test.ts",
+      "fullName": "C441-SKILL each contracts reference names the secret marker and template",
+      "origin": "441 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/loop.test.ts",
+      "fullName": "C441-NO-HOOK-PORT a hook object left on the ports is never consulted; the action executes and its result is recorded redacted",
+      "origin": "441 D-15"
     }
   ]
 }
