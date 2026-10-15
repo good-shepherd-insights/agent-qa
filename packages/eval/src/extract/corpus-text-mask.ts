@@ -3,10 +3,12 @@
  * declared secrets before anything is written into the git-committed eval corpus.
  *
  * The D-18 fields a case copies from a handoff are the step text, the screen state before a
- * decision and the planned action; every other recorded member already arrives masked from
- * record time. A caller masks the HANDOFF and extracts from the masked copy, so every digest a
- * committed case carries (`promptInputHash`, `screenStateHash`, `receiptDigest`) is computed over
- * the committed text and is never a guessing oracle for a raw value.
+ * decision and the planned action; the writer's check refuses every other string leaf still
+ * holding a declared value, except the kept members. A caller masks the HANDOFF and extracts from
+ * the masked copy, so every digest a committed case carries (`promptInputHash`, `screenStateHash`,
+ * `receiptDigest`) is computed over the committed text and is never a guessing oracle for a raw
+ * value. A served brief's two prompt tiers are masked too, with their digests and the brief digest
+ * recomputed over the masked text, so the committed brief still guards.
  *
  * Closed vocabulary is kept as written, because masking it would break the cassette guard under a
  * short declared value: the screen state's platform, element refs, roles, hierarchy refs, state
@@ -16,7 +18,8 @@
  * those members is masked, so the walk fails closed. `rerunOrigin` is the digest-verified record of
  * an earlier attempt that no committed file copies; it is never walked.
  */
-import type { Action, MaskFn } from '@vostride/agent-qa-schema'
+import { computeBriefDigest, sha256hex } from '@vostride/agent-qa-schema'
+import type { Action, MaskFn, ServedBrief } from '@vostride/agent-qa-schema'
 
 type Json = unknown
 
@@ -100,6 +103,24 @@ const CLOSED_MEMBERS = new Set([
   'verdict', 'benefit',
 ])
 
+// The `everyLeaf` check's kept paths inside a served brief, by type path rather than member name:
+// the digest, date, enum, literal and minted-id paths of LosslessServedBriefSchema, plus channel
+// 1's kind, status and tier, which their producers write from closed unions.
+const SERVED_BRIEF_KEPT_PATHS: ReadonlySet<string> = new Set([
+  'scope.tier', 'briefDigest',
+  'channel1[].id', 'channel1[].kind', 'channel1[].status', 'channel1[].tier',
+  'channel2[].id', 'channel2[].bodyDigest',
+  'channel3[].id', 'channel3[].anchors[].t', 'channel3[].anchors[].platform',
+  'proof.completeness', 'proof.admissionEvents[].id', 'proof.admissionEvents[].surface',
+  'proof.promptTurns[].runDate', 'proof.promptTurns[].policyDigest',
+  'proof.promptTurns[].contextTierDigest', 'proof.promptTurns[].volatileTierDigest',
+])
+
+const PROMPT_TIERS = [
+  ['contextTier', 'contextTierDigest'],
+  ['volatileTier', 'volatileTierDigest'],
+] as const
+
 export interface MaskCorpusTextOptions {
   /**
    * Also mask every other string leaf except the closed members: the committed-corpus writer's
@@ -181,8 +202,40 @@ function maskAnchor(value: Json, mask: MaskFn): Json {
     key === 'role' || key === 'ordinal' || key === 'ref' ? item : maskLeaves(item, mask))
 }
 
+// A changed tier gets its digest and the brief digest recomputed; an unchanged brief keeps its bytes.
+function maskPromptTiers(brief: Record<string, Json>, mask: MaskFn): Record<string, Json> {
+  const proof = brief.proof
+  if (!isRecord(proof) || !Array.isArray(proof.promptTurns)) return brief
+  let changed = false
+  const promptTurns = proof.promptTurns.map(turn => {
+    if (!isRecord(turn)) return turn
+    let next = turn
+    for (const [tier, digest] of PROMPT_TIERS) {
+      const text = next[tier]
+      if (typeof text !== 'string') continue
+      const masked = mask(text)
+      if (masked === text) continue
+      next = { ...next, [tier]: masked, [digest]: sha256hex(masked) }
+      changed = true
+    }
+    return next
+  })
+  if (!changed) return brief
+  const masked = { ...brief, proof: { ...proof, promptTurns } }
+  return { ...masked, briefDigest: computeBriefDigest(masked as unknown as ServedBrief) }
+}
+
+function maskServedBrief(value: Json, mask: MaskFn, scope: Scope): Json {
+  const brief = isRecord(value) ? maskPromptTiers(value, mask) : value
+  if (!scope.everyLeaf) return brief
+  return scope.closedHonored && isRecord(brief)
+    ? maskByPath(brief, mask, '', SERVED_BRIEF_KEPT_PATHS)
+    : maskLeaves(brief, mask)
+}
+
 function maskMember(key: string, item: Json, mask: MaskFn, scope: Scope): Json {
   if (key === 'rerunOrigin') return item
+  if (key === 'servedBrief') return maskServedBrief(item, mask, scope)
   if (TEXT_MEMBERS.has(key)) return maskLeaves(item, mask)
   if (key === 'stateBefore') return maskScreenState(item, mask)
   if (ACTION_MEMBERS.has(key)) return maskAction(item, mask)
