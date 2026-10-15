@@ -81,6 +81,7 @@ export type {
 // 361 D-10/D-09: pure masked payload projections (schema-in/schema-out).
 export {
   maskPayloadStrings,
+  maskPayloadTree,
   projectStepFinalized,
   projectSubActionRecorded,
   projectTestFinished,

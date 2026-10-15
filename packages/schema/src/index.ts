@@ -674,6 +674,7 @@ export { CURRENT_BUS_SCHEMA_VERSION, RUN_EVENT_TYPES } from './run/index'
 // 361 D-10/D-09: pure masked payload projections (SESSION-03 projection layer).
 export {
   maskPayloadStrings,
+  maskPayloadTree,
   projectStepFinalized,
   projectSubActionRecorded,
   projectTestFinished,

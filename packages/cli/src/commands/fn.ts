@@ -9,7 +9,7 @@ import { dirname, resolve } from 'node:path'
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import type { FunctionDeclaration } from '@vostride/agent-qa-agent'
 import type { RunExecutionPort } from '@vostride/agent-qa-agent-local'
-import { maskPayloadStrings, type MaskFn } from '@vostride/agent-qa-schema'
+import { maskPayloadTree, type MaskFn } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import pc from 'picocolors'
 
@@ -128,7 +128,7 @@ async function renderStream(
     const stamped = element as SeqStamped
     lastSeq = stamped.seq
     if (json) {
-      console.log(JSON.stringify(maskPayloadStrings(element, mask)))
+      console.log(JSON.stringify(maskPayloadTree(element, mask)))
       continue
     }
     const label = `${pc.dim(`seq ${stamped.seq ?? '?'}`)}  ${pc.bold(stamped.type ?? 'event')}`
@@ -144,8 +144,9 @@ async function renderStream(
 
 // 2026-10-14 (441-14, D-07): leaves are masked before serialization, so a declared value holding a
 // JSON-special character can neither break the document nor slip past the mask.
+// 2026-10-15 (441-62, GAP-D2): keys too.
 function emitJson(mask: MaskFn, value: unknown): void {
-  console.log(JSON.stringify(maskPayloadStrings(value, mask), null, 2))
+  console.log(JSON.stringify(maskPayloadTree(value, mask), null, 2))
 }
 
 /**
@@ -326,7 +327,8 @@ export function createFnCommand(deps: FnCommandDeps = {}): Command {
           emitJson(mask, result)
           return
         }
-        emitHuman(mask, renderFnResult(result))
+        // 441-62 (CR-A01): mask the structure first; the text mask alone misses escaped values.
+        emitHuman(mask, renderFnResult(maskPayloadTree(result, mask)))
       } catch (error) {
         reportError(error, mask)
       }

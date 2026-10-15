@@ -48,6 +48,41 @@ function walk(value: unknown, mask: MaskFn): unknown {
 }
 
 /**
+ * Like {@link maskPayloadStrings}, but also masks every object key, for documents whose keys are
+ * data (op results, chat payloads, CLI output). Two keys of one object that mask to one name throw
+ * instead of silently dropping a member; the message carries no value.
+ */
+export function maskPayloadTree<T>(value: T, mask: MaskFn): T {
+  return walkTree(value, mask) as T
+}
+
+function walkTree(value: unknown, mask: MaskFn): unknown {
+  if (typeof value === 'string') {
+    return mask(value)
+  }
+  if (Array.isArray(value)) {
+    return value.map(entry => walkTree(entry, mask))
+  }
+  if (value !== null && typeof value === 'object') {
+    const masked: Record<string, unknown> = {}
+    for (const [key, entry] of Object.entries(value)) {
+      const maskedKey = mask(key)
+      if (Object.hasOwn(masked, maskedKey)) {
+        throw new Error('two keys of one object mask to the same name')
+      }
+      Object.defineProperty(masked, maskedKey, {
+        value: walkTree(entry, mask),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      })
+    }
+    return masked
+  }
+  return value
+}
+
+/**
  * `StepEvidence` → `stepFinalized` payload (D-10). Carries `cacheStatus`, the
  * `verifierVerdict`, a boolean `selfHealOccurred` FLAG (never the `selfHeal` body), and
  * the `briefDigest` — the `ServedBrief`'s own digest field travels, never its body.
