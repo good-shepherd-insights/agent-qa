@@ -120,5 +120,7 @@ export function buildAgentInstructionPointer(): readonly string[] {
     '- Runs: `agent-qa runs list`, then `agent-qa runs overview <runId>`',
     '- Knowledge: read agent-qa-knowledge/AGENTS.md first',
     '- Skills: `agent-qa skills` lists them and their folder',
+    '- Secrets: only the values in `workspace.secretsFile` are masked,',
+    '  shown as `[secret:<name>]`; use temporary, limited test credentials',
   ])
 }

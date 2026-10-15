@@ -105,12 +105,14 @@ attached to every run session and checks the variable itself on each envelope, a
 is constructed with NDJSON on when the variable is `true`. Treat the two as one channel with two
 record shapes, discriminated by the JSON.
 
-**Payloads are printed verbatim, and they are already masked.** Masking happens at the sink that
-produces each record — envelope payloads are masked before the reporter sees them, and log entries
-pass through the same secret redactor that the human-readable output uses. This channel performs no
-second redaction and never restores an original value, so what a consumer reads is exactly what the
-run decided to disclose. Note that the human-readable log display goes to **stderr**, so redirecting
-stdout gives you the event stream on its own.
+**Payloads are printed verbatim, and they are already masked.** Only the values in the file
+`workspace.secretsFile` names are secrets, and nothing else is masked. Masking happens at the sink
+that produces each record — envelope payloads are masked before the reporter sees them, and log
+entries pass through the same secret redactor that the human-readable output uses, which replaces
+each declared value with `[secret:<name>]`. This channel performs no second redaction and never
+restores an original value, so what a consumer reads is exactly what the run decided to disclose.
+Note that the human-readable log display goes to **stderr**, so redirecting stdout gives you the
+event stream on its own.
 
 The channel is supported and stable in this shape. If you consume it, pin on the prefix and on the
 JSON fields you actually read, not on line ordering between the two writers.

@@ -18,7 +18,7 @@
 +# agent-qa init:end
 --- /dev/null
 +++ b/agent-qa.config.yaml
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,100 @@
 +# agent-qa Configuration
 +
 +# File discovery and project settings
@@ -30,6 +30,7 @@
 +  hooksFile: hooks.yaml
 +  envFile: .env
 +  secretsFile: .env.secrets.local
++  # Its values are shown as [secret:<name>] and never restored; nothing else is masked.
 +# Optional: ignore archived or generated tests.
 +  # testPathIgnore:
 +  #   - tests/archive/**/*.yaml

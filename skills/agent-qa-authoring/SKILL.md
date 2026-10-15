@@ -62,6 +62,16 @@ metadata:
   `allowProduction: true` at the top level. No argument or flag allows it.
 - `agent_qa_list_runs` enumerates recent runs; `agent_qa_get_run_digest` reports one.
 
+## Secrets
+
+- Only the values in the file `workspace.secretsFile` names are secrets. agent-qa replaces each one
+  with `[secret:<name>]` in the text it sends to a model and in the records, logs and output it
+  writes, and never restores it.
+- To type a secret in a step, write `{{secret:<name>}}`. Never write `[secret:<name>]` in a step: it
+  would type the placeholder, so the action is refused.
+- Nothing else is masked: not `workspace.envFile` values, environment variables, cookies, saved auth
+  state or emails, and not screenshots or recordings. Use temporary, limited test credentials.
+
 ## Do Not
 
 - Do not invent config keys.

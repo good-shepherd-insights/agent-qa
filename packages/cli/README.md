@@ -44,6 +44,12 @@ npx agent-qa install-browsers --chromium
 npx agent-qa install-mobile-drivers --all
 ```
 
+Put test credentials in the secrets file that `workspace.secretsFile` names (`init` sets it to
+`.env.secrets.local`). Only the values in that file are secrets: agent-qa shows each one as
+`[secret:<name>]` and never restores it, and a test types one with `{{secret:<name>}}`. Nothing else
+is masked, and screenshots and recordings are not masked, so use temporary, limited test
+credentials.
+
 Start the dashboard, complete auth, and run tests from the UI:
 
 ```sh

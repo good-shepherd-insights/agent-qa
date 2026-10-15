@@ -251,6 +251,7 @@ export function addYamlComments(yamlStr: string): string {
     result += line + '\n'
 
     if (line === '  secretsFile: .env.secrets.local') {
+      result += '  # Its values are shown as [secret:<name>] and never restored; nothing else is masked.\n'
       result += '# Optional: ignore archived or generated tests.\n'
       result += '  # testPathIgnore:\n'
       result += '  #   - tests/archive/**/*.yaml\n'

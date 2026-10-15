@@ -27,5 +27,11 @@
   "hooks": {
     "rootKeys": ["hooks"],
     "hookKeys": ["id", "name", "runtime", "file", "deps", "packageFile", "timeout", "network"]
+  },
+  "secrets": {
+    "source": "workspace.secretsFile",
+    "marker": "[secret:<name>]",
+    "template": "{{secret:<name>}}",
+    "advice": "Only the values in workspace.secretsFile are masked, and nothing else is. Use temporary, limited test credentials."
   }
 }

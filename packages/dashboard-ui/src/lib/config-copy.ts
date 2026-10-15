@@ -499,7 +499,8 @@ export const FILES_FIELD_LABELS = {
 export const FILES_FIELD_HELP = {
   hooksFile: 'The shared hooks module for tests and suites.',
   envFile: 'A dotenv file loaded before runs start.',
-  secretsFile: 'A dotenv-style file for secrets that only running tests read.',
+  secretsFile:
+    'A dotenv-style file for secrets that only running tests read. Its values are shown as [secret:<name>] and never restored; nothing else is masked.',
 } as const
 
 export const HOOKS_FILE_REQUIRED_ERROR = 'Hooks file is required.'

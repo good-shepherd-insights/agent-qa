@@ -322,3 +322,39 @@ describe('C440-SKILL', () => {
     }
   })
 })
+
+// 2026-10-15 (441-46, D-25): only declared secrets are masked, and the skill says so.
+describe('C441-SKILL', () => {
+  const skillCopies = [
+    path.join(SOURCE_SKILLS_DIR, 'agent-qa-authoring', 'SKILL.md'),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../skills/agent-qa-authoring/SKILL.md'),
+  ]
+  const referenceCopies = skillCopies.map((copy) =>
+    path.join(path.dirname(copy), 'references', 'agent-qa-contracts.json'),
+  )
+
+  it('each authoring skill copy states the declared-secrets rule and the advice', () => {
+    for (const copy of skillCopies) {
+      const body = readFileSync(copy, 'utf8')
+      for (const text of [
+        'workspace.secretsFile',
+        '[secret:<name>]',
+        '{{secret:<name>}}',
+        'temporary, limited test credentials',
+      ]) {
+        expect(body, copy).toContain(text)
+      }
+    }
+  })
+
+  it('each contracts reference names the secret marker and template', () => {
+    for (const copy of referenceCopies) {
+      const contracts = JSON.parse(readFileSync(copy, 'utf8')) as { secrets?: unknown }
+      expect(contracts.secrets, copy).toMatchObject({
+        source: 'workspace.secretsFile',
+        marker: '[secret:<name>]',
+        template: '{{secret:<name>}}',
+      })
+    }
+  })
+})
