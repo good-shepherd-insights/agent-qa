@@ -107,6 +107,23 @@ interface SeqStamped {
   type?: string
 }
 
+// 2026-10-15 (441-68, GAP2-D3): `seq`, `ts`, `runId` and `type` keep their keys, so `seq` stays the
+// resume token. `seq`, `ts` and `type` are code vocabulary and keep their values; a person can choose
+// a run id, so it is masked. Every other member is masked keys and leaves.
+function streamLine(element: unknown, mask: MaskFn): unknown {
+  if (typeof element !== 'object' || element === null || Array.isArray(element)) {
+    return maskPayloadTree(element, mask)
+  }
+  const { seq, ts, runId, type, ...rest } = element as Record<string, unknown>
+  return {
+    seq,
+    ts,
+    runId: typeof runId === 'string' ? mask(runId) : maskPayloadTree(runId, mask),
+    type,
+    ...maskPayloadTree(rest, mask),
+  }
+}
+
 /**
  * Render a stream as it arrives.
  *
@@ -128,7 +145,7 @@ async function renderStream(
     const stamped = element as SeqStamped
     lastSeq = stamped.seq
     if (json) {
-      console.log(JSON.stringify(maskPayloadTree(element, mask)))
+      console.log(JSON.stringify(streamLine(element, mask)))
       continue
     }
     const label = `${pc.dim(`seq ${stamped.seq ?? '?'}`)}  ${pc.bold(stamped.type ?? 'event')}`

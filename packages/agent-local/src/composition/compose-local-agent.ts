@@ -2525,6 +2525,79 @@ function chatToolsetHash(registry: FunctionRegistry | undefined): string {
   return sha256hex16(chatToolsetIds(registry).join('\n'))
 }
 
+// 2026-10-15 (441-68, GAP2-D3): chat projections mask the text a person, an op or config wrote and
+// keep the closed vocabulary the code writes and reads back (`guardChatSessionEvent` checks keys,
+// `kind`, `turnId` and `at` exactly). Keys are never renamed outside an op's payload. A member no
+// table names is masked as a tree, which fails closed.
+type ChatMemberRule = 'as-written' | 'text' | 'tree' | ((value: unknown, mask: MaskFn) => unknown)
+type ChatMemberRules = Readonly<Record<string, ChatMemberRule>>
+
+function projectChatMembers<T extends object>(value: T, rules: ChatMemberRules, mask: MaskFn): T {
+  return Object.fromEntries(Object.entries(value).map(([key, member]) => {
+    const rule = Object.hasOwn(rules, key) ? rules[key]! : 'tree'
+    if (rule === 'as-written') return [key, member]
+    if (typeof rule === 'function') return [key, rule(member, mask)]
+    if (rule === 'text' && typeof member === 'string') return [key, mask(member)]
+    return [key, maskPayloadTree(member, mask)]
+  })) as T
+}
+
+const eachChatRecord = (rules: ChatMemberRules): ChatMemberRule => (value, mask) => {
+  const project = (entry: unknown) =>
+    isRecord(entry) ? projectChatMembers(entry, rules, mask) : maskPayloadTree(entry, mask)
+  return Array.isArray(value) ? value.map(project) : project(value)
+}
+
+const CHAT_EVENT_BASE: ChatMemberRules = {
+  kind: 'as-written', turnId: 'as-written', at: 'as-written',
+}
+const CHAT_CLAUSE_RECEIPT_RULES: ChatMemberRules = {
+  clause: 'text', functionId: 'as-written', origin: 'as-written', status: 'as-written', outcome: 'text',
+}
+const CHAT_EVENT_RULES: Readonly<Record<ChatSessionEvent['kind'], ChatMemberRules>> = {
+  user_message: { ...CHAT_EVENT_BASE, text: 'text' },
+  stage_outcome: { ...CHAT_EVENT_BASE, stage: 'as-written', outcome: 'as-written' },
+  clause_receipt: { ...CHAT_EVENT_BASE, ...CHAT_CLAUSE_RECEIPT_RULES },
+  clause_result: { ...CHAT_EVENT_BASE, functionId: 'as-written', payload: 'tree' },
+  approval_decision: {
+    ...CHAT_EVENT_BASE, actionClass: 'as-written', decision: 'as-written', source: 'as-written',
+  },
+  mark_unhandled: { ...CHAT_EVENT_BASE, clause: 'text', reason: 'text' },
+  model_change: { ...CHAT_EVENT_BASE, from: 'text', to: 'text', source: 'as-written' },
+  active_tools_change: {
+    ...CHAT_EVENT_BASE, addedIds: 'as-written', removedIds: 'as-written', toolsetHash: 'as-written',
+  },
+  compaction: {
+    ...CHAT_EVENT_BASE, beforeTokens: 'as-written', afterTokens: 'as-written', outcome: 'as-written',
+  },
+  aborted: { ...CHAT_EVENT_BASE, source: 'as-written' },
+  turn_complete: { ...CHAT_EVENT_BASE, status: 'as-written' },
+}
+
+const CHAT_INVOKE_ANSWER_RULES: ChatMemberRules = {
+  payload: 'tree',
+  verdict: eachChatRecord({ status: 'as-written', outcome: 'text' }),
+  foldLines: 'tree',
+}
+
+const CHAT_TURN_RESULT_RULES: ChatMemberRules = {
+  sessionId: 'as-written',
+  turnId: 'as-written',
+  status: 'as-written',
+  answer: 'text',
+  receipts: eachChatRecord(CHAT_CLAUSE_RECEIPT_RULES),
+  results: eachChatRecord({ functionId: 'as-written', payload: 'tree' }),
+  unhandled: eachChatRecord({ clause: 'text', reason: 'text' }),
+  refusedLineCount: 'as-written',
+}
+
+function projectChatSessionEvent(event: ChatSessionEvent, mask: MaskFn): ChatSessionEvent {
+  const rules = Object.hasOwn(CHAT_EVENT_RULES, event.kind)
+    ? CHAT_EVENT_RULES[event.kind]
+    : CHAT_EVENT_BASE
+  return projectChatMembers(event, rules, mask)
+}
+
 export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost {
   const clock = input.clock ?? SYSTEM_CLOCK
 
@@ -2614,10 +2687,6 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
   const chatModelsByName = new Map<string, ChatLanguageModel>()
   if (input.chatModel !== undefined) chatModelsByName.set(composedChatModelName, input.chatModel)
 
-  // 2026-10-14 (441-06, D-06): session events, op results and turn results carry the declared mask.
-  // 2026-10-15 (441-62, WR-B05): keys too, since an op result's keys can be data.
-  const maskChatProjection = <T>(value: T): T => maskPayloadTree(value, input.mask)
-
   const chatSessionLog = createJsonlSessionLog({
     root: input.agentQaRoot,
     now: () => clock.now(),
@@ -2653,8 +2722,9 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
         events: opened.events,
         refusedLines: opened.refusedLines,
         append: async (event) => {
-          turnIds.add(event.turnId)
-          const projected = maskChatProjection(event)
+          // 2026-10-14 (441-06, D-06): every event carries the declared mask (441-68: per member).
+          const projected = projectChatSessionEvent(event, input.mask)
+          turnIds.add(projected.turnId)
           await opened.append(projected)
           // 400-01 (D-03): the host's carbon copy, taken AFTER the write and never instead of it.
           // Swallowed by name: a surface's push channel is downstream of the durable log, and a
@@ -2782,7 +2852,8 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
         throw new TypeError('a chat turn ran before its registry finished composing')
       }
       const payload = await invokeFunction(composedRegistry, functionId, invokeInput, caller)
-      return maskChatProjection({ payload, ...foldFunctionResult(composedRegistry, functionId, payload) })
+      const fold = foldFunctionResult(composedRegistry, functionId, payload)
+      return projectChatMembers({ payload, ...fold }, CHAT_INVOKE_ANSWER_RULES, input.mask)
     },
     ...(chatPlanner === undefined ? {} : { planner: chatPlanner }),
     ...(chatCompaction === undefined ? {} : { compaction: chatCompaction }),
@@ -3115,7 +3186,8 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       chatTurn: {
         // The engine also echoes authored clause text on receipts and refusal answers. Mask
         // the complete outward projection after execution, never the message it dispatches.
-        runTurn: async turnInput => maskChatProjection(await chatTurn.runTurn(turnInput)),
+        runTurn: async turnInput =>
+          projectChatMembers(await chatTurn.runTurn(turnInput), CHAT_TURN_RESULT_RULES, input.mask),
       },
       // 393 D-01 / D-15: the keep-gate evaluator's two host halves, bound HERE and therefore on
       // BOTH hosts — the CLI and 386's daemon compose this same root, which is the whole point of
