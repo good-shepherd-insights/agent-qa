@@ -38,7 +38,7 @@ export interface CommitEvalReportInput {
   markdown: string
   /** Explicit absolute committed-root path — `<configDir>/agent-qa-eval` for the 372 CLI. */
   committedRoot: string
-  // 441-23: unread since the egress check went; 441-32 deletes it.
+  // 441-23: unread since the egress check went; 441-57 deletes it.
   reportOutputBaseDir?: string
 }
 

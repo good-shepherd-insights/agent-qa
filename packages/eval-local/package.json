@@ -57,7 +57,6 @@
     "@vostride/agent-qa-runner": "workspace:*",
     "@vostride/agent-qa-runner-local": "workspace:*",
     "@vostride/agent-qa-safety": "workspace:*",
-    "@vostride/agent-qa-safety-local": "workspace:*",
     "@vostride/agent-qa-schema": "workspace:*",
     "ai": "6.0.174",
     "zod": "4.4.2"

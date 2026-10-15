@@ -9,11 +9,11 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   'handoff and artifact reads composed over runner-local stores',
   'cassette bundle writes under the runtime workdir staging root',
   // Phase 368 D-04/D-05/D-06: the ONE sanctioned replay-composition helper (runCassetteReplay)
-  // binding createModel egress + a temp-0 LLMPlanner (368-01 nonActionTools seam) + runSafetyScope
-  // (replay-scoped JsonlAuditSink) with the caller's declared mask on every request + optional
-  // replay-record persistence. This deliberately makes eval-local the SECOND package (after cli)
-  // importing both model and runner; Phase 372's CLI wraps exactly this helper.
-  'the single sanctioned replay-composition helper wiring createModel + LLMPlanner + runSafetyScope',
+  // binding createModel egress + a temp-0 LLMPlanner (368-01 nonActionTools seam) with the
+  // caller's declared mask on every request + optional replay-record persistence. This
+  // deliberately makes eval-local the SECOND package (after cli) importing both model and runner;
+  // Phase 372's CLI wraps exactly this helper. 441-32 (D-15): no safety scope or audit sink.
+  'the single sanctioned replay-composition helper wiring createModel + LLMPlanner',
   // Phase 369 D-13: per-cassette score persistence — score.json written BESIDE its replay.json in
   // the same slugged cassette dir, FILE-scoped overwrite (never a dir recreate: Pitfall 5) so the
   // composition's record-then-score ordering keeps both files alive across re-runs (OQ-2).
@@ -30,9 +30,9 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   // a closed zod schema with typed call-error degradation (the port never throws, D-11). Prompt
   // content arrives fully built from eval core (D-15) — the binding transports, never assembles.
   // bindJudgePanel composes N existing bindJudgePort handles at this same factory site.
-  // Replay, Gate 1 and operator calibration invoke them only inside runSafetyScope;
-  // this exception does not authorize another factory or general provider invocation.
-  'the tier-4 judge-port binding through createModel, including bindJudgePanel as N existing bindings during replay, Gate 1 and operator calibration inside runSafetyScope',
+  // Only replay, Gate 1 and operator calibration invoke them; this exception does not authorize
+  // another factory or general provider invocation.
+  'the tier-4 judge-port binding through createModel, including bindJudgePanel as N existing bindings during replay, Gate 1 and operator calibration',
   // Phase 371 ROOT-01/D-15/D-17: the write-once committed eval-root store under agent-qa-eval/ —
   // scaffolded gitignore covering every blobs/ dir, schemaVersion root marker, per-segment slugged
   // paths, byte-compare idempotence, typed write-conflict refusal.
@@ -152,7 +152,8 @@ export const AGENT_QA_EVAL_LOCAL_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-runner',
   '@vostride/agent-qa-runner-local',
   '@vostride/agent-qa-safety',
-  '@vostride/agent-qa-safety-local',
+  // 2026-10-15 (441-32, D-15): @vostride/agent-qa-safety-local left with the replay and judge
+  // calibration audit scopes, its last imports.
   '@vostride/agent-qa-schema',
 ] as const
 

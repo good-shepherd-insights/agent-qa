@@ -21,7 +21,7 @@ function fixture() {
   const artifact = createJudgeCalibrationArtifact(input, { status: 'capability-gap', reason: 'no-credential' })
   const path = join(committedRoot, judgeCalibrationPath(artifact.profileKey))
   return { root, input, artifact, path, publish: (overrides = {}) => publishJudgeCalibration({ ...input,
-    artifact, auditDirectory: join(agentQaRoot, 'eval/calibrate/test'), ...overrides }) }
+    artifact, ...overrides }) }
 }
 function resign(a: JudgeCalibrationArtifact) {
   const { generationId: _generationId, ...body } = a
@@ -75,7 +75,7 @@ it('publishes exact identity-bearing gap bytes, reads them and regenerates uncha
   expect(await f.publish()).toMatchObject({ kind: 'committed', artifact: f.artifact })
   const before = readFileSync(f.path)
   expect(readJudgeCalibration(f.input)).toEqual({ kind: 'loaded', artifact: f.artifact })
-  expect(await f.publish({ auditDirectory: join(f.input.agentQaRoot, 'eval/calibrate/another') })).toMatchObject({ kind: 'unchanged' })
+  expect(await f.publish()).toMatchObject({ kind: 'unchanged' })
   expect(readFileSync(f.path)).toEqual(before)
   expect(createJudgeCalibrationArtifact(f.input, { status: 'capability-gap', reason: 'no-credential' })).toEqual(f.artifact)
   expect(f.artifact).not.toHaveProperty('skippedCounts')

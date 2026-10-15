@@ -63,9 +63,8 @@ export interface SeedCommittedCorpusInput {
   cassettes: readonly ExtractedCassette[]
   /** Explicit absolute committed-root path — `<configDir>/agent-qa-eval` for the 372 CLI. */
   committedRoot: string
-  /** Seeding-scoped output base dir. */
-  seedingOutputBaseDir: string
-  /** Unread (441-57 removes it). */
+  // 441-32: unread since the eval audit went (D-15); 441-57 deletes both.
+  seedingOutputBaseDir?: string
   auditSink?: AuditSink
 }
 
@@ -273,8 +272,8 @@ export interface WritePartitionManifestInput {
   manifest: PartitionManifest
   /** Explicit absolute committed-root path — `<configDir>/agent-qa-eval` for the CLI. */
   committedRoot: string
-  /** Seeding-scoped output base dir. */
-  seedingOutputBaseDir: string
+  // 441-32: unread (D-15); 441-57 deletes it.
+  seedingOutputBaseDir?: string
 }
 
 export type WritePartitionManifestOutcome = CommittedDocumentOutcome
@@ -283,7 +282,8 @@ export interface WriteRunExclusionInput {
   /** An already-guarded exclusion record; its product + runSlug name the file. */
   record: RunExclusionRecord
   committedRoot: string
-  seedingOutputBaseDir: string
+  // 441-32: unread (D-15); 441-57 deletes it.
+  seedingOutputBaseDir?: string
 }
 
 export type WriteRunExclusionOutcome = CommittedDocumentOutcome

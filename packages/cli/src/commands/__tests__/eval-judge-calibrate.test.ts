@@ -12,7 +12,6 @@ const { makeLocalV2Handoff, LOCAL_FIXTURE_BLOB_BYTES } = await import(new URL('.
 const { capturingStub, judgeGenerateResult, actionGenerateResult } = await import(new URL('../../../../eval-local/src/__tests__/fixtures/replay-fixtures.js', import.meta.url).href)
 import { files as filesUnder } from '../../gates/__tests__/feedback-fixture.js'
 import { runJudgeCalibrateVerb, resolveEvalSession, resolveReplayProfileDeclaration } from '../../eval-session-composition.js'
-import { getActiveAuditSink } from '@vostride/agent-qa-safety'
 
 const boundary = vi.hoisted(() => ({ calls: 0, binds: 0, comparisons: 0, publications: 0,
   inputs: [] as unknown[], masks: [] as ((text: string) => string)[],
@@ -72,7 +71,6 @@ function fixture(models: core.CassetteModelReceipt[] = [{}], members = ['claude-
   }
   const stubs = members.map(model => capturingStub(() => {
     expect(boundary.masks.at(-1)!(secret)).toBe('[secret:JUDGE_KEY]')
-    expect(getActiveAuditSink()).toBeDefined()
     boundary.calls++; return judgeGenerateResult('equivalent', 'high')
   }, model))
   boundary.overrides = { languageModels: Object.assign({}, ...stubs.map(stub => stub.languageModels)) }
@@ -213,7 +211,6 @@ it('forces four calls on a guarded deterministic non-tie without changing commit
   expect(boundary).toMatchObject({ binds: 2, comparisons: 1, calls: 4 })
   expect(output.stdout).not.toContain(secret)
   expect(bytes(f.committedRoot)).toEqual(before)
-  expect(output.result.auditDirectory).toContain('/.agent-qa/eval/calibrate/')
 })
 it.each(['claude-sonnet-4', 'unclassified-supplied', 'deepseek-r1-distill-llama'])('refuses actual recorded %s before binding with the whole declaration', async recorded => {
   const members = recorded.startsWith('deepseek') ? ['llama-3', 'gemini-2.5'] : ['claude-sonnet-4', 'gemini-2.5']

@@ -1,5 +1,3 @@
-import { join } from 'node:path'
-import { randomUUID } from 'node:crypto'
 import {
   adjudicatePanelComparison, assessPanelEligibility, createPanelIdentity,
   prepareJudgeCalibrationProbe, resolveJudgeCalibrationMinimum,
@@ -9,10 +7,8 @@ import {
 } from '@vostride/agent-qa-eval'
 import type { ModelProfile } from '@vostride/agent-qa-model'
 import type { MaskFn } from '@vostride/agent-qa-schema'
-import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { bindJudgePanel, type JudgeBindingInput } from './judge-binding.js'
 import { loadJudgeCalibrationEvidence } from './judge-calibration-evidence-source.js'
-import { assertCalibrationPath } from './calibration-source.js'
 import { createJudgeCalibrationArtifact, publishJudgeCalibration, JudgeCalibrationEvidenceError,
   type JudgeCalibrationReadInput, type JudgeCalibrationPublication } from './judge-calibration-source.js'
 
@@ -53,8 +49,7 @@ export async function runJudgeCalibration(input: {
     // The post-probe reread must prove the snapshot actually measured, not a newer one.
     if (preview && (['profileKey', 'corpusDigest', 'goldSetDigest', 'replayEvidenceDigest', 'evidenceDigest'] as const)
       .some(key => artifact[key] !== preview[key])) return { kind: 'input-drift' as const, reason: 'Judge calibration evidence changed during the probe; retry.' }
-    return await publishJudgeCalibration({ ...context, artifact, replace: input.replace,
-      auditDirectory: preview?.auditDirectory ?? join(context.agentQaRoot, 'eval', 'calibrate', randomUUID()) })
+    return await publishJudgeCalibration({ ...context, artifact, replace: input.replace })
   } catch (error) { return { kind: 'refused' as const, reason: 'Judge calibration evidence unavailable or invalid; inspect the selected corpus and saved replays.',
     ...(error instanceof JudgeCalibrationEvidenceError ? { skippedCounts: error.skippedCounts } : {}) } }
 }
@@ -80,7 +75,7 @@ export async function runJudgePanelCalibration(input: RunJudgePanelCalibrationIn
     const preview = await executeJudgePanelCalibration(input)
     return JSON.parse(input.mask(JSON.stringify(preview))) as typeof preview
   } catch {
-    throw new Error('Judge calibration probe failed; inspect the local audit and retry.')
+    throw new Error('Judge calibration probe failed; retry.')
   }
 }
 
@@ -94,8 +89,6 @@ async function executeJudgePanelCalibration(input: RunJudgePanelCalibrationInput
   }
   const read = loadJudgeCalibrationEvidence(input)
   const observations: JudgeCalibrationProbeObservation[] = []
-  const auditDirectory = join(input.agentQaRoot, 'eval', 'calibrate', randomUUID())
-  assertCalibrationPath(input.agentQaRoot, auditDirectory)
   const memberModelIds = input.members.map(member => member.profile.model)
   for (const row of read.evidence) {
     // Re-read the admitted receipt, preserving genuine absence and unknown supplied IDs.
@@ -114,13 +107,11 @@ async function executeJudgePanelCalibration(input: RunJudgePanelCalibrationInput
     if (!probe) { observations.push({ ...common, kind: 'skipped', reason: 'missing-evidence' }); continue }
     try {
       const usage: UsageAggregator = { calls: 0 }
-      const outcome = await runSafetyScope({ auditSink: new JsonlAuditSink(auditDirectory) }, () => {
-        const port = bindJudgePanel(input.members.map(member => ({ ...member, mask: input.mask })))
-        return adjudicatePanelComparison(port, probe.evidence, usage)
-      })
+      const port = bindJudgePanel(input.members.map(member => ({ ...member, mask: input.mask })))
+      const outcome = await adjudicatePanelComparison(port, probe.evidence, usage)
       observations.push({ ...common, kind: 'attempted', probe, outcome, usage })
     } catch {
-      throw new Error('Judge calibration probe failed; inspect the local audit and retry.')
+      throw new Error('Judge calibration probe failed; retry.')
     }
   }
   // 422 D-12: RAW disclosure beside the measurement. The bait population is the committed
@@ -135,7 +126,6 @@ async function executeJudgePanelCalibration(input: RunJudgePanelCalibrationInput
     corpusDigest: read.corpusDigest, goldSetDigest: read.goldSetDigest,
     replayEvidenceDigest: read.replayEvidenceDigest, evidenceDigest: read.evidenceDigest,
     skippedCounts: read.skippedCounts,
-    auditDirectory,
     // Explicit safe projection: no source actions, prompts, auth, or arbitrary provider detail.
     rows: observations.map(row => ({ decisionId: row.decisionId, replayedModelId: row.replayedModelId,
       ...(row.recordedModelId === undefined ? {} : { recordedModelId: row.recordedModelId }),

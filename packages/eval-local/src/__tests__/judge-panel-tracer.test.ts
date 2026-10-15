@@ -162,7 +162,7 @@ it('publishes the frozen v2 constitution and sanctioned public panel binding', (
   expect(AGENT_QA_EVAL_LOCAL_OWNERSHIP_CONTRACT.internalDependencies).toEqual([
     '@vostride/agent-qa-eval', '@vostride/agent-qa-model', '@vostride/agent-qa-runner',
     '@vostride/agent-qa-runner-local', '@vostride/agent-qa-safety',
-    '@vostride/agent-qa-safety-local', '@vostride/agent-qa-schema',
+    '@vostride/agent-qa-schema',
   ])
   expect(AGENT_QA_EVAL_LOCAL_OWNERSHIP_CONTRACT.externalDependencies).toEqual(['ai', 'zod'])
   const manifest = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'))

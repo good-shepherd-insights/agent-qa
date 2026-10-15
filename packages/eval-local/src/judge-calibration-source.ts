@@ -233,9 +233,7 @@ export function readJudgeCalibration(input: Omit<JudgeCalibrationReadInput, 'min
 
 /** One checked file, with immutable create or explicit atomic replace under the operator lock. */
 export async function publishJudgeCalibration(input: JudgeCalibrationReadInput & {
-  artifact: JudgeCalibrationArtifact; replace?: boolean;
-  // 441-23: unread since the egress check went; 441-32 deletes it.
-  auditDirectory?: string; onBoundary?: (stage: string) => void;
+  artifact: JudgeCalibrationArtifact; replace?: boolean; onBoundary?: (stage: string) => void;
 }): Promise<JudgeCalibrationPublication> {
   let release: (() => void) | undefined, temp: string | undefined
   try {

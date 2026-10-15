@@ -6,7 +6,6 @@ import * as core from '@vostride/agent-qa-eval'
 import * as local from '../index.js'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
 import { asRunId, asRef, sha256hex, slugBranch, type MarkReceipt } from '@vostride/agent-qa-schema'
-import { getActiveAuditSink } from '@vostride/agent-qa-safety'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { runJudgePanelCalibration, runJudgeCalibration } from '../judge-calibration-composition.js'
 import * as publication from '../judge-calibration-source.js'
@@ -37,7 +36,6 @@ function fixture(models: core.CassetteModelReceipt[] = [{}], verdicts: ('equival
   const members = memberIds.map((model, index) => {
     const stub = capturingStub(() => {
       calls++
-      getActiveAuditSink()!.appendGuardrailAudit({ channel: 'provider-request', detector: 'bearer', action: 'redact' })
       if (verdicts[index] === 'error') throw new Error('fixture-private-provider-error')
       return judgeGenerateResult(verdicts[index] === 'unsure' ? 'unsure' : verdicts[index]!, 'high')
     }, model)
@@ -77,13 +75,11 @@ it.each([false, true])('publishes and rereads legitimate nonexecutable exclusion
     rmSync(join(f.input.committedRoot, result.path))
     const drift = await publication.publishJudgeCalibration({ ...f.input, identity: preview.identity,
       minN: core.resolveJudgeCalibrationMinimum(), artifact: result.artifact,
-      auditDirectory: join(f.input.agentQaRoot, 'eval/calibrate/drift'),
       onBoundary: at => { if (at === stage) writeFileSync(labelPath, JSON.stringify(label)) } })
     expect(drift.kind).toBe('input-drift')
     writeFileSync(labelPath, originalLabel)
     expect((await publication.publishJudgeCalibration({ ...f.input, identity: preview.identity,
-      minN: core.resolveJudgeCalibrationMinimum(), artifact: result.artifact,
-      auditDirectory: join(f.input.agentQaRoot, 'eval/calibrate/restore') })).kind).toBe('committed')
+      minN: core.resolveJudgeCalibrationMinimum(), artifact: result.artifact })).kind).toBe('committed')
   }
   writeFileSync(labelPath, JSON.stringify(label))
   const changed = local.loadJudgeCalibrationEvidence(f.input)
@@ -105,7 +101,7 @@ it.each(['omitted', 'different'] as const)('rejects %s diagnostics against real 
   expect(publication.guardJudgeCalibration(artifact)).toEqual(artifact)
   const path = join(f.input.committedRoot, publication.judgeCalibrationPath(artifact.profileKey))
   const publish = (candidate: typeof artifact) => publication.publishJudgeCalibration({ ...input,
-    artifact: candidate, auditDirectory: join(f.input.agentQaRoot, 'eval/calibrate/counts') })
+    artifact: candidate })
   expect((await publish(artifact)).kind).toBe('refused')
   expect(existsSync(path)).toBe(false)
   mkdirSync(join(f.input.committedRoot, 'reports/judge-calibration'), { recursive: true })
@@ -137,9 +133,6 @@ it('keeps all refused histories n0 with zero bindings, cost and absent estimates
 it('keeps sequential fresh scoped bindings and durable audit paths across decisions', async () => {
   const f = fixture([{}, {}]), result = await runJudgePanelCalibration(f.input)
   expect(result.cost.usage.calls).toBe(8); expect(f.calls()).toBe(8); expect(binds.count).toBe(2)
-  const audit = readFileSync(join(result.auditDirectory, 'guardrail_audit.jsonl'), 'utf8')
-  expect(audit.trim().split('\n')).toHaveLength(8)
-  expect(audit).not.toContain('fixture-private-api-key')
   expect(JSON.stringify(result)).not.toContain('fixture-private-api-key')
 })
 it('retains errored member call cost separately from abstention and pair denominators', async () => {
@@ -154,7 +147,7 @@ it('retains errored member call cost separately from abstention and pair denomin
 })
 it('refuses without invoking a provider when binding throws', async () => {
   const f = fixture(); binds.fail = true
-  await expect(runJudgePanelCalibration(f.input)).rejects.toThrow('Judge calibration probe failed; inspect the local audit and retry.')
+  await expect(runJudgePanelCalibration(f.input)).rejects.toThrow('Judge calibration probe failed; retry.')
   expect(f.calls()).toBe(0)
 })
 it('still probes a guarded ambiguous target with independently unresolved truth', async () => {
@@ -184,7 +177,7 @@ it('discloses selected gold independently from saved-evidence admission', async 
 it('refuses credential-bearing canonical member identity without inventing or binding one', async () => {
   const f = fixture()
   f.input.members[0]!.profile.model = 'claude-sonnet-4/fixture-private-api-key'
-  await expect(runJudgePanelCalibration(f.input)).rejects.toThrow('Judge calibration probe failed; inspect the local audit and retry.')
+  await expect(runJudgePanelCalibration(f.input)).rejects.toThrow('Judge calibration probe failed; retry.')
   expect(binds.count).toBe(0); expect(f.calls()).toBe(0)
 })
 it('requires an explicit composite at the direct operator boundary', async () => {

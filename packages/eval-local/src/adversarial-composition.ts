@@ -334,6 +334,7 @@ export interface StageAdversarialProposalInput {
   agentQaRoot: string
   committedRoot: string
   product: string
+  // 441-32: unread since the eval audit went (D-15); 441-57 deletes it.
   auditSink?: AuditSink
   mutators?: readonly AdversarialMutator[]
   /** D-04: the per-refresh NOVEL-seed cap; absent resolves to the recorded default. */
@@ -453,8 +454,9 @@ export interface RefreshAdversarialSplitInput {
   product: string
   /** The reviewed batch digest the operator named; exact, never "the latest". */
   batchDigest: string
+  // 441-32: unread since the eval audit went (D-15); 441-57 deletes both.
   auditSink?: AuditSink
-  seedingOutputBaseDir: string
+  seedingOutputBaseDir?: string
   dryRun?: boolean
   /** Snapshot host receipts only after validation, under lifecycle ownership, before writes. */
   beforeWrites?: () => void
@@ -1837,8 +1839,6 @@ function refreshAdversarialSplitOwned(input: RefreshAdversarialSplitInput): Refr
       report = seedCommittedCorpus({
         batches: [{ plan, cassettes }],
         committedRoot: input.committedRoot,
-        seedingOutputBaseDir: input.seedingOutputBaseDir,
-        ...(input.auditSink === undefined ? {} : { auditSink: input.auditSink }),
       }).reports[0]
     } catch {
       report = undefined

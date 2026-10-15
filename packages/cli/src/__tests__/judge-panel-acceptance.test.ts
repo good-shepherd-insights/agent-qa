@@ -14,7 +14,6 @@ const { actionGenerateResult } = await import(new URL('../../../eval-local/src/_
 const { writeCommittedFloorFixture } = await import(new URL('../../../eval-local/src/__tests__/fixtures/floor-fixtures.js', import.meta.url).href)
 import { files as filesUnder } from '../gates/__tests__/feedback-fixture.js'
 import { runJudgeCalibrateVerb, resolveEvalSession } from '../eval-session-composition.js'
-import { getActiveAuditSink } from '@vostride/agent-qa-safety'
 
 const boundary = vi.hoisted(() => ({ calls: 0, binds: 0, comparisons: 0, masks: [] as ((text: string) => string)[],
   overrides: {} as import('@vostride/agent-qa-model').ModelProviderOverrides }))
@@ -69,7 +68,6 @@ function fixture(models: core.CassetteModelReceipt[] = [{}], members = ['claude-
   }
   const stubs = members.map(model => capturingStub(() => {
     expect(boundary.masks.at(-1)!(secret)).toBe('[secret:JUDGE_KEY]')
-    expect(getActiveAuditSink()).toBeDefined()
     boundary.calls++; return judgeGenerateResult('equivalent', 'high')
   }, model))
   boundary.overrides = { languageModels: Object.assign({}, ...stubs.map(stub => stub.languageModels)) }

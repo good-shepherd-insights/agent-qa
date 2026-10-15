@@ -26,16 +26,20 @@ const digest = (text: string) => createHash('sha256').update(text).digest('hex')
 // @vostride/agent-qa-safety edge was REMOVED with curation-tail.ts's audit sink type, its last
 // shipped import. Its tests still import the package, so it moved to devDependencies. Both digests
 // were recomputed by this wall's own expression; no edge was added.
+// Re-blessed 2026-10-15 for eval-local only (441-32, D-15): both of its pins moved because its
+// @vostride/agent-qa-safety-local edge was REMOVED with the replay and judge calibration audit
+// scopes, its last imports. Both digests were recomputed by this wall's own expression; no edge
+// was added.
 const dependencyPins = {
   eval: '3dfdd67ac8febb33dc7f7d027408677ff5f7852b02c6df15d221b5395c9b5371',
-  'eval-local': '2a080fb9e46b9858ba6d8f2fb2739fa273db8d458e9ca9ed17545389c0d0216d',
+  'eval-local': 'ff1e17649560aefa89a3be3e75ff96ac2943502ff2d83d4ce7c6fc3614885ad4',
   'knowledge-local': 'a88a5eaa4fb407dbfc466da9ffae57698962ca15abf7b3bceb800ee6c4a57243',
   'agent-local': 'b2e720e8c49b10e5882523a1cffdfa8e502619dd3e1e799e1078eba3dc6d01d0',
   cli: '0ac4708d4e07a047da6119c6e393ee62432597aff39b2ce8786d9f4a48445f0a',
 }
 const internalPins: Record<string, string> = {
   eval: 'f09db8107041e27d15929be67224e779d7ecaca3b45594f7c63cee45c9c200ed',
-  'eval-local': 'deedee0b56409517d1fca91bbe7f4b7c56984409290a66d6beddccbaaa843f45',
+  'eval-local': '7c4b292bddc81bd586e59a67436a51996f0fb146ca48f5628843fa3e7f94bdfc',
   'knowledge-local': '5410ce22c0e1e698cc2040f8652231ea72b48313430d1d289e9c1a38442fb955',
   'agent-local': 'ffe54e4e45a22c4544b49e376470cea3421d2b9e03f0bd903755b0af711db469',
   cli: '1817c1a2602f85746c3c86e448f2633444dca109f8bb97397947941af699923a',

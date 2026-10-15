@@ -71,7 +71,7 @@ export interface StageFeedbackEntryInput extends FeedbackStateInput {
   attributedObservationId: string
   benefit: Benefit
   candidateId: string
-  // 441-23: unread since the egress check went; 441-32 deletes it.
+  // 441-23: unread since the egress check went; 441-57 deletes it.
   auditSink?: AuditSink
 }
 export type StageFeedbackEntryResult =
@@ -216,7 +216,8 @@ export interface AdmitStagedFeedbackResult {
 }
 export async function admitStagedFeedback(input: {
   agentQaRoot: string; committedRoot: string; product?: string; dryRun: boolean
-  auditSink?: AuditSink; seedingOutputBaseDir: string
+  // 441-32: unread since the eval audit went (D-15); 441-57 deletes both.
+  auditSink?: AuditSink; seedingOutputBaseDir?: string
 }): Promise<AdmitStagedFeedbackResult> {
   const previous = readCommittedCorpusDigest(input)
   if (previous.kind !== 'digest') throw new TypeError('feedback corpus unavailable')
@@ -237,8 +238,7 @@ export async function admitStagedFeedback(input: {
     result.writesStarted = true
     let seeded: SeedingBatchReport | undefined
     try {
-      seeded = seedCommittedCorpus({ batches, committedRoot: input.committedRoot,
-        seedingOutputBaseDir: input.seedingOutputBaseDir, auditSink: input.auditSink })
+      seeded = seedCommittedCorpus({ batches, committedRoot: input.committedRoot })
     } catch {
       result.failures.push({ phase: 'write', reason: 'seeding-unavailable' })
     }

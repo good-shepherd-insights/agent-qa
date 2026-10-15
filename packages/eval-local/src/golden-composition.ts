@@ -1,7 +1,5 @@
 // Gate-side composition only: extraction, selection and census projection stay in eval core.
 // The shipped writers own every committed byte.
-import { join } from 'node:path'
-
 import {
   assertBaselineComparator,
   buildGoldenTrajectoryPlan,
@@ -33,6 +31,7 @@ export interface FreezeGoldenTrajectoryInput {
   handoff: CompletedRunHandoff
   supersedes?: string
   priorGold?: MarkReceipt['gold']
+  // 441-32: unread since the eval audit went (D-15); 441-57 deletes it.
   auditSink?: AuditSink
 }
 
@@ -58,7 +57,6 @@ export function freezeGoldenTrajectory(input: FreezeGoldenTrajectoryInput): Free
   if (plan.skipped.length > 0) {
     return { kind: 'refused', refusals: plan.skipped.map(({ cassetteId }) => ({ cassetteId, kind: 'missing-cassette' })) }
   }
-  const outputBaseDir = join(input.agentQaRoot, 'eval', 'golden', input.mark.markId)
   const seeded = seedCommittedCorpus({
     plan: {
       product: plan.product,
@@ -72,8 +70,6 @@ export function freezeGoldenTrajectory(input: FreezeGoldenTrajectoryInput): Free
     },
     cassettes: plan.goldCassettes,
     committedRoot: input.committedRoot,
-    seedingOutputBaseDir: outputBaseDir,
-    auditSink: input.auditSink,
   })
   if (seeded.refusals.length > 0) return { kind: 'refused', refusals: seeded.refusals }
 
@@ -102,7 +98,6 @@ export function freezeGoldenTrajectory(input: FreezeGoldenTrajectoryInput): Free
     census,
     markdown: renderCensusMarkdown(census),
     committedRoot: input.committedRoot,
-    censusOutputBaseDir: outputBaseDir,
   })
   return {
     kind: 'frozen',

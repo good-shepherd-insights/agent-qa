@@ -4,13 +4,11 @@ import { resolveKnowledgeRoot } from '@vostride/agent-qa-core'
 // the run session composition, which as of 385-08/D-13 is the local agent package's composition
 // subtree rather than a module beside this one). It discharges at ONE site what every eval verb (replay / score /
 // report / seed; plans 372-05/06/07) stands on: the session's `mask`, a SecretRedactor over the
-// workspace secrets file and nothing else (441 D-01/D-06); D-07 the eval-scoped audit stream — per-invocation dirs
-// under .agent-qa/eval/audit/<verb>/<key>, never .agent-qa/runs/ and never a fabricated runId
-// (Pitfall 2: buildRunAuditSink is the run-dir-rooted, runId-stamping builder and is never
-// reused here); and D-03 judge-as-named-user-facing-config — judge/planner resolution flows
-// through the exact resolveNamedConfig → resolveModelAuth → toModelProfileAndAuth chain run
-// uses, discharging 370 D-06's explicit-second-ModelProfile contract. Errors are typed (D-08):
-// the command layer maps them to exit codes — never process.exit inside this module.
+// workspace secrets file and nothing else (441 D-01/D-06); and D-03
+// judge-as-named-user-facing-config — judge/planner resolution flows through the exact
+// resolveNamedConfig → resolveModelAuth → toModelProfileAndAuth chain run uses, discharging
+// 370 D-06's explicit-second-ModelProfile contract. Errors are typed (D-08): the command layer
+// maps them to exit codes — never process.exit inside this module.
 //
 // The CLI is a surface / composition root with full host access (spec §4), so this module uses
 // node builtins directly.
@@ -166,7 +164,7 @@ import type {
   StageFeedbackEntryInput,
   WriteBaselinePointerOutcome,
 } from '@vostride/agent-qa-eval-local'
-import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
+import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import type {
   ModelProfile,
   ModelProviderOverrides,
@@ -361,11 +359,7 @@ export async function resolveEvalSession(input: {
   }
 }
 
-// D-07: per-invocation eval audit dirs live under `.agent-qa/eval/audit/<verb>/<slugBranch(key)>`
-// so measurement audit stays separable from run audit. Pitfall 2: never buildRunAuditSink here —
-// that builder roots under `.agent-qa/runs/` and stamps a runId; eval invocations have neither.
-// The WHOLE key is slugged with slugBranch (one path segment) — the exact slug the run dir uses,
-// so path shapes never fork.
+// 441-32 (D-15): every caller now fills an option nothing reads; 441-57 deletes this with them.
 export function evalAuditDir(configDir: string, verb: string, key: string): string {
   return resolve(configDir, '.agent-qa', 'eval', 'audit', verb, slugBranch(key))
 }
@@ -418,18 +412,13 @@ export interface ExtractVerbResult {
  * refusal — pre-366 documents surface here, never as batch errors), and hand every survivor to
  * the sanctioned engines: `extractRunCassettes` selects/projects, `FsCassetteStore` stages
  * idempotently (rm+mkdir recreate). The CLI adds NO selection, completeness, or dedup logic.
- * The whole body runs inside `runSafetyScope` with a D-07 eval-scoped audit sink — extract has
- * no model egress, the discipline is uniform anyway.
  */
 export async function runExtractVerb(
   session: EvalSession,
   filters: { run?: string; product?: string } = {},
 ): Promise<ExtractVerbResult> {
-  const auditSink = new JsonlAuditSink(
-    evalAuditDir(session.configDir, 'extract', filters.run ?? 'sweep'),
-  )
   return await runSafetyScope(
-    { auditSink, executionContext: session.executionContext },
+    { executionContext: session.executionContext },
     async () => sweepAndExtract(resolve(session.configDir, '.agent-qa'), filters),
   )
 }
@@ -1316,8 +1305,7 @@ export function isFeedbackStateNovel(session: EvalSession, input: { agentQaRoot:
 export async function runFeedbackStaging(session: EvalSession, input: Omit<StageFeedbackEntryInput, 'committedRoot' | 'auditSink'>) {
   const digest = readCanaryCorpusDigest(session)
   if (digest.kind !== 'digest') return digest
-  return stageFeedbackEntry({ ...input, committedRoot: resolve(session.configDir, 'agent-qa-eval'),
-    auditSink: new JsonlAuditSink(join(input.agentQaRoot, 'eval/audit/feedback', slugBranch(input.attributedObservationId))) })
+  return stageFeedbackEntry({ ...input, committedRoot: resolve(session.configDir, 'agent-qa-eval') })
 }
 
 export interface SeedFromFeedbackVerbResult {
@@ -1508,6 +1496,7 @@ export interface AdversarialVerbOptions {
     author: AdversarialProbeAuthorSelection,
     binding: AdversarialProbeAuthorBinding,
   ) => ProbeAuthorPort
+  // 441-32: unread since the eval audit went (D-15); 441-57 deletes it.
   auditSink?: import('@vostride/agent-qa-safety-local').JsonlAuditSink
   knowledgeRoot?: string
   readStandingGateReceipts?: typeof LOCAL_CURATION_CAPABILITIES.readStandingGateReceipts
@@ -1571,9 +1560,6 @@ export async function runAdversarialVerb(
     const reason = digest.kind === 'no-eval-root' ? 'no-eval-root' : 'corpus-unavailable'
     return { ...base, kind: 'refused', reason }
   }
-  const auditSink =
-    opts.auditSink ??
-    new JsonlAuditSink(join(opts.agentQaRoot, 'eval/audit/adversarial', slugBranch(product)))
 
   if (opts.admit === true) {
     if (opts.batch === undefined) {
@@ -1587,7 +1573,6 @@ export async function runAdversarialVerb(
       committedRoot,
       product,
       batchDigest: opts.batch,
-      auditSink,
       seedingOutputBaseDir: evalAuditDir(session.configDir, 'seed', 'adversarial'),
       beforeWrites: () => {
         receipts = opts.knowledgeRoot !== undefined && opts.readStandingGateReceipts !== undefined
@@ -1637,7 +1622,6 @@ export async function runAdversarialVerb(
     agentQaRoot: opts.agentQaRoot,
     committedRoot,
     product,
-    auditSink,
     ...(opts.mutators === undefined ? {} : { mutators: opts.mutators }),
     // Only a NON-default cap is pushed down: the composition owns the recorded default, and
     // handing it back an unattributed value would have it record an operator choice nobody made.
@@ -1705,7 +1689,7 @@ async function resolveProbeBinding(
   if (capability.kind !== 'probe-author') {
     return { noProbeModel: { kind: 'no-probe-model', reason: capability.reason } }
   }
-  const bind = opts.bindProbeAuthor ?? await defaultProbeAuthorBinder(session, opts, product)
+  const bind = opts.bindProbeAuthor ?? await defaultProbeAuthorBinder(session)
   // 422-05's pre-invocation seam, filled with the one check that belongs at the tightest
   // possible instant. The reservation itself is written one layer down, where the durable store
   // and the budget live; this fires immediately before `createModel` and refuses a call that is
@@ -1732,16 +1716,12 @@ async function resolveProbeBinding(
 
 async function defaultProbeAuthorBinder(
   session: EvalSession,
-  opts: AdversarialVerbOptions,
-  product: string,
 ): Promise<(author: AdversarialProbeAuthorSelection, binding: AdversarialProbeAuthorBinding) => ProbeAuthorPort> {
   const { createAdversarialProbeAuthor } = await import('./adversarial-probe-author.js')
-  const auditDir = join(opts.agentQaRoot, 'eval/audit/adversarial-probe', slugBranch(product))
   return (author, binding) => createAdversarialProbeAuthor({
     author,
     executionContext: session.executionContext,
     mask: session.mask,
-    auditDir,
     onCallAttempted: binding.onCallAttempted,
   })
 }

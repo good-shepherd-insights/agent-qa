@@ -1,5 +1,5 @@
 // Fresh gate replay delegates to replayCorpusOnce → sweepCassetteReplays → runCassetteReplay,
-// retaining its ONE planner createModel site inside runSafetyScope and the existing judge binding.
+// retaining its ONE planner createModel site and the existing judge binding.
 // The gate's report and decisions are local audit artifacts, never committed. Committed evidence
 // is read through guarded legs and compared by eval core; no verdict policy is reimplemented here.
 import { readFileSync } from 'node:fs'

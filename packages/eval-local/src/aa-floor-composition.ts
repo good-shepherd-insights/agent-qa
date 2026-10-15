@@ -100,7 +100,8 @@ export interface RunNoiseFloorMeasurementInput {
   classifierRepeatability?: ClassifierRepeatability
   explanation?: string
   commit: boolean
-  reportOutputBaseDir: string
+  // 441-32: unread since the eval audit went (D-15); 441-57 deletes it.
+  reportOutputBaseDir?: string
   clock?: () => number
   onProgress?: (line: string) => void
 }
@@ -257,7 +258,7 @@ export async function runNoiseFloorMeasurement(
     artefact, profileKey, fingerprint, runRoots, notices, refusals,
     ...(input.fromMeasured === undefined ? {} : { recovery: { costLog: input.fromMeasured, modelCalls: 0 } as const }),
     ...(input.commit ? { committed: writeNoiseFloorArtefact({
-      artefact, committedRoot: input.committedRoot, reportOutputBaseDir: input.reportOutputBaseDir,
+      artefact, committedRoot: input.committedRoot,
     }) } : {}),
   }
 }

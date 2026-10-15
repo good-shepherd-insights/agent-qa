@@ -49,7 +49,7 @@ it('publishes private gold only through main while ownership names every sanctio
   expect(Object.keys(reader)).toEqual(['openCorpusReader'])
   const clause = AGENT_QA_EVAL_LOCAL_OWNERSHIP_CONTRACT.allowedResponsibilities.find(row => row.includes('bindJudgePanel'))!
   expect(clause).toContain('N existing bindings')
-  expect(clause).toContain('replay, Gate 1 and operator calibration inside runSafetyScope')
+  expect(clause).toContain('replay, Gate 1 and operator calibration')
 })
 
 it('censuses the completed replay/Gate/operator binding and safety routes', () => {

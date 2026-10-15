@@ -1,4 +1,4 @@
-import { createModel, JsonlAuditSink, runSafetyScope, type FeedbackWordingConfig } from '../eval-session-composition.js'
+import { createModel, runSafetyScope, type FeedbackWordingConfig } from '../eval-session-composition.js'
 import { canonicalJson, ImprovementPlanSchema, type ExecutionContext, type ImprovementPlan, type MaskFn } from '@vostride/agent-qa-schema'
 import { generateText } from 'ai'
 import { z } from 'zod'
@@ -28,7 +28,8 @@ export interface WordingInput {
   config: FeedbackWordingConfig | undefined
   executionContext: ExecutionContext
   mask: MaskFn
-  auditDir: string
+  // 441-32: unread since the eval audit went (D-15); 441-57 deletes it.
+  auditDir?: string
   createModelForTest?: typeof createModel
 }
 
@@ -50,7 +51,7 @@ export async function wordImprovementPlan(input: WordingInput): Promise<Improvem
     const expired = new Promise<never>((_resolve, reject) => {
       timeout = setTimeout(() => { controller.abort(); reject(new Error('Wording timed out')) }, WORDING_TIMEOUT_MS)
     })
-    return await runSafetyScope({ auditSink: new JsonlAuditSink(input.auditDir), executionContext: input.executionContext }, async () => {
+    return await runSafetyScope({ executionContext: input.executionContext }, async () => {
       const model = (input.createModelForTest ?? createModel)(profileCopy, resolved.auth, input.mask)
       const bundle = floor.kind === 'knowledge' ? floor.deltas.flatMap(delta => delta.kind === 'Supersede' ? [delta.newBundle] : delta.kind === 'Add' ? [delta.bundle] : [])[0] : undefined
       const prose = floor.kind === 'test-edit' ? { intent: floor.intent } : { summary: bundle?.summary, body: bundle?.body }
