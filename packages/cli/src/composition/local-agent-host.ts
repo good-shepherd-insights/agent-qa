@@ -1734,6 +1734,7 @@ export function createConfigWritePort(configPath: string, mask: MaskFn): ConfigW
 
     async publishFiles({ files }): Promise<ConfigFilePublishOutcome> {
       if (files.length === 0) return { kind: 'refused', reason: 'no-files', written: [] }
+      const { ConfigManager } = await import('@vostride/agent-qa-dashboard')
       const realConfigDir = realpathSync(configDir)
       const planned: { identity: string; absolutePath: string; expected: string; bytes: Uint8Array }[] = []
       for (const file of files) {
@@ -1753,6 +1754,10 @@ export function createConfigWritePort(configPath: string, mask: MaskFn): ConfigW
         const existing = readTargetIfPresent(absolutePath)
         if ((existing === undefined ? undefined : sha256hexBytes(existing)) !== file.baseDigest) {
           return { kind: 'refused', reason: 'file-changed', path: file.path, written: [] }
+        }
+        // 441 GAP3-D5: every planned file is checked before any is written.
+        if (ConfigManager.addsShownMarker(existing, file.bytes)) {
+          return { kind: 'refused', reason: 'marker_written_back', path: file.path, written: [] }
         }
         planned.push({
           identity,
@@ -1776,6 +1781,10 @@ export function createConfigWritePort(configPath: string, mask: MaskFn): ConfigW
             failed: { path: file.identity, reason: 'write-failed', message: errorText(error) },
             unwritten,
           }
+        }
+        const markerRefused = replaced.kind === 'refused' && replaced.error === 'marker_written_back'
+        if (markerRefused && written.length === 0) {
+          return { kind: 'refused', reason: 'marker_written_back', path: file.identity, written: [] }
         }
         if (replaced.kind === 'refused') {
           return {

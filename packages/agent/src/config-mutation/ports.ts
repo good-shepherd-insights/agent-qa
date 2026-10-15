@@ -292,7 +292,12 @@ export type ConfigFilePublishOutcome =
   | { readonly kind: 'published'; readonly written: readonly string[] }
   | {
     readonly kind: 'refused'
-    readonly reason: 'no-files' | 'outside-workspace' | 'duplicate-path' | 'file-changed'
+    readonly reason:
+      | 'no-files'
+      | 'outside-workspace'
+      | 'duplicate-path'
+      | 'file-changed'
+      | 'marker_written_back'
     readonly path?: string
     readonly written: readonly []
   }

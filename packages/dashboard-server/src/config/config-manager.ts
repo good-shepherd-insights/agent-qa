@@ -52,6 +52,7 @@ export type ConfigPriors = readonly ConfigPrior[]
 export type ReplaceDocumentOutcome =
   | { kind: 'ok'; revision: string; baseRevision: string }
   | { kind: 'refused'; error: 'file_changed'; revision: string }
+  | { kind: 'refused'; error: 'marker_written_back'; message: string }
 
 export type RestorePriorsOutcome =
   | { kind: 'ok'; revision: string }
@@ -143,6 +144,16 @@ export async function readConfigValues(manager: ConfigManager): Promise<Record<s
 export class ConfigManager {
   constructor(private configPath: string, readonly mask: MaskFn) {}
 
+  // 441 GAP3-D5: a whole document may keep a marker the file already holds, as often, but never
+  // add one. A missing file holds none.
+  static addsShownMarker(current: Uint8Array | undefined, next: Uint8Array): boolean {
+    const held = shownMarkerCounts(current)
+    for (const [marker, count] of shownMarkerCounts(next)) {
+      if (count > (held.get(marker) ?? 0)) return true
+    }
+    return false
+  }
+
   // 429-05 Pitfall 3: a half-edited file is named, never served as the partial config yaml recovers.
   async readWithRevision(): Promise<ConfigReadOutcome> {
     const read = await this.readParsed()
@@ -233,14 +244,19 @@ export class ConfigManager {
   // bytes it was built from, read again in this path's turn. Anything else is somebody's edit.
   async replaceDocument(expectedRevision: string, content: Uint8Array): Promise<ReplaceDocumentOutcome> {
     return this.serialized(async () => {
-      let revision: string
+      let current: Buffer | undefined
       try {
-        revision = createHash('sha256').update(await readFile(this.configPath)).digest('hex')
+        current = await readFile(this.configPath)
       } catch (err: unknown) {
         if (!isMissingFile(err)) throw err
-        revision = CONFIG_REVISION_ABSENT
       }
+      const revision = current === undefined
+        ? CONFIG_REVISION_ABSENT
+        : createHash('sha256').update(current).digest('hex')
       if (revision !== expectedRevision) return { kind: 'refused', error: 'file_changed', revision }
+      if (ConfigManager.addsShownMarker(current, content)) {
+        return { kind: 'refused', error: 'marker_written_back', message: MARKER_WRITTEN_BACK_SENTENCE }
+      }
       await this.writeAtomic(content)
       return { kind: 'ok', revision: createHash('sha256').update(content).digest('hex'), baseRevision: revision }
     })
@@ -426,6 +442,15 @@ export function holdsShownMarker(value: unknown): boolean {
     )
   }
   return false
+}
+
+function shownMarkerCounts(bytes: Uint8Array | undefined): Map<string, number> {
+  const counts = new Map<string, number>()
+  if (bytes === undefined) return counts
+  for (const [marker] of Buffer.from(bytes).toString('utf-8').matchAll(/\[secret:\w+\]/g)) {
+    counts.set(marker, (counts.get(marker) ?? 0) + 1)
+  }
+  return counts
 }
 
 function pathHoldsShownMarker(path: readonly ConfigPathSegment[]): boolean {

@@ -999,6 +999,16 @@ function fileWriteRefusal(
         + 'again and ask again.',
     }
   }
+  // 441 GAP3-D5: the fields arm's marker_written_back answer, for a whole file.
+  if (outcome.reason === 'marker_written_back') {
+    return {
+      outcome: 'refused',
+      reason: 'write-refused',
+      detail:
+        `${file} refused this change as it now stands: `
+        + `${FIELD_WRITE_REFUSAL_WORDS.marker_written_back}, so nothing was written.`,
+    }
+  }
   const words = {
     'no-files': 'there was no file to write',
     'outside-workspace': `${file} is outside the workspace`,
