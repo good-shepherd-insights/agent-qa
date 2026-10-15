@@ -4606,3 +4606,78 @@ Not fixed in round 3, by the orchestrator's scope (owner delegated), and recorde
 The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
 verdict are recorded in `.planning/phases/441-declared-secret-masking/441-RECORD.md` § Gate and the
 SHA in § Final SHA, rather than quoted here, so no agent-qa commit follows it.
+
+### Gap closure round 4 (441-74), 2026-10-16
+
+This subsection appends to the Phase 441 section and rewrites none of it, including the round 1
+to round 3 subsections above; written by 441-74. **Scope:** GAP4-D1 and GAP4-D2. The owner chose
+to fix CR-J01 now (2026-10-16). The finding came from the gap round 3 code review (2026-10-16).
+Every commit below is in agent-qa on `version-0.2` and signed. Every new cell is listed in
+`scripts/gate/inputs/regressions.json` with its `441 GAP4-D1` origin, after the 1629 rows listed
+at `82a043b5f`, which are unchanged and in order. No registered cell was re-aimed, and no row was
+edited.
+
+**What GAP4-D1 changed**
+
+- **GAP4-D1, a real run under a short declared value is seeded and marked again (CR-J01).** Round
+  3's corpus writer check (`maskCorpusText(doc, mask, { everyLeaf: true })`) kept closed members by
+  member name, and the name list had no `policyDigest`, `contextTierDigest`, `volatileTierDigest`
+  or `runDate`, which every current leaf cassette carries under
+  `input.servedBrief.proof.promptTurns[]`. So it checked digest and date members as text: under a
+  one- or two-character declared value, every case of a real run was refused as
+  `unmasked-declared-value`, `eval seed` committed nothing, and every mark's gold freeze threw
+  `FeedbackFreezeRefusedError`. Now `maskCorpusText` acts at the member `servedBrief`, in both
+  modes: it masks each prompt turn's `contextTier` and `volatileTier`, recomputes a changed tier's
+  digest with `sha256hex` and the brief's `briefDigest` with `computeBriefDigest` over the masked
+  brief, and leaves `policyL0`, `learnedL1`, `learnedL2`, `policyDigest` and `runDate` as written.
+  In `everyLeaf` mode it then keeps the brief's closed members by type path and checks every other
+  string leaf. Masking was chosen over refusing because the volatile tier always ends with
+  `Current date: <runDate>` (`runner/src/loop/prompts.ts` `buildVolatileTier`): refusing would keep
+  every case refused whenever the declared value occurs in the run date, which for `0` is every run
+  dated 20xx. No eval, eval-local or cli code reads a brief's tiers; replay rebuilds them from
+  `policyL0`, `learnedL1` and `learnedL2`, which stay byte-identical. 441-74 `2eecd9817` (RED),
+  `ebe876b19` (GREEN). Cells: `C441-GAP4-CORPUS` (4: eval 3, cli 1).
+
+#### Contracts and persisted values
+
+| Contract or persisted value | Disposition | Evidence |
+|---|---|---|
+| `maskCorpusText`, the served-brief rule | **Changed, no new export.** At the member `servedBrief` (a handoff step, a leaf cassette's input leg, a trajectory record), in both modes: each `proof.promptTurns[]` `contextTier` and `volatileTier` is masked; a changed tier's digest is recomputed with `sha256hex` over the masked text; `briefDigest` is recomputed with `computeBriefDigest` only when a tier changed. A brief the mask leaves alone is returned byte-identical, placeholder digests included. | `C441-GAP4-CORPUS a prompt tier holding a one-character declared value is masked, …`; `… is returned byte-identical in both modes` |
+| the `everyLeaf` keep table inside a served brief | **By type path, not by name.** Kept: `scope.tier`, `briefDigest`, `channel1[].id`, `channel1[].kind`, `channel1[].status`, `channel1[].tier`, `channel2[].id`, `channel2[].bodyDigest`, `channel3[].id`, `channel3[].anchors[].t`, `channel3[].anchors[].platform`, `proof.completeness`, `proof.admissionEvents[].id`, `proof.admissionEvents[].surface`, `proof.promptTurns[].runDate`, `proof.promptTurns[].policyDigest`, `proof.promptTurns[].contextTierDigest`, `proof.promptTurns[].volatileTierDigest`. Every other string leaf of the brief is checked. **Moved from kept to checked:** `channel2[].detailLevel` (the model's tool argument) and `truncation`, which the name list kept. Inside recorded exchanges no member is exempt, as before. | `C441-GAP4-CORPUS in everyLeaf mode a served brief keeps exactly its digest, date, enum, literal and minted-id paths, …` |
+| committed `briefDigest` and `receipt.memoryBriefDigest` | **Computed over the masked brief when a tier held a declared value**, so they differ from the run's raw brief digest. A comparison of a committed cassette's brief with a raw handoff brief refuses (fail closed). The known one is `resolveFailingPathCandidate` (`eval-local/src/replay-gate-composition.ts`); its only production caller, the misdirection check through `ablateCanaryStep`, extracts from the raw handoff (`source: 'handoff'`), so no production path hands it a committed cassette. | `C441-GAP4-CORPUS under a one-character declared value, eval seed seeds a run …` (each committed brief guards, and `memoryBriefDigest` equals its `briefDigest`) |
+| a short declared value inside a kept digest, run date or minted id | **Stays visible there (T-441-179, accepted; GAP4-02).** One inside the run date is also readable by lining `runDate` up against the masked volatile tier. | — |
+| cases committed before 441-74 | **Unchanged (D-20, no migration).** A case committed before 441-71 is as round 3 left it. From 441-71 to 441-73 a case whose tier held a declared value was refused, so none was committed; a brief whose tiers hold none is byte-identical under the new rule. | `C441-GAP4-CORPUS a brief whose digests and run date hold … is returned byte-identical in both modes` |
+
+#### Supersedes
+
+- **441-71's statement that the closed-member list covers the corpus's digests** (441-71's
+  summary and round 3's W1 rule): it did not cover `policyDigest`, `contextTierDigest`,
+  `volatileTierDigest` or `runDate`; inside a served brief the members are now kept by type path.
+- **GAP3-02's sentence "nothing raw reaches them from the run"**: false for `testId`, which comes
+  from `testDef['test-id'] ?? test.name` and is a kept closed member (the verifier's R13).
+- **The module header's record-time sentence** in `eval/src/extract/corpus-text-mask.ts`, "every
+  other recorded member already arrives masked from record time": false for `testId`, model
+  identities and the brief. The header now says the writer's check refuses every other string leaf
+  still holding a declared value, except the kept members.
+- **The 434 gate count** (round 3's Supersedes): the gate list holds 267 `C441-` cells, the 263
+  above and 4 `C441-GAP4-CORPUS` cells.
+
+#### Deferred
+
+Recorded in `.planning/phases/441-declared-secret-masking/deferred-items.md`:
+
+- GAP3-02, progressed: the served brief is matched by type path; the rest of the name list is
+  not, and model identities under a short value are still refused.
+- R13: a declared value typed into a test's own name or `test-id` is committed raw (open, for the
+  owner's review).
+- GAP4-01: the served brief's knowledge text (`policyL0`, `learnedL1`, `learnedL2`, channel
+  summaries and anchors, `scope.key`, `truncation`, `sourceId`, `clusterKey`, `detailLevel`) is
+  checked, not masked, so a case whose served knowledge holds a declared value is still refused.
+- GAP4-02: a declared value inside a kept run date, digest or minted id is visible there
+  (T-441-179).
+
+**Gate**
+
+The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
+verdict are recorded in `.planning/phases/441-declared-secret-masking/441-RECORD.md` § Gate and the
+SHA in § Final SHA, rather than quoted here, so no agent-qa commit follows it.
