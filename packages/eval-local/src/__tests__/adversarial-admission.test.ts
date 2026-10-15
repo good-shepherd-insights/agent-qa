@@ -139,7 +139,6 @@ function fixture(count: number): Fixture {
         plan,
         cassettes: [{ cassette: seed, blobs: extracted.blobs }],
         committedRoot,
-        seedingOutputBaseDir: join(agentQaRoot, 'eval', 'audit', 'admission-seed'),
       }).refusals,
     ).toEqual([])
     seedIds.push(seed.id)
@@ -168,7 +167,6 @@ function admit(
     committedRoot: f.committedRoot,
     product: 'default',
     batchDigest,
-    seedingOutputBaseDir: join(f.agentQaRoot, 'eval', 'audit', 'admission-admit'),
     ...(opts.afterCaseCommitted === undefined ? {} : { afterCaseCommitted: opts.afterCaseCommitted }),
     ...(opts.dryRun === undefined ? {} : { dryRun: opts.dryRun }),
   })
@@ -367,7 +365,6 @@ describe('C441-COMMITTED', () => {
       committedRoot: f.committedRoot,
       product: 'default',
       batchDigest: staged.batchDigest!,
-      seedingOutputBaseDir: join(f.agentQaRoot, 'eval', 'audit', 'admission-admit'),
     })
     expect(admitted.kind).toBe('admitted')
     expect(committedIds(f.committedRoot)).toEqual(reviewed)

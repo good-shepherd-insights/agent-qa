@@ -123,7 +123,6 @@ function fixture(count: number): Fixture {
         plan,
         cassettes: [{ cassette: seed, blobs: extracted.blobs }],
         committedRoot,
-        seedingOutputBaseDir: join(agentQaRoot, 'eval', 'audit', 'admission-seed'),
       }).refusals,
     ).toEqual([])
     seedIds.push(seed.id)
@@ -152,7 +151,6 @@ function admit(
     committedRoot: f.committedRoot,
     product: 'default',
     batchDigest,
-    seedingOutputBaseDir: join(f.agentQaRoot, 'eval', 'audit', 'admission-admit'),
     ...(opts.afterCaseCommitted === undefined ? {} : { afterCaseCommitted: opts.afterCaseCommitted }),
     ...(opts.dryRun === undefined ? {} : { dryRun: opts.dryRun }),
   })
@@ -192,7 +190,6 @@ describe('422 adversarial retirement integrity and recovery', () => {
     const before = tree(f.committedRoot)
     const failure = new TypeError('standing knowledge receipt schema is unavailable')
     expect(() => refreshAdversarialSplit({ ...f,
-      seedingOutputBaseDir: join(f.agentQaRoot, 'eval/audit/error-boundary'),
       beforeWrites: () => { throw failure },
     })).toThrow(failure)
     expect(tree(f.committedRoot)).toEqual(before)
@@ -432,7 +429,6 @@ try {
   let paused = false
   const result = input.mode === 'retire' ? local.retireStagedAdversarialBatch(input)
     : local.refreshAdversarialSplit({ ...input,
-      seedingOutputBaseDir: input.agentQaRoot + '/eval/audit/child-admit',
       afterCaseCommitted: input.entered ? id => {
         if (!paused) { paused = true; signal(input.entered, { id, owner: JSON.parse(fs.readFileSync(input.lock + '/owner.json', 'utf8')) }); wait(input.release); if (input.stopAfterHold) throw new Error('stop') }
       } : undefined })

@@ -134,12 +134,10 @@ function jsonFilesMentioning(dir: string, needle: string): string[] {
 describe('414 ROOT-07 — relocation: the split and the exclusion set are functions of committed bytes, not of where the root lives', () => {
   let rootA: string
   let rootB: string
-  let outDir: string
   let plan: SeedingPlan
 
   beforeEach(async () => {
     rootA = await mkdtemp(join(tmpdir(), 'relocation-a-'))
-    outDir = await mkdtemp(join(tmpdir(), 'relocation-out-'))
     const handoff = sourceHandoff()
     const cassettes = extract(handoff)
     plan = buildSeedingPlan({ handoff, cassettes, partition: TEST_PARTITION })
@@ -147,7 +145,6 @@ describe('414 ROOT-07 — relocation: the split and the exclusion set are functi
       plan,
       cassettes,
       committedRoot: rootA,
-      seedingOutputBaseDir: outDir,
     })
     writePartitionManifest({
       manifest: projectPartitionManifest({
@@ -157,7 +154,6 @@ describe('414 ROOT-07 — relocation: the split and the exclusion set are functi
         privateFraction: TEST_PARTITION.privateFraction,
       }),
       committedRoot: rootA,
-      seedingOutputBaseDir: outDir,
     })
 
     // The move. A DIFFERENT mkdtemp prefix, so the two absolute paths share no suffix and a
@@ -169,7 +165,6 @@ describe('414 ROOT-07 — relocation: the split and the exclusion set are functi
   afterEach(async () => {
     await rm(rootA, { recursive: true, force: true })
     await rm(rootB, { recursive: true, force: true })
-    await rm(outDir, { recursive: true, force: true })
   })
 
   it('reproduces every committed split from the MOVED manifest, byte for byte', () => {

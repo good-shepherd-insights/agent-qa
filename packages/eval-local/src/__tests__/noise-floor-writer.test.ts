@@ -48,21 +48,18 @@ function floorFixture(): NoiseFloorArtefact {
 
 describe('writeNoiseFloorArtefact (415 D-04/D-12)', () => {
   let root: string
-  let outDir: string
   let artefact: NoiseFloorArtefact
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'eval-local-floor-root-'))
-    outDir = await mkdtemp(join(tmpdir(), 'eval-local-floor-out-'))
     artefact = floorFixture()
   })
   afterEach(async () => {
     await rm(root, { recursive: true, force: true })
-    await rm(outDir, { recursive: true, force: true })
   })
 
   function write() {
-    return writeNoiseFloorArtefact({ artefact, committedRoot: root, reportOutputBaseDir: outDir })
+    return writeNoiseFloorArtefact({ artefact, committedRoot: root })
   }
 
   it('writes canonical bytes once and returns unchanged on identical evidence', () => {
@@ -88,14 +85,12 @@ describe('writeNoiseFloorArtefact (415 D-04/D-12)', () => {
   it('is refused for an unexplained zero before any file or audit sink exists', () => {
     artefact.axes.headline.aggregateFloor = 0
     expect(guardNoiseFloorArtefact(artefact).kind).toBe('ok')
-    const auditBase = join(outDir, 'not-created')
     expect(writeNoiseFloorArtefact({
-      artefact, committedRoot: root, reportOutputBaseDir: auditBase,
+      artefact, committedRoot: root,
     })).toEqual({
       kind: 'refused', refusal: { kind: 'zero-floor-without-explanation', axes: ['headline'] },
     })
     expect(existsSync(join(root, 'reports/noise-floor'))).toBe(false)
-    expect(existsSync(auditBase)).toBe(false)
   })
 
   it('is refused below the protocol minimum before a secret can reach the checkpoint', () => {
@@ -104,13 +99,11 @@ describe('writeNoiseFloorArtefact (415 D-04/D-12)', () => {
       kind: 'refused', refusal: { kind: 'below-protocol-minimum', repeats: 2, seeds: 2 },
     })
     expect(existsSync(join(root, 'reports'))).toBe(false)
-    expect(existsSync(join(outDir, 'guardrail_audit.jsonl'))).toBe(false)
   })
 
   it('refuses unusable evidence before creating any report or audit file', () => {
     artefact.runs[0]!.harnessErrorCount = 1
     expect(write()).toMatchObject({ kind: 'refused', refusal: { kind: 'unusable-measurement' } })
     expect(existsSync(join(root, 'reports'))).toBe(false)
-    expect(existsSync(join(outDir, 'guardrail_audit.jsonl'))).toBe(false)
   })
 })

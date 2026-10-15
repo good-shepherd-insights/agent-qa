@@ -96,7 +96,6 @@ describe('sweepCassetteReplays', () => {
       k: 1,
       seed: 17,
       mask,
-      replayOutputBaseDir: join(root, 'audit'),
       ...stores(root, replaysRoot),
       replaysRoot,
       onProgress: id => progress.push(id),
@@ -142,7 +141,6 @@ describe('sweepCassetteReplays', () => {
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
       mask: (text: string) => text,
-      replayOutputBaseDir: join(root, 'audit'),
       ...persistence,
       replaysRoot,
     })
@@ -178,7 +176,6 @@ describe('sweepCassetteReplays', () => {
       ...input,
       ...stores(root, firstRoot),
       replaysRoot: firstRoot,
-      replayOutputBaseDir: join(root, 'repeat-a', 'audit'),
     })
     expect(first.replayed).toBe(2)
     const files = first.replayedDirs.flatMap(dir =>
@@ -191,7 +188,6 @@ describe('sweepCassetteReplays', () => {
       ...input,
       ...stores(root, secondRoot),
       replaysRoot: secondRoot,
-      replayOutputBaseDir: join(root, 'repeat-b', 'audit'),
     })
 
     expect(second.replayed).toBe(2)

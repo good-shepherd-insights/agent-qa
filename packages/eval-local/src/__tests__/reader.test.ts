@@ -160,7 +160,6 @@ const GHOST_PRIVATE_ENTRY = {
 
 describe('openCorpusReader on the /reader subpath (414 D-18/D-19/D-20, ROOT-10 SC5)', () => {
   let root: string
-  let outDir: string
   let plan: SeedingPlan
   let privateIds: string[]
   let sharedIds: string[]
@@ -168,7 +167,6 @@ describe('openCorpusReader on the /reader subpath (414 D-18/D-19/D-20, ROOT-10 S
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'eval-local-reader-root-'))
-    outDir = await mkdtemp(join(tmpdir(), 'eval-local-reader-out-'))
     const handoff = sourceHandoff()
     const cassettes = extract(handoff)
     plan = buildSeedingPlan({ handoff, cassettes, partition: READER_PARTITION })
@@ -176,7 +174,6 @@ describe('openCorpusReader on the /reader subpath (414 D-18/D-19/D-20, ROOT-10 S
       plan,
       cassettes,
       committedRoot: root,
-      seedingOutputBaseDir: outDir,
     })
     writePartitionManifest({
       manifest: projectPartitionManifest({
@@ -186,7 +183,6 @@ describe('openCorpusReader on the /reader subpath (414 D-18/D-19/D-20, ROOT-10 S
         privateFraction: READER_PARTITION.privateFraction,
       }),
       committedRoot: root,
-      seedingOutputBaseDir: outDir,
     })
     writeCommitted(
       root,
@@ -210,7 +206,6 @@ describe('openCorpusReader on the /reader subpath (414 D-18/D-19/D-20, ROOT-10 S
 
   afterEach(async () => {
     await rm(root, { recursive: true, force: true })
-    await rm(outDir, { recursive: true, force: true })
   })
 
   it('exports exactly one value from the /reader subpath (D-20 key-set pin)', async () => {

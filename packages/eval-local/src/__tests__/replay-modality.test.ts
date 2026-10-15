@@ -65,7 +65,6 @@ describe('RPLY-04 modality / offline / mobile proof (runCassetteReplay)', () => 
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
-      replayOutputBaseDir: await tempRoot('replay-m-text-audit-'),
     })
 
     if (!('granularity' in outcome)) throw new Error('expected a replay result, got a refusal')
@@ -91,7 +90,6 @@ describe('RPLY-04 modality / offline / mobile proof (runCassetteReplay)', () => 
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
-      replayOutputBaseDir: await tempRoot('replay-m-vision-audit-'),
     })
 
     if (!('granularity' in outcome)) throw new Error('expected a replay result, got a refusal')
@@ -119,7 +117,6 @@ describe('RPLY-04 modality / offline / mobile proof (runCassetteReplay)', () => 
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
-      replayOutputBaseDir: await tempRoot('replay-m-android-audit-'),
     })
 
     if (!('granularity' in outcome)) throw new Error('expected a replay result, got a refusal')
@@ -155,7 +152,6 @@ describe('RPLY-04 modality / offline / mobile proof (runCassetteReplay)', () => 
       profile: stubProfile('http://localhost:1/v1'),
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
-      replayOutputBaseDir: await tempRoot('replay-m-offline-audit-'),
     })
 
     if (!('granularity' in outcome)) throw new Error('expected a replay result, got a refusal')

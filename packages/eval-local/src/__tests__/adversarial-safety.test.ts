@@ -115,7 +115,6 @@ function fixture(opts: { seedText?: string } = {}) {
     plan,
     cassettes: [{ cassette: seed, blobs: extracted.blobs }],
     committedRoot,
-    seedingOutputBaseDir: join(agentQaRoot, 'eval', 'audit', 'safety-seed'),
   })
   expect(seeded.refusals).toEqual([])
   return { root, committedRoot, agentQaRoot, handoff, seed }
@@ -139,7 +138,6 @@ function refresh(f: ReturnType<typeof fixture>, batchDigest: string) {
     committedRoot: f.committedRoot,
     product: 'default',
     batchDigest,
-    seedingOutputBaseDir: join(f.agentQaRoot, 'eval', 'audit', 'safety-admit'),
   })
 }
 

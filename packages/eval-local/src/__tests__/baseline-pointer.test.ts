@@ -27,7 +27,6 @@ const FIXTURE_BATCH_KEY = '358327d21294f77b91645e3cefde46ad12fe06542275737283544
 
 describe('writeBaselinePointer (D-19/D-20, ROOT-11)', () => {
   let root: string
-  let outDir: string
   let report: EvalBatchReport
   let pointer: BaselinePointer
 
@@ -41,13 +40,11 @@ describe('writeBaselinePointer (D-19/D-20, ROOT-11)', () => {
       report: overrides.report ?? report,
       pointer: overrides.pointer ?? pointer,
       committedRoot: root,
-      reportOutputBaseDir: outDir,
     })
   }
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'eval-local-baseline-root-'))
-    outDir = await mkdtemp(join(tmpdir(), 'eval-local-baseline-out-'))
     report = buildEvalReport([])
     pointer = projectBaselinePointer({
       plannerModelId: 'gpt-5.6-terra',
@@ -60,7 +57,6 @@ describe('writeBaselinePointer (D-19/D-20, ROOT-11)', () => {
 
   afterEach(async () => {
     await rm(root, { recursive: true, force: true })
-    await rm(outDir, { recursive: true, force: true })
   })
 
   it('designates the baseline at reports/baselines/<slug(profileKey)>.json (happy path)', () => {
@@ -121,6 +117,5 @@ describe('writeBaselinePointer (D-19/D-20, ROOT-11)', () => {
     expect(existsSync(join(root, committedBaselinePointerPath(sameFamilyPointer.profileKey)))).toBe(
       false,
     )
-    expect(existsSync(join(outDir, 'guardrail_audit.jsonl'))).toBe(false)
   })
 })

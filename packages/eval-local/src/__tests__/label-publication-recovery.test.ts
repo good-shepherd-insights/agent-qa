@@ -25,7 +25,7 @@ function bytes(root: string): Record<string, string> {
 }
 function setup() {
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-calibration-write-')); roots.push(root)
-  const committedRoot = join(root, 'committed'), agentQaRoot = join(root, 'runtime'), reportOutputBaseDir = join(root, 'audit')
+  const committedRoot = join(root, 'committed'), agentQaRoot = join(root, 'runtime')
   const handoff = makeLocalV2Handoff({ runId: asRunId('calibration-producer'), scope: { tier: 'product', key: 'shop' } })
   handoff.tests = [handoff.tests[0]!]
   handoff.tests[0]!.steps = [handoff.tests[0]!.steps[0]!]
@@ -49,8 +49,8 @@ function setup() {
     write(committedRoot, committedCassettePath('shop', item.cassetteId), committedFileText(extracted.cassettes.find(row => row.cassette.id === item.cassetteId)!.cassette))
   }
   expect(plan.pairCounts.total).toBe(1)
-  const invoke = (opts: Partial<api.RunLabelCalibrationInput> = {}) => api.runLabelCalibration({ committedRoot, agentQaRoot, reportOutputBaseDir, ...opts })
-  return { root, committedRoot, agentQaRoot, reportOutputBaseDir, invoke, handoff, persistRun, plan }
+  const invoke = (opts: Partial<api.RunLabelCalibrationInput> = {}) => api.runLabelCalibration({ committedRoot, agentQaRoot, ...opts })
+  return { root, committedRoot, agentQaRoot, invoke, handoff, persistRun, plan }
 }
 
 it.each(['before-revision:0', 'before-revision:1', 'before-marker', 'before-rename', 'after-marker'])('recovers a complete generation after %s interruption', async boundary => {
@@ -127,7 +127,7 @@ it('refuses a real gold mark published after capture without mixing staged weigh
   expect(await f.invoke({ commit: true, onBoundary: stage => {
     if (stage !== 'before-marker') return
     const frozen = api.freezeGoldenTrajectory({ agentQaRoot: f.agentQaRoot, committedRoot: f.committedRoot,
-      product: 'shop', handoff: f.handoff, mark, auditSink: { appendGuardrailAudit() {} } })
+      product: 'shop', handoff: f.handoff, mark })
     expect(frozen.kind).toBe('frozen')
     if (frozen.kind !== 'frozen') throw new Error('gold publication refused')
     write(f.agentQaRoot, `runs/${f.handoff.runId}/marks.jsonl`, JSON.stringify({ ...mark, gold: frozen.cases }) + '\n')

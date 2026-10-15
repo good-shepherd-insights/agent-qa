@@ -260,12 +260,10 @@ function bundleDirs(root: string): string[] {
 
 describe('readCommittedCorpus / listCommittedReports / listBaselinePointers (413 D-14/D-08)', () => {
   let root: string
-  let outDir: string
   let plan: SeedingPlan
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'eval-local-corpus-source-root-'))
-    outDir = await mkdtemp(join(tmpdir(), 'eval-local-corpus-source-out-'))
     const handoff = sourceHandoff()
     const cassettes = extract(handoff)
     plan = planFor(handoff, cassettes)
@@ -273,13 +271,11 @@ describe('readCommittedCorpus / listCommittedReports / listBaselinePointers (413
       plan,
       cassettes,
       committedRoot: root,
-      seedingOutputBaseDir: outDir,
     })
   })
 
   afterEach(async () => {
     await rm(root, { recursive: true, force: true })
-    await rm(outDir, { recursive: true, force: true })
   })
 
   it('round-trips a seeded committed root into a joined snapshot', () => {

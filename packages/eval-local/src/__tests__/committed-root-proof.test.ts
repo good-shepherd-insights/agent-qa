@@ -268,7 +268,6 @@ function planFor(handoff: CompletedRunHandoff, cassettes: readonly ExtractedCass
 
 describe('committed-root proofs (ROOT-02 / GUARD-FUT-04, D-13, D-15)', () => {
   let root: string
-  let outDir: string
 
   function seed(
     plan: SeedingPlan,
@@ -278,18 +277,15 @@ describe('committed-root proofs (ROOT-02 / GUARD-FUT-04, D-13, D-15)', () => {
       plan,
       cassettes,
       committedRoot: root,
-      seedingOutputBaseDir: outDir,
     })
   }
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'eval-local-root-proof-'))
-    outDir = await mkdtemp(join(tmpdir(), 'eval-local-root-proof-out-'))
   })
 
   afterEach(async () => {
     await rm(root, { recursive: true, force: true })
-    await rm(outDir, { recursive: true, force: true })
   })
 
   it('raw-byte proof, masking layer (GUARD-FUT-04): a MaskingContext-registered value appears nowhere raw in the committed tree', () => {

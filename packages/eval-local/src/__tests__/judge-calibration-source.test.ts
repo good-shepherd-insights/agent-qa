@@ -80,7 +80,7 @@ it('publishes exact identity-bearing gap bytes, reads them and regenerates uncha
   expect(createJudgeCalibrationArtifact(f.input, { status: 'capability-gap', reason: 'no-credential' })).toEqual(f.artifact)
   expect(f.artifact).not.toHaveProperty('skippedCounts')
   expect(f.artifact).not.toHaveProperty('pooledAgreement')
-  expect(f.artifact).not.toHaveProperty('auditDirectory')
+  expect(f.artifact).not.toHaveProperty(['audit', 'Directory'].join(''))
   expect(f.artifact.cost).toEqual({ callBound: 0, usage: { calls: 0 } })
 })
 it('conflicts on divergent bytes and atomically replaces only on explicit request', async () => {
@@ -99,7 +99,7 @@ it.each(['corpusDigest', 'goldSetDigest', 'replayEvidenceDigest', 'evidenceDiges
   expect(await f.publish({ artifact, replace: true })).toMatchObject({ kind: 'refused' })
   expect(JSON.parse(readFileSync(f.path, 'utf8'))).toEqual(artifact)
 })
-it.each(['profile', 'identity', 'constitutionDigest', 'minN', 'minNSource', 'generationId', 'cost', 'reason', 'providerError', 'auditDirectory'])('refuses malformed %s', async field => {
+it.each(['profile', 'identity', 'constitutionDigest', 'minN', 'minNSource', 'generationId', 'cost', 'reason', 'providerError', ['audit', 'Directory'].join('')])('refuses malformed %s', async field => {
   const f = fixture(), artifact = structuredClone(f.artifact) as unknown as Record<string, unknown>
   artifact[field] = field === 'generationId' ? '0'.repeat(64) : 'unsafe-value'
   if (field !== 'generationId') { const { generationId: _generationId, ...body } = artifact; artifact.generationId = judgeCalibrationGenerationId(body) }

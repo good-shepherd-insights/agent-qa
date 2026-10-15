@@ -307,7 +307,6 @@ export function writeGate1Fixture(
   const written = writeNoiseFloorArtefact({
     artefact,
     committedRoot,
-    reportOutputBaseDir: join(agentQaRoot, 'fixture-audit'),
   })
   if (written.kind !== 'written') throw new Error(JSON.stringify(written))
   return {
@@ -346,7 +345,6 @@ export async function warmGateRoot(
     mask: (text: string) => text,
     seed,
     k: 1,
-    replayOutputBaseDir: fixture.gateRoot,
     source: 'committed',
     corpusDigest: fixture.corpusDigest,
     clock: incrementingClock(),

@@ -57,13 +57,11 @@ function exclusion(
 
 describe('writePartitionManifest / writeRunExclusion (414 D-02/D-05/D-06, ROOT-07/ROOT-08)', () => {
   let root: string
-  let outDir: string
 
   function writeManifest(value: PartitionManifest): WritePartitionManifestOutcome {
     return writePartitionManifest({
       manifest: value,
       committedRoot: root,
-      seedingOutputBaseDir: outDir,
     })
   }
 
@@ -71,18 +69,15 @@ describe('writePartitionManifest / writeRunExclusion (414 D-02/D-05/D-06, ROOT-0
     return writeRunExclusion({
       record,
       committedRoot: root,
-      seedingOutputBaseDir: outDir,
     })
   }
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'eval-local-partition-writers-root-'))
-    outDir = await mkdtemp(join(tmpdir(), 'eval-local-partition-writers-out-'))
   })
 
   afterEach(async () => {
     await rm(root, { recursive: true, force: true })
-    await rm(outDir, { recursive: true, force: true })
   })
 
   it('writes the manifest once; disagreeing flags are a write-conflict, not an overwrite (D-05)', () => {

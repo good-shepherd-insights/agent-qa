@@ -34,7 +34,7 @@ async function fixture(withLabels = false) {
   }
   const input = { ...corpus, agentQaRoot: root, runRoot: join(root, 'r0'),
     profile: stubProfile(), auth: noneAuth, modelOverrides: { languageModels: stub.languageModels },
-    mask: (text: string) => text, seed: 11, replayOutputBaseDir: join(root, 'audit'),
+    mask: (text: string) => text, seed: 11,
     source: 'committed', clock: incrementingClock(), corpusDigest: computeCorpusDigest(read.snapshot.entries),
     productByCassetteId: new Map(read.snapshot.entries.map(entry => [entry.cassetteId, entry.product])),
     corpusEntriesById: entries, labelRecords,

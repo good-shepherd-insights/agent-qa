@@ -57,7 +57,6 @@ async function fixture() {
       modelOverrides: { languageModels: stub.languageModels },
       mask: (text: string) => text,
       seed: 11,
-      replayOutputBaseDir: join(root, 'audit'),
       source: 'committed',
       clock: incrementingClock(),
     },
@@ -89,7 +88,6 @@ async function measurementFixture(configure?: Parameters<typeof writeCommittedFl
       repeats: 3,
       bootstrapSeed: 97,
       commit: false,
-      reportOutputBaseDir: join(root, 'audit'),
       clock: incrementingClock(),
     },
   }
@@ -245,7 +243,7 @@ describe('runNoiseFloorMeasurement', () => {
     const current = await evalLocal.replayCorpusOnce({ ...input,
       selected: loaded.loaded, loadRefusals: loaded.loadRefusals,
       runRoot: join(input.agentQaRoot, 'gate'), seed: 11, source: 'committed',
-      corpusDigest: healthy.artefact.corpusDigest, replayOutputBaseDir: input.reportOutputBaseDir,
+      corpusDigest: healthy.artefact.corpusDigest,
     })
     expect(current.report.honesty.refusalCounts['parse-failed']).toBe(1)
     expect(current.vectors).toHaveLength(2)
@@ -347,7 +345,7 @@ describe('runNoiseFloorMeasurement', () => {
     const { root, input, corpus } = await measurementFixture()
     const baseline = await evalLocal.replayCorpusOnce({ ...input,
       selected: corpus.selected, runRoot: join(root, 'baseline'), seed: 11,
-      replayOutputBaseDir: join(root, 'baseline-audit'), source: 'committed' })
+      source: 'committed' })
     const pointer = projectBaselinePointer({ ...input.profileKeyInputs,
       fingerprint: 'historical-other-profile', corpusDigest: 'historical-corpus', batchKey: baseline.report.batchKey })
     const { fingerprint: _fingerprint, corpusDigest: _corpusDigest, ...legacy } = pointer

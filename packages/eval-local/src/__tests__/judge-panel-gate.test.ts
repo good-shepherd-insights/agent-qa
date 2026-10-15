@@ -49,14 +49,14 @@ async function fixture(options: { ids?: string[]; recorded?: string; warm?: bool
       modelOverrides: { languageModels: planner.languageModels }, seedPolicy: 'declared' }) }
   identity.profileKey = composeBaselineProfileKey(identity)
   const { judgeMemberModelIds: _members, ...floorIdentity } = identity
-  expect(local.writeNoiseFloorArtefact({ artefact: { ...f.artefact, ...floorIdentity }, committedRoot: f.committedRoot,
-    reportOutputBaseDir: join(root, 'floor-audit') }).kind).toBe('written')
+  expect(local.writeNoiseFloorArtefact({ artefact: { ...f.artefact, ...floorIdentity },
+    committedRoot: f.committedRoot }).kind).toBe('written')
   const runRoot = join(f.agentQaRoot, 'eval/gate', slugBranch(identity.profileKey))
   if (options.warm !== false) await local.replayCorpusOnce({ selected: f.selected, cassettesRoot: f.cassettesRoot,
     agentQaRoot: f.agentQaRoot, runRoot, profile, auth: noneAuth,
     modelOverrides: { languageModels: planner.languageModels },
     ...(members.length === 0 ? {} : { judge: { members: members.map(member => ({ ...member, auth: noneAuth })) } }),
-    seed: 11, k: 1, mask: (text: string) => text, replayOutputBaseDir: runRoot,
+    seed: 11, k: 1, mask: (text: string) => text,
     source: 'committed', corpusDigest: f.corpusDigest, clock: incrementingClock() })
   planner.captured.length = 0
   warmed = true

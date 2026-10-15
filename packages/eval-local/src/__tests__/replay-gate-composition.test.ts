@@ -232,7 +232,6 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
       evalLocal.writeNoiseFloorArtefact({
         artefact: { ...f.artefact, ...identity },
         committedRoot: f.committedRoot,
-        reportOutputBaseDir: join(f.agentQaRoot, 'judge-fixture-audit'),
       }).kind,
     ).toBe('written')
     await evalLocal.replayCorpusOnce({
@@ -256,7 +255,6 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
       seed: 11,
       k: 1,
       mask: (text: string) => text,
-      replayOutputBaseDir: gateRoot,
       source: 'committed',
       corpusDigest: f.corpusDigest,
       clock: incrementingClock(),
@@ -1202,7 +1200,6 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
     const written = evalLocal.writeNoiseFloorArtefact({
       artefact: { ...f.artefact, ...identity },
       committedRoot: f.committedRoot,
-      reportOutputBaseDir: join(f.agentQaRoot, 'judge-fixture-audit'),
     })
     expect(written.kind).toBe('written')
     await evalLocal.replayCorpusOnce({
@@ -1221,7 +1218,6 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
       seed: 11,
       k: 1,
       mask: (text: string) => text,
-      replayOutputBaseDir: gateRoot,
       source: 'committed',
       corpusDigest: f.corpusDigest,
       clock: incrementingClock(),

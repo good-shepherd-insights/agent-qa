@@ -1,4 +1,4 @@
-import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync, existsSync } from 'node:fs'
+import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -40,7 +40,7 @@ async function run(judge?: RunCassetteReplayInput['judge'], sensitive = false, o
   const replay = capturingStub(index => fillResult(noConsensus ? `hello world ${['alpha', 'beta', 'gamma'][index]}` : undefined), plannerId)
   const outcome = await runCassetteReplay({ cassette, artifacts, profile: familyStubProfile(plannerId), auth: noneAuth,
     modelOverrides: { languageModels: replay.languageModels }, judge, modelCallObservation: observation,
-    clock: { now: () => 0 }, replayOutputBaseDir: root, k: noConsensus ? 3 : 1,
+    clock: { now: () => 0 }, k: noConsensus ? 3 : 1,
     escalationPredicate: () => noConsensus,
     scoreStore: new FsScoreStore({ root }), recordStore: new FsReplayRecordStore({ root }),
     mask: text => redactor.redactString(text),
@@ -55,9 +55,7 @@ async function run(judge?: RunCassetteReplayInput['judge'], sensitive = false, o
   const record = JSON.parse(scoreBytes) as ScoreRecord
   const report = buildEvalReport([{ cassetteId: cassette.id, outcome, score: record.score }], record.judge)
   const written = new FsReportStore({ root }).save(report)
-  const auditPath = join(root, 'guardrail_audit.jsonl')
-  const audit = existsSync(auditPath) ? readFileSync(auditPath, 'utf8').split('\n').filter(Boolean).map(row => JSON.parse(row)) : []
-  return { root, cassette, outcome, record, scoreBytes, replayBytes: bytes('replay.json'), reportBytes: readFileSync(written.file, 'utf8'), audit }
+  return { root, cassette, outcome, record, scoreBytes, replayBytes: bytes('replay.json'), reportBytes: readFileSync(written.file, 'utf8') }
 }
 
 describe('panel replay at the sanctioned model boundary', () => {

@@ -25,7 +25,7 @@ function bytes(root: string): Record<string, string> {
 }
 function setup() {
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-calibration-write-')); roots.push(root)
-  const committedRoot = join(root, 'committed'), agentQaRoot = join(root, 'runtime'), reportOutputBaseDir = join(root, 'audit')
+  const committedRoot = join(root, 'committed'), agentQaRoot = join(root, 'runtime')
   const handoff = makeLocalV2Handoff({ runId: asRunId('calibration-producer'), scope: { tier: 'product', key: 'shop' } })
   handoff.tests = [handoff.tests[0]!]
   handoff.tests[0]!.steps = [handoff.tests[0]!.steps[0]!]
@@ -49,8 +49,8 @@ function setup() {
     write(committedRoot, committedCassettePath('shop', item.cassetteId), committedFileText(extracted.cassettes.find(row => row.cassette.id === item.cassetteId)!.cassette))
   }
   expect(plan.pairCounts.total).toBe(1)
-  const invoke = (opts: Record<string, unknown> = {}) => (api as Record<string, any>).runLabelCalibration?.({ committedRoot, agentQaRoot, reportOutputBaseDir, ...opts })
-  return { root, committedRoot, agentQaRoot, reportOutputBaseDir, invoke, handoff, persistRun, plan }
+  const invoke = (opts: Record<string, unknown> = {}) => (api as Record<string, any>).runLabelCalibration?.({ committedRoot, agentQaRoot, ...opts })
+  return { root, committedRoot, agentQaRoot, invoke, handoff, persistRun, plan }
 }
 
 it('dry-run computes all pair weights without creating committed, lock or audit bytes', async () => {
@@ -143,7 +143,7 @@ it('resumes after actual publisher process death using the existing stale-owner 
   const moduleUrl = pathToFileURL(join(process.cwd(), 'dist/index.js')).href
   const child = spawnSync(process.execPath, ['--input-type=module', '-e',
     `import { runLabelCalibration } from ${JSON.stringify(moduleUrl)}; await runLabelCalibration({ ...JSON.parse(process.argv[1]), commit: true, onBoundary(stage) { if (stage === 'before-marker') process.exit(73) } })`,
-    JSON.stringify({ committedRoot: f.committedRoot, agentQaRoot: f.agentQaRoot, reportOutputBaseDir: f.reportOutputBaseDir })], { encoding: 'utf8' })
+    JSON.stringify({ committedRoot: f.committedRoot, agentQaRoot: f.agentQaRoot })], { encoding: 'utf8' })
   expect(child.status, child.stderr).toBe(73)
   expect(api.readLabelCalibration(f.committedRoot).kind).toBe('absent')
   expect(await f.invoke({ commit: true })).toMatchObject({ kind: 'committed', artifact: planned.artifact })

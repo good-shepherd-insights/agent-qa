@@ -28,8 +28,7 @@ function feedbackInput(f: ReturnType<typeof fixture>, route = 'novel') {
     candidateId: f.line.id, stateDigest: distilledScreenStateDigest(f.step.subActions[0]!.stateBefore) }
 }
 function admissionInput(f: ReturnType<typeof fixture>, dryRun = false) {
-  return { agentQaRoot: f.agentQaRoot, committedRoot: f.committedRoot, dryRun,
-    seedingOutputBaseDir: join(f.agentQaRoot, 'eval/audit/seed-feedback') }
+  return { agentQaRoot: f.agentQaRoot, committedRoot: f.committedRoot, dryRun }
 }
 
 describe('418 feedback staging and explicit admission', () => {

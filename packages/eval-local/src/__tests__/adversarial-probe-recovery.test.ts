@@ -157,7 +157,6 @@ function fixture(count = 1): Fixture {
         plan,
         cassettes: [{ cassette: seed, blobs: extracted.blobs }],
         committedRoot,
-        seedingOutputBaseDir: join(agentQaRoot, 'eval', 'audit', 'probe-recovery-seed'),
       }).refusals,
     ).toEqual([])
     seedIds.push(seed.id)

@@ -155,7 +155,6 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
   it('replays a loaded leaf cassette to a decision at temperature 0 through the pinned middleware', async () => {
     const { cassette, artifacts } = extractLeaf(makeLocalV2Handoff())
     const stub = capturingStub(() => actionGenerateResult())
-    const replayDir = await tempRoot('replay-comp-temp0-')
 
     const outcome = await runCassetteReplay({
       mask: (text: string) => text,
@@ -164,7 +163,6 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
-      replayOutputBaseDir: replayDir,
     })
 
     if (!('granularity' in outcome)) throw new Error('expected a replay result, got a refusal')
@@ -228,7 +226,6 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
-      replayOutputBaseDir: replayDir,
       recordStore: new FsReplayRecordStore({ root: replayDir }),
     })
 
@@ -266,7 +263,6 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
       auth: noneAuth,
       seed: 11,
       modelOverrides: { languageModels: stub.languageModels },
-      replayOutputBaseDir: replayDir,
       recordStore: new FsReplayRecordStore({ root: replayDir }),
     })
 
@@ -291,7 +287,6 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
   it('stamps recorded and replayed model ids; a mismatch is data, not an error (D-03)', async () => {
     const { cassette, artifacts } = extractLeaf(makeLocalV2Handoff())
     const stub = capturingStub(() => actionGenerateResult())
-    const replayDir = await tempRoot('replay-comp-ids-')
 
     const outcome = (await runCassetteReplay({
       mask: (text: string) => text,
@@ -300,7 +295,6 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
-      replayOutputBaseDir: replayDir,
     })) as LeafReplayResult
 
     // The replayed id derives ONLY from the caller profile (never the recorded id, D-03).
@@ -313,7 +307,6 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
   it('constructs a fresh planner + accounting per sample under a forced k=3 escalation', async () => {
     const { cassette, artifacts } = extractLeaf(makeLocalV2Handoff())
     const stub = capturingStub(() => actionGenerateResult())
-    const replayDir = await tempRoot('replay-comp-ksample-')
 
     const outcome = (await runCassetteReplay({
       mask: (text: string) => text,
@@ -324,7 +317,6 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
       modelOverrides: { languageModels: stub.languageModels },
       k: 3,
       escalationPredicate: () => true,
-      replayOutputBaseDir: replayDir,
     })) as LeafReplayResult
 
     // Three independent samples ⇒ three create() cycles ⇒ three provider-boundary calls, each a
@@ -342,7 +334,6 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
     const { cassette, artifacts } = extractLeaf(makeLocalV2Handoff())
 
     const withStoreRoot = await tempRoot('replay-comp-store-')
-    const withStoreReplayDir = await tempRoot('replay-comp-store-audit-')
     const persistedOutcome = await runCassetteReplay({
       mask: (text: string) => text,
       cassette,
@@ -350,7 +341,6 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: capturingStub(() => actionGenerateResult()).languageModels },
-      replayOutputBaseDir: withStoreReplayDir,
       recordStore: new FsReplayRecordStore({ root: withStoreRoot }),
     })
 
@@ -361,7 +351,6 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
     )
 
     const noStoreRoot = await tempRoot('replay-comp-nostore-')
-    const noStoreReplayDir = await tempRoot('replay-comp-nostore-audit-')
     await runCassetteReplay({
       mask: (text: string) => text,
       cassette,
@@ -369,7 +358,6 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: capturingStub(() => actionGenerateResult()).languageModels },
-      replayOutputBaseDir: noStoreReplayDir,
     })
     expect(findReplayRecords(noStoreRoot)).toHaveLength(0)
   })
@@ -407,7 +395,6 @@ describe('runCassetteReplay — production round-trip spine (RPLY-02, D-05/D-12)
   it('extract → store → load → replay → persist, all on temp dirs with a captured stub', async () => {
     const bundleRoot = await tempRoot('replay-e2e-bundles-')
     const storeRoot = await tempRoot('replay-e2e-store-')
-    const replayDir = await tempRoot('replay-e2e-audit-')
 
     const load = extractStoreLoad(makeLocalV2Handoff(), memArtifacts(), bundleRoot)
     expect(load.kind).toBe('loaded')
@@ -421,7 +408,6 @@ describe('runCassetteReplay — production round-trip spine (RPLY-02, D-05/D-12)
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
-      replayOutputBaseDir: replayDir,
       recordStore: new FsReplayRecordStore({ root: storeRoot }),
     })
 
@@ -445,7 +431,6 @@ describe('runCassetteReplay — production round-trip spine (RPLY-02, D-05/D-12)
   it('flows an evidence-incomplete cassette into a persisted refusal without invoking the planner', async () => {
     const bundleRoot = await tempRoot('replay-e2e-incomplete-bundles-')
     const storeRoot = await tempRoot('replay-e2e-incomplete-store-')
-    const replayDir = await tempRoot('replay-e2e-incomplete-audit-')
 
     // No blob bytes available at extraction ⇒ the full-capture leaf is evidence-incomplete.
     const emptyArtifacts: ArtifactSource = { getBlob: () => undefined }
@@ -477,7 +462,6 @@ describe('runCassetteReplay — production round-trip spine (RPLY-02, D-05/D-12)
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: { [STUB_MODEL_ID]: throwingStub } },
-      replayOutputBaseDir: replayDir,
       recordStore: new FsReplayRecordStore({ root: storeRoot }),
     })
 
@@ -494,7 +478,6 @@ describe('runCassetteReplay — production round-trip spine (RPLY-02, D-05/D-12)
 
   it('serves a recorded exchange through the real plan() tool-loop (368-01 seam + exchange server)', async () => {
     const bundleRoot = await tempRoot('replay-e2e-exchange-bundles-')
-    const replayDir = await tempRoot('replay-e2e-exchange-audit-')
 
     // Extend the recorded live decision with a non-action exchange (opaque evidence data).
     const handoff = makeLocalV2Handoff()
@@ -521,7 +504,6 @@ describe('runCassetteReplay — production round-trip spine (RPLY-02, D-05/D-12)
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
-      replayOutputBaseDir: replayDir,
     })
 
     if (!('granularity' in outcome)) throw new Error('expected a replay result, got a refusal')
@@ -555,7 +537,6 @@ describe('runCassetteReplay — optional score persistence (369-08, D-13/OQ-2)',
   it('scores the replay in eval core and persists score.json beside replay.json (record first)', async () => {
     const { cassette, artifacts } = extractLeaf(makeLocalV2Handoff())
     const storeRoot = await tempRoot('replay-comp-scored-')
-    const replayDir = await tempRoot('replay-comp-scored-audit-')
 
     const outcome = await runCassetteReplay({
       mask: (text: string) => text,
@@ -564,7 +545,6 @@ describe('runCassetteReplay — optional score persistence (369-08, D-13/OQ-2)',
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: capturingStub(() => actionGenerateResult()).languageModels },
-      replayOutputBaseDir: replayDir,
       recordStore: new FsReplayRecordStore({ root: storeRoot }),
       scoreStore: new FsScoreStore({ root: storeRoot }),
     })
@@ -592,7 +572,6 @@ describe('runCassetteReplay — optional score persistence (369-08, D-13/OQ-2)',
   it('never scores a refusal: replay.json persists, no score.json is written', async () => {
     const bundleRoot = await tempRoot('replay-comp-refusal-bundles-')
     const storeRoot = await tempRoot('replay-comp-refusal-store-')
-    const replayDir = await tempRoot('replay-comp-refusal-audit-')
 
     // No blob bytes at extraction ⇒ evidence-incomplete cassette ⇒ completeness refusal.
     const emptyArtifacts: ArtifactSource = { getBlob: () => undefined }
@@ -607,7 +586,6 @@ describe('runCassetteReplay — optional score persistence (369-08, D-13/OQ-2)',
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: capturingStub(() => actionGenerateResult()).languageModels },
-      replayOutputBaseDir: replayDir,
       recordStore: new FsReplayRecordStore({ root: storeRoot }),
       scoreStore: new FsScoreStore({ root: storeRoot }),
     })
@@ -710,7 +688,6 @@ describe('runCassetteReplay — tier-4 judge leg (370-07, JUDGE-01/03/04)', () =
   })
 
   interface MidBandRun {
-    replayDir: string
     replayStub: ReturnType<typeof keyedCapturingStub>
     scoreFiles: string[]
     persisted: ScoreRecord
@@ -721,7 +698,6 @@ describe('runCassetteReplay — tier-4 judge leg (370-07, JUDGE-01/03/04)', () =
     options: { stepText?: string; judge?: RunCassetteReplayInput['judge'] } = {},
   ): Promise<MidBandRun> {
     const storeRoot = await tempRoot('replay-judge-store-')
-    const replayDir = await tempRoot('replay-judge-audit-')
     const { cassette, artifacts } = extractLeaf(midBandHandoff(options.stepText))
     const replayStub = keyedCapturingStub(
       () => fillGenerateResult(CANDIDATE_FILL_TEXT),
@@ -735,7 +711,6 @@ describe('runCassetteReplay — tier-4 judge leg (370-07, JUDGE-01/03/04)', () =
       profile: familyStubProfile(REPLAY_MODEL_ID),
       auth: noneAuth,
       modelOverrides: { languageModels: replayStub.languageModels },
-      replayOutputBaseDir: replayDir,
       recordStore: new FsReplayRecordStore({ root: storeRoot }),
       scoreStore: new FsScoreStore({ root: storeRoot }),
       ...(options.judge !== undefined ? { judge: options.judge } : {}),
@@ -747,7 +722,7 @@ describe('runCassetteReplay — tier-4 judge leg (370-07, JUDGE-01/03/04)', () =
       .map((entry) => join(entry.parentPath, entry.name))
     if (scoreFiles.length === 0) throw new Error('expected a persisted score.json')
     const persisted = JSON.parse(readFileSync(scoreFiles[0]!, 'utf8')) as ScoreRecord
-    return { replayDir, replayStub, scoreFiles, persisted }
+    return { replayStub, scoreFiles, persisted }
   }
 
   it('stamps ties not-invoked{no-judge-configured} on the no-judge path, 369 behavior otherwise unchanged (D-05/D-06)', async () => {
@@ -913,18 +888,6 @@ describe('runCassetteReplay — tier-4 judge leg (370-07, JUDGE-01/03/04)', () =
 const FAKE_REPLAY_SECRET = 'raw-fake-replay-secret-9001'
 
 describe('runCassetteReplay — D-06 declared mask (372-01, G1/BASE-01)', () => {
-  const tempRoots: string[] = []
-
-  async function tempRoot(prefix: string): Promise<string> {
-    const root = await mkdtemp(join(tmpdir(), prefix))
-    tempRoots.push(root)
-    return root
-  }
-
-  afterEach(async () => {
-    await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
-  })
-
   function secretHandoff(): CompletedRunHandoff {
     const handoff = makeLocalV2Handoff()
     handoff.tests[0]!.steps[0]!.stepText =
@@ -935,7 +898,6 @@ describe('runCassetteReplay — D-06 declared mask (372-01, G1/BASE-01)', () => 
   it('masks a declared secret to its named marker in the replay egress (D-06)', async () => {
     const { cassette, artifacts } = extractLeaf(secretHandoff())
     const stub = capturingStub(() => actionGenerateResult())
-    const replayDir = await tempRoot('replay-mask-seeded-')
     const redactor = new SecretRedactor(SecretStore.fromEnvContent(`REPLAY_TOKEN=${FAKE_REPLAY_SECRET}`))
 
     await runCassetteReplay({
@@ -944,7 +906,6 @@ describe('runCassetteReplay — D-06 declared mask (372-01, G1/BASE-01)', () => 
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
-      replayOutputBaseDir: replayDir,
       mask: (text) => redactor.redactString(text),
     })
 
@@ -995,7 +956,6 @@ describe('C441-EGRESS', () => {
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
-      replayOutputBaseDir: await tempRoot('c441-egress-replay-'),
       mask,
     })
 
@@ -1020,7 +980,6 @@ describe('C441-EGRESS', () => {
       profile: familyStubProfile(REPLAY_MODEL_ID),
       auth: noneAuth,
       modelOverrides: { languageModels: replayStub.languageModels },
-      replayOutputBaseDir: await tempRoot('c441-egress-judge-audit-'),
       scoreStore: new FsScoreStore({ root: storeRoot }),
       judge: {
         profile: familyStubProfile(JUDGE_MODEL_ID),

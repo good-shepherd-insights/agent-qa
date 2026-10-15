@@ -66,7 +66,6 @@ describe('RPLY-02 captured provider-boundary proof (runCassetteReplay, D-05/D-06
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
-      replayOutputBaseDir: await tempRoot('replay-b-temp0-audit-'),
     })
 
     if (!('granularity' in outcome)) throw new Error('expected a replay result, got a refusal')
@@ -98,7 +97,6 @@ describe('RPLY-02 captured provider-boundary proof (runCassetteReplay, D-05/D-06
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
-      replayOutputBaseDir: await tempRoot('replay-b-mask-audit-'),
       mask: (text) => redactor.redactString(text),
     })
 
@@ -126,7 +124,6 @@ describe('RPLY-02 captured provider-boundary proof (runCassetteReplay, D-05/D-06
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
-      replayOutputBaseDir: await tempRoot('replay-b-brief-audit-'),
     })
 
     if (!('granularity' in outcome)) throw new Error('expected a replay result, got a refusal')
@@ -168,7 +165,6 @@ describe('RPLY-02 captured provider-boundary proof (runCassetteReplay, D-05/D-06
       profile: stubProfile(),
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
-      replayOutputBaseDir: await tempRoot('replay-b-incomplete-audit-'),
       recordStore: new FsReplayRecordStore({ root: storeRoot }),
     })
 

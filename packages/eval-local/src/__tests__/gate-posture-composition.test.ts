@@ -85,7 +85,6 @@ describe('readGatePostureFor (414 D-15, ROOT-10)', () => {
       plan,
       cassettes,
       committedRoot: root,
-      seedingOutputBaseDir: outDir,
     })
   })
 
@@ -105,7 +104,6 @@ describe('readGatePostureFor (414 D-15, ROOT-10)', () => {
       writePartitionManifest({
         manifest,
         committedRoot: root,
-        seedingOutputBaseDir: outDir,
       }).kind,
     ).toBe('written')
 

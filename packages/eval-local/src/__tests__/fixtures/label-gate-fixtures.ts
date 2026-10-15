@@ -15,21 +15,21 @@ export async function labelGateFixture(root: string) {
   const profileKeyInputs = { plannerModelId: profile.model, matcherVersion: buildEvalReport([]).matcherVersion }
   const mode = { kind: 'fresh' as const, profile, auth: noneAuth,
     modelOverrides: { languageModels: stub.languageModels }, mask: (text: string) => text,
-    seed: 11, cassettesRoot: corpus.cassettesRoot, replayOutputBaseDir: join(root, 'audit') }
+    seed: 11, cassettesRoot: corpus.cassettesRoot }
   const floor = await local.runNoiseFloorMeasurement({ ...mode, committedRoot, agentQaRoot,
     profileKeyInputs, seeds: [11, 29], repeats: 3, bootstrapSeed: 97, commit: true,
-    reportOutputBaseDir: mode.replayOutputBaseDir, clock: incrementingClock() })
+    clock: incrementingClock() })
   expect(floor.committed?.kind).toBe('written')
   const batchKey = computeBatchKey(corpus.selected.map(entry => entry.cassette.id))
   const stagedOutputDir = join(floor.runRoots[0]!, 'reports')
   const baseline = local.loadStagedReport(agentQaRoot, batchKey, stagedOutputDir)
   if (baseline.kind !== 'loaded' || baseline.decisions === undefined) throw new Error('expected fixture baseline')
   expect(local.commitEvalReport({ report: baseline.report, decisions: baseline.decisions,
-    markdown: '# Fixture baseline\n', committedRoot, reportOutputBaseDir: mode.replayOutputBaseDir }).kind).toBe('committed')
+    markdown: '# Fixture baseline\n', committedRoot }).kind).toBe('committed')
   const pointer = projectBaselinePointer({ ...profileKeyInputs, batchKey,
     fingerprint: floor.fingerprint, corpusDigest: floor.artefact.corpusDigest })
-  expect(local.writeBaselinePointer({ report: baseline.report, pointer, committedRoot,
-    reportOutputBaseDir: mode.replayOutputBaseDir }).kind).toBe('written')
+  expect(local.writeBaselinePointer({ report: baseline.report, pointer, committedRoot })
+    .kind).toBe('written')
   stub.captured.length = 0
   return { root, corpus, stub, floor, pointer, baseline, stagedOutputDir,
     input: { committedRoot, agentQaRoot, profileKeyInputs, mode, clock: incrementingClock() },

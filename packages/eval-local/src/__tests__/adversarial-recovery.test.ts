@@ -147,7 +147,6 @@ function fixture(count = SEED_COUNT): Fixture {
       plan,
       cassettes: [{ cassette: seed, blobs: extracted.blobs }],
       committedRoot,
-      seedingOutputBaseDir: join(agentQaRoot, 'eval', 'audit', 'recovery-seed'),
     })
     expect(seeded.refusals).toEqual([])
     seedIds.push(seed.id)

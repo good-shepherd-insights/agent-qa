@@ -26,7 +26,6 @@ const MARKDOWN = '# Corpus Census\n\nentries: 0\n'
 
 describe('commitCensus (413 D-15/D-16)', () => {
   let root: string
-  let outDir: string
   let census: CorpusCensus
 
   function commit(overrides: { markdown?: string } = {}): CommitCensusOutcome {
@@ -34,7 +33,6 @@ describe('commitCensus (413 D-15/D-16)', () => {
       census,
       markdown: overrides.markdown ?? MARKDOWN,
       committedRoot: root,
-      censusOutputBaseDir: outDir,
     })
   }
 
@@ -50,7 +48,6 @@ describe('commitCensus (413 D-15/D-16)', () => {
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'eval-local-census-root-'))
-    outDir = await mkdtemp(join(tmpdir(), 'eval-local-census-out-'))
     census = deriveCensus({
       snapshot: {
         entries: [],
@@ -63,7 +60,6 @@ describe('commitCensus (413 D-15/D-16)', () => {
 
   afterEach(async () => {
     await rm(root, { recursive: true, force: true })
-    await rm(outDir, { recursive: true, force: true })
   })
 
   it('commits census.json + census.md under reports/census/<slug(corpusDigest)>/', () => {

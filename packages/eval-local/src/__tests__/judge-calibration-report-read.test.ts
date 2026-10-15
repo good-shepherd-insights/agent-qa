@@ -55,7 +55,7 @@ it.each(['absent', 'gap'])('fresh floor reports disclose %s and measured recover
     profileKeyInputs: { plannerModelId: 'gpt-replay-stub', matcherVersion: 1,
       judgeModelId: judge.judgeModelId, judgeVersion: judge.judgeVersion },
     seeds: [11, 29], repeats: 3, bootstrapSeed: 97, commit: false,
-    reportOutputBaseDir: join(root, 'audit'), clock: incrementingClock() }
+    clock: incrementingClock() }
   if (mode === 'gap') {
     const artifact = local.createJudgeCalibrationArtifact({ committedRoot: input.committedRoot, agentQaRoot: input.agentQaRoot,
       identity: judge, minN: { value: 20, source: 'flag' }, profile: { ...input.profileKeyInputs,

@@ -150,7 +150,6 @@ function snapshotTree(dir: string, prefix = ''): Map<string, Buffer> {
 
 describe('seedCommittedCorpus (ROOT-02, D-13/D-14/D-15/D-16/D-17)', () => {
   let root: string
-  let outDir: string
   let handoff: CompletedRunHandoff
   let cassettes: ExtractedCassette[]
   let plan: SeedingPlan
@@ -163,13 +162,11 @@ describe('seedCommittedCorpus (ROOT-02, D-13/D-14/D-15/D-16/D-17)', () => {
       plan: overrides.plan ?? plan,
       cassettes: overrides.cassettes ?? cassettes,
       committedRoot: root,
-      seedingOutputBaseDir: outDir,
     })
   }
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'eval-local-seeding-root-'))
-    outDir = await mkdtemp(join(tmpdir(), 'eval-local-seeding-out-'))
     handoff = seedingHandoff()
     cassettes = extract(handoff)
     plan = planFor(handoff, cassettes)
@@ -177,7 +174,6 @@ describe('seedCommittedCorpus (ROOT-02, D-13/D-14/D-15/D-16/D-17)', () => {
 
   afterEach(async () => {
     await rm(root, { recursive: true, force: true })
-    await rm(outDir, { recursive: true, force: true })
   })
 
   it('seeds scaffold + contracts + every case atomically into the committed root (happy path)', () => {
@@ -353,7 +349,6 @@ function losslessProof(text: string): LosslessServedBriefProofV1 {
 
 describe('413 SC2 — lossless proof text is committed as recorded, its declared value masked (D-10, T-413-01)', () => {
   let root: string
-  let outDir: string
   let handoff: CompletedRunHandoff
 
   function seed(
@@ -364,19 +359,16 @@ describe('413 SC2 — lossless proof text is committed as recorded, its declared
       plan,
       cassettes: seedCassettes,
       committedRoot: root,
-      seedingOutputBaseDir: outDir,
     })
   }
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'eval-local-sc2-root-'))
-    outDir = await mkdtemp(join(tmpdir(), 'eval-local-sc2-out-'))
     handoff = seedingHandoff()
   })
 
   afterEach(async () => {
     await rm(root, { recursive: true, force: true })
-    await rm(outDir, { recursive: true, force: true })
   })
 
   it('commits a masking-registered value in proof.promptTurns as its placeholder, never raw', () => {
@@ -417,7 +409,6 @@ describe('413 SC2 — lossless proof text is committed as recorded, its declared
 describe('C441-COMMITTED', () => {
   it('a seeded cassette with credential-shaped text is committed', async () => {
     const root = await mkdtemp(join(tmpdir(), 'eval-local-c441-root-'))
-    const outDir = await mkdtemp(join(tmpdir(), 'eval-local-c441-out-'))
     try {
       const handoff = seedingHandoff()
       const cassettes = structuredClone(extract(handoff))
@@ -427,7 +418,7 @@ describe('C441-COMMITTED', () => {
       if (cassette.granularity !== 'leaf') throw new Error('fixture case must be a leaf')
       cassette.input.stateBefore.tree += '\n- text "Card 4242 4242 4242 4242 with Bearer abc123def456ghi789"'
 
-      const report = seedCommittedCorpus({ plan, cassettes, committedRoot: root, seedingOutputBaseDir: outDir })
+      const report = seedCommittedCorpus({ plan, cassettes, committedRoot: root })
 
       expect(report.refusals.map((refusal) => refusal.kind).join(', ')).toBe('')
       const committed = readFileSync(join(root, casePaths(cassette.id).cassette), 'utf8')
@@ -435,7 +426,6 @@ describe('C441-COMMITTED', () => {
       expect(committed).toContain('Bearer abc123def456ghi789')
     } finally {
       await rm(root, { recursive: true, force: true })
-      await rm(outDir, { recursive: true, force: true })
     }
   })
 })

@@ -5,7 +5,6 @@ import { join } from 'node:path'
 
 import { buildGoldenTrajectoryPlan, buildSeedingPlan, committedFileText, computeDecisionIdentity, createScoringContext, decisionCorrectnessVectors, deriveCensus, extractRunCassettes, renderCensusMarkdown, scoreCassetteReplay, type LeafReplayResult } from '@vostride/agent-qa-eval'
 import { FsEvidenceArtifactStore, HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import type { GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import type { MarkReceipt } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -28,11 +27,9 @@ describe('freezeGoldenTrajectory', () => {
   let committedRoot: string
   let handoff: ReturnType<typeof makeLocalV2Handoff>
   let mark: MarkReceipt
-  let rows: GuardrailAuditRow[]
   const product = 'default'
   const freeze = () => freezeGoldenTrajectory({
     agentQaRoot: root, committedRoot, product, handoff, mark,
-    auditSink: { appendGuardrailAudit(row) { rows.push(row) } },
   })
   const extract = () => extractRunCassettes({ handoff, artifacts: new FsRunArtifactSource({ root, runId: handoff.runId }) }).cassettes
   const paths = (id: string) => [committedCassettePath(product, id), committedLabelPath(product, id), committedCorpusPath(product, id)]
@@ -57,7 +54,6 @@ describe('freezeGoldenTrajectory', () => {
       origin: 'user', ordinal: 1, markedAt: 0, gold: [], evidence: { confirmed: 0, overturned: 0 },
       disposition: { kind: 'confirmed-bug', confirmedRecords: 0 },
     }
-    rows = []
   })
   afterEach(() => { vi.restoreAllMocks(); rmSync(root, { recursive: true, force: true }) })
 
@@ -71,7 +67,6 @@ describe('freezeGoldenTrajectory', () => {
     const files = paths(id)
     expect(JSON.parse(readFileSync(files[2]!, 'utf8'))).toMatchObject({ split: 'held-out', heldOutVisibility: 'private' })
     expect(JSON.parse(readFileSync(files[1]!, 'utf8')).label).toMatchObject({ tier: 'gold', sourceChannel: 'user-mark' })
-    expect(rows).toEqual([])
     const read = readCommittedCorpus(committedRoot)
     expect(read.snapshot.entries).toHaveLength(1)
     const census = deriveCensus({ snapshot: read.snapshot, schemaVersionsSeen: read.schemaVersionsSeen })
@@ -89,14 +84,14 @@ describe('freezeGoldenTrajectory', () => {
     const plan = buildSeedingPlan({ handoff, cassettes, partition: { saltHex: 'a'.repeat(64), heldOutFraction: 0.000001, privateFraction: 0.5 } })
     expect(plan.cases).toHaveLength(1)
     expect(plan.cases[0]!.corpusEntry.split).toBe('natural')
-    expect(seedCommittedCorpus({ plan, cassettes, committedRoot, seedingOutputBaseDir: join(root, 'seed') }).refusals).toEqual([])
+    expect(seedCommittedCorpus({ plan, cassettes, committedRoot }).refusals).toEqual([])
     const files = paths(plan.cases[0]!.cassetteId)
     const before = hashes(files)
     const commitUnmarked = () => {
       const read = readCommittedCorpus(committedRoot)
       const census = deriveCensus({ snapshot: read.snapshot, schemaVersionsSeen: read.schemaVersionsSeen })
       expect(census.products.default!.markedGold).toBeUndefined()
-      return commitCensus({ census, markdown: renderCensusMarkdown(census), committedRoot, censusOutputBaseDir: join(root, 'census') })
+      return commitCensus({ census, markdown: renderCensusMarkdown(census), committedRoot })
     }
     expect(commitUnmarked().kind).toBe('committed')
     expect(commitUnmarked()).toMatchObject({ kind: 'committed', json: 'unchanged', markdown: 'unchanged' })
@@ -114,7 +109,6 @@ describe('freezeGoldenTrajectory', () => {
     const expected = committedFileText(plan.goldCassettes[0]!.cassette)
     const result = freeze()
     expect(result.kind).toBe('frozen')
-    expect(rows).toEqual([])
     expect(readFileSync(paths(plan.cases[0]!.cassetteId)[0]!, 'utf8')).toBe(expected)
     expect(handoff.tests[0]!.steps[0]!.subActions[0]!.stateBefore.timestamp).toBe(timestamp)
   })

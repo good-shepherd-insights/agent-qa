@@ -49,12 +49,11 @@ async function fixture(configure?: Parameters<typeof writeCommittedFloorFixture>
     mask: (text: string) => text,
     seed: 11,
     cassettesRoot: corpus.cassettesRoot,
-    replayOutputBaseDir: join(root, 'audit'),
   }
   const floor = await evalLocal.runNoiseFloorMeasurement({
     ...fresh, committedRoot: corpus.committedRoot, agentQaRoot, profileKeyInputs,
     seeds: [11, 29], repeats: 3, bootstrapSeed: 97, commit: true,
-    reportOutputBaseDir: fresh.replayOutputBaseDir, clock: incrementingClock(),
+    clock: incrementingClock(),
   })
   expect(floor.committed?.kind).toBe('written')
   const batchKey = computeBatchKey(corpus.selected.map(entry => entry.cassette.id))
@@ -62,13 +61,13 @@ async function fixture(configure?: Parameters<typeof writeCommittedFloorFixture>
   if (baseline.kind !== 'loaded' || baseline.decisions === undefined) throw new Error('expected fixture baseline')
   expect(evalLocal.commitEvalReport({
     report: baseline.report, decisions: baseline.decisions, markdown: '# Fixture baseline\n',
-    committedRoot: corpus.committedRoot, reportOutputBaseDir: fresh.replayOutputBaseDir,
+    committedRoot: corpus.committedRoot,
   }).kind).toBe('committed')
   const pointer = projectBaselinePointer({
     ...profileKeyInputs, batchKey, fingerprint: floor.fingerprint, corpusDigest: floor.artefact.corpusDigest,
   })
   expect(evalLocal.writeBaselinePointer({ report: baseline.report, pointer,
-    committedRoot: corpus.committedRoot, reportOutputBaseDir: fresh.replayOutputBaseDir,
+    committedRoot: corpus.committedRoot,
   }).kind).toBe('written')
   stub.captured.length = 0
   return {
