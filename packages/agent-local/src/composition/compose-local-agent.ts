@@ -2694,8 +2694,8 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     // This thunk is read when a header is WRITTEN, which happens exactly once per session and only
     // for a session that has not existed until now — so no `/model` can have run in it. Answering
     // with a live override would stamp one conversation's switch onto the opening header of every
-    // conversation opened after it.
-    model: () => composedChatModelName,
+    // conversation opened after it. 441 GAP3-D4: written and listed through the declared mask.
+    model: () => input.mask(composedChatModelName),
     toolsetHash: () => chatToolsetHash(composedRegistry),
   })
 
@@ -2918,10 +2918,12 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     // THE MODEL IT REPORTS IS THE ASKING SESSION'S (plan 13). A composition-wide read would answer
     // one conversation's `/model` override for every conversation, and the per-turn diff would
     // then write a `model_change` into sessions nobody had switched.
+    //
+    // 441 GAP3-D4: masked, because the log it is compared with is masked on append.
     config: (sessionId): ChatConfigState => {
       const ids = chatToolsetIds(composedRegistry)
       return {
-        model: chatModelNameFor(sessionId),
+        model: input.mask(chatModelNameFor(sessionId)),
         toolset: { hash: chatToolsetHash(composedRegistry), ids },
       }
     },
