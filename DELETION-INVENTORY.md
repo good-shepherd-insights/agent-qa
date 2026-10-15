@@ -4198,7 +4198,7 @@ Reconciliation 23 (2026-10-12) in `.planning/REQUIREMENTS.md` amended V2-EXEC-03
 
 ### Gate at the time of writing
 
-The record gate runs on the commit that adds this section, which is Phase 441's final agent-qa SHA.
-Its legs, counts and verdict are recorded in
-`.planning/phases/441-declared-secret-masking/441-RECORD.md` § Gate rather than quoted here, so no
-agent-qa commit follows the gate run.
+The record gate runs on Phase 441's final agent-qa SHA, which
+`.planning/phases/441-declared-secret-masking/441-RECORD.md` § Final SHA names. Its legs, counts and
+verdict, including a first red run on the commit that added this section, are recorded in that
+file's § Gate rather than quoted here, so no agent-qa commit follows the gate run.

@@ -260,6 +260,8 @@ use:
   mobile:
     appState: preserve
 FIXTURE_YAML
+# 2026-10-15 (441-35, D-01): MCP masks with the declared secrets and needs a readable file; this one declares none.
+: > "$FIXTURE/.env.secrets.local"
 
 start_fixture_server() {
   PORT="$(node "$SANDBOX/freeport.mjs")"
