@@ -25,7 +25,6 @@ const MARKDOWN = '# Eval baseline report\n\nfirstAttemptDecisionAccuracy: 0/0\n'
 
 describe('commitEvalReport (D-13, BASE-02)', () => {
   let root: string
-  let outDir: string
   let report: EvalBatchReport
 
   function commit(overrides: {
@@ -38,7 +37,6 @@ describe('commitEvalReport (D-13, BASE-02)', () => {
       markdown: overrides.markdown ?? MARKDOWN,
       ...(overrides.decisions === undefined ? {} : { decisions: overrides.decisions }),
       committedRoot: root,
-      reportOutputBaseDir: outDir,
     })
   }
 
@@ -51,13 +49,11 @@ describe('commitEvalReport (D-13, BASE-02)', () => {
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'eval-local-report-root-'))
-    outDir = await mkdtemp(join(tmpdir(), 'eval-local-report-out-'))
     report = buildEvalReport([])
   })
 
   afterEach(async () => {
     await rm(root, { recursive: true, force: true })
-    await rm(outDir, { recursive: true, force: true })
   })
 
   it('commits report.json + report.md under reports/<slug(batchKey)>/ (happy path)', () => {
@@ -153,7 +149,6 @@ describe('commitEvalReport (D-13, BASE-02)', () => {
       else document.matcherVersion += 1
       expect(() => commit({ decisions: document })).toThrow(TypeError)
       expect(existsSync(join(root, 'reports'))).toBe(false)
-      expect(existsSync(join(outDir, 'guardrail_audit.jsonl'))).toBe(false)
     },
   )
 })
