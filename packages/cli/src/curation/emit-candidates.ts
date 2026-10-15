@@ -986,6 +986,7 @@ export function emitCurationCandidates(opts: EmitCurationCandidatesOptions): Emi
         knowledgeRoot: opts.knowledgeRoot,
         projection: projected,
         artifactSources,
+        ...(opts.mask === undefined ? {} : { mask: opts.mask }),
       })
     } catch (error) {
       if (error instanceof TypeError) throw error

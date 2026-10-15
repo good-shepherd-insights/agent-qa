@@ -1,14 +1,15 @@
 // Binary artifact bytes land only in the gitignore-covered artifacts/ directory and bypass the
 // committed-text checkpoint, following the eval-local blob precedent (BNDL-01/D-13). The writer
 // commits a separately checkpointed inventory containing only this function's `copied` rows.
-// Credential-region masking belongs to SAFE-02 in Phase 378; this layer verifies content hashes,
-// enforces copied-byte caps, and never emits a row before its content-addressed file exists.
+// This layer verifies content hashes, enforces copied-byte caps, and never emits a row before its
+// content-addressed file exists. 2026-10-15 (441-25, D-28/D-21): DOM and accessibility snapshots
+// are written through the caller's declared mask; every other artifact is copied byte-for-byte.
 
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import type { ArtifactRef } from '@vostride/agent-qa-schema'
+import type { ArtifactRef, MaskFn } from '@vostride/agent-qa-schema'
 
 export const ARTIFACT_STEP_CAP_BYTES = 2 * 1024 * 1024
 export const ARTIFACT_RUN_CAP_BYTES = 25 * 1024 * 1024
@@ -54,9 +55,11 @@ export interface ArtifactCopyResult<AdditionalReason extends string = never> {
 export interface ArtifactCopyOptions<AdditionalReason extends string = never> {
   /** Pre-copy filter refusals retained in the same inventory as copy-time refusals. */
   preSkipped?: readonly SkippedArtifact<ArtifactCopySkipReason | AdditionalReason>[]
+  mask?: MaskFn
 }
 
 const ARTIFACT_SHA_RE = /^[0-9a-f]{64}$/
+const TEXT_ARTIFACT_ROLES: ReadonlySet<string> = new Set(['dom-snapshot', 'ax-snapshot'])
 
 function byteSha(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex')
@@ -87,6 +90,11 @@ function redactArtifactValues(bytes: Buffer, values: readonly string[] | undefin
     text = text.split(value).join(ARTIFACT_VALUE_REDACTION_PLACEHOLDER)
   }
   return Buffer.from(text)
+}
+
+function maskTextArtifact(bytes: Buffer, role: string | undefined, mask: MaskFn | undefined): Buffer {
+  if (mask === undefined || role === undefined || !TEXT_ARTIFACT_ROLES.has(role)) return bytes
+  return Buffer.from(mask(bytes.toString('utf8')))
 }
 
 function skippedRow(
@@ -132,7 +140,11 @@ export function copyArtifacts<AdditionalReason extends string = never>(
       continue
     }
 
-    const copyBytes = redactArtifactValues(sourceBytes, input.redactValues)
+    const copyBytes = maskTextArtifact(
+      redactArtifactValues(sourceBytes, input.redactValues),
+      input.role,
+      options.mask,
+    )
     const copiedRef = copyBytes.equals(sourceBytes)
       ? input.ref
       : { ...input.ref, sha: byteSha(copyBytes) }

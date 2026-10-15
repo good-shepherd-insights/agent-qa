@@ -12,14 +12,13 @@ import {
 } from 'node:fs'
 import { basename, isAbsolute, join } from 'node:path'
 
-import { canonicalJson } from '@vostride/agent-qa-schema'
+import { canonicalJson, type MaskFn } from '@vostride/agent-qa-schema'
 import { ZodError } from 'zod'
 
 import { copyArtifacts } from '../artifact-copy.js'
 import { assertWithinKnowledgeRoot } from '../knowledge-containment.js'
 import type {
   ArtifactCopyInput,
-  ArtifactCopySkipReason,
   CopiedArtifact,
   SkippedArtifact,
 } from '../artifact-copy.js'
@@ -41,11 +40,6 @@ export {
 } from '../queue-transport.js'
 export type { PublishStagedQueueEntryOutcome } from '../queue-transport.js'
 import {
-  classifyCaptureBlacklist,
-  filterArtifactsForCapture,
-  sanitizeCaptureBlacklistEvidence,
-} from '../curator/capture-blacklist.js'
-import {
   claimedCandidateDir,
   claimedLeaseDir,
   claimedRoot,
@@ -65,6 +59,7 @@ import {
   writeJobStateWithinCurrentAuthority,
 } from './job-state.js'
 import {
+  artifactFreeCaptureReceipt,
   buildCurationCandidateAddressFields,
   candidateContentAddress,
   CURATION_QUEUE_SCHEMA_VERSION,
@@ -74,7 +69,6 @@ import {
   type CurationArtifactDescriptor,
   type CurationCandidatePayload,
   type CurationCandidateProjection,
-  type CurationCaptureReceipt,
 } from './queue-payload.js'
 
 export interface CurationProjectionArtifactSource {
@@ -88,6 +82,7 @@ export interface EnqueueCurationCandidateProjectionOptions {
   knowledgeRoot: string
   projection: CurationCandidateProjection
   artifactSources: readonly CurationProjectionArtifactSource[]
+  mask?: MaskFn
 }
 
 export type CurationEnqueueRefusalReason =
@@ -582,30 +577,8 @@ function projectionArtifactInputs(
   }
 }
 
-function copyFailure(
-  skipped: SkippedArtifact<ArtifactCopySkipReason | 'capture-blacklist'>,
-): skipped is SkippedArtifact<ArtifactCopySkipReason> {
-  return skipped.reason !== 'capture-blacklist'
-}
-
 function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0
-}
-
-function sanitizeCaptureInteractions(
-  interactions: CurationCaptureReceipt['interactions'],
-): CurationCaptureReceipt['interactions'] {
-  const sorted = [...interactions].sort((left, right) =>
-    left.stepIndex - right.stepIndex
-    || compareText(left.elementRef ?? '', right.elementRef ?? ''),
-  )
-  const seen = new Set<string>()
-  return sorted.filter((interaction) => {
-    const key = JSON.stringify([interaction.stepIndex, interaction.elementRef ?? null])
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
 }
 
 function descriptorById(
@@ -658,19 +631,14 @@ function finalizeProjection(
   stagingDir: string,
   projection: CurationCandidateProjection,
   sourceInputs: readonly ArtifactCopyInput[],
+  mask: MaskFn | undefined,
 ): FinalizeProjectionOutcome {
-  const classified = classifyCaptureBlacklist(projection.captureEvidence)
-  const filtered = filterArtifactsForCapture({
-    artifacts: sourceInputs,
-    blacklist: classified,
-    stepInteractions: projection.stepInteractions,
-  })
-  const copied = copyArtifacts<'capture-blacklist'>(
-    filtered.toCopy,
+  const copied = copyArtifacts(
+    sourceInputs,
     join(stagingDir, 'artifacts'),
-    { preSkipped: filtered.skipped },
+    mask === undefined ? {} : { mask },
   )
-  const failedCopy = copied.skipped.find(copyFailure)
+  const [failedCopy] = copied.skipped
   if (failedCopy !== undefined) {
     return { kind: 'refused', reason: skippedArtifactReason(failedCopy.reason) }
   }
@@ -681,45 +649,6 @@ function finalizeProjection(
   if (artifactInventory === undefined) {
     return { kind: 'refused', reason: 'artifact-inventory-mismatch' }
   }
-  const omissions = filtered.skipped
-    .map((artifact) => ({
-      stepIndex: artifact.stepIndex,
-      ref: artifact.ref.id,
-      role: artifact.role,
-      originalName: artifact.originalName,
-      reason: 'capture-blacklist' as const,
-    }))
-    .sort((left, right) =>
-      left.stepIndex - right.stepIndex
-      || compareText(left.ref, right.ref)
-      || compareText(left.role, right.role)
-      || compareText(left.originalName, right.originalName),
-    )
-  const redactions = copied.copied
-    .flatMap((artifact) => {
-      const descriptor = descriptors.get(artifact.ref.id)
-      if (
-        descriptor === undefined
-        || (descriptor.role !== 'dom-snapshot' && descriptor.role !== 'ax-snapshot')
-        || descriptor.ref.sha === artifact.ref.sha
-      ) {
-        return []
-      }
-      return [{
-        stepIndex: artifact.stepIndex,
-        ref: descriptor.ref.id,
-        role: descriptor.role,
-        originalName: descriptor.originalName,
-        reason: 'capture-blacklist' as const,
-        safeSha256: artifact.ref.sha,
-      }]
-    })
-    .sort((left, right) =>
-      left.stepIndex - right.stepIndex
-      || compareText(left.ref, right.ref)
-      || compareText(left.role, right.role)
-      || compareText(left.originalName, right.originalName),
-    )
 
   try {
     const fields = buildCurationCandidateAddressFields({
@@ -744,12 +673,7 @@ function finalizeProjection(
       evidenceToken: projection.evidenceToken,
       attributingObservationId: projection.attributingObservationId,
       artifactInventory,
-      captureReceipt: {
-        regions: sanitizeCaptureBlacklistEvidence(classified),
-        interactions: sanitizeCaptureInteractions(projection.stepInteractions),
-        omissions,
-        redactions,
-      },
+      captureReceipt: artifactFreeCaptureReceipt(),
       emittedAt: projection.emittedAt,
     })
     const candidateId = candidateContentAddress(fields)
@@ -766,8 +690,8 @@ function finalizeProjection(
 }
 
 /**
- * Finalizes raw capture evidence into safe bytes and a value-free receipt before the candidate
- * content address or any queue-visible directory exists.
+ * Copies the projection's artifacts through the declared mask before the candidate content
+ * address or any queue-visible directory exists.
  */
 export function enqueueCurationCandidateProjection(
   opts: EnqueueCurationCandidateProjectionOptions,
@@ -784,7 +708,7 @@ export function enqueueCurationCandidateProjection(
   const stagingDir = join(stagingRoot, randomUUID())
   mkdirSync(stagingDir, { recursive: true })
   try {
-    const finalized = finalizeProjection(stagingDir, projection, sourceInputs.inputs)
+    const finalized = finalizeProjection(stagingDir, projection, sourceInputs.inputs, opts.mask)
     if (finalized.kind === 'refused') return finalized
     const { payload } = finalized
     const candidateId = payload.candidateId

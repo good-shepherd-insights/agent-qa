@@ -11,12 +11,14 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from 'vitest'
+import type { Delta } from '@vostride/agent-qa-schema'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
+import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 
-import {
-  ARTIFACT_STEP_CAP_BYTES,
-  ARTIFACT_VALUE_REDACTION_PLACEHOLDER,
-} from '../artifact-copy.js'
+import { ARTIFACT_STEP_CAP_BYTES } from '../artifact-copy.js'
+import type { CuratorAuthor } from '../curator/author-contract.js'
+import { drainQueue } from '../curator/drain.js'
 import {
   enqueueCurationCandidate,
   enqueueCurationCandidateProjection,
@@ -343,141 +345,6 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
     })
   })
 
-  it('omits credential screenshots before queue-root write and emits a value-free receipt', () => {
-    const credential = 'fixture-queue-credential'
-    const screenshotBytes = Buffer.from(`screenshot pixels ${credential}`)
-    const screenshot = projectionArtifact('credential.png', screenshotBytes, 4, 'screenshot')
-    const rawSha = screenshot.descriptor.ref.sha
-    const rawProjection = projection({
-      artifactDescriptors: [screenshot.descriptor],
-      captureEvidence: {
-        elements: [
-          {
-            stepIndex: 4,
-            elementRef: 'credential-field',
-            role: 'textbox',
-            name: 'API key',
-            value: credential,
-          },
-        ],
-      },
-      stepInteractions: [{ stepIndex: 4, elementRef: 'credential-field' }],
-    })
-
-    const outcome = enqueueCurationCandidateProjection({
-      knowledgeRoot,
-      projection: rawProjection,
-      artifactSources: [screenshot.source],
-    })
-
-    expect(outcome.kind).toBe('enqueued')
-    if (outcome.kind !== 'enqueued') throw new Error('expected enqueued projection')
-    const candidateDir = queuedCandidateDir(knowledgeRoot, outcome.candidateId)
-    const parsed = readCurationCandidatePayload(candidateDir)
-    expect(parsed.kind).toBe('parsed')
-    if (parsed.kind !== 'parsed') throw new Error('expected parsed projection payload')
-    expect(parsed.payload.artifactInventory).toEqual([])
-    expect(parsed.payload.captureReceipt).toEqual({
-      regions: [
-        {
-          stepIndex: 4,
-          elementRef: 'credential-field',
-          role: 'textbox',
-          normalizedName: 'api key',
-          reason: 'credential-name',
-        },
-      ],
-      interactions: [{ stepIndex: 4, elementRef: 'credential-field' }],
-      omissions: [
-        {
-          stepIndex: 4,
-          ref: screenshot.descriptor.ref.id,
-          role: 'screenshot',
-          originalName: 'credential.png',
-          reason: 'capture-blacklist',
-        },
-      ],
-      redactions: [],
-    })
-    const files = queueFiles()
-    const serialized = Buffer.concat(files.map(({ bytes }) => bytes)).toString('utf8')
-    expect(files.some(({ path }) => path.includes(rawSha))).toBe(false)
-    expect(serialized).not.toContain(rawSha)
-    expect(serialized).not.toContain(credential)
-  })
-
-  it.each(['dom-snapshot', 'ax-snapshot'] as const)(
-    'redacts %s bytes before hashing and coalesces on the finalized candidate id',
-    (role) => {
-      const credential = 'fixture-dom-credential'
-      const rawBytes = Buffer.from(JSON.stringify({ ref: 'credential-field', value: credential }))
-      const snapshot = projectionArtifact(`${role}.json`, rawBytes, 4, role)
-      const rawProjection = projection({
-        artifactDescriptors: [snapshot.descriptor],
-        captureEvidence: {
-          elements: [
-            {
-              stepIndex: 4,
-              elementRef: 'credential-field',
-              role: 'textbox',
-              name: 'Password',
-              inputType: 'password',
-              value: credential,
-            },
-          ],
-        },
-        stepInteractions: [{ stepIndex: 4, elementRef: 'credential-field' }],
-      })
-
-      const first = enqueueCurationCandidateProjection({
-        knowledgeRoot,
-        projection: rawProjection,
-        artifactSources: [snapshot.source],
-      })
-      expect(first.kind).toBe('enqueued')
-      if (first.kind !== 'enqueued') throw new Error('expected enqueued projection')
-      const candidateDir = queuedCandidateDir(knowledgeRoot, first.candidateId)
-      const parsed = readCurationCandidatePayload(candidateDir)
-      expect(parsed.kind).toBe('parsed')
-      if (parsed.kind !== 'parsed') throw new Error('expected parsed projection payload')
-      const inventory = parsed.payload.artifactInventory[0]!
-      const safeBytes = readFileSync(join(candidateDir, inventory.relativePath), 'utf8')
-
-      expect(inventory).toMatchObject({
-        role,
-        originalName: `${role}.json`,
-        sha256: sha(Buffer.from(safeBytes)),
-        bytes: Buffer.byteLength(safeBytes),
-      })
-      expect(inventory.sha256).not.toBe(snapshot.descriptor.ref.sha)
-      expect(safeBytes).toContain(ARTIFACT_VALUE_REDACTION_PLACEHOLDER)
-      expect(safeBytes).not.toContain(credential)
-      expect(parsed.payload.captureReceipt?.redactions).toEqual([
-        {
-          stepIndex: 4,
-          ref: snapshot.descriptor.ref.id,
-          role,
-          originalName: `${role}.json`,
-          reason: 'capture-blacklist',
-          safeSha256: inventory.sha256,
-        },
-      ])
-      expect(parsed.payload.candidateId).toBe(first.candidateId)
-
-      const duplicate = enqueueCurationCandidateProjection({
-        knowledgeRoot,
-        projection: { ...rawProjection, emittedAt: '2099-01-01T00:00:00.000Z' },
-        artifactSources: [snapshot.source],
-      })
-      expect(duplicate).toEqual({ kind: 'coalesced', candidateId: first.candidateId })
-      const files = queueFiles()
-      const serialized = Buffer.concat(files.map(({ bytes }) => bytes)).toString('utf8')
-      expect(files.some(({ path }) => path.includes(snapshot.descriptor.ref.sha))).toBe(false)
-      expect(serialized).not.toContain(snapshot.descriptor.ref.sha)
-      expect(serialized).not.toContain(credential)
-    },
-  )
-
   it('cleans staging and exposes no candidate for malformed, missing, mismatched, or inconsistent input', () => {
     const source = projectionArtifact(
       'source.txt',
@@ -691,6 +558,213 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
     expect(readCurationCandidatePayload(candidateDir)).toEqual({
       kind: 'malformed',
       present: true,
+    })
+  })
+
+  describe('C441-CAPTURE', () => {
+    const DECLARED = 'Hunter-42-zz'
+    const TOKEN = 'tok-441'
+    const STEP = 4
+
+    function declaredMask(): (text: string) => string {
+      const redactor = new SecretRedactor(new SecretStore({ PW_441: DECLARED }))
+      return (text) => redactor.redactString(text)
+    }
+
+    function passwordSnapshot(): ReturnType<typeof projectionArtifact> {
+      return projectionArtifact(
+        'password.dom.json',
+        Buffer.from(JSON.stringify({
+          elements: [
+            { ref: 'password-field', role: 'textbox', inputType: 'password', name: 'Password', value: DECLARED },
+            { ref: 'token-field', role: 'textbox', name: 'api token', value: TOKEN },
+          ],
+        })),
+        STEP,
+        'dom-snapshot',
+      )
+    }
+
+    function passwordScreenshot(): ReturnType<typeof projectionArtifact> {
+      return projectionArtifact(
+        'password.png',
+        Buffer.concat([
+          Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+          Buffer.from(`pixels ${DECLARED} ${TOKEN}`),
+        ]),
+        STEP,
+        'screenshot',
+      )
+    }
+
+    function credentialEvidence(): Pick<
+      CurationCandidateProjection,
+      'captureEvidence' | 'stepInteractions'
+    > {
+      return {
+        captureEvidence: {
+          elements: [
+            {
+              stepIndex: STEP,
+              elementRef: 'password-field',
+              role: 'textbox',
+              name: 'Password',
+              inputType: 'password',
+              value: DECLARED,
+            },
+            { stepIndex: STEP, elementRef: 'token-field', role: 'textbox', name: 'api token', value: TOKEN },
+          ],
+        },
+        stepInteractions: [
+          { stepIndex: STEP, elementRef: 'password-field' },
+          { stepIndex: STEP, elementRef: 'token-field' },
+        ],
+      }
+    }
+
+    function enqueueCaptured(
+      artifacts: readonly ReturnType<typeof projectionArtifact>[],
+    ): { candidateId: string; candidateDir: string; payload: CurationCandidatePayload } {
+      const outcome = enqueueCurationCandidateProjection({
+        knowledgeRoot,
+        projection: projection({
+          artifactDescriptors: artifacts.map((artifact) => artifact.descriptor),
+          ...credentialEvidence(),
+        }),
+        artifactSources: artifacts.map((artifact) => artifact.source),
+        mask: declaredMask(),
+      })
+      expect(outcome.kind).toBe('enqueued')
+      if (outcome.kind !== 'enqueued') throw new Error('expected enqueued projection')
+      const candidateDir = queuedCandidateDir(knowledgeRoot, outcome.candidateId)
+      const parsed = readCurationCandidatePayload(candidateDir)
+      if (parsed.kind !== 'parsed') throw new Error('expected parsed projection payload')
+      return { candidateId: outcome.candidateId, candidateDir, payload: parsed.payload }
+    }
+
+    function filesNamed(dir: string, name: string): string[] {
+      if (!existsSync(dir)) return []
+      return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+        const path = join(dir, entry.name)
+        if (entry.isDirectory()) return filesNamed(path, name)
+        return entry.name === name ? [path] : []
+      })
+    }
+
+    it('a password-input snapshot is copied with only declared values masked', () => {
+      const snapshot = passwordSnapshot()
+      const { candidateDir, payload: queued } = enqueueCaptured([snapshot])
+
+      expect(queued.artifactInventory).toHaveLength(1)
+      const [inventory] = queued.artifactInventory
+      const staged = readFileSync(join(candidateDir, inventory!.relativePath), 'utf8')
+      expect(staged).toContain('[secret:PW_441]')
+      expect(staged).toContain(TOKEN)
+      expect(staged).not.toContain(DECLARED)
+      expect(staged).not.toContain('<REDACTED')
+      expect(inventory).toMatchObject({
+        sha256: sha(Buffer.from(staged)),
+        bytes: Buffer.byteLength(staged),
+        stepIndex: STEP,
+        role: 'dom-snapshot',
+        originalName: 'password.dom.json',
+      })
+    })
+
+    it('a screenshot is copied byte-for-byte', () => {
+      const screenshot = passwordScreenshot()
+      const sourceBytes = readFileSync(screenshot.source.sourcePath)
+      const { candidateDir, payload: queued } = enqueueCaptured([screenshot])
+
+      expect(queued.artifactInventory).toEqual([
+        {
+          relativePath: `artifacts/${screenshot.descriptor.ref.sha}`,
+          sha256: screenshot.descriptor.ref.sha,
+          bytes: sourceBytes.byteLength,
+          stepIndex: STEP,
+          role: 'screenshot',
+          originalName: 'password.png',
+        },
+      ])
+      expect(readFileSync(join(candidateDir, 'artifacts', screenshot.descriptor.ref.sha)))
+        .toEqual(sourceBytes)
+    })
+
+    it('the candidate drains and commits with its artifacts', async () => {
+      const snapshot = passwordSnapshot()
+      const screenshot = passwordScreenshot()
+      const { payload: queued } = enqueueCaptured([snapshot, screenshot])
+      const maskedSnapshot = queued.artifactInventory.find((row) => row.role === 'dom-snapshot')!
+      const author = vi.fn<CuratorAuthor>(async (job) => {
+        const authorship = {
+          path: 'llm' as const,
+          model: { id: 'curator-test' },
+          executionContext: job.executionContext,
+        }
+        const delta: Delta = {
+          kind: 'Add',
+          origin: 'agent',
+          scope: job.scope,
+          citedIds: [],
+          authorship,
+          bundle: {
+            kind: job.kind,
+            ...(job.subtype === undefined ? {} : { subtype: job.subtype }),
+            anchors: job.anchors,
+            scope: job.scope,
+            summary: job.summarySeed,
+            body: job.bodySeed,
+            distilledEvidenceRef: {
+              id: `curation-candidate-${job.candidateId}`,
+              sha: job.candidateId,
+            },
+            originStage: 'run-curation',
+          },
+        }
+        return { kind: 'authored' as const, deltas: [delta], authorship }
+      })
+
+      const report = await drainQueue({
+        knowledgeRoot,
+        auditBaseDir: join(root, '.agent-qa'),
+        author,
+        executionContext: 'local-interactive',
+        policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+        operations: {
+          readRebuildRequest: () => ({ present: false }),
+          readIndexMaintenanceState: () => ({
+            indexAbsent: false,
+            pendingEmbeddings: 0,
+            renderingEpochStale: false,
+            vectorReconciliationOutstanding: false,
+          }),
+          openKnowledgeReader: () => ({
+            source: 'scan' as const,
+            vec: 'none' as const,
+            getById: vi.fn(),
+            searchLexical: vi.fn(() => []),
+            lookupAnchor: vi.fn(() => []),
+            searchDense: vi.fn(() => []),
+            recheck: vi.fn((hits) => [...hits]),
+            close: vi.fn(),
+          }),
+          retrieve: async () => [],
+        },
+      })
+
+      expect(report).toMatchObject({ jobsProcessed: 1, committed: 1, failures: 0 })
+      const committedSnapshot = filesNamed(knowledgeRoot, maskedSnapshot.sha256)
+        .filter((path) => !path.startsWith(queueRoot(knowledgeRoot)))
+      expect(committedSnapshot).toHaveLength(1)
+      const committedText = readFileSync(committedSnapshot[0]!, 'utf8')
+      expect(committedText).toContain('[secret:PW_441]')
+      expect(committedText).toContain(TOKEN)
+      expect(committedText).not.toContain(DECLARED)
+      const committedScreenshot = filesNamed(knowledgeRoot, screenshot.descriptor.ref.sha)
+        .filter((path) => !path.startsWith(queueRoot(knowledgeRoot)))
+      expect(committedScreenshot).toHaveLength(1)
+      expect(readFileSync(committedScreenshot[0]!))
+        .toEqual(readFileSync(screenshot.source.sourcePath))
     })
   })
 })
