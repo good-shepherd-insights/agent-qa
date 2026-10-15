@@ -62,16 +62,31 @@ function resolveSecretsPath(configPath: string): string {
   return workspace.secretsFile.absolutePath
 }
 
+function statKey(path: string): string {
+  const stat = statSync(path)
+  return `${stat.mtimeMs}:${stat.size}:${stat.ino}`
+}
+
+// 2026-10-15 (441-63, WR-A02): the secrets path is re-resolved whenever the config file changes,
+// and a config that cannot be stated or read is never served from cache.
 export function createDeclaredSecretMask(configPath: string): DeclaredSecretMask {
-  let secretsPath: string | undefined
+  let resolved: { configKey: string; secretsPath: string } | undefined
   let cached: { key: string; redactor: SecretRedactor } | undefined
 
+  const currentSecretsPath = (): string => {
+    const configKey = statKey(configPath)
+    if (resolved?.configKey !== configKey) {
+      resolved = undefined
+      resolved = { configKey, secretsPath: resolveSecretsPath(configPath) }
+    }
+    return resolved.secretsPath
+  }
+
   const redactor = (): SecretRedactor => {
-    secretsPath ??= resolveSecretsPath(configPath)
+    const secretsPath = currentSecretsPath()
     let key: string | undefined
     try {
-      const stat = statSync(secretsPath)
-      key = `${stat.mtimeMs}:${stat.size}:${stat.ino}`
+      key = `${secretsPath}\0${statKey(secretsPath)}`
     } catch {
       key = undefined
     }
