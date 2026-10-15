@@ -3,10 +3,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { CurationAuthorship, Delta } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -23,18 +19,15 @@ import {
   type ArtifactFreeCandidateProjectionInput,
 } from '../../__tests__/fixtures/curation-candidate-fixture.js'
 
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 const flowAnchor = { t: 'flow', name: 'Checkout flow' } as const
 
 describe('fallback to capable-model enrichment in place (CUR-02)', () => {
   let root: string
   let knowledgeRoot: string
-  let auditBaseDir: string
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'knowledge-enrichment-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
-    auditBaseDir = join(root, '.agent-qa')
   })
 
   afterEach(() => {
@@ -85,10 +78,8 @@ describe('fallback to capable-model enrichment in place (CUR-02)', () => {
   function options(author: CuratorAuthor) {
     return {
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive' as const,
-      policy,
     }
   }
 

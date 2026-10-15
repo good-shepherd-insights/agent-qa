@@ -128,7 +128,6 @@ describe('createAuthoringReader dense retrieval', () => {
     const store: BundleStoreConfig = {
       knowledgeRoot,
       productKey: PRODUCT,
-      auditBaseDir: join(root, '.agent-qa'),
       commitArtifacts: 'none',
       writerLeaseId: 'authoring-reader-dense',
     }

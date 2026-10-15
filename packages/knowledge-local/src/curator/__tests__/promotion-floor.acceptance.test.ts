@@ -14,10 +14,6 @@ import {
   type DistilledObservation,
   type ExecutionContext,
 } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -41,7 +37,6 @@ import { readGateReceipts } from '../../bundle-read.js'
 import { enqueueCanaryOutcome } from '../../queue/canary-queue.js'
 import { createPromotionFloorFixture } from './fixtures/promotion-floor-fixture.js'
 
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 const NO_INDEX_MAINTENANCE = {
   indexAbsent: false,
   pendingEmbeddings: 0,
@@ -52,12 +47,10 @@ const NO_INDEX_MAINTENANCE = {
 describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
   let root: string
   let knowledgeRoot: string
-  let auditBaseDir: string
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'knowledge-promotion-floor-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
-    auditBaseDir = join(root, '.agent-qa')
   })
 
   afterEach(() => {
@@ -151,10 +144,8 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
     }))
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext,
-      policy,
       operations: {
         readRebuildRequest: () => ({ present: false }),
         readIndexMaintenanceState: () => NO_INDEX_MAINTENANCE,
@@ -223,7 +214,6 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
     const published = publishBundle({
       knowledgeRoot,
       productKey: 'storefront',
-      auditBaseDir,
       commitArtifacts: 'none',
       writerLeaseId: 'promotion-floor-fixture',
     }, {
@@ -264,10 +254,8 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
     return {
       knowledgeRoot,
       productKey: 'storefront',
-      auditBaseDir,
       commitArtifacts: 'none',
       writerLeaseId: 'promotion-floor-fixture',
-      policy,
     }
   }
 
@@ -276,7 +264,6 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
     if (lease.kind !== 'acquired') throw new Error('expected promotion fixture writer lease')
     return createLocalKnowledgeStore({
       knowledgeRoot,
-      auditBaseDir,
       executionContext: 'local-interactive',
       epoch: lease.epoch,
       writerLeaseId: lease.leaseId,
@@ -286,7 +273,7 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
 
   it.each(['rode-along', 'exercised-benefited'] as const)
     ('418 BYOM %s without corpus drains v51 bytes and exactly one floor promotion line', async benefit => {
-      const fixture = createPromotionFloorFixture({ knowledgeRoot, auditBaseDir })
+      const fixture = createPromotionFloorFixture({ knowledgeRoot })
       const { draft, published } = fixture.publishHeldCandidate('fact-door2-canary')
       const outcome: CanaryOutcome = { candidateId: published.id, runOutcome: 'positive', benefit,
         stateValidity: 'unknown', runId: 'run-canary-disposition', testId: 'checkout::happy-path',
@@ -295,8 +282,8 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
         exercisedAnchor: draft.anchors[0]! }
       enqueueCanaryOutcome(knowledgeRoot, outcome)
       const author = vi.fn<CuratorAuthor>(async () => { throw new Error('no model in BYOM acceptance') })
-      expect(await drainQueue({ knowledgeRoot, auditBaseDir, author, executionContext: 'local-interactive',
-        policy, maintenance: 'skip' })).toMatchObject({ jobsProcessed: 1, committed: 1, failures: 0 })
+      expect(await drainQueue({ knowledgeRoot, author, executionContext: 'local-interactive',
+        maintenance: 'skip' })).toMatchObject({ jobsProcessed: 1, committed: 1, failures: 0 })
       const reference = JSON.parse(readFileSync(fileURLToPath(new URL('./fixtures/416-v51-reference.json', import.meta.url)), 'utf8'))
       expect(readFileSync(join(published.dir, 'evidence/outcomes.jsonl'), 'utf8'))
         .toBe(reference['fact/door2-canary'].outcomes)

@@ -11,10 +11,6 @@ import {
   type CurationAuthorship,
   type RecordId,
 } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -33,7 +29,6 @@ import type { CuratorAuthor } from '../author-contract.js'
 import { canaryOutcomeObservationId } from '../disposition.js'
 import { drainQueue } from '../drain.js'
 
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 const PRODUCT = 'ladder-storefront'
 const FULL_AUTHORSHIP: CurationAuthorship = {
   path: 'llm',
@@ -51,12 +46,10 @@ const CREATION_JOB_ID = 'job-ladder-seed'
 describe('procedure confirmation ladder (PROC-01/PROC-02 D-05)', () => {
   let root: string
   let knowledgeRoot: string
-  let auditBaseDir: string
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'procedure-confirmation-ladder-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
-    auditBaseDir = join(root, '.agent-qa')
     scaffoldKnowledgeRoot(knowledgeRoot)
   })
 
@@ -68,10 +61,8 @@ describe('procedure confirmation ladder (PROC-01/PROC-02 D-05)', () => {
     const outcome = publishBundle({
       knowledgeRoot,
       productKey: PRODUCT,
-      auditBaseDir,
       commitArtifacts: 'none',
       writerLeaseId: 'confirmation-ladder-test',
-      policy,
     }, {
       draft: makeProcedureBundleDraftFixture(),
       discriminant: {
@@ -139,10 +130,8 @@ describe('procedure confirmation ladder (PROC-01/PROC-02 D-05)', () => {
   async function drain() {
     return drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author: throwingAuthor(),
       executionContext: 'local-interactive',
-      policy,
     })
   }
 

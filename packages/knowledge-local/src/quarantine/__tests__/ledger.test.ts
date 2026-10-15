@@ -480,16 +480,13 @@ describe('quarantine ledger re-entry history (390-18)', () => {
 
 describe('appendQuarantineEvents (D-04)', () => {
   let knowledgeRoot: string
-  let auditBaseDir: string
 
   beforeEach(async () => {
     knowledgeRoot = await mkdtemp(join(tmpdir(), 'quarantine-append-'))
-    auditBaseDir = await mkdtemp(join(tmpdir(), 'quarantine-audit-'))
   })
 
   afterEach(async () => {
     await rm(knowledgeRoot, { recursive: true, force: true })
-    await rm(auditBaseDir, { recursive: true, force: true })
   })
 
   function ledgerText(): string {
@@ -498,7 +495,7 @@ describe('appendQuarantineEvents (D-04)', () => {
 
   it('round-trips: append then read then fold reproduces the events identically', () => {
     const events = [entered(), renewed()]
-    const outcome = appendQuarantineEvents(knowledgeRoot, events, { auditBaseDir })
+    const outcome = appendQuarantineEvents(knowledgeRoot, events)
     expect(outcome).toEqual({ kind: 'appended', lines: 2 })
 
     const read = readQuarantineLedger(knowledgeRoot)
@@ -510,14 +507,14 @@ describe('appendQuarantineEvents (D-04)', () => {
   })
 
   it('writes canonical JSON, one event per line, newline-terminated', () => {
-    appendQuarantineEvents(knowledgeRoot, [entered()], { auditBaseDir })
+    appendQuarantineEvents(knowledgeRoot, [entered()])
     const text = ledgerText()
     expect(text).toBe(`${canonicalJson(entered())}\n`)
   })
 
   it('APPENDS — an existing ledger keeps every prior line', () => {
-    appendQuarantineEvents(knowledgeRoot, [entered()], { auditBaseDir })
-    appendQuarantineEvents(knowledgeRoot, [renewed()], { auditBaseDir })
+    appendQuarantineEvents(knowledgeRoot, [entered()])
+    appendQuarantineEvents(knowledgeRoot, [renewed()])
     expect(readQuarantineLedger(knowledgeRoot).events).toEqual([entered(), renewed()])
     expect(ledgerText().trimEnd().split('\n')).toHaveLength(2)
   })
@@ -525,7 +522,7 @@ describe('appendQuarantineEvents (D-04)', () => {
   it('creates the knowledge root when the first append lands', () => {
     const freshRoot = join(knowledgeRoot, 'nested', 'root')
     expect(existsSync(freshRoot)).toBe(false)
-    expect(appendQuarantineEvents(freshRoot, [entered()], { auditBaseDir })).toEqual({
+    expect(appendQuarantineEvents(freshRoot, [entered()])).toEqual({
       kind: 'appended',
       lines: 1,
     })
@@ -533,7 +530,7 @@ describe('appendQuarantineEvents (D-04)', () => {
   })
 
   it('an empty event list is a no-op that writes no file', () => {
-    expect(appendQuarantineEvents(knowledgeRoot, [], { auditBaseDir })).toEqual({
+    expect(appendQuarantineEvents(knowledgeRoot, [])).toEqual({
       kind: 'appended',
       lines: 0,
     })
@@ -549,30 +546,25 @@ describe('appendQuarantineEvents (D-04)', () => {
 
   it('refuses an event the READ would refuse — throws, writes nothing', () => {
     expect(() =>
-      appendQuarantineEvents(knowledgeRoot, [entered({ filePath: UNMATCHABLE_IDENTITY })], {
-        auditBaseDir,
-      }),
+      appendQuarantineEvents(knowledgeRoot, [entered({ filePath: UNMATCHABLE_IDENTITY })]),
     ).toThrow(TypeError)
 
     // Named by INDEX, so a caller appending a batch knows which event it authored badly.
     expect(() =>
-      appendQuarantineEvents(knowledgeRoot, [entered({ filePath: UNMATCHABLE_IDENTITY })], {
-        auditBaseDir,
-      }),
+      appendQuarantineEvents(knowledgeRoot, [entered({ filePath: UNMATCHABLE_IDENTITY })]),
     ).toThrow(/index 0/)
 
     expect(existsSync(join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME))).toBe(false)
   })
 
   it('a malformed SECOND event withholds the clean first one — all-or-nothing holds', () => {
-    appendQuarantineEvents(knowledgeRoot, [entered()], { auditBaseDir })
+    appendQuarantineEvents(knowledgeRoot, [entered()])
     const before = ledgerText()
 
     expect(() =>
       appendQuarantineEvents(
         knowledgeRoot,
         [renewed(), entered({ testName: 'second test', filePath: UNMATCHABLE_IDENTITY })],
-        { auditBaseDir },
       ),
     ).toThrow(/index 1/)
 
@@ -585,7 +577,6 @@ describe('appendQuarantineEvents (D-04)', () => {
     const outcome = appendQuarantineEvents(
       knowledgeRoot,
       [renewed(), entered({ testName: 'second test', filePath: 'tests/a.yaml' })],
-      { auditBaseDir },
     )
     expect(outcome).toEqual({ kind: 'appended', lines: 2 })
     expect(ledgerText().trimEnd().split('\n')).toHaveLength(2)
@@ -646,13 +637,13 @@ describe('appendQuarantineEvents (D-04)', () => {
   for (const [label, schemaVersion] of READ_REFUSED_VERSIONS) {
     it(`refuses a schemaVersion the READ refuses — ${label} (${String(schemaVersion)})`, () => {
       expect(() =>
-        appendQuarantineEvents(knowledgeRoot, [entered({ schemaVersion })], { auditBaseDir }),
+        appendQuarantineEvents(knowledgeRoot, [entered({ schemaVersion })]),
       ).toThrow(TypeError)
 
       // The throw names the offending index AND the leg that refused, so an operator reading it
       // can tell a malformed record from a wrong-version one.
       expect(() =>
-        appendQuarantineEvents(knowledgeRoot, [entered({ schemaVersion })], { auditBaseDir }),
+        appendQuarantineEvents(knowledgeRoot, [entered({ schemaVersion })]),
       ).toThrow(/index 0[\s\S]*schemaVersion/)
 
       expect(existsSync(join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME))).toBe(false)
@@ -725,7 +716,7 @@ describe('appendQuarantineEvents (D-04)', () => {
     // And the write side does NOT split: it refuses both, on the same `=== CURRENT` comparison.
     for (const [, schemaVersion] of READ_REFUSED_VERSIONS) {
       expect(() =>
-        appendQuarantineEvents(knowledgeRoot, [entered({ schemaVersion })], { auditBaseDir }),
+        appendQuarantineEvents(knowledgeRoot, [entered({ schemaVersion })]),
       ).toThrow(TypeError)
     }
   })
@@ -734,7 +725,7 @@ describe('appendQuarantineEvents (D-04)', () => {
     // Accept-direction control on the identical fixture shape. Without it the five refusals above
     // are satisfiable by a `throw` on everything.
     const event = entered({ schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION })
-    expect(appendQuarantineEvents(knowledgeRoot, [event], { auditBaseDir })).toEqual({
+    expect(appendQuarantineEvents(knowledgeRoot, [event])).toEqual({
       kind: 'appended',
       lines: 1,
     })
@@ -744,14 +735,13 @@ describe('appendQuarantineEvents (D-04)', () => {
   })
 
   it('a wrong-version SECOND event withholds the clean first one — all-or-nothing holds', () => {
-    appendQuarantineEvents(knowledgeRoot, [entered()], { auditBaseDir })
+    appendQuarantineEvents(knowledgeRoot, [entered()])
     const before = ledgerText()
 
     expect(() =>
       appendQuarantineEvents(
         knowledgeRoot,
         [renewed(), entered({ testName: 'second test', schemaVersion: 3 })],
-        { auditBaseDir },
       ),
     ).toThrow(/index 1/)
 
@@ -759,7 +749,7 @@ describe('appendQuarantineEvents (D-04)', () => {
   })
 
   it('reads no clock — the caller stamps every instant', () => {
-    appendQuarantineEvents(knowledgeRoot, [entered()], { auditBaseDir })
+    appendQuarantineEvents(knowledgeRoot, [entered()])
     const [event] = readQuarantineLedger(knowledgeRoot).events
     expect(event.at).toBe(ENTERED_AT)
     if (event.kind !== 'entered') throw new Error('expected an entered event')

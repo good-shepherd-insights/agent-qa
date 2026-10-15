@@ -60,7 +60,7 @@ describe('authored policy ladder', () => {
     const writerAuthority = acquireWriterLease(knowledgeRoot)
     if (writerAuthority.kind !== 'acquired') throw new Error('lease unavailable')
     materializePolicy({ knowledgeRoot, recordId: 'policy-roundtrip', scope: 'Shop Product',
-      title: 'Checkout safety', ruleText: 'Never submit real payment forms.', auditBaseDir: knowledgeRoot, writerAuthority })
+      title: 'Checkout safety', ruleText: 'Never submit real payment forms.', writerAuthority })
     const ladder = readPolicyLadder(knowledgeRoot, 'Shop Product')
     expect(ladder.text).toContain('Never submit real payment forms.')
     expect(ladder.text).toContain('Checkout safety')

@@ -127,7 +127,7 @@ describe('432 direct explicit knowledge writer (D-04, D-05, D-08, D-09, D-11)', 
   }
 
   function storeConfig(): BundleStoreConfig {
-    return { knowledgeRoot, productKey: 'Direct Product', auditBaseDir: agentQaRoot, commitArtifacts: 'none' }
+    return { knowledgeRoot, productKey: 'Direct Product', commitArtifacts: 'none' }
   }
 
   function publish(summary: string, kind: 'fact' | 'policy' = 'fact'): string {
@@ -480,7 +480,7 @@ describe('432 direct explicit knowledge writer (D-04, D-05, D-08, D-09, D-11)', 
     const lease = acquireWriterLease(knowledgeRoot)
     if (lease.kind !== 'acquired') throw new Error('fixture lease unavailable')
     try {
-      const automatic = createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir: agentQaRoot,
+      const automatic = createLocalKnowledgeStore({ knowledgeRoot,
         executionContext: 'ci', writerLeaseId: lease.leaseId, epoch: lease.epoch })
       await automatic.commit([{ kind: 'Supersede', origin: 'user', scope: SCOPE,
         citedIds: [asRecordId(automaticVictim)], victimId: asRecordId(automaticVictim),

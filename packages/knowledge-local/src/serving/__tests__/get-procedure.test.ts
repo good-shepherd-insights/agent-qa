@@ -660,12 +660,10 @@ describe('servingReader getProcedure end-to-end', () => {
   const PRODUCT = 'fixture-storefront'
   let root: string
   let knowledgeRoot: string
-  let auditBaseDir: string
 
   beforeEach(() => {
     root = join(tmpdir(), `get-procedure-reader-${randomUUID()}`)
     knowledgeRoot = join(root, 'agent-qa-knowledge')
-    auditBaseDir = join(root, '.agent-qa')
   })
 
   afterEach(() => {
@@ -676,7 +674,6 @@ describe('servingReader getProcedure end-to-end', () => {
     const outcome = publishBundle({
       knowledgeRoot,
       productKey: PRODUCT,
-      auditBaseDir,
       commitArtifacts: 'none',
       writerLeaseId: 'get-procedure-test',
     }, {

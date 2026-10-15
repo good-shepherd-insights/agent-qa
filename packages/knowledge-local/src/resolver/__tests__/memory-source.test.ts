@@ -89,12 +89,10 @@ describe('the bundle-status → MEM card-status mapping is total over the comple
 describe('the MEM sighting source reports the status the store actually derived', () => {
   let root: string
   let knowledgeRoot: string
-  let agentQaRoot: string
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'memory-source-status-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
-    agentQaRoot = join(root, '.agent-qa')
     scaffoldKnowledgeRoot(knowledgeRoot)
   })
 
@@ -106,7 +104,6 @@ describe('the MEM sighting source reports the status the store actually derived'
     return {
       knowledgeRoot,
       productKey: 'Memory Source Product',
-      auditBaseDir: agentQaRoot,
       commitArtifacts: 'none',
     }
   }

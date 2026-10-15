@@ -137,13 +137,11 @@ function discriminant(
 describe('openKnowledgeReader synchronous serving port', () => {
   let root: string
   let knowledgeRoot: string
-  let auditBaseDir: string
   let seeded: SeededStore
 
   beforeEach(async () => {
     root = join(tmpdir(), `knowledge-serving-reader-${randomUUID()}`)
     knowledgeRoot = join(root, 'agent-qa-knowledge')
-    auditBaseDir = join(root, '.agent-qa')
     seeded = await seedStore()
   })
 
@@ -155,7 +153,6 @@ describe('openKnowledgeReader synchronous serving port', () => {
     return {
       knowledgeRoot,
       productKey: PRODUCT,
-      auditBaseDir,
       commitArtifacts: 'none',
       writerLeaseId: 'reader-test',
     }
@@ -603,7 +600,6 @@ describe('openKnowledgeReader synchronous serving port', () => {
     const outcome = commitFixtureProcedure({
       root,
       knowledgeRoot,
-      auditBaseDir,
       draft: makeProcedureBundleDraftFixture({ scope: SCOPE }),
       ...overrides,
     })
@@ -745,11 +741,9 @@ describe('openKnowledgeReader synchronous serving port', () => {
     const forward = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
       .getRunBrief(SCOPE, 200)
     const primaryKnowledgeRoot = knowledgeRoot
-    const primaryAuditBaseDir = auditBaseDir
 
     try {
       knowledgeRoot = join(root, 'reverse-agent-qa-knowledge')
-      auditBaseDir = join(root, '.reverse-agent-qa')
       await seedStore(true)
       const reverse = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
         .getRunBrief(SCOPE, 200)
@@ -757,7 +751,6 @@ describe('openKnowledgeReader synchronous serving port', () => {
       expect(JSON.stringify(reverse)).toBe(JSON.stringify(forward))
     } finally {
       knowledgeRoot = primaryKnowledgeRoot
-      auditBaseDir = primaryAuditBaseDir
     }
   })
 

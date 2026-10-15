@@ -24,7 +24,7 @@ async function persist(name = 'agent-observed-clean', stage = 5) {
   const entry = baseline.cases.find(row => row.name === name)!
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-prior-serving-'))
   roots.push(root)
-  const config = { knowledgeRoot: join(root, 'knowledge'), productKey: 'baseline', auditBaseDir: join(root, 'audit'), commitArtifacts: 'none' as const }
+  const config = { knowledgeRoot: join(root, 'knowledge'), productKey: 'baseline', commitArtifacts: 'none' as const }
   const published = publishBundle(config, entry.input)
   if (published.kind !== 'published') throw new Error('fixture publication refused')
   for (const event of entry.appended.slice(0, stage)) expect(appendOutcomeEvent(config, published.id, BundleOutcomeEventSchema.parse(event)).kind).toBe('appended')

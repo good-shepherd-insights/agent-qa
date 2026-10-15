@@ -312,13 +312,11 @@ function twoClassHandoff(input: {
 
 interface FoldHarness {
   knowledgeRoot: string
-  auditBaseDir: string
 }
 
 function harness(prefix: string): FoldHarness {
   return {
     knowledgeRoot: tempDir(`${prefix}-knowledge-`),
-    auditBaseDir: tempDir(`${prefix}-audit-`),
   }
 }
 
@@ -334,7 +332,6 @@ function fold(
     ...(overrides.withoutQuarantine === true ? {} : {
       quarantine: {
         now: overrides.now ?? NOW,
-        auditBaseDir: env.auditBaseDir,
       },
     }),
   })
@@ -501,9 +498,7 @@ describe('the fold report surfaces every failure mode as data (Pitfall 4)', () =
 
 describe('auto-exit through the real fold (D-10, FLAK-03)', () => {
   function seedQuarantined(env: FoldHarness): void {
-    appendQuarantineEvents(env.knowledgeRoot, [enteredEvent()], {
-      auditBaseDir: env.auditBaseDir,
-    })
+    appendQuarantineEvents(env.knowledgeRoot, [enteredEvent()])
   }
 
   it('releases after the 5th passing ordinal and NOT after the 4th', () => {
@@ -555,7 +550,6 @@ describe('auto-exit through the real fold (D-10, FLAK-03)', () => {
     appendQuarantineEvents(
       env.knowledgeRoot,
       [enteredEvent({ expiresAt: '2026-07-10T12:00:00.000Z' })],
-      { auditBaseDir: env.auditBaseDir },
     )
 
     for (const buildOrdinal of [1, 2, 3, 4]) {
@@ -618,7 +612,6 @@ describe('auto-exit through the real fold (D-10, FLAK-03)', () => {
           testName: TEST_NAME,
         },
       ],
-      { auditBaseDir: env.auditBaseDir },
     )
 
     let report: FoldRunOutcomesReport | undefined
@@ -643,7 +636,6 @@ describe('auto-exit through the real fold (D-10, FLAK-03)', () => {
     appendQuarantineEvents(
       env.knowledgeRoot,
       [enteredEvent({ expiresAt: '2026-07-10T12:00:00.000Z' })],
-      { auditBaseDir: env.auditBaseDir },
     )
 
     crossThreeInFive(env)
@@ -665,7 +657,6 @@ describe("the auto-entry's owner through the real fold (390-18)", () => {
     appendQuarantineEvents(
       env.knowledgeRoot,
       [enteredEvent({ owner: 'alice', expiresAt: '2026-07-10T12:00:00.000Z' })],
-      { auditBaseDir: env.auditBaseDir },
     )
 
     crossThreeInFive(env)
@@ -695,7 +686,6 @@ describe("the auto-entry's owner through the real fold (390-18)", () => {
           testName: TEST_NAME,
         } as QuarantineLedgerEvent,
       ],
-      { auditBaseDir: env.auditBaseDir },
     )
 
     crossThreeInFive(env)

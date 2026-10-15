@@ -18,7 +18,7 @@ describe('418 bundle-local canary posture facts', () => {
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), '418-canary-facts-'))
     knowledgeRoot = join(root, 'knowledge')
-    fixture = createPromotionFloorFixture({ knowledgeRoot, auditBaseDir: join(root, '.agent-qa') })
+    fixture = createPromotionFloorFixture({ knowledgeRoot })
   })
   afterEach(() => rmSync(root, { recursive: true, force: true }))
   function seed(name = 'quiet') {
@@ -178,7 +178,7 @@ describe('432 canary posture facts and holds never read the legacy inbox (D-05, 
     knowledgeRoot = join(root, 'knowledge')
     agentQaRoot = join(root, '.agent-qa')
     legacyDir = undefined
-    fixture = createPromotionFloorFixture({ knowledgeRoot, auditBaseDir: agentQaRoot })
+    fixture = createPromotionFloorFixture({ knowledgeRoot })
   })
   afterEach(() => {
     if (legacyDir !== undefined && existsSync(legacyDir)) chmodSync(legacyDir, 0o755)

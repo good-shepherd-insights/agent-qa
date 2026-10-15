@@ -21,10 +21,6 @@ import {
   type MeasurementObservation,
   type RecordId,
 } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -44,7 +40,6 @@ import {
   type ArtifactFreeCandidateProjectionInput,
 } from '../../__tests__/fixtures/curation-candidate-fixture.js'
 
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 const scope = { tier: 'product', key: 'storefront' } as const
 const NO_INDEX_MAINTENANCE = {
   indexAbsent: false,
@@ -65,13 +60,11 @@ interface MeasurementFixture {
 describe('queue-to-commit measurement drift acceptance (DCAY-02)', () => {
   let root: string
   let knowledgeRoot: string
-  let auditBaseDir: string
   let fallbackAuthor: ReturnType<typeof vi.fn<CuratorAuthor>>
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'knowledge-drift-supersede-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
-    auditBaseDir = join(root, '.agent-qa')
     fallbackAuthor = vi.fn<CuratorAuthor>(async () => ({
       kind: 'fallback-required',
       reason: 'no-model',
@@ -112,7 +105,6 @@ describe('queue-to-commit measurement drift acceptance (DCAY-02)', () => {
     const published = publishBundle({
       knowledgeRoot,
       productKey: scope.key,
-      auditBaseDir,
       commitArtifacts: 'none',
       writerLeaseId: 'drift-acceptance-fixture',
     }, {
@@ -164,7 +156,6 @@ describe('queue-to-commit measurement drift acceptance (DCAY-02)', () => {
     expect(writeMeasurementBaseline({
       knowledgeRoot,
       productKey: scope.key,
-      auditBaseDir,
       commitArtifacts: 'none',
       writerLeaseId: 'drift-acceptance-fixture',
     }, published.id, baseline)).toEqual({ kind: 'appended' })
@@ -217,10 +208,8 @@ describe('queue-to-commit measurement drift acceptance (DCAY-02)', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author: fallbackAuthor,
       executionContext,
-      policy,
       operations: {
         readRebuildRequest: () => ({ present: false }),
         readIndexMaintenanceState: () => NO_INDEX_MAINTENANCE,

@@ -128,7 +128,6 @@ function blockFor(ms: number): void {
 describe('quarantine ledger under real cross-process contention (D-04)', () => {
   let base: string
   let root: string
-  let audit: string
   let markers: {
     ready: string
     go: string
@@ -143,7 +142,6 @@ describe('quarantine ledger under real cross-process contention (D-04)', () => {
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), 'agent-qa-quarantine-contention-'))
     root = join(base, 'knowledge')
-    audit = join(base, 'audit')
     markers = {
       ready: join(base, 'child-ready'),
       go: join(base, 'parent-go'),
@@ -176,7 +174,6 @@ describe('quarantine ledger under real cross-process contention (D-04)', () => {
           [QUARANTINE_CHILD_ENV.gate]: '1',
           [QUARANTINE_CHILD_ENV.role]: role,
           [QUARANTINE_CHILD_ENV.root]: root,
-          [QUARANTINE_CHILD_ENV.audit]: audit,
           [QUARANTINE_CHILD_ENV.report]: markers.report,
           [QUARANTINE_CHILD_ENV.ready]: markers.ready,
           [QUARANTINE_CHILD_ENV.go]: markers.go,
@@ -243,7 +240,6 @@ describe('quarantine ledger under real cross-process contention (D-04)', () => {
   ): Omit<QuarantineOperationsOptions, 'resolveWriterAuthority'> {
     return {
       resolveKnowledgeRoot: () => root,
-      auditBaseDir: audit,
       now,
       // Every corpus path is already workspace-relative, so the production recipe is the identity
       // over them; 390-12 owns the mint's own corpus and it is not the subject here.
@@ -472,7 +468,7 @@ describe('quarantine ledger under real cross-process contention (D-04)', () => {
       // PHASE 1 — strict alternation. Neither side writes round i+1 until it has SEEN the other's
       // round i, so the committed order is interleaved by construction, not by scheduling luck.
       for (let index = 0; index < ALTERNATION_ROUNDS; index += 1) {
-        appendQuarantineEvents(root, [burstEvent('parent', index)], { auditBaseDir: audit })
+        appendQuarantineEvents(root, [burstEvent('parent', index)])
         await waitFor(
           `the child's alternation line ${String(index)}`,
           () => committedNames().includes(`child-burst-${String(index)}`),
@@ -486,7 +482,7 @@ describe('quarantine ledger under real cross-process contention (D-04)', () => {
       publishMarker(markers.resume)
       const half = ALTERNATION_ROUNDS + BURST_LINES / 2
       for (let index = ALTERNATION_ROUNDS; index < half; index += 1) {
-        appendQuarantineEvents(root, [burstEvent('parent', index)], { auditBaseDir: audit })
+        appendQuarantineEvents(root, [burstEvent('parent', index)])
       }
       await waitFor(
         'a free-burst line from the child',
@@ -494,7 +490,7 @@ describe('quarantine ledger under real cross-process contention (D-04)', () => {
         handle,
       )
       for (let index = half; index < ALTERNATION_ROUNDS + BURST_LINES; index += 1) {
-        appendQuarantineEvents(root, [burstEvent('parent', index)], { auditBaseDir: audit })
+        appendQuarantineEvents(root, [burstEvent('parent', index)])
       }
 
       await awaitChildReport(handle)

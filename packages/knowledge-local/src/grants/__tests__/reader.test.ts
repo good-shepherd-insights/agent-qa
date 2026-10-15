@@ -61,7 +61,7 @@ describe('a legacy grant ledger authorizes nothing, in any state, because nothin
 
   function publish(summary: string): string {
     const outcome = publishBundle(
-      { knowledgeRoot, productKey: 'Grant Reader Product', auditBaseDir: agentQaRoot, commitArtifacts: 'none' },
+      { knowledgeRoot, productKey: 'Grant Reader Product', commitArtifacts: 'none' },
       {
         draft: makeBundleDraftFixture({ kind: 'fact', anchors: [ANCHOR], scope: SCOPE, summary }),
         discriminant: { kind: 'fact', subtype: 'selector', elementRef: { role: 'Button', name: summary } },

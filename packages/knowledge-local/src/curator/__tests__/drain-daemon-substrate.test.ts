@@ -19,10 +19,6 @@ import {
   type Delta,
   type ExecutionContext,
 } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { scaffoldKnowledgeRoot } from '../../__tests__/fixtures/bundle-fixture.js'
@@ -65,7 +61,6 @@ import {
   type CanaryAuthorityHooks,
 } from '../knowledge-store.js'
 
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 const NO_INDEX_MAINTENANCE = {
   indexAbsent: false,
   pendingEmbeddings: 0,
@@ -76,12 +71,10 @@ const NO_INDEX_MAINTENANCE = {
 describe('drainQueue daemon substrate', () => {
   let root: string
   let knowledgeRoot: string
-  let auditBaseDir: string
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'knowledge-drain-daemon-substrate-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
-    auditBaseDir = join(root, '.agent-qa')
     scaffoldKnowledgeRoot(knowledgeRoot)
   })
 
@@ -271,10 +264,8 @@ describe('drainQueue daemon substrate', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author: scriptedAuthor(),
       executionContext: 'local-headless',
-      policy,
       operations: maintenanceFreeOperations(),
     })
 
@@ -294,10 +285,8 @@ describe('drainQueue daemon substrate', () => {
     const beforeSecondDrain = statusesBySummary()
     const second = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author: scriptedAuthor(),
       executionContext: 'ci',
-      policy,
       operations: maintenanceFreeOperations(),
     })
 
@@ -316,10 +305,8 @@ describe('drainQueue daemon substrate', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author: scriptedAuthor(),
       executionContext: 'local-interactive',
-      policy,
       maintenance: 'skip',
       lease: { leaseId: authority.leaseId, epoch: authority.epoch },
       operations: {
@@ -374,10 +361,8 @@ describe('drainQueue daemon substrate', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-headless',
-      policy,
       operations: {
         ...maintenanceFreeOperations(),
         claimNextJob: claimWithoutContext,
@@ -407,10 +392,8 @@ describe('drainQueue daemon substrate', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author: scriptedAuthor(),
       executionContext: 'ci',
-      policy,
       lease: { leaseId: acquired.leaseId, epoch: acquired.epoch },
       operations: maintenanceFreeOperations(),
     } as Parameters<typeof drainQueue>[0] & {
@@ -448,10 +431,8 @@ describe('drainQueue daemon substrate', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive',
-      policy,
       maintenance: 'skip',
       onJobLifecycle: (event) => {
         const state = readJobState(knowledgeRoot, event.candidateId)
@@ -490,10 +471,8 @@ describe('drainQueue daemon substrate', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author: scriptedAuthor(),
       executionContext: 'local-interactive',
-      policy,
       maintenance: 'skip',
       lease: { leaseId: stale.leaseId, epoch: stale.epoch },
       onJobLifecycle: (event) => observed.push(event),
@@ -574,10 +553,8 @@ describe('drainQueue daemon substrate', () => {
 
     await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'ci',
-      policy,
       maintenance: 'skip',
       onJobLifecycle: (event) => observed.push(event),
       operations,
@@ -594,10 +571,8 @@ describe('drainQueue daemon substrate', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author: scriptedAuthor(),
       executionContext: 'ci',
-      policy,
       maintenance: 'skip',
       signal: controller.signal,
       onJobLifecycle: (event) => observed.push(event),
@@ -619,10 +594,8 @@ describe('drainQueue daemon substrate', () => {
 
     const budgetCut = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author: scriptedAuthor(),
       executionContext: 'ci',
-      policy,
       now,
       operations: maintenanceFreeOperations(),
     })
@@ -635,10 +608,8 @@ describe('drainQueue daemon substrate', () => {
     if (holder.kind !== 'acquired') throw new Error('expected holder lease')
     const handedOff = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author: scriptedAuthor(),
       executionContext: 'local-interactive',
-      policy,
       operations: maintenanceFreeOperations(),
     })
 
@@ -787,10 +758,8 @@ describe('drainQueue daemon substrate', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author: scriptedAuthor(),
       executionContext: 'ci',
-      policy,
       maintenance: 'skip',
       operations,
     })
@@ -828,10 +797,8 @@ describe('drainQueue daemon substrate', () => {
     for (let poll = 0; poll < 2; poll += 1) {
       const report = await drainQueue({
         knowledgeRoot,
-        auditBaseDir,
         author,
         executionContext: 'ci',
-        policy,
         maintenance: 'skip',
         operations: maintenanceFreeOperations(),
       })
@@ -850,10 +817,8 @@ describe('drainQueue daemon substrate', () => {
     const candidateId = enqueue('checkpoint-persist-requeue', 'ci')
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author: scriptedAuthor(),
       executionContext: 'ci',
-      policy,
       maintenance: 'skip',
       operations: {
         ...maintenanceFreeOperations(),
@@ -893,10 +858,8 @@ describe('drainQueue daemon substrate', () => {
     })
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author: scriptedAuthor(),
       executionContext: 'ci',
-      policy,
       maintenance: 'skip',
       operations: maintenanceFreeOperations(),
     })
@@ -937,10 +900,8 @@ describe('drainQueue daemon substrate', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author: scriptedAuthor(),
       executionContext: 'local-headless',
-      policy,
       maintenance: 'skip',
       operations: {
         readRebuildRequest: () => ({ present: false }),
@@ -1140,10 +1101,8 @@ describe('drainQueue daemon substrate', () => {
       enqueue(seed, 'ci')
       const report = await drainQueue({
         knowledgeRoot,
-        auditBaseDir,
         author: scriptedAuthor(),
         executionContext: 'ci',
-        policy,
         maintenance: 'skip',
         operations: maintenanceFreeOperations(),
       })
@@ -1180,10 +1139,8 @@ describe('drainQueue daemon substrate', () => {
     ) {
       return drainQueue({
         knowledgeRoot,
-        auditBaseDir,
         author: scriptedAuthor(),
         executionContext: 'local-interactive',
-        policy,
         maintenance: 'skip',
         lease,
         operations: {
@@ -1207,13 +1164,11 @@ describe('drainQueue daemon substrate', () => {
 
       const store = createLocalKnowledgeStore({
         knowledgeRoot,
-        auditBaseDir,
         executionContext: 'local-interactive',
         epoch: lease.epoch,
         writerLeaseId: 'fabricated-canary-writer',
         sourceBuildOrdinal: 43,
         sourceRunId: 'run-canary-fabricated-store',
-        policy,
       })
 
       await expect(

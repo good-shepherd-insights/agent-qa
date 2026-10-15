@@ -40,16 +40,16 @@ async function capture(scenario: Scenario, options: {
 } = {}) {
   const root = mkdtempSync(join(tmpdir(), '416-v51-reference-'))
   const knowledgeRoot = join(root, 'agent-qa-knowledge')
-  const fixture = createPromotionFloorFixture({ knowledgeRoot, auditBaseDir: join(root, '.agent-qa') })
+  const fixture = createPromotionFloorFixture({ knowledgeRoot })
   const gate = vi.mocked(evaluatePromotionGate)
   gate.mockClear()
   function storeFor(sourceRunId?: string) {
     const lease = acquireWriterLease(knowledgeRoot)
     if (lease.kind !== 'acquired') throw new Error('expected reference writer lease')
     return createLocalKnowledgeStore({
-      knowledgeRoot, auditBaseDir: join(root, '.agent-qa'), executionContext: 'local-interactive',
+      knowledgeRoot, executionContext: 'local-interactive',
       epoch: lease.epoch, writerLeaseId: lease.leaseId, sourceBuildOrdinal: 43,
-      ...(sourceRunId === undefined ? {} : { sourceRunId, policy: fixture.outcomeAppendConfig().policy }),
+      ...(sourceRunId === undefined ? {} : { sourceRunId }),
       ...(options.resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture: options.resolvePromotionPosture }),
     })
   }
@@ -115,17 +115,15 @@ describe('416 v51 reference across the three real doors', () => {
   it('418 present broken posture keeps the credited receipt and holds posture-unavailable', async () => {
     const root = mkdtempSync(join(tmpdir(), '418-unavailable-reference-'))
     const knowledgeRoot = join(root, 'agent-qa-knowledge')
-    const auditBaseDir = join(root, '.agent-qa')
     try {
-      const fixture = createPromotionFloorFixture({ knowledgeRoot, auditBaseDir })
+      const fixture = createPromotionFloorFixture({ knowledgeRoot })
       const { draft, published } = fixture.publishHeldCandidate('fact-door2-canary')
       const lease = acquireWriterLease(knowledgeRoot)
       if (lease.kind !== 'acquired') throw new Error('expected writer lease')
       const onPromotionOutcome = vi.fn()
-      const store = createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir,
+      const store = createLocalKnowledgeStore({ knowledgeRoot,
         executionContext: 'local-interactive', epoch: lease.epoch, writerLeaseId: lease.leaseId,
         sourceRunId: 'run-canary-disposition', sourceBuildOrdinal: 43,
-        policy: fixture.outcomeAppendConfig().policy,
         resolvePromotionPosture: () => ({ kind: 'unavailable', replayGateAvailable: true,
           refusals: ['fixture broken eval root'] }),
         onPromotionOutcome })

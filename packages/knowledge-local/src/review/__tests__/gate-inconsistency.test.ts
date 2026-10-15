@@ -35,7 +35,7 @@ describe('432 evidence-based gate inconsistency hold (D-05, D-22)', () => {
     root = mkdtempSync(join(tmpdir(), '432-gate-inconsistency-'))
     knowledgeRoot = join(root, 'knowledge')
     agentQaRoot = join(root, '.agent-qa')
-    fixture = createPromotionFloorFixture({ knowledgeRoot, auditBaseDir: agentQaRoot })
+    fixture = createPromotionFloorFixture({ knowledgeRoot })
     onPromotionOutcome.mockReset()
   })
   afterEach(() => rmSync(root, { recursive: true, force: true }))
@@ -46,7 +46,7 @@ describe('432 evidence-based gate inconsistency hold (D-05, D-22)', () => {
       : lease.kind === 'held' ? { writerLeaseId: lease.holder.leaseId, epoch: lease.holder.epoch }
         : undefined
     if (authority === undefined) throw new Error(lease.kind)
-    return createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir: agentQaRoot,
+    return createLocalKnowledgeStore({ knowledgeRoot,
       executionContext, sourceBuildOrdinal: 43, ...authority,
       resolvePromotionPosture: () => resolvedPromotionPosture(), onPromotionOutcome })
   }

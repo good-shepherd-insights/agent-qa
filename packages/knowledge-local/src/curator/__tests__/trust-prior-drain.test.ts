@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { asRecordId, canonicalJson, type Delta, type TrustPriorTable } from '@vostride/agent-qa-schema'
-import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { enqueueArtifactFreeCandidateProjection } from '../../__tests__/fixtures/curation-candidate-fixture.js'
 import { makeFakeEmbedder } from '../../__tests__/fixtures/fake-embedder.js'
@@ -26,13 +25,12 @@ const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 const prior = (): TrustPriorTable => ({ 'agent-verified': { alpha: 2.7, beta: 0.3 } })
 const hostSnapshot = () => Object.freeze({ 'agent-verified': Object.freeze({ alpha: 2.7, beta: 0.3 }) })
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-prior-drain-'))
   roots.push(root)
   const knowledgeRoot = join(root, 'knowledge')
-  const auditBaseDir = join(root, 'audit')
+  const agentQaRoot = join(root, 'audit')
   const queued = enqueueArtifactFreeCandidateProjection({ knowledgeRoot, projectionInput: {
     sourceRunId: 'prior-drain-run', scope: { tier: 'product', key: 'storefront' },
     buildOrdinal: 42, executionContext: 'local-interactive', kind: 'fact', subtype: 'content',
@@ -50,8 +48,8 @@ function fixture() {
         distilledEvidenceRef: { id: `curation-candidate-${job.candidateId}`, sha: job.candidateId } } }
     return { kind: 'authored', authorship, deltas: [delta] }
   })
-  return { knowledgeRoot, auditBaseDir, agentQaRoot: auditBaseDir, author,
-    policy, executionContext: 'local-interactive' as const, maintenance: 'skip' as const }
+  return { knowledgeRoot, agentQaRoot, author,
+    executionContext: 'local-interactive' as const, maintenance: 'skip' as const }
 }
 
 function persisted(knowledgeRoot: string) {

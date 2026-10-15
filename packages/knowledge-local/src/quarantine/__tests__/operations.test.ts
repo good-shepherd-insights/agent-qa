@@ -151,7 +151,6 @@ function refusingMint(filePath: string): string {
 
 describe('createQuarantineOperations (D-12/D-13)', () => {
   let knowledgeRoot: string
-  let auditBaseDir: string
   let clockReads: number
 
   function operations(
@@ -161,7 +160,6 @@ describe('createQuarantineOperations (D-12/D-13)', () => {
   ) {
     return createQuarantineOperations({
       resolveKnowledgeRoot: () => knowledgeRoot,
-      auditBaseDir,
       now: () => {
         clockReads += 1
         return now
@@ -194,13 +192,11 @@ describe('createQuarantineOperations (D-12/D-13)', () => {
 
   beforeEach(async () => {
     knowledgeRoot = await mkdtemp(join(tmpdir(), 'quarantine-ops-'))
-    auditBaseDir = await mkdtemp(join(tmpdir(), 'quarantine-ops-audit-'))
     clockReads = 0
   })
 
   afterEach(async () => {
     await rm(knowledgeRoot, { recursive: true, force: true })
-    await rm(auditBaseDir, { recursive: true, force: true })
   })
 
   // ---- list -------------------------------------------------------------------------------

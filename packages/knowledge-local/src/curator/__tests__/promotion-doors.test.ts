@@ -11,7 +11,6 @@ import {
   type CanaryOutcome,
   type ResolvePromotionPosture,
 } from '@vostride/agent-qa-schema'
-import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { deriveBundleTrust, readGateReceipts } from '../../bundle-read.js'
@@ -22,7 +21,6 @@ import { drainQueue } from '../drain.js'
 import * as knowledgeStore from '../knowledge-store.js'
 import { completeGate1Receipt, createPromotionFloorFixture, resolvedPromotionPosture } from './fixtures/promotion-floor-fixture.js'
 
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 const bound: ResolvePromotionPosture = () => resolvedPromotionPosture()
 const unavailable: ResolvePromotionPosture = () => ({
   kind: 'unavailable', replayGateAvailable: false, refusals: ['corpus.json: refused'],
@@ -31,13 +29,13 @@ const unavailable: ResolvePromotionPosture = () => ({
 describe('416 promotion doors share receipt authority', () => {
   let root: string
   let knowledgeRoot: string
-  let auditBaseDir: string
+  let agentQaRoot: string
   let fixture: ReturnType<typeof createPromotionFloorFixture>
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), '416-promotion-doors-'))
     knowledgeRoot = join(root, 'knowledge')
-    auditBaseDir = join(root, 'audit')
-    fixture = createPromotionFloorFixture({ knowledgeRoot, auditBaseDir })
+    agentQaRoot = join(root, 'audit')
+    fixture = createPromotionFloorFixture({ knowledgeRoot })
   })
   afterEach(() => {
     vi.restoreAllMocks()
@@ -49,7 +47,7 @@ describe('416 promotion doors share receipt authority', () => {
     const authority = lease.kind === 'acquired' ? lease : lease.kind === 'held' ? lease.holder : undefined
     if (authority === undefined) throw new Error('expected writer authority')
     return knowledgeStore.createLocalKnowledgeStore({
-      knowledgeRoot, auditBaseDir, executionContext: 'local-interactive',
+      knowledgeRoot, executionContext: 'local-interactive',
       epoch: authority.epoch, writerLeaseId: authority.leaseId, sourceBuildOrdinal: 46,
       ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }),
       onPromotionOutcome,
@@ -114,7 +112,7 @@ describe('416 promotion doors share receipt authority', () => {
     const seeded = fixture.publishHeldCandidate('queued-canary')
     expect(enqueueCanaryOutcome(knowledgeRoot, positive(seeded)).kind).toBe('enqueued')
     const author = vi.fn(async () => { throw new Error('canary must not call an author') })
-    const report = await drainQueue({ knowledgeRoot, auditBaseDir, executionContext: 'local-interactive', policy,
+    const report = await drainQueue({ knowledgeRoot, executionContext: 'local-interactive',
       author, resolvePromotionPosture: bound, maintenance: 'skip' })
     expect(report).toMatchObject({ jobsProcessed: 1, failures: 0 })
     expect(report.promotions).toEqual([{ candidateId: seeded.published.id, promotionHoldReason: 'gate1-receipt-required' }])
@@ -218,7 +216,7 @@ describe('416 promotion doors share receipt authority', () => {
     // RE-SPELLED 2026-10-01 (432-17): the accept applies directly instead of through a proposal.
     const factory = vi.spyOn(knowledgeStore, 'createExplicitReviewStore')
     const resolver = vi.fn(bound)
-    await applyExplicitReview({ agentQaRoot: auditBaseDir, knowledgeRoot, operationId: 'promotion-doors-accept',
+    await applyExplicitReview({ agentQaRoot, knowledgeRoot, operationId: 'promotion-doors-accept',
       opId: 'knowledge.accept', executionContext: 'local-interactive',
       request: { verb: 'accept', input: { target: { grain: 'record', recordId: seeded.published.id } } },
       resolvePromotionPosture: resolver })
@@ -230,7 +228,7 @@ describe('416 promotion doors share receipt authority', () => {
     const lease = acquireWriterLease(knowledgeRoot)
     if (lease.kind !== 'acquired') throw new Error('expected writer lease')
     const commit = vi.fn(() => ({ kind: 'noop' as const, reason: 'captured' }))
-    const port = knowledgeStore.createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir, executionContext: 'local-interactive',
+    const port = knowledgeStore.createLocalKnowledgeStore({ knowledgeRoot, executionContext: 'local-interactive',
       writerLeaseId: lease.leaseId, epoch: lease.epoch, resolvePromotionPosture: bound,
       operations: { commitCurationDelta: commit } })
     await port.commit([{ kind: 'Confirm', origin: 'agent', scope: seeded.draft.scope, citedIds: [seeded.published.id],

@@ -74,7 +74,6 @@ describe('an applied explicit change survives a release that throws (WR-11)', ()
     const config: BundleStoreConfig = {
       knowledgeRoot,
       productKey: 'Release Product',
-      auditBaseDir: agentQaRoot,
       commitArtifacts: 'none',
     }
     const outcome = publishBundle(config, {

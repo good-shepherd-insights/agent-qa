@@ -263,12 +263,10 @@ describe('D-06 an entity title is never retrievable as a learned fact', () => {
 
   let root: string
   let knowledgeRoot: string
-  let auditBaseDir: string
 
   beforeEach(() => {
     root = join(tmpdir(), `entity-brief-${randomUUID()}`)
     knowledgeRoot = join(root, 'agent-qa-knowledge')
-    auditBaseDir = join(root, '.agent-qa')
     scaffoldKnowledgeRoot(knowledgeRoot)
     mkdirSync(join(knowledgeRoot, 'policies'), { recursive: true })
     writeFileSync(
@@ -286,7 +284,6 @@ describe('D-06 an entity title is never retrievable as a learned fact', () => {
     return {
       knowledgeRoot,
       productKey: PRODUCT,
-      auditBaseDir,
       commitArtifacts: 'none',
       writerLeaseId: 'entity-index-test',
     }

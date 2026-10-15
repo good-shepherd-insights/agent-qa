@@ -32,7 +32,7 @@ describe('materializePolicy sovereign authored shelf', () => {
   })
   function input(ruleText = 'Dismiss the cookie banner first') {
     return { knowledgeRoot: root, recordId: 'policy-fixture', scope: 'shop', ruleText,
-      auditBaseDir: join(root, 'runtime'), writerAuthority }
+      writerAuthority }
   }
   it.each([
     '<!-- agent-qa:policy policy-fixture -->\nunfinished',

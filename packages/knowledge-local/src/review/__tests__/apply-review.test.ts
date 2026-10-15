@@ -217,7 +217,6 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     return {
       knowledgeRoot,
       productKey: 'Apply Product',
-      auditBaseDir: agentQaRoot,
       commitArtifacts: 'none',
     }
   }
@@ -389,7 +388,7 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     const lease = acquireWriterLease(knowledgeRoot)
     if (lease.kind !== 'acquired') throw new Error('fixture lease unavailable')
     try {
-      const store = knowledgeStore.createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir: agentQaRoot,
+      const store = knowledgeStore.createLocalKnowledgeStore({ knowledgeRoot,
         executionContext: 'local-interactive', writerLeaseId: lease.leaseId, epoch: lease.epoch })
       await store.recordGateReceipt(stampReceiptDigest({ schemaVersion: 1, gate: 3,
         candidateId: recordId, verdict: 'fail', producedAtOrdinal: 100,

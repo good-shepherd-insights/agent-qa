@@ -4,10 +4,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { serializeProcedureBody, type BundleDraft, type Delta } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
@@ -33,14 +29,12 @@ import {
 describe('D-02 procedure-kind commit mint contract', () => {
   let root: string
   let knowledgeRoot: string
-  let auditBaseDir: string
   let epoch: number
   let leaseId: string
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'knowledge-procedure-commit-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
-    auditBaseDir = join(root, '.agent-qa')
     mkdirSync(knowledgeRoot, { recursive: true })
     const lease = acquireWriterLease(knowledgeRoot)
     if (lease.kind !== 'acquired') throw new Error('expected a fresh writer lease')
@@ -173,11 +167,9 @@ describe('D-02 procedure-kind commit mint contract', () => {
     }
     const dependencies: CommitCurationDependencies = {
       knowledgeRoot,
-      auditBaseDir,
       epoch,
       profile: { mode: 'drain-to-active' },
       drainState: { supersedesSeenByAnchorKey: new Map() },
-      policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
     }
     return commitCurationDelta(dependencies, job, checkpoint)
   }

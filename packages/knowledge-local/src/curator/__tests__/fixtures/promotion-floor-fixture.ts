@@ -1,12 +1,10 @@
 // 2026-09-06, 416 D-06: shared pristine v51 acceptance builders.
 import { stampReceiptDigest, type Gate1Receipt, type GateVerdict, type Anchor, type BundleDraft, type DistilledObservation, type ExecutionContext, type ResolvedPromotionGatePosture } from '@vostride/agent-qa-schema'
-import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import { expect, vi } from 'vitest'
 import { createLocalKnowledgeStore, drainQueue, enumerateBundleDirs, loadBundle, type BundleStoreConfig, type CuratorAuthor, type DrainOptions, type LoadedBundle } from '../../../index.js'
 import { publishBundle } from '../../../bundle-publish.test-helper.js'
 import { enqueueArtifactFreeCandidateProjection, type ArtifactFreeCandidateProjectionInput } from '../../../__tests__/fixtures/curation-candidate-fixture.js'
 import { acquireWriterLease } from '../../../lease/writer-lease.js'
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 const NO_INDEX_MAINTENANCE = { indexAbsent: false, pendingEmbeddings: 0, renderingEpochStale: false, vectorReconciliationOutstanding: false } as const
 export function resolvedPromotionPosture(
   overrides: Partial<ResolvedPromotionGatePosture> = {},
@@ -37,7 +35,7 @@ export function completeGate1Receipt(
     samples: { k: 1, seeds: [1], seedHonored: true, modelCalls: 0 }, crossCheck: 'held',
   })
 }
-export function createPromotionFloorFixture({ knowledgeRoot, auditBaseDir }: { knowledgeRoot: string; auditBaseDir: string }) {
+export function createPromotionFloorFixture({ knowledgeRoot }: { knowledgeRoot: string }) {
   function selectorProjection(
     seed: string,
     overrides: Partial<ArtifactFreeCandidateProjectionInput> = {},
@@ -126,10 +124,8 @@ export function createPromotionFloorFixture({ knowledgeRoot, auditBaseDir }: { k
     }))
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext,
-      policy,
       operations: {
         readRebuildRequest: () => ({ present: false }),
         readIndexMaintenanceState: () => NO_INDEX_MAINTENANCE,
@@ -188,7 +184,6 @@ export function createPromotionFloorFixture({ knowledgeRoot, auditBaseDir }: { k
     const published = publishBundle({
       knowledgeRoot,
       productKey: 'storefront',
-      auditBaseDir,
       commitArtifacts: 'none',
       writerLeaseId: 'promotion-floor-fixture',
     }, {
@@ -229,10 +224,8 @@ export function createPromotionFloorFixture({ knowledgeRoot, auditBaseDir }: { k
     return {
       knowledgeRoot,
       productKey: 'storefront',
-      auditBaseDir,
       commitArtifacts: 'none',
       writerLeaseId: 'promotion-floor-fixture',
-      policy,
     }
   }
 
@@ -241,7 +234,6 @@ export function createPromotionFloorFixture({ knowledgeRoot, auditBaseDir }: { k
     if (lease.kind !== 'acquired') throw new Error('expected promotion fixture writer lease')
     return createLocalKnowledgeStore({
       knowledgeRoot,
-      auditBaseDir,
       executionContext: 'local-interactive',
       epoch: lease.epoch,
       writerLeaseId: lease.leaseId,
@@ -274,9 +266,9 @@ export function createPromotionFloorFixture({ knowledgeRoot, auditBaseDir }: { k
   function canaryStore(sourceBuildOrdinal: number, sourceRunId: string) {
     const lease = acquireWriterLease(knowledgeRoot)
     if (lease.kind !== 'acquired') throw new Error('expected canary fixture writer lease')
-    return createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir,
+    return createLocalKnowledgeStore({ knowledgeRoot,
       executionContext: 'local-interactive', epoch: lease.epoch, writerLeaseId: lease.leaseId,
-      sourceBuildOrdinal, sourceRunId, policy })
+      sourceBuildOrdinal, sourceRunId })
   }
   return { selectorProjection, cautionProjection, enqueue, drainWithoutModel, onlyBundle,
     publishHeldCandidate, publishHeldCaution, outcomeAppendConfig, promotionStore, canaryStore }

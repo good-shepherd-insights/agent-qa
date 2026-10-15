@@ -25,11 +25,10 @@ describe('416 promotion receipt writer contract', () => {
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), '416-promotion-idempotency-'))
     const knowledgeRoot = join(root, 'knowledge')
-    const auditBaseDir = join(root, 'audit')
-    fixture = createPromotionFloorFixture({ knowledgeRoot, auditBaseDir })
+    fixture = createPromotionFloorFixture({ knowledgeRoot })
     const lease = acquireWriterLease(knowledgeRoot)
     if (lease.kind !== 'acquired') throw new Error('expected writer lease')
-    config = { knowledgeRoot, auditBaseDir, executionContext: 'local-interactive',
+    config = { knowledgeRoot, executionContext: 'local-interactive',
       epoch: lease.epoch, writerLeaseId: lease.leaseId, sourceBuildOrdinal: 46 }
   })
   afterEach(() => rmSync(root, { recursive: true, force: true }))

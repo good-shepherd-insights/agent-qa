@@ -38,20 +38,18 @@ function treeBytes(dir: string): Map<string, string> {
 describe('423-17 mark evidence planning half (D-16)', () => {
   let root: string
   let knowledgeRoot: string
-  let auditBaseDir: string
   const runId = asRunId('marked-run')
   const markId = 'mark_0123456789ab'
   const scope = { tier: 'product', key: 'storefront' } as const
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'mark-evidence-plan-'))
     knowledgeRoot = join(root, 'knowledge')
-    auditBaseDir = join(root, '.agent-qa')
     scaffoldKnowledgeRoot(knowledgeRoot)
   })
   afterEach(() => rmSync(root, { recursive: true, force: true }))
 
   function plant(name: string, source?: { runId: string; curationJobId: string }) {
-    const result = publishBundle({ knowledgeRoot, auditBaseDir, productKey: 'storefront', commitArtifacts: 'none' }, {
+    const result = publishBundle({ knowledgeRoot, productKey: 'storefront', commitArtifacts: 'none' }, {
       draft: makeBundleDraftFixture({ scope, summary: name }),
       discriminant: { kind: 'fact', subtype: 'selector', elementRef: { role: 'button', name } },
       originClass: 'agent-verified', createdAtOrdinal: 10, screenStates: [], initialEvents: [],
@@ -76,7 +74,7 @@ describe('423-17 mark evidence planning half (D-16)', () => {
           subActions: [], verifierVerdict: { pass: true, reasoning: 'Done' } }] }] }
   }
   function append(recordId: string, held: { leaseId: string; epoch: number }, event: BundleOutcomeEvent) {
-    const result = appendOutcomeEvent({ knowledgeRoot, auditBaseDir, productKey: 'storefront',
+    const result = appendOutcomeEvent({ knowledgeRoot, productKey: 'storefront',
       commitArtifacts: 'none', writerLeaseId: held.leaseId, writerEpoch: held.epoch }, asRecordId(recordId), event)
     expect(result.kind).toBe('appended')
   }
@@ -104,7 +102,7 @@ describe('423-17 mark evidence planning half (D-16)', () => {
     append(observed.id, held, helpful(observed.id))
     append(receipted.id, held, helpful(receipted.id, { evidenceToken: asEvidenceToken('opaque'),
       observationId: 'opaque-hit' }))
-    expect(appendGateReceipt({ knowledgeRoot, auditBaseDir, productKey: 'storefront', commitArtifacts: 'none',
+    expect(appendGateReceipt({ knowledgeRoot, productKey: 'storefront', commitArtifacts: 'none',
       writerLeaseId: held.leaseId, writerEpoch: held.epoch }, receipted.id, stampReceiptDigest({ schemaVersion: 1,
       gate: 2, candidateId: receipted.id, verdict: 'pass', benefit: 'exercised-benefited', stateValidity: 'valid',
       producedAtOrdinal: 12, producedBy: { opId: 'canary.record' }, corpusVersion: { corpusDigest: 'c'.repeat(64) },
@@ -133,7 +131,7 @@ describe('423-17 mark evidence planning half (D-16)', () => {
 
     const predicted = api.projectMarkEvidenceOutcome(plan, { includeAlreadyAppended: false })
     expect(predicted).toMatchObject({ confirmed: 0, overturned: 4, skipped: [] })
-    const writerInput: AppendMarkEvidenceInput = { ...planInput, auditBaseDir, executionContext: 'local-interactive',
+    const writerInput: AppendMarkEvidenceInput = { ...planInput, executionContext: 'local-interactive',
       lease: lease(), mark: { markId, runId, kind: 'false-pass' } }
     expect(await appendMarkEvidence(writerInput)).toEqual(predicted)
     for (const target of plan.targets) {
@@ -166,7 +164,7 @@ describe('423-17 mark evidence planning half (D-16)', () => {
       ] }])
     const predicted = api.projectMarkEvidenceOutcome(plan, { includeAlreadyAppended: false })
     expect(predicted).toEqual({ confirmed: 1, overturned: 2, skipped: [] })
-    expect(await appendMarkEvidence({ ...planInput, auditBaseDir, executionContext: 'local-interactive',
+    expect(await appendMarkEvidence({ ...planInput, executionContext: 'local-interactive',
       lease: held, mark: { markId, runId, kind: 'false-pass' } })).toEqual(predicted)
     expect(markEvents(a.dir).map(event => event.type)).toEqual(['confirmed', 'overturned', 'overturned'])
 
@@ -193,7 +191,7 @@ describe('423-17 mark evidence planning half (D-16)', () => {
     const predicted = api.projectMarkEvidenceOutcome(plan, { includeAlreadyAppended: false })
     expect(predicted).toEqual({ confirmed: 1, overturned: 0, skipped: [
       { recordId: a.id, reason: 'bundle-unreadable' }, { recordId: 'missing-record', reason: 'bundle-unreadable' }] })
-    expect(await appendMarkEvidence({ ...planInput, auditBaseDir, executionContext: 'local-interactive',
+    expect(await appendMarkEvidence({ ...planInput, executionContext: 'local-interactive',
       lease: lease(), mark: { markId, runId, kind: 'false-fail' } })).toEqual(predicted)
 
     const incomplete = api.planMarkEvidence({ knowledgeRoot, mark: { runId, kind: 'false-pass' }, servedRecordIds: [b.id] })
@@ -213,7 +211,7 @@ describe('423-17 mark evidence planning half (D-16)', () => {
       handoff: handoff() }
     const fresh = api.planMarkEvidence(planInput)
     expect(fresh.targets.map(target => target.recordId)).toEqual([a.id, b.id])
-    const writerInput: AppendMarkEvidenceInput = { ...planInput, auditBaseDir, executionContext: 'local-interactive',
+    const writerInput: AppendMarkEvidenceInput = { ...planInput, executionContext: 'local-interactive',
       lease: held, mark: { markId, runId, kind: 'false-pass' } }
     expect(await appendMarkEvidence(writerInput)).toEqual(api.projectMarkEvidenceOutcome(fresh, {
       includeAlreadyAppended: false }))

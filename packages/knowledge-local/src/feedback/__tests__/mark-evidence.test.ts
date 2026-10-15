@@ -16,19 +16,17 @@ import { appendMarkEvidence, type AppendMarkEvidenceInput } from '../mark-eviden
 describe('mark evidence appends through the production writer', () => {
   let root: string
   let knowledgeRoot: string
-  let auditBaseDir: string
   const runId = asRunId('marked-run')
   const scope = { tier: 'product', key: 'storefront' } as const
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'mark-evidence-'))
     knowledgeRoot = join(root, 'knowledge')
-    auditBaseDir = join(root, '.agent-qa')
     scaffoldKnowledgeRoot(knowledgeRoot)
   })
   afterEach(() => rmSync(root, { recursive: true, force: true }))
 
   function plant(name: string, source?: { runId: string; curationJobId: string }) {
-    const result = publishBundle({ knowledgeRoot, auditBaseDir, productKey: 'storefront', commitArtifacts: 'none' }, {
+    const result = publishBundle({ knowledgeRoot, productKey: 'storefront', commitArtifacts: 'none' }, {
       draft: makeBundleDraftFixture({ scope, summary: name }),
       discriminant: { kind: 'fact', subtype: 'selector', elementRef: { role: 'button', name } },
       originClass: 'agent-verified', createdAtOrdinal: 10, screenStates: [], initialEvents: [],
@@ -41,7 +39,7 @@ describe('mark evidence appends through the production writer', () => {
   function input(ids: string[], kind: AppendMarkEvidenceInput['mark']['kind'] = 'false-fail'): AppendMarkEvidenceInput {
     const lease = acquireWriterLease(knowledgeRoot)
     if (lease.kind !== 'acquired') throw new Error('fixture must hold writer authority')
-    return { knowledgeRoot, auditBaseDir, executionContext: 'local-interactive',
+    return { knowledgeRoot, executionContext: 'local-interactive',
       lease: { leaseId: lease.leaseId, epoch: lease.epoch },
       mark: { markId: 'mark_0123456789ab', runId, kind }, servedRecordIds: ids }
   }
@@ -59,7 +57,7 @@ describe('mark evidence appends through the production writer', () => {
       testId: 'checkout', testIndex: 0, stepIndex: 0, ...overrides })
   }
   function append(recordId: string, value: AppendMarkEvidenceInput, event: BundleOutcomeEvent) {
-    const result = appendOutcomeEvent({ knowledgeRoot, auditBaseDir, productKey: 'storefront',
+    const result = appendOutcomeEvent({ knowledgeRoot, productKey: 'storefront',
       commitArtifacts: 'none', writerLeaseId: value.lease.leaseId, writerEpoch: value.lease.epoch },
     asRecordId(recordId), event)
     expect(result.kind).toBe('appended')
@@ -161,7 +159,7 @@ describe('mark evidence appends through the production writer', () => {
 
   it('overturns a real positive canary Confirm emitted through the knowledge-port bridge', async () => {
     const a = plant('Checkout'); const value = input([a.id], 'false-pass'); value.handoff = handoff()
-    const port = createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir,
+    const port = createLocalKnowledgeStore({ knowledgeRoot,
       executionContext: 'local-interactive', writerLeaseId: value.lease.leaseId, epoch: value.lease.epoch,
       sourceBuildOrdinal: 12, sourceRunId: runId })
     await port.recordCanaryOutcome({ candidateId: a.id, runId, testId: 'checkout', testIndex: 0,
@@ -212,7 +210,7 @@ describe('mark evidence appends through the production writer', () => {
     const a = plant('Checkout'); const value = input([a.id], 'false-pass')
     for (const [receiptRun, observationId] of [[runId, 'opaque-hit'], ['foreign-run', 'opaque-foreign']]) {
       append(a.id, value, helpful(a.id, { evidenceToken: asEvidenceToken(observationId!), observationId }))
-      expect(appendGateReceipt({ knowledgeRoot, auditBaseDir, productKey: 'storefront',
+      expect(appendGateReceipt({ knowledgeRoot, productKey: 'storefront',
         commitArtifacts: 'none', writerLeaseId: value.lease.leaseId, writerEpoch: value.lease.epoch },
       a.id, stampReceiptDigest({ schemaVersion: 1, gate: 2, candidateId: a.id, verdict: 'pass',
         benefit: 'exercised-benefited', stateValidity: 'valid', producedAtOrdinal: 12,

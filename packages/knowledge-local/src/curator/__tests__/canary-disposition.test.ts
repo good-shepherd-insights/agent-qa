@@ -16,10 +16,6 @@ import {
   type CanaryOutcome,
   type DistilledObservation,
 } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -53,7 +49,6 @@ import { rebuildIndex } from '../../index-rebuild.js'
 import { openKnowledgeReader } from '../../index-reader.js'
 import { completeGate1Receipt, resolvedPromotionPosture } from './fixtures/promotion-floor-fixture.js'
 
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 const FACT_ANCHORS = [
   { t: 'el', role: 'button', name: 'Checkout', ordinal: 0 },
   { t: 'page', route: '/checkout' },
@@ -71,11 +66,11 @@ const ELEMENT_OBSERVATION: DistilledObservation = {
 describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
   let root: string
   let knowledgeRoot: string
-  let auditBaseDir: string
+  let agentQaRoot: string
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'knowledge-canary-disposition-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
-    auditBaseDir = join(root, '.agent-qa')
+    agentQaRoot = join(root, '.agent-qa')
     scaffoldKnowledgeRoot(knowledgeRoot)
     const lease = acquireWriterLease(knowledgeRoot)
     if (lease.kind !== 'acquired') throw new Error('expected a fresh writer lease')
@@ -105,10 +100,8 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
     return {
       knowledgeRoot,
       productKey: 'storefront',
-      auditBaseDir,
       commitArtifacts: 'none',
       writerLeaseId: 'canary-disposition-test',
-      policy,
     }
   }
 
@@ -187,12 +180,10 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
   function store() {
     return createLocalKnowledgeStore({
       knowledgeRoot,
-      auditBaseDir,
       executionContext: 'local-interactive',
       sourceBuildOrdinal: 43,
       sourceRunId: 'run-canary-disposition',
       ...portAuthority(),
-      policy,
     })
   }
 
@@ -204,9 +195,9 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
 
   async function drainContradiction() {
     const author = vi.fn<CuratorAuthor>(async () => ({ kind: 'fallback-required', reason: 'no-model' }))
-    const report = await drainQueue({ knowledgeRoot, auditBaseDir,
+    const report = await drainQueue({ knowledgeRoot,
       resolvePromotionPosture: () => resolvedPromotionPosture(),
-      author, executionContext: 'local-interactive', policy })
+      author, executionContext: 'local-interactive' })
     expect(report.failures).toBe(0)
     expect(author).not.toHaveBeenCalled()
     return report
@@ -232,12 +223,12 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
     expect(result.trust.status).not.toBe('deprecated')
     const g2 = readGateReceipts(published.dir, published.id)!.find(line => !isPromotionReceipt(line) && line.gate === 2)!
     expect(g2).toMatchObject({ verdict: 'fail', benefit: 'exercised-harmed' })
-    expect(existsSync(proposalsDir(auditBaseDir))).toBe(false)
+    expect(existsSync(proposalsDir(agentQaRoot))).toBe(false)
     // A replayed harm holds again, still from the receipts, and still files nothing.
     enqueueCanaryOutcome(knowledgeRoot, harm)
     expect((await drainContradiction()).promotions).toContainEqual({ candidateId: published.id,
       promotionHoldReason: 'gate-inconsistent' })
-    expect(existsSync(proposalsDir(auditBaseDir))).toBe(false)
+    expect(existsSync(proposalsDir(agentQaRoot))).toBe(false)
     const gateInput = assemblePromotionGateInput({ knowledgeRoot, bundleDir: published.dir,
       bundle: loaded(published.dir).bundle,
       resolvePromotionPosture: () => resolvedPromotionPosture() })
@@ -251,7 +242,7 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
       stateValidity: 'valid', corpusDigest: 'c'.repeat(64) })
     const report = await drainContradiction()
     expect(report.promotions).toContainEqual({ candidateId: published.id, promotionHoldReason: 'no-confirmed-evidence' })
-    expect(existsSync(proposalsDir(auditBaseDir))).toBe(false)
+    expect(existsSync(proposalsDir(agentQaRoot))).toBe(false)
   })
 
   // 2026-09-30, 432-10 D-05: re-spelled. The held-out contradiction still holds; with no proposal
@@ -269,7 +260,7 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
     const report = await drainContradiction()
     expect(report.promotions).toContainEqual({ candidateId: published.id,
       promotionHoldReason: heldOut ? 'gate-inconsistent' : 'gate-failed' })
-    expect(existsSync(proposalsDir(auditBaseDir))).toBe(false)
+    expect(existsSync(proposalsDir(agentQaRoot))).toBe(false)
     expect(loaded(published.dir).trust.status).toBe('candidate')
   })
 
@@ -299,7 +290,7 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
   it.each([true, false])('SC3 ordered=%s: keeps credited receipt and reports the gated result without throwing', async ordered => {
     const published = seedCandidate()
     const onPromotionOutcome = vi.fn()
-    const port = createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir, policy,
+    const port = createLocalKnowledgeStore({ knowledgeRoot,
       executionContext: 'local-interactive', sourceBuildOrdinal: 43, sourceJobId: 'fixture-job',
       ...portAuthority(), resolvePromotionPosture: () => resolvedPromotionPosture(), onPromotionOutcome })
     await port.recordGateReceipt(completeGate1Receipt(published.id, { producedAtOrdinal: ordered ? 42 : 48 }))
@@ -373,9 +364,9 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
   it('D-22 retains the positive Confirm while a planted replay binding holds promotion', async () => {
     const published = seedCandidate()
     const onPromotionOutcome = vi.fn()
-    const gated = createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir,
+    const gated = createLocalKnowledgeStore({ knowledgeRoot,
       executionContext: 'local-interactive', sourceBuildOrdinal: 43,
-      ...portAuthority(), policy, resolvePromotionPosture: () => resolvedPromotionPosture(), onPromotionOutcome })
+      ...portAuthority(), resolvePromotionPosture: () => resolvedPromotionPosture(), onPromotionOutcome })
     await gated.recordCanaryOutcome(outcome(published.id))
     const result = loaded(published.dir)
     expect(result.bundle.events.filter(event => event.type === 'confirmed')).toHaveLength(1)
@@ -407,7 +398,7 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
     const beforeIndexProjection = vi.fn()
     const terminal = vi.fn()
     await rebuildIndex({ knowledgeRoot })
-    const port = createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir, policy,
+    const port = createLocalKnowledgeStore({ knowledgeRoot,
       executionContext: 'local-interactive', ...portAuthority(),
       canaryAuthorityHooks: { beforeIndexProjection }, onCanaryTailWithinCurrentAuthority: terminal })
     // Supply the existing floor evidence so the actual diagnostic reaches Gate 2.
@@ -523,10 +514,8 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
     })
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive',
-      policy,
     })
     const result = loaded(published.dir)
     const positiveToken = deriveEvidenceToken({
@@ -609,10 +598,8 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
 
     const report = await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author,
       executionContext: 'local-interactive',
-      policy,
       operations: {
         readRebuildRequest: () => ({ present: false }),
         readIndexMaintenanceState: () => ({

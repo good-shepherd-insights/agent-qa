@@ -16,7 +16,7 @@ describe('416 D-03 — persisted gates part byte identity (SC1)', () => {
     const root = mkdtempSync(join(tmpdir(), '416-gates-byte-identity-'))
     try {
       const knowledgeRoot = join(root, 'source')
-      const fixture = createPromotionFloorFixture({ knowledgeRoot, auditBaseDir: join(root, '.agent-qa') })
+      const fixture = createPromotionFloorFixture({ knowledgeRoot })
       const { published } = fixture.publishHeldCandidate('canary-byte-identity')
       const runId = 'run-canary-byte-identity'
       const tuple = { candidateId: published.id, testId: 'checkout', testIndex: 0, stepIndex: 2 }

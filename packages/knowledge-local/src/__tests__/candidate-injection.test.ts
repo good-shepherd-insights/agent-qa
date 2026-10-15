@@ -18,7 +18,7 @@ describe('417 candidate injection read', () => {
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), '417-candidate-injection-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
-    fixture = createPromotionFloorFixture({ knowledgeRoot, auditBaseDir: join(root, '.agent-qa') })
+    fixture = createPromotionFloorFixture({ knowledgeRoot })
   })
   afterEach(() => rmSync(root, { recursive: true, force: true }))
 

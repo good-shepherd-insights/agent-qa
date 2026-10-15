@@ -14,10 +14,6 @@ import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type { CurationAuthorship, Delta } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -38,7 +34,6 @@ import {
   type ArtifactFreeCandidateProjectionInput,
 } from '../../__tests__/fixtures/curation-candidate-fixture.js'
 
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 // 2026-10-02 (quick 261002-tmo): the SIGKILL cells' 30 s bound is measured from the kill to the
 // recovered, consistent store, which is the recovery it states. It used to start before the child
 // was spawned, so it also timed a whole child vitest process booting to the boundary, and the
@@ -293,7 +288,6 @@ const vitestPath = join(packageRoot, 'node_modules', 'vitest', 'vitest.mjs')
 function startSigkillChild(input: {
   point: SigkillPoint
   knowledgeRoot: string
-  auditBaseDir: string
   markerPath: string
 }): { child: ChildProcess; output: () => string } {
   const child = spawn(
@@ -312,7 +306,6 @@ function startSigkillChild(input: {
         AGENT_QA_SIGKILL_CHILD: '1',
         AGENT_QA_SIGKILL_POINT: input.point,
         AGENT_QA_SIGKILL_KNOWLEDGE_ROOT: input.knowledgeRoot,
-        AGENT_QA_SIGKILL_AUDIT_BASE_DIR: input.auditBaseDir,
         AGENT_QA_SIGKILL_MARKER: input.markerPath,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -448,16 +441,13 @@ function assertConsistent(
 
 function options(
   knowledgeRoot: string,
-  auditBaseDir: string,
   author: CuratorAuthor,
   operations?: DrainOperations,
 ): DrainOptions {
   return {
     knowledgeRoot,
-    auditBaseDir,
     author,
     executionContext: 'local-interactive',
-    policy,
     ...(operations === undefined ? {} : { operations }),
   }
 }
@@ -553,7 +543,6 @@ async function proveRealSigkillBoundary(point: RealSigkillPoint): Promise<void> 
 async function provePublishStagingSigkill(): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), 'knowledge-sigkill-publish-'))
   const knowledgeRoot = join(root, 'agent-qa-knowledge')
-  const auditBaseDir = join(root, '.agent-qa')
   const markerPath = join(root, 'child-publish-staged.marker')
   const candidate = enqueue(
     knowledgeRoot,
@@ -565,7 +554,6 @@ async function provePublishStagingSigkill(): Promise<void> {
     running = startSigkillChild({
       point: 'publish-staged',
       knowledgeRoot,
-      auditBaseDir,
       markerPath,
     })
     const marker = await waitForBoundaryMarker(
@@ -602,7 +590,7 @@ async function provePublishStagingSigkill(): Promise<void> {
     expect(marker.stagingBasename).toContain('.staged-epoch-')
 
     const recoveryAuthor = scriptedAuthor()
-    const recovery = await drainQueue(options(knowledgeRoot, auditBaseDir, recoveryAuthor))
+    const recovery = await drainQueue(options(knowledgeRoot, recoveryAuthor))
     expect(recovery).toMatchObject({
       kind: 'drained',
       failures: 0,
@@ -619,7 +607,7 @@ async function provePublishStagingSigkill(): Promise<void> {
     assertIndexMatchesBundle(knowledgeRoot, loaded.bundle)
 
     const beforeSecondRecovery = canonicalStoreSnapshot(knowledgeRoot)
-    await drainQueue(options(knowledgeRoot, auditBaseDir, recoveryAuthor))
+    await drainQueue(options(knowledgeRoot, recoveryAuthor))
     expect(canonicalStoreSnapshot(knowledgeRoot)).toEqual(beforeSecondRecovery)
     expect(recoveryAuthor).not.toHaveBeenCalled()
     expect(Date.now() - killedAt).toBeLessThan(RECOVERY_BOUND_MS)
@@ -632,7 +620,6 @@ async function provePublishStagingSigkill(): Promise<void> {
 async function proveMutableEnrichmentSigkill(): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), 'knowledge-sigkill-mutable-'))
   const knowledgeRoot = join(root, 'agent-qa-knowledge')
-  const auditBaseDir = join(root, '.agent-qa')
   const markerPath = join(root, 'child-mutable-enrichment.marker')
   let running: ReturnType<typeof startSigkillChild> | undefined
 
@@ -646,7 +633,7 @@ async function proveMutableEnrichmentSigkill(): Promise<void> {
       reason: 'no-model',
     }))
     const fallbackReport = await drainQueue(
-      options(knowledgeRoot, auditBaseDir, fallbackAuthor),
+      options(knowledgeRoot, fallbackAuthor),
     )
     expect(fallbackReport).toMatchObject({ committed: 1, failures: 0 })
     expect(fallbackAuthor).toHaveBeenCalledOnce()
@@ -668,7 +655,6 @@ async function proveMutableEnrichmentSigkill(): Promise<void> {
     running = startSigkillChild({
       point: 'mutable-enrichment',
       knowledgeRoot,
-      auditBaseDir,
       markerPath,
     })
     const marker = await waitForBoundaryMarker(
@@ -716,7 +702,7 @@ async function proveMutableEnrichmentSigkill(): Promise<void> {
     expect(existsSync(transactionDir)).toBe(true)
 
     const recoveryAuthor = scriptedAuthor()
-    const recovery = await drainQueue(options(knowledgeRoot, auditBaseDir, recoveryAuthor))
+    const recovery = await drainQueue(options(knowledgeRoot, recoveryAuthor))
     expect(recovery).toMatchObject({
       kind: 'drained',
       failures: 0,
@@ -756,7 +742,7 @@ async function proveMutableEnrichmentSigkill(): Promise<void> {
     assertIndexMatchesBundle(knowledgeRoot, enriched.bundle)
 
     const beforeSecondRecovery = canonicalStoreSnapshot(knowledgeRoot)
-    await drainQueue(options(knowledgeRoot, auditBaseDir, recoveryAuthor))
+    await drainQueue(options(knowledgeRoot, recoveryAuthor))
     expect(canonicalStoreSnapshot(knowledgeRoot)).toEqual(beforeSecondRecovery)
     expect(recoveryAuthor).not.toHaveBeenCalled()
     expect(Date.now() - killedAt).toBeLessThan(RECOVERY_BOUND_MS)
@@ -779,7 +765,6 @@ describe('kill-anywhere recovery across memory.md §8.7 lifecycle boundaries (CU
   it.each(matrix)('recovers %s exactly once without post-checkpoint re-authoring', async (point) => {
     const root = mkdtempSync(join(tmpdir(), `knowledge-kill-${point}-`))
     const knowledgeRoot = join(root, 'agent-qa-knowledge')
-    const auditBaseDir = join(root, '.agent-qa')
     const candidate = enqueue(knowledgeRoot, projectionInput(point))
     const author = scriptedAuthor()
     const observed = { value: point === 'after-emit-before-claim' }
@@ -789,7 +774,7 @@ describe('kill-anywhere recovery across memory.md §8.7 lifecycle boundaries (CU
         const controller = new AbortController()
         controller.abort()
         const first = await drainQueue({
-          ...options(knowledgeRoot, auditBaseDir, author),
+          ...options(knowledgeRoot, author),
           signal: controller.signal,
         })
         expect(first.kind).toBe('aborted')
@@ -798,7 +783,6 @@ describe('kill-anywhere recovery across memory.md §8.7 lifecycle boundaries (CU
           drainQueue(
             options(
               knowledgeRoot,
-              auditBaseDir,
               author,
               operationsForFault(point, knowledgeRoot, observed),
             ),
@@ -808,7 +792,6 @@ describe('kill-anywhere recovery across memory.md §8.7 lifecycle boundaries (CU
         const first = await drainQueue(
           options(
             knowledgeRoot,
-            auditBaseDir,
             author,
             operationsForFault(point, knowledgeRoot, observed),
           ),
@@ -825,12 +808,12 @@ describe('kill-anywhere recovery across memory.md §8.7 lifecycle boundaries (CU
         expect(callsAtRecoveryStart).toBe(1)
       }
 
-      await drainQueue(options(knowledgeRoot, auditBaseDir, author))
+      await drainQueue(options(knowledgeRoot, author))
       const consistent = assertConsistent(knowledgeRoot, candidate.candidateId)
       expect(author).toHaveBeenCalledTimes(1)
 
       const beforeSecondRecovery = treeSnapshot(consistent.bundleTree)
-      await drainQueue(options(knowledgeRoot, auditBaseDir, author))
+      await drainQueue(options(knowledgeRoot, author))
       expect(treeSnapshot(consistent.bundleTree)).toEqual(beforeSecondRecovery)
       expect(enumerateBundleDirs(knowledgeRoot).map(({ dir }) => dir)).toHaveLength(1)
       expect(author).toHaveBeenCalledTimes(1)
@@ -842,13 +825,11 @@ describe('kill-anywhere recovery across memory.md §8.7 lifecycle boundaries (CU
   it('recovers a real SIGKILL after authored intent in under 30 seconds', async () => {
     const root = mkdtempSync(join(tmpdir(), 'knowledge-sigkill-'))
     const knowledgeRoot = join(root, 'agent-qa-knowledge')
-    const auditBaseDir = join(root, '.agent-qa')
     const markerPath = join(root, 'child-at-intent.marker')
     const candidate = enqueue(knowledgeRoot, projectionInput('sigkill'))
     const running = startSigkillChild({
       point: 'authored-intent',
       knowledgeRoot,
-      auditBaseDir,
       markerPath,
     })
 
@@ -865,7 +846,7 @@ describe('kill-anywhere recovery across memory.md §8.7 lifecycle boundaries (CU
       expireKilledLease(knowledgeRoot, marker.leaseId)
 
       const recoveryAuthor = scriptedAuthor()
-      await drainQueue(options(knowledgeRoot, auditBaseDir, recoveryAuthor))
+      await drainQueue(options(knowledgeRoot, recoveryAuthor))
       assertConsistent(knowledgeRoot, candidate.candidateId)
       expect(recoveryAuthor).not.toHaveBeenCalled()
       expect(Date.now() - killedAt).toBeLessThan(RECOVERY_BOUND_MS)

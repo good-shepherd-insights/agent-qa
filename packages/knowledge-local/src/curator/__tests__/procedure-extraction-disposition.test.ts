@@ -9,10 +9,6 @@ import { join } from 'node:path'
 
 import { serializeProcedureBody } from '@vostride/agent-qa-schema'
 import type { Anchor, Delta, DistilledObservation } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
@@ -37,8 +33,6 @@ import {
   makeProcedureBundleDraftFixture,
   makeProcedureScreenStateSequenceFixture,
 } from '../../__tests__/fixtures/bundle-fixture.js'
-
-const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 
 const OBSERVATION_STEP_KEYS = ['enter-email', 'enter-password', 'submit'] as const
 const OBSERVATION_ELEMENT_KEYS = [
@@ -113,8 +107,6 @@ function makeEvidence(
     distilledObservations: makeObservations(),
     artifactInventory: [],
     candidateDir: join(root, 'claimed', 'candidate'),
-    policy,
-    auditBaseDir: join(root, '.agent-qa'),
     ...overrides,
   }
 }
@@ -469,11 +461,9 @@ describe('procedure extraction commit path — artifact cap & egress backstop (A
     const delta = addDelta()
     const dependencies: CommitCurationDependencies = {
       knowledgeRoot: knowledgeDir,
-      auditBaseDir: join(root, '.agent-qa'),
       epoch: lease.epoch,
       profile: { mode: 'drain-to-active' },
       drainState: { supersedesSeenByAnchorKey: new Map() },
-      policy,
     }
     return commitCurationDelta(dependencies, job, checkpointFor(delta))
   }

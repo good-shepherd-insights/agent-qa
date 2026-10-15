@@ -51,7 +51,7 @@ async function fixture(kind: 'policy' | 'fact' = 'policy') {
   const lease = acquireWriterLease(knowledgeRoot)
   if (lease.kind !== 'acquired') throw new Error('lease unavailable')
   const scope = { tier: 'product' as const, key: 'review' }
-  const store = stores.createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir: agentQaRoot,
+  const store = stores.createLocalKnowledgeStore({ knowledgeRoot,
     executionContext: 'local-interactive', epoch: lease.epoch, writerLeaseId: lease.leaseId })
   const draft = {
     kind, ...(kind === 'fact' ? { subtype: 'navigational' as const } : {}),

@@ -12,10 +12,6 @@ import {
   type CurationAuthorship,
   type Delta,
 } from '@vostride/agent-qa-schema'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -184,16 +180,13 @@ describe('SIGKILL child point selector', () => {
 describe.skipIf(!childMode)('SIGKILL drain child fixture', () => {
   it('blocks at the selected durable production boundary until killed', async () => {
     const knowledgeRoot = requiredEnv('AGENT_QA_SIGKILL_KNOWLEDGE_ROOT')
-    const auditBaseDir = requiredEnv('AGENT_QA_SIGKILL_AUDIT_BASE_DIR')
     const marker = requiredEnv('AGENT_QA_SIGKILL_MARKER')
     const point = parseSigkillPoint(process.env.AGENT_QA_SIGKILL_POINT)
 
     await drainQueue({
       knowledgeRoot,
-      auditBaseDir,
       author: scriptedAuthor(point),
       executionContext: 'local-interactive',
-      policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
       operations: {
         commitCurationDelta: (deps, job, checkpoint) =>
           commitCurationDelta(

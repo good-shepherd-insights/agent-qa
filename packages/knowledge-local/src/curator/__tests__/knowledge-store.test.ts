@@ -57,14 +57,12 @@ const ELEMENT_OBSERVATION: DistilledObservation = {
 describe('KnowledgePort procedure authoring boundary (WR-02/D-02)', () => {
   let root: string
   let knowledgeRoot: string
-  let auditBaseDir: string
   let epoch: number
   let leaseId: string
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'knowledge-store-procedure-boundary-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
-    auditBaseDir = join(root, '.agent-qa')
     const lease = acquireWriterLease(knowledgeRoot)
     if (lease.kind !== 'acquired') throw new Error('expected a fresh writer lease')
     epoch = lease.epoch
@@ -80,7 +78,6 @@ describe('KnowledgePort procedure authoring boundary (WR-02/D-02)', () => {
   ): CreateLocalKnowledgeStoreConfig {
     return {
       knowledgeRoot,
-      auditBaseDir,
       executionContext: 'local-interactive',
       epoch,
       writerLeaseId: leaseId,
@@ -237,14 +234,12 @@ describe('KnowledgePort procedure authoring boundary (WR-02/D-02)', () => {
 describe('KnowledgePort promote deterministic gate (PROM-01/D-17)', () => {
   let root: string
   let knowledgeRoot: string
-  let auditBaseDir: string
   let epoch: number
   let leaseId: string
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'knowledge-store-promote-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
-    auditBaseDir = join(root, '.agent-qa')
     // CR-02: promote() now runs its whole gate-and-write body inside the exact-authority
     // fence, so this fixture has to hold the lease it mutates under rather than name one.
     const lease = acquireWriterLease(knowledgeRoot)
@@ -261,7 +256,6 @@ describe('KnowledgePort promote deterministic gate (PROM-01/D-17)', () => {
     return {
       knowledgeRoot,
       productKey: 'storefront',
-      auditBaseDir,
       commitArtifacts: 'none',
       writerLeaseId: 'knowledge-store-test',
     }
@@ -348,7 +342,6 @@ describe('KnowledgePort promote deterministic gate (PROM-01/D-17)', () => {
   ): CreateLocalKnowledgeStoreConfig {
     return {
       knowledgeRoot,
-      auditBaseDir,
       executionContext: 'local-interactive',
       epoch,
       writerLeaseId: leaseId,

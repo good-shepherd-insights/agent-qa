@@ -42,7 +42,7 @@ it.each([false, true])('commits a real same-kind same-anchor floor replacement b
   const lease = acquireWriterLease(knowledgeRoot)
   if (lease.kind !== 'acquired') throw new Error('fixture lease unavailable')
   try {
-    const store = createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir: agentQaRoot,
+    const store = createLocalKnowledgeStore({ knowledgeRoot,
       executionContext: 'local-interactive', writerLeaseId: lease.leaseId, epoch: lease.epoch,
       sourceBuildOrdinal: 6 })
     await store.commit([{ kind: 'Add', origin: 'user', scope: draft.scope, citedIds: [], bundle: draft }])
@@ -162,7 +162,7 @@ it('applies the same real floor replacement through the direct writer in ci, onc
   const lease = acquireWriterLease(knowledgeRoot)
   if (lease.kind !== 'acquired') throw new Error('fixture lease unavailable')
   try {
-    const store = createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir: agentQaRoot,
+    const store = createLocalKnowledgeStore({ knowledgeRoot,
       executionContext: 'local-interactive', writerLeaseId: lease.leaseId, epoch: lease.epoch,
       sourceBuildOrdinal: 6 })
     await store.commit([{ kind: 'Add', origin: 'user', scope: draft.scope, citedIds: [], bundle: draft }])

@@ -24,7 +24,7 @@ describe('416 D-09 D-11 shared promotion input', () => {
   let fixture: ReturnType<typeof createPromotionFloorFixture>
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), '416-promotion-input-'))
-    fixture = createPromotionFloorFixture({ knowledgeRoot: join(root, 'knowledge'), auditBaseDir: join(root, 'audit') })
+    fixture = createPromotionFloorFixture({ knowledgeRoot: join(root, 'knowledge') })
   })
   afterEach(() => rmSync(root, { recursive: true, force: true }))
   function assemble(bundleDir: string, resolvePromotionPosture?: ResolvePromotionPosture) {

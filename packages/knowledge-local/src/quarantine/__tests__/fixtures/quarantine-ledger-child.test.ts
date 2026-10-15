@@ -76,7 +76,6 @@ function mintIdentityPath(filePath: string): string {
 
 interface ChildContext {
   root: string
-  audit: string
   reportPath: string
   readyPath: string
   goPath: string
@@ -85,7 +84,6 @@ interface ChildContext {
 function readContext(): ChildContext {
   return {
     root: requiredEnv(QUARANTINE_CHILD_ENV.root),
-    audit: requiredEnv(QUARANTINE_CHILD_ENV.audit),
     reportPath: requiredEnv(QUARANTINE_CHILD_ENV.report),
     readyPath: requiredEnv(QUARANTINE_CHILD_ENV.ready),
     goPath: requiredEnv(QUARANTINE_CHILD_ENV.go),
@@ -100,7 +98,6 @@ function readContext(): ChildContext {
 function cliShapedOperations(context: ChildContext): ReturnType<typeof createQuarantineOperations> {
   return createQuarantineOperations({
     resolveKnowledgeRoot: () => context.root,
-    auditBaseDir: context.audit,
     now: steppingClock(1),
     mintIdentityPath,
   })
@@ -214,7 +211,7 @@ async function runUnserializedCycle(context: ChildContext): Promise<Record<strin
   const event = decision === 'renewed'
     ? renewedEvent(CONTESTED, at)
     : enteredEvent(CONTESTED, at, CLI_OWNER)
-  const outcome = appendQuarantineEvents(context.root, [event], { auditBaseDir: context.audit })
+  const outcome = appendQuarantineEvents(context.root, [event])
   const appendedAtMs = Date.now()
 
   return {
@@ -254,16 +251,12 @@ async function runAppendBurst(context: ChildContext): Promise<Record<string, unk
       `the parent's alternation line ${String(index)}`,
       () => committedTestNames().has(`parent-burst-${String(index)}`),
     )
-    appendQuarantineEvents(context.root, [burstEvent('child', index)], {
-      auditBaseDir: context.audit,
-    })
+    appendQuarantineEvents(context.root, [burstEvent('child', index)])
   }
 
   await waitFor('the parent to open the free burst', () => existsSync(resumePath))
   for (let index = rounds; index < rounds + burst; index += 1) {
-    appendQuarantineEvents(context.root, [burstEvent('child', index)], {
-      auditBaseDir: context.audit,
-    })
+    appendQuarantineEvents(context.root, [burstEvent('child', index)])
   }
 
   return { role: 'append-burst', pid: process.pid, failed: false, lines: rounds + burst }

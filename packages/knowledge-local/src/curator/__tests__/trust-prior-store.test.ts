@@ -24,7 +24,7 @@ function fixture() {
   const lease = acquireWriterLease(knowledgeRoot)
   if (lease.kind !== 'acquired') throw new Error('fixture lease refused')
   const config: CreateLocalKnowledgeStoreConfig = {
-    knowledgeRoot, auditBaseDir: join(root, 'audit'), writerLeaseId: lease.leaseId,
+    knowledgeRoot, writerLeaseId: lease.leaseId,
     epoch: lease.epoch, executionContext: 'local-interactive', sourceBuildOrdinal: 43,
   }
   const bundle = makeBundleDraftFixture({ subtype: 'content' })

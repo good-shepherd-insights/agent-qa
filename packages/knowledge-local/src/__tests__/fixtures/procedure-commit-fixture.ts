@@ -27,7 +27,7 @@ export interface CommitFixtureProcedureOptions {
   /** Temp root that holds the `claimed/` staging dir; distinct from `knowledgeRoot`. */
   root: string
   knowledgeRoot: string
-  auditBaseDir: string
+  auditBaseDir?: string
   draft?: BundleDraft
   sourceRunId?: string
   buildOrdinal?: number

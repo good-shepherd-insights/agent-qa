@@ -19,7 +19,7 @@ it('materializes a production Add policy as a distinct replay-stable reference u
   const lease = acquireWriterLease(knowledgeRoot)
   if (lease.kind !== 'acquired') throw new Error('lease unavailable')
   try {
-    const store = createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir: agentQaRoot,
+    const store = createLocalKnowledgeStore({ knowledgeRoot,
       executionContext: 'local-interactive', epoch: lease.epoch, writerLeaseId: lease.leaseId })
     const scope = { tier: 'product' as const, key: 'review' }
     await store.commit([{ kind: 'Add', origin: 'user', scope, citedIds: [], bundle: {
