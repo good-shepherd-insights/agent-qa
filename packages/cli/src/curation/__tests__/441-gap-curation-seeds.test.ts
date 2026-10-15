@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 
 import {
   curationCandidatePayloadSchema,
@@ -148,10 +148,12 @@ function queuedPayloads(knowledgeRoot: string, report: EmitReport): CurationCand
   })
 }
 
-function filesUnder(dir: string): string[] {
+// memory/index is the gitignored derived index, not committed knowledge (D-06, D-27).
+function committedFilesUnder(dir: string): string[] {
   return readdirSync(dir, { recursive: true, withFileTypes: true })
     .filter((entry) => entry.isFile())
     .map((entry) => join(entry.parentPath, entry.name))
+    .filter((file) => !relative(dir, file).startsWith(join('memory', 'index')))
 }
 
 describe('C441-GAP-CURATION', () => {
@@ -210,7 +212,7 @@ describe('C441-GAP-CURATION', () => {
         const facts = readdirSync(bundlesDir).filter((name) => name.startsWith('fact-'))
         expect(facts).toHaveLength(1)
         expect(readFileSync(join(bundlesDir, facts[0]!, 'record.md'), 'utf8')).toContain(MARKER)
-        const leaked = filesUnder(knowledgeRoot).filter((file) =>
+        const leaked = committedFilesUnder(knowledgeRoot).filter((file) =>
           file.includes(DECLARED) || readFileSync(file, 'utf8').includes(DECLARED))
         expect(leaked).toEqual([])
       } finally {

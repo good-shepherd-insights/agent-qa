@@ -124,6 +124,49 @@ function stepArtifactDescriptors(step: StepEvidence): CurationArtifactDescriptor
   })
 }
 
+// 2026-10-15 (441-64, GAP-D4): only an anchor's text member is masked; `flow.name` is a test id.
+function maskedAnchor(anchor: Anchor, mask: MaskFn | undefined): Anchor {
+  switch (anchor.t) {
+    case 'page':
+      return { ...anchor, route: maskedProse(anchor.route, mask) }
+    case 'el':
+      return { ...anchor, name: maskedProse(anchor.name, mask) }
+    case 'selector':
+      return { ...anchor, literal: maskedProse(anchor.literal, mask) }
+    case 'error':
+      return { ...anchor, message: maskedProse(anchor.message, mask) }
+    case 'flow':
+    case 'platform':
+      return anchor
+  }
+}
+
+function maskedObservation(
+  observation: DistilledObservation,
+  mask: MaskFn | undefined,
+): DistilledObservation {
+  const { flow, surface, element, locator, error } = observation
+  return {
+    ...observation,
+    step: { ...observation.step, naturalKey: maskedProse(observation.step.naturalKey, mask) },
+    ...(flow?.precedes === undefined
+      ? {}
+      : { flow: { ...flow, precedes: maskedProse(flow.precedes, mask) } }),
+    ...(surface === undefined
+      ? {}
+      : { surface: { ...surface, naturalKey: maskedProse(surface.naturalKey, mask) } }),
+    ...(element === undefined
+      ? {}
+      : { element: { naturalKey: maskedProse(element.naturalKey, mask) } }),
+    ...(locator === undefined
+      ? {}
+      : { locator: { selector: maskedProse(locator.selector, mask) } }),
+    ...(error === undefined
+      ? {}
+      : { error: { ...error, naturalKey: maskedProse(error.naturalKey, mask) } }),
+  }
+}
+
 function commonFields(
   handoff: CompletedRunHandoff,
   input: {
@@ -137,7 +180,9 @@ function commonFields(
     attributingObservationId: string
     artifactDescriptors: CurationArtifactDescriptor[]
   },
+  mask: MaskFn | undefined,
 ): CurationCandidateProjection {
+  const anchors = uniqueAnchors(input.anchors.map((anchor) => maskedAnchor(anchor, mask)))
   return {
     sourceRunId: handoff.runId,
     scope: handoff.scope,
@@ -148,13 +193,14 @@ function commonFields(
     ...(input.rootCauseClass === undefined
       ? {}
       : { rootCauseClass: input.rootCauseClass }),
-    anchors: input.anchors,
+    anchors,
     summarySeed: input.summarySeed,
     bodySeed: input.bodySeed,
-    distilledObservations: input.observations,
+    distilledObservations: input.observations.map((observation) =>
+      maskedObservation(observation, mask)),
     evidenceToken: deriveEvidenceToken({
       attributingObservationId: input.attributingObservationId,
-      anchor: input.anchors[0]!,
+      anchor: anchors[0]!,
       buildOrdinal: handoff.buildOrdinal,
     }),
     attributingObservationId: input.attributingObservationId,
@@ -179,6 +225,7 @@ function projectFact(
   handoff: CompletedRunHandoff,
   test: PerTestOutcome,
   step: StepEvidence,
+  mask: MaskFn | undefined,
 ): CurationCandidateProjection | undefined {
   if (!step.verifierVerdict.pass) return undefined
   const resolved = resolvedElementEvidence(step)
@@ -241,19 +288,20 @@ function projectFact(
       kind: 'fact',
       subtype: classification.subtype,
       anchors,
-      summarySeed,
-      bodySeed,
+      summarySeed: maskedProse(summarySeed, mask),
+      bodySeed: maskedProse(bodySeed, mask),
       observations: [observation],
       attributingObservationId: id,
       artifactDescriptors: stepArtifactDescriptors(step),
     },
+    mask,
   )
 }
 
-function measurementSeeds(step: StepEvidence, mask: MaskFn | undefined): MeasurementSeed[] {
+function measurementSeeds(step: StepEvidence): MeasurementSeed[] {
   const reported = step.reportedValue === undefined
     ? []
-    : [{ metric: 'reported-value', value: maskedProse(step.reportedValue.value, mask) }]
+    : [{ metric: 'reported-value', value: step.reportedValue.value }]
   const asserted =
     step.assertOutcome === undefined || !step.assertOutcome.passed
       ? []
@@ -262,7 +310,7 @@ function measurementSeeds(step: StepEvidence, mask: MaskFn | undefined): Measure
             metric: `assert-value:${step.assertOutcome.source}`,
             value: step.assertOutcome.actual === null
               ? 'null'
-              : maskedProse(step.assertOutcome.actual ?? 'undefined', mask),
+              : step.assertOutcome.actual ?? 'undefined',
           },
         ]
   return [...reported, ...asserted]
@@ -282,7 +330,7 @@ function projectMeasurements(
   const platform = firstSubAction.stateBefore.platform
   const id = observationId(handoff, test.testIndex, step.stepIndex)
 
-  return measurementSeeds(step, mask).map((measurement) => {
+  return measurementSeeds(step).map((measurement) => {
     const metricAnchor = {
       t: 'flow' as const,
       name: `measurement:${measurement.metric}`,
@@ -309,12 +357,13 @@ function projectMeasurements(
         kind: 'fact',
         subtype: 'measurement',
         anchors,
-        summarySeed: `${measurement.metric} measured as ${measurement.value}`,
-        bodySeed: `Verified ${measurement.metric} value: ${measurement.value}.`,
+        summarySeed: maskedProse(`${measurement.metric} measured as ${measurement.value}`, mask),
+        bodySeed: maskedProse(`Verified ${measurement.metric} value: ${measurement.value}.`, mask),
         observations: [observation],
         attributingObservationId: id,
         artifactDescriptors: stepArtifactDescriptors(step),
       },
+      mask,
     )
   })
 }
@@ -328,6 +377,7 @@ function isLearnableCaution(
 function projectCaution(
   handoff: CompletedRunHandoff,
   test: PerTestOutcome,
+  mask: MaskFn | undefined,
 ): CurationCandidateProjection | undefined {
   const rootCause = test.rootCause
   if (rootCause === undefined || !isLearnableCaution(rootCause.class)) return undefined
@@ -364,8 +414,8 @@ function projectCaution(
       kind: 'caution',
       rootCauseClass: rootCause.class,
       anchors,
-      summarySeed: `${rootCause.class} caution for ${test.testId}`,
-      bodySeed: `${rootCause.class}: ${rootCause.evidence.rationale}`,
+      summarySeed: maskedProse(`${rootCause.class} caution for ${test.testId}`, mask),
+      bodySeed: maskedProse(`${rootCause.class}: ${rootCause.evidence.rationale}`, mask),
       observations: [observation],
       attributingObservationId: id,
       artifactDescriptors: artifactDescriptorsForRefs(
@@ -373,6 +423,7 @@ function projectCaution(
         stepIndex,
       ),
     },
+    mask,
   )
 }
 
@@ -739,14 +790,14 @@ function projectProcedureTarget(
     const previous = test.steps[position - 1]
     return {
       schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
-      step: { naturalKey: maskedProse(step.stepText, mask), ordinal: step.stepIndex },
+      step: { naturalKey: step.stepText, ordinal: step.stepIndex },
       ...(stepPlatform === undefined
         ? {}
         : { platform: observationPlatform(stepPlatform) }),
       test: { id: test.testId },
       flow: {
         name: flowName,
-        ...(previous === undefined ? {} : { precedes: maskedProse(previous.stepText, mask) }),
+        ...(previous === undefined ? {} : { precedes: previous.stepText }),
       },
       ...(route === undefined || stepPlatform === undefined
         ? {}
@@ -794,6 +845,7 @@ function projectProcedureTarget(
       ),
       artifactDescriptors,
     },
+    mask,
   )
 }
 
@@ -821,13 +873,13 @@ export function projectCurationCandidates(
   return [
     ...handoff.tests.flatMap((test) => {
       const factsAndMeasurements = test.steps.flatMap((step) => {
-        const fact = projectFact(handoff, test, step)
+        const fact = projectFact(handoff, test, step, mask)
         return [
           ...(fact === undefined ? [] : [fact]),
           ...projectMeasurements(handoff, test, step, mask),
         ]
       })
-      const caution = projectCaution(handoff, test)
+      const caution = projectCaution(handoff, test, mask)
       return [...factsAndMeasurements, ...(caution === undefined ? [] : [caution])]
     }),
     ...projectProcedureTargets(handoff, mask),
