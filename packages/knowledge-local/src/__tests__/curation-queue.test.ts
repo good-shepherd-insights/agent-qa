@@ -765,5 +765,49 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
       expect(report).toMatchObject({ committed: 1, quarantined: 1 })
       expect(listQueuedCandidates(knowledgeRoot)).toEqual([])
     })
+
+    it('a queue row with the retired flags is skipped as malformed', async () => {
+      const fields = {
+        schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
+        sourceRunId: 'run-before-441-50',
+        scope: { tier: 'product', key: 'storefront' },
+        buildOrdinal: 42,
+        executionContext: 'local-interactive',
+        secretFlagged: true,
+        injectionFlagged: true,
+        kind: 'fact',
+        subtype: 'selector',
+        anchors: [{ t: 'el', role: 'button', name: 'Old checkout' }],
+        summarySeed: 'Old checkout button selector',
+        bodySeed: 'The old checkout button was resolved and verified.',
+        distilledObservations: [],
+        evidenceToken: 'evidence-before-441-50',
+        attributingObservationId: 'run-before-441-50:test-0:step-0',
+        artifactInventory: [],
+      }
+      const oldId = sha(Buffer.from(canonicalJson(fields)))
+      const oldDir = queuedCandidateDir(knowledgeRoot, oldId)
+      mkdirSync(oldDir, { recursive: true })
+      writeFileSync(
+        join(oldDir, 'payload.json'),
+        `${canonicalJson({ candidateId: oldId, ...fields, emittedAt: '2026-10-01T00:00:00.000Z' })}\n`,
+        'utf8',
+      )
+      const fresh = enqueueArtifactFreeCandidateProjection({
+        knowledgeRoot,
+        projectionInput: projectionInput(),
+      })
+      expect(fresh.kind).toBe('enqueued')
+      if (fresh.kind !== 'enqueued') throw new Error('expected enqueued projection')
+
+      expect(readCurationCandidatePayload(oldDir)).toEqual({ kind: 'malformed', present: true })
+      expect(readCurationCandidatePayload(queuedCandidateDir(knowledgeRoot, fresh.candidateId)))
+        .toMatchObject({ kind: 'parsed' })
+
+      const report = await drainWithAddAuthor()
+
+      expect(report).toMatchObject({ committed: 1, quarantined: 1 })
+      expect(listQueuedCandidates(knowledgeRoot)).toEqual([])
+    })
   })
 })
