@@ -4470,3 +4470,139 @@ The round's record gate measures agent-qa HEAD after this subsection lands, and 
 round 1's carried record gate. Its legs, counts and verdict are recorded in
 `.planning/phases/441-declared-secret-masking/441-RECORD.md` § Gate and the SHA in § Final SHA,
 rather than quoted here, so no agent-qa commit follows it.
+
+### Gap closure round 3 (441-71 to 441-73), 2026-10-15
+
+This subsection appends to the Phase 441 section and rewrites none of it, including the round 1
+and round 2 subsections above; written by 441-73. **Scope:** GAP3-D1..D6 (owner chose D1;
+orchestrator, owner delegated, D2..D6). The owner chose D1, "Fix it": VERIFICATION truth 11 (the
+committed eval corpus, WR-C02) is closed with code, not an override. The orchestrator scoped D2 to
+D6 from the round 2 gap review (2026-10-15) on the owner's delegation. Every commit below is in
+agent-qa on `version-0.2` and signed. Every new cell is listed in
+`scripts/gate/inputs/regressions.json` with its `441 GAP3-D<n>` origin, after the 1603 rows listed
+at `9f9cb5355`, which are unchanged and in order. No registered cell was re-aimed, and no row was
+edited.
+
+**What each decision changed**
+
+- **GAP3-D1, the committed eval corpus holds a declared value only as its marker (truth 11,
+  WR-C02).** `agent-qa eval seed`, the gold freeze, canary feedback staging and admission, and
+  adversarial admission copied the D-18 fields (`stepText`, `stateBefore`, the planned action and
+  typed text) into `agent-qa-eval/` raw, and every committed digest was computed over that raw
+  text. The new eval export `maskCorpusText(doc, mask, options?)`
+  (`eval/src/extract/corpus-text-mask.ts`) masks the D-18 text of a handoff, cassette or label
+  record with the declared secrets and keeps closed vocabulary (refs, roles, platform, element
+  state flags, each action type's closed members, anchors' `role`, `ordinal` and `ref`) by type
+  path; it renames no key, leaves numbers alone and never walks `rerunOrigin`. The cli masks the
+  handoff before extraction, so every committed hash is over committed text. The writer
+  (`seedCommittedCorpus`) and the four other entry points require the mask and throw before any
+  write without one, and the writer refuses a case any committed string of which
+  `maskCorpusText(doc, mask, { everyLeaf: true })` would still change. 441-71 `0bfbb55b0`,
+  `3e6784e94`, `828cf90b5`, `04920117b`, `94c53c097`, `a522580aa`. Cells: `C441-GAP3-CORPUS`
+  (15: eval 3, cli 3, eval-local 9).
+- **GAP3-D2, a judge calibration commit decides on raw data (CR-H01).** Round 2's commit arm built
+  its identity and drift comparison from the masked preview, so a short declared value such as
+  `0` turned every commit into `input-drift`. `runJudgePanelCalibration` is now the masked wrapper
+  over a module-private `probeJudgePanelCalibration`; the commit arm reads the raw probe and
+  returns `maskJudgeCalibrationText(await publishJudgeCalibration(…), mask)`
+  (`eval-local/src/judge-calibration-composition.ts`). 441-72 `41badbff4`, `b340447c5`. Cells:
+  `C441-GAP3-JUDGE` (2).
+- **GAP3-D3, a template is restored only when its own text holds no declared value (WR-H01).**
+  With `}`, `{{` or `W}` declared, `{{secret:PW}}` was still sent verbatim, because the restore
+  checked the name and the text around the token, not the token's own braces. `keepsTemplate`
+  (`safety/src/egress/masking-middleware.ts`) now also requires that neither one-brace cut of the
+  token (`token.slice(0, -1)`, `token.slice(1)`) changes under the mask; the name check is gone,
+  because the name lies inside both cuts, and the whole-token check stays (441-72's deviation, for
+  the registered `C441-GAP-EGRESS` stub cell). 441-72 `41badbff4`, `b340447c5`. Cells:
+  `C441-GAP3-EGRESS` (3: safety 2, cli 1).
+- **GAP3-D4, the chat header model is masked, and a re-read records no switch (WR-H03, WR-H02).**
+  The session log's header `model` was written and listed raw, and the fold (masked on append) was
+  compared with a raw per-turn read, so every turn after a `/model` whose name held a declared
+  value recorded a spurious `config_reread` change. The header thunk and the `config(sessionId)`
+  thunk in `agent-local/src/composition/compose-local-agent.ts` pass the declared mask;
+  `activeModel` and `chatModelsByName` stay raw. 441-72 `469ae4916`, `9902118ad`. Cells:
+  `C441-GAP3-TRANSCRIPT` (2).
+- **GAP3-D5, the whole-file write path refuses a shown marker (WR-H04).** Chat and MCP
+  `config.hook.add` wrote a `[secret:<name>]` name or file into the hooks file through the files
+  publication, which round 2's field-level `marker_written_back` never saw. The static
+  `ConfigManager.addsShownMarker(current, next)` (`dashboard-server/src/config/config-manager.ts`)
+  counts each distinct marker text; `replaceDocument` checks the revision, then the marker rule,
+  then writes, and the host's `publishFiles` (`cli/src/composition/local-agent-host.ts`) checks
+  every planned file before writing any, answering in the fields arm's words. 441-72 `4aa3d1f04`,
+  `169d65e8c`. Cells: `C441-GAP3-WRITE-BACK` (4: dashboard-server 2, cli 2).
+
+#### Contracts and persisted values
+
+| Contract or persisted value | Disposition | Evidence |
+|---|---|---|
+| `maskCorpusText` | **New export of `@vostride/agent-qa-eval`** (with the type `MaskCorpusTextOptions`). The D-18 text of a handoff, cassette or label record masked with the declared secrets, closed vocabulary kept by type path, with an `everyLeaf` mode for the writer's check. | `C441-GAP3-CORPUS` eval cells (3) |
+| `BuildSeedingPlanInput.mask` | **New optional member.** A rerun's original is re-projected through the mask after its raw digest checks, so rerun retirement works in masked space. | `C441-GAP3-CORPUS a rerun whose original decision text holds a declared value still retires its masked original silver label` |
+| `seedCommittedCorpus`, `freezeGoldenTrajectory`, `admitStagedFeedback`, `refreshAdversarialSplit`, `stageFeedbackEntry` | **`mask` is required** and each throws a `TypeError` before any write without one; `seedCommittedCorpus` probes its mask once before the scaffold. The cli binds it from `createDeclaredSecretMask(configPath)`, so a missing secrets file fails closed with the loader's sentence. | `C441-GAP3-CORPUS seedCommittedCorpus without a mask throws before it writes anything`; `… stageFeedbackEntry without a mask throws before it creates the staging directory` |
+| `SeedingRefusal` | **Gains `{ cassetteId, kind: 'unmasked-declared-value' }`**; nothing of the case (or the label revision) is written. Adversarial admission maps it to the new staging skip reason `'unmasked-declared-value'`. | `C441-GAP3-CORPUS the corpus writer refuses …` (2); `… adversarial admission skips a staged case …` |
+| `ReplaceDocumentOutcome`, `ConfigFilePublishOutcome` | **Each gains `marker_written_back`.** `replaceDocument` answers `{ kind: 'refused', error: 'marker_written_back', message: MARKER_WRITTEN_BACK_SENTENCE }`; `publishFiles` answers `{ kind: 'refused', reason: 'marker_written_back', path, written: [] }`, and chat and MCP show `<file> refused this change as it now stands: <FIELD_WRITE_REFUSAL_WORDS.marker_written_back>, so nothing was written.` A document may keep a marker its file already holds, as often. | `C441-GAP3-WRITE-BACK` (4) |
+| committed corpus text (`agent-qa-eval/` cassettes, label records, corpus entries) | **A declared value and a `{{secret:<name>}}` template are committed in record form, `[secret:<name>]`**, from 441-71 on. A replay of a decision that typed a secret compares a marker gold value. | `C441-GAP3-CORPUS eval seed commits a declared value …`; `… a gold freeze from a mark …` |
+| committed digests (`screenStateHash`, `promptInputHash`) | **Computed over the committed text**, never over the raw screen state. | `C441-GAP3-CORPUS every hash a seeded case commits is computed over the committed text, never over the raw screen state` |
+| cases committed before 441-71 | **Not rewritten (D-20).** A pre-fix case whose text holds a raw template or declared value re-seeds as `write-conflict` (write-once, D-17), with no migration; adversarial variants staged from such a seed are refused as `unmasked-declared-value`. | `C441-GAP3-CORPUS a feedback entry staged unmasked, as a pre-fix stage holds it, is refused at admission and commits nothing raw` |
+| chat session headers (`*.jsonl`) | **Written with the model id masked from 441-72 on.** Older headers are unchanged (D-20); such a session records one masked `config_reread` change on its next turn (GAP3-03, open). | `C441-GAP3-TRANSCRIPT` (2) |
+| the model-egress template restore | **Needs a token text free of every declared value** (both one-brace cuts unchanged by the mask). | `C441-GAP3-EGRESS` (3) |
+
+**441-71's other known effects.** A feedback target whose route or element name holds a declared
+value is `target-unavailable`, because the staging digest comparison stays raw against masked.
+`rerunProvenance.originalEvidenceDigest` (a digest of the whole raw step evidence) is still
+committed in label records; T-441-163 accepts it, because no committed file reproduces that
+evidence. Under a one- or two-character declared value, the writer's `everyLeaf` check refuses
+cases whose configuration text (a provider or model id) contains it (GAP3-02). An adversarial
+`--dry-run` preview can list a case the real admission refuses (GAP3-01).
+
+#### T-441-82
+
+T-441-82 (an undeclared credential committed in a seeded cassette or an admitted probe) was
+accepted in 441-42 on the premise "seeds come from masked run records" (`441-SECURITY.md`'s
+register rows and AR-441-22). That premise was false until 441-71: the D-18 fields a case copies
+were committed raw. Corrected rationale: since 441-71 (GAP3-D1), every case's D-18 text is masked
+with the declared secrets before the case is built, and the committed-corpus writer refuses a case
+that is not. The threat's undeclared-credential half stays accepted under D-01 and D-15. The
+declared half is mitigated by T-441-157 and T-441-159; T-441-163 (the committed
+`originalEvidenceDigest`) is the one accepted residue.
+
+#### Supersedes
+
+- **`seeding-composition.ts`'s composition-law sentence** "Cassette text arrives masked with the
+  run's declared secrets from record time, and nothing else masks it": the D-18 text is masked
+  before the case is built, and the writer requires the mask and refuses an unmasked case.
+- **Round 2's claim that CR-D01 held on every write path** (the round 1 GAP-D7 bullet and round
+  2's `marker_written_back` row): it held on the field path, test and suite saves and
+  `config set`, not on whole-file writes. Since 441-72 it is true on every write path, whole-file
+  writes included.
+- **441-67's claim about braces touching a template** (round 2's GAP2-D2 bullet, "the cut-brace
+  probes over the whole text before and after the token find no declared value across its
+  braces"): a declared value inside the token's own text was not checked; the two in-token cuts now
+  are.
+- **The judge commit arm's use of the masked preview** (round 2's GAP2-D6 bullet, where the
+  preview and `runJudgeCalibrateVerb` return through `maskJudgeCalibrationText`): the commit arm
+  decides on the raw probe and masks only what it returns.
+- **The 434 gate count** (round 2's Supersedes): the gate list holds 263 `C441-` cells, the 237
+  above and 26 `C441-GAP3-` cells (`C441-GAP3-CORPUS` 15, `C441-GAP3-WRITE-BACK` 4,
+  `C441-GAP3-TRANSCRIPT` 2, `C441-GAP3-JUDGE` 2, `C441-GAP3-EGRESS` 3).
+
+#### Deferred
+
+Not fixed in round 3, by the orchestrator's scope (owner delegated), and recorded as open entries in
+`.planning/phases/441-declared-secret-masking/deferred-items.md`:
+
+- IN-H01: the test and suite target pickers still offer masked names, which can never be saved.
+- IN-H02: deleting a model that is itself a judge is still refused when a remaining judge's name
+  holds a declared value.
+- IN-H03: `config set` prompts for a value before refusing a key that holds a marker, and "No value
+  provided." still exits 0.
+- The daemon's stale prose: `cli/src/commands/daemon.ts:203-212` still credits the deleted
+  guardrail-shape redaction.
+- The verifier's R1 (run records' data-bearing object keys), R3 (the dashboard's hook catalog,
+  detail and registry error) and R9 (the live editor's start-up secrets path), each still open.
+- From the round's own plans: GAP3-01 to GAP3-04 and 441-71's known effects above.
+
+**Gate**
+
+The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
+verdict are recorded in `.planning/phases/441-declared-secret-masking/441-RECORD.md` § Gate and the
+SHA in § Final SHA, rather than quoted here, so no agent-qa commit follows it.
