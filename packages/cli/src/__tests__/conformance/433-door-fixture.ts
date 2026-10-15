@@ -21,6 +21,7 @@ import { chromium } from 'playwright-core'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 
 import { composeDashboardDoor, composeRunServicePorts, createDashboardRunDoor } from '../../commands/dashboard.js'
+import { composeRunOwnership } from '../../composition/run-owner-probe.js'
 import {
   POPULATED_RUN_ANCHORED_BUILDS,
   POPULATED_TARGET_NAME,
@@ -222,7 +223,10 @@ export async function openDashboardScene(
   project: PopulatedRunProject,
   options: { readonly dbPath?: string } = {},
 ): Promise<DashboardScene> {
-  const db = new DashboardDatabase({ dbPath: options.dbPath ?? resolveDashboardDbPath({ configDir: project.root }) })
+  const db = new DashboardDatabase({
+    dbPath: options.dbPath ?? resolveDashboardDbPath({ configDir: project.root }),
+    runOwnership: composeRunOwnership(),
+  })
   // The command hands the door its config path, so a trigger's production refusal happens at the
   // door (433-34, G-433-10); the scene composes it the same way.
   const runDoor = await createDashboardRunDoor({ db, configPath: project.configPath })

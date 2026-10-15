@@ -140,6 +140,7 @@ import {
   removeEmbedderWorkerRegistration,
   resetEmbedderCapability,
   resolveEmbedderCapability,
+  resolveProcessIncarnation,
   verifyEmbedderWorkerIncarnation,
   resolvePurgeAffectedSet,
   resolveRollbackAffectedSet,
@@ -413,6 +414,8 @@ export interface LocalDaemonCapabilities {
   readonly probeEmbedderWorkerSocket: typeof probeEmbedderWorkerSocket
   /** CR-05: no surface may signal a registered worker pid without this verdict returning 'match'. */
   readonly verifyEmbedderWorkerIncarnation: typeof verifyEmbedderWorkerIncarnation
+  // 2026-10-16 (442-02, D-20): a run owner's start time, read for the CLI's runs.db ownership.
+  readonly resolveProcessIncarnation: typeof resolveProcessIncarnation
   readonly removeEmbedderWorkerRegistration: (
     agentQaRoot: string,
     expected: OwnedEmbedderWorkerRegistration,
@@ -449,6 +452,7 @@ export const LOCAL_DAEMON_CAPABILITIES: LocalDaemonCapabilities = Object.freeze(
   embedderWorkerSocketPath,
   probeEmbedderWorkerSocket,
   verifyEmbedderWorkerIncarnation,
+  resolveProcessIncarnation,
   removeEmbedderWorkerRegistration,
   resetEmbedderCapability: () => resetEmbedderCapability(DEFAULT_EMBEDDING_PROFILE),
   pinLocalHeadlessExecutionContext: () => {

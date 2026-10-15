@@ -56,6 +56,7 @@ import type { runInProcessCliRun as RunInProcessCliRun } from '../composition/in
 // imports this one's producers — see `cli-run-input-error.ts`'s header.
 import { CliRunInputError } from '../composition/cli-run-input-error.js'
 import { DeclaredSecretsUnavailableError, readDeclaredSecrets } from '../composition/declared-secrets.js'
+import { composeRunOwnership } from '../composition/run-owner-probe.js'
 import {
   buildMemberRunConfig,
   buildRunPorts,
@@ -2465,6 +2466,7 @@ export async function produceSuiteRunMembers(
       const configuredDbPath = dashboardCfg?.dbPath as string | undefined
       const dashboardDb = new DashboardDatabase({
         dbPath: resolveDashboardDbPath({ configDir, configuredDbPath }),
+        runOwnership: composeRunOwnership(),
       })
       activeSuiteDbs.add(dashboardDb)
       return { dashboardDb, logStorage: dashboardDb }
@@ -4833,6 +4835,7 @@ export function createRunCommand(): Command {
             const configuredDbPath = dashboardCfg2?.dbPath as string | undefined
             dashboardDb = new DashboardDatabase({
               dbPath: resolveDashboardDbPath({ configDir, configuredDbPath }),
+              runOwnership: composeRunOwnership(),
             })
             logStorage = dashboardDb
             _crashDb = dashboardDb

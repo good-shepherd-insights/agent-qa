@@ -75,6 +75,7 @@ import {
   createConfigReader,
 } from '../composition/local-agent-host.js'
 import { createDeclaredSecretMask } from '../composition/declared-secrets.js'
+import { composeRunOwnership } from '../composition/run-owner-probe.js'
 import type { ComposeCliLocalAgentInput } from '../composition/local-agent-host.js'
 import {
   applyResolvedAuthToModelConfig,
@@ -1149,6 +1150,7 @@ async function startDashboardBackedServices(
 
     const db = new DashboardDatabase({
       dbPath: resolveDashboardDbPath({ configDir, configuredDbPath }),
+      runOwnership: composeRunOwnership(),
     })
 
     let uiDir: string | undefined
@@ -1453,7 +1455,10 @@ async function startDashboardBackedServices(
  */
 export async function openProjectRunDetailReader(dbPath: string) {
   const { DashboardDatabase, createDashboardRunDetailReader } = await import('@vostride/agent-qa-dashboard')
-  const db = new DashboardDatabase({ dbPath })
+  const db = new DashboardDatabase({
+    dbPath,
+    runOwnership: composeRunOwnership(),
+  })
   return { reader: createDashboardRunDetailReader(db), close: () => db.close() }
 }
 

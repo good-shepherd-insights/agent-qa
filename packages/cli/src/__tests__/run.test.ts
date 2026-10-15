@@ -635,6 +635,7 @@ vi.mock('../commands/baseline-probe.js', () => ({
 }))
 
 import { createRunCommand } from '../commands/run.js'
+import { composeRunOwnership } from '../composition/run-owner-probe.js'
 
 let defaultSecretsFilePath: string | undefined
 let defaultEnvFilePath: string | undefined
@@ -3570,6 +3571,7 @@ describe('run command — DashboardReporter wiring', () => {
     })
     expect(mockDashboardDatabase).toHaveBeenCalledWith({
       dbPath: resolve(process.cwd(), '.agent-qa/runs.db'),
+      runOwnership: composeRunOwnership(),
     })
     // 363-09: dashboard history is written by the Plan-08 bus ingest, not the deleted v1 DashboardReporter.
     expect(mockCreateDashboardRunIngest).toHaveBeenCalled()
@@ -3604,6 +3606,7 @@ describe('run command — DashboardReporter wiring', () => {
     })
     expect(mockDashboardDatabase).toHaveBeenCalledWith({
       dbPath: resolve(process.cwd(), '.agent-qa/dashboard.db'),
+      runOwnership: composeRunOwnership(),
     })
   })
 
@@ -3637,6 +3640,7 @@ describe('run command — DashboardReporter wiring', () => {
     expect(existsSync(join(projectDir, '.agent-qa', 'runs.db'))).toBe(true)
     expect(mockDashboardDatabase).toHaveBeenCalledWith({
       dbPath: join(projectDir, '.agent-qa', 'runs.db'),
+      runOwnership: composeRunOwnership(),
     })
   })
 
