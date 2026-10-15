@@ -68,7 +68,6 @@ import {
   type SeedingPlan,
   type StandaloneLabelRecord,
 } from '@vostride/agent-qa-eval'
-import { type AuditSink } from '@vostride/agent-qa-safety'
 import { slugBranch } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
@@ -334,8 +333,6 @@ export interface StageAdversarialProposalInput {
   agentQaRoot: string
   committedRoot: string
   product: string
-  // 441-32: unread since the eval audit went (D-15); 441-57 deletes it.
-  auditSink?: AuditSink
   mutators?: readonly AdversarialMutator[]
   /** D-04: the per-refresh NOVEL-seed cap; absent resolves to the recorded default. */
   maxSeeds?: number
@@ -454,9 +451,6 @@ export interface RefreshAdversarialSplitInput {
   product: string
   /** The reviewed batch digest the operator named; exact, never "the latest". */
   batchDigest: string
-  // 441-32: unread since the eval audit went (D-15); 441-57 deletes both.
-  auditSink?: AuditSink
-  seedingOutputBaseDir?: string
   dryRun?: boolean
   /** Snapshot host receipts only after validation, under lifecycle ownership, before writes. */
   beforeWrites?: () => void

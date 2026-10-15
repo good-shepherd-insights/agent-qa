@@ -47,8 +47,6 @@ export type ReleaseGateMode =
       mask: RunCassetteReplayInput['mask']
       seed: number
       cassettesRoot: string
-      // 441-32: unread since the replay audit sink went (D-15); 441-57 deletes it.
-      replayOutputBaseDir?: string
       onProgress?: (line: string) => void
     }
   | {

@@ -49,8 +49,6 @@ export interface SweepCassetteReplaysInput {
   seed?: number
   judge?: RunCassetteReplayInput['judge']
   mask: RunCassetteReplayInput['mask']
-  // 441-32: unread since the replay audit sink went (D-15); 441-57 deletes it.
-  replayOutputBaseDir?: string
   recordStore: FsReplayRecordStore
   scoreStore: FsScoreStore
   /** The explicit output root shared by the caller's record and score stores. */

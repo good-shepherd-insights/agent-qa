@@ -28,8 +28,6 @@ export interface WriteBaselinePointerInput {
   pointer: BaselinePointer
   /** Explicit absolute committed-root path — `<configDir>/agent-qa-eval` for the CLI. */
   committedRoot: string
-  // 441-23: unread since the egress check went; 441-57 deletes it.
-  reportOutputBaseDir?: string
 }
 
 export type WriteBaselinePointerOutcome =

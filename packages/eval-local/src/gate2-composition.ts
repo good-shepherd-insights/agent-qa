@@ -23,7 +23,6 @@ import {
 } from '@vostride/agent-qa-eval'
 import { BENEFITS, distilledScreenStateDigest, slugBranch, type Benefit, type CrossCheck } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import { loadCompletedRunHandoff, RUNS_SUBDIR, HANDOFF_FILE } from '@vostride/agent-qa-runner-local'
 import { FsRunArtifactSource } from './artifact-source.js'
 import { loadCassetteBundle } from './cassette-loader.js'
@@ -71,8 +70,6 @@ export interface StageFeedbackEntryInput extends FeedbackStateInput {
   attributedObservationId: string
   benefit: Benefit
   candidateId: string
-  // 441-23: unread since the egress check went; 441-57 deletes it.
-  auditSink?: AuditSink
 }
 export type StageFeedbackEntryResult =
   | { kind: 'staged'; dir: string }
@@ -216,8 +213,6 @@ export interface AdmitStagedFeedbackResult {
 }
 export async function admitStagedFeedback(input: {
   agentQaRoot: string; committedRoot: string; product?: string; dryRun: boolean
-  // 441-32: unread since the eval audit went (D-15); 441-57 deletes both.
-  auditSink?: AuditSink; seedingOutputBaseDir?: string
 }): Promise<AdmitStagedFeedbackResult> {
   const previous = readCommittedCorpusDigest(input)
   if (previous.kind !== 'digest') throw new TypeError('feedback corpus unavailable')

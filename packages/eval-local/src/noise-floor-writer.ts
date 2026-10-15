@@ -8,8 +8,6 @@ import { FsCommittedRootStore, committedNoiseFloorPath } from './committed-root-
 export interface WriteNoiseFloorArtefactInput {
   artefact: NoiseFloorArtefact
   committedRoot: string
-  // 441-23: unread since the egress check went; 441-57 deletes it.
-  reportOutputBaseDir?: string
 }
 
 export type WriteNoiseFloorArtefactOutcome =

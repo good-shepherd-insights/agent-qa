@@ -12,8 +12,6 @@ import { acquireMarkLock } from './mark-lock.js'
 export interface RunLabelCalibrationInput {
   committedRoot: string
   agentQaRoot: string
-  // 441-23: unread since the egress check went; 441-57 deletes it.
-  reportOutputBaseDir?: string
   commit?: boolean
   replace?: boolean
   minGold?: { value: number; source: 'default' | 'cli' }

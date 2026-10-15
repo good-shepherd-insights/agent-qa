@@ -2,8 +2,7 @@
 // D-02 filter vocabulary, typed per-run skips (never batch errors), D-04 DTO-faithful rendering,
 // and D-08 exit semantics. Task 1 pins runExtractVerb; Task 2 pins the commander wiring.
 // Phase 372-06 adds the replay verb: sweep staged cassette bundles through runCassetteReplay with
-// the session's seeded masking factory (D-06), the D-03 judge bag, typed refusal counters, and
-// the deterministic batchKey audit dir (D-07).
+// the session's seeded masking factory (D-06), the D-03 judge bag and typed refusal counters.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { Command } from 'commander'
 import { APICallError } from 'ai'

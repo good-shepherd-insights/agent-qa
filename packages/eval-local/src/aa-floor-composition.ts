@@ -63,8 +63,6 @@ export interface ReplayCorpusOnceInput {
   mask: RunCassetteReplayInput['mask']
   seed: number
   k?: number
-  // 441-32: unread since the replay audit sink went (D-15); 441-57 deletes it.
-  replayOutputBaseDir?: string
   source: string
   /** Digest of the committed snapshot supplying this run, when the caller read one. */
   corpusDigest?: string
@@ -100,8 +98,6 @@ export interface RunNoiseFloorMeasurementInput {
   classifierRepeatability?: ClassifierRepeatability
   explanation?: string
   commit: boolean
-  // 441-32: unread since the eval audit went (D-15); 441-57 deletes it.
-  reportOutputBaseDir?: string
   clock?: () => number
   onProgress?: (line: string) => void
 }

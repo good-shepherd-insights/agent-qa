@@ -93,8 +93,6 @@ export interface RunCassetteReplayInput {
   seed?: number
   /** k-sample escalation seam (D-10). Defaults to the imported neverEscalate — never re-minted. */
   escalationPredicate?: ReplayEscalationPredicate
-  // 441-32: unread since the replay audit sink went (D-15); 441-57 deletes it.
-  replayOutputBaseDir?: string
   /** Optional persistence: when supplied, the outcome is saved after the replay returns (D-12). */
   recordStore?: FsReplayRecordStore
   /**

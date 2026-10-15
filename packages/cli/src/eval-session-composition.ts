@@ -359,11 +359,6 @@ export async function resolveEvalSession(input: {
   }
 }
 
-// 441-32 (D-15): every caller now fills an option nothing reads; 441-57 deletes this with them.
-export function evalAuditDir(configDir: string, verb: string, key: string): string {
-  return resolve(configDir, '.agent-qa', 'eval', 'audit', verb, slugBranch(key))
-}
-
 /**
  * Typed named-input-not-found rejection (D-08): a `--run <slug>` or `--cassette <id>` naming
  * nothing on disk is the ONLY sweep-shape failure — the command layer maps it to exit 1.
@@ -626,10 +621,9 @@ function replayInvocationSpend(
  * The replay verb pipeline (D-01/D-02): sweep every staged cassette bundle (or the ones the
  * filters name), load each through loadCassetteBundle (typed refusals as data), and drive
  * runCassetteReplay — production planner profile, the session's declared mask (441 D-06),
- * D-03 judge bag, D-07 batchKey-scoped audit dir, replay + score stores. After the loop the
+ * D-03 judge bag, replay + score stores. After the loop the
  * judge counters are folded from the PERSISTED ScoreRecords (render from disk, never recompute,
- * D-04). Pitfall 1: runCassetteReplay opens its OWN safety scopes, so
- * no outer runSafetyScope wraps the model legs here. `opts` is the TEST-ONLY captured-boundary
+ * D-04). No runSafetyScope wraps the model legs here. `opts` is the TEST-ONLY captured-boundary
  * stub seam (createModel overrides passthrough) — judge/k/seed are NOT verb parameters, they
  * arrive flag-merged on `session.evalConfig` (D-03).
  */
@@ -1000,7 +994,6 @@ export async function runCalibrateVerb(session: EvalSession, opts: {
   const result = await runLabelCalibration({
     committedRoot: resolve(session.configDir, 'agent-qa-eval'),
     agentQaRoot: resolve(session.configDir, '.agent-qa'),
-    reportOutputBaseDir: evalAuditDir(session.configDir, 'calibrate', 'labels'),
     commit: opts.commit, replace: opts.replace,
     minGold: { value: minGold, source: opts.minGold === undefined ? 'default' : 'cli' },
   })
@@ -1302,7 +1295,7 @@ export function isFeedbackStateNovel(session: EvalSession, input: { agentQaRoot:
   if (digest.kind !== 'digest') throw new TypeError('feedback corpus unavailable')
   return isNovelState({ ...input, committedRoot: resolve(session.configDir, 'agent-qa-eval') })
 }
-export async function runFeedbackStaging(session: EvalSession, input: Omit<StageFeedbackEntryInput, 'committedRoot' | 'auditSink'>) {
+export async function runFeedbackStaging(session: EvalSession, input: Omit<StageFeedbackEntryInput, 'committedRoot'>) {
   const digest = readCanaryCorpusDigest(session)
   if (digest.kind !== 'digest') return digest
   return stageFeedbackEntry({ ...input, committedRoot: resolve(session.configDir, 'agent-qa-eval') })
@@ -1343,8 +1336,7 @@ export async function runSeedFromFeedbackVerb(session: EvalSession, opts: {
     // Read standing DATA before the operator's write. Gate3 has no digest and is never invented stale.
     const receipts = opts.knowledgeRoot !== undefined && opts.readStandingGateReceipts !== undefined
       ? opts.readStandingGateReceipts({ knowledgeRoot: opts.knowledgeRoot }) : []
-    const result = await admitStagedFeedback({ ...opts, committedRoot: resolve(session.configDir, 'agent-qa-eval'),
-      seedingOutputBaseDir: evalAuditDir(session.configDir, 'seed', 'feedback') })
+    const result = await admitStagedFeedback({ ...opts, committedRoot: resolve(session.configDir, 'agent-qa-eval') })
     const selected = opts.dryRun ? result.entries : result.admitted
     const entries = selected.map(entry => ({ cassetteId: entry.extracted.cassette.id, product: entry.product,
       split: 'natural' as const, source: 'canary-feedback' as const, benefit: entry.benefit,
@@ -1496,8 +1488,6 @@ export interface AdversarialVerbOptions {
     author: AdversarialProbeAuthorSelection,
     binding: AdversarialProbeAuthorBinding,
   ) => ProbeAuthorPort
-  // 441-32: unread since the eval audit went (D-15); 441-57 deletes it.
-  auditSink?: import('@vostride/agent-qa-safety-local').JsonlAuditSink
   knowledgeRoot?: string
   readStandingGateReceipts?: typeof LOCAL_CURATION_CAPABILITIES.readStandingGateReceipts
 }
@@ -1573,7 +1563,6 @@ export async function runAdversarialVerb(
       committedRoot,
       product,
       batchDigest: opts.batch,
-      seedingOutputBaseDir: evalAuditDir(session.configDir, 'seed', 'adversarial'),
       beforeWrites: () => {
         receipts = opts.knowledgeRoot !== undefined && opts.readStandingGateReceipts !== undefined
           ? opts.readStandingGateReceipts({ knowledgeRoot: opts.knowledgeRoot }) : []
@@ -1952,7 +1941,7 @@ export async function runFloorVerb(
     : { profile: await resolveReplayProfileDeclaration(session) }
   const judgeResolution = opts.fromMeasured === undefined ? await resolveEvalJudge(session) : {}
   const judge = withJudgeOverrides(judgeResolution.judge, opts.judgeOverrides)
-  const { plannerModelId, matcherVersion, judgeModelId, judgeVersion, profileKey } =
+  const { plannerModelId, matcherVersion, judgeModelId, judgeVersion } =
     await resolveGateProfileIdentity(session, opts.plannerOverrides)
   if (opts.fromMeasured === undefined && replayJudgeRequest(judge)?.judgeModelId !== judgeModelId) {
     throw new EvalJudgeDeclarationError('Floor judge identity changed before execution; re-run eval floor.')
@@ -1975,7 +1964,6 @@ export async function runFloorVerb(
     seeds, repeats, bootstrapSeed, classifierRepeatability,
     explanation: opts.explanation,
     commit: opts.commit === true,
-    reportOutputBaseDir: evalAuditDir(session.configDir, 'floor', profileKey),
     onProgress: line => {
       if (/^floor r\d+ seed=/.test(line)) costLines.push(line)
       process.stderr.write(line + '\n')
@@ -2376,7 +2364,6 @@ export async function runSeedVerb(
         const outcome = writeRunExclusion({
           record,
           committedRoot,
-          seedingOutputBaseDir: evalAuditDir(session.configDir, 'seed', runSlug),
         })
         // A write-conflict is a DATA row on the DTO, never a throw (D-08).
         result.exclusionsWritten.push({
@@ -2462,7 +2449,6 @@ export async function runSeedVerb(
         plan,
         cassettes: extraction.cassettes,
         committedRoot,
-        seedingOutputBaseDir: evalAuditDir(session.configDir, 'seed', runSlug),
       })
       for (const skip of report.softEvidence?.skips ?? []) {
         result.notices.push(`SOFT evidence ${skip.runId}/${skip.testIndex}/${skip.stepIndex}/${skip.attempt}: ${skip.reason}`)
@@ -2560,7 +2546,6 @@ function ensurePartitionManifests(
       const outcome = writePartitionManifest({
         manifest,
         committedRoot,
-        seedingOutputBaseDir: evalAuditDir(session.configDir, 'seed', `partition-${product}`),
       })
       byProduct.set(product, manifest)
       result.partitions.push(partitionRow(manifest, relPath, requireManifestWritten(outcome, product, relPath)))
@@ -2584,7 +2569,6 @@ function ensurePartitionManifests(
     const outcome = writePartitionManifest({
       manifest: reprojected,
       committedRoot,
-      seedingOutputBaseDir: evalAuditDir(session.configDir, 'seed', `partition-${product}`),
     })
     result.partitions.push(
       partitionRow(committed, relPath, requireManifestWritten(outcome, product, relPath)),
@@ -2999,7 +2983,6 @@ export async function runReportVerb(
   // commitEvalReport into the committed root (D-13) — the typed outcome
   // (committed / write-conflict) folds into the DTO as data (D-08).
   const committedRoot = resolve(session.configDir, 'agent-qa-eval')
-  const reportOutputBaseDir = evalAuditDir(session.configDir, 'report', report.batchKey)
   let committed: CommitEvalReportOutcome | undefined
   if (opts.commit === true) {
     committed = commitEvalReport({
@@ -3007,7 +2990,6 @@ export async function runReportVerb(
       decisions,
       markdown: renderEvalReportMarkdown(report),
       committedRoot,
-      reportOutputBaseDir,
     })
   }
 
@@ -3073,10 +3055,7 @@ async function designateReportBaseline(
     }),
     batchKey: report.batchKey,
   })
-  const baseline = writeBaselinePointer({
-    report, pointer, committedRoot,
-    reportOutputBaseDir: evalAuditDir(session.configDir, 'report', report.batchKey),
-  })
+  const baseline = writeBaselinePointer({ report, pointer, committedRoot })
   if (baseline.kind === 'refused') notices.push(renderBaselineComparatorRefusal(baseline.refusal))
   if (seedPolicy === 'none' && (baseline.kind === 'written' || baseline.kind === 'unchanged')) {
     notices.push(
@@ -3352,7 +3331,6 @@ export async function runCensusVerb(
       census,
       markdown: renderCensusMarkdown(census),
       committedRoot,
-      censusOutputBaseDir: evalAuditDir(session.configDir, 'census', census.corpusDigest),
     })
   }
 
@@ -3453,7 +3431,7 @@ export { canonicalJson, markedDecisionCount, previewMarkLabels, resolveMarkLabel
 export type { GoldenTrajectoryTarget, MarkGroundTruthPreview, MarkLabelPreviewItem } from '@vostride/agent-qa-eval'
 export { FsHandoffSource, FsMarkLedger, MARK_INTENT_FILE, MarkLedgerCorruptError, freezeGoldenTrajectory, latestMarkReceiptFor } from '@vostride/agent-qa-eval-local'
 export { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-export { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
+export { runSafetyScope } from '@vostride/agent-qa-safety-local'
 export { createModel } from '@vostride/agent-qa-model'
 export type { AgentQaConfig as FeedbackWordingConfig } from '@vostride/agent-qa-core'
 // 2026-09-11, 422 D-09/D-10: the adversarial probe preflight and the author binding reach the

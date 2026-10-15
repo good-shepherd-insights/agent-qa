@@ -40,7 +40,6 @@ import type {
   SeedingPlan,
   SilverExclusion,
 } from '@vostride/agent-qa-eval'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 
 import {
   COMMITTED_GITIGNORE_TEXT,
@@ -63,9 +62,6 @@ export interface SeedCommittedCorpusInput {
   cassettes: readonly ExtractedCassette[]
   /** Explicit absolute committed-root path — `<configDir>/agent-qa-eval` for the 372 CLI. */
   committedRoot: string
-  // 441-32: unread since the eval audit went (D-15); 441-57 deletes both.
-  seedingOutputBaseDir?: string
-  auditSink?: AuditSink
 }
 
 export type SeedingRefusal =
@@ -272,8 +268,6 @@ export interface WritePartitionManifestInput {
   manifest: PartitionManifest
   /** Explicit absolute committed-root path — `<configDir>/agent-qa-eval` for the CLI. */
   committedRoot: string
-  // 441-32: unread (D-15); 441-57 deletes it.
-  seedingOutputBaseDir?: string
 }
 
 export type WritePartitionManifestOutcome = CommittedDocumentOutcome
@@ -282,8 +276,6 @@ export interface WriteRunExclusionInput {
   /** An already-guarded exclusion record; its product + runSlug name the file. */
   record: RunExclusionRecord
   committedRoot: string
-  // 441-32: unread (D-15); 441-57 deletes it.
-  seedingOutputBaseDir?: string
 }
 
 export type WriteRunExclusionOutcome = CommittedDocumentOutcome

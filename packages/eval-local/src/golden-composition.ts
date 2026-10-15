@@ -9,7 +9,6 @@ import {
   renderCensusMarkdown,
   resolveMarkedDecisions,
 } from '@vostride/agent-qa-eval'
-import type { AuditSink } from '@vostride/agent-qa-safety'
 import type { CompletedRunHandoff, MarkReceipt } from '@vostride/agent-qa-schema'
 
 import { FsRunArtifactSource } from './artifact-source.js'
@@ -31,8 +30,6 @@ export interface FreezeGoldenTrajectoryInput {
   handoff: CompletedRunHandoff
   supersedes?: string
   priorGold?: MarkReceipt['gold']
-  // 441-32: unread since the eval audit went (D-15); 441-57 deletes it.
-  auditSink?: AuditSink
 }
 
 export type FreezeOutcome =

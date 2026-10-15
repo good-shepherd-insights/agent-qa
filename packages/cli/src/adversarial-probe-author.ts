@@ -66,8 +66,6 @@ export interface AdversarialProbeAuthorInput {
   executionContext: RunExecutionContext
   /** The eval session's declared-secret mask, applied to every request this author sends. */
   mask: MaskFn
-  // 441-32: unread since the eval audit went (D-15); 441-57 deletes it.
-  auditDir?: string
   /**
    * Called BEFORE the model is constructed and before anything is sent. A throw refuses the
    * call, and the refusal is the point: this is where a cap or a durable reservation belongs.
