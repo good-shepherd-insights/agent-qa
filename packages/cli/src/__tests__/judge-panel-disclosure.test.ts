@@ -204,16 +204,15 @@ it('does not select calibration for a later config with a different actual repla
 describe('C441-GAP-DISPLAY', () => {
   it('judge calibrate keeps numbers and DTO keys with a one-digit declared value and masks string leaves', async () => {
     const f = await fixture()
-    writeFileSync(join(f.root, 'fixture.secrets'), 'PIN_441=0\nPW_441=pa"ss\n')
+    writeFileSync(join(f.root, 'fixture.secrets'), 'PIN_441=0\nPW_441=pa"ss\nSRC_441=default\n')
     const session = await resolveEvalSession({ configPath: f.session.configPath })
 
     const result = await runJudgeCalibrateVerb(session)
 
     expect(result).toMatchObject({ kind: 'capability-gap', reason: 'no-credential', minN: 20, n: 0,
-      cost: { callBound: 0, usage: { calls: 0 } } })
+      cost: { callBound: 0, usage: { calls: 0 } }, minNSource: '[secret:SRC_441]' })
     expect(Object.keys(result).filter(key => key.includes('[secret:'))).toEqual([])
     const shown = JSON.stringify(result)
-    expect(shown).toContain('[secret:PIN_441]')
     expect(shown).not.toContain('pa"ss')
     expect(shown).not.toContain('pa\\"ss')
   })

@@ -6,7 +6,7 @@ import {
   type JudgeCalibrationMinimum, type JudgeTargetedCalibrationDisclosure, type UsageAggregator,
 } from '@vostride/agent-qa-eval'
 import type { ModelProfile } from '@vostride/agent-qa-model'
-import type { MaskFn } from '@vostride/agent-qa-schema'
+import { maskPayloadStrings, type MaskFn } from '@vostride/agent-qa-schema'
 import { bindJudgePanel, type JudgeBindingInput } from './judge-binding.js'
 import { loadJudgeCalibrationEvidence } from './judge-calibration-evidence-source.js'
 import { createJudgeCalibrationArtifact, publishJudgeCalibration, JudgeCalibrationEvidenceError,
@@ -73,7 +73,8 @@ export async function runJudgePanelCalibration(input: RunJudgePanelCalibrationIn
     if ([input.replayProfile.model, ...input.members.map(member => member.profile.model)]
       .some(id => input.mask(id) !== id)) throw new Error('Unsafe model identity')
     const preview = await executeJudgePanelCalibration(input)
-    return JSON.parse(input.mask(JSON.stringify(preview))) as typeof preview
+    // 441-62 (CR-A02): string leaves only; the DTO's keys and numbers are never masked.
+    return maskPayloadStrings(preview, input.mask)
   } catch {
     throw new Error('Judge calibration probe failed; retry.')
   }

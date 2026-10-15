@@ -174,6 +174,7 @@ import {
   ANALYSIS_FILE,
   admitAnalysisArtifactForRun,
   guardRunAnalysisArtifact,
+  maskPayloadStrings,
   resolveRunVerdicts,
   sha256hex,
 } from '@vostride/agent-qa-schema'
@@ -934,7 +935,8 @@ export async function runJudgeCalibrateVerb(session: EvalSession, opts: {
       mask: session.mask } }
     : { kind: 'capability-gap', reason: preflight.reason, minN: preflight.minN,
       publication: context, commit: opts.commit, replace: opts.replace })
-  return JSON.parse(session.mask(JSON.stringify({ ...result, entries: preflight.entries }))) as typeof result & { entries: typeof preflight.entries }
+  // 441-62 (CR-A02): string leaves only; the DTO's keys and numbers are never masked.
+  return maskPayloadStrings({ ...result, entries: preflight.entries }, session.mask)
 }
 
 export type JudgeCalibrateVerbResult = Awaited<ReturnType<typeof runJudgeCalibrateVerb>>
