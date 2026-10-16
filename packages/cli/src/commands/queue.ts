@@ -150,14 +150,16 @@ export function createQueueCommand(): Command {
 
         let response: Response
         try {
-          response = await fetch(`${serverUrl}/api/runs/${runId}/cancel`, { method: 'POST' })
+          response = await fetch(`${serverUrl}/api/runs/${encodeURIComponent(runId)}/cancel`, {
+            method: 'POST',
+          })
         } catch {
           console.error(pc.red(`Could not connect to dashboard server at ${serverUrl}`))
           console.error(pc.dim('Make sure the dashboard is running: agent-qa dashboard'))
           process.exit(1)
         }
 
-        // 2026-10-16 (442-05, D-09): print the route's sentence; nothing cancelled exits 1.
+        // 2026-10-16 (442-18, IN-02): refused/missing exit 1 on stderr; cancelled/orphan exit 0.
         if (response.ok) {
           const data = await response.json() as { cancelled?: boolean; message?: string }
           if (data.cancelled) {
@@ -171,10 +173,10 @@ export function createQueueCommand(): Command {
           return
         }
         if (response.status === 404) {
-          console.log(pc.red(`Job not found: ${runId}`))
+          console.error(pc.red(`Job not found: ${runId}`))
         } else {
           const data = await response.json().catch(() => ({})) as { error?: string }
-          console.log(pc.red(data.error ?? `Failed to cancel: ${response.statusText}`))
+          console.error(pc.red(data.error ?? `Failed to cancel: ${response.statusText}`))
         }
         process.exit(1)
       } catch (err) {
