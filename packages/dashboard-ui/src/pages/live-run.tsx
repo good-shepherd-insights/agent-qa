@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { getRunFaviconState, type RunFaviconState, useRunStatusFavicon } from '@/hooks/use-run-status-favicon'
-import { cancelRun, classifyRunStreamClose, fetchRun, openRunStream } from '@/lib/api'
+import { ApiError, cancelRun, classifyRunStreamClose, fetchRun, openRunStream } from '@/lib/api'
 import type { RunRow } from '@/lib/api'
 import { rungBannerText } from '@/lib/knowledge-view'
 import { liveRunLayoutOf, liveRunPanelIds } from '@/lib/live-run-layout'
@@ -283,8 +283,10 @@ export default function LiveRunPage() {
     if (id === undefined || isCancelling) return
     setIsCancelling(true)
     cancelRun(id)
-      .then(() => { toast.success('Run cancelled') })
-      .catch(() => { toast.error('Failed to cancel run') })
+      .then((result) => { toast.success(result.message ?? 'Run cancelled') })
+      .catch((error: unknown) => {
+        toast.error(error instanceof ApiError ? error.message : 'Failed to cancel run')
+      })
       .finally(() => { setIsCancelling(false) })
   }, [id, isCancelling])
 

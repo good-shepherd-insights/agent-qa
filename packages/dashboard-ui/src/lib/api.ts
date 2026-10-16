@@ -1037,7 +1037,7 @@ export async function classifyRunStreamClose(
   }
 }
 
-export async function cancelRun(runId: string): Promise<{ cancelled: boolean }> {
+export async function cancelRun(runId: string): Promise<{ cancelled: boolean; message?: string }> {
   return postJson(`/api/runs/${encodeURIComponent(runId)}/cancel`, {})
 }
 

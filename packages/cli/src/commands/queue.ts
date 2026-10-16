@@ -157,19 +157,26 @@ export function createQueueCommand(): Command {
           process.exit(1)
         }
 
+        // 2026-10-16 (442-05, D-09): print the route's sentence; nothing cancelled exits 1.
         if (response.ok) {
-          const data = await response.json() as any
+          const data = await response.json() as { cancelled?: boolean; message?: string }
           if (data.cancelled) {
             console.log(pc.green(`✓ Cancelled job ${runId}`))
+          } else if (typeof data.message === 'string') {
+            console.log(data.message)
           } else {
-            console.log(pc.red(`Failed to cancel: ${data.error ?? 'Unknown error'}`))
+            console.log(pc.red('Failed to cancel: Unknown error'))
+            process.exit(1)
           }
-        } else if (response.status === 404) {
+          return
+        }
+        if (response.status === 404) {
           console.log(pc.red(`Job not found: ${runId}`))
         } else {
-          const data = await response.json().catch(() => ({})) as any
-          console.log(pc.red(`Failed to cancel: ${data.error ?? response.statusText}`))
+          const data = await response.json().catch(() => ({})) as { error?: string }
+          console.log(pc.red(data.error ?? `Failed to cancel: ${response.statusText}`))
         }
+        process.exit(1)
       } catch (err) {
         console.error(pc.red(`Error: ${err instanceof Error ? err.message : String(err)}`))
         process.exit(1)
