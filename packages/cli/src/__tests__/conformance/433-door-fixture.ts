@@ -13,6 +13,7 @@ import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
+import type { FunctionRegistry } from '@vostride/agent-qa-agent'
 import { resolveWorkspacePaths } from '@vostride/agent-qa-core'
 import { DashboardDatabase, resolveDashboardDbPath, startServer } from '@vostride/agent-qa-dashboard'
 import { generateHookId } from '@vostride/agent-qa-ids'
@@ -60,7 +61,7 @@ export interface CliRunOutcome {
 
 export const RUN_ID_TOKEN = /\br_[a-z]+(?:-[a-z]+)+/gu
 
-function refuseWithoutRecordingTools(): void {
+export function refuseWithoutRecordingTools(): void {
   if (process.platform === 'win32') throw new Error('POSIX run lifecycle required; never skip')
   const executable = chromium.executablePath()
   if (!existsSync(executable)) throw new Error('Playwright Chromium missing; never skip')
@@ -211,6 +212,7 @@ export function printedRunIds(text: string): string[] {
 export interface DashboardScene {
   readonly origin: string
   readonly db: DashboardDatabase
+  readonly registry: FunctionRegistry
   readonly settled: Array<{ runId: string; status: string; details: Record<string, unknown> }>
   close(): Promise<void>
 }
@@ -267,6 +269,7 @@ export async function openDashboardScene(
   return {
     origin: boundOrigin,
     db,
+    registry: door.host.registry,
     settled,
     close: async () => {
       if (closed) return
