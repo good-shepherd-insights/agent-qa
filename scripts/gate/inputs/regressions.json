@@ -10896,6 +10896,192 @@
       "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
       "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A78: the product git commit stays deleted",
       "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner.test.ts",
+      "fullName": "C442-INCARNATION-FORMAT a live owner stamped in another start-time format is unknown, never gone",
+      "origin": "442 GAP-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner.test.ts",
+      "fullName": "C442-INCARNATION-FORMAT a live owner with an equal-format different start time is still gone",
+      "origin": "442 GAP-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner.test.ts",
+      "fullName": "C442-INCARNATION-FORMAT a dead owner is gone whatever its stamp's format",
+      "origin": "442 GAP-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/knowledge-local/src/__tests__/embedder-worker.test.ts",
+      "fullName": "C442-INCARNATION-FORMAT C442-INCARNATION-FORMAT an embedder registration stamped in another start-time format is unverifiable, and an equal-format different one is a mismatch",
+      "origin": "442 GAP-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/knowledge-local/src/__tests__/writer-lease.test.ts",
+      "fullName": "C442-INCARNATION-FORMAT C442-INCARNATION-FORMAT a ps host stamps ps-lstart-utc read by /bin/ps in UTC and the C locale, and Linux stamps proc-starttime",
+      "origin": "442 GAP-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/knowledge-local/src/__tests__/writer-lease.test.ts",
+      "fullName": "C442-INCARNATION-FORMAT C442-INCARNATION-FORMAT a mutation-lock row stamped in another start-time format is never reclaimed and its live owner never signalled",
+      "origin": "442 GAP-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/442-cross-environment-owner.e2e.test.ts",
+      "fullName": "C442-CROSS-ENV the composed probe reads a live run stamped under another time zone, locale or ps as alive",
+      "origin": "442 GAP-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/442-cross-environment-owner.e2e.test.ts",
+      "fullName": "C442-CROSS-ENV a dashboard started under another time zone and locale leaves a live run running and byte-equal",
+      "origin": "442 GAP-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/442-cross-environment-owner.e2e.test.ts",
+      "fullName": "C442-CROSS-ENV a cancel from another time zone and locale is refused with 409 and writes nothing",
+      "origin": "442 GAP-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/knowledge-local/src/__tests__/writer-lease.test.ts",
+      "fullName": "C442-CROSS-ENV C442-CROSS-ENV one live process reads as one start-time token from readers with different time zones, locales and a shadowing ps",
+      "origin": "442 GAP-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/knowledge-local/src/__tests__/writer-lease.test.ts",
+      "fullName": "C442-CROSS-ENV C442-CROSS-ENV a mutation-lock holder stamped under another time zone, locale or ps is read as itself, never as a reused pid",
+      "origin": "442 GAP-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/run-owner-probe.test.ts",
+      "fullName": "C442-OWN-START-TIME the CLI retries an unread own start time and keeps the first one it reads",
+      "origin": "442 GAP-D2"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/run-owner-probe.test.ts",
+      "fullName": "C442-OWN-START-TIME the CLI bounds both start-time reads, and a ps that never answers reads as unknown",
+      "origin": "442 GAP-D2"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/442-cancel-ownership.test.ts",
+      "fullName": "C442-OWN-START-TIME the dashboard cancels its own run stamped with no start time",
+      "origin": "442 GAP-D2"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/442-cancel-ownership.test.ts",
+      "fullName": "C442-OWN-START-TIME a dashboard on a reused pid with no start time does not cancel a dead dashboard's run as its own",
+      "origin": "442 GAP-D2"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/database.test.ts",
+      "fullName": "C442-OWN-START-TIME a run stamped before its own start time was read is still finalized as its own",
+      "origin": "442 GAP-D2"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner.test.ts",
+      "fullName": "C442-OWN-START-TIME a start time missing on both sides is never self, even for this pid on this host",
+      "origin": "442 GAP-D2"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/442-cancel-ownership.test.ts",
+      "fullName": "C442-PROBE-THROWS a cancel answers 409, not 500, when the start-time read throws",
+      "origin": "442 GAP-D3"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/442-orphan-startup.test.ts",
+      "fullName": "C442-PROBE-THROWS a dashboard starts and leaves the run running when the start-time read throws",
+      "origin": "442 GAP-D3"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner.test.ts",
+      "fullName": "C442-PROBE-THROWS a start-time read that throws answers unknown",
+      "origin": "442 GAP-D3"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner-host.test.ts",
+      "fullName": "C442-HOST-IDENTITY C442-HOST-IDENTITY a macOS host is its hardware UUID digest, unchanged when the host name changes",
+      "origin": "442 GAP-D4"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner-host.test.ts",
+      "fullName": "C442-HOST-IDENTITY C442-HOST-IDENTITY a macOS read failure names the host name under its own prefix, never equals a UUID identity, and is retried",
+      "origin": "442 GAP-D4"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner-host.test.ts",
+      "fullName": "C442-HOST-IDENTITY C442-HOST-IDENTITY Linux and Windows hosts keep os.hostname()",
+      "origin": "442 GAP-D4"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner-host.test.ts",
+      "fullName": "C442-HOST-IDENTITY C442-HOST-IDENTITY this machine's identity is its UUID digest on macOS and its host name elsewhere",
+      "origin": "442 GAP-D4"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner-host.test.ts",
+      "fullName": "C442-HOST-IDENTITY C442-HOST-IDENTITY a dead owner stamped before the host name changed is still finalized as an orphan",
+      "origin": "442 GAP-D4"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner-host.test.ts",
+      "fullName": "C442-HOST-IDENTITY C442-HOST-IDENTITY a handle injected without a host stamps and classifies with this machine's identity",
+      "origin": "442 GAP-D4"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/live-run.test.tsx",
+      "fullName": "C442-CANCEL-TOAST an orphan answer shows its sentence as an info toast, never success",
+      "origin": "442 GAP-D5"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/live-run.test.tsx",
+      "fullName": "C442-CANCEL-TOAST only the 409 refusal shows the route's sentence; any other error reads Failed to cancel run",
+      "origin": "442 GAP-D5"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/live-run.test.tsx",
+      "fullName": "C442-CANCEL-TOAST repeated cancel toasts for one run share one id",
+      "origin": "442 GAP-D5"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/queue-cancel.test.ts",
+      "fullName": "C442-QUEUE-CANCEL-OUTPUT queue cancel prints a refusal to stderr and exits 1, and an orphan answer to stdout with exit 0",
+      "origin": "442 GAP-D6"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/queue-cancel.test.ts",
+      "fullName": "C442-QUEUE-CANCEL-OUTPUT queue cancel encodes the run id in the URL",
+      "origin": "442 GAP-D6"
     }
   ]
 }
