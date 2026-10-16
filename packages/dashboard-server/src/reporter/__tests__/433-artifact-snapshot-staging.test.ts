@@ -51,7 +51,8 @@ function loadedConfig(model: string) {
   }
 }
 
-// What `JobQueue.enqueue` writes for a dashboard run: a pending row and a queued artifact.
+// What `JobQueue` writes for a dashboard run it dispatches: a pending row, a queued artifact, then
+// the flip to running.
 function enqueueLikeTheQueue(name: string): string {
   const runId = db.insertPendingRun({ name, filePath: 'tests/login.yaml' })
   db.insertRunArtifact({
@@ -63,6 +64,7 @@ function enqueueLikeTheQueue(name: string): string {
       metadata: { attributes: {} },
     },
   })
+  db.updateRunStatus(runId, 'running')
   return runId
 }
 

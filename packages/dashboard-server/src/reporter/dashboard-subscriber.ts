@@ -104,6 +104,7 @@ export interface DashboardRunIngestDeps {
   sourceSnapshot?: SourceSnapshot
   /** Trusted run attributes, written to the run row + artifact metadata. */
   attributes?: RunAttributes
+  runId?: string
   correlationEnv?: DashboardRunIngestCorrelationEnv
   /** Fired once the primary DB row exists (log correlation / live-view wiring). */
   onRunCreated?: (runId: string) => void
@@ -231,39 +232,24 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
     db.insertRunArtifact({ runId: id, kind, payload: baseArtifactPayload() })
   }
 
-  function adoptOrInsertPrimary(): string {
+  // 2026-10-17 (443-04, D-07): the row is claimed, never rewritten; a refused claim leaves `runId`
+  // unset, so nothing below writes under another process's row.
+  function claimPrimary(): string | undefined {
     const startedAt = now()
     startedAtMs = Date.parse(startedAt) || Date.now()
-    const explicitId = env.runId ?? env.suiteQueueId
+    const explicitId = deps.runId ?? env.runId ?? env.suiteQueueId
 
     if (explicitId) {
-      if (db.getRun(explicitId)) {
-        db.updateRun(explicitId, {
-          status: 'running',
-          startedAt,
-          endedAt: startedAt,
-          ...(sourceName ? { name: sourceName } : {}),
-          ...(attributes ? { attributes } : {}),
-          platform,
-          ...(sourceSuiteId ? { suiteId: sourceSuiteId } : {}),
-          ...(sourceTestId ? { testId: sourceTestId } : {}),
-        })
-      } else {
-        db.insertRun({
-          id: explicitId,
-          name: sourceName ?? 'run',
-          filePath: sourceFilePath,
-          status: 'running',
-          duration: 0,
-          attributes,
-          startedAt,
-          endedAt: startedAt,
-          platform,
-          testId: sourceTestId,
-          suiteId: sourceSuiteId,
-        })
-      }
-      return explicitId
+      const claimed = db.claimRunningRow(explicitId, {
+        ...(sourceName ? { name: sourceName } : {}),
+        filePath: sourceFilePath,
+        ...(attributes ? { attributes } : {}),
+        startedAt,
+        platform,
+        testId: sourceTestId,
+        suiteId: sourceSuiteId,
+      })
+      return claimed ? explicitId : undefined
     }
 
     return db.insertRun({
@@ -323,7 +309,8 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
   }
 
   function handleRunStarted(): void {
-    const id = adoptOrInsertPrimary()
+    const id = claimPrimary()
+    if (id === undefined) return
     runId = id
     insertArtifact(id, 'test')
     for (const held of heldSnapshots.splice(0)) applySnapshots(id, held)

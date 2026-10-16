@@ -515,9 +515,10 @@ export class DashboardDatabase {
   }
 
   // 2026-10-17 (443-02, D-07): one statement that inserts a fresh row or adopts this handle's own
-  // running row; any other row is refused and left untouched.
+  // running row; any other row is refused and left untouched. An adopt that names no name or
+  // attributes keeps the row's own (443-04).
   claimRunningRow(id: string, fields: {
-    name: string
+    name?: string
     filePath?: string
     attributes?: RunAttributes
     startedAt: string
@@ -528,12 +529,12 @@ export class DashboardDatabase {
     const stamp = this.ownStamps.get(id) ?? this.readOwnStamp()
     const result = this.db.prepare(`
       INSERT INTO runs (id, name, file_path, status, duration, attributes, started_at, ended_at, platform, test_id, suite_id, owner_pid, owner_incarnation, owner_host)
-      VALUES (?, ?, ?, 'running', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?1, COALESCE(?2, 'run'), ?3, 'running', 0, COALESCE(?4, '{}'), ?5, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
       ON CONFLICT(id) DO UPDATE SET
         started_at = excluded.started_at,
         ended_at = excluded.ended_at,
-        name = excluded.name,
-        attributes = excluded.attributes,
+        name = COALESCE(?2, runs.name),
+        attributes = COALESCE(?4, runs.attributes),
         platform = excluded.platform,
         test_id = COALESCE(excluded.test_id, runs.test_id),
         suite_id = COALESCE(excluded.suite_id, runs.suite_id)
@@ -543,10 +544,9 @@ export class DashboardDatabase {
         AND runs.owner_host = excluded.owner_host
     `).run(
       id,
-      fields.name,
+      fields.name ?? null,
       fields.filePath ?? null,
-      JSON.stringify(fields.attributes ?? {}),
-      fields.startedAt,
+      fields.attributes === undefined ? null : JSON.stringify(fields.attributes),
       fields.startedAt,
       fields.platform ?? 'web',
       fields.testId ?? null,
@@ -574,15 +574,13 @@ export class DashboardDatabase {
     testId?: string
     suiteId?: string
   }): void {
+    if (updates.status === 'running') {
+      throw new Error('updateRun cannot write status running; claim the row with claimRunningRow')
+    }
     const fields: string[] = []
     const values: unknown[] = []
     if (updates.name !== undefined) { fields.push('name = ?'); values.push(updates.name) }
     if (updates.status !== undefined) { fields.push('status = ?'); values.push(updates.status) }
-    const stamp = updates.status === 'running' ? this.readOwnStamp() : undefined
-    if (stamp) {
-      fields.push('owner_pid = ?', 'owner_incarnation = ?', 'owner_host = ?')
-      values.push(stamp.pid, stamp.incarnation, stamp.host)
-    }
     if (updates.duration !== undefined) { fields.push('duration = ?'); values.push(updates.duration) }
     if (updates.startedAt !== undefined) { fields.push('started_at = ?'); values.push(updates.startedAt) }
     if (updates.endedAt !== undefined) { fields.push('ended_at = ?'); values.push(updates.endedAt) }
@@ -597,8 +595,7 @@ export class DashboardDatabase {
     if (fields.length === 0) return
     values.push(id)
     this.db.prepare(`UPDATE runs SET ${fields.join(', ')} WHERE id = ?`).run(...values)
-    if (stamp) this.ownStamps.set(id, stamp)
-    else if (updates.status !== undefined) this.ownStamps.delete(id)
+    if (updates.status !== undefined) this.ownStamps.delete(id)
   }
 
   updateRunMetadata(id: string, updates: {

@@ -1,8 +1,11 @@
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { RunEventEnvelope, RunEventType } from '@vostride/agent-qa-schema'
 import { DashboardDatabase } from '../../db/database.js'
+import type { RunOwner } from '../../db/run-owner.js'
 import { createDashboardRunIngest } from '../dashboard-subscriber.js'
 
 let db: DashboardDatabase
@@ -82,6 +85,7 @@ function subActionRecorded(overrides: Record<string, unknown> = {}): Record<stri
 describe('createDashboardRunIngest', () => {
   it('SUITE-DURATION-WRITE accumulates parallel member work once and replaces retries, including zero', async () => {
     const runId = db.insertPendingRun({ name: 'Duration probe', parallel: true })
+    db.updateRunStatus(runId, 'running')
     const ingest = createDashboardRunIngest({ db, correlationEnv: { runId } })
     ingest.handler(ev(runId, 'runStarted', { memberTestCount: 3 }))
     const durations = [31631.826750000007, 38765.66812499997, 35742.61929200002]
@@ -170,6 +174,7 @@ describe('createDashboardRunIngest', () => {
   it('correlation env — plain mode adopts an existing queued row without duplicating it', () => {
     const runId = 'r_queued-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
     db.insertPendingRun({ id: runId, name: 'Queued', attributes })
+    db.updateRunStatus(runId, 'running')
     const ingest = createDashboardRunIngest({
       db,
       sourceSnapshot: testSource({ name: 'Adopted Test' }),
@@ -552,6 +557,7 @@ describe('C442-OWNER-STAMP', () => {
       const adoptedId = 'r_adopt-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
       owned.insertPendingRun({ id: adoptedId, name: 'Queued', attributes })
       expect(owned.readRunOwner(adoptedId)).toBeUndefined()
+      owned.updateRunStatus(adoptedId, 'running')
       const adopted = createDashboardRunIngest({
         db: owned, sourceSnapshot: testSource(), attributes, correlationEnv: { runId: adoptedId },
       })
@@ -570,5 +576,137 @@ describe('C442-OWNER-STAMP', () => {
     } finally {
       owned.close()
     }
+  })
+})
+
+describe('C443-CLAIM', () => {
+  const SELF: RunOwner = { pid: 4242, incarnation: 'proc-starttime:7', host: 'h' }
+  const OTHER: RunOwner = { pid: 4343, incarnation: 'proc-starttime:9', host: 'h' }
+  const PROJECTIONS = ['run_members', 'run_steps', 'run_sub_actions', 'execution_logs', 'run_artifacts']
+  let dir: string
+  const handles: DashboardDatabase[] = []
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'agent-qa-443-ingest-claim-'))
+  })
+
+  afterEach(() => {
+    for (const handle of handles.splice(0)) handle.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  function handleFor(self: RunOwner): DashboardDatabase {
+    const handle = new DashboardDatabase({
+      dbPath: join(dir, 'runs.db'),
+      runOwnership: { self, probe: { isAlive: () => true, incarnationOf: () => undefined } },
+    })
+    handles.push(handle)
+    return handle
+  }
+
+  function rowSnapshot(handle: DashboardDatabase, id: string): Array<Record<string, unknown>> {
+    return handle['db'].prepare('SELECT * FROM runs WHERE id = ?').all(id) as Array<Record<string, unknown>>
+  }
+
+  function changedColumns(before: Array<Record<string, unknown>>, after: Array<Record<string, unknown>>): string {
+    if (before.length !== after.length) return `row count ${before.length} -> ${after.length}`
+    const [was, now] = [before[0] ?? {}, after[0] ?? {}]
+    const keys = [...new Set([...Object.keys(was), ...Object.keys(now)])]
+    return keys.filter((key) => JSON.stringify(was[key]) !== JSON.stringify(now[key])).join(', ')
+  }
+
+  function projectionCounts(handle: DashboardDatabase, id: string): Record<string, number> {
+    return Object.fromEntries(PROJECTIONS.map((table) => [
+      table,
+      (handle['db'].prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE run_id = ?`).get(id) as { n: number }).n,
+    ]))
+  }
+
+  function replayWholeRun(ingest: ReturnType<typeof createDashboardRunIngest>, id: string): void {
+    ingest.handler(ev(id, 'runStarted', { memberTestCount: 1 }))
+    ingest.handler(ev(id, 'testStarted', { testId: 't-a', testIndex: 0, name: 'Test A', filePath: 'tests/a.yaml' }))
+    ingest.handler(ev(id, 'stepStarted', { testIndex: 0, stepIndex: 0, stepText: 'Click Save' }))
+    ingest.handler(ev(id, 'stepFinalized', stepFinalized()))
+    ingest.handler(ev(id, 'subActionRecorded', subActionRecorded()))
+    ingest.handler(ev(id, 'hookFinished', {
+      hookExecutionId: 'hook-1', hookName: 'seed', kind: 'hook', phase: 'setup', status: 'passed', durationMs: 5,
+    }))
+    ingest.handler(ev(id, 'testFinished', { testId: 't-a', testIndex: 0, outcome: 'failed', durationMs: 100 }))
+    ingest.handler(ev(id, 'verdict', { verdict: 'failed' }))
+    ingest.handler(ev(id, 'runFinished', { aggregateVerdict: 'failed', disposition: 'detached', finalSeq: seq }))
+  }
+
+  it('an ingest for an id another live process owns writes nothing under it', async () => {
+    const other = handleFor(OTHER)
+    const own = handleFor(SELF)
+    const startedAt = '2026-10-16T23:00:00.000Z'
+    const foreignId = other.insertRun({
+      name: 'Owned elsewhere', status: 'running', duration: 0,
+      attributes: { 'agent-qa.trigger': 'mcp' }, startedAt, endedAt: startedAt,
+    })
+    const before = rowSnapshot(own, foreignId)
+    expect(before).toHaveLength(1)
+
+    const created: string[] = []
+    const refused = createDashboardRunIngest({
+      db: own, runId: foreignId, sourceSnapshot: testSource(), configSnapshot: testConfig(), attributes,
+      onRunCreated: (id) => { created.push(id) },
+    })
+    replayWholeRun(refused, foreignId)
+    refused.stageSnapshots({ config: testConfig(), source: testSource() })
+    await refused.finalize({ runtime: { status: 'failed' } })
+
+    expect(changedColumns(before, rowSnapshot(own, foreignId)), 'columns rewritten on the foreign row').toBe('')
+    expect(own.readRunOwner(foreignId)).toEqual(OTHER)
+    const written = Object.entries(projectionCounts(own, foreignId)).filter(([, n]) => n > 0)
+    expect(written.map(([table]) => table).join(', '), 'rows were filed under the foreign id').toBe('')
+    expect(created.join(', '), 'onRunCreated fired for a refused claim').toBe('')
+
+    const controlId = 'r_control-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
+    const control = createDashboardRunIngest({
+      db: own, runId: controlId, sourceSnapshot: testSource(), configSnapshot: testConfig(), attributes,
+    })
+    replayWholeRun(control, controlId)
+    await control.finalize()
+    const unwritten = Object.entries(projectionCounts(own, controlId)).filter(([, n]) => n === 0)
+    expect(unwritten.map(([table]) => table).join(', '), 'the replay wrote nothing to').toBe('')
+  })
+
+  it("the dashboard's queued row is adopted once the queue flipped it", async () => {
+    const own = handleFor(SELF)
+    const queuedId = own.insertPendingRun({ name: 'Queued', attributes: { 'agent-qa.trigger': 'dashboard' } })
+    expect(own.updateRunStatus(queuedId, 'running')).toBe(true)
+
+    const created: string[] = []
+    const ingest = createDashboardRunIngest({
+      db: own, runId: queuedId, attributes: { 'agent-qa.trigger': 'dashboard' },
+      onRunCreated: (id) => { created.push(id) },
+    })
+    ingest.handler(ev(queuedId, 'runStarted', { memberTestCount: 1 }))
+    expect(own.getRun(queuedId)).toMatchObject({ status: 'running', name: 'Queued' })
+    expect(own.readRunOwner(queuedId)).toEqual(SELF)
+    expect(created).toEqual([queuedId])
+
+    ingest.handler(ev(queuedId, 'testFinished', { testIndex: 0, outcome: 'failed', durationMs: 10 }))
+    ingest.handler(ev(queuedId, 'verdict', { verdict: 'failed' }))
+    ingest.handler(ev(queuedId, 'runFinished', { aggregateVerdict: 'failed', disposition: 'detached', finalSeq: seq }))
+    await ingest.finalize()
+    expect(own.getRun(queuedId)?.status).toBe('failed')
+    expect(own.getRuns().map((run) => run.id)).toEqual([queuedId])
+  })
+
+  it('an ingest claims a fresh id under this process', () => {
+    const own = handleFor(SELF)
+    const freshId = 'r_fresh-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
+    const created: string[] = []
+    const ingest = createDashboardRunIngest({
+      db: own, runId: freshId, sourceSnapshot: testSource(), attributes,
+      onRunCreated: (id) => { created.push(id) },
+    })
+    ingest.handler(ev(freshId, 'runStarted', {}))
+
+    expect(own.getRuns().map((run) => [run.id, run.status])).toEqual([[freshId, 'running']])
+    expect(own.readRunOwner(freshId)).toEqual(SELF)
+    expect(created).toEqual([freshId])
   })
 })

@@ -1123,15 +1123,16 @@ describe('C442-OWNER-STAMP', () => {
       const byUpdate = owned.insertPendingRun({ name: 'Flipped by update' })
       expect(owned.readRunOwner(byStatus)).toBeUndefined()
 
-      owned.updateRunStatus(byStatus, 'running')
-      owned.updateRun(byUpdate, { status: 'running', startedAt: '2026-10-16T00:00:00.000Z' })
+      expect(owned.updateRunStatus(byStatus, 'running')).toBe(true)
+      expect(() => owned.updateRun(byUpdate, { status: 'running', startedAt: '2026-10-16T00:00:00.000Z' }))
+        .toThrow('updateRun cannot write status running; claim the row with claimRunningRow')
 
-      for (const id of [byStatus, byUpdate]) {
-        expect(owned.getRun(id)?.status).toBe('running')
-        expect(owned.readRunOwner(id)).toEqual(STAMPED_OWNER)
-        const row = owned.getRun(id) as unknown as Record<string, unknown>
-        for (const key of Object.keys(row)) expect(key.toLowerCase()).not.toContain('owner')
-      }
+      expect(owned.getRun(byStatus)?.status).toBe('running')
+      expect(owned.readRunOwner(byStatus)).toEqual(STAMPED_OWNER)
+      const row = owned.getRun(byStatus) as unknown as Record<string, unknown>
+      for (const key of Object.keys(row)) expect(key.toLowerCase()).not.toContain('owner')
+      expect(owned.getRun(byUpdate)?.status).toBe('pending')
+      expect(owned.readRunOwner(byUpdate)).toBeUndefined()
     } finally {
       owned.close()
     }
@@ -1236,11 +1237,10 @@ describe('C442-ORPHAN', () => {
     }
     expect(snapshotOf(first, untouched)).toBe(before)
 
-    second.updateRun(untouched, { status: 'running' })
-    expect(first.readRunOwner(untouched)).toEqual(OTHER_OWNER)
-    expect(first.finalizeOrphanRun(untouched, owner)).toBe(false)
-    expect(first.finalizeOwnRun(untouched, { status: 'cancelled', endedAt })).toBe(false)
-    expect(first.getRun(untouched)?.status).toBe('running')
+    expect(() => second.updateRun(untouched, { status: 'running' }))
+      .toThrow('updateRun cannot write status running; claim the row with claimRunningRow')
+    expect(first.readRunOwner(untouched)).toEqual(owner)
+    expect(snapshotOf(first, untouched)).toBe(before)
   })
 
   it('the sweeps find nothing to do on an empty table', () => {

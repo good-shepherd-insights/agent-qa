@@ -163,14 +163,19 @@ describe('cancelling one of two concurrently executing dashboard runs (401 UAT 1
         session.subscribe(1, (envelope) => { own.push(envelope as unknown as Envelope) })
       })
       const buffered = (runId: string): Envelope[] => recorded.get(runId) ?? []
-      const enqueue = (name: string): string => db.insertRun({
-        name,
-        status: 'pending',
-        duration: 0,
-        startedAt: new Date().toISOString(),
-        endedAt: new Date().toISOString(),
-        platform: 'web',
-      })
+      // A queued row as `JobQueue` hands it to the backend: pending, then flipped (443-04).
+      const enqueue = (name: string): string => {
+        const id = db.insertRun({
+          name,
+          status: 'pending',
+          duration: 0,
+          startedAt: new Date().toISOString(),
+          endedAt: new Date().toISOString(),
+          platform: 'web',
+        })
+        db.updateRunStatus(id, 'running')
+        return id
+      }
 
       const cancelled = enqueue('the run that will be cancelled')
       const survivor = enqueue('the run that must not notice')

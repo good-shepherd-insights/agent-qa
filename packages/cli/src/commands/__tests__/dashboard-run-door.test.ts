@@ -135,8 +135,9 @@ async function composeDoor(fixture: Fixture): Promise<Driven> {
 }
 
 /** Enqueue a row the way the dashboard's queue does, so the ingest has a real row to adopt. */
+// A queued row as `JobQueue` hands it to the backend: pending, then flipped to running (443-04).
 function enqueue(db: DashboardDatabase, name: string): string {
-  return db.insertRun({
+  const id = db.insertRun({
     name,
     status: 'pending',
     duration: 0,
@@ -144,6 +145,8 @@ function enqueue(db: DashboardDatabase, name: string): string {
     endedAt: new Date().toISOString(),
     platform: 'web',
   })
+  db.updateRunStatus(id, 'running')
+  return id
 }
 
 async function waitFor(assertion: () => void, timeoutMs = 120_000): Promise<void> {

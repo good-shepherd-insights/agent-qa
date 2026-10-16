@@ -23,6 +23,9 @@
  *   dashboard-server/src/queue/job-queue.ts,    anyone's running row marked cancelled -> the
  *   the cancel route's running arm              owner-aware outcome (442-05)
  *                                               [C442-STATUS-WRITERS-CLASSIFIED]
+ *   dashboard-server/src/reporter/              any existing row rewritten as running -> one claim
+ *   dashboard-subscriber.ts, the adopt arm      of its own row (443-04)
+ *                                               [C442-STATUS-WRITERS-CLASSIFIED]
  */
 
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
@@ -247,7 +250,7 @@ const sweepOffenses = (label: string, text: string): string[] => [
 // ---------------------------------------------------------------------------------------------
 
 const WRITER_CALL: Halves = [
-  '\\.(updateRun|updateRunStatus|insertRun|insertPendingRun|finalizeOwnRun|finalizeOrphan',
+  '\\.(claimRunningRow|updateRun|updateRunStatus|insertRun|insertPendingRun|finalizeOwnRun|finalizeOrphan',
   'Run|finalizeRunArtifact)\\s*\\(',
 ]
 // updateRun and insertRun write a status only when their argument names one.
@@ -278,11 +281,10 @@ const WRITERS: readonly Writer[] = [
   w(RUN_TS, 'insertRun', 'own', 'suite id-mismatch row'),
   w(RUN_TS, 'insertRun', 'own', 'direct parse-error validation row'),
   w(SHUTDOWN, 'finalizeOwnRun', 'own', 'first-signal dep, bound by run.ts to its own row'),
-  w(SUBSCRIBER, 'updateRun', 'own', 'ingest adopts its explicit row as running'),
   w(SUBSCRIBER, 'updateRun', 'own', 'member outcome on its own row'),
   w(SUBSCRIBER, 'updateRun', 'own', 'runFinished aggregate verdict'),
   w(SUBSCRIBER, 'updateRun', 'own', 'verdict envelope'),
-  w(SUBSCRIBER, 'insertRun', 'own', 'ingest inserts its explicit row as running'),
+  w(SUBSCRIBER, 'claimRunningRow', 'own', 'ingest claims its own run row'),
   w(SUBSCRIBER, 'insertRun', 'own', 'ingest inserts a fresh running row'),
   w(SUBSCRIBER, 'finalizeRunArtifact', 'own', 'runFinished finalize'),
   w(SERVER, 'updateRun', 'own', 'run-settled of a run this dashboard executed'),
@@ -298,7 +300,7 @@ const WRITERS: readonly Writer[] = [
   w(JOB_QUEUE, 'finalizeOrphanRun', 'orphan', 'cancel of a running row whose owner is gone'),
   w(DATABASE, 'finalizeRunArtifact', 'orphan', 'inside finalizeOrphanRun, after its CAS wrote'),
 ]
-const WRITER_FLOOR = 35
+const WRITER_FLOOR = 34
 
 function argumentOf(text: string, open: number): string {
   let depth = 0

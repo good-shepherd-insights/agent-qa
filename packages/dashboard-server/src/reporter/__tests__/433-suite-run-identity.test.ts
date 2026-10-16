@@ -62,6 +62,7 @@ const DOORS: Door[] = [
     async start() {
       // What JobQueue.enqueue writes for a dashboard suite run: a pending row named after the suite.
       const runId = db.insertPendingRun({ name: SUITE_NAME, filePath: 'suites/automation-exercise.suite.yaml' })
+      db.updateRunStatus(runId, 'running')
       const ingest = createDashboardRunIngest({
         db,
         correlationEnv: { suiteQueueId: runId },
@@ -129,6 +130,7 @@ describe('C433-SUITE-RUN-IDENTITY', () => {
 
   it('C433-SUITE-RUN-IDENTITY: a single-test run is unchanged', async () => {
     const runId = db.insertPendingRun({ name: 'tests/login.yaml', filePath: 'tests/login.yaml' })
+    db.updateRunStatus(runId, 'running')
     const ingest = createDashboardRunIngest({
       db,
       correlationEnv: { runId },
