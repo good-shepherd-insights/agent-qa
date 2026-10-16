@@ -119,7 +119,7 @@ for (const path of ['COMPOSED', 'DIRECT'] as const) {
         } as SuiteRunMemberProductionInput)
     const dbPath = join(root, 'dashboard.db')
     const db = new DashboardDatabase({ dbPath })
-    const ingest = createDashboardRunIngest({ db, correlationEnv: { runId } })
+    const ingest = createDashboardRunIngest({ db, runId })
     const events: RunEventEnvelope[] = []
     let store: EvidenceArtifactStorePort | undefined
     let bytesAtPublication: Uint8Array | undefined
@@ -239,7 +239,7 @@ async function ariaReadback(mode: 'two' | 'empty' | 'missing' | 'mobile' | 'chil
   const store = new FsEvidenceArtifactStore({ root: storeRoot, runId })
   const dbPath = join(root, 'aria.db')
   const db = new DashboardDatabase({ dbPath })
-  const ingest = createDashboardRunIngest({ db, correlationEnv: { runId } })
+  const ingest = createDashboardRunIngest({ db, runId })
   const bus = createRunEventBus({ runId })
   const events: RunEventEnvelope[] = []
   const publicationBytes = new Map<string, Uint8Array>()

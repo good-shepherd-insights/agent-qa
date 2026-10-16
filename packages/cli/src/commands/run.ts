@@ -809,25 +809,11 @@ function resolveReporterSelection(opts: RunOptions, dashboardConfigured: boolean
   }
 }
 
-// 363-09: the spawn correlation env the dashboard ingest reads from `process.env` (the bus never
-// carries it). Read once at the composition root and passed into `createDashboardRunIngest`.
-// 2026-08-24 (402-09, D-11): `parentRunId` / `maxRetries` / `attemptNumber` are gone with the
-// ingest's retry mode. 401-07 (D-12) had already retired the queue re-spawn that set
-// `AGENT_QA_PARENT_RUN_ID`, so the mode was producer-less; D-11 removes what it left behind.
-function readDashboardCorrelationEnv(env: NodeJS.ProcessEnv = process.env): {
-  runId?: string
-  suiteQueueId?: string
-} {
-  return {
-    runId: env.AGENT_QA_RUN_ID,
-    suiteQueueId: env.AGENT_QA_SUITE_QUEUE_ID,
-  }
-}
-
 // 363-09 (D-08 successor): construct the dashboard DB ingest as a bus subscriber (replacing the v1
-// DashboardReporter attach). Config/source snapshots + correlation env ride construction; envelopes
-// drive lifecycle. Returns a subscriber handle whose `flush` lands the finalize sweep (the memory
-// section arrives out-of-band). Dashboard is optional — a load failure degrades to no subscriber.
+// DashboardReporter attach). Config/source snapshots and the run's own id ride construction;
+// envelopes drive lifecycle. Returns a subscriber handle whose `flush` lands the finalize sweep
+// (the memory section arrives out-of-band). Dashboard is optional — a load failure degrades to no
+// subscriber.
 //
 // 433-29 (G-433-5, F-433-15): the ingest is built at ATTACH, where it is handed the run's mask.
 // Construction snapshots cross that mask before they reach the database (the suite path stored its
@@ -839,28 +825,20 @@ async function buildDashboardIngestSubscriber(input: {
   sourceSnapshot?: unknown
   attributes?: RunAttributes
   onRunCreated?: (runId: string) => void
-  /**
-   * 433-28 (G-433-4, F-433-20): the run's own id, as the dashboard door passes it. Used only when
-   * the environment carries no correlation id, so an ingest never files the run under a new one.
-   */
-  runCorrelation: { runId: string } | { suiteQueueId: string }
+  runId: string
 }): Promise<((attach: DashboardIngestAttach) => RunSubscriberHandle) | undefined> {
   try {
     const { createDashboardRunIngest } = await import('@vostride/agent-qa-dashboard')
-    const fromEnv = readDashboardCorrelationEnv()
-    const correlationEnv = fromEnv.runId === undefined && fromEnv.suiteQueueId === undefined
-      ? input.runCorrelation
-      : fromEnv
     return (attach) => {
       const mask = (value: unknown): any => (isSnapshotRecord(value)
         ? maskPayloadStrings(value, attach.mask)
         : undefined)
       const ingest = createDashboardRunIngest({
         db: input.db,
+        runId: input.runId,
         configSnapshot: mask(input.configSnapshot),
         sourceSnapshot: mask(input.sourceSnapshot),
         attributes: input.attributes,
-        correlationEnv,
         onRunCreated: input.onRunCreated,
       })
       const unsubscribe = attach.onMemberSnapshot?.((snapshot) => { ingest.stageSnapshots(snapshot) })
@@ -1887,7 +1865,7 @@ async function executeSuites(
         configSnapshot: produced.subscriberSeed?.configSnapshot,
         sourceSnapshot: produced.subscriberSeed?.sourceSnapshot,
         attributes: produced.subscriberSeed?.attributes,
-        runCorrelation: { suiteQueueId: runId },
+        runId,
         onRunCreated: (createdRunId: string) => {
           ownSuiteRow = { db: runLevelDashboardDb, id: createdRunId }
         },
@@ -5076,7 +5054,7 @@ export function createRunCommand(): Command {
         // the dashboard db, the curation tail, the `--all` exit-code fold and the three terminal
         // exits. A drive that reached for any of those would be a library that owns its host.
         const singleExtraSubscribers: RunSubscriberHandle[] = []
-        // The primary run row is adopted from AGENT_QA_RUN_ID and refreshed from the bus envelope
+        // The primary run row is claimed under the run's own id and refreshed from the bus envelope
         // stream (testStarted identity, testFinished status/duration, stepFinalized steps). The
         // resolved per-test config/source snapshot lives inside the member closure (D-04) and reaches
         // the ingest through the producer's snapshot channel (433-29).
@@ -5084,7 +5062,7 @@ export function createRunCommand(): Command {
           ? await buildDashboardIngestSubscriber({
               db: dashboardDb,
               attributes: resolveCliRunAttributes(userRunAttributes, 'local', inheritedRunAttributes),
-              runCorrelation: { runId: singleRunId },
+              runId: singleRunId,
               onRunCreated: (createdRunId: string) => {
                 _ownRunRowId = createdRunId
                 currentRunId = createdRunId

@@ -69,7 +69,7 @@ async function usageRun(options: { retry?: boolean; omitCache?: boolean; unscope
   const store = new FsEvidenceArtifactStore({ root: dir, runId })
   const bus = createRunEventBus({ runId })
   const events: RunEventEnvelope[] = []
-  const ingest = createDashboardRunIngest({ db, correlationEnv: { runId } })
+  const ingest = createDashboardRunIngest({ db, runId })
   bus.subscribe(1, event => { events.push(event); ingest.handler(event) })
   let planningCalls = 0
   let verifierCalls = 0
@@ -203,7 +203,7 @@ it('TIMEOUT-DETAIL-ROUNDTRIP: a timeout failure summary lands on the member row 
   const db = new DashboardDatabase({ dbPath })
   const redactor = new SecretRedactor(new SecretStore({ UNRELATED: 'synthetic-unrelated-secret-423-42' }))
   const bus = createRunEventBus({ runId })
-  const ingest = createDashboardRunIngest({ db, correlationEnv: { runId } })
+  const ingest = createDashboardRunIngest({ db, runId })
   bus.subscribe(1, event => ingest.handler(event))
   const summary = 'Step 1/1 "Navigate to test URL" failed: Test timed out after 5ms'
   try {
@@ -301,7 +301,7 @@ it('USAGE-OPTIONAL-ENVELOPE: independent token/model fields and clearing survive
   const tokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedInputTokens: 0 }
   const modelUsage = { roles: {}, calls: { started: 1, succeeded: 0, failed: 1 } }
   try {
-    const ingest = createDashboardRunIngest({ db, correlationEnv: { runId: 'envelope' } })
+    const ingest = createDashboardRunIngest({ db, runId: 'envelope' })
     let seq = 0
     const emit = (payload: StepFinalizedPayload) => ingest.handler({ runId: 'envelope', type: 'stepFinalized', payload, seq: ++seq, ts: Date.now() })
     ingest.handler({ runId: 'envelope', type: 'runStarted', payload: {}, seq: ++seq, ts: Date.now() } as RunEventEnvelope)
@@ -462,7 +462,7 @@ it('EVID-V2-HISTORY: refuses v2 untouched; historical NULLs and new subscriber f
   const db = new DashboardDatabase({ dbPath: join(dir, 'evidence.db') })
   const { step, child } = recorded()
   try {
-    const ingest = createDashboardRunIngest({ db, correlationEnv: { runId: 'new' } })
+    const ingest = createDashboardRunIngest({ db, runId: 'new' })
     let seq = 0
     const emit = (type: RunEventEnvelope['type'], payload: unknown) => ingest.handler({
       runId: 'new', type, payload, seq: ++seq, ts: Date.now(),
@@ -546,7 +546,7 @@ it('ARIA-COLD-READBACK: subscriber preserves ordered child ownership and empty e
     }
   })
   try {
-    const ingest = createDashboardRunIngest({ db, correlationEnv: { runId: 'aria-order' } })
+    const ingest = createDashboardRunIngest({ db, runId: 'aria-order' })
     let seq = 0
     const emit = (type: RunEventEnvelope['type'], payload: unknown) => ingest.handler({
       runId: 'aria-order', type, payload, seq: ++seq, ts: Date.now(),

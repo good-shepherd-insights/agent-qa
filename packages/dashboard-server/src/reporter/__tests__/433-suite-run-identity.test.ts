@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { RunEventEnvelope, RunEventType } from '@vostride/agent-qa-schema'
 import { DashboardDatabase } from '../../db/database.js'
 import { createDashboardRunIngest, type DashboardRunIngest } from '../dashboard-subscriber.js'
+import { generateRunId } from '@vostride/agent-qa-ids'
 
 // G-433-3 / F-433-12 (433-27). A suite is ONE run row with member handles (402-09 D-11). The walk
 // found that row stored under the last member's name and test id with suite_id null, so the suite's
@@ -58,14 +59,14 @@ interface Door {
 
 const DOORS: Door[] = [
   {
-    label: 'dashboard door (suiteQueueId)',
+    label: 'dashboard door',
     async start() {
       // What JobQueue.enqueue writes for a dashboard suite run: a pending row named after the suite.
       const runId = db.insertPendingRun({ name: SUITE_NAME, filePath: 'suites/automation-exercise.suite.yaml' })
       db.updateRunStatus(runId, 'running')
       const ingest = createDashboardRunIngest({
         db,
-        correlationEnv: { suiteQueueId: runId },
+        runId,
         now: () => '2026-10-04T00:00:00.000Z',
       })
       feedSuiteRun(ingest)
@@ -78,6 +79,7 @@ const DOORS: Door[] = [
     async start() {
       const ingest = createDashboardRunIngest({
         db,
+        runId: generateRunId(),
         sourceSnapshot: {
           kind: 'suite',
           suiteId: SUITE_ID,
@@ -133,7 +135,7 @@ describe('C433-SUITE-RUN-IDENTITY', () => {
     db.updateRunStatus(runId, 'running')
     const ingest = createDashboardRunIngest({
       db,
-      correlationEnv: { runId },
+      runId,
       now: () => '2026-10-04T00:00:00.000Z',
     })
     const testId = 't_login-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel'

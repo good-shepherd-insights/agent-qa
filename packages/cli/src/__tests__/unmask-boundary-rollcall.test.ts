@@ -612,7 +612,7 @@ function dashboardRunRollCall(): Promise<DashboardRunRollCall> {
         filePath: 'tests/login.yaml',
         loadStatus: 'loaded',
       },
-      correlationEnv: { runId: RUN_ID },
+      runId: RUN_ID,
       now: () => '2026-08-28T00:00:00.000Z',
     })
     for (const envelope of FIXTURE.envelopes) ingest.handler(envelope)

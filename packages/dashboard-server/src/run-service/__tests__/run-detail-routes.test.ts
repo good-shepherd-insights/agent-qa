@@ -276,7 +276,7 @@ async function serveOneRun(options: { withHost?: boolean } = {}): Promise<number
   const ingest = createDashboardRunIngest({
     db,
     sourceSnapshot: { kind: 'test', testId: 't_tracer', name: 'Tracer Test', filePath: 'tests/tracer.yaml', loadStatus: 'loaded' },
-    correlationEnv: { runId: RUN_ID },
+    runId: RUN_ID,
     now: () => '2026-08-27T00:00:00.000Z',
   })
 

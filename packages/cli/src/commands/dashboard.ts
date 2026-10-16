@@ -599,11 +599,8 @@ export async function createDashboardRunDoor(input: {
         } catch { /* one watcher's failure is not another's, and never the run's */ }
       }
     },
-    // THE DB WRITES, UNCHANGED IN WHAT THEY WRITE (D-09's build-order pin). `createDashboardRunIngest`
-    // is the same subscriber the spawned child composed; what moved is where it runs and how it
-    // learns which row to adopt. That correlation used to be three environment variables the queue
-    // put in a child's environment; it is construction data now, per run, which is also what makes
-    // two concurrent runs adopt two different rows instead of racing one global.
+    // THE DB WRITES (D-09's build-order pin). Each run's ingest is built with that run's own id, so
+    // two concurrent runs claim two different rows.
     subscribers: (attach) => {
       const entry = entries.get(attach.session.id as unknown as string)
       if (entry === undefined) return undefined
@@ -664,15 +661,10 @@ export async function createDashboardRunDoor(input: {
         )
       }
 
-      // The correlation the retiring child received as `AGENT_QA_RUN_ID` / `AGENT_QA_SUITE_QUEUE_ID`,
-      // as construction data. `AGENT_QA_PARENT_RUN_ID` and `AGENT_QA_MAX_RETRIES` are absent because
-      // queue retries retired with the machinery that minted their children (D-12).
       const ingest = createDashboardRunIngest({
         db: input.db as never,
+        runId: opts.runId,
         ...(opts.attributes === undefined ? {} : { attributes: opts.attributes }),
-        correlationEnv: opts.source === 'suite'
-          ? { suiteQueueId: opts.runId }
-          : { runId: opts.runId },
       })
 
       entries.set(opts.runId, {

@@ -750,7 +750,7 @@ const PRODUCTION_CHANNELS: ReadonlyArray<{ id: string; drive: (db: DashboardData
     drive: async (db) => {
       const ingest = createDashboardRunIngest({
         db,
-        correlationEnv: { suiteQueueId: PARENT_ID },
+        runId: PARENT_ID,
         sourceSnapshot: { kind: 'suite', name: 'Checkout Suite', suiteId: SUITE_ID },
         now: () => '2026-08-01T00:00:00.000Z',
       })
@@ -766,9 +766,7 @@ const PRODUCTION_CHANNELS: ReadonlyArray<{ id: string; drive: (db: DashboardData
     drive: async (db) => {
       const ingest = createDashboardRunIngest({
         db,
-        // The retired retry correlation shape, still handed in verbatim: the claim is that the
-        // ingest does nothing with it, and a channel that stopped OFFERING it would stop measuring.
-        correlationEnv: { parentRunId: PARENT_ID, runId: CHILD_A, attemptNumber: 2 } as never,
+        runId: CHILD_A,
         sourceSnapshot: { kind: 'test', name: 'Member A' },
         now: () => '2026-08-01T00:00:00.000Z',
       })

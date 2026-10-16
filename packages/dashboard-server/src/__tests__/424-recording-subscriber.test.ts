@@ -46,7 +46,7 @@ afterEach(() => {
 })
 
 function startBus() {
-  const ingest = createDashboardRunIngest({ db, correlationEnv: { runId } })
+  const ingest = createDashboardRunIngest({ db, runId })
   const bus = createRunEventBus({ runId })
   buses.push(bus)
   bus.subscribe(1, ingest.handler)

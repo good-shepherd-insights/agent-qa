@@ -2495,10 +2495,10 @@ describe('run command — framework error handling', () => {
     let ownRunId: string | undefined
     mockCreateDashboardRunIngest.mockImplementationOnce(function (...args: unknown[]) {
       const input = args[0] as {
-        correlationEnv: { runId: string }
+        runId: string
         onRunCreated?: (id: string) => void
       }
-      ownRunId = input.correlationEnv.runId
+      ownRunId = input.runId
       input.onRunCreated?.(ownRunId)
       return mockDashboardRunIngestInstance
     })

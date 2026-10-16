@@ -161,7 +161,7 @@ async function freshFixture(root: string) {
   const eventBytes: Record<string, number> = {}
   const db = new DashboardDatabase({ dbPath: path })
   try {
-    const ingest = createDashboardRunIngest({ db, correlationEnv: { runId: RUN_ID } })
+    const ingest = createDashboardRunIngest({ db, runId: RUN_ID })
     let seq = 0
     const emit = (type: RunEventEnvelope['type'], payload: unknown) => ingest.handler({
       runId: RUN_ID, type, payload, seq: ++seq, ts: 1_700_000_000_000 + seq,

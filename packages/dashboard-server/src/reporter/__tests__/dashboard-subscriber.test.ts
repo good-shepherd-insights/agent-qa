@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { RunEventEnvelope, RunEventType } from '@vostride/agent-qa-schema'
+import { generateRunId } from '@vostride/agent-qa-ids'
 import { DashboardDatabase } from '../../db/database.js'
 import type { RunOwner } from '../../db/run-owner.js'
 import { createDashboardRunIngest } from '../dashboard-subscriber.js'
@@ -86,7 +87,7 @@ describe('createDashboardRunIngest', () => {
   it('SUITE-DURATION-WRITE accumulates parallel member work once and replaces retries, including zero', async () => {
     const runId = db.insertPendingRun({ name: 'Duration probe', parallel: true })
     db.updateRunStatus(runId, 'running')
-    const ingest = createDashboardRunIngest({ db, correlationEnv: { runId } })
+    const ingest = createDashboardRunIngest({ db, runId })
     ingest.handler(ev(runId, 'runStarted', { memberTestCount: 3 }))
     const durations = [31631.826750000007, 38765.66812499997, 35742.61929200002]
     for (const testIndex of [2, 0, 1]) {
@@ -113,7 +114,7 @@ describe('createDashboardRunIngest', () => {
       configSnapshot: testConfig(),
       sourceSnapshot: testSource(),
       attributes,
-      correlationEnv: { runId },
+      runId,
       now: () => '2026-07-08T00:00:00.000Z',
     })
 
@@ -155,7 +156,7 @@ describe('createDashboardRunIngest', () => {
       db,
       sourceSnapshot: testSource(),
       attributes,
-      correlationEnv: { runId },
+      runId,
       now: () => '2026-07-08T00:00:00.000Z',
     })
     ingest.handler(ev('run-bus', 'runStarted', {}))
@@ -179,7 +180,7 @@ describe('createDashboardRunIngest', () => {
       db,
       sourceSnapshot: testSource({ name: 'Adopted Test' }),
       attributes,
-      correlationEnv: { runId },
+      runId,
       now: () => '2026-07-08T00:00:00.000Z',
     })
     ingest.handler(ev('run-bus', 'runStarted', {}))
@@ -202,7 +203,7 @@ describe('createDashboardRunIngest', () => {
       configSnapshot: testConfig(),
       sourceSnapshot: { kind: 'suite', suiteId: 'suite-smoke', name: 'Smoke Suite', loadStatus: 'loaded' },
       attributes,
-      correlationEnv: { suiteQueueId: suiteRunId },
+      runId: suiteRunId,
       now: () => '2026-07-08T00:00:00.000Z',
     })
 
@@ -235,28 +236,13 @@ describe('createDashboardRunIngest', () => {
       .toEqual([[0, 'Test A', 'passed'], [1, 'Test B', 'failed']])
   })
 
-  it('correlation env — a suiteQueueId is just another spelling of runId', () => {
-    const runIdA = 'r_viasuite-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
-    const ingestA = createDashboardRunIngest({
-      db,
-      sourceSnapshot: testSource(),
-      attributes,
-      correlationEnv: { suiteQueueId: runIdA },
-      now: () => '2026-07-08T00:00:00.000Z',
-    })
-    ingestA.handler(ev('run-bus', 'runStarted', {}))
-    expect(db.getRun(runIdA)?.status).toBe('running')
-    expect(db.getRunArtifact(runIdA)?.kind).toBe('test')
-    expect(db.getRuns()).toHaveLength(1)
-  })
-
   it('step rows carry the stepStarted instruction text, not a generic "Step N" label', () => {
     const runId = 'r_named-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
     const ingest = createDashboardRunIngest({
       db,
       sourceSnapshot: testSource(),
       attributes,
-      correlationEnv: { runId },
+      runId,
       now: () => '2026-07-09T00:00:00.000Z',
     })
     ingest.handler(ev('run-bus', 'runStarted', {}))
@@ -277,7 +263,7 @@ describe('createDashboardRunIngest', () => {
       db,
       sourceSnapshot: testSource(),
       attributes,
-      correlationEnv: { runId },
+      runId,
       now: () => '2026-07-09T00:00:00.000Z',
     })
     ingest.handler(ev('run-bus', 'runStarted', {}))
@@ -315,7 +301,7 @@ describe('createDashboardRunIngest', () => {
       db,
       sourceSnapshot: testSource(),
       attributes,
-      correlationEnv: { runId },
+      runId,
       now: () => '2026-07-09T00:00:00.000Z',
     })
     ingest.handler(ev('run-bus', 'runStarted', {}))
@@ -349,7 +335,7 @@ describe('createDashboardRunIngest', () => {
   })
 
   it('finalize is idempotent and safe when no run was ever started', async () => {
-    const ingest = createDashboardRunIngest({ db, correlationEnv: { runId: 'r_never-started' } })
+    const ingest = createDashboardRunIngest({ db, runId: 'r_never-started' })
     await expect(ingest.finalize()).resolves.toBeUndefined()
     await expect(ingest.finalize()).resolves.toBeUndefined()
     expect(db.getRuns()).toHaveLength(0)
@@ -361,7 +347,7 @@ describe('createDashboardRunIngest', () => {
       db,
       sourceSnapshot: testSource(),
       attributes,
-      correlationEnv: { runId },
+      runId,
       now: () => '2026-08-27T00:00:00.000Z',
     })
     ingest.handler(ev('run-bus', 'runStarted', {}))
@@ -392,7 +378,7 @@ describe('createDashboardRunIngest', () => {
       db,
       sourceSnapshot: testSource(),
       attributes,
-      correlationEnv: { runId },
+      runId,
       now: () => '2026-08-27T00:00:00.000Z',
     })
     ingest.handler(ev('run-bus', 'runStarted', {}))
@@ -425,7 +411,7 @@ describe('createDashboardRunIngest', () => {
       db,
       sourceSnapshot: testSource(),
       attributes,
-      correlationEnv: { runId },
+      runId,
       now: () => '2026-08-27T00:00:00.000Z',
     })
     ingest.handler(ev('run-bus', 'runStarted', {}))
@@ -470,7 +456,7 @@ describe('createDashboardRunIngest', () => {
       db,
       sourceSnapshot: testSource(),
       attributes,
-      correlationEnv: { runId },
+      runId,
       now: () => '2026-08-27T00:00:00.000Z',
     })
     ingest.handler(ev('run-bus', 'runStarted', {}))
@@ -498,7 +484,7 @@ describe('createDashboardRunIngest', () => {
       db,
       sourceSnapshot: testSource(),
       attributes,
-      correlationEnv: { runId },
+      runId,
       now: () => '2026-08-27T00:00:00.000Z',
     })
     ingest.handler(ev('run-bus', 'runStarted', {}))
@@ -523,7 +509,7 @@ describe('createDashboardRunIngest', () => {
       db,
       sourceSnapshot: testSource(),
       attributes,
-      correlationEnv: { runId },
+      runId,
       now: () => '2026-08-27T00:00:00.000Z',
     })
     ingest.handler(ev('run-bus', 'runStarted', {}))
@@ -550,7 +536,7 @@ describe('C442-OWNER-STAMP', () => {
     try {
       const insertedId = 'r_insert-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
       const inserted = createDashboardRunIngest({
-        db: owned, sourceSnapshot: testSource(), attributes, correlationEnv: { runId: insertedId },
+        db: owned, sourceSnapshot: testSource(), attributes, runId: insertedId,
       })
       inserted.handler(ev(insertedId, 'runStarted', {}))
 
@@ -559,13 +545,13 @@ describe('C442-OWNER-STAMP', () => {
       expect(owned.readRunOwner(adoptedId)).toBeUndefined()
       owned.updateRunStatus(adoptedId, 'running')
       const adopted = createDashboardRunIngest({
-        db: owned, sourceSnapshot: testSource(), attributes, correlationEnv: { runId: adoptedId },
+        db: owned, sourceSnapshot: testSource(), attributes, runId: adoptedId,
       })
       adopted.handler(ev(adoptedId, 'runStarted', {}))
 
-      const minted = createDashboardRunIngest({ db: owned, sourceSnapshot: testSource(), attributes })
+      const mintedId = generateRunId()
+      const minted = createDashboardRunIngest({ db: owned, sourceSnapshot: testSource(), attributes, runId: mintedId })
       minted.handler(ev('run-bus', 'runStarted', {}))
-      const mintedId = owned.getRuns().map(run => run.id).find(id => id !== insertedId && id !== adoptedId)
 
       const ids = [insertedId, adoptedId, mintedId]
       expect(ids.every(id => id !== undefined)).toBe(true)
@@ -708,5 +694,73 @@ describe('C443-CLAIM', () => {
     expect(own.getRuns().map((run) => [run.id, run.status])).toEqual([[freshId, 'running']])
     expect(own.readRunOwner(freshId)).toEqual(SELF)
     expect(created).toEqual([freshId])
+  })
+})
+
+describe('C443-INGEST-ID', () => {
+  const TABLES = ['run_members', 'run_steps', 'run_sub_actions', 'execution_logs', 'run_artifacts']
+
+  function misfiled(id: string): string {
+    const runIds = (db['db'].prepare('SELECT id FROM runs').all() as Array<{ id: string }>).map((row) => row.id)
+    const offenders = runIds.join(',') === id ? [] : [`runs: ${runIds.join(',') || 'empty'}`]
+    for (const table of TABLES) {
+      const filed = (db['db'].prepare(`SELECT DISTINCT run_id FROM ${table}`).all() as Array<{ run_id: string }>)
+        .map((row) => row.run_id)
+      if (filed.join(',') !== id) offenders.push(`${table}: ${filed.join(',') || 'empty'}`)
+    }
+    return offenders.join('; ')
+  }
+
+  function replayMember(ingest: ReturnType<typeof createDashboardRunIngest>, id: string, testIndex: number): void {
+    const name = `Member ${String(testIndex)}`
+    ingest.handler(ev(id, 'testStarted', { testId: `t-${String(testIndex)}`, testIndex, name, filePath: 'tests/m.yaml' }))
+    ingest.handler(ev(id, 'stepStarted', { testIndex, stepIndex: 0, stepText: 'Click Save' }))
+    ingest.handler(ev(id, 'stepFinalized', stepFinalized({ testIndex })))
+    ingest.handler(ev(id, 'subActionRecorded', subActionRecorded({ testIndex })))
+    ingest.handler(ev(id, 'hookFinished', {
+      hookExecutionId: `hook-${String(testIndex)}`, hookName: 'seed', kind: 'hook', phase: 'setup',
+      status: 'passed', durationMs: 5, testIndex,
+    }))
+    ingest.handler(ev(id, 'testFinished', { testId: `t-${String(testIndex)}`, testIndex, outcome: 'passed', durationMs: 10 }))
+  }
+
+  it('every row the ingest writes is filed under the id it was built with', async () => {
+    const unnamed = (): unknown =>
+      // @ts-expect-error a run's own id is required construction data
+      createDashboardRunIngest({ db })
+    expect(typeof unnamed).toBe('function')
+
+    const builtWith = 'r_built-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
+    const ingest = createDashboardRunIngest({
+      db, runId: builtWith, sourceSnapshot: testSource(), configSnapshot: testConfig(), attributes,
+    })
+    ingest.handler(ev('run-bus', 'runStarted', { memberTestCount: 1 }))
+    replayMember(ingest, 'run-bus', 0)
+    ingest.handler(ev('run-bus', 'verdict', { verdict: 'passed' }))
+    ingest.handler(ev('run-bus', 'runFinished', { aggregateVerdict: 'passed', disposition: 'detached', finalSeq: seq }))
+    await ingest.finalize({ runtime: { status: 'passed' } })
+
+    expect(misfiled(builtWith), 'rows filed under another id or missing').toBe('')
+    expect(db.getRun(builtWith)?.status).toBe('passed')
+  })
+
+  it('an ingest built for a suite files the suite run under the same id', async () => {
+    const builtWith = 'r_suitebuilt-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
+    const ingest = createDashboardRunIngest({
+      db,
+      runId: builtWith,
+      sourceSnapshot: { kind: 'suite', suiteId: 's_smoke', name: 'Smoke Suite', loadStatus: 'loaded' },
+      configSnapshot: testConfig(),
+      attributes,
+    })
+    ingest.handler(ev('run-bus', 'runStarted', { memberTestCount: 2 }))
+    replayMember(ingest, 'run-bus', 0)
+    replayMember(ingest, 'run-bus', 1)
+    ingest.handler(ev('run-bus', 'runFinished', { aggregateVerdict: 'passed', disposition: 'detached', finalSeq: seq }))
+    await ingest.finalize()
+
+    expect(misfiled(builtWith), 'rows filed under another id or missing').toBe('')
+    expect(db.getRun(builtWith)).toMatchObject({ name: 'Smoke Suite', suiteId: 's_smoke', status: 'passed' })
+    expect(db.readRunDetailRows(builtWith)?.members.map((member) => member.testIndex)).toEqual([0, 1])
   })
 })

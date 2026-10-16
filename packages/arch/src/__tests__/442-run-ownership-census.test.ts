@@ -285,7 +285,6 @@ const WRITERS: readonly Writer[] = [
   w(SUBSCRIBER, 'updateRun', 'own', 'runFinished aggregate verdict'),
   w(SUBSCRIBER, 'updateRun', 'own', 'verdict envelope'),
   w(SUBSCRIBER, 'claimRunningRow', 'own', 'ingest claims its own run row'),
-  w(SUBSCRIBER, 'insertRun', 'own', 'ingest inserts a fresh running row'),
   w(SUBSCRIBER, 'finalizeRunArtifact', 'own', 'runFinished finalize'),
   w(SERVER, 'updateRun', 'own', 'run-settled of a run this dashboard executed'),
   w(SERVER, 'updateRun', 'own', 'Appium start failure of a run this dashboard executed'),
@@ -300,7 +299,7 @@ const WRITERS: readonly Writer[] = [
   w(JOB_QUEUE, 'finalizeOrphanRun', 'orphan', 'cancel of a running row whose owner is gone'),
   w(DATABASE, 'finalizeRunArtifact', 'orphan', 'inside finalizeOrphanRun, after its CAS wrote'),
 ]
-const WRITER_FLOOR = 34
+const WRITER_FLOOR = 33
 
 function argumentOf(text: string, open: number): string {
   let depth = 0

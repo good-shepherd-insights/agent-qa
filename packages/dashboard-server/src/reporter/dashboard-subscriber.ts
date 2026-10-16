@@ -22,8 +22,8 @@ import type { DashboardDatabase } from '../db/database.js'
  * "unnamed fifth consumer") rewired from the deleted `DashboardReporter` into a bus
  * subscriber (Open Q-1 resolved as option (a): one envelope vocabulary, D-16 precedent).
  *
- * The bus deliberately does not carry the resolved config/source snapshots or the
- * spawn correlation env; those ride construction. Envelopes drive lifecycle/status.
+ * The bus deliberately does not carry the resolved config/source snapshots or the run's
+ * own id; those ride construction. Envelopes drive lifecycle/status.
  * The `runs` + `run_artifacts` rows this writes stay shape-compatible with what
  * `GET /api/runs/:id/artifact` and the queue read today — the spawn must survive
  * until M5 (Pitfall 1's hard requirement). This module implements no Reporter
@@ -76,36 +76,15 @@ export interface DashboardRunIngestSnapshots {
   source?: SourceSnapshot
 }
 
-/**
- * The spawn correlation env the runner process is launched with (test-runner.ts
- * `execute()` — the three exclusive modes). Read from `process.env` at the CLI
- * composition root and passed in; the bus never carries these.
- */
-export interface DashboardRunIngestCorrelationEnv {
-  /** `AGENT_QA_RUN_ID` — adopt/update this exact row. */
-  runId?: string
-  /**
-   * `AGENT_QA_SUITE_QUEUE_ID` — the enqueued run row id for a suite run.
-   *
-   * 2026-08-24 (402-09, D-11): this is now a SECOND SPELLING OF `runId`, not a parent handle. A
-   * suite is ONE run row with member handles (402-04); the id is adopted exactly as a single test's
-   * is. `parentRunId` / `maxRetries` / `attemptNumber` used to sit beside it and are gone with the
-   * retry mode they served — 401-07 (D-12) had already retired the machinery that set
-   * `AGENT_QA_PARENT_RUN_ID`, so that mode was producer-less before this plan touched it.
-   */
-  suiteQueueId?: string
-}
-
 export interface DashboardRunIngestDeps {
   db: DashboardDatabase
+  runId: string
   /** Resolved config snapshot (RunArtifactPayload-compatible) — the bus never carries it. */
   configSnapshot?: ConfigSnapshot
   /** Resolved test/suite source snapshot — the bus never carries it. */
   sourceSnapshot?: SourceSnapshot
   /** Trusted run attributes, written to the run row + artifact metadata. */
   attributes?: RunAttributes
-  runId?: string
-  correlationEnv?: DashboardRunIngestCorrelationEnv
   /** Fired once the primary DB row exists (log correlation / live-view wiring). */
   onRunCreated?: (runId: string) => void
   /** Injectable clock for deterministic tests. */
@@ -193,7 +172,6 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
   const configSnapshot = deps.configSnapshot
   const sourceSnapshot = deps.sourceSnapshot
   const attributes = deps.attributes
-  const env = deps.correlationEnv ?? {}
   const now = deps.now ?? (() => new Date().toISOString())
 
 
@@ -232,38 +210,21 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
     db.insertRunArtifact({ runId: id, kind, payload: baseArtifactPayload() })
   }
 
-  // 2026-10-17 (443-04, D-07): the row is claimed, never rewritten; a refused claim leaves `runId`
-  // unset, so nothing below writes under another process's row.
+  // 2026-10-17 (443-04, D-07, D-12): the run's own row is claimed, never rewritten; a refused
+  // claim leaves `runId` unset, so nothing below writes under another process's row.
   function claimPrimary(): string | undefined {
     const startedAt = now()
     startedAtMs = Date.parse(startedAt) || Date.now()
-    const explicitId = deps.runId ?? env.runId ?? env.suiteQueueId
-
-    if (explicitId) {
-      const claimed = db.claimRunningRow(explicitId, {
-        ...(sourceName ? { name: sourceName } : {}),
-        filePath: sourceFilePath,
-        ...(attributes ? { attributes } : {}),
-        startedAt,
-        platform,
-        testId: sourceTestId,
-        suiteId: sourceSuiteId,
-      })
-      return claimed ? explicitId : undefined
-    }
-
-    return db.insertRun({
-      name: sourceName ?? 'run',
+    const claimed = db.claimRunningRow(deps.runId, {
+      ...(sourceName ? { name: sourceName } : {}),
       filePath: sourceFilePath,
-      status: 'running',
-      duration: 0,
-      attributes,
+      ...(attributes ? { attributes } : {}),
       startedAt,
-      endedAt: startedAt,
       platform,
       testId: sourceTestId,
       suiteId: sourceSuiteId,
     })
+    return claimed ? deps.runId : undefined
   }
 
   // 2026-08-24 (Phase 402 plan 09, D-11): `insertRetryChild` AND `insertSuiteChild` ARE DELETED.

@@ -3,5 +3,4 @@ export type {
   DashboardRunIngest,
   DashboardRunIngestDeps,
   DashboardRunIngestFinalizeExtra,
-  DashboardRunIngestCorrelationEnv,
 } from './dashboard-subscriber.js'

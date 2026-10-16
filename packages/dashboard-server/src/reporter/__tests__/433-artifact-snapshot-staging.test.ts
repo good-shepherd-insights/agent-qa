@@ -98,7 +98,7 @@ function storedPayload(runId: string): Record<string, any> {
 describe('C433-ARTIFACT-STAGING', () => {
   it('C433-ARTIFACT-STAGING: the queued source is replaced by the loaded snapshot', async () => {
     const runId = enqueueLikeTheQueue('tests/login.yaml')
-    const ingest = createDashboardRunIngest({ db, correlationEnv: { runId } })
+    const ingest = createDashboardRunIngest({ db, runId })
     ingest.handler(ev('runStarted', { memberTestCount: 1 }))
     ingest.stageSnapshots({ config: loadedConfig('gpt-first'), source: loadedSource(FIRST_YAML, 'Login Test') })
 
@@ -112,7 +112,7 @@ describe('C433-ARTIFACT-STAGING', () => {
 
   it('C433-ARTIFACT-STAGING: the first snapshot wins', async () => {
     const runId = enqueueLikeTheQueue('suite run')
-    const ingest = createDashboardRunIngest({ db, correlationEnv: { runId } })
+    const ingest = createDashboardRunIngest({ db, runId })
     ingest.handler(ev('runStarted', { memberTestCount: 2 }))
     ingest.stageSnapshots({ config: loadedConfig('gpt-first'), source: loadedSource(FIRST_YAML, 'Login Test') })
     ingest.stageSnapshots({ config: loadedConfig('gpt-second'), source: loadedSource(SECOND_YAML, 'Second Test') })
@@ -125,7 +125,7 @@ describe('C433-ARTIFACT-STAGING', () => {
 
   it('C433-ARTIFACT-STAGING: a finalized artifact is never re-staged', async () => {
     const runId = enqueueLikeTheQueue('tests/login.yaml')
-    const ingest = createDashboardRunIngest({ db, correlationEnv: { runId } })
+    const ingest = createDashboardRunIngest({ db, runId })
     ingest.handler(ev('runStarted', { memberTestCount: 1 }))
     ingest.handler(ev('runFinished', { aggregateVerdict: 'passed', disposition: 'detached', finalSeq: seq }))
     await ingest.finalize()
@@ -142,7 +142,7 @@ describe('C433-ARTIFACT-STAGING', () => {
 
   it('C433-ARTIFACT-STAGING: a CLI-door run without a queued row gets both sections', async () => {
     const runId = 'r_cli-door-alpha-bravo-charlie-delta-echo-foxtrot-golf'
-    const ingest = createDashboardRunIngest({ db, correlationEnv: { runId } })
+    const ingest = createDashboardRunIngest({ db, runId })
     // The member's snapshot can arrive before the bus delivers `runStarted`; it is held.
     ingest.stageSnapshots({ config: loadedConfig('gpt-cli'), source: loadedSource(FIRST_YAML, 'Login Test') })
     expect(db.getRunArtifact(runId)).toBeNull()

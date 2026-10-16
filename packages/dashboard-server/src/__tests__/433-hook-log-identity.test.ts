@@ -102,7 +102,7 @@ async function ingestHookedTestRun(runId: string, minted: string[]): Promise<voi
     db,
     sourceSnapshot: { kind: 'test', testId: TEST_ID, name: 'Hooked test', filePath: 'tests/hooked.yaml', loadStatus: 'loaded' },
     attributes,
-    correlationEnv: { runId },
+    runId,
     now: () => '2026-10-05T00:00:00.000Z',
   })
   const emit = seamFor(runId, ingest, minted)
@@ -120,7 +120,7 @@ async function ingestHookedSuiteRun(runId: string, minted: string[]): Promise<vo
     db,
     sourceSnapshot: { kind: 'suite', suiteId: SUITE_ID, name: 'Hooked suite', loadStatus: 'loaded' },
     attributes,
-    correlationEnv: { suiteQueueId: runId },
+    runId,
     now: () => '2026-10-05T00:00:00.000Z',
   })
   const emit = seamFor(runId, ingest, minted)
@@ -233,7 +233,7 @@ describe('C433-HOOK-LOG-IDENTITY', () => {
       db,
       sourceSnapshot: { kind: 'test', testId: TEST_ID, name: 'Hooked test', filePath: 'tests/hooked.yaml', loadStatus: 'loaded' },
       attributes,
-      correlationEnv: { runId: RUN_A },
+      runId: RUN_A,
       now: () => '2026-10-05T00:00:00.000Z',
     })
     ingest.handler(ev(RUN_A, 'runStarted', {}))
@@ -260,7 +260,7 @@ describe('C433-HOOK-LOG-IDENTITY', () => {
       db,
       sourceSnapshot: { kind: 'test', testId: TEST_ID, name: 'Hooked test', filePath: 'tests/hooked.yaml', loadStatus: 'loaded' },
       attributes,
-      correlationEnv: { runId: RUN_A },
+      runId: RUN_A,
       now: () => '2026-10-05T00:00:00.000Z',
     })
     const emit = seamFor(RUN_A, ingest, [])
