@@ -17,18 +17,32 @@ export interface CliRunOwnership {
   }
 }
 
+export const RUN_OWNER_START_TIME_TIMEOUT_MS = 1_000
+
+export function createRunOwnership({ readStartTime, isAlive }: {
+  readStartTime: (pid: number, timeoutMs: number) => string | undefined
+  isAlive: (pid: number) => boolean
+}): CliRunOwnership {
+  let ownStartTime: string | undefined
+  return {
+    get self() {
+      // 2026-10-16 (442-15, GAP-D2): a miss is not remembered; the next read retries.
+      ownStartTime ??= readStartTime(process.pid, RUN_OWNER_START_TIME_TIMEOUT_MS)
+      return { pid: process.pid, incarnation: ownStartTime ?? null, host: hostname() }
+    },
+    probe: {
+      isAlive,
+      incarnationOf: (pid) => readStartTime(pid, RUN_OWNER_START_TIME_TIMEOUT_MS),
+    },
+  }
+}
+
 let composed: CliRunOwnership | undefined
 
 export function composeRunOwnership(): CliRunOwnership {
-  if (composed !== undefined) return composed
-  const { resolveProcessIncarnation } = LOCAL_DAEMON_CAPABILITIES
-  composed = {
-    self: {
-      pid: process.pid,
-      incarnation: resolveProcessIncarnation(process.pid) ?? null,
-      host: hostname(),
-    },
-    probe: { isAlive: processIsAlive, incarnationOf: (pid) => resolveProcessIncarnation(pid) },
-  }
+  composed ??= createRunOwnership({
+    readStartTime: LOCAL_DAEMON_CAPABILITIES.resolveProcessIncarnation,
+    isAlive: processIsAlive,
+  })
   return composed
 }
