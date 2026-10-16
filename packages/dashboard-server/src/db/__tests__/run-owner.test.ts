@@ -148,3 +148,17 @@ describe('C442-OWN-START-TIME', () => {
     expect(probed.join()).toBe('100')
   })
 })
+
+describe('C442-PROBE-THROWS', () => {
+  it('a start-time read that throws answers unknown', () => {
+    const owner: RunOwner = { pid: 200, incarnation: 'start:200', host: HOST }
+    const probe: RunOwnerProbe = {
+      isAlive: (pid) => pid === owner.pid,
+      incarnationOf: (pid) => {
+        if (pid === owner.pid) throw new Error('ps failed')
+        return undefined
+      },
+    }
+    expect(classifyRunOwner({ ...owner }, { self: SELF, probe })).toBe('unknown')
+  })
+})

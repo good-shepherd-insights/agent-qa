@@ -128,7 +128,12 @@ async function cancelOver(
   const response = await fetch(`${dashboard.origin}/api/runs/${encodeURIComponent(id)}/cancel`, {
     method: 'POST',
   })
-  return { status: response.status, body: await response.json() }
+  const text = await response.text()
+  let body: unknown = text
+  try {
+    body = JSON.parse(text)
+  } catch { /* a non-JSON body is compared as text */ }
+  return { status: response.status, body }
 }
 
 function expectOrphanFinalized(id: string, pid: number): void {
@@ -333,5 +338,29 @@ describe('C442-OWN-START-TIME', () => {
       reusedQueue.stop()
       reusedDb.close()
     }
+  })
+})
+
+describe('C442-PROBE-THROWS', () => {
+  it('a cancel answers 409, not 500, when the start-time read throws', async () => {
+    const throwing: RunOwner = { pid: 3006, incarnation: 'inc-3006', host: HOST }
+    const throwingProbe: RunOwnerProbe = {
+      isAlive: probe.isAlive,
+      incarnationOf: (pid) => {
+        if (pid === throwing.pid) throw new Error('ps failed')
+        return probe.incarnationOf(pid)
+      },
+    }
+    const dashboard = await startDashboard({ self: SELF, probe: throwingProbe })
+    const id = seedRunning(throwing, 'Start time read throws')
+    const before = snapshotOf(id)
+
+    expect(await cancelOver(dashboard, id)).toEqual({
+      status: 409,
+      body: refusalBodyOf(throwing),
+    })
+    expect(dashboard.backend.killed).toEqual([])
+    expect(emitted).toEqual([])
+    expect(snapshotOf(id)).toBe(before)
   })
 })

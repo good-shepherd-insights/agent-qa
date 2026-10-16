@@ -191,3 +191,27 @@ describe('C442-ORPHAN', () => {
     ])
   })
 })
+
+describe('C442-PROBE-THROWS', () => {
+  it('a dashboard starts and leaves the run running when the start-time read throws', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const throwing: RunOwner = { pid: 2007, incarnation: 'inc-2007', host: HOST }
+    const throwingProbe: RunOwnerProbe = {
+      isAlive: probe.isAlive,
+      incarnationOf: (pid) => {
+        if (pid === throwing.pid) throw new Error('ps failed')
+        return probe.incarnationOf(pid)
+      },
+    }
+    const id = seedRunning(throwing, 'Start time read throws')
+    const before = snapshotOf(id)
+
+    await startDashboard({ self: SELF, probe: throwingProbe })
+
+    const lines = log.mock.calls.map((call) => String(call[0]))
+    expect(lines.some((line) => line.startsWith('Dashboard running at'))).toBe(true)
+    expect(lines.filter((line) => CLEANUP_LINE.test(line))).toEqual([])
+    expect(reader.getRun(id)?.status).toBe('running')
+    expect(snapshotOf(id)).toBe(before)
+  })
+})
