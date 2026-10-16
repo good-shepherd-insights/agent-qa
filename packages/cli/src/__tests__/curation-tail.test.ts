@@ -444,6 +444,8 @@ function successfulOperations(
     reconcileRunOutcomesProjection: vi.fn(() => ({ kind: 'current' as const })),
     acquireWriterLease: vi.fn(() => ({ kind: 'acquired' as const, leaseId: 'sweep-lease', epoch: 7 })),
     releaseLease: vi.fn(() => ({ kind: 'released' as const })),
+    // 2026-10-16 (442-10, D-17): each sibling run's fixture context, as its own run-config record would give it.
+    resolveRunCurationContext: vi.fn(async () => ({ mask, knowledgeRoot })),
     ...overrides,
   }
 }

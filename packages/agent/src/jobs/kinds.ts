@@ -255,6 +255,8 @@ export interface PostRunJobCapabilities {
      * which is the one answer that is indistinguishable from a real empty fold.
      */
     readonly candidateIds?: readonly string[]
+    /** 2026-10-16 (442-10, D-17): why a fold that did not complete handed its run back. */
+    readonly reason?: string
   }>
   /**
    * Put one run's analysis artifact durably on disk (389 D-09).
@@ -1158,8 +1160,9 @@ function realCurateMemoryHandler(capabilities: PostRunJobCapabilities): JobHandl
     if (!counts.complete) {
       return {
         status: 'retryable',
-        reason: 'the curation fold did not complete and wrote no receipt; the stage will retry '
-          + 'under its declared bound',
+        reason: counts.reason
+          ?? 'the curation fold did not complete and wrote no receipt; the stage will retry '
+            + 'under its declared bound',
       }
     }
     // WR-02. The bundles are committed by now: a snapshot that does not validate is omitted and the

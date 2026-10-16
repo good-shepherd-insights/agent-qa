@@ -108,6 +108,8 @@ function harness(overrides: {
       drainKind: 'drained' as const,
     })),
     runCurationTail,
+    // 2026-10-16 (442-10, D-17): another run's fixture context, as its own run-config record would give it.
+    resolveRunCurationContext: vi.fn(async () => ({ mask: (text: string) => text, knowledgeRoot })),
     now: () => clock.value,
   } as unknown as PostRunTailOperations
 

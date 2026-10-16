@@ -53,6 +53,7 @@ import { exercisedAnchors } from './handoff-anchors.js'
 import { renderPromotionLine } from './promotion-posture.js'
 import { readRunCanaryPolicy } from './canary-run-state.js'
 import type { ResolveTrustPriors } from './trust-priors.js'
+import { resolveRunCurationContext } from './run-curation-context.js'
 
 export const CURATION_TAIL_RECEIPT_FILE = 'curation-tail-receipt.json'
 /**
@@ -118,6 +119,7 @@ export interface CurationTailOperations {
   readCurationTailReceipt(runDir: string): CurationTailReceipt | undefined
   writeCurationTailReceipt(runDir: string, receipt: CurationTailReceipt): void
   nudgeDaemon: typeof nudgeDaemon
+  resolveRunCurationContext: typeof resolveRunCurationContext
 }
 
 /**
@@ -175,6 +177,7 @@ function defaultOperations(): CurationTailOperations {
     readCurationTailReceipt,
     writeCurationTailReceipt,
     nudgeDaemon,
+    resolveRunCurationContext,
   }
 }
 
@@ -1018,6 +1021,19 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
     try {
       const priorReceipt = operations.readCurationTailReceipt(runDir)
       if (receiptMatches(priorReceipt, receiptIdentity)) continue
+      let runMask = opts.mask
+      if (runDir !== currentRunDir) {
+        const context = await operations.resolveRunCurationContext({
+          agentQaRoot: opts.agentQaRoot,
+          runId: String(handoff.runId),
+          drainerKnowledgeRoot: knowledgeRoot,
+        })
+        if ('handBack' in context) {
+          opts.log.warn(`Skipping post-verdict knowledge curation for ${runDir}: ${context.handBack}`)
+          continue
+        }
+        runMask = context.mask
+      }
       const resolvePromotionPosture = opts.resolvePromotionPostureForRun === undefined
         ? opts.resolvePromotionPosture : await opts.resolvePromotionPostureForRun(handoff.buildOrdinal, handoff.scope)
       const folded = await curateCompletedRun({
@@ -1028,7 +1044,7 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
         handoff,
         knowledgeRoot,
         agentQaRoot: opts.agentQaRoot,
-        ...(opts.mask === undefined ? {} : { mask: opts.mask }),
+        ...(runMask === undefined ? {} : { mask: runMask }),
         ...(opts.modelDeps === undefined ? {} : { modelDeps: opts.modelDeps }),
         ...(opts.authority === undefined ? {} : { authority: opts.authority }),
         ...(opts.deadlineMs === undefined ? {} : { deadlineMs: opts.deadlineMs }),

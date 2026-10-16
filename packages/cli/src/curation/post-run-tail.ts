@@ -90,6 +90,7 @@ import {
 } from './misdirection-run-state.js'
 import { createPostRunChipEmitter } from './post-run-chip-emitter.js'
 import { buildPromotionPostureResolver, promotionPostureResolverForHost } from './promotion-posture.js'
+import { resolveRunCurationContext } from './run-curation-context.js'
 import { LOCAL_CURATION_CAPABILITIES, latestBuildOrdinal } from '@vostride/agent-qa-agent-local'
 import { createReplayGatePortForHost, type ReplayGateClaimAuthority } from '../gates/replay-gate-host.js'
 import { CURATION_BREAKDOWN_BUCKETS, type ScopeKey } from '@vostride/agent-qa-schema'
@@ -176,6 +177,7 @@ export interface PostRunTailOperations {
   nudgeDaemon: typeof nudgeDaemon
   curateCompletedRun: typeof curateCompletedRun
   runCurationTail: typeof runCurationTail
+  resolveRunCurationContext: typeof resolveRunCurationContext
   createChipEmitter: typeof createPostRunChipEmitter
   /**
    * Durable chip truth, through the ONE read op (D-14).
@@ -250,6 +252,7 @@ export interface PostRunTailHostInput {
     readonly snapshot?: CurationSnapshot
     /** The committed receipt's candidates, forwarded to the third stage (422 D-13). */
     readonly candidateIds?: readonly string[]
+    readonly reason?: string
   }>
 }
 
@@ -309,6 +312,7 @@ export function defaultPostRunTailOperations(): PostRunTailOperations {
     nudgeDaemon,
     curateCompletedRun,
     runCurationTail,
+    resolveRunCurationContext,
     createChipEmitter: createPostRunChipEmitter,
     readPostProcessingStatus: async (host, runId) => await invokeFunction(
       host.registry,
@@ -628,6 +632,18 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
     if (knowledgeRoot === undefined) {
       throw new Error('the post-run tail resolved no knowledge root to curate against')
     }
+    let runMask = opts.mask
+    let runKnowledgeRoot = knowledgeRoot
+    if (input.runId !== opts.runId) {
+      const context = await ops().resolveRunCurationContext({
+        agentQaRoot: opts.agentQaRoot, runId: input.runId, drainerKnowledgeRoot: knowledgeRoot,
+      })
+      if ('handBack' in context) {
+        return { curated: 0, deprecated: 0, complete: false, reason: context.handBack }
+      }
+      runMask = context.mask
+      runKnowledgeRoot = context.knowledgeRoot
+    }
     const curatedRunDir = completedRunDir(opts.agentQaRoot, input.runId)
     const handoff = ops().loadCompletedRunHandoff(
       completedRunHandoffPath(opts.agentQaRoot, input.runId),
@@ -641,9 +657,9 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
       ...(runPromotionPosture === undefined ? {} : { resolvePromotionPosture: runPromotionPosture }),
       runDir: curatedRunDir,
       handoff,
-      knowledgeRoot,
+      knowledgeRoot: runKnowledgeRoot,
       agentQaRoot: opts.agentQaRoot,
-      ...(opts.mask === undefined ? {} : { mask: opts.mask }),
+      ...(runMask === undefined ? {} : { mask: runMask }),
       ...(opts.modelDeps === undefined ? {} : { modelDeps: opts.modelDeps }),
       ...(heldAuthority === undefined ? {} : { authority: heldAuthority }),
       ...(deadlineMs === undefined ? {} : { deadlineMs }),

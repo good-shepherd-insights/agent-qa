@@ -659,6 +659,7 @@ export interface ComposeCliLocalAgentInput {
        * none. See the capability's own comment in `agent` for why those are not one answer.
        */
       readonly candidateIds?: readonly string[]
+      readonly reason?: string
     }>
     /**
      * REQUIRED wherever the binding is supplied (388-10, UF-388-01): what this binding does
