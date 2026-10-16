@@ -1,9 +1,18 @@
-// THE DOOR MATRIX (Phase 432 plan 42; D-01/D-12/D-14/D-18, PXH-SAFE-01/02).
+// THE DOOR MATRIX (Phase 432 plan 42; D-01/D-12/D-14/D-18, PXH-SAFE-01/02; 442 D-12/D-19).
 //
 // One run request, made the way a person or an agent makes it on EVERY door agent-qa ships:
 //   `agent-qa run` (spawned binary), `agent-qa fn`, `agent-qa ask`, CLI chat, MCP over HTTP,
-//   MCP over stdio (spawned binary), the dashboard's Run control, the run service, and the
-//   background worker (the daemon) — each in CI posture, with no terminal.
+//   MCP over stdio (spawned binary), the dashboard's Run control, the run service, the
+//   background worker (the daemon), the dashboard's co-hosted MCP endpoint and its enqueue
+//   route — each in CI posture, with no terminal.
+//
+// 2026-10-16 (442-09, D-12/D-19): D-12's nine doors map onto these eleven rows. The CLI is
+// `agent-qa run`; the standalone MCP server is MCP over stdio and MCP over HTTP; `fn`, `ask` and
+// chat are their own rows; the daemon is the background worker; dashboard `POST /run` is the run
+// service; the co-hosted MCP endpoint and enqueue are their own rows. The dashboard Run control is
+// a door D-12 does not name, and it stays. Every project declares a marker auth plugin (D-10), and
+// the dashboard rows compose `createDashboardRunDoor` without the command's host-start config read
+// (D-18), so a marker can only come from the request.
 // Three postures per door, each in a fresh temporary project over a loopback counting target:
 //   1. a NON-PRODUCTION test runs in its one call, nothing reads stdin and nothing is asked;
 //   2. a declared PRODUCTION test is refused before any effect — no run directory, no request at
@@ -18,8 +27,9 @@
 //
 // NOTHING IS MOCKED BETWEEN THE DOOR AND THE RUN CORE. Every door goes through its shipped
 // composition (`composeCliLocalAgent`, `composeDashboardDoor`/`createDashboardRunDoor`,
-// `composeRunServicePorts`, `runDaemonHost`, the built `dist/cli.js`); the model points at an
-// unbindable port, so a started run probes the target, fails to plan and finishes.
+// `composeRunServicePorts`, `runDaemonHost`, `mountCoHostedMcp`, the built `dist/cli.js`); the
+// model points at a counting path on the target's origin that answers no model, so a started run
+// probes the target, fails to plan and finishes.
 //
 // 2026-10-03 (quick-261003-tsr, WR-08): every door, in-process ones included, runs under the
 // project's empty `no-browsers` pin, and every target hit records the pin in force when it arrived.
@@ -36,6 +46,7 @@ import { spawn } from 'node:child_process'
 import {
   existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync,
 } from 'node:fs'
+import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -44,7 +55,7 @@ import { fileURLToPath } from 'node:url'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import { createMcpHandler } from '@modelcontextprotocol/server'
-import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
+import type { ConfigReaderPort, FunctionRegistry, JobModelCapability } from '@vostride/agent-qa-agent'
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import { resolveWorkspacePaths } from '@vostride/agent-qa-core'
 import { DashboardDatabase, startServer } from '@vostride/agent-qa-dashboard'
@@ -57,9 +68,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parse as parseYaml } from 'yaml'
 
 import { createAskCommand } from '../../commands/ask.js'
-import { composeDashboardDoor, composeRunServicePorts, createDashboardRunDoor } from '../../commands/dashboard.js'
+import {
+  composeDashboardDoor, composeRunServicePorts, createDashboardRunDoor, mountCoHostedMcp,
+} from '../../commands/dashboard.js'
 import { createFnCommand } from '../../commands/fn.js'
-import { composeMcpMasking, MCP_FUNCTION_CALLER } from '../../commands/mcp.js'
+import { composeMcpMasking, createMcpHttpRequestListener, MCP_FUNCTION_CALLER } from '../../commands/mcp.js'
 import { CountingTarget } from '../../composition/__tests__/in-process-run-fixture.js'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../../composition/local-agent-host.js'
 import { invokeViaDaemon } from '../../daemon/client.js'
@@ -71,6 +84,8 @@ const CLI_DIST = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..',
 const OPT_IN_LINE = 'allowProduction: true'
 const PRODUCTION_TARGET = 'prod-one'
 const LOCAL_TARGET = 'local-one'
+const MODEL_PATH = 'model-endpoint'
+const PLUGIN_MARKER = 'plugin-loaded.marker'
 /** The prompt wording a retired approval would print. None of it may reach anybody. */
 const APPROVAL = /\[y\/N\]|\[y\/a\/N\]|needs your approval|Proceed\?|--trust-session/u
 
@@ -92,14 +107,22 @@ interface MatrixProject {
   readonly agentQaRoot: string
   readonly localTest: string
   readonly productionTest: string
+  readonly pluginMarker: string
 }
 
-/** One project, one local and one production target over the counting origin, one product. */
+// 2026-10-16 (442-09, D-10): a fresh directory per cell is a fresh plugin file URL, so neither
+// Node's module cache nor a loader's declaration set can make a marker assertion vacuous.
 function matrixProject(origin: string, optIn: boolean): MatrixProject {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'agent-qa-432-42-doors-')))
   roots.push(root)
   mkdirSync(join(root, 'tests'), { recursive: true })
   mkdirSync(join(root, 'no-browsers'), { recursive: true })
+  writeFileSync(join(root, 'marker-auth-plugin.mjs'), [
+    "import { writeFileSync } from 'node:fs'",
+    `writeFileSync(new URL('./${PLUGIN_MARKER}', import.meta.url), String(process.pid))`,
+    'export const providers = []',
+    '',
+  ].join('\n'))
   writeFileSync(join(root, 'agent-qa.config.yaml'), [
     ...(optIn ? [OPT_IN_LINE] : []),
     'workspace:',
@@ -110,6 +133,11 @@ function matrixProject(origin: string, optIn: boolean): MatrixProject {
     '  hooksFile: hooks.yaml',
     '  envFile: .env',
     '  secretsFile: .env.secrets.local',
+    'plugins:',
+    '  auth:',
+    '    - path: ./marker-auth-plugin.mjs',
+    'services:',
+    '  dashboard: {}',
     'registry:',
     '  targets:',
     `    ${LOCAL_TARGET}:`,
@@ -126,7 +154,7 @@ function matrixProject(origin: string, optIn: boolean): MatrixProject {
     '    - name: unreachable',
     '      provider: openai-compatible',
     '      model: gpt-4o-mini',
-    '      baseURL: http://127.0.0.1:1/v1',
+    `      baseURL: ${origin}/${MODEL_PATH}`,
     'use:',
     '  llm: unreachable',
     '  mobile:',
@@ -153,6 +181,7 @@ function matrixProject(origin: string, optIn: boolean): MatrixProject {
     agentQaRoot: join(root, '.agent-qa'),
     localTest: test('local.yaml', LOCAL_TARGET),
     productionTest: test('prod.yaml', PRODUCTION_TARGET),
+    pluginMarker: join(root, PLUGIN_MARKER),
   }
 }
 
@@ -232,6 +261,8 @@ async function atDoor<T>(
 interface DoorAnswer {
   readonly refused: boolean
   readonly text: string
+  /** The dashboard database a dashboard-hosted door wrote through, read for D-11's row effect. */
+  readonly db?: DashboardDatabase
 }
 
 type Door = (project: MatrixProject, pattern: string, target: CountingTarget) => Promise<DoorAnswer>
@@ -282,6 +313,7 @@ function toolText(result: unknown): DoorAnswer {
 async function openDashboard(project: MatrixProject): Promise<{
   origin: string
   db: DashboardDatabase
+  registry: FunctionRegistry
   settled: Array<{ runId: string; status: string; details: Record<string, unknown> }>
 }> {
   const db = new DashboardDatabase({ dbPath: ':memory:' })
@@ -322,7 +354,15 @@ async function openDashboard(project: MatrixProject): Promise<{
     await door.host.close()
     db.close()
   })
-  return { origin: boundOrigin, db, settled }
+  return { origin: boundOrigin, db, registry: door.host.registry as FunctionRegistry, settled }
+}
+
+/** A queued or triggered dashboard run, once settled, as the door's answer. */
+async function settledAnswer(scene: Awaited<ReturnType<typeof openDashboard>>): Promise<DoorAnswer> {
+  expect(await waitFor(() => scene.settled.length > 0, 90_000), 'the dashboard run never settled').toBe(true)
+  const settled = scene.settled[0]!
+  const reason = typeof settled.details['neutralReason'] === 'string' ? settled.details['neutralReason'] : ''
+  return { refused: settled.details['refusedBeforeStart'] === true, text: `${reason}\n${JSON.stringify(settled.details)}`, db: scene.db }
 }
 
 const DOORS: ReadonlyArray<readonly [string, Door]> = [
@@ -387,13 +427,10 @@ const DOORS: ReadonlyArray<readonly [string, Door]> = [
     // 433-34 (G-433-10): the trigger refuses at the door, so the refusal is its answer and no row exists.
     if (response.status >= 400 && body.error === 'run_denied') {
       expect(scene.db.getRuns({}), 'a refused click minted a run row').toEqual([])
-      return { refused: true, text: `${body.neutralReason ?? ''}\n${JSON.stringify(body)}` }
+      return { refused: true, text: `${body.neutralReason ?? ''}\n${JSON.stringify(body)}`, db: scene.db }
     }
     expect(body.error, JSON.stringify(body)).toBeUndefined()
-    expect(await waitFor(() => scene.settled.length > 0, 90_000), 'the dashboard run never settled').toBe(true)
-    const settled = scene.settled[0]!
-    const reason = typeof settled.details['neutralReason'] === 'string' ? settled.details['neutralReason'] : ''
-    return { refused: settled.details['refusedBeforeStart'] === true, text: `${reason}\n${JSON.stringify(settled.details)}` }
+    return await settledAnswer(scene)
   }],
   ['the run service', async (project, pattern) => {
     const scene = await openDashboard(project)
@@ -403,7 +440,7 @@ const DOORS: ReadonlyArray<readonly [string, Door]> = [
     const raw = await response.text()
     const body = (() => { try { return JSON.parse(raw) as Record<string, unknown> } catch { return {} } })()
     const text = typeof body['neutralReason'] === 'string' ? `${body['neutralReason']}\n${raw}` : raw
-    return { refused: response.status >= 400 && body['error'] === 'run_denied', text }
+    return { refused: response.status >= 400 && body['error'] === 'run_denied', text, db: scene.db }
   }],
   ['the background worker (daemon)', async (project, pattern) => {
     const listeners = new Map<NodeJS.Signals, () => void>()
@@ -439,6 +476,43 @@ const DOORS: ReadonlyArray<readonly [string, Door]> = [
       await running
     }
   }],
+  ['the co-hosted MCP endpoint', async (project, pattern) => {
+    // The listener `agent-qa dashboard` mounts, over the scene door's registry as the command builds it.
+    const scene = await openDashboard(project)
+    const masking = composeMcpMasking({ configPath: project.configPath })
+    const warnings: string[] = []
+    const mount = await mountCoHostedMcp({
+      server: createServer(createMcpHttpRequestListener({
+        registry: scene.registry,
+        maskText: (text: string) => masking.mask(text),
+        liveLink: { dashboardBaseUrl: () => scene.origin },
+      })),
+      port: 0,
+      warn: (line) => warnings.push(line),
+    })
+    const server = mount.server
+    expect(server, warnings.join('\n')).toBeDefined()
+    cleanups.push(() => new Promise<void>((closed) => server!.close(() => closed())))
+    const client = new Client({ name: 'agent-qa-442-09-cohost', version: '0.0.0' })
+    try {
+      await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${String(mount.boundPort)}/mcp`)))
+      return { ...toolText(await client.callTool({ name: 'agent_qa_start_run', arguments: { patterns: [pattern] } })), db: scene.db }
+    } finally {
+      await client.close().catch(() => {})
+    }
+  }],
+  ['the enqueue route', async (project, pattern) => {
+    const scene = await openDashboard(project)
+    const response = await fetch(`${scene.origin}/api/queue/enqueue`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'the matrix enqueue', file: pattern }),
+    })
+    const body = await response.json() as Record<string, unknown>
+    if (response.status === 403 && body['error'] === 'run_denied') {
+      return { refused: true, text: `${String(body['neutralReason'] ?? '')}\n${JSON.stringify(body)}`, db: scene.db }
+    }
+    expect(response.status, JSON.stringify(body)).toBe(202)
+    return await settledAnswer(scene)
+  }],
 ]
 
 /** The browser pin this process held at each target hit, in arrival order. */
@@ -464,7 +538,7 @@ function expectPinnedHits(project: MatrixProject, pinsAtHit: PinsAtHit): void {
 
 describe('C432-DOOR-NONPRODUCTION: every door runs, refuses production, and honours only the config opt-in', () => {
   it('C432-DOOR-NONPRODUCTION: the matrix covers every supported door', () => {
-    expect(DOORS.map(([name]) => name)).toHaveLength(9)
+    expect(DOORS.map(([name]) => name)).toHaveLength(11)
   })
 
   it.each(DOORS)('C432-DOOR-NONPRODUCTION: %s starts a non-production run in its one call, reading no stdin and asking nothing', async (_name, door) => {
