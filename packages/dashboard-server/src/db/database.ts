@@ -354,12 +354,14 @@ export function runSqliteMigrations(
 
   db.pragma('foreign_keys = OFF')
   try {
+    // 2026-10-17 (443-03, D-23): another opener may have stamped the file since the read above.
     const runAll = db.transaction(() => {
+      if (assertSupportedUserVersion(db, schemaVersion) === schemaVersion) return
       for (const sql of terminal.sql) {
         db.exec(sql)
       }
       db.pragma(`user_version = ${terminal.version}`)
-    })
+    }, { immediate: true })
     runAll()
   } finally {
     db.pragma('foreign_keys = ON')
@@ -389,6 +391,26 @@ function assertSupportedUserVersion(db: DashboardSqliteDatabase, schemaVersion: 
     throw new UnsupportedUserVersionError(currentVersion, schemaVersion)
   }
   return currentVersion
+}
+
+const SQLITE_BUSY = 5
+const WAL_RETRY_STEP_MS = 25
+const WAL_RETRY_LIMIT_MS = 5000
+
+// 2026-10-17 (443-03, D-23): on a fresh file the WAL switch can return SQLITE_BUSY that
+// busy_timeout does not absorb; the constructor is synchronous, so the wait is Atomics.wait.
+function enableWalMode(db: DashboardSqliteDatabase): void {
+  const pause = new Int32Array(new SharedArrayBuffer(4))
+  for (let waited = 0; ; waited += WAL_RETRY_STEP_MS) {
+    try {
+      db.pragma('journal_mode = WAL')
+      return
+    } catch (error) {
+      const busy = (error as { errcode?: unknown } | null)?.errcode === SQLITE_BUSY
+      if (!busy || waited >= WAL_RETRY_LIMIT_MS) throw error
+      Atomics.wait(pause, 0, 0, WAL_RETRY_STEP_MS)
+    }
+  }
 }
 
 export class RunsDatabaseVersionRefusedError extends Error {
@@ -426,7 +448,7 @@ export class DashboardDatabase {
       this.db.pragma('busy_timeout = 5000')
       // 2026-10-16 (442-01, D-03): refuse before WAL mode rewrites the file header.
       assertSupportedUserVersion(this.db, SCHEMA_VERSION)
-      this.db.pragma('journal_mode = WAL')
+      enableWalMode(this.db)
       this.runMigrations()
     } catch (error) {
       this.db.close()
