@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { cpus } from 'node:os'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { cpus, tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { isCanonicalRunId } from '@vostride/agent-qa-ids'
 import { DashboardDatabase } from '../db/database.js'
 import { JobQueue } from '../queue/job-queue.js'
@@ -436,5 +438,113 @@ describe('JobQueue no longer interprets a retired confirm-scope key', () => {
   it('a run with no confirmScope at all is unaffected — the no-op control', () => {
     const runId = queue.enqueue({ name: 'plain', metadata: { args: ['/w/tests/plain.yaml'] } })
     expect(db.getRun(runId)?.metadata).toEqual({ args: ['/w/tests/plain.yaml'] })
+  })
+})
+
+describe('C443-QUEUE-FLIP', () => {
+  const SELF = { pid: 4242, incarnation: 'proc-starttime:7', host: 'h' }
+  const OTHER = { pid: 5151, incarnation: 'proc-starttime:9', host: 'h' }
+  const inertProbe = { isAlive: () => true, incarnationOf: () => undefined }
+  let dir: string
+  let own: DashboardDatabase
+  let other: DashboardDatabase
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'agent-qa-443-queue-flip-'))
+    const dbPath = join(dir, 'runs.db')
+    own = new DashboardDatabase({ dbPath, runOwnership: { self: SELF, probe: inertProbe } })
+    other = new DashboardDatabase({ dbPath, runOwnership: { self: OTHER, probe: inertProbe } })
+  })
+
+  afterEach(() => {
+    own.close()
+    other.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  function statusAndOwner(id: string): string {
+    return JSON.stringify(own['db'].prepare(
+      'SELECT status, owner_pid, owner_incarnation, owner_host FROM runs WHERE id = ?',
+    ).all(id))
+  }
+
+  function flipRefusedFor(victim: string): DashboardDatabase {
+    return new Proxy(own, {
+      get(target, prop) {
+        if (prop === 'updateRunStatus') {
+          return (id: string, status: string) => {
+            if (id === victim && status === 'running') other.updateRunStatus(id, 'cancelled')
+            return target.updateRunStatus(id, status)
+          }
+        }
+        const value = Reflect.get(target, prop, target)
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+  }
+
+  it('the flip moves a pending row to running and stamps it', () => {
+    const id = own.insertPendingRun({ name: 'Queued' })
+    expect(own.readRunOwner(id)).toBeUndefined()
+
+    expect(own.updateRunStatus(id, 'running')).toBe(true)
+
+    expect(own.getRun(id)?.status).toBe('running')
+    expect(own.readRunOwner(id)).toEqual(SELF)
+    expect(own.isOwnStamp(id, SELF)).toBe(true)
+  })
+
+  it('the flip refuses a row that is not pending', () => {
+    const startedAt = '2026-10-17T00:00:00.000Z'
+    const finished = { duration: 1, startedAt, endedAt: startedAt }
+    const rows = [
+      other.insertRun({ name: 'Owned elsewhere', status: 'running', duration: 0, startedAt, endedAt: startedAt }),
+      own.insertRun({ name: 'Passed', status: 'passed', ...finished }),
+      own.insertRun({ name: 'Cancelled', status: 'cancelled', ...finished }),
+    ]
+    for (const id of rows) {
+      const before = statusAndOwner(id)
+      expect(JSON.parse(before)).toHaveLength(1)
+
+      expect(own.updateRunStatus(id, 'running')).toBe(false)
+
+      expect(statusAndOwner(id)).toBe(before)
+      expect(own.isOwnStamp(id, SELF)).toBe(false)
+    }
+    expect(own.readRunOwner(rows[0])).toEqual(OTHER)
+  })
+
+  it('the queue does not dispatch a row it could not flip', () => {
+    const victim = own.insertPendingRun({ name: 'Cancelled before the flip' })
+    const queue = new JobQueue({ db: flipRefusedFor(victim), concurrency: 2 })
+    const execute = vi.fn()
+    queue.on('execute', execute)
+
+    queue.processNext()
+
+    expect(execute).not.toHaveBeenCalled()
+    expect(queue.getActiveCount()).toBe(0)
+    expect(own.getRun(victim)?.status).toBe('cancelled')
+    expect(own.readRunOwner(victim)).toBeUndefined()
+    queue.stop()
+  })
+
+  it('the slot a refused flip reserved is free for the next row', () => {
+    const victim = own.insertPendingRun({ name: 'Refused', platform: 'android', priority: 5 })
+    const next = own.insertPendingRun({ name: 'Next', platform: 'android' })
+    const queue = new JobQueue({ db: flipRefusedFor(victim), concurrency: 2 })
+    const executed: string[] = []
+    queue.on('execute', (run) => executed.push(run.id))
+
+    queue.processNext()
+
+    expect(executed).toEqual([next])
+    expect(queue.getActiveCount()).toBe(1)
+    expect(own.getRun(next)?.status).toBe('running')
+    queue.onSlotFreed(victim)
+    expect(queue.getActiveCount()).toBe(1)
+    queue.onSlotFreed(next)
+    expect(queue.getActiveCount()).toBe(0)
+    queue.stop()
   })
 })

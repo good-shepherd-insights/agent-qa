@@ -111,7 +111,13 @@ export class JobQueue extends EventEmitter {
         if (isMobile) this.activePlatforms.add(platform)
         this.activeRuns.set(next.id, { platform })
 
-        this.db.updateRunStatus(next.id, 'running')
+        // 2026-10-17 (443-02, D-07): a row that left pending before the flip is not dispatched.
+        if (!this.db.updateRunStatus(next.id, 'running')) {
+          this.activeCount--
+          if (isMobile) this.activePlatforms.delete(platform)
+          this.activeRuns.delete(next.id)
+          continue
+        }
         this.db.updateRun(next.id, { startedAt: new Date().toISOString() })
         this.emit('execute', next)
 

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import { DashboardDatabase } from '../database.js'
 import type { RunOwner, RunOwnership } from '../run-owner.js'
 
@@ -199,5 +199,42 @@ describe('C443-CLAIM', () => {
     expect(rawRows(own, id)).toHaveLength(1)
     expect(own.getRun(id)?.name).toBe('Claimed run')
     expect(own.readRunOwner(id)).toEqual({ ...SELF, incarnation: null })
+  })
+
+  it('a handle names its resolved file', () => {
+    const relativePath = relative(process.cwd(), dbPath)
+    expect(isAbsolute(relativePath)).toBe(false)
+    const handle = new DashboardDatabase({ dbPath: relativePath })
+    opened.push(handle)
+    expect(handle.dbPath).toBe(resolve(relativePath))
+    expect(handle.dbPath).toBe(dbPath)
+
+    const memory = new DashboardDatabase({ dbPath: ':memory:' })
+    opened.push(memory)
+    expect(memory.dbPath).toBe(':memory:')
+  })
+})
+
+describe('C443-OWN-FINALIZE', () => {
+  const OTHER: RunOwner = { pid: 5151, incarnation: 'proc-starttime:9', host: 'h' }
+
+  it('the own-row finalizer writes each verdict status once', () => {
+    const own = handleFor(SELF)
+    const other = handleFor(OTHER)
+    const endedAt = '2026-10-17T00:10:00.000Z'
+    const statuses = ['passed', 'failed', 'skipped', 'cancelled'] as const
+    for (const status of statuses) {
+      const id = `r_final_${status}`
+      expect(own.claimRunningRow(id, claimFields())).toBe(true)
+
+      expect(other.finalizeOwnRun(id, { status, endedAt })).toBe(false)
+      expect(own.getRun(id)?.status).toBe('running')
+
+      expect(own.finalizeOwnRun(id, { status, endedAt, duration: 600_000 })).toBe(true)
+      expect(own.getRun(id)).toMatchObject({ status, endedAt, duration: 600_000 })
+      expect(own.finalizeOwnRun(id, { status: 'failed', endedAt })).toBe(false)
+      expect(own.getRun(id)?.status).toBe(status)
+    }
+    expect(own.getRuns({ limit: 10 }).map((run) => run.status).sort()).toEqual([...statuses].sort())
   })
 })

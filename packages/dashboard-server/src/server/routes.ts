@@ -1577,7 +1577,8 @@ export const RESPONSE_SAFE_RUN_READ_METHODS = [
  *
  * Each name and why it carries no run metadata to a reader:
  *   - `insertRun`, `insertPendingRun`, `insertRunArtifact`, `updateRun`, `updateRunMetadata`,
- *     `updateRunStatus`, `deleteRun` — WRITES. They return an id, a delete tally, or nothing.
+ *     `updateRunStatus`, `deleteRun` — WRITES. They return an id, a delete tally, a boolean, or
+ *     nothing.
  *   - `stageRunArtifact`, `finalizeRunArtifact` — writes that ECHO the row they just wrote, to the
  *     writer that supplied it (`server.ts`, on the raw handle). This router never calls them;
  *     `routes.runs.test.ts` pins that absence, because the echo would otherwise be a door.

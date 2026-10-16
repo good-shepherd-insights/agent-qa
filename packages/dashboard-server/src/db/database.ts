@@ -411,6 +411,7 @@ export class RunsDatabaseVersionRefusedError extends Error {
 export class DashboardDatabase {
   private db: DashboardSqliteDatabase
   readonly runOwnership: RunOwnership
+  readonly dbPath: string
   private readonly ownStamps = new Map<string, RunOwner>()
 
   constructor({
@@ -418,6 +419,7 @@ export class DashboardDatabase {
     runOwnership = defaultRunOwnership(),
   }: { dbPath?: string; runOwnership?: RunOwnershipInput } = {}) {
     this.runOwnership = completeRunOwnership(runOwnership)
+    this.dbPath = dbPath === ':memory:' ? dbPath : resolve(dbPath)
     mkdirSync(dirname(dbPath), { recursive: true })
     this.db = createDashboardSqliteDatabase(dbPath)
     try {
@@ -651,17 +653,20 @@ export class DashboardDatabase {
     return rows.map(r => this.mapRunRow(r))
   }
 
-  updateRunStatus(id: string, status: string): void {
+  updateRunStatus(id: string, status: string): boolean {
     if (status !== 'running') {
-      this.db.prepare('UPDATE runs SET status = ? WHERE id = ?').run(status, id)
+      const result = this.db.prepare('UPDATE runs SET status = ? WHERE id = ?').run(status, id)
       this.ownStamps.delete(id)
-      return
+      return Number(result.changes) === 1
     }
+    // 2026-10-17 (443-02, D-07): the queue flip moves only a pending row to running.
     const stamp = this.readOwnStamp()
-    this.db.prepare(
-      'UPDATE runs SET status = ?, owner_pid = ?, owner_incarnation = ?, owner_host = ? WHERE id = ?',
-    ).run(status, stamp.pid, stamp.incarnation, stamp.host, id)
+    const result = this.db.prepare(
+      "UPDATE runs SET status = 'running', owner_pid = ?, owner_incarnation = ?, owner_host = ? WHERE id = ? AND status = 'pending'",
+    ).run(stamp.pid, stamp.incarnation, stamp.host, id)
+    if (Number(result.changes) !== 1) return false
     this.ownStamps.set(id, stamp)
+    return true
   }
 
   // ---- The v2 bus-shaped projection (Phase 405 plan 01, D-01) ---------------------------------
@@ -1071,7 +1076,7 @@ export class DashboardDatabase {
 
   // 2026-10-16 (442-01, D-04): one compare-and-set on the stamped owner; never read-then-write.
   finalizeOwnRun(id: string, updates: {
-    status: 'failed' | 'cancelled'
+    status: 'passed' | 'failed' | 'skipped' | 'cancelled'
     endedAt: string
     duration?: number
     failureSummary?: string
