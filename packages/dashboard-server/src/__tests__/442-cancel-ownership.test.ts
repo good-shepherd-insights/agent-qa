@@ -76,11 +76,18 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-function seedRunning(owner: RunOwner, name: string): string {
+function seedRunning(owner: RunOwner, name: string, runId?: string): string {
   const seeding = new DashboardDatabase({ dbPath, runOwnership: { self: owner, probe } })
   try {
     const startedAt = new Date(Date.now() - 60_000).toISOString()
-    const id = seeding.insertRun({ name, status: 'running', duration: 0, startedAt, endedAt: startedAt })
+    const id = seeding.insertRun({
+      id: runId,
+      name,
+      status: 'running',
+      duration: 0,
+      startedAt,
+      endedAt: startedAt,
+    })
     seeding.insertRunArtifact({ runId: id, kind: 'test' })
     return id
   } finally {
@@ -421,5 +428,50 @@ describe('C442-PID-NAMESPACE', () => {
       body: { cancelled: false, message: orphanSummary(control.pid) },
     })
     expectOrphanFinalized(controlId, control.pid)
+  })
+})
+
+describe('C442-CANCEL-RUN-ID', () => {
+  it('a cancel on a run whose id needs encoding reaches that run', async () => {
+    const dashboard = await startDashboard()
+    const ownId = seedRunning(SELF, 'Own run, id needs encoding', 'run a/b?c')
+    const orphanId = seedRunning(GONE, 'Gone owner, id needs encoding', 'orphan 1/2?3')
+    expect([ownId, orphanId]).toEqual(['run a/b?c', 'orphan 1/2?3'])
+    for (const [id, owner] of [
+      [ownId, SELF],
+      [orphanId, GONE],
+    ] as const) {
+      expect(reader.getRun(id)?.status).toBe('running')
+      expect(reader.readRunOwner(id)).toEqual(owner)
+    }
+
+    expect(await cancelOver(dashboard, ownId)).toEqual({ status: 200, body: { cancelled: true } })
+    const row = reader.getRun(ownId)!
+    expect(row.status).toBe('cancelled')
+    expect(row.failureSummary).toBe('Test cancelled by user')
+    expect(dashboard.backend.killed).toEqual(['run a/b?c'])
+
+    expect(await cancelOver(dashboard, orphanId)).toEqual({
+      status: 200,
+      body: { cancelled: false, message: orphanSummary(GONE.pid) },
+    })
+    expectOrphanFinalized(orphanId, GONE.pid)
+    expect(dashboard.backend.killed).toEqual(['run a/b?c'])
+  })
+
+  it('a malformed run id is answered 400 and writes nothing', async () => {
+    const dashboard = await startDashboard()
+    const id = seedRunning(SELF, 'Own run, literal escape in its id', 'run%ZZ')
+    expect(reader.getRun(id)?.status).toBe('running')
+    const before = snapshotOf(id)
+
+    const response = await fetch(`${dashboard.origin}/api/runs/run%ZZ/cancel`, { method: 'POST' })
+    expect({ status: response.status, body: await response.json() }).toEqual({
+      status: 400,
+      body: { error: 'invalid_run_id' },
+    })
+    expect(snapshotOf(id)).toBe(before)
+    expect(dashboard.backend.killed).toEqual([])
+    expect(emitted).toEqual([])
   })
 })
