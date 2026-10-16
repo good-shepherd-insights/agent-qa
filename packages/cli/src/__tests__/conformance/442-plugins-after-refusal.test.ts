@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { Client } from '@modelcontextprotocol/client'
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import { generateSuiteId, generateTestId } from '@vostride/agent-qa-ids'
 import { Command } from 'commander'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -190,6 +192,24 @@ async function commander(project: MarkerProject, args: readonly string[]): Promi
   return { text: printed.join('\n'), exitCode }
 }
 
+async function withMcpStdio<T>(project: MarkerProject, body: (client: Client) => Promise<T>): Promise<T> {
+  posixOnly()
+  expect(existsSync(CLI_DIST), `the built CLI is missing at ${CLI_DIST}; run pnpm build first`).toBe(true)
+  const env = Object.fromEntries(
+    Object.entries({ ...process.env, CI: 'true', DO_NOT_TRACK: '1', PLAYWRIGHT_BROWSERS_PATH: join(project.root, 'no-browsers') })
+      .filter((entry): entry is [string, string] => entry[1] !== undefined && !/TOKEN/u.test(entry[0]) && entry[0] !== 'AGENT_QA_RUN_ID'),
+  )
+  const transport = new StdioClientTransport({ command: process.execPath, args: [CLI_DIST, 'mcp'], cwd: project.root, stderr: 'pipe', env })
+  const client = new Client({ name: 'agent-qa-442-08-plugins-stdio', version: '0.0.0' })
+  try {
+    await client.connect(transport)
+    return await body(client)
+  } finally {
+    await client.close().catch(() => {})
+    await transport.close().catch(() => {})
+  }
+}
+
 describe('C442-PLUGINS-AFTER-REFUSAL', () => {
   it('a refused production run loads no plugin', async () => {
     await withTarget(async (target) => {
@@ -237,6 +257,35 @@ describe('C442-PLUGINS-AFTER-REFUSAL', () => {
       expect(text).not.toContain(OPT_IN_LINE)
       expect(target.hits, text).toContain(`/${PRODUCTION_TARGET}`)
       expect(writtenMarkers(project), 'the opted-in run did not load its plugins').toEqual(project.markers)
+    })
+  }, 120_000)
+
+  it('agent-qa mcp starts without loading a plugin', async () => {
+    await withTarget(async (target) => {
+      const project = markerProject(target.origin, false)
+      await withMcpStdio(project, async (client) => {
+        const { tools } = await client.listTools()
+        expect(tools.length).toBeGreaterThan(0)
+        expect(writtenMarkers(project), 'agent-qa mcp loaded a plugin at startup').toEqual([])
+      })
+    })
+  }, 120_000)
+
+  it('a refused production run over MCP stdio loads no plugin', async () => {
+    await withTarget(async (target) => {
+      const project = markerProject(target.origin, false)
+      await withMcpStdio(project, async (client) => {
+        const result = await client.callTool({ name: 'agent_qa_start_run', arguments: { patterns: [project.productionTest] } }) as {
+          content?: readonly { text?: string }[]
+          isError?: boolean
+        }
+        const text = (result.content ?? []).map((entry) => entry.text ?? '').join('\n')
+        expect(result.isError, text).toBe(true)
+        expect(text).toContain(`"${PRODUCTION_TARGET}"`)
+        expect(text).toContain(OPT_IN_LINE)
+        expect(target.hits).toEqual([])
+        expect(writtenMarkers(project), 'a refused production run over MCP stdio loaded a plugin').toEqual([])
+      })
     })
   }, 120_000)
 })
