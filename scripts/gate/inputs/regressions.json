@@ -11032,13 +11032,13 @@
     {
       "runner": "vitest",
       "file": "packages/dashboard-server/src/db/__tests__/run-owner-host.test.ts",
-      "fullName": "C442-HOST-IDENTITY C442-HOST-IDENTITY Linux and Windows hosts keep os.hostname()",
+      "fullName": "C442-HOST-IDENTITY C442-HOST-IDENTITY Windows hosts keep os.hostname(), and Linux hosts name their pid namespace",
       "origin": "442 GAP-D4"
     },
     {
       "runner": "vitest",
       "file": "packages/dashboard-server/src/db/__tests__/run-owner-host.test.ts",
-      "fullName": "C442-HOST-IDENTITY C442-HOST-IDENTITY this machine's identity is its UUID digest on macOS and its host name elsewhere",
+      "fullName": "C442-HOST-IDENTITY C442-HOST-IDENTITY this machine's identity is its UUID digest on macOS, its pid namespace and host name on Linux, and its host name elsewhere",
       "origin": "442 GAP-D4"
     },
     {
@@ -11082,6 +11082,78 @@
       "file": "packages/cli/src/commands/__tests__/queue-cancel.test.ts",
       "fullName": "C442-QUEUE-CANCEL-OUTPUT queue cancel encodes the run id in the URL",
       "origin": "442 GAP-D6"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner-host.test.ts",
+      "fullName": "C442-PID-NAMESPACE a Linux identity names this pid namespace and this host name, read once",
+      "origin": "442 GAP-D9"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner-host.test.ts",
+      "fullName": "C442-PID-NAMESPACE two pid namespaces never share an identity, even under one host name",
+      "origin": "442 GAP-D9"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner-host.test.ts",
+      "fullName": "C442-PID-NAMESPACE two processes in one pid namespace on one machine share an identity",
+      "origin": "442 GAP-D9"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner-host.test.ts",
+      "fullName": "C442-PID-NAMESPACE an unreadable or malformed pid namespace falls back under its own prefix, never equals a namespace identity, and is retried",
+      "origin": "442 GAP-D9"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner-host.test.ts",
+      "fullName": "C442-PID-NAMESPACE two processes whose pid namespace cannot be read never share an identity",
+      "origin": "442 GAP-D9"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner-host.test.ts",
+      "fullName": "C442-PID-NAMESPACE a row stamped with the bare host name an earlier agent-qa wrote is another host to a Linux reader",
+      "origin": "442 GAP-D9"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner-host.test.ts",
+      "fullName": "C442-PID-NAMESPACE an owner in another pid namespace under this host name is unknown, whether its pid is dead here or another process's",
+      "origin": "442 GAP-D9"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner-host.test.ts",
+      "fullName": "C442-PID-NAMESPACE an owner in this pid namespace whose pid is dead is still gone",
+      "origin": "442 GAP-D9"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/442-orphan-startup.test.ts",
+      "fullName": "C442-PID-NAMESPACE a dashboard started beside a container that shares its host name leaves the container's runs running and byte-equal",
+      "origin": "442 GAP-D9"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/442-cancel-ownership.test.ts",
+      "fullName": "C442-PID-NAMESPACE a cancel on a run owned from another pid namespace under this host name is refused with 409 and writes nothing",
+      "origin": "442 GAP-D9"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/442-cancel-ownership.test.ts",
+      "fullName": "C442-CANCEL-RUN-ID a cancel on a run whose id needs encoding reaches that run",
+      "origin": "442 GAP-D10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/442-cancel-ownership.test.ts",
+      "fullName": "C442-CANCEL-RUN-ID a malformed run id is answered 400 and writes nothing",
+      "origin": "442 GAP-D10"
     }
   ]
 }
