@@ -175,3 +175,152 @@ describe('C442-HOST-IDENTITY', () => {
     }
   })
 })
+
+const HOST_NAMESPACE = 'pid:[4026531836]'
+const CONTAINER_NAMESPACE = 'pid:[4026532001]'
+const HOST_IDENTITY = 'linux-pidns:4026531836:build-box'
+const CONTAINER_IDENTITY = 'linux-pidns:4026532001:build-box'
+const THROWS = Symbol('throws')
+
+function linuxResolver(
+  name: string,
+  readPidNamespace: () => string | undefined,
+  readPlatformUuid?: () => string | undefined,
+) {
+  const options = {
+    platform: 'linux' as const,
+    hostname: () => name,
+    readPidNamespace,
+    readPlatformUuid,
+  }
+  return createRunOwnerHostResolver(options)
+}
+
+function countedNamespaceReader(...answers: Array<string | undefined | typeof THROWS>) {
+  const reader = {
+    calls: 0,
+    read: (): string | undefined => {
+      const answer = answers[Math.min(reader.calls++, answers.length - 1)]
+      if (answer === THROWS) throw new Error('readlink /proc/self/ns/pid failed')
+      return answer
+    },
+  }
+  return reader
+}
+
+const namespaceProbe: RunOwnerProbe = {
+  isAlive: (pid) => pid === 12,
+  incarnationOf: (pid) => (pid === 12 ? 'proc-starttime:12' : undefined),
+}
+
+function namespaceOwnership() {
+  const here = linuxResolver('build-box', () => HOST_NAMESPACE)()
+  const container = linuxResolver('build-box', () => CONTAINER_NAMESPACE)()
+  return {
+    here,
+    container,
+    ownership: {
+      self: { pid: 1000, incarnation: 'proc-starttime:900000', host: here },
+      probe: namespaceProbe,
+    },
+  }
+}
+
+describe('C442-PID-NAMESPACE', () => {
+  it('a Linux identity names this pid namespace and this host name, read once', () => {
+    const reader = countedNamespaceReader(CONTAINER_NAMESPACE)
+    const uuidReader = countedUuidReader(UUID)
+    const resolve = linuxResolver('build-box', reader.read, uuidReader.read)
+    expect(resolve()).toBe(CONTAINER_IDENTITY)
+    expect(resolve()).toBe(CONTAINER_IDENTITY)
+    expect(reader.calls).toBe(1)
+    expect(uuidReader.calls).toBe(0)
+  })
+
+  it('two pid namespaces never share an identity, even under one host name', () => {
+    const host = linuxResolver('build-box', () => HOST_NAMESPACE)()
+    const container = linuxResolver('build-box', () => CONTAINER_NAMESPACE)()
+    const boxA = linuxResolver('box-a', () => HOST_NAMESPACE)()
+    const boxB = linuxResolver('box-b', () => HOST_NAMESPACE)()
+    expect(container).not.toBe(host)
+    expect(boxB).not.toBe(boxA)
+    for (const identity of [host, container, boxA, boxB]) {
+      expect(identity).not.toBe('build-box')
+      expect(identity).not.toBe('hostname:build-box')
+    }
+  })
+
+  it('two processes in one pid namespace on one machine share an identity', () => {
+    for (const namespace of [CONTAINER_NAMESPACE, HOST_NAMESPACE]) {
+      const first = linuxResolver('build-box', () => namespace)()
+      const second = linuxResolver('build-box', () => namespace)()
+      expect(second).toBe(first)
+    }
+  })
+
+  it('an unreadable or malformed pid namespace falls back under its own prefix, never equals a namespace identity, and is retried', () => {
+    const reader = countedNamespaceReader(
+      undefined,
+      THROWS,
+      'net:[4026532001]',
+      'pid:[]',
+      'pid:[12a]',
+      CONTAINER_NAMESPACE,
+    )
+    const resolve = linuxResolver('build-box', reader.read)
+    const fallbacks = [resolve(), resolve(), resolve(), resolve(), resolve()]
+    for (const fallback of fallbacks) {
+      expect(fallback).toMatch(/^linux-pidns-unread:/)
+      expect(fallback).toBe(fallbacks[0])
+      expect(fallback).not.toBe(CONTAINER_IDENTITY)
+      expect(fallback).not.toBe(HOST_IDENTITY)
+    }
+    expect(resolve()).toBe(CONTAINER_IDENTITY)
+    expect(resolve()).toBe(CONTAINER_IDENTITY)
+    expect(reader.calls).toBe(6)
+  })
+
+  it('two processes whose pid namespace cannot be read never share an identity', () => {
+    const first = linuxResolver('build-box', () => undefined)
+    const second = linuxResolver('build-box', () => undefined)
+    const firstIdentity = first()
+    const secondIdentity = second()
+    expect(secondIdentity).not.toBe(firstIdentity)
+    expect(first()).toBe(firstIdentity)
+    expect(second()).toBe(secondIdentity)
+    for (const identity of [firstIdentity, secondIdentity]) expect(identity).not.toBe('build-box')
+  })
+
+  it('a row stamped with the bare host name an earlier agent-qa wrote is another host to a Linux reader', () => {
+    const { here } = namespaceOwnership()
+    const verdict = classifyRunOwner(
+      { pid: 4242, incarnation: 'proc-starttime:7', host: 'build-box' },
+      {
+        self: { pid: 1000, incarnation: 'proc-starttime:1', host: here },
+        probe: { isAlive: () => false, incarnationOf: () => undefined },
+      },
+    )
+    expect(verdict).toBe('unknown')
+  })
+
+  it("an owner in another pid namespace under this host name is unknown, whether its pid is dead here or another process's", () => {
+    const { container, ownership } = namespaceOwnership()
+    const owners = [
+      { pid: 7, incarnation: 'proc-starttime:884211', host: container },
+      { pid: 12, incarnation: 'proc-starttime:884300', host: container },
+    ]
+    expect(owners.map((owner) => classifyRunOwner(owner, ownership))).toEqual([
+      'unknown',
+      'unknown',
+    ])
+  })
+
+  it('an owner in this pid namespace whose pid is dead is still gone', () => {
+    const { here, ownership } = namespaceOwnership()
+    const owners = [
+      { pid: 7, incarnation: 'proc-starttime:884211', host: here },
+      { pid: 12, incarnation: 'proc-starttime:884300', host: here },
+    ]
+    expect(owners.map((owner) => classifyRunOwner(owner, ownership))).toEqual(['gone', 'gone'])
+  })
+})

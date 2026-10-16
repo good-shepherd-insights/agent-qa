@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { DashboardDatabase } from '../db/database.js'
+import { createRunOwnerHostResolver } from '../db/run-owner-host.js'
 import type { RunOwner, RunOwnership, RunOwnerProbe } from '../db/run-owner.js'
 import { startServer } from '../server/server.js'
 
@@ -213,5 +214,60 @@ describe('C442-PROBE-THROWS', () => {
     expect(lines.filter((line) => CLEANUP_LINE.test(line))).toEqual([])
     expect(reader.getRun(id)?.status).toBe('running')
     expect(snapshotOf(id)).toBe(before)
+  })
+})
+
+function linuxResolver(
+  name: string,
+  readPidNamespace: () => string | undefined,
+  readPlatformUuid?: () => string | undefined,
+) {
+  const options = {
+    platform: 'linux' as const,
+    hostname: () => name,
+    readPidNamespace,
+    readPlatformUuid,
+  }
+  return createRunOwnerHostResolver(options)
+}
+
+const namespaceProbe: RunOwnerProbe = {
+  isAlive: (pid) => pid === 12,
+  incarnationOf: (pid) => (pid === 12 ? 'proc-starttime:12' : undefined),
+}
+
+describe('C442-PID-NAMESPACE', () => {
+  it("a dashboard started beside a container that shares its host name leaves the container's runs running and byte-equal", async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const here = linuxResolver('build-box', () => 'pid:[4026531836]')()
+    const container = linuxResolver('build-box', () => 'pid:[4026532001]')()
+    const containerOwners: RunOwner[] = [
+      { pid: 7, incarnation: 'proc-starttime:884211', host: container },
+      { pid: 12, incarnation: 'proc-starttime:884300', host: container },
+    ]
+    const control: RunOwner = { pid: 2008, incarnation: 'proc-starttime:700', host: here }
+    const seeded = containerOwners.map((owner) => ({
+      owner,
+      id: seedRunning(owner, `Container pid ${String(owner.pid)}`),
+    }))
+    const controlId = seedRunning(control, 'Same pid namespace, dead owner')
+    for (const { owner, id } of [...seeded, { owner: control, id: controlId }]) {
+      expect(reader.getRun(id)?.status).toBe('running')
+      expect(reader.readRunOwner(id)).toEqual(owner)
+    }
+    const before = seeded.map(({ id }) => snapshotOf(id))
+
+    await startDashboard({
+      self: { pid: 1000, incarnation: 'proc-starttime:900000', host: here },
+      probe: namespaceProbe,
+    })
+
+    expect(seeded.map(({ id }) => reader.getRun(id)?.status)).toEqual(['running', 'running'])
+    expect(seeded.map(({ id }) => snapshotOf(id))).toEqual(before)
+    expectOrphanFinalized(controlId, control.pid)
+    const lines = log.mock.calls.map((call) => String(call[0]))
+    expect(lines.filter((line) => CLEANUP_LINE.test(line))).toEqual([
+      'Finalized 1 run(s) whose agent-qa process had ended',
+    ])
   })
 })

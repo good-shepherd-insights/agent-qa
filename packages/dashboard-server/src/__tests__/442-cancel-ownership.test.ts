@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { DashboardDatabase } from '../db/database.js'
+import { createRunOwnerHostResolver } from '../db/run-owner-host.js'
 import { orphanSummary, ownedElsewhere } from '../db/run-owner.js'
 import type { RunOwner, RunOwnerProbe, RunOwnership } from '../db/run-owner.js'
 import type { ExecutionBackend } from '../execution/execution-backend.js'
@@ -362,5 +363,63 @@ describe('C442-PROBE-THROWS', () => {
     expect(dashboard.backend.killed).toEqual([])
     expect(emitted).toEqual([])
     expect(snapshotOf(id)).toBe(before)
+  })
+})
+
+function linuxResolver(
+  name: string,
+  readPidNamespace: () => string | undefined,
+  readPlatformUuid?: () => string | undefined,
+) {
+  const options = {
+    platform: 'linux' as const,
+    hostname: () => name,
+    readPidNamespace,
+    readPlatformUuid,
+  }
+  return createRunOwnerHostResolver(options)
+}
+
+const namespaceProbe: RunOwnerProbe = {
+  isAlive: (pid) => pid === 12,
+  incarnationOf: (pid) => (pid === 12 ? 'proc-starttime:12' : undefined),
+}
+
+describe('C442-PID-NAMESPACE', () => {
+  it('a cancel on a run owned from another pid namespace under this host name is refused with 409 and writes nothing', async () => {
+    const here = linuxResolver('build-box', () => 'pid:[4026531836]')()
+    const container = linuxResolver('build-box', () => 'pid:[4026532001]')()
+    const dashboard = await startDashboard({
+      self: { pid: 1000, incarnation: 'proc-starttime:900000', host: here },
+      probe: namespaceProbe,
+    })
+    const containerOwners: RunOwner[] = [
+      { pid: 7, incarnation: 'proc-starttime:884211', host: container },
+      { pid: 12, incarnation: 'proc-starttime:884300', host: container },
+    ]
+    const control: RunOwner = { pid: 3008, incarnation: 'proc-starttime:700', host: here }
+    const seeded = containerOwners.map((owner) => ({
+      owner,
+      id: seedRunning(owner, `Container pid ${String(owner.pid)}`),
+    }))
+    const controlId = seedRunning(control, 'Same pid namespace, dead owner')
+    for (const { owner, id } of [...seeded, { owner: control, id: controlId }]) {
+      expect(reader.getRun(id)?.status).toBe('running')
+      expect(reader.readRunOwner(id)).toEqual(owner)
+    }
+    const before = seeded.map(({ id }) => snapshotOf(id))
+
+    for (const { owner, id } of seeded) {
+      expect(await cancelOver(dashboard, id)).toEqual({ status: 409, body: refusalBodyOf(owner) })
+    }
+    expect(seeded.map(({ id }) => snapshotOf(id))).toEqual(before)
+    expect(dashboard.backend.killed).toEqual([])
+    expect(emitted).toEqual([])
+
+    expect(await cancelOver(dashboard, controlId)).toEqual({
+      status: 200,
+      body: { cancelled: false, message: orphanSummary(control.pid) },
+    })
+    expectOrphanFinalized(controlId, control.pid)
   })
 })
