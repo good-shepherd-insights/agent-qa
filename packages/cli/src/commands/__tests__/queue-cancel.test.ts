@@ -93,3 +93,62 @@ describe('C442-CANCEL-SENTENCE', () => {
     expect(orphan.exits).toEqual([])
   })
 })
+
+interface StreamsResult {
+  readonly exits: Array<number | string | null | undefined>
+  readonly stdout: string
+  readonly stderr: string
+  readonly asked: string[]
+}
+
+async function cancelApart(runId: string, status: number, body: unknown): Promise<StreamsResult> {
+  answer = { status, body }
+  asked = []
+  const exits: StreamsResult['exits'] = []
+  vi.spyOn(process, 'exit').mockImplementation(((code?: number | string | null) => {
+    exits.push(code)
+  }) as never)
+  const out: string[] = []
+  const err: string[] = []
+  const into = (lines: string[]) => (...args: unknown[]): void => {
+    lines.push(args.map(String).join(' '))
+  }
+  vi.spyOn(console, 'log').mockImplementation(into(out))
+  vi.spyOn(console, 'error').mockImplementation(into(err))
+  const program = new Command('agent-qa').exitOverride()
+  program.addCommand(createQueueCommand())
+  await program.parseAsync(['node', 'agent-qa', 'queue', 'cancel', runId, '--server', origin])
+  vi.restoreAllMocks()
+  return { exits, stdout: out.join('\n'), stderr: err.join('\n'), asked: [...asked] }
+}
+
+describe('C442-QUEUE-CANCEL-OUTPUT', () => {
+  it('queue cancel prints a refusal to stderr and exits 1, and an orphan answer to stdout with exit 0', async () => {
+    const refused = await cancelApart(RUN_ID, 409, {
+      error: REFUSAL,
+      reason: 'owned-by-live-process',
+      ownerPid: 4242,
+    })
+    expect(refused.stderr).toContain(REFUSAL)
+    expect(refused.stdout).toBe('')
+    expect(refused.exits).toEqual([1])
+
+    const missing = await cancelApart(RUN_ID, 404, { error: 'Run not found or not cancellable' })
+    expect(missing.stderr).toContain(`Job not found: ${RUN_ID}`)
+    expect(missing.stdout).toBe('')
+    expect(missing.exits).toEqual([1])
+
+    const orphan = await cancelApart(RUN_ID, 200, { cancelled: false, message: ORPHAN })
+    expect(orphan.stdout).toBe(ORPHAN)
+    expect(orphan.stderr).toBe('')
+    expect(orphan.exits).toEqual([])
+  })
+
+  it('queue cancel encodes the run id in the URL', async () => {
+    const odd = 'run a/b?c'
+    const result = await cancelApart(odd, 200, { cancelled: true })
+    expect(result.asked).toEqual(['POST /api/runs/run%20a%2Fb%3Fc/cancel'])
+    expect(result.stdout).toContain(`Cancelled job ${odd}`)
+    expect(result.exits).toEqual([])
+  })
+})
