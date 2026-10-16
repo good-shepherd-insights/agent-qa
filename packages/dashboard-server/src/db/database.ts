@@ -3,10 +3,12 @@ import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { MIGRATIONS, SCHEMA_VERSION, type DashboardMigration } from './schema.js'
 import {
+  completeRunOwnership,
   defaultRunOwnership,
   orphanSummary,
   type RunOwner,
   type RunOwnership,
+  type RunOwnershipInput,
 } from './run-owner.js'
 import {
   DEFAULT_AGENT_QA_RUNS_DB_PATH,
@@ -414,8 +416,8 @@ export class DashboardDatabase {
   constructor({
     dbPath = DASHBOARD_DB_PATH_FALLBACK,
     runOwnership = defaultRunOwnership(),
-  }: { dbPath?: string; runOwnership?: RunOwnership } = {}) {
-    this.runOwnership = runOwnership
+  }: { dbPath?: string; runOwnership?: RunOwnershipInput } = {}) {
+    this.runOwnership = completeRunOwnership(runOwnership)
     mkdirSync(dirname(dbPath), { recursive: true })
     this.db = createDashboardSqliteDatabase(dbPath)
     try {

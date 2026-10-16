@@ -1,4 +1,4 @@
-import { hostname } from 'node:os'
+import { resolveRunOwnerHost } from './run-owner-host.js'
 
 export interface RunOwner {
   readonly pid: number
@@ -14,6 +14,21 @@ export interface RunOwnerProbe {
 export interface RunOwnership {
   readonly self: RunOwner
   readonly probe: RunOwnerProbe
+}
+
+export interface RunOwnershipInput {
+  readonly self: Omit<RunOwner, 'host'> & { readonly host?: string }
+  readonly probe: RunOwnerProbe
+}
+
+export function completeRunOwnership(input: RunOwnershipInput): RunOwnership {
+  return {
+    get self() {
+      const { pid, incarnation, host } = input.self
+      return { pid, incarnation, host: host ?? resolveRunOwnerHost() }
+    },
+    probe: input.probe,
+  }
 }
 
 export type RunOwnerState = 'self' | 'alive' | 'gone' | 'unknown'
@@ -76,7 +91,7 @@ function signalZeroIsAlive(pid: number): boolean {
 // 2026-10-16 (442-01, D-02): with no incarnation reader, a live pid can only classify as unknown.
 export function defaultRunOwnership(): RunOwnership {
   return {
-    self: { pid: process.pid, incarnation: null, host: hostname() },
+    self: { pid: process.pid, incarnation: null, host: resolveRunOwnerHost() },
     probe: { isAlive: signalZeroIsAlive, incarnationOf: () => undefined },
   }
 }
