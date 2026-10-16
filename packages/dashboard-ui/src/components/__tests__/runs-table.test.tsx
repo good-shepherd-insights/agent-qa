@@ -441,3 +441,66 @@ describe("RunsTable", () => {
     )
   })
 })
+
+// 2026-10-17 (443-07, D-09): a verify run's row carries the gate-run mark; the list shows it beside
+// the name and adds no filter for it.
+describe("C443-VERIFY-MARK", () => {
+  const GATE_RUN_KEY = "agent-qa.gate-run"
+
+  function singleRun(id: string, name: string, attributes: Record<string, string>): SuiteRunRow {
+    return { ...runs[1]!, id, name, attributes }
+  }
+
+  function nameCellOf(view: HTMLDivElement, name: string): HTMLTableCellElement | null {
+    const span = Array.from(view.querySelectorAll("span")).find((element) => element.textContent === name)
+    return span?.closest("td") ?? null
+  }
+
+  function toolbarControls(view: HTMLDivElement): string[] {
+    const search = view.querySelector('input[placeholder="Search runs..."]')
+    const toolbar = search?.parentElement
+    if (!toolbar) return []
+    return Array.from(toolbar.querySelectorAll("input, button, select")).map((element) =>
+      `${element.tagName.toLowerCase()}:${element.getAttribute("aria-label") ?? element.getAttribute("placeholder") ?? element.textContent?.trim() ?? ""}`,
+    )
+  }
+
+  it("the Runs list shows Verify run beside a marked run's name", async () => {
+    const { view } = await renderTable({
+      selectedRunId: null,
+      tableRuns: [singleRun("run_gate", "Draft verify run", { "agent-qa.trigger": "cli", [GATE_RUN_KEY]: "true" })],
+    })
+    const cell = nameCellOf(view, "Draft verify run")
+    expect(cell, "the marked run's name cell").not.toBeNull()
+    expect(cell?.textContent ?? "", "the marked run's name cell text").toContain("Verify run")
+    const badge = Array.from(cell?.querySelectorAll('[data-slot="badge"]') ?? []).find(
+      (element) => element.textContent === "Verify run",
+    )
+    expect(badge?.getAttribute("data-variant"), "the Verify run badge variant").toBe("secondary")
+  })
+
+  it("no badge on an unmarked run", async () => {
+    const { view } = await renderTable({
+      selectedRunId: null,
+      tableRuns: [
+        singleRun("run_plain", "Started by someone", { "agent-qa.trigger": "cli" }),
+        singleRun("run_false", "Marked false", { "agent-qa.trigger": "cli", [GATE_RUN_KEY]: "false" }),
+        singleRun("run_none", "No attributes at all", {}),
+      ],
+    })
+    for (const name of ["Started by someone", "Marked false", "No attributes at all"]) {
+      expect(nameCellOf(view, name), `name cell of ${name}`).not.toBeNull()
+    }
+    expect(view.textContent ?? "", "the list text").not.toContain("Verify run")
+  })
+
+  it("no filter is added", async () => {
+    const { view } = await renderTable({
+      selectedRunId: null,
+      tableRuns: [singleRun("run_gate", "Draft verify run", { [GATE_RUN_KEY]: "true" })],
+    })
+    expect(toolbarControls(view).join(" | ")).toBe(
+      "input:Search runs... | button:All platforms | button:All targets | button:Filter by attributes",
+    )
+  })
+})

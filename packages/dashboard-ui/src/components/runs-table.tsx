@@ -78,7 +78,7 @@ const COLUMN_WIDTHS: Partial<Record<string, string>> = {
   createdAt: "128px",
 }
 
-const INTERNAL_ATTRIBUTE_ORDER = ["agent-qa.trigger", "agent-qa.runner"]
+const INTERNAL_ATTRIBUTE_ORDER = ["agent-qa.trigger", "agent-qa.runner", "agent-qa.gate-run"]
 
 function formatPlatform(platform: string) {
   return platform === "ios"
@@ -920,6 +920,9 @@ export function RunsTable({
                             <span className="block whitespace-normal break-words text-sm font-medium leading-snug text-foreground">
                               {run.name}
                             </span>
+                            {run.attributes?.["agent-qa.gate-run"] === "true" && (
+                              <Badge variant="secondary">Verify run</Badge>
+                            )}
                           </div>
                         </TableCell>
 
