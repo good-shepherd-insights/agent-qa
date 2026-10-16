@@ -655,7 +655,8 @@ async function composeDaemonRunExecution(input: {
   readonly resolveWriterAuthority: () => CurationWriterAuthority | undefined
 }): Promise<RunExecutionPort> {
   const selectTrustPriors = bindTrustPriorsToConfig(input)
-  const { resolveRunInvocationInputs } = await import('../commands/run.js')
+  const { createRunRecord, doorRunAttributes, resolveRunInvocationInputs } =
+    await import('../commands/run.js')
   const { refuseUnhonourableRequestFields, runInProcessCliRun } =
     await import('../composition/in-process-run-execution.js')
 
@@ -707,6 +708,11 @@ async function composeDaemonRunExecution(input: {
       // Read ONCE per run, here, so the conditional spread and the value it spreads are the same
       // reading — two calls could straddle a lease this daemon lost between them.
       const daemonAuthority = input.resolveWriterAuthority()
+      // 2026-10-17 (443-06, D-02): the record's incomplete line goes to the daemon's log, never stdout.
+      const runRecord = createRunRecord({
+        attributes: doorRunAttributes('cli'),
+        warn: (line: string) => input.logger.error(line),
+      })
 
       let startedRunId: string | undefined
       try {
@@ -723,10 +729,8 @@ async function composeDaemonRunExecution(input: {
             // 432-13 (D-01/D-14): NO APPROVAL POSTURE. The worker injects no confirm and no trust:
             // nothing asks, so a non-production run it is handed starts, and the core refuses a
             // production one before any effect unless the config opts in.
-            //
-            // NO `subscribers` either — D-04. The typed bus event log is the run's record; a
-            // reporter here would be the console tee under another name.
             inputs,
+            runRecord,
             // ═══ 2026-08-26 — Phase 404 D-05/D-09: THIS DOOR HANDS OVER ITS OWN LEASE ═══
             //
             // The daemon holds this project's writer lease for its whole lifetime and heartbeats
@@ -789,6 +793,8 @@ async function composeDaemonRunExecution(input: {
         )
         recordRunOutcome(startedRunId, 'failed')
         return { runId: asRunId(startedRunId) }
+      } finally {
+        runRecord.close()
       }
     },
   }

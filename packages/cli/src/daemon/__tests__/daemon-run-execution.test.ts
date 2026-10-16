@@ -35,6 +35,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
+import { DashboardDatabase, resolveRunOwnerHost } from '@vostride/agent-qa-dashboard'
 import {
   getActiveExecutionContext,
   setActiveExecutionContextResolver,
@@ -762,4 +763,55 @@ describe('the daemon has no capture-file writer and no piped-child consumer (401
       .map((path) => path.slice(CLI_SRC.length + 1))
     expect(offenders, 'a module the daemon reaches still launches a piped run child').toEqual([])
   })
+})
+
+// 2026-10-17 (443-06, D-02): the daemon's runs reach runs.db through the same record as every door.
+describe('C443-DAEMON-RECORD', () => {
+  it('a run the daemon dispatches writes its row, stamped with the daemon, trigger cli', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const project = daemonProject({ origin: target.origin, environment: 'local' })
+      const { fixture } = project
+      const { acknowledged, refusal, hostErrors } =
+        await dispatchThroughDaemon({ project, patterns: [fixture.suitePattern] })
+
+      expect(refusal, `runs.start refused: ${String(refusal)}`).toBeUndefined()
+      const runId = (acknowledged as { runId?: string }).runId
+      expect(runId, 'runs.start acknowledged no run').toMatch(/^r_/)
+      const dbPath = join(fixture.project, '.agent-qa', 'runs.db')
+      expect(existsSync(dbPath), 'the daemon left no runs.db').toBe(true)
+      const db = new DashboardDatabase({ dbPath })
+      try {
+        const rows = db.getRuns({})
+        expect(rows.map((row) => row.id).join(','), 'runs.db rows').toBe(runId)
+        expect(rows[0]!.attributes?.['agent-qa.trigger'], 'the row trigger').toBe('cli')
+        const owner = db.readRunOwner(runId!)
+        expect(owner?.pid, 'the row owner pid').toBe(process.pid)
+        expect(owner?.host, 'the row owner host').toBe(resolveRunOwnerHost())
+      } finally {
+        db.close()
+      }
+      expect(hostErrors.filter((line) => line.includes('dashboard record is incomplete'))).toEqual([])
+    } finally {
+      await target.close()
+    }
+  }, 180_000)
+
+  it('a refused production run through the daemon opens no runs.db file', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const project = daemonProject({ origin: target.origin, environment: 'production' })
+      const { fixture } = project
+      const { acknowledged, refusal } =
+        await dispatchThroughDaemon({ project, patterns: [fixture.suitePattern] })
+
+      expect(acknowledged).toBeUndefined()
+      expect(String((refusal as Error | undefined)?.message)).toContain('allowProduction: true')
+      expect(existsSync(join(fixture.project, '.agent-qa', 'runs.db')), 'a refused run opened runs.db').toBe(false)
+    } finally {
+      await target.close()
+    }
+  }, 180_000)
 })
