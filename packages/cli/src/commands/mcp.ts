@@ -63,7 +63,7 @@ import { dirname, resolve } from 'node:path'
 import { analyticsEvent, composeAnalyticsHost } from '../composition/analytics-host.js'
 import { createDeclaredSecretMask } from '../composition/declared-secrets.js'
 import type { DeclaredSecretMask } from '../composition/declared-secrets.js'
-import { composeCliLocalAgent } from '../composition/local-agent-host.js'
+import { composeCliLocalAgent, withRunDoor } from '../composition/local-agent-host.js'
 import { resolveConfig } from '../config.js'
 
 /** The one line the stdio host prints, on stderr, once the server is listening. */
@@ -194,7 +194,8 @@ export function createMcpHttpRequestListener(input: {
       maskText: input.maskText,
       ...(input.liveLink === undefined ? {} : { liveLink: input.liveLink }),
     }))
-    void nodeHandler(req, res)
+    // 2026-10-17 (443-06, D-24): a run this request starts records `mcp`, on whichever host serves it.
+    withRunDoor('mcp', () => { void nodeHandler(req, res) })
   }
 }
 
@@ -274,6 +275,7 @@ export function createMcpCommand(): Command {
           analytics,
           agentQaRoot,
           configPath,
+          runTrigger: 'mcp',
           // 2026-10-01 (432-17, D-05): no minting surface — a change is written in the call and
           // nothing is filed for a later reader to attribute.
           // 432-16 (D-14): no confirm port exists to refuse. 396-01 D-09 passed `confirm: undefined`

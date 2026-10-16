@@ -74,6 +74,7 @@ import {
   CLI_FUNCTION_CALLER,
   composeCliLocalAgent,
   createConfigReader,
+  withRunDoor,
 } from '../composition/local-agent-host.js'
 import { createDeclaredSecretMask } from '../composition/declared-secrets.js'
 import { composeRunOwnership } from '../composition/run-owner-probe.js'
@@ -411,6 +412,7 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
     ),
     resolveExecutionContext,
     ...(input.runBridge === undefined ? {} : { runBridge: input.runBridge }),
+    runTrigger: 'dashboard',
   })
   return {
     host,
@@ -829,12 +831,14 @@ export function composeRunServicePorts(input: RunServiceCompositionInput): RunSe
     // THE SHIPPED DISPATCHER, NOT THE PORT UNDERNEATH IT (D-04). Going straight to the run
     // execution would skip the input validation, the core's production refusal, the receipt
     // classification and the ack law — the carve-out the no-private-powers law refuses.
-    const result = await invokeFunction(
+    // 2026-10-17 (443-06, D-24): this request's run records `api`; the queue and the co-hosted MCP
+    // endpoint share the host and record their own.
+    const result = await withRunDoor('api', () => invokeFunction(
       host.registry as FunctionRegistry,
       RUNS_START_FUNCTION_ID,
       request,
       RUN_SERVICE_FUNCTION_CALLER,
-    )
+    ))
     // PARSED, NOT CAST. The ack law says every field comes off the durable record; this is the
     // read side of it, and it is what makes the router's typed 202 a fact rather than a hope.
     return RunStartAcknowledgementSchema.parse(result)

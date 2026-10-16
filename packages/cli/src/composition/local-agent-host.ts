@@ -1,6 +1,7 @@
 import type { CurationSnapshot } from '@vostride/agent-qa-schema'
 import { createCanaryAblationForHost } from '../gates/canary-ablation-host.js'
 import { randomUUID } from 'node:crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import {
   AUTHORING_DRAFT_EDIT_FUNCTION_ID,
   invokeFunction,
@@ -123,7 +124,7 @@ import {
   // file emits are unchanged — only the definition moved.
   yamlParseFailureMessage,
 } from '@vostride/agent-qa-core'
-import type { TestDefinition } from '@vostride/agent-qa-core'
+import type { RunAttributeTrigger, TestDefinition } from '@vostride/agent-qa-core'
 // 422-09: the shared proposal-stage builder lives in its own module so the daemon can compose it
 // without dragging this file's whole surface into its module graph. Re-exported here because the
 // terminal host is its other caller and every reader of this file expects to find it beside the
@@ -236,6 +237,18 @@ export function createConfigReader(configPath: string, mask: MaskFn): ConfigRead
   }
 }
 
+// 2026-10-17 (443-06, D-24): the door a request arrived on, scoped to that request, so one host
+// serving several doors (the dashboard) records each run's own trigger.
+const runDoorScope = new AsyncLocalStorage<RunAttributeTrigger>()
+
+export function withRunDoor<T>(trigger: RunAttributeTrigger, fn: () => T): T {
+  return runDoorScope.run(trigger, fn)
+}
+
+export function currentRunDoor(): RunAttributeTrigger | undefined {
+  return runDoorScope.getStore()
+}
+
 /**
  * The chat / `fn` / MCP door's run execution: the ONE in-process drive (401-05).
  *
@@ -297,12 +310,14 @@ function createComposedRunExecution(input: {
   readonly agentQaRoot: string
   readonly resolveExecutionContext: ComposeLocalAgentInput['resolveExecutionContext']
   readonly runBridge?: ComposeCliLocalAgentInput['runBridge']
+  readonly runTrigger?: RunAttributeTrigger
 }): RunExecutionPort {
   const selectTrustPriors = bindTrustPriorsToConfig(input)
   return {
     // 432-13: the port's second argument (the retired run gate's standing-approval reader) is not
     // taken. Nothing asks, so there is no approval for a reader to satisfy.
     async execute(request: RunsStartInput): Promise<{ runId: RunId }> {
+      const trigger = currentRunDoor() ?? input.runTrigger ?? 'cli'
       const { createRunRecord, doorRunAttributes, resolveRunInvocationInputs } = await import('../commands/run.js')
       const {
         refuseUnhonourableRequestFields,
@@ -329,7 +344,7 @@ function createComposedRunExecution(input: {
       })
       const trustPriors = selectTrustPriors(inputs.configFilePath)
       const runRecord = createRunRecord({
-        attributes: doorRunAttributes('cli'),
+        attributes: doorRunAttributes(trigger),
         ...(input.runBridge?.record === undefined ? {} : { host: input.runBridge.record }),
         warn,
       })
@@ -592,6 +607,8 @@ export interface ComposeCliLocalAgentInput {
      */
     readonly chipRelay?: (envelope: RunEventEnvelope) => void
   }
+  /** The `agent-qa.trigger` this host's runs record outside any `withRunDoor` scope (443-06, D-10). */
+  runTrigger?: RunAttributeTrigger
   /**
    * 403 D-03: the live-view mint seam, FORWARDED UNTOUCHED to `composeLocalAgent`.
    *
@@ -1998,6 +2015,7 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
       agentQaRoot: input.agentQaRoot,
       resolveExecutionContext: input.resolveExecutionContext,
       ...(input.runBridge === undefined ? {} : { runBridge: input.runBridge }),
+      ...(input.runTrigger === undefined ? {} : { runTrigger: input.runTrigger }),
     }),
     // 403 D-03: the live-view mint seam, forwarded untouched on the same house rule.
     ...(input.liveView === undefined ? {} : { liveView: input.liveView }),
