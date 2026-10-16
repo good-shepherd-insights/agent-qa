@@ -19,6 +19,7 @@ import type {
   JobRecoveryHost,
   LocalAgentHost,
 } from '@vostride/agent-qa-agent-local'
+import { resolveProcessIncarnation } from '@vostride/agent-qa-knowledge-local'
 import { DEFAULT_EMBEDDING_PROFILE } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -848,9 +849,11 @@ describe('daemon embedder-worker lifecycle', () => {
       // evidence the daemon used to treat as licence to SIGTERM-then-SIGKILL. The pid now belongs
       // to an unrelated process, and the ONLY thing that says so is the OS-assigned start time.
       const surrogate = spawnSurrogate()
+      // The reader's own start-time format with a value no process has (another is unverifiable).
+      const startTimeFormat = String(resolveProcessIncarnation(process.pid)).split(':')[0]
       const orphan = orphanRegistration(REUSED_PID_INSTANCE_ID, DEFAULT_EMBEDDING_PROFILE, {
         pid: surrogate.pid!,
-        incarnation: 'proc-starttime:0',
+        incarnation: `${startTimeFormat}:0`,
       })
       const harness = startHarness(
         'reused-pid-unsignaled',
