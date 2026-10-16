@@ -268,6 +268,7 @@ const WRITERS: readonly Writer[] = [
   w(RUN_TS, 'finalizeOwnRun', 'own', 'suite first signal, the id its ingest reported'),
   w(RUN_TS, 'finalizeOwnRun', 'own', 'direct first signal, the id its ingest reported'),
   w(RUN_TS, 'finalizeOwnRun', 'own', 'crash catch, its own row only'),
+  w(RUN_TS, 'finalizeOwnRun', 'own', 'record flush, its own row after a failed write'),
   w(RUN_TS, 'finalizeRunArtifact', 'own', 'crash catch, only after its own CAS wrote'),
   w(RUN_TS, 'finalizeRunArtifact', 'own', 'direct parse-error validation row'),
   w(RUN_TS, 'updateRun', 'own', 'suite path-traversal row handed to this process'),
@@ -299,7 +300,7 @@ const WRITERS: readonly Writer[] = [
   w(JOB_QUEUE, 'finalizeOrphanRun', 'orphan', 'cancel of a running row whose owner is gone'),
   w(DATABASE, 'finalizeRunArtifact', 'orphan', 'inside finalizeOrphanRun, after its CAS wrote'),
 ]
-const WRITER_FLOOR = 33
+const WRITER_FLOOR = 34
 
 function argumentOf(text: string, open: number): string {
   let depth = 0

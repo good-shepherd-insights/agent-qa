@@ -5,7 +5,7 @@ import { resolve as resolvePath } from 'node:path'
 import { Command, InvalidArgumentError } from 'commander'
 import pc from 'picocolors'
 import { resolveConfig, loadConfigPlugins, mergeWithTestConfig, mergeUseBlocks, formatConfigDebug, loadEnvOverrides } from '../config.js'
-import { ATTR_RUNNER, ATTR_TRIGGER, AUTH_STATE_SCHEMA_VERSION, buildInternalRunAttributes, DEFAULT_AGENT_QA_ARTIFACTS_DIR, DEFAULT_AGENT_QA_CACHE_DIR, formatRunAttributesBlock, generateRunId, isCanonicalRunId, mergeRunAttributes, MobileSetupError, normalizeAuthStateUse, parseRunAttrFlags, resolveAuthStateForRun, resolveAuthStatePaths, resolveKnowledgeRoot, resolveMobileRunConfig, validateTrustedRunAttributes } from '@vostride/agent-qa-core'
+import { ATTR_RUNNER, ATTR_TRIGGER, AUTH_STATE_SCHEMA_VERSION, buildInternalRunAttributes, DEFAULT_AGENT_QA_ARTIFACTS_DIR, DEFAULT_AGENT_QA_RUNS_DB_PATH, DEFAULT_AGENT_QA_CACHE_DIR, formatRunAttributesBlock, generateRunId, isCanonicalRunId, mergeRunAttributes, MobileSetupError, normalizeAuthStateUse, parseRunAttrFlags, resolveAuthStateForRun, resolveAuthStatePaths, resolveKnowledgeRoot, resolveMobileRunConfig, validateTrustedRunAttributes } from '@vostride/agent-qa-core'
 import { discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, resolveWorkspacePaths, workspaceRelativeIdentityPath } from '@vostride/agent-qa-core'
 import type { AgentQaConfig, AuthStateMetadata, MemberLogScope, NormalizedAuthStateUse, ResolvedAuthStateForRun, ResolvedAuthStatePaths, ResolvedMobileRunConfig, ResolvedWorkspacePaths, RunAttributes, RunAttributeRunner, RunAttributeTrigger, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
 import { createModel, createTokenAccounting, resolveCapabilities, resolveVisionConfig, resolveVisionGate, visionFromConfig } from '@vostride/agent-qa-model'
@@ -942,6 +942,22 @@ export interface RunRecord {
   close(): void
 }
 
+export class RunRecordUnavailableError extends Error {
+  readonly dbPath: string
+
+  constructor(dbPath: string, cause: unknown) {
+    super(
+      cause instanceof Error && cause.name === 'RunsDatabaseVersionRefusedError'
+        ? `${cause.message} The run was not started.`
+        : `agent-qa could not open the runs database at ${dbPath}, so the run was not started: `
+          + `${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause },
+    )
+    this.name = 'RunRecordUnavailableError'
+    this.dbPath = dbPath
+  }
+}
+
 export function doorRunAttributes(trigger: RunAttributeTrigger): RunAttributes {
   return buildInternalRunAttributes({ trigger, runner: 'local' })
 }
@@ -951,6 +967,12 @@ function isOwnRunningRowOrFree(db: DashboardDatabase, runId: string): boolean {
   if (row === undefined) return true
   const owner = db.readRunOwner(runId)
   return row.status === 'running' && owner !== undefined && db.isOwnStamp(runId, owner)
+}
+
+function finalRunStatus(verdict: string | undefined): 'passed' | 'failed' | 'skipped' | 'cancelled' {
+  if (verdict === 'passed' || verdict === 'healed') return 'passed'
+  if (verdict === 'skipped' || verdict === 'cancelled') return verdict
+  return 'failed'
 }
 
 export function createRunRecord(input: {
@@ -975,18 +997,33 @@ export function createRunRecord(input: {
         throw new Error(`This run record belongs to ${openedFor} and cannot open ${runId}.`)
       }
       openedFor = runId
-      dashboard = await import('@vostride/agent-qa-dashboard')
-      const dbPath = dashboard.resolveDashboardDbPath({
-        configDir,
-        ...(configuredDbPath === undefined ? {} : { configuredDbPath }),
-      })
       const host = input.host
-      const useHost = host !== undefined
-        && (host.queueRun(runId) !== undefined || host.db.dbPath === dbPath)
-      const handle = useHost
-        ? host.db
-        : new dashboard.DashboardDatabase({ dbPath, runOwnership: composeRunOwnership() })
-      if (!isOwnRunningRowOrFree(handle, runId)) {
+      let dbPath = resolvePath(configDir, configuredDbPath?.trim() || DEFAULT_AGENT_QA_RUNS_DB_PATH)
+      let useHost = false
+      let handle: DashboardDatabase
+      let free: boolean
+      // 2026-10-17 (443-05, D-05): a runs.db that cannot be opened refuses the run before any effect.
+      try {
+        dashboard = await import('@vostride/agent-qa-dashboard')
+        dbPath = dashboard.resolveDashboardDbPath({
+          configDir,
+          ...(configuredDbPath === undefined ? {} : { configuredDbPath }),
+        })
+        useHost = host !== undefined
+          && (host.queueRun(runId) !== undefined || host.db.dbPath === dbPath)
+        handle = useHost && host !== undefined
+          ? host.db
+          : new dashboard.DashboardDatabase({ dbPath, runOwnership: composeRunOwnership() })
+      } catch (error) {
+        throw new RunRecordUnavailableError(dbPath, error)
+      }
+      try {
+        free = isOwnRunningRowOrFree(handle, runId)
+      } catch (error) {
+        if (!useHost) handle.close()
+        throw new RunRecordUnavailableError(dbPath, error)
+      }
+      if (!free) {
         if (!useHost) handle.close()
         throw new RunIdAlreadyInUseError(runId)
       }
@@ -1012,11 +1049,57 @@ export function createRunRecord(input: {
         onRunCreated: (created) => { ownRow = created },
       })
       const unsubscribe = attach.onMemberSnapshot?.((snapshot) => { ingest.stageSnapshots(snapshot) })
+      const handle = db
+      let stopped = false
+      let flushed = false
+      let verdict: string | undefined
+      const stop = (reason: string): void => {
+        stopped = true
+        incompleteReason ??= reason
+      }
       return {
-        handler: ingest.handler,
+        handler(envelope) {
+          const payload = envelope.payload as { verdict?: unknown; aggregateVerdict?: unknown } | undefined
+          if (envelope.type === 'verdict' && typeof payload?.verdict === 'string') verdict = payload.verdict
+          if (envelope.type === 'runFinished' && typeof payload?.aggregateVerdict === 'string') {
+            verdict = payload.aggregateVerdict
+          }
+          if (stopped) return
+          try {
+            ingest.handler(envelope)
+          } catch (error) {
+            stop(error instanceof Error ? error.message : String(error))
+            return
+          }
+          if (envelope.type === 'runStarted' && ownRow === undefined) {
+            stop('another agent-qa process owns its row')
+          }
+        },
         flush: async () => {
+          if (flushed) return
+          flushed = true
           unsubscribe?.()
-          await ingest.finalize()
+          if (!stopped) {
+            try {
+              await ingest.finalize()
+            } catch (error) {
+              stop(error instanceof Error ? error.message : String(error))
+            }
+          }
+          stopped = true
+          if (incompleteReason === undefined) return
+          // 2026-10-17 (443-05, D-27): the verdict stands; the run's own row is closed once, best effort.
+          if (ownRow !== undefined) {
+            try {
+              handle.finalizeOwnRun(runId, { status: finalRunStatus(verdict), endedAt: new Date().toISOString() })
+            } catch {
+              // The warning below already says the record is incomplete.
+            }
+          }
+          input.warn(
+            `The run finished (${verdict ?? 'without a verdict'}), but its dashboard record is incomplete: `
+              + `${incompleteReason}.`,
+          )
         },
       }
     },
