@@ -490,6 +490,52 @@ export class DashboardDatabase {
     return id
   }
 
+  // 2026-10-17 (443-02, D-07): one statement that inserts a fresh row or adopts this handle's own
+  // running row; any other row is refused and left untouched.
+  claimRunningRow(id: string, fields: {
+    name: string
+    filePath?: string
+    attributes?: RunAttributes
+    startedAt: string
+    platform?: string
+    testId?: string
+    suiteId?: string
+  }): boolean {
+    const stamp = this.ownStamps.get(id) ?? this.readOwnStamp()
+    const result = this.db.prepare(`
+      INSERT INTO runs (id, name, file_path, status, duration, attributes, started_at, ended_at, platform, test_id, suite_id, owner_pid, owner_incarnation, owner_host)
+      VALUES (?, ?, ?, 'running', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        started_at = excluded.started_at,
+        ended_at = excluded.ended_at,
+        name = excluded.name,
+        attributes = excluded.attributes,
+        platform = excluded.platform,
+        test_id = COALESCE(excluded.test_id, runs.test_id),
+        suite_id = COALESCE(excluded.suite_id, runs.suite_id)
+      WHERE runs.status = 'running'
+        AND runs.owner_pid = excluded.owner_pid
+        AND runs.owner_incarnation IS excluded.owner_incarnation
+        AND runs.owner_host = excluded.owner_host
+    `).run(
+      id,
+      fields.name,
+      fields.filePath ?? null,
+      JSON.stringify(fields.attributes ?? {}),
+      fields.startedAt,
+      fields.startedAt,
+      fields.platform ?? 'web',
+      fields.testId ?? null,
+      fields.suiteId ?? null,
+      stamp.pid,
+      stamp.incarnation,
+      stamp.host,
+    )
+    if (Number(result.changes) !== 1) return false
+    this.ownStamps.set(id, stamp)
+    return true
+  }
+
   updateRun(id: string, updates: {
     name?: string
     status?: string
