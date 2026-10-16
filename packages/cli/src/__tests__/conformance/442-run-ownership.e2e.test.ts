@@ -1,10 +1,9 @@
 // 2026-10-16 (442-03, D-05, WINDOWS #551): a crash or interrupt finalizes only its own run's row.
 
 import { existsSync } from 'node:fs'
-import { hostname } from 'node:os'
 import { join } from 'node:path'
 
-import { orphanSummary, ownedElsewhere } from '@vostride/agent-qa-dashboard'
+import { orphanSummary, ownedElsewhere, resolveRunOwnerHost } from '@vostride/agent-qa-dashboard'
 import type { RunOwner } from '@vostride/agent-qa-dashboard'
 import { resolveProcessIncarnation } from '@vostride/agent-qa-knowledge-local'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -206,7 +205,7 @@ describe('C442-OWN-RUN-ONLY', () => {
       expect(readOwner(at.project, parked.id)).toEqual({
         pid: parked.run.pid,
         incarnation,
-        host: hostname(),
+        host: resolveRunOwnerHost(),
       })
     }
 
@@ -288,7 +287,7 @@ async function startDashboardWhileBRuns(): Promise<DashboardStartedMidRun> {
   expect(at.browsers.releasedOrdinals()).toEqual([])
   expectUnfinalizedAndRunning(at.project, b.id)
 
-  const here = hostname()
+  const here = resolveRunOwnerHost()
   const exitedHere = seeded(at, { pid: await exitedPid(), incarnation: 'ps-lstart:exited', host: here })
   const reusedPid = seeded(at, { pid: process.pid, incarnation: reusedPidStamp(), host: here })
   const otherHost = seeded(at, {

@@ -1,9 +1,12 @@
 import { spawn, spawnSync } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
-import { hostname } from 'node:os'
-
-import { classifyRunOwner } from '@vostride/agent-qa-dashboard'
-import type { RunOwner, RunOwnership } from '@vostride/agent-qa-dashboard'
+import {
+  classifyRunOwner,
+  completeRunOwnership,
+  DashboardDatabase,
+  resolveRunOwnerHost,
+} from '@vostride/agent-qa-dashboard'
+import type { RunOwner } from '@vostride/agent-qa-dashboard'
 import { resolveProcessIncarnation } from '@vostride/agent-qa-knowledge-local'
 import { describe, expect, it } from 'vitest'
 
@@ -30,22 +33,28 @@ function requirePid(child: ChildProcess): number {
 
 describe('C442-OWNER-STAMP', () => {
   it('the CLI composes its own pid, start time and host', () => {
-    const ownership: RunOwnership = composeRunOwnership()
-    expect(ownership.self).toEqual({
-      pid: process.pid,
-      incarnation: resolveProcessIncarnation(process.pid) ?? null,
-      host: hostname(),
-    })
-    expect(composeRunOwnership()).toBe(ownership)
+    const composed = composeRunOwnership()
+    const db = new DashboardDatabase({ dbPath: ':memory:', runOwnership: composed })
+    try {
+      expect(db.runOwnership.self).toEqual({
+        pid: process.pid,
+        incarnation: resolveProcessIncarnation(process.pid) ?? null,
+        host: resolveRunOwnerHost(),
+      })
+    } finally {
+      db.close()
+    }
+    expect(Object.keys(composed.self).sort()).toEqual(['incarnation', 'pid'])
+    expect(composeRunOwnership()).toBe(composed)
   })
 })
 
 describe('C442-OWNER-CLASSIFY', () => {
   it('the composed probe reads real processes', async () => {
     requirePosix()
-    const ownership = composeRunOwnership()
+    const ownership = completeRunOwnership(composeRunOwnership())
     expect(typeof ownership.self.incarnation).toBe('string')
-    const host = hostname()
+    const host = resolveRunOwnerHost()
 
     const finished = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' })
     const finishedPid = requirePid(finished)
@@ -78,20 +87,20 @@ describe('C442-OWNER-CLASSIFY', () => {
 describe('C442-OWN-START-TIME', () => {
   it('the CLI retries an unread own start time and keeps the first one it reads', () => {
     const ownReads: number[] = []
-    const ownership = createRunOwnership({
+    const ownership = completeRunOwnership(createRunOwnership({
       readStartTime: (pid) => {
         ownReads.push(pid)
         return ownReads.length === 1 ? undefined : 'ps-lstart-utc:A'
       },
       isAlive: () => true,
-    })
+    }))
 
     expect(ownership.self.incarnation).toBeNull()
     expect(ownership.self.incarnation).toBe('ps-lstart-utc:A')
     expect(ownership.self).toEqual({
       pid: process.pid,
       incarnation: 'ps-lstart-utc:A',
-      host: hostname(),
+      host: resolveRunOwnerHost(),
     })
     expect(ownReads).toEqual([process.pid, process.pid])
   })
@@ -112,7 +121,7 @@ describe('C442-OWN-START-TIME', () => {
 
     requirePosix()
     const wedgedBounds: Array<number | undefined> = []
-    const wedged = createRunOwnership({
+    const wedged = completeRunOwnership(createRunOwnership({
       readStartTime: (pid, timeoutMs) => {
         wedgedBounds.push(timeoutMs)
         if (pid === process.pid) return 'ps-lstart-utc:self'
@@ -120,7 +129,7 @@ describe('C442-OWN-START-TIME', () => {
         return undefined
       },
       isAlive: processIsAlive,
-    })
+    }))
     expect(wedged.self.incarnation).toBe('ps-lstart-utc:self')
 
     const waiting = spawn(process.execPath, ['-e', 'process.stdin.resume()'], {
@@ -131,7 +140,7 @@ describe('C442-OWN-START-TIME', () => {
       const live: RunOwner = {
         pid: waitingPid,
         incarnation: 'ps-lstart-utc:child',
-        host: hostname(),
+        host: resolveRunOwnerHost(),
       }
       const startedAt = Date.now()
       expect(classifyRunOwner(live, wedged)).toBe('unknown')

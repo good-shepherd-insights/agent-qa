@@ -361,6 +361,8 @@ const REACHED_BUT_UNPINNED = [
   'cli/src/commands/install-browsers.ts',
   // `spawnSync` git probes while `agent-qa init` decides what kind of checkout it is in.
   'cli/src/commands/init-filesystem.ts',
+  // `spawnSync('/usr/sbin/ioreg', …)` — the macOS hardware UUID that names a run owner's host.
+  'dashboard-server/src/db/run-owner-host.ts',
   // `spawnSync('ps', …)` — is the process holding this writer lease still alive?
   'knowledge-local/src/lease/writer-lease.ts',
   // `execFileSync` git reads. Its own header declares it the only sanctioned home for them.

@@ -7,7 +7,11 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 
-import { classifyRunOwner, ownedElsewhere } from '@vostride/agent-qa-dashboard'
+import {
+  classifyRunOwner,
+  completeRunOwnership,
+  ownedElsewhere,
+} from '@vostride/agent-qa-dashboard'
 import type { RunOwner } from '@vostride/agent-qa-dashboard'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -29,7 +33,6 @@ const READING_ENVIRONMENT = { TZ: 'Asia/Kathmandu', LC_ALL: 'C', LANG: 'C' } as 
 const resolveBuilt = createRequire(import.meta.url).resolve
 
 const OWNER_SCRIPT = `import { createRequire } from 'node:module'
-import { hostname } from 'node:os'
 
 process.stdin.resume()
 process.stdin.on('end', () => process.exit(0))
@@ -39,13 +42,13 @@ const { DashboardDatabase } = require(process.env.STAMPED_OWNER_DASHBOARD)
 const self = {
   pid: process.pid,
   incarnation: LOCAL_DAEMON_CAPABILITIES.resolveProcessIncarnation(process.pid) ?? null,
-  host: hostname(),
 }
 const db = new DashboardDatabase({
   dbPath: process.env.STAMPED_OWNER_DB,
   runOwnership: { self, probe: { isAlive: () => true, incarnationOf: () => undefined } },
 })
 let id
+let owner
 try {
   const startedAt = new Date().toISOString()
   id = db.insertRun({
@@ -56,10 +59,11 @@ try {
     endedAt: startedAt,
   })
   db.insertRunArtifact({ runId: id, kind: 'test' })
+  owner = db.readRunOwner(id)
 } finally {
   db.close()
 }
-process.stdout.write(JSON.stringify({ id, owner: self }) + '\\n')
+process.stdout.write(JSON.stringify({ id, owner }) + '\\n')
 `
 
 interface StampedOwner {
@@ -245,7 +249,7 @@ describe('C442-CROSS-ENV', () => {
       const at = await openCell()
       const owners = await startBothOwners(at)
       for (const stamped of owners) expectLiveStampedRunning(at, stamped)
-      const ownership = composeRunOwnership()
+      const ownership = completeRunOwnership(composeRunOwnership())
 
       const restore = pinReading(at)
       try {

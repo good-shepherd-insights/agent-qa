@@ -1,4 +1,3 @@
-import { hostname } from 'node:os'
 import { LOCAL_DAEMON_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 
 import { processIsAlive } from '../daemon/registration.js'
@@ -9,7 +8,6 @@ export interface CliRunOwnership {
   readonly self: {
     readonly pid: number
     readonly incarnation: string | null
-    readonly host: string
   }
   readonly probe: {
     isAlive(pid: number): boolean
@@ -28,7 +26,7 @@ export function createRunOwnership({ readStartTime, isAlive }: {
     get self() {
       // 2026-10-16 (442-15, GAP-D2): a miss is not remembered; the next read retries.
       ownStartTime ??= readStartTime(process.pid, RUN_OWNER_START_TIME_TIMEOUT_MS)
-      return { pid: process.pid, incarnation: ownStartTime ?? null, host: hostname() }
+      return { pid: process.pid, incarnation: ownStartTime ?? null }
     },
     probe: {
       isAlive,
