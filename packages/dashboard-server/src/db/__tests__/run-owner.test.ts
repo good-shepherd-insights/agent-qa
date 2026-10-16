@@ -107,3 +107,35 @@ describe('C442-OWNER-CLASSIFY', () => {
     )
   })
 })
+
+describe('C442-INCARNATION-FORMAT', () => {
+  const stampedAs = (incarnation: string): RunOwner => ({ pid: 200, incarnation, host: HOST })
+
+  it('a live owner stamped in another start-time format is unknown, never gone', () => {
+    const { ownership, probed } = ownershipOver({
+      200: { alive: true, incarnation: 'ps-lstart-utc:Fri Oct 16 03:21:30 2026' },
+    })
+    const stamps = ['ps-lstart:Fri Oct 16 08:51:30 2026', 'proc-starttime:12']
+    expect(stamps.map((stamp) => classifyRunOwner(stampedAs(stamp), ownership))).toEqual([
+      'unknown',
+      'unknown',
+    ])
+    expect(probed.join()).toBe('200,200')
+  })
+
+  it('a live owner with an equal-format different start time is still gone', () => {
+    const { ownership, probed } = ownershipOver({
+      200: { alive: true, incarnation: 'ps-lstart-utc:B' },
+    })
+    expect(classifyRunOwner(stampedAs('ps-lstart-utc:A'), ownership)).toBe('gone')
+    expect(probed.join()).toBe('200')
+  })
+
+  it("a dead owner is gone whatever its stamp's format", () => {
+    const { ownership, probed } = ownershipOver({
+      200: { alive: false, incarnation: 'ps-lstart-utc:Fri Oct 16 03:21:30 2026' },
+    })
+    expect(classifyRunOwner(stampedAs('ps-lstart:old'), ownership)).toBe('gone')
+    expect(probed.join()).toBe('200')
+  })
+})
