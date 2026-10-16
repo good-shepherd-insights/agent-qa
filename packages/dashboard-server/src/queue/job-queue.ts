@@ -142,7 +142,7 @@ export class JobQueue extends EventEmitter {
     return this.concurrency
   }
 
-  // 2026-10-16 (442-05, D-06 to D-08): only the owner cancels a running row; a gone owner's is an orphan.
+  // 2026-10-16 (442-05, D-06 to D-08): only the owner cancels a running row; gone is an orphan.
   cancel(runId: string): RunCancelOutcome {
     const run = this.db.getRun(runId)
     if (!run) return NOT_CANCELLABLE
@@ -165,7 +165,9 @@ export class JobQueue extends EventEmitter {
           const artifact = this.db.getRunArtifact(runId)
           if (artifact && !artifact.finalizedAt) {
             this.db.finalizeRunArtifact(runId, {
-              errors: [{ code: 'cancelled', phase: 'queue', message: 'Run cancellation requested' }],
+              errors: [
+                { code: 'cancelled', phase: 'queue', message: 'Run cancellation requested' },
+              ],
               runtime: { status: 'cancelled' },
             })
           }

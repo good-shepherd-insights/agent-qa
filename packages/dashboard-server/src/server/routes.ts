@@ -2363,7 +2363,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         return
       }
       const runId = path.slice('/api/runs/'.length, path.length - '/cancel'.length)
-      // 2026-10-16 (442-05, D-06/D-07): cancel metadata is written only for a run this dashboard owns.
+      // 2026-10-16 (442-05, D-06/D-07): cancel metadata is written only for this dashboard's runs.
       const outcome = jobQueue.cancel(runId)
       switch (outcome.kind) {
         case 'cancelled':
