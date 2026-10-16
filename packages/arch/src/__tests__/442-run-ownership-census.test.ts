@@ -25,8 +25,10 @@
  *                                               [C442-STATUS-WRITERS-CLASSIFIED]
  */
 
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
@@ -206,7 +208,8 @@ const JOB_QUEUE = 'dashboard-server/src/queue/job-queue.ts'
 const ROUTES = 'dashboard-server/src/server/routes.ts'
 const DATABASE = 'dashboard-server/src/db/database.ts'
 const SUBSCRIBER = 'dashboard-server/src/reporter/dashboard-subscriber.ts'
-const GUARDED = [RUN_TS, SHUTDOWN, SERVER, JOB_QUEUE, ROUTES, DATABASE, SUBSCRIBER]
+const SCHEMA = 'dashboard-server/src/db/schema.ts'
+const GUARDED = [RUN_TS, SHUTDOWN, SERVER, JOB_QUEUE, ROUTES, DATABASE, SUBSCRIBER, SCHEMA]
 
 const memberCalls = (text: string, name: string): number =>
   [...text.matchAll(new RegExp(`\\.${name}\\s*\\(`, 'g'))].length
@@ -240,6 +243,97 @@ const sweepOffenses = (label: string, text: string): string[] => [
 ]
 
 // ---------------------------------------------------------------------------------------------
+// The runs.status writers, each classified by whose row it writes
+// ---------------------------------------------------------------------------------------------
+
+const WRITER_CALL: Halves = [
+  '\\.(updateRun|updateRunStatus|insertRun|insertPendingRun|finalizeOwnRun|finalizeOrphan',
+  'Run|finalizeRunArtifact)\\s*\\(',
+]
+// updateRun and insertRun write a status only when their argument names one.
+const STATUS_OPTIONAL = new Set(['updateRun', 'insertRun'])
+const STATUS_KEY = /(?:^|[{,\s])status\s*(?:[:,}]|$)/m
+
+type Classification = 'own' | 'orphan' | 'own-queue'
+interface Writer { file: string; call: string; classification: Classification; why: string }
+interface WriterSite { file: string; call: string; line: number }
+
+const w = (file: string, call: string, classification: Classification, why: string): Writer =>
+  ({ file, call, classification, why })
+
+const WRITERS: readonly Writer[] = [
+  w(RUN_TS, 'finalizeOwnRun', 'own', 'suite first signal, the id its ingest reported'),
+  w(RUN_TS, 'finalizeOwnRun', 'own', 'direct first signal, the id its ingest reported'),
+  w(RUN_TS, 'finalizeOwnRun', 'own', 'crash catch, its own row only'),
+  w(RUN_TS, 'finalizeRunArtifact', 'own', 'crash catch, only after its own CAS wrote'),
+  w(RUN_TS, 'finalizeRunArtifact', 'own', 'direct parse-error validation row'),
+  w(RUN_TS, 'updateRun', 'own', 'suite path-traversal row handed to this process'),
+  w(RUN_TS, 'updateRun', 'own', 'suite parse-error row handed to this process'),
+  w(RUN_TS, 'updateRun', 'own', 'suite missing-definition row handed to this process'),
+  w(RUN_TS, 'updateRun', 'own', 'suite id-mismatch row handed to this process'),
+  w(RUN_TS, 'updateRun', 'own', 'direct parse-error validation row handed to this process'),
+  w(RUN_TS, 'insertRun', 'own', 'suite path-traversal row'),
+  w(RUN_TS, 'insertRun', 'own', 'suite parse-error row'),
+  w(RUN_TS, 'insertRun', 'own', 'suite missing-definition row'),
+  w(RUN_TS, 'insertRun', 'own', 'suite id-mismatch row'),
+  w(RUN_TS, 'insertRun', 'own', 'direct parse-error validation row'),
+  w(SHUTDOWN, 'finalizeOwnRun', 'own', 'first-signal dep, bound by run.ts to its own row'),
+  w(SUBSCRIBER, 'updateRun', 'own', 'ingest adopts its explicit row as running'),
+  w(SUBSCRIBER, 'updateRun', 'own', 'member outcome on its own row'),
+  w(SUBSCRIBER, 'updateRun', 'own', 'runFinished aggregate verdict'),
+  w(SUBSCRIBER, 'updateRun', 'own', 'verdict envelope'),
+  w(SUBSCRIBER, 'insertRun', 'own', 'ingest inserts its explicit row as running'),
+  w(SUBSCRIBER, 'insertRun', 'own', 'ingest inserts a fresh running row'),
+  w(SUBSCRIBER, 'finalizeRunArtifact', 'own', 'runFinished finalize'),
+  w(SERVER, 'updateRun', 'own', 'run-settled of a run this dashboard executed'),
+  w(SERVER, 'updateRun', 'own', 'Appium start failure of a run this dashboard executed'),
+  w(SERVER, 'finalizeRunArtifact', 'own', 'best-effort helper of the two writes above'),
+  w(SERVER, 'finalizeOrphanRun', 'orphan', 'startup, only for an owner classified gone'),
+  w(JOB_QUEUE, 'insertPendingRun', 'own-queue', 'enqueue writes a pending row'),
+  w(JOB_QUEUE, 'updateRunStatus', 'own-queue', 'pending to running, stamped with this dashboard'),
+  w(JOB_QUEUE, 'updateRun', 'own-queue', 'cancel of a pending row'),
+  w(JOB_QUEUE, 'finalizeRunArtifact', 'own-queue', 'cancel of a pending row'),
+  w(JOB_QUEUE, 'updateRun', 'own-queue', 'cancel of a running row this dashboard owns'),
+  w(JOB_QUEUE, 'finalizeRunArtifact', 'own-queue', 'cancel of a running row this dashboard owns'),
+  w(JOB_QUEUE, 'finalizeOrphanRun', 'orphan', 'cancel of a running row whose owner is gone'),
+  w(DATABASE, 'finalizeRunArtifact', 'orphan', 'inside finalizeOrphanRun, after its CAS wrote'),
+]
+const WRITER_FLOOR = 35
+
+function argumentOf(text: string, open: number): string {
+  let depth = 0
+  for (let i = open; i < text.length && i < open + 4000; i++) {
+    if (text[i] === '(') depth++
+    else if (text[i] === ')' && --depth === 0) return text.slice(open + 1, i)
+  }
+  return text.slice(open + 1, open + 4000)
+}
+
+function writerCalls(file: string, text: string): WriterSite[] {
+  return [...text.matchAll(rx(WRITER_CALL, 'g'))]
+    .filter((m) => !STATUS_OPTIONAL.has(m[1]!)
+      || STATUS_KEY.test(argumentOf(text, m.index + m[0].length - 1)))
+    .map((m) => ({ file, call: m[1]!, line: lineAt(text, m.index) }))
+}
+
+function classificationDiff(found: readonly WriterSite[], pinned: readonly Writer[]): string[] {
+  const key = (site: { file: string; call: string }): string => `${site.file} ${site.call}`
+  const keys = [...new Set([...found.map(key), ...pinned.map(key)])].sort()
+  return keys.flatMap((k) => {
+    const sites = found.filter((site) => key(site) === k)
+    const listed = pinned.filter((writer) => key(writer) === k).length
+    const lines = sites.map((site) => site.line).join(', ')
+    if (sites.length > listed) {
+      return [`unlisted: ${k} (found ${sites.length} at lines ${lines}, listed ${listed})`]
+    }
+    if (sites.length < listed) return [`stale: ${k} (found ${sites.length}, listed ${listed})`]
+    return []
+  })
+}
+
+const RUNNING_CHECK = "CHECK (status <> 'running' OR owner_pid IS NOT NULL)"
+
+// ---------------------------------------------------------------------------------------------
 // The cells
 // ---------------------------------------------------------------------------------------------
 
@@ -264,6 +358,66 @@ describe('C442-CENSUS — no path finalizes runs it does not own (442 D-05)', ()
   it('C442-NO-RUNNING-SWEEP: no production code lists the running rows to finalize them, and no SQL text updates the runs table by status without naming its id', () => {
     const offenders = scanned(REGIONS).flatMap((file) => sweepOffenses(file, code(file)))
     expect(offenders, offenders.join('\n')).toEqual([])
+  })
+
+  it('C442-STATUS-WRITERS-CLASSIFIED: every runs.status writer is listed with whose row it writes', () => {
+    const found = scanned(REGIONS).flatMap((file) => writerCalls(file, code(file)))
+    const diff = classificationDiff(found, WRITERS)
+    expect(diff, diff.join('\n')).toEqual([])
+    expect(WRITERS).toHaveLength(WRITER_FLOOR)
+    expect(found.length, 'the scan found fewer writers than the list pins')
+      .toBeGreaterThanOrEqual(WRITER_FLOOR)
+    for (const writer of WRITERS) {
+      expect(writer.why, `${writer.file} ${writer.call} has no reason`).not.toBe('')
+      if (writer.call === 'finalizeOrphanRun') expect(writer.classification).toBe('orphan')
+      if (writer.classification === 'own-queue') expect(writer.file).toBe(JOB_QUEUE)
+      if (writer.classification === 'orphan') {
+        const inFinalizer = writer.call === 'finalizeOrphanRun' || writer.file === DATABASE
+        expect(inFinalizer, `${writer.file} ${writer.call}: orphan outside the orphan finalizer`)
+          .toBe(true)
+      }
+    }
+  })
+
+  it('C442-OWNER-REQUIRED: the v5 runs table requires an owner on every running row', () => {
+    const schema = bytesOf(SCHEMA)
+    expect(code(SCHEMA)).toMatch(/\bexport const SCHEMA_VERSION = 5\b/)
+    const migrations = schema.indexOf('export const MIGRATIONS')
+    const start = schema.indexOf('CREATE TABLE IF NOT EXISTS runs (')
+    expect(migrations, `${SCHEMA} declares no MIGRATIONS`).toBeGreaterThan(-1)
+    expect(start, 'the runs DDL is not inside MIGRATIONS').toBeGreaterThan(migrations)
+    expect(schema.slice(migrations, start)).toMatch(/version: 5,/)
+    const ddl = schema.slice(start, schema.indexOf('`', start))
+    const parts = ['owner_pid INTEGER', 'owner_incarnation TEXT', 'owner_host TEXT', RUNNING_CHECK]
+    for (const part of parts) {
+      expect(ddl, `the runs DDL lacks ${part}`).toContain(part)
+    }
+
+    const root = mkdtempSync(join(tmpdir(), 'c442-owner-required-'))
+    try {
+      const db = new DatabaseSync(join(root, 'runs.db'))
+      try {
+        db.exec(ddl)
+        const insert = db.prepare(
+          'INSERT INTO runs (id, name, status, owner_pid, owner_incarnation, owner_host)'
+            + ' VALUES (?, ?, ?, ?, ?, ?)',
+        )
+        expect(() => insert.run('ownerless', 'raw', 'running', null, null, null))
+          .toThrow(/CHECK constraint failed/)
+        insert.run('owned', 'raw', 'running', 4242, 'ps-lstart:fixed', 'census-host')
+        insert.run('queued', 'raw', 'pending', null, null, null)
+        const flip = db.prepare(cat('UPDATE ru', "ns SET status = 'running' WHERE id = ?"))
+        expect(() => flip.run('queued')).toThrow(/CHECK constraint failed/)
+        expect(db.prepare('SELECT id, status FROM runs ORDER BY id').all()).toEqual([
+          { id: 'owned', status: 'running' },
+          { id: 'queued', status: 'pending' },
+        ])
+      } finally {
+        db.close()
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
 
@@ -301,6 +455,23 @@ describe('C442-CENSUS instruments', () => {
       "ns SET status = ?\n  WHERE id = ? AND status = 'running'\n`).run(s, id)\n",
     )
     expect(sweepOffenses('planted.ts', codeOf(cas))).toEqual([])
+
+    const planted = 'cli/src/commands/planted.ts'
+    const real = scanned(REGIONS).flatMap((file) => writerCalls(file, code(file)))
+    const unclassified = cat('  db.updat', "eRun(id, { status: 'failed' })\n")
+    const sites = writerCalls(planted, codeOf(unclassified))
+    expect(sites).toEqual([{ file: planted, call: 'updateRun', line: 1 }])
+    expect(classificationDiff([...real, ...sites], WRITERS))
+      .toEqual([`unlisted: ${planted} updateRun (found 1 at lines 1, listed 0)`])
+    expect(writerCalls(planted, codeOf(`// ${unclassified}`))).toEqual([])
+    const shorthand = cat('db.updat', 'eRun(id, {\n  status,\n  endedAt,\n})\n')
+    expect(writerCalls(planted, codeOf(shorthand))).toHaveLength(1)
+    expect(writerCalls(planted, codeOf(cat('db.updat', 'eRun(id, { errorLog })\n')))).toEqual([])
+    expect(writerCalls(planted, codeOf(cat('db.updat', 'eRun(id, { previous: run.status })\n'))))
+      .toEqual([])
+    const gone = real.filter((site) => !(site.file === SERVER && site.call === 'finalizeOrphanRun'))
+    expect(classificationDiff(gone, WRITERS))
+      .toEqual([`stale: ${SERVER} finalizeOrphanRun (found 0, listed 1)`])
   })
 
   it('C442-SELF-MATCH: this file spells none of the needles it assembles, and lies outside every region it scans', () => {
@@ -310,6 +481,7 @@ describe('C442-CENSUS instruments', () => {
       .filter((needle) => own.toLowerCase().includes(needle.toLowerCase()))
     expect(spelled, `this file spells what it reads: ${spelled.join(', ')}`).toEqual([])
     expect(sweepOffenses(OWN, codeOf(own))).toEqual([])
+    expect(writerCalls(OWN, codeOf(own))).toEqual([])
     const files = scanned(REGIONS)
     expect(files, 'this census file is inside a region it scans').not.toContain(OWN)
     const tests = files.filter((file) => file.includes('/__tests__/'))
