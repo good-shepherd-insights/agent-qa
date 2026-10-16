@@ -431,14 +431,16 @@ export async function resolveConfig(options: {
       baseUrlHint
     )
   }
-  if (options.loadAuthPlugins !== false) {
-    await loadLLMAuthPlugins(result.data.plugins?.auth, {
-      baseDir: dirname(resolvePath(configPath)),
-    })
-    const { loadProviderPluginsForRawConfig } = await import('./provider-plugins.js')
-    await loadProviderPluginsForRawConfig(result.data, configPath)
-  }
+  if (options.loadAuthPlugins !== false) await loadConfigPlugins(result.data, configPath)
   return result.data
+}
+
+export async function loadConfigPlugins(config: AgentQaConfig, configPath: string): Promise<void> {
+  await loadLLMAuthPlugins(config.plugins?.auth, {
+    baseDir: dirname(resolvePath(configPath)),
+  })
+  const { loadProviderPluginsForRawConfig } = await import('./provider-plugins.js')
+  await loadProviderPluginsForRawConfig(config, configPath)
 }
 
 /** Resolve the writer-gated knowledge root without making each CLI surface import core directly. */

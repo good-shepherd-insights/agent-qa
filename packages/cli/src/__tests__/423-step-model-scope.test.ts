@@ -157,7 +157,7 @@ async function executePath(path: 'DIRECT' | 'SUITE' | 'COMPOSED', options: { mis
     runtimeSecrets: { secretStore, secretRedactor, secretsFileMetadata: { path: null, status: 'missing' } },
     envFileVars: {}, inlineVars: {}, cliVars: {}, userRunAttributes: {}, effectiveLogLevel: 'silent',
     resolvedHooks: new Map(), rawEnvFileContent: null, resolvedEnvFilePath: null,
-    discovered: { tests: [filePath], suites: [] },
+    discovered: { tests: [filePath], suites: [] }, loadPlugins: async () => {},
   } as unknown as RunInvocationInputs
   const events: RunEventEnvelope[] = []
   if (path === 'COMPOSED') {
@@ -172,7 +172,7 @@ async function executePath(path: 'DIRECT' | 'SUITE' | 'COMPOSED', options: { mis
       ? await produceDirectRunMembers({ inputs, bindings: [{ test, filePath, fileContent }] as never, opts })
       : await produceSuiteRunMembers({
           config, configDir: project, configFilePath, configContent, runId, opts,
-          effectiveLogLevel: 'silent', suiteFiles: [suiteFile],
+          effectiveLogLevel: 'silent', suiteFiles: [suiteFile], loadPlugins: async () => {},
           preflight: {
             definitions: new Map([[suiteFile, { 'suite-id': generateSuiteId(), name: 'Observed suite', target: 'fixture', tests: [{ test: 'one.yaml', id: testId }] }]]),
             preloadedTests: new Map([[filePath, { fileContent, parseResult: { tests: [test], errors: [] } }]]), product: 'usage-fixture', productionTargetNames: [],

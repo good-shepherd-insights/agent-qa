@@ -603,6 +603,7 @@ vi.mock('../version-notice.js', () => ({
 
 vi.mock('../config.js', () => ({
   resolveConfig: mockResolveConfig,
+  loadConfigPlugins: vi.fn(async () => {}),
   mergeWithTestConfig: vi.fn((...args: any[]) => args[0]),
   mergeConfigs: vi.fn((...args: any[]) => args[0]),
   mergeUseBlocks: vi.fn((globalUse: any, suiteUse: any, testUse: any, cliFlags: any) => {

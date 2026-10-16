@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { resolve as resolvePath } from 'node:path'
 import { Command, InvalidArgumentError } from 'commander'
 import pc from 'picocolors'
-import { resolveConfig, mergeWithTestConfig, mergeUseBlocks, formatConfigDebug, loadEnvOverrides } from '../config.js'
+import { resolveConfig, loadConfigPlugins, mergeWithTestConfig, mergeUseBlocks, formatConfigDebug, loadEnvOverrides } from '../config.js'
 import { ATTR_RUNNER, ATTR_TRIGGER, AUTH_STATE_SCHEMA_VERSION, buildInternalRunAttributes, DEFAULT_AGENT_QA_ARTIFACTS_DIR, DEFAULT_AGENT_QA_CACHE_DIR, formatRunAttributesBlock, generateRunId, isCanonicalRunId, mergeRunAttributes, MobileSetupError, normalizeAuthStateUse, parseRunAttrFlags, resolveAuthStateForRun, resolveAuthStatePaths, resolveKnowledgeRoot, resolveMobileRunConfig, validateTrustedRunAttributes } from '@vostride/agent-qa-core'
 import { discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, resolveWorkspacePaths, workspaceRelativeIdentityPath } from '@vostride/agent-qa-core'
 import type { AgentQaConfig, AuthStateMetadata, MemberLogScope, NormalizedAuthStateUse, ResolvedAuthStateForRun, ResolvedAuthStatePaths, ResolvedMobileRunConfig, ResolvedWorkspacePaths, RunAttributes, RunAttributeRunner, RunAttributeTrigger, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
@@ -1211,6 +1211,11 @@ export interface RunInvocationInputs {
    * non-empty.
    */
   readonly discovered: { readonly tests: string[]; readonly suites: string[] }
+  /**
+   * 2026-10-16 (442-08, D-10): the config is resolved plugin-free; this loads its auth and provider
+   * plugins once, after the production refusal. A no-op for `loadAuthPlugins: false`.
+   */
+  readonly loadPlugins: () => Promise<void>
 }
 
 /**
@@ -1236,11 +1241,15 @@ export async function resolveRunInvocationInputs(
   const config = await resolveConfig({
     configPath: request.configPath,
     flags: request.flagOverrides ?? {},
-    loadAuthPlugins: request.loadAuthPlugins ?? true,
+    loadAuthPlugins: false,
   })
 
   // Read raw config file content for cache key scoping
   const configFilePath = resolvePath(request.configPath ?? 'agent-qa.config.yaml')
+  let pluginsLoaded: Promise<void> | undefined
+  const loadPlugins = request.loadAuthPlugins === false
+    ? async (): Promise<void> => {}
+    : (): Promise<void> => (pluginsLoaded ??= loadConfigPlugins(config, configFilePath))
   const workspacePaths = resolveWorkspacePaths({ config, configPath: configFilePath })
   let configContent = ''
   try {
@@ -1441,6 +1450,7 @@ export async function resolveRunInvocationInputs(
     userRunAttributes,
     inheritedRunAttributes,
     discovered: { tests: discoveredTestFiles, suites: discoveredSuiteFiles },
+    loadPlugins,
   }
 }
 
@@ -1719,7 +1729,7 @@ async function executeSuites(
   configContent: string,
   effectiveLogLevel: string,
   trustPriors: ReturnType<typeof trustPriorsForHost> | undefined,
-  variableContext?: {
+  variableContext: {
     envFileVars: Record<string, string>
     inlineVars: Record<string, string>
     cliVars: Record<string, string>
@@ -1730,13 +1740,14 @@ async function executeSuites(
     secretsFileMetadata?: SecretsFileArtifactMetadata | null
     userRunAttributes: RunAttributes
     inheritedRunAttributes?: RunAttributes
-  },
-  hooksContext?: { resolvedHooks: Map<string, HookDefinition>; sandboxOptions: SandboxRunnerOptions },
+  } | undefined,
+  hooksContext: { resolvedHooks: Map<string, HookDefinition>; sandboxOptions: SandboxRunnerOptions } | undefined,
   // 398-10: the invocation's analytics, composed ONCE at the command root and handed down. It is a
   // memoised resolver rather than a value for the reason `--list` and `--dry-run` exist: composing
   // resolves the identity store, and a command that never starts a run should not mint one. The
   // memo is what keeps "lazily" from becoming "twice".
-  analytics?: () => Promise<CliAnalyticsHost>,
+  analytics: (() => Promise<CliAnalyticsHost>) | undefined,
+  loadPlugins: () => Promise<void>,
 ): Promise<number> {
   const { parseSuiteFile, parseTestFile, patchTestForSuite } = await import('@vostride/agent-qa-core')
   // 401-04: `startRun` is NOT among these. BOTH of this command's paths reach it through
@@ -1848,6 +1859,7 @@ async function executeSuites(
     effectiveLogLevel,
     runId,
     opts,
+    loadPlugins,
     ...(variableContext === undefined ? {} : { variableContext }),
     ...(hooksContext === undefined ? {} : { hooksContext }),
     ...(analytics === undefined ? {} : { analytics }),
@@ -2163,6 +2175,7 @@ export async function produceMembersFromPatterns(
       configContent: context.inputs.configContent,
       effectiveLogLevel: context.inputs.effectiveLogLevel,
       runId: context.runId,
+      loadPlugins: context.inputs.loadPlugins,
       ...(context.opts === undefined ? {} : { opts: context.opts }),
       ...(context.reporterSelection === undefined ? {} : { reporterSelection: context.reporterSelection }),
       variableContext: {
@@ -2381,6 +2394,8 @@ export interface SuiteRunMemberProductionInput {
    * the host's URL wins, and this process manages nothing. See `AppiumUrlResolver`.
    */
   readonly resolveAppiumUrl?: AppiumUrlResolver
+  /** `RunInvocationInputs.loadPlugins`, awaited after this producer's production refusal. */
+  readonly loadPlugins: () => Promise<void>
 }
 
 export interface SuiteVariableContext {
@@ -2431,6 +2446,8 @@ export async function produceSuiteRunMembers(
       allowProduction: config.allowProduction,
     })
   }
+  // 2026-10-16 (442-08, D-10): plugins load only once production has been refused or allowed.
+  await input.loadPlugins()
 
   const { parseTestFile, patchTestForSuite } = await import('@vostride/agent-qa-core')
   // 401-04: `startRun` is NOT among these — every path reaches it through the invocation core.
@@ -3548,6 +3565,7 @@ export async function produceSuiteRunMembers(
     ...(buildTag === undefined ? {} : { buildTag }),
     logger: { setRunId: () => { /* the suite path stamps its loggers per prepared suite */ } },
     secretRedactor: suiteRunSecretRedactor,
+    loadPlugins: input.loadPlugins,
     subscriberSeed: (() => {
       const withDb = preparedSuites.find((p) => p.dashboardDb)
       if (withDb === undefined) return {}
@@ -3771,6 +3789,8 @@ export interface ProducedCliRunMembers {
   getCurationModelDeps(): CurationTailModelDeps | undefined
   /** Any teardown the producer owns. The suite half finalises its lifecycle here. */
   finalize?(): Promise<void>
+  /** The run's plugin load (442-08, D-10), which the core awaits after its production refusal. */
+  readonly loadPlugins: () => Promise<void>
 }
 
 export async function produceDirectRunMembers(
@@ -4582,6 +4602,7 @@ export async function produceDirectRunMembers(
     takeFrameworkError: () => frameworkError,
     getCurationModelDeps: () => singleCurationModelDeps,
     onMemberSnapshot: memberSnapshots.subscribe,
+    loadPlugins: input.inputs.loadPlugins,
   }
 }
 
@@ -4766,7 +4787,7 @@ export function createRunCommand(): Command {
 
         // Handle suite execution (early return)
         if (discoveredSuiteFiles.length > 0 && discoveredTestFiles.length === 0) {
-          const exitCode = await executeSuites(discoveredSuiteFiles, opts, config, globalOpts, configContent, effectiveLogLevel, trustPriors, { envFileVars, inlineVars, cliVars, rawEnvFileContent, resolvedEnvFilePath, userRunAttributes, inheritedRunAttributes, ...runtimeSecrets }, resolvedHooks && sandboxOptions ? { resolvedHooks, sandboxOptions } : undefined, analytics)
+          const exitCode = await executeSuites(discoveredSuiteFiles, opts, config, globalOpts, configContent, effectiveLogLevel, trustPriors, { envFileVars, inlineVars, cliVars, rawEnvFileContent, resolvedEnvFilePath, userRunAttributes, inheritedRunAttributes, ...runtimeSecrets }, resolvedHooks && sandboxOptions ? { resolvedHooks, sandboxOptions } : undefined, analytics, inputs.loadPlugins)
           const suiteReporterSelection = resolveReporterSelection(opts, Boolean(config.services?.dashboard)).selection
           if (suiteReporterSelection) {
             await maybePrintPostRunUpdateNotice({
@@ -4783,7 +4804,7 @@ export function createRunCommand(): Command {
         // Handle --all: run suites first, then fall through to test execution
         let suitesFailed = false
         if (discoveredSuiteFiles.length > 0 && discoveredTestFiles.length > 0) {
-          suitesFailed = (await executeSuites(discoveredSuiteFiles, opts, config, globalOpts, configContent, effectiveLogLevel, trustPriors, { envFileVars, inlineVars, cliVars, rawEnvFileContent, resolvedEnvFilePath, userRunAttributes, inheritedRunAttributes, ...runtimeSecrets }, resolvedHooks && sandboxOptions ? { resolvedHooks, sandboxOptions } : undefined, analytics)) !== 0
+          suitesFailed = (await executeSuites(discoveredSuiteFiles, opts, config, globalOpts, configContent, effectiveLogLevel, trustPriors, { envFileVars, inlineVars, cliVars, rawEnvFileContent, resolvedEnvFilePath, userRunAttributes, inheritedRunAttributes, ...runtimeSecrets }, resolvedHooks && sandboxOptions ? { resolvedHooks, sandboxOptions } : undefined, analytics, inputs.loadPlugins)) !== 0
         }
 
         const files = discoveredTestFiles

@@ -357,8 +357,9 @@ export interface InProcessCliRunExecutionOptions {
  * THE CORE MAKES THIS CHECK TOO, and its own header explains why it is first there: a refused
  * request must leave nothing behind. That property is the core's to state but not the core's to
  * KEEP once something stands in front of it. Everything the drive does before composing the core
- * resolves the caller's project config, and `resolveRunInvocationInputs` LOADS AUTH PLUGINS —
- * third-party code executed on behalf of a request this seam was always going to refuse.
+ * resolves the caller's project config and secrets — reads made on behalf of a request this seam
+ * was always going to refuse. (Plugins no longer load there; 442-08 moved them behind the core's
+ * production refusal.)
  *
  * Measured at the fn door rather than reasoned about: `agent-qa fn runs.start` carrying `scope`,
  * against a project declaring an auth plugin that is not installed, reported the PLUGIN's error
@@ -460,6 +461,7 @@ export async function runInProcessCliRun(
       productionTargetNames: produced.productionTargetNames,
       allowProduction: produced.allowProduction,
     }),
+    afterRefusal: () => produced.loadPlugins(),
     assembleRun: async (assemblyContext) => {
       const assembly = await assembleCliRun({
         runId: assemblyContext.runId,

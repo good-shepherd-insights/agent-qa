@@ -370,6 +370,8 @@ export interface RunInvocationCoreOptions {
     readonly runId: string
     readonly configDir: string
   }) => PostVerdictPort
+  /** The door's first third-party code, awaited once the request is allowed and before any port. */
+  readonly afterRefusal?: () => Promise<void>
 }
 
 /**
@@ -433,6 +435,10 @@ export function createRunInvocationCore(
       // and no adapter. It asks nothing and offers nothing: the config opts in, or the run does not
       // start. Since 432-13 it is the only refusal of a well-formed request.
       refuseProductionWithoutOptIn(runId, declaration)
+
+      // (3b) 2026-10-16 (442-08, D-10): the door's own code runs only for an allowed request, and a
+      // failure here still leaves no run directory.
+      await options.afterRefusal?.()
 
       // (4) Assembly — the first line that may touch the target, and it is below every refusal.
       const ports = buildRunPorts({ configDir, runId })

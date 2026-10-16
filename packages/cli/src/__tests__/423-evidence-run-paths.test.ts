@@ -109,7 +109,7 @@ for (const path of ['COMPOSED', 'DIRECT'] as const) {
       ? await produceDirectRunMembers({ inputs, bindings: [{ test, filePath, fileContent }] as never, opts })
       : await produceSuiteRunMembers({
           config, configDir: root, configFilePath, configContent, runId, opts,
-          effectiveLogLevel: 'silent', suiteFiles: [suiteFile],
+          effectiveLogLevel: 'silent', suiteFiles: [suiteFile], loadPlugins: async () => {},
           preflight: {
             definitions: new Map([[suiteFile, { 'suite-id': generateSuiteId(), name: 'Console suite', target: 'fixture', tests: [{ test: 'one.yaml', id: testId }] }]]),
             preloadedTests: new Map([[filePath, { fileContent, parseResult: { tests: [test], errors: [] } }]]),

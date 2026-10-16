@@ -86,6 +86,7 @@ it.each(['settles', 'host deadline expires', 'abort', 'detached tail', 'framewor
       applyAssembly: () => undefined,
       bindSession: () => undefined, takeFrameworkError: () => mode === 'framework error' ? new Error('fixture framework failure') : undefined,
       getCurationModelDeps: () => undefined,
+      loadPlugins: async () => {},
     }),
     postProcessing: { misdirection: { prepareMisdirectionEvidence: (input) =>
       prepareMisdirectionEvidence({ ...input, arbiter: {

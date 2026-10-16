@@ -309,11 +309,9 @@ function createComposedRunExecution(input: {
         runInProcessCliRun,
       } = await import('./in-process-run-execution.js')
 
-      // THE REFUSAL COMES FIRST, and at THIS door rather than only inside the drive. Reading the
-      // preflight below resolves the caller's project config and loads its auth plugins; doing
-      // that for a request the seam was always going to refuse would execute third-party code on
-      // behalf of a refused call. It is the drive's own exported predicate over the core's own
-      // field set — one spelling, applied where the ordering claim is still true.
+      // THE REFUSAL COMES FIRST, and at THIS door rather than only inside the drive: the
+      // preflight below reads the caller's config and secrets, which a refused call should not
+      // cost. It is the drive's own exported predicate over the core's own field set.
       refuseUnhonourableRequestFields(request)
 
       // The request may name another config; the drive resolves against exactly this expression, so

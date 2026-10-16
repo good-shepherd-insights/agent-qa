@@ -367,6 +367,7 @@ vi.mock('@vostride/agent-qa-web', () => ({
 
 vi.mock('../config.js', () => ({
   resolveConfig: mockResolveConfig,
+  loadConfigPlugins: vi.fn(async () => {}),
   mergeWithTestConfig: vi.fn((...args: any[]) => args[0]),
   mergeUseBlocks: vi.fn((...args: any[]) => args[0] ?? {}),
   formatConfigDebug: vi.fn(() => ''),
