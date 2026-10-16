@@ -242,6 +242,11 @@ interface DashboardStartedMidRun {
   readonly otherHost: SeededRow
 }
 
+// This process's own start-time format, so the stamp reads as a reused pid rather than unknown.
+function reusedPidStamp(): string {
+  return `${String(resolveProcessIncarnation(process.pid)).split(':')[0]}:never`
+}
+
 function seeded(at: Cell, owner: RunOwner): SeededRow {
   const id = seedRunningRow(at.project.dbPath, owner)
   expect(readRow(at.project, id).status).toBe('running')
@@ -285,7 +290,7 @@ async function startDashboardWhileBRuns(): Promise<DashboardStartedMidRun> {
 
   const here = hostname()
   const exitedHere = seeded(at, { pid: await exitedPid(), incarnation: 'ps-lstart:exited', host: here })
-  const reusedPid = seeded(at, { pid: process.pid, incarnation: 'ps-lstart:never', host: here })
+  const reusedPid = seeded(at, { pid: process.pid, incarnation: reusedPidStamp(), host: here })
   const otherHost = seeded(at, {
     pid: await exitedPid(),
     incarnation: 'ps-lstart:exited',

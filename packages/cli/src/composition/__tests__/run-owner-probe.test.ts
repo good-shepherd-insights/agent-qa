@@ -64,9 +64,8 @@ describe('C442-OWNER-CLASSIFY', () => {
       await exited(waiting)
     }
 
-    expect(
-      classifyRunOwner({ pid: process.pid, incarnation: 'ps-lstart:never', host }, ownership),
-    ).toBe('gone')
+    const reused = `${String(ownership.self.incarnation).split(':')[0]}:never`
+    expect(classifyRunOwner({ pid: process.pid, incarnation: reused, host }, ownership)).toBe('gone')
     expect(classifyRunOwner(ownership.self, ownership)).toBe('self')
   })
 })

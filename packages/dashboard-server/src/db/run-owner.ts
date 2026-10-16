@@ -18,7 +18,13 @@ export interface RunOwnership {
 
 export type RunOwnerState = 'self' | 'alive' | 'gone' | 'unknown'
 
+function incarnationFormat(token: string): string {
+  const separator = token.indexOf(':')
+  return separator < 0 ? '' : token.slice(0, separator)
+}
+
 // 2026-10-16 (442-01, D-02): gone only on proof (a dead pid or a changed start time); else unknown.
+// 442-14 (GAP-D1): a start time stamped in another format is not proof.
 export function classifyRunOwner(owner: RunOwner, ownership: RunOwnership): RunOwnerState {
   const { self, probe } = ownership
   if (owner.host !== self.host) return 'unknown'
@@ -33,6 +39,8 @@ export function classifyRunOwner(owner: RunOwner, ownership: RunOwnership): RunO
   if (owner.incarnation === null) return 'unknown'
   const current = probe.incarnationOf(owner.pid)
   if (current === undefined) return 'unknown'
+  const stampedFormat = incarnationFormat(owner.incarnation)
+  if (incarnationFormat(current) !== stampedFormat) return 'unknown'
   return current === owner.incarnation ? 'alive' : 'gone'
 }
 
