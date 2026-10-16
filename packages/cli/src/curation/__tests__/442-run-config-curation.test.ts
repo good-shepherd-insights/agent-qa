@@ -1,11 +1,13 @@
 import {
   appendFileSync,
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
@@ -36,6 +38,7 @@ import {
 } from '../curation-tail.js'
 import { composeCliPostRunTail } from '../post-run-tail-composition.js'
 import type { PostRunTailHostInput, PostRunTailOperations } from '../post-run-tail.js'
+import { createPostVerdictStep } from '../post-verdict-step.js'
 
 // 2026-10-16 (442-10, D-14): reconciliation 23 reads SC3's distinct secrets as distinct secretsFiles.
 const VALUE_A = 'alpha-tenant-7731'
@@ -45,7 +48,7 @@ const VALUE_LATE = 'late-tenant-9902'
 const MARKER_LATE = '[secret:A_LATE]'
 const RUN_A = 'r-c442-run-a'
 const RUN_B = 'r-c442-run-b'
-const RUN_A_LATER = 'r-c442-run-a-later'
+const RUN_A_LATER = 'r-c442-later-a'
 const SCOPE_A = 'tenant-a'
 const SCOPE_B = 'tenant-b'
 const TAIL_TIMEOUT_MS = 180_000
@@ -255,7 +258,9 @@ function recordsOfRun(knowledgeRoot: string, runId: string): string[] {
     }
     return names
       .map((name) => join(bundles, name))
-      .filter((bundle) => readFileSync(join(bundle, 'provenance.json'), 'utf8').includes(runId))
+      .filter((bundle) =>
+        readFileSync(join(bundle, 'provenance.json'), 'utf8').includes(JSON.stringify(runId)),
+      )
       .map((bundle) => readFileSync(join(bundle, 'record.md'), 'utf8'))
   })
 }
@@ -583,4 +588,86 @@ describe('C442-RUN-CONFIG-CURATION', () => {
     },
     TAIL_TIMEOUT_MS,
   )
+})
+
+async function runStep(
+  p: Project,
+  runId: string,
+  configPath: string,
+  input: { readonly gateRun?: true } = {},
+): Promise<{ readonly warns: string[]; readonly outcome: unknown }> {
+  const warns: string[] = []
+  const step = createPostVerdictStep({
+    runId,
+    agentQaRoot: p.agentQaRoot,
+    knowledgeRoot: p.knowledgeA,
+    configPath: relative(process.cwd(), configPath),
+    detach: true,
+    log: { warn: (message: string) => warns.push(message) },
+    operations: { ownContinuation: (async () => 'enqueued') as never },
+  })
+  const outcome = await step.port.run(input as never)
+  return { warns, outcome }
+}
+
+function temporaryFiles(p: Project, runId: string): string[] {
+  return readdirSync(completedRunDir(p.agentQaRoot, runId)).filter((name) => name.endsWith('.tmp'))
+}
+
+describe('C442-RUN-CONFIG-CURATION', () => {
+  it("a run's post-verdict step records its own config", async () => {
+    for (const input of [{}, { gateRun: true as const }]) {
+      const p = project({ sharedKnowledge: true })
+      seedRun(p, RUN_A, SCOPE_A, [VALUE_A])
+
+      const { warns } = await runStep(p, RUN_A, p.aConfig, input)
+
+      expect(existsSync(recordPath(p, RUN_A)), 'the step wrote no run-config record').toBe(true)
+      expect(warns).toEqual([])
+      expect(JSON.parse(readFileSync(recordPath(p, RUN_A), 'utf8'))).toEqual({
+        schemaVersion: 1,
+        runId: RUN_A,
+        configPath: p.aConfig,
+      })
+      expect(statSync(recordPath(p, RUN_A)).mode & 0o777).toBe(0o600)
+      expect(temporaryFiles(p, RUN_A)).toEqual([])
+    }
+  })
+
+  it('writing the same record twice is success, a different one is refused', async () => {
+    const p = project({ sharedKnowledge: true })
+    seedRun(p, RUN_A, SCOPE_A, [VALUE_A])
+
+    await runStep(p, RUN_A, p.aConfig)
+    expect(existsSync(recordPath(p, RUN_A)), 'the step wrote no run-config record').toBe(true)
+    const first = readFileSync(recordPath(p, RUN_A), 'utf8')
+    expect((await runStep(p, RUN_A, p.aConfig)).warns).toEqual([])
+    const refused = await runStep(p, RUN_A, p.bConfig)
+    expect(refused.warns).toHaveLength(1)
+    expect(refused.warns[0]).toContain(RUN_A)
+    expect(readFileSync(recordPath(p, RUN_A), 'utf8')).toBe(first)
+    expect(temporaryFiles(p, RUN_A)).toEqual([])
+  })
+
+  it("a record write failure does not change the run's verdict path", async () => {
+    const control = project({ sharedKnowledge: true })
+    seedRun(control, RUN_A, SCOPE_A, [VALUE_A])
+    const expected = await runStep(control, RUN_A, control.aConfig)
+
+    const p = project({ sharedKnowledge: true })
+    seedRun(p, RUN_A, SCOPE_A, [VALUE_A])
+    const runDir = completedRunDir(p.agentQaRoot, RUN_A)
+    chmodSync(runDir, 0o500)
+    let failed: Awaited<ReturnType<typeof runStep>>
+    try {
+      failed = await runStep(p, RUN_A, p.aConfig)
+    } finally {
+      chmodSync(runDir, 0o700)
+    }
+
+    expect(failed.outcome).toEqual(expected.outcome)
+    expect(failed.warns).toHaveLength(1)
+    expect(failed.warns[0]).toContain(RUN_A)
+    expect(existsSync(recordPath(p, RUN_A))).toBe(false)
+  })
 })
