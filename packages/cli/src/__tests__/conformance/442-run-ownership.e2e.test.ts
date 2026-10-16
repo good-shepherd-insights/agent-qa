@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs'
 import { hostname } from 'node:os'
 import { join } from 'node:path'
 
-import { orphanSummary } from '@vostride/agent-qa-dashboard'
+import { orphanSummary, ownedElsewhere } from '@vostride/agent-qa-dashboard'
 import type { RunOwner } from '@vostride/agent-qa-dashboard'
 import { resolveProcessIncarnation } from '@vostride/agent-qa-knowledge-local'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -261,6 +261,21 @@ function expectOrphanFinalized(project: TwoRunProject, row: SeededRow): void {
 
 // The scene is the dashboard as `agent-qa dashboard` composes it, with the real run ownership. Its
 // fixture loads playwright-core, so it is imported only after this process has planted its browser.
+async function openSceneOver(at: Cell) {
+  const { openDashboardScene } = await import('./433-door-fixture.js')
+  return openDashboardScene(
+    {
+      root: at.project.project,
+      configPath: at.project.configPath,
+      agentQaRoot: at.project.agentQaRoot,
+      suitePath: at.project.suitePattern,
+      testPath: at.project.testPattern,
+      testId: at.project.directTestId,
+    },
+    { dbPath: at.project.dbPath },
+  )
+}
+
 async function startDashboardWhileBRuns(): Promise<DashboardStartedMidRun> {
   const at = await openCell()
   const b = await startParked(at, suiteArgs(at.project), 0)
@@ -282,18 +297,7 @@ async function startDashboardWhileBRuns(): Promise<DashboardStartedMidRun> {
     artifact: at.project.db.getRunArtifact(otherHost.id),
   })
 
-  const { openDashboardScene } = await import('./433-door-fixture.js')
-  const scene = await openDashboardScene(
-    {
-      root: at.project.project,
-      configPath: at.project.configPath,
-      agentQaRoot: at.project.agentQaRoot,
-      suitePath: at.project.suitePattern,
-      testPath: at.project.testPattern,
-      testId: at.project.directTestId,
-    },
-    { dbPath: at.project.dbPath },
-  )
+  const scene = await openSceneOver(at)
   try {
     expect(b.run.exited()).toBe(false)
     expect(at.browsers.releasedOrdinals()).toEqual([])
@@ -336,5 +340,53 @@ describe('C442-DASHBOARD-START', () => {
       expect(row.failureSummary ?? '').not.toContain(foreign)
       expect(payload).not.toContain(foreign)
     }
+  }, CELL_BUDGET_MS)
+})
+
+describe('C442-CANCEL-OWNER', () => {
+  it('a dashboard cancel leaves a CLI-owned run in flight untouched', async () => {
+    const at = await openCell()
+    const a = await startParked(at, suiteArgs(at.project), 0)
+    expect(a.run.exited()).toBe(false)
+    expect(at.browsers.releasedOrdinals()).toEqual([])
+    expectUnfinalizedAndRunning(at.project, a.id)
+    const aOwner = readOwner(at.project, a.id)
+    expect(aOwner.pid).toBe(a.run.pid)
+
+    const scene = await openSceneOver(at)
+    try {
+      const response = await fetch(
+        `${scene.origin}/api/runs/${encodeURIComponent(a.id)}/cancel`,
+        { method: 'POST' },
+      )
+      const body: unknown = await response.json()
+      const after = readRow(at.project, a.id)
+      expect(
+        { status: response.status, body, rowStatus: after.status },
+        `the row read '${after.status}' right after the cancel, failure summary ${
+          JSON.stringify(after.failureSummary)
+        }`,
+      ).toEqual({
+        status: 409,
+        body: {
+          error: ownedElsewhere(a.run.pid),
+          reason: 'owned-by-live-process',
+          ownerPid: a.run.pid,
+        },
+        rowStatus: 'running',
+      })
+      expect(a.run.exited()).toBe(false)
+      expect(at.browsers.releasedOrdinals()).toEqual([])
+      expectUnfinalizedAndRunning(at.project, a.id)
+      expect(readOwner(at.project, a.id)).toEqual(aOwner)
+    } finally {
+      await scene.close()
+    }
+
+    at.browsers.release(0)
+    await expectFinishesOnItsOwn(at, a, 'Test cancelled by user')
+    expect(readRow(at.project, a.id).failureSummary ?? '').not.toContain('Test cancelled by user')
+    expect(JSON.stringify(at.project.db.getRunArtifact(a.id)!.payload))
+      .not.toContain('Run cancellation requested')
   }, CELL_BUDGET_MS)
 })
