@@ -99,7 +99,7 @@ vi.mock('react-router', async () => {
   return { ...actual, useNavigate: () => navigateMock }
 })
 vi.mock('@/hooks/use-page-title', () => ({ usePageTitle: () => {} }))
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), info: vi.fn(), error: vi.fn() } }))
 // The panel doubles render the props the layout cells read (428 D-06): the Group's orientation and
 // each panel's id and default size.
 vi.mock('@/components/ui/resizable', () => ({
@@ -715,46 +715,103 @@ describe('the header is the title, the file path, Cancel and view run detail (42
   })
 })
 
+const REFUSAL = 'This run belongs to another agent-qa process (pid 4242). Stop it there with Ctrl+C.'
+const ORPHAN = 'The process running this run (pid 4242) ended before it finished.'
+const CANCEL_TOAST = { id: `cancel-${RUN_ID}` }
+
+async function pressCancel(): Promise<void> {
+  const button = qa('button').find((one) => one.textContent === 'Cancel')
+  if (button === undefined) throw new Error('the Cancel button does not exist')
+  await act(async () => { (button as HTMLButtonElement).click() })
+  await flush()
+  await flush()
+}
+
+async function clickCancel(): Promise<void> {
+  await mount()
+  await open()
+  await emit(runStarted(), testStarted(0, 'the member', 1), stepStarted())
+  await pressCancel()
+}
+
 describe('C442-CANCEL-SENTENCE', () => {
-  const REFUSAL = 'This run belongs to another agent-qa process (pid 4242). Stop it there with Ctrl+C.'
-  const ORPHAN = 'The process running this run (pid 4242) ended before it finished.'
-
-  async function clickCancel(): Promise<void> {
-    await mount()
-    await open()
-    await emit(runStarted(), testStarted(0, 'the member', 1), stepStarted())
-    const button = qa('button').find((one) => one.textContent === 'Cancel')
-    if (button === undefined) throw new Error('the Cancel button does not exist')
-    await act(async () => { (button as HTMLButtonElement).click() })
-    await flush()
-    await flush()
-  }
-
   it("the refusal toast shows the route's sentence", async () => {
     cancelRunMock.mockRejectedValueOnce(
       new ApiError(409, 'Conflict', { error: REFUSAL, reason: 'owned-by-live-process', ownerPid: 4242 }),
     )
     await clickCancel()
     expect(cancelRunMock).toHaveBeenCalledWith(RUN_ID)
-    expect(vi.mocked(toast.error).mock.calls).toEqual([[REFUSAL]])
+    expect(vi.mocked(toast.error).mock.calls).toEqual([[REFUSAL, CANCEL_TOAST]])
     expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
 
     vi.mocked(toast.error).mockClear()
     cancelRunMock.mockRejectedValueOnce(new TypeError('Failed to fetch'))
     await clickCancel()
-    expect(vi.mocked(toast.error).mock.calls).toEqual([['Failed to cancel run']])
+    expect(vi.mocked(toast.error).mock.calls).toEqual([['Failed to cancel run', CANCEL_TOAST]])
   })
 
   it("an orphan answer's toast shows its sentence", async () => {
     cancelRunMock.mockResolvedValueOnce({ cancelled: false, message: ORPHAN })
     await clickCancel()
-    expect(vi.mocked(toast.success).mock.calls).toEqual([[ORPHAN]])
+    expect(vi.mocked(toast.info).mock.calls).toEqual([[ORPHAN, CANCEL_TOAST]])
 
-    vi.mocked(toast.success).mockClear()
+    vi.mocked(toast.info).mockClear()
     cancelRunMock.mockResolvedValueOnce({ cancelled: true })
     await clickCancel()
-    expect(vi.mocked(toast.success).mock.calls).toEqual([['Run cancelled']])
+    expect(vi.mocked(toast.success).mock.calls).toEqual([['Run cancelled', CANCEL_TOAST]])
+    expect(vi.mocked(toast.info)).not.toHaveBeenCalled()
     expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+  })
+})
+
+describe('C442-CANCEL-TOAST', () => {
+  it('an orphan answer shows its sentence as an info toast, never success', async () => {
+    cancelRunMock.mockResolvedValueOnce({ cancelled: false, message: ORPHAN })
+    await clickCancel()
+    expect(vi.mocked(toast.info).mock.calls).toEqual([[ORPHAN, CANCEL_TOAST]])
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+
+    vi.mocked(toast.info).mockClear()
+    cancelRunMock.mockResolvedValueOnce({ cancelled: true })
+    await clickCancel()
+    expect(vi.mocked(toast.success).mock.calls).toEqual([['Run cancelled', CANCEL_TOAST]])
+    expect(vi.mocked(toast.info)).not.toHaveBeenCalled()
+  })
+
+  it("only the 409 refusal shows the route's sentence; any other error reads Failed to cancel run", async () => {
+    cancelRunMock.mockRejectedValueOnce(
+      new ApiError(409, 'Conflict', { error: REFUSAL, reason: 'owned-by-live-process', ownerPid: 4242 }),
+    )
+    await clickCancel()
+    expect(vi.mocked(toast.error).mock.calls).toEqual([[REFUSAL, CANCEL_TOAST]])
+
+    const others: unknown[] = [
+      new ApiError(404, 'Not Found', { error: 'Run not found or not cancellable' }),
+      new ApiError(500, 'Internal Server Error', { error: 'SQLITE_BUSY: database is locked' }),
+      new TypeError('Failed to fetch'),
+    ]
+    for (const error of others) {
+      vi.mocked(toast.error).mockClear()
+      cancelRunMock.mockRejectedValueOnce(error)
+      await clickCancel()
+      expect(vi.mocked(toast.error).mock.calls, String(error)).toEqual([['Failed to cancel run', CANCEL_TOAST]])
+    }
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+    expect(vi.mocked(toast.info)).not.toHaveBeenCalled()
+  })
+
+  it('repeated cancel toasts for one run share one id', async () => {
+    const refusal = () =>
+      new ApiError(409, 'Conflict', { error: REFUSAL, reason: 'owned-by-live-process', ownerPid: 4242 })
+    cancelRunMock.mockRejectedValueOnce(refusal()).mockRejectedValueOnce(refusal())
+    await clickCancel()
+    await pressCancel()
+    expect(cancelRunMock).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(toast.error).mock.calls).toEqual([
+      [REFUSAL, CANCEL_TOAST],
+      [REFUSAL, CANCEL_TOAST],
+    ])
   })
 })
 
