@@ -27,6 +27,7 @@ import {
   resolveProcessIncarnation,
   verifyEmbedderWorkerIncarnation,
 } from '../embedder-worker/worker-incarnation.js'
+import { incarnationFormat } from '../lease/writer-lease.js'
 import {
   EMBEDDER_WORKER_REQUEST_TIMEOUT_MS,
   EMBEDDER_WORKER_SOCKET_PATH_BUDGET_BYTES,
@@ -113,8 +114,9 @@ function kernelStartTimeFact(pid: number): string {
     if (startTime === undefined) throw new Error(`Could not read starttime for pid ${pid}`)
     return startTime
   }
-  return execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], {
+  return execFileSync('/bin/ps', ['-p', String(pid), '-o', 'lstart='], {
     encoding: 'utf8',
+    env: { LC_ALL: 'C', LANG: 'C', TZ: 'UTC0' },
   }).trim()
 }
 
@@ -339,7 +341,7 @@ describe.sequential('embedder worker discovery', () => {
     )
     expect(verifyEmbedderWorkerIncarnation({
       ...live,
-      incarnation: 'proc-starttime:1',
+      incarnation: `${incarnationFormat(live.incarnation)}:1`,
     } as never)).toBe(process.platform === 'win32' ? 'unverifiable' : 'mismatch')
     // The sentinel is what a worker records when it cannot attribute itself. It is never a signal
     // target, even though the pid it names is unquestionably alive.

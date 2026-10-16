@@ -27,6 +27,7 @@ import {
   deriveWriterLeaseFreshness,
   EPOCH_FILE,
   heartbeatLease,
+  incarnationFormat,
   isLeaseStale,
   LEASE_FILE,
   LEASE_HEARTBEAT_TTL_MS,
@@ -373,8 +374,9 @@ function observedProcessStartToken(pid: number): string {
     if (starttime === undefined) throw new Error(`no starttime field for pid ${pid}`)
     return starttime
   }
-  const observed = execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], {
+  const observed = execFileSync('/bin/ps', ['-p', String(pid), '-o', 'lstart='], {
     encoding: 'utf8',
+    env: { LC_ALL: 'C', LANG: 'C', TZ: 'UTC0' },
   }).trim()
   if (observed === '') throw new Error(`no start time reported for pid ${pid}`)
   return observed
@@ -1186,7 +1188,9 @@ const LEGACY_MUTATION_LOCK_TABLE = `
 `
 
 /** A token no live process can ever report: the recorded owner is provably not this pid's tenant. */
-const DEAD_OWNER_INCARNATION = 'incarnation-of-a-process-that-already-died'
+const DEAD_OWNER_INCARNATION = `${incarnationFormat(
+  resolveProcessIncarnation(process.pid) ?? '',
+)}:incarnation-of-a-process-that-already-died`
 
 describe('mutation-lock owner process incarnation (CR-04)', () => {
   let root: string
@@ -2115,11 +2119,11 @@ describe('writer lease acquisition deadline against an unreclaimable owner (V-02
  * WR-04: the `ps` fork on the pre-signal path is the last wait beneath the acquisition deadline
  * that could outlive it.
  *
- * The guard-REJECTING input domain is a process table that will not answer: these legs shadow `ps`
- * on the child's PATH with a script that sleeps far past any budget, which is the one input class
- * the cap exists to refuse. The accepting control shadows `ps` with a pass-through to the real
- * binary, so the only difference between "no signal" and "SIGKILL" is whether the resolution
- * returned inside its cap.
+ * The guard-REJECTING input domain is a process table that will not answer: these legs hand the
+ * child's code under test, through the test-only `psExecutable` seam, a `ps` that sleeps far past
+ * any budget, which is the one input class the cap exists to refuse. The accepting control hands
+ * it a pass-through to `/bin/ps`, so the only difference between "no signal" and "SIGKILL" is
+ * whether the resolution returned inside its cap.
  *
  * Platform bound, stated rather than hidden: `resolveProcessIncarnation` reads `/proc/<pid>/stat`
  * on Linux and forks `ps` everywhere else POSIX. The residual being closed therefore only EXISTS
@@ -2160,7 +2164,7 @@ describe('budget-capped process-incarnation resolution on the escalation path (W
     return child
   }
 
-  /** Put a `ps` of our choosing first on the child's PATH; the parent keeps the real one. */
+  /** Write the `ps` the child hands its code under test; the parent keeps the real one. */
   function shadowPs(body: string): void {
     const file = join(shadowDir, 'ps')
     writeFileSync(file, body, 'utf8')
@@ -2168,7 +2172,7 @@ describe('budget-capped process-incarnation resolution on the escalation path (W
   }
 
   function realPsPath(): string {
-    return execFileSync('sh', ['-c', 'command -v ps'], { encoding: 'utf8' }).trim()
+    return '/bin/ps'
   }
 
   function spawnWithShadowedPs(
@@ -2182,7 +2186,7 @@ describe('budget-capped process-incarnation resolution on the escalation path (W
         env: {
           ...process.env,
           ...env,
-          PATH: `${shadowDir}:${process.env.PATH ?? ''}`,
+          AGENT_QA_LEASE_TEST_PS: join(shadowDir, 'ps'),
         },
         stdio: ['pipe', 'pipe', 'pipe'],
       },
@@ -2242,6 +2246,7 @@ describe('budget-capped process-incarnation resolution on the escalation path (W
     const outcome = acquireWriterLease(process.env.AGENT_QA_LEASE_TEST_ROOT, {
       acquireDeadlineMs: 4000,
       mutationLockTakeoverMs: 0,
+      psExecutable: process.env.AGENT_QA_LEASE_TEST_PS,
     });
     const elapsedMs = Number(process.hrtime.bigint() - startedAtNs) / 1e6;
     process.stdout.write(JSON.stringify({
@@ -2256,13 +2261,17 @@ describe('budget-capped process-incarnation resolution on the escalation path (W
     async () => {
       // The rejecting input: a process table that never answers. Without the cap this fork runs to
       // completion and the caller's whole deadline is spent inside a single resolution.
-      shadowPs('#!/bin/sh\nexec sleep 30\n')
+      shadowPs('#!/bin/sh\nexec /bin/sleep 30\n')
       const source = `
         const { resolveProcessIncarnation } = await import(
           ${JSON.stringify(WRITER_LEASE_MODULE_URL)}
         );
         const startedAtNs = process.hrtime.bigint();
-        const resolved = resolveProcessIncarnation(Number(process.env.AGENT_QA_LEASE_TEST_PID), 250);
+        const resolved = resolveProcessIncarnation(
+          Number(process.env.AGENT_QA_LEASE_TEST_PID),
+          250,
+          process.env.AGENT_QA_LEASE_TEST_PS,
+        );
         const elapsedMs = Number(process.hrtime.bigint() - startedAtNs) / 1e6;
         process.stdout.write(JSON.stringify({ resolved: resolved ?? null, elapsedMs }) + '\\n');
       `
@@ -2292,7 +2301,7 @@ describe('budget-capped process-incarnation resolution on the escalation path (W
       // thing standing between this owner and a SIGKILL is whether its identity can be re-read.
       seedAttributedOwnerRow(surrogate.pid, 'ps-timeout-generation')
       const releaseBlockingWrite = holdAuthorityTransaction()
-      shadowPs('#!/bin/sh\nexec sleep 30\n')
+      shadowPs('#!/bin/sh\nexec /bin/sleep 30\n')
 
       try {
         const contender = spawnWithShadowedPs(CONTENDER_SOURCE, {
@@ -2328,7 +2337,7 @@ describe('budget-capped process-incarnation resolution on the escalation path (W
 
       seedAttributedOwnerRow(surrogate.pid, 'ps-floor-generation')
       const releaseBlockingWrite = holdAuthorityTransaction()
-      shadowPs('#!/bin/sh\nexec sleep 30\n')
+      shadowPs('#!/bin/sh\nexec /bin/sleep 30\n')
 
       try {
         // A deadline shorter than the store's own busy timeout, so the claim spends the ENTIRE
@@ -2366,7 +2375,7 @@ describe('budget-capped process-incarnation resolution on the escalation path (W
 
       seedAttributedOwnerRow(surrogate.pid, 'ps-passthrough-generation')
       const releaseBlockingWrite = holdAuthorityTransaction()
-      // The same PATH shadow, the same escalation, the same row — differing only in whether the
+      // The same ps seam, the same escalation, the same row — differing only in whether the
       // process table answers. A cap that refused this input would be a blanket refusal.
       shadowPs(`#!/bin/sh\nexec ${realPsPath()} "$@"\n`)
       const surrogateExited = observeExit(surrogate)
@@ -2461,7 +2470,6 @@ describe('budget-capped process-incarnation resolution on the escalation path (W
       AGENT_QA_LEASE_TEST_ROOT: knowledgeRoot,
       AGENT_QA_LEASE_TEST_DB: authorityDbPath(),
       AGENT_QA_LEASE_TEST_PERMIT: permitFile,
-      AGENT_QA_LEASE_TEST_REAL_PATH: process.env.PATH ?? '',
     })
     const output = collectStdout(child)
     await waitForOutput(child, 'started\n')
@@ -2483,22 +2491,22 @@ describe('budget-capped process-incarnation resolution on the escalation path (W
     async () => {
       // Phase 1's rejecting input: a process table that will not answer inside the cap, so the
       // claimant genuinely cannot prove its own incarnation and writes an unattributed row.
-      shadowPs('#!/bin/sh\nexec sleep 30\n')
+      shadowPs('#!/bin/sh\nexec /bin/sleep 30\n')
       const source = `${OWN_INCARNATION_CHILD_PRELUDE}
         process.stdout.write('started\\n');
         awaitPermit();
         let row1 = null;
         let row2 = null;
         const acquired = acquireWriterLease(root, {
+          psExecutable: process.env.AGENT_QA_LEASE_TEST_PS,
           afterMutationLockClaimed: () => { row1 = readLockIncarnation(); },
         });
         if (acquired.kind !== 'acquired') {
           throw new Error('phase 1 did not acquire: ' + acquired.kind);
         }
-        // The process table recovers. Nothing else about this process changed — same pid, same
-        // start time, same module instance — so a second incarnation-less row can only mean the
-        // first miss was remembered as an answer.
-        process.env.PATH = process.env.AGENT_QA_LEASE_TEST_REAL_PATH;
+        // The process table recovers (no seam). Nothing else about this process changed — same
+        // pid, same start time, same module instance — so a second incarnation-less row can only
+        // mean the first miss was remembered as an answer.
         withCurrentWriterAuthority(
           root,
           { leaseId: acquired.leaseId, epoch: acquired.epoch },
@@ -2516,7 +2524,7 @@ describe('budget-capped process-incarnation resolution on the escalation path (W
       expect(report.row2).toEqual({ pid: report.pid, incarnation: expectedIncarnation })
       // Anchored to the OS, so a retry that invented or defaulted a token would fail here rather
       // than pass a non-null check (the plan's prohibition, asserted).
-      expect(expectedIncarnation.startsWith('ps-lstart:')).toBe(true)
+      expect(expectedIncarnation.startsWith('ps-lstart-utc:')).toBe(true)
     },
     90_000,
   )
@@ -2524,7 +2532,7 @@ describe('budget-capped process-incarnation resolution on the escalation path (W
   itOnPsHosts(
     'caps the own-pid fork with the acquisition budget rather than the bare constant (round-5 regression 1)',
     async () => {
-      shadowPs('#!/bin/sh\nexec sleep 30\n')
+      shadowPs('#!/bin/sh\nexec /bin/sleep 30\n')
       // 400 ms is below PROCESS_INCARNATION_PS_TIMEOUT_MS and above PROCESS_INCARNATION_PS_FLOOR_MS,
       // so the clamp is the caller's remainder and nothing else. The bound asserted below is 2x
       // that deadline: the bare constant cannot fit inside it, the clamped cap cannot exceed it.
@@ -2536,6 +2544,7 @@ describe('budget-capped process-incarnation resolution on the escalation path (W
         const startedAtNs = process.hrtime.bigint();
         const outcome = acquireWriterLease(root, {
           acquireDeadlineMs: 400,
+          psExecutable: process.env.AGENT_QA_LEASE_TEST_PS,
           afterMutationLockClaimed: () => {
             claimedElapsedMs = Number(process.hrtime.bigint() - startedAtNs) / 1e6;
             row1 = readLockIncarnation();
@@ -2564,7 +2573,7 @@ describe('budget-capped process-incarnation resolution on the escalation path (W
   itOnPsHosts(
     'still memoises a RESOLVED own incarnation and forks once per process (accepting control)',
     async () => {
-      // The same PATH shadow and the same two claims, differing only in whether the process table
+      // The same ps seam and the same two claims, differing only in whether the process table
       // answers. A retryable sentinel that also retried the hit path would pay a `ps` fork on every
       // governed mutation for the life of the daemon; this is the leg that would catch it.
       shadowPs(`#!/bin/sh\nexec ${realPsPath()} "$@"\n`)
@@ -2577,6 +2586,7 @@ describe('budget-capped process-incarnation resolution on the escalation path (W
         const observe = (pid) => { resolved.push(pid); };
         const acquired = acquireWriterLease(root, {
           onProcessIncarnationResolved: observe,
+          psExecutable: process.env.AGENT_QA_LEASE_TEST_PS,
           afterMutationLockClaimed: () => { row1 = readLockIncarnation(); },
         });
         if (acquired.kind !== 'acquired') {
@@ -2589,6 +2599,7 @@ describe('budget-capped process-incarnation resolution on the escalation path (W
           () => {},
           {
             onProcessIncarnationResolved: observe,
+            psExecutable: process.env.AGENT_QA_LEASE_TEST_PS,
             afterMutationLockClaimed: () => { row2 = readLockIncarnation(); },
           },
         );

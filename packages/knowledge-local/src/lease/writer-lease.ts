@@ -73,6 +73,9 @@ const PROCESS_INCARNATION_PS_TIMEOUT_MS = 1_000
 /** Provisional floor for that cap — the bounded overshoot argued for at `psIncarnationCapMs`. */
 const PROCESS_INCARNATION_PS_FLOOR_MS = 250
 
+const PROCESS_INCARNATION_PS_PATH = '/bin/ps'
+const PROCESS_INCARNATION_PS_ENV = Object.freeze({ LC_ALL: 'C', LANG: 'C', TZ: 'UTC0' })
+
 const MUTATION_LOCK_TERMINATION_POLL_MS = 10
 const MUTATION_LOCK_TERMINATION_TIMEOUT_MS = 5_000
 const MUTATION_LOCK_TERMINATION_WAIT = new Int32Array(
@@ -420,15 +423,16 @@ interface MutationLockOwner {
  *
  * Linux reads field 22 (`starttime`) of `/proc/<pid>/stat`, counted from the LAST `)` because the
  * `comm` field is parenthesised and may itself contain spaces and parentheses. Other POSIX hosts
- * read `ps -p <pid> -o lstart=`. Windows has no equivalent builtin, so it resolves to `undefined`
- * and every incarnation check there fails closed.
+ * read `/bin/ps -p <pid> -o lstart=` in the C locale and UTC, so every reader renders one start
+ * time as one token. Windows has no equivalent builtin, so it resolves to `undefined` and every
+ * incarnation check there fails closed.
  *
  * Returns `undefined` — never throws — whenever the pid cannot be attributed. `undefined` means
  * "do not signal", never "safe to signal".
  *
  * WR-04: `timeoutMs` bounds the POSIX arm's `ps` fork, which is the last wait beneath the
- * acquisition deadline that used to be able to outlive it — a wedged or PATH-shadowed `ps` never
- * returns, and this resolution sits directly on the pre-signal path. A cap that expires resolves
+ * acquisition deadline that used to be able to outlive it — a wedged `ps` never returns, and this
+ * resolution sits directly on the pre-signal path. A cap that expires resolves
  * through the SAME funnel every other failure uses (`undefined`), so a timed-out resolution is
  * unverifiable and therefore signal-ineligible. Callers with no budget of their own omit it.
  *
@@ -438,16 +442,22 @@ interface MutationLockOwner {
 export function resolveProcessIncarnation(
   pid: number,
   timeoutMs?: number,
+  psExecutable?: string,
 ): string | undefined {
   if (!Number.isSafeInteger(pid) || pid <= 0) return undefined
   try {
     if (process.platform === 'win32') return undefined
     return process.platform === 'linux'
       ? resolveLinuxProcessIncarnation(pid)
-      : resolvePosixProcessIncarnation(pid, timeoutMs)
+      : resolvePosixProcessIncarnation(pid, timeoutMs, psExecutable)
   } catch {
     return undefined
   }
+}
+
+export function incarnationFormat(token: string): string {
+  const separator = token.indexOf(':')
+  return separator < 0 ? '' : token.slice(0, separator)
 }
 
 function resolveLinuxProcessIncarnation(pid: number): string | undefined {
@@ -469,16 +479,20 @@ function resolveLinuxProcessIncarnation(pid: number): string | undefined {
 function resolvePosixProcessIncarnation(
   pid: number,
   timeoutMs?: number,
+  psExecutable: string = PROCESS_INCARNATION_PS_PATH,
 ): string | undefined {
-  const observed = spawnSync('ps', ['-p', String(pid), '-o', 'lstart='], {
+  // 2026-10-16 (442-14, GAP-D1): one rendering for every reader; the caller's PATH, TZ and
+  // locale never reach ps.
+  const observed = spawnSync(psExecutable, ['-p', String(pid), '-o', 'lstart='], {
     encoding: 'utf8',
+    env: PROCESS_INCARNATION_PS_ENV,
     windowsHide: true,
     // `spawnSync` reads 0 as "no timeout", so an exhausted budget must never arrive here as 0.
     ...(timeoutMs === undefined ? {} : { timeout: Math.max(1, Math.ceil(timeoutMs)) }),
   })
   if (observed.error !== undefined || observed.status !== 0) return undefined
   const lstart = (observed.stdout ?? '').trim()
-  return lstart === '' ? undefined : `ps-lstart:${lstart}`
+  return lstart === '' ? undefined : `ps-lstart-utc:${lstart}`
 }
 
 const OWN_INCARNATION_UNRESOLVED = Symbol('own-incarnation-unresolved')
@@ -502,12 +516,12 @@ let ownIncarnation: string | typeof OWN_INCARNATION_UNRESOLVED = OWN_INCARNATION
  * Two things this function's previous comment stated, both of which the call site contradicted:
  *
  *   1. It claimed the fork "is not spending an escalation budget". It is. The sole call site is
- *      `withMutationLock`, which `acquireWriterLease` enters under `deadlineAtNs`, so a wedged or
- *      PATH-shadowed `ps` here spends the acquisition deadline exactly as the pre-signal fork
- *      does. WR-04's clamp therefore applies to BOTH forks: `psIncarnationCapMs` degrades to the
- *      same flat `PROCESS_INCARNATION_PS_TIMEOUT_MS` when the caller has no budget, so the
- *      heartbeat and governed-mutation paths are unchanged, while a budgeted acquisition now caps
- *      this fork at `clamp(remaining, FLOOR, TIMEOUT)` like every other wait beneath it.
+ *      `withMutationLock`, which `acquireWriterLease` enters under `deadlineAtNs`, so a wedged
+ *      `ps` here spends the acquisition deadline exactly as the pre-signal fork does. WR-04's
+ *      clamp therefore applies to BOTH forks: `psIncarnationCapMs` degrades to the same flat
+ *      `PROCESS_INCARNATION_PS_TIMEOUT_MS` when the caller has no budget, so the heartbeat and
+ *      governed-mutation paths are unchanged, while a budgeted acquisition now caps this fork at
+ *      `clamp(remaining, FLOOR, TIMEOUT)` like every other wait beneath it.
  *   2. It memoised a MISS. One timed-out fork at startup then wrote `undefined` into the memo for
  *      the life of the process, so every `mutation_lock` row that daemon ever wrote carried no
  *      incarnation, `verifyMutationLockOwnerIdentity` answered `unverifiable` for all of them, and
@@ -521,7 +535,11 @@ let ownIncarnation: string | typeof OWN_INCARNATION_UNRESOLVED = OWN_INCARNATION
  */
 function ownProcessIncarnation(escalation: MutationEscalationContext = {}): string | undefined {
   if (ownIncarnation !== OWN_INCARNATION_UNRESOLVED) return ownIncarnation
-  const resolved = resolveProcessIncarnation(process.pid, psIncarnationCapMs(escalation))
+  const resolved = resolveProcessIncarnation(
+    process.pid,
+    psIncarnationCapMs(escalation),
+    escalation.psExecutable,
+  )
   escalation.onIncarnationResolved?.(process.pid)
   if (resolved === undefined) return undefined
   ownIncarnation = resolved
@@ -543,6 +561,8 @@ export interface MutationLockOptions {
    * resolution, on the caller's main thread) is invisible to any assertion about outcomes.
    */
   onProcessIncarnationResolved?: (pid: number) => void
+  // Test-only replacement for `/bin/ps`, for a wedged process table; production never sets it.
+  psExecutable?: string
 }
 
 /**
@@ -559,6 +579,7 @@ interface MutationEscalationContext {
   /** Absolute monotonic instant past which no escalation wait may continue; absent = no budget. */
   readonly deadlineAtNs?: bigint
   readonly onIncarnationResolved?: (pid: number) => void
+  readonly psExecutable?: string
 }
 
 export interface AcquireWriterLeaseOptions extends MutationLockOptions {
@@ -880,9 +901,14 @@ function verifyMutationLockOwnerIdentity(
   escalation: MutationEscalationContext,
 ): MutationLockOwnerIdentity {
   if (owner.incarnation === undefined) return 'unverifiable'
-  const occupant = resolveProcessIncarnation(owner.pid, psIncarnationCapMs(escalation))
+  const occupant = resolveProcessIncarnation(
+    owner.pid,
+    psIncarnationCapMs(escalation),
+    escalation.psExecutable,
+  )
   escalation.onIncarnationResolved?.(owner.pid)
   if (occupant === undefined) return 'unverifiable'
+  if (incarnationFormat(occupant) !== incarnationFormat(owner.incarnation)) return 'unverifiable'
   return occupant === owner.incarnation ? 'match' : 'mismatch'
 }
 
@@ -1084,6 +1110,7 @@ function withMutationLock<T>(
     ...(options.onProcessIncarnationResolved === undefined
       ? {}
       : { onIncarnationResolved: options.onProcessIncarnationResolved }),
+    ...(options.psExecutable === undefined ? {} : { psExecutable: options.psExecutable }),
   }
   let db: DatabaseSync
   try {

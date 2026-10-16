@@ -8,7 +8,7 @@
  * CR-04's single `resolveProcessIncarnation` definition instead of growing a second, subtly
  * different identity scheme.
  */
-import { resolveProcessIncarnation } from '../lease/writer-lease.js'
+import { incarnationFormat, resolveProcessIncarnation } from '../lease/writer-lease.js'
 
 import {
   EMBEDDER_WORKER_UNVERIFIABLE_INCARNATION,
@@ -52,5 +52,8 @@ export function verifyEmbedderWorkerIncarnation(
   }
   const occupant = resolveProcessIncarnation(registration.pid)
   if (occupant === undefined) return 'unverifiable'
+  if (incarnationFormat(occupant) !== incarnationFormat(registration.incarnation)) {
+    return 'unverifiable'
+  }
   return occupant === registration.incarnation ? 'match' : 'mismatch'
 }
