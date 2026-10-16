@@ -4,6 +4,7 @@ import { readFile, stat } from 'node:fs/promises'
 import { join, extname, resolve } from 'node:path'
 import { cpus } from 'node:os'
 import type { DashboardDatabase } from '../db/database.js'
+import { classifyRunOwner } from '../db/run-owner.js'
 import { createRouter, sanitizeQueuedExecutionTimeout } from './routes.js'
 import { backstopServerError, refuseUnparseableRequest, tryParseRequestUrl } from './request-url.js'
 import type { ExecutionBackend, RunSettledDetails, RunSettledStatus } from '../execution/execution-backend.js'
@@ -463,30 +464,15 @@ export async function startServer(opts: StartServerOptions): Promise<{
     jobQueue.onSlotFreed(runId)
   })
 
-  // Clean up orphaned runs from previous server sessions — any run still
-  // marked 'running' in the DB has no live process and should be failed.
-  const orphaned = db.getRuns({ status: 'running' })
-  let cleaned = 0
-  for (const run of orphaned) {
-    // 2026-08-24 (402-09, D-11): the suite-run skip that stood here is deleted. It left a parent
-    // in `running` whenever a child also read `running`, on the premise that a CLI process might
-    // still own them. Nothing mints children any more, and after a server restart nothing owns a
-    // pre-402 child either — the skip could only strand historical rows in a state no process would
-    // ever finish, which is the opposite of cleanup.
-    const duration = run.startedAt
-      ? Date.now() - new Date(run.startedAt).getTime()
-      : 0
-    db.updateRun(run.id, {
-      status: 'failed',
-      duration,
-      endedAt: new Date().toISOString(),
-      failureSummary: 'Process terminated unexpectedly (server restarted)',
-    })
-    finalizeRunArtifactBestEffort(run.id, 'server-restart', 'startup-cleanup', 'Process terminated unexpectedly (server restarted)', { status: 'failed', duration })
-    cleaned++
+  // 2026-10-16 (442-04, D-05/D-04): only runs whose owning process is provably gone are finalized.
+  let finalized = 0
+  for (const { id, owner } of db.listRunningRunOwners()) {
+    if (classifyRunOwner(owner, db.runOwnership) === 'gone' && db.finalizeOrphanRun(id, owner)) {
+      finalized++
+    }
   }
-  if (cleaned > 0) {
-    console.log(`Cleaned up ${cleaned} orphaned run(s) stuck in 'running' state`)
+  if (finalized > 0) {
+    console.log(`Finalized ${finalized} run(s) whose agent-qa process had ended`)
   }
 
   // Log any pending rows left from previous session (benign — picked up when queue starts)
