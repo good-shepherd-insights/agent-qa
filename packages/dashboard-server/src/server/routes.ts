@@ -2363,29 +2363,39 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         return
       }
       const runId = path.slice('/api/runs/'.length, path.length - '/cancel'.length)
-      const cancelled = jobQueue.cancel(runId)
-      if (cancelled) {
-        // For pending jobs, JobQueue already set status='cancelled'.
-        // For running jobs, JobQueue emits 'cancel-running' which triggers executionManager.kill().
-        // Update DB with cancel metadata for running jobs.
-        try {
-          const run = db.getRun(runId)
-          if (run && run.status === 'cancelled') {
-            const duration = run.startedAt
-              ? Date.now() - new Date(run.startedAt).getTime()
-              : 0
-            db.updateRun(runId, {
-              duration,
-              endedAt: new Date().toISOString(),
-              failureSummary: 'Test cancelled by user',
-            })
-          }
-        } catch { /* best-effort */ }
-        json(res, { cancelled: true })
-      } else {
-        json(res, { error: 'Run not found or not cancellable' }, 404)
+      // 2026-10-16 (442-05, D-06/D-07): cancel metadata is written only for a run this dashboard owns.
+      const outcome = jobQueue.cancel(runId)
+      switch (outcome.kind) {
+        case 'cancelled':
+          try {
+            const run = db.getRun(runId)
+            if (run && run.status === 'cancelled') {
+              const duration = run.startedAt
+                ? Date.now() - new Date(run.startedAt).getTime()
+                : 0
+              db.updateRun(runId, {
+                duration,
+                endedAt: new Date().toISOString(),
+                failureSummary: 'Test cancelled by user',
+              })
+            }
+          } catch { /* best-effort */ }
+          json(res, { cancelled: true })
+          return
+        case 'orphan-finalized':
+          json(res, { cancelled: false, message: outcome.message })
+          return
+        case 'owned-elsewhere':
+          json(
+            res,
+            { error: outcome.message, reason: 'owned-by-live-process', ownerPid: outcome.ownerPid },
+            409,
+          )
+          return
+        case 'not-cancellable':
+          json(res, { error: 'Run not found or not cancellable' }, 404)
+          return
       }
-      return
     }
 
     // DELETE /api/runs/:id

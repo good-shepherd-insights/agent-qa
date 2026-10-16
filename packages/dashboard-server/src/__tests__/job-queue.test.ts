@@ -129,7 +129,7 @@ describe('JobQueue', () => {
     it('cancels a pending run and sets status to cancelled', () => {
       const runId = queue.enqueue({ name: 'Cancel Me' })
       const result = queue.cancel(runId)
-      expect(result).toBe(true)
+      expect(result).toEqual({ kind: 'cancelled' })
 
       const run = db.getRun(runId)
       expect(run!.status).toBe('cancelled')
@@ -150,7 +150,7 @@ describe('JobQueue', () => {
       queue.on('cancel-running', cancelSpy)
 
       const result = queue.cancel(runId)
-      expect(result).toBe(true)
+      expect(result).toEqual({ kind: 'cancelled' })
 
       const run = db.getRun(runId)
       expect(run!.status).toBe('cancelled')
@@ -187,7 +187,7 @@ describe('JobQueue', () => {
       db.insertRunArtifact({ runId: runningChildId, kind: 'test', payload: { runtime: { status: 'running' } } })
       db.insertRunArtifact({ runId: pendingChildId, kind: 'test', payload: { runtime: { status: 'pending' } } })
 
-      expect(queue.cancel(parentId)).toBe(true)
+      expect(queue.cancel(parentId)).toEqual({ kind: 'cancelled' })
 
       // Cancelling a run cancels the run.
       expect(db.getRun(parentId)?.status).toBe('cancelled')
@@ -205,12 +205,12 @@ describe('JobQueue', () => {
       db.updateRunStatus(runId, 'passed') // transition to completed
 
       const result = queue.cancel(runId)
-      expect(result).toBe(false)
+      expect(result).toEqual({ kind: 'not-cancellable' })
     })
 
     it('returns false for a non-existent run', () => {
       const result = queue.cancel('non-existent-id')
-      expect(result).toBe(false)
+      expect(result).toEqual({ kind: 'not-cancellable' })
     })
   })
 

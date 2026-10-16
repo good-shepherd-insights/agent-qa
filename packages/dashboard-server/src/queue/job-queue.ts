@@ -3,6 +3,7 @@ import { cpus } from 'node:os'
 import type { RunAttributes } from '@vostride/agent-qa-core'
 import type { RunArtifactKind } from '@vostride/agent-qa-schema'
 import type { DashboardDatabase, RunRow } from '../db/database.js'
+import { classifyRunOwner, orphanSummary, ownedElsewhere } from '../db/run-owner.js'
 
 interface EnqueueOptions {
   name: string
@@ -17,6 +18,14 @@ interface EnqueueOptions {
   metadata?: Record<string, unknown>
   parallel?: boolean
 }
+
+export type RunCancelOutcome =
+  | { kind: 'cancelled' }
+  | { kind: 'orphan-finalized'; message: string }
+  | { kind: 'owned-elsewhere'; message: string; ownerPid: number }
+  | { kind: 'not-cancellable' }
+
+const NOT_CANCELLABLE: RunCancelOutcome = { kind: 'not-cancellable' }
 
 export class JobQueue extends EventEmitter {
   private db: DashboardDatabase
@@ -133,9 +142,10 @@ export class JobQueue extends EventEmitter {
     return this.concurrency
   }
 
-  cancel(runId: string): boolean {
+  // 2026-10-16 (442-05, D-06 to D-08): only the owner cancels a running row; a gone owner's is an orphan.
+  cancel(runId: string): RunCancelOutcome {
     const run = this.db.getRun(runId)
-    if (!run) return false
+    if (!run) return NOT_CANCELLABLE
     const now = new Date().toISOString()
     if (run.status === 'pending') {
       this.db.updateRun(runId, { status: 'cancelled', endedAt: now })
@@ -143,23 +153,33 @@ export class JobQueue extends EventEmitter {
         errors: [{ code: 'cancelled', phase: 'queue', message: 'Run cancelled before execution' }],
         runtime: { status: 'cancelled' },
       })
-      return true
+      return { kind: 'cancelled' }
     }
-    if (run.status === 'running') {
-      this.db.updateRun(runId, { status: 'cancelled', endedAt: now })
-      try {
-        const artifact = this.db.getRunArtifact(runId)
-        if (artifact && !artifact.finalizedAt) {
-          this.db.finalizeRunArtifact(runId, {
-            errors: [{ code: 'cancelled', phase: 'queue', message: 'Run cancellation requested' }],
-            runtime: { status: 'cancelled' },
-          })
-        }
-      } catch { /* cancellation still proceeds */ }
-      this.emit('cancel-running', runId)
-      return true
+    if (run.status !== 'running') return NOT_CANCELLABLE
+    const owner = this.db.readRunOwner(runId)
+    if (owner === undefined) return NOT_CANCELLABLE
+    switch (classifyRunOwner(owner, this.db.runOwnership)) {
+      case 'self':
+        this.db.updateRun(runId, { status: 'cancelled', endedAt: now })
+        try {
+          const artifact = this.db.getRunArtifact(runId)
+          if (artifact && !artifact.finalizedAt) {
+            this.db.finalizeRunArtifact(runId, {
+              errors: [{ code: 'cancelled', phase: 'queue', message: 'Run cancellation requested' }],
+              runtime: { status: 'cancelled' },
+            })
+          }
+        } catch { /* cancellation still proceeds */ }
+        this.emit('cancel-running', runId)
+        return { kind: 'cancelled' }
+      case 'gone':
+        return this.db.finalizeOrphanRun(runId, owner)
+          ? { kind: 'orphan-finalized', message: orphanSummary(owner.pid) }
+          : NOT_CANCELLABLE
+      case 'alive':
+      case 'unknown':
+        return { kind: 'owned-elsewhere', message: ownedElsewhere(owner.pid), ownerPid: owner.pid }
     }
-    return false
   }
 
   // 2026-08-24 (Phase 402 plan 09, D-11): THE CHILD-RUN CANCELLATION FAN-OUT IS DELETED WITH THE
