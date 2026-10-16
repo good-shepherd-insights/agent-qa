@@ -282,10 +282,16 @@ export default function LiveRunPage() {
   const handleCancel = useCallback(() => {
     if (id === undefined || isCancelling) return
     setIsCancelling(true)
+    const toastOptions = { id: `cancel-${id}` }
     cancelRun(id)
-      .then((result) => { toast.success(result.message ?? 'Run cancelled') })
+      .then((result) => {
+        if (result.cancelled) toast.success('Run cancelled', toastOptions)
+        else toast.info(result.message ?? 'Run cancelled', toastOptions)
+      })
       .catch((error: unknown) => {
-        toast.error(error instanceof ApiError ? error.message : 'Failed to cancel run')
+        // 442 D-09: only the 409 owned-by-live-process refusal is worded for a person.
+        const refused = error instanceof ApiError && error.status === 409
+        toast.error(refused ? error.message : 'Failed to cancel run', toastOptions)
       })
       .finally(() => { setIsCancelling(false) })
   }, [id, isCancelling])
