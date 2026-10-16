@@ -646,3 +646,44 @@ describe.sequential('embedder worker discovery', () => {
     },
   )
 })
+
+describe('C442-INCARNATION-FORMAT', () => {
+  it('C442-INCARNATION-FORMAT an embedder registration stamped in another start-time format is unverifiable, and an equal-format different one is a mismatch', () => {
+    const projectRoot = temporaryProject('incarnation-format')
+    const agentQaRoot = embedderWorkerAgentQaRoot(projectRoot)
+    const own = resolveProcessIncarnation(process.pid)
+    const live = {
+      schemaVersion: 3,
+      instanceId: '00000000-0000-4000-8000-000000000442',
+      pid: process.pid,
+      socketPath: join(agentQaRoot, 'embedder-worker-format.sock'),
+      profile: STATIC_FLOOR_EMBEDDING_PROFILE,
+      startedAtMs: Date.now(),
+      incarnation: own ?? EMBEDDER_WORKER_UNVERIFIABLE_INCARNATION,
+    } as const
+
+    if (process.platform === 'win32') {
+      expect(own).toBeUndefined()
+    } else {
+      expect(own).toBeTypeOf('string')
+      expect(String(own)).toContain(':')
+      expect(verifyEmbedderWorkerIncarnation(live as never)).toBe('match')
+    }
+    const format = String(own).split(':')[0]
+    const verdicts = {
+      foreignFormat: verifyEmbedderWorkerIncarnation({
+        ...live,
+        incarnation: 'foreign-format:1',
+      } as never),
+      equalFormat: verifyEmbedderWorkerIncarnation({
+        ...live,
+        incarnation: `${format}:1`,
+      } as never),
+    }
+
+    expect(verdicts, `own token ${String(own)}`).toEqual({
+      foreignFormat: 'unverifiable',
+      equalFormat: process.platform === 'win32' ? 'unverifiable' : 'mismatch',
+    })
+  })
+})

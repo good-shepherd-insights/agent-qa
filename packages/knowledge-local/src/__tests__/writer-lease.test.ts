@@ -191,6 +191,7 @@ function spawnLeaseAcquirer(
 function spawnAuthorityHolder(
   knowledgeRoot: string,
   permitFile: string,
+  extraEnv: NodeJS.ProcessEnv = {},
 ): ChildProcessWithoutNullStreams {
   const source = `
     const { existsSync } = await import('node:fs');
@@ -229,6 +230,7 @@ function spawnAuthorityHolder(
         ...process.env,
         AGENT_QA_LEASE_TEST_ROOT: knowledgeRoot,
         AGENT_QA_LEASE_TEST_PERMIT: permitFile,
+        ...extraEnv,
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     },
@@ -3358,4 +3360,306 @@ describe('the lock-free beat astride a reclaim: CR-03 containment by the epoch f
     // A refused beat writes nothing, so the reclaim's publication survives it intact.
     expect(leaseOnDisk()).toMatchObject({ leaseId: successor.leaseId, epoch: 2 })
   }, 15_000)
+})
+
+function refuseWithoutPosixRunLifecycle(): void {
+  if (process.platform === 'win32') throw new Error('POSIX run lifecycle required; never skip')
+}
+
+function ownerEnvironmentB(root: string): NodeJS.ProcessEnv {
+  const directory = join(root, 'shadowing-ps')
+  mkdirSync(directory, { recursive: true })
+  const ps = join(directory, 'ps')
+  writeFileSync(ps, "#!/bin/sh\nprintf 'Thu Jan  1 00:00:00 1970\\n'\nexit 0\n", 'utf8')
+  chmodSync(ps, 0o755)
+  return { PATH: `${directory}:${process.env.PATH ?? ''}` }
+}
+
+function awaitChildClose(
+  child: ChildProcessWithoutNullStreams,
+  watchdogMs: number,
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    let stdout = ''
+    let stderr = ''
+    const timer = setTimeout(() => {
+      reject(new Error(`child produced no outcome within ${watchdogMs}ms: ${stderr}`))
+    }, watchdogMs)
+    timer.unref()
+    child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk })
+    child.stderr.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk })
+    child.once('error', reject)
+    child.once('close', (code) => {
+      clearTimeout(timer)
+      resolve({ code, stdout, stderr })
+    })
+  })
+}
+
+function spawnIncarnationReader(
+  pid: number,
+  env: NodeJS.ProcessEnv,
+): ChildProcessWithoutNullStreams {
+  const source = `
+    const { resolveProcessIncarnation } = await import(${JSON.stringify(WRITER_LEASE_MODULE_URL)});
+    const token = resolveProcessIncarnation(Number(process.env.AGENT_QA_LEASE_TEST_READ_PID));
+    process.stdout.write(JSON.stringify({ token: token ?? null }) + '\\n');
+  `
+  return spawn(process.execPath, [...LEASE_SOURCE_CHILD_ARGV, '--eval', source], {
+    env: { ...process.env, ...env, AGENT_QA_LEASE_TEST_READ_PID: String(pid) },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+}
+
+function spawnBoundedLeaseContender(
+  knowledgeRoot: string,
+  acquireDeadlineMs: number,
+  env: NodeJS.ProcessEnv,
+): ChildProcessWithoutNullStreams {
+  const source = `
+    const { acquireWriterLease } = await import(${JSON.stringify(WRITER_LEASE_MODULE_URL)});
+    const outcome = acquireWriterLease(process.env.AGENT_QA_LEASE_TEST_ROOT, {
+      acquireDeadlineMs: Number(process.env.AGENT_QA_LEASE_TEST_DEADLINE_MS),
+      mutationLockTakeoverMs: 0,
+    });
+    process.stdout.write(JSON.stringify({ kind: outcome.kind, reason: outcome.reason }) + '\\n');
+  `
+  return spawn(process.execPath, [...LEASE_SOURCE_CHILD_ARGV, '--eval', source], {
+    env: {
+      ...process.env,
+      ...env,
+      AGENT_QA_LEASE_TEST_ROOT: knowledgeRoot,
+      AGENT_QA_LEASE_TEST_DEADLINE_MS: String(acquireDeadlineMs),
+    },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+}
+
+async function contenderOutcome(
+  contender: ChildProcessWithoutNullStreams,
+): Promise<{ kind: string; reason?: string }> {
+  const closed = await awaitChildClose(contender, 30_000)
+  if (closed.code !== 0) throw new Error(`contender exited ${closed.code}: ${closed.stderr}`)
+  return lastJsonLine(closed.stdout) as { kind: string; reason?: string }
+}
+
+function readMutationLockRowAt(knowledgeRoot: string): Record<string, unknown> | undefined {
+  const db = new DatabaseSync(join(knowledgeRoot, WRITER_AUTHORITY_DB_FILE), { readOnly: true })
+  try {
+    return db.prepare('SELECT * FROM mutation_lock WHERE id = 1').get() as
+      | Record<string, unknown>
+      | undefined
+  } finally {
+    db.close()
+  }
+}
+
+function useSpawnedChildren(prefix: string): {
+  root: () => string
+  track: (child: ChildProcessWithoutNullStreams) => ChildProcessWithoutNullStreams
+} {
+  let root = ''
+  const spawned: ChildProcessWithoutNullStreams[] = []
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), prefix))
+  })
+
+  afterEach(() => {
+    for (const child of spawned.splice(0)) {
+      if (child.exitCode === null && child.signalCode === null && child.pid !== undefined) {
+        try {
+          process.kill(child.pid, 'SIGKILL')
+        } catch {
+          // Already gone.
+        }
+      }
+    }
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  return {
+    root: () => root,
+    track: (child) => {
+      spawned.push(child)
+      return child
+    },
+  }
+}
+
+describe('C442-CROSS-ENV', () => {
+  const READING_ENVIRONMENT = { TZ: 'Asia/Kathmandu', LC_ALL: 'C', LANG: 'C' }
+  const OWNER_ENVIRONMENT_A = { TZ: 'UTC', LC_ALL: 'fr_FR.UTF-8', LANG: 'fr_FR.UTF-8' }
+  const OTHER_READER_ENVIRONMENT = {
+    TZ: 'America/Los_Angeles',
+    LC_ALL: 'de_DE.UTF-8',
+    LANG: 'de_DE.UTF-8',
+  }
+  const { root, track } = useSpawnedChildren('knowledge-writer-cross-env-')
+
+  it('C442-CROSS-ENV one live process reads as one start-time token from readers with different time zones, locales and a shadowing ps', async () => {
+    refuseWithoutPosixRunLifecycle()
+    const subject = track(spawnIdleSurrogate(join(root(), 'subject.exit')))
+    await waitForOutput(subject, 'surrogate-alive\n')
+    if (subject.pid === undefined) throw new Error('subject never started')
+    expect(processIsAliveInTest(subject.pid)).toBe(true)
+
+    const readers: [string, NodeJS.ProcessEnv][] = [
+      ['reading', READING_ENVIRONMENT],
+      ['A', OWNER_ENVIRONMENT_A],
+      ['America/Los_Angeles de_DE.UTF-8', OTHER_READER_ENVIRONMENT],
+      ['B', ownerEnvironmentB(root())],
+    ]
+    const tokens: Record<string, unknown> = {}
+    for (const [label, env] of readers) {
+      const closed = await awaitChildClose(track(spawnIncarnationReader(subject.pid, env)), 30_000)
+      if (closed.code !== 0) {
+        throw new Error(`reader ${label} exited ${closed.code}: ${closed.stderr}`)
+      }
+      tokens[label] = (lastJsonLine(closed.stdout) as { token: unknown }).token
+    }
+
+    expect(processIsAliveInTest(subject.pid)).toBe(true)
+    expect(Object.values(tokens).map((token) => typeof token)).toEqual([
+      'string',
+      'string',
+      'string',
+      'string',
+    ])
+    const first = tokens.reading
+    expect(tokens).toEqual(Object.fromEntries(readers.map(([label]) => [label, first])))
+  }, 60_000)
+
+  it('C442-CROSS-ENV a mutation-lock holder stamped under another time zone, locale or ps is read as itself, never as a reused pid', async () => {
+    refuseWithoutPosixRunLifecycle()
+    const owners: [string, NodeJS.ProcessEnv][] = [
+      ['A', OWNER_ENVIRONMENT_A],
+      ['B', ownerEnvironmentB(root())],
+    ]
+    const ends: Record<string, { holder: string; contender: string; stamp: unknown }> = {}
+    for (const [label, env] of owners) {
+      const knowledgeRoot = join(root(), `holder-${label}`, 'agent-qa-knowledge')
+      mkdirSync(knowledgeRoot, { recursive: true })
+      const holder = track(
+        spawnAuthorityHolder(knowledgeRoot, join(root(), `holder-${label}.permit`), env),
+      )
+      const holderExit = observeExit(holder)
+      await waitForOutput(holder, 'inside\n')
+      if (holder.pid === undefined) throw new Error(`holder ${label} never started`)
+      expect(processIsAliveInTest(holder.pid)).toBe(true)
+      const claimed = readMutationLockRowAt(knowledgeRoot)
+      expect(claimed).toMatchObject({ pid: holder.pid })
+      expect(claimed?.incarnation).toBeTypeOf('string')
+
+      const leaseFile = join(knowledgeRoot, LEASE_FILE)
+      const lease = JSON.parse(readFileSync(leaseFile, 'utf8')) as WriterLease
+      writeFileSync(
+        leaseFile,
+        `${JSON.stringify({ ...lease, heartbeatAtMs: Date.now() - LEASE_HEARTBEAT_TTL_MS })}\n`,
+        'utf8',
+      )
+
+      const outcome = await contenderOutcome(
+        track(spawnBoundedLeaseContender(knowledgeRoot, 8_000, READING_ENVIRONMENT)),
+      )
+      const holderEnd = await Promise.race([
+        holderExit.then((exit) => exit.signal ?? `exit ${exit.code}`),
+        new Promise<string>((resolve) => {
+          setTimeout(() => resolve(holder.signalCode ?? 'alive and unsignalled'), 3_000).unref()
+        }),
+      ])
+      ends[label] = { holder: holderEnd, contender: outcome.kind, stamp: claimed?.incarnation }
+    }
+
+    const observed = Object.fromEntries(
+      Object.entries(ends).map(([label, end]) => [
+        label,
+        { holder: end.holder, contender: end.contender },
+      ]),
+    )
+    expect(observed, JSON.stringify(ends)).toEqual({
+      A: { holder: 'SIGKILL', contender: 'acquired' },
+      B: { holder: 'SIGKILL', contender: 'acquired' },
+    })
+  }, 90_000)
+})
+
+describe('C442-INCARNATION-FORMAT', () => {
+  const { root, track } = useSpawnedChildren('knowledge-writer-incarnation-format-')
+
+  it('C442-INCARNATION-FORMAT a ps host stamps ps-lstart-utc read by /bin/ps in UTC and the C locale, and Linux stamps proc-starttime', () => {
+    const token = resolveProcessIncarnation(process.pid)
+    if (process.platform === 'win32') {
+      expect(token).toBeUndefined()
+      return
+    }
+    if (process.platform === 'linux') {
+      expect(token).toBe(`proc-starttime:${observedProcessStartToken(process.pid)}`)
+      return
+    }
+    const lstart = execFileSync('/bin/ps', ['-p', String(process.pid), '-o', 'lstart='], {
+      encoding: 'utf8',
+      env: { LC_ALL: 'C', LANG: 'C', TZ: 'UTC0' },
+    }).trim()
+    expect(lstart).not.toBe('')
+    expect(token).toBe(`ps-lstart-utc:${lstart}`)
+  })
+
+  it('C442-INCARNATION-FORMAT a mutation-lock row stamped in another start-time format is never reclaimed and its live owner never signalled', async () => {
+    refuseWithoutPosixRunLifecycle()
+    const knowledgeRoot = join(root(), 'agent-qa-knowledge')
+    const surrogate = track(spawnIdleSurrogate(join(root(), 'surrogate.exit')))
+    await waitForOutput(surrogate, 'surrogate-alive\n')
+    if (surrogate.pid === undefined) throw new Error('surrogate never started')
+    expect(processIsAliveInTest(surrogate.pid)).toBe(true)
+
+    mkdirSync(knowledgeRoot, { recursive: true })
+    const dbPath = join(knowledgeRoot, WRITER_AUTHORITY_DB_FILE)
+    const seed = new DatabaseSync(dbPath)
+    try {
+      seed.exec('PRAGMA journal_mode = WAL')
+      seed.exec(LEGACY_MUTATION_LOCK_TABLE)
+      seed.exec('ALTER TABLE mutation_lock ADD COLUMN incarnation TEXT')
+      seed.prepare(`
+        INSERT INTO mutation_lock (id, generation_token, pid, acquired_at_ms, incarnation)
+        VALUES (1, ?, ?, ?, ?)
+      `).run(
+        'foreign-format-generation',
+        surrogate.pid,
+        Date.now() - 60_000,
+        'foreign-format:incarnation',
+      )
+    } finally {
+      seed.close()
+    }
+    expect(readMutationLockRowAt(knowledgeRoot)).toMatchObject({
+      pid: surrogate.pid,
+      incarnation: 'foreign-format:incarnation',
+    })
+
+    const blocking = new DatabaseSync(dbPath)
+    blocking.exec('PRAGMA busy_timeout = 250')
+    blocking.exec('BEGIN IMMEDIATE')
+    let outcome: { kind: string; reason?: string }
+    try {
+      outcome = await contenderOutcome(track(spawnBoundedLeaseContender(knowledgeRoot, 4_000, {})))
+    } finally {
+      blocking.exec('ROLLBACK')
+      blocking.close()
+    }
+
+    expect({
+      outcome,
+      surrogate: {
+        alive: processIsAliveInTest(surrogate.pid),
+        exitCode: surrogate.exitCode,
+        signal: surrogate.signalCode,
+      },
+      row: readMutationLockRowAt(knowledgeRoot),
+    }).toMatchObject({
+      outcome: { kind: 'refused', reason: 'mutation-lock-unreclaimable' },
+      surrogate: { alive: true, exitCode: null, signal: null },
+      row: { pid: surrogate.pid, incarnation: 'foreign-format:incarnation' },
+    })
+  }, 60_000)
 })
