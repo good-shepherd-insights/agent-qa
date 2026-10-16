@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { DashboardDatabase, runSqliteMigrations } from '../db/database.js'
+import type { RunOwnership } from '../db/run-owner.js'
 import { createDashboardSqliteDatabase } from '../db/sqlite.js'
 import { SCHEMA_VERSION, MIGRATIONS } from '../db/schema.js'
 
@@ -1255,5 +1256,53 @@ describe('C442-ORPHAN', () => {
     expect(second.listRunningRunOwners()).toEqual([
       { id, startedAt: first.getRun(id)!.startedAt, owner: STAMPED_OWNER },
     ])
+  })
+})
+
+describe('C442-OWN-START-TIME', () => {
+  let dir: string
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'agent-qa-442-own-start-'))
+  })
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('a run stamped before its own start time was read is still finalized as its own', () => {
+    const dbPath = join(dir, 'runs.db')
+    const unread = { pid: 4242, incarnation: null, host: 'h' }
+    let selfReads = 0
+    const lateRead: RunOwnership = {
+      get self() {
+        selfReads += 1
+        return { ...unread, incarnation: selfReads === 1 ? null : 'proc-starttime:7' }
+      },
+      probe: inertProbe,
+    }
+    const endedAt = new Date().toISOString()
+    const startedAt = new Date(Date.now() - 60_000).toISOString()
+    const running = { name: 'Own run', status: 'running', duration: 0, startedAt, endedAt: startedAt }
+    const own = new DashboardDatabase({ dbPath, runOwnership: lateRead })
+    const stamper = new DashboardDatabase({ dbPath, runOwnership: { self: unread, probe: inertProbe } })
+    const stranger = new DashboardDatabase({ dbPath, runOwnership: { self: unread, probe: inertProbe } })
+    try {
+      const id = own.insertRun(running)
+      expect(own.readRunOwner(id)).toEqual(unread)
+      expect(own.runOwnership.self.incarnation).toBe('proc-starttime:7')
+
+      expect(own.finalizeOwnRun(id, { status: 'cancelled', endedAt })).toBe(true)
+      expect(own.getRun(id)?.status).toBe('cancelled')
+
+      const fresh = stamper.insertRun(running)
+      expect(stranger.readRunOwner(fresh)).toEqual(unread)
+      expect(stranger.finalizeOwnRun(fresh, { status: 'cancelled', endedAt })).toBe(false)
+      expect(stranger.getRun(fresh)?.status).toBe('running')
+    } finally {
+      own.close()
+      stamper.close()
+      stranger.close()
+    }
   })
 })

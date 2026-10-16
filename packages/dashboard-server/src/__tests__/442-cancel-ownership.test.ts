@@ -7,7 +7,7 @@ import { join } from 'node:path'
 
 import { DashboardDatabase } from '../db/database.js'
 import { orphanSummary, ownedElsewhere } from '../db/run-owner.js'
-import type { RunOwner, RunOwnerProbe } from '../db/run-owner.js'
+import type { RunOwner, RunOwnerProbe, RunOwnership } from '../db/run-owner.js'
 import type { ExecutionBackend } from '../execution/execution-backend.js'
 import { JobQueue } from '../queue/job-queue.js'
 import { startServer } from '../server/server.js'
@@ -19,6 +19,7 @@ const GONE: RunOwner = { pid: 3002, incarnation: 'inc-3002', host: HOST }
 const OTHER_HOST: RunOwner = { pid: 3003, incarnation: 'inc-3003', host: 'elsewhere.invalid' }
 const UNREADABLE: RunOwner = { pid: 3004, incarnation: 'inc-3004', host: HOST }
 const RACED: RunOwner = { pid: 3005, incarnation: 'inc-3005', host: HOST }
+const UNREAD_SELF: RunOwner = { pid: SELF.pid, incarnation: null, host: HOST }
 
 const NOT_CANCELLABLE = { error: 'Run not found or not cancellable' }
 const CLEANUP_LINE = /run\(s\) whose agent-qa process had ended/
@@ -100,10 +101,10 @@ interface Dashboard {
   logged(): string[]
 }
 
-async function startDashboard(): Promise<Dashboard> {
+async function startDashboard(ownership: RunOwnership = { self: SELF, probe }): Promise<Dashboard> {
   const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
   const backend = new RecordingBackend()
-  const db = new DashboardDatabase({ dbPath, runOwnership: { self: SELF, probe } })
+  const db = new DashboardDatabase({ dbPath, runOwnership: ownership })
   const handle = await startServer({
     declaredSecretMask: (text) => text,
     db,
@@ -280,5 +281,57 @@ describe('C442-CANCEL-ORPHAN', () => {
     expect(snapshotOf(cancelledFirst)).toBe(after)
     expect(dashboard.logged().some((line) => line.startsWith('Dashboard running at'))).toBe(true)
     expect(dashboard.logged().filter((line) => CLEANUP_LINE.test(line))).toEqual([])
+  })
+})
+
+describe('C442-OWN-START-TIME', () => {
+  it('the dashboard cancels its own run stamped with no start time', () => {
+    const own = new DashboardDatabase({ dbPath, runOwnership: { self: UNREAD_SELF, probe } })
+    const ownQueue = new JobQueue({ db: own })
+    const ownEmitted: string[] = []
+    ownQueue.on('cancel-running', (runId: string) => {
+      ownEmitted.push(runId)
+    })
+    try {
+      const id = ownQueue.enqueue({ name: 'Own run, no start time' })
+      ownQueue.processNext()
+      expect(reader.readRunOwner(id)).toEqual(UNREAD_SELF)
+      expect(reader.getRun(id)?.status).toBe('running')
+
+      expect(ownQueue.cancel(id)).toEqual({ kind: 'cancelled' })
+      expect(reader.getRun(id)?.status).toBe('cancelled')
+      expect(ownEmitted).toEqual([id])
+    } finally {
+      ownQueue.stop()
+      own.close()
+    }
+  })
+
+  it("a dashboard on a reused pid with no start time does not cancel a dead dashboard's run as its own", async () => {
+    const byQueue = seedRunning(UNREAD_SELF, 'Dead dashboard, queue')
+    const byRoute = seedRunning(UNREAD_SELF, 'Dead dashboard, route')
+    const before = [byQueue, byRoute].map(snapshotOf)
+    const reused: RunOwnership = { self: { ...UNREAD_SELF }, probe }
+    const reusedDb = new DashboardDatabase({ dbPath, runOwnership: reused })
+    const reusedQueue = new JobQueue({ db: reusedDb })
+    const reusedEmitted: string[] = []
+    reusedQueue.on('cancel-running', (runId: string) => {
+      reusedEmitted.push(runId)
+    })
+    try {
+      expect(reusedQueue.cancel(byQueue)).toEqual(refusalOf(UNREAD_SELF))
+
+      const dashboard = await startDashboard(reused)
+      expect(await cancelOver(dashboard, byRoute)).toEqual({
+        status: 409,
+        body: refusalBodyOf(UNREAD_SELF),
+      })
+      expect(reusedEmitted).toEqual([])
+      expect(dashboard.backend.killed).toEqual([])
+      expect([byQueue, byRoute].map(snapshotOf)).toEqual(before)
+    } finally {
+      reusedQueue.stop()
+      reusedDb.close()
+    }
   })
 })

@@ -139,3 +139,12 @@ describe('C442-INCARNATION-FORMAT', () => {
     expect(probed.join()).toBe('200')
   })
 })
+
+describe('C442-OWN-START-TIME', () => {
+  it('a start time missing on both sides is never self, even for this pid on this host', () => {
+    const unread: RunOwner = { pid: 100, incarnation: null, host: HOST }
+    const { ownership, probed } = ownershipOver({ 100: { alive: true } })
+    expect(classifyRunOwner({ ...unread }, { self: unread, probe: ownership.probe })).toBe('unknown')
+    expect(probed.join()).toBe('100')
+  })
+})
