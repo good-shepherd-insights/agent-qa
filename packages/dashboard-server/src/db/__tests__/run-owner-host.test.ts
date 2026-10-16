@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readlinkSync, rmSync } from 'node:fs'
 import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -108,27 +108,51 @@ describe('C442-HOST-IDENTITY', () => {
     expect(verdict).toBe('unknown')
   })
 
-  it('C442-HOST-IDENTITY Linux and Windows hosts keep os.hostname()', () => {
-    for (const platform of ['linux', 'win32'] as const) {
-      const reader = countedUuidReader(UUID)
-      const resolve = createRunOwnerHostResolver({
-        platform,
-        hostname: () => 'build-box.local',
-        readPlatformUuid: reader.read,
-      })
-      expect(resolve()).toBe('build-box.local')
-      expect(resolve()).toBe('build-box.local')
-      expect(reader.calls).toBe(0)
+  it('C442-HOST-IDENTITY Windows hosts keep os.hostname(), and Linux hosts name their pid namespace', () => {
+    const windowsUuid = countedUuidReader(UUID)
+    const windowsNamespace = countedNamespaceReader('pid:[4026532001]')
+    const windows = createRunOwnerHostResolver({
+      platform: 'win32',
+      hostname: () => 'build-box.local',
+      readPlatformUuid: windowsUuid.read,
+      readPidNamespace: windowsNamespace.read,
+    })
+    expect(windows()).toBe('build-box.local')
+    expect(windows()).toBe('build-box.local')
+    expect(windowsUuid.calls).toBe(0)
+    expect(windowsNamespace.calls).toBe(0)
+
+    const linuxUuid = countedUuidReader(UUID)
+    const linux = createRunOwnerHostResolver({
+      platform: 'linux',
+      hostname: () => 'build-box.local',
+      readPlatformUuid: linuxUuid.read,
+      readPidNamespace: () => 'pid:[4026532001]',
+    })
+    expect(linux()).toBe('linux-pidns:4026532001:build-box.local')
+    expect(linuxUuid.calls).toBe(0)
+  })
+
+  it("C442-HOST-IDENTITY this machine's identity is its UUID digest on macOS, its pid namespace and host name on Linux, and its host name elsewhere", () => {
+    if (process.platform === 'darwin') {
+      expect(resolveRunOwnerHost()).toMatch(UUID_IDENTITY)
+    } else if (process.platform === 'linux') {
+      const inode = (() => {
+        try {
+          return /^pid:\[(\d+)\]$/.exec(readlinkSync('/proc/self/ns/pid'))?.[1]
+        } catch {
+          return undefined
+        }
+      })()
+      if (inode === undefined) expect(resolveRunOwnerHost()).toMatch(/^linux-pidns-unread:/)
+      else expect(resolveRunOwnerHost()).toBe(`linux-pidns:${inode}:${hostname()}`)
+    } else {
+      expect(resolveRunOwnerHost()).toBe(hostname())
     }
   })
 
-  it("C442-HOST-IDENTITY this machine's identity is its UUID digest on macOS and its host name elsewhere", () => {
-    if (process.platform === 'darwin') expect(resolveRunOwnerHost()).toMatch(UUID_IDENTITY)
-    else expect(resolveRunOwnerHost()).toBe(hostname())
-  })
-
   it('C442-HOST-IDENTITY a dead owner stamped before the host name changed is still finalized as an orphan', () => {
-    const named = (platform: 'darwin' | 'linux', name: string) =>
+    const named = (platform: 'darwin' | 'win32', name: string) =>
       createRunOwnerHostResolver({ platform, hostname: () => name, readPlatformUuid: () => UUID })
     const renamed = seedThenClassifyAfterRename(
       named('darwin', 'name-1'),
@@ -140,8 +164,8 @@ describe('C442-HOST-IDENTITY', () => {
     expect(renamed.run?.failureSummary).toBe(orphanSummary(4242))
 
     const byHostName = seedThenClassifyAfterRename(
-      named('linux', 'name-1'),
-      named('linux', 'name-2'),
+      named('win32', 'name-1'),
+      named('win32', 'name-2'),
     )
     expect(byHostName.verdict).toBe('unknown')
     expect(byHostName.run?.status).toBe('running')
