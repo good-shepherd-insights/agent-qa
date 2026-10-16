@@ -409,6 +409,7 @@ export class RunsDatabaseVersionRefusedError extends Error {
 export class DashboardDatabase {
   private db: DashboardSqliteDatabase
   readonly runOwnership: RunOwnership
+  private readonly ownStamps = new Map<string, RunOwner>()
 
   constructor({
     dbPath = DASHBOARD_DB_PATH_FALLBACK,
@@ -456,7 +457,7 @@ export class DashboardDatabase {
     suiteId?: string
   }): string {
     const id = run.id || generateRunId()
-    const owner = run.status === 'running' ? this.runOwnership.self : undefined
+    const owner = run.status === 'running' ? this.readOwnStamp() : undefined
     const stmt = this.db.prepare(`
       INSERT INTO runs (id, name, file_path, status, duration, attributes, environment, metadata, started_at, ended_at, failure_summary, platform, test_file_content, model_name, llm_provider, test_id, suite_id, owner_pid, owner_incarnation, owner_host)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -483,6 +484,7 @@ export class DashboardDatabase {
       owner?.incarnation ?? null,
       owner?.host ?? null,
     )
+    if (owner) this.ownStamps.set(id, owner)
     return id
   }
 
@@ -504,10 +506,10 @@ export class DashboardDatabase {
     const values: unknown[] = []
     if (updates.name !== undefined) { fields.push('name = ?'); values.push(updates.name) }
     if (updates.status !== undefined) { fields.push('status = ?'); values.push(updates.status) }
-    if (updates.status === 'running') {
-      const { pid, incarnation, host } = this.runOwnership.self
+    const stamp = updates.status === 'running' ? this.readOwnStamp() : undefined
+    if (stamp) {
       fields.push('owner_pid = ?', 'owner_incarnation = ?', 'owner_host = ?')
-      values.push(pid, incarnation, host)
+      values.push(stamp.pid, stamp.incarnation, stamp.host)
     }
     if (updates.duration !== undefined) { fields.push('duration = ?'); values.push(updates.duration) }
     if (updates.startedAt !== undefined) { fields.push('started_at = ?'); values.push(updates.startedAt) }
@@ -523,6 +525,8 @@ export class DashboardDatabase {
     if (fields.length === 0) return
     values.push(id)
     this.db.prepare(`UPDATE runs SET ${fields.join(', ')} WHERE id = ?`).run(...values)
+    if (stamp) this.ownStamps.set(id, stamp)
+    else if (updates.status !== undefined) this.ownStamps.delete(id)
   }
 
   updateRunMetadata(id: string, updates: {
@@ -602,12 +606,14 @@ export class DashboardDatabase {
   updateRunStatus(id: string, status: string): void {
     if (status !== 'running') {
       this.db.prepare('UPDATE runs SET status = ? WHERE id = ?').run(status, id)
+      this.ownStamps.delete(id)
       return
     }
-    const { pid, incarnation, host } = this.runOwnership.self
+    const stamp = this.readOwnStamp()
     this.db.prepare(
       'UPDATE runs SET status = ?, owner_pid = ?, owner_incarnation = ?, owner_host = ? WHERE id = ?',
-    ).run(status, pid, incarnation, host, id)
+    ).run(status, stamp.pid, stamp.incarnation, stamp.host, id)
+    this.ownStamps.set(id, stamp)
   }
 
   // ---- The v2 bus-shaped projection (Phase 405 plan 01, D-01) ---------------------------------
@@ -1029,12 +1035,30 @@ export class DashboardDatabase {
       fields.push('failure_summary = ?')
       values.push(updates.failureSummary)
     }
-    const { pid, incarnation, host } = this.runOwnership.self
+    const stamp = this.ownStamps.get(id)
+    if (stamp === undefined) return false
     const result = this.db.prepare(`
       UPDATE runs SET ${fields.join(', ')}
       WHERE id = ? AND status = 'running' AND owner_pid = ? AND owner_incarnation IS ? AND owner_host = ?
-    `).run(...values, id, pid, incarnation, host)
-    return Number(result.changes) === 1
+    `).run(...values, id, stamp.pid, stamp.incarnation, stamp.host)
+    if (Number(result.changes) !== 1) return false
+    this.ownStamps.delete(id)
+    return true
+  }
+
+  // 2026-10-16 (442-15, GAP-D2): own is the stamp this handle wrote, so a NULL start time here is
+  // this handle's own write, never an inference about another process.
+  isOwnStamp(id: string, owner: RunOwner): boolean {
+    const stamp = this.ownStamps.get(id)
+    return stamp !== undefined
+      && stamp.pid === owner.pid
+      && stamp.incarnation === owner.incarnation
+      && stamp.host === owner.host
+  }
+
+  private readOwnStamp(): RunOwner {
+    const { pid, incarnation, host } = this.runOwnership.self
+    return { pid, incarnation, host }
   }
 
   finalizeOrphanRun(id: string, owner: RunOwner): boolean {

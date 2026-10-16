@@ -25,10 +25,15 @@ function incarnationFormat(token: string): string {
 
 // 2026-10-16 (442-01, D-02): gone only on proof (a dead pid or a changed start time); else unknown.
 // 442-14 (GAP-D1): a start time stamped in another format is not proof.
+// 442-15 (GAP-D2): a missing start time is never an identity; self needs two equal non-null ones.
 export function classifyRunOwner(owner: RunOwner, ownership: RunOwnership): RunOwnerState {
   const { self, probe } = ownership
   if (owner.host !== self.host) return 'unknown'
-  if (owner.pid === self.pid && owner.incarnation === self.incarnation) return 'self'
+  if (
+    owner.pid === self.pid
+    && owner.incarnation !== null
+    && owner.incarnation === self.incarnation
+  ) return 'self'
   let alive: boolean
   try {
     alive = probe.isAlive(owner.pid)

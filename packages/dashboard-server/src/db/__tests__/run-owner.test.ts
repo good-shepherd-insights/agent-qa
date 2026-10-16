@@ -90,7 +90,7 @@ describe('C442-OWNER-CLASSIFY', () => {
     const ownership = defaultRunOwnership()
     const host = ownership.self.host
     expect(ownership.self.pid).toBe(process.pid)
-    expect(classifyRunOwner({ pid: process.pid, incarnation: null, host }, ownership)).toBe('self')
+    expect(classifyRunOwner({ pid: process.pid, incarnation: null, host }, ownership)).toBe('unknown')
     const live = [process.pid, process.ppid]
     for (const pid of live) {
       for (const incarnation of ['start:any', null]) {

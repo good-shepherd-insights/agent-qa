@@ -143,6 +143,7 @@ export class JobQueue extends EventEmitter {
   }
 
   // 2026-10-16 (442-05, D-06 to D-08): only the owner cancels a running row; gone is an orphan.
+  // 442-15 (GAP-D2): own is the stamp this handle wrote, or equal non-null start times.
   cancel(runId: string): RunCancelOutcome {
     const run = this.db.getRun(runId)
     if (!run) return NOT_CANCELLABLE
@@ -158,7 +159,8 @@ export class JobQueue extends EventEmitter {
     if (run.status !== 'running') return NOT_CANCELLABLE
     const owner = this.db.readRunOwner(runId)
     if (owner === undefined) return NOT_CANCELLABLE
-    switch (classifyRunOwner(owner, this.db.runOwnership)) {
+    const own = this.db.isOwnStamp(runId, owner)
+    switch (own ? 'self' : classifyRunOwner(owner, this.db.runOwnership)) {
       case 'self':
         this.db.updateRun(runId, { status: 'cancelled', endedAt: now })
         try {
