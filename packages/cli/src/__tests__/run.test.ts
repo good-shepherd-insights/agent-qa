@@ -2490,15 +2490,21 @@ describe('run command — framework error handling', () => {
       tests: [makeTest()],
       errors: [],
     })
-    const runningRun = {
-      id: 'r_crash-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india',
-      name: 'Crash Run',
-      status: 'running',
-      startedAt: new Date().toISOString(),
-    }
+    // 2026-10-16 (442-03, D-05): only the row the ingest reported is finalized and printed.
+    let ownRunId: string | undefined
+    mockCreateDashboardRunIngest.mockImplementationOnce(function (...args: unknown[]) {
+      const input = args[0] as {
+        correlationEnv: { runId: string }
+        onRunCreated?: (id: string) => void
+      }
+      ownRunId = input.correlationEnv.runId
+      input.onRunCreated?.(ownRunId)
+      return mockDashboardRunIngestInstance
+    })
     const crashDb = {
-      getRuns: vi.fn(() => [runningRun]),
-      updateRun: vi.fn(),
+      getRuns: vi.fn(() => []),
+      getRun: vi.fn(() => ({ id: ownRunId, status: 'running', startedAt: new Date().toISOString() })),
+      finalizeOwnRun: vi.fn(() => true),
       getRunArtifact: vi.fn(() => ({ finalizedAt: null })),
       finalizeRunArtifact: vi.fn(),
       close: vi.fn(),
@@ -2509,12 +2515,17 @@ describe('run command — framework error handling', () => {
     await runCommand('tests/**/*.yaml')
 
     expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(crashDb.updateRun).toHaveBeenCalledWith(
-      runningRun.id,
+    expect(ownRunId).toEqual(expect.any(String))
+    expect(crashDb.getRuns).not.toHaveBeenCalled()
+    expect(crashDb.finalizeOwnRun).toHaveBeenCalledTimes(1)
+    expect(crashDb.finalizeOwnRun).toHaveBeenCalledWith(
+      ownRunId,
       expect.objectContaining({ status: 'failed' }),
     )
+    expect(crashDb.finalizeRunArtifact).toHaveBeenCalledWith(ownRunId, expect.anything())
     const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
-    expect(allOutput).toContain(`Run ID: ${runningRun.id}`)
+    expect(allOutput.match(/Run ID: /g)).toHaveLength(1)
+    expect(allOutput).toContain(`Run ID: ${ownRunId!}`)
   })
 
 })

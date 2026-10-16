@@ -5,9 +5,9 @@
 // The FIRST signal runs the graceful path: mark exit code 130, route the abort into the active
 // RunSession cancel, arm the unref'd force-exit grace-timer backstop (owned by the caller — the
 // `setTimeout(() => process.exit(130), cancelGraceMs())` + `grace.unref?.()` + `clearTimeout` stay
-// verbatim in run.ts so the 361-13 backstop source anchors remain intact), and best-effort sweep
-// running suite-DB rows to `cancelled`. It NEVER force-exits synchronously — a clean settle exits
-// through the verdict map.
+// verbatim in run.ts so the 361-13 backstop source anchors remain intact), and best-effort
+// finalize this process's own run row as `cancelled`. It NEVER force-exits synchronously — a
+// clean settle exits through the verdict map.
 //
 // A SECOND (and any further) signal is a HARD force-exit: it calls `exit(130)` immediately,
 // independent of the grace timer and of any wedged async `done`. Once the block from 364-02 is gone
@@ -27,8 +27,8 @@ export interface ShutdownControllerDeps {
    * the 361-13 backstop anchors hold. Invoked once, on the first signal only.
    */
   armGrace: () => void
-  /** Best-effort suite-DB running→cancelled sweep. Optional; must never throw out of the handler. */
-  sweepSuiteDbs?: () => void
+  /** Best-effort cancel of this process's own run row. Optional; never throws out of the handler. */
+  finalizeOwnRun?: () => void
 }
 
 export interface ShutdownController {
@@ -61,9 +61,9 @@ export function createShutdownController(deps: ShutdownControllerDeps): Shutdown
       /* cancel is best-effort */
     }
     deps.armGrace()
-    if (deps.sweepSuiteDbs) {
+    if (deps.finalizeOwnRun) {
       try {
-        deps.sweepSuiteDbs()
+        deps.finalizeOwnRun()
       } catch {
         /* best-effort cleanup — a wedged DB must never break the shutdown handler */
       }

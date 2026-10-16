@@ -1784,7 +1784,6 @@ async function executeSuites(
     return 0
   }
 
-  const activeSuiteDbs = new Set<any>()
   let shutdownRequested = false
   let frozenExitCode: number | undefined
   // SESSION-04 (D-01/D-03): the CLI owns the ONE run-level SIGINT. When a RunSession is live the
@@ -1800,21 +1799,12 @@ async function executeSuites(
     graceTimer = undefined
   }
 
-  // Best-effort suite-DB running→cancelled sweep, invoked by the controller on the first signal.
-  const sweepSuiteDbs = () => {
-    for (const activeSuiteDb of activeSuiteDbs) {
-      try {
-        const now = new Date().toISOString()
-        const runningRuns = activeSuiteDb.getRuns({ status: 'running' })
-          .filter((run: any) => run.suiteId && !run.parentRunId)
-        for (const run of runningRuns) {
-          // 2026-08-24 (402-09, D-11): the child fan-out that stood here is deleted with the model
-          // that minted the children. A suite is ONE run row with member handles (402-04), and
-          // cancelling the run cancels the run.
-          activeSuiteDb.updateRun(run.id, { status: 'cancelled', endedAt: now })
-        }
-      } catch { /* best-effort cleanup */ }
-    }
+  // 2026-10-16 (442-03, D-05): the first signal cancels the row this process's ingest wrote, only.
+  let ownSuiteRow: { readonly db: any; readonly id: string } | undefined
+  const finalizeOwnRun = () => {
+    if (ownSuiteRow === undefined) return
+    const endedAt = new Date().toISOString()
+    ownSuiteRow.db.finalizeOwnRun(ownSuiteRow.id, { status: 'cancelled', endedAt })
   }
 
   // RUNX-02 / D1: route both signals through the controller so a SECOND Ctrl+C HARD force-exits
@@ -1833,7 +1823,7 @@ async function executeSuites(
       grace.unref?.()
       graceTimer = grace
     },
-    sweepSuiteDbs,
+    finalizeOwnRun,
   })
 
   // `on`, not `once`, so a repeated Ctrl+C reaches the controller's hard force-exit path.
@@ -1861,7 +1851,6 @@ async function executeSuites(
     ...(variableContext === undefined ? {} : { variableContext }),
     ...(hooksContext === undefined ? {} : { hooksContext }),
     ...(analytics === undefined ? {} : { analytics }),
-    activeSuiteDbs,
   })
   const reporterSelection = requireReporterSelection(opts, Boolean(config.services?.dashboard))
   printPlannerLimits(produced.plannerLimits)
@@ -1887,6 +1876,9 @@ async function executeSuites(
         sourceSnapshot: produced.subscriberSeed?.sourceSnapshot,
         attributes: produced.subscriberSeed?.attributes,
         runCorrelation: { suiteQueueId: runId },
+        onRunCreated: (createdRunId: string) => {
+          ownSuiteRow = { db: runLevelDashboardDb, id: createdRunId }
+        },
       })
     : undefined
   // 398-10 (D-17/D-20): the re-homed subscriber over the port this command composed at its root.
@@ -2083,7 +2075,6 @@ export interface PatternMemberProductionContext {
   readonly opts?: RunOptions
   readonly reporterSelection?: ReporterSelection
   readonly analytics?: () => Promise<CliAnalyticsHost>
-  readonly activeSuiteDbs?: Set<any>
   /**
    * An Appium a HOST already leased for this run (401-07, D-01/D-12 — INVK-01 truth 5).
    *
@@ -2193,7 +2184,6 @@ export async function produceMembersFromPatterns(
         sandboxOptions: context.inputs.sandboxOptions,
       },
       ...(context.analytics === undefined ? {} : { analytics: context.analytics }),
-      ...(context.activeSuiteDbs === undefined ? {} : { activeSuiteDbs: context.activeSuiteDbs }),
       ...(context.resolveAppiumUrl === undefined ? {} : { resolveAppiumUrl: context.resolveAppiumUrl }),
     })
   }
@@ -2384,8 +2374,6 @@ export interface SuiteRunMemberProductionInput {
   readonly variableContext?: SuiteVariableContext
   readonly hooksContext?: { resolvedHooks: Map<string, HookDefinition>; sandboxOptions: SandboxRunnerOptions }
   readonly analytics?: () => Promise<CliAnalyticsHost>
-  /** The door's live suite-database set, so its signal sweep can still find them. */
-  readonly activeSuiteDbs?: Set<any>
   /**
    * An Appium a HOST already leased for this run (401-07, D-01/D-12 — INVK-01 truth 5).
    *
@@ -2428,7 +2416,6 @@ export async function produceSuiteRunMembers(
   const suiteRunMask: MaskFn = (text) => suiteRunSecretRedactor.redactString(text)
   const hooksContext = input.hooksContext
   const analytics = input.analytics
-  const activeSuiteDbs = input.activeSuiteDbs ?? new Set<any>()
   const parsedSuiteDefinitions = input.preflight.definitions
   const preloadedSuiteTests = input.preflight.preloadedTests
   const preflightRunProduct = input.preflight.product
@@ -2468,7 +2455,6 @@ export async function produceSuiteRunMembers(
         dbPath: resolveDashboardDbPath({ configDir, configuredDbPath }),
         runOwnership: composeRunOwnership(),
       })
-      activeSuiteDbs.add(dashboardDb)
       return { dashboardDb, logStorage: dashboardDb }
     } catch (err) {
       console.warn(pc.yellow(`Warning: Could not load dashboard reporter: ${err instanceof Error ? err.message : String(err)}`))
@@ -2478,7 +2464,6 @@ export async function produceSuiteRunMembers(
 
   const closeSuiteDashboardDb = (dashboardDb?: any) => {
     if (!dashboardDb) return
-    activeSuiteDbs.delete(dashboardDb)
     dashboardDb.close()
   }
 
@@ -4653,6 +4638,8 @@ export function createRunCommand(): Command {
     )
     .action(async (patterns: string[], opts: RunOptions, command: Command) => {
       let _crashDb: any
+      // 2026-10-16 (442-03, D-05): the row this process's ingest wrote; the only row it finalizes.
+      let _ownRunRowId: string | undefined
       let _crashSecretRedactor: SecretRedactor | undefined
       // 433-35 (G-433-11): the run this invocation started, so a framework error names the id it recorded.
       let _startedRunId: string | undefined
@@ -5006,6 +4993,11 @@ export function createRunCommand(): Command {
             grace.unref?.()
             graceTimer = grace
           },
+          finalizeOwnRun: () => {
+            if (!dashboardDb || _ownRunRowId === undefined) return
+            const endedAt = new Date().toISOString()
+            dashboardDb.finalizeOwnRun(_ownRunRowId, { status: 'cancelled', endedAt })
+          },
         })
         // `on`, not `once`, so a repeated Ctrl+C reaches the controller's hard force-exit path.
         process.on('SIGINT', shutdownController.handleSignal)
@@ -5072,7 +5064,11 @@ export function createRunCommand(): Command {
               db: dashboardDb,
               attributes: resolveCliRunAttributes(userRunAttributes, 'local', inheritedRunAttributes),
               runCorrelation: { runId: singleRunId },
-              onRunCreated: (createdRunId: string) => { currentRunId = createdRunId; logger?.setRunId(createdRunId) },
+              onRunCreated: (createdRunId: string) => {
+                _ownRunRowId = createdRunId
+                currentRunId = createdRunId
+                logger?.setRunId(createdRunId)
+              },
             })
           : undefined
         // 398-10: same factory, same composed port — Pitfall 8's rule applied to analytics.
@@ -5258,48 +5254,45 @@ export function createRunCommand(): Command {
         const errStack = err instanceof Error ? err.stack ?? '' : ''
         const formattedError = formatFrameworkError(errMsg)
         console.error(pc.red(frameworkErrorTerminalLine(errMsg, _crashSecretRedactor)))
-        const crashRunIdsPrinted = new Set<string>()
 
-        if (_crashDb) {
+        if (_crashDb && _ownRunRowId !== undefined) {
           const fullError = `${errMsg}\n${errStack}`
           const isBrowserClose = fullError.includes('Target page, context or browser has been closed')
             || fullError.includes('browser has been closed')
             || fullError.includes('Browser closed')
+          const finalStatus = isBrowserClose ? 'cancelled' : 'failed'
+          const failureSummary = isBrowserClose
+            ? 'Browser closed by user'
+            : redactSecretValue(formattedError.failureSummary, _crashSecretRedactor)
           try {
-            const runs = _crashDb.getRuns({ status: 'running' })
-            for (const run of runs) {
-              const finalStatus = isBrowserClose ? 'cancelled' : 'failed'
-              printRunId(run.id)
-              crashRunIdsPrinted.add(run.id)
-              printRunAttributes(run.attributes)
-              _crashDb.updateRun(run.id, {
-                status: finalStatus,
-                duration: run.startedAt ? Date.now() - new Date(run.startedAt).getTime() : 0,
-                endedAt: new Date().toISOString(),
-                failureSummary: isBrowserClose ? 'Browser closed by user' : redactSecretValue(formattedError.failureSummary, _crashSecretRedactor),
-              })
-              try {
-                const artifact = _crashDb.getRunArtifact(run.id)
-                if (artifact && !artifact.finalizedAt) {
-                  _crashDb.finalizeRunArtifact(run.id, {
-                    runtime: {
-                      status: finalStatus,
-                      duration: run.startedAt ? Date.now() - new Date(run.startedAt).getTime() : 0,
-                    },
-                    errors: [{
-                      code: isBrowserClose ? 'browser-disconnect' : 'process-close',
-                      phase: 'process-close',
-                      message: isBrowserClose ? 'Browser closed by user' : redactSecretValue(formattedError.failureSummary, _crashSecretRedactor),
-                    }],
-                  })
-                }
-              } catch { /* best-effort cleanup */ }
+            const ownRow = _crashDb.getRun(_ownRunRowId)
+            const startedAt = ownRow?.startedAt
+            const duration = startedAt ? Date.now() - new Date(startedAt).getTime() : 0
+            const finalized = _crashDb.finalizeOwnRun(_ownRunRowId, {
+              status: finalStatus,
+              duration,
+              endedAt: new Date().toISOString(),
+              failureSummary,
+            })
+            if (finalized) {
+              printRunAttributes(ownRow?.attributes)
+              const artifact = _crashDb.getRunArtifact(_ownRunRowId)
+              if (artifact && !artifact.finalizedAt) {
+                _crashDb.finalizeRunArtifact(_ownRunRowId, {
+                  runtime: { status: finalStatus, duration },
+                  errors: [{
+                    code: isBrowserClose ? 'browser-disconnect' : 'process-close',
+                    phase: 'process-close',
+                    message: failureSummary,
+                  }],
+                })
+              }
             }
           } catch { /* best-effort cleanup */ }
         }
 
         // The run already recorded its verdict and the cause (433-35), so the id is how to read it.
-        if (_startedRunId !== undefined && !crashRunIdsPrinted.has(_startedRunId)) printRunId(_startedRunId)
+        if (_startedRunId !== undefined) printRunId(_startedRunId)
 
         if (_crashDb) {
           try { _crashDb.close() } catch {}

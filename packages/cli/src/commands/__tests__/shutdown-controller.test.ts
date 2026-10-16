@@ -1,7 +1,7 @@
 // Phase 364 Plan 03 (RUNX-02 / D1): the first-vs-second-signal contract for the extracted CLI
 // shutdown controller. The controller owns the SIGINT/SIGTERM dispatch logic that was inline in
 // run.ts `handleShutdown`: the FIRST signal runs the graceful path (exitCode 130, route into the
-// RunSession cancel, arm the unref'd force-exit backstop, best-effort suite-DB cancellation) and a
+// RunSession cancel, arm the unref'd force-exit backstop, best-effort own-row finalization) and a
 // SECOND signal HARD force-exits (130) immediately — independent of the grace timer and of any
 // wedged async `done`. Every effectful dependency is injected so the whole controller is
 // deterministic with plain spies (no real signals, no real timers).
@@ -14,7 +14,7 @@ function makeDeps(overrides: Partial<ShutdownControllerDeps> = {}): ShutdownCont
     exit: vi.fn(),
     setExitCode: vi.fn(),
     armGrace: vi.fn(),
-    sweepSuiteDbs: vi.fn(),
+    finalizeOwnRun: vi.fn(),
     ...overrides,
   }
 }
@@ -29,7 +29,7 @@ describe('createShutdownController — first-vs-second-signal contract', () => {
     expect(deps.setExitCode).toHaveBeenCalledWith(130)
     expect(deps.cancel).toHaveBeenCalledTimes(1)
     expect(deps.armGrace).toHaveBeenCalledTimes(1)
-    expect(deps.sweepSuiteDbs).toHaveBeenCalledTimes(1)
+    expect(deps.finalizeOwnRun).toHaveBeenCalledTimes(1)
     // The graceful path must not force-exit — it hands the process to the RunSession cancel and the
     // unref'd grace-timer backstop, so a clean settle exits through the verdict map.
     expect(deps.exit).not.toHaveBeenCalled()
@@ -70,14 +70,14 @@ describe('createShutdownController — first-vs-second-signal contract', () => {
 
   it('the suite-DB sweep is best-effort — a throwing sweep never escapes the handler', () => {
     const deps = makeDeps({
-      sweepSuiteDbs: vi.fn(() => {
+      finalizeOwnRun: vi.fn(() => {
         throw new Error('db is wedged')
       }),
     })
     const controller = createShutdownController(deps)
 
     expect(() => controller.handleSignal()).not.toThrow()
-    // The graceful path still completed its other effects despite the throwing sweep.
+    // The graceful path still completed its other effects despite the throwing finalizer.
     expect(deps.setExitCode).toHaveBeenCalledWith(130)
     expect(deps.cancel).toHaveBeenCalledTimes(1)
     expect(deps.armGrace).toHaveBeenCalledTimes(1)
@@ -97,7 +97,7 @@ describe('createShutdownController — first-vs-second-signal contract', () => {
   })
 
   it('the sweep is optional — a controller without a suite-DB sweep still runs the graceful path', () => {
-    const deps = makeDeps({ sweepSuiteDbs: undefined })
+    const deps = makeDeps({ finalizeOwnRun: undefined })
     const controller = createShutdownController(deps)
 
     expect(() => controller.handleSignal()).not.toThrow()
@@ -118,5 +118,19 @@ describe('createShutdownController — first-vs-second-signal contract', () => {
     expect(deps.cancel).not.toHaveBeenCalled()
     expect(deps.armGrace).not.toHaveBeenCalled()
     expect(deps.exit).not.toHaveBeenCalled()
+  })
+})
+
+describe('C442-OWN-RUN-ONLY', () => {
+  it("the shutdown controller finalizes this process's own run once, on the first signal", () => {
+    const deps = makeDeps()
+    const controller = createShutdownController(deps)
+
+    controller.handleSignal()
+    controller.handleSignal()
+    controller.handleSignal()
+
+    expect(deps.finalizeOwnRun).toHaveBeenCalledTimes(1)
+    expect(deps.exit).toHaveBeenCalledTimes(2)
   })
 })
