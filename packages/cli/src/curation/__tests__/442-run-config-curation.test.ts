@@ -1,4 +1,14 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 
@@ -9,13 +19,21 @@ import {
   asRunId,
   type CompletedRunHandoff,
   type ElementInfo,
+  type MaskFn,
   type ScreenState,
   type StepEvidence,
 } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { createDeclaredSecretMask } from '../../composition/declared-secrets.js'
-import { completedRunDir, readCurationTailReceipt } from '../curation-tail.js'
+import {
+  completedRunDir,
+  curateCompletedRun,
+  defaultCurationTailOperations,
+  readCurationTailReceipt,
+  runCurationTail,
+  type CurationTailOperations,
+} from '../curation-tail.js'
 import { composeCliPostRunTail } from '../post-run-tail-composition.js'
 import type { PostRunTailHostInput, PostRunTailOperations } from '../post-run-tail.js'
 
@@ -23,8 +41,11 @@ import type { PostRunTailHostInput, PostRunTailOperations } from '../post-run-ta
 const VALUE_A = 'alpha-tenant-7731'
 const VALUE_B = 'bravo-tenant-4410'
 const MARKER_A = '[secret:A_SECRET]'
+const VALUE_LATE = 'late-tenant-9902'
+const MARKER_LATE = '[secret:A_LATE]'
 const RUN_A = 'r-c442-run-a'
 const RUN_B = 'r-c442-run-b'
+const RUN_A_LATER = 'r-c442-run-a-later'
 const SCOPE_A = 'tenant-a'
 const SCOPE_B = 'tenant-b'
 const TAIL_TIMEOUT_MS = 180_000
@@ -153,13 +174,15 @@ function step(stepIndex: number, scopeKey: string, value: string): StepEvidence 
       channel3: [],
       briefDigest: 'brief-digest',
     },
-    subActions: [{
-      plan: `Use ${target.ref}`,
-      plannedAction: { type: 'click', ref: target.ref },
-      stateBefore: state,
-      stateAfter: state,
-      result: { success: true },
-    }],
+    subActions: [
+      {
+        plan: `Use ${target.ref}`,
+        plannedAction: { type: 'click', ref: target.ref },
+        stateBefore: state,
+        stateAfter: state,
+        result: { success: true },
+      },
+    ],
     verifierVerdict: { pass: true, reasoning: 'step verified' },
   }
 }
@@ -175,21 +198,27 @@ function seedRun(p: Project, runId: string, scopeKey: string, values: readonly s
     configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
     startedAt: 1_750_000_000_000,
     endedAt: 1_750_000_001_000,
-    tests: [{
-      testId: `${scopeKey}::open-account`,
-      testName: 'Open the account',
-      testIndex: 0,
-      outcome: 'passed',
-      steps: values.map((value, index) => step(index, scopeKey, value)),
-      filePath: 'account.spec.yaml',
-    }],
+    tests: [
+      {
+        testId: `${scopeKey}::open-account`,
+        testName: 'Open the account',
+        testIndex: 0,
+        outcome: 'passed',
+        steps: values.map((value, index) => step(index, scopeKey, value)),
+        filePath: 'account.spec.yaml',
+      },
+    ],
   }
   new FsHandoffStore({ root: p.agentQaRoot, runId }).save(handoff)
 }
 
+function recordPath(p: Project, runId: string): string {
+  return join(completedRunDir(p.agentQaRoot, runId), 'run-config.json')
+}
+
 function writeRecord(p: Project, runId: string, configPath: string): void {
   writeFileSync(
-    join(completedRunDir(p.agentQaRoot, runId), 'run-config.json'),
+    recordPath(p, runId),
     `${JSON.stringify({ schemaVersion: 1, runId, configPath })}\n`,
   )
 }
@@ -203,8 +232,9 @@ function committedFilesUnder(dir: string): string[] {
 }
 
 function filesHolding(dir: string, text: string): string[] {
-  return committedFilesUnder(dir).filter((file) =>
-    file.includes(text) || readFileSync(file, 'utf8').includes(text))
+  return committedFilesUnder(dir).filter(
+    (file) => file.includes(text) || readFileSync(file, 'utf8').includes(text),
+  )
 }
 
 function recordsOfRun(knowledgeRoot: string, runId: string): string[] {
@@ -244,16 +274,40 @@ function fakeHost(): never {
   } as never
 }
 
+interface AuthorEgress {
+  readonly sourceRunId: string
+  readonly mask: MaskFn
+}
+
+// The curator author's egress mask, paired with the run whose fold built it.
+function authorSpy(egress: AuthorEgress[]): Partial<CurationTailOperations> {
+  const shipped = defaultCurationTailOperations()
+  let built: MaskFn | undefined
+  return {
+    buildCuratorAuthor: ((deps: { mask: MaskFn }) => {
+      built = deps.mask
+      return async () => ({ kind: 'fallback-required', reason: 'no-model' })
+    }) as never,
+    drainQueue: ((request: { sourceRunId: string }) => {
+      if (built !== undefined) egress.push({ sourceRunId: request.sourceRunId, mask: built })
+      built = undefined
+      return shipped.drainQueue(request as never)
+    }) as never,
+  }
+}
+
 async function drainTail(input: {
   readonly p: Project
   readonly runId: string
   readonly configPath: string
   readonly knowledgeDir: string
   readonly chainRunId?: string
+  readonly egress?: AuthorEgress[]
 }): Promise<{ readonly warns: string[]; readonly chain?: ChainResult }> {
   const warns: string[] = []
   let bound: PostRunTailHostInput | undefined
   let chain: ChainResult | undefined
+  const spy = input.egress === undefined ? undefined : authorSpy(input.egress)
   const operations: Partial<PostRunTailOperations> = {
     composeHost: (host) => {
       bound = host
@@ -261,6 +315,14 @@ async function drainTail(input: {
     },
     createChipEmitter: () => ({ observe: () => undefined, finish: () => undefined }) as never,
     nudgeDaemon: async () => undefined,
+    ...(spy === undefined
+      ? {}
+      : {
+          curateCompletedRun: (fold) =>
+            curateCompletedRun({ ...fold, operations: { ...fold.operations, ...spy } }),
+          runCurationTail: (sweep) =>
+            runCurationTail({ ...sweep, operations: { ...sweep.operations, ...spy } }),
+        }),
     ...(input.chainRunId === undefined
       ? {}
       : {
@@ -278,11 +340,56 @@ async function drainTail(input: {
     configFilePath: input.configPath,
     knowledgeConfig: { dir: input.knowledgeDir },
     mask: createDeclaredSecretMask(input.configPath).mask,
+    ...(spy === undefined ? {} : { modelDeps: {} as never }),
     log: { warn: (message: string) => warns.push(message), info: () => undefined },
     operations,
   })
   await tail.drain()
   return { warns, ...(chain === undefined ? {} : { chain }) }
+}
+
+function reasonOf(chain: ChainResult | undefined): string | undefined {
+  return (chain as { readonly reason?: string } | undefined)?.reason
+}
+
+function nothingOfRunA(p: Project): void {
+  for (const knowledgeRoot of [p.knowledgeA, p.knowledgeB]) {
+    expect(recordsOfRun(knowledgeRoot, RUN_A)).toEqual([])
+    expect(filesHolding(knowledgeRoot, VALUE_A)).toEqual([])
+  }
+}
+
+function receiptOfRunA(p: Project): unknown {
+  return readCurationTailReceipt(completedRunDir(p.agentQaRoot, RUN_A))
+}
+
+// One fixture per hand-back case, each driven through both drain paths.
+async function handedBackByB(p: Project, reasonPart: string): Promise<void> {
+  const { chain } = await drainTail({
+    p,
+    runId: RUN_B,
+    configPath: p.bConfig,
+    knowledgeDir: p.knowledgeDirB,
+    chainRunId: RUN_A,
+  })
+  expect(chain?.complete).toBe(false)
+  const reason = reasonOf(chain)
+  expect(reason).toContain(RUN_A)
+  expect(reason).toContain(reasonPart)
+  expect(reason).not.toContain(VALUE_A)
+  expect(receiptOfRunA(p)).toBeUndefined()
+  nothingOfRunA(p)
+
+  const { warns } = await drainTail({
+    p,
+    runId: RUN_B,
+    configPath: p.bConfig,
+    knowledgeDir: p.knowledgeDirB,
+  })
+  expect(warns.filter((line) => line.includes(RUN_A) && line.includes(reasonPart))).toHaveLength(1)
+  expect(receiptOfRunA(p)).toBeUndefined()
+  expect(readCurationTailReceipt(completedRunDir(p.agentQaRoot, RUN_B))).toBeDefined()
+  nothingOfRunA(p)
 }
 
 describe('C442-RUN-CONFIG-CURATION', () => {
@@ -326,6 +433,153 @@ describe('C442-RUN-CONFIG-CURATION', () => {
       expect(filesHolding(p.knowledgeA, VALUE_A)).toEqual([])
       expect(recordsA.every((record) => record.includes(MARKER_A))).toBe(true)
       expect(readCurationTailReceipt(completedRunDir(p.agentQaRoot, RUN_A))).toBeDefined()
+    },
+    TAIL_TIMEOUT_MS,
+  )
+
+  it(
+    "the curator author's egress mask for run A's fold is A's",
+    async () => {
+      for (const chainRunId of [undefined, RUN_A]) {
+        const p = project({ sharedKnowledge: true })
+        seedRun(p, RUN_A, SCOPE_A, [VALUE_A])
+        writeRecord(p, RUN_A, p.aConfig)
+        seedRun(p, RUN_B, SCOPE_B, [VALUE_B])
+        const egress: AuthorEgress[] = []
+
+        await drainTail({
+          p,
+          runId: RUN_B,
+          configPath: p.bConfig,
+          knowledgeDir: p.knowledgeDirB,
+          egress,
+          ...(chainRunId === undefined ? {} : { chainRunId }),
+        })
+
+        const forA = egress.filter((entry) => entry.sourceRunId === RUN_A)
+        expect(forA, "no author was built for run A's fold").toHaveLength(1)
+        expect(forA[0]!.mask(`Open the ${VALUE_A} account`)).toBe(`Open the ${MARKER_A} account`)
+        expect(recordsOfRun(p.knowledgeA, RUN_A).length).toBeGreaterThan(0)
+        expect(filesHolding(p.knowledgeA, VALUE_A)).toEqual([])
+      }
+    },
+    TAIL_TIMEOUT_MS,
+  )
+
+  it(
+    "distinct knowledge roots hand run A back and A's own project curates it",
+    async () => {
+      const p = project({ sharedKnowledge: false })
+      seedRun(p, RUN_A, SCOPE_A, [VALUE_A])
+      writeRecord(p, RUN_A, p.aConfig)
+      seedRun(p, RUN_B, SCOPE_B, [VALUE_B])
+
+      await handedBackByB(p, 'keeps its knowledge in')
+
+      seedRun(p, RUN_A_LATER, SCOPE_A, ['later-account'])
+      writeRecord(p, RUN_A_LATER, p.aConfig)
+      await drainTail({
+        p,
+        runId: RUN_A_LATER,
+        configPath: p.aConfig,
+        knowledgeDir: p.knowledgeDirA,
+      })
+
+      const recordsA = recordsOfRun(p.knowledgeA, RUN_A)
+      expect(recordsA.length, "run A's run was never folded").toBeGreaterThan(0)
+      expect(recordsA.every((record) => record.includes(MARKER_A))).toBe(true)
+      expect(receiptOfRunA(p)).toBeDefined()
+      expect(recordsOfRun(p.knowledgeB, RUN_A)).toEqual([])
+      expect(filesHolding(p.knowledgeA, VALUE_A)).toEqual([])
+      expect(filesHolding(p.knowledgeB, VALUE_A)).toEqual([])
+    },
+    TAIL_TIMEOUT_MS,
+  )
+
+  it(
+    'a value added to the secrets file after the run is masked at curation',
+    async () => {
+      for (const chainRunId of [undefined, RUN_A]) {
+        const p = project({ sharedKnowledge: true })
+        seedRun(p, RUN_A, SCOPE_A, [VALUE_A, VALUE_LATE])
+        writeRecord(p, RUN_A, p.aConfig)
+        seedRun(p, RUN_B, SCOPE_B, [VALUE_B])
+        appendFileSync(p.aSecrets, `A_LATE=${VALUE_LATE}\n`)
+
+        await drainTail({
+          p,
+          runId: RUN_B,
+          configPath: p.bConfig,
+          knowledgeDir: p.knowledgeDirB,
+          ...(chainRunId === undefined ? {} : { chainRunId }),
+        })
+
+        const recordsA = recordsOfRun(p.knowledgeA, RUN_A)
+        expect(recordsA.filter((record) => record.includes(MARKER_LATE))).toHaveLength(1)
+        expect(filesHolding(p.knowledgeA, VALUE_LATE)).toEqual([])
+        expect(filesHolding(p.knowledgeA, VALUE_A)).toEqual([])
+      }
+    },
+    TAIL_TIMEOUT_MS,
+  )
+
+  it(
+    'a run whose secrets file cannot be read is handed back, never curated under another mask',
+    async () => {
+      const cases: ReadonlyArray<readonly [string, (p: Project) => void]> = [
+        ['whose secrets file cannot be read', (p) => rmSync(p.aSecrets)],
+        ['whose secrets file cannot be read', (p) => chmodSync(p.aSecrets, 0o000)],
+        ['which cannot be read', (p) => rmSync(p.aConfig)],
+      ]
+      for (const [reasonPart, breakRunA] of cases) {
+        const p = project({ sharedKnowledge: true })
+        seedRun(p, RUN_A, SCOPE_A, [VALUE_A])
+        writeRecord(p, RUN_A, p.aConfig)
+        seedRun(p, RUN_B, SCOPE_B, [VALUE_B])
+        breakRunA(p)
+
+        await handedBackByB(p, reasonPart)
+      }
+    },
+    TAIL_TIMEOUT_MS,
+  )
+
+  it(
+    "a run with no config record is never curated by another run's tail",
+    async () => {
+      const records: ReadonlyArray<(p: Project) => void> = [
+        () => undefined,
+        (p) =>
+          writeFileSync(
+            recordPath(p, RUN_A),
+            `${JSON.stringify({
+              schemaVersion: 1,
+              runId: RUN_A,
+              configPath: p.aConfig,
+              mask: 'none',
+            })}\n`,
+          ),
+        (p) => {
+          const elsewhere = join(p.root, 'planted-run-config.json')
+          writeFileSync(
+            elsewhere,
+            `${JSON.stringify({
+              schemaVersion: 1,
+              runId: RUN_A,
+              configPath: p.aConfig,
+            })}\n`,
+          )
+          symlinkSync(elsewhere, recordPath(p, RUN_A))
+        },
+      ]
+      for (const writeRunARecord of records) {
+        const p = project({ sharedKnowledge: true })
+        seedRun(p, RUN_A, SCOPE_A, [VALUE_A])
+        writeRunARecord(p)
+        seedRun(p, RUN_B, SCOPE_B, [VALUE_B])
+
+        await handedBackByB(p, 'has no config record')
+      }
     },
     TAIL_TIMEOUT_MS,
   )

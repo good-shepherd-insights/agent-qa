@@ -541,3 +541,32 @@ describe('the third post-run stage (422 D-13)', () => {
     ])
   })
 })
+
+describe('C442-RUN-CONFIG-CURATION', () => {
+  // 2026-10-16 (442-10, D-17): a hand-back is the existing retryable outcome carrying its reason.
+  it('a curate-memory fold that hands its run back is retryable with its reason', async () => {
+    const reason =
+      'Run run-388-real-kinds keeps its knowledge in /tmp/other-root; it is left for a run of its own project.'
+    const handedBack = { curated: 0, deprecated: 0, complete: false, reason }
+    const { context, published } = contextFor({ runId: RUN_ID, executionContext: 'local-headless' })
+    const outcome = await createRealJobKindRegistry({
+      loadCompletedRunHandoff: () => HANDOFF,
+      curateRun: async () => handedBack,
+      persistAnalysis: () => {},
+    }).require('curate-memory').handler(context)
+
+    expect(outcome).toEqual({ status: 'retryable', reason })
+    expect(published.map((entry) => entry.checkpointId)).toEqual(['candidates-authored'])
+
+    const silent = await createRealJobKindRegistry({
+      loadCompletedRunHandoff: () => HANDOFF,
+      curateRun: async () => ({ curated: 0, deprecated: 0, complete: false }),
+      persistAnalysis: () => {},
+    }).require('curate-memory').handler(contextFor({ runId: RUN_ID }).context)
+    expect(silent).toEqual({
+      status: 'retryable',
+      reason: 'the curation fold did not complete and wrote no receipt; the stage will retry '
+        + 'under its declared bound',
+    })
+  })
+})
