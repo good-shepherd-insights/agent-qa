@@ -38,7 +38,7 @@ import type {
 // The bus assigns sequence numbers from 1 (seq 0 never exists). Subscribing at seq 1 replays every
 // retained event then goes live — a subscribe(0) would demand a seq-0 prefix the log can never supply
 // and raise ReplayIncompleteError (bus.ts collectReplay/D-07). This is the full replay-then-live floor.
-const REPLAY_FROM_START = 1
+export const REPLAY_FROM_START = 1
 
 // 2026-10-02 (432-42, D-14): the console pause/resume seam is deleted. It let the confirm decorator
 // clear the live line before a prompt; 432-19 deleted the decorator and nothing read the seam since.

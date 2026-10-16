@@ -75,7 +75,7 @@ import {
   releaseUntakenPostVerdictLease,
   type PostVerdictHandoff,
 } from '../curation/post-verdict-step.js'
-import { attachRunSubscribers } from '../run-session-composition.js'
+import { REPLAY_FROM_START, attachRunSubscribers } from '../run-session-composition.js'
 import {
   isMintedCliRunId,
   mintCliRunId,
@@ -87,6 +87,7 @@ import type {
   RunArtifactSnapshotListener,
   RunInvocationInputs,
   RunOptions,
+  RunRecord,
 } from '../commands/run.js'
 import type { ResolveTrustPriors } from '../curation/trust-priors.js'
 
@@ -229,11 +230,13 @@ export interface InProcessCliRunExecutionOptions {
    * the same patterns after a `--` operand separator. A single-test-shaped default would turn a live request into an input error.
    */
   readonly produceMembers?: RunMemberProducer
-  /**
-   * The door's reporters, attached inside the core's `onSession`. Absent ⇒ none, which is the
-   * daemon's honest posture: the typed bus event log is the run's record (D-04).
-   */
+  /** The door's own reporters, attached inside the core's `onSession`. The record is not one. */
   readonly subscribers?: (input: RunSubscriberAttachInput) => { flush(): Promise<void> } | undefined
+  /**
+   * The run's runs.db record (443-05, D-02/D-22). The drive opens it after the production refusal
+   * and attaches it itself; the door that built it closes it.
+   */
+  readonly runRecord?: RunRecord
   /**
    * The door's post-verdict tail, run INSIDE the run's safety scope and after the subscriber flush,
    * returning the final exit code.
@@ -422,6 +425,7 @@ export async function runInProcessCliRun(
   let quarantined: readonly QuarantineAppliedEntry[] = []
   let startedSession: RunSession | undefined
   let startedSubscribers: { flush(): Promise<void> } | undefined
+  let startedRecord: { flush(): Promise<void> } | undefined
   /**
    * This run's post-verdict handoff box (404 D-10), captured when the core builds the step.
    *
@@ -461,7 +465,17 @@ export async function runInProcessCliRun(
       productionTargetNames: produced.productionTargetNames,
       allowProduction: produced.allowProduction,
     }),
-    afterRefusal: () => produced.loadPlugins(),
+    afterRefusal: async () => {
+      // 2026-10-17 (443-05, D-05): the record opens after the refusal and before any effect.
+      await options.runRecord?.open({
+        runId,
+        configDir: produced.configDir,
+        ...(produced.configuredRunsDbPath === undefined
+          ? {}
+          : { configuredDbPath: produced.configuredRunsDbPath }),
+      })
+      await produced.loadPlugins()
+    },
     assembleRun: async (assemblyContext) => {
       const assembly = await assembleCliRun({
         runId: assemblyContext.runId,
@@ -512,6 +526,18 @@ export async function runInProcessCliRun(
         mask,
         ...(produced.onMemberSnapshot === undefined ? {} : { onMemberSnapshot: produced.onMemberSnapshot }),
       })
+      // Subscribed directly, never through `attachRunSubscribers`: its wire reporter can print to
+      // stdout, which is the protocol on the MCP stdio server and `fn --json`.
+      const record = options.runRecord?.subscriber({
+        mask,
+        ...(produced.onMemberSnapshot === undefined ? {} : { onMemberSnapshot: produced.onMemberSnapshot }),
+        snapshots: {
+          config: produced.subscriberSeed?.configSnapshot,
+          source: produced.subscriberSeed?.sourceSnapshot,
+        },
+      })
+      if (record !== undefined) session.subscribe(REPLAY_FROM_START, record.handler)
+      startedRecord = record
     },
     // 404 D-05/D-10: the post-verdict step, composed HERE and threaded by the core so no door can
     // forget it. It speaks writer-lease vocabulary `agent-local`'s runner seam may not name, which
@@ -614,7 +640,7 @@ export async function runInProcessCliRun(
         await produced.finalize?.()
         // Pitfall 6/8: await EVERY subscriber flush (junit write, dashboard finalize, analytics
         // drain) AFTER `done` and BEFORE publishing the result or re-throwing a framework error.
-        await startedSubscribers?.flush()
+        await Promise.all([startedSubscribers?.flush(), startedRecord?.flush()])
         const postVerdictDeadlineMs = Date.now() + DRAIN_BUDGET_MS
         preparationSettled = await waitForPostVerdictContinuation(postVerdictHandoff?.completion,
           postVerdictDeadlineMs, options.postVerdictSignal)

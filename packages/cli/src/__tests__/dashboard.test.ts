@@ -10,7 +10,6 @@ const {
   mockDashboardDatabase,
   mockResolveDashboardDbPath,
   mockStartServer,
-  mockCreateDashboardRunIngest,
   mockCreateInProcessExecutionBackend,
 } = vi.hoisted(() => ({
   mockResolveConfig: vi.fn(),
@@ -19,11 +18,9 @@ const {
     configuredDbPath || '.agent-qa/runs.db',
   ),
   mockStartServer: vi.fn(),
-  // 401-07: the run door composes both of these through the SAME lazy import. A mock missing
-  // either does not fail as a missing assertion — `createDashboardRunDoor` throws on the
-  // destructure, the command exits 2, and every cell below then measures a command that never ran.
-  // (Which is exactly how this was found: seven cells went red with `Error: process.exit`.)
-  mockCreateDashboardRunIngest: vi.fn(() => ({ handler: vi.fn(), finalize: vi.fn(async () => {}) })),
+  // 401-07: the run door composes this through the same lazy import. A mock missing it does not
+  // fail as a missing assertion — `createDashboardRunDoor` throws on the destructure, the command
+  // exits 2, and every cell below then measures a command that never ran.
   mockCreateInProcessExecutionBackend: vi.fn((options: unknown) => ({
     options,
     execute: vi.fn(),
@@ -47,7 +44,6 @@ vi.mock('@vostride/agent-qa-dashboard', async () => {
   const actual = await vi.importActual<typeof import('@vostride/agent-qa-dashboard')>('@vostride/agent-qa-dashboard')
   return {
     DashboardDatabase: mockDashboardDatabase,
-    createDashboardRunIngest: mockCreateDashboardRunIngest,
     createInProcessExecutionBackend: mockCreateInProcessExecutionBackend,
     // 404-05: THE REAL RELAY, on the reasoning above. The
     // command destructures it from this same lazily imported package, so a mock without it leaves

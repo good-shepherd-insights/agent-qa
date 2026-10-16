@@ -21,8 +21,10 @@ import type {
   MaskFn,
   ModelCapabilities,
   QuarantineAppliedEntry,
+  RunEventEnvelope,
   RunSession,
 } from '@vostride/agent-qa-schema'
+import type { DashboardDatabase } from '@vostride/agent-qa-dashboard'
 import type { SecretStore, SecretRedactor, SecretRedactorPort, HookDefinition, NonActionToolMap, SandboxRunnerOptions } from '@vostride/agent-qa-runner'
 import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
 import type { TestResult, PlatformAdapter, PlatformConfig } from '@vostride/agent-qa-runner'
@@ -912,6 +914,118 @@ function maskRunArtifactSnapshot(
   return {
     ...(isSnapshotRecord(artifact.config) ? { config: maskPayloadStrings(artifact.config, mask) } : {}),
     ...(isSnapshotRecord(artifact.source) ? { source: maskPayloadStrings(artifact.source, mask) } : {}),
+  }
+}
+
+// 2026-10-17 (443-05, D-02/D-22): the one run-record builder. It lives here because this file is the
+// CLI's only ledgered home for the dashboard package (FUNC-02 surface firewall).
+export interface RunRecordHostBinding {
+  readonly db: DashboardDatabase
+  queueRun(runId: string): { readonly attributes?: RunAttributes } | undefined
+}
+
+export interface RunRecordAttach {
+  readonly mask: MaskFn
+  readonly onMemberSnapshot?: (listener: RunArtifactSnapshotListener) => () => void
+  readonly snapshots?: { readonly config?: unknown; readonly source?: unknown }
+}
+
+export interface RunRecord {
+  open(input: { runId: string; configDir: string; configuredDbPath?: string }): Promise<void>
+  readonly db: DashboardDatabase | undefined
+  subscriber(attach: RunRecordAttach): {
+    handler(envelope: RunEventEnvelope): void
+    flush(): Promise<void>
+  }
+  ownRowId(): string | undefined
+  incomplete(): string | undefined
+  close(): void
+}
+
+export function doorRunAttributes(trigger: RunAttributeTrigger): RunAttributes {
+  return buildInternalRunAttributes({ trigger, runner: 'local' })
+}
+
+function isOwnRunningRowOrFree(db: DashboardDatabase, runId: string): boolean {
+  const row = db.getRun(runId)
+  if (row === undefined) return true
+  const owner = db.readRunOwner(runId)
+  return row.status === 'running' && owner !== undefined && db.isOwnStamp(runId, owner)
+}
+
+export function createRunRecord(input: {
+  readonly attributes: RunAttributes
+  readonly host?: RunRecordHostBinding
+  readonly warn: (line: string) => void
+}): RunRecord {
+  let dashboard: typeof import('@vostride/agent-qa-dashboard') | undefined
+  let db: DashboardDatabase | undefined
+  let ownsDb = false
+  let openedFor: string | undefined
+  let ownRow: string | undefined
+  let incompleteReason: string | undefined
+
+  return {
+    get db() {
+      return db
+    },
+    async open({ runId, configDir, configuredDbPath }) {
+      if (openedFor !== undefined) {
+        if (openedFor === runId) return
+        throw new Error(`This run record belongs to ${openedFor} and cannot open ${runId}.`)
+      }
+      openedFor = runId
+      dashboard = await import('@vostride/agent-qa-dashboard')
+      const dbPath = dashboard.resolveDashboardDbPath({
+        configDir,
+        ...(configuredDbPath === undefined ? {} : { configuredDbPath }),
+      })
+      const host = input.host
+      const useHost = host !== undefined
+        && (host.queueRun(runId) !== undefined || host.db.dbPath === dbPath)
+      const handle = useHost
+        ? host.db
+        : new dashboard.DashboardDatabase({ dbPath, runOwnership: composeRunOwnership() })
+      if (!isOwnRunningRowOrFree(handle, runId)) {
+        if (!useHost) handle.close()
+        throw new RunIdAlreadyInUseError(runId)
+      }
+      db = handle
+      ownsDb = !useHost
+    },
+    subscriber(attach) {
+      if (db === undefined || dashboard === undefined || openedFor === undefined) {
+        throw new Error('A run record was attached before it was opened.')
+      }
+      const runId = openedFor
+      const queued = input.host?.queueRun(runId)
+      const attributes = queued === undefined ? input.attributes : queued.attributes
+      const mask = (value: unknown): any => (isSnapshotRecord(value)
+        ? maskPayloadStrings(value, attach.mask)
+        : undefined)
+      const ingest = dashboard.createDashboardRunIngest({
+        db,
+        runId,
+        configSnapshot: mask(attach.snapshots?.config),
+        sourceSnapshot: mask(attach.snapshots?.source),
+        ...(attributes === undefined ? {} : { attributes }),
+        onRunCreated: (created) => { ownRow = created },
+      })
+      const unsubscribe = attach.onMemberSnapshot?.((snapshot) => { ingest.stageSnapshots(snapshot) })
+      return {
+        handler: ingest.handler,
+        flush: async () => {
+          unsubscribe?.()
+          await ingest.finalize()
+        },
+      }
+    },
+    ownRowId: () => ownRow,
+    incomplete: () => incompleteReason,
+    close() {
+      if (ownsDb) db?.close()
+      ownsDb = false
+    },
   }
 }
 
@@ -3544,6 +3658,9 @@ export async function produceSuiteRunMembers(
     logger: { setRunId: () => { /* the suite path stamps its loggers per prepared suite */ } },
     secretRedactor: suiteRunSecretRedactor,
     loadPlugins: input.loadPlugins,
+    ...(config.services?.dashboard?.dbPath === undefined
+      ? {}
+      : { configuredRunsDbPath: config.services.dashboard.dbPath }),
     subscriberSeed: (() => {
       const withDb = preparedSuites.find((p) => p.dashboardDb)
       if (withDb === undefined) return {}
@@ -3769,6 +3886,8 @@ export interface ProducedCliRunMembers {
   finalize?(): Promise<void>
   /** The run's plugin load (442-08, D-10), which the core awaits after its production refusal. */
   readonly loadPlugins: () => Promise<void>
+  /** The run's own config's `services.dashboard.dbPath`, resolved only when the record opens (D-08). */
+  readonly configuredRunsDbPath?: string
 }
 
 export async function produceDirectRunMembers(
@@ -4581,6 +4700,9 @@ export async function produceDirectRunMembers(
     getCurationModelDeps: () => singleCurationModelDeps,
     onMemberSnapshot: memberSnapshots.subscribe,
     loadPlugins: input.inputs.loadPlugins,
+    ...(config.services?.dashboard?.dbPath === undefined
+      ? {}
+      : { configuredRunsDbPath: config.services.dashboard.dbPath }),
   }
 }
 

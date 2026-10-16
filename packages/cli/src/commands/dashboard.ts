@@ -24,6 +24,7 @@ import {
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import { refuseProductionWithoutOptIn } from '@vostride/agent-qa-agent-local'
 import { resolveWorkspacePaths } from '@vostride/agent-qa-core'
+import type { RunAttributes } from '@vostride/agent-qa-core'
 import type {
   AgentHost,
   AgentRegistryHandle,
@@ -487,11 +488,7 @@ interface DashboardRunEntry {
   readonly onSession: (session: RunSession) => void
   readonly appiumUrl?: string
   readonly flags: DashboardRunFlags
-  readonly ingest: {
-    handler: (envelope: RunEventEnvelope) => void
-    stageSnapshots: (snapshots: { config?: Record<string, unknown>; source?: Record<string, unknown> }) => void
-    finalize: () => Promise<void>
-  }
+  readonly attributes?: RunAttributes
 }
 
 /** The queue's argv operands that are FLAGS rather than patterns. Exactly one today. */
@@ -570,14 +567,7 @@ export async function createDashboardRunDoor(input: {
    */
   readonly configPath?: string
 }): Promise<DashboardRunDoor> {
-  const {
-    createDashboardRunIngest,
-    createInProcessExecutionBackend,
-  } = await import('@vostride/agent-qa-dashboard')
-  // DEFERRED, and load-bearing: `in-process-run-execution.ts` imports `commands/run.ts`'s producers
-  // statically and `commands/run.ts` imports this command's neighbours, so a static edge back can
-  // close an ESM cycle at module-evaluation time. Every other door acquires this port the same way.
-  const { cliRunSubscribers } = await import('../composition/in-process-run-execution.js')
+  const { createInProcessExecutionBackend } = await import('@vostride/agent-qa-dashboard')
 
   const entries = new Map<string, DashboardRunEntry>()
   /** 402-01: everyone watching the ONE bridge this process's host publishes sessions through. */
@@ -599,26 +589,15 @@ export async function createDashboardRunDoor(input: {
         } catch { /* one watcher's failure is not another's, and never the run's */ }
       }
     },
-    // THE DB WRITES (D-09's build-order pin). Each run's ingest is built with that run's own id, so
-    // two concurrent runs claim two different rows.
-    subscribers: (attach) => {
-      const entry = entries.get(attach.session.id as unknown as string)
-      if (entry === undefined) return undefined
-      // 433-29 (G-433-5, F-433-15): the producer's masked test/config snapshot replaces the queue's
-      // `loadStatus: 'queued'` placeholder on this run's artifact.
-      const unsubscribe = attach.onMemberSnapshot?.((snapshot) => { entry.ingest.stageSnapshots(snapshot) })
-      return cliRunSubscribers({
-        // NO CONSOLE REPORTER. This process's stdout is a server's log, not a run's transcript, and
-        // a run's transcript is the typed bus event log (D-04).
-        console: false,
-        extraSubscribers: [{
-          handler: entry.ingest.handler,
-          flush: async () => {
-            unsubscribe?.()
-            await entry.ingest.finalize()
-          },
-        }],
-      })(attach)
+    // 2026-10-17 (443-05, D-02/D-06): every run's record writes through this one handle when its
+    // runs.db is this file, and a queued run keeps its routes' attributes.
+    record: {
+      db: input.db as never,
+      queueRun: (runId: string) => {
+        const entry = entries.get(runId)
+        if (entry === undefined) return undefined
+        return entry.attributes === undefined ? {} : { attributes: entry.attributes }
+      },
     },
     resolveAppiumUrl: (runId: string): string | undefined => entries.get(runId)?.appiumUrl,
     resolveRunFlags: (runId: string): DashboardRunFlags | undefined => entries.get(runId)?.flags,
@@ -661,17 +640,11 @@ export async function createDashboardRunDoor(input: {
         )
       }
 
-      const ingest = createDashboardRunIngest({
-        db: input.db as never,
-        runId: opts.runId,
-        ...(opts.attributes === undefined ? {} : { attributes: opts.attributes }),
-      })
-
       entries.set(opts.runId, {
         onSession,
         ...(opts.appiumUrl === undefined ? {} : { appiumUrl: opts.appiumUrl }),
         flags,
-        ingest,
+        ...(opts.attributes === undefined ? {} : { attributes: opts.attributes }),
       })
       try {
         const request: RunsStartInput = {

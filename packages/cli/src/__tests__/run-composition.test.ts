@@ -201,6 +201,8 @@ describe('the CLI run-session module exports presentation ONLY (385-08 / D-13)',
 
     expect(declared).toEqual([
       'AttachRunSubscribersInput',
+      // 2026-10-17 (443-05, D-22): the replay floor the drive subscribes the run's record at.
+      'REPLAY_FROM_START',
       'attachRunSubscribers',
       // 2026-08-17 (398-10): the run-completion analytics subscriber factory. It belongs beside
       // `attachRunSubscribers` for that helper's own reason — `run.ts` has two `startRun` sites

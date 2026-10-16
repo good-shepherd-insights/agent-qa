@@ -189,6 +189,7 @@ import type { CliAnalyticsHost } from './analytics-host.js'
 // runtime edge, and is how this host names the option shapes it merely passes through — the port
 // itself is still acquired through the deferred `await import(...)` in `createComposedRunExecution`.
 import type { InProcessCliRunExecutionOptions } from './in-process-run-execution.js'
+import type { RunRecordHostBinding } from '../commands/run.js'
 // Type-only: the pump's authority shape, named here because this door's drain leg declares
 // what its `takeLease` thunk answered. Erased at emit, so no runtime edge is added.
 import type { CurationWriterAuthority } from '../curation/curation-tail.js'
@@ -279,11 +280,10 @@ export function createConfigReader(configPath: string, mask: MaskFn): ConfigRead
  * drive starts the tail AFTER `afterVerdict` settles, does not await it, and hands it the run's
  * close-out.
  *
- * WHAT ARRIVES FROM THE HOST SINCE 401-07: `onSession`, `subscribers`, `resolveAppiumUrl` and
- * `resolveRunFlags`, all four through `runBridge` and all four absent unless a host asks. A host that watches its runs
- * needs the first; one that writes its own rows needs the second (D-04 still holds for a host that
- * asks for neither — the typed bus event log is the run's record, and a reporter bound by default
- * would be the console tee under another name); one that leases devices needs the third.
+ * WHAT ARRIVES FROM THE HOST SINCE 401-07: `onSession`, `resolveAppiumUrl` and `resolveRunFlags`,
+ * all through `runBridge` and all absent unless a host asks. A host that watches its runs needs the
+ * first; one that leases devices needs the second. Every run is recorded in runs.db through one
+ * record per execute (443-05, D-02); a host holding a runs.db handle lends it as `runBridge.record`.
  *
  * IT IS ACQUIRED THROUGH A DEFERRED IMPORT, and that is load-bearing rather than stylistic.
  * `composition/in-process-run-execution.ts` imports `commands/run.js`'s producers statically — the
@@ -303,7 +303,7 @@ function createComposedRunExecution(input: {
     // 432-13: the port's second argument (the retired run gate's standing-approval reader) is not
     // taken. Nothing asks, so there is no approval for a reader to satisfy.
     async execute(request: RunsStartInput): Promise<{ runId: RunId }> {
-      const { resolveRunInvocationInputs } = await import('../commands/run.js')
+      const { createRunRecord, doorRunAttributes, resolveRunInvocationInputs } = await import('../commands/run.js')
       const {
         refuseUnhonourableRequestFields,
         runInProcessCliRun,
@@ -328,6 +328,11 @@ function createComposedRunExecution(input: {
         warn,
       })
       const trustPriors = selectTrustPriors(inputs.configFilePath)
+      const runRecord = createRunRecord({
+        attributes: doorRunAttributes('cli'),
+        ...(input.runBridge?.record === undefined ? {} : { host: input.runBridge.record }),
+        warn,
+      })
 
       let startedRunId: string | undefined
       try {
@@ -360,9 +365,7 @@ function createComposedRunExecution(input: {
               startedRunId = session.id as unknown as string
               input.runBridge?.onSession?.(session)
             },
-            ...(input.runBridge?.subscribers === undefined
-              ? {}
-              : { subscribers: input.runBridge.subscribers }),
+            runRecord,
             ...(input.runBridge?.resolveAppiumUrl === undefined
               ? {}
               : { resolveAppiumUrl: input.runBridge.resolveAppiumUrl }),
@@ -450,6 +453,8 @@ function createComposedRunExecution(input: {
         if (startedRunId === undefined) throw error
         warn(`Run ${startedRunId} failed: ${error instanceof Error ? error.message : String(error)}`)
         return { runId: startedRunId as RunId }
+      } finally {
+        runRecord.close()
       }
     },
   }
@@ -558,21 +563,21 @@ export interface ComposeCliLocalAgentInput {
   /**
    * The D-09 RUN BRIDGE: what a host that watches its own runs needs from them (401-07, INVK-01).
    *
-   * ONE OPTION RATHER THAN THREE FIELDS, because the three are one story — a host that bridges a
-   * run's bus to a surface also needs that run's reporters and, if it leases devices, that run's
-   * device. A door that wants none of it passes nothing and this composition is byte-identical to
-   * what it was; the dashboard is the only door that wants any of it today, and it wants all three.
+   * ONE OPTION, because its members are one story — a host that bridges a run's bus to a surface
+   * also lends its runs.db handle and, if it leases devices, that run's device. A door that wants
+   * none of it passes nothing; the dashboard is the only door that wants any of it today.
    *
-   * IT IS A PASS-THROUGH, NOT A DECISION. Every member is handed to `runInProcessCliRun` as the
-   * option of the same name. This host adds nothing and defaults nothing — `onSession` in
+   * IT IS A PASS-THROUGH, NOT A DECISION. Every member but `record` is handed to
+   * `runInProcessCliRun` as the option of the same name; `record` is lent to the run's record. This
+   * host adds nothing and defaults nothing — `onSession` in
    * particular is CHAINED onto the door's own local capture rather than replacing it, because that
    * capture is what the ack-law catch below reads to tell a started run from one that never began.
    */
   runBridge?: {
     /** Fired with each started `RunSession` — the D-09 bridge hook. */
     readonly onSession?: (session: RunSession) => void
-    /** The host's own bus subscribers, attached inside the core's `onSession`. */
-    readonly subscribers?: InProcessCliRunExecutionOptions['subscribers']
+    /** The host's runs.db handle and its queue's rows (443-05, D-06). */
+    readonly record?: RunRecordHostBinding
     /** The Appium this host leased for a named run, if it leases any. */
     readonly resolveAppiumUrl?: InProcessCliRunExecutionOptions['resolveAppiumUrl']
     /** Per-run flags this host's own UI offers that the request DTO has no field for. */
