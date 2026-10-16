@@ -9798,6 +9798,1104 @@
       "file": "packages/cli/src/__tests__/441-gap4-eval-corpus.test.ts",
       "fullName": "C441-GAP4-CORPUS under a one-character declared value, eval seed seeds a run whose lossless served brief holds it and a false-pass mark on that run is marked, while its free text commits only as the marker",
       "origin": "441 GAP4-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/424-read-migration.test.ts",
+      "fullName": "C442-SCHEMA-V5 a version 4 file is refused naming the file and left untouched",
+      "origin": "442 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/424-read-migration.test.ts",
+      "fullName": "C442-SCHEMA-V5 a version 3 file is refused naming the file and left untouched",
+      "origin": "442 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/424-read-migration.test.ts",
+      "fullName": "C442-SCHEMA-V5 a newer file is refused naming the file",
+      "origin": "442 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/database.test.ts",
+      "fullName": "C442-SCHEMA-V5 a fresh runs database opens at version 5 with the owner columns",
+      "origin": "442 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/database.test.ts",
+      "fullName": "C442-SCHEMA-V5 an owner-less running row is refused by the store",
+      "origin": "442 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/database.test.ts",
+      "fullName": "C442-OWNER-STAMP the queue flip stamps the dashboard",
+      "origin": "442 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/database.test.ts",
+      "fullName": "C442-OWNER-STAMP a handle with no injected owner stamps this process on this host with no incarnation",
+      "origin": "442 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/reporter/__tests__/dashboard-subscriber.test.ts",
+      "fullName": "C442-OWNER-STAMP the ingest stamps its own row",
+      "origin": "442 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/run-owner-probe.test.ts",
+      "fullName": "C442-OWNER-STAMP the CLI composes its own pid, start time and host",
+      "origin": "442 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner.test.ts",
+      "fullName": "C442-OWNER-CLASSIFY answers self for this process's own pid and start time",
+      "origin": "442 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner.test.ts",
+      "fullName": "C442-OWNER-CLASSIFY answers gone for a dead pid",
+      "origin": "442 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner.test.ts",
+      "fullName": "C442-OWNER-CLASSIFY answers gone for a live pid whose start time differs from the stamp",
+      "origin": "442 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner.test.ts",
+      "fullName": "C442-OWNER-CLASSIFY answers alive for a live pid with the stamped start time",
+      "origin": "442 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner.test.ts",
+      "fullName": "C442-OWNER-CLASSIFY answers unknown when the start time of a live pid cannot be read",
+      "origin": "442 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner.test.ts",
+      "fullName": "C442-OWNER-CLASSIFY answers unknown for a live pid stamped with no start time",
+      "origin": "442 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner.test.ts",
+      "fullName": "C442-OWNER-CLASSIFY answers unknown when the liveness probe throws",
+      "origin": "442 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner.test.ts",
+      "fullName": "C442-OWNER-CLASSIFY answers unknown for an owner on another host even when its pid is dead here",
+      "origin": "442 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner.test.ts",
+      "fullName": "C442-OWNER-CLASSIFY does not answer self for its own pid with a different start time",
+      "origin": "442 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner.test.ts",
+      "fullName": "C442-OWNER-CLASSIFY the default ownership never answers alive or gone for a live pid",
+      "origin": "442 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/run-owner.test.ts",
+      "fullName": "C442-OWNER-CLASSIFY the orphan and owned-elsewhere sentences name the pid",
+      "origin": "442 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/run-owner-probe.test.ts",
+      "fullName": "C442-OWNER-CLASSIFY the composed probe reads real processes",
+      "origin": "442 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/442-orphan-startup.test.ts",
+      "fullName": "C442-ORPHAN a starting dashboard finalizes a gone owner's run with the plain sentence",
+      "origin": "442 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/442-orphan-startup.test.ts",
+      "fullName": "C442-ORPHAN a starting dashboard leaves a live, unknown or own run running",
+      "origin": "442 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/442-orphan-startup.test.ts",
+      "fullName": "C442-ORPHAN a reused pid is gone",
+      "origin": "442 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/442-orphan-startup.test.ts",
+      "fullName": "C442-ORPHAN pending rows are untouched by the startup sweep",
+      "origin": "442 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/442-orphan-startup.test.ts",
+      "fullName": "C442-ORPHAN an empty runs database starts with nothing finalized and no cleanup line",
+      "origin": "442 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/442-orphan-startup.test.ts",
+      "fullName": "C442-ORPHAN a second dashboard start finalizes nothing twice",
+      "origin": "442 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/database.test.ts",
+      "fullName": "C442-ORPHAN an orphan is finalized failed with the plain sentence",
+      "origin": "442 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/database.test.ts",
+      "fullName": "C442-ORPHAN exactly one finalizer wins a race",
+      "origin": "442 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/database.test.ts",
+      "fullName": "C442-ORPHAN the sweeps find nothing to do on an empty table",
+      "origin": "442 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/442-run-ownership.e2e.test.ts",
+      "fullName": "C442-OWN-RUN-ONLY a crash of one run leaves the other run's row, artifact and post-run work intact",
+      "origin": "442 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/442-run-ownership.e2e.test.ts",
+      "fullName": "C442-OWN-RUN-ONLY SIGINT to one run cancels only that run",
+      "origin": "442 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/442-run-ownership.e2e.test.ts",
+      "fullName": "C442-OWN-RUN-ONLY SIGTERM to one run cancels only that run",
+      "origin": "442 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/442-run-ownership.e2e.test.ts",
+      "fullName": "C442-OWN-RUN-ONLY each run's row names its own process",
+      "origin": "442 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/442-run-ownership.e2e.test.ts",
+      "fullName": "C442-OWN-RUN-ONLY an interrupted single-test run finalizes its own row",
+      "origin": "442 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/shutdown-controller.test.ts",
+      "fullName": "C442-OWN-RUN-ONLY the shutdown controller finalizes this process's own run once, on the first signal",
+      "origin": "442 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/442-run-ownership.e2e.test.ts",
+      "fullName": "C442-DASHBOARD-START a dashboard started while a run is in flight leaves it running",
+      "origin": "442 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/442-run-ownership.e2e.test.ts",
+      "fullName": "C442-DASHBOARD-START the run in flight still finishes as itself",
+      "origin": "442 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/442-run-ownership-census.test.ts",
+      "fullName": "C442-CENSUS — no path finalizes runs it does not own (442 D-05) C442-UNIVERSE-FLOORS: both production regions and every guarded file read real code, so no cell can pass over an empty scan",
+      "origin": "442 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/442-run-ownership-census.test.ts",
+      "fullName": "C442-CENSUS — no path finalizes runs it does not own (442 D-05) C442-NO-RUNNING-SWEEP: no production code lists the running rows to finalize them, and no SQL text updates the runs table by status without naming its id",
+      "origin": "442 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/442-run-ownership-census.test.ts",
+      "fullName": "C442-CENSUS — no path finalizes runs it does not own (442 D-05) C442-STATUS-WRITERS-CLASSIFIED: every runs.status writer is listed with whose row it writes",
+      "origin": "442 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/442-run-ownership-census.test.ts",
+      "fullName": "C442-CENSUS — no path finalizes runs it does not own (442 D-05) C442-OWNER-REQUIRED: the v5 runs table requires an owner on every running row",
+      "origin": "442 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/442-run-ownership-census.test.ts",
+      "fullName": "C442-CENSUS instruments C442-PLANTED-POSITIVE: every removed shape is found when planted as code, and none as a comment",
+      "origin": "442 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/442-run-ownership-census.test.ts",
+      "fullName": "C442-CENSUS instruments C442-SELF-MATCH: this file spells none of the needles it assembles, and lies outside every region it scans",
+      "origin": "442 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/442-cancel-ownership.test.ts",
+      "fullName": "C442-CANCEL-OWNER another live process's run is refused and nothing is written",
+      "origin": "442 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/442-cancel-ownership.test.ts",
+      "fullName": "C442-CANCEL-OWNER an owner whose liveness cannot be shown is refused the same way",
+      "origin": "442 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/442-cancel-ownership.test.ts",
+      "fullName": "C442-CANCEL-OWNER the dashboard still cancels its own queued and running runs",
+      "origin": "442 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/442-run-ownership.e2e.test.ts",
+      "fullName": "C442-CANCEL-OWNER a dashboard cancel leaves a CLI-owned run in flight untouched",
+      "origin": "442 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/442-cancel-ownership.test.ts",
+      "fullName": "C442-CANCEL-ORPHAN a cancel on a run whose process is gone finalizes it as an orphan",
+      "origin": "442 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/442-cancel-ownership.test.ts",
+      "fullName": "C442-CANCEL-ORPHAN a cancel after the orphan was finalized writes nothing",
+      "origin": "442 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/442-cancel-ownership.test.ts",
+      "fullName": "C442-CANCEL-ORPHAN a cancel and a dashboard start over one orphan finalize it once",
+      "origin": "442 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/live-run.test.tsx",
+      "fullName": "C442-CANCEL-SENTENCE the refusal toast shows the route's sentence",
+      "origin": "442 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/live-run.test.tsx",
+      "fullName": "C442-CANCEL-SENTENCE an orphan answer's toast shows its sentence",
+      "origin": "442 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/queue-cancel.test.ts",
+      "fullName": "C442-CANCEL-SENTENCE queue cancel prints a refusal and exits non-zero",
+      "origin": "442 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/queue-cancel.test.ts",
+      "fullName": "C442-CANCEL-SENTENCE queue cancel exits zero when the run was cancelled or finalized as an orphan",
+      "origin": "442 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/server.appium-ownership.test.ts",
+      "fullName": "C442-ENQUEUE-REFUSAL a refused android enqueue takes no Appium lease and executes nothing",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/442-enqueue-refusal.test.ts",
+      "fullName": "C442-ENQUEUE-REFUSAL a production enqueue is refused before anything is queued, leased or recorded",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/442-enqueue-refusal.test.ts",
+      "fullName": "C442-ENQUEUE-REFUSAL an enqueue naming no file is judged against every discovered test",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/442-enqueue-refusal.test.ts",
+      "fullName": "C442-ENQUEUE-REFUSAL an explicit allowProduction: false is refused like an absent one",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/442-enqueue-refusal.test.ts",
+      "fullName": "C442-ENQUEUE-REFUSAL two concurrent refused enqueues leave nothing",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/442-enqueue-refusal.test.ts",
+      "fullName": "C442-ENQUEUE-REFUSAL a declared target still runs in one call",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent-local/src/composition/__tests__/run-invocation-core.test.ts",
+      "fullName": "C442-PLUGINS-AFTER-REFUSAL the post-refusal hook never runs for a refused request",
+      "origin": "442 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent-local/src/composition/__tests__/run-invocation-core.test.ts",
+      "fullName": "C442-PLUGINS-AFTER-REFUSAL the post-refusal hook runs once before any port on an allowed request",
+      "origin": "442 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent-local/src/composition/__tests__/run-invocation-core.test.ts",
+      "fullName": "C442-PLUGINS-AFTER-REFUSAL a hook that throws leaves no run directory",
+      "origin": "442 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/442-plugins-after-refusal.test.ts",
+      "fullName": "C442-PLUGINS-AFTER-REFUSAL a refused production run loads no plugin",
+      "origin": "442 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/442-plugins-after-refusal.test.ts",
+      "fullName": "C442-PLUGINS-AFTER-REFUSAL a refused production suite loads no plugin",
+      "origin": "442 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/442-plugins-after-refusal.test.ts",
+      "fullName": "C442-PLUGINS-AFTER-REFUSAL a refused production fn request loads no plugin",
+      "origin": "442 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/442-plugins-after-refusal.test.ts",
+      "fullName": "C442-PLUGINS-AFTER-REFUSAL an opted-in production run loads its plugin and runs",
+      "origin": "442 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/442-plugins-after-refusal.test.ts",
+      "fullName": "C442-PLUGINS-AFTER-REFUSAL agent-qa mcp starts without loading a plugin",
+      "origin": "442 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/442-plugins-after-refusal.test.ts",
+      "fullName": "C442-PLUGINS-AFTER-REFUSAL a refused production run over MCP stdio loads no plugin",
+      "origin": "442 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/432-direct-parity.test.ts",
+      "fullName": "C442-DOOR-TABLE agent-qa run (spawned, CI, stdin closed) refuses a declared production run before any effect, plugin loading included",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/432-direct-parity.test.ts",
+      "fullName": "C442-DOOR-TABLE agent-qa fn refuses a declared production run before any effect, plugin loading included",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/432-direct-parity.test.ts",
+      "fullName": "C442-DOOR-TABLE agent-qa ask refuses a declared production run before any effect, plugin loading included",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/432-direct-parity.test.ts",
+      "fullName": "C442-DOOR-TABLE CLI chat refuses a declared production run before any effect, plugin loading included",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/432-direct-parity.test.ts",
+      "fullName": "C442-DOOR-TABLE MCP over HTTP refuses a declared production run before any effect, plugin loading included",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/432-direct-parity.test.ts",
+      "fullName": "C442-DOOR-TABLE MCP over stdio (spawned) refuses a declared production run before any effect, plugin loading included",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/432-direct-parity.test.ts",
+      "fullName": "C442-DOOR-TABLE the dashboard Run control refuses a declared production run before any effect, plugin loading included",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/432-direct-parity.test.ts",
+      "fullName": "C442-DOOR-TABLE the run service refuses a declared production run before any effect, plugin loading included",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/432-direct-parity.test.ts",
+      "fullName": "C442-DOOR-TABLE the background worker (daemon) refuses a declared production run before any effect, plugin loading included",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/432-direct-parity.test.ts",
+      "fullName": "C442-DOOR-TABLE the co-hosted MCP endpoint refuses a declared production run before any effect, plugin loading included",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/432-direct-parity.test.ts",
+      "fullName": "C442-DOOR-TABLE the enqueue route refuses a declared production run before any effect, plugin loading included",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/432-direct-parity.test.ts",
+      "fullName": "C442-DOOR-TABLE agent-qa run (spawned, CI, stdin closed) runs a declared production target in one call and loads its plugin",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/432-direct-parity.test.ts",
+      "fullName": "C442-DOOR-TABLE agent-qa fn runs a declared production target in one call and loads its plugin",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/432-direct-parity.test.ts",
+      "fullName": "C442-DOOR-TABLE agent-qa ask runs a declared production target in one call and loads its plugin",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/432-direct-parity.test.ts",
+      "fullName": "C442-DOOR-TABLE CLI chat runs a declared production target in one call and loads its plugin",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/432-direct-parity.test.ts",
+      "fullName": "C442-DOOR-TABLE MCP over HTTP runs a declared production target in one call and loads its plugin",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/432-direct-parity.test.ts",
+      "fullName": "C442-DOOR-TABLE MCP over stdio (spawned) runs a declared production target in one call and loads its plugin",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/432-direct-parity.test.ts",
+      "fullName": "C442-DOOR-TABLE the dashboard Run control runs a declared production target in one call and loads its plugin",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/432-direct-parity.test.ts",
+      "fullName": "C442-DOOR-TABLE the run service runs a declared production target in one call and loads its plugin",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/432-direct-parity.test.ts",
+      "fullName": "C442-DOOR-TABLE the background worker (daemon) runs a declared production target in one call and loads its plugin",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/432-direct-parity.test.ts",
+      "fullName": "C442-DOOR-TABLE the co-hosted MCP endpoint runs a declared production target in one call and loads its plugin",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/432-direct-parity.test.ts",
+      "fullName": "C442-DOOR-TABLE the enqueue route runs a declared production target in one call and loads its plugin",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/432-direct-parity.test.ts",
+      "fullName": "C442-ABSENCE no door asks, requires a token or scope, or offers an inbox",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/jobs/__tests__/real-kinds.test.ts",
+      "fullName": "C442-RUN-CONFIG-CURATION a curate-memory fold that hands its run back is retryable with its reason",
+      "origin": "442 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/442-run-config-curation.test.ts",
+      "fullName": "C442-RUN-CONFIG-CURATION run B's tail curates run A only under A's secrets (janitor)",
+      "origin": "442 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/442-run-config-curation.test.ts",
+      "fullName": "C442-RUN-CONFIG-CURATION run B's tail curates run A only under A's secrets (chain)",
+      "origin": "442 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/442-run-config-curation.test.ts",
+      "fullName": "C442-RUN-CONFIG-CURATION the curator author's egress mask for run A's fold is A's",
+      "origin": "442 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/442-run-config-curation.test.ts",
+      "fullName": "C442-RUN-CONFIG-CURATION distinct knowledge roots hand run A back and A's own project curates it",
+      "origin": "442 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/442-run-config-curation.test.ts",
+      "fullName": "C442-RUN-CONFIG-CURATION a value added to the secrets file after the run is masked at curation",
+      "origin": "442 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/442-run-config-curation.test.ts",
+      "fullName": "C442-RUN-CONFIG-CURATION a run whose secrets file cannot be read is handed back, never curated under another mask",
+      "origin": "442 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/442-run-config-curation.test.ts",
+      "fullName": "C442-RUN-CONFIG-CURATION a run with no config record is never curated by another run's tail",
+      "origin": "442 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/442-run-config-curation.test.ts",
+      "fullName": "C442-RUN-CONFIG-CURATION a run's post-verdict step records its own config",
+      "origin": "442 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/442-run-config-curation.test.ts",
+      "fullName": "C442-RUN-CONFIG-CURATION writing the same record twice is success, a different one is refused",
+      "origin": "442 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/442-run-config-curation.test.ts",
+      "fullName": "C442-RUN-CONFIG-CURATION a record write failure does not change the run's verdict path",
+      "origin": "442 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return UNIVERSE-FLOORS: every region reads real code, so no leg can pass over an empty scan",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A01: the terminal y/N approval prompt stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A02: the chat two-answer approval prompt stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A03: the chat always-answer branch stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A04: the knowledge rollback confirmation stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A05: the cache purge confirmation stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A06: the knowledge purge repeated-id confirmation stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A07: the GET run-confirm channel route stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A08: the POST run-confirm answer route stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A09: the dashboard run-confirm dialog stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A10: the dashboard mark approval stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A11: the confirm registry stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A12: resolveAsk stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A13: the execution-policy evaluate export stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A14: the baseVerdict ask ladder stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A15: the execution gate hook stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A16: ConfirmPort stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A17: the readline confirmation stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A18: grants.list stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A19: grants.revoke stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A20: the grant ledger writer stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A21: the grant ledger reader stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A22: the standing approval contract stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A23: the protected proposals class stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A24: the protected grants class stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A25: proposals.list stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A26: proposals.show stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A27: proposals.accept stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A28: proposals.reject stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A29: knowledge.proposal.apply stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A30: config.proposal.apply stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A31: config.undo.propose stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A32: knowledge.accept.propose stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A33: knowledge.reject.propose stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A34: knowledge.forget.propose stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A35: the propose-knowledge-change tool stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A36: the apply-proposal tool stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A37: the propose-config-change tool stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A38: the apply-config-proposal tool stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A39: the list-proposals tool stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A40: the show-proposal tool stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A41: the proposal envelope stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A42: the proposal store stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A43: the proposal inbox reader stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A44: the proposals CLI stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A45: requiresHumanOrigin stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A46: FunctionScope stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A47: the capability member read stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A48: the capability member run stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A49: the capability member config-write stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A50: the capability member knowledge-write stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A51: the capability member approval-write stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A52: the capability member test-write stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A53: requiredScopes metadata stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A54: the grantedScopes caller key stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A55: the safeMode caller key stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A56: the credential caller key stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A57: the sessionId overlay caller key stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A58: MCP permission visibility stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A59: services.mcp.tokens stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A60: the MCP bearer check stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A61: services.dashboard.runServiceTokens stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A62: the run-service bearer check stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A63: services.mcp.stdio.grantConfigWrite stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A64: the trust-session flag stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A65: safety.trustMode stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A66: the fail-closed policy stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A67: the pin directive stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A68: the pin overlay resolver stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A69: the answer-confirm remedy stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A70: the trust-session-flag remedy stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A71: the session-pin-final remedy stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A72: the present-bearer-scope remedy stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A73: the CLI remedy renderer stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A74: the dashboard remedy renderer stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A75: the hard destructive command patterns stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A76: the execution audit writer stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A77: ExecutionAuditRow stays deleted",
+      "origin": "442 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/432-approval-permission-deleted.test.ts",
+      "fullName": "C432-RETURN: every removed approval and permission member reds by name on its return C432-RETURN-A78: the product git commit stays deleted",
+      "origin": "442 D-12"
     }
   ]
 }
