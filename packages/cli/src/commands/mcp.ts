@@ -214,16 +214,10 @@ export function createMcpCommand(): Command {
       try {
         const program = command.parent
         const globalOpts = program?.opts<{ config?: string }>() ?? {}
-        // Tolerant exactly as the v1 command was: a project whose configuration will not resolve
-        // still gets a server, because analytics configuration and the dashboard base are the only
-        // things this read feeds, and refusing to start over them would be refusing the capability
-        // over the telemetry. 2026-10-01 (432-21/432-22, D-12/D-22): `services.mcp.tokens` and
-        // `services.mcp.stdio.grantConfigWrite` are deleted keys. A file that still declares one
-        // fails strict validation like any unknown key, and this tolerant read then serves without
-        // the configuration; nothing in this host depends on a credential declaration.
+        // 2026-10-16 (442-08, D-18): tolerant, plugin-free; only analytics and the dashboard base.
         let config: Awaited<ReturnType<typeof resolveConfig>> | undefined
         try {
-          config = await resolveConfig({ configPath: globalOpts.config })
+          config = await resolveConfig({ configPath: globalOpts.config, loadAuthPlugins: false })
         } catch {
           config = undefined
         }
