@@ -4869,3 +4869,112 @@ The record gate runs on Phase 442's final agent-qa SHA, the commit that adds thi
 `.planning/phases/442-run-ownership-and-production-refusal/442-RECORD.md` § Final SHA names. Its
 legs, counts and verdict are recorded in that file's § Gate rather than quoted here, so no
 agent-qa commit follows the gate run.
+
+### Gap closure round 1 (442-12 to 442-18), 2026-10-16
+
+This subsection appends to the Phase 442 section and rewrites none of it; written by 442-19. It
+follows `.planning/phases/442-run-ownership-and-production-refusal/442-VERIFICATION.md` (agent-qa
+`a7bfd355d`, 10 of 13 truths). Its three failed truths share one root cause, CR-01: on a non-Linux
+POSIX host the stamped start time was the raw `ps -p <pid> -o lstart=` text, rendered in the
+reading process's time zone and locale by whichever `ps` came first on its `PATH`, and any
+difference read as a reused pid. The orchestrator decided the gaps, with review WR-01 to WR-03 and
+IN-02 and UI review fixes 1 and 2 and item 5, as GAP-D1 to GAP-D8 on 2026-10-16, with the owner's
+delegation. Every commit below is in agent-qa on `version-0.2` and signed. Every new cell is listed
+in `scripts/gate/inputs/regressions.json` with its `442 GAP-D<n>` origin, after the 1816 rows
+listed at `a7bfd355d`, which are unchanged and in order.
+
+**How it is measured.** Baseline `a7bfd355d` (Phase 442's earlier final SHA). Closing SHA
+`1fdabe92d` (442-19's gate list commit, the parent of this subsection's commit).
+`git -C agent-qa diff --shortstat a7bfd355d 1fdabe92d`: 26 files changed, 1,772 insertions, 125
+deletions (under `packages/`: 25 files, +1,586/−125). `--diff-filter=D`: no file deleted.
+`--diff-filter=A`: three files added, one production module
+(`dashboard-server/src/db/run-owner-host.ts`) and two test files
+(`cli/src/__tests__/conformance/442-cross-environment-owner.e2e.test.ts`,
+`dashboard-server/src/db/__tests__/run-owner-host.test.ts`). 19 commits, every one signed: two
+tests-only RED commits (442-12 `6f87f5b67`, 442-13 `f82a62fe5`), the fixes and their RED cells
+(442-14 to 442-18) and 442-19's gate list. The removed lines below are read from each deleting
+commit's diff, not transcribed from a summary.
+
+#### What was deleted
+
+| Member (file at `a7bfd355d`) | What it did | Deleting commit | The cell that notices its return |
+|---|---|---|---|
+| the `ps-lstart:` token producer and the `PATH`-resolved spawn in `resolveProcessIncarnation` (`spawnSync('ps', ['-p', String(pid), '-o', 'lstart='], …)` with the inherited environment, returning `` `ps-lstart:${lstart}` ``; `knowledge-local/src/lease/writer-lease.ts`) | stamped and read a start time in the caller's own time zone, locale and `ps`, so two readers of one live process could disagree (CR-01) | `85b59ca60` (442-14), replaced by `/bin/ps` under `{ LC_ALL: 'C', LANG: 'C', TZ: 'UTC0' }` emitting `ps-lstart-utc:` | `C442-INCARNATION-FORMAT C442-INCARNATION-FORMAT a ps host stamps ps-lstart-utc read by /bin/ps in UTC and the C locale, and Linux stamps proc-starttime`; `C442-CROSS-ENV C442-CROSS-ENV one live process reads as one start-time token from readers with different time zones, locales and a shadowing ps`; `C442-CROSS-ENV the composed probe reads a live run stamped under another time zone, locale or ps as alive` |
+| `classifyRunOwner`'s `current === owner.incarnation ? 'alive' : 'gone'` for a token in another format, and the matching `mismatch` in `verifyMutationLockOwnerIdentity` and `verifyEmbedderWorkerIncarnation` (`dashboard-server/src/db/run-owner.ts`, `writer-lease.ts`, `embedder-worker/worker-incarnation.ts`) | read a differing start-time format as proof of reuse | `85b59ca60`, `9d89e7f03` (442-14) | `C442-INCARNATION-FORMAT a live owner stamped in another start-time format is unknown, never gone`; `C442-INCARNATION-FORMAT C442-INCARNATION-FORMAT an embedder registration stamped in another start-time format is unverifiable, and an equal-format different one is a mismatch`; `C442-CROSS-ENV C442-CROSS-ENV a mutation-lock holder stamped under another time zone, locale or ps is read as itself, never as a reused pid` |
+| the whole-process memo of the CLI's own start time (`composeRunOwnership`'s first-call `resolveProcessIncarnation(process.pid) ?? null`, kept for the process even when it was `null`, with no read bound; `cli/src/composition/run-owner-probe.ts`) | a failed first read stamped every later run with no start time (WR-01) | `1ea4b05bb` (442-15), replaced by `createRunOwnership`, which keeps only a start time it read and bounds every read at `RUN_OWNER_START_TIME_TIMEOUT_MS` | `C442-OWN-START-TIME the CLI retries an unread own start time and keeps the first one it reads`; `C442-OWN-START-TIME the CLI bounds both start-time reads, and a ps that never answers reads as unknown` |
+| `classifyRunOwner`'s `owner.pid === self.pid && owner.incarnation === self.incarnation` `self` arm, which matched `null` to `null` (`run-owner.ts`), and the queue cancel's `self` read through it (`queue/job-queue.ts`) | let a process on a reused pid with no start time cancel or finalize a dead process's run as its own | `875a3034e` (442-15); an own row is now the stamp the handle recorded (`isOwnStamp`, `finalizeOwnRun` on that stamp) | `C442-OWN-START-TIME a start time missing on both sides is never self, even for this pid on this host`; `C442-OWN-START-TIME a dashboard on a reused pid with no start time does not cancel a dead dashboard's run as its own` |
+| the unguarded `probe.incarnationOf(owner.pid)` in `classifyRunOwner` (`run-owner.ts`) | a probe that threw rejected the dashboard start and turned a cancel into a 500 (WR-03) | `dad11c3fc` (442-16) | `C442-PROBE-THROWS a start-time read that throws answers unknown`; `C442-PROBE-THROWS a dashboard starts and leaves the run running when the start-time read throws`; `C442-PROBE-THROWS a cancel answers 409, not 500, when the start-time read throws` |
+| the macOS host identity `os.hostname()` in `defaultRunOwnership()` (`run-owner.ts`, `import { hostname } from 'node:os'`) | named a run's host by a name that follows the network, so a dead owner's row could never be reaped after a rename (WR-02) | `1c57c47cd` (442-17), replaced by `resolveRunOwnerHost()`: `macos-uuid-sha256:<digest>` on macOS | `C442-HOST-IDENTITY C442-HOST-IDENTITY a macOS host is its hardware UUID digest, unchanged when the host name changes`; `C442-HOST-IDENTITY C442-HOST-IDENTITY a dead owner stamped before the host name changed is still finalized as an orphan` |
+| the CLI composition's own host-name read (`host: hostname()` in the composed `self`, and its `node:os` import; `run-owner-probe.ts`) | gave the CLI a host identity of its own beside the store's | `bbcf3ecc9` (442-17); the store now completes the host (`completeRunOwnership`) | `C442-OWNER-STAMP the CLI composes its own pid, start time and host` (the composed `self` has only `pid` and `incarnation`); `C442-HOST-IDENTITY C442-HOST-IDENTITY a handle injected without a host stamps and classifies with this machine's identity` |
+| the live-run page's `toast.success(result.message ?? 'Run cancelled')` for every resolved cancel and `toast.error(error.message)` for every `ApiError` (`dashboard-ui/src/pages/live-run.tsx`) | showed the orphan answer as a green success and raw server text for a 404 or 500 | `ceb146d7f` (442-18) | `C442-CANCEL-TOAST an orphan answer shows its sentence as an info toast, never success`; `C442-CANCEL-TOAST only the 409 refusal shows the route's sentence; any other error reads Failed to cancel run` |
+| `agent-qa queue cancel`'s `console.log` of a refusal or a missing run, and its unencoded run id in the URL (`cli/src/commands/queue.ts`) | wrote a failure to stdout | `7f63753fc` (442-18) | `C442-QUEUE-CANCEL-OUTPUT queue cancel prints a refusal to stderr and exits 1, and an orphan answer to stdout with exit 0`; `C442-QUEUE-CANCEL-OUTPUT queue cancel encodes the run id in the URL` |
+
+No file was deleted and no test cell was removed. The round's 31 new cells, by area:
+`C442-INCARNATION-FORMAT` 6 and `C442-CROSS-ENV` 5 (`442 GAP-D1`), `C442-OWN-START-TIME` 6
+(`GAP-D2`), `C442-PROBE-THROWS` 3 (`GAP-D3`), `C442-HOST-IDENTITY` 6 (`GAP-D4`),
+`C442-CANCEL-TOAST` 3 (`GAP-D5`), `C442-QUEUE-CANCEL-OUTPUT` 2 (`GAP-D6`).
+
+#### Registered gate rows
+
+The 1816 rows listed at `a7bfd355d` are still listed, unchanged and in order; none was renamed,
+removed or moved. These registered cells were re-spelled under their kept names, each named in its
+plan's summary: `C442-OWNER-CLASSIFY the composed probe reads real processes` (442-14, 442-17),
+`C442-DASHBOARD-START a dashboard started while a run is in flight leaves it running` and
+`C442-DASHBOARD-START the run in flight still finishes as itself` (442-14, 442-17),
+`C442-OWNER-CLASSIFY the default ownership never answers alive or gone for a live pid` (442-15),
+`C442-OWNER-STAMP the CLI composes its own pid, start time and host` and
+`C442-OWN-RUN-ONLY each run's row names its own process` (442-17), and
+`C442-CANCEL-SENTENCE the refusal toast shows the route's sentence` and
+`C442-CANCEL-SENTENCE an orphan answer's toast shows its sentence` (442-18). The unregistered
+CR-05 daemon cell was re-spelled to the reader's own start-time format (442-14 `bd678087d`). The
+401-07 and 401-08 spawn censuses name `db/run-owner-host.ts` with its reason (442-17); neither was
+weakened.
+
+#### What was RETAINED, and why
+
+| Item | Why kept | What pins it |
+|---|---|---|
+| Linux `proc-starttime:<n>` from `/proc/<pid>/stat` | already one rendering for every reader | `C442-INCARNATION-FORMAT C442-INCARNATION-FORMAT a ps host stamps ps-lstart-utc read by /bin/ps in UTC and the C locale, and Linux stamps proc-starttime` |
+| win32's `undefined` start time | Windows has no equivalent builtin; a live pid there stays `unknown` | `C442-OWNER-CLASSIFY answers unknown when the start time of a live pid cannot be read` |
+| `os.hostname()` as the host on Linux and Windows | the 442 contract is unchanged there (D-20) | `C442-HOST-IDENTITY C442-HOST-IDENTITY Linux and Windows hosts keep os.hostname()` |
+| an equal-format, different start time as proof of reuse | the one case D-02 calls proof | `C442-INCARNATION-FORMAT a live owner with an equal-format different start time is still gone`; `C442-INCARNATION-FORMAT a dead owner is gone whatever its stamp's format` |
+| D-04's orphan sentence and D-07's refusal sentence, word for word | locked wording; UI review fix 3 was rejected and the Ctrl+C advice (UI item 4) stays open | `C442-CANCEL-SENTENCE the refusal toast shows the route's sentence`; `C442-CANCEL-SENTENCE an orphan answer's toast shows its sentence` |
+| the WR-04 `ps` budget clamp and the `undefined` failure funnel | the escalation path's bound is unchanged; the test-only `psExecutable` seam swaps only the executable, never the environment | the WR-04 describe in `writer-lease.test.ts`, titles kept |
+
+#### What degrades, stated plainly
+
+- **Rows, lock rows and registrations stamped in the old format read as unknown while their
+  process lives.** A `runs.db` row, a `mutation_lock` row or an embedder registration written as
+  `ps-lstart:` by a pre-fix agent-qa reads `unknown` (`classifyRunOwner`) or `unverifiable` (the
+  lock and the embedder) until that process ends, and `gone` once its pid is dead. A dashboard
+  start leaves such a row `running`, a cancel on it is refused, and a lock contender may wait until
+  its occupant exits.
+- **macOS rows stamped with the old host name by a still-running pre-fix process read as another
+  host** (`unknown`, left running) until that process ends.
+- **A failed macOS hardware-UUID read names the host `hostname:<name>`**, which never equals a
+  UUID identity, so a row written then reads as another host's; the read is retried, never
+  remembered.
+
+#### Persisted values the narrowed contract governs
+
+No migration and no compatibility code (D-03).
+
+| Persisted value | Disposition | Evidence |
+|---|---|---|
+| `runs.owner_incarnation` | **New rows on a ps host carry `ps-lstart-utc:<C-locale UTC lstart>`**; Linux keeps `proc-starttime:<n>`. A stored `ps-lstart:` value is not rewritten and reads `unknown` while its pid lives. | `C442-CROSS-ENV a dashboard started under another time zone and locale leaves a live run running and byte-equal`; `C442-INCARNATION-FORMAT a live owner stamped in another start-time format is unknown, never gone` |
+| `runs.owner_host` | **On macOS, `macos-uuid-sha256:<sha256 of the upper-cased IOPlatformUUID>`**, or `hostname:<name>` after a failed read; the raw UUID is never stored. Linux and Windows keep `os.hostname()`. Stored values are not rewritten. | `C442-HOST-IDENTITY C442-HOST-IDENTITY a macOS host is its hardware UUID digest, unchanged when the host name changes`; `C442-HOST-IDENTITY C442-HOST-IDENTITY a macOS read failure names the host name under its own prefix, never equals a UUID identity, and is retried` |
+| `mutation_lock.incarnation` (the writer-authority store) | **Written in the canonical format**; a row in another format is `unverifiable`: never reclaimed by a held store, and its live owner never signalled. | `C442-INCARNATION-FORMAT C442-INCARNATION-FORMAT a mutation-lock row stamped in another start-time format is never reclaimed and its live owner never signalled` |
+| the embedder worker registration's `incarnation` | **Written in the canonical format**; a registration in another format is `unverifiable`, so no signal reaches its pid. | `C442-INCARNATION-FORMAT C442-INCARNATION-FORMAT an embedder registration stamped in another start-time format is unverifiable, and an equal-format different one is a mismatch` |
+
+#### The instruments that notice a return
+
+- **The 434 gate** must execute and pass the 31 cells above, each with its `442 GAP-D<n>` origin,
+  as well as the 1816 earlier rows, the 104 round-1 `C442-` cells and the `C432-RETURN` census
+  among them.
+- **`pnpm validate:arch`** still runs `C442-CENSUS`; no status writer was added this round.
+
+**Gate**
+
+The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
+verdict are recorded in `.planning/phases/442-run-ownership-and-production-refusal/442-RECORD.md`
+§ Gate and the SHA in § Final SHA, rather than quoted here, so no agent-qa commit follows it.
