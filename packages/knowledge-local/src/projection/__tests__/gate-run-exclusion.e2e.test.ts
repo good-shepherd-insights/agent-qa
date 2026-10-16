@@ -189,6 +189,10 @@ const MARKER_CENSUS: Readonly<Record<string, 'consumer' | 'carrier' | 'producer'
   // unbroken — `run-invocation-core.ts` below carries the markers onto the run in process, and
   // `run-invocation-core.test.ts` / `run-invocation-evidence.test.ts` assert the carriage.
   'packages/agent-local/src/composition/run-invocation-core.ts': 'carrier',
+  // 2026-10-17 (443-07, D-09): the drive hands the request's flag to the run record, and core spells
+  // it as the row's `agent-qa.gate-run` attribute; neither decides what feeds learning.
+  'packages/cli/src/composition/in-process-run-execution.ts': 'carrier',
+  'packages/core/src/run-attributes.ts': 'carrier',
 
   // Producers: the sites that put the marker on a request in the first place.
   'packages/agent/src/authoring/stability-gates.ts': 'producer',

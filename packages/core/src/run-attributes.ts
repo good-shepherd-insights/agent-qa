@@ -3,6 +3,7 @@ export type RunAttributes = Record<string, string>
 export const INTERNAL_ATTRIBUTE_PREFIX = 'agent-qa.'
 export const ATTR_TRIGGER = 'agent-qa.trigger'
 export const ATTR_RUNNER = 'agent-qa.runner'
+export const ATTR_GATE_RUN = 'agent-qa.gate-run'
 
 export type RunAttributeTrigger = 'cli' | 'dashboard' | 'api' | 'mcp'
 export type RunAttributeRunner = 'local' | 'browserstack'
@@ -61,6 +62,12 @@ function assertValidInternalAttribute(key: string, value: string, sourceLabel: s
   if (key === ATTR_RUNNER) {
     if (!RUN_ATTRIBUTE_RUNNERS.includes(value as RunAttributeRunner)) {
       throw new Error(`${sourceLabel}: Attribute value for "${key}" must be one of: ${RUN_ATTRIBUTE_RUNNERS.join(', ')}`)
+    }
+    return
+  }
+  if (key === ATTR_GATE_RUN) {
+    if (value !== 'true') {
+      throw new Error(`${sourceLabel}: Attribute value for "${key}" must be "true"`)
     }
     return
   }
@@ -131,10 +138,12 @@ export function parseRunAttrFlags(flags: string[] | undefined): ParsedRunAttrFla
 export function buildInternalRunAttributes(input: {
   trigger: RunAttributeTrigger
   runner: RunAttributeRunner
+  gateRun?: true
 }): RunAttributes {
   return {
     [ATTR_TRIGGER]: input.trigger,
     [ATTR_RUNNER]: input.runner,
+    ...(input.gateRun === true ? { [ATTR_GATE_RUN]: 'true' } : {}),
   }
 }
 
@@ -155,7 +164,8 @@ export function sortRunAttributesForDisplay(
     if (activeIndex >= 0) return [0, activeIndex, key]
     if (key === ATTR_TRIGGER) return [1, 0, key]
     if (key === ATTR_RUNNER) return [1, 1, key]
-    if (key.startsWith(INTERNAL_ATTRIBUTE_PREFIX)) return [1, 2, key]
+    if (key === ATTR_GATE_RUN) return [1, 2, key]
+    if (key.startsWith(INTERNAL_ATTRIBUTE_PREFIX)) return [1, 3, key]
     return [2, 0, key]
   }
 
