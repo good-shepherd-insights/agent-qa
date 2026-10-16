@@ -49,6 +49,7 @@ const {
   mockCreateAnalyticsRunSubscriber,
   mockDashboardRunIngestInstance,
   mockCreateDashboardRunIngest,
+  mockRunsDbHandle,
   mockShouldPrintAgentQaUpdateNotice,
   mockPrintAgentQaUpdateNoticeIfNeeded,
   mockLogScope,
@@ -70,8 +71,21 @@ const {
   }
   const dashboardRunIngest = {
     handler: vi.fn(),
+    stageSnapshots: vi.fn(),
     finalize: vi.fn().mockResolvedValue(undefined),
   }
+  // 2026-10-17 (443-08, D-03): every run opens its record, so the default handle answers its reads.
+  const runsDbHandle = () => ({
+    close: vi.fn(),
+    getRun: vi.fn(() => undefined),
+    readRunOwner: vi.fn(() => undefined),
+    isOwnStamp: vi.fn(() => false),
+    insertRun: vi.fn(),
+    updateRun: vi.fn(),
+    insertRunArtifact: vi.fn(),
+    finalizeRunArtifact: vi.fn(),
+    finalizeOwnRun: vi.fn(() => true),
+  })
   // WINDOWS #233/#249: records the member-log-scope depth at every setRunId stamp, so a cell can
   // assert the direct member executor actually runs INSIDE a scope. Depth, not a source grep —
   // deleting the `logger.runInMemberScope(...)` wrap in run.ts leaves every stamp at depth 0.
@@ -87,7 +101,11 @@ const {
       return analyticsRunSubscriber
     }),
     mockDashboardRunIngestInstance: dashboardRunIngest,
-    mockCreateDashboardRunIngest: vi.fn(function () { return dashboardRunIngest }),
+    mockRunsDbHandle: runsDbHandle,
+    mockCreateDashboardRunIngest: vi.fn(function (deps: { runId: string; onRunCreated?: (runId: string) => void }) {
+      deps.onRunCreated?.(deps.runId)
+      return dashboardRunIngest
+    }),
     mockGlob: vi.fn(),
     mockParseAllTests: vi.fn(),
     mockParseSuiteFile: vi.fn(),
@@ -119,7 +137,7 @@ const {
     mockJUnitReporterInstance: { outputPath: '' },
     mockStdoutLiveReporterInstance: { active: false },
     mockMultiReporterInstance: multiReporter,
-    mockDashboardDatabase: vi.fn(function () { return { close: vi.fn() } }),
+    mockDashboardDatabase: vi.fn(function (): unknown { return runsDbHandle() }),
     mockDashboardReporter: vi.fn(function () { return {} }),
     mockResolveDashboardDbPath: vi.fn(),
     mockGenerateRunId: vi.fn(() => 'r_able-baker-charlie-delta-echo-foxtrot-golf-hotel-india-juliet'),
@@ -220,6 +238,7 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => {
   // through the composition root. Passed through rather than spelled, so a mock cannot become a
   // second answer about where the cache and the auth states live.
   DEFAULT_AGENT_QA_AUTH_STATES_DIR: actual.DEFAULT_AGENT_QA_AUTH_STATES_DIR,
+  DEFAULT_AGENT_QA_RUNS_DB_PATH: actual.DEFAULT_AGENT_QA_RUNS_DB_PATH,
   workspaceRelativeIdentityPath: actual.workspaceRelativeIdentityPath,
   // 398-10: the shipped version reader, FROM THE REAL MODULE for the same reason as the two above.
   // `composition/analytics-host.ts` stamps `agent_qa_version` on every event this command emits,
@@ -736,7 +755,7 @@ beforeEach(() => {
   writeFileSync(defaultEnvFilePath, '')
   writeFileSync(defaultHooksFilePath, 'hooks: []\n')
   mockResolveConfig.mockResolvedValue(defaultConfig())
-  mockDashboardDatabase.mockImplementation(function () { return { close: vi.fn() } })
+  mockDashboardDatabase.mockImplementation(function () { return mockRunsDbHandle() })
   mockDashboardReporter.mockImplementation(function () { return {} })
   mockResolveDashboardDbPath.mockImplementation(({ configDir, configuredDbPath }: { configDir: string; configuredDbPath?: string }) => {
     if (configuredDbPath?.trim()) return resolve(configDir, configuredDbPath)
@@ -2366,7 +2385,15 @@ describe('run command — exit codes', () => {
   })
 
   it('exits 2 on parse errors', async () => {
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
+    // 2026-10-17 (443-08, D-03): the failure row is written whatever the config holds, so the
+    // malformed file the row snapshots exists on disk.
+    const projectDir = mkdtempSync(join(tmpdir(), 'agent-qa-run-parse-error-'))
+    tempDirs.push(projectDir)
+    const malformed = join(projectDir, 'a.yaml')
+    writeFileSync(malformed, 'name: [an unclosed list\n')
+    const db = mockRunsDbHandle()
+    mockDashboardDatabase.mockImplementationOnce(function () { return db })
+    mockGlob.mockResolvedValue([malformed])
     mockParseAllTests.mockResolvedValue({
       tests: [],
       errors: [{
@@ -2379,13 +2406,17 @@ describe('run command — exit codes', () => {
       }],
     })
 
-    await runCommand('tests/**/*.yaml')
+    await runCommand(malformed)
 
     expect(exitSpy).toHaveBeenCalledWith(2)
     const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     // Read off the MINT rather than typed in — the id is salted per test now (401-20), and a
     // literal here would pin one execution's value.
     expect(allOutput).toContain(`Run ID: ${mockGenerateRunId.mock.results[0]!.value as string}`)
+    expect(db.insertRun).toHaveBeenCalledWith(expect.objectContaining({
+      id: mockGenerateRunId.mock.results[0]!.value as string,
+      status: 'failed',
+    }))
   })
 
   it('exits 2 when no files match glob', async () => {
@@ -2504,7 +2535,11 @@ describe('run command — framework error handling', () => {
     })
     const crashDb = {
       getRuns: vi.fn(() => []),
-      getRun: vi.fn(() => ({ id: ownRunId, status: 'running', startedAt: new Date().toISOString() })),
+      getRun: vi.fn(() => (ownRunId === undefined
+        ? undefined
+        : { id: ownRunId, status: 'running', startedAt: new Date().toISOString() })),
+      readRunOwner: vi.fn(() => undefined),
+      isOwnStamp: vi.fn(() => false),
       finalizeOwnRun: vi.fn(() => true),
       getRunArtifact: vi.fn(() => ({ finalizedAt: null })),
       finalizeRunArtifact: vi.fn(),
@@ -3654,57 +3689,6 @@ describe('run command — DashboardReporter wiring', () => {
       dbPath: join(projectDir, '.agent-qa', 'runs.db'),
       runOwnership: composeRunOwnership(),
     })
-  })
-
-  it('does not create DashboardReporter when services.dashboard is absent', async () => {
-    const cfg = defaultConfig()
-    delete (cfg.services as any).dashboard
-    mockResolveConfig.mockResolvedValue(cfg)
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
-    mockRunMemberTest.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
-    })
-
-    await runCommand('tests/**/*.yaml')
-
-    expect(mockDashboardDatabase).not.toHaveBeenCalled()
-    expect(mockDashboardReporter).not.toHaveBeenCalled()
-  })
-
-  it('warns but continues when dashboard-server import fails', async () => {
-    const cfg = defaultConfig()
-    cfg.services.dashboard = { ...cfg.services.dashboard } as any
-    mockResolveConfig.mockResolvedValue(cfg)
-    mockDashboardDatabase.mockImplementation(() => {
-      throw new Error('native bindings not found')
-    })
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
-    mockRunMemberTest.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
-    })
-
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-
-    await runCommand('tests/**/*.yaml')
-
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Could not load dashboard reporter'))
-    warnSpy.mockRestore()
   })
 })
 

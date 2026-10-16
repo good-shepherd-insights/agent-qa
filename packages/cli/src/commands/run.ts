@@ -4846,15 +4846,14 @@ export function createRunCommand(): Command {
       'exclude this run from the outcome projection: no flake counters, no exemplar ranking, no quarantine window (D-14 §6)',
     )
     .action(async (patterns: string[], opts: RunOptions, command: Command) => {
-      let _crashDb: any
-      // 2026-10-16 (442-03, D-05): the row this process's ingest wrote; the only row it finalizes.
-      let _ownRunRowId: string | undefined
+      // 2026-10-17 (443-08, D-02): the direct path's record; its own row is the only row it finalizes.
+      let _crashRecord: RunRecord | undefined
       let _crashSecretRedactor: SecretRedactor | undefined
       // 433-35 (G-433-11): the run this invocation started, so a framework error names the id it recorded.
       let _startedRunId: string | undefined
 
       // 398-15 (WR-06, paired with CR-01): DRAIN THE MEMOISED ANALYTICS HOST BEFORE THIS ACTION
-      // EXITS. Declared out here, beside `_crashDb`, because the third terminal exit is in the
+      // EXITS. Declared out here, beside `_crashRecord`, because the third terminal exit is in the
       // CATCH below and a binding inside the `try` is not in scope there.
       //
       // Until CR-01 the transport's flush tore the PostHog client down, so this command's
@@ -5017,28 +5016,15 @@ export function createRunCommand(): Command {
             }))
           : undefined
 
-        // Product preflight above is intentionally before dashboard creation. Parse errors still
-        // initialize the dashboard here so their established diagnostic artifacts remain intact.
-        let logStorage: any
-        const dashboardCfg2 = config.services?.dashboard as Record<string, unknown> | undefined
-        const reporterSelection = requireReporterSelection(opts, Boolean(dashboardCfg2))
-        const dashboardEnabled = reporterSelection.dashboard
-        let dashboardDb: any
+        const reporterSelection = requireReporterSelection(opts, Boolean(config.services?.dashboard))
         let currentRunId: string | undefined
-        if (dashboardEnabled) {
-          try {
-            const { DashboardDatabase, resolveDashboardDbPath } = await import('@vostride/agent-qa-dashboard')
-            const configuredDbPath = dashboardCfg2?.dbPath as string | undefined
-            dashboardDb = new DashboardDatabase({
-              dbPath: resolveDashboardDbPath({ configDir, configuredDbPath }),
-              runOwnership: composeRunOwnership(),
-            })
-            logStorage = dashboardDb
-            _crashDb = dashboardDb
-          } catch (err) {
-            console.warn(pc.yellow(`Warning: Could not load dashboard reporter: ${err instanceof Error ? err.message : String(err)}`))
-          }
-        }
+        // 2026-10-17 (443-08, D-03/D-05): one record for this path, written whatever the config holds.
+        const record = createRunRecord({
+          attributes: resolveCliRunAttributes(userRunAttributes, 'local', inheritedRunAttributes),
+          warn: (line) => console.warn(pc.yellow(line)),
+        })
+        _crashRecord = record
+        const configuredRunsDbPath = config.services?.dashboard?.dbPath
 
         if (parseResult.errors.length > 0) {
           console.error(pc.red(`Found ${parseResult.errors.length} parse error(s):\n`))
@@ -5047,6 +5033,13 @@ export function createRunCommand(): Command {
           }
           const validationRunId = createTestRunId()
           const validationAttributes = resolveCliRunAttributes(userRunAttributes, 'local', inheritedRunAttributes)
+          // 2026-10-17 (443-08, D-26): the failure row is filed under the id this command prints.
+          await record.open({
+            runId: validationRunId,
+            configDir,
+            ...(configuredRunsDbPath === undefined ? {} : { configuredDbPath: configuredRunsDbPath }),
+          })
+          const dashboardDb = record.db
           if (dashboardDb) {
             const now = new Date().toISOString()
             const { basename } = await import('node:path')
@@ -5062,37 +5055,20 @@ export function createRunCommand(): Command {
               if (resolvedTarget?.platform) detectedPlatform = resolvedTarget.platform
             }
             const testName = nameMatch ? nameMatch[1].trim().replace(/^['"]|['"]$/g, '') : basename(files[0], '.yaml')
-            const existingRunId = process.env.AGENT_QA_RUN_ID
-            let artifactRunId: string
-            if (existingRunId) {
-              dashboardDb.updateRun(existingRunId, {
-                name: testName,
-                status: 'failed',
-                duration: 0,
-                endedAt: now,
-                attributes: validationAttributes,
-                platform: detectedPlatform,
-                failureSummary: `${parseResult.errors.length} parse error(s)`,
-                errorLog: errorText,
-              })
-              artifactRunId = existingRunId
-            } else {
-              dashboardDb.insertRun({
-                id: validationRunId,
-                name: testName,
-                status: 'failed',
-                duration: 0,
-                startedAt: now,
-                endedAt: now,
-                attributes: validationAttributes,
-                platform: detectedPlatform,
-                failureSummary: `${parseResult.errors.length} parse error(s)`,
-              })
-              dashboardDb.updateRun(validationRunId, { errorLog: errorText })
-              artifactRunId = validationRunId
-            }
+            dashboardDb.insertRun({
+              id: validationRunId,
+              name: testName,
+              status: 'failed',
+              duration: 0,
+              startedAt: now,
+              endedAt: now,
+              attributes: validationAttributes,
+              platform: detectedPlatform,
+              failureSummary: `${parseResult.errors.length} parse error(s)`,
+            })
+            dashboardDb.updateRun(validationRunId, { errorLog: errorText })
             dashboardDb.insertRunArtifact({
-              runId: artifactRunId,
+              runId: validationRunId,
               kind: 'test',
               payload: redactSecretValue({
                 config: {
@@ -5127,9 +5103,9 @@ export function createRunCommand(): Command {
                 })),
               }, runtimeSecrets.secretRedactor),
             })
-            dashboardDb.finalizeRunArtifact(artifactRunId)
-            dashboardDb.close()
+            dashboardDb.finalizeRunArtifact(validationRunId)
           }
+          record.close()
           printRunId(validationRunId)
           printRunAttributes(validationAttributes)
           process.exit(2)
@@ -5203,9 +5179,10 @@ export function createRunCommand(): Command {
             graceTimer = grace
           },
           finalizeOwnRun: () => {
-            if (!dashboardDb || _ownRunRowId === undefined) return
+            const ownRowId = record.ownRowId()
+            if (record.db === undefined || ownRowId === undefined) return
             const endedAt = new Date().toISOString()
-            dashboardDb.finalizeOwnRun(_ownRunRowId, { status: 'cancelled', endedAt })
+            record.db.finalizeOwnRun(ownRowId, { status: 'cancelled', endedAt })
           },
         })
         // `on`, not `once`, so a repeated Ctrl+C reaches the controller's hard force-exit path.
@@ -5231,7 +5208,6 @@ export function createRunCommand(): Command {
           ...(directRunProduct === undefined ? {} : { product: directRunProduct }),
           opts,
           reporterSelection,
-          ...(logStorage === undefined ? {} : { logStorage }),
           analytics,
           onMemberRunId: (memberRunId) => { currentRunId = memberRunId },
         })
@@ -5264,22 +5240,6 @@ export function createRunCommand(): Command {
         // the dashboard db, the curation tail, the `--all` exit-code fold and the three terminal
         // exits. A drive that reached for any of those would be a library that owns its host.
         const singleExtraSubscribers: RunSubscriberHandle[] = []
-        // The primary run row is claimed under the run's own id and refreshed from the bus envelope
-        // stream (testStarted identity, testFinished status/duration, stepFinalized steps). The
-        // resolved per-test config/source snapshot lives inside the member closure (D-04) and reaches
-        // the ingest through the producer's snapshot channel (433-29).
-        const singleDashboardIngest = dashboardDb
-          ? await buildDashboardIngestSubscriber({
-              db: dashboardDb,
-              attributes: resolveCliRunAttributes(userRunAttributes, 'local', inheritedRunAttributes),
-              runId: singleRunId,
-              onRunCreated: (createdRunId: string) => {
-                _ownRunRowId = createdRunId
-                currentRunId = createdRunId
-                logger?.setRunId(createdRunId)
-              },
-            })
-          : undefined
         // 398-10: same factory, same composed port — Pitfall 8's rule applied to analytics.
         const singleAnalytics = await analytics()
         singleExtraSubscribers.push(buildAnalyticsRunSubscriber({
@@ -5309,26 +5269,23 @@ export function createRunCommand(): Command {
               // spread is the same house rule the INVK-06 markers ride: an absent flag is an ABSENT field.
               postProcessing: { ...(opts.detach === true ? { detach: true as const } : {}),
                 ...(opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }) },
+              runRecord: record,
               onSession: (session) => {
                 activeRunSession = session
                 _startedRunId = singleRunId
+                logger?.setRunId(singleRunId)
               },
-              subscribers: ({ session, quarantined, mask, onMemberSnapshot }) => {
+              subscribers: ({ session, quarantined, mask }) => {
                 singleAnalytics.bindMaskingContext({ mask })
                 // Attach the bus subscribers (console, junit and wire print masked payloads;
-                // dashboard ingest; analytics) — replay-then-live gives D-04 for free.
+                // analytics) — replay-then-live gives D-04 for free. The drive attaches the record.
                 // `quarantined` is the SAME resolved set the run was assembled with (390 D-15,
                 // Pitfall 8).
                 return attachRunSubscribers({
                   session,
                   console: reporterSelection.console ? { verbose: false, logLevel: effectiveLogLevel } : false,
                   junitOutputPath: reporterSelection.junit ? opts.junitOutput : undefined,
-                  extraSubscribers: [
-                    ...(singleDashboardIngest === undefined
-                      ? []
-                      : [singleDashboardIngest({ mask, ...(onMemberSnapshot === undefined ? {} : { onMemberSnapshot }) })]),
-                    ...singleExtraSubscribers,
-                  ],
+                  extraSubscribers: singleExtraSubscribers,
                   quarantined,
                 })
               },
@@ -5403,9 +5360,7 @@ export function createRunCommand(): Command {
 
         releaseAppium()
 
-        if (dashboardDb) {
-          dashboardDb.close()
-        }
+        record.close()
 
         // `singleExit` was fixed from the verdict plus any --all suite failure before curation.
         const exitCode = singleExit
@@ -5459,12 +5414,20 @@ export function createRunCommand(): Command {
           await drainAnalytics()
           process.exit(2)
         }
+        // 2026-10-17 (443-08, D-05): a run this command cannot record is refused, exit 2, no id.
+        if (err instanceof RunRecordUnavailableError) {
+          console.error(pc.red(redactSecretValue(err.message, _crashSecretRedactor)))
+          await drainAnalytics()
+          process.exit(2)
+        }
         const errMsg = err instanceof Error ? err.message : String(err)
         const errStack = err instanceof Error ? err.stack ?? '' : ''
         const formattedError = formatFrameworkError(errMsg)
         console.error(pc.red(frameworkErrorTerminalLine(errMsg, _crashSecretRedactor)))
 
-        if (_crashDb && _ownRunRowId !== undefined) {
+        const _crashDb = _crashRecord?.db
+        const _ownRunRowId = _crashRecord?.ownRowId()
+        if (_crashDb !== undefined && _ownRunRowId !== undefined) {
           const fullError = `${errMsg}\n${errStack}`
           const isBrowserClose = fullError.includes('Target page, context or browser has been closed')
             || fullError.includes('browser has been closed')
@@ -5503,9 +5466,7 @@ export function createRunCommand(): Command {
         // The run already recorded its verdict and the cause (433-35), so the id is how to read it.
         if (_startedRunId !== undefined) printRunId(_startedRunId)
 
-        if (_crashDb) {
-          try { _crashDb.close() } catch {}
-        }
+        try { _crashRecord?.close() } catch {}
         await drainAnalytics() // 398-15 (WR-06): terminal exit 3 of 3 — the action's error path.
         process.exit(2)
       }

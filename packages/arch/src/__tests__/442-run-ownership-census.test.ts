@@ -275,7 +275,6 @@ const WRITERS: readonly Writer[] = [
   w(RUN_TS, 'updateRun', 'own', 'suite parse-error row handed to this process'),
   w(RUN_TS, 'updateRun', 'own', 'suite missing-definition row handed to this process'),
   w(RUN_TS, 'updateRun', 'own', 'suite id-mismatch row handed to this process'),
-  w(RUN_TS, 'updateRun', 'own', 'direct parse-error validation row handed to this process'),
   w(RUN_TS, 'insertRun', 'own', 'suite path-traversal row'),
   w(RUN_TS, 'insertRun', 'own', 'suite parse-error row'),
   w(RUN_TS, 'insertRun', 'own', 'suite missing-definition row'),
@@ -300,7 +299,7 @@ const WRITERS: readonly Writer[] = [
   w(JOB_QUEUE, 'finalizeOrphanRun', 'orphan', 'cancel of a running row whose owner is gone'),
   w(DATABASE, 'finalizeRunArtifact', 'orphan', 'inside finalizeOrphanRun, after its CAS wrote'),
 ]
-const WRITER_FLOOR = 34
+const WRITER_FLOOR = 33
 
 function argumentOf(text: string, open: number): string {
   let depth = 0

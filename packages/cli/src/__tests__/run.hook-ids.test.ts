@@ -145,6 +145,7 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => ({
   // now in this command's module graph through the composition root.
   DEFAULT_AGENT_QA_AUTH_STATES_DIR: '.agent-qa/auth-states',
   DEFAULT_AGENT_QA_CACHE_DIR: '.agent-qa/cache',
+  DEFAULT_AGENT_QA_RUNS_DB_PATH: '.agent-qa/runs.db',
   DEFAULT_AGENT_QA_SCREENSHOTS_DIR: '.agent-qa/artifacts/screenshots',
   DEFAULT_AGENT_QA_VIDEOS_DIR: '.agent-qa/artifacts/videos',
   AUTH_STATE_SCHEMA_VERSION: 1,
@@ -352,6 +353,18 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => ({
       : '',
   ),
   isPathInsideDir: vi.fn((candidatePath: string) => !candidatePath.includes('..')),
+}))
+
+// 2026-10-17 (443-08, D-03): every run opens its record; these cells read hooks, not runs.db rows.
+vi.mock('@vostride/agent-qa-dashboard', () => ({
+  resolveDashboardDbPath: ({ configDir }: { configDir: string }) => `${configDir}/.agent-qa/runs.db`,
+  DashboardDatabase: vi.fn(function () {
+    return { close: vi.fn(), getRun: vi.fn(), readRunOwner: vi.fn(), isOwnStamp: vi.fn(), finalizeOwnRun: vi.fn() }
+  }),
+  createDashboardRunIngest: vi.fn(function (deps: { runId: string; onRunCreated?: (runId: string) => void }) {
+    deps.onRunCreated?.(deps.runId)
+    return { handler: vi.fn(), stageSnapshots: vi.fn(), finalize: vi.fn(async () => {}) }
+  }),
 }))
 
 vi.mock('@vostride/agent-qa-web', () => ({
