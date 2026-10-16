@@ -314,4 +314,81 @@ describe('C442-ENQUEUE-REFUSAL', () => {
     },
     CELL_BUDGET_MS,
   )
+
+  it(
+    'an enqueue naming no file is judged against every discovered test',
+    async () => {
+      await expectRefusedLeavingNothing('absent', [{ name: 'every discovered test' }])
+    },
+    CELL_BUDGET_MS,
+  )
+
+  it(
+    'an explicit allowProduction: false is refused like an absent one',
+    async () => {
+      await expectRefusedLeavingNothing('false', [
+        { name: 'the production enqueue', file: 'tests/prod.yaml' },
+      ])
+    },
+    CELL_BUDGET_MS,
+  )
+
+  it(
+    'two concurrent refused enqueues leave nothing',
+    async () => {
+      await expectRefusedLeavingNothing('absent', [
+        { name: 'the first production enqueue', file: 'tests/prod.yaml' },
+        { name: 'the second production enqueue', file: 'tests/prod.yaml' },
+      ])
+    },
+    CELL_BUDGET_MS,
+  )
+
+  it(
+    'a declared target still runs in one call',
+    async () => {
+      await withTarget(async (target) => {
+        const project = enqueueProject(target.origin, 'true')
+        const scene = await openScene(project)
+        const answer = await enqueue(scene, {
+          name: 'the opted-in production enqueue',
+          file: project.productionTest,
+        })
+        expect(answer.status, JSON.stringify(answer.body)).toBe(202)
+        expect(answer.body['status']).toBe('queued')
+        expect(await waitFor(() => scene.settled.length > 0), 'the run never settled').toBe(true)
+        expect(
+          await waitFor(() => scene.db.getRuns({}).every((row) => row.status !== 'running')),
+          'the run never finished',
+        ).toBe(true)
+        expect(scene.settled[0]!.details['refusedBeforeStart']).toBeUndefined()
+        expect(target.hits, 'the run never reached the target').toContain(`/${PRODUCTION_TARGET}`)
+        expect(scene.db.getRuns({}).map((row) => row.id)).toEqual([answer.body['runId']])
+      })
+    },
+    CELL_BUDGET_MS,
+  )
 })
+
+async function expectRefusedLeavingNothing(
+  optIn: OptIn,
+  payloads: Array<Record<string, unknown>>,
+): Promise<void> {
+  await withTarget(async (target) => {
+    const project = enqueueProject(target.origin, optIn)
+    const scene = await openScene(project)
+    const before = await snapshot(scene, project)
+    const answers = await Promise.all(payloads.map((payload) => enqueue(scene, payload)))
+    await quiet(scene)
+    const after = await snapshot(scene, project)
+    expect(
+      { answers, ...after, settled: scene.settled, targetHits: target.hits },
+      `the route answered ${JSON.stringify(answers)}`,
+    ).toEqual({
+      answers: payloads.map(() => ({ status: 403, body: refusal() })),
+      ...before,
+      settled: [],
+      targetHits: [],
+    })
+  })
+}

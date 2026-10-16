@@ -240,17 +240,23 @@ function createConfigPath(content = MOBILE_CONFIG): { configPath: string; worksp
   }
 }
 
-async function startDashboard(opts: { configContent?: string; llm?: boolean } = {}): Promise<number> {
+async function startDashboard(opts: {
+  configContent?: string
+  llm?: boolean
+  preflight?: ExecutionBackend['preflight']
+} = {}): Promise<number> {
   const db = new DashboardDatabase({ dbPath: ':memory:' })
   currentDb = db
   const { configPath, workspacePaths } = createConfigPath(opts.configContent)
+  const backend = new FakeExecutionBackend() as unknown as ExecutionBackend
+  if (opts.preflight) backend.preflight = opts.preflight
   started = await startServer({
     declaredSecretMask: (text) => text,
     db,
     port: 0,
     configPath,
     workspacePaths,
-    executionBackend: new FakeExecutionBackend() as unknown as ExecutionBackend,
+    executionBackend: backend,
     llmConfig: opts.llm
       ? {
           provider: 'anthropic-compatible',
@@ -636,5 +642,32 @@ describe('dashboard Appium ownership', () => {
     expect(killAllIndex).toBeGreaterThanOrEqual(0)
     expect(releaseIndex).toBeGreaterThan(killAllIndex)
     expect(shutdownIndex).toBeGreaterThan(releaseIndex)
+  })
+})
+
+describe('C442-ENQUEUE-REFUSAL', () => {
+  it('a refused android enqueue takes no Appium lease and executes nothing', async () => {
+    const neutralReason = 'Target "release-android-wikipedia" is declared environment: production.'
+    const preflight = vi.fn(async () => {
+      throw Object.assign(new Error('refused'), { neutralReason })
+    })
+    const port = await startDashboard({ preflight })
+    const response = await fetch(`http://127.0.0.1:${port}/api/queue/enqueue`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Android', platform: 'android', parallel: true }),
+    })
+    const body = (await response.json()) as Record<string, unknown>
+    await new Promise((resolve) => setTimeout(resolve, 100))
+
+    expect({ status: response.status, body }).toEqual({
+      status: 403,
+      body: { error: 'run_denied', neutralReason },
+    })
+    expect(preflight).toHaveBeenCalledWith({ args: [], source: 'dashboard' })
+    expect(currentAppium().acquireLease).not.toHaveBeenCalled()
+    expect(currentRunner().execute).not.toHaveBeenCalled()
+    expect(currentDb!.getPendingRuns()).toEqual([])
+    expect(currentDb!.getRuns({})).toEqual([])
   })
 })
