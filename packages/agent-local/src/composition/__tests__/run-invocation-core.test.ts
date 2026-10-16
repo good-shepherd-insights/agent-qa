@@ -23,7 +23,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { RunEventEnvelope, RunSession } from '@vostride/agent-qa-schema'
 
@@ -41,6 +41,18 @@ import type { RunAssemblyContext, RunConfig } from '../run-invocation-core.js'
 // here as a literal so the cells below can still assert no row ever names it.
 const RETIRED_RUN_START_ACTION = 'run:start'
 import type { RunTargetClass } from '../run-risk.js'
+
+const portBuilds = vi.hoisted(() => ({ order: [] as string[] }))
+vi.mock('../run-composition.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../run-composition.js')>()
+  return {
+    ...actual,
+    buildRunPorts: (input: Parameters<typeof actual.buildRunPorts>[0]) => {
+      portBuilds.order.push('buildRunPorts')
+      return actual.buildRunPorts(input)
+    },
+  }
+})
 
 let projectDir: string
 
@@ -759,5 +771,88 @@ describe('C441-RUN-RECORDS', () => {
     expect(recordedEvents(String(started.runId)).map((event) => event.type)).toContain('runFinished')
     expect(existsSync(join(runDir, 'handoff.json'))).toBe(true)
     expect(readdirSync(runDir)).not.toContain('guardrail_audit.jsonl')
+  })
+})
+
+describe('C442-PLUGINS-AFTER-REFUSAL', () => {
+  function hookedCore(input: {
+    afterRefusal: () => Promise<void>
+    productionTargetNames?: readonly string[]
+    targetClass?: RunTargetClass
+    mintRunId?: () => string
+    assemble?: (context: RunAssemblyContext) => RunConfig
+  }): ReturnType<typeof createRunInvocationCore> {
+    return createRunInvocationCore({
+      configPath: join(projectDir, 'agent-qa.config.yaml'),
+      agentQaRoot: agentQaRoot(),
+      executionContext: 'ci',
+      mintRunId: input.mintRunId ?? (() => 'run_minted_by_the_core'),
+      isMintedRunId: FIXTURE_MINTED_RUN_ID,
+      resolveTargetDeclaration: () => ({
+        targetClass: input.targetClass ?? 'local',
+        targetNames: [FAKE_TARGET_NAME],
+        productionTargetNames: input.productionTargetNames ?? [],
+      }),
+      assembleRun: input.assemble ?? recordingAssembler().assemble,
+      afterRefusal: input.afterRefusal,
+    })
+  }
+
+  it('the post-refusal hook never runs for a refused request', async () => {
+    await makeCore({ targetClass: 'local' }).execute({ runId: 'run_already_in_use' as never })
+    const refusals: Array<[string, () => Promise<unknown>, new (...args: never[]) => Error]> = [
+      ['an unminted run id', () => hookedCore({ afterRefusal: hook }).execute({ runId: 'not-a-minted-id' as never }), RunIdNotMintedError],
+      ['an in-use run id', () => hookedCore({ afterRefusal: hook }).execute({ runId: 'run_already_in_use' as never }), RunIdAlreadyInUseError],
+      ['production with names', () => hookedCore({
+        afterRefusal: hook, targetClass: 'production', productionTargetNames: ['prod-eu'], mintRunId: () => 'run_prod_named',
+      }).execute({}), RunDeniedError],
+      ['production with an empty name list', () => hookedCore({
+        afterRefusal: hook, targetClass: 'production', productionTargetNames: [], mintRunId: () => 'run_prod_unnamed',
+      }).execute({}), RunDeniedError],
+    ]
+    const calls: string[] = []
+    let current = ''
+    async function hook(): Promise<void> { calls.push(current) }
+    for (const [name, attempt, refusal] of refusals) {
+      current = name
+      await expect(attempt(), name).rejects.toThrow(refusal)
+    }
+    expect(calls).toEqual([])
+    expect(existsSync(join(agentQaRoot(), 'runs', 'run_prod_named'))).toBe(false)
+    expect(existsSync(join(agentQaRoot(), 'runs', 'run_prod_unnamed'))).toBe(false)
+  })
+
+  it('the post-refusal hook runs once before any port on an allowed request', async () => {
+    portBuilds.order.length = 0
+    const assembler = recordingAssembler()
+    const core = hookedCore({
+      afterRefusal: async () => {
+        portBuilds.order.push('afterRefusal')
+        expect(assembler.calls).toHaveLength(0)
+      },
+      assemble: assembler.assemble,
+      mintRunId: () => 'run_allowed_with_hook',
+    })
+
+    await core.execute({})
+
+    expect(portBuilds.order.filter((entry) => entry === 'afterRefusal')).toHaveLength(1)
+    expect(portBuilds.order.indexOf('afterRefusal')).toBeGreaterThanOrEqual(0)
+    expect(portBuilds.order.indexOf('afterRefusal')).toBeLessThan(portBuilds.order.indexOf('buildRunPorts'))
+    expect(assembler.calls).toHaveLength(1)
+  })
+
+  it('a hook that throws leaves no run directory', async () => {
+    const assembler = recordingAssembler()
+    const failure = new Error('the post-refusal hook failed')
+    const core = hookedCore({
+      afterRefusal: async () => { throw failure },
+      assemble: assembler.assemble,
+      mintRunId: () => 'run_hook_throws',
+    })
+
+    await expect(core.execute({})).rejects.toBe(failure)
+    expect(existsSync(join(agentQaRoot(), 'runs', 'run_hook_throws'))).toBe(false)
+    expect(assembler.calls).toEqual([])
   })
 })
