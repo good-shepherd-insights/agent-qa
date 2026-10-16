@@ -4681,3 +4681,191 @@ Recorded in `.planning/phases/441-declared-secret-masking/deferred-items.md`:
 The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
 verdict are recorded in `.planning/phases/441-declared-secret-masking/441-RECORD.md` § Gate and the
 SHA in § Final SHA, rather than quoted here, so no agent-qa commit follows it.
+
+## 2026-10-16 — Phase 442: Run ownership and production refusal (V2-RUN-01, V2-RUN-04)
+
+This section appends to the register and rewrites no earlier section. Phase 442 made two rules
+true. A run row is finalized only by the process that owns it, or, once that process is provably
+gone, by a starting dashboard or a cancel on that row. And every run door refuses an undeclared
+production target before any effect, plugin loading included. What did more was deleted: the
+runs.db v3-to-v4 upgrade arm, the dashboard's startup sweep over every `running` row and its
+"server restarted" sentence, the CLI crash loop over every `running` row, the suite's first-signal
+sweep and its dependency name, and the cancel arm that marked anyone's `running` row cancelled.
+The section follows the 2026-10-15 Phase 441 shape. Dated 2026-10-16; written by 442-11.
+
+### The ruling
+
+> V2-RUN-01: a crash, an interrupt or a starting dashboard finalizes only runs it owns or whose
+> owner is gone.
+>
+> V2-RUN-04: production is refused before any effect on every door, including
+> `POST /api/queue/enqueue`.
+
+From `.planning/REQUIREMENTS.md`. The phase's decisions are in
+`.planning/phases/442-run-ownership-and-production-refusal/442-CONTEXT.md`: the owner is the pid
+plus its process start time and its host (D-01, D-20); an owner is gone only on proof, a dead pid
+or a live pid whose start time differs from the stamp (D-02); runs.db is cut hard to v5 with no
+upgrade (D-03); an orphan is finalized `failed` with "The process running this run (pid N) ended
+before it finished." (D-04); a cancel is a request to the run's owner, refused for another live
+process's run (D-06 to D-09); loading a plugin counts as an effect (D-10); and a run is curated
+only under its own run's config, or handed back (D-13, D-17).
+
+### How this inventory is measured
+
+| Instrument | What it claims | Where |
+|---|---|---|
+| the census | `C442-NO-RUNNING-SWEEP`: no production code in `cli/src/` or `dashboard-server/src/` lists the `running` rows to finalize them, and no SQL text updates `runs` by status without naming its id (needles from halves, comments blanked by the 432 to 438 lexer). `C442-STATUS-WRITERS-CLASSIFIED`: the 35 `runs.status` writers are pinned by file and call, each `own`, `orphan` or `own-queue`. `C442-OWNER-REQUIRED`: the v5 DDL, run through `node:sqlite`, refuses an owner-less `running` row. `C442-UNIVERSE-FLOORS`, `C442-PLANTED-POSITIVE` and `C442-SELF-MATCH`. 6 cells, in `validate:arch`. | `packages/arch/src/__tests__/442-run-ownership-census.test.ts` (442-06 `0f1e75aaa`, `858c204a9`) |
+| the gate list | 104 `C442-` cells and the 79 `C432-RETURN` cells of the approval and permission census listed in `scripts/gate/inputs/regressions.json` after the 1633 rows listed at `4ee8a4df6` (unchanged and in order), each with its `442 D-NN` origin, so `gate:local` must execute and pass every one | `scripts/gate/inputs/regressions.json` (442-11 `99787e5e6`) |
+| the real-process cells | two concurrent `agent-qa run` processes over one runs.db: a framework crash, SIGINT and SIGTERM of one leave the other's row, artifact and post-run work intact; a shipped dashboard scene started, or cancelling, mid-run leaves a CLI-owned run alone | `packages/cli/src/__tests__/conformance/442-run-ownership.e2e.test.ts` (442-03, 442-04, 442-05) |
+| the door table | 11 doors, each refusing a declared production run before any D-11 effect (a run directory, a runs.db row, a job-store row, a build ordinal, a target or model request, a plugin marker) and running it in one call with `allowProduction: true` | `packages/cli/src/__tests__/conformance/432-direct-parity.test.ts` (442-09) |
+
+**Both ends of the derivation, stated so it can be re-run.** Baseline `4ee8a4df6` (agent-qa
+`version-0.2`, Phase 441's research SHA and 442-01's base). Closing SHA `99787e5e6` (442-11's gate
+list commit, the parent of this section's commit). `git -C agent-qa diff --shortstat 4ee8a4df6
+99787e5e6`: 67 files changed, 5,911 insertions, 665 deletions (under `packages/`: 64 files,
++4,801/−662). `--diff-filter=D`: no file deleted. `--diff-filter=A`: 14 files added, three
+production modules (`dashboard-server/src/db/run-owner.ts`,
+`cli/src/composition/run-owner-probe.ts`, `cli/src/curation/run-curation-context.ts`), one test
+fixture (`cli/src/__tests__/conformance/442-run-fixture.ts`) and ten test files. 32 commits, every
+one signed (`%G?` = `G`): 31 from 442-01 to 442-10 and 442-11's gate list. The removed lines below
+are read from each deleting commit's diff (`git -C agent-qa show <sha>`), not transcribed from a
+summary. Line numbers are at `4ee8a4df6`.
+
+### What was deleted
+
+#### Members removed from surviving files
+
+| Member (file at `4ee8a4df6`) | What it did | Deleting commit | The cell that notices its return |
+|---|---|---|---|
+| `fromV3Sql` (the optional field on a migration entry and the v4 entry's value, `dashboard-server/src/db/schema.ts:37`, `:43`) | the additive v3-to-v4 upgrade statements (424 D-13) | `dce450bf3` (442-01) | `C442-SCHEMA-V5 a version 3 file is refused naming the file and left untouched`, `C442-SCHEMA-V5 a version 4 file is refused naming the file and left untouched` (an upgrade arm would migrate instead of refuse); `C442-CENSUS … C442-OWNER-REQUIRED` reads the version 5 entry |
+| `upgradingV3` and its arm (`dashboard-server/src/db/database.ts:339-353`: the version test, the statement choice, the re-check under the immediate lock) | opened a v3 file and upgraded it in place | `dce450bf3` (442-01) | the same two `C442-SCHEMA-V5` cells, which also compare the file's sha256 and require no `-wal` file |
+| the startup loop over `db.getRuns({ status: 'running' })` (`dashboard-server/src/server/server.ts:466-490`) | marked every `running` row `failed` with a duration from `startedAt`, whoever owned it | `f0ba4343b` (442-04) | `C442-CENSUS … C442-NO-RUNNING-SWEEP`; `C442-ORPHAN a starting dashboard leaves a live, unknown or own run running`; `C442-DASHBOARD-START a dashboard started while a run is in flight leaves it running` |
+| the sentence `Process terminated unexpectedly (server restarted)` (`server.ts:483`, `:485`), as failure summary and artifact error | guessed a cause it could not know | `f0ba4343b` (442-04) | no needle spells it; `C442-ORPHAN a starting dashboard finalizes a gone owner's run with the plain sentence` and `C442-DASHBOARD-START a dashboard started while a run is in flight leaves it running` require the D-04 sentence in its place |
+| the artifact error `finalizeRunArtifactBestEffort(run.id, 'server-restart', 'startup-cleanup', …)` (`server.ts:485`) | finalized every swept run's artifact | `f0ba4343b` (442-04) | `C442-ORPHAN a starting dashboard finalizes a gone owner's run with the plain sentence` (the error is now `owner-gone` / `orphan-cleanup`); the census's `finalizeRunArtifact` writer count in `server.ts` |
+| the log line `Cleaned up ${cleaned} orphaned run(s) stuck in 'running' state` (`server.ts:489`), the comment above the loop and its dated 402-09 suite-run-skip comment | reported the sweep | `f0ba4343b` (442-04) | `C442-ORPHAN an empty runs database starts with nothing finalized and no cleanup line` (the line is now `Finalized N run(s) whose agent-qa process had ended`, printed only above zero) |
+| the crash catch's loop over `_crashDb.getRuns({ status: 'running' })` and `crashRunIdsPrinted` (`cli/src/commands/run.ts:5258-5296`) | marked every `running` row in the shared runs.db `failed` or `cancelled` and printed each id | `3b88be45b` (442-03) | `C442-CENSUS … C442-NO-RUNNING-SWEEP`; `C442-OWN-RUN-ONLY a crash of one run leaves the other run's row, artifact and post-run work intact` |
+| `sweepSuiteDbs` (`run.ts:1803-1817`) and `activeSuiteDbs` (the door's `Set`, the producer input field, the pattern-context field, the add and delete calls) | on the first signal, marked every `running` row of every open suite handle `cancelled` (WINDOWS #551) | `3b88be45b` (442-03) | `C442-CENSUS … C442-NO-RUNNING-SWEEP`; `C442-OWN-RUN-ONLY SIGINT to one run cancels only that run`; `C442-OWN-RUN-ONLY SIGTERM to one run cancels only that run` |
+| the shutdown controller's dependency `sweepSuiteDbs` (`cli/src/commands/shutdown-controller.ts`) | the first-signal sweep's hook | `3b88be45b` (442-03), renamed `finalizeOwnRun` with the same best-effort contract | `C442-OWN-RUN-ONLY the shutdown controller finalizes this process's own run once, on the first signal`; no needle spells the old name |
+| `JobQueue.cancel`'s `running` arm as it stood (`dashboard-server/src/queue/job-queue.ts:136-162`, returning `boolean`) and the route's three-line comment about it (`routes.ts`) | marked any `running` row `cancelled`, finalized its artifact and emitted `cancel-running`, whoever owned it | `50ae6946a` (442-05) | `C442-CANCEL-OWNER a dashboard cancel leaves a CLI-owned run in flight untouched`; `C442-CANCEL-OWNER another live process's run is refused and nothing is written`; `C442-CENSUS … C442-STATUS-WRITERS-CLASSIFIED` reds on an added or removed status writer in `job-queue.ts`, not on a reshaped one |
+| `agent-qa queue cancel`'s two `Failed to cancel: …` branches that exited 0 (`cli/src/commands/queue.ts`) | printed a failure and reported success | `9283bff5d` (442-05) | `C442-CANCEL-SENTENCE queue cancel prints a refusal and exits non-zero` |
+| the live-run page's `.catch(() => { toast.error('Failed to cancel run') })` (`dashboard-ui/src/pages/live-run.tsx`) | discarded the route's answer | `9283bff5d` (442-05) | `C442-CANCEL-SENTENCE the refusal toast shows the route's sentence` |
+| the run-door inputs' plugin load before the refusal (`resolveRunInvocationInputs` passing `loadAuthPlugins: request.loadAuthPlugins ?? true`, `run.ts:1225-1240`; `resolveConfig`'s unconditional auth and provider plugin load, `cli/src/config.ts:434-440`) | ran third-party plugin code for a request the core would refuse | `92fa77f8d` (442-08) | `C442-PLUGINS-AFTER-REFUSAL a refused production run loads no plugin`, `… suite …`, `… fn request …`; the 11 `C442-DOOR-TABLE … refuses a declared production run before any effect, plugin loading included` cells |
+| `agent-qa mcp`'s plugin-loading startup read (`resolveConfig({ configPath: globalOpts.config })`, `cli/src/commands/mcp.ts:226`) and its long comment | loaded every plugin at server start to read analytics and the dashboard address | `f45a56571` (442-08) | `C442-PLUGINS-AFTER-REFUSAL agent-qa mcp starts without loading a plugin` |
+
+No file was deleted. Six test cells went with the v3-to-v4 upgrade, in `dce450bf3`:
+`MIGRATION-V3-HISTORY: keeps every prior row and NULL with fresh schema and index parity`,
+`MIGRATION-ROLLBACK: failure after the first real ALTER restores schema, version and data` and
+`MIGRATION-RACE-IDEMPOTENT: a second opener re-reads v4 under the lock and adds nothing`
+(`424-read-migration.test.ts`); `MIGRATION-ROLLBACK: failure after a real ALTER restores schema,
+version, data and foreign keys`, `MIGRATION-ROLLBACK: version stamp shares the same transaction as
+both recording ALTERs` and `MIGRATION-RACE-IDEMPOTENT: a second opener that read version 3 before
+the first migrated adds nothing and throws nothing` (`423-read-migration.test.ts`). None was
+listed in `regressions.json`. The cells re-spelled in place, titles kept except where a title
+named a version that is now false, are listed in each plan's summary (442-01, 442-02, 442-03,
+442-05, 442-08, 442-10).
+
+#### Registered gate rows
+
+The 1633 rows listed at `4ee8a4df6` are still listed, unchanged and in order. No listed row was
+renamed, removed or moved to another file: the two registered `post-run-tail.test.ts` cells that
+442-10's harness change touched keep their names and pass.
+
+### What was RETAINED, and why
+
+| Item | Where (at `99787e5e6`) | Why kept | What pins it |
+|---|---|---|---|
+| the queue's own-run cancel: `JobQueue.cancel`'s `pending` arm and, for a `running` row whose owner classifies `self`, today's non-CAS `updateRun` to `cancelled`, the artifact finalize and `cancel-running` | `dashboard-server/src/queue/job-queue.ts` | the dashboard still cancels the runs it owns (D-07); Phase 444 owns cancel-before-stop (CONTEXT § Deferred Ideas) | `C442-CANCEL-OWNER the dashboard still cancels its own queued and running runs`; the five `JobQueue cancel` cells, titles kept |
+| `updateRunStatus`, the queue's pending-to-running flip | `dashboard-server/src/db/database.ts`, called from `job-queue.ts` | how a dashboard takes ownership of a run it executes; it now writes the owner columns in the same statement (D-01) | `C442-OWNER-STAMP the queue flip stamps the dashboard`; `C442-CENSUS … C442-STATUS-WRITERS-CLASSIFIED` (`own-queue`) |
+| `updateRun` and `insertRun` with a status | the ingest, `run.ts`, `server.ts`, `job-queue.ts` | every remaining call writes a row its caller owns; a `running` write stamps the handle's owner | `C442-CENSUS … C442-STATUS-WRITERS-CLASSIFIED` (35 writers) |
+| `finalizeRunArtifactBestEffort` in `server.ts` | `dashboard-server/src/server/server.ts` | its run-settled and Appium-start-failure callers survive; only the startup loop's call went | the census's `server.ts` writer entries |
+| `getRuns` | `database.ts` | list reads for routes and the dashboard; no production caller filters by `running` to finalize | `C442-CENSUS … C442-NO-RUNNING-SWEEP` |
+| the second-signal force-exit paths | `run.ts`, `shutdown-controller.ts` | an artifact left unfinalized after a forced exit is today's behaviour; Phase 444 owns the cancel proof (442-01 Planner decision 7) | the seven `createShutdownController — first-vs-second-signal contract …` cells, titles kept |
+| `RunRow` and `mapRunRow` without owner fields | `database.ts` | owners are read only through `readRunOwner` and `listRunningRunOwners`, so no route or UI shape changed (442-01 Planner decision 1) | read from code at `99787e5e6`; not pinned by a cell |
+| `DELETE /api/runs/:id` | `database.ts`, `routes.ts` | deletes any row, a live process's `running` row included; deferred (CONTEXT § Deferred Ideas) | — |
+| the daemon's `curateRun` binding | `cli/src/curation/post-run-tail.ts` (`STAGE_DRAINER`: curation is `masked-leg-only`) | it declares `no-masker` and never claims `curate-memory`, so it never drains another run's row (442-10) | 442-10's summary; not pinned by a C442 cell |
+
+### What degrades, stated plainly
+
+- **An older runs.db must be deleted once.** A `.agent-qa/runs.db` written at version 1 to 4 is
+  refused on open with `<path> was written by an older agent-qa (runs database version <n>).
+  Delete it and run again; agent-qa creates a new one.` The file is left byte-identical; its run
+  history is not migrated (D-03). Inside `agent-qa run`, the sentence appears within the existing
+  `Could not load dashboard reporter` warning.
+- **A SIGKILLed run stays `running` until a dashboard start or a cancel finds its owner gone.**
+  Nothing reaps an orphan while a dashboard stays up (CONTEXT § Deferred Ideas). The same holds
+  for a suite run's own row after a framework crash on the suite path: `_crashDb` is set only on
+  the direct path, so that row waits for the next dashboard start (442-01 Planner decision 7;
+  RESEARCH Pitfall 10).
+- **win32 liveness reads `unknown`.** `resolveProcessIncarnation` returns `undefined` on win32,
+  so a live pid there is never shown to be the stamped process or a reused one. Another process's
+  live row is never finalized, and a cancel on it is refused; only a dead pid classifies `gone`.
+  The same applies to any live pid whose start time `ps` cannot read in time.
+- **An owner on another host is `unknown`** (a container or a shared folder, D-20): its row is
+  left `running` by every dashboard start and every cancel on this host.
+- **The dashboard cannot cancel a run another live process owns.** The route answers 409 with
+  `This run belongs to another agent-qa process (pid N). Stop it there with Ctrl+C.`, and
+  `agent-qa queue cancel` prints it and exits 1. Delivering a cancel to another process
+  (`runs.cancel`) is deferred.
+- **A run directory without `run-config.json` is never curated by another run.** Every run before
+  442-10 lacks the record. The prior-run janitor warns and leaves it uncurated; the chain's
+  `curate-memory` row answers retryable with the plain reason and, after `maxAttempts: 3`, ends
+  failed with it (D-17).
+- **A refused production request no longer reports a missing plugin.** The refusal comes first,
+  so `PluginNotInstalledError` is reported only for a request that is allowed to run.
+
+### Persisted values the narrowed contract governs
+
+No migration and no compatibility code (D-03).
+
+| Persisted value | Disposition | Evidence |
+|---|---|---|
+| `.agent-qa/runs.db` at user_version 1, 2, 3 or 4 | **Refused by path, left untouched.** The version check runs before `journal_mode = WAL`, so the header is not rewritten and no `-wal` file appears. | `C442-SCHEMA-V5 a version 4 file is refused naming the file and left untouched`; `C442-SCHEMA-V5 a version 3 file is refused naming the file and left untouched` |
+| `.agent-qa/runs.db` at a version above 5 | **Refused** with the incompatible wording, the path prepended. | `C442-SCHEMA-V5 a newer file is refused naming the file` |
+| a v5 `running` row | **Always carries an owner.** `CHECK (status <> 'running' OR owner_pid IS NOT NULL)` refuses an owner-less insert and a status-only flip to `running`. | `C442-SCHEMA-V5 an owner-less running row is refused by the store`; `C442-CENSUS … C442-OWNER-REQUIRED` |
+| a `pending` row left by an earlier dashboard | **Owned by the dashboard that runs it**, stamped at the queue flip (D-01). | `C442-OWNER-STAMP the queue flip stamps the dashboard`; `C442-ORPHAN pending rows are untouched by the startup sweep` |
+| run directories without `.agent-qa/runs/<id>/run-config.json` (every run before 442-10), or with a record that has an extra key, is a symlink or names another run | **Never curated by another run's tail** (D-17); handed back with `Run <id> has no config record (it ran before agent-qa recorded one), so no other run curates it.` | `C442-RUN-CONFIG-CURATION a run with no config record is never curated by another run's tail` |
+| `run-config.json` (`{ schemaVersion: 1, runId, configPath }`, mode 0o600) | **New, written by every run's post-verdict step**; it names a path and holds no secret, and is declared in the 401-11 parity ledger. A second write of the same config is silent; a different config is refused and the file kept. | `C442-RUN-CONFIG-CURATION a run's post-verdict step records its own config`; `C442-RUN-CONFIG-CURATION writing the same record twice is success, a different one is refused` |
+
+### The instruments that notice a return
+
+- **`pnpm validate:arch`** runs the 442 census beside the earlier ones:
+  `C442-CENSUS — no path finalizes runs it does not own (442 D-05)` with `C442-UNIVERSE-FLOORS`,
+  `C442-NO-RUNNING-SWEEP`, `C442-STATUS-WRITERS-CLASSIFIED` and `C442-OWNER-REQUIRED`, and
+  `C442-CENSUS instruments` with `C442-PLANTED-POSITIVE` and `C442-SELF-MATCH`. A returning sweep
+  over the `running` rows, a bulk `UPDATE runs` by status, an unclassified status writer, or an
+  owner-less `running` row reds by name on the commit that adds it.
+- **The 434 gate** (`pnpm run gate:local`) must execute and pass all 104 listed `C442-` cells,
+  each with its `442 D-NN` origin: `C442-SCHEMA-V5` 5, `C442-OWNER-STAMP` 4,
+  `C442-OWNER-CLASSIFY` 12, `C442-ORPHAN` 9, `C442-OWN-RUN-ONLY` 6, `C442-DASHBOARD-START` 2,
+  `C442-CENSUS` 6, `C442-CANCEL-OWNER` 4, `C442-CANCEL-ORPHAN` 3, `C442-CANCEL-SENTENCE` 4,
+  `C442-ENQUEUE-REFUSAL` 6, `C442-PLUGINS-AFTER-REFUSAL` 9, `C442-DOOR-TABLE` 22, `C442-ABSENCE`
+  1, `C442-RUN-CONFIG-CURATION` 11. It must also pass the 79 `C432-RETURN` cells (origin
+  `442 D-12`), so a returning approval, permission, token, scope or proposal member reds the gate,
+  not only `validate:arch`.
+- **Not spelled by any needle:** the names `sweepSuiteDbs`, `activeSuiteDbs`, `fromV3Sql` and
+  `upgradingV3`, and the "server restarted" sentence. Their behaviour returning is caught by the
+  cells in the table above; the names alone returning are not.
+
+### Not observed, stated as such
+
+- **win32 liveness was not run.** No Windows host ran the probe; the `unknown` answer for a live
+  pid there is covered only by cells with an injected probe (
+  `C442-OWNER-CLASSIFY answers unknown when the start time of a live pid cannot be read`). The cells that spawn processes or send
+  signals throw `POSIX run lifecycle required; never skip` on win32, so Windows signal handling
+  was not observed.
+- **No live model ran.** Every cell uses a stub model or none.
+- **No user workspace was inspected.** The persisted-value dispositions are what the cells and
+  the code show for files in the old formats.
+
+### Reconciliation
+
+None needed. V2-RUN-01 and V2-RUN-04 were built as written. SC3's "distinct environment-bound
+secrets" was read under reconciliation 23 (2026-10-12) as distinct `secretsFile`s before planning
+(442-CONTEXT D-14), so `.planning/REQUIREMENTS.md` was not edited.
+
+### Gate at the time of writing
+
+The record gate runs on Phase 442's final agent-qa SHA, the commit that adds this section, which
+`.planning/phases/442-run-ownership-and-production-refusal/442-RECORD.md` § Final SHA names. Its
+legs, counts and verdict are recorded in that file's § Gate rather than quoted here, so no
+agent-qa commit follows the gate run.
