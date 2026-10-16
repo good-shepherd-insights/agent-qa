@@ -159,6 +159,39 @@ export function startCliRun(
   }
 }
 
+// The second handle stamps the row with the given owner, as that owner's own process would.
+export function seedRunningRow(dbPath: string, owner: RunOwner): string {
+  const seeding = new DashboardDatabase({
+    dbPath,
+    runOwnership: { self: owner, probe: { isAlive: () => true, incarnationOf: () => undefined } },
+  })
+  try {
+    const startedAt = new Date(Date.now() - 60_000).toISOString()
+    const id = seeding.insertRun({
+      name: `Seeded run owned by pid ${String(owner.pid)} on ${owner.host}`,
+      status: 'running',
+      duration: 0,
+      startedAt,
+      endedAt: startedAt,
+    })
+    seeding.insertRunArtifact({ runId: id, kind: 'test' })
+    return id
+  } finally {
+    seeding.close()
+  }
+}
+
+export async function exitedPid(): Promise<number> {
+  const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' })
+  if (child.pid === undefined) throw new Error('the short-lived process did not start')
+  const pid = child.pid
+  await new Promise<void>((settle, fail) => {
+    child.once('error', fail)
+    child.once('close', () => { settle() })
+  })
+  return pid
+}
+
 export function readRow(project: TwoRunProject, id: string): RunRow {
   const row = project.db.getRun(id)
   if (row === undefined) throw new Error(`runs.db has no row ${id}`)

@@ -4,10 +4,13 @@ import { existsSync } from 'node:fs'
 import { hostname } from 'node:os'
 import { join } from 'node:path'
 
+import { orphanSummary } from '@vostride/agent-qa-dashboard'
+import type { RunOwner } from '@vostride/agent-qa-dashboard'
 import { resolveProcessIncarnation } from '@vostride/agent-qa-knowledge-local'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
+  exitedPid,
   holdCellBrowsers,
   loggedEventTypes,
   readOwner,
@@ -15,6 +18,7 @@ import {
   refuseWithoutPosixRunLifecycle,
   rowIds,
   runDirectory,
+  seedRunningRow,
   startCliRun,
   twoRunProject,
 } from './442-run-fixture.js'
@@ -222,5 +226,115 @@ describe('C442-OWN-RUN-ONLY', () => {
     expect(aExit.code).toBe(130)
     expect(at.browsers.releasedOrdinals()).toEqual([])
     expect(readRow(at.project, a.id).status).toBe('cancelled')
+  }, CELL_BUDGET_MS)
+})
+
+interface SeededRow {
+  readonly id: string
+  readonly owner: RunOwner
+}
+
+interface DashboardStartedMidRun {
+  readonly at: Cell
+  readonly b: Parked
+  readonly exitedHere: SeededRow
+  readonly reusedPid: SeededRow
+  readonly otherHost: SeededRow
+}
+
+function seeded(at: Cell, owner: RunOwner): SeededRow {
+  const id = seedRunningRow(at.project.dbPath, owner)
+  expect(readRow(at.project, id).status).toBe('running')
+  expect(readOwner(at.project, id)).toEqual(owner)
+  return { id, owner }
+}
+
+function expectOrphanFinalized(project: TwoRunProject, row: SeededRow): void {
+  const sentence = orphanSummary(row.owner.pid)
+  const read = readRow(project, row.id)
+  expect(read.status).toBe('failed')
+  expect(read.failureSummary).toBe(sentence)
+  expect(project.db.getRunArtifact(row.id)?.payload.errors).toEqual([
+    { code: 'owner-gone', phase: 'orphan-cleanup', message: sentence },
+  ])
+}
+
+// The scene is the dashboard as `agent-qa dashboard` composes it, with the real run ownership. Its
+// fixture loads playwright-core, so it is imported only after this process has planted its browser.
+async function startDashboardWhileBRuns(): Promise<DashboardStartedMidRun> {
+  const at = await openCell()
+  const b = await startParked(at, suiteArgs(at.project), 0)
+  expect(b.run.exited()).toBe(false)
+  expect(at.browsers.releasedOrdinals()).toEqual([])
+  expectUnfinalizedAndRunning(at.project, b.id)
+
+  const here = hostname()
+  const exitedHere = seeded(at, { pid: await exitedPid(), incarnation: 'ps-lstart:exited', host: here })
+  const reusedPid = seeded(at, { pid: process.pid, incarnation: 'ps-lstart:never', host: here })
+  const otherHost = seeded(at, {
+    pid: await exitedPid(),
+    incarnation: 'ps-lstart:exited',
+    host: 'elsewhere.invalid',
+  })
+  const bOwner = readOwner(at.project, b.id)
+  const otherHostBefore = JSON.stringify({
+    row: readRow(at.project, otherHost.id),
+    artifact: at.project.db.getRunArtifact(otherHost.id),
+  })
+
+  const { openDashboardScene } = await import('./433-door-fixture.js')
+  const scene = await openDashboardScene(
+    {
+      root: at.project.project,
+      configPath: at.project.configPath,
+      agentQaRoot: at.project.agentQaRoot,
+      suitePath: at.project.suitePattern,
+      testPath: at.project.testPattern,
+      testId: at.project.directTestId,
+    },
+    { dbPath: at.project.dbPath },
+  )
+  try {
+    expect(b.run.exited()).toBe(false)
+    expect(at.browsers.releasedOrdinals()).toEqual([])
+    expectUnfinalizedAndRunning(at.project, b.id)
+    expect(readOwner(at.project, b.id)).toEqual(bOwner)
+    expectOrphanFinalized(at.project, exitedHere)
+    expectOrphanFinalized(at.project, reusedPid)
+    expect(JSON.stringify({
+      row: readRow(at.project, otherHost.id),
+      artifact: at.project.db.getRunArtifact(otherHost.id),
+    })).toBe(otherHostBefore)
+    expect(readRow(at.project, otherHost.id).status).toBe('running')
+  } finally {
+    await scene.close()
+  }
+  return { at, b, exitedHere, reusedPid, otherHost }
+}
+
+describe('C442-DASHBOARD-START', () => {
+  it('a dashboard started while a run is in flight leaves it running', async () => {
+    const { at, b } = await startDashboardWhileBRuns()
+    at.browsers.release(0)
+    expect((await b.run.done).code).toBe(1)
+  }, CELL_BUDGET_MS)
+
+  it('the run in flight still finishes as itself', async () => {
+    const { at, b, exitedHere, reusedPid } = await startDashboardWhileBRuns()
+    expectUnfinalizedAndRunning(at.project, b.id)
+
+    at.browsers.release(0)
+    await expectFinishesOnItsOwn(at, b, exitedHere.id)
+    const row = readRow(at.project, b.id)
+    const payload = JSON.stringify(at.project.db.getRunArtifact(b.id)!.payload)
+    for (const foreign of [
+      'ended before it finished',
+      'owner-gone',
+      'orphan-cleanup',
+      reusedPid.id,
+    ]) {
+      expect(row.failureSummary ?? '').not.toContain(foreign)
+      expect(payload).not.toContain(foreign)
+    }
   }, CELL_BUDGET_MS)
 })
