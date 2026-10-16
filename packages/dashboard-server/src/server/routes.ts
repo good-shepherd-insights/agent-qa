@@ -2950,6 +2950,20 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             json(res, { error: err instanceof Error ? err.message : String(err) }, 400)
             return
           }
+          const args = normalizedFileTarget ? [normalizedFileTarget.executionPath] : []
+          const source = isSuiteFile ? 'suite' : 'dashboard'
+          // 2026-10-16 (442 D-12, WINDOWS #550): the trigger's preflight, before anything queues.
+          try {
+            await executionBackend?.preflight?.({ args, source })
+          } catch (error) {
+            const denial = runDenialOf(error)
+            if (denial !== undefined) {
+              json(res, denial, 403)
+              return
+            }
+            json(res, { error: error instanceof Error ? error.message : String(error) }, 400)
+            return
+          }
           const runId = jobQueue.enqueue({
             name: body.name,
             filePath: normalizedFileTarget?.storagePath,
@@ -2964,7 +2978,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             parallel: body.parallel,
             metadata: {
               ...queuedMetadata.metadata,
-              args: normalizedFileTarget ? [normalizedFileTarget.executionPath] : [],
+              args,
               ...(isSuiteFile ? { isSuite: true } : {}),
             },
           })
