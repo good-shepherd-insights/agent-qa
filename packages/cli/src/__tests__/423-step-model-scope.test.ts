@@ -12,6 +12,10 @@ import { produceDirectRunMembers, produceSuiteRunMembers } from '../commands/run
 import type { RunInvocationInputs, SuiteRunMemberProductionInput } from '../commands/run.js'
 import { assembleCliRun } from '../composition/run-assembly.js'
 import { runInProcessCliRun } from '../composition/in-process-run-execution.js'
+import { closeTestRunRecords, testRunRecord } from '../composition/__tests__/in-process-run-fixture.js'
+
+// 2026-10-17 (443-08, D-22): every drive call carries a record; each cell closes the ones it opened.
+afterEach(() => { closeTestRunRecords() })
 
 const boundary = vi.hoisted(() => ({
   configs: [] as MemberRunConfig[],
@@ -162,6 +166,7 @@ async function executePath(path: 'DIRECT' | 'SUITE' | 'COMPOSED', options: { mis
   const events: RunEventEnvelope[] = []
   if (path === 'COMPOSED') {
     const outcome = await runInProcessCliRun({
+      runRecord: testRunRecord(),
       configPath: configFilePath, agentQaRoot: join(project, '.agent-qa'), executionContext: 'ci', inputs,
       onSession: session => { session.subscribe(1, event => { events.push(event) }) },
     }, { runId, patterns: [filePath] })

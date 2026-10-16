@@ -271,14 +271,7 @@ const WRITERS: readonly Writer[] = [
   w(RUN_TS, 'finalizeOwnRun', 'own', 'record flush, its own row after a failed write'),
   w(RUN_TS, 'finalizeRunArtifact', 'own', 'crash catch, only after its own CAS wrote'),
   w(RUN_TS, 'finalizeRunArtifact', 'own', 'direct parse-error validation row'),
-  w(RUN_TS, 'updateRun', 'own', 'suite path-traversal row handed to this process'),
-  w(RUN_TS, 'updateRun', 'own', 'suite parse-error row handed to this process'),
-  w(RUN_TS, 'updateRun', 'own', 'suite missing-definition row handed to this process'),
-  w(RUN_TS, 'updateRun', 'own', 'suite id-mismatch row handed to this process'),
-  w(RUN_TS, 'insertRun', 'own', 'suite path-traversal row'),
-  w(RUN_TS, 'insertRun', 'own', 'suite parse-error row'),
-  w(RUN_TS, 'insertRun', 'own', 'suite missing-definition row'),
-  w(RUN_TS, 'insertRun', 'own', 'suite id-mismatch row'),
+  w(RUN_TS, 'insertRun', 'own', "suite preparation failure, under the run's own id"),
   w(RUN_TS, 'insertRun', 'own', 'direct parse-error validation row'),
   w(SHUTDOWN, 'finalizeOwnRun', 'own', 'first-signal dep, bound by run.ts to its own row'),
   w(SUBSCRIBER, 'updateRun', 'own', 'member outcome on its own row'),
@@ -299,7 +292,7 @@ const WRITERS: readonly Writer[] = [
   w(JOB_QUEUE, 'finalizeOrphanRun', 'orphan', 'cancel of a running row whose owner is gone'),
   w(DATABASE, 'finalizeRunArtifact', 'orphan', 'inside finalizeOrphanRun, after its CAS wrote'),
 ]
-const WRITER_FLOOR = 33
+const WRITER_FLOOR = 26
 
 function argumentOf(text: string, open: number): string {
   let depth = 0

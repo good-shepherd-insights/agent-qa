@@ -62,6 +62,10 @@ function printedRunIds(stdout: string): string[] {
   return [...stdout.matchAll(/^Run ID: (\S+)$/gmu)].map((match) => match[1]!)
 }
 
+function namedRunIds(exit: CliRunExit): string[] {
+  return [...new Set(`${exit.stdout}\n${exit.stderr}`.match(/\br_[a-z]+(?:-[a-z]+)+/gu) ?? [])]
+}
+
 function runDirectories(at: InProcessFixture): string[] {
   const runs = join(at.agentQaRoot, 'runs')
   return existsSync(runs) ? readdirSync(runs) : []
@@ -99,6 +103,19 @@ const flat = (text: string): string => text.replace(/\s*\n\s*/gu, ' | ').slice(0
 
 const sha256 = (path: string): string => createHash('sha256').update(readFileSync(path)).digest('hex')
 
+const PLUGIN_MARKER = 'plugin-loaded.marker'
+
+function declareMarkerAuthPlugin(at: InProcessFixture): string {
+  writeFileSync(join(at.project, 'marker-auth-plugin.mjs'), [
+    "import { writeFileSync } from 'node:fs'",
+    `writeFileSync(new URL('./${PLUGIN_MARKER}', import.meta.url), String(process.pid))`,
+    'export const providers = []',
+    '',
+  ].join('\n'))
+  appendFileSync(at.configPath, 'plugins:\n  auth:\n    - path: ./marker-auth-plugin.mjs\n')
+  return join(at.project, PLUGIN_MARKER)
+}
+
 function writeVersion4RunsDb(at: InProcessFixture): string {
   const path = runsDbOf(at)
   mkdirSync(at.agentQaRoot, { recursive: true })
@@ -115,7 +132,7 @@ describe('C443-CLI-ROW', () => {
 
     const exit = await run(at, ['run', at.testPattern])
 
-    const ids = printedRunIds(exit.stdout)
+    const ids = namedRunIds(exit)
     expect(ids.length, `printed run ids: ${flat(exit.stdout)} | ${flat(exit.stderr)}`).toBe(1)
     expect(existsSync(runsDbOf(at)), `no runs.db after the run: ${flat(exit.stderr)}`).toBe(true)
     const recorded = rows(at)
@@ -123,6 +140,21 @@ describe('C443-CLI-ROW', () => {
     expect(recorded[0]!.ownerPid, 'the row owner pid').toBe(exit.pid)
     expect(recorded[0]!.attributes['agent-qa.trigger'], 'the row trigger').toBe('cli')
     expect(TERMINAL.includes(recorded[0]!.status), `the row status ${recorded[0]!.status}`).toBe(true)
+  }, CELL_BUDGET_MS)
+
+  it('a suite run with no dashboard block writes one row under the printed id', async () => {
+    const at = project()
+    expect(readFileSync(at.configPath, 'utf8').includes('dashboard'), 'the config names a dashboard block').toBe(false)
+
+    const exit = await run(at, ['run', '--suite', at.suitePattern])
+
+    const ids = namedRunIds(exit)
+    expect(ids.length, `printed run ids: ${flat(exit.stdout)} | ${flat(exit.stderr)}`).toBe(1)
+    expect(existsSync(runsDbOf(at)), `no runs.db after the suite run: ${flat(exit.stderr)}`).toBe(true)
+    const recorded = rows(at)
+    expect(recorded.map((row) => row.id).join(','), 'the rows under runs.db').toBe(ids[0])
+    expect(recorded[0]!.ownerPid, 'the row owner pid').toBe(exit.pid)
+    expect(recorded[0]!.attributes['agent-qa.trigger'], 'the row trigger').toBe('cli')
   }, CELL_BUDGET_MS)
 })
 
@@ -138,6 +170,7 @@ describe('C443-RECORD-REFUSAL', () => {
     expect(exit.stderr.includes(path), `stderr names the file: ${flat(exit.stderr)}`).toBe(true)
     expect(exit.stderr.includes(NOT_STARTED), `stderr says the run was not started: ${flat(exit.stderr)}`).toBe(true)
     expect(printedRunIds(exit.stdout).join(','), 'printed run ids').toBe('')
+    expect(namedRunIds(exit).join(','), 'run ids the command named').toBe('')
     expect(runDirectories(at).join(','), 'run directories').toBe('')
     expect(sha256(path) === before, 'the version-4 file changed').toBe(true)
   }, CELL_BUDGET_MS)
@@ -153,6 +186,24 @@ describe('C443-RECORD-REFUSAL', () => {
     expect(existsSync(runsDbOf(at)), 'a runs.db file exists').toBe(false)
     expect(runDirectories(at).join(','), 'run directories').toBe('')
   }, CELL_BUDGET_MS)
+
+  it('a suite run whose runs.db cannot be opened is refused before its plugins load', async () => {
+    const at = project()
+    const marker = declareMarkerAuthPlugin(at)
+    const path = writeVersion4RunsDb(at)
+    const before = sha256(path)
+
+    const exit = await run(at, ['run', '--suite', at.suitePattern])
+
+    expect(exit.code, `exit code; stderr: ${flat(exit.stderr)}`).toBe(2)
+    expect(exit.stderr.includes(path), `stderr names the file: ${flat(exit.stderr)}`).toBe(true)
+    expect(exit.stderr.includes(NOT_STARTED), `stderr says the run was not started: ${flat(exit.stderr)}`).toBe(true)
+    expect(printedRunIds(exit.stdout).join(','), 'printed run ids').toBe('')
+    expect(namedRunIds(exit).join(','), 'run ids the command named').toBe('')
+    expect(runDirectories(at).join(','), 'run directories').toBe('')
+    expect(existsSync(marker), 'the auth plugin loaded').toBe(false)
+    expect(sha256(path) === before, 'the version-4 file changed').toBe(true)
+  }, CELL_BUDGET_MS)
 })
 
 describe('C443-HANDED-ROW', () => {
@@ -163,9 +214,25 @@ describe('C443-HANDED-ROW', () => {
     const exit = await run(at, ['run', at.testPattern])
 
     expect(exit.code, `exit code; stderr: ${flat(exit.stderr)}`).toBe(2)
-    const ids = printedRunIds(exit.stdout)
+    const ids = namedRunIds(exit)
     expect(ids.length, `printed run ids: ${flat(exit.stdout)}`).toBe(1)
     expect(existsSync(runsDbOf(at)), `no runs.db after the parse error: ${flat(exit.stderr)}`).toBe(true)
+    const recorded = rows(at)
+    expect(recorded.map((row) => `${row.id}:${row.status}`).join(','), 'the rows under runs.db').toBe(`${ids[0]}:failed`)
+  }, CELL_BUDGET_MS)
+
+  it('a suite preparation failure writes one failed row under the printed id', async () => {
+    const at = project()
+    const suiteFile = join(at.project, at.suitePattern)
+    writeFileSync(suiteFile, readFileSync(suiteFile, 'utf8').replace('test: tests/member.yaml', 'test: ../outside.yaml'))
+
+    const exit = await run(at, ['run', '--suite', at.suitePattern])
+
+    expect(exit.code, `exit code; stderr: ${flat(exit.stderr)}`).toBe(2)
+    expect(exit.stderr.includes('Path traversal rejected'), `stderr names the refusal: ${flat(exit.stderr)}`).toBe(true)
+    const ids = namedRunIds(exit)
+    expect(ids.length, `printed run ids: ${flat(exit.stdout)}`).toBe(1)
+    expect(existsSync(runsDbOf(at)), `no runs.db after the preparation failure: ${flat(exit.stderr)}`).toBe(true)
     const recorded = rows(at)
     expect(recorded.map((row) => `${row.id}:${row.status}`).join(','), 'the rows under runs.db').toBe(`${ids[0]}:failed`)
   }, CELL_BUDGET_MS)

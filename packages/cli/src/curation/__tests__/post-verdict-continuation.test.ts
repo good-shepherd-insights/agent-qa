@@ -26,6 +26,10 @@ import * as drive from '../../composition/in-process-run-execution.js'
 import * as tailComposition from '../post-run-tail-composition.js'
 import * as evalSession from '../../eval-session-composition.js'
 import { readRunCanaryPolicy } from '../canary-run-state.js'
+import { closeTestRunRecords, testRunRecord } from '../../composition/__tests__/in-process-run-fixture.js'
+
+// 2026-10-17 (443-08, D-22): every drive call carries a record; each cell closes the ones it opened.
+afterEach(() => { closeTestRunRecords() })
 
 const roots: string[] = []
 afterEach(() => {
@@ -69,6 +73,7 @@ it.each(['settles', 'host deadline expires', 'abort', 'detached tail', 'framewor
   const detached = vi.fn(async () => undefined)
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
   const running = runInProcessCliRun({
+    runRecord: testRunRecord(),
     configPath: fixture.configPath, agentQaRoot: fixture.agentQaRoot,
     postVerdictSignal: abort.signal,
     ...(mode === 'detached tail' ? { postRunTail: detached } : {}),

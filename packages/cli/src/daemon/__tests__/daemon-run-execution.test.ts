@@ -57,6 +57,10 @@ import { invokeViaDaemon } from '../client.js'
 import { DAEMON_EVENTS_FILE } from '../events.js'
 import { runDaemonHost } from '../host.js'
 import type { DaemonHostOperations } from '../host.js'
+import { closeTestRunRecords, testRunRecord } from '../../composition/__tests__/in-process-run-fixture.js'
+
+// 2026-10-17 (443-08, D-22): every drive call carries a record; each cell closes the ones it opened.
+afterEach(() => { closeTestRunRecords() })
 
 /**
  * The capture files that retired with the child (D-04).
@@ -446,6 +450,7 @@ describe('the daemon dispatches runs through the in-process core (401-06, INVK-0
           try {
             await runInProcessCliRun(
               {
+                runRecord: testRunRecord(),
                 configPath: fixture.configPath,
                 agentQaRoot: fixture.agentQaRoot,
                 executionContext: 'local-interactive',

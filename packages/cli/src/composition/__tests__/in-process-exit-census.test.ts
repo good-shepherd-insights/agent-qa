@@ -34,7 +34,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { RunDeniedError } from '@vostride/agent-qa-agent-local'
 
@@ -42,6 +42,10 @@ import { CliRunInputError, runInProcessCliRun } from '../in-process-run-executio
 import { requireReporterSelection } from '../../commands/run.js'
 import type { RunOptions } from '../../commands/run.js'
 import { CountingTarget, createInProcessFixture } from './in-process-run-fixture.js'
+import { closeTestRunRecords, testRunRecord } from './in-process-run-fixture.js'
+
+// 2026-10-17 (443-08, D-22): every drive call carries a record; each cell closes the ones it opened.
+afterEach(() => { closeTestRunRecords() })
 
 const CLI_SRC = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const ENTRY = join(CLI_SRC, 'composition', 'in-process-run-execution.ts')
@@ -152,6 +156,9 @@ const PINNED_RUN_TS_IMPORTS = [
   // 401-20 (CR-04): the mint's inverse. `isMintedRunId` is a REQUIRED core option with no default,
   // and it travels the same relative route the mint does — a shape check invented in `agent-local`
   // would be a second spelling of a run's identity.
+  // 2026-10-17 (443-08, D-22): `createInProcessCliRunExecution` builds one record per run.
+  'createRunRecord',
+  'doorRunAttributes',
   'isMintedCliRunId',
   'mintCliRunId',
   'produceMembersFromPatterns',
@@ -365,6 +372,7 @@ describe('(iii) every failure door answers with a value, and none of them kills 
         try {
           await runInProcessCliRun(
             {
+              runRecord: testRunRecord(),
               configPath: fixture.configPath,
               agentQaRoot: fixture.agentQaRoot,
               executionContext: 'local-headless',
@@ -428,6 +436,7 @@ describe('(iii) every failure door answers with a value, and none of them kills 
       try {
         await runInProcessCliRun(
           {
+            runRecord: testRunRecord(),
             configPath: fixture.configPath,
             agentQaRoot: fixture.agentQaRoot,
             executionContext: 'local-headless',

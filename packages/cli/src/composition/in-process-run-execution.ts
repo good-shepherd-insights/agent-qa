@@ -77,6 +77,8 @@ import {
 } from '../curation/post-verdict-step.js'
 import { REPLAY_FROM_START, attachRunSubscribers } from '../run-session-composition.js'
 import {
+  createRunRecord,
+  doorRunAttributes,
   isMintedCliRunId,
   mintCliRunId,
   produceMembersFromPatterns,
@@ -234,9 +236,10 @@ export interface InProcessCliRunExecutionOptions {
   readonly subscribers?: (input: RunSubscriberAttachInput) => { flush(): Promise<void> } | undefined
   /**
    * The run's runs.db record (443-05, D-02/D-22). The drive opens it after the production refusal
-   * and attaches it itself; the door that built it closes it.
+   * and attaches it itself; the door that built it closes it. Required (443-08): no door runs
+   * unrecorded.
    */
-  readonly runRecord?: RunRecord
+  readonly runRecord: RunRecord
   /**
    * The door's post-verdict tail, run INSIDE the run's safety scope and after the subscriber flush,
    * returning the final exit code.
@@ -399,6 +402,7 @@ export async function runInProcessCliRun(
           ...(request.patterns === undefined ? {} : { patterns: request.patterns }),
         }),
         runId,
+        runRecord: options.runRecord,
         // The door's per-run resolver, BOUND to this run's id here — the one place the id is
         // decided. See `resolveAppiumUrl` on the options.
         ...(options.resolveAppiumUrl === undefined
@@ -467,7 +471,7 @@ export async function runInProcessCliRun(
     }),
     afterRefusal: async () => {
       // 2026-10-17 (443-05, D-05): the record opens after the refusal and before any effect.
-      await options.runRecord?.open({
+      await options.runRecord.open({
         runId,
         configDir: produced.configDir,
         ...(produced.configuredRunsDbPath === undefined
@@ -528,7 +532,7 @@ export async function runInProcessCliRun(
       })
       // Subscribed directly, never through `attachRunSubscribers`: its wire reporter can print to
       // stdout, which is the protocol on the MCP stdio server and `fn --json`.
-      const record = options.runRecord?.subscriber({
+      const record = options.runRecord.subscriber({
         mask,
         gateRun: request.gateRun === true,
         ...(produced.onMemberSnapshot === undefined ? {} : { onMemberSnapshot: produced.onMemberSnapshot }),
@@ -537,7 +541,7 @@ export async function runInProcessCliRun(
           source: produced.subscriberSeed?.sourceSnapshot,
         },
       })
-      if (record !== undefined) session.subscribe(REPLAY_FROM_START, record.handler)
+      session.subscribe(REPLAY_FROM_START, record.handler)
       startedRecord = record
     },
     // 404 D-05/D-10: the post-verdict step, composed HERE and threaded by the core so no door can
@@ -712,12 +716,21 @@ export async function runInProcessCliRun(
  * empty one) binds over unchanged.
  */
 export function createInProcessCliRunExecution(
-  options: InProcessCliRunExecutionOptions,
+  options: Omit<InProcessCliRunExecutionOptions, 'runRecord'>,
 ): { execute(request: RunsStartInput): Promise<{ runId: string }> } {
   return {
     async execute(request: RunsStartInput): Promise<{ runId: string }> {
-      const outcome = await runInProcessCliRun(options, request)
-      return { runId: outcome.runId }
+      // 2026-10-17 (443-08, D-22): one record per run, closed by the port that built it.
+      const runRecord = createRunRecord({
+        attributes: doorRunAttributes('cli'),
+        warn: (line) => console.warn(line),
+      })
+      try {
+        const outcome = await runInProcessCliRun({ ...options, runRecord }, request)
+        return { runId: outcome.runId }
+      } finally {
+        runRecord.close()
+      }
     },
   }
 }

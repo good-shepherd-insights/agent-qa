@@ -811,57 +811,6 @@ function resolveReporterSelection(opts: RunOptions, dashboardConfigured: boolean
   }
 }
 
-// 363-09 (D-08 successor): construct the dashboard DB ingest as a bus subscriber (replacing the v1
-// DashboardReporter attach). Config/source snapshots and the run's own id ride construction;
-// envelopes drive lifecycle. Returns a subscriber handle whose `flush` lands the finalize sweep
-// (the memory section arrives out-of-band). Dashboard is optional — a load failure degrades to no
-// subscriber.
-//
-// 433-29 (G-433-5, F-433-15): the ingest is built at ATTACH, where it is handed the run's mask.
-// Construction snapshots cross that mask before they reach the database (the suite path stored its
-// env file in clear before), and the producer's snapshot channel stages each member's loaded
-// test/config onto the run's artifact.
-async function buildDashboardIngestSubscriber(input: {
-  db: any
-  configSnapshot?: unknown
-  sourceSnapshot?: unknown
-  attributes?: RunAttributes
-  onRunCreated?: (runId: string) => void
-  runId: string
-}): Promise<((attach: DashboardIngestAttach) => RunSubscriberHandle) | undefined> {
-  try {
-    const { createDashboardRunIngest } = await import('@vostride/agent-qa-dashboard')
-    return (attach) => {
-      const mask = (value: unknown): any => (isSnapshotRecord(value)
-        ? maskPayloadStrings(value, attach.mask)
-        : undefined)
-      const ingest = createDashboardRunIngest({
-        db: input.db,
-        runId: input.runId,
-        configSnapshot: mask(input.configSnapshot),
-        sourceSnapshot: mask(input.sourceSnapshot),
-        attributes: input.attributes,
-        onRunCreated: input.onRunCreated,
-      })
-      const unsubscribe = attach.onMemberSnapshot?.((snapshot) => { ingest.stageSnapshots(snapshot) })
-      return {
-        handler: ingest.handler,
-        flush: async () => {
-          unsubscribe?.()
-          await ingest.finalize()
-        },
-      }
-    }
-  } catch {
-    return undefined
-  }
-}
-
-interface DashboardIngestAttach {
-  readonly mask: MaskFn
-  readonly onMemberSnapshot?: RunArtifactSnapshotChannel['subscribe']
-}
-
 function isSnapshotRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -1157,10 +1106,6 @@ function formatParseErrors(errors: ParseError[]): void {
 
 function createTestRunId(): string {
   return process.env.AGENT_QA_RUN_ID ?? generateRunId()
-}
-
-function createSuiteRunId(): string {
-  return process.env.AGENT_QA_SUITE_QUEUE_ID ?? process.env.AGENT_QA_RUN_ID ?? generateRunId()
 }
 
 function printRunId(runId: string | null | undefined): void {
@@ -1990,12 +1935,21 @@ async function executeSuites(
     graceTimer = undefined
   }
 
+  // 2026-10-17 (443-08, D-02/D-03): one record per invocation, written whatever the config holds.
+  const record = createRunRecord({
+    attributes: resolveCliRunAttributes(
+      variableContext?.userRunAttributes ?? {},
+      'local',
+      variableContext?.inheritedRunAttributes,
+    ),
+    warn: (line) => console.warn(pc.yellow(line)),
+  })
   // 2026-10-16 (442-03, D-05): the first signal cancels the row this process's ingest wrote, only.
-  let ownSuiteRow: { readonly db: any; readonly id: string } | undefined
   const finalizeOwnRun = () => {
-    if (ownSuiteRow === undefined) return
+    const ownRowId = record.ownRowId()
+    if (record.db === undefined || ownRowId === undefined) return
     const endedAt = new Date().toISOString()
-    ownSuiteRow.db.finalizeOwnRun(ownSuiteRow.id, { status: 'cancelled', endedAt })
+    record.db.finalizeOwnRun(ownRowId, { status: 'cancelled', endedAt })
   }
 
   // RUNX-02 / D1: route both signals through the controller so a SECOND Ctrl+C HARD force-exits
@@ -2028,76 +1982,63 @@ async function executeSuites(
   // is it.
   const runId = process.env.AGENT_QA_RUN_ID ?? generateRunId()
   const executionContext = resolveRunExecutionContext()
-  const produced = await produceSuiteRunMembers({
-    resolveTrustPriors: trustPriors?.resolve,
-    suiteFiles,
-    preflight,
-    config,
-    configDir,
-    configFilePath,
-    configContent,
-    effectiveLogLevel,
-    runId,
-    opts,
-    loadPlugins,
-    ...(variableContext === undefined ? {} : { variableContext }),
-    ...(hooksContext === undefined ? {} : { hooksContext }),
-    ...(analytics === undefined ? {} : { analytics }),
-  })
-  const reporterSelection = requireReporterSelection(opts, Boolean(config.services?.dashboard))
-  printPlannerLimits(produced.plannerLimits)
-  const members = produced.members
-  const executor = produced.executor
-  const runProduct = produced.product
-  const suiteTargetClass = produced.targetClass
-  const buildTag = produced.buildTag
-  const knowledgeRoot = produced.knowledgeRoot
-  const runDigests = { runLevel: produced.configDigests }
-  let suiteQuarantined: readonly QuarantineAppliedEntry[] = []
-
-  // 363-09: the run-level bus subscribers (Pitfall 8 — the SAME attach helper both of this door's
-  // paths use). Analytics rides the bus (D-16); the dashboard ingest (when a suite DB exists) writes
-  // runs/run_artifacts rows as a subscriber (D-08). Dashboard/analytics construction data the wire
-  // omits rides here.
-  const runLevelDashboardDb = produced.subscriberSeed?.dashboardDb
-  const extraSubscribers: RunSubscriberHandle[] = []
-  const suiteDashboardIngest = runLevelDashboardDb
-    ? await buildDashboardIngestSubscriber({
-        db: runLevelDashboardDb,
-        configSnapshot: produced.subscriberSeed?.configSnapshot,
-        sourceSnapshot: produced.subscriberSeed?.sourceSnapshot,
-        attributes: produced.subscriberSeed?.attributes,
-        runId,
-        onRunCreated: (createdRunId: string) => {
-          ownSuiteRow = { db: runLevelDashboardDb, id: createdRunId }
-        },
-      })
-    : undefined
-  // 398-10 (D-17/D-20): the re-homed subscriber over the port this command composed at its root.
-  // `config` is NOT passed — the opt-out posture is already expressed by which transport that port
-  // holds, and a subscriber that re-read it would be the second decision site D-19 abolished.
-  const analyticsHost = analytics === undefined ? undefined : await analytics()
-  if (analyticsHost !== undefined) {
-    extraSubscribers.push(buildAnalyticsRunSubscriber({
-      analytics: analyticsHost,
-      ...analyticsRunAttribution(resolveCliRunAttributes(
-        variableContext?.userRunAttributes ?? {},
-        'local',
-        variableContext?.inheritedRunAttributes,
-      )),
-    }))
-  }
-
-  // 432-13 (D-01/D-14): NOTHING ASKS. This door builds no confirm channel and carries no session
-  // trust: a non-production suite starts at a terminal, on a piped stdio and in CI alike, and the
-  // core refuses production before any effect unless the config opts in.
-
-  // 401-11 (D-01/D-02): THE SUITE PATH IS A CALLER OF THE SAME ONE IN-PROCESS DRIVE the single-test
-  // path calls. With this, `createRunInvocationCore` is composed in exactly ONE place in the whole
-  // CLI door, and the two near-identical post-`done` bodies became one.
-  const { runInProcessCliRun } = await import('../composition/in-process-run-execution.js')
   let exitCode: number
   try {
+    const produced = await produceSuiteRunMembers({
+      resolveTrustPriors: trustPriors?.resolve,
+      suiteFiles,
+      preflight,
+      config,
+      configDir,
+      configFilePath,
+      configContent,
+      effectiveLogLevel,
+      runId,
+      opts,
+      loadPlugins,
+      runRecord: record,
+      ...(variableContext === undefined ? {} : { variableContext }),
+      ...(hooksContext === undefined ? {} : { hooksContext }),
+      ...(analytics === undefined ? {} : { analytics }),
+    })
+    const reporterSelection = requireReporterSelection(opts, Boolean(config.services?.dashboard))
+    printPlannerLimits(produced.plannerLimits)
+    const members = produced.members
+    const executor = produced.executor
+    const runProduct = produced.product
+    const suiteTargetClass = produced.targetClass
+    const buildTag = produced.buildTag
+    const knowledgeRoot = produced.knowledgeRoot
+    const runDigests = { runLevel: produced.configDigests }
+    let suiteQuarantined: readonly QuarantineAppliedEntry[] = []
+
+    // 363-09: the run-level bus subscribers (Pitfall 8 — the SAME attach helper both of this door's
+    // paths use). Analytics rides the bus (D-16); the drive attaches the record.
+    const extraSubscribers: RunSubscriberHandle[] = []
+    // 398-10 (D-17/D-20): the re-homed subscriber over the port this command composed at its root.
+    // `config` is NOT passed — the opt-out posture is already expressed by which transport that port
+    // holds, and a subscriber that re-read it would be the second decision site D-19 abolished.
+    const analyticsHost = analytics === undefined ? undefined : await analytics()
+    if (analyticsHost !== undefined) {
+      extraSubscribers.push(buildAnalyticsRunSubscriber({
+        analytics: analyticsHost,
+        ...analyticsRunAttribution(resolveCliRunAttributes(
+          variableContext?.userRunAttributes ?? {},
+          'local',
+          variableContext?.inheritedRunAttributes,
+        )),
+      }))
+    }
+
+    // 432-13 (D-01/D-14): NOTHING ASKS. This door builds no confirm channel and carries no session
+    // trust: a non-production suite starts at a terminal, on a piped stdio and in CI alike, and the
+    // core refuses production before any effect unless the config opts in.
+
+    // 401-11 (D-01/D-02): THE SUITE PATH IS A CALLER OF THE SAME ONE IN-PROCESS DRIVE the single-test
+    // path calls. With this, `createRunInvocationCore` is composed in exactly ONE place in the whole
+    // CLI door, and the two near-identical post-`done` bodies became one.
+    const { runInProcessCliRun } = await import('../composition/in-process-run-execution.js')
+
     const outcome = await (runInProcessCliRun as typeof RunInProcessCliRun)(
       {
         configPath: configFilePath,
@@ -2112,21 +2053,17 @@ async function executeSuites(
         // spread is the same house rule the INVK-06 markers ride: an absent flag is an ABSENT field.
         postProcessing: { ...(opts.detach === true ? { detach: true as const } : {}),
           ...(opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }) },
+        runRecord: record,
         onSession: (session) => {
           activeRunSession = session
         },
-        subscribers: ({ session, quarantined, mask, onMemberSnapshot }) => {
+        subscribers: ({ session, quarantined, mask }) => {
           analyticsHost?.bindMaskingContext({ mask })
           return attachRunSubscribers({
             session,
             console: reporterSelection.console ? { verbose: false, logLevel: effectiveLogLevel } : false,
             junitOutputPath: reporterSelection.junit ? opts.junitOutput : undefined,
-            extraSubscribers: [
-              ...(suiteDashboardIngest === undefined
-                ? []
-                : [suiteDashboardIngest({ mask, ...(onMemberSnapshot === undefined ? {} : { onMemberSnapshot }) })]),
-              ...extraSubscribers,
-            ],
+            extraSubscribers,
             // 390 D-15: the SAME resolved set the run was assembled with, so the reporters and the
             // aggregate verdict rule describe one disposition rather than two.
             quarantined,
@@ -2204,6 +2141,7 @@ async function executeSuites(
     shutdownController.dispose()
     process.removeListener('SIGINT', shutdownController.handleSignal)
     process.removeListener('SIGTERM', shutdownController.handleSignal)
+    record.close()
   }
 
   releaseAppium()
@@ -2214,10 +2152,9 @@ async function executeSuites(
  * A parse refusal, which is an input refusal that carries its own diagnostics.
  *
  * SUBCLASSED RATHER THAN COLLAPSED because the CLI door does one thing more with a parse failure
- * than any other door does: when a dashboard database is configured it writes a `failed` run row and
- * a run artifact carrying the errors. That is REPORTING, which belongs to the door and not to the
- * in-process path — a daemon or a chat host sees an ordinary `CliRunInputError` and needs to know
- * nothing about run rows.
+ * than any other door does: it writes a `failed` run row and a run artifact carrying the errors.
+ * That is REPORTING, which belongs to the door and not to the in-process path — a daemon or a chat
+ * host sees an ordinary `CliRunInputError` and needs to know nothing about run rows.
  *
  * It extends the class from the LEAF module, never one re-exported through
  * `in-process-run-execution.js`: `extends` is evaluated while the module graph is still
@@ -2264,6 +2201,8 @@ export interface PatternMemberProductionContext {
   readonly resolveTrustPriors?: ResolveTrustPriors
   readonly inputs: RunInvocationInputs
   readonly runId: string
+  /** The run's record; the suite half opens it after its own production refusal (443-08, D-05). */
+  readonly runRecord?: RunRecord
   readonly opts?: RunOptions
   readonly reporterSelection?: ReporterSelection
   readonly analytics?: () => Promise<CliAnalyticsHost>
@@ -2356,6 +2295,7 @@ export async function produceMembersFromPatterns(
       effectiveLogLevel: context.inputs.effectiveLogLevel,
       runId: context.runId,
       loadPlugins: context.inputs.loadPlugins,
+      ...(context.runRecord === undefined ? {} : { runRecord: context.runRecord }),
       ...(context.opts === undefined ? {} : { opts: context.opts }),
       ...(context.reporterSelection === undefined ? {} : { reporterSelection: context.reporterSelection }),
       variableContext: {
@@ -2576,6 +2516,8 @@ export interface SuiteRunMemberProductionInput {
   readonly resolveAppiumUrl?: AppiumUrlResolver
   /** `RunInvocationInputs.loadPlugins`, awaited after this producer's production refusal. */
   readonly loadPlugins: () => Promise<void>
+  /** The run's record, opened after this producer's production refusal and before its plugins. */
+  readonly runRecord?: RunRecord
 }
 
 export interface SuiteVariableContext {
@@ -2626,6 +2568,14 @@ export async function produceSuiteRunMembers(
       allowProduction: config.allowProduction,
     })
   }
+  // 2026-10-17 (443-08, D-05): the record opens here, before plugins; the drive's later open is a no-op.
+  await input.runRecord?.open({
+    runId,
+    configDir,
+    ...(config.services?.dashboard?.dbPath === undefined
+      ? {}
+      : { configuredDbPath: config.services.dashboard.dbPath }),
+  })
   // 2026-10-16 (442-08, D-10): plugins load only once production has been refused or allowed.
   await input.loadPlugins()
 
@@ -2639,29 +2589,28 @@ export async function produceSuiteRunMembers(
   void activeRunSession
   const suiteSnapshots = createRunArtifactSnapshotChannel()
 
-  const dashboardCfg = config.services?.dashboard as Record<string, unknown> | undefined
-  const reporterSelection = requireReporterSelection(opts, Boolean(dashboardCfg))
-  const dashboardEnabled = reporterSelection.dashboard
-
-  const createSuiteDashboardResources = async (): Promise<{ dashboardDb?: any; logStorage?: any }> => {
-    if (!dashboardEnabled) return {}
-    try {
-      const { DashboardDatabase, resolveDashboardDbPath } = await import('@vostride/agent-qa-dashboard')
-      const configuredDbPath = dashboardCfg?.dbPath as string | undefined
-      const dashboardDb = new DashboardDatabase({
-        dbPath: resolveDashboardDbPath({ configDir, configuredDbPath }),
-        runOwnership: composeRunOwnership(),
-      })
-      return { dashboardDb, logStorage: dashboardDb }
-    } catch (err) {
-      console.warn(pc.yellow(`Warning: Could not load dashboard reporter: ${err instanceof Error ? err.message : String(err)}`))
-      return {}
-    }
-  }
-
-  const closeSuiteDashboardDb = (dashboardDb?: any) => {
-    if (!dashboardDb) return
-    dashboardDb.close()
+  const reporterSelection = requireReporterSelection(opts, Boolean(config.services?.dashboard))
+  // 2026-10-17 (443-08, D-26): a preparation failure is filed under this run's own id, once.
+  const recordPreparationFailure = (row: {
+    name: string
+    failureSummary: string
+    errorLog: string
+    attributes: RunAttributes
+  }): void => {
+    const db = input.runRecord?.db
+    if (db === undefined || db.getRun(runId) !== undefined) return
+    const now = new Date().toISOString()
+    db.insertRun({
+      id: runId,
+      name: row.name,
+      status: 'failed',
+      duration: 0,
+      startedAt: now,
+      endedAt: now,
+      attributes: row.attributes,
+      failureSummary: row.failureSummary,
+    })
+    db.updateRun(runId, { errorLog: row.errorLog })
   }
 
   // One resolved suite member. The two path legs are semantically opposite and both `string`, so
@@ -2711,7 +2660,6 @@ export async function produceSuiteRunMembers(
     perMemberDigests: ConfigDigests[]
     bootstrapFailure: string | undefined
     // Teardown-time composition side effects (the old runSuite `.finally`).
-    dashboardDb: any
     suiteWorkingMemory: WorkingMemoryStore
     suiteAttributes: RunAttributes
     knowledgeSeed: {
@@ -2730,7 +2678,6 @@ export async function produceSuiteRunMembers(
       'local',
       variableContext?.inheritedRunAttributes,
     )
-    const { dashboardDb, logStorage } = await createSuiteDashboardResources()
     let suiteFileContent = ''
     try { suiteFileContent = await readFile(suiteFile, 'utf-8') } catch { /* best-effort */ }
 
@@ -2747,35 +2694,12 @@ export async function produceSuiteRunMembers(
     for (const { test: relativePath, id: suiteEntryId } of suite.tests) {
       if (!isPathInsideDir(relativePath, configDir)) {
         const refusalLines = [pc.red(`Path traversal rejected: ${relativePath}`)]
-        const runId = createSuiteRunId()
-        if (dashboardDb) {
-          const now = new Date().toISOString()
-          const existingRunId = process.env.AGENT_QA_RUN_ID ?? process.env.AGENT_QA_SUITE_QUEUE_ID
-          if (existingRunId) {
-            dashboardDb.updateRun(existingRunId, {
-              name: `Path traversal rejected in suite`,
-              status: 'failed',
-              duration: 0,
-              endedAt: now,
-              attributes: suiteFailureAttributes,
-              failureSummary: `Path traversal rejected: ${relativePath}`,
-              errorLog: `Path traversal rejected: ${relativePath}`,
-            })
-          } else {
-            dashboardDb.insertRun({
-              id: runId,
-              name: `Path traversal rejected in suite`,
-              status: 'failed',
-              duration: 0,
-              startedAt: now,
-              endedAt: now,
-              attributes: suiteFailureAttributes,
-              failureSummary: `Path traversal rejected: ${relativePath}`,
-            })
-            dashboardDb.updateRun(runId, { errorLog: `Path traversal rejected: ${relativePath}` })
-          }
-          closeSuiteDashboardDb(dashboardDb)
-        }
+        recordPreparationFailure({
+          name: `Path traversal rejected in suite`,
+          attributes: suiteFailureAttributes,
+          failureSummary: `Path traversal rejected: ${relativePath}`,
+          errorLog: `Path traversal rejected: ${relativePath}`,
+        })
         printRunId(runId)
         printRunAttributes(suiteFailureAttributes)
         throw new CliRunInputError(refusalLines, 2)
@@ -2790,75 +2714,29 @@ export async function produceSuiteRunMembers(
           pc.red(`Parse errors in ${relativePath}:`),
           ...formatParseErrorLines(parseResult.errors),
         ]
-        const runId = createSuiteRunId()
-        if (dashboardDb) {
-          const now = new Date().toISOString()
-          const errorLines: string[] = []
-          for (const e of parseResult.errors) {
-            const location = `${e.file}:${e.line}:${e.column}`
-            errorLines.push(`${e.severity}: ${e.message}\n  --> ${location}`)
-          }
-          const existingRunId = process.env.AGENT_QA_RUN_ID ?? process.env.AGENT_QA_SUITE_QUEUE_ID
-          if (existingRunId) {
-            dashboardDb.updateRun(existingRunId, {
-              name: `Parse errors in suite "${suite.name}"`,
-              status: 'failed',
-              duration: 0,
-              endedAt: now,
-              attributes: suiteFailureAttributes,
-              failureSummary: `${parseResult.errors.length} parse error(s) in ${relativePath}`,
-              errorLog: errorLines.join('\n'),
-            })
-          } else {
-            dashboardDb.insertRun({
-              id: runId,
-              name: `Parse errors in suite "${suite.name}"`,
-              status: 'failed',
-              duration: 0,
-              startedAt: now,
-              endedAt: now,
-              attributes: suiteFailureAttributes,
-              failureSummary: `${parseResult.errors.length} parse error(s) in ${relativePath}`,
-            })
-            dashboardDb.updateRun(runId, { errorLog: errorLines.join('\n') })
-          }
-          closeSuiteDashboardDb(dashboardDb)
+        const errorLines: string[] = []
+        for (const e of parseResult.errors) {
+          const location = `${e.file}:${e.line}:${e.column}`
+          errorLines.push(`${e.severity}: ${e.message}\n  --> ${location}`)
         }
+        recordPreparationFailure({
+          name: `Parse errors in suite "${suite.name}"`,
+          attributes: suiteFailureAttributes,
+          failureSummary: `${parseResult.errors.length} parse error(s) in ${relativePath}`,
+          errorLog: errorLines.join('\n'),
+        })
         printRunId(runId)
         printRunAttributes(suiteFailureAttributes)
         throw new CliRunInputError(refusalLines, 2)
       }
       if (parseResult.tests.length === 0) {
         const refusalLines = [pc.red(`No test definition found in ${relativePath}`)]
-        const runId = createSuiteRunId()
-        if (dashboardDb) {
-          const now = new Date().toISOString()
-          const existingRunId = process.env.AGENT_QA_RUN_ID ?? process.env.AGENT_QA_SUITE_QUEUE_ID
-          if (existingRunId) {
-            dashboardDb.updateRun(existingRunId, {
-              name: `No test definition in suite "${suite.name}"`,
-              status: 'failed',
-              duration: 0,
-              endedAt: now,
-              attributes: suiteFailureAttributes,
-              failureSummary: `No test definition found in ${relativePath}`,
-              errorLog: `No test definition found in ${relativePath}`,
-            })
-          } else {
-            dashboardDb.insertRun({
-              id: runId,
-              name: `No test definition in suite "${suite.name}"`,
-              status: 'failed',
-              duration: 0,
-              startedAt: now,
-              endedAt: now,
-              attributes: suiteFailureAttributes,
-              failureSummary: `No test definition found in ${relativePath}`,
-            })
-            dashboardDb.updateRun(runId, { errorLog: `No test definition found in ${relativePath}` })
-          }
-          closeSuiteDashboardDb(dashboardDb)
-        }
+        recordPreparationFailure({
+          name: `No test definition in suite "${suite.name}"`,
+          attributes: suiteFailureAttributes,
+          failureSummary: `No test definition found in ${relativePath}`,
+          errorLog: `No test definition found in ${relativePath}`,
+        })
         printRunId(runId)
         printRunAttributes(suiteFailureAttributes)
         throw new CliRunInputError(refusalLines, 2)
@@ -2876,35 +2754,12 @@ export async function produceSuiteRunMembers(
       if (testDef['test-id'] && testDef['test-id'] !== suiteEntryId) {
         const mismatchMsg = `ID mismatch in suite "${suite.name}": test file ${relativePath} has test-id "${testDef['test-id']}" but suite entry specifies id "${suiteEntryId}"`
         const refusalLines = [pc.red(mismatchMsg)]
-        const runId = createSuiteRunId()
-        if (dashboardDb) {
-          const now = new Date().toISOString()
-          const existingRunId = process.env.AGENT_QA_RUN_ID ?? process.env.AGENT_QA_SUITE_QUEUE_ID
-          if (existingRunId) {
-            dashboardDb.updateRun(existingRunId, {
-              name: `ID mismatch in suite "${suite.name}"`,
-              status: 'failed',
-              duration: 0,
-              endedAt: now,
-              attributes: suiteFailureAttributes,
-              failureSummary: mismatchMsg,
-              errorLog: mismatchMsg,
-            })
-          } else {
-            dashboardDb.insertRun({
-              id: runId,
-              name: `ID mismatch in suite "${suite.name}"`,
-              status: 'failed',
-              duration: 0,
-              startedAt: now,
-              endedAt: now,
-              attributes: suiteFailureAttributes,
-              failureSummary: mismatchMsg,
-            })
-            dashboardDb.updateRun(runId, { errorLog: mismatchMsg })
-          }
-          closeSuiteDashboardDb(dashboardDb)
-        }
+        recordPreparationFailure({
+          name: `ID mismatch in suite "${suite.name}"`,
+          attributes: suiteFailureAttributes,
+          failureSummary: mismatchMsg,
+          errorLog: mismatchMsg,
+        })
         printRunId(runId)
         printRunAttributes(suiteFailureAttributes)
         throw new CliRunInputError(refusalLines, 2)
@@ -3107,7 +2962,6 @@ export async function produceSuiteRunMembers(
     const logger = new LogManager({
       runId: process.env.AGENT_QA_RUN_ID || undefined,
       displayLevel: effectiveLogLevel as any,
-      storage: logStorage,
       ndjson: process.env.AGENT_QA_LIVE_EVENTS === 'true',
       redactor: variableContext?.secretRedactor,
     })
@@ -3290,7 +3144,6 @@ export async function produceSuiteRunMembers(
       results: [],
       perMemberDigests: [],
       bootstrapFailure: undefined,
-      dashboardDb,
       suiteWorkingMemory,
       suiteAttributes,
       knowledgeSeed: {
@@ -3423,7 +3276,6 @@ export async function produceSuiteRunMembers(
       artifactsDir: resolvePath(configDir, config.services?.dashboard?.artifactsDir ?? RUNTIME_ARTIFACTS_DIR),
       mask: suiteRunMask,
     })
-    closeSuiteDashboardDb(prepared.dashboardDb)
     printRunAttributes(prepared.suiteAttributes)
   }
 
@@ -3750,14 +3602,13 @@ export async function produceSuiteRunMembers(
       ? {}
       : { configuredRunsDbPath: config.services.dashboard.dbPath }),
     subscriberSeed: (() => {
-      const withDb = preparedSuites.find((p) => p.dashboardDb)
-      if (withDb === undefined) return {}
-      const suiteArtifact = withDb.suiteArtifact as { config?: unknown; source?: unknown } | undefined
+      const first = preparedSuites[0]
+      if (first === undefined) return {}
+      const suiteArtifact = first.suiteArtifact as { config?: unknown; source?: unknown } | undefined
       return {
-        dashboardDb: withDb.dashboardDb,
         configSnapshot: suiteArtifact?.config,
         sourceSnapshot: suiteArtifact?.source,
-        attributes: withDb.suiteAttributes,
+        attributes: first.suiteAttributes,
       }
     })(),
     onMemberSnapshot: suiteSnapshots.subscribe,
@@ -3941,12 +3792,8 @@ export interface ProducedCliRunMembers {
    * `RunConfig.secretRedactor`, and the shell masks every bus event with it.
    */
   readonly secretRedactor: SecretRedactorPort
-  /**
-   * What a door's dashboard-ingest subscriber needs and only the producer knows: the suite database
-   * the prepared suites opened, plus the config/source snapshots and attributes the wire omits.
-   */
+  /** What the run's record needs and only the producer knows: the snapshots and attributes the wire omits. */
   readonly subscriberSeed?: {
-    readonly dashboardDb?: any
     readonly configSnapshot?: unknown
     readonly sourceSnapshot?: unknown
     readonly attributes?: RunAttributes

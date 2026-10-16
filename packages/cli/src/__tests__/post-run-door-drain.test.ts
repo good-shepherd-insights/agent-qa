@@ -35,6 +35,10 @@ import {
   createInProcessFixture,
   eventTypes,
 } from '../composition/__tests__/in-process-run-fixture.js'
+import { closeTestRunRecords, testRunRecord } from '../composition/__tests__/in-process-run-fixture.js'
+
+// 2026-10-17 (443-08, D-22): every drive call carries a record; each cell closes the ones it opened.
+afterEach(() => { closeTestRunRecords() })
 
 /** A promise the cell settles by hand — the deferred the whole ordering claim rests on. */
 function deferred(): { promise: Promise<void>; resolve: () => void; reject: (e: Error) => void } {
@@ -81,6 +85,7 @@ describe('the detached post-run leg (404 D-06, RESEARCH Pitfall 2)', () => {
 
       const outcome: CliRunOutcome = await runInProcessCliRun(
         {
+          runRecord: testRunRecord(),
           ...fixtureOptions(fixture),
           executionContext: 'local-headless',
           postRunTail: async () => {
@@ -112,6 +117,7 @@ describe('the detached post-run leg (404 D-06, RESEARCH Pitfall 2)', () => {
 
     const outcome = await runInProcessCliRun(
       {
+        runRecord: testRunRecord(),
         ...fixtureOptions(fixture),
         executionContext: 'local-headless',
         afterVerdict: async (context) => {
@@ -142,6 +148,7 @@ describe('the detached post-run leg (404 D-06, RESEARCH Pitfall 2)', () => {
 
     const outcome = await runInProcessCliRun(
       {
+        runRecord: testRunRecord(),
         ...fixtureOptions(fixture),
         executionContext: 'local-headless',
         warn: (message) => { warnings.push(message) },
@@ -168,6 +175,7 @@ describe('the detached post-run leg (404 D-06, RESEARCH Pitfall 2)', () => {
 
       const outcome = await runInProcessCliRun(
         {
+          runRecord: testRunRecord(),
           ...fixtureOptions(fixture),
           executionContext: 'local-headless',
           warn: (message) => { warnings.push(message) },
@@ -190,6 +198,7 @@ describe('the detached post-run leg (404 D-06, RESEARCH Pitfall 2)', () => {
 
     const outcome = await runInProcessCliRun(
       {
+        runRecord: testRunRecord(),
         ...fixtureOptions(fixture),
         executionContext: 'local-headless',
         postRunTail: async (context) => {

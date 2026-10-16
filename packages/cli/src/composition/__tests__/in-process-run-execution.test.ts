@@ -295,6 +295,13 @@ import type { CliRunOutcome } from '../in-process-run-execution.js'
 import { PLANTED_SECRET_NAME, auditRows, buildOrdinalsExist, eventTypes, runDirs } from './in-process-run-fixture.js'
 import { parseTestFile } from '@vostride/agent-qa-core'
 import { memberStepText } from '@vostride/agent-qa-runner'
+import { DatabaseSync } from 'node:sqlite'
+import { invokeFunction } from '@vostride/agent-qa-agent'
+import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
+import { closeTestRunRecords, testRunRecord } from './in-process-run-fixture.js'
+
+// 2026-10-17 (443-08, D-22): every drive call carries a record; each cell closes the ones it opened.
+afterEach(() => { closeTestRunRecords() })
 
 /** The process-global resolver is exactly that; a leaked pin poisons every sibling cell. */
 const shippedExecutionContextResolver = getActiveExecutionContext
@@ -427,7 +434,7 @@ describe('a door holding only a RunsStartInput gets a policy-gated run, in proce
     try {
       const fixture = createInProcessFixture({ origin: target.origin, environment: 'local' })
       const outcome: CliRunOutcome = await runInProcessCliRun(
-        { ...fixtureOptions(fixture), executionContext: 'local-headless' },
+        { runRecord: testRunRecord(), ...fixtureOptions(fixture), executionContext: 'local-headless' },
         // Still a bare `RunsStartInput`. Still no mode flag — which is exactly what
         // `createCliRunExecution` forwards today, so a producer that could not do this would be a
         // scope reduction of the shipped contract at the two doors this seam exists to unblock.
@@ -462,7 +469,7 @@ describe('a door holding only a RunsStartInput gets a policy-gated run, in proce
 
       try {
         await runInProcessCliRun(
-          { ...fixtureOptions(composed), executionContext: 'local-headless' },
+          { runRecord: testRunRecord(), ...fixtureOptions(composed), executionContext: 'local-headless' },
           { configPath: named.configPath, patterns: [named.testPattern] },
         )
       } catch { /* the member's framework error; where the run LANDED is what this cell reads */ }
@@ -508,7 +515,7 @@ describe('a door holding only a RunsStartInput gets a policy-gated run, in proce
       let denial: unknown
       try {
         await runInProcessCliRun(
-          { ...fixtureOptions(composed), executionContext: 'local-headless' },
+          { runRecord: testRunRecord(), ...fixtureOptions(composed), executionContext: 'local-headless' },
           { configPath: named.configPath, patterns: [named.testPattern] },
         )
       } catch (err) {
@@ -615,7 +622,7 @@ describe('C432-DOOR-NONPRODUCTION: a shared target starts whatever the injected 
       let denial: unknown
       try {
         await runInProcessCliRun(
-          { ...fixtureOptions(fixture), executionContext: injected },
+          { runRecord: testRunRecord(), ...fixtureOptions(fixture), executionContext: injected },
           { patterns: [fixture.testPattern] },
         )
       } catch (err) {
@@ -649,7 +656,7 @@ describe('the CLI door drives every target a two-target invocation names (401-14
       let denial: unknown
       try {
         await runInProcessCliRun(
-          { ...fixtureOptions(fixture), executionContext: 'local-interactive' },
+          { runRecord: testRunRecord(), ...fixtureOptions(fixture), executionContext: 'local-interactive' },
           { patterns: [fixture.testPattern, fixture.secondTestPattern!] },
         )
       } catch (err) {
@@ -696,7 +703,7 @@ describe('the run-start baseline is taken PER MEMBER and deduped by URL (401-19,
 
       try {
         await runInProcessCliRun(
-          { ...fixtureOptions(fixture), executionContext: 'local-headless' },
+          { runRecord: testRunRecord(), ...fixtureOptions(fixture), executionContext: 'local-headless' },
           { patterns: [fixture.testPattern, fixture.secondTestPattern!] },
         )
       } catch { /* the members' framework errors; who was knocked on is what this cell reads */ }
@@ -729,7 +736,7 @@ describe('the run-start baseline is taken PER MEMBER and deduped by URL (401-19,
 
       try {
         await runInProcessCliRun(
-          { ...fixtureOptions(fixture), executionContext: 'local-headless' },
+          { runRecord: testRunRecord(), ...fixtureOptions(fixture), executionContext: 'local-headless' },
           { patterns },
         )
       } catch { /* as above */ }
@@ -769,7 +776,7 @@ describe('the run-start baseline is taken PER MEMBER and deduped by URL (401-19,
 
       try {
         await runInProcessCliRun(
-          { ...fixtureOptions(fixture), executionContext: 'local-headless' },
+          { runRecord: testRunRecord(), ...fixtureOptions(fixture), executionContext: 'local-headless' },
           { patterns: [fixture.suitePattern] },
         )
       } catch { /* as above */ }
@@ -801,7 +808,7 @@ describe('a dashboard-launched run leaves no masking-digests sidecar (441-58, D-
       // The member dies on the pinned empty browsers root — a framework error the drive re-surfaces.
       try {
         await runInProcessCliRun(
-          { ...fixtureOptions(fixture), executionContext: 'local-headless' },
+          { runRecord: testRunRecord(), ...fixtureOptions(fixture), executionContext: 'local-headless' },
           { patterns: [fixture.testPattern] },
         )
       } catch { /* the member's framework error */ }
@@ -831,7 +838,7 @@ describe('a dashboard-launched run leaves no masking-digests sidecar (441-58, D-
 
       try {
         await runInProcessCliRun(
-          { ...fixtureOptions(fixture), executionContext: 'local-headless' },
+          { runRecord: testRunRecord(), ...fixtureOptions(fixture), executionContext: 'local-headless' },
           { patterns: [fixture.testPattern] },
         )
       } catch { /* the member's framework error */ }
@@ -882,7 +889,7 @@ describe('C441-RUN-RECORDS', () => {
       })
       try {
         await runInProcessCliRun(
-          { ...fixtureOptions(fixture), executionContext: 'local-headless' },
+          { runRecord: testRunRecord(), ...fixtureOptions(fixture), executionContext: 'local-headless' },
           { patterns: [fixture.testPattern] },
         )
       } catch { /* the member's framework error on the pinned empty browsers root */ }
@@ -911,6 +918,7 @@ describe('C441-RUN-RECORDS', () => {
       try {
         await runInProcessCliRun(
           {
+            runRecord: testRunRecord(),
             ...fixtureOptions(fixture),
             executionContext: 'local-headless',
             onSession: (session) => {
@@ -946,7 +954,7 @@ describe('C441-RUN-RECORDS', () => {
       const run = async (fixture: typeof alpha): Promise<void> => {
         try {
           await runInProcessCliRun(
-            { ...fixtureOptions(fixture), executionContext: 'local-headless' },
+            { runRecord: testRunRecord(), ...fixtureOptions(fixture), executionContext: 'local-headless' },
             { patterns: [fixture.testPattern] },
           )
         } catch { /* the member's framework error on the pinned empty browsers root */ }
@@ -960,6 +968,51 @@ describe('C441-RUN-RECORDS', () => {
       expect(alphaLines.filter((line) => line.includes('alpha-441-x'))).toEqual([])
       expect(bravoLines.filter((line) => line.includes('bravo-441-y'))).toEqual([])
     } finally {
+      await target.close()
+    }
+  }, 120_000)
+})
+
+// 2026-10-17 (443-08, D-05): a runs.start that names a suite opens its record before the suite is
+// prepared, so an unopenable runs.db refuses it before any plugin loads.
+describe('C443-RECORD-REFUSAL', () => {
+  it('a runs.start whose pattern is a suite opens the record before preparing the suite', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    const fixture = createInProcessFixture({ origin: target.origin, environment: 'local' })
+    const composed = composeCliLocalAgent({ agentQaRoot: fixture.agentQaRoot, configPath: fixture.configPath })
+    try {
+      fixtureOptions(fixture)
+      const marker = join(fixture.project, 'plugin-loaded.marker')
+      writeFileSync(join(fixture.project, 'marker-auth-plugin.mjs'), [
+        "import { writeFileSync } from 'node:fs'",
+        "writeFileSync(new URL('./plugin-loaded.marker', import.meta.url), String(process.pid))",
+        'export const providers = []',
+        '',
+      ].join('\n'))
+      writeFileSync(
+        fixture.configPath,
+        `${readFileSync(fixture.configPath, 'utf8')}plugins:\n  auth:\n    - path: ./marker-auth-plugin.mjs\n`,
+      )
+      const dbPath = join(fixture.agentQaRoot, 'runs.db')
+      mkdirSync(fixture.agentQaRoot, { recursive: true })
+      const old = new DatabaseSync(dbPath)
+      old.exec('CREATE TABLE runs (id TEXT PRIMARY KEY); PRAGMA user_version = 4')
+      old.close()
+
+      let refusal: unknown
+      try {
+        await invokeFunction(composed.registry, 'runs.start', { patterns: [fixture.suitePattern] }, CLI_FUNCTION_CALLER)
+      } catch (error) {
+        refusal = error
+      }
+
+      const message = refusal instanceof Error ? refusal.message : String(refusal)
+      expect(message.includes(dbPath) && message.includes('The run was not started.'), `the refusal: ${message}`).toBe(true)
+      expect(runDirs(fixture as never).length, 'run directories').toBe(0)
+      expect(existsSync(marker), 'the auth plugin loaded').toBe(false)
+    } finally {
+      await composed.close()
       await target.close()
     }
   }, 120_000)

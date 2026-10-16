@@ -25,6 +25,9 @@ import { join } from 'node:path'
 
 import { generateSuiteId, generateTestId } from '@vostride/agent-qa-ids'
 
+import { createRunRecord, doorRunAttributes } from '../../commands/run.js'
+import type { RunRecord } from '../../commands/run.js'
+
 export {
   CountingTarget,
   auditRows,
@@ -347,4 +350,17 @@ export function createInProcessFixture(input: InProcessFixtureInput): InProcessF
       ? { secondTargetName: SECOND_TARGET_NAME, secondTestPattern: 'tests/second.yaml' }
       : {}),
   }
+}
+
+const openTestRunRecords: RunRecord[] = []
+
+/** A run record for a cell that calls the drive directly (443-08, D-22); `closeTestRunRecords` closes it. */
+export function testRunRecord(): RunRecord {
+  const record = createRunRecord({ attributes: doorRunAttributes('cli'), warn: () => {} })
+  openTestRunRecords.push(record)
+  return record
+}
+
+export function closeTestRunRecords(): void {
+  for (const record of openTestRunRecords.splice(0)) record.close()
 }

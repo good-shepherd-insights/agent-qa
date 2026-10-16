@@ -51,6 +51,10 @@ import type { DaemonHostOperations } from '../../daemon/host.js'
 import { runInProcessCliRun } from '../in-process-run-execution.js'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
 import { CountingTarget } from './in-process-run-fixture.js'
+import { closeTestRunRecords, testRunRecord } from './in-process-run-fixture.js'
+
+// 2026-10-17 (443-08, D-22): every drive call carries a record; each cell closes the ones it opened.
+afterEach(() => { closeTestRunRecords() })
 
 /** The one line the refusal must name, spelled here rather than imported from the producer. */
 const OPT_IN_LINE = 'allowProduction: true'
@@ -415,6 +419,7 @@ describe('C432-MIXED-SUITE-PRODUCTION — a suite keeps every production member'
 
       const refusal = await caught(() => runInProcessCliRun(
         {
+          runRecord: testRunRecord(),
           configPath: fixture.configPath,
           agentQaRoot: fixture.agentQaRoot,
           executionContext: 'local-interactive',
@@ -466,6 +471,7 @@ describe('C432-PRODUCTION-BEFORE-EFFECTS — the in-process drive refuses before
 
       const refusal = await caught(() => runInProcessCliRun(
         {
+          runRecord: testRunRecord(),
           configPath: fixture.configPath,
           agentQaRoot: fixture.agentQaRoot,
           // 432-13: nothing else can refuse this run; only production does.
@@ -498,6 +504,7 @@ describe('C432-PRODUCTION-BEFORE-EFFECTS — the in-process drive refuses before
 
       const outcome = await runInProcessCliRun(
         {
+          runRecord: testRunRecord(),
           configPath: fixture.configPath,
           agentQaRoot: fixture.agentQaRoot,
           executionContext: 'local-interactive',
@@ -523,6 +530,7 @@ describe('C432-PRODUCTION-BEFORE-EFFECTS — the in-process drive refuses before
         const effects = fakeEffects()
         const refusal = await caught(() => runInProcessCliRun(
           {
+            runRecord: testRunRecord(),
             configPath: fixture.configPath,
             agentQaRoot: fixture.agentQaRoot,
             executionContext: 'local-interactive',
@@ -549,6 +557,7 @@ describe('C432-PRODUCTION-BEFORE-EFFECTS — the in-process drive refuses before
       for (const patterns of [[fixture.tests.prodEu], [...fixture.mixedSuites]]) {
         const refusal = await caught(() => runInProcessCliRun(
           {
+            runRecord: testRunRecord(),
             configPath: fixture.configPath,
             agentQaRoot: fixture.agentQaRoot,
             executionContext: 'local-interactive',
@@ -572,6 +581,7 @@ describe('C432-PRODUCTION-BEFORE-EFFECTS — the in-process drive refuses before
       for (let attempt = 0; attempt < 2; attempt += 1) {
         refusals.push(await caught(() => runInProcessCliRun(
           {
+            runRecord: testRunRecord(),
             configPath: fixture.configPath,
             agentQaRoot: fixture.agentQaRoot,
             executionContext: 'local-interactive',

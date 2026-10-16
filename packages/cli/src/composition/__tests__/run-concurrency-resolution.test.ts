@@ -18,7 +18,7 @@ import { mkdtempSync, readFileSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { DEFAULT_PARALLEL_WORKERS, resolveEffectiveWorkers } from '@vostride/agent-qa-schema'
@@ -33,6 +33,10 @@ import {
 } from '../../commands/run.js'
 import type { RunOptions } from '../../commands/run.js'
 import { CountingTarget, createInProcessFixture } from './in-process-run-fixture.js'
+import { closeTestRunRecords, testRunRecord } from './in-process-run-fixture.js'
+
+// 2026-10-17 (443-08, D-22): every drive call carries a record; each cell closes the ones it opened.
+afterEach(() => { closeTestRunRecords() })
 
 /**
  * WHAT THE DRIVE HANDED THE ASSEMBLER, captured at the seam itself.
@@ -239,6 +243,7 @@ describe('the drive: the ONE seam that applies the formula, for every door', () 
       try {
         await runInProcessCliRun(
           {
+            runRecord: testRunRecord(),
             configPath: fixture.configPath,
             agentQaRoot: fixture.agentQaRoot,
             executionContext: 'local-headless',
