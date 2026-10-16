@@ -4881,7 +4881,10 @@ difference read as a reused pid. The orchestrator decided the gaps, with review 
 IN-02 and UI review fixes 1 and 2 and item 5, as GAP-D1 to GAP-D8 on 2026-10-16, with the owner's
 delegation. Every commit below is in agent-qa on `version-0.2` and signed. Every new cell is listed
 in `scripts/gate/inputs/regressions.json` with its `442 GAP-D<n>` origin, after the 1816 rows
-listed at `a7bfd355d`, which are unchanged and in order.
+listed at `a7bfd355d`, which are unchanged and in order. 442-23 corrected this subsection's second
+What-degrades bullet (rows whose host is stamped in another format), and gap closure round 2
+(below) replaced the Linux host identity, so its statements that Linux keeps `os.hostname()` now
+hold for Windows only.
 
 **How it is measured.** Baseline `a7bfd355d` (Phase 442's earlier final SHA). Closing SHA
 `1fdabe92d` (442-19's gate list commit, the parent of this subsection's commit).
@@ -4949,8 +4952,12 @@ weakened.
   lock and the embedder) until that process ends, and `gone` once its pid is dead. A dashboard
   start leaves such a row `running`, a cancel on it is refused, and a lock contender may wait until
   its occupant exits.
-- **macOS rows stamped with the old host name by a still-running pre-fix process read as another
-  host** (`unknown`, left running) until that process ends.
+- **A row whose host is stamped in another format reads `unknown` whether or not its process
+  lives.** That is a bare host name written before 442-17 on macOS or before 442-21 on Linux, or a
+  `hostname:<name>` written after a failed `ioreg` read. `classifyRunOwner` compares hosts before
+  liveness, so a dashboard start leaves such a row `running` and a cancel on it is refused,
+  until it is removed from the dashboard. This is review WR-02, deferred as the conservative
+  D-02/D-20 direction (442-23).
 - **A failed macOS hardware-UUID read names the host `hostname:<name>`**, which never equals a
   UUID identity, so a row written then reads as another host's; the read is retried, never
   remembered.
@@ -4971,6 +4978,120 @@ No migration and no compatibility code (D-03).
 - **The 434 gate** must execute and pass the 31 cells above, each with its `442 GAP-D<n>` origin,
   as well as the 1816 earlier rows, the 104 round-1 `C442-` cells and the `C432-RETURN` census
   among them.
+- **`pnpm validate:arch`** still runs `C442-CENSUS`; no status writer was added this round.
+
+**Gate**
+
+The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
+verdict are recorded in `.planning/phases/442-run-ownership-and-production-refusal/442-RECORD.md`
+§ Gate and the SHA in § Final SHA, rather than quoted here, so no agent-qa commit follows it.
+
+### Gap closure round 2 (442-20 to 442-22), 2026-10-16
+
+This subsection appends to the Phase 442 section; written by 442-23, which also corrected one
+bullet of gap closure round 1 above and changed no other earlier line. It follows
+`.planning/phases/442-run-ownership-and-production-refusal/442-VERIFICATION.md` (agent-qa
+`3ffc2838a`, 17 of 18 truths). Its failed truth 18 is review WR-03: on Linux the run owner's host
+was `os.hostname()` alone, so a process in another pid namespace that shares the host name (a
+container on `--network host`, `--uts=host` or Kubernetes `hostNetwork`, writing to a bind-mounted
+`runs.db`) passed `classifyRunOwner`'s host compare, and its namespace-local pid, dead here or
+another process here, classified `gone`. The orchestrator decided the gap, with review WR-01 and
+the verification's WR-01 and WR-02 advisories, as GAP-D9 to GAP-D13 on 2026-10-16, with the
+owner's delegation. Every commit below is in agent-qa on `version-0.2` and signed. Every new cell
+is listed in `scripts/gate/inputs/regressions.json` with its `442 GAP-D<n>` origin, after the 1847
+rows listed at `3ffc2838a`, which are unchanged and in order except two rows renamed in place
+(Registered gate rows, below).
+
+**How it is measured.** Baseline `3ffc2838a` (Phase 442's gap round 1 final SHA). Closing SHA
+`f9f86a815` (442-23's gate list commit, the parent of this subsection's commit).
+`git -C agent-qa diff --shortstat 3ffc2838a f9f86a815`: 6 files changed, 472 insertions, 25
+deletions (under `packages/`: 5 files, +398/−23). `--diff-filter=D`: no file deleted.
+`--diff-filter=A`: no file added. 5 commits, every one signed: two tests-only RED commits (442-20
+`7eff4ce97`, 442-22 `e0d3061fb`), the two fixes (442-21 `1b392d841`, 442-22 `8d21002a3`) and
+442-23's gate list (`f9f86a815`). The removed lines below are read from each deleting commit's
+diff, not transcribed from a summary.
+
+#### What was deleted
+
+| Member (file at `3ffc2838a`) | What it did | Deleting commit | The cell that notices its return |
+|---|---|---|---|
+| the Linux host identity `os.hostname()`, which the non-darwin return (`if (platform !== 'darwin') return hostname()`) served for `linux` in `createRunOwnerHostResolver` (`dashboard-server/src/db/run-owner-host.ts`) | named a Linux run's host by a name a container in another pid namespace can share, so that container's namespace-local pid was probed here and its live run classified `gone`, finalized by the startup sweep and the cancel route (WR-03, truth 18) | `1b392d841` (442-21), replaced on `linux` by GR2-2's `linux-pidns:<inode>:<hostname>` (the inode read from the `/proc/self/ns/pid` link, accepted only as `pid:[<digits>]`, memoised on success), or that resolver's own `linux-pidns-unread:<random UUID>` after a failed read, retried on every call; the non-darwin return still serves win32 and every other platform | the ten `C442-PID-NAMESPACE` cells listed below |
+| the cancel arm's undecoded run-id slice (`const runId = path.slice('/api/runs/'.length, path.length - '/cancel'.length)`; `dashboard-server/src/server/routes.ts`) | handed the percent-encoded id to `jobQueue.cancel`, so an id that needs encoding got 404, and a request for an encoded id could cancel a row whose literal id is the encoded text (WR-01) | `8d21002a3` (442-22), replaced by `decodeURIComponent` of the same slice in a try whose catch answers `400 { error: 'invalid_run_id' }` before the queue is asked | `C442-CANCEL-RUN-ID a cancel on a run whose id needs encoding reaches that run`; `C442-CANCEL-RUN-ID a malformed run id is answered 400 and writes nothing` |
+
+No file was deleted and no test cell was removed. The round's 12 new cells, by area:
+`C442-PID-NAMESPACE` 10 (`442 GAP-D9`) and `C442-CANCEL-RUN-ID` 2 (`442 GAP-D10`). The ten
+`C442-PID-NAMESPACE` cells:
+- `C442-PID-NAMESPACE a Linux identity names this pid namespace and this host name, read once`
+- `C442-PID-NAMESPACE two pid namespaces never share an identity, even under one host name`
+- `C442-PID-NAMESPACE two processes in one pid namespace on one machine share an identity`
+- `C442-PID-NAMESPACE an unreadable or malformed pid namespace falls back under its own prefix, never equals a namespace identity, and is retried`
+- `C442-PID-NAMESPACE two processes whose pid namespace cannot be read never share an identity`
+- `C442-PID-NAMESPACE a row stamped with the bare host name an earlier agent-qa wrote is another host to a Linux reader`
+- `C442-PID-NAMESPACE an owner in another pid namespace under this host name is unknown, whether its pid is dead here or another process's`
+- `C442-PID-NAMESPACE an owner in this pid namespace whose pid is dead is still gone`
+  (`dashboard-server/src/db/__tests__/run-owner-host.test.ts`, the eight above)
+- `C442-PID-NAMESPACE a dashboard started beside a container that shares its host name leaves the container's runs running and byte-equal`
+  (`dashboard-server/src/__tests__/442-orphan-startup.test.ts`)
+- `C442-PID-NAMESPACE a cancel on a run owned from another pid namespace under this host name is refused with 409 and writes nothing`
+  (`dashboard-server/src/__tests__/442-cancel-ownership.test.ts`)
+
+#### Registered gate rows
+
+The 1847 rows listed at `3ffc2838a` are still listed and in order; none was removed or moved. Two
+were renamed in place (GR2-5), keeping their file, area and origin `442 GAP-D4`, because their old
+titles asserted the pre-round-2 Linux identity:
+- index 1838: `C442-HOST-IDENTITY C442-HOST-IDENTITY Linux and Windows hosts keep os.hostname()`
+  became `C442-HOST-IDENTITY C442-HOST-IDENTITY Windows hosts keep os.hostname(), and Linux hosts name their pid namespace`;
+- index 1839: `C442-HOST-IDENTITY C442-HOST-IDENTITY this machine's identity is its UUID digest on macOS and its host name elsewhere`
+  became `C442-HOST-IDENTITY C442-HOST-IDENTITY this machine's identity is its UUID digest on macOS, its pid namespace and host name on Linux, and its host name elsewhere`.
+
+One registered cell was re-spelled under its kept name, as 442-21's summary records:
+`C442-HOST-IDENTITY C442-HOST-IDENTITY a dead owner stamped before the host name changed is still finalized as an orphan`
+now builds its host-name-identity control's resolvers with `platform: 'win32'` instead of
+`'linux'`. Every other row is unchanged.
+
+#### What was RETAINED, and why
+
+| Item | Why kept | What pins it |
+|---|---|---|
+| the darwin identity `macos-uuid-sha256:<digest>` and its `hostname:<name>` fallback | byte-identical to 442-17; the hardware UUID already separates macOS hosts | `C442-HOST-IDENTITY C442-HOST-IDENTITY a macOS host is its hardware UUID digest, unchanged when the host name changes`; `C442-HOST-IDENTITY C442-HOST-IDENTITY a macOS read failure names the host name under its own prefix, never equals a UUID identity, and is retried` |
+| `os.hostname()` on win32 and every other platform that is neither darwin nor Linux | no pid-namespace read there; D-20 is unchanged for them | `C442-HOST-IDENTITY C442-HOST-IDENTITY Windows hosts keep os.hostname(), and Linux hosts name their pid namespace` |
+| `classifyRunOwner` and its host-before-liveness order | another host is `unknown`, the conservative direction (D-02); only the Linux host string changed | `C442-PID-NAMESPACE an owner in another pid namespace under this host name is unknown, whether its pid is dead here or another process's`; `C442-PID-NAMESPACE an owner in this pid namespace whose pid is dead is still gone` |
+| the cancel arm's outcomes: 503 `Queue not available`, `200 { cancelled: true }`, `200 { cancelled: false, message }`, D-07's 409 and the 404 | only how the id is read changed | `C442-CANCEL-OWNER another live process's run is refused and nothing is written`; `C442-CANCEL-ORPHAN a cancel on a run whose process is gone finalizes it as an orphan` |
+| D-04's orphan sentence and D-07's refusal sentence, word for word | locked wording; the Ctrl+C advice (UI item 4) and the refusal's other-host wording stay open | `C442-CANCEL-SENTENCE the refusal toast shows the route's sentence`; `C442-CANCEL-SENTENCE an orphan answer's toast shows its sentence` |
+| the two clients, `agent-qa queue cancel` and the dashboard UI's API client (`dashboard-ui/src/lib/api.ts`), which already encode the id | their diff against `3ffc2838a` is empty | `C442-QUEUE-CANCEL-OUTPUT queue cancel encodes the run id in the URL` |
+
+#### What degrades, stated plainly
+
+- **A Linux row stamped before 442-21 with a bare host name reads `unknown` and stays `running`
+  until it is removed.** Its host no longer equals any Linux reader's, and hosts are compared
+  before liveness, so a dashboard start leaves it and a cancel on it is refused (review WR-02,
+  deferred by GAP-D12). `C442-PID-NAMESPACE a row stamped with the bare host name an earlier agent-qa wrote is another host to a Linux reader`
+  pins it.
+- **A process whose pid namespace cannot be read stamps `linux-pidns-unread:<random UUID>`**,
+  which no other process shares, so its rows are `unknown` to every other reader and stay
+  `running` until removed. Its own handle still finalizes them through the stamp it recorded
+  (442-15).
+- **Known limitations.** Windows keeps `os.hostname()`, so a Windows container carrying the host's
+  name is not told apart. A `--pid=host` container with its own host name reads as another host
+  (`unknown`, conservative). Two Linux machines with one host name, both in their initial pid
+  namespace, sharing one `runs.db` are still equated (the pre-existing D-20 limitation). No real
+  Linux container was run: there is no Linux host or Docker daemon here, so the cells model both
+  sides through the identity module's seams, and the Linux branch's default reader runs only on
+  Linux.
+
+#### Persisted values the narrowed contract governs
+
+No migration and no compatibility code (D-03).
+
+| Persisted value | Disposition | Evidence |
+|---|---|---|
+| `runs.owner_host` | **On Linux, `linux-pidns:<inode>:<host name>`**, or `linux-pidns-unread:<random UUID>` after a failed namespace read; only the namespace inode and the host name are stored, and no machine identifier file is read. macOS and Windows values are unchanged. Stored values are not rewritten. | `C442-PID-NAMESPACE a Linux identity names this pid namespace and this host name, read once`; `C442-PID-NAMESPACE an unreadable or malformed pid namespace falls back under its own prefix, never equals a namespace identity, and is retried` |
+
+#### The instruments that notice a return
+
+- **The 434 gate** must execute and pass the 12 cells above, each with its `442 GAP-D<n>` origin,
+  as well as the 1847 earlier rows, the two renamed rows under their new names.
 - **`pnpm validate:arch`** still runs `C442-CENSUS`; no status writer was added this round.
 
 **Gate**
