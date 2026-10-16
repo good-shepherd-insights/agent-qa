@@ -2362,7 +2362,13 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         json(res, { error: 'Queue not available' }, 503)
         return
       }
-      const runId = path.slice('/api/runs/'.length, path.length - '/cancel'.length)
+      let runId: string
+      try {
+        runId = decodeURIComponent(path.slice('/api/runs/'.length, path.length - '/cancel'.length))
+      } catch {
+        json(res, { error: 'invalid_run_id' }, 400)
+        return
+      }
       // 2026-10-16 (442-05, D-06/D-07): cancel metadata is written only for this dashboard's runs.
       const outcome = jobQueue.cancel(runId)
       switch (outcome.kind) {
