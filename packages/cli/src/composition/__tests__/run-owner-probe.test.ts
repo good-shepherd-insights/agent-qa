@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { hostname } from 'node:os'
 
@@ -7,7 +7,12 @@ import type { RunOwner, RunOwnership } from '@vostride/agent-qa-dashboard'
 import { resolveProcessIncarnation } from '@vostride/agent-qa-knowledge-local'
 import { describe, expect, it } from 'vitest'
 
-import { composeRunOwnership } from '../run-owner-probe.js'
+import { processIsAlive } from '../../daemon/registration.js'
+import {
+  composeRunOwnership,
+  createRunOwnership,
+  RUN_OWNER_START_TIME_TIMEOUT_MS,
+} from '../run-owner-probe.js'
 
 function requirePosix(): void {
   if (process.platform === 'win32') throw new Error('POSIX run lifecycle required; never skip')
@@ -67,5 +72,79 @@ describe('C442-OWNER-CLASSIFY', () => {
     const reused = `${String(ownership.self.incarnation).split(':')[0]}:never`
     expect(classifyRunOwner({ pid: process.pid, incarnation: reused, host }, ownership)).toBe('gone')
     expect(classifyRunOwner(ownership.self, ownership)).toBe('self')
+  })
+})
+
+describe('C442-OWN-START-TIME', () => {
+  it('the CLI retries an unread own start time and keeps the first one it reads', () => {
+    const ownReads: number[] = []
+    const ownership = createRunOwnership({
+      readStartTime: (pid) => {
+        ownReads.push(pid)
+        return ownReads.length === 1 ? undefined : 'ps-lstart-utc:A'
+      },
+      isAlive: () => true,
+    })
+
+    expect(ownership.self.incarnation).toBeNull()
+    expect(ownership.self.incarnation).toBe('ps-lstart-utc:A')
+    expect(ownership.self).toEqual({
+      pid: process.pid,
+      incarnation: 'ps-lstart-utc:A',
+      host: hostname(),
+    })
+    expect(ownReads).toEqual([process.pid, process.pid])
+  })
+
+  it('the CLI bounds both start-time reads, and a ps that never answers reads as unknown', async () => {
+    expect(RUN_OWNER_START_TIME_TIMEOUT_MS).toBe(1000)
+    const bounds: Array<number | undefined> = []
+    const recording = createRunOwnership({
+      readStartTime: (_pid, timeoutMs) => {
+        bounds.push(timeoutMs)
+        return 'ps-lstart-utc:A'
+      },
+      isAlive: () => true,
+    })
+    expect(recording.self.incarnation).toBe('ps-lstart-utc:A')
+    expect(recording.probe.incarnationOf(4242)).toBe('ps-lstart-utc:A')
+    expect(bounds).toEqual([RUN_OWNER_START_TIME_TIMEOUT_MS, RUN_OWNER_START_TIME_TIMEOUT_MS])
+
+    requirePosix()
+    const wedgedBounds: Array<number | undefined> = []
+    const wedged = createRunOwnership({
+      readStartTime: (pid, timeoutMs) => {
+        wedgedBounds.push(timeoutMs)
+        if (pid === process.pid) return 'ps-lstart-utc:self'
+        spawnSync('/bin/sleep', ['30'], { stdio: 'ignore', timeout: timeoutMs })
+        return undefined
+      },
+      isAlive: processIsAlive,
+    })
+    expect(wedged.self.incarnation).toBe('ps-lstart-utc:self')
+
+    const waiting = spawn(process.execPath, ['-e', 'process.stdin.resume()'], {
+      stdio: ['pipe', 'ignore', 'ignore'],
+    })
+    try {
+      const waitingPid = requirePid(waiting)
+      const live: RunOwner = {
+        pid: waitingPid,
+        incarnation: 'ps-lstart-utc:child',
+        host: hostname(),
+      }
+      const startedAt = Date.now()
+      expect(classifyRunOwner(live, wedged)).toBe('unknown')
+      expect(Date.now() - startedAt).toBeLessThan(2_000)
+      expect(wedgedBounds).toEqual([
+        RUN_OWNER_START_TIME_TIMEOUT_MS,
+        RUN_OWNER_START_TIME_TIMEOUT_MS,
+      ])
+      expect(waiting.exitCode).toBeNull()
+      expect(processIsAlive(waitingPid)).toBe(true)
+    } finally {
+      waiting.stdin?.end()
+      await exited(waiting)
+    }
   })
 })
