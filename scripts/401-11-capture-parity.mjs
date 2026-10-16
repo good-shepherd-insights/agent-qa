@@ -342,8 +342,17 @@ function runDirFiles(project) {
  * below fails on an entry that no reading actually produces, so a name that stops being written
  * has to be deleted here in the same commit rather than lingering as a permanent blind spot.
  */
-// 441-58 (D-14) retired the only entry, 405-02's `masking-digests.json`: no run writes it now.
-export const POST_GOLDEN_RUN_DIR_ADDITIONS = []
+// 441-58 (D-14) retired 405-02's `masking-digests.json`: no run writes it now.
+export const POST_GOLDEN_RUN_DIR_ADDITIONS = [
+  {
+    file: 'run-config.json',
+    addedBy: '442-10',
+    reason:
+      'Phase 442 D-17: every run records its absolute config path beside its handoff so another '
+      + "run's tail curates it only under that config's mask and knowledge root. It names a path "
+      + 'and holds no secret.',
+  },
+]
 
 /** The declared names, as a Set — one derivation, used by both helpers below. */
 const declaredAdditionNames = new Set(POST_GOLDEN_RUN_DIR_ADDITIONS.map((entry) => entry.file))

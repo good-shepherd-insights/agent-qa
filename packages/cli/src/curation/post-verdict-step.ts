@@ -136,9 +136,10 @@ import {
   type PrepareMisdirectionEvidenceResult,
 } from './misdirection-tail.js'
 import { createCanaryAblationForHost } from '../gates/canary-ablation-host.js'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { canonicalJson } from '@vostride/agent-qa-schema'
 import { ownPostVerdictContinuation, postVerdictPendingPath, PostVerdictContinuationRefused } from './post-verdict-continuation.js'
+import { writeRunConfigRecord } from './run-curation-context.js'
 
 /**
  * The capability table, stubbable per cell.
@@ -730,6 +731,14 @@ export function createPostVerdictStep(options: PostVerdictStepOptions): {
 
   const execute = async (input: PostVerdictStepInput): Promise<PostVerdictOutcome> => {
       const root = options.knowledgeRoot
+      // 2026-10-16 (442-10, D-17): every run, gate runs included, records the config another
+      // run's tail must curate it under; without the record every other tail hands it back.
+      try {
+        writeRunConfigRecord(options.agentQaRoot, options.runId, resolve(options.configPath))
+      } catch (error) {
+        options.log.warn(`Run ${options.runId}: its config record was not written, so only its own tail `
+          + `will curate it (${error instanceof Error ? error.message : String(error)}).`)
+      }
       const settle = (outcome: PostVerdictOutcome): PostVerdictOutcome => {
         decided = outcome
         return outcome

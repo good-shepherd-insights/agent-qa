@@ -162,7 +162,7 @@ describe('agent-qa run parity across the in-process extraction (401-11)', () => 
     if (invocationsMeasured !== PARITY_INVOCATIONS.length) return
 
     expect(staleDeclaredAdditions([...observedRunDirFiles]).map((entry) => entry.file)).toEqual([])
-    // 441-58 (D-14): the ledger is empty since its only entry stopped being written.
-    expect(POST_GOLDEN_RUN_DIR_ADDITIONS).toEqual([])
+    // 2026-10-16 (442-10, D-17): run-config.json is the only declared addition.
+    expect(POST_GOLDEN_RUN_DIR_ADDITIONS.map((entry) => entry.file)).toEqual(['run-config.json'])
   })
 })
