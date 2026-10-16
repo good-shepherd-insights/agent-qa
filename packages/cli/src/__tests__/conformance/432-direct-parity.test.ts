@@ -49,6 +49,7 @@ import {
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 
@@ -73,7 +74,7 @@ import {
 } from '../../commands/dashboard.js'
 import { createFnCommand } from '../../commands/fn.js'
 import { composeMcpMasking, createMcpHttpRequestListener, MCP_FUNCTION_CALLER } from '../../commands/mcp.js'
-import { CountingTarget } from '../../composition/__tests__/in-process-run-fixture.js'
+import { buildOrdinalsExist, CountingTarget } from '../../composition/__tests__/in-process-run-fixture.js'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../../composition/local-agent-host.js'
 import { invokeViaDaemon } from '../../daemon/client.js'
 import { runDaemonHost } from '../../daemon/host.js'
@@ -358,11 +359,12 @@ async function openDashboard(project: MatrixProject): Promise<{
 }
 
 /** A queued or triggered dashboard run, once settled, as the door's answer. */
-async function settledAnswer(scene: Awaited<ReturnType<typeof openDashboard>>): Promise<DoorAnswer> {
+async function settledAnswer(scene: Awaited<ReturnType<typeof openDashboard>>, answered: unknown): Promise<DoorAnswer> {
   expect(await waitFor(() => scene.settled.length > 0, 90_000), 'the dashboard run never settled').toBe(true)
   const settled = scene.settled[0]!
   const reason = typeof settled.details['neutralReason'] === 'string' ? settled.details['neutralReason'] : ''
-  return { refused: settled.details['refusedBeforeStart'] === true, text: `${reason}\n${JSON.stringify(settled.details)}`, db: scene.db }
+  const text = `${reason}\n${JSON.stringify(answered)}\n${JSON.stringify(settled.details)}`
+  return { refused: settled.details['refusedBeforeStart'] === true, text, db: scene.db }
 }
 
 const DOORS: ReadonlyArray<readonly [string, Door]> = [
@@ -430,7 +432,7 @@ const DOORS: ReadonlyArray<readonly [string, Door]> = [
       return { refused: true, text: `${body.neutralReason ?? ''}\n${JSON.stringify(body)}`, db: scene.db }
     }
     expect(body.error, JSON.stringify(body)).toBeUndefined()
-    return await settledAnswer(scene)
+    return await settledAnswer(scene, body)
   }],
   ['the run service', async (project, pattern) => {
     const scene = await openDashboard(project)
@@ -511,7 +513,7 @@ const DOORS: ReadonlyArray<readonly [string, Door]> = [
       return { refused: true, text: `${String(body['neutralReason'] ?? '')}\n${JSON.stringify(body)}`, db: scene.db }
     }
     expect(response.status, JSON.stringify(body)).toBe(202)
-    return await settledAnswer(scene)
+    return await settledAnswer(scene, body)
   }],
 ]
 
@@ -585,6 +587,140 @@ describe('C432-DOOR-NONPRODUCTION: every door runs, refuses production, and hono
       expect(answer.text).not.toMatch(APPROVAL)
     })
   }, 180_000)
+})
+
+// ---- every door, every effect D-11 names (442 D-10/D-11/D-12) -----------------------------------
+
+/** The ids a sqlite store holds in `table`; a store that was never created holds none. */
+function storeRows(path: string, table: string): string[] {
+  if (!existsSync(path)) return []
+  const db = new DatabaseSync(path, { readOnly: true })
+  try {
+    if (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) === undefined) return []
+    return (db.prepare(`SELECT id FROM ${table}`).all() as Array<{ id: unknown }>).map((row) => String(row.id))
+  } finally {
+    db.close()
+  }
+}
+
+function doorEffects(project: MatrixProject, target: CountingTarget, db?: DashboardDatabase) {
+  return {
+    runDirectories: runDirectories(project),
+    runsDbRows: [
+      ...storeRows(join(project.agentQaRoot, 'runs.db'), 'runs'),
+      ...(db?.getRuns({}).map((row) => row.id) ?? []),
+    ],
+    jobRows: storeRows(join(project.agentQaRoot, 'agent-jobs.db'), 'jobs'),
+    buildOrdinal: buildOrdinalsExist({ project: project.root, suitePattern: '' }),
+    targetHits: target.hits.filter((hit) => !hit.startsWith(`/${MODEL_PATH}`)),
+    modelHits: target.hits.filter((hit) => hit.startsWith(`/${MODEL_PATH}`)),
+    pluginMarker: existsSync(project.pluginMarker),
+  }
+}
+
+const NO_EFFECTS: ReturnType<typeof doorEffects> = {
+  runDirectories: [],
+  runsDbRows: [],
+  jobRows: [],
+  buildOrdinal: false,
+  targetHits: [],
+  modelHits: [],
+  pluginMarker: false,
+}
+
+/** What a returned token, grant, proposal inbox or approval affordance would have to say. */
+const RETIRED_AFFORDANCE = /\btokens?\b|\bbearer\b|\bgrant|\bpropos|\binbox\b|\bapprov|\bconsent|trust-session/iu
+const RESOLVED_SCOPE = /"scope":\s*\{\s*"tier":\s*"product",\s*"key":\s*"door-product"\s*\}/gu
+/** Canonical ids are generated words (`r_vine-…-stable-scope`), so they are read past, not matched. */
+const CANONICAL_ID = /\b(?:obs|[tshr])_[a-z0-9]+(?:-[a-z0-9]+)*/gu
+
+const WRITES_RUN_ROW = new Set(['agent-qa run (spawned, CI, stdin closed)', 'the dashboard Run control', 'the enqueue route'])
+
+describe('C442-DOOR-TABLE', () => {
+  it.each(DOORS)('%s refuses a declared production run before any effect, plugin loading included', async (name, door) => {
+    // The positive control first: the same door and instruments over an opted-in twin see each
+    // effect, so the nothing below was measured. Only WRITES_RUN_ROW's doors write a runs.db row
+    // today; the runs.start doors write none.
+    expect(DOORS.map(([door]) => door)).toEqual(expect.arrayContaining([...WRITES_RUN_ROW]))
+    await withTarget(async (target) => {
+      const twin = matrixProject(target.origin, true)
+      const { value: allowed } = await atDoor(twin, () => door(twin, twin.productionTest, target))
+      expect(allowed.refused, allowed.text).toBe(false)
+      expect(await waitFor(() => target.hits.includes(`/${PRODUCTION_TARGET}`)), allowed.text).toBe(true)
+      const seen = doorEffects(twin, target, allowed.db)
+      expect(seen.pluginMarker, 'the instrument never saw the plugin load').toBe(true)
+      expect(seen.runDirectories, 'the instrument never saw a run directory').toHaveLength(1)
+      expect(seen.jobRows.length, 'the instrument never saw a job-store row').toBeGreaterThan(0)
+      expect(seen.buildOrdinal, 'the instrument never saw a build ordinal').toBe(true)
+      if (WRITES_RUN_ROW.has(name)) expect(seen.runsDbRows, 'the instrument never saw a runs.db row').toHaveLength(1)
+    })
+    await withTarget(async (target) => {
+      const project = matrixProject(target.origin, false)
+      const { value: answer, stdinReads, unsettled } = await atDoor(project, () => door(project, project.productionTest, target))
+      expect(stdinReads).toEqual([])
+      expect(unsettled).toEqual([])
+      expect(answer.refused, answer.text).toBe(true)
+      expect(answer.text, 'the refusal does not name the target').toContain(`"${PRODUCTION_TARGET}"`)
+      expect(answer.text, 'the refusal does not name the one line to add').toContain(OPT_IN_LINE)
+      expect(doorEffects(project, target, answer.db), answer.text).toEqual(NO_EFFECTS)
+    })
+  }, 180_000)
+
+  it.each(DOORS)('%s runs a declared production target in one call and loads its plugin', async (_name, door) => {
+    await withTarget(async (target) => {
+      const project = matrixProject(target.origin, true)
+      expect(existsSync(project.pluginMarker)).toBe(false)
+      const { value: answer, stdinReads, unsettled } = await atDoor(project, () => door(project, project.productionTest, target))
+      expect(stdinReads).toEqual([])
+      expect(unsettled).toEqual([])
+      expect(answer.refused, answer.text).toBe(false)
+      expect(answer.text).not.toContain(OPT_IN_LINE)
+      expect(await waitFor(() => target.hits.includes(`/${PRODUCTION_TARGET}`)), `the opted-in run never reached the target: ${answer.text}`).toBe(true)
+      expect(runDirectories(project), 'the one call did not run once').toHaveLength(1)
+      expect(existsSync(project.pluginMarker), 'the opted-in run did not load its plugin').toBe(true)
+    })
+  }, 180_000)
+})
+
+describe('C442-ABSENCE', () => {
+  it('no door asks, requires a token or scope, or offers an inbox', async () => {
+    const answers: Array<{ at: string; text: string; stdinReads: string[] }> = []
+    for (const [name, door] of DOORS) {
+      for (const allowed of [false, true]) {
+        await withTarget(async (target) => {
+          const project = matrixProject(target.origin, allowed)
+          const { value, stdinReads } = await atDoor(project, () => door(project, project.productionTest, target))
+          expect(value.refused, `${name}: ${value.text}`).toBe(!allowed)
+          answers.push({ at: `${name} (${allowed ? 'allowed' : 'refused'})`, text: value.text, stdinReads })
+        })
+      }
+    }
+    expect(answers).toHaveLength(DOORS.length * 2)
+    for (const { at, text: answered, stdinReads } of answers) {
+      const text = answered.replaceAll(CANONICAL_ID, '<id>')
+      expect(stdinReads, `${at} read stdin`).toEqual([])
+      expect(text, at).not.toMatch(APPROVAL)
+      expect(text, at).not.toMatch(RETIRED_AFFORDANCE)
+      // A started run's acknowledgement names the scope it resolved from the config; that record
+      // is a fact about the run, and no other mention of a scope may appear.
+      expect(text.replaceAll(RESOLVED_SCOPE, ''), at).not.toMatch(/scope/iu)
+    }
+
+    // 442-01 decision 13: the retired `scope` field is refused at a door as a field it will not
+    // honour, before any effect; that is refusal vocabulary, not a returned affordance.
+    await withTarget(async (target) => {
+      const project = matrixProject(target.origin, false)
+      const input = { patterns: [project.localTest], scope: { tier: 'product', key: 'door-product' } }
+      const { value: answer, stdinReads } = await atDoor(project, () => commander(project, ['fn', 'runs.start', '--input', JSON.stringify(input), '--json']))
+      expect(stdinReads).toEqual([])
+      expect(answer.exitCode, answer.text).toBe(1)
+      expect(answer.text).toContain('RunRequestFieldRefusedError')
+      expect(answer.text).toContain('agent-qa cannot start a run with: scope')
+      expect(answer.text).not.toMatch(APPROVAL)
+      expect(answer.text).not.toMatch(RETIRED_AFFORDANCE)
+      expect(doorEffects(project, target), answer.text).toEqual(NO_EFFECTS)
+    })
+  }, 600_000)
 })
 
 // ---- the operations every door reaches through the one function layer ---------------------------
