@@ -1,8 +1,10 @@
 // 2026-10-17 (444-10, D-13/D-36): one stage vocabulary on every surface. A finished stage reads
 // `complete`; `done` stays only as agent-jobs.db's own job and notification words.
 // 2026-10-17 (444-11, D-13/D-39): a run whose chain was never enqueued reads `skipped (<reason>)`.
+// 2026-10-18 (444-12, D-14): a run that ended with no verdict reads `skipped (no verdict)`.
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -14,7 +16,9 @@ import {
   RUNS_DIGEST_FUNCTION_ID,
   RUNS_POST_PROCESSING_FUNCTION_ID,
 } from '@vostride/agent-qa-agent'
-import type { FunctionDeps, PostProcessingChainState } from '@vostride/agent-qa-agent'
+import type { FunctionDeps, PostProcessingChainState, ReplayedRunEvent } from '@vostride/agent-qa-agent'
+import { DashboardDatabase } from '@vostride/agent-qa-dashboard'
+import { generateRunId } from '@vostride/agent-qa-ids'
 import {
   asJobId,
   CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
@@ -33,6 +37,7 @@ import type {
 import { buildAgentQaMcpServer } from '@vostride/agent-qa-mcp'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { composeCliLocalAgent } from '../composition/local-agent-host.js'
 import { renderChainTerminalLine, renderPostProcessingSummaryLine } from '../curation/post-run-tail.js'
 
 const PACKAGES_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
@@ -416,6 +421,82 @@ describe('C444-STAGE-SKIPPED', () => {
       const path = join(PACKAGES_ROOT, file)
       expect(existsSync(path), `${file} is missing; the census cannot read it`).toBe(true)
       expect(stripComments(readFileSync(path, 'utf8')), file).toContain('POST_PROCESSING_SKIP_REASON_WORDS[')
+    }
+  })
+})
+
+const STARTED_ONLY = [
+  { seq: 1, ts: 1, runId: RUN_ID, type: 'runStarted', payload: { busSchemaVersion: 1 } },
+] as unknown as readonly ReplayedRunEvent[]
+
+function noVerdictDeps(status: string): FunctionDeps {
+  const base = depsWith(undefined)
+  return {
+    ...base,
+    runs: { ...base.runs, readEvents: () => Promise.resolve(STARTED_ONLY) },
+    runDetail: {
+      read: () => Promise.resolve(undefined),
+      readRecord: () => Promise.resolve({ status }),
+    },
+  }
+}
+
+describe('C444-NO-VERDICT', () => {
+  it('the CLI exit line prints skipped (no verdict)', async () => {
+    const status = await invokeFunction(
+      createFunctionRegistry({ deps: noVerdictDeps('failed') }),
+      RUNS_POST_PROCESSING_FUNCTION_ID,
+      { runId: RUN_ID },
+      CALLER,
+    ) as PostProcessingStatus
+    expect(status.skipped).toEqual({ reason: 'no-verdict' })
+    const line = renderPostProcessingSummaryLine(status, 'handed-off')
+    expect(line).toContain('analysis: skipped (no verdict) · curation: skipped (no verdict)')
+    expect(line).not.toContain('pending')
+    expect(line).not.toContain('daemon will drain')
+
+    const running = await invokeFunction(
+      createFunctionRegistry({ deps: noVerdictDeps('running') }),
+      RUNS_POST_PROCESSING_FUNCTION_ID,
+      { runId: RUN_ID },
+      CALLER,
+    ) as PostProcessingStatus
+    expect(renderPostProcessingSummaryLine(running, 'handed-off')).not.toContain('skipped')
+  })
+
+  it("the CLI host's reader answers a finished row and opens nothing before runs.db exists", async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-qa-444-no-verdict-'))
+    const agentQaRoot = join(root, '.agent-qa')
+    mkdirSync(agentQaRoot, { recursive: true })
+    const configPath = join(root, 'agent-qa.config.yaml')
+    writeFileSync(configPath, 'workspace:\n  testMatch: [tests/**/*.yaml]\n  secretsFile: .env.secrets.local\n')
+    writeFileSync(join(root, '.env.secrets.local'), '')
+    const runsDb = join(agentQaRoot, 'runs.db')
+    const runId = generateRunId()
+    const host = composeCliLocalAgent({ configPath, agentQaRoot })
+    try {
+      const read = async (): Promise<PostProcessingStatus> => await invokeFunction(
+        host.registry, RUNS_POST_PROCESSING_FUNCTION_ID, { runId }, CALLER,
+      ) as PostProcessingStatus
+      const before = await read()
+      expect('skipped' in before).toBe(false)
+      expect(existsSync(runsDb), 'the read created runs.db').toBe(false)
+
+      const db = new DashboardDatabase({ dbPath: runsDb })
+      try {
+        db.insertRun({
+          id: runId, name: 'a run with no verdict', status: 'failed', duration: 0,
+          startedAt: '2026-10-18T00:00:00.000Z', endedAt: '2026-10-18T00:00:01.000Z',
+          failureSummary: 'The run ended before it reached a verdict.',
+        })
+      } finally { db.close() }
+      const after = await read()
+      expect(after.skipped).toEqual({ reason: 'no-verdict' })
+      expect(renderPostProcessingSummaryLine(after, 'handed-off'))
+        .toContain('analysis: skipped (no verdict) · curation: skipped (no verdict)')
+    } finally {
+      await host.close()
+      rmSync(root, { recursive: true, force: true })
     }
   })
 })
