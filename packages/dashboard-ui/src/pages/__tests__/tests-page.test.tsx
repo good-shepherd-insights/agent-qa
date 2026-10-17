@@ -293,6 +293,10 @@ function LocationProbe() {
   )
 }
 
+function singleMember(filePath: string, outcome: string) {
+  return { testIndex: 0, testId: null, filePath, suiteId: null, name: filePath, outcome }
+}
+
 let container: HTMLDivElement | null = null
 let root: Root | null = null
 
@@ -455,9 +459,9 @@ beforeEach(() => {
   })
   fetchRunsMock.mockResolvedValue({
     runs: [
-      { id: "run_login_latest", filePath: "tests/web/login.yaml", status: "failed", createdAt: "2026-04-18T04:00:00.000Z" },
-      { id: "run_login_old", filePath: "tests/web/login.yaml", status: "passed", createdAt: "2026-04-17T04:00:00.000Z" },
-      { id: "run_signup_latest", filePath: "tests/android/signup.yaml", status: "passed", createdAt: "2026-04-18T03:00:00.000Z" },
+      { id: "run_login_latest", filePath: "tests/web/login.yaml", status: "failed", createdAt: "2026-04-18T04:00:00.000Z", members: [singleMember("tests/web/login.yaml", "failed")] },
+      { id: "run_login_old", filePath: "tests/web/login.yaml", status: "passed", createdAt: "2026-04-17T04:00:00.000Z", members: [singleMember("tests/web/login.yaml", "passed")] },
+      { id: "run_signup_latest", filePath: "tests/android/signup.yaml", status: "passed", createdAt: "2026-04-18T03:00:00.000Z", members: [singleMember("tests/android/signup.yaml", "passed")] },
     ],
   })
   triggerRunMock.mockResolvedValue({ runId: "run_1" })
@@ -655,7 +659,7 @@ describe("TestsPage", () => {
     })
     fetchRunsMock.mockResolvedValueOnce({
       runs: [
-        { id: "run_web_login_latest", filePath: "tests/web/login.yaml", status: "passed", createdAt: "2026-04-18T04:00:00.000Z" },
+        { id: "run_web_login_latest", filePath: "tests/web/login.yaml", status: "passed", createdAt: "2026-04-18T04:00:00.000Z", members: [singleMember("tests/web/login.yaml", "passed")] },
       ],
     })
 

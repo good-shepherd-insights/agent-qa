@@ -57,7 +57,7 @@ import {
   type AttributeValueSuggestion,
   type RunRow,
 } from "@/lib/api"
-import { getRunStatusDescriptor, getStatusBadgeClassName } from "@/lib/status"
+import { getRunStatusDescriptor, getStatusBadgeClassName, runStatusClass } from "@/lib/status"
 import { cn, formatDate, formatDateShort, formatDuration } from "@/lib/utils"
 
 export type SuiteRunRow = RunRow & { tests?: RunRow[] }
@@ -855,7 +855,7 @@ export function RunsTable({
                   const isSuite = isSuiteParent(run)
                   const isExpanded = isSuite && expandedSuites.has(run.id)
                   const childTests = run.tests ?? []
-                  const passedCount = childTests.filter((test) => test.status === "passed").length
+                  const passedCount = childTests.filter((test) => runStatusClass(test.status) === "pass").length
                   const rowIsActive = selectedRunId === run.id
                   const rowIsBatchSelected = selectedRunIds.has(run.id)
 

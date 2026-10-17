@@ -52,6 +52,7 @@ import {
 } from "@/pages/tests-suites-table-widths"
 import { ShortcutLegend } from "@/components/shortcut-hints"
 import { deleteTestFile, deniedRunSentences, fetchTestFiles, fetchRuns, purgeCache, triggerRun, type TestFileInfo, type RunRow } from "@/lib/api"
+import { runStatusClass } from "@/lib/status"
 import { cn, formatDate } from "@/lib/utils"
 
 interface TestRow {
@@ -106,9 +107,6 @@ function StatusBadge({ status }: { status: string }) {
   }
 }
 
-const PASS_STATUSES = new Set(["passed", "healed"])
-const COMPLETED_RUN_STATUSES = new Set(["passed", "healed", "failed", "flaky", "cancelled"])
-
 function formatPlatformLabel(platform: string | null): string {
   if (!platform) return "\u2014"
   return platform === "ios" ? "iOS" : platform.charAt(0).toUpperCase() + platform.slice(1)
@@ -125,6 +123,21 @@ function stripDisplayPrefix(path: string): string {
 
 function getRunTimestamp(run: RunRow): string {
   return run.createdAt || run.startedAt || run.endedAt || ""
+}
+
+interface MemberHistoryEntry {
+  run: RunRow
+  status: string
+}
+
+// 2026-10-17 (444-15, D-09): a member with no outcome reads as its run while the run is running.
+function memberStatus(run: RunRow, outcome: string | null): string | null {
+  return outcome ?? (run.status === "running" ? "running" : null)
+}
+
+function isFinishedStatus(status: string): boolean {
+  const statusClass = runStatusClass(status)
+  return statusClass !== undefined && statusClass !== "live"
 }
 
 function getHeaderClassName(columnId: string) {
@@ -286,7 +299,7 @@ const columns: ColumnDef<TestRow>[] = [
           className="relative z-10 flex w-full flex-col items-end gap-1 rounded-sm text-right focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
           onClick={(event) => event.stopPropagation()}
         >
-          <StatusBadge status={row.original.lastRun.status} />
+          <StatusBadge status={row.original.lastRunStatus ?? ""} />
           <span className="whitespace-normal break-words text-xs leading-snug text-muted-foreground">
             {formatDate(getRunTimestamp(row.original.lastRun))}
           </span>
@@ -356,40 +369,48 @@ export default function TestsPage() {
   const rowRefs = useRef<Array<HTMLTableRowElement | null>>([])
 
   const data: TestRow[] = useMemo(() => {
-    const runsByExactPath = new Map<string, RunRow[]>()
-    const runsByStrippedPath = new Map<string, RunRow[]>()
+    const historyByExactPath = new Map<string, MemberHistoryEntry[]>()
+    const historyByStrippedPath = new Map<string, MemberHistoryEntry[]>()
 
-    const appendRun = (map: Map<string, RunRow[]>, key: string, run: RunRow) => {
+    const appendEntry = (map: Map<string, MemberHistoryEntry[]>, key: string, entry: MemberHistoryEntry) => {
       if (!key) return
       const current = map.get(key)
       if (current) {
-        current.push(run)
+        current.push(entry)
       } else {
-        map.set(key, [run])
+        map.set(key, [entry])
       }
     }
 
     for (const run of runs) {
-      if (!run.filePath) continue
-      const exactPath = normalizeTestPath(run.filePath)
-      appendRun(runsByExactPath, exactPath, run)
-      appendRun(runsByStrippedPath, stripDisplayPrefix(exactPath), run)
+      const seenPaths = new Set<string>()
+      for (const member of run.members ?? []) {
+        if (!member.filePath) continue
+        const status = memberStatus(run, member.outcome)
+        if (status === null) continue
+        const exactPath = normalizeTestPath(member.filePath)
+        if (seenPaths.has(exactPath)) continue
+        seenPaths.add(exactPath)
+        const entry = { run, status }
+        appendEntry(historyByExactPath, exactPath, entry)
+        appendEntry(historyByStrippedPath, stripDisplayPrefix(exactPath), entry)
+      }
     }
 
     return files.map((file) => {
       const exactPath = normalizeTestPath(file.path)
-      const matchingRuns = runsByExactPath.get(exactPath)
-        ?? runsByStrippedPath.get(stripDisplayPrefix(exactPath))
+      const history = historyByExactPath.get(exactPath)
+        ?? historyByStrippedPath.get(stripDisplayPrefix(exactPath))
         ?? []
-      const sortedRuns = [...matchingRuns].sort((left, right) =>
-        getRunTimestamp(right).localeCompare(getRunTimestamp(left)),
+      const sortedHistory = [...history].sort((left, right) =>
+        getRunTimestamp(right.run).localeCompare(getRunTimestamp(left.run)),
       )
-      const completedRuns = sortedRuns.filter((run) => COMPLETED_RUN_STATUSES.has(run.status))
-      const passCount = completedRuns.filter((run) => PASS_STATUSES.has(run.status)).length
-      const passRate = completedRuns.length > 0
-        ? Math.round((passCount / completedRuns.length) * 100)
+      const completed = sortedHistory.filter((entry) => isFinishedStatus(entry.status))
+      const passCount = completed.filter((entry) => runStatusClass(entry.status) === "pass").length
+      const passRate = completed.length > 0
+        ? Math.round((passCount / completed.length) * 100)
         : null
-      const lastRun = sortedRuns[0] ?? null
+      const last = sortedHistory[0] ?? null
 
       return {
         path: file.path,
@@ -397,11 +418,11 @@ export default function TestsPage() {
         testId: file.testId,
         targetName: file.targetName,
         platform: file.platform,
-        lastRunStatus: lastRun?.status ?? null,
-        lastRun,
+        lastRunStatus: last?.status ?? null,
+        lastRun: last?.run ?? null,
         passRate,
         passCount,
-        completedRunCount: completedRuns.length,
+        completedRunCount: completed.length,
       }
     })
   }, [files, runs])

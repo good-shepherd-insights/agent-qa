@@ -53,6 +53,7 @@ import {
 import { ShortcutLegend } from "@/components/shortcut-hints"
 import { useSuitesSearchParams } from "@/hooks/use-suites-search-params"
 import { deleteSuiteFile, deniedRunSentences, fetchSuiteFiles, fetchRuns, triggerRun, type SuiteFileInfo, type RunRow } from "@/lib/api"
+import { runStatusClass } from "@/lib/status"
 import { formatDate } from "@/lib/utils"
 
 interface SuiteListRow {
@@ -68,8 +69,6 @@ interface SuiteListRow {
   completedRunCount: number
 }
 
-const PASS_STATUSES = new Set(["passed", "healed"])
-const COMPLETED_RUN_STATUSES = new Set(["passed", "healed", "failed", "flaky", "cancelled"])
 const SUITES_TABLE_PAGE_SIZE = 50
 
 function formatPlatformLabel(platform: string | null): string {
@@ -190,23 +189,29 @@ export default function SuitesPage() {
   }, [])
 
   const data: SuiteListRow[] = useMemo(() => {
+    const runsBySuiteId = new Map<string, RunRow[]>()
+    for (const run of runs) {
+      const suiteIds = new Set((run.members ?? []).flatMap((member) => member.suiteId ? [member.suiteId] : []))
+      for (const suiteId of suiteIds) {
+        const current = runsBySuiteId.get(suiteId)
+        if (current) {
+          current.push(run)
+        } else {
+          runsBySuiteId.set(suiteId, [run])
+        }
+      }
+    }
+
     return suiteFiles.map((sf) => {
-      const matchingRuns = runs.filter((run) => {
-        if (run.suiteId && sf.suiteId) {
-          return run.suiteId === sf.suiteId
-        }
-
-        if (!run.suiteId) {
-          return run.name === sf.name
-        }
-
-        return false
-      })
+      const matchingRuns = sf.suiteId ? runsBySuiteId.get(sf.suiteId) ?? [] : []
       const sortedRuns = [...matchingRuns].sort((left, right) =>
         getRunTimestamp(right).localeCompare(getRunTimestamp(left)),
       )
-      const completedRuns = sortedRuns.filter((run) => COMPLETED_RUN_STATUSES.has(run.status))
-      const passCount = completedRuns.filter((run) => PASS_STATUSES.has(run.status)).length
+      const completedRuns = sortedRuns.filter((run) => {
+        const statusClass = runStatusClass(run.status)
+        return statusClass !== undefined && statusClass !== "live"
+      })
+      const passCount = completedRuns.filter((run) => runStatusClass(run.status) === "pass").length
       const passRate = completedRuns.length > 0
         ? Math.round((passCount / completedRuns.length) * 100)
         : null

@@ -113,6 +113,23 @@ export function getRunStatusDescriptor(status: string | null | undefined): RunSt
   }
 }
 
+export type RunStatusClass = 'pass' | 'fail' | 'cancelled' | 'live'
+
+// 2026-10-17 (444-15, D-03): mirrors the server's runStatusClass; other words have no class.
+const RUN_STATUS_CLASS: Record<string, RunStatusClass> = {
+  pending: 'live',
+  running: 'live',
+  passed: 'pass',
+  healed: 'pass',
+  failed: 'fail',
+  timeout: 'fail',
+  cancelled: 'cancelled',
+}
+
+export function runStatusClass(status: string): RunStatusClass | undefined {
+  return Object.hasOwn(RUN_STATUS_CLASS, status) ? RUN_STATUS_CLASS[status] : undefined
+}
+
 export function isTerminalRunStatus(status: string | null | undefined): boolean {
   return getRunStatusDescriptor(status).terminal
 }

@@ -14,6 +14,7 @@ import {
 import { configCommandLabel, CONFIG_SECTION_LABELS } from "@/lib/config-copy"
 import { CONFIG_SECTION_ALIASES, searchConfigSections } from "@/lib/config-tabs"
 import { routes } from "@/lib/routes"
+import { runStatusClass } from "@/lib/status"
 import { useProductTour } from "@/components/product-tour"
 import {
   CommandDialog,
@@ -54,6 +55,17 @@ const createActions = [
     value: "create add new hook hooks setup teardown inline",
   },
 ]
+
+function runStatusTextClass(status: string) {
+  switch (runStatusClass(status)) {
+    case "pass":
+      return "text-green-500"
+    case "fail":
+      return "text-red-500"
+    default:
+      return "text-muted-foreground"
+  }
+}
 
 interface SearchResults {
   runs: RunRow[]
@@ -247,7 +259,7 @@ export function CommandPalette() {
                 >
                   <Play />
                   <span className="truncate">{run.name}</span>
-                  <span className={`ml-auto text-xs ${run.status === "passed" ? "text-green-500" : run.status === "failed" ? "text-red-500" : "text-muted-foreground"}`}>
+                  <span className={`ml-auto text-xs ${runStatusTextClass(run.status)}`}>
                     {run.status}
                   </span>
                 </CommandItem>
