@@ -221,8 +221,9 @@ describe('cancelling one of two concurrently executing dashboard runs (401 UAT 1
       // member was STILL PARKED. Nothing released it, so the run cannot have reached its verdict by
       // finishing — the abort is what ended it.
       expect(browsers.releasesIssued()).toBe(0)
+      // 2026-10-17 (444-06, D-43): the status is the run's own verdict; kill adds no reason.
       expect(settled[0]!.status).toBe('cancelled')
-      expect(settled[0]!.details.reason).toBe('cancelled')
+      expect(settled[0]!.details.reason).toBeUndefined()
 
       // ---- (4) AT THAT SAME MOMENT THE OTHER RUN IS UNTOUCHED ---------------------------------
       expect(runDoor.backend.getActiveExecutions().map((execution) => execution.runId)).toEqual([survivor])

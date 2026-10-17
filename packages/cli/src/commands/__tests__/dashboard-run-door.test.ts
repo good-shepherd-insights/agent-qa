@@ -385,12 +385,13 @@ describe('two concurrent dashboard runs are isolated (401-07, INVK-01 concurrenc
       // there would have discriminated nothing.
       //
       // So the claim here is the one that IS observable at this door: a cancel reaches the run it
-      // NAMES. `kill` returning true for the named run and false for a stranger, the door's own
-      // cancel reason on that run and only that run. The other half — that the abort reaches that
-      // run's SESSION object and no other — is measured in
+      // NAMES. `kill` returning true for the named run and false for a stranger. The other half —
+      // that the abort reaches that run's SESSION object and no other — is measured in
       // `dashboard-server/src/execution/__tests__/in-process-backend.test.ts` over sessions whose
       // `cancel()` can be counted, where killing A leaves B's count at zero.
-      expect(byRun.get(cancelled)!.details.reason).toBe('cancelled')
+      // 2026-10-17 (444-06, D-43): kill no longer stamps its own `cancelled` reason, so neither run
+      // carries one; the settle status is each run's verdict.
+      expect(byRun.get(cancelled)!.details.reason).toBeUndefined()
       expect(byRun.get(survivor)!.details.reason).toBeUndefined()
 
       // The survivor ran to its own verdict, in its own directory.

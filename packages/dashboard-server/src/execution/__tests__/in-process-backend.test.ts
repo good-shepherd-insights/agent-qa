@@ -143,6 +143,16 @@ const buildDenial = (): unknown => Object.assign(
   { remedies: [{ kind: ['answer', 'confirm'].join('-') }], neutralReason: NEUTRAL_DENIAL_PROSE },
 )
 
+// 2026-10-17 (444-06, D-11, D-43): a cancelled run's status is its own verdict, so a cancelled fake
+// session publishes one.
+const cancelledVerdict = (runId: string, seq = 1): RunEventEnvelope => ({
+  seq,
+  ts: '2026-10-17T00:00:00.000Z',
+  runId,
+  type: 'verdict',
+  payload: { verdict: 'cancelled' },
+}) as unknown as RunEventEnvelope
+
 const baseOpts = (runId: string): ExecuteOptions => ({
   runId,
   args: ['tests/parity.yaml'],
@@ -326,11 +336,12 @@ describe('native lifecycle mapping — cancel, timeout, completion (401-07, D-12
     await waitFor(() => { expect(session).toBeDefined() })
     expect(backend.kill('cancel-me')).toBe(true)
     expect(session!.cancels).toBe(1)
+    session!.publish(cancelledVerdict('cancel-me'))
 
     release?.()
     await waitFor(() => { expect(drive.settled).toHaveLength(1) })
     expect(drive.settled[0]!.status).toBe('cancelled')
-    expect(drive.settled[0]!.details.reason).toBe('cancelled')
+    expect(drive.settled[0]!.details.reason).toBeUndefined()
   })
 
   it('KILLING A RUN THAT IS NOT RUNNING IS FALSE, AND ABORTS NOTHING', async () => {
@@ -370,6 +381,7 @@ describe('native lifecycle mapping — cancel, timeout, completion (401-07, D-12
         await new Promise<void>((resolve) => { nameIt = resolve })
         session = new FakeRunSession(opts.runId as RunSession['id'])
         onSession(session)
+        if (session.cancels > 0) session.publish(cancelledVerdict(opts.runId))
       },
     })
     recordSettles(backend, settled)
@@ -528,6 +540,7 @@ describe('two concurrent runs are isolated at the consumer surface (401-07, INVK
     expect(backend.kill('run-A')).toBe(true)
     expect(sessions.get('run-A')!.cancels).toBe(1)
     expect(sessions.get('run-B')!.cancels).toBe(0)
+    sessions.get('run-A')!.publish(cancelledVerdict('run-A', 5))
 
     releases.get('run-A')!()
     await waitFor(() => { expect(settled).toHaveLength(1) })

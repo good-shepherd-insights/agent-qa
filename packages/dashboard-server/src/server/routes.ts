@@ -2377,19 +2377,35 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         json(res, { error: 'invalid_run_id' }, 400)
         return
       }
+      // 2026-10-17 (444-06, D-31): each answer in plain words; the route writes nothing.
       const outcome = jobQueue.cancel(runId)
       switch (outcome.kind) {
         case 'cancelled':
-          json(res, { cancelled: true })
+          json(res, { outcome: 'cancelled', message: 'Run cancelled before it started.' })
           return
         case 'stop-requested':
-          json(res, { outcome: 'stop-requested' }, 202)
+          json(
+            res,
+            { outcome: 'stop-requested', message: 'Stop requested. The run will end with its own verdict.' },
+            202,
+          )
           return
         case 'not-stoppable-here':
-          json(res, { reason: 'not-stoppable-here' }, 409)
+          json(
+            res,
+            {
+              error: "This run can't be stopped from the dashboard. Stop it where it was started.",
+              reason: 'not-stoppable-here',
+            },
+            409,
+          )
           return
         case 'finished':
-          json(res, { outcome: 'finished', status: outcome.status })
+          json(res, {
+            outcome: 'finished',
+            status: outcome.status,
+            message: `This run already finished: ${outcome.status}.`,
+          })
           return
         case 'orphan-finalized':
           json(res, { cancelled: false, message: outcome.message })

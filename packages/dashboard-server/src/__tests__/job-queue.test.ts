@@ -144,20 +144,8 @@ describe('JobQueue', () => {
       })
     })
 
-    it('cancels a running run and emits cancel-running event', () => {
-      const runId = queue.enqueue({ name: 'Running Job' })
-      queue.processNext() // transition to running
-
-      const cancelSpy = vi.fn()
-      queue.on('cancel-running', cancelSpy)
-
-      const result = queue.cancel(runId)
-      expect(result).toEqual({ kind: 'cancelled' })
-
-      const run = db.getRun(runId)
-      expect(run!.status).toBe('cancelled')
-      expect(cancelSpy).toHaveBeenCalledWith(runId)
-    })
+    // 2026-10-17 (444-06, D-01, D-11): the cell that pinned the `cancel-running` event is deleted
+    // with the event; C444-CANCEL-REQUEST in 444-cancel-request.test.ts pins the stop request.
 
     // 2026-08-24 (402-09, D-11): the cell that stood here asserted the child-cancellation fan-out.
     // The fan-out is deleted with the model that minted its children; this is the same claim with
@@ -169,6 +157,15 @@ describe('JobQueue', () => {
     // an operator's historical database is refused by version now, not carried — so the claim is
     // made over two unrelated in-flight rows: a cancel reaches the run it names and nothing else.
     it('leaves every other in-flight run alone when one run is cancelled', () => {
+      const asked: string[] = []
+      queue.stop()
+      queue = new JobQueue({
+        db,
+        requestStop: (runId) => {
+          asked.push(runId)
+          return true
+        },
+      })
       const parentId = queue.enqueue({ name: 'Historical Suite' })
       queue.processNext()
       const startedAt = '2026-05-02T10:00:00.000Z'
@@ -189,11 +186,11 @@ describe('JobQueue', () => {
       db.insertRunArtifact({ runId: runningChildId, kind: 'test', payload: { runtime: { status: 'running' } } })
       db.insertRunArtifact({ runId: pendingChildId, kind: 'test', payload: { runtime: { status: 'pending' } } })
 
-      expect(queue.cancel(parentId)).toEqual({ kind: 'cancelled' })
+      expect(queue.cancel(parentId)).toEqual({ kind: 'stop-requested' })
 
-      // Cancelling a run cancels the run.
-      expect(db.getRun(parentId)?.status).toBe('cancelled')
-      expect(db.getRunArtifact(parentId)?.finalizedAt).toBeTruthy()
+      // The stop request reaches the run it names, which keeps its row until its own verdict...
+      expect(asked).toEqual([parentId])
+      expect(db.getRun(parentId)?.status).toBe('running')
       // ...and reaches nothing else. The rows are still there, unchanged and still readable.
       expect(db.getRun(runningChildId)?.status).toBe('running')
       expect(db.getRun(pendingChildId)?.status).toBe('pending')
@@ -207,7 +204,8 @@ describe('JobQueue', () => {
       db.updateRunStatus(runId, 'passed') // transition to completed
 
       const result = queue.cancel(runId)
-      expect(result).toEqual({ kind: 'not-cancellable' })
+      expect(result).toEqual({ kind: 'finished', status: 'passed' })
+      expect(db.getRun(runId)?.status).toBe('passed')
     })
 
     it('returns false for a non-existent run', () => {

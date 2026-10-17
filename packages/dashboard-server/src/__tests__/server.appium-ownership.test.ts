@@ -174,7 +174,8 @@ interface QueueResponse {
 }
 
 interface CancelResponse {
-  cancelled: boolean
+  outcome: string
+  message: string
 }
 
 let started: Awaited<ReturnType<typeof startServer>> | undefined
@@ -380,7 +381,7 @@ describe('dashboard Appium ownership', () => {
     await waitFor(() => expect(runner.execute).toHaveBeenCalledTimes(1))
 
     const cancel = await postJson<CancelResponse>(port, `/api/runs/${android.runId}/cancel`, {})
-    expect(cancel.cancelled).toBe(true)
+    expect(cancel.outcome).toBe('stop-requested')
     expect(runner.kill).toHaveBeenCalledWith(android.runId)
 
     runner.closeRun(android.runId, 'cancelled')
@@ -390,7 +391,8 @@ describe('dashboard Appium ownership', () => {
     expect(appium.stopCalls).toBe(1)
     const artifact = currentDb!.getRunArtifact(android.runId)
     expect(artifact?.finalizedAt).toBeTruthy()
-    expect(artifact?.payload.errors?.[0]).toMatchObject({ code: 'cancelled' })
+    expect(currentDb!.getRun(android.runId)?.status).toBe('cancelled')
+    expect(artifact?.payload.runtime).toMatchObject({ status: 'cancelled' })
   })
 
   it('fails a timed-out run even when all persisted steps passed', async () => {
@@ -575,7 +577,7 @@ describe('dashboard Appium ownership', () => {
     expect(currentDb!.getRun(second.runId)?.status).toBe('pending')
 
     const cancel = await postJson<CancelResponse>(port, `/api/runs/${first.runId}/cancel`, {})
-    expect(cancel.cancelled).toBe(true)
+    expect(cancel.outcome).toBe('stop-requested')
     runner.closeRun(first.runId, 'cancelled')
 
     await waitFor(() => expect(runner.execute).toHaveBeenCalledTimes(2))

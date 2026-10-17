@@ -256,6 +256,7 @@ describe('C444-CANCEL-REQUEST', () => {
 
     const row = reader.getRun(runId)!
     expect(row.status).toBe('cancelled')
+    expect(row.endedAt).toBe(RUN_ENDED_AT)
     expect(row.failureSummary ?? null).toBeNull()
     expect(live.settled).toEqual([{ runId, status: 'cancelled' }])
     const errors = reader.getRunArtifact(runId)?.payload.errors ?? []

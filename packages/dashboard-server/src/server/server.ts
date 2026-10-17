@@ -329,15 +329,11 @@ export async function startServer(opts: StartServerOptions): Promise<{
     details: RunSettledDetails,
   ) => {
     // The run settled but the DB row is still 'running' — update it so the dashboard does not
-    // show a stuck run.
+    // show a stuck run. 2026-10-17 (444-06, D-31): a row the run already finished is never rewritten.
     try {
       const run = db.getRun(runId)
       const output = details.output
-      const isBrowserDisconnect = output.some(line =>
-        line.includes('Target page, context or browser has been closed') ||
-        line.includes('Browser closed by user')
-      )
-      if (run && (run.status === 'running' || run.status === 'cancelled')) {
+      if (run && run.status === 'running') {
         const duration = run.startedAt
           ? Date.now() - new Date(run.startedAt).getTime()
           : 0
@@ -349,8 +345,7 @@ export async function startServer(opts: StartServerOptions): Promise<{
         // composition below can prefer it over the diagnostic lines. Undefined on every other arm,
         // which is what keeps those arms byte-identical.
         let refusalProse: string | undefined
-        const explicitCancellation = run.status === 'cancelled' || status === 'cancelled'
-        if (explicitCancellation) {
+        if (status === 'cancelled') {
           dbStatus = 'cancelled'
           failureSummary = undefined
         } else if (status === 'timeout') {
@@ -378,9 +373,6 @@ export async function startServer(opts: StartServerOptions): Promise<{
         } else if (status === 'completed') {
           dbStatus = 'failed'
           failureSummary = 'Process exited before test completed'
-        } else if (isBrowserDisconnect) {
-          dbStatus = 'cancelled'
-          failureSummary = 'Browser closed by user'
         } else {
           dbStatus = 'failed'
           const outputLines = output.map(l => l.replace(/\x1b\[[0-9;]*m/g, ''))
@@ -410,12 +402,10 @@ export async function startServer(opts: StartServerOptions): Promise<{
         // ~75 lines stood here: force every `running`/`pending` child terminal, re-read them, and
         // derive the parent's status as the worst child status. A suite is now ONE run row with
         // member handles (D-11, 402-04); nothing writes the run row's parent-link column, so the
-        // fold's own `updatedChildren.length === 0` branch — `worstStatus = isBrowserDisconnect ? 'cancelled'
-        // : dbStatus` — was the only branch it could still take, and that is exactly what the
-        // common path below already does (`dbStatus` is already `'cancelled'` on a browser
-        // disconnect). What a suite run GAINS by falling through is the diagnostic
-        // `failureSummary` and the captured `errorLog` the fold discarded in favour of the
-        // constant sentence "Suite test(s) failed".
+        // fold's own `updatedChildren.length === 0` branch was the only branch it could still take,
+        // and that is what the common path below does. What a suite run GAINS by falling through
+        // is the diagnostic `failureSummary` and the captured `errorLog` the fold discarded in
+        // favour of the constant sentence "Suite test(s) failed".
         //
         // HISTORICAL ROWS ARE UNAFFECTED: this fold only ever ran when a live process closed, and
         // no live process owns pre-402 children. The read side that renders them is untouched (see
@@ -451,7 +441,7 @@ export async function startServer(opts: StartServerOptions): Promise<{
         })
         finalizeRunArtifactBestEffort(
           runId,
-          isBrowserDisconnect ? 'browser-disconnect' : 'process-close',
+          'process-close',
           'process-close',
           failureSummary ?? 'Process closed',
           { status: dbStatus, finalStatus: dbStatus, processStatus: status, duration },

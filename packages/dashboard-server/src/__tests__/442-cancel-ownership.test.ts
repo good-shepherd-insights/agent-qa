@@ -22,7 +22,10 @@ const UNREADABLE: RunOwner = { pid: 3004, incarnation: 'inc-3004', host: HOST }
 const RACED: RunOwner = { pid: 3005, incarnation: 'inc-3005', host: HOST }
 const UNREAD_SELF: RunOwner = { pid: SELF.pid, incarnation: null, host: HOST }
 
-const NOT_CANCELLABLE = { error: 'Run not found or not cancellable' }
+const STOP_REQUESTED = {
+  outcome: 'stop-requested',
+  message: 'Stop requested. The run will end with its own verdict.',
+}
 const CLEANUP_LINE = /run\(s\) whose agent-qa process had ended/
 
 let beforeProbe: (pid: number) => void = () => undefined
@@ -51,7 +54,7 @@ let dbPath: string
 let configPath: string
 let reader: DashboardDatabase
 let queue: JobQueue
-let emitted: string[]
+let stopRequests: string[]
 const started: Array<{ close: () => void }> = []
 
 beforeEach(() => {
@@ -60,10 +63,13 @@ beforeEach(() => {
   configPath = join(dir, 'agent-qa.config.yaml')
   writeFileSync(configPath, 'testDir: tests\n')
   reader = new DashboardDatabase({ dbPath, runOwnership: { self: SELF, probe } })
-  queue = new JobQueue({ db: reader })
-  emitted = []
-  queue.on('cancel-running', (runId: string) => {
-    emitted.push(runId)
+  stopRequests = []
+  queue = new JobQueue({
+    db: reader,
+    requestStop: (runId) => {
+      stopRequests.push(runId)
+      return true
+    },
   })
 })
 
@@ -177,7 +183,7 @@ describe('C442-CANCEL-OWNER', () => {
     const before = [byQueue, byRoute].map(snapshotOf)
 
     expect(queue.cancel(byQueue)).toEqual(refusalOf(ALIVE))
-    expect(emitted).toEqual([])
+    expect(stopRequests).toEqual([])
 
     const dashboard = await startDashboard()
     expect(await cancelOver(dashboard, byRoute)).toEqual({
@@ -202,7 +208,7 @@ describe('C442-CANCEL-OWNER', () => {
         body: refusalBodyOf(owner),
       })
     }
-    expect(emitted).toEqual([])
+    expect(stopRequests).toEqual([])
     expect(dashboard.backend.killed).toEqual([])
     expect(ids.map(snapshotOf)).toEqual(before)
   })
@@ -216,25 +222,19 @@ describe('C442-CANCEL-OWNER', () => {
       message: 'Run cancelled before execution',
     })
 
+    // 2026-10-17 (444-06, D-11): a running own row is asked to stop; its verdict is the run's.
     const ownByQueue = seedRunning(SELF, 'Own run, queue')
-    expect(queue.cancel(ownByQueue)).toEqual({ kind: 'cancelled' })
-    expect(reader.getRun(ownByQueue)?.status).toBe('cancelled')
-    expect(emitted).toEqual([ownByQueue])
+    expect(queue.cancel(ownByQueue)).toEqual({ kind: 'stop-requested' })
+    expect(reader.getRun(ownByQueue)?.status).toBe('running')
+    expect(stopRequests).toEqual([ownByQueue])
 
     const ownByRoute = seedRunning(SELF, 'Own run, route')
     const dashboard = await startDashboard()
-    expect(await cancelOver(dashboard, ownByRoute)).toEqual({
-      status: 200,
-      body: { cancelled: true },
-    })
+    expect(await cancelOver(dashboard, ownByRoute)).toEqual({ status: 202, body: STOP_REQUESTED })
     const row = reader.getRun(ownByRoute)!
-    expect(row.status).toBe('cancelled')
-    expect(row.failureSummary).toBe('Test cancelled by user')
-    expect(row.duration).toBeGreaterThan(0)
-    expect(reader.getRunArtifact(ownByRoute)?.payload.errors?.[0]).toMatchObject({
-      code: 'cancelled',
-      message: 'Run cancellation requested',
-    })
+    expect(row.status).toBe('running')
+    expect(row.failureSummary ?? null).toBeNull()
+    expect(reader.getRunArtifact(ownByRoute)?.payload.errors ?? []).toEqual([])
     expect(dashboard.backend.killed).toEqual([ownByRoute])
   })
 })
@@ -255,7 +255,7 @@ describe('C442-CANCEL-ORPHAN', () => {
     })
     for (const id of [byQueue, byRoute]) expectOrphanFinalized(id, GONE.pid)
     expect(reader.getRun(byRoute)?.failureSummary).not.toBe('Test cancelled by user')
-    expect(emitted).toEqual([])
+    expect(stopRequests).toEqual([])
     expect(dashboard.backend.killed).toEqual([])
   })
 
@@ -266,8 +266,11 @@ describe('C442-CANCEL-ORPHAN', () => {
     expectOrphanFinalized(id, GONE.pid)
     const after = snapshotOf(id)
 
-    expect(await cancelOver(dashboard, id)).toEqual({ status: 404, body: NOT_CANCELLABLE })
-    expect(queue.cancel(id)).toEqual({ kind: 'not-cancellable' })
+    expect(await cancelOver(dashboard, id)).toEqual({
+      status: 200,
+      body: { outcome: 'finished', status: 'failed', message: 'This run already finished: failed.' },
+    })
+    expect(queue.cancel(id)).toEqual({ kind: 'finished', status: 'failed' })
     expect(snapshotOf(id)).toBe(after)
     expect(dashboard.backend.killed).toEqual([])
   })
@@ -284,7 +287,7 @@ describe('C442-CANCEL-ORPHAN', () => {
         other.close()
       }
     }
-    expect(queue.cancel(racedByStart)).toEqual({ kind: 'not-cancellable' })
+    expect(queue.cancel(racedByStart)).toEqual({ kind: 'finished', status: 'failed' })
     expectOrphanFinalized(racedByStart, RACED.pid)
 
     const cancelledFirst = seedRunning(GONE, 'Cancelled before a dashboard start')
@@ -300,10 +303,13 @@ describe('C442-CANCEL-ORPHAN', () => {
 describe('C442-OWN-START-TIME', () => {
   it('the dashboard cancels its own run stamped with no start time', () => {
     const own = new DashboardDatabase({ dbPath, runOwnership: { self: UNREAD_SELF, probe } })
-    const ownQueue = new JobQueue({ db: own })
-    const ownEmitted: string[] = []
-    ownQueue.on('cancel-running', (runId: string) => {
-      ownEmitted.push(runId)
+    const ownStops: string[] = []
+    const ownQueue = new JobQueue({
+      db: own,
+      requestStop: (runId) => {
+        ownStops.push(runId)
+        return true
+      },
     })
     try {
       const id = ownQueue.enqueue({ name: 'Own run, no start time' })
@@ -311,9 +317,9 @@ describe('C442-OWN-START-TIME', () => {
       expect(reader.readRunOwner(id)).toEqual(UNREAD_SELF)
       expect(reader.getRun(id)?.status).toBe('running')
 
-      expect(ownQueue.cancel(id)).toEqual({ kind: 'cancelled' })
-      expect(reader.getRun(id)?.status).toBe('cancelled')
-      expect(ownEmitted).toEqual([id])
+      expect(ownQueue.cancel(id)).toEqual({ kind: 'stop-requested' })
+      expect(reader.getRun(id)?.status).toBe('running')
+      expect(ownStops).toEqual([id])
     } finally {
       ownQueue.stop()
       own.close()
@@ -326,10 +332,13 @@ describe('C442-OWN-START-TIME', () => {
     const before = [byQueue, byRoute].map(snapshotOf)
     const reused: RunOwnership = { self: { ...UNREAD_SELF }, probe }
     const reusedDb = new DashboardDatabase({ dbPath, runOwnership: reused })
-    const reusedQueue = new JobQueue({ db: reusedDb })
-    const reusedEmitted: string[] = []
-    reusedQueue.on('cancel-running', (runId: string) => {
-      reusedEmitted.push(runId)
+    const reusedStops: string[] = []
+    const reusedQueue = new JobQueue({
+      db: reusedDb,
+      requestStop: (runId) => {
+        reusedStops.push(runId)
+        return true
+      },
     })
     try {
       expect(reusedQueue.cancel(byQueue)).toEqual(refusalOf(UNREAD_SELF))
@@ -339,7 +348,7 @@ describe('C442-OWN-START-TIME', () => {
         status: 409,
         body: refusalBodyOf(UNREAD_SELF),
       })
-      expect(reusedEmitted).toEqual([])
+      expect(reusedStops).toEqual([])
       expect(dashboard.backend.killed).toEqual([])
       expect([byQueue, byRoute].map(snapshotOf)).toEqual(before)
     } finally {
@@ -368,7 +377,7 @@ describe('C442-PROBE-THROWS', () => {
       body: refusalBodyOf(throwing),
     })
     expect(dashboard.backend.killed).toEqual([])
-    expect(emitted).toEqual([])
+    expect(stopRequests).toEqual([])
     expect(snapshotOf(id)).toBe(before)
   })
 })
@@ -421,7 +430,7 @@ describe('C442-PID-NAMESPACE', () => {
     }
     expect(seeded.map(({ id }) => snapshotOf(id))).toEqual(before)
     expect(dashboard.backend.killed).toEqual([])
-    expect(emitted).toEqual([])
+    expect(stopRequests).toEqual([])
 
     expect(await cancelOver(dashboard, controlId)).toEqual({
       status: 200,
@@ -445,10 +454,10 @@ describe('C442-CANCEL-RUN-ID', () => {
       expect(reader.readRunOwner(id)).toEqual(owner)
     }
 
-    expect(await cancelOver(dashboard, ownId)).toEqual({ status: 200, body: { cancelled: true } })
+    expect(await cancelOver(dashboard, ownId)).toEqual({ status: 202, body: STOP_REQUESTED })
     const row = reader.getRun(ownId)!
-    expect(row.status).toBe('cancelled')
-    expect(row.failureSummary).toBe('Test cancelled by user')
+    expect(row.status).toBe('running')
+    expect(row.failureSummary ?? null).toBeNull()
     expect(dashboard.backend.killed).toEqual(['run a/b?c'])
 
     expect(await cancelOver(dashboard, orphanId)).toEqual({
@@ -472,6 +481,6 @@ describe('C442-CANCEL-RUN-ID', () => {
     })
     expect(snapshotOf(id)).toBe(before)
     expect(dashboard.backend.killed).toEqual([])
-    expect(emitted).toEqual([])
+    expect(stopRequests).toEqual([])
   })
 })

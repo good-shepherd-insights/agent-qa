@@ -327,7 +327,8 @@ describe('C433-LAUNCH-FAILURE: the dashboard door', () => {
       expect(await waitFor(() => model.requests.length > 0, 150_000), 'the member launched its browser and reached planning').toBe(true)
 
       const cancel = await fetch(`${scene.origin}/api/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' })
-      expect(cancel.status, await cancel.text()).toBe(200)
+      // 2026-10-17 (444-06, D-31): a running run's cancel is a stop request, answered 202.
+      expect(cancel.status, await cancel.text()).toBe(202)
       expect(await waitFor(() => scene.settled.some((entry) => entry.runId === runId), 120_000), 'the run settles').toBe(true)
       await waitFor(() => unsettledRuns(project).length === 0, 60_000)
 
