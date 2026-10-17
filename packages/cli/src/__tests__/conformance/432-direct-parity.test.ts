@@ -13,6 +13,8 @@
 // a door D-12 does not name, and it stays. Every project declares a marker auth plugin (D-10), and
 // the dashboard rows compose `createDashboardRunDoor` without the command's host-start config read
 // (D-18), so a marker can only come from the request.
+// 2026-10-17 (443-10, D-02/D-05): every door writes one runs.db row for a run it starts, and a
+// refused run leaves no runs.db file.
 // Three postures per door, each in a fresh temporary project over a loopback counting target:
 //   1. a NON-PRODUCTION test runs in its one call, nothing reads stdin and nothing is asked;
 //   2. a declared PRODUCTION test is refused before any effect — no run directory, no request at
@@ -611,6 +613,7 @@ function doorEffects(project: MatrixProject, target: CountingTarget, db?: Dashbo
       ...(db?.getRuns({}).map((row) => row.id) ?? []),
     ],
     jobRows: storeRows(join(project.agentQaRoot, 'agent-jobs.db'), 'jobs'),
+    runsDbFile: existsSync(join(project.agentQaRoot, 'runs.db')),
     buildOrdinal: buildOrdinalsExist({ project: project.root, suitePattern: '' }),
     targetHits: target.hits.filter((hit) => !hit.startsWith(`/${MODEL_PATH}`)),
     modelHits: target.hits.filter((hit) => hit.startsWith(`/${MODEL_PATH}`)),
@@ -622,6 +625,7 @@ const NO_EFFECTS: ReturnType<typeof doorEffects> = {
   runDirectories: [],
   runsDbRows: [],
   jobRows: [],
+  runsDbFile: false,
   buildOrdinal: false,
   targetHits: [],
   modelHits: [],
@@ -634,13 +638,12 @@ const RESOLVED_SCOPE = /"scope":\s*\{\s*"tier":\s*"product",\s*"key":\s*"door-pr
 /** Canonical ids are generated words (`r_vine-…-stable-scope`), so they are read past, not matched. */
 const CANONICAL_ID = /\b(?:obs|[tshr])_[a-z0-9]+(?:-[a-z0-9]+)*/gu
 
-const WRITES_RUN_ROW = new Set(['agent-qa run (spawned, CI, stdin closed)', 'the dashboard Run control', 'the enqueue route'])
+const WRITES_RUN_ROW = new Set(DOORS.map(([door]) => door))
 
 describe('C442-DOOR-TABLE', () => {
   it.each(DOORS)('%s refuses a declared production run before any effect, plugin loading included', async (name, door) => {
     // The positive control first: the same door and instruments over an opted-in twin see each
-    // effect, so the nothing below was measured. Only WRITES_RUN_ROW's doors write a runs.db row
-    // today; the runs.start doors write none.
+    // effect, so the nothing below was measured. Every door writes its run's runs.db row.
     expect(DOORS.map(([door]) => door)).toEqual(expect.arrayContaining([...WRITES_RUN_ROW]))
     await withTarget(async (target) => {
       const twin = matrixProject(target.origin, true)
