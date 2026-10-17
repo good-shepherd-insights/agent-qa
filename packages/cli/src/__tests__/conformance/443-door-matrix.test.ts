@@ -257,7 +257,7 @@ function stdoutTeeEnv(): NodeJS.ProcessEnv {
     '}',
     '',
   ].join('\n'), 'utf8')
-  return { NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --require ${preload}`.trim() }
+  return { NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --require ${JSON.stringify(preload)}`.trim() }
 }
 
 function isJson(line: string): boolean {
