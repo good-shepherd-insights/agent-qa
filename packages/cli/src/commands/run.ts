@@ -408,6 +408,7 @@ function releaseAppium(): void {
 
 export async function createPlatformAdapter(
   platform: 'web' | 'android' | 'ios',
+  options: { readonly hostOwnsSignals?: true } = {},
 ): Promise<PlatformAdapter> {
   if (platform === 'android') {
     try {
@@ -430,7 +431,7 @@ export async function createPlatformAdapter(
     }
   }
   const { WebPlatformAdapter } = await import('@vostride/agent-qa-web')
-  return new WebPlatformAdapter()
+  return new WebPlatformAdapter(options.hostOwnsSignals === true ? { hostOwnsSignals: true } : {})
 }
 
 const runWebAccessibilityCheck: NonNullable<RunSuiteConfig['accessibilityCheck']> = async (page, options) => {
@@ -3764,6 +3765,8 @@ export interface DirectRunMemberProductionInput {
   /** Reports each member's own run id. The command uses it to keep its crash-finalizer honest. */
   readonly onMemberRunId?: (runId: string) => void
   readonly terminal?: RunTerminal
+  // 2026-10-17 (444-22, D-46): only agent-qa run passes this; its controller owns SIGINT/SIGTERM.
+  readonly hostOwnsSignals?: true
   /**
    * An Appium a HOST already leased for this run (401-07, D-01/D-12 — INVK-01 truth 5).
    *
@@ -4158,7 +4161,10 @@ export async function produceDirectRunMembers(
           }
         }
 
-        adapter = await createPlatformAdapter(testPlatform)
+        adapter = await createPlatformAdapter(
+          testPlatform,
+          input.hostOwnsSignals === true ? { hostOwnsSignals: true } : {},
+        )
 
         const mergedBrowser = (mergedUse as Record<string, unknown>).browser as Record<string, unknown> | undefined
         const platformConfig = buildPlatformConfig(testPlatform, testResolvedDevice, testTimeoutsForSetup, mergedBrowser ?? config.use?.browser, (testMergedConfig as any).use?.logCapture ?? config.use?.logCapture, testFarmSession, testMobileResolved)
@@ -5105,6 +5111,7 @@ export function createRunCommand(): Command {
           analytics,
           onMemberRunId: (memberRunId) => { currentRunId = memberRunId },
           terminal: RUN_TERMINAL,
+          hostOwnsSignals: true,
         })
         printPlannerLimits(produced.plannerLimits)
         const members = produced.members
