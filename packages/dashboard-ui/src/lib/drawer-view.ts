@@ -6,6 +6,7 @@ export const DRAWER_COPY = {
   testAsWritten: 'Test as written',
   resolvedDefinition: 'Resolved definition',
   suiteMembers: 'Suite members',
+  runTests: 'Tests in this run',
   runAttributes: 'Run attributes',
   effectiveConfig: 'Effective config',
   globalConfigAsWritten: 'Global config as written',

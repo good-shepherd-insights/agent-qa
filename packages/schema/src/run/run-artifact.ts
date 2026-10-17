@@ -95,6 +95,7 @@ export interface RunArtifactSuiteMemberSnapshot {
   error?: RunArtifactTerminalError
   childRunId?: string
   skipReason?: string
+  config?: RunArtifactConfigSnapshot | ArtifactRecord
 }
 
 export interface RunArtifactSuiteSourceSnapshot {
@@ -109,6 +110,13 @@ export interface RunArtifactSuiteSourceSnapshot {
   error?: RunArtifactTerminalError
 }
 
+// 2026-10-17 (444-03, D-07): a run of several tests outside one suite; each member carries its own
+// source and config, and the run holds none of its own.
+export interface RunArtifactTestsSourceSnapshot {
+  kind: 'tests'
+  members: RunArtifactSuiteMemberSnapshot[]
+}
+
 export interface RunArtifactRuntimeSnapshot extends ArtifactRecord {
   status?: string
   duration?: number
@@ -120,7 +128,11 @@ export interface RunArtifactRuntimeSnapshot extends ArtifactRecord {
 export interface RunArtifactPayload {
   schemaVersion: typeof RUN_ARTIFACT_SCHEMA_VERSION
   config?: RunArtifactConfigSnapshot | ArtifactRecord
-  source?: RunArtifactTestSourceSnapshot | RunArtifactSuiteSourceSnapshot | ArtifactRecord
+  source?:
+    | RunArtifactTestSourceSnapshot
+    | RunArtifactSuiteSourceSnapshot
+    | RunArtifactTestsSourceSnapshot
+    | ArtifactRecord
   runtime?: RunArtifactRuntimeSnapshot
   errors?: RunArtifactTerminalError[]
   metadata?: RunArtifactMetadata

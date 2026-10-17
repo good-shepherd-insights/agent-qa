@@ -2,7 +2,7 @@ import { ChevronRight } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import type { RunArtifactResponse } from "@/lib/api"
-import { DRAWER_COPY } from "@/lib/drawer-view"
+import { DRAWER_COPY, ranAgainstParts } from "@/lib/drawer-view"
 import { routes } from "@/lib/routes"
 import { ArtifactAttributeRows } from "./artifact-attribute-rows"
 import { formatArtifactValue, InspectorSection, isArtifactArray, isArtifactRecord, KeyValueRows, KeyValueTree, RawBlock } from "./artifact-renderers"
@@ -50,10 +50,25 @@ function getRunAttributes(response: RunArtifactResponse): Record<string, string>
   return stringAttributesFrom(recordAt(metadata, "attributes"))
 }
 
+function MemberConfig({ config }: { config: Record<string, unknown> }) {
+  const runtime = valueAt(config, "runtime")
+  const timeouts = valueAt(config, "timeouts")
+  const model = valueAt(config, "model")
+  return (
+    <div data-member-config>
+      {runtime == null ? null : <KeyValueTree label="runtime" value={runtime} />}
+      {timeouts == null ? null : <KeyValueTree label="timeouts" value={timeouts} />}
+      {model == null ? null : <KeyValueTree label="model" value={model} />}
+    </div>
+  )
+}
+
 function SuiteMembers({
   source,
+  kind,
 }: {
   source: Record<string, unknown>
+  kind: "suite" | "tests"
 }) {
   const members = arrayAt(source, "members")
     .filter(isArtifactRecord)
@@ -64,7 +79,10 @@ function SuiteMembers({
     })
 
   return (
-    <InspectorSection title={DRAWER_COPY.suiteMembers} data-drawer-section="suite-members">
+    <InspectorSection
+      title={kind === "tests" ? DRAWER_COPY.runTests : DRAWER_COPY.suiteMembers}
+      data-drawer-section={kind === "tests" ? "run-tests" : "suite-members"}
+    >
       <div className="space-y-3">
         {members.length === 0 ? DRAWER_COPY.notCaptured : null}
         {members.map((member) => {
@@ -72,6 +90,8 @@ function SuiteMembers({
           const index = typeof member.index === "number" ? member.index : 0
           const childRunId = textAt(member, "childRunId")
           const error = terminalErrorMessage(valueAt(member, "error"))
+          const config = recordAt(member, "config")
+          const ranAgainst = config ? ranAgainstParts(config).join(" · ") : ""
 
           return (
             <div
@@ -105,6 +125,7 @@ function SuiteMembers({
                     mono: Boolean(childRunId),
                   },
                   { label: "Error", value: error ?? "None" },
+                  ...(config ? [{ label: "Ran against", value: ranAgainst || DRAWER_COPY.notCaptured }] : []),
                 ]}
               />
               <Collapsible>
@@ -113,10 +134,11 @@ function SuiteMembers({
                   Member snapshots
                 </CollapsibleTrigger>
                 <CollapsibleContent className="mt-2 space-y-2">
-                  <RawBlock label="Raw member YAML" content={textAt(member, "rawYaml")} />
+                  <RawBlock label={kind === "tests" ? "Raw test YAML" : "Raw member YAML"} content={textAt(member, "rawYaml")} />
                   {valueAt(member, "resolvedDefinition") !== undefined ? (
                     <KeyValueTree label="resolvedDefinition" value={valueAt(member, "resolvedDefinition")} />
                   ) : null}
+                  {config ? <MemberConfig config={config} /> : null}
                 </CollapsibleContent>
               </Collapsible>
             </div>
@@ -138,13 +160,17 @@ export function ArtifactTestTab({ response }: { response: RunArtifactResponse })
 
   return (
     <div className="space-y-4">
-      <InspectorSection title={DRAWER_COPY.testAsWritten} data-drawer-section="test-as-written">
-        {rawYaml ? <RawBlock label={kind === "suite" ? "Raw suite YAML" : "Raw test YAML"} content={rawYaml} /> : DRAWER_COPY.notCaptured}
-      </InspectorSection>
-      <InspectorSection title={DRAWER_COPY.resolvedDefinition} data-drawer-section="resolved-definition">
-        {definition == null ? DRAWER_COPY.notCaptured : <KeyValueTree label="resolvedDefinition" value={definition} />}
-      </InspectorSection>
-      {kind === "suite" ? <SuiteMembers source={capturedSource ?? {}} /> : null}
+      {kind === "tests" ? null : (
+        <>
+          <InspectorSection title={DRAWER_COPY.testAsWritten} data-drawer-section="test-as-written">
+            {rawYaml ? <RawBlock label={kind === "suite" ? "Raw suite YAML" : "Raw test YAML"} content={rawYaml} /> : DRAWER_COPY.notCaptured}
+          </InspectorSection>
+          <InspectorSection title={DRAWER_COPY.resolvedDefinition} data-drawer-section="resolved-definition">
+            {definition == null ? DRAWER_COPY.notCaptured : <KeyValueTree label="resolvedDefinition" value={definition} />}
+          </InspectorSection>
+        </>
+      )}
+      {kind === "suite" || kind === "tests" ? <SuiteMembers source={capturedSource ?? {}} kind={kind} /> : null}
       {Object.keys(attributes).length > 0 ? (
         <InspectorSection title={DRAWER_COPY.runAttributes} data-drawer-section="run-attributes">
           <ArtifactAttributeRows attributes={attributes} />

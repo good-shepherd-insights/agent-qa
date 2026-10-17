@@ -5,8 +5,10 @@ import type {
   RunArtifactConfigSnapshot,
   RunArtifactKind,
   RunArtifactStageInput,
+  RunArtifactSuiteMemberSnapshot,
   RunArtifactSuiteSourceSnapshot,
   RunArtifactTestSourceSnapshot,
+  RunArtifactTestsSourceSnapshot,
   RunEventEnvelope,
   StepFinalizedPayload,
   StepStartedPayload,
@@ -64,6 +66,7 @@ import { runRowIdentity, type RunIdentityMember } from './run-row-identity.js'
 type SourceSnapshot =
   | RunArtifactTestSourceSnapshot
   | RunArtifactSuiteSourceSnapshot
+  | RunArtifactTestsSourceSnapshot
   | ArtifactRecord
 
 type ConfigSnapshot = RunArtifactConfigSnapshot | ArtifactRecord
@@ -115,6 +118,8 @@ export interface DashboardRunIngest {
    * Stage a loaded snapshot onto this run's own artifact (433-29, F-433-15). A section is written
    * only where it is absent or still the queue's `loadStatus: 'queued'` placeholder, so the first
    * snapshot wins and a finalized artifact is never touched. A call before `runStarted` is held.
+   * A run of several members outside one suite instead files each snapshot under its member
+   * (444-03, D-07).
    */
   stageSnapshots(input: DashboardRunIngestSnapshots): void
   finalize(extra?: DashboardRunIngestFinalizeExtra): Promise<void>
@@ -143,6 +148,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function readString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value : undefined
+}
+
+function samePath(memberPath: string, snapshotPath: string | undefined): boolean {
+  if (snapshotPath === undefined) return false
+  const member = memberPath.replace(/\\/g, '/')
+  const snapshot = snapshotPath.replace(/\\/g, '/')
+  return member === snapshot || snapshot.endsWith(`/${member}`) || member.endsWith(`/${snapshot}`)
 }
 
 /**
@@ -181,7 +193,11 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
   const configRecord = isRecord(configSnapshot) ? configSnapshot : undefined
   const configRuntime = isRecord(configRecord?.runtime) ? (configRecord!.runtime as ArtifactRecord) : undefined
 
-  const identity = runRowIdentity(deps.members ?? [])
+  const runMembers = deps.members ?? []
+  const identity = runRowIdentity(runMembers)
+  // 2026-10-17 (444-03, D-07, D-08): several members outside one suite own their sources; a
+  // single-test or one-suite run keeps the first-wins source (433-29).
+  const membersMode = runMembers.length > 1 && identity.suiteId === undefined
   const platform = readString(configRuntime?.platform) ?? 'web'
 
   /** The primary DB row id lifecycle status/finalize writes target. */
@@ -196,6 +212,10 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
   const heldSnapshots: DashboardRunIngestSnapshots[] = []
 
   function baseArtifactPayload(): RunArtifactStageInput {
+    if (membersMode) {
+      const source: RunArtifactTestsSourceSnapshot = { kind: 'tests', members: [] }
+      return { source, ...(attributes ? { metadata: { attributes } } : {}) }
+    }
     return {
       ...(sourceSnapshot ? { source: sourceSnapshot as RunArtifactStageInput['source'] } : {}),
       ...(configSnapshot ? { config: configSnapshot as RunArtifactStageInput['config'] } : {}),
@@ -247,7 +267,77 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
     return stored === undefined || (isRecord(stored) && stored.loadStatus === 'queued')
   }
 
+  function pickMember(
+    pool: readonly number[],
+    snapshot: { testId?: string; name?: string; filePath?: string },
+    taken: ReadonlySet<number>,
+  ): number | undefined {
+    const byId = pool.filter((index) => {
+      const member = runMembers[index]
+      if (member === undefined) return false
+      return snapshot.testId !== undefined ? member.testId === snapshot.testId : member.testId === snapshot.name
+    })
+    const byPath = byId.filter((index) => samePath(runMembers[index]!.filePath, snapshot.filePath))
+    return (byPath.length > 0 ? byPath : byId).find((index) => !taken.has(index))
+  }
+
+  function testMemberEntry(
+    source: Record<string, unknown>,
+    config: ConfigSnapshot | undefined,
+    taken: ReadonlySet<number>,
+  ): RunArtifactSuiteMemberSnapshot | undefined {
+    const testId = readString(source.testId)
+    const filePath = readString(source.filePath)
+    const index = pickMember(
+      runMembers.map((_, position) => position),
+      { testId, name: readString(source.name), filePath },
+      taken,
+    )
+    if (index === undefined) return undefined
+    const member = runMembers[index]!
+    return {
+      index,
+      ref: { test: filePath ?? member.filePath, id: testId ?? member.testId },
+      filePath: filePath ?? null,
+      testId: testId ?? null,
+      name: readString(source.name) ?? null,
+      rawYaml: readString(source.rawYaml) ?? null,
+      resolvedDefinition: source.resolvedDefinition ?? null,
+      loadStatus: 'loaded',
+      ...(config === undefined ? {} : { config }),
+    }
+  }
+
+  function applyMemberSnapshot(id: string, input: DashboardRunIngestSnapshots): void {
+    const artifact = db.getRunArtifact(id)
+    if (!artifact || artifact.finalizedAt) return
+    const stored = (artifact.payload as unknown as Record<string, unknown>).source
+    const entries = (isRecord(stored) && Array.isArray(stored.members) ? stored.members : [])
+      .filter((entry): entry is RunArtifactSuiteMemberSnapshot => isRecord(entry) && typeof entry.index === 'number')
+    const taken = new Set(entries.map((entry) => entry.index))
+    const config = isRecord(input.config) ? input.config : undefined
+    const added: RunArtifactSuiteMemberSnapshot[] = []
+    if (isRecord(input.source) && input.source.kind === 'test') {
+      const entry = testMemberEntry(input.source, config, taken)
+      if (entry !== undefined) added.push(entry)
+    }
+    if (added.length === 0) return
+    const source: RunArtifactTestsSourceSnapshot = {
+      kind: 'tests',
+      members: [...entries, ...added].sort((a, b) => a.index - b.index),
+    }
+    db.stageRunArtifact(id, { source })
+  }
+
   function applySnapshots(id: string, input: DashboardRunIngestSnapshots): void {
+    if (membersMode) {
+      try {
+        applyMemberSnapshot(id, input)
+      } catch {
+        // Non-darkening, as below.
+      }
+      return
+    }
     try {
       const artifact = db.getRunArtifact(id)
       if (!artifact || artifact.finalizedAt) return

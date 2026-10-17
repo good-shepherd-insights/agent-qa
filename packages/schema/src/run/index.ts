@@ -20,6 +20,7 @@ export type {
   RunArtifactSuiteSourceSnapshot,
   RunArtifactTerminalError,
   RunArtifactTestSourceSnapshot,
+  RunArtifactTestsSourceSnapshot,
 } from './run-artifact'
 export type { RunStatus, ExecutionContext } from './run-status'
 export { EXECUTION_CONTEXT_VALUES } from './run-status'
