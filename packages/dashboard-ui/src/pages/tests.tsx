@@ -52,7 +52,7 @@ import {
 } from "@/pages/tests-suites-table-widths"
 import { ShortcutLegend } from "@/components/shortcut-hints"
 import { deleteTestFile, deniedRunSentences, fetchTestFiles, fetchRuns, purgeCache, triggerRun, type TestFileInfo, type RunRow } from "@/lib/api"
-import { runStatusClass } from "@/lib/status"
+import { memberStatus, runStatusClass } from "@/lib/status"
 import { cn, formatDate } from "@/lib/utils"
 
 interface TestRow {
@@ -128,11 +128,6 @@ function getRunTimestamp(run: RunRow): string {
 interface MemberHistoryEntry {
   run: RunRow
   status: string
-}
-
-// 2026-10-17 (444-15, D-09): a member with no outcome reads as its run while the run is running.
-function memberStatus(run: RunRow, outcome: string | null): string | null {
-  return outcome ?? (run.status === "running" ? "running" : null)
 }
 
 function isFinishedStatus(status: string): boolean {
@@ -386,7 +381,7 @@ export default function TestsPage() {
       const seenPaths = new Set<string>()
       for (const member of run.members ?? []) {
         if (!member.filePath) continue
-        const status = memberStatus(run, member.outcome)
+        const status = memberStatus(run.status, member.outcome)
         if (status === null) continue
         const exactPath = normalizeTestPath(member.filePath)
         if (seenPaths.has(exactPath)) continue

@@ -650,7 +650,7 @@ export async function fetchTestFiles(): Promise<{ files: TestFileInfo[]; targets
   return request('/api/tests')
 }
 
-export async function fetchTestFile(testId: string): Promise<{ path: string; content: string }> {
+export async function fetchTestFile(testId: string): Promise<{ path: string; content: string; testId: string }> {
   return request(`/api/tests/${encodeURIComponent(testId)}`)
 }
 
@@ -1094,9 +1094,11 @@ export interface AnalyticsScope {
   totalCount: number
 }
 
+export type TestHistoryRun = RunRow & { memberOutcome: string | null }
+
 export interface TestAnalyticsDetail {
   name: string
-  runs: RunRow[]
+  runs: TestHistoryRun[]
   total: number
   trends: TestTrends
   isFlaky: boolean
@@ -1104,7 +1106,7 @@ export interface TestAnalyticsDetail {
   scope?: AnalyticsScope
   scopedTrends?: TestTrends
   scopedFlakyScore?: number
-  scopedRuns?: RunRow[]
+  scopedRuns?: TestHistoryRun[]
 }
 
 export interface SuiteAnalyticsDetail {
@@ -1127,9 +1129,15 @@ export async function fetchFlakyTests(opts?: { minRuns?: number; limit?: number 
 
 export async function fetchTestAnalytics(
   name: string,
-  opts?: { limit?: number; offset?: number; from?: string },
+  opts: { testId?: string; filePath?: string; limit?: number; offset?: number; from?: string },
 ): Promise<TestAnalyticsDetail> {
-  const query = buildQuery({ limit: opts?.limit, offset: opts?.offset, from: opts?.from })
+  const query = buildQuery({
+    testId: opts.testId,
+    filePath: opts.filePath,
+    limit: opts.limit,
+    offset: opts.offset,
+    from: opts.from,
+  })
   return request(`/api/analytics/tests/${encodeURIComponent(name)}${query}`)
 }
 

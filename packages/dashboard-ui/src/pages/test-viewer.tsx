@@ -44,7 +44,9 @@ import {
   triggerRun,
   purgeCache,
   type TestAnalyticsDetail,
+  type TestHistoryRun,
 } from "@/lib/api"
+import { memberStatus } from "@/lib/status"
 import {
   normalizeViewerUrlState,
   serializeViewerUrlState,
@@ -152,6 +154,12 @@ function StatusBadge({ status }: { status: string }) {
   }
 }
 
+function MemberOutcomeBadge({ run }: { run: TestHistoryRun }) {
+  const status = memberStatus(run.status, run.memberOutcome)
+  if (status === null) return <span className="text-muted-foreground">{"\u2014"}</span>
+  return <StatusBadge status={status} />
+}
+
 function RunHistoryTable({
   runs,
 }: {
@@ -186,7 +194,7 @@ function RunHistoryTable({
                 className="absolute inset-0"
                 tabIndex={-1}
               />
-              <StatusBadge status={run.status} />
+              <MemberOutcomeBadge run={run} />
             </TableCell>
             <TableCell>
               {run.status === "running" ? (
@@ -237,6 +245,7 @@ export default function TestViewerPage() {
 
   const [content, setContent] = useState("")
   const [filePath, setFilePath] = useState("")
+  const [loadedTestId, setLoadedTestId] = useState("")
   const [isLoading, setIsLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
   const [analyticsData, setAnalyticsData] =
@@ -307,6 +316,7 @@ export default function TestViewerPage() {
         if (!cancelled) {
           setContent(data.content)
           setFilePath(data.path)
+          setLoadedTestId(data.testId)
         }
       })
       .catch(() => {
@@ -325,9 +335,13 @@ export default function TestViewerPage() {
   }, [testId])
 
   useEffect(() => {
-    if (!testName) return
+    if (!testName || (!loadedTestId && !filePath)) return
     let cancelled = false
-    fetchTestAnalytics(testName, { limit: 50 })
+    fetchTestAnalytics(testName, {
+      testId: loadedTestId || undefined,
+      filePath: filePath || undefined,
+      limit: 50,
+    })
       .then((data) => {
         if (!cancelled) setAnalyticsData(data)
       })
@@ -335,7 +349,7 @@ export default function TestViewerPage() {
     return () => {
       cancelled = true
     }
-  }, [testName])
+  }, [testName, loadedTestId, filePath])
 
   const handleRun = async (local: boolean) => {
     if (isRunning) return
@@ -494,7 +508,7 @@ export default function TestViewerPage() {
                         className="absolute inset-0"
                         tabIndex={-1}
                       />
-                      <StatusBadge status={run.status} />
+                      <MemberOutcomeBadge run={run} />
                     </TableCell>
                     <TableCell>
                       {run.status === "running" ? (

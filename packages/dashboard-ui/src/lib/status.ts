@@ -130,6 +130,11 @@ export function runStatusClass(status: string): RunStatusClass | undefined {
   return Object.hasOwn(RUN_STATUS_CLASS, status) ? RUN_STATUS_CLASS[status] : undefined
 }
 
+// 2026-10-17 (444-15, D-09): a member with no outcome reads as its run only while the run is running.
+export function memberStatus(runStatus: string, outcome: string | null | undefined): string | null {
+  return outcome ?? (runStatus === 'running' ? 'running' : null)
+}
+
 export function isTerminalRunStatus(status: string | null | undefined): boolean {
   return getRunStatusDescriptor(status).terminal
 }
