@@ -127,3 +127,13 @@ describe('C443-VERIFY-MARK', () => {
     )
   })
 })
+
+// 2026-10-17 (443-16, GAP-D6): the record's spread is the gate-run mark's one spelling.
+describe('C443-DEAD-SURFACE', () => {
+  it('the internal attribute builder takes no gate-run option', () => {
+    const input = { trigger: 'cli' as const, runner: 'local' as const, gateRun: true as const }
+    const built = buildInternalRunAttributes(input)
+    expect(Object.hasOwn(built, ATTR_GATE_RUN), 'the builder wrote the gate-run mark').toBe(false)
+    expect(built).toEqual({ [ATTR_TRIGGER]: 'cli', [ATTR_RUNNER]: 'local' })
+  })
+})

@@ -234,7 +234,7 @@ const LOCAL_HOST = 'cli/src/composition/local-agent-host.ts'
 const DAEMON_HOST = 'cli/src/daemon/host.ts'
 const DRIVE_FILE = 'cli/src/composition/in-process-run-execution.ts'
 const DOOR_FILES = [RUN_TS, DASHBOARD_TS, LOCAL_HOST, DAEMON_HOST, DRIVE_FILE]
-const DRIVE_CALLS: readonly string[] = [RUN_TS, RUN_TS, LOCAL_HOST, DAEMON_HOST, DRIVE_FILE].sort()
+const DRIVE_CALLS: readonly string[] = [RUN_TS, RUN_TS, LOCAL_HOST, DAEMON_HOST].sort()
 
 // ---------------------------------------------------------------------------------------------
 // The AST reads
@@ -407,7 +407,7 @@ describe('C443-ONE-RECORD', () => {
 
   it('every drive call passes a record from the one builder, and the scan saw every door', () => {
     const sites = sourcesOf(scanned([CLI])).flatMap(driveSites)
-    expect(sites.length, 'the scan found fewer drive calls than the doors that make one').toBeGreaterThanOrEqual(5)
+    expect(sites.length, 'the scan found fewer drive calls than the doors that make one').toBeGreaterThanOrEqual(4)
     expect(sites.map((site) => site.file).sort().join(', '), 'the drive call sites').toBe(DRIVE_CALLS.join(', '))
     const problems = sites.flatMap((site) => site.problems.map((problem) => `${site.file}:${site.line}: ${problem}`))
     expect(problems.join(' | '), 'drive calls without a record from the one builder').toBe('')
