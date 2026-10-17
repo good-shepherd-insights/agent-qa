@@ -33,9 +33,9 @@ import {
   POST_PROCESSING_LOADING_LABEL,
   POST_PROCESSING_UNAVAILABLE_WORD,
   PROPOSALS_REASON_ABSENT_TEXT,
-  STAGE_EXCLUDED_TEXT,
   STAGE_INDICATOR_WORDS,
   STAGE_PRESENTATION_STATES,
+  STAGE_SKIPPED_TEXT,
   WILL_RETRY_TEXT,
   analysisCompleteWithVerdictsText,
   curationBreakdownLine,
@@ -433,7 +433,7 @@ describe('an indicator says the stage, and says the state when it needs attentio
       'running',
       'pending',
       'failed',
-      'excluded',
+      'skipped',
       'unavailable',
     ])
     expect(STAGE_PRESENTATION_STATES).toHaveLength(6)
@@ -443,14 +443,14 @@ describe('an indicator says the stage, and says the state when it needs attentio
       running: 'Analysis running',
       pending: 'Analysis pending',
       failed: 'Analysis failed',
-      excluded: 'Analysis excluded',
+      skipped: 'Analysis skipped',
     })
     expect(STAGE_INDICATOR_WORDS.curation).toEqual({
       complete: 'Curation',
       running: 'Curation running',
       pending: 'Curation pending',
       failed: 'Curation failed',
-      excluded: 'Curation excluded',
+      skipped: 'Curation skipped',
     })
     expect(POST_PROCESSING_UNAVAILABLE_WORD).toBe('Post-processing unavailable')
     expect(POST_PROCESSING_LOADING_LABEL).toBe('Post-processing status loading')
@@ -509,42 +509,39 @@ describe('C444-STAGE-SKIPPED', () => {
   })
 })
 
-// THE EXCLUDED STATE COMES FROM THE READ'S OWN FIELD (425-08 · D-08, T-425-08-01).
+// THE SKIPPED STATE COMES FROM THE READ'S OWN FIELD (425-08 · D-08, T-425-08-01; 444 D-39).
 //
 // The op folds `skipped` from the run's durable `gateRun` / `excludedFromOutcomes` markers — the
 // same markers the post-verdict enqueue skip reads — so the dashboard, the CLI exit line and the
 // digest say ONE thing (law 6). The projection therefore reads the FIELD and nothing else: not the
 // absence of job rows, not the run's own status, not a settled chip word. The negative arm below is
 // the half that matters, because a fold that guessed would still pass every positive assertion.
-describe('a skipped chain reads excluded because the read said so, never because rows are missing (D-08)', () => {
-  it('EXCLUDED-FROM-FIELD: paints BOTH indicators excluded while the chip words stay verbatim', () => {
+describe('a skipped chain reads skipped because the read said so, never because rows are missing (D-08)', () => {
+  it('EXCLUDED-FROM-FIELD: paints BOTH indicators skipped while the chip words stay verbatim', () => {
     for (const reason of POST_PROCESSING_SKIP_REASONS) {
       const view = chips(projectPostProcessingView(read({
         status: status('pending', 'pending', undefined, { skipped: { reason } }),
       })))
 
-      expect(view.excluded).toEqual({ reason })
+      expect(view.skipped).toEqual({ reason })
       expect(view.analysis).toEqual({
         status: 'pending',
-        state: 'excluded',
-        word: STAGE_INDICATOR_WORDS.analysis.excluded,
-        card: { outcome: STAGE_EXCLUDED_TEXT.analysis },
+        state: 'skipped',
+        word: STAGE_INDICATOR_WORDS.analysis.skipped,
+        card: { outcome: STAGE_SKIPPED_TEXT[reason].analysis },
       })
       expect(view.curation).toEqual({
         status: 'pending',
-        state: 'excluded',
-        word: STAGE_INDICATOR_WORDS.curation.excluded,
-        card: { outcome: STAGE_EXCLUDED_TEXT.curation },
+        state: 'skipped',
+        word: STAGE_INDICATOR_WORDS.curation.skipped,
+        card: { outcome: STAGE_SKIPPED_TEXT[reason].curation },
       })
     }
 
-    expect(STAGE_EXCLUDED_TEXT.analysis)
-      .toBe('Analysis excluded — benchmark and gate runs are not analysed')
-    expect(STAGE_EXCLUDED_TEXT.curation)
-      .toBe('Curation excluded — benchmark and gate runs are not curated')
+    expect(STAGE_SKIPPED_TEXT).toEqual(SKIPPED_SENTENCES)
   })
 
-  it('EXCLUDED-FROM-FIELD: outranks the chip words — a settled read carrying the field is still excluded', () => {
+  it('EXCLUDED-FROM-FIELD: outranks the chip words — a settled read carrying the field is still skipped', () => {
     const view = chips(projectPostProcessingView(read({
       status: status('complete', 'complete', notification({ status: 'complete' }, { total: 0, byClass: {} }), {
         skipped: { reason: 'gate-run' },
@@ -552,19 +549,19 @@ describe('a skipped chain reads excluded because the read said so, never because
       disposition: 'drained',
     })))
 
-    expect(view.excluded).toEqual({ reason: 'gate-run' })
+    expect(view.skipped).toEqual({ reason: 'gate-run' })
     expect(view.analysis.status).toBe('complete')
-    expect(view.analysis.state).toBe('excluded')
-    expect(view.analysis.card?.outcome).toBe(STAGE_EXCLUDED_TEXT.analysis)
+    expect(view.analysis.state).toBe('skipped')
+    expect(view.analysis.card?.outcome).toBe(STAGE_SKIPPED_TEXT['gate-run'].analysis)
     expect(view.curation.status).toBe('complete')
-    expect(view.curation.state).toBe('excluded')
-    expect(view.curation.card?.outcome).toBe(STAGE_EXCLUDED_TEXT.curation)
+    expect(view.curation.state).toBe('skipped')
+    expect(view.curation.card?.outcome).toBe(STAGE_SKIPPED_TEXT['gate-run'].curation)
   })
 
   it('EXCLUDED-FROM-FIELD: a pending read WITHOUT the field is queued — the absence of rows proves nothing', () => {
     const view = chips(projectPostProcessingView(read({ disposition: 'handedOff' })))
 
-    expect(view.excluded).toBeUndefined()
+    expect(view.skipped).toBeUndefined()
     expect(view.analysis.state).toBe('pending')
     expect(view.analysis.card?.outcome)
       .toBe(stageQueuedText('analysis', PENDING_POSTURE_TEXT.handedOff))
@@ -707,7 +704,7 @@ describe('a card times the stage from the job row, and never from a clock of its
     expect(view.curation.card?.timing).toBeUndefined()
   })
 
-  it('STAGE-TIMING-LINE: an excluded run is never timed — nothing was ever enqueued to time', () => {
+  it('STAGE-TIMING-LINE: a skipped run is never timed — nothing was ever enqueued to time', () => {
     const view = chips(projectPostProcessingView(read({
       status: status('pending', 'pending', undefined, {
         skipped: { reason: 'gate-run' },
@@ -715,7 +712,7 @@ describe('a card times the stage from the job row, and never from a clock of its
       }),
     })))
     expect(view.analysis.card?.timing).toBeUndefined()
-    expect(view.analysis.card?.outcome).toBe(STAGE_EXCLUDED_TEXT.analysis)
+    expect(view.analysis.card?.outcome).toBe(STAGE_SKIPPED_TEXT['gate-run'].analysis)
   })
 })
 

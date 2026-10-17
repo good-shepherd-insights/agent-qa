@@ -28,6 +28,7 @@
 // workspace path it changed (432-09, D-04/D-25). Nothing awaits a decision: no proposal store is read.
 
 import {
+  POST_PROCESSING_SKIP_REASON_WORDS,
   RunDigestSchema,
   RunsDigestInputSchema,
 } from '@vostride/agent-qa-schema'
@@ -111,15 +112,17 @@ function renderDigestLines(digest: Omit<RunDigest, 'lines'>): string[] {
   })
   if (clusterBlock !== '') lines.push(clusterBlock)
 
-  // 425 D-08: an excluded run has no chain to report on, so the two chip words would read
-  // `pending` forever. The fact replaces them — in the same words the CLI exit line prints and
-  // the dashboard paints — while the outcome clause keeps its own behaviour, because a row that
-  // somehow carries both is still entitled to say what became of it.
-  const excluded = digest.chain.skipped
+  // 425 D-08 / 444 D-39: a skipped run has no chain to report on, so the two chip words would read
+  // `pending` forever. The fact replaces them in the CLI exit line's words; the outcome clause
+  // keeps its own behaviour.
+  const skipped = digest.chain.skipped
+  const skippedWord = skipped === undefined
+    ? undefined
+    : POST_PROCESSING_SKIP_REASON_WORDS[skipped.reason]
   lines.push(`chain — ${[
-    ...(excluded === undefined
+    ...(skippedWord === undefined
       ? [`analysis: ${digest.chain.analysis}`, `curation: ${digest.chain.curation}`]
-      : [`analysis: excluded (${excluded.reason})`, `curation: excluded (${excluded.reason})`]),
+      : [`analysis: skipped (${skippedWord})`, `curation: skipped (${skippedWord})`]),
     ...(digest.chain.outcome === undefined ? [] : [`chain ${digest.chain.outcome}`]),
   ].join(DIGEST_SEPARATOR)}`)
 

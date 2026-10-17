@@ -27,8 +27,8 @@ import {
   ANALYSIS_COMPLETE_NO_ISSUES_TEXT,
   FAILED_REASON_ABSENT_TEXT,
   PENDING_POSTURE_TEXT,
-  STAGE_EXCLUDED_TEXT,
   STAGE_INDICATOR_WORDS,
+  STAGE_SKIPPED_TEXT,
 } from "@/lib/post-processing-view"
 import type { PostProcessingRead } from "@/lib/api"
 
@@ -418,20 +418,20 @@ describe("run detail owns the chip client, and hands the navbar its projection",
     })
   })
 
-  // THE EXCLUSION FACT TRAVELS THE WHOLE WAY (425-08 · D-08). Plan 02 put it on the read over all
+  // THE SKIPPED FACT TRAVELS THE WHOLE WAY (425-08 · D-08; 444 D-39). Plan 02 put it on the read over all
   // four doors; the observable here is that the page's own wiring carries it to the header without
   // the header having to know what a gate run is. A projection that only folded correctly in a unit
   // test would pass its own cells and still hand this navbar a chain that reads `pending` forever.
-  it("PAGE-EXCLUDED-READ: hands the navbar the excluded view, reason included, off the read", async () => {
+  it("PAGE-EXCLUDED-READ: hands the navbar the skipped view, reason included, off the read", async () => {
     await renderPage()
     await act(async () => {
       onReadOf()(statusRead("pending", "pending", {}, { skipped: { reason: "gate-run" } }))
     })
     expect(lastNavbarView()).toMatchObject({
       kind: "chips",
-      excluded: { reason: "gate-run" },
-      analysis: { status: "pending", state: "excluded", card: { outcome: STAGE_EXCLUDED_TEXT.analysis } },
-      curation: { status: "pending", state: "excluded", card: { outcome: STAGE_EXCLUDED_TEXT.curation } },
+      skipped: { reason: "gate-run" },
+      analysis: { status: "pending", state: "skipped", card: { outcome: STAGE_SKIPPED_TEXT["gate-run"].analysis } },
+      curation: { status: "pending", state: "skipped", card: { outcome: STAGE_SKIPPED_TEXT["gate-run"].curation } },
     })
   })
 

@@ -42,18 +42,18 @@ export type PostProcessingReadBody = Extract<PostProcessingRead, { kind: 'read' 
 /**
  * HOW AN INDICATOR PRESENTS — which is NOT the four words the store says (425 D-06/D-07).
  *
- * The chip vocabulary stays exactly `pending · running · complete · failed` (444 D-13, and a fifth word
- * there would red the v54 census). Presentation needs two more states the store never spells: a run
- * that skipped the whole chain (`excluded`, 425 D-08) and a store that could not be read at all
- * (`unavailable`, 404 D-23). Keeping them in a SEPARATE closed set is what lets the header say both
- * without widening what a producer can produce.
+ * The chip vocabulary stays exactly `pending · running · complete · failed` (444 D-13, and a fifth
+ * word there would red the v54 census). Presentation needs two more states the store never spells:
+ * a run that skipped the whole chain (`skipped`, 425 D-08, 444 D-39) and a store that could not be
+ * read at all (`unavailable`, 404 D-23). Keeping them in a SEPARATE closed set is what lets the
+ * header say both without widening what a producer can produce.
  */
 export type StagePresentationState =
   | 'complete'
   | 'running'
   | 'pending'
   | 'failed'
-  | 'excluded'
+  | 'skipped'
   | 'unavailable'
 
 export const STAGE_PRESENTATION_STATES = [
@@ -61,7 +61,7 @@ export const STAGE_PRESENTATION_STATES = [
   'running',
   'pending',
   'failed',
-  'excluded',
+  'skipped',
   'unavailable',
 ] as const satisfies readonly StagePresentationState[]
 
@@ -84,14 +84,14 @@ export const STAGE_INDICATOR_WORDS: Record<
     running: 'Analysis running',
     pending: 'Analysis pending',
     failed: 'Analysis failed',
-    excluded: 'Analysis excluded',
+    skipped: 'Analysis skipped',
   },
   curation: {
     complete: 'Curation',
     running: 'Curation running',
     pending: 'Curation pending',
     failed: 'Curation failed',
-    excluded: 'Curation excluded',
+    skipped: 'Curation skipped',
   },
 }
 
@@ -119,16 +119,24 @@ export const POST_PROCESSING_LOADING_LABEL = 'Post-processing status loading'
 export const ANALYSIS_COMPLETE_NO_ISSUES_TEXT = 'Analysis complete — no issues found'
 
 /**
- * What a run the chain never enqueued says, per stage (D-08/D-13).
+ * What a run the chain never enqueued says, per reason and stage (D-08/D-13; 444 D-39).
  *
- * NEUTRAL, NOT A FAILURE. A benchmark or gate run skipped the whole post-run chain by design
- * (404 D-08), so its stages did not fail and are not queued — nothing was ever asked of them. The
- * sentence states the rule rather than the run's condition, because the reader's question here is
- * "why is there nothing here" and the answer is about the kind of run, not about this one.
+ * NEUTRAL, NOT A FAILURE. A gate run or a run excluded from outcomes skipped the whole post-run
+ * chain by design (404 D-08), so its stages did not fail and are not queued. The sentence states
+ * the rule for that kind of run. Total over the reasons, so a new reason fails to compile here.
  */
-export const STAGE_EXCLUDED_TEXT: Record<PostProcessingStage, string> = {
-  analysis: 'Analysis excluded — benchmark and gate runs are not analysed',
-  curation: 'Curation excluded — benchmark and gate runs are not curated',
+export const STAGE_SKIPPED_TEXT: Record<
+  PostProcessingSkipReason,
+  Record<PostProcessingStage, string>
+> = {
+  'gate-run': {
+    analysis: 'Analysis skipped — gate runs are not analysed',
+    curation: 'Curation skipped — gate runs are not curated',
+  },
+  'outcome-excluded': {
+    analysis: 'Analysis skipped — runs excluded from outcomes are not analysed',
+    curation: 'Curation skipped — runs excluded from outcomes are not curated',
+  },
 }
 
 /** A stage that is still moving says so, and says nothing else (D-13). */
@@ -252,11 +260,11 @@ export type PostProcessingView =
       readonly analysis: PostProcessingChipView
       readonly curation: PostProcessingChipView
       /**
-       * Present iff the READ carried `status.exclusion` (D-08). A SIBLING of the chip words, never
-       * a fifth one: the four-word vocabulary stays closed and the raw words survive underneath, so
-       * a surface that does not know about the exclusion still renders exactly what the store said.
+       * Present iff the READ carried `status.skipped` (D-08, 444 D-39). A SIBLING of the chip words,
+       * never a fifth one: the raw words survive underneath, so a surface that does not know about
+       * the fact still renders exactly what the store said.
        */
-      readonly excluded?: { readonly reason: PostProcessingSkipReason }
+      readonly skipped?: { readonly reason: PostProcessingSkipReason }
     }
   | { readonly kind: 'unavailable'; readonly error: string; readonly reason?: string }
 
@@ -603,7 +611,7 @@ const STAGE_RUNNING_TEXT: Record<PostProcessingStage, string> = {
  *
  * The `complete` arm covers the two settled shapes this plan owns: analysis with nothing to report,
  * and curation's counts. A settled analysis WITH verdicts gets its root-cause sentence in 425-08
- * alongside the timing lines, and `excluded` gets its neutral sentence there too; until then those
+ * alongside the timing lines, and `skipped` gets its neutral sentence there too; until then those
  * two reads keep their word and their glyph rather than a sentence this plan would have to invent.
  */
 function stageCard(
@@ -649,22 +657,24 @@ function stageCard(
 }
 
 /**
- * One indicator on a run the chain never enqueued (D-08).
+ * One indicator on a run the chain never enqueued (D-08, 444 D-39).
  *
  * THE CHIP WORD IS STILL QUOTED VERBATIM. `status` carries whatever the store said — `pending` on
- * every excluded run alive today — because the exclusion is a SIBLING fact and not a fifth word:
- * the four-word census must still see four words, and a surface that does not know about the
- * exclusion must still be able to read exactly what the store said.
+ * every skipped run — because skipped is a SIBLING fact and not a fifth word.
  *
  * NO TIMING, EVER. There is no job row to time; a stage that was never enqueued has no queue
  * moment, and rendering one would be the zero-for-an-absence this phase exists to remove.
  */
-function excludedChipView(stage: PostProcessingStage, read: ReadBody): PostProcessingChipView {
+function skippedChipView(
+  stage: PostProcessingStage,
+  reason: PostProcessingSkipReason,
+  read: ReadBody,
+): PostProcessingChipView {
   return {
     status: read.status.chips[stage],
-    state: 'excluded',
-    word: STAGE_INDICATOR_WORDS[stage].excluded,
-    card: { outcome: STAGE_EXCLUDED_TEXT[stage] },
+    state: 'skipped',
+    word: STAGE_INDICATOR_WORDS[stage].skipped,
+    card: { outcome: STAGE_SKIPPED_TEXT[reason][stage] },
   }
 }
 
@@ -720,7 +730,7 @@ export function projectPostProcessingView(read: PostProcessingRead): PostProcess
       ...(read.reason === undefined ? {} : { reason: read.reason }),
     }
   }
-  // THE EXCLUSION GATE, AND ITS ONE INPUT (D-08, T-425-08-01). The op folds this field from the
+  // THE SKIPPED GATE, AND ITS ONE INPUT (D-08, T-425-08-01). The op folds this field from the
   // run's durable `gateRun` / `excludedFromOutcomes` markers — the same markers the post-verdict
   // enqueue skip reads — so the CLI exit line, the digest and this header say ONE thing. Nothing
   // else may reach this branch: not the absence of job rows (a chain polled before its first
@@ -729,9 +739,9 @@ export function projectPostProcessingView(read: PostProcessingRead): PostProcess
   if (skipped !== undefined) {
     return {
       kind: 'chips',
-      analysis: excludedChipView('analysis', read),
-      curation: excludedChipView('curation', read),
-      excluded: { reason: skipped.reason },
+      analysis: skippedChipView('analysis', skipped.reason, read),
+      curation: skippedChipView('curation', skipped.reason, read),
+      skipped: { reason: skipped.reason },
     }
   }
 

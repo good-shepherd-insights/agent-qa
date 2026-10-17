@@ -9,7 +9,7 @@ import { expectTypeOf, test } from 'vitest'
 import { STAGE_PRESENTATION_STATES, type StagePresentationState } from '../post-processing-view'
 
 test('C425-STAGE-STATES-EXACT', () => {
-  type Expected = 'complete' | 'running' | 'pending' | 'failed' | 'excluded' | 'unavailable'
+  type Expected = 'complete' | 'running' | 'pending' | 'failed' | 'skipped' | 'unavailable'
   expectTypeOf<StagePresentationState>().toEqualTypeOf<Expected>()
   expectTypeOf<(typeof STAGE_PRESENTATION_STATES)[number]>().toEqualTypeOf<Expected>()
   expectTypeOf<Exclude<StagePresentationState, (typeof STAGE_PRESENTATION_STATES)[number]>>().toEqualTypeOf<never>()

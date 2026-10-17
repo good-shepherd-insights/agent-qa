@@ -53,7 +53,7 @@ type IndicatorLook = { Glyph: LucideIcon; glyphClass: string; wordClass: string 
  * element is the verdict badge (UI-SPEC S2). A `Record` with no default arm so a seventh state
  * fails to compile rather than falling through to a look nobody chose.
  *
- * `excluded` and `unavailable` share the dash ON PURPOSE — their words are what separate them.
+ * `skipped` and `unavailable` share the dash ON PURPOSE — their words are what separate them.
  */
 const INDICATOR_LOOK: Record<StagePresentationState, IndicatorLook> = {
   complete: { Glyph: CircleCheck, glyphClass: "text-emerald-500", wordClass: "text-muted-foreground" },
@@ -64,7 +64,7 @@ const INDICATOR_LOOK: Record<StagePresentationState, IndicatorLook> = {
   },
   pending: { Glyph: Circle, glyphClass: "text-muted-foreground", wordClass: "text-muted-foreground" },
   failed: { Glyph: CircleX, glyphClass: "text-destructive", wordClass: "text-destructive" },
-  excluded: { Glyph: CircleMinus, glyphClass: "text-muted-foreground", wordClass: "text-muted-foreground" },
+  skipped: { Glyph: CircleMinus, glyphClass: "text-muted-foreground", wordClass: "text-muted-foreground" },
   unavailable: {
     Glyph: CircleMinus,
     glyphClass: "text-muted-foreground",
@@ -312,13 +312,13 @@ export function PostProcessingChips({
   // THE REASON RIDES THE CONTAINER AS ITS OWN ATTRIBUTE (425 D-08). The absence-spread rather than
   // a `?? ''` default: an attribute present and empty is a claim that a reason was recorded and was
   // blank, which is exactly the absent/zero conflation this phase is about. `data-chips-state`
-  // stays `chips` — the exclusion is a fact ABOUT the chips, not a fourth area state.
+  // stays `chips` — skipped is a fact ABOUT the chips, not a fourth area state.
   return (
     <span
       data-chips-state="chips"
-      {...(view.excluded === undefined
+      {...(view.skipped === undefined
         ? {}
-        : { "data-postprocessing-excluded": view.excluded.reason })}
+        : { "data-postprocessing-skipped": view.skipped.reason })}
       className="inline-flex items-center gap-2 min-w-0"
     >
       <Chip stage="analysis" chip={view.analysis} onActivate={onOpenVerdict} door="verdict" />

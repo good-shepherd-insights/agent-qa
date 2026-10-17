@@ -1,18 +1,16 @@
-// `runs.digest` carries and prints the exclusion fact (Phase 425 plan 07, D-08 · law 6).
-//
-// Plan 02 widened `RunDigestChainOutcomes` with the same additive-optional `exclusion` field it
-// put on `PostProcessingStatus`, and deliberately left the digest op's arm unwritten. This is
-// that arm, measured where it matters: the value on `chain` and the words on the rendered line.
+// `runs.digest` carries and prints the skipped fact (Phase 425 plan 07, D-08 · law 6; renamed from
+// the exclusion fact in 444 D-39). The value sits on `chain.skipped` and the line prints
+// `skipped (<word>)` from the schema's one word map.
 //
 // ONE FOLD, ONE PRODUCER (425-14). With a post-processing reader bound, the fact is the one
 // `runs.postprocessing` folded and the digest publishes it; only a host with no such reader falls
 // back to folding the handoff this op already loads for its own run-not-found refusal. Never read
 // off missing job rows, and never off `run.status`. A gate run's chain is never enqueued, so an op
-// that inferred exclusion from an empty chain would also call every in-flight run excluded, one
+// that inferred skipped from an empty chain would also call every in-flight run skipped, one
 // poll too early.
 //
 // The negative half is as load-bearing as the positive one: an ordinary run's chain must carry
-// no `exclusion` key at all and must render the two chip-word clauses byte-identically, or the
+// no `skipped` key at all and must render the two chip-word clauses byte-identically, or the
 // arm is a rewrite of the shipped line wearing a condition.
 
 import {
@@ -146,7 +144,7 @@ describe('DIGEST-CHAIN-EXCLUDED', () => {
       skipped: { reason: 'outcome-excluded' },
     })
     expect(chainLine(digest))
-      .toBe('chain — analysis: excluded (outcome-excluded) · curation: excluded (outcome-excluded)')
+      .toBe('chain — analysis: skipped (outcome-excluded) · curation: skipped (outcome-excluded)')
   })
 
   it('renders the gate-run reason as itself, so the word is not a constant', async () => {
@@ -154,10 +152,10 @@ describe('DIGEST-CHAIN-EXCLUDED', () => {
 
     expect(digest.chain).toHaveProperty('skipped', { reason: 'gate-run' })
     expect(chainLine(digest))
-      .toBe('chain — analysis: excluded (gate-run) · curation: excluded (gate-run)')
+      .toBe('chain — analysis: skipped (gate run) · curation: skipped (gate run)')
   })
 
-  it('leaves an ordinary run with no exclusion key and its shipped chain line unchanged',
+  it('leaves an ordinary run with no skipped key and its shipped chain line unchanged',
     async () => {
       const digest = await digestFor(handoff())
 
@@ -168,11 +166,11 @@ describe('DIGEST-CHAIN-EXCLUDED', () => {
 })
 
 // ONE PRODUCER ON THE BOUND PATH (425-14 · WR-04, law 6). The digest loads the handoff first, for
-// its own not-found refusal; `runs.postprocessing` loads it second and folds the exclusion. Serving
-// a plain handoff to the first load and a gate run to every later one makes the two derivations
-// disagree, so the chain arm shows which one was published.
+// its own not-found refusal; `runs.postprocessing` loads it second and folds the skipped fact.
+// Serving a plain handoff to the first load and a gate run to every later one makes the two
+// derivations disagree, so the chain arm shows which one was published.
 describe('DIGEST-EXCLUSION-FROM-THE-STATUS', () => {
-  it('publishes the exclusion the post-processing read folded, not a second derivation', async () => {
+  it('publishes the skipped fact the post-processing read folded, not a second derivation', async () => {
     let loads = 0
     const plain = handoff()
     const gate = handoff({ gateRun: true } as never)
@@ -188,7 +186,7 @@ describe('DIGEST-EXCLUSION-FROM-THE-STATUS', () => {
         + 'published: the chain arm must carry the fold `runs.postprocessing` made',
     ).toEqual({ analysis: 'pending', curation: 'pending', skipped: { reason: 'gate-run' } })
     expect(chainLine(digest))
-      .toBe('chain — analysis: excluded (gate-run) · curation: excluded (gate-run)')
+      .toBe('chain — analysis: skipped (gate run) · curation: skipped (gate run)')
   })
 })
 
@@ -196,16 +194,16 @@ describe('DIGEST-EXCLUSION-FROM-THE-STATUS', () => {
 // from the handoff it already loaded — dropping the fact there would tell a reader their gate run
 // was simply pending.
 describe('DIGEST-EXCLUSION-WITHOUT-A-READER', () => {
-  it('still answers the exclusion from its own handoff when no reader is bound', async () => {
+  it('still answers the skipped fact from its own handoff when no reader is bound', async () => {
     const gate = handoff({ gateRun: true } as never)
     const digest = await digestOver({ get: () => gate, list: [gate], postProcessing: false })
 
     expect(digest.chain).toHaveProperty('skipped', { reason: 'gate-run' })
     expect(chainLine(digest))
-      .toBe('chain — analysis: excluded (gate-run) · curation: excluded (gate-run)')
+      .toBe('chain — analysis: skipped (gate run) · curation: skipped (gate run)')
   })
 
-  it('leaves an ordinary run with no exclusion key and the shipped two-word line', async () => {
+  it('leaves an ordinary run with no skipped key and the shipped two-word line', async () => {
     const plain = handoff()
     const digest = await digestOver({ get: () => plain, list: [plain], postProcessing: false })
 
