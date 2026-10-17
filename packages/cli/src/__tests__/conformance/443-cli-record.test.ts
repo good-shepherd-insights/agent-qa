@@ -366,3 +366,48 @@ describe('C443-REPORTER', () => {
     expect(await memberCaptureFor({ screenshotDir: './shots' }), 'capture with --screenshot-dir').toBe('true')
   }, CELL_BUDGET_MS)
 })
+
+// 2026-10-17 (443-10, D-26): the suite producer prints nothing; only `agent-qa run` names the id.
+describe('C443-SUITE-PREP-STDOUT', () => {
+  function stdoutNotOneJsonDocument(stdout: string): string {
+    if (stdout.trim() === '') return ''
+    try {
+      JSON.parse(stdout)
+      return ''
+    } catch {
+      return flat(stdout)
+    }
+  }
+
+  function preparationFailureProject(): InProcessFixture {
+    const at = project()
+    const suiteFile = join(at.project, at.suitePattern)
+    writeFileSync(suiteFile, readFileSync(suiteFile, 'utf8').replace('test: tests/member.yaml', 'test: ../outside.yaml'))
+    return at
+  }
+
+  it('a suite preparation failure through fn --json leaves stdout one JSON document and files its row', async () => {
+    const at = preparationFailureProject()
+
+    const exit = await run(at, ['fn', 'runs.start', '--input', JSON.stringify({ patterns: [at.suitePattern] }), '--json'])
+
+    expect(exit.stderr.includes('Path traversal rejected'), `stderr names the refusal: ${flat(exit.stderr)}`).toBe(true)
+    expect(stdoutNotOneJsonDocument(exit.stdout), 'stdout that is not one JSON document').toBe('')
+    expect(existsSync(runsDbOf(at)), `no runs.db after the preparation failure: ${flat(exit.stderr)}`).toBe(true)
+    const recorded = rows(at)
+    expect(recorded.map((row) => row.status).join(','), 'the rows under runs.db').toBe('failed')
+    expect(/^r_[a-z]+(?:-[a-z]+)+$/u.test(recorded[0]!.id), `the row is filed under a minted run id: ${recorded[0]!.id}`).toBe(true)
+  }, CELL_BUDGET_MS)
+
+  it('agent-qa run on a suite preparation failure still prints its Run ID line', async () => {
+    const at = preparationFailureProject()
+
+    const exit = await run(at, ['run', '--suite', at.suitePattern])
+
+    expect(exit.code, `exit code; stderr: ${flat(exit.stderr)}`).toBe(2)
+    const ids = printedRunIds(exit.stdout)
+    expect(ids.length, `Run ID lines on stdout: ${flat(exit.stdout)}`).toBe(1)
+    expect(exit.stdout.includes('Run attributes:'), `stdout names the run attributes: ${flat(exit.stdout)}`).toBe(true)
+    expect(rows(at).map((row) => `${row.id}:${row.status}`).join(','), 'the rows under runs.db').toBe(`${ids[0]}:failed`)
+  }, CELL_BUDGET_MS)
+})

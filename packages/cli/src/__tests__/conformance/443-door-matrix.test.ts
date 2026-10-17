@@ -5,7 +5,7 @@
 // was recorded, so a door whose run is missing fails its cells and never skips.
 
 import { spawn } from 'node:child_process'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { Server } from 'node:http'
 import { join } from 'node:path'
@@ -128,6 +128,7 @@ interface DoorRecord {
 const records: DoorRecord[] = []
 const stdioErrors: string[] = []
 let stdioStartParsed = false
+let stdioStdoutLog: string | undefined
 let project: PopulatedRunProject & { readonly testId: string; readonly secondTestId?: string }
 let scene: DashboardScene | undefined
 let target: FixtureServer | undefined
@@ -229,14 +230,43 @@ async function spawnHttpMcp(port: number): Promise<{ pid: number | undefined; st
   }
 }
 
-function stdioTransport(): StdioClientTransport {
+function stdioTransport(extraEnv: NodeJS.ProcessEnv = {}): StdioClientTransport {
   return new StdioClientTransport({
     command: process.execPath,
     args: [CLI_ENTRY, '--config', project.configPath, 'mcp'],
     cwd: project.root,
     stderr: 'pipe',
-    env: stringEnv(spawnedEnv()),
+    env: stringEnv({ ...spawnedEnv(), ...extraEnv }),
   })
+}
+
+// 2026-10-17 (443-10, D-13): the MCP client drops stdout lines that are not JSON, so its error
+// handler never sees a stray line. A preload in the CLI child (not its children) records every
+// byte the server writes to stdout.
+function stdoutTeeEnv(): NodeJS.ProcessEnv {
+  stdioStdoutLog = join(project.root, 'mcp-stdio-stdout.log')
+  const preload = join(project.root, 'mcp-stdio-stdout-tee.cjs')
+  writeFileSync(preload, [
+    "const { appendFileSync } = require('node:fs')",
+    `if (process.ppid === ${String(process.pid)}) {`,
+    '  const write = process.stdout.write.bind(process.stdout)',
+    '  process.stdout.write = (chunk, ...rest) => {',
+    `    appendFileSync(${JSON.stringify(stdioStdoutLog)}, typeof chunk === 'string' ? chunk : Buffer.from(chunk))`,
+    '    return write(chunk, ...rest)',
+    '  }',
+    '}',
+    '',
+  ].join('\n'), 'utf8')
+  return { NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --require ${preload}`.trim() }
+}
+
+function isJson(line: string): boolean {
+  try {
+    JSON.parse(line)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function toolAnswer(result: unknown): { text: string; isError: boolean; structured: unknown } {
@@ -316,7 +346,7 @@ const DRIVERS: Readonly<Record<string, Driver>> = {
     record.runId = onlyRunId(outcome.text)
   },
   'agent-qa mcp over stdio': async (row, record) => {
-    const transport = stdioTransport()
+    const transport = stdioTransport(stdoutTeeEnv())
     transport.onerror = (error) => { stdioErrors.push(`transport: ${message(error)}`) }
     const client = new Client({ name: 'agent-qa-443-01-stdio', version: '0.0.0' })
     client.onerror = (error) => { stdioErrors.push(`client: ${message(error)}`) }
@@ -796,5 +826,9 @@ describe('C443-DOOR-MATRIX', () => {
     expect(stdioErrors, `the stdio client's error handler\n${describeRecord(record)}`).toEqual([])
     expect(stdioStartParsed, `the start answer parsed as a tool result\n${describeRecord(record)}`).toBe(true)
     requireRun(record)
+    const written = stdioStdoutLog !== undefined && existsSync(stdioStdoutLog) ? readFileSync(stdioStdoutLog, 'utf8') : ''
+    const lines = written.split('\n').filter((line) => line.trim() !== '')
+    expect(lines.some((line) => isJson(line) && line.includes('"jsonrpc"')), 'the stdout instrument saw the JSON-RPC stream').toBe(true)
+    expect(JSON.stringify(lines.filter((line) => !isJson(line))), 'stdout lines that are not JSON-RPC').toBe('[]')
   })
 })
