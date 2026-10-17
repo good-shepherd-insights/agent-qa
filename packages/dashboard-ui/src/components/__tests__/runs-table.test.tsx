@@ -504,3 +504,78 @@ describe("C443-VERIFY-MARK", () => {
     )
   })
 })
+
+// 2026-10-17 (443-18, GAP-D7): the badge alone displays the mark, explained and first-line aligned.
+describe("C443-VERIFY-BADGE", () => {
+  const GATE_RUN_KEY = "agent-qa.gate-run"
+  const EXPLANATION = "Started by authoring verify. Not used for learning."
+
+  function singleRun(id: string, name: string, attributes: Record<string, string>): SuiteRunRow {
+    return { ...runs[1]!, id, name, attributes }
+  }
+
+  function nameCellOf(view: HTMLDivElement, name: string): HTMLTableCellElement | null {
+    const span = Array.from(view.querySelectorAll("span")).find((element) => element.textContent === name)
+    return span?.closest("td") ?? null
+  }
+
+  function verifyBadgeIn(cell: HTMLTableCellElement | null): Element | undefined {
+    return Array.from(cell?.querySelectorAll('[data-slot="badge"]') ?? []).find(
+      (element) => element.textContent === "Verify run",
+    )
+  }
+
+  it("the Verify run badge explains itself and takes keyboard focus", async () => {
+    const { view } = await renderTable({
+      selectedRunId: null,
+      tableRuns: [singleRun("run_gate", "Draft verify run", { "agent-qa.trigger": "cli", [GATE_RUN_KEY]: "true" })],
+    })
+    const cell = nameCellOf(view, "Draft verify run")
+    const badge = verifyBadgeIn(cell)
+    expect(badge, "the Verify run badge").toBeDefined()
+    expect(badge?.getAttribute("tabindex"), "the badge's tabindex").toBe("0")
+    expect(cell?.textContent ?? "", "the marked run's name cell text").toContain(EXPLANATION)
+  })
+
+  it("the attributes cell does not list the gate-run mark again", async () => {
+    const { view } = await renderTable({
+      selectedRunId: null,
+      tableRuns: [
+        singleRun("run_gate", "Draft verify run", {
+          "agent-qa.trigger": "cli",
+          "agent-qa.runner": "local",
+          [GATE_RUN_KEY]: "true",
+        }),
+      ],
+    })
+    const row = nameCellOf(view, "Draft verify run")?.closest("tr")
+    const attributesCell = Array.from(row?.querySelectorAll("td") ?? []).find((element) =>
+      (element.textContent ?? "").includes("agent-qa.trigger"),
+    )
+    expect(attributesCell, "the attributes cell").toBeDefined()
+    const text = attributesCell?.textContent ?? ""
+    expect(text, "the attributes cell text").not.toContain(GATE_RUN_KEY)
+    expect(text, "the attributes cell's hidden count").not.toMatch(/\+\d+ more/)
+    const labels = Array.from(attributesCell?.querySelectorAll("[aria-label]") ?? []).map(
+      (element) => element.getAttribute("aria-label") ?? "",
+    )
+    expect(labels.length, "aria-labels in the attributes cell").toBeGreaterThan(0)
+    for (const label of labels) {
+      expect(label, "an aria-label in the attributes cell").toContain("agent-qa.trigger")
+      expect(label, "an aria-label in the attributes cell").not.toContain(GATE_RUN_KEY)
+    }
+  })
+
+  it("the badge lines up with the first line of a wrapped name", async () => {
+    const { view } = await renderTable({
+      selectedRunId: null,
+      tableRuns: [singleRun("run_gate", LONG_RUN_NAME, { "agent-qa.trigger": "cli", [GATE_RUN_KEY]: "true" })],
+    })
+    const badge = verifyBadgeIn(nameCellOf(view, LONG_RUN_NAME))
+    expect(badge, "the Verify run badge").toBeDefined()
+    const wrapperClasses = Array.from(badge?.parentElement?.classList ?? [])
+    expect(wrapperClasses, "the name cell wrapper's classes").toContain("items-start")
+    expect(wrapperClasses, "the name cell wrapper's classes").not.toContain("items-center")
+    expect(Array.from(badge?.classList ?? []), "the badge's classes").toContain("mt-0.5")
+  })
+})
