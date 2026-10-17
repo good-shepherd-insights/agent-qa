@@ -8,14 +8,26 @@ import { fileURLToPath } from 'node:url'
 import {
   createFunctionRegistry,
   invokeFunction,
+  RUNS_DIGEST_FUNCTION_ID,
   RUNS_POST_PROCESSING_FUNCTION_ID,
 } from '@vostride/agent-qa-agent'
 import type { FunctionDeps, PostProcessingChainState } from '@vostride/agent-qa-agent'
-import { asJobId } from '@vostride/agent-qa-schema'
-import type { FunctionCaller, PostProcessingStatus } from '@vostride/agent-qa-schema'
+import {
+  asJobId,
+  CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
+  PostProcessingStatusSchema,
+  RunDigestSchema,
+} from '@vostride/agent-qa-schema'
+import type {
+  CompletedRunHandoff,
+  FunctionCaller,
+  PostProcessingStatus,
+  RunDigest,
+  RunNotification,
+} from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
-import { renderPostProcessingSummaryLine } from '../curation/post-run-tail.js'
+import { renderChainTerminalLine, renderPostProcessingSummaryLine } from '../curation/post-run-tail.js'
 
 const PACKAGES_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 
@@ -101,11 +113,11 @@ function doneLiteralLines(code: string): string[] {
   return code.split('\n').filter(line => DONE_LITERAL.test(line)).map(line => line.trim())
 }
 
-function depsWith(state: PostProcessingChainState): FunctionDeps {
+function depsWith(state: PostProcessingChainState, handoff?: CompletedRunHandoff): FunctionDeps {
   return {
     runs: {
       list: () => Promise.resolve([]),
-      get: () => Promise.resolve(undefined),
+      get: () => Promise.resolve(handoff),
       readEvents: () => Promise.resolve([]),
       readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
     },
@@ -140,6 +152,31 @@ async function served(state: PostProcessingChainState): Promise<PostProcessingSt
   ) as PostProcessingStatus
 }
 
+function storedNotification(): RunNotification {
+  return {
+    schemaVersion: CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
+    runId: RUN_ID,
+    outcome: 'done',
+    verdictSummary: { total: 1, byClass: { app_bug: 1 } },
+    stages: {
+      analysis: { status: 'done' },
+      curation: { status: 'done', curated: 2, deprecated: 0 },
+      proposals: { status: 'done', proposed: 1, skipped: 0 },
+    },
+  }
+}
+
+function finishedChain(notification: RunNotification): PostProcessingChainState {
+  return {
+    analyzeRun: { status: 'done', claimed: false },
+    curateMemory: { status: 'done', claimed: false },
+    proposeImprovements: { status: 'done', claimed: false },
+    notification,
+  }
+}
+
+const HANDOFF = { runId: RUN_ID } as unknown as CompletedRunHandoff
+
 describe('C444-STAGE-WORDS', () => {
   it('the CLI exit line prints complete', async () => {
     const status = await served({
@@ -165,5 +202,80 @@ describe('C444-STAGE-WORDS', () => {
       if (hits.length > 0) found[file] = hits
     }
     expect(found).toEqual({})
+  })
+})
+
+describe('C444-NOTIFICATION-VIEW', () => {
+  it('the stored notification keeps done and the served view reads complete', async () => {
+    const stored = storedNotification()
+    const before = structuredClone(stored)
+    const status = await served(finishedChain(stored))
+    expect(status.notification).toEqual({
+      ...before,
+      outcome: 'complete',
+      stages: {
+        analysis: { status: 'complete' },
+        curation: { status: 'complete', curated: 2, deprecated: 0 },
+        proposals: { status: 'complete', proposed: 1, skipped: 0 },
+      },
+    })
+    expect(stored).toEqual(before)
+
+    const failed: RunNotification = {
+      ...storedNotification(),
+      outcome: 'failed',
+      stages: { analysis: { status: 'done' }, curation: { status: 'failed' }, proposals: { status: 'failed' } },
+    }
+    const failedView = (await served(finishedChain(failed))).notification
+    expect(failedView?.outcome).toBe('failed')
+    expect(failedView?.stages).toEqual({
+      analysis: { status: 'complete' },
+      curation: { status: 'failed' },
+      proposals: { status: 'failed' },
+    })
+  })
+
+  it('the CLI chain terminal line and the proposals segment print complete', async () => {
+    const status = await served(finishedChain(storedNotification()))
+    const line = renderChainTerminalLine(status.notification!)
+    expect(line.startsWith(`post-processing complete for ${RUN_ID} — `)).toBe(true)
+    expect(line).toContain('analysis: complete')
+    expect(line).toContain('curation: complete (2 curated, 0 deprecated)')
+    expect(line).toContain('proposals: complete (staged 1, skipped 0)')
+    expect(line).not.toMatch(/\bdone\b/u)
+  })
+
+  it("the digest's chain line prints complete", async () => {
+    const digest = await invokeFunction(
+      createFunctionRegistry({ deps: depsWith(finishedChain(storedNotification()), HANDOFF) }),
+      RUNS_DIGEST_FUNCTION_ID,
+      { runId: RUN_ID },
+      CALLER,
+    ) as RunDigest
+    expect(digest.chain).toEqual({ analysis: 'complete', curation: 'complete', outcome: 'complete' })
+    expect(digest.lines).toContain('chain — analysis: complete · curation: complete · chain complete')
+    expect(digest.lines.join('\n')).not.toMatch(/\bdone\b/u)
+  })
+
+  it("the served output validates against the functions' output schema", async () => {
+    const status = await served(finishedChain(storedNotification()))
+    expect(PostProcessingStatusSchema.parse(status)).toEqual(status)
+    expect(PostProcessingStatusSchema.safeParse({
+      ...status,
+      notification: { ...status.notification, outcome: 'done' },
+    }).success).toBe(false)
+    expect(PostProcessingStatusSchema.safeParse({
+      ...status,
+      notification: { ...status.notification, stages: { ...status.notification!.stages, analysis: { status: 'done' } } },
+    }).success).toBe(false)
+    const digest = await invokeFunction(
+      createFunctionRegistry({ deps: depsWith(finishedChain(storedNotification()), HANDOFF) }),
+      RUNS_DIGEST_FUNCTION_ID,
+      { runId: RUN_ID },
+      CALLER,
+    ) as RunDigest
+    expect(RunDigestSchema.parse(digest)).toEqual(digest)
+    expect(RunDigestSchema.safeParse({ ...digest, chain: { ...digest.chain, outcome: 'done' } }).success)
+      .toBe(false)
   })
 })
