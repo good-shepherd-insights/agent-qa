@@ -49,6 +49,12 @@ const RENDERERS = [
 
 const SKIP_WORD_READERS = [
   'cli/src/curation/post-run-tail.ts',
+  'agent/src/functions/ops/runs-digest.ts',
+] as const
+
+const SKIPPED_RENDERERS = [
+  ...RENDERERS,
+  'dashboard-ui/src/components/run-detail/post-processing-chips.tsx',
 ] as const
 
 const RUN_ID = 'run-444-stage-words'
@@ -121,6 +127,12 @@ const DONE_LITERAL = /'done'|"done"/u
 
 function doneLiteralLines(code: string): string[] {
   return code.split('\n').filter(line => DONE_LITERAL.test(line)).map(line => line.trim())
+}
+
+const EXCLUDED_STAGE_WORD = /'excluded'|"excluded"|excluded \(|data-postprocessing-excluded/u
+
+function excludedStageWordLines(code: string): string[] {
+  return code.split('\n').filter(line => EXCLUDED_STAGE_WORD.test(line)).map(line => line.trim())
 }
 
 function depsWith(state: PostProcessingChainState | undefined, handoff?: CompletedRunHandoff): FunctionDeps {
@@ -349,6 +361,45 @@ describe('C444-STAGE-SKIPPED', () => {
     )
     expect(line).toContain('analysis: skipped (outcome-excluded) · curation: skipped (outcome-excluded)')
     expect(line).not.toMatch(/\bexcluded \(/u)
+  })
+
+  it("the digest's chain line prints skipped (gate run)", async () => {
+    const digest = await invokeFunction(
+      createFunctionRegistry({ deps: depsWith(undefined, GATE_RUN_HANDOFF) }),
+      RUNS_DIGEST_FUNCTION_ID,
+      { runId: RUN_ID },
+      CALLER,
+    ) as RunDigest
+    expect(digest.chain).toEqual({ analysis: 'pending', curation: 'pending', skipped: { reason: 'gate-run' } })
+    expect(digest.lines).toContain('chain — analysis: skipped (gate run) · curation: skipped (gate run)')
+    expect(RunDigestSchema.parse(digest)).toEqual(digest)
+
+    const client = await mcpClient(depsWith(undefined, GATE_RUN_HANDOFF))
+    const result = await client.callTool({ name: 'agent_qa_get_run_digest', arguments: { runId: RUN_ID } })
+    expect(result.isError, JSON.stringify(result.content)).not.toBe(true)
+    const served = result.structuredContent as RunDigest
+    expect(served.chain).toEqual(digest.chain)
+    expect(served.lines).toContain('chain — analysis: skipped (gate run) · curation: skipped (gate run)')
+    expect(JSON.stringify(result)).not.toMatch(/\bexcluded \(/u)
+  })
+
+  it('no renderer prints excluded as a stage word', () => {
+    expect(excludedStageWordLines(stripComments(
+      "const a = 'excluded'\nconst b = \"excluded\"\nconst c = `excluded (${r})`\n<x data-postprocessing-excluded />",
+    ))).toHaveLength(4)
+    expect(excludedStageWordLines(stripComments(
+      "// 'excluded'\nconst r = 'outcome-excluded'\nconst e = excludedFromOutcomes",
+    ))).toEqual([])
+    const found: Record<string, string[]> = {}
+    for (const file of SKIPPED_RENDERERS) {
+      const path = join(PACKAGES_ROOT, file)
+      expect(existsSync(path), `${file} is missing; the census cannot read it`).toBe(true)
+      const code = stripComments(readFileSync(path, 'utf8'))
+      expect(code.length, `${file} read as empty`).toBeGreaterThan(0)
+      const hits = excludedStageWordLines(code)
+      if (hits.length > 0) found[file] = hits
+    }
+    expect(found).toEqual({})
   })
 
   it("every renderer reads the reason's word from one map", () => {

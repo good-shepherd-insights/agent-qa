@@ -473,6 +473,42 @@ describe('C444-STAGE-WORDS', () => {
   })
 })
 
+const SKIPPED_SENTENCES = {
+  'gate-run': {
+    analysis: 'Analysis skipped — gate runs are not analysed',
+    curation: 'Curation skipped — gate runs are not curated',
+  },
+  'outcome-excluded': {
+    analysis: 'Analysis skipped — runs excluded from outcomes are not analysed',
+    curation: 'Curation skipped — runs excluded from outcomes are not curated',
+  },
+} as const
+
+describe('C444-STAGE-SKIPPED', () => {
+  it("the dashboard indicator reads Analysis skipped with the reason's own sentence", () => {
+    expect(POST_PROCESSING_SKIP_REASONS.length).toBeGreaterThan(0)
+    for (const reason of POST_PROCESSING_SKIP_REASONS) {
+      const view = chips(projectPostProcessingView(read({
+        status: status('pending', 'pending', undefined, { skipped: { reason } }),
+      })))
+      expect(view.skipped, reason).toEqual({ reason })
+      expect(view).not.toHaveProperty('excluded')
+      expect(view.analysis).toEqual({
+        status: 'pending',
+        state: 'skipped',
+        word: 'Analysis skipped',
+        card: { outcome: SKIPPED_SENTENCES[reason].analysis },
+      })
+      expect(view.curation).toEqual({
+        status: 'pending',
+        state: 'skipped',
+        word: 'Curation skipped',
+        card: { outcome: SKIPPED_SENTENCES[reason].curation },
+      })
+    }
+  })
+})
+
 // THE EXCLUDED STATE COMES FROM THE READ'S OWN FIELD (425-08 · D-08, T-425-08-01).
 //
 // The op folds `skipped` from the run's durable `gateRun` / `excludedFromOutcomes` markers — the
