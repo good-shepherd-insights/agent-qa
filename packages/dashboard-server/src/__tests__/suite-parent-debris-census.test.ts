@@ -913,14 +913,14 @@ export const DEBRIS_SURFACES: readonly DebrisSurface[] = [
     why: `The paging total for the same listing. ${DELETE_LINK_FILTER}`,
   },
   {
-    id: 'db:getRunsByTestName',
+    id: 'db:getRunsByTest',
     kind: 'reader',
     disposition: 'delete',
     sites: [],
     why: `Test-history listing. ${DELETE_LINK_FILTER}`,
   },
   {
-    id: 'db:getRunsByTestNameCount',
+    id: 'db:getRunsByTestCount',
     kind: 'reader',
     disposition: 'delete',
     sites: [],

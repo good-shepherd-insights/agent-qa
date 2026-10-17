@@ -159,11 +159,11 @@ function createMockDatabase() {
     getNextPendingRun() {
       return runs.find((run) => run.status === 'pending')
     },
-    getRunsByTestName(name: string) {
-      return runs.filter((run) => run.name === name)
+    getRunsByTest(test: { testId?: string }) {
+      return runs.filter((run) => run.testId === test.testId)
     },
-    getRunsByTestNameCount(name: string) {
-      return runs.filter((run) => run.name === name).length
+    getRunsByTestCount(test: { testId?: string }) {
+      return runs.filter((run) => run.testId === test.testId).length
     },
     getTestTrends() {
       return []
@@ -1059,8 +1059,8 @@ describe('CR-02 — no run-reading response hands out the confirm scope', () => 
   })
 
   it('DOOR 5 — GET /api/analytics/tests/:name carries none', async () => {
-    seedScopedRun(db, { id: 'run-analytics-test', name: 'Checkout' })
-    const res = await invokeRoute(router, '/api/analytics/tests/Checkout')
+    seedScopedRun(db, { id: 'run-analytics-test', name: 'Checkout', testId: 't_checkout' })
+    const res = await invokeRoute(router, '/api/analytics/tests/Checkout?testId=t_checkout')
     expect(res.status).toBe(200)
     const data = JSON.parse(res.body) as { runs: Array<{ metadata: Record<string, unknown> | null }> }
     expect(data.runs).toHaveLength(1)

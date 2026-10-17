@@ -4,7 +4,7 @@ import { readFile, writeFile, stat, readdir, rm } from 'node:fs/promises'
 import { join, isAbsolute, basename, resolve, dirname } from 'node:path'
 
 import type { AttributePredicate, DashboardDatabase, InsightsBreakdownDimension, RunArtifactRow, RunRow } from '../db/database.js'
-import { isRunStatusWord, runStatusClass } from '../db/run-status-class.js'
+import { isRunStatusWord, memberOutcomeClass, runStatusClass, type RunStatusClass } from '../db/run-status-class.js'
 import type { ExecutionBackend } from '../execution/execution-backend.js'
 import type { JobQueue } from '../queue/job-queue.js'
 import { extractTestFileMetadata, type SupportedPlatform, type TestFileManager } from '../tests/test-file-manager.js'
@@ -922,10 +922,8 @@ async function readAnalyticsScopePredicates(configManager: ConfigManager | undef
   return parseAnalyticsScopePredicates(parsedConfig.data as Record<string, unknown>)
 }
 
-function calculateFlakyMetrics(runs: RunRow[]): { score: number; statusCount: number } {
-  const statuses = runs
-    .map(r => runStatusClass(r.status))
-    .filter(c => c === 'pass' || c === 'fail')
+function calculateFlakyMetrics(classes: ReadonlyArray<RunStatusClass | 'skipped'>): { score: number; statusCount: number } {
+  const statuses = classes.filter(c => c === 'pass' || c === 'fail')
   let alternations = 0
   for (let i = 1; i < statuses.length; i++) {
     if (statuses[i] !== statuses[i - 1]) alternations++
@@ -1564,7 +1562,7 @@ export const RESPONSE_SAFE_RUN_READ_METHODS = [
   'getRunArtifactBundle',
   'getRuns',
   'getRunsBySuiteId',
-  'getRunsByTestName',
+  'getRunsByTest',
 ] as const
 
 /**
@@ -1583,7 +1581,7 @@ export const RESPONSE_SAFE_RUN_READ_METHODS = [
  *   - `stageRunArtifact`, `finalizeRunArtifact` — writes that ECHO the row they just wrote, to the
  *     writer that supplied it (`server.ts`, on the raw handle). This router never calls them;
  *     `routes.runs.test.ts` pins that absence, because the echo would otherwise be a door.
- *   - `getRunsByTestNameCount`, `getRunsBySuiteIdCount` — a `number`.
+ *   - `getRunsByTestCount`, `getRunsBySuiteIdCount` — a `number`.
  *   - `listRunAttributeKeys`, `listRunAttributeValues` — attribute-name/value suggestions built by
  *     the database from the `attributes` column; they never touch `metadata`.
  */
@@ -1608,7 +1606,7 @@ const RUN_READS_WITHOUT_ROWS: ReadonlySet<string> = new Set([
   'deleteRun',
   'finalizeRunArtifact',
   'getRunsBySuiteIdCount',
-  'getRunsByTestNameCount',
+  'getRunsByTestCount',
   // 433-30: run ids and a count, no row; each id is dispatched through the agent host.
   'listInsightsWindowRunIds',
   'insertPendingRun',
@@ -1748,9 +1746,9 @@ function withResponseSafeRunReads(db: DashboardDatabase): DashboardDatabase {
       value: (...args: Parameters<DashboardDatabase['getRunsBySuiteId']>) =>
         scrubRows(db.getRunsBySuiteId(...args)),
     },
-    getRunsByTestName: {
-      value: (...args: Parameters<DashboardDatabase['getRunsByTestName']>) =>
-        scrubRows(db.getRunsByTestName(...args)),
+    getRunsByTest: {
+      value: (...args: Parameters<DashboardDatabase['getRunsByTest']>) =>
+        scrubRows(db.getRunsByTest(...args)),
     },
     // THE ROUTER HAS NO SERIALIZER OF ITS OWN FOR THIS ONE. `GET /api/runs/:id/artifact` reaches
     // the payload through `getRunArtifactBundle` and serializes it with
@@ -3496,6 +3494,14 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
       const limit = url.searchParams.has('limit') ? parseInt(url.searchParams.get('limit')!, 10) : 50
       const offset = url.searchParams.has('offset') ? parseInt(url.searchParams.get('offset')!, 10) : 0
       const from = url.searchParams.get('from') ?? undefined
+      const testId = url.searchParams.get('testId') || undefined
+      const filePath = url.searchParams.get('filePath') || undefined
+      if (!testId && !filePath) {
+        json(res, { error: 'testId or filePath is required' }, 400)
+        return
+      }
+      const test = { ...(testId ? { testId } : {}), ...(filePath ? { filePath } : {}) }
+      const memberClasses = (runs: RunRow[]) => runs.map(r => memberOutcomeClass(r.memberOutcome ?? null))
       void readAnalyticsScopePredicates(configManager)
         .then((scopeResult) => {
           if (!scopeResult.ok) {
@@ -3503,26 +3509,26 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             return
           }
 
-          const runs = db.getRunsByTestName(name, { limit, offset })
-          const total = db.getRunsByTestNameCount(name)
-          const trends = db.getTestTrends(name, { from })
-          const allRunsForFlakiness = db.getRunsByTestName(name, { limit: 100 })
-          const flakyMetrics = calculateFlakyMetrics(allRunsForFlakiness)
+          const runs = db.getRunsByTest(test, { limit, offset })
+          const total = db.getRunsByTestCount(test)
+          const trends = db.getTestTrends(test, { from })
+          const allRunsForFlakiness = db.getRunsByTest(test, { limit: 100 })
+          const flakyMetrics = calculateFlakyMetrics(memberClasses(allRunsForFlakiness))
           const flakyScore = flakyMetrics.score
           const configured = scopeResult.predicates.length > 0
           const scopedRuns = configured
-            ? db.getRunsByTestName(name, { limit, offset, attributePredicates: scopeResult.predicates })
+            ? db.getRunsByTest(test, { limit, offset, attributePredicates: scopeResult.predicates })
             : runs
           const scopedTotal = configured
-            ? db.getRunsByTestNameCount(name, { attributePredicates: scopeResult.predicates })
+            ? db.getRunsByTestCount(test, { attributePredicates: scopeResult.predicates })
             : total
           const scopedTrends = configured
-            ? db.getTestTrends(name, { from, attributePredicates: scopeResult.predicates })
+            ? db.getTestTrends(test, { from, attributePredicates: scopeResult.predicates })
             : trends
           const scopedRunsForFlakiness = configured
-            ? db.getRunsByTestName(name, { limit: 100, attributePredicates: scopeResult.predicates })
+            ? db.getRunsByTest(test, { limit: 100, attributePredicates: scopeResult.predicates })
             : allRunsForFlakiness
-          const scopedFlakyScore = calculateFlakyMetrics(scopedRunsForFlakiness).score
+          const scopedFlakyScore = calculateFlakyMetrics(memberClasses(scopedRunsForFlakiness)).score
 
           json(res, {
             name,
@@ -3575,7 +3581,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
           const total = db.getRunsBySuiteIdCount(suiteId)
           const trends = db.getSuiteTrends(suiteId, { from })
           const allRunsForFlakiness = db.getRunsBySuiteId(suiteId, { limit: 100 })
-          const flakyMetrics = calculateFlakyMetrics(allRunsForFlakiness)
+          const flakyMetrics = calculateFlakyMetrics(allRunsForFlakiness.map(r => runStatusClass(r.status)))
           const flakyScore = flakyMetrics.score
           const configured = scopeResult.predicates.length > 0
           const scopedRuns = configured
@@ -3590,7 +3596,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
           const scopedRunsForFlakiness = configured
             ? db.getRunsBySuiteId(suiteId, { limit: 100, attributePredicates: scopeResult.predicates })
             : allRunsForFlakiness
-          const scopedFlakyScore = calculateFlakyMetrics(scopedRunsForFlakiness).score
+          const scopedFlakyScore = calculateFlakyMetrics(scopedRunsForFlakiness.map(r => runStatusClass(r.status))).score
 
           json(res, {
             suiteId,

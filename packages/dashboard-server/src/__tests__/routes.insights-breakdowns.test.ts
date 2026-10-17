@@ -194,27 +194,17 @@ afterEach(async () => {
 
 describe('GET /api/analytics/tests/:name', () => {
   it('returns scoped test metrics without changing all-run metrics', async () => {
-    insertRun({
-      id: randomUUID(),
-      name: 'Checkout flow',
-      status: 'passed',
-      duration: 1000,
-      attributes: { 'git.branch': 'phase223-main' },
-    })
-    insertRun({
-      id: randomUUID(),
-      name: 'Checkout flow',
-      status: 'failed',
-      duration: 1000,
-      attributes: { 'git.branch': 'phase223-main' },
-    })
-    insertRun({
-      id: randomUUID(),
-      name: 'Checkout flow',
-      status: 'failed',
-      duration: 1000,
-      attributes: { 'git.branch': 'dev' },
-    })
+    // 2026-10-17 (444-05, D-35): the test viewer reads member rows, so each run seeds its member.
+    for (const [status, branch] of [['passed', 'phase223-main'], ['failed', 'phase223-main'], ['failed', 'dev']] as const) {
+      const runId = insertRun({
+        id: randomUUID(),
+        name: 'Checkout flow',
+        status,
+        duration: 1000,
+        attributes: { 'git.branch': branch },
+      })
+      db.upsertRunMember({ runId, testIndex: 0, testId: 't_checkout', name: 'Checkout flow', filePath: 'tests/checkout.yaml', outcome: status })
+    }
     await applyAnalyticsScopeConfig([
       'analytics:',
       '  passRateScope:',
@@ -223,7 +213,7 @@ describe('GET /api/analytics/tests/:name', () => {
       '',
     ].join('\n'))
 
-    const res = await invokeRoute('/api/analytics/tests/Checkout%20flow')
+    const res = await invokeRoute('/api/analytics/tests/Checkout%20flow?testId=t_checkout')
     expect(res.status).toBe(200)
     const data = JSON.parse(res.body) as any
     expect(data.trends.passRate).toBe(1 / 3)

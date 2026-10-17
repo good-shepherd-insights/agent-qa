@@ -19,7 +19,7 @@ import {
   createDashboardSqliteDatabase,
   type DashboardSqliteDatabase,
 } from './sqlite.js'
-import { runStatusClass } from './run-status-class.js'
+import { memberOutcomeClass, runStatusClass, type RunStatusClass } from './run-status-class.js'
 import {
   RUN_ARTIFACT_SCHEMA_VERSION,
   ModelUsageSchema,
@@ -40,6 +40,16 @@ const DASHBOARD_DB_PATH_FALLBACK = DEFAULT_AGENT_QA_RUNS_DB_PATH || '.agent-qa/r
 
 // 2026-10-17 (444-05, D-41): a suite's history is every run with a member in that suite.
 const MEMBER_SUITE_CONDITION = 'id IN (SELECT run_id FROM run_members WHERE suite_id = ?)'
+
+// 2026-10-17 (444-05, D-35): a test's history is every run with a member of that test id or path.
+function memberTestMatch(test: TestRef): { sql: string; params: string[] } {
+  const clauses: string[] = []
+  const params: string[] = []
+  if (test.testId) { clauses.push('test_id = ?'); params.push(test.testId) }
+  if (test.filePath) { clauses.push('file_path = ?'); params.push(test.filePath) }
+  if (clauses.length === 0) throw new Error('A test is named by its testId or filePath')
+  return { sql: `(${clauses.join(' OR ')})`, params }
+}
 
 export interface RunRow {
   id: string
@@ -65,6 +75,12 @@ export interface RunRow {
   parallel: boolean
   createdAt: string
   members?: RunMemberSummary[]
+  memberOutcome?: string | null
+}
+
+export interface TestRef {
+  testId?: string
+  filePath?: string
 }
 
 export interface RunMemberSummary {
@@ -1011,14 +1027,17 @@ export class DashboardDatabase {
     return this.withMemberExecutionDuration(runs.slice(start, end))
   }
 
-  private buildTrendsFromRuns(runs: RunRow[]): {
+  private buildTrendsFromRuns(
+    runs: RunRow[],
+    classOf: (run: RunRow) => RunStatusClass | 'skipped' = (run) => runStatusClass(run.status),
+  ): {
     daily: { date: string; passed: number; failed: number; total: number; avgDuration: number }[]
     passRate: number
     totalRuns: number
     avgDuration: number
   } {
     const totalRuns = runs.length
-    const passedTotal = runs.filter((run) => runStatusClass(run.status) === 'pass').length
+    const passedTotal = runs.filter((run) => classOf(run) === 'pass').length
     const avgDuration = totalRuns > 0
       ? runs.reduce((sum, run) => sum + run.duration, 0) / totalRuns
       : 0
@@ -1037,8 +1056,8 @@ export class DashboardDatabase {
           const total = dayRuns.length
           return {
             date,
-            passed: dayRuns.filter((run) => runStatusClass(run.status) === 'pass').length,
-            failed: dayRuns.filter((run) => runStatusClass(run.status) === 'fail').length,
+            passed: dayRuns.filter((run) => classOf(run) === 'pass').length,
+            failed: dayRuns.filter((run) => classOf(run) === 'fail').length,
             total,
             avgDuration: total > 0 ? dayRuns.reduce((sum, run) => sum + run.duration, 0) / total : 0,
           }
@@ -1830,43 +1849,66 @@ export class DashboardDatabase {
     return { runIds: rows.map((row) => row.id), total: counts.settled, inFlight: counts.cnt - counts.settled }
   }
 
-  getRunsByTestName(name: string, opts?: { limit?: number; offset?: number; attributePredicates?: AttributePredicate[] }): RunRow[] {
-    return this.queryRunsWithAttributePredicates({
-      conditions: ['name = ?'],
-      params: [name],
+  getRunsByTest(test: TestRef, opts?: { limit?: number; offset?: number; attributePredicates?: AttributePredicate[] }): RunRow[] {
+    const match = memberTestMatch(test)
+    return this.withMemberOutcome(this.queryRunsWithAttributePredicates({
+      conditions: [`id IN (SELECT run_id FROM run_members WHERE ${match.sql})`],
+      params: match.params,
       attributePredicates: opts?.attributePredicates,
       orderBy: 'ORDER BY started_at DESC',
       limit: opts?.limit,
       offset: opts?.offset,
-    })
+    }), test)
   }
 
-  getRunsByTestNameCount(name: string, opts?: { attributePredicates?: AttributePredicate[] }): number {
+  getRunsByTestCount(test: TestRef, opts?: { attributePredicates?: AttributePredicate[] }): number {
     if (opts?.attributePredicates?.length) {
-      return this.getRunsByTestName(name, { attributePredicates: opts.attributePredicates }).length
+      return this.getRunsByTest(test, { attributePredicates: opts.attributePredicates }).length
     }
-    const row = this.db.prepare('SELECT COUNT(*) as cnt FROM runs WHERE name = ?').get(name) as { cnt: number }
+    const match = memberTestMatch(test)
+    const row = this.db.prepare(
+      `SELECT COUNT(*) as cnt FROM runs WHERE id IN (SELECT run_id FROM run_members WHERE ${match.sql})`,
+    ).get(...match.params) as { cnt: number }
     return row.cnt
   }
 
-  getTestTrends(name: string, opts?: { from?: string; attributePredicates?: AttributePredicate[] }): {
+  getTestTrends(test: TestRef, opts?: { from?: string; attributePredicates?: AttributePredicate[] }): {
     daily: { date: string; passed: number; failed: number; total: number; avgDuration: number }[]
     passRate: number
     totalRuns: number
     avgDuration: number
   } {
-    const conditions = ['name = ?']
-    const params: unknown[] = [name]
+    const match = memberTestMatch(test)
+    const conditions = [`id IN (SELECT run_id FROM run_members WHERE ${match.sql})`]
+    const params: unknown[] = [...match.params]
     if (opts?.from) {
       conditions.push('started_at >= ?')
       params.push(opts.from)
     }
-    return this.buildTrendsFromRuns(this.queryRunsWithAttributePredicates({
+    const runs = this.withMemberOutcome(this.queryRunsWithAttributePredicates({
       conditions,
       params,
       attributePredicates: opts?.attributePredicates,
       orderBy: 'ORDER BY started_at ASC',
-    }))
+    }), test)
+    return this.buildTrendsFromRuns(runs, (run) => memberOutcomeClass(run.memberOutcome ?? null))
+  }
+
+  // The first matching member by test index names the run's outcome for this test.
+  private withMemberOutcome(runs: RunRow[], test: TestRef): RunRow[] {
+    const match = memberTestMatch(test)
+    for (let offset = 0; offset < runs.length; offset += 400) {
+      const batch = runs.slice(offset, offset + 400)
+      const rows = this.db.prepare(`
+        SELECT run_id, outcome FROM run_members
+        WHERE run_id IN (${batch.map(() => '?').join(',')}) AND ${match.sql}
+        ORDER BY run_id, test_index
+      `).all(...batch.map(run => run.id), ...match.params) as Array<{ run_id: string; outcome: string | null }>
+      const byId = new Map<string, string | null>()
+      for (const row of rows) if (!byId.has(row.run_id)) byId.set(row.run_id, row.outcome)
+      for (const run of batch) run.memberOutcome = byId.get(run.id) ?? null
+    }
+    return runs
   }
 
   getRunsBySuiteId(suiteId: string, opts?: { limit?: number; offset?: number; attributePredicates?: AttributePredicate[] }): RunRow[] {
@@ -1980,46 +2022,48 @@ export class DashboardDatabase {
     return rows.slice(0, limit)
   }
 
+  // 2026-10-17 (444-05, D-35): grouped by member file path; only pass- and fail-class outcomes count.
   getFlakyTests(opts?: { minRuns?: number; limit?: number }): {
     name: string; filePath: string | null; totalRuns: number; passRate: number; flakyScore: number
   }[] {
     const minRuns = opts?.minRuns ?? 3
     const limit = opts?.limit ?? 50
 
-    const tests = this.db.prepare(`
-      SELECT name,
-             MAX(file_path) as file_path,
-             COUNT(*) as total_runs,
-             SUM(CASE WHEN status = 'passed' THEN 1 ELSE 0 END) as passed,
-             GROUP_CONCAT(status, ',') as status_seq
-      FROM (
-        SELECT name, status, file_path FROM runs
-        WHERE status IN ('passed', 'failed')
-        ORDER BY name, started_at DESC
-      )
-      GROUP BY name
-      HAVING COUNT(*) >= ?
-      LIMIT ?
-    `).all(minRuns, limit) as Record<string, unknown>[]
+    const rows = this.db.prepare(`
+      SELECT m.file_path AS file_path, m.name AS name, m.outcome AS outcome
+      FROM run_members m JOIN runs r ON r.id = m.run_id
+      WHERE m.file_path IS NOT NULL AND m.outcome IS NOT NULL
+      ORDER BY m.file_path, r.started_at DESC, r.id DESC, m.test_index DESC
+    `).all() as Array<{ file_path: string; name: string | null; outcome: string }>
 
-    return tests.map(t => {
-      const statusSeq = (t.status_seq as string).split(',')
-      let alternations = 0
-      for (let i = 1; i < statusSeq.length; i++) {
-        if (statusSeq[i] !== statusSeq[i - 1]) alternations++
-      }
-      const flakyScore = statusSeq.length > 1 ? alternations / (statusSeq.length - 1) : 0
-      const totalRuns = t.total_runs as number
-      const passed = t.passed as number
+    const byPath = new Map<string, { name: string | null; classes: Array<'pass' | 'fail'> }>()
+    for (const row of rows) {
+      const outcomeClass = memberOutcomeClass(row.outcome)
+      if (outcomeClass !== 'pass' && outcomeClass !== 'fail') continue
+      const entry = byPath.get(row.file_path) ?? { name: null, classes: [] }
+      if (entry.name === null && row.name) entry.name = row.name
+      entry.classes.push(outcomeClass)
+      byPath.set(row.file_path, entry)
+    }
 
-      return {
-        name: t.name as string,
-        filePath: (t.file_path as string) ?? null,
-        totalRuns,
-        passRate: passed / totalRuns,
-        flakyScore,
-      }
-    }).sort((a, b) => b.flakyScore - a.flakyScore)
+    return [...byPath.entries()]
+      .filter(([, entry]) => entry.classes.length >= minRuns)
+      .map(([filePath, entry]) => {
+        let alternations = 0
+        for (let i = 1; i < entry.classes.length; i++) {
+          if (entry.classes[i] !== entry.classes[i - 1]) alternations++
+        }
+        const totalRuns = entry.classes.length
+        return {
+          name: entry.name ?? filePath,
+          filePath,
+          totalRuns,
+          passRate: entry.classes.filter((c) => c === 'pass').length / totalRuns,
+          flakyScore: totalRuns > 1 ? alternations / (totalRuns - 1) : 0,
+        }
+      })
+      .sort((a, b) => b.flakyScore - a.flakyScore || a.filePath.localeCompare(b.filePath))
+      .slice(0, limit)
   }
 
   insertExecutionLog(data: InsertExecutionLogInput): void {

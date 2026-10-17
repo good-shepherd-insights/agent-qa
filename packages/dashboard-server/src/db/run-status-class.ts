@@ -30,3 +30,10 @@ export function runStatusClass(status: string): RunStatusClass {
   if (!isRunStatusWord(status)) throw new Error(`runStatusClass: unknown run status "${status}"`)
   return CLASS_OF[status]
 }
+
+// 2026-10-17 (444-05, D-35): a member outcome is a run word or `skipped`; a member with none is live.
+export function memberOutcomeClass(outcome: string | null): RunStatusClass | 'skipped' {
+  if (outcome === null) return 'live'
+  if (outcome === 'skipped') return 'skipped'
+  return runStatusClass(outcome)
+}

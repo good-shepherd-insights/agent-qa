@@ -120,14 +120,14 @@ describe('C433-SUITE-RUN-IDENTITY', () => {
       )
     })
 
-    it(`C433-SUITE-RUN-IDENTITY: the suite history lists the run and the last member's test history does not — ${door.label}`, async () => {
+    it(`C433-SUITE-RUN-IDENTITY: the suite history lists the run and the last member's test history lists it by its member — ${door.label}`, async () => {
       const runId = await door.start()
       // `/api/analytics/suites/:suiteId` (suite viewer, /suites) reads these two.
       expect(db.getRunsBySuiteId(SUITE_ID).map((row) => row.id)).toEqual([runId])
       expect(db.getRunsBySuiteIdCount(SUITE_ID)).toBe(1)
-      // `/api/analytics/tests/:name` (the test viewer's history) reads by the test's name.
-      expect(db.getRunsByTestName(LAST.name)).toEqual([])
-      expect(db.getRunsByTestNameCount(LAST.name)).toBe(0)
+      // 2026-10-17 (444-05, D-35): the test viewer's history reads member rows by test id.
+      expect(db.getRunsByTest({ testId: LAST.testId }).map((row) => [row.id, row.memberOutcome])).toEqual([[runId, 'passed']])
+      expect(db.getRunsByTestCount({ testId: LAST.testId })).toBe(1)
       // And no run row is filed under the last member's test id.
       expect(db.getRuns().filter((row) => row.testId === LAST.testId)).toEqual([])
     })
@@ -152,6 +152,6 @@ describe('C433-SUITE-RUN-IDENTITY', () => {
     const row = db.getRun(runId)
     expect({ name: row?.name, suiteId: row?.suiteId, testId: row?.testId })
       .toEqual({ name: 'Login Test', suiteId: null, testId })
-    expect(db.getRunsByTestName('Login Test').map((r) => r.id)).toEqual([runId])
+    expect(db.getRunsByTest({ testId }).map((r) => r.id)).toEqual([runId])
   })
 })
