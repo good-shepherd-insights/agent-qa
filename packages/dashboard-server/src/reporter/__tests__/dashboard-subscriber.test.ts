@@ -764,3 +764,47 @@ describe('C443-INGEST-ID', () => {
     expect(db.readRunDetailRows(builtWith)?.members.map((member) => member.testIndex)).toEqual([0, 1])
   })
 })
+
+// 2026-10-17 (443-12, GAP-D1): the record must learn it owns its row before any write that can throw.
+describe('C443-RECORD-CLOSE', () => {
+  it('an ingest whose artifact write fails after its claim still reports the claimed row', () => {
+    const owner: RunOwner = { pid: 4242, incarnation: 'proc-starttime:7', host: 'h' }
+    const real = new DashboardDatabase({
+      dbPath: ':memory:',
+      runOwnership: { self: owner, probe: { isAlive: () => true, incarnationOf: () => undefined } },
+    })
+    try {
+      let thrown = false
+      const failing = new Proxy(real, {
+        get(subject, property, receiver) {
+          const value = Reflect.get(subject, property, receiver) as unknown
+          if (property === 'insertRunArtifact' && typeof value === 'function') {
+            return (...args: unknown[]) => {
+              if (!thrown) {
+                thrown = true
+                throw new Error('disk I/O error')
+              }
+              return (value as (...rest: unknown[]) => unknown).apply(subject, args)
+            }
+          }
+          return typeof value === 'function' ? (value as (...rest: unknown[]) => unknown).bind(subject) : value
+        },
+      })
+      const id = generateRunId()
+      const created: string[] = []
+      const ingest = createDashboardRunIngest({
+        db: failing, runId: id, sourceSnapshot: testSource(), attributes,
+        onRunCreated: (createdId) => { created.push(createdId) },
+      })
+
+      expect(() => ingest.handler(ev(id, 'runStarted', {}))).toThrow('disk I/O error')
+
+      expect(thrown, 'the failing write was never reached').toBe(true)
+      expect(real.getRun(id)?.status).toBe('running')
+      expect(real.isOwnStamp(id, owner), 'the claim left no own stamp').toBe(true)
+      expect(created, 'onRunCreated did not report the claimed row').toEqual([id])
+    } finally {
+      real.close()
+    }
+  })
+})

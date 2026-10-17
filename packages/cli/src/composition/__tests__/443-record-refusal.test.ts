@@ -4,6 +4,8 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
@@ -14,8 +16,10 @@ import { RunDeniedError, RunIdAlreadyInUseError } from '@vostride/agent-qa-agent
 import { DashboardDatabase } from '@vostride/agent-qa-dashboard'
 import { generateRunId } from '@vostride/agent-qa-ids'
 import type { RunStartAcknowledgement, RunsStartInput } from '@vostride/agent-qa-schema'
+import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
 
 import { CLI_ENTRY, REBUILD_INSTRUCTION, buildFreshness, hermeticEnv } from '../../__tests__/conformance/spawned-chat.js'
+import { createRunRecord, doorRunAttributes } from '../../commands/run.js'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
 import type { ComposeCliLocalAgentInput } from '../local-agent-host.js'
 import { composeRunOwnership } from '../run-owner-probe.js'
@@ -283,5 +287,112 @@ describe('C443-RECORD-INCOMPLETE', () => {
     expect(real.getRun(runId!)?.status).toBe(verdict === 'healed' ? 'passed' : verdict === 'timeout' ? 'failed' : verdict)
     const incomplete = warned.flatMap((line) => line.split('\n')).filter((line) => line.includes('but its dashboard record is incomplete'))
     expect(incomplete.length, `incomplete-record lines: ${incomplete.join(' | ')}`).toBe(1)
+  }, RUN_BUDGET_MS)
+})
+
+// 2026-10-17 (443-12, GAP-D1): the D-27 close-out in the two windows C443-RECORD-INCOMPLETE does not
+// reach: a write that fails right after the claim, and one that fails after a member finished.
+describe('C443-RECORD-CLOSE', () => {
+  function failOn(
+    real: DashboardDatabase,
+    method: 'insertRunArtifact' | 'updateRun',
+    fails: (args: unknown[]) => boolean,
+  ): { db: DashboardDatabase; reached: () => boolean } {
+    let thrown = false
+    const db = new Proxy(real, {
+      get(subject, property, receiver) {
+        const value = Reflect.get(subject, property, receiver) as unknown
+        if (property === method && typeof value === 'function') {
+          return (...args: unknown[]) => {
+            if (!thrown && fails(args)) {
+              thrown = true
+              throw new Error('disk I/O error')
+            }
+            return (value as (...rest: unknown[]) => unknown).apply(subject, args)
+          }
+        }
+        return typeof value === 'function' ? (value as (...rest: unknown[]) => unknown).bind(subject) : value
+      },
+    })
+    return { db, reached: () => thrown }
+  }
+
+  function verdictOf(project: Fixture, runId: string): string | undefined {
+    return readFileSync(join(project.agentQaRoot, 'runs', runId, 'events.jsonl'), 'utf8')
+      .split('\n')
+      .filter((line) => line.trim() !== '')
+      .map((line) => JSON.parse(line) as { type: string; payload?: { verdict?: string } })
+      .find((event) => event.type === 'verdict')?.payload?.verdict
+  }
+
+  it('an artifact write that fails right after the claim still closes the row with the verdict status', async () => {
+    const project = fixture()
+    const real = new DashboardDatabase({ dbPath: runsDbOf(project), runOwnership: composeRunOwnership() })
+    opened.push(() => real.close())
+    const failing = failOn(real, 'insertRunArtifact', () => true)
+    const warned: string[] = []
+    vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => { warned.push(args.map(String).join(' ')) })
+
+    const outcome = await start(project, { patterns: [project.testPattern] }, {
+      record: { db: failing.db, queueRun: () => undefined },
+    })
+
+    const runId = outcome.ack?.runId
+    expect(runId, messageOf(outcome.error)).toBeDefined()
+    expect(failing.reached(), 'the failing write was never reached').toBe(true)
+    const verdict = verdictOf(project, runId!)
+    expect(verdict, 'the run published no verdict').toBeDefined()
+    expect(real.getRun(runId!)?.status).toBe(verdict === 'healed' ? 'passed' : verdict === 'timeout' ? 'failed' : verdict)
+    expect(real.readRunOwner(runId!)?.pid, 'the row is not owned by this process').toBe(process.pid)
+    const incomplete = warned.flatMap((line) => line.split('\n')).filter((line) => line.includes('but its dashboard record is incomplete'))
+    expect(incomplete.length, `incomplete-record lines: ${incomplete.join(' | ')}`).toBe(1)
+  }, RUN_BUDGET_MS)
+
+  it("a two-member run whose second member's write fails ends at the run's verdict status", async () => {
+    const configDir = realpathSync(mkdtempSync(join(tmpdir(), 'agent-qa-443-record-close-')))
+    opened.push(() => rmSync(configDir, { recursive: true, force: true }))
+    mkdirSync(join(configDir, '.agent-qa'), { recursive: true })
+    const real = new DashboardDatabase({
+      dbPath: join(configDir, '.agent-qa', 'runs.db'),
+      runOwnership: composeRunOwnership(),
+    })
+    opened.push(() => real.close())
+    let statusWrites = 0
+    const failing = failOn(real, 'updateRun', ([, updates]) => (
+      (updates as { status?: unknown } | undefined)?.status !== undefined && ++statusWrites === 2
+    ))
+    const warned: string[] = []
+    const record = createRunRecord({
+      attributes: doorRunAttributes('cli'),
+      host: { db: failing.db, queueRun: () => undefined },
+      warn: (line) => { warned.push(line) },
+    })
+    opened.push(() => record.close())
+    const runId = generateRunId()
+    await record.open({ runId, configDir })
+    expect(record.db, 'the record did not use the lent handle').toBe(failing.db)
+    const subscriber = record.subscriber({ mask: (text) => text })
+    let seq = 0
+    const send = (type: RunEventEnvelope['type'], payload: Record<string, unknown>): void => {
+      seq += 1
+      subscriber.handler({ seq, ts: seq, runId, type, payload } as RunEventEnvelope)
+    }
+
+    send('runStarted', { memberTestCount: 2 })
+    send('testStarted', { testId: 't-a', testIndex: 0, name: 'Member A', filePath: 'tests/a.yaml' })
+    send('testFinished', { testId: 't-a', testIndex: 0, outcome: 'passed', durationMs: 10 })
+    expect(real.getRun(runId)?.status, "the first member's status write did not land").toBe('passed')
+    send('testStarted', { testId: 't-b', testIndex: 1, name: 'Member B', filePath: 'tests/b.yaml' })
+    send('testFinished', { testId: 't-b', testIndex: 1, outcome: 'failed', durationMs: 10 })
+    send('verdict', { verdict: 'failed' })
+    send('runFinished', { aggregateVerdict: 'failed', disposition: 'detached', finalSeq: seq + 1 })
+    await subscriber.flush()
+
+    expect(failing.reached(), 'the failing write was never reached').toBe(true)
+    expect(real.getRun(runId)?.status).toBe('failed')
+    expect(real.readRunOwner(runId)?.pid, 'the row is not owned by this process').toBe(process.pid)
+    const incomplete = warned.flatMap((line) => line.split('\n'))
+      .filter((line) => line.includes('The run finished (failed), but its dashboard record is incomplete'))
+    expect(incomplete.length, `incomplete-record lines: ${warned.join(' | ')}`).toBe(1)
   }, RUN_BUDGET_MS)
 })
