@@ -119,14 +119,14 @@ async function expectFinishesOnItsOwn(at: Cell, b: Parked, otherId: string): Pro
   expect(exit.code).toBe(1)
   const row = readRow(at.project, b.id)
   expect(row.status).toBe('failed')
-  for (const foreign of ['Framework error', 'Browser closed by user']) {
+  for (const foreign of ['Framework error', 'The browser closed before this test finished.']) {
     expect(row.failureSummary ?? '').not.toContain(foreign)
   }
   const artifact = at.project.db.getRunArtifact(b.id)
   expect(artifact?.finalizedAt ?? null).not.toBeNull()
   const payload = JSON.stringify(artifact!.payload)
   const foreignTexts = [
-    'process-close', 'browser-disconnect', 'Framework error', 'Browser closed by user', otherId,
+    'process-close', 'browser-disconnect', 'Framework error', 'The browser closed before this test finished.', otherId,
   ]
   for (const foreign of foreignTexts) expect(payload).not.toContain(foreign)
   const types = loggedEventTypes(at.project, b.id)

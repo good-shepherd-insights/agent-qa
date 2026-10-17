@@ -65,6 +65,8 @@ import { describeBoundSurface } from '../tools/builder.js'
 import { defaultRegistry } from '../tools/index.js'
 import { createStepReadFinalizer } from './step-read-finalization.js'
 
+const BROWSER_CLOSED_SUMMARY = 'The browser closed before this test finished.'
+
 /** A single member-test step — a bare instruction or an object carrying per-step knobs. */
 export interface MemberStepSpec {
   step: string
@@ -1067,8 +1069,10 @@ async function runMemberAttempt(
   const adapterFlags = config.adapter as { isBrowserDisconnected?: boolean }
   const isDisconnected = adapterFlags.isBrowserDisconnected === true
 
-  const failureSummary = isDisconnected
-    ? 'Browser closed by user'
+  // 444-17 (D-53): a closed browser is not a cancel. Only a cancel the run received makes the
+  // member `cancelled`; a disconnect on its own fails it, and says so without guessing a cause.
+  const failureSummary = isDisconnected && !cancelled
+    ? BROWSER_CLOSED_SUMMARY
     : testFailed
       ? generateFailureSummary(steps)
       : cancelled
@@ -1079,7 +1083,7 @@ async function runMemberAttempt(
     runId: undefined,
     name: member.name,
     filePath: member.filePath,
-    status: cancelled ? 'cancelled' : isDisconnected ? 'cancelled' : testFailed ? 'failed' : 'passed',
+    status: cancelled ? 'cancelled' : isDisconnected || testFailed ? 'failed' : 'passed',
     steps,
     duration: performance.now() - startTime,
     metadata: member.meta as Record<string, unknown> | undefined,

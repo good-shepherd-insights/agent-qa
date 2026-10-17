@@ -417,7 +417,7 @@ describe('C444-NO-CAUSE-GUESS', () => {
     await startDashboard(backend as unknown as ExecutionBackend)
     const lines = [
       'Error: page.click: Target page, context or browser has been closed',
-      'Error: Browser closed by user',
+      'Error: The browser closed before this test finished.',
     ]
     const ids = lines.map((line) => {
       const id = seedOwnRunning(`Closed browser: ${line}`)
