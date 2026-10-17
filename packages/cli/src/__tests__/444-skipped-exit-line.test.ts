@@ -14,7 +14,7 @@ import { runPostRunTail, type PostRunTailOperations } from '../curation/post-run
 import type { PostVerdictHandoff } from '../curation/post-verdict-step.js'
 
 const RUN_ID = 'run_444_18_skipped_exit_line'
-const OLD_SENTENCE = 'post-run analysis intentionally skipped.'
+const OLD_SENTENCE_HEAD = 'post-run analysis'
 const CONTEXTS = ['local-headless', 'ci'] as const
 
 const DRAIN_OPERATIONS = [
@@ -109,8 +109,9 @@ async function expectSkippedExitLine(reason: PostProcessingSkipReason): Promise<
       expect(line, key).not.toContain('pending')
       expect(line, key).not.toContain('resumes only if')
       expect(line, key).not.toContain('daemon')
-      expect(line, key).not.toMatch(/\bdone\b|\bexcluded\b/)
-      expect([...ran.lines, ...ran.warnings].join('\n'), key).not.toContain(OLD_SENTENCE)
+      expect(line, key).not.toMatch(/\bdone\b|(?<!outcome-)\bexcluded\b/)
+      expect(ran.lines, `${key} prints the exit line and nothing else`).toEqual([line])
+      expect([...ran.lines, ...ran.warnings].join('\n'), key).not.toContain(OLD_SENTENCE_HEAD)
       expect(ran.warnings, key).toEqual([])
       expect(ran.drainCalls, `${key} starts no drain`).toEqual([])
       expect(ran.leaseTakes, `${key} takes no lease`).toBe(0)

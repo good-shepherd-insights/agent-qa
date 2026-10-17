@@ -825,8 +825,11 @@ it.each((['direct', 'suite'] as const).flatMap(mode =>
     const runId = String(request.runId)
     const runDir = join(f.input.agentQaRoot, 'runs', runId)
     mkdirSync(runDir, { recursive: true })
+    // 444 D-55: a skipped preparation is a gate run, so its handoff carries the marker the shell
+    // copies from the same RunConfig, and the exit line reads the status read's skipped fact.
     writeFileSync(join(runDir, 'handoff.json'), JSON.stringify({
       ...JSON.parse(readFileSync(f.handoffPath, 'utf8')), runId,
+      ...(state === 'skipped' ? { gateRun: true } : {}),
     }))
     const release = deferred<void>()
     const reserved = deferred<void>()
@@ -873,7 +876,8 @@ it.each((['direct', 'suite'] as const).flatMap(mode =>
   } else if (state === 'failed') expect(report).toEqual({ enqueue: 'failed', drain: 'not-attempted', jobsRun: 0 })
   else if (state === 'skipped') {
     expect(report).toEqual({ enqueue: 'skipped', drain: 'not-attempted', jobsRun: 0 })
-    expect(lines).toContain('post-run analysis intentionally skipped.')
+    expect(lines).toContain('post-processing — analysis: skipped (gate run) · curation: skipped (gate run)')
+    expect(lines).not.toContain('post-run analysis')
     expect(lines).not.toContain('Durable intent:')
   } else {
     expect(report).toEqual({ enqueue: 'enqueued', drain: 'detached', jobsRun: 0 })

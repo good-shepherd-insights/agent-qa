@@ -981,11 +981,11 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         return
       }
       if (opts.postVerdict !== undefined && actualEnqueue === 'failed') { discloseFailure(); return }
-      if (opts.postVerdict !== undefined && actualEnqueue === 'skipped') {
-        log.info?.(`Run ${opts.runId}: post-run analysis intentionally skipped.`)
-        return
-      }
-      if (input.detached === true && drainOutcome === 'not-attempted') {
+      // 444 D-55: a skipped enqueue (a gate run, an outcome-excluded run) falls through to the one
+      // exit line, which prints the status read's `skipped` fact. `drain()` returned before doing
+      // anything, and nothing here pumps, so nothing was queued and nothing is drained.
+      const skippedEnqueue = opts.postVerdict !== undefined && actualEnqueue === 'skipped'
+      if (input.detached === true && drainOutcome === 'not-attempted' && !skippedEnqueue) {
         // The one place `detached` is ever produced. `drain()` was never called, so nothing
         // else in this file could have said so — and a report that called the detach posture
         // `not-attempted` would be indistinguishable from an enqueue that failed first.
