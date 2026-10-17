@@ -285,11 +285,13 @@ export default function LiveRunPage() {
     const toastOptions = { id: `cancel-${id}` }
     cancelRun(id)
       .then((result) => {
-        if (result.cancelled) toast.success('Run cancelled', toastOptions)
-        else toast.info(result.message ?? 'Run cancelled', toastOptions)
+        // 2026-10-17 (444-07, D-31): a stop request is not a cancel; the verdict sets the status.
+        if (typeof result.message !== 'string') toast.error('Failed to cancel run', toastOptions)
+        else if (result.outcome === 'cancelled') toast.success(result.message, toastOptions)
+        else toast.info(result.message, toastOptions)
       })
       .catch((error: unknown) => {
-        // 442 D-09: only the 409 owned-by-live-process refusal is worded for a person.
+        // 442 D-09, 444 D-31: only the 409 refusals are worded for a person.
         const refused = error instanceof ApiError && error.status === 409
         toast.error(refused ? error.message : 'Failed to cancel run', toastOptions)
       })
