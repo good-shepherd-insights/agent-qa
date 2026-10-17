@@ -181,7 +181,7 @@ async function get(port: number, path: string): Promise<Answer> {
 
 describe('the read route joins the op result with the run record (D-18/D-22)', () => {
   it('answers the op result VERBATIM, with the disposition and the last per-stage failure', async () => {
-    const status = chips('failed', 'done')
+    const status = chips('failed', 'complete')
     const { port, calls } = await serveWith({
       status,
       events: [
@@ -356,7 +356,7 @@ describe('the arm sits ABOVE the /api/runs/:id catch-all', () => {
     // Measured rather than assumed: the live-url arm's own header records that its first tracer run
     // answered 404 from precisely that catch-all. `/api/runs/<id>/post-processing` is four segments
     // too, so the catch-all would try `db.getRun('<id>')` and answer `Run not found`.
-    const { port } = await serveWith({ status: chips('done', 'done'), events: [] })
+    const { port } = await serveWith({ status: chips('complete', 'complete'), events: [] })
 
     const answer = await get(port, `/api/runs/${RUN_ID}/post-processing`)
     expect(answer.status, answer.raw).toBe(200)
@@ -366,17 +366,17 @@ describe('the arm sits ABOVE the /api/runs/:id catch-all', () => {
 
 describe('isPostProcessingTerminal', () => {
   it('is true once BOTH chips settled, in either settled word', () => {
-    expect(isPostProcessingTerminal(chips('done', 'done'))).toBe(true)
-    expect(isPostProcessingTerminal(chips('failed', 'done'))).toBe(true)
-    expect(isPostProcessingTerminal(chips('done', 'failed'))).toBe(true)
+    expect(isPostProcessingTerminal(chips('complete', 'complete'))).toBe(true)
+    expect(isPostProcessingTerminal(chips('failed', 'complete'))).toBe(true)
+    expect(isPostProcessingTerminal(chips('complete', 'failed'))).toBe(true)
     expect(isPostProcessingTerminal(chips('failed', 'failed'))).toBe(true)
   })
 
   it('is false while either chip is still in flight', () => {
     expect(isPostProcessingTerminal(chips('pending', 'pending'))).toBe(false)
     expect(isPostProcessingTerminal(chips('running', 'pending'))).toBe(false)
-    expect(isPostProcessingTerminal(chips('done', 'running'))).toBe(false)
-    expect(isPostProcessingTerminal(chips('running', 'done'))).toBe(false)
+    expect(isPostProcessingTerminal(chips('complete', 'running'))).toBe(false)
+    expect(isPostProcessingTerminal(chips('running', 'complete'))).toBe(false)
   })
 
   it('is true the moment the chain wrote its one row, whatever the chips say', () => {

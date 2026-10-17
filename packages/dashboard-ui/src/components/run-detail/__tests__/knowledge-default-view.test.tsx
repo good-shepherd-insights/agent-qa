@@ -171,7 +171,7 @@ function richView(): Extract<KnowledgeView, { state: "ready" }> {
         planSource: { kind: "procedure-hint", procedureId: HINTED },
       },
     ],
-    curation: { status: "done", counts: { curated: 4, deprecated: 1 } },
+    curation: { status: "complete", counts: { curated: 4, deprecated: 1 } },
     learned: {
       changes: snap.rows.flatMap(row => row.changes.map(entry => ({
         ...entry.change,

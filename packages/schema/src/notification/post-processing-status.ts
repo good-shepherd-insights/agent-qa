@@ -14,6 +14,7 @@
 // 2026-09-02 (Phase 412): the job-kind layer followed — the reserved sixth job kind, the chain's
 // third derived id, the retired entity kind and the retired proposal arm left with the
 // Issue-slot cleanup — see `DELETION-INVENTORY.md`.
+// 2026-10-17 (444-10, D-13): the vocabulary is `pending · running · complete · failed`; a done job row reads `complete`.
 
 import { z } from 'zod'
 
@@ -31,7 +32,7 @@ import type { CurationSnapshot } from './curation-snapshot'
 export const POST_PROCESSING_CHIP_STATUSES = [
   'pending',
   'running',
-  'done',
+  'complete',
   'failed',
 ] as const
 

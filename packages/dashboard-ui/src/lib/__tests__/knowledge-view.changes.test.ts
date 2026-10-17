@@ -103,7 +103,7 @@ function projection(
 
 function fiveBucketRun(): ReadyProjection {
   const snapshot = fiveBucketSnapshot()
-  return projection('done', {
+  return projection('complete', {
     changes: snapshotChanges(snapshot), curationSnapshot: snapshot, sinceThen: { changes: [], count: 0 },
   }, { curated: 4, deprecated: 1 })
 }
@@ -133,7 +133,7 @@ describe('Memory changes are one row per affected record, in 425 words (D-15)', 
       ] }],
       breakdown: { added: 0, confirmed: 0, superseded: 1, deprecated: 0, proposed: 0 },
     })
-    const both = learnedView(projection('done', {
+    const both = learnedView(projection('complete', {
       changes: [joined(recorded('fact-old', 'superseded', 40, { byRecordId: 'fact-new' })), joined(recorded('fact-new', 'added', 40))],
       curationSnapshot: snapshot,
     }))
@@ -146,7 +146,7 @@ describe('Memory changes are one row per affected record, in 425 words (D-15)', 
     expect(both.rows[0]?.was).toEqual({ primary: 'summary fact-old', leadSource: 'joined' })
     expect(WAS_PREFIX).toBe('Was:')
 
-    const newOnly = learnedView(projection('done', {
+    const newOnly = learnedView(projection('complete', {
       changes: [recorded('fact-old', 'superseded', 40, { byRecordId: 'fact-new' }), joined(recorded('fact-new', 'added', 40))],
       curationSnapshot: snapshot,
     }))
@@ -155,7 +155,7 @@ describe('Memory changes are one row per affected record, in 425 words (D-15)', 
   })
 
   it('NO-SNAPSHOT-MAPPING: without a snapshot, changes group per record onto the same words and Proposed is never guessed', () => {
-    const view = learnedView(projection('done', {
+    const view = learnedView(projection('complete', {
       changes: [
         joined(recorded('rec-a', 'added', 1)),
         recorded('rec-b', 'promoted', 2),
@@ -184,7 +184,7 @@ describe('Memory changes are one row per affected record, in 425 words (D-15)', 
       })),
       breakdown: { added: 3, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
     })
-    const view = learnedView(projection('done', {
+    const view = learnedView(projection('complete', {
       changes: [
         joined(recorded('rec-joined', 'added', 50)),
         { ...recorded('rec-gone', 'added', 51), contentAbsence: { reason: 'not-found' } },
@@ -213,7 +213,7 @@ describe('Memory changes are one row per affected record, in 425 words (D-15)', 
       ],
       breakdown: { added: 1, confirmed: 0, superseded: 0, deprecated: 0, proposed: 2 },
     })
-    const view = learnedView(projection('done', {
+    const view = learnedView(projection('complete', {
       changes: [
         joined(recorded('rec-fact', 'added', 60)),
         joined(recorded('rec-question', 'added', 61), { kind: 'unknown' }),
@@ -237,7 +237,7 @@ describe('Memory changes are one row per affected record, in 425 words (D-15)', 
       breakdown: { added: 2, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
     })
     const later = joined(recorded('rec-a', 'promoted', 90))
-    const view = learnedView(projection('done', {
+    const view = learnedView(projection('complete', {
       changes: [joined(recorded('rec-a', 'added', 70)), joined(recorded('rec-b', 'added', 71)), later],
       curationSnapshot: snapshot,
       sinceThen: { changes: [later], count: 1 },
@@ -278,7 +278,7 @@ describe('every bucket word explains itself, and the section speaks of memory ch
     const zero = CurationSnapshotSchema.parse({
       schemaVersion: 1, rows: [], breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
     })
-    const nothing = learnedView(projection('done', { curationSnapshot: zero, sinceThen: { changes: [], count: 0 } }))
+    const nothing = learnedView(projection('complete', { curationSnapshot: zero, sinceThen: { changes: [], count: 0 } }))
     expect(nothing.countLine).toBe(NO_MEMORY_CHANGES_TEXT)
     expect(nothing.sentence).toBe(NO_MEMORY_CHANGES_SENTENCE)
     expect(nothing.rows).toEqual([])

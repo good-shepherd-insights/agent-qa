@@ -97,7 +97,7 @@ function projection(
     buildOrdinal: 1,
     knowledgeStore: 'bound',
     steps,
-    curation: { status: 'done' },
+    curation: { status: 'complete' },
     learned: {
       changes: learned.changes ?? [],
       canaryAttributions: [],

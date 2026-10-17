@@ -122,7 +122,7 @@ describe('423 checkpoint-backed snapshot projection', () => {
     const expected = JSON.parse(JSON.stringify(before).replaceAll('synthetic-snapshot-secret',
       '[secret:SNAP_441]'))
     expect(result).toHaveProperty('curationSnapshot', expected)
-    expect(result.chips).toEqual({ analysis: 'done', curation: 'done' })
+    expect(result.chips).toEqual({ analysis: 'complete', curation: 'complete' })
     expect(result.stageDetails).toEqual({ analysis: { attempts: 1 }, curation: { attempts: 2 }, proposals: { attempts: 1 } })
     expect(result).not.toHaveProperty('notification')
     expect(JSON.stringify(result)).not.toContain('synthetic-snapshot-secret')
@@ -144,7 +144,7 @@ describe('423 checkpoint-backed snapshot projection', () => {
     })
     expect(result.notification).toEqual(notification)
     expect(result).not.toHaveProperty('curationSnapshot')
-    expect(result.chips).toEqual({ analysis: 'done', curation: outcome })
+    expect(result.chips).toEqual({ analysis: 'complete', curation: outcome === 'done' ? 'complete' : 'failed' })
     expect(runsPostProcessingSpec.classify!(result).status).toBe('executed')
     expect(PostProcessingStatusSchema.parse(result)).toEqual(result)
   })
@@ -158,12 +158,12 @@ describe('423 checkpoint-backed snapshot projection', () => {
       curationSnapshot: recorded,
     }, identity)
     expect(result).toHaveProperty('curationSnapshot', recorded)
-    expect(result.chips).toEqual({ analysis: 'done', curation: 'done' })
+    expect(result.chips).toEqual({ analysis: 'complete', curation: 'complete' })
     expect(runsPostProcessingSpec.classify!(result).status).toBe('executed')
   })
 
   it('POSTPROCESSING-SNAPSHOT-STRICT rejects malformed optional snapshots and extra fields', () => {
-    const base = { runId: RUN_ID, chips: { analysis: 'done', curation: 'done' }, curationSnapshot: snapshot() }
+    const base = { runId: RUN_ID, chips: { analysis: 'complete', curation: 'complete' }, curationSnapshot: snapshot() }
     expect(PostProcessingStatusSchema.safeParse(base).success).toBe(true)
     for (const invalid of [null, { ...snapshot(), schemaVersion: 2 }, { ...snapshot(), extra: true },
       { ...snapshot(), breakdown: { ...snapshot().breakdown, superseded: 0 } }]) {
@@ -203,7 +203,7 @@ describe('423 checkpoint-backed snapshot projection', () => {
       curateMemory: { status: 'done', claimed: false, attempts: 2 },
       curationSnapshot: recorded,
     }, () => 'collided-identity')
-    expect(collided).toEqual({ runId: RUN_ID, chips: { analysis: 'done', curation: 'done' },
+    expect(collided).toEqual({ runId: RUN_ID, chips: { analysis: 'complete', curation: 'complete' },
       stageDetails: { analysis: { attempts: 1 }, curation: { attempts: 2 } },
       curationSnapshotWithheld: { reason: 'projection-refused' } })
     expect(PostProcessingStatusSchema.safeParse(collided).success).toBe(true)
@@ -274,7 +274,7 @@ describe('423 durable stage projection', () => {
       proposeImprovements: { status: 'done', claimed: false },
     })
     expect(result.chips).toEqual({ analysis: 'running', curation: 'failed' })
-    expect(POST_PROCESSING_CHIP_STATUSES).toEqual(['pending', 'running', 'done', 'failed'])
+    expect(POST_PROCESSING_CHIP_STATUSES).toEqual(['pending', 'running', 'complete', 'failed'])
     expect(result.stageDetails).toEqual({ analysis: {}, curation: {}, proposals: {} })
     expect(runsPostProcessingSpec.classify!(result).status).toBe('executed')
   })
@@ -306,7 +306,7 @@ describe('423 durable stage projection', () => {
 
   it('CHIP-CONTROL terminal status wins over a stale claim', async () => {
     const result = await read({ analyzeRun: { status: 'done', claimed: true } })
-    expect(result.chips).toEqual({ analysis: 'done', curation: 'pending' })
+    expect(result.chips).toEqual({ analysis: 'complete', curation: 'pending' })
   })
 })
 

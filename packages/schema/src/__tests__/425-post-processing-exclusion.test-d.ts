@@ -54,7 +54,7 @@ describe('C425-EXCLUSION-REASONS-EXACT', () => {
       { reason: PostProcessingExclusionReason } | undefined
     >()
     expectTypeOf<PostProcessingChipStatus>().toEqualTypeOf<
-      'pending' | 'running' | 'done' | 'failed'
+      'pending' | 'running' | 'complete' | 'failed'
     >()
     expectTypeOf<Extract<PostProcessingChipStatus, 'excluded'>>().toEqualTypeOf<never>()
     expectTypeOf<RunDigestChainOutcomes['analysis']>().toEqualTypeOf<PostProcessingChipStatus>()

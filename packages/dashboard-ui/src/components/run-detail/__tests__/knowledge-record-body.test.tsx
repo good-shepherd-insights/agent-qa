@@ -91,7 +91,7 @@ function mountRecord(record: RecordShape | undefined): HTMLElement {
       },
       trace: { kind: "no-trace", reason: "pre-trace-run" },
     }],
-    curation: { status: "done" },
+    curation: { status: "complete" },
     learned: { changes: [], canaryAttributions: [] },
   })
   const view = projectKnowledgeView({ kind: "read", projection })

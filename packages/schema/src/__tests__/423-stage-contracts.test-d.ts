@@ -39,7 +39,7 @@ describe('C423-STAGES-EXACT', () => {
 
   test('pins exactly two chip keys and four statuses independently', () => {
     expectTypeOf<keyof PostProcessingChips>().toEqualTypeOf<'analysis' | 'curation'>()
-    expectTypeOf<PostProcessingChipStatus>().toEqualTypeOf<'pending' | 'running' | 'done' | 'failed'>()
+    expectTypeOf<PostProcessingChipStatus>().toEqualTypeOf<'pending' | 'running' | 'complete' | 'failed'>()
     expectTypeOf<
       Exclude<PostProcessingChipStatus, (typeof POST_PROCESSING_CHIP_STATUSES)[number]>
     >().toEqualTypeOf<never>()
@@ -47,8 +47,8 @@ describe('C423-STAGES-EXACT', () => {
       Exclude<(typeof POST_PROCESSING_CHIP_STATUSES)[number], PostProcessingChipStatus>
     >().toEqualTypeOf<never>()
     expectTypeOf<PostProcessingChips>().toEqualTypeOf<{
-      analysis: 'pending' | 'running' | 'done' | 'failed'
-      curation: 'pending' | 'running' | 'done' | 'failed'
+      analysis: 'pending' | 'running' | 'complete' | 'failed'
+      curation: 'pending' | 'running' | 'complete' | 'failed'
     }>()
   })
 

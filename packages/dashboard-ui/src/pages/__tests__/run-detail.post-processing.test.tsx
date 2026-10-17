@@ -402,7 +402,7 @@ describe("run detail owns the chip client, and hands the navbar its projection",
   it("hands the navbar the passing run's analysis card, straight off the read (SC3)", async () => {
     await renderPage()
     await act(async () => {
-      onReadOf()(statusRead("done", "done", { disposition: "drained" }, {
+      onReadOf()(statusRead("complete", "complete", { disposition: "drained" }, {
         notification: {
           schemaVersion: 3,
           runId: RUN_ID,
@@ -475,7 +475,7 @@ describe("run detail owns the chip client, and hands the navbar its projection",
   it("disposes and re-subscribes ONCE when the id changes, and forgets the old run's read", async () => {
     await renderPage()
     await act(async () => {
-      onReadOf()(statusRead("done", "done"))
+      onReadOf()(statusRead("complete", "complete"))
     })
     expect(lastNavbarView()).toMatchObject({ kind: "chips" })
 

@@ -74,7 +74,7 @@ function mount(element: ReactElement): HTMLElement {
 
 /** The projection's own mapping, restated once so a loose record below need only name its word. */
 const STATE_OF: Record<string, StageIndicatorState> = {
-  done: "complete",
+  complete: "complete",
   running: "running",
   pending: "pending",
   failed: "failed",
@@ -169,19 +169,19 @@ describe("a settled analysis indicator explains itself (D-13, roadmap SC3)", () 
   it("TRACER-PASSING-ANALYSIS-CARD: glyph plus word on a focusable root, card line 1 is the sentence", async () => {
     const host = render(chipsView(
       {
-        status: "done",
+        status: "complete",
         state: "complete",
         word: STAGE_INDICATOR_WORDS.analysis.complete,
         card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT },
       },
-      { status: "done", state: "complete", word: STAGE_INDICATOR_WORDS.curation.complete },
+      { status: "complete", state: "complete", word: STAGE_INDICATOR_WORDS.curation.complete },
     ))
     const root = chip(host, "analysis")
 
     expect(root.tagName).toBe("SPAN")
     expect(root.getAttribute("tabindex")).toBe("0")
     expect(root.getAttribute("data-stage-state")).toBe("complete")
-    expect(root.getAttribute("data-chip-status")).toBe("done")
+    expect(root.getAttribute("data-chip-status")).toBe("complete")
     expect(root.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true")
     expect(root.textContent).toContain(STAGE_INDICATOR_WORDS.analysis.complete)
     expect(root.querySelector(".sr-only")?.textContent).toBe("Analysis: complete, no issues found")
@@ -220,18 +220,18 @@ describe("a pending chip says who is going to move it (D-22)", () => {
 describe("a terminal chip says what it committed (D-21)", () => {
   it("renders curation's counts in its card, and never on the analysis card", async () => {
     const host = render(chipsView(
-      { status: "done", card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT } },
-      { status: "done", card: { outcome: "Curation complete — 4 added · 2 deprecated" } },
+      { status: "complete", card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT } },
+      { status: "complete", card: { outcome: "Curation complete — 4 added · 2 deprecated" } },
     ))
     expect(lineOf(await cardOf(host, "curation"), "outcome"))
       .toBe("Curation complete — 4 added · 2 deprecated")
     expect(lineOf(await cardOf(host, "analysis"), "outcome")).toBe(ANALYSIS_COMPLETE_NO_ISSUES_TEXT)
   })
 
-  it("renders the counts-absent line in the SAME slot — a `done` chip is never silent about counts (D-12)", async () => {
+  it("renders the counts-absent line in the SAME slot — a `complete` chip is never silent about counts (D-12)", async () => {
     const host = render(chipsView(
-      { status: "done" },
-      { status: "done", card: { outcome: `Curation complete — ${COUNTS_NOT_RECORDED_TEXT}` } },
+      { status: "complete" },
+      { status: "complete", card: { outcome: `Curation complete — ${COUNTS_NOT_RECORDED_TEXT}` } },
     ))
     expect(lineOf(await cardOf(host, "curation"), "outcome"))
       .toBe(`Curation complete — ${COUNTS_NOT_RECORDED_TEXT}`)
@@ -249,8 +249,8 @@ describe("`curated N facts, deprecated M` is gone from the header (D-16)", () =>
       "Curation complete — 4 curated · 2 deprecated",
     ]) {
       const host = render(chipsView(
-        { status: "done", card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT } },
-        { status: "done", card: { outcome, note: BREAKDOWN_NOT_RECORDED_TEXT } },
+        { status: "complete", card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT } },
+        { status: "complete", card: { outcome, note: BREAKDOWN_NOT_RECORDED_TEXT } },
       ))
       expect(host.textContent ?? "").not.toMatch(LEGACY)
       for (const stage of ["analysis", "curation"] as const) {
@@ -269,14 +269,14 @@ describe("`curated N facts, deprecated M` is gone from the header (D-16)", () =>
 // a header rendered without a page behind it must not grow an affordance that goes nowhere.
 describe("the curation chip is a click-through into the Knowledge tab (D-01)", () => {
   const SETTLED_CURATION = {
-    status: "done",
+    status: "complete",
     card: { outcome: `Curation complete — ${COUNTS_NOT_RECORDED_TEXT}` },
   }
 
   function renderWithClick(onCurationClick: () => void): HTMLElement {
     return mount(
       <PostProcessingChips
-        view={chipsView({ status: "done" }, SETTLED_CURATION)}
+        view={chipsView({ status: "complete" }, SETTLED_CURATION)}
         onCurationClick={onCurationClick}
       />,
     )
@@ -310,7 +310,7 @@ describe("the curation chip is a click-through into the Knowledge tab (D-01)", (
     const root = chip(host, "curation")
 
     expect(root.getAttribute("data-chip")).toBe("curation")
-    expect(root.getAttribute("data-chip-status")).toBe("done")
+    expect(root.getAttribute("data-chip-status")).toBe("complete")
     expect(root.getAttribute("data-stage-state")).toBe("complete")
     expect(lineOf(await cardOf(host, "curation"), "outcome")).toBe(SETTLED_CURATION.card.outcome)
   })
@@ -334,7 +334,7 @@ describe("the curation chip is a click-through into the Knowledge tab (D-01)", (
   })
 
   it("stays today's span with no title when the page passes no handler", () => {
-    const host = render(chipsView({ status: "done" }, { status: "done" }))
+    const host = render(chipsView({ status: "complete" }, { status: "complete" }))
     const root = chip(host, "curation")
 
     expect(root.tagName).toBe("SPAN")
@@ -354,7 +354,7 @@ describe("the analysis indicator is the door to the verdict when the page gave i
     card: { outcome: `Analysis failed — ${FAILED_REASON_ABSENT_TEXT.handedOff}` },
   }
   const SETTLED_CURATION = {
-    status: "done",
+    status: "complete",
     card: { outcome: `Curation complete — ${COUNTS_NOT_RECORDED_TEXT}` },
   }
 
@@ -423,7 +423,7 @@ describe("the analysis indicator is the door to the verdict when the page gave i
     const host = mount(
       <PostProcessingChips
         view={chipsView(
-          { status: "done", card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT } },
+          { status: "complete", card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT } },
           SETTLED_CURATION,
         )}
       />,
@@ -636,11 +636,11 @@ describe("a card explains timing and the chip-less stage on their own lines (D-1
   it("STAGE-CARD-LINES: timing and proposals paint as their own lines, and only where they belong", async () => {
     const host = render(chipsView(
       {
-        status: "done",
+        status: "complete",
         card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT, timing: "Queued 10:41:02 · finished in 5s" },
       },
       {
-        status: "done",
+        status: "complete",
         card: {
           outcome: "Curation complete — 2 added",
           timing: "Queued 10:41:09 · finished in 2s",
@@ -665,7 +665,7 @@ describe("a card explains timing and the chip-less stage on their own lines (D-1
     const host = mount(
       <PostProcessingChips
         view={chipsView(
-          { status: "done" },
+          { status: "complete" },
           {
             status: "failed",
             card: {
@@ -730,7 +730,7 @@ describe("a run the chain never enqueued reads excluded on both indicators (D-08
   })
 
   it("EXCLUDED-PAINT: a view carrying no exclusion carries NO reason attribute at all", () => {
-    const host = render(chipsView({ status: "done" }, { status: "done" }))
+    const host = render(chipsView({ status: "complete" }, { status: "complete" }))
     const area = host.querySelector('[data-chips-state="chips"]')!
     expect(area.hasAttribute("data-postprocessing-excluded")).toBe(false)
   })
@@ -777,7 +777,7 @@ describe("RunNavbar puts the chips beside the verdict badge (D-20)", () => {
         shortcutsOpen={false}
         onToggleShortcuts={() => {}}
         hasPostProcessing
-        postProcessing={chipsView({ status: "done" }, { status: "running" })}
+        postProcessing={chipsView({ status: "complete" }, { status: "running" })}
       /></MemoryRouter>,
     )
     // The 404-06 acceptance: ONE render site for the badge, so one element carries the raw status.

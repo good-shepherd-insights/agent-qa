@@ -93,7 +93,7 @@ function row(overrides: Partial<StepRowView> = {}): StepRowView {
 }
 
 const LEARNED_NOTHING: LearnedView = {
-  state: "done",
+  state: "complete",
   countLine: legacyCurationPairText(0, 0),
   sentence: NO_MEMORY_CHANGES_SENTENCE,
   rows: [],
@@ -312,7 +312,7 @@ describe("the ready arm paints four sections in KNOWLEDGE_SECTIONS order (427 D-
   function allZeroView(): KnowledgeView {
     const projection = RunKnowledgeProjectionSchema.parse({
       kind: "ready", runId: "run-427-01-absence", buildOrdinal: 2, knowledgeStore: "bound", steps: [],
-      curation: { status: "done", counts: { curated: 0, deprecated: 0 } },
+      curation: { status: "complete", counts: { curated: 0, deprecated: 0 } },
       learned: {
         changes: [], canaryAttributions: [],
         curationSnapshot: CurationSnapshotSchema.parse({
@@ -412,7 +412,7 @@ function snapshot() {
 function pageView(status: ReadyProjection["curation"]["status"], learned: Partial<ReadyProjection["learned"]>): KnowledgeView {
   const projection = RunKnowledgeProjectionSchema.parse({
     kind: "ready", runId: RUN_423, buildOrdinal: 2, knowledgeStore: "bound", steps: [],
-    curation: { status, ...(status === "done" ? { counts: { curated: 4, deprecated: 1 } } : {}) },
+    curation: { status, ...(status === "complete" ? { counts: { curated: 4, deprecated: 1 } } : {}) },
     learned: { changes: [], canaryAttributions: [], ...learned },
   })
   return projectKnowledgeView({ kind: "read", projection })
@@ -456,7 +456,7 @@ describe("423 D-15: the page path keeps failed-chain rows and states the snapsho
     const recorded = snapshot()
     const curation = recorded.rows.flatMap(row => row.changes.map(entry => joined(entry.change)))
     const later = joined(change("fact-added", "promoted", 91))
-    const view = mount(<TabKnowledge view={pageView("done", {
+    const view = mount(<TabKnowledge view={pageView("complete", {
       changes: [...curation, later], curationSnapshot: recorded, sinceThen: { changes: [later], count: 1 },
     })} />)
     const section = view.querySelector("[data-learned-state]")

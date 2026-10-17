@@ -1739,7 +1739,7 @@ export type PostProcessingRead =
  */
 export function isPostProcessingTerminal(status: PostProcessingStatus): boolean {
   const settled = (chip: PostProcessingStatus['chips']['analysis']): boolean =>
-    chip === 'done' || chip === 'failed'
+    chip === 'complete' || chip === 'failed'
   if (status.notification !== undefined) return true
   return settled(status.chips.analysis) && settled(status.chips.curation)
 }

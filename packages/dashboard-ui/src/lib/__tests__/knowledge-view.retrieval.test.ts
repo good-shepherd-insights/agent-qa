@@ -107,7 +107,7 @@ function ready(retrievalRung?: { schemaVersion: 1 | 2; rung: RetrievalRung; reas
       buildOrdinal: 3,
       knowledgeStore,
       steps: [],
-      curation: { status: 'done' },
+      curation: { status: 'complete' },
       learned: { changes: [], canaryAttributions: [] },
       ...(retrievalRung === undefined ? {} : { retrievalRung }),
     },

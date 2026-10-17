@@ -56,7 +56,7 @@ function tail(f: ReturnType<typeof markFixture>, snapshot: ReturnType<typeof tru
     releaseLease: () => ({ kind: 'released' }), nudgeDaemon: async () => undefined,
     runCurationTail: async () => undefined, createChipEmitter: () => ({ observe: () => undefined }),
     readPostProcessingStatus: async (): Promise<PostProcessingStatus> => ({ runId: f.handoff.runId,
-      chips: { analysis: 'done', curation: mode === 'failed' ? 'failed' : 'pending' },
+      chips: { analysis: 'complete', curation: mode === 'failed' ? 'failed' : 'pending' },
       ...(mode === 'done' || mode === 'failed' ? { notification: { ...notification(mode), runId: f.handoff.runId } } : {}) }),
     readRunDigest: async () => ({ markChanges: [] }),
   } as unknown as PostRunTailOperations

@@ -78,7 +78,7 @@ function readyView(steps: ReturnType<typeof step>[], changes: unknown[] = []): E
     buildOrdinal: 1,
     knowledgeStore: "bound",
     steps,
-    curation: { status: "done", counts: { curated: changes.length, deprecated: 0 } },
+    curation: { status: "complete", counts: { curated: changes.length, deprecated: 0 } },
     learned: { changes, canaryAttributions: [] },
   })
   const view = projectKnowledgeView({ kind: "read", projection })

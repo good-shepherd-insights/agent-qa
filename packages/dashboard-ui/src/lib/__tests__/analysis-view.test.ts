@@ -83,7 +83,7 @@ describe('projectAnalysisView joins verdicts to members by perTest (D-05)', () =
           { perTest: 3, testId: 't_three', sentence: 'the sentence for member THREE' },
         ],
       }),
-      'done',
+      'complete',
     )
 
     expect([...view.keys()].sort((a, b) => a - b), 'keyed by the member handle').toEqual([1, 3])
@@ -98,9 +98,9 @@ describe('projectAnalysisView joins verdicts to members by perTest (D-05)', () =
   it('projects an undefined analysis and an empty verdicts list to an EMPTY map (the green run)', () => {
     expect(projectAnalysisView(undefined, undefined).size).toBe(0)
     expect(projectAnalysisView(undefined, 'running').size).toBe(0)
-    expect(projectAnalysisView(undefined, 'done').size).toBe(0)
+    expect(projectAnalysisView(undefined, 'complete').size).toBe(0)
     // A green run: the op answered, and it answered that nothing needs explaining.
-    expect(projectAnalysisView(analysis(), 'done').size).toBe(0)
+    expect(projectAnalysisView(analysis(), 'complete').size).toBe(0)
   })
 
   it('keys a verdict whose sentence never arrived, and drops a sentence with no verdict', () => {
@@ -142,11 +142,11 @@ describe('projectAnalysisView joins verdicts to members by perTest (D-05)', () =
 })
 
 describe('the marker is the chip word and nothing else (D-09/D-11)', () => {
-  it('maps every chip word — pending and running provisional, failed failed, done nothing', () => {
+  it('maps every chip word — pending and running provisional, failed failed, complete nothing', () => {
     expect(markerFor('pending')).toBe('provisional')
     expect(markerFor('running')).toBe('provisional')
     expect(markerFor('failed')).toBe('failed')
-    expect(markerFor('done'), 'a terminal chain has nothing left to warn about').toBeUndefined()
+    expect(markerFor('complete'), 'a terminal chain has nothing left to warn about').toBeUndefined()
     expect(markerFor(undefined), 'no read has landed — that is not a marker').toBeUndefined()
   })
 
@@ -161,8 +161,8 @@ describe('the marker is the chip word and nothing else (D-09/D-11)', () => {
     expect(projectAnalysisView(bytes, 'pending').get(0)?.markerText).toBe(ANALYSIS_PROVISIONAL_TEXT)
     expect(projectAnalysisView(bytes, 'failed').get(0)?.marker).toBe('failed')
     expect(projectAnalysisView(bytes, 'failed').get(0)?.markerText).toBe(ANALYSIS_FAILED_FALLBACK_TEXT)
-    expect(projectAnalysisView(bytes, 'done').get(0)?.marker).toBeUndefined()
-    expect(projectAnalysisView(bytes, 'done').get(0)?.markerText).toBeUndefined()
+    expect(projectAnalysisView(bytes, 'complete').get(0)?.marker).toBeUndefined()
+    expect(projectAnalysisView(bytes, 'complete').get(0)?.markerText).toBeUndefined()
   })
 
   it('gives the SAME marker to a sentence with the fallback words and one without them', () => {
@@ -180,7 +180,7 @@ describe('the marker is the chip word and nothing else (D-09/D-11)', () => {
       sentences: [{ perTest: 0, testId: 't_0', sentence: 'the submit button never became enabled' }],
     })
 
-    for (const chip of ['pending', 'running', 'done', 'failed'] as const) {
+    for (const chip of ['pending', 'running', 'complete', 'failed'] as const) {
       expect(
         projectAnalysisView(withWords, chip).get(0)?.marker,
         `the ${chip} marker must not read the sentence`,
@@ -189,7 +189,7 @@ describe('the marker is the chip word and nothing else (D-09/D-11)', () => {
 
     // And a floor sentence under a `done` chain carries no marker at all: the analysis finished
     // and the deterministic verdict is the answer, not a provisional one.
-    expect(projectAnalysisView(withWords, 'done').get(0)?.marker).toBeUndefined()
+    expect(projectAnalysisView(withWords, 'complete').get(0)?.marker).toBeUndefined()
   })
 })
 
@@ -205,7 +205,7 @@ describe('clusters render as a per-member sibling line (D-08)', () => {
         ],
         clusters: [cluster([0, 4, 7])],
       }),
-      'done',
+      'complete',
     )
 
     expect(view.get(4)?.siblings).toEqual([
@@ -229,7 +229,7 @@ describe('clusters render as a per-member sibling line (D-08)', () => {
         sentences: [{ perTest: 0, testId: 't_0', sentence: 's0' }],
         clusters: [cluster([0])],
       }),
-      'done',
+      'complete',
     )
 
     expect(view.get(0)?.siblings).toEqual([])
@@ -246,7 +246,7 @@ describe('clusters render as a per-member sibling line (D-08)', () => {
         ],
         clusters: [cluster([0, 4])],
       }),
-      'done',
+      'complete',
     )
 
     expect(view.get(9)?.siblings).toEqual([])
@@ -267,7 +267,7 @@ describe('cited evidence rides the verdict, and absence is counted (D-01/D-19)',
           { perTest: 1, testId: 't_1', sentence: 's1' },
         ],
       }),
-      'done',
+      'complete',
     )
 
     expect(view.get(0)?.citedSteps).toEqual([2, 3])
@@ -296,7 +296,7 @@ describe('cited evidence rides the verdict, and absence is counted (D-01/D-19)',
         ],
         sentences: [{ perTest: 0, testId: 't_0', sentence: 's0' }],
       }),
-      'done',
+      'complete',
     )
 
     expect(view.get(0)?.citedArtifacts).toEqual([
@@ -322,7 +322,7 @@ describe('cited evidence rides the verdict, and absence is counted (D-01/D-19)',
         ],
         sentences: [{ perTest: 0, testId: 't_0', sentence: 's0' }],
       }),
-      'done',
+      'complete',
     )
 
     expect(view.get(0)?.missingEvidence, 'nothing missing is no count line').toBeUndefined()
@@ -360,7 +360,7 @@ describe('the projection reads circularity evidence and invents none (422 D-17/D
         verdicts: [verdict(0, misdirection === undefined ? {} : { misdirection })],
         sentences: [{ perTest: 0, testId: 't_0', sentence: 'observed (step 0): "boom"' }],
       }),
-      'done',
+      'complete',
     ).get(0)?.misdirectionEvidence
   }
 

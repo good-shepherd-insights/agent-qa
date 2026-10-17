@@ -248,7 +248,7 @@ function digestOutput(analysis: AnalysisGetOutput = analysisOutput()): RunDigest
   return {
     runId,
     verdictClusters: analysis.clusters,
-    chain: { analysis: 'done', curation: 'pending' },
+    chain: { analysis: 'complete', curation: 'pending' },
     // 432-09: the fixes this run's marks applied, read from its own ledger; no proposal is counted.
     markChanges: [
       { markId: 'mark_000000000001', ordinal: 1, fix: 'fact',
@@ -261,7 +261,7 @@ function digestOutput(analysis: AnalysisGetOutput = analysisOutput()): RunDigest
     lines: [
       `digest — ${runId}`,
       ...(block === '' ? [] : [block]),
-      'chain — analysis: done · curation: pending',
+      'chain — analysis: complete · curation: pending',
       'marks — 2 changes applied:',
       '  mark_000000000001  fact: 1 record changed',
       '  mark_000000000002  test-edit: wrote tests/checkout.yaml',
@@ -278,10 +278,10 @@ function pendingStatus(): PostProcessingStatus {
   }
 }
 
-function doneStatus(): PostProcessingStatus {
+function completeStatus(): PostProcessingStatus {
   return {
     runId,
-    chips: { analysis: 'done', curation: 'pending' },
+    chips: { analysis: 'complete', curation: 'pending' },
   }
 }
 
@@ -421,7 +421,7 @@ const ANALYZE_COMPLETED = {
 
 describe('the digest block — in-process analyze-run completed (D-17, over 389 D-12/D-15)', () => {
   it('prints the digest after the exit line, bytes identical to the op result', async () => {
-    const h = harness({ runNextJob: pump([ANALYZE_COMPLETED]), status: doneStatus() })
+    const h = harness({ runNextJob: pump([ANALYZE_COMPLETED]), status: completeStatus() })
     const tail = runPostRunTail(options(h))
     await tail.drain()
     await tail.finish()
@@ -430,7 +430,7 @@ describe('the digest block — in-process analyze-run completed (D-17, over 389 
     expect(lines).toHaveLength(2)
     // The exit line first — untouched vocabulary, and NO pointer on this leg: the digest
     // itself is one line down, so a fetch command would be noise (the D-17 either/or).
-    expect(lines[0]).toBe('post-processing — analysis: done · curation: pending · trust priors: provisional')
+    expect(lines[0]).toBe('post-processing — analysis: complete · curation: pending · trust priors: provisional')
     expect(lines[0]).not.toContain('agent-qa digest')
     expect(lines[0]).not.toContain('changes applied')
 
@@ -460,7 +460,7 @@ describe('the digest block — in-process analyze-run completed (D-17, over 389 
   it('prints the block after the terminal human line when the chain finished (D-09 + D-17)', async () => {
     const h = harness({
       runNextJob: pump([ANALYZE_COMPLETED]),
-      status: { ...doneStatus(), notification: terminalNotification() },
+      status: { ...completeStatus(), notification: terminalNotification() },
     })
     const tail = runPostRunTail(options(h))
     await tail.drain()
@@ -486,7 +486,7 @@ describe('the digest block — in-process analyze-run completed (D-17, over 389 
           ...(nonSignal ? { nonSignal: { environment: 1, timeout: 2, flake: 3 }, rerunExcluded: 2 } : {}) } } : {}),
       }))
       const h = harness({ runNextJob: pump([ANALYZE_COMPLETED]),
-        status: { ...doneStatus(), notification: terminalNotification() } })
+        status: { ...completeStatus(), notification: terminalNotification() } })
       const tail = runPostRunTail({ ...options(h), agentQaRoot: root })
       await tail.drain()
       await tail.finish()
@@ -504,7 +504,7 @@ describe('the digest block — in-process analyze-run completed (D-17, over 389 
       // analyze-run completion is (the 700–716 house rule).
       const h = harness({
         runNextJob: vi.fn(async () => ANALYZE_COMPLETED),
-        status: doneStatus(),
+        status: completeStatus(),
       })
       let reads = 0
       ;(h.operations as { now: () => number }).now = () => 1_000 + (reads++) * 30_000
@@ -527,7 +527,7 @@ describe('the digest block — in-process analyze-run completed (D-17, over 389 
     // is now consumed one layer up.
     const h = harness({
       runNextJob: pump([ANALYZE_COMPLETED]),
-      status: doneStatus(),
+      status: completeStatus(),
       digest: digestOutput({ runId, verdicts: [], sentences: [], clusters: [] }),
     })
     const tail = runPostRunTail(options(h))
@@ -536,7 +536,7 @@ describe('the digest block — in-process analyze-run completed (D-17, over 389 
 
     const lines = h.info.mock.calls.map(([message]) => String(message))
     expect(lines).toHaveLength(2)
-    expect(lines[0]).toBe('post-processing — analysis: done · curation: pending · trust priors: provisional')
+    expect(lines[0]).toBe('post-processing — analysis: complete · curation: pending · trust priors: provisional')
     expect(lines[1]).not.toContain('analysis — ')
     expect(lines[1]).toContain('marks — 2 changes applied:')
   })
@@ -544,7 +544,7 @@ describe('the digest block — in-process analyze-run completed (D-17, over 389 
   it('a failed digest read costs the BLOCK and nothing else — warned, never thrown', async () => {
     const h = harness({
       runNextJob: pump([ANALYZE_COMPLETED]),
-      status: doneStatus(),
+      status: completeStatus(),
       readRunDigest: vi.fn(async () => {
         throw new Error('the digest could not be composed')
       }),
@@ -672,7 +672,7 @@ describe('C441-GAP-DISPLAY', () => {
     const redactor = new SecretRedactor(SecretStore.fromEnvContent('PW_441=Hunter-42-zz\n'))
     const h = harness({
       runNextJob: pump([ANALYZE_COMPLETED]),
-      status: doneStatus(),
+      status: completeStatus(),
       readRunDigest: vi.fn(async () => {
         throw new Error('the digest for Hunter-42-zz could not be composed')
       }),
@@ -693,7 +693,7 @@ describe('C441-GAP-DISPLAY', () => {
 
 describe('prohibitions: never-wait and print-not-publish (388 D-03 / C13)', () => {
   it('the print path emits NO chip or bus event — chips observe pump outcomes only', async () => {
-    const h = harness({ runNextJob: pump([ANALYZE_COMPLETED]), status: doneStatus() })
+    const h = harness({ runNextJob: pump([ANALYZE_COMPLETED]), status: completeStatus() })
     const tail = runPostRunTail(options(h))
     await tail.drain()
     const observedDuringPump = h.chipObserve.mock.calls.length

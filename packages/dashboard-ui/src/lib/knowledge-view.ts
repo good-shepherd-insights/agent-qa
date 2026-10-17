@@ -1696,10 +1696,10 @@ export interface StepRowView {
  * FOUR OF THEM MIRROR THE CURATION CHIP and the fifth is the one the chip cannot say. A reader
  * looking at the header and the panel at once must not see two different accounts of the same
  * chain; `counts-absent` is the extra state because "settled, and nobody wrote the numbers down"
- * is a fact about the frozen row rather than about the chain, and collapsing it into `done` would
+ * is a fact about the frozen row rather than about the chain, and collapsing it into `complete` would
  * make an unrecorded run indistinguishable from one that changed nothing.
  */
-export type LearnedState = 'pending' | 'running' | 'done' | 'failed' | 'counts-absent'
+export type LearnedState = 'pending' | 'running' | 'complete' | 'failed' | 'counts-absent'
 
 export type LearnedLeadSource = 'joined' | 'absent' | 'not-recorded'
 
@@ -2254,7 +2254,7 @@ export function learnedView(
       : { state: 'failed', sentence: CURATION_FAILED_TEXT, rows: [], ...degraded, ...readNote, ...snapshot }
   }
 
-  const state: LearnedState = counts === undefined ? 'counts-absent' : 'done'
+  const state: LearnedState = counts === undefined ? 'counts-absent' : 'complete'
 
   // A SETTLED ARM'S CAUSE, IN THE ORDER THE READ JUSTIFIES THEM (425-06 · D-19). An incomplete
   // store scan is a proven reason rows are missing; with a clean read there is no proven reason at

@@ -112,7 +112,7 @@ function ledgerChange(recordId: string, change: LedgerChange["change"], atOrdina
 function renderLedger(changes: LedgerChange[]): HTMLElement {
   const projection = RunKnowledgeProjectionSchema.parse({
     kind: "ready", runId: "run-427-08-ledger", buildOrdinal: 2, knowledgeStore: "bound", steps: [],
-    curation: { status: "done", counts: { curated: changes.length, deprecated: 0 } },
+    curation: { status: "complete", counts: { curated: changes.length, deprecated: 0 } },
     learned: { changes, canaryAttributions: [] },
   })
   const view = projectKnowledgeView({ kind: "read", projection })
@@ -317,13 +317,13 @@ describe("a settled curation with no counts says so — never a zero (D-12)", ()
 describe("a settled curation that changed nothing says that, and lists nothing (D-12)", () => {
   it("renders the both-zero phrase beside the heading and the changed-nothing sentence", () => {
     const host = render({
-      state: "done",
+      state: "complete",
       countLine: legacyCurationPairText(0, 0),
       sentence: NO_MEMORY_CHANGES_SENTENCE,
       rows: [],
     })
 
-    expect(stateOf(host)).toBe("done")
+    expect(stateOf(host)).toBe("complete")
     expect(host.querySelector("[data-learned-count-line]")?.textContent).toBe(legacyCurationPairText(0, 0))
     expect(host.textContent).toContain(NO_MEMORY_CHANGES_SENTENCE)
     expect(rowsOf(host).length).toBe(0)
@@ -331,7 +331,7 @@ describe("a settled curation that changed nothing says that, and lists nothing (
 
   it("keeps the counts on screen when they moved but no change record reached this run", () => {
     const host = render({
-      state: "done",
+      state: "complete",
       countLine: legacyCurationPairText(3, 1),
       sentence: CHANGES_NOT_AVAILABLE_TEXT,
       rows: [],
@@ -355,7 +355,7 @@ describe("a settled curation that changed nothing says that, and lists nothing (
 describe("the heading spells one number one way, and labels a coarser one (425-06)", () => {
   it("LEARNED-BREAKDOWN-LINE: renders the five-bucket line in the heading's own count slot", () => {
     const breakdown = { added: 1, confirmed: 1, superseded: 1, deprecated: 1, proposed: 1 }
-    const host = render({ state: "done", countLine: curationBreakdownLine(breakdown), rows: [] })
+    const host = render({ state: "complete", countLine: curationBreakdownLine(breakdown), rows: [] })
 
     expect(host.querySelector("[data-learned-count-line]")?.textContent)
       .toBe("1 added · 1 confirmed · 1 superseded · 1 deprecated · 1 proposed")
@@ -364,7 +364,7 @@ describe("the heading spells one number one way, and labels a coarser one (425-0
 
   it("LEARNED-LEGACY-NOTE: renders the note as its own muted paragraph beneath the heading row", () => {
     const host = render({
-      state: "done",
+      state: "complete",
       countLine: legacyCurationPairText(2, 0),
       countNote: BREAKDOWN_NOT_RECORDED_TEXT,
       rows: [],
@@ -379,7 +379,7 @@ describe("the heading spells one number one way, and labels a coarser one (425-0
   })
 
   it("LEARNED-LEGACY-NOTE: omits the note element ENTIRELY when there is no absence to label", () => {
-    const host = render({ state: "done", countLine: legacyCurationPairText(3, 1), rows: [] })
+    const host = render({ state: "complete", countLine: legacyCurationPairText(3, 1), rows: [] })
 
     expect(host.querySelector("[data-learned-count-note]")).toBeNull()
   })
@@ -398,7 +398,7 @@ describe("a mismatch is explained beneath the heading, and only when there is on
 
   it("RECONCILIATION-ONLY-ON-MISMATCH: renders the count and the cause as their own paragraphs", () => {
     const host = render({
-      state: "done",
+      state: "complete",
       countLine: curationBreakdownLine(breakdown),
       rows: [row()],
       curationSnapshot: {
@@ -429,7 +429,7 @@ describe("a mismatch is explained beneath the heading, and only when there is on
 
   it("RECONCILIATION-ONLY-ON-MISMATCH: renders NO element at all when the numbers agree", () => {
     const host = render({
-      state: "done",
+      state: "complete",
       countLine: curationBreakdownLine(breakdown),
       rows: [row()],
       curationSnapshot: { breakdown, sinceThenCount: 0 },
@@ -468,7 +468,7 @@ describe("a mismatch is explained beneath the heading, and only when there is on
 
 describe("the record list is one row per affected record, in 425's words (D-10, 427 D-15)", () => {
   const populated: LearnedView = {
-    state: "done",
+    state: "complete",
     countLine: legacyCurationPairText(3, 1),
     rows: [
       row({ key: "0", bucket: "confirmed", primary: "a fact promoted to trusted" }),
@@ -495,7 +495,7 @@ describe("the record list is one row per affected record, in 425's words (D-10, 
   // RE-SPELLED 427-08 from 'renders the kind word in the row's badge as well as in its attribute'.
   it("BUCKET-LABEL-VOCABULARY: each row's label reads the 425 breakdown word it is stamped with", () => {
     const snapshot = fiveBucketSnapshot()
-    const host = render(learnedView(readyProjection("done", {
+    const host = render(learnedView(readyProjection("complete", {
       changes: snapshotChanges(), curationSnapshot: snapshot, sinceThen: { changes: [], count: 0 },
     }, { curated: 4, deprecated: 1 })))
     const line = curationBreakdownLine(snapshot.breakdown)
@@ -599,7 +599,7 @@ describe("a curated NEW fact is painted, not denied (CR-04, R-407-15-01)", () =>
   // proposed row says it is held for review". Nothing reviews it; it is recorded and not applied.
   it("PROPOSED-NOT-APPLIED: a proposed row says it is recorded and not applied, and an open question says so", () => {
     const host = render({
-      state: "done",
+      state: "complete",
       countLine: curationBreakdownLine({ added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 2 }),
       rows: [
         row({ key: "0", bucket: "proposed", primary: "the cart page lives at /view_cart", kind: "fact", note: PROPOSED_NOTE }),
@@ -621,7 +621,7 @@ describe("a curated NEW fact is painted, not denied (CR-04, R-407-15-01)", () =>
       ...change,
       recordContent: { ...joinedContent(change.recordId), summary: `a stored fact, number ${String(index)}`, content: "a body" },
     })))
-    const host = render(learnedView(readyProjection("done", {
+    const host = render(learnedView(readyProjection("complete", {
       changes, curationSnapshot: snapshot, sinceThen: { changes: [], count: 0 },
     }, { curated: 4, deprecated: 1 })))
 
@@ -643,7 +643,7 @@ describe("a curated NEW fact is painted, not denied (CR-04, R-407-15-01)", () =>
   it("BUCKET-LABEL-MEANINGS: every bucket label is a button named by its word, whose tooltip and one description are its meaning", async () => {
     const buckets = ["added", "confirmed", "superseded", "deprecated", "proposed"] as const
     const host = render({
-      state: "done",
+      state: "complete",
       countLine: curationBreakdownLine({ added: 1, confirmed: 1, superseded: 1, deprecated: 1, proposed: 1 }),
       rows: buckets.map((bucket, index) => row({ key: String(index), bucket, primary: `a ${bucket} fact` })),
     })
@@ -683,7 +683,7 @@ describe("a curated NEW fact is painted, not denied (CR-04, R-407-15-01)", () =>
   it("renders BOTH changes of one record as one row, both events in its ledger block, with no duplicate-key warning", () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => undefined)
     try {
-      const projection = readyProjection("done", {
+      const projection = readyProjection("complete", {
         changes: [recorded("r", "confirmed", 12), recorded("r", "superseded", 13)],
       }, { curated: 1, deprecated: 0 })
       const view = projectKnowledgeView({ kind: "read", projection })
@@ -708,7 +708,7 @@ describe("a curated NEW fact is painted, not denied (CR-04, R-407-15-01)", () =>
 
 describe("an unreadable store is stamped on the root, never inferred from an empty list (407-14)", () => {
   const unreadable: LearnedView = {
-    state: "done",
+    state: "complete",
     countLine: legacyCurationPairText(3, 1),
     sentence: CHANGES_UNREADABLE_TEXT,
     rows: [],
@@ -729,7 +729,7 @@ describe("an unreadable store is stamped on the root, never inferred from an emp
 
   it("omits the attribute ENTIRELY on a clean read — absent, never an empty string", () => {
     const host = render({
-      state: "done",
+      state: "complete",
       countLine: legacyCurationPairText(3, 1),
       sentence: CHANGES_NOT_AVAILABLE_TEXT,
       rows: [],
@@ -737,7 +737,7 @@ describe("an unreadable store is stamped on the root, never inferred from an emp
 
     const section = host.querySelector("[data-learned-state]")
     expect(section?.hasAttribute("data-learned-read")).toBe(false)
-    expect(stateOf(host)).toBe("done")
+    expect(stateOf(host)).toBe("complete")
     // AND NO NOTE AT ALL (407-18). An empty paragraph beneath a clean read would be a degradation
     // stamp nobody earned; the element is absent, not blank.
     expect(host.querySelector("[data-learned-read-note]")).toBeNull()
@@ -747,7 +747,7 @@ describe("an unreadable store is stamped on the root, never inferred from an emp
 describe("a partial read is painted beside the rows, and beneath an unsettled sentence (REVIEW CR-01, WR-05)", () => {
   it("paints the row, the incomplete stamp and the read note — and NO sentence", () => {
     const host = render({
-      state: "done",
+      state: "complete",
       countLine: legacyCurationPairText(1, 0),
       rows: [row()],
       scanIncomplete: true,
@@ -790,7 +790,7 @@ describe("a partial read is painted beside the rows, and beneath an unsettled se
   it("folds two confirmations that differ ONLY in the evidence token into one row, with no duplicate-key warning", () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => undefined)
     try {
-      const host = render(learnedView(readyProjection("done", {
+      const host = render(learnedView(readyProjection("complete", {
         changes: [
           recorded("r", "confirmed", 12, { evidenceToken: "tok-a" }),
           recorded("r", "confirmed", 12, { evidenceToken: "tok-b" }),
@@ -807,7 +807,7 @@ describe("a partial read is painted beside the rows, and beneath an unsettled se
 
   it("renders the row() default key as the row index the view assigns", () => {
     expect(row().key).toBe("0")
-    const view = learnedView(readyProjection("done", {
+    const view = learnedView(readyProjection("complete", {
       changes: [recorded("a", "added", 1), recorded("b", "confirmed", 2)],
     }, { curated: 2, deprecated: 0 }))
     expect(view.rows.map(entry => entry.key)).toEqual(["0", "1"])
@@ -818,7 +818,7 @@ describe("a partial read is painted beside the rows, and beneath an unsettled se
 // shows what changed; no pending-proposals line, review command or copy control is rendered, in any state.
 describe("no pending-proposals line or review command is rendered (432-09 D-25)", () => {
   it.each([
-    ["done", { state: "done", countLine: legacyCurationPairText(0, 0), sentence: NO_MEMORY_CHANGES_SENTENCE, rows: [] }],
+    ["complete", { state: "complete", countLine: legacyCurationPairText(0, 0), sentence: NO_MEMORY_CHANGES_SENTENCE, rows: [] }],
     ["pending", { state: "pending", sentence: CHANGES_PENDING_TEXT, rows: [] }],
   ] as const)("C432-NO-REVIEW-CTA: a %s half renders no proposals line, command or copy button", (_state, view) => {
     const host = render(view as LearnedView)
@@ -954,7 +954,7 @@ describe("423 D-15: a failed chain keeps its learned rows beside the snapshot se
   })
 
   it("FAILED-NO-SNAPSHOT: a historical settled chain states the same absence and keeps its legacy counts", () => {
-    const projection = readyProjection("done", { changes: [joined(recorded("fact-legacy", "confirmed", 9))] }, { curated: 1, deprecated: 0 })
+    const projection = readyProjection("complete", { changes: [joined(recorded("fact-legacy", "confirmed", 9))] }, { curated: 1, deprecated: 0 })
     const host = render(learnedView(projection))
 
     expect(sectionOf(host).getAttribute("data-learned-snapshot")).toBe("absent")
@@ -965,7 +965,7 @@ describe("423 D-15: a failed chain keeps its learned rows beside the snapshot se
   it("ALL-FIVE-BUCKETS: a completed snapshot is recorded, and every change it names stays in this run's curation", () => {
     const snapshot = fiveBucketSnapshot()
     const changes = snapshotChanges()
-    const projection = readyProjection("done", {
+    const projection = readyProjection("complete", {
       changes, curationSnapshot: snapshot, sinceThen: { changes: [], count: 0 },
     }, { curated: 4, deprecated: 1 })
     const view = learnedView(projection)
@@ -1000,7 +1000,7 @@ describe("423 D-15: a failed chain keeps its learned rows beside the snapshot se
   it("LATER-LINKED-ROWS: a later promotion is painted as a since-then row beside the unchanged curation rows", () => {
     const snapshot = fiveBucketSnapshot()
     const later = joined(recorded("fact-added", "promoted", 91))
-    const projection = readyProjection("done", {
+    const projection = readyProjection("complete", {
       changes: [...snapshotChanges(), later], curationSnapshot: snapshot, sinceThen: { changes: [later], count: 1 },
     }, { curated: 4, deprecated: 1 })
     const view = learnedView(projection)

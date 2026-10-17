@@ -199,7 +199,7 @@ it('adopts a real prior generation in new bundle/index hosts and matches report,
       releaseLease: () => ({ kind: 'released' }), nudgeDaemon: async () => undefined,
       runCurationTail: async () => undefined, createChipEmitter: () => ({ observe: () => undefined }),
       readPostProcessingStatus: async (): Promise<PostProcessingStatus> => ({ runId: f.handoff.runId,
-        chips: { analysis: 'done', curation: mode === 'failed' ? 'failed' : 'pending' },
+        chips: { analysis: 'complete', curation: mode === 'failed' ? 'failed' : 'pending' },
         ...(mode === 'done' || mode === 'failed' ? { notification } : {}) }),
       readRunDigest: async () => ({ markChanges: [] }),
     } as unknown as PostRunTailOperations

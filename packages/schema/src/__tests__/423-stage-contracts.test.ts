@@ -10,7 +10,7 @@ import {
 } from '../index'
 import * as notification from '../notification/index'
 
-const legacy = { runId: 'stage-contract-fixture', chips: { analysis: 'done', curation: 'pending' } }
+const legacy = { runId: 'stage-contract-fixture', chips: { analysis: 'complete', curation: 'pending' } }
 
 describe('STAGE-DETAIL-OPTIONAL', () => {
   test('parses all three recorded stage details through the public result schema', () => {
@@ -93,12 +93,12 @@ describe('C423-STAGES-EXACT', () => {
   })
 
   test('keeps exactly two required chips with exactly four statuses', () => {
-    expect(POST_PROCESSING_CHIP_STATUSES).toEqual(['pending', 'running', 'done', 'failed'])
+    expect(POST_PROCESSING_CHIP_STATUSES).toEqual(['pending', 'running', 'complete', 'failed'])
     expect(Object.keys(PostProcessingStatusSchema.shape.chips.shape)).toEqual([
       'analysis',
       'curation',
     ])
-    for (const status of ['pending', 'running', 'done', 'failed']) {
+    for (const status of ['pending', 'running', 'complete', 'failed']) {
       expect(
         PostProcessingStatusSchema.safeParse({
           ...legacy,
@@ -107,9 +107,10 @@ describe('C423-STAGES-EXACT', () => {
       ).toBe(true)
     }
     for (const chips of [
-      { analysis: 'done' },
-      { analysis: 'done', curation: 'unknown' },
-      { ...legacy.chips, proposals: 'done' },
+      { analysis: 'complete' },
+      { analysis: 'complete', curation: 'unknown' },
+      { analysis: 'done', curation: 'done' },
+      { ...legacy.chips, proposals: 'complete' },
     ]) {
       expect(PostProcessingStatusSchema.safeParse({ ...legacy, chips }).success).toBe(false)
     }

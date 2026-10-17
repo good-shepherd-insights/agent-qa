@@ -100,13 +100,13 @@ type PostProcessingReadOutcome =
  * TWO CLAUSES BECAUSE THERE ARE TWO TERMINALS AND THE ROW OUTRANKS THE CHIPS. A chain that wrote
  * its one `RunNotification` is over by definition — that row IS the chain's terminal receipt — and
  * a projection that disagreed with it would be a chain that ended twice. Absent the row, both chips
- * having settled (`done` or `failed`, the only two settled words in the four-word vocabulary) is
+ * having settled (`complete` or `failed`, the only two settled words in the four-word vocabulary) is
  * the same fact read one layer down.
  */
 export function isPostProcessingTerminal(status: PostProcessingStatus): boolean {
   if (status.notification !== undefined) return true
   const settled = (chip: PostProcessingStatus['chips']['analysis']): boolean =>
-    chip === 'done' || chip === 'failed'
+    chip === 'complete' || chip === 'failed'
   return settled(status.chips.analysis) && settled(status.chips.curation)
 }
 

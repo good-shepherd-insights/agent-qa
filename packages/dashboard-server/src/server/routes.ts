@@ -727,7 +727,7 @@ async function readInsightsKnowledgeChanges(
     }
     const curation = outcome.body.curation.status
     let state: InsightsRunCuration
-    if (curation === 'done') state = 'read'
+    if (curation === 'complete') state = 'read'
     else if (curation === 'failed') state = 'failed'
     else if (curation === 'pending' && await isExcludedFromPostProcessing(host, runId)) state = 'read'
     else state = 'unfinished'

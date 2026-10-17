@@ -1612,8 +1612,8 @@ async function readSettledProjection(
       const parsed = RunKnowledgeProjectionSchema.safeParse(JSON.parse(body))
       if (parsed.success) {
         recorded.projection = parsed.data
-        const status = parsed.data.kind === 'ready' ? parsed.data.curation.status : 'done'
-        if (status === 'done' || status === 'failed') return
+        const status = parsed.data.kind === 'ready' ? parsed.data.curation.status : 'complete'
+        if (status === 'complete' || status === 'failed') return
       }
     }
     if (Date.now() >= deadline) return
@@ -2322,7 +2322,7 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
       absencesOf('changes'),
       `Memory changes did not state exactly one absence, NO_MEMORY_CHANGES_SENTENCE.${seen}`,
     ).toEqual([NO_MEMORY_CHANGES_SENTENCE])
-    expect(observed.learnedState, `the learned-nothing chain is not settled \`done\`.${seen}`).toBe('done')
+    expect(observed.learnedState, `the learned-nothing chain is not settled \`complete\`.${seen}`).toBe('complete')
     expect(
       observed.learnedCountLine,
       `the Memory changes count line does not read the all-zero breakdown's words.${seen}`,
@@ -2499,7 +2499,7 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
     ).toBeDefined()
     // `counts-absent` is the fifth word the chip cannot say: a settled chain whose frozen row
     // recorded neither count. Every other word mirrors the chip exactly.
-    const expected = projection.curation.status === 'done' && projection.curation.counts === undefined
+    const expected = projection.curation.status === 'complete' && projection.curation.counts === undefined
       ? 'counts-absent'
       : projection.curation.status
     expect(
@@ -2600,7 +2600,7 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
       + `BEFORE the sentence ladder (407-15) — a served record is never denied.${context('served', served)}`,
     ).toBeUndefined()
     expect(
-      ['done', 'counts-absent'].includes(painted.learnedState ?? ''),
+      ['complete', 'counts-absent'].includes(painted.learnedState ?? ''),
       'the Learned half is not in a settled state on a run whose chain already reached a terminal '
       + `curation word.${context('served', served)}`,
     ).toBe(true)
@@ -2845,16 +2845,16 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
       const chainWord = ready.curation.status
       const arm = chainWord === 'pending' || chainWord === 'running'
         ? 'unsettled'
-        : chainWord === 'failed' ? 'settled-and-failed' : 'settled-and-done'
+        : chainWord === 'failed' ? 'settled-and-failed' : 'settled-and-complete'
       const armNote = arm === 'unsettled'
         ? ' (UNSETTLED chain — it has not finished deciding, so it lists NOTHING: D-12)'
         : arm === 'settled-and-failed'
-          ? ' (SETTLED-AND-FAILED chain — IT LISTS EXACTLY WHAT A SETTLED-AND-DONE ONE WOULD. A '
+          ? ' (SETTLED-AND-FAILED chain — IT LISTS EXACTLY WHAT A SETTLED-AND-COMPLETE ONE WOULD. A '
             + 'chain that fell over cannot un-commit records it had already written, so the rows '
             + 'stand and the failure is reported BESIDE them — by the Learned root\'s state word '
             + 'and by `[data-learned-chain-note]`, never by the absence of rows. Authority: owner '
             + 'ruling 2026-08-31, REVIEW CR-01, G-407-12.)'
-          : ' (SETTLED-AND-DONE chain — the other arm that lists rows)'
+          : ' (SETTLED-AND-COMPLETE chain — the other arm that lists rows)'
       expect(
         painted.learnedRows,
         `AGREEMENT 1 BROKE in the ${entry.world} world: the Memory changes rows the page painted `
@@ -2984,7 +2984,7 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
     expect(
       served.failedWithChanges?.jobRowsUpdated ?? 0,
       `the sixth world's curation plant changed a number of \`jobs\` rows other than exactly one. `
-      + `Nought means it addressed no row at all and the world would read \`done\`; more than one `
+      + `Nought means it addressed no row at all and the world would read \`complete\`; more than one `
       + `means \`chainJobIdsForRun(runId, DIGEST_JOB_ID_SOURCE).curateMemory\` matched a `
       + `neighbouring run's row.${seenFWC}`,
     ).toBe(1)
@@ -3067,11 +3067,11 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
       (served.malformed?.projection?.kind === 'ready'
         ? served.malformed.projection
         : undefined)?.curation.status,
-      `the malformed world's chain no longer reads \`done\`. The sixth world's plant was not `
+      `the malformed world's chain no longer reads \`complete\`. The sixth world's plant was not `
       + `reverted before \`plantMalformedBundle\` ran, so an EXISTING world's recorded reading has `
       + `been overwritten by this plan — the census can no longer be compared with round 3's, and `
       + `the four original rows are no longer byte-identical.${seenFWC}`,
-    ).toBe('done')
+    ).toBe('complete')
 
     // ── NON-VACUITY, on the FIFTH WORLD — three assertions, three messages, three reasons.
     //
@@ -3097,7 +3097,7 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
     expect(
       served.attributedFailed?.jobRowsUpdated ?? 0,
       `the curation plant changed a number of \`jobs\` rows other than exactly one. Nought means it `
-      + `addressed no row at all and the world would read \`done\`; more than one means the `
+      + `addressed no row at all and the world would read \`complete\`; more than one means the `
       + `derivation matched a neighbouring run's row.${seenAF}`,
     ).toBe(1)
 

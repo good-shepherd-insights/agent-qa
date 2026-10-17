@@ -27,7 +27,7 @@ import {
 
 type ReadyProjection = Extract<RunKnowledgeProjection, { kind: 'ready' }>
 type Outcome = 'confirmed' | 'contradicted' | 'helpful' | 'harmful'
-type CurationStatus = 'pending' | 'running' | 'done' | 'failed'
+type CurationStatus = 'pending' | 'running' | 'complete' | 'failed'
 
 function line(id: string, summary: string, canary = false) {
   return { id, kind: 'fact', summary, trust: 0.9, status: 'candidate', servedAsCanary: canary, tier: 'confirmed' }
@@ -72,7 +72,7 @@ function projection(steps: ReturnType<typeof step>[], learned: Learned = {}): Re
     buildOrdinal: 1,
     knowledgeStore: 'bound',
     steps,
-    curation: { status: learned.status ?? 'done' },
+    curation: { status: learned.status ?? 'complete' },
     learned: {
       changes: [],
       canaryAttributions: learned.attributions ?? [],

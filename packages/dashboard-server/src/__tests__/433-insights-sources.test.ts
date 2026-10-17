@@ -100,7 +100,7 @@ function plantHost(answers: Record<string, KnowledgeAnswer>) {
         buildOrdinal: 3,
         knowledgeStore: 'bound',
         steps: [],
-        curation: { status: 'done' },
+        curation: { status: 'complete' },
         learned: {
           changes: answer.map((change, index) => ({
             schemaVersion: 1,

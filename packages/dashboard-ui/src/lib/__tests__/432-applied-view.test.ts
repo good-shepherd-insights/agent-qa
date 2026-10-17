@@ -88,7 +88,7 @@ describe('432-09 the applied change, as the history and preview show it', () => 
       kind: 'read',
       projection: {
         kind: 'ready', runId: 'r_applied_view', buildOrdinal: 1, knowledgeStore: 'bound', steps: [],
-        curation: { status: 'done' }, learned: { changes: [], canaryAttributions: [] },
+        curation: { status: 'complete' }, learned: { changes: [], canaryAttributions: [] },
       },
     } as unknown as KnowledgeRead
     const view = knowledgeView.projectKnowledgeView(read)

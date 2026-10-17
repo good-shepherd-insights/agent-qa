@@ -135,7 +135,7 @@ function ready(overrides: Partial<Extract<RunKnowledgeProjection, { kind: 'ready
       buildOrdinal: 3,
       knowledgeStore: 'bound',
       steps: [],
-      curation: { status: 'done' },
+      curation: { status: 'complete' },
       learned: { changes: [], canaryAttributions: [] },
       ...overrides,
     } as Extract<RunKnowledgeProjection, { kind: 'ready' }>,
@@ -534,14 +534,14 @@ describe('a canary line is never blank — it says pending, not-attributed, or t
     expect(canaryOutcomeWord('running', undefined)).toBe('pending')
   })
 
-  it('says the attributed OUTCOME WORD once curation is done', () => {
+  it('says the attributed OUTCOME WORD once curation is complete', () => {
     for (const outcome of ['confirmed', 'contradicted', 'helpful', 'harmful'] as const) {
-      expect(canaryOutcomeWord('done', attribution({ outcome }))).toBe(outcome)
+      expect(canaryOutcomeWord('complete', attribution({ outcome }))).toBe(outcome)
     }
   })
 
-  it('says NOT-ATTRIBUTED when curation is done and nothing was attributed to this line', () => {
-    expect(canaryOutcomeWord('done', undefined)).toBe('not-attributed')
+  it('says NOT-ATTRIBUTED when curation is complete and nothing was attributed to this line', () => {
+    expect(canaryOutcomeWord('complete', undefined)).toBe('not-attributed')
   })
 
   /**
@@ -575,15 +575,15 @@ describe('a canary line is never blank — it says pending, not-attributed, or t
    * answer, which is what a partial read actually produced.
    */
   it('says UNKNOWN, not NOT-ATTRIBUTED, when the read that would have answered was partial', () => {
-    expect(canaryOutcomeWord('done', undefined, true)).toBe('unknown')
+    expect(canaryOutcomeWord('complete', undefined, true)).toBe('unknown')
     // The default keeps every existing caller green, and says the same thing explicitly.
-    expect(canaryOutcomeWord('done', undefined)).toBe('not-attributed')
-    expect(canaryOutcomeWord('done', undefined, false)).toBe('not-attributed')
+    expect(canaryOutcomeWord('complete', undefined)).toBe('not-attributed')
+    expect(canaryOutcomeWord('complete', undefined, false)).toBe('not-attributed')
   })
 
   it('lets a row that WAS read win over the flag — rows beat degradation here as on the other half', () => {
     for (const outcome of ['confirmed', 'contradicted', 'helpful', 'harmful'] as const) {
-      expect(canaryOutcomeWord('done', attribution({ outcome }), true)).toBe(outcome)
+      expect(canaryOutcomeWord('complete', attribution({ outcome }), true)).toBe(outcome)
     }
   })
 
@@ -627,12 +627,12 @@ describe('a canary line is never blank — it says pending, not-attributed, or t
   it('reaches `unknown` only where the chain SETTLED, no row was served and the read was partial — from either settled word', () => {
     const words = new Set<string>()
 
-    for (const status of ['pending', 'running', 'failed', 'done'] as const) {
+    for (const status of ['pending', 'running', 'failed', 'complete'] as const) {
       for (const row of [undefined, attribution()]) {
         for (const partial of [false, true]) {
           const word = canaryOutcomeWord(status, row, partial)
           if (word === 'unknown') {
-            expect(status === 'done' || status === 'failed').toBe(true)
+            expect(status === 'complete' || status === 'failed').toBe(true)
             expect(row).toBeUndefined()
             expect(partial).toBe(true)
           }
@@ -794,7 +794,7 @@ describe('the projection joins the trace, the ledger, the outcome and the plan s
           served: { channel1: [briefLine(true, 'rec_a')], channel2: [], channel3: [] },
         }),
       ],
-      curation: { status: 'done' },
+      curation: { status: 'complete' },
       learned: {
         changes: [],
         canaryAttributions: [attribution({ testIndex: 0, stepIndex: 0, recordId: 'rec_a', outcome: 'helpful' })],
@@ -814,7 +814,7 @@ describe('the projection joins the trace, the ledger, the outcome and the plan s
   it('says UNKNOWN on a served canary line whose store read was partial, not NOT-ATTRIBUTED', () => {
     const partial = {
       steps: [step({ served: { channel1: [briefLine(true, 'rec_a')], channel2: [], channel3: [] } })],
-      curation: { status: 'done' as const },
+      curation: { status: 'complete' as const },
       learned: { changes: [], canaryAttributions: [], scanIncomplete: true as const },
     }
 
@@ -830,7 +830,7 @@ describe('the projection joins the trace, the ledger, the outcome and the plan s
   it('leaves a non-canary line with NO outcome key at all — never a word it did not earn', () => {
     const view = projectKnowledgeView(ready({
       steps: [step({ served: { channel1: [briefLine(false, 'rec_a')], channel2: [], channel3: [] } })],
-      curation: { status: 'done' },
+      curation: { status: 'complete' },
     }))
 
     const line = detailOf(view).channel1[0]
@@ -953,7 +953,7 @@ describe('419 promotion projection copies receipt attribution', () => {
     // RE-SPELLED 427-08 (D-19 part 2): the receipt now reaches Retrieval details, never the row.
     const promotionReceiptDigest = '0123456789abcdef'.repeat(4)
     const input = {
-      curation: { status: 'done' as const },
+      curation: { status: 'complete' as const },
       learned: { canaryAttributions: [], changes: [
         change('promoted', 'fact-current', { promotionPath: 'user-sovereign', promotionReceiptDigest }),
         change('promoted', 'fact-historical'),
@@ -1003,7 +1003,7 @@ describe('the Learned half mirrors the curation word and NEVER renders blank (D-
   })
 
   it('says the counts were not recorded — never a zero — when a settled row committed none (D-12)', () => {
-    const view = learnedFrom({ curation: { status: 'done' } })
+    const view = learnedFrom({ curation: { status: 'complete' } })
     expect(view.state).toBe('counts-absent')
     expect(view.sentence).toBe(COUNTS_NOT_RECORDED_SENTENCE)
     expect(view.countLine).toBe(COUNTS_NOT_RECORDED_TEXT)
@@ -1012,7 +1012,7 @@ describe('the Learned half mirrors the curation word and NEVER renders blank (D-
   })
 
   it('keeps the two absences apart: `counts-absent` is a settled run, `pending` is an unsettled one', () => {
-    expect(learnedFrom({ curation: { status: 'done' } }).state)
+    expect(learnedFrom({ curation: { status: 'complete' } }).state)
       .not.toBe(learnedFrom({ curation: { status: 'pending' } }).state)
   })
 })
@@ -1021,8 +1021,8 @@ describe('a settled curation says what it changed, in the chip\'s own words (D-0
   it('collapses a both-zero legacy pair to the pair itself, with the changed-nothing sentence', () => {
     // RE-SPELLED 425-06 (D-16/D-18). The pair is now rendered AS a pair rather than folded into a
     // phrase, because folding it was the step that let two coarse counts read as a breakdown.
-    const view = learnedFrom({ curation: { status: 'done', counts: { curated: 0, deprecated: 0 } } })
-    expect(view.state).toBe('done')
+    const view = learnedFrom({ curation: { status: 'complete', counts: { curated: 0, deprecated: 0 } } })
+    expect(view.state).toBe('complete')
     expect(view.countLine).toBe(legacyCurationPairText(0, 0))
     expect(view.countNote).toBe(BREAKDOWN_NOT_RECORDED_TEXT)
     expect(view.sentence).toBe(NO_MEMORY_CHANGES_SENTENCE)
@@ -1031,10 +1031,10 @@ describe('a settled curation says what it changed, in the chip\'s own words (D-0
 
   it('says the change records are not available YET when counts moved but no row reached this run', () => {
     const view = learnedFrom({
-      curation: { status: 'done', counts: { curated: 3, deprecated: 1 } },
+      curation: { status: 'complete', counts: { curated: 3, deprecated: 1 } },
       learned: { changes: [], canaryAttributions: [] },
     })
-    expect(view.state).toBe('done')
+    expect(view.state).toBe('complete')
     expect(view.countLine).toBe(legacyCurationPairText(3, 1))
     expect(view.sentence).toBe(CHANGES_NOT_AVAILABLE_TEXT)
     expect(view.rows).toEqual([])
@@ -1042,7 +1042,7 @@ describe('a settled curation says what it changed, in the chip\'s own words (D-0
 
   it('reads the count line from the SAME function the chip does — one number, one wording', () => {
     const view = learnedFrom({
-      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
+      curation: { status: 'complete', counts: { curated: 1, deprecated: 0 } },
       learned: {
         changes: [],
         canaryAttributions: [],
@@ -1061,7 +1061,7 @@ describe('a settled curation says what it changed, in the chip\'s own words (D-0
    */
   it('LEARNED-BREAKDOWN-LINE: spells the five buckets in the curation card\'s own words', () => {
     const view = learnedFrom({
-      curation: { status: 'done', counts: { curated: 4, deprecated: 1 } },
+      curation: { status: 'complete', counts: { curated: 4, deprecated: 1 } },
       learned: {
         changes: [],
         canaryAttributions: [],
@@ -1075,7 +1075,7 @@ describe('a settled curation says what it changed, in the chip\'s own words (D-0
 
   it('LEARNED-BREAKDOWN-LINE: omits a zero bucket rather than printing a count nobody took', () => {
     const view = learnedFrom({
-      curation: { status: 'done', counts: { curated: 2, deprecated: 1 } },
+      curation: { status: 'complete', counts: { curated: 2, deprecated: 1 } },
       learned: {
         changes: [],
         canaryAttributions: [],
@@ -1090,7 +1090,7 @@ describe('a settled curation says what it changed, in the chip\'s own words (D-0
 
   it('LEARNED-BREAKDOWN-LINE: reads five zeros as no memory changes, and still states the outcome', () => {
     const view = learnedFrom({
-      curation: { status: 'done' },
+      curation: { status: 'complete' },
       learned: { changes: [], canaryAttributions: [], curationSnapshot: snapshotOf() },
     })
 
@@ -1107,7 +1107,7 @@ describe('a settled curation says what it changed, in the chip\'s own words (D-0
    * that no breakdown exists — the reader who sees two numbers where five usually live is told why.
    */
   it('LEARNED-LEGACY-NOTE: prints a pre-423 pair as a pair, with the not-recorded note beneath', () => {
-    const view = learnedFrom({ curation: { status: 'done', counts: { curated: 2, deprecated: 0 } } })
+    const view = learnedFrom({ curation: { status: 'complete', counts: { curated: 2, deprecated: 0 } } })
 
     expect(view.countLine).toBe(legacyCurationPairText(2, 0))
     expect(view.countLine).toBe('2 curated · 0 deprecated')
@@ -1115,7 +1115,7 @@ describe('a settled curation says what it changed, in the chip\'s own words (D-0
   })
 
   it('LEARNED-LEGACY-NOTE: a settled row with no counts at all keeps its own fragment and no note', () => {
-    const view = learnedFrom({ curation: { status: 'done' } })
+    const view = learnedFrom({ curation: { status: 'complete' } })
 
     expect(view.countLine).toBe(COUNTS_NOT_RECORDED_TEXT)
     expect(view.countNote).toBeUndefined()
@@ -1123,7 +1123,7 @@ describe('a settled curation says what it changed, in the chip\'s own words (D-0
 
   it('LEARNED-LEGACY-NOTE: names the withheld category when the READ ITSELF withheld the snapshot', () => {
     const view = learnedFrom({
-      curation: { status: 'done' },
+      curation: { status: 'complete' },
       learned: {
         changes: [],
         canaryAttributions: [],
@@ -1137,7 +1137,7 @@ describe('a settled curation says what it changed, in the chip\'s own words (D-0
 
   it('LEARNED-LEGACY-NOTE: the snapshot outranks the pair — a recorded breakdown carries no note', () => {
     const view = learnedFrom({
-      curation: { status: 'done', counts: { curated: 2, deprecated: 0 } },
+      curation: { status: 'complete', counts: { curated: 2, deprecated: 0 } },
       learned: {
         changes: [],
         canaryAttributions: [],
@@ -1161,7 +1161,7 @@ describe('a settled curation says what it changed, in the chip\'s own words (D-0
   })
   it('drops the state sentence once there are rows — the rows ARE the answer', () => {
     const view = learnedFrom({
-      curation: { status: 'done', counts: { curated: 3, deprecated: 1 } },
+      curation: { status: 'complete', counts: { curated: 3, deprecated: 1 } },
       learned: { changes: [change('confirmed')], canaryAttributions: [] },
     })
     expect(view.rows.length).toBe(1)
@@ -1189,7 +1189,7 @@ describe('a count that disagrees with the rows says so, and says why (425-06 · 
   it('RECONCILIATION-ONLY-ON-MISMATCH: a schema-valid snapshot shows one curation row per counted record', () => {
     const snapshot = addedSnapshot(['rec-a', 'rec-b', 'rec-c'])
     const view = learnedFrom({
-      curation: { status: 'done', counts: { curated: 3, deprecated: 0 } },
+      curation: { status: 'complete', counts: { curated: 3, deprecated: 0 } },
       learned: {
         changes: [change('added', 'rec-a'), change('added', 'rec-b')],
         canaryAttributions: [],
@@ -1204,7 +1204,7 @@ describe('a count that disagrees with the rows says so, and says why (425-06 · 
 
   it('RECONCILIATION-ONLY-ON-MISMATCH: carries NO reconciliation key when the two numbers agree', () => {
     const view = learnedFrom({
-      curation: { status: 'done', counts: { curated: 2, deprecated: 0 } },
+      curation: { status: 'complete', counts: { curated: 2, deprecated: 0 } },
       learned: {
         changes: [change('added', 'rec-a'), change('added', 'rec-b')],
         canaryAttributions: [],
@@ -1227,7 +1227,7 @@ describe('a count that disagrees with the rows says so, and says why (425-06 · 
   it('RECONCILIATION-ONLY-ON-MISMATCH: a since-then row is not one of the rows shown (423 D-15)', () => {
     const later = change('promoted', 'rec-later')
     const view = learnedFrom({
-      curation: { status: 'done', counts: { curated: 2, deprecated: 0 } },
+      curation: { status: 'complete', counts: { curated: 2, deprecated: 0 } },
       learned: {
         changes: [change('added', 'rec-a'), change('added', 'rec-b'), later],
         canaryAttributions: [],
@@ -1259,7 +1259,7 @@ describe('a count that disagrees with the rows says so, and says why (425-06 · 
 
   it('RECONCILIATION-CAUSE-FROM-READ: an incomplete store scan keeps the rows and names the store beside them', () => {
     const view = learnedFrom({
-      curation: { status: 'done', counts: { curated: 3, deprecated: 0 } },
+      curation: { status: 'complete', counts: { curated: 3, deprecated: 0 } },
       learned: {
         changes: [change('added', 'rec-a')],
         canaryAttributions: [],
@@ -1291,7 +1291,7 @@ describe('a count that disagrees with the rows says so, and says why (425-06 · 
 
   it('RECONCILIATION-CAUSE-FROM-READ: a run with no snapshot at all reconciles nothing', () => {
     const view = learnedFrom({
-      curation: { status: 'done', counts: { curated: 3, deprecated: 0 } },
+      curation: { status: 'complete', counts: { curated: 3, deprecated: 0 } },
       learned: { changes: [change('added', 'rec-a')], canaryAttributions: [] },
     })
 
@@ -1314,7 +1314,7 @@ describe('the record list is the five LEARNED kinds and nothing else (D-10, wide
 
   function rowsOfEveryKind() {
     return learnedFrom({
-      curation: { status: 'done', counts: { curated: 3, deprecated: 1 } },
+      curation: { status: 'complete', counts: { curated: 3, deprecated: 1 } },
       learned: {
         changes: everyKind.map((kind, index) => change(kind, `rec_${String(index)}`)),
         canaryAttributions: [],
@@ -1330,7 +1330,7 @@ describe('the record list is the five LEARNED kinds and nothing else (D-10, wide
 
   it('drops ONLY `purged` — a deletion is maintenance, never what this run taught the store', () => {
     const ids = ledgerFrom({
-      curation: { status: 'done', counts: { curated: 3, deprecated: 1 } },
+      curation: { status: 'complete', counts: { curated: 3, deprecated: 1 } },
       learned: {
         changes: everyKind.map((kind, index) => change(kind, `rec_${String(index)}`)),
         canaryAttributions: [],
@@ -1349,7 +1349,7 @@ describe('the record list is the five LEARNED kinds and nothing else (D-10, wide
   // RE-TARGETED 427-08 (D-19 part 2): ids and references live in the Retrieval details ledger.
   it('carries the record id verbatim, however unlovely — in the ledger, never on the row', () => {
     const input = {
-      curation: { status: 'done' as const, counts: { curated: 1, deprecated: 0 } },
+      curation: { status: 'complete' as const, counts: { curated: 1, deprecated: 0 } },
       learned: { changes: [change('promoted', 'fact-page-https-example-com-0f9a')], canaryAttributions: [] },
     }
     expect(ledgerFrom(input)[0]?.recordIds).toEqual(['fact-page-https-example-com-0f9a'])
@@ -1358,7 +1358,7 @@ describe('the record list is the five LEARNED kinds and nothing else (D-10, wide
 
   it('mints NO href for a record id that is not an addressable entity — a guessed link is worse than none', () => {
     const entries = ledgerFrom({
-      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
+      curation: { status: 'complete', counts: { curated: 1, deprecated: 0 } },
       learned: { changes: [change('confirmed', 'fact-page-https-example-com-0f9a')], canaryAttributions: [] },
     })
     expect(entries[0]?.href).toBeUndefined()
@@ -1367,7 +1367,7 @@ describe('the record list is the five LEARNED kinds and nothing else (D-10, wide
 
   it('builds the canonical agentqa:// reference when the record IS addressed by a MEM short-ID', () => {
     const entries = ledgerFrom({
-      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
+      curation: { status: 'complete', counts: { curated: 1, deprecated: 0 } },
       learned: { changes: [change('superseded', 'MEM-001')], canaryAttributions: [] },
     })
     expect(entries[0]?.ref).toBe(formatEntityUri('MEM', 'MEM-001'))
@@ -1389,14 +1389,14 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
    */
   it('lists the added record instead of denying it — one row, no sentence', () => {
     const view = learnedFrom({
-      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
+      curation: { status: 'complete', counts: { curated: 1, deprecated: 0 } },
       learned: {
         changes: [change('added', 'fact-el-textbox-password-9a05ce', { sourceRunId: RUN_ID })],
         canaryAttributions: [],
       },
     })
 
-    expect(view.state).toBe('done')
+    expect(view.state).toBe('complete')
     expect(view.countLine).toBe(legacyCurationPairText(1, 0))
     expect(view.rows.length).toBe(1)
     expect(view.rows[0]?.bucket).toBe('added')
@@ -1413,11 +1413,11 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
    */
   it('paints rows even when the frozen counts say nothing moved — a served record is never denied', () => {
     const view = learnedFrom({
-      curation: { status: 'done', counts: { curated: 0, deprecated: 0 } },
+      curation: { status: 'complete', counts: { curated: 0, deprecated: 0 } },
       learned: { changes: [change('confirmed')], canaryAttributions: [] },
     })
 
-    expect(view.state).toBe('done')
+    expect(view.state).toBe('complete')
     expect(view.countLine).toBe(legacyCurationPairText(0, 0))
     expect(view.rows.length).toBe(1)
     expect(view.sentence).toBeUndefined()
@@ -1425,7 +1425,7 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
 
   it('paints rows under a settled row that recorded NO counts — the state word still says so', () => {
     const view = learnedFrom({
-      curation: { status: 'done' },
+      curation: { status: 'complete' },
       learned: { changes: [change('promoted')], canaryAttributions: [] },
     })
 
@@ -1490,7 +1490,7 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
     expect(view.countLine).toBeUndefined()
   })
 
-  it('narrows the KINDS on the failed arm exactly as on the done arm — it is the same fold', () => {
+  it('narrows the KINDS on the failed arm exactly as on the complete arm — it is the same fold', () => {
     const view = learnedFrom({
       curation: { status: 'failed' },
       learned: {
@@ -1513,7 +1513,7 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
    */
   it('keys a row by its ROW INDEX and never by the record it belongs to', () => {
     const view = learnedFrom({
-      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
+      curation: { status: 'complete', counts: { curated: 1, deprecated: 0 } },
       learned: { changes: [change('added', 'rec_a', { atOrdinal: 4 })], canaryAttributions: [] },
     })
 
@@ -1523,7 +1523,7 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
 
   it('never spells the word undefined, and returns the same key for the same input twice', () => {
     const input = {
-      curation: { status: 'done' as const, counts: { curated: 1, deprecated: 0 } },
+      curation: { status: 'complete' as const, counts: { curated: 1, deprecated: 0 } },
       learned: {
         changes: [change('confirmed', 'rec', { atOrdinal: 12, evidenceToken: 'tok-a', byRecordId: 'by-1' })],
         canaryAttributions: [],
@@ -1540,7 +1540,7 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
 
   it('folds two changes on ONE record into one row in its strongest bucket, both events in the ledger', () => {
     const input = {
-      curation: { status: 'done' as const, counts: { curated: 1, deprecated: 0 } },
+      curation: { status: 'complete' as const, counts: { curated: 1, deprecated: 0 } },
       learned: {
         changes: [
           change('confirmed', 'rec_same', { atOrdinal: 12 }),
@@ -1567,7 +1567,7 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
    */
   it('gives two confirmations at ONE ordinal one row, and keeps both tokens in the ledger', () => {
     const input = {
-      curation: { status: 'done' as const, counts: { curated: 2, deprecated: 0 } },
+      curation: { status: 'complete' as const, counts: { curated: 2, deprecated: 0 } },
       learned: {
         changes: [
           change('confirmed', 'rec_same', { atOrdinal: 12, evidenceToken: 'tok-a' }),
@@ -1590,7 +1590,7 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
    */
   it('separates two changes identical in all five previously-keyed members', () => {
     const input = {
-      curation: { status: 'done' as const, counts: { curated: 2, deprecated: 0 } },
+      curation: { status: 'complete' as const, counts: { curated: 2, deprecated: 0 } },
       learned: {
         changes: [
           change('confirmed', 'rec_same', { atOrdinal: 12, evidenceToken: 'tok-a', byRecordId: 'by-1' }),
@@ -1613,7 +1613,7 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
     // The kept-kind filter runs BEFORE the index is assigned, so a dropped `purged` change does
     // not leave a hole in the numbering of the rows that survive it.
     const view = learnedFrom({
-      curation: { status: 'done', counts: { curated: 2, deprecated: 0 } },
+      curation: { status: 'complete', counts: { curated: 2, deprecated: 0 } },
       learned: {
         changes: [
           change('purged', 'rec_gone'),
@@ -1640,11 +1640,11 @@ describe('an unreadable store is named, never called "not available yet" (407-14
    */
   it('says the change records could not be READ, keeps the counts, and lists nothing', () => {
     const view = learnedFrom({
-      curation: { status: 'done', counts: { curated: 3, deprecated: 1 } },
+      curation: { status: 'complete', counts: { curated: 3, deprecated: 1 } },
       learned: { changes: [], canaryAttributions: [], scanIncomplete: true },
     })
 
-    expect(view.state).toBe('done')
+    expect(view.state).toBe('complete')
     expect(view.countLine).toBe(legacyCurationPairText(3, 1))
     expect(view.sentence).toBe(CHANGES_UNREADABLE_TEXT)
     expect(view.scanIncomplete).toBe(true)
@@ -1659,7 +1659,7 @@ describe('an unreadable store is named, never called "not available yet" (407-14
 
   it('carries NO scanIncomplete member on a clean read — the flag is true or absent, never false', () => {
     const view = learnedFrom({
-      curation: { status: 'done', counts: { curated: 3, deprecated: 1 } },
+      curation: { status: 'complete', counts: { curated: 3, deprecated: 1 } },
       learned: { changes: [], canaryAttributions: [] },
     })
 
@@ -1680,7 +1680,7 @@ describe('a partial read decorates the answer, it never replaces it (REVIEW CR-0
    */
   it('paints the row it was handed and keeps the flag beside it — no unreadable-store sentence', () => {
     const view = learnedFrom({
-      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
+      curation: { status: 'complete', counts: { curated: 1, deprecated: 0 } },
       learned: {
         changes: [change('confirmed', 'rec-mine', { sourceRunId: RUN_ID })],
         canaryAttributions: [],
@@ -1688,7 +1688,7 @@ describe('a partial read decorates the answer, it never replaces it (REVIEW CR-0
       },
     })
 
-    expect(view.state).toBe('done')
+    expect(view.state).toBe('complete')
     expect(view.countLine).toBe(legacyCurationPairText(1, 0))
     expect(view.rows.length).toBe(1)
     expect(view.rows[0]?.bucket).toBe('confirmed')
@@ -1705,7 +1705,7 @@ describe('a partial read decorates the answer, it never replaces it (REVIEW CR-0
    */
   it('still names the unreadable store when the kind filter left nothing to paint, and adds NO note', () => {
     const view = learnedFrom({
-      curation: { status: 'done', counts: { curated: 3, deprecated: 1 } },
+      curation: { status: 'complete', counts: { curated: 3, deprecated: 1 } },
       learned: { changes: [], canaryAttributions: [], scanIncomplete: true },
     })
 
@@ -1781,7 +1781,7 @@ describe('a partial read decorates the answer, it never replaces it (REVIEW CR-0
 
   it('paints rows under a counts-absent settled row on a partial read, note and all', () => {
     const view = learnedFrom({
-      curation: { status: 'done' },
+      curation: { status: 'complete' },
       learned: {
         changes: [change('promoted', 'rec-mine', { sourceRunId: RUN_ID })],
         canaryAttributions: [],
@@ -1798,9 +1798,9 @@ describe('a partial read decorates the answer, it never replaces it (REVIEW CR-0
   })
 
   it('carries NEITHER member on a clean read, in every state — absence is an absent key', () => {
-    for (const status of ['pending', 'running', 'failed', 'done'] as const) {
+    for (const status of ['pending', 'running', 'failed', 'complete'] as const) {
       const view = learnedFrom({
-        curation: status === 'done' ? { status, counts: { curated: 1, deprecated: 0 } } : { status },
+        curation: status === 'complete' ? { status, counts: { curated: 1, deprecated: 0 } } : { status },
         learned: { changes: [change('added')], canaryAttributions: [] },
       })
 
@@ -1822,9 +1822,9 @@ describe('a partial read decorates the answer, it never replaces it (REVIEW CR-0
 // review command, whatever the curation word — and a legacy count on the wire is not projected.
 describe('no ready view carries a pending-proposals line or a review command (432-09 D-25)', () => {
   it.each([
-    ['done', { curation: { status: 'done' as const, counts: { curated: 1, deprecated: 0 } } }],
+    ['complete', { curation: { status: 'complete' as const, counts: { curated: 1, deprecated: 0 } } }],
     ['pending', { curation: { status: 'pending' as const } }],
-    ['a legacy count on the wire', { curation: { status: 'done' as const }, pendingProposalCount: 3 } as never],
+    ['a legacy count on the wire', { curation: { status: 'complete' as const }, pendingProposalCount: 3 } as never],
   ])('renders no proposals member on %s', (_name, overrides) => {
     const view = readyView(overrides)
     expect('proposals' in view).toBe(false)
@@ -1835,11 +1835,11 @@ describe('no ready view carries a pending-proposals line or a review command (43
 describe('the ready arm carries the Learned half so the tab does not have to build one', () => {
   it('fills `learned` on every ready view, and never a `proposals` member (432-09)', () => {
     const view = projectKnowledgeView(ready({
-      curation: { status: 'done', counts: { curated: 2, deprecated: 1 } },
+      curation: { status: 'complete', counts: { curated: 2, deprecated: 1 } },
       learned: { changes: [change('confirmed', 'MEM-001')], canaryAttributions: [] },
     }))
     if (view.state !== 'ready') throw new Error('expected ready')
-    expect(view.learned?.state).toBe('done')
+    expect(view.learned?.state).toBe('complete')
     expect(view.learned?.rows.length).toBe(1)
     expect('proposals' in view).toBe(false)
   })

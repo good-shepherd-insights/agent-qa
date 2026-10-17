@@ -42,7 +42,7 @@ export type PostProcessingReadBody = Extract<PostProcessingRead, { kind: 'read' 
 /**
  * HOW AN INDICATOR PRESENTS — which is NOT the four words the store says (425 D-06/D-07).
  *
- * The chip vocabulary stays exactly `pending · running · done · failed` (404 D-01, and a fifth word
+ * The chip vocabulary stays exactly `pending · running · complete · failed` (444 D-13, and a fifth word
  * there would red the v54 census). Presentation needs two more states the store never spells: a run
  * that skipped the whole chain (`excluded`, 425 D-08) and a store that could not be read at all
  * (`unavailable`, 404 D-23). Keeping them in a SEPARATE closed set is what lets the header say both
@@ -582,7 +582,7 @@ export function stagePresentationState(
   stage: PostProcessingStage,
 ): StageIndicatorState {
   switch (read.status.chips[stage]) {
-    case 'done':
+    case 'complete':
       return 'complete'
     case 'running':
       return 'running'

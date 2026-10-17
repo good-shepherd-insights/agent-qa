@@ -69,7 +69,7 @@ function attributed(recordId: string, stepIndex: number, outcome: Outcome) {
 
 function projection(
   steps: ReturnType<typeof step>[],
-  learned: { attributions?: ReturnType<typeof attributed>[]; status?: "pending" | "done"; scanIncomplete?: true } = {},
+  learned: { attributions?: ReturnType<typeof attributed>[]; status?: "pending" | "complete"; scanIncomplete?: true } = {},
 ): ReadyProjection {
   const parsed = RunKnowledgeProjectionSchema.parse({
     kind: "ready",
@@ -77,7 +77,7 @@ function projection(
     buildOrdinal: 1,
     knowledgeStore: "bound",
     steps,
-    curation: { status: learned.status ?? "done" },
+    curation: { status: learned.status ?? "complete" },
     learned: {
       changes: [],
       canaryAttributions: learned.attributions ?? [],

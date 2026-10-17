@@ -106,7 +106,7 @@ function ok(body: Record<string, unknown>): Answer {
 
 const RUNNING_BODY = { status: status('running', 'pending'), failures: {} }
 const TERMINAL_BODY = {
-  status: status('done', 'done', {
+  status: status('complete', 'complete', {
     schemaVersion: 2,
     runId: RUN_ID,
     outcome: 'done',
@@ -206,8 +206,8 @@ describe('isPostProcessingTerminal mirrors the door', () => {
   })
 
   it('both chips settled is terminal; a single unsettled chip is not', () => {
-    expect(isPostProcessingTerminal(status('done', 'failed'))).toBe(true)
-    expect(isPostProcessingTerminal(status('done', 'running'))).toBe(false)
+    expect(isPostProcessingTerminal(status('complete', 'failed'))).toBe(true)
+    expect(isPostProcessingTerminal(status('complete', 'running'))).toBe(false)
     expect(isPostProcessingTerminal(status('pending', 'pending'))).toBe(false)
   })
 })
@@ -326,7 +326,7 @@ describe('watchPostProcessing reads once and decides both channels from that rea
       runId: RUN_ID,
       seq: 9,
       type: 'analysisCompleted',
-      payload: { stage: 'analysis', status: 'done' },
+      payload: { stage: 'analysis', status: 'complete' },
     })
     await settle()
     expect(urls).toHaveLength(2)
@@ -340,7 +340,7 @@ describe('watchPostProcessing reads once and decides both channels from that rea
     const reads: PostProcessingRead[] = []
     const dispose = watchPostProcessing(RUN_ID, { onRead: (read) => reads.push(read) })
     await settle()
-    StubEventSource.instances[0]!.emit('snapshot', { status: status('done', 'done') })
+    StubEventSource.instances[0]!.emit('snapshot', { status: status('complete', 'complete') })
     await settle()
     expect(reads[1]).toMatchObject({ status: status('running', 'pending') })
     dispose()

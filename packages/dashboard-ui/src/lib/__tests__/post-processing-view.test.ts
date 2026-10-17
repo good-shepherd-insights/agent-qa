@@ -173,7 +173,7 @@ describe('a running chip says one word and nothing else', () => {
 describe('a terminal curation card says what it committed (D-21, D-17/D-18 wording of record)', () => {
   it('reads the breakdown off the snapshot on the same read — five buckets, zeros omitted', () => {
     const view = chips(projectPostProcessingView(read({
-      status: status('done', 'done', notification({ status: 'done' }), {
+      status: status('complete', 'complete', notification({ status: 'done' }), {
         curationSnapshot: { schemaVersion: 1, rows: [], breakdown: breakdown({ added: 4, deprecated: 2 }) },
       }),
       disposition: 'drained',
@@ -184,7 +184,7 @@ describe('a terminal curation card says what it committed (D-21, D-17/D-18 wordi
 
   it('says `counts not recorded for this run` when the row committed no counts — never a zero (D-12)', () => {
     const view = chips(projectPostProcessingView(read({
-      status: status('done', 'done', notification({ status: 'done' })),
+      status: status('complete', 'complete', notification({ status: 'done' })),
     })))
     expect(view.curation.card?.outcome).toBe(`Curation complete — ${COUNTS_NOT_RECORDED_TEXT}`)
     expect(COUNTS_NOT_RECORDED_TEXT).toBe('counts not recorded for this run')
@@ -192,20 +192,20 @@ describe('a terminal curation card says what it committed (D-21, D-17/D-18 wordi
 
   it('says the counts-absent line when only ONE of the pair was recorded — half a pair is no pair', () => {
     const view = chips(projectPostProcessingView(read({
-      status: status('done', 'done', notification({ status: 'done', curated: 4 })),
+      status: status('complete', 'complete', notification({ status: 'done', curated: 4 })),
     })))
     expect(view.curation.card?.outcome).toBe(`Curation complete — ${COUNTS_NOT_RECORDED_TEXT}`)
   })
 
-  it('keeps a bare `done` when there is no notification row at all — nothing to say counts about', () => {
-    const view = chips(projectPostProcessingView(read({ status: status('done', 'done') })))
+  it('keeps a bare `complete` when there is no notification row at all — nothing to say counts about', () => {
+    const view = chips(projectPostProcessingView(read({ status: status('complete', 'complete') })))
     expect(view.curation)
-      .toEqual({ status: 'done', state: 'complete', word: STAGE_INDICATOR_WORDS.curation.complete })
+      .toEqual({ status: 'complete', state: 'complete', word: STAGE_INDICATOR_WORDS.curation.complete })
   })
 
   it('renders an all-zero breakdown as `no memory changes` rather than as five zeros (D-17)', () => {
     const view = chips(projectPostProcessingView(read({
-      status: status('done', 'done', notification({ status: 'done' }), {
+      status: status('complete', 'complete', notification({ status: 'done' }), {
         curationSnapshot: { schemaVersion: 1, rows: [], breakdown: breakdown() },
       }),
     })))
@@ -217,7 +217,7 @@ describe('a terminal curation card says what it committed (D-21, D-17/D-18 wordi
   // measures what that card SAYS rather than that it does not exist.
   it('never invents a card for the analysis chip from curation counts', () => {
     const view = chips(projectPostProcessingView(read({
-      status: status('done', 'done', notification({ status: 'done' }, { total: 1, byClass: { app_bug: 1 } }), {
+      status: status('complete', 'complete', notification({ status: 'done' }, { total: 1, byClass: { app_bug: 1 } }), {
         curationSnapshot: { schemaVersion: 1, rows: [], breakdown: breakdown({ added: 4 }) },
       }),
     })))
@@ -227,9 +227,9 @@ describe('a terminal curation card says what it committed (D-21, D-17/D-18 wordi
     expect(view.analysis.card?.outcome).not.toContain('curated')
 
     // A run whose chain recorded NO terminal row has nothing to say about either stage.
-    const bare = chips(projectPostProcessingView(read({ status: status('done', 'done') })))
+    const bare = chips(projectPostProcessingView(read({ status: status('complete', 'complete') })))
     expect(bare.analysis)
-      .toEqual({ status: 'done', state: 'complete', word: STAGE_INDICATOR_WORDS.analysis.complete })
+      .toEqual({ status: 'complete', state: 'complete', word: STAGE_INDICATOR_WORDS.analysis.complete })
   })
 })
 
@@ -250,7 +250,7 @@ describe('the curation breakdown is one function, and legacy rows say what they 
   it('renders a legacy pair verbatim and labels it as the absence of a breakdown', () => {
     expect(legacyCurationPairText(2, 0)).toBe('2 curated · 0 deprecated')
     const view = chips(projectPostProcessingView(read({
-      status: status('done', 'done', notification({ status: 'done', curated: 2, deprecated: 0 })),
+      status: status('complete', 'complete', notification({ status: 'done', curated: 2, deprecated: 0 })),
     })))
     expect(view.curation.card?.outcome).toBe('Curation complete — 2 curated · 0 deprecated')
     expect(view.curation.card?.note).toBe(BREAKDOWN_NOT_RECORDED_TEXT)
@@ -260,7 +260,7 @@ describe('the curation breakdown is one function, and legacy rows say what they 
   it('names the withheld category rather than inventing counts for it', () => {
     for (const reason of ['masking-unavailable', 'projection-refused'] as const) {
       const view = chips(projectPostProcessingView(read({
-        status: status('done', 'done', notification({ status: 'done' }), {
+        status: status('complete', 'complete', notification({ status: 'done' }), {
           curationSnapshotWithheld: { reason },
         }),
       })))
@@ -275,7 +275,7 @@ describe('the curation breakdown is one function, and legacy rows say what they 
 
   it('prefers the snapshot over the legacy pair — a snapshot-bearing row never says `curated`', () => {
     const view = chips(projectPostProcessingView(read({
-      status: status('done', 'done', notification({ status: 'done', curated: 2, deprecated: 0 }), {
+      status: status('complete', 'complete', notification({ status: 'done', curated: 2, deprecated: 0 }), {
         curationSnapshot: { schemaVersion: 1, rows: [], breakdown: breakdown({ added: 2 }) },
       }),
     })))
@@ -394,7 +394,7 @@ describe('a failed chip says why, or says honestly that nobody recorded why (D-2
 // retiring the function retired its cells rather than leaving them asserting over nothing.
 describe('the count line is the wording of record, in one place (D-09)', () => {
   it('publishes the curation door name as a thin call into the one accessible-name function', () => {
-    const settled = { status: 'done', state: 'complete', word: STAGE_INDICATOR_WORDS.curation.complete } as const
+    const settled = { status: 'complete', state: 'complete', word: STAGE_INDICATOR_WORDS.curation.complete } as const
     expect(curationChipAccessibleName(settled)).toBe('Curation: complete — open Knowledge tab')
     expect(curationChipAccessibleName({ ...settled, card: { outcome: 'Curation complete — 2 added' } }))
       .toBe('Curation: complete, 2 added — open Knowledge tab')
@@ -411,7 +411,7 @@ describe('a settled analysis with nothing to report says so in one sentence (D-1
     expect(ANALYSIS_COMPLETE_NO_ISSUES_TEXT).toBe('Analysis complete — no issues found')
 
     const view = chips(projectPostProcessingView(read({
-      status: status('done', 'done', notification({ status: 'done' }, { total: 0, byClass: {} })),
+      status: status('complete', 'complete', notification({ status: 'done' }, { total: 0, byClass: {} })),
       disposition: 'drained',
     })))
 
@@ -510,17 +510,17 @@ describe('a skipped chain reads excluded because the read said so, never because
 
   it('EXCLUDED-FROM-FIELD: outranks the chip words — a settled read carrying the field is still excluded', () => {
     const view = chips(projectPostProcessingView(read({
-      status: status('done', 'done', notification({ status: 'done' }, { total: 0, byClass: {} }), {
+      status: status('complete', 'complete', notification({ status: 'done' }, { total: 0, byClass: {} }), {
         exclusion: { reason: 'gate-run' },
       }),
       disposition: 'drained',
     })))
 
     expect(view.excluded).toEqual({ reason: 'gate-run' })
-    expect(view.analysis.status).toBe('done')
+    expect(view.analysis.status).toBe('complete')
     expect(view.analysis.state).toBe('excluded')
     expect(view.analysis.card?.outcome).toBe(STAGE_EXCLUDED_TEXT.analysis)
-    expect(view.curation.status).toBe('done')
+    expect(view.curation.status).toBe('complete')
     expect(view.curation.state).toBe('excluded')
     expect(view.curation.card?.outcome).toBe(STAGE_EXCLUDED_TEXT.curation)
   })
@@ -547,7 +547,7 @@ describe('the projection is pure and total (PXH-RUN-03)', () => {
       read({ status: status('pending', 'pending', undefined, { exclusion: { reason: 'outcome-excluded' } }) }),
       read({ status: status('failed', 'failed'), disposition: 'handedOff', failures: {} }),
       read({
-        status: status('done', 'done', notification({ status: 'done' }, { total: 0, byClass: {} }), {
+        status: status('complete', 'complete', notification({ status: 'done' }, { total: 0, byClass: {} }), {
           curationSnapshot: { schemaVersion: 1, rows: [], breakdown: breakdown({ added: 1 }) },
         }),
         disposition: 'drained',
@@ -661,7 +661,7 @@ describe('a card times the stage from the job row, and never from a clock of its
 
   it('STAGE-TIMING-LINE: folds onto the stage that HAS a row, and onto neither when none does', () => {
     const view = chips(projectPostProcessingView(read({
-      status: status('done', 'done', notification({ status: 'done' }, { total: 0, byClass: {} }), {
+      status: status('complete', 'complete', notification({ status: 'done' }, { total: 0, byClass: {} }), {
         stageDetails: { analysis: { ...STORED, attempts: 1 } },
       }),
       disposition: 'drained',
@@ -692,7 +692,7 @@ describe('a card times the stage from the job row, and never from a clock of its
 describe('a settled analysis with verdicts names its root cause from the summary (D-13)', () => {
   const outcomeFor = (verdictSummary: unknown): string | undefined =>
     chips(projectPostProcessingView(read({
-      status: status('done', 'done', notification({ status: 'done' }, verdictSummary)),
+      status: status('complete', 'complete', notification({ status: 'done' }, verdictSummary)),
       disposition: 'drained',
     }))).analysis.card?.outcome
 
@@ -742,8 +742,8 @@ describe('the proposals stage appears in the curation card only when relevant (D
     detail?: Record<string, unknown>,
   ) => chips(projectPostProcessingView(read({
     status: status(
-      'done',
-      'done',
+      'complete',
+      'complete',
       notification({ status: 'done' }, { total: 0, byClass: {} }, proposals),
       detail === undefined ? {} : { stageDetails: { proposals: detail } },
     ),
@@ -770,7 +770,7 @@ describe('the proposals stage appears in the curation card only when relevant (D
 
   it('PROPOSALS-LINE-ONLY-WHEN-RELEVANT: the analysis card never carries one', () => {
     const view = chips(projectPostProcessingView(read({
-      status: status('done', 'done', notification({ status: 'done' }, { total: 0, byClass: {} }, {
+      status: status('complete', 'complete', notification({ status: 'done' }, { total: 0, byClass: {} }, {
         status: 'done',
         proposed: 2,
       })),

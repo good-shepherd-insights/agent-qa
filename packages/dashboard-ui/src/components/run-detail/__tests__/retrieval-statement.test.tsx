@@ -68,7 +68,7 @@ function view(recorded: Recorded | undefined, options: { withRows?: boolean; kno
     buildOrdinal: 1,
     knowledgeStore: options.knowledgeStore ?? "bound",
     steps: options.withRows === true ? [servedStep()] : [],
-    curation: { status: "done" },
+    curation: { status: "complete" },
     learned: { changes: [], canaryAttributions: [] },
     ...(recorded === undefined ? {} : { retrievalRung: { schemaVersion: recorded.reason === "low-ram-deferral" ? 1 : 2, ...recorded } }),
   })

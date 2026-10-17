@@ -139,20 +139,20 @@ describe('the proposal stage moves no chip and disturbs no trail', () => {
     expect(f.trail().map(row => row.seq)).toEqual([9, 10, 11])
   })
 
-  it('keeps the CLI summary line reporting curation done while the third stage is still out', () => {
+  it('keeps the CLI summary line reporting curation complete while the third stage is still out', () => {
     // The pull half of the same claim, in the CLI's own vocabulary: the chip set is closed at
     // two (`analysis`, `curation`) and the third stage has no word in it, so a proposal stage
     // that is still running — or has failed — cannot red a chip for work that durably succeeded.
     const status: PostProcessingStatus = {
       runId: RUN_ID,
-      chips: { analysis: 'done', curation: 'done' },
+      chips: { analysis: 'complete', curation: 'complete' },
     }
     const line = renderPostProcessingSummaryLine(status, 'none')
-    expect(line).toContain('analysis: done')
-    expect(line).toContain('curation: done')
+    expect(line).toContain('analysis: complete')
+    expect(line).toContain('curation: complete')
     expect(line).not.toContain('proposal')
     // The vocabulary itself is closed and unwidened: four words, and no fifth for a third stage.
-    expect([...POST_PROCESSING_CHIP_STATUSES]).toEqual(['pending', 'running', 'done', 'failed'])
+    expect([...POST_PROCESSING_CHIP_STATUSES]).toEqual(['pending', 'running', 'complete', 'failed'])
     expect(Object.keys(status.chips)).toEqual(['analysis', 'curation'])
   })
 })

@@ -158,7 +158,7 @@ export function provenanceLabel(
 /**
  * The chip word's marker — the WHOLE lifecycle rule, in one total switch (D-09 / D-11).
  *
- * `done` and "no read yet" both answer nothing, and they answer it for different reasons: a
+ * `complete` and "no read yet" both answer nothing, and they answer it for different reasons: a
  * terminal chain has nothing left to warn about, and a page that has not heard from the read route
  * has nothing to warn WITH. Neither is a marker, and inventing one for either would put a
  * permanent "still running" beside a finished verdict.
@@ -170,7 +170,7 @@ export function markerFor(chip: AnalysisChipWord): MemberVerdictMarker | undefin
       return 'provisional'
     case 'failed':
       return 'failed'
-    case 'done':
+    case 'complete':
     case undefined:
       return undefined
   }

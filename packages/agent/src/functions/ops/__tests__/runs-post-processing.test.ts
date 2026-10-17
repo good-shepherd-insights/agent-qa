@@ -170,7 +170,7 @@ const CHIP_BY_STATUS: Record<
   // Terminal: the claim was released by the transaction that ended the job, so the two columns
   // agree — and they are still both stated, because a projection that consulted the claim on a
   // terminal row would pass a table that only listed one of them.
-  done: { unclaimed: 'done', claimed: 'done' },
+  done: { unclaimed: 'complete', claimed: 'complete' },
   failed: { unclaimed: 'failed', claimed: 'failed' },
   cancelled: { unclaimed: 'failed', claimed: 'failed' },
 }
@@ -206,7 +206,7 @@ describe('the chip set and its vocabulary are closed (404 D-01/D-04)', () => {
     // Order asserted too, because the array is the enumeration surfaces walk — a reordering is a
     // change to what a caller iterating it renders first, and the constant's own doc claims the
     // order is the lifecycle.
-    expect([...POST_PROCESSING_CHIP_STATUSES]).toEqual(['pending', 'running', 'done', 'failed'])
+    expect([...POST_PROCESSING_CHIP_STATUSES]).toEqual(['pending', 'running', 'complete', 'failed'])
   })
 
   it('has no reserved-slot row left in the exhaustive status table', () => {
@@ -219,7 +219,7 @@ describe('the chip set and its vocabulary are closed (404 D-01/D-04)', () => {
     const produced = new Set(
       Object.values(CHIP_BY_STATUS).flatMap((cell) => [cell.claimed, cell.unclaimed]),
     )
-    expect([...produced].sort()).toEqual(['done', 'failed', 'pending', 'running'])
+    expect([...produced].sort()).toEqual(['complete', 'failed', 'pending', 'running'])
   })
 })
 
@@ -274,8 +274,8 @@ describe('projectPostProcessingChips is total over the durable chain state (D-14
     expect(projectPostProcessingChips({ analyzeRun: row('queued', true) }).analysis).toBe('running')
   })
 
-  it('reads done as done and both terminal failure statuses as failed', () => {
-    expect(projectPostProcessingChips({ curateMemory: row('done') }).curation).toBe('done')
+  it('reads a done row as complete and both terminal failure statuses as failed', () => {
+    expect(projectPostProcessingChips({ curateMemory: row('done') }).curation).toBe('complete')
     expect(projectPostProcessingChips({ curateMemory: row('failed') }).curation).toBe('failed')
     expect(projectPostProcessingChips({ curateMemory: row('cancelled') }).curation).toBe('failed')
   })
@@ -326,7 +326,7 @@ describe('the runs.postProcessing op (D-14/D-15)', () => {
 
     expect(status).toEqual({
       runId: RUN_ID,
-      chips: { analysis: 'done', curation: 'done' },
+      chips: { analysis: 'complete', curation: 'complete' },
       stageDetails: { analysis: {}, curation: {} },
       notification: NOTIFICATION,
     })

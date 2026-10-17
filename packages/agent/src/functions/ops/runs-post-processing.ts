@@ -79,7 +79,7 @@ function chipFor(
   absent: PostProcessingChipStatus,
 ): PostProcessingChipStatus {
   if (row === undefined) return absent
-  if (row.status === 'done') return 'done'
+  if (row.status === 'done') return 'complete'
   // `cancelled` joins `failed` deliberately: both are terminal states in which the stage's work
   // did not happen, and a chip that told them apart would be reporting queue mechanics at a
   // reader who asked what became of their run.

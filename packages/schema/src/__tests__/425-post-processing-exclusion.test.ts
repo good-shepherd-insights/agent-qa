@@ -48,7 +48,7 @@ describe('C425-EXCLUSION-REASONS-EXACT', () => {
   })
 
   test('leaves the four chip words untouched', () => {
-    expect(POST_PROCESSING_CHIP_STATUSES).toEqual(['pending', 'running', 'done', 'failed'])
+    expect(POST_PROCESSING_CHIP_STATUSES).toEqual(['pending', 'running', 'complete', 'failed'])
     expect(POST_PROCESSING_CHIP_STATUSES).toHaveLength(4)
   })
 

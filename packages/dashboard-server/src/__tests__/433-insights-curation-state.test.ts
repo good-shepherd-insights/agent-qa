@@ -43,7 +43,7 @@ function insertQueuedRun(id: string): string {
   return db.insertPendingRun({ id, name: `Run ${id}` })
 }
 
-type CurationWord = 'pending' | 'running' | 'done' | 'failed'
+type CurationWord = 'pending' | 'running' | 'complete' | 'failed'
 type KnowledgeAnswer = 'throw' | 'incomplete' | { curation: CurationWord; changes?: readonly string[] }
 type PostProcessingAnswer = 'throw' | { exclusion?: 'gate-run' | 'outcome-excluded' }
 
@@ -73,7 +73,7 @@ function plantHost(
         if (answer === 'throw') return Promise.reject(new Error('post-processing unreadable'))
         return Promise.resolve({
           runId,
-          chips: { analysis: 'done', curation: 'pending' },
+          chips: { analysis: 'complete', curation: 'pending' },
           stageDetails: {
             curation: { attempts: 1, lastFailureKind: 'planted', lastFailureReason: 'planted failure text' },
           },
@@ -83,7 +83,7 @@ function plantHost(
       if (functionId !== KNOWLEDGE_ID) {
         return Promise.reject(new Error(`the fixture plants no answer for ${functionId}`))
       }
-      const answer = knowledge[runId] ?? { curation: 'done' }
+      const answer = knowledge[runId] ?? { curation: 'complete' }
       if (answer === 'throw') return Promise.reject(new Error('handoff unreadable'))
       if (answer === 'incomplete') return Promise.resolve({ kind: 'evidence-incomplete', runId })
       return Promise.resolve({
@@ -256,7 +256,7 @@ describe('C433-INSIGHTS-CURATION: curation state', () => {
     insertRun('r_running', '2026-04-02T10:00:00.000Z', 'running')
     insertQueuedRun('r_queued')
     const planted = plantHost({
-      r_settled: { curation: 'done', changes: ['added'] },
+      r_settled: { curation: 'complete', changes: ['added'] },
       r_running: 'incomplete',
       r_queued: 'incomplete',
     })
@@ -283,7 +283,7 @@ describe('C433-INSIGHTS-CURATION: curation state', () => {
     insertRun('r_pruned', '2026-04-06T10:00:00.000Z')
     const planted = plantHost(
       {
-        r_done: { curation: 'done', changes: ['added', 'confirmed'] },
+        r_done: { curation: 'complete', changes: ['added', 'confirmed'] },
         r_failed: { curation: 'failed', changes: ['added'] },
         r_curating: { curation: 'running', changes: ['added'] },
         r_excluded: { curation: 'pending', changes: ['confirmed'] },

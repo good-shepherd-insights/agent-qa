@@ -198,7 +198,7 @@ const POPULATED: RunKnowledgeProjection = {
       guard: { checksPassed: 5, total: 5 },
     },
   }],
-  curation: { status: "done" },
+  curation: { status: "complete" },
   learned: {
     changes: [],
     canaryAttributions: [{

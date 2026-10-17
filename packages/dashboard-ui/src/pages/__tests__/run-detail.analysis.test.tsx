@@ -192,9 +192,9 @@ function analysisOf(over: Partial<AnalysisGetOutput> = {}): AnalysisGetOutput {
 /** The read route's own frame shape — the only thing `watchPostProcessing` ever hands the page. */
 const CHIP_PENDING = { kind: "read", status: { runId: RUN_ID, chips: { analysis: 'pending', curation: 'pending' } } }
 const CHIP_RUNNING = { kind: "read", status: { runId: RUN_ID, chips: { analysis: 'running', curation: 'pending' } } }
-const CHIP_DONE = { kind: "read", status: { runId: RUN_ID, chips: { analysis: 'done', curation: 'pending' } } }
+const CHIP_DONE = { kind: "read", status: { runId: RUN_ID, chips: { analysis: 'complete', curation: 'pending' } } }
 /** The SAME analysis word, a different curation word — a frame that must trigger nothing. */
-const CHIP_DONE_AGAIN = { kind: "read", status: { runId: RUN_ID, chips: { analysis: 'done', curation: 'done' } } }
+const CHIP_DONE_AGAIN = { kind: "read", status: { runId: RUN_ID, chips: { analysis: 'complete', curation: 'complete' } } }
 /** The chain fell over for good: the floor sentences are what exists (spec §1.2, D-11). */
 const CHIP_FAILED = { kind: "read", status: { runId: RUN_ID, chips: { analysis: 'failed', curation: 'pending' } } }
 
@@ -315,7 +315,7 @@ describe("the page re-reads analysis on chip TRANSITIONS and on nothing else (D-
     expect(fetchRunAnalysisMock, "pending → running is a transition").toHaveBeenCalledTimes(3)
 
     await push(CHIP_DONE)
-    expect(fetchRunAnalysisMock, "running → done is a transition").toHaveBeenCalledTimes(4)
+    expect(fetchRunAnalysisMock, "running → complete is a transition").toHaveBeenCalledTimes(4)
 
     await push(CHIP_DONE)
     await push(CHIP_DONE_AGAIN)
@@ -413,7 +413,7 @@ describe("the sentence's lifecycle is painted from the chip word (D-09/D-11)", (
     }))
     await push(CHIP_DONE)
 
-    expect(view.querySelector("[data-verdict-marker]"), "a done chain warns about nothing").toBeNull()
+    expect(view.querySelector("[data-verdict-marker]"), "a complete chain warns about nothing").toBeNull()
     expect(view.querySelector("[data-verdict-sentence]")?.textContent).toBe(upgraded)
     expect(view.querySelector("[data-verdict-block]")?.getAttribute("data-verdict-producer"))
       .toBe("analyze-run")

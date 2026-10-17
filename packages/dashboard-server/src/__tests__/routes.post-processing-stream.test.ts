@@ -320,7 +320,7 @@ describe('the stream opens with a snapshot and relays until the chain is termina
     expect(dataOf(relayed), 'the envelope travels whole — no projection').toEqual(started)
 
     // The chain goes terminal. The envelope is the TRIGGER; the re-read is the answer.
-    const terminal = chips('done', 'done')
+    const terminal = chips('complete', 'complete')
     fixture.setStatus(terminal)
     const completed = envelope(42, 'curationCompleted', { runId: RUN_ID })
     fixture.relay.publish(completed)
@@ -369,7 +369,7 @@ describe('the stream opens with a snapshot and relays until the chain is termina
 describe('the stream 204s rather than letting a browser reconnect forever (D-16, Pitfall 6)', () => {
   it('204 with no body when the chain is ALREADY terminal at open', async () => {
     const fixture = await serve({
-      status: chips('done', 'failed'),
+      status: chips('complete', 'failed'),
       events: [envelope(1, 'runFinished', { aggregateVerdict: 'passed', disposition: 'drained', finalSeq: 1 })],
     })
 
@@ -633,7 +633,7 @@ describe('UF-01 — the stream door answers its own throw and unwinds what it bu
         expect(openStreams.size).toBe(1)
         expect(vi.getTimerCount(), 'and its heartbeat is ticking').toBe(1)
 
-        status = chips('done', 'done')
+        status = chips('complete', 'complete')
         relay.publish(envelope(42, 'curationCompleted', { runId: RUN_ID }))
         await settle()
       })
