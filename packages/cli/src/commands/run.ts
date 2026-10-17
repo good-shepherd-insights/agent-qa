@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { trustPriorsForHost, type ResolveTrustPriors } from '../curation/trust-priors.js'
 import { randomUUID } from 'node:crypto'
+import { realpathSync } from 'node:fs'
 import { resolve as resolvePath } from 'node:path'
 import { Command, InvalidArgumentError } from 'commander'
 import pc from 'picocolors'
@@ -916,6 +917,15 @@ function isOwnRunningRowOrFree(db: DashboardDatabase, runId: string): boolean {
   return row.status === 'running' && owner !== undefined && db.isOwnStamp(runId, owner)
 }
 
+// 2026-10-17 (443-15, GAP-D5): a path that does not exist yet (or `:memory:`) has no real path.
+function namesOneRunsDb(a: string, b: string): boolean {
+  try {
+    return realpathSync.native(a) === realpathSync.native(b)
+  } catch {
+    return resolvePath(a) === resolvePath(b)
+  }
+}
+
 function finalRunStatus(verdict: string | undefined): 'passed' | 'failed' | 'skipped' | 'cancelled' {
   if (verdict === 'passed' || verdict === 'healed') return 'passed'
   if (verdict === 'skipped' || verdict === 'cancelled') return verdict
@@ -943,7 +953,6 @@ export function createRunRecord(input: {
         if (openedFor === runId) return
         throw new Error(`This run record belongs to ${openedFor} and cannot open ${runId}.`)
       }
-      openedFor = runId
       const host = input.host
       let dbPath = resolvePath(configDir, configuredDbPath?.trim() || DEFAULT_AGENT_QA_RUNS_DB_PATH)
       let useHost = false
@@ -957,7 +966,7 @@ export function createRunRecord(input: {
           ...(configuredDbPath === undefined ? {} : { configuredDbPath }),
         })
         useHost = host !== undefined
-          && (host.queueRun(runId) !== undefined || host.db.dbPath === dbPath)
+          && (host.queueRun(runId) !== undefined || namesOneRunsDb(host.db.dbPath, dbPath))
         handle = useHost && host !== undefined
           ? host.db
           : new dashboard.DashboardDatabase({ dbPath, runOwnership: composeRunOwnership() })
@@ -975,6 +984,7 @@ export function createRunRecord(input: {
         throw new RunIdAlreadyInUseError(runId)
       }
       db = handle
+      openedFor = runId
       ownsDb = !useHost
     },
     subscriber(attach) {

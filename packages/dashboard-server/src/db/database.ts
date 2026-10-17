@@ -406,7 +406,8 @@ function enableWalMode(db: DashboardSqliteDatabase): void {
       db.pragma('journal_mode = WAL')
       return
     } catch (error) {
-      const busy = (error as { errcode?: unknown } | null)?.errcode === SQLITE_BUSY
+      const errcode = (error as { errcode?: unknown } | null)?.errcode
+      const busy = typeof errcode === 'number' && (errcode & 0xff) === SQLITE_BUSY
       if (!busy || waited >= WAL_RETRY_LIMIT_MS) throw error
       Atomics.wait(pause, 0, 0, WAL_RETRY_STEP_MS)
     }
