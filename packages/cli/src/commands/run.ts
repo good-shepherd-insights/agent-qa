@@ -1108,6 +1108,14 @@ function printRunId(runId: string | null | undefined): void {
   if (runId) console.log(`Run ID: ${runId}`)
 }
 
+/** What a producer may print; only `agent-qa run` passes one, since other doors' stdout is a protocol. */
+export interface RunTerminal {
+  printRunId(runId: string): void
+  printRunAttributes(attributes: RunAttributes): void
+}
+
+const RUN_TERMINAL: RunTerminal = { printRunId, printRunAttributes }
+
 // 436 D-06: printed at the terminal door only, before the first test and at every log level. The
 // producers never print: the MCP host's stdout is its JSON-RPC connection.
 function printPlannerLimits(record: PlannerLimitsRecord | undefined): void {
@@ -1988,6 +1996,7 @@ async function executeSuites(
       opts,
       loadPlugins,
       runRecord: record,
+      terminal: RUN_TERMINAL,
       ...(variableContext === undefined ? {} : { variableContext }),
       ...(hooksContext === undefined ? {} : { hooksContext }),
       ...(analytics === undefined ? {} : { analytics }),
@@ -2504,6 +2513,7 @@ export interface SuiteRunMemberProductionInput {
   readonly loadPlugins: () => Promise<void>
   /** The run's record, opened after this producer's production refusal and before its plugins. */
   readonly runRecord?: RunRecord
+  readonly terminal?: RunTerminal
 }
 
 export interface SuiteVariableContext {
@@ -2685,8 +2695,8 @@ export async function produceSuiteRunMembers(
           failureSummary: `Path traversal rejected: ${relativePath}`,
           errorLog: `Path traversal rejected: ${relativePath}`,
         })
-        printRunId(runId)
-        printRunAttributes(suiteFailureAttributes)
+        input.terminal?.printRunId(runId)
+        input.terminal?.printRunAttributes(suiteFailureAttributes)
         throw new CliRunInputError(refusalLines, 2)
       }
 
@@ -2710,8 +2720,8 @@ export async function produceSuiteRunMembers(
           failureSummary: `${parseResult.errors.length} parse error(s) in ${relativePath}`,
           errorLog: errorLines.join('\n'),
         })
-        printRunId(runId)
-        printRunAttributes(suiteFailureAttributes)
+        input.terminal?.printRunId(runId)
+        input.terminal?.printRunAttributes(suiteFailureAttributes)
         throw new CliRunInputError(refusalLines, 2)
       }
       if (parseResult.tests.length === 0) {
@@ -2722,8 +2732,8 @@ export async function produceSuiteRunMembers(
           failureSummary: `No test definition found in ${relativePath}`,
           errorLog: `No test definition found in ${relativePath}`,
         })
-        printRunId(runId)
-        printRunAttributes(suiteFailureAttributes)
+        input.terminal?.printRunId(runId)
+        input.terminal?.printRunAttributes(suiteFailureAttributes)
         throw new CliRunInputError(refusalLines, 2)
       }
 
@@ -2745,8 +2755,8 @@ export async function produceSuiteRunMembers(
           failureSummary: mismatchMsg,
           errorLog: mismatchMsg,
         })
-        printRunId(runId)
-        printRunAttributes(suiteFailureAttributes)
+        input.terminal?.printRunId(runId)
+        input.terminal?.printRunAttributes(suiteFailureAttributes)
         throw new CliRunInputError(refusalLines, 2)
       }
 
@@ -3260,7 +3270,7 @@ export async function produceSuiteRunMembers(
       artifactsDir: resolvePath(configDir, config.services?.dashboard?.artifactsDir ?? RUNTIME_ARTIFACTS_DIR),
       mask: suiteRunMask,
     })
-    printRunAttributes(prepared.suiteAttributes)
+    input.terminal?.printRunAttributes(prepared.suiteAttributes)
   }
 
   // ---- Compose the ONE RunSession per invocation (D-01/D-04, SESSION-01/04/05) ---------------
@@ -3683,6 +3693,7 @@ export interface DirectRunMemberProductionInput {
   readonly runId?: string
   /** Reports each member's own run id. The command uses it to keep its crash-finalizer honest. */
   readonly onMemberRunId?: (runId: string) => void
+  readonly terminal?: RunTerminal
   /**
    * An Appium a HOST already leased for this run (401-07, D-01/D-12 — INVK-01 truth 5).
    *
@@ -4290,7 +4301,7 @@ export async function produceDirectRunMembers(
           }
           results.push(setupResult)
           setupFailureResult = setupResult
-          printRunAttributes(testAttributes)
+          input.terminal?.printRunAttributes(testAttributes)
         }
       }
 
@@ -4425,7 +4436,7 @@ export async function produceDirectRunMembers(
       }
 
       results.push(result)
-      printRunAttributes(testAttributes)
+      input.terminal?.printRunAttributes(testAttributes)
 
       // Post-run cache invalidation is no longer done here (Phase 356, D-03/D-13):
       // the redesigned per-key ActionPlanCache invalidates the exact failed decision
@@ -5025,6 +5036,7 @@ export function createRunCommand(): Command {
           opts,
           analytics,
           onMemberRunId: (memberRunId) => { currentRunId = memberRunId },
+          terminal: RUN_TERMINAL,
         })
         printPlannerLimits(produced.plannerLimits)
         const members = produced.members
