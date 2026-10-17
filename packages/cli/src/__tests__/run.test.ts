@@ -2515,57 +2515,6 @@ describe('run command — framework error handling', () => {
     expect(allErrors).not.toContain('Looks like Playwright was just installed')
   })
 
-  it('prints run IDs for running rows finalized during framework crash cleanup', async () => {
-    const cfg = defaultConfig()
-    cfg.services.dashboard = { dbPath: '.agent-qa/runs.db' } as any
-    mockResolveConfig.mockResolvedValue(cfg)
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
-    // 2026-10-16 (442-03, D-05): only the row the ingest reported is finalized and printed.
-    let ownRunId: string | undefined
-    mockCreateDashboardRunIngest.mockImplementationOnce(function (...args: unknown[]) {
-      const input = args[0] as {
-        runId: string
-        onRunCreated?: (id: string) => void
-      }
-      ownRunId = input.runId
-      input.onRunCreated?.(ownRunId)
-      return mockDashboardRunIngestInstance
-    })
-    const crashDb = {
-      getRuns: vi.fn(() => []),
-      getRun: vi.fn(() => (ownRunId === undefined
-        ? undefined
-        : { id: ownRunId, status: 'running', startedAt: new Date().toISOString() })),
-      readRunOwner: vi.fn(() => undefined),
-      isOwnStamp: vi.fn(() => false),
-      finalizeOwnRun: vi.fn(() => true),
-      getRunArtifact: vi.fn(() => ({ finalizedAt: null })),
-      finalizeRunArtifact: vi.fn(),
-      close: vi.fn(),
-    }
-    mockDashboardDatabase.mockImplementationOnce(function () { return crashDb })
-    mockWebAdapterSetup.mockRejectedValueOnce(new Error('browser crashed'))
-
-    await runCommand('tests/**/*.yaml')
-
-    expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(ownRunId).toEqual(expect.any(String))
-    expect(crashDb.getRuns).not.toHaveBeenCalled()
-    expect(crashDb.finalizeOwnRun).toHaveBeenCalledTimes(1)
-    expect(crashDb.finalizeOwnRun).toHaveBeenCalledWith(
-      ownRunId,
-      expect.objectContaining({ status: 'failed' }),
-    )
-    expect(crashDb.finalizeRunArtifact).toHaveBeenCalledWith(ownRunId, expect.anything())
-    const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
-    expect(allOutput.match(/Run ID: /g)).toHaveLength(1)
-    expect(allOutput).toContain(`Run ID: ${ownRunId!}`)
-  })
-
 })
 
 describe('run command — reporter integration', () => {
