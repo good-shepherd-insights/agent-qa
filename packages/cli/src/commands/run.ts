@@ -1112,9 +1112,14 @@ function printRunId(runId: string | null | undefined): void {
 export interface RunTerminal {
   printRunId(runId: string): void
   printRunAttributes(attributes: RunAttributes): void
+  printDebugLine(line: string): void
 }
 
-const RUN_TERMINAL: RunTerminal = { printRunId, printRunAttributes }
+const RUN_TERMINAL: RunTerminal = {
+  printRunId,
+  printRunAttributes,
+  printDebugLine: (line) => console.log(pc.dim(line)),
+}
 
 // 436 D-06: printed at the terminal door only, before the first test and at every log level. The
 // producers never print: the MCP host's stdout is its JSON-RPC connection.
@@ -4118,7 +4123,7 @@ export async function produceDirectRunMembers(
         }
 
         if (effectiveLogLevel === 'debug') {
-          console.log(pc.dim(`  Platform: ${testPlatform}${useFarm ? ` (farm: ${testResolvedDevice?.transport})` : ''}${testPlatform !== 'web' ? ' (adapter re-created)' : ''}`))
+          input.terminal?.printDebugLine(`  Platform: ${testPlatform}${useFarm ? ` (farm: ${testResolvedDevice?.transport})` : ''}${testPlatform !== 'web' ? ' (adapter re-created)' : ''}`)
         }
       }
 
@@ -4148,7 +4153,7 @@ export async function produceDirectRunMembers(
       process.env.AGENT_QA_LLM_MODEL = plannerCfg.model
       process.env.AGENT_QA_LLM_PROVIDER = plannerCfg.provider
       if (effectiveLogLevel === 'debug') {
-        console.log(pc.dim(`  Model: ${plannerCfg.model} (${plannerCfg.provider})`))
+        input.terminal?.printDebugLine(`  Model: ${plannerCfg.model} (${plannerCfg.provider})`)
       }
       const runMask = (text: string) => runtimeSecrets.secretRedactor.redactString(text)
       const plannerModel = createModel(plannerProfile, plannerAuth, runMask)
