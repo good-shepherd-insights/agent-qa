@@ -282,6 +282,17 @@ describe('projectPostProcessingChips is total over the durable chain state (D-14
 
 })
 
+describe('C444-STAGE-WORDS', () => {
+  it('the producer answers complete for a finished stage', () => {
+    expect(projectPostProcessingChips({ analyzeRun: row('done'), curateMemory: row('done', true) }))
+      .toEqual({ analysis: 'complete', curation: 'complete' })
+    expect(projectPostProcessingChips({ analyzeRun: row('failed'), curateMemory: row('cancelled') }))
+      .toEqual({ analysis: 'failed', curation: 'failed' })
+    expect(projectPostProcessingChips({ analyzeRun: row('queued', true), curateMemory: row('queued') }))
+      .toEqual({ analysis: 'running', curation: 'pending' })
+  })
+})
+
 describe('the runs.postProcessing op (D-14/D-15)', () => {
   it('asks the port for exactly the three ids chainJobIdsForRun derives', async () => {
     const reader = recordingReader({})

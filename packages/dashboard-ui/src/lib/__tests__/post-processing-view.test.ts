@@ -457,6 +457,22 @@ describe('an indicator says the stage, and says the state when it needs attentio
   })
 })
 
+describe('C444-STAGE-WORDS', () => {
+  it('the dashboard presents complete for a complete chip', () => {
+    const view = chips(projectPostProcessingView(read({ status: status('complete', 'complete') })))
+    expect(view.analysis).toEqual({
+      status: 'complete',
+      state: 'complete',
+      word: STAGE_INDICATOR_WORDS.analysis.complete,
+    })
+    expect(view.curation).toEqual({
+      status: 'complete',
+      state: 'complete',
+      word: STAGE_INDICATOR_WORDS.curation.complete,
+    })
+  })
+})
+
 // THE EXCLUDED STATE COMES FROM THE READ'S OWN FIELD (425-08 · D-08, T-425-08-01).
 //
 // The op folds `exclusion` from the run's durable `gateRun` / `excludedFromOutcomes` markers — the
