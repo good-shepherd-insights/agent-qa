@@ -38,7 +38,7 @@ function memberConfig(overrides: Partial<MemberRunConfig>): MemberRunConfig {
 
 describe('C444-NO-CAUSE-WORDS', () => {
   it("a cancelled step's record and a test's default abort reason carry no \"by user\"", async () => {
-    const finalized: Array<{ status: string; error?: string }> = []
+    const finalized: Array<{ status?: string; error?: string }> = []
     const cancel = new AbortController()
     cancel.abort(new Error('stop'))
     const ports: LoopPorts = {
@@ -46,7 +46,7 @@ describe('C444-NO-CAUSE-WORDS', () => {
       planner: makePlanner(),
       abortSignal: cancel.signal,
       events: {
-        stepFinalized(_evidence, enrich) { finalized.push({ status: enrich.status, error: enrich.error }) },
+        stepFinalized(_evidence, enrich) { finalized.push({ status: enrich?.status, error: enrich?.error }) },
         subActionRecorded() {},
       },
     } as LoopPorts
