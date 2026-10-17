@@ -295,6 +295,7 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => {
   LLMVerifier: mockLLMVerifier,
   ATTR_TRIGGER: 'agent-qa.trigger',
   ATTR_RUNNER: 'agent-qa.runner',
+  ATTR_GATE_RUN: 'agent-qa.gate-run',
   DEFAULT_AGENT_QA_ARTIFACTS_DIR: '.agent-qa/artifacts',
   DEFAULT_AGENT_QA_CACHE_DIR: '.agent-qa/cache',
   DEFAULT_AGENT_QA_SCREENSHOTS_DIR: '.agent-qa/artifacts/screenshots',

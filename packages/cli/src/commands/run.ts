@@ -727,16 +727,17 @@ function readRunAttributesFromEnv(): RunAttributes | undefined {
   return Object.keys(attributes).length > 0 ? attributes : undefined
 }
 
-function resolveCliRunAttributes(
+export function resolveCliRunAttributes(
   userAttributes: RunAttributes,
   runner: RunAttributeRunner,
   inheritedAttributes?: RunAttributes,
 ): RunAttributes {
   if (!inheritedAttributes) return buildCliRunAttributes(userAttributes, runner)
   const trigger = inheritedAttributes[ATTR_TRIGGER] as RunAttributeTrigger | undefined
+  // 2026-10-17 (444-09, D-26): only the record writes the gate-run mark, from the run's own flag.
   const inheritedUserAttributes = Object.fromEntries(
     Object.entries(inheritedAttributes)
-      .filter(([key]) => key !== ATTR_TRIGGER && key !== ATTR_RUNNER),
+      .filter(([key]) => key !== ATTR_TRIGGER && key !== ATTR_RUNNER && key !== ATTR_GATE_RUN),
   )
   return mergeRunAttributes(
     buildInternalRunAttributes({ trigger: trigger ?? 'cli', runner }),
@@ -941,6 +942,8 @@ export function createRunRecord(input: {
   let opening: { readonly runId: string; readonly done: Promise<void> } | undefined
   let ownRow: string | undefined
   let incompleteReason: string | undefined
+  let closed = false
+  const refuseClosed = (): Error => new Error('This run record is closed.')
 
   const openOnce = async ({ runId, configDir, configuredDbPath }: Parameters<RunRecord['open']>[0]) => {
     const host = input.host
@@ -963,6 +966,11 @@ export function createRunRecord(input: {
     } catch (error) {
       throw new RunRecordUnavailableError(dbPath, error)
     }
+    // 2026-10-17 (444-09, D-25): a close that landed during the open releases the handle it built.
+    if (closed) {
+      if (!useHost) handle.close()
+      throw refuseClosed()
+    }
     try {
       free = isOwnRunningRowOrFree(handle, runId)
     } catch (error) {
@@ -983,6 +991,7 @@ export function createRunRecord(input: {
       return db
     },
     async open(args) {
+      if (closed) throw refuseClosed()
       if (opening !== undefined) {
         if (opening.runId === args.runId) return opening.done
         throw new Error(`This run record belongs to ${opening.runId} and cannot open ${args.runId}.`)
@@ -1100,6 +1109,7 @@ export function createRunRecord(input: {
     },
     ownRowId: () => ownRow,
     close() {
+      closed = true
       if (ownsDb) db?.close()
       ownsDb = false
     },
