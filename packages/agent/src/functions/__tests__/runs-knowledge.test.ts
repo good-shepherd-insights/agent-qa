@@ -813,7 +813,7 @@ describe('the curation word and its counts mirror the chip (LERN-02, D-09/D-12)'
       },
     })
 
-    expect(result.curation.status).toBe('done')
+    expect(result.curation.status).toBe('complete')
     expect(result.curation.counts).toEqual({ curated: 3, deprecated: 1 })
   })
 
@@ -826,7 +826,7 @@ describe('the curation word and its counts mirror the chip (LERN-02, D-09/D-12)'
       },
     })
 
-    expect(result.curation.status).toBe('done')
+    expect(result.curation.status).toBe('complete')
     expect('counts' in result.curation).toBe(false)
   })
 })

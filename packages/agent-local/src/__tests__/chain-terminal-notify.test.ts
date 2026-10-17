@@ -570,7 +570,7 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
       { runId: RUN_ID },
       CALLER,
     ) as PostProcessingStatus
-    expect(status.chips).toEqual({ analysis: 'done', curation: 'failed' })
+    expect(status.chips).toEqual({ analysis: 'complete', curation: 'failed' })
   })
 
   // WR-03, the ACCEPT leg. A gate that rejected everything would satisfy the case above just as

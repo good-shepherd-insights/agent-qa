@@ -24,6 +24,7 @@ import {
   POST_PROCESSING_DETAIL_STAGES,
   PostProcessingStatusSchema,
   RunsPostProcessingInputSchema,
+  toRunNotificationView,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
@@ -307,7 +308,7 @@ export const runsPostProcessingSpec: FunctionSpec<RunsPostProcessingInput, PostP
       // Absence is spread away rather than padded (the `runs-get.ts` idiom): a chain in flight
       // has no record yet, and a rendered `null` would be a second spelling of what a missing
       // key already says.
-      ...(notification === undefined ? {} : { notification }),
+      ...(notification === undefined ? {} : { notification: toRunNotificationView(notification) }),
     }
   },
 }

@@ -59,7 +59,7 @@ import type {
   PostProcessingStatus,
   RunDigest,
   RunEventEnvelope,
-  RunNotification,
+  RunNotificationView,
 } from '@vostride/agent-qa-schema'
 
 // 391-06: the clustered block layout moved to the ONE package that has two callers for it — the
@@ -1093,7 +1093,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
           // D-09: this process ran the chain to its terminal, so the human line is the honest
           // close-out — it reports what HAPPENED, where the summary reports what is pending.
           // 418 D-04: diagnostics come from this run's validated durable v4 receipt;
-          // older/missing receipts keep the pre-v4 line. Notification vocabulary is unchanged.
+          // older/missing receipts keep the pre-v4 line. The line prints the served view's words (444 D-36).
           const receipt = readCurationTailReceipt(completedRunDir(opts.agentQaRoot, opts.runId))
           log.info?.(renderChainTerminalLine(status.notification,
             { ...(receipt?.runId === opts.runId ? receipt : {}),
@@ -1309,7 +1309,7 @@ export type CircularityGuardDisclosure =
 /**
  * The D-09 human line, rendered from the chain-terminal row and nothing else.
  *
- * Fires on ANY terminal — done or failed (D-12) — because a failure is exactly when the user
+ * Fires on ANY terminal — complete or failed (D-12) — because a failure is exactly when the user
  * most needs to be told. Counts come from the row rather than from the drain that produced it:
  * the row is what 392's chat and M5's dashboard will render, and a CLI line built from a
  * live-process value would be a second, quieter answer to the same question.
@@ -1338,7 +1338,7 @@ export type CircularityGuardDisclosure =
  * WORDS and the array LENGTHS are rendered; no candidate id, no digest, no authored text.
  */
 export function renderChainTerminalLine(
-  notification: RunNotification,
+  notification: RunNotificationView,
   report?: {
     canary?: CanaryCreditCounters
     trustPriorDisclosure?: TrustPriorDisclosure
@@ -1397,15 +1397,15 @@ export function renderChainTerminalLine(
  *   `proposals: not recorded`            the row carries no proposal stage. Every v2 notification
  *                                        migrated forward, and every chain that halted at a
  *                                        permanently failed fold. NOT a stage that staged nothing.
- *   `proposals: done (staged not recorded…)`  the stage RAN and no staging port was bound, so the
+ *   `proposals: complete (staged not recorded…)`  the stage RAN and no staging port was bound, so the
  *                                        counts were omitted by the handler on purpose.
- *   `proposals: done (staged 0, skipped 0…)`  a MEASURED zero — the port answered and staged
+ *   `proposals: complete (staged 0, skipped 0…)`  a MEASURED zero — the port answered and staged
  *                                        nothing. This is the only arm that may print a zero.
  *   `proposals: failed`                  the stage ran and did not finish, which is why the chain
  *                                        outcome one clause up says `failed`.
  */
 function renderProposalStageSegment(
-  proposals: RunNotification['stages']['proposals'],
+  proposals: RunNotificationView['stages']['proposals'],
   gate1: ProposalGate1Disclosure | undefined,
 ): string {
   if (proposals === undefined) return 'proposals: not recorded'

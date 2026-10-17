@@ -406,9 +406,9 @@ describe("run detail owns the chip client, and hands the navbar its projection",
         notification: {
           schemaVersion: 3,
           runId: RUN_ID,
-          outcome: "done",
+          outcome: "complete",
           verdictSummary: { total: 0, byClass: {} },
-          stages: { analysis: { status: "done" }, curation: { status: "done" } },
+          stages: { analysis: { status: "complete" }, curation: { status: "complete" } },
         },
       }))
     })

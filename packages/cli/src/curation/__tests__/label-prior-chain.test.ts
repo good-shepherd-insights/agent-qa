@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { calibrateLabels, canonicalJson } from '@vostride/agent-qa-eval'
-import { sha256hex, type PostProcessingStatus, type RunNotification } from '@vostride/agent-qa-schema'
+import { sha256hex, type PostProcessingStatus, type RunNotificationView } from '@vostride/agent-qa-schema'
 import { createKnowledgeReader, DIGEST_JOB_ID_SOURCE } from '@vostride/agent-qa-agent-local'
 import { markFixture } from '../../gates/__tests__/feedback-fixture.js'
 import { renderChainTerminalLine, renderPostProcessingSummaryLine, type PostRunTailOperations } from '../post-run-tail.js'
@@ -19,11 +19,11 @@ const roots: string[] = []
 afterEach(() => { vi.clearAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 const disclosure: TrustPriorDisclosure = { status: 'calibrated', digest: 'a'.repeat(64), nByOrigin: { 'agent-verified': 20, 'agent-observed': 25 } }
 const priorText = (digest: string, observed = 25) => `trust priors: calibrated@${digest} (agent-verified n=20, agent-observed n=${observed})`
-function notification(outcome: 'done' | 'failed' = 'done'): RunNotification {
+function notification(outcome: 'complete' | 'failed' = 'complete'): RunNotificationView {
   return { schemaVersion: 4, runId: 'fixture-run', outcome, verdictSummary: { total: 3, byClass: { app_bug: 3 } },
-    stages: { analysis: { status: 'done' }, curation: { status: outcome, curated: 2, deprecated: 1 } } } as RunNotification
+    stages: { analysis: { status: 'complete' }, curation: { status: outcome, curated: 2, deprecated: 1 } } } as RunNotificationView
 }
-it.each(['done', 'failed'] as const)('renders exact cached priors on %s terminal without changing counts', outcome => {
+it.each(['complete', 'failed'] as const)('renders exact cached priors on %s terminal without changing counts', outcome => {
   const line = renderChainTerminalLine(notification(outcome), { trustPriorDisclosure: disclosure,
     canary: { ...emptyCanaryCreditCounters(), credited: 2, staged: 1 } })
   expect(line).toContain(priorText(disclosure.digest!))
@@ -45,7 +45,7 @@ function artifact(root: string, precision: number) {
   mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, JSON.stringify(value))
   return value
 }
-function tail(f: ReturnType<typeof markFixture>, snapshot: ReturnType<typeof trustPriorsForHost>, mode: 'done' | 'failed' | 'partial' | 'handed-off') {
+function tail(f: ReturnType<typeof markFixture>, snapshot: ReturnType<typeof trustPriorsForHost>, mode: 'complete' | 'failed' | 'partial' | 'handed-off') {
   const info = vi.fn(), warn = vi.fn()
   const operations = {
     loadCompletedRunHandoff: () => f.handoff, resolveKnowledgeRoot: () => f.knowledgeRoot,
@@ -57,14 +57,14 @@ function tail(f: ReturnType<typeof markFixture>, snapshot: ReturnType<typeof tru
     runCurationTail: async () => undefined, createChipEmitter: () => ({ observe: () => undefined }),
     readPostProcessingStatus: async (): Promise<PostProcessingStatus> => ({ runId: f.handoff.runId,
       chips: { analysis: 'complete', curation: mode === 'failed' ? 'failed' : 'pending' },
-      ...(mode === 'done' || mode === 'failed' ? { notification: { ...notification(mode), runId: f.handoff.runId } } : {}) }),
+      ...(mode === 'complete' || mode === 'failed' ? { notification: { ...notification(mode), runId: f.handoff.runId } } : {}) }),
     readRunDigest: async () => ({ markChanges: [] }),
   } as unknown as PostRunTailOperations
   const handle = composeCliPostRunTail({ runId: f.handoff.runId, configDir: f.root, configFilePath: f.configPath,
     knowledgeConfig: { dir: 'agent-qa-knowledge' }, log: { info, warn }, operations, trustPriors: snapshot })
   return { handle, info, warn }
 }
-it.each(['done', 'failed', 'partial', 'handed-off'] as const)('keeps old and fresh host disclosure and numerical reader consistent for %s', async mode => {
+it.each(['complete', 'failed', 'partial', 'handed-off'] as const)('keeps old and fresh host disclosure and numerical reader consistent for %s', async mode => {
   const f = markFixture(); roots.push(f.root)
   const first = artifact(f.root, 0.75), old = trustPriorsForHost(f)
   const oldReader = createKnowledgeReader(() => f.knowledgeRoot, undefined, undefined, old.resolve)

@@ -20,6 +20,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import {
   CurationSnapshotSchema,
   guardRunNotification,
+  toRunNotificationView,
   type RecordChange,
   type RunNotification,
 } from '@vostride/agent-qa-schema'
@@ -37,6 +38,11 @@ import {
   type ProposalGate1Disclosure,
 } from '../post-run-tail.js'
 import { createKnowledgeChecks, type KnowledgeCheckProbes } from '../../commands/doctor-knowledge-checks.js'
+
+const renderStoredLine = (
+  row: RunNotification,
+  report?: Parameters<typeof renderChainTerminalLine>[1],
+): string => renderChainTerminalLine(toRunNotificationView(row), report)
 
 const created: string[] = []
 afterAll(() => {
@@ -88,7 +94,7 @@ function gate1(overrides: Partial<ProposeGate1Report> = {}): ProposeGate1Report 
 
 describe('the chain terminal line and the third stage (D-13/D-14/D-19)', () => {
   it('says the proposal stage is not recorded rather than staged 0 when the row carries none', () => {
-    const line = renderChainTerminalLine(notification())
+    const line = renderStoredLine(notification())
     expect(line).toContain('proposals: not recorded')
     expect(line).not.toContain('staged 0')
     // The historical population: a v2 row migrated forward names no proposal stage at all, and
@@ -101,41 +107,41 @@ describe('the chain terminal line and the third stage (D-13/D-14/D-19)', () => {
       stages: { analysis: { status: 'done' }, curation: { status: 'done', curated: 2, deprecated: 1 } },
     })
     expect(migrated.stages.proposals).toBeUndefined()
-    expect(renderChainTerminalLine(migrated)).toContain('proposals: not recorded')
+    expect(renderStoredLine(migrated)).toContain('proposals: not recorded')
   })
 
   it('renders a MEASURED zero as zero, and keeps curation counts untouched beside it', () => {
-    const line = renderChainTerminalLine(
+    const line = renderStoredLine(
       notification({ proposals: { status: 'done', proposed: 0, skipped: 0 } }),
     )
-    expect(line).toContain('proposals: done (staged 0, skipped 0')
-    expect(line).toContain('curation: done (2 curated, 1 deprecated)')
+    expect(line).toContain('proposals: complete (staged 0, skipped 0')
+    expect(line).toContain('curation: complete (2 curated, 1 deprecated)')
     expect(line).not.toContain('not recorded')
   })
 
   it('renders recorded staged and skipped counts exactly as the row carries them', () => {
     expect(
-      renderChainTerminalLine(notification({ proposals: { status: 'done', proposed: 3, skipped: 4 } })),
-    ).toContain('proposals: done (staged 3, skipped 4')
+      renderStoredLine(notification({ proposals: { status: 'done', proposed: 3, skipped: 4 } })),
+    ).toContain('proposals: complete (staged 3, skipped 4')
   })
 
   it('says staged not recorded for a stage that ran with no staging port bound', () => {
-    const line = renderChainTerminalLine(notification({ proposals: { status: 'done' } }))
-    expect(line).toContain('proposals: done (staged not recorded')
+    const line = renderStoredLine(notification({ proposals: { status: 'done' } }))
+    expect(line).toContain('proposals: complete (staged not recorded')
     expect(line).not.toContain('staged 0')
   })
 
   it('names a FAILED proposal stage on the line, so a failed chain outcome is attributable', () => {
-    const line = renderChainTerminalLine(
+    const line = renderStoredLine(
       notification({ proposals: { status: 'failed' } }, 'failed'),
     )
     expect(line).toContain('post-processing failed')
-    expect(line).toContain('curation: done')
+    expect(line).toContain('curation: complete')
     expect(line).toContain('proposals: failed')
   })
 
   it('projects the persisted Gate-1 remainder, its interruptions and its screened slots', () => {
-    const line = renderChainTerminalLine(
+    const line = renderStoredLine(
       notification({ proposals: { status: 'done', proposed: 1, skipped: 0 } }),
       {
         proposalGate1: {
@@ -153,7 +159,7 @@ describe('the chain terminal line and the third stage (D-13/D-14/D-19)', () => {
   })
 
   it('keeps a broken corpus root distinguishable from a zero remainder', () => {
-    const unavailable = renderChainTerminalLine(
+    const unavailable = renderStoredLine(
       notification({ proposals: { status: 'done', proposed: 0, skipped: 0 } }),
       {
         proposalGate1: {
@@ -171,7 +177,7 @@ describe('the chain terminal line and the third stage (D-13/D-14/D-19)', () => {
   it('tells not-recorded, unreadable and not-bound Gate-1 legs apart', () => {
     const row = notification({ proposals: { status: 'done', proposed: 0, skipped: 0 } })
     const of = (proposalGate1: ProposalGate1Disclosure): string =>
-      renderChainTerminalLine(row, { proposalGate1 })
+      renderStoredLine(row, { proposalGate1 })
     expect(of({ kind: 'not-recorded' })).toContain('Gate-1 not recorded')
     expect(of({ kind: 'unreadable' })).toContain('Gate-1 unreadable')
     expect(of({ kind: 'unbound' })).toContain('Gate-1 not bound')
@@ -185,7 +191,7 @@ describe('the chain terminal line and the third stage (D-13/D-14/D-19)', () => {
   })
 
   it('never carries a candidate id or a digest onto the line', () => {
-    const line = renderChainTerminalLine(notification({ proposals: { status: 'done', proposed: 1 } }), {
+    const line = renderStoredLine(notification({ proposals: { status: 'done', proposed: 1 } }), {
       proposalGate1: {
         kind: 'recorded',
         report: gate1({
@@ -225,23 +231,23 @@ describe('the chain terminal line and the five-bucket curation breakdown (423 D-
     const recorded = guardRunNotification(notification({
       curation: { status: 'done', curated: 2, deprecated: 1, curationSnapshot },
     }))
-    const line = renderChainTerminalLine(recorded)
+    const line = renderStoredLine(recorded)
     expect(line).toContain(
-      'curation: done (added 1, confirmed 1, superseded 0, deprecated 1, proposed 2',
+      'curation: complete (added 1, confirmed 1, superseded 0, deprecated 1, proposed 2',
     )
     expect(line).not.toContain('curated,')
     expect(line).not.toContain('1 deprecated')
 
-    expect(renderChainTerminalLine(notification())).toContain('curation: done (2 curated, 1 deprecated)')
+    expect(renderStoredLine(notification())).toContain('curation: complete (2 curated, 1 deprecated)')
 
     const zero = CurationSnapshotSchema.parse({
       schemaVersion: 1,
       rows: [],
       breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
     })
-    expect(renderChainTerminalLine(notification({
+    expect(renderStoredLine(notification({
       curation: { status: 'done', curated: 0, deprecated: 0, curationSnapshot: zero },
-    }))).toContain('curation: done (added 0, confirmed 0, superseded 0, deprecated 0, proposed 0)')
+    }))).toContain('curation: complete (added 0, confirmed 0, superseded 0, deprecated 0, proposed 0)')
   })
 })
 
@@ -257,7 +263,7 @@ describe('the read projection over a real stored notification (422-17-T2)', () =
       verdictSummary: { total: 2, byClass: { app_bug: 2 } },
       stages: { analysis: { status: 'done' }, curation: { status: 'done', curated: 1, deprecated: 0 } },
     })
-    const line = renderChainTerminalLine(row, { proposalGate1: { kind: 'not-recorded' } })
+    const line = renderStoredLine(row, { proposalGate1: { kind: 'not-recorded' } })
     expect(line).toContain('proposals: not recorded')
     // A stage that was never recorded has no Gate-1 leg to report on either, so the clause is
     // ABSENT rather than a second "not recorded" about a leg of a stage that did not happen.
@@ -279,10 +285,10 @@ describe('the read projection over a real stored notification (422-17-T2)', () =
         proposals: { status: 'done', proposed: 0, skipped: 0 },
       },
     })
-    const line = renderChainTerminalLine(row, {
+    const line = renderStoredLine(row, {
       proposalGate1: { kind: 'recorded', report: gate1({ disposition: 'no-candidates' }) },
     })
-    expect(line).toContain('proposals: done (staged 0, skipped 0')
+    expect(line).toContain('proposals: complete (staged 0, skipped 0')
     expect(line).toContain('Gate-1 no-candidates: ungated remaining 0')
     expect(line).not.toContain('not recorded')
   })
@@ -299,11 +305,11 @@ describe('the read projection over a real stored notification (422-17-T2)', () =
         proposals: { status: 'failed' },
       },
     })
-    const line = renderChainTerminalLine(row)
+    const line = renderStoredLine(row)
     expect(line).toContain('post-processing failed')
-    // The stage that actually failed is named, so `failed` beside a `done` curation is
+    // The stage that actually failed is named, so `failed` beside a `complete` curation is
     // attributable rather than a chain outcome with no owner.
-    expect(line).toContain('curation: done (1 curated, 0 deprecated)')
+    expect(line).toContain('curation: complete (1 curated, 0 deprecated)')
     expect(line).toContain('proposals: failed (staged not recorded)')
   })
 })
@@ -311,7 +317,7 @@ describe('the read projection over a real stored notification (422-17-T2)', () =
 describe('circularity guard backing on the chain line (D-19; WINDOWS #427)', () => {
   const row = notification({ proposals: { status: 'done', proposed: 0, skipped: 0 } })
   const of = (circularity: CircularityGuardDisclosure): string =>
-    renderChainTerminalLine(row, { circularity })
+    renderStoredLine(row, { circularity })
 
   it('says not recorded when this run recorded no evaluation-root posture at all', () => {
     expect(of({ kind: 'not-recorded' })).toContain('circularity guard: not recorded')

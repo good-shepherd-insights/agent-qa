@@ -22,7 +22,7 @@ export {
   EditorLiveUrlResultSchema,
   // 388 D-14: the chip-truth read op's two contracts, and the notification's wire shape.
   RunsPostProcessingInputSchema,
-  RunNotificationSchema,
+  RunNotificationViewSchema,
   PostProcessingStatusSchema,
   // 405 D-03: the run-detail read op's contracts — the input, the three row schemas, the D-06
   // token sum and the whole projection. They live beside `runs.postprocessing`'s because they

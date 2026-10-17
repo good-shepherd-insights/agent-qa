@@ -5,7 +5,7 @@ import { Command } from 'commander'
 import { PassThrough, Writable } from 'node:stream'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import * as model from '@vostride/agent-qa-model'
-import { asRef, ORIGIN_PRIORS, GateReceiptSchema, receiptDigestOf, screenStateHash, sha256hex, type Verdict, type PostProcessingStatus, type RunNotification } from '@vostride/agent-qa-schema'
+import { asRef, ORIGIN_PRIORS, GateReceiptSchema, receiptDigestOf, screenStateHash, sha256hex, type Verdict, type PostProcessingStatus, type RunNotificationView } from '@vostride/agent-qa-schema'
 import { readCommittedCorpus, readLabelCalibration, FsReplayRecordStore, FsScoreStore, FsReportStore,
   committedLabelPath, runReplayGate, serializeReplayGateReceipt, FsRunArtifactSource, seedCommittedCorpus } from '@vostride/agent-qa-eval-local'
 import { projectSilverLabelRecord, extractRunCassettes, buildSeedingPlan, projectCorpusEntry, canonicalJson, type LeafCassette } from '@vostride/agent-qa-eval'
@@ -185,11 +185,11 @@ it('adopts a real prior generation in new bundle/index hosts and matches report,
   expect(prior.alpha + prior.beta).toBe(ORIGIN_PRIORS['agent-verified'].alpha + ORIGIN_PRIORS['agent-verified'].beta)
   expect(prior.alpha / (prior.alpha + prior.beta)).toBeCloseTo(0)
   expect(fresh.disclosure.digest).toBe(publication.artifact.generationId)
-  for (const mode of ['done', 'failed', 'partial', 'handed-off'] as const) {
+  for (const mode of ['complete', 'failed', 'partial', 'handed-off'] as const) {
     const info = vi.fn()
-    const notification = { schemaVersion: 4, runId: f.handoff.runId, outcome: mode === 'failed' ? 'failed' : 'done',
+    const notification = { schemaVersion: 4, runId: f.handoff.runId, outcome: mode === 'failed' ? 'failed' : 'complete',
       verdictSummary: { total: 1, byClass: { app_bug: 1 } },
-      stages: { analysis: { status: 'done' }, curation: { status: mode === 'failed' ? 'failed' : 'done', curated: 2, deprecated: 1 } } } as RunNotification
+      stages: { analysis: { status: 'complete' }, curation: { status: mode === 'failed' ? 'failed' : 'complete', curated: 2, deprecated: 1 } } } as RunNotificationView
     const operations = {
       loadCompletedRunHandoff: () => f.handoff, resolveKnowledgeRoot: () => f.knowledgeRoot,
       composeHost: () => ({ jobs: async () => ({ idSource: DIGEST_JOB_ID_SOURCE,
@@ -200,7 +200,7 @@ it('adopts a real prior generation in new bundle/index hosts and matches report,
       runCurationTail: async () => undefined, createChipEmitter: () => ({ observe: () => undefined }),
       readPostProcessingStatus: async (): Promise<PostProcessingStatus> => ({ runId: f.handoff.runId,
         chips: { analysis: 'complete', curation: mode === 'failed' ? 'failed' : 'pending' },
-        ...(mode === 'done' || mode === 'failed' ? { notification } : {}) }),
+        ...(mode === 'complete' || mode === 'failed' ? { notification } : {}) }),
       readRunDigest: async () => ({ markChanges: [] }),
     } as unknown as PostRunTailOperations
     const tail = composeCliPostRunTail({ runId: f.handoff.runId, configDir: f.root, configFilePath: f.configPath,

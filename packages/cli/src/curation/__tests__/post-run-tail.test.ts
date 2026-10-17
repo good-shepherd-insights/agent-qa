@@ -49,7 +49,7 @@ import type {
   PostProcessingStatus,
   RunDigest,
   RunEventEnvelope,
-  RunNotification,
+  RunNotificationView,
   Verdict,
   VerdictSentenceParts,
 } from '@vostride/agent-qa-schema'
@@ -285,17 +285,17 @@ function completeStatus(): PostProcessingStatus {
   }
 }
 
-function terminalNotification(): RunNotification {
+function terminalNotification(): RunNotificationView {
   return {
     schemaVersion: 2,
     runId,
-    outcome: 'done',
+    outcome: 'complete',
     verdictSummary: { total: 3, byClass: { app_bug: 3 } },
     stages: {
-      analysis: { status: 'done' },
-      curation: { status: 'done', curated: 2, deprecated: 0 },
+      analysis: { status: 'complete' },
+      curation: { status: 'complete', curated: 2, deprecated: 0 },
     },
-  } as unknown as RunNotification
+  } as unknown as RunNotificationView
 }
 
 // ------------------------------------------------------------------------------------------
@@ -469,7 +469,7 @@ describe('the digest block — in-process analyze-run completed (D-17, over 389 
     const lines = h.info.mock.calls.map(([message]) => String(message))
     expect(lines).toHaveLength(2)
     // The D-09 line is rendered from the row and NOTHING else — no fetch command grafted on.
-    expect(lines[0]).toContain(`post-processing done for ${runId}`)
+    expect(lines[0]).toContain(`post-processing complete for ${runId}`)
     expect(lines[0]).not.toContain('agent-qa digest')
     expect(lines[1]).toContain(CLUSTER_SENTENCE)
   })
@@ -492,7 +492,7 @@ describe('the digest block — in-process analyze-run completed (D-17, over 389 
       await tail.finish()
       const line = String(h.info.mock.calls[0]?.[0])
       if (nonSignal) expect(line).toContain('non-signal 6 (environment 1, timeout 2, flake 3), rerun-excluded 2')
-      else if (schemaVersion === 4) expect(line).toContain('curation: done (2 curated, 0 deprecated; canary: credited 1, ride-along 2, cap-exceeded 0, non-signal 0, rerun-excluded 0, staged 0)')
+      else if (schemaVersion === 4) expect(line).toContain('curation: complete (2 curated, 0 deprecated; canary: credited 1, ride-along 2, cap-exceeded 0, non-signal 0, rerun-excluded 0, staged 0)')
       else expect(line).not.toContain('canary:')
     } finally { rmSync(root, { recursive: true, force: true }) }
   })
@@ -876,14 +876,14 @@ describe('425 D-20 — the chain-terminal line a real snapshot-bearing run print
     expect(report.drain).toBe('drained')
 
     const lines = info.mock.calls.map(([message]) => String(message))
-    const terminal = lines.find((message) => message.startsWith('post-processing done for'))
+    const terminal = lines.find((message) => message.startsWith('post-processing complete for'))
     expect(terminal, `no chain-terminal line in:\n${lines.join('\n')}`).toBeDefined()
 
     // THE BRANCH. The five buckets in CURATION_BREAKDOWN_BUCKETS order, every one printed —
     // a recorded snapshot measured all five, so a zero here is a measurement and not an
     // absence, and the CLI line keeps it (D-20: a log line is a record, not a glance).
     expect(terminal).toContain(
-      'curation: done (added 1, confirmed 0, superseded 0, deprecated 0, proposed 0')
+      'curation: complete (added 1, confirmed 0, superseded 0, deprecated 0, proposed 0')
     // …and neither spelling of the legacy sentence survives beside it.
     expect(terminal).not.toContain(' curated')
     expect(terminal).not.toContain(' deprecated)')
@@ -980,11 +980,11 @@ describe('425 D-20 — the chain-terminal line a real snapshot-bearing run print
       breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
     })
     const lines = info.mock.calls.map(([message]) => String(message))
-    const terminal = lines.find((message) => message.startsWith('post-processing done for'))
+    const terminal = lines.find((message) => message.startsWith('post-processing complete for'))
     expect(terminal, `no chain-terminal line in:\n${lines.join('\n')}`).toBeDefined()
     // A real fold's receipt also carries its canary counters, which close the same parenthesis.
     expect(terminal).toContain(
-      'curation: done (added 0, confirmed 0, superseded 0, deprecated 0, proposed 0; canary: credited 0, '
+      'curation: complete (added 0, confirmed 0, superseded 0, deprecated 0, proposed 0; canary: credited 0, '
       + 'ride-along 0, cap-exceeded 0, non-signal 0, rerun-excluded 0, staged 0) ·')
     expect(terminal).not.toContain('curated')
   })

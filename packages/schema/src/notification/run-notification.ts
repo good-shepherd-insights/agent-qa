@@ -137,6 +137,55 @@ export interface RunNotification {
   stages: RunNotificationStages
 }
 
+// 2026-10-17 (444-10, D-36): agent-jobs.db keeps the stored words; every read serves this view.
+export type RunNotificationViewStatus = 'complete' | 'failed'
+
+export const RUN_NOTIFICATION_VIEW_STATUSES = [
+  'complete',
+  'failed',
+] as const satisfies readonly RunNotificationViewStatus[]
+
+export interface RunNotificationViewStages {
+  analysis: { status: RunNotificationViewStatus }
+  curation: {
+    status: RunNotificationViewStatus
+    curated?: number
+    deprecated?: number
+    curationSnapshot?: CurationSnapshot
+  }
+  proposals?: {
+    status: RunNotificationViewStatus
+    proposed?: number
+    skipped?: number
+  }
+}
+
+export interface RunNotificationView {
+  schemaVersion: typeof CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION
+  runId: string
+  outcome: RunNotificationViewStatus
+  verdictSummary: RunNotificationVerdictSummary
+  stages: RunNotificationViewStages
+}
+
+const VIEW_WORD: Record<RunNotificationStageStatus, RunNotificationViewStatus> = {
+  done: 'complete',
+  failed: 'failed',
+}
+
+export function toRunNotificationView(notification: RunNotification): RunNotificationView {
+  const { analysis, curation, proposals } = notification.stages
+  return {
+    ...notification,
+    outcome: VIEW_WORD[notification.outcome],
+    stages: {
+      analysis: { ...analysis, status: VIEW_WORD[analysis.status] },
+      curation: { ...curation, status: VIEW_WORD[curation.status] },
+      ...(proposals === undefined ? {} : { proposals: { ...proposals, status: VIEW_WORD[proposals.status] } }),
+    },
+  }
+}
+
 /**
  * The two admissible stage key sets, sorted and joined — declared as DATA (2026-09-12, 422-22).
  *

@@ -3,9 +3,11 @@ import {
   CURATION_BREAKDOWN_BUCKETS, CURATION_BUCKET_PRECEDENCE, CURATION_SNAPSHOT_SCHEMA_VERSION,
   CurationBucketSchema, CurationSnapshotSchema, CurationSnapshotRowSchema,
   CurationSnapshotChangeSchema, CurationBreakdownSchema,
-  guardRunNotification, RunNotificationSchema, RunNotificationSchemaError,
+  guardRunNotification, RunNotificationSchemaError, RunNotificationViewSchema, toRunNotificationView,
 } from '../index'
-import type { CurationSnapshot, CurationSnapshotChange, CurationSnapshotRow } from '../index'
+import type {
+  CurationSnapshot, CurationSnapshotChange, CurationSnapshotRow, RunNotification,
+} from '../index'
 
 // Independent inputs and expected counts: no production fold constructs the oracle.
 const zero = { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 }
@@ -72,7 +74,7 @@ test.each([1, 2, 3])('NOTIFICATION-V1/V2/V3-MIGRATE: v%s retains historical coun
   expect(result.stages.proposals).toEqual(version === 3
     ? { status: 'done', proposed: 23, skipped: 4 } : undefined)
   expect(Object.hasOwn(result.stages.curation, 'curationSnapshot')).toBe(false)
-  expect(RunNotificationSchema.parse(result)).toEqual(result)
+  expect(RunNotificationViewSchema.parse(toRunNotificationView(result))).toEqual(toRunNotificationView(result))
   expect(JSON.stringify(stored)).toBe(before)
 })
 
@@ -80,18 +82,23 @@ test('NOTIFICATION-V4-ROUNDTRIP: both strict readers preserve full snapshot byte
   const stored = notification(4, five)
   expect(() => guardRunNotification(stored)).not.toThrow()
   expect(guardRunNotification(JSON.parse(JSON.stringify(stored)))).toEqual(stored)
-  expect(RunNotificationSchema.safeParse(stored).success).toBe(true)
-  const wire = RunNotificationSchema.parse(stored)
-  expect(wire).toEqual(stored)
-  expect(JSON.stringify(wire.stages.curation)).toBe(JSON.stringify(stored.stages.curation))
+  const view = toRunNotificationView(stored as RunNotification)
+  expect(RunNotificationViewSchema.safeParse(view).success).toBe(true)
+  const wire = RunNotificationViewSchema.parse(view)
+  expect(wire).toEqual(view)
+  expect(JSON.stringify(wire.stages.curation.curationSnapshot))
+    .toBe(JSON.stringify(stored.stages.curation.curationSnapshot))
   expect(wire.stages.proposals?.proposed).toBe(23)
-  expect(RunNotificationSchema.safeParse(notification(4)).success).toBe(true)
+  expect(RunNotificationViewSchema.safeParse(toRunNotificationView(notification(4) as RunNotification)).success)
+    .toBe(true)
+  expect(RunNotificationViewSchema.safeParse(stored).success).toBe(false)
 })
 
 test('NOTIFICATION-NEWER-REFUSE: invalid and future versions refuse without a guessed walk', () => {
   for (const version of [0, -1, 1.5, 4.5, 5, 100, NaN, Infinity]) {
     expect(() => guardRunNotification(notification(version))).toThrow(RunNotificationSchemaError)
-    expect(RunNotificationSchema.safeParse(notification(version)).success).toBe(false)
+    expect(RunNotificationViewSchema.safeParse(toRunNotificationView(notification(version) as RunNotification)).success)
+      .toBe(false)
   }
   expect(() => guardRunNotification(notification(5))).toThrow(/this build reads 4/)
 })
@@ -104,7 +111,8 @@ test('INVALID-BREAKDOWN: notification guards reject malformed snapshot membershi
     { ...five, rows: [...five.rows, added], breakdown: { ...five.breakdown, added: 2 } },
     { ...five, rows: [{ ...added, recordId: 'syntheticSecretIdentity' }] }]
   for (const invalid of invalids) {
-    expect(RunNotificationSchema.safeParse(notification(4, invalid)).success).toBe(false)
+    expect(RunNotificationViewSchema.safeParse(toRunNotificationView(notification(4, invalid) as RunNotification)).success)
+      .toBe(false)
     expect(() => guardRunNotification(notification(4, invalid))).toThrow(RunNotificationSchemaError)
     try { guardRunNotification(notification(4, invalid)) } catch (error) {
       expect(String(error)).not.toMatch(/syntheticSecret(Key|Identity)/)

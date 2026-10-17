@@ -116,7 +116,7 @@ describe('Wave 18 cold read masking recovery', () => {
     await publish(p, snapshot(p.runId))
     const read = cold(p)
     await expect(invokeFunction(read.host.registry, 'runs.knowledge', { runId: p.runId }, CLI_FUNCTION_CALLER))
-      .resolves.toMatchObject({ kind: 'ready', curation: { status: 'done' } })
+      .resolves.toMatchObject({ kind: 'ready', curation: { status: 'complete' } })
     expect(read.host.jobs).not.toHaveBeenCalled()
   })
 

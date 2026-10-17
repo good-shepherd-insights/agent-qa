@@ -387,9 +387,9 @@ describe('isPostProcessingTerminal', () => {
       notification: {
         schemaVersion: 4,
         runId: RUN_ID,
-        outcome: 'done',
+        outcome: 'complete',
         verdictSummary: { total: 0, byClass: {} },
-        stages: { analysis: { status: 'done' }, curation: { status: 'done' } },
+        stages: { analysis: { status: 'complete' }, curation: { status: 'complete' } },
       },
     }
     expect(isPostProcessingTerminal(withRow)).toBe(true)

@@ -12,8 +12,11 @@ import type { VerifierVerdict } from '../handoff/step-evidence'
 import type { ArtifactRef } from '../ids/artifact-ref'
 import type { PlannerLimitsRecord } from '../config/planner-limits'
 import type { ScopeKey, ScopeTier } from '../identity/scope-key'
-import { CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION } from '../notification/run-notification'
-import type { RunNotification } from '../notification/run-notification'
+import {
+  CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
+  RUN_NOTIFICATION_VIEW_STATUSES,
+} from '../notification/run-notification'
+import type { RunNotificationView } from '../notification/run-notification'
 import { CurationSnapshotSchema } from '../notification/curation-snapshot'
 import {
   CurationSnapshotWithheldSchema,
@@ -322,18 +325,14 @@ export type RunsPostProcessingInput = z.infer<typeof RunsPostProcessingInputSche
 /**
  * The chain-terminal notification as a WIRE contract (Phase 388, D-09/D-11).
  *
- * A second validator over the record `guardRunNotification` also checks, and the duplication
- * is bounded rather than accidental: both are declared against the ONE `RunNotification` type
- * — this one by `satisfies`, that one by its return — so a field added to the record without a
- * home in both is a compile error rather than a divergence somebody has to notice. They are
- * two validators because they answer at two boundaries: the guard reads BYTES another build
- * may have written into a sqlite column, and this one describes the shape a surface receives
- * and the JSON-Schema projection a catalogue publishes.
+ * `guardRunNotification` reads the BYTES another build may have written into a sqlite column;
+ * this describes the shape a surface receives and the JSON-Schema projection a catalogue
+ * publishes. 2026-10-17 (444-10, D-36): a surface receives `toRunNotificationView`'s words.
  */
-export const RunNotificationSchema = z.object({
+export const RunNotificationViewSchema = z.object({
   schemaVersion: z.literal(CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION),
   runId: z.string(),
-  outcome: z.enum(['done', 'failed']),
+  outcome: z.enum(RUN_NOTIFICATION_VIEW_STATUSES),
   verdictSummary: z.object({
     total: z.number().int().nonnegative(),
     // Partial on purpose (D-11): a class that did not occur is an ABSENT key, never a zero,
@@ -342,9 +341,9 @@ export const RunNotificationSchema = z.object({
     byClass: z.partialRecord(z.enum(verdictClassValues), z.number().int().nonnegative()),
   }).strict(),
   stages: z.object({
-    analysis: z.object({ status: z.enum(['done', 'failed']) }).strict(),
+    analysis: z.object({ status: z.enum(RUN_NOTIFICATION_VIEW_STATUSES) }).strict(),
     curation: z.object({
-      status: z.enum(['done', 'failed']),
+      status: z.enum(RUN_NOTIFICATION_VIEW_STATUSES),
       curated: z.number().int().nonnegative().optional(),
       deprecated: z.number().int().nonnegative().optional(),
       curationSnapshot: CurationSnapshotSchema.optional(),
@@ -353,12 +352,12 @@ export const RunNotificationSchema = z.object({
     // not recorded. It has to be declared all the same: this object is `.strict()`, so a wire
     // contract that simply ignored the third stage would REFUSE every record that carries one.
     proposals: z.object({
-      status: z.enum(['done', 'failed']),
+      status: z.enum(RUN_NOTIFICATION_VIEW_STATUSES),
       proposed: z.number().int().nonnegative().optional(),
       skipped: z.number().int().nonnegative().optional(),
     }).strict().optional(),
   }).strict(),
-}).strict() satisfies z.ZodType<RunNotification>
+}).strict() satisfies z.ZodType<RunNotificationView>
 
 const PostProcessingChipsSchema = z.object({
   analysis: z.enum(POST_PROCESSING_CHIP_STATUSES),
@@ -382,7 +381,7 @@ export const PostProcessingStatusSchema = z.object({
   curationSnapshotWithheld: CurationSnapshotWithheldSchema.optional(),
   /** The run's chain was never enqueued (425 D-08); folded from the durable handoff markers. */
   exclusion: PostProcessingExclusionSchema.optional(),
-  notification: RunNotificationSchema.optional(),
+  notification: RunNotificationViewSchema.optional(),
 }).strict() satisfies z.ZodType<PostProcessingStatus>
 
 /**

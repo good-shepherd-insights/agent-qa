@@ -171,7 +171,7 @@ function buildProjection(runId: string, steps: RealStep[], world: World): Extrac
   const parsed = RunKnowledgeProjectionSchema.parse({
     kind: 'ready', runId, buildOrdinal: 7, knowledgeStore: 'bound', retrievalRung: rung,
     steps: projectionSteps,
-    curation: world === 'pending' ? { status: 'pending' } : { status: 'done', counts: { curated: 4, deprecated: 1 } },
+    curation: world === 'pending' ? { status: 'pending' } : { status: 'complete', counts: { curated: 4, deprecated: 1 } },
     learned,
   })
   if (parsed.kind !== 'ready') throw new Error('the capture projection must be ready')

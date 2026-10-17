@@ -337,10 +337,12 @@ export {
   RunDigestMarkChangeSchema,
   RunDigestQuarantineReportSchema,
   RunDigestSchema,
+  RUN_NOTIFICATION_VIEW_STATUSES,
   RunNotificationSchemaError,
   RunsDigestInputSchema,
   guardRunNotification,
   isPostProcessingChipStatus,
+  toRunNotificationView,
 } from './notification/index'
 export type {
   CurationSnapshotWithheldReason,
@@ -360,6 +362,9 @@ export type {
   RunNotificationStageStatus,
   RunNotificationStages,
   RunNotificationVerdictSummary,
+  RunNotificationView,
+  RunNotificationViewStages,
+  RunNotificationViewStatus,
   RunsDigestInput,
 } from './notification/index'
 export type { RunStatus, ExecutionContext, RunId } from './run/index'
@@ -1088,7 +1093,7 @@ export {
   EditorLiveUrlResultSchema,
   // 388 D-14: the chip-truth read op's two contracts, and the notification's wire shape.
   RunsPostProcessingInputSchema,
-  RunNotificationSchema,
+  RunNotificationViewSchema,
   PostProcessingStatusSchema,
   // 405 D-03: the run-detail read op's contracts.
   RunsDetailInputSchema,

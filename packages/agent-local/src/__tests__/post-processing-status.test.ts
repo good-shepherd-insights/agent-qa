@@ -26,6 +26,7 @@ import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   CurationSnapshotSchema,
   sha256hex,
+  toRunNotificationView,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
@@ -309,7 +310,7 @@ describe('423 completed checkpoint snapshot', () => {
       expect(await jobs.store.listNotifications()).toEqual([])
       const projected = await createHarness(writer.agentQaRoot).status()
       expect(projected.curationSnapshot).toEqual(CURATION_SNAPSHOT)
-      expect(projected.chips).toEqual({ analysis: 'done', curation: 'done' })
+      expect(projected.chips).toEqual({ analysis: 'complete', curation: 'complete' })
       expect(Object.keys(projected.stageDetails!).sort()).toEqual(['analysis', 'curation', 'proposals'])
       expect(projected).not.toHaveProperty('notification')
       expect(readQueue(writer.agentQaRoot)).toEqual(before)
@@ -470,7 +471,7 @@ describe('423 cold stage facts', () => {
         }]
       }))
       expect(result.stageDetails).toEqual(expected)
-      const chip = lifecycle === 'retried' ? 'running' : lifecycle === 'complete' ? 'done'
+      const chip = lifecycle === 'retried' ? 'running' : lifecycle === 'complete' ? 'complete'
         : lifecycle === 'queued' ? 'pending' : 'failed'
       expect(result.chips).toEqual({ analysis: chip, curation: chip })
       expect(readQueue(writer.agentQaRoot)).toEqual(before)
@@ -648,7 +649,7 @@ describe('chip truth is read from durable rows (ANLZ-05, D-14)', () => {
     expect('notification' in status).toBe(false)
   })
 
-  it('reads a completed chain as done/done with the notification attached', async () => {
+  it('reads a completed chain as complete/complete with the notification attached', async () => {
     const harness = createHarness()
     const jobs = await harness.host.jobs()
     const handoff = fixtureHandoff(RUN_ID)
@@ -660,23 +661,25 @@ describe('chip truth is read from durable rows (ANLZ-05, D-14)', () => {
 
     const status = await harness.status()
 
-    expect(status.chips).toEqual({ analysis: 'done', curation: 'done' })
-    // The SAME record the terminal transaction wrote, not a rebuild of it: read back through
-    // the store's own reader and compared whole, so a projection that assembled a plausible
-    // notification of its own would fail here rather than look right.
+    expect(status.chips).toEqual({ analysis: 'complete', curation: 'complete' })
+    // The view of the SAME record the terminal transaction wrote, not a rebuild of it: read back
+    // through the store's own reader and compared whole, so a projection that assembled a
+    // plausible notification of its own would fail here rather than look right. The stored row
+    // keeps its own words (444 D-36).
     const [written] = await jobs.store.listNotifications()
-    expect(status.notification).toEqual(written?.payload)
+    expect(status.notification).toEqual(toRunNotificationView(written!.payload))
+    expect(written?.payload).toMatchObject({ outcome: 'done', stages: { analysis: { status: 'done' } } })
     expect(status.notification).toMatchObject({
       runId: RUN_ID,
-      outcome: 'done',
+      outcome: 'complete',
       stages: {
-        analysis: { status: 'done' },
-        curation: { status: 'done', curated: 2, deprecated: 1 },
+        analysis: { status: 'complete' },
+        curation: { status: 'complete', curated: 2, deprecated: 1 },
       },
     })
   })
 
-  it('reads a chain whose curation died as done/failed (D-12)', async () => {
+  it('reads a chain whose curation died as complete/failed (D-12)', async () => {
     const agentQaRoot = mkdtempSync(join(tmpdir(), 'agent-qa-pp-status-'))
     roots.push(agentQaRoot)
     const host = composeLocalAgent({
@@ -711,7 +714,7 @@ describe('chip truth is read from durable rows (ANLZ-05, D-14)', () => {
 
     // The failure is reported per STAGE: a chip set that collapsed to one outcome would say
     // the analysis failed too, and the analysis is exactly the artifact that survived.
-    expect(status.chips).toEqual({ analysis: 'done', curation: 'failed' })
+    expect(status.chips).toEqual({ analysis: 'complete', curation: 'failed' })
     expect(status.notification).toMatchObject({ outcome: 'failed' })
   })
 
@@ -832,7 +835,7 @@ describe('a row another build wrote still reads, through the op (D-01, Pitfall 7
       expect(Object.keys(notification!.stages).sort()).toEqual(['analysis', 'curation'])
       // The counts survived the walk — a migration that rebuilt the stage record instead of
       // narrowing it would drop them and still pass the key-set claim above.
-      expect(notification!.stages.curation).toEqual({ status: 'done', curated: 2, deprecated: 1 })
+      expect(notification!.stages.curation).toEqual({ status: 'complete', curated: 2, deprecated: 1 })
       // And the chips the same read projects are the two, by key set.
       expect(Object.keys(status.chips).sort()).toEqual(['analysis', 'curation'])
     })

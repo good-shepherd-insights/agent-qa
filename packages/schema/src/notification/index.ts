@@ -1,7 +1,9 @@
 export {
   CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
+  RUN_NOTIFICATION_VIEW_STATUSES,
   RunNotificationSchemaError,
   guardRunNotification,
+  toRunNotificationView,
 } from './run-notification'
 export type {
   RunNotification,
@@ -9,6 +11,9 @@ export type {
   RunNotificationStageStatus,
   RunNotificationStages,
   RunNotificationVerdictSummary,
+  RunNotificationView,
+  RunNotificationViewStages,
+  RunNotificationViewStatus,
 } from './run-notification'
 export {
   CURATION_SNAPSHOT_WITHHELD_REASONS,

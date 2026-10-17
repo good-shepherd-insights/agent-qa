@@ -493,7 +493,7 @@ describe('JOBQ-06 — an induced post-processing failure is invisible to the ver
     // is the DIGEST — headed by the run, carrying the same clustered analysis section through
     // the same relocated renderer, and then the chain and the decisions waiting on a human.
     const cleanLines = lines(cleanSuffix)
-    expect(cleanLines[0]).toContain(`post-processing done for ${RUN_ID}`)
+    expect(cleanLines[0]).toContain(`post-processing complete for ${RUN_ID}`)
     expect(cleanLines[1]).toBe(`digest — ${RUN_ID}`)
     expect(cleanLines[2]).toBe('analysis — 2 distinct problems:')
     // The sections D-18 names, all present and all counts. 432-09 (D-25): nothing waits on a

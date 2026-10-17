@@ -6,6 +6,7 @@ import {
   PostProcessingStatusSchema,
   CurationSnapshotSchema,
   CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
+  toRunNotificationView,
 } from '@vostride/agent-qa-schema'
 import type { CurationSnapshot, MaskFn, PostProcessingStageDetail, RunNotification } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
@@ -80,8 +81,8 @@ describe('423 checkpoint-backed snapshot projection', () => {
     const before = JSON.stringify(notification)
     const result = await read({ notification }, mask)
     expect(JSON.stringify(result)).not.toContain('synthetic-snapshot-secret')
-    expect(result.notification).toEqual(JSON.parse(before.replaceAll('synthetic-snapshot-secret',
-      '[secret:SNAP_441]')))
+    expect(result.notification).toEqual(toRunNotificationView(JSON.parse(before.replaceAll('synthetic-snapshot-secret',
+      '[secret:SNAP_441]'))))
     expect(PostProcessingStatusSchema.parse(result)).toEqual(result)
     expect(JSON.stringify(notification)).toBe(before)
     expect(result).not.toHaveProperty('curationSnapshot')
@@ -103,7 +104,7 @@ describe('423 checkpoint-backed snapshot projection', () => {
     const collapsing: MaskFn = () => '[secret:COLLAPSED_441]'
     await expect(read({ notification }, collapsing)).resolves.toHaveProperty('curationSnapshotWithheld', { reason: 'projection-refused' })
     const result = await read({ notification }, collapsing)
-    expect(result.notification?.stages.curation).toEqual({ status: 'done' })
+    expect(result.notification?.stages.curation).toEqual({ status: 'complete' })
     expect(JSON.stringify(notification)).toBe(before)
     expect(JSON.stringify(result)).not.toContain('synthetic-secret')
     expect(PostProcessingStatusSchema.parse(result)).toEqual(result)
@@ -142,7 +143,7 @@ describe('423 checkpoint-backed snapshot projection', () => {
       curateMemory: { status: outcome, claimed: false },
       notification,
     })
-    expect(result.notification).toEqual(notification)
+    expect(result.notification).toEqual(toRunNotificationView(notification))
     expect(result).not.toHaveProperty('curationSnapshot')
     expect(result.chips).toEqual({ analysis: 'complete', curation: outcome === 'done' ? 'complete' : 'failed' })
     expect(runsPostProcessingSpec.classify!(result).status).toBe('executed')
@@ -194,7 +195,7 @@ describe('423 checkpoint-backed snapshot projection', () => {
     const nested = await read({ notification })
     expect(nested).toHaveProperty('curationSnapshotWithheld', { reason: 'masking-unavailable' })
     expect(nested).not.toHaveProperty('curationSnapshot')
-    expect(nested.notification?.stages.curation).toEqual({ status: 'done', curated: 2, deprecated: 0 })
+    expect(nested.notification?.stages.curation).toEqual({ status: 'complete', curated: 2, deprecated: 0 })
     expect(notification.stages.curation.curationSnapshot).toBe(recorded)
     expect(PostProcessingStatusSchema.safeParse(nested).success).toBe(true)
 

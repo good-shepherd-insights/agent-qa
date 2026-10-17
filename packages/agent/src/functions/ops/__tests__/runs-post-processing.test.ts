@@ -17,6 +17,7 @@ import {
   asJobId,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   POST_PROCESSING_CHIP_STATUSES,
+  toRunNotificationView,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
@@ -328,13 +329,13 @@ describe('the runs.postProcessing op (D-14/D-15)', () => {
       runId: RUN_ID,
       chips: { analysis: 'complete', curation: 'complete' },
       stageDetails: { analysis: {}, curation: {} },
-      notification: NOTIFICATION,
+      notification: toRunNotificationView(NOTIFICATION),
     })
     // The third stage reaches a reader through the durable RECORD, not through a chip — so the
     // op must carry a `proposals` stage out untouched. A DTO that dropped it would leave the
     // one surface that can report the proposal stage reporting nothing at all.
     expect(status.notification?.stages.proposals).toEqual({
-      status: 'done',
+      status: 'complete',
       proposed: 2,
       skipped: 1,
     })

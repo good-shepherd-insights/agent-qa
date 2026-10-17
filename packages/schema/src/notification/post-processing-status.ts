@@ -20,7 +20,7 @@ import { z } from 'zod'
 
 import { jobConclusionKindValues } from '../job/job'
 import type { JobConclusionKind } from '../job/job'
-import type { RunNotification } from './run-notification'
+import type { RunNotificationView } from './run-notification'
 import type { CurationSnapshot } from './curation-snapshot'
 
 /**
@@ -144,7 +144,7 @@ export interface PostProcessingStatus {
    * Present only once the chain reached its terminal and wrote its one row (D-09). Absent is
    * the ordinary state of a chain still in flight — never rendered as a failure.
    */
-  notification?: RunNotification
+  notification?: RunNotificationView
 }
 
 export function isPostProcessingChipStatus(value: unknown): value is PostProcessingChipStatus {

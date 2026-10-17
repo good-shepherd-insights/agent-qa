@@ -109,9 +109,9 @@ const TERMINAL_BODY = {
   status: status('complete', 'complete', {
     schemaVersion: 2,
     runId: RUN_ID,
-    outcome: 'done',
+    outcome: 'complete',
     verdictSummary: { total: 1, byClass: {} },
-    stages: { analysis: { status: 'done' }, curation: { status: 'done', curated: 2, deprecated: 1 } },
+    stages: { analysis: { status: 'complete' }, curation: { status: 'complete', curated: 2, deprecated: 1 } },
   }),
   disposition: 'drained',
   failures: {},

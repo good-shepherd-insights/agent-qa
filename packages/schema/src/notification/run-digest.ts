@@ -33,7 +33,8 @@ import type { MarkAppliedChange, MarkFixKind } from '../functions/feedback'
 import { runIdSchema } from '../run/run-id'
 import { POST_PROCESSING_CHIP_STATUSES, PostProcessingExclusionSchema } from './post-processing-status'
 import type { PostProcessingChipStatus, PostProcessingExclusionReason } from './post-processing-status'
-import type { RunNotificationOutcome } from './run-notification'
+import { RUN_NOTIFICATION_VIEW_STATUSES } from './run-notification'
+import type { RunNotificationViewStatus } from './run-notification'
 
 /** `runs.digest` addresses exactly one run by id — the `runs.postprocessing` shape. */
 export const RunsDigestInputSchema = z.object({
@@ -66,12 +67,12 @@ export interface RunDigestMarkChange {
  *
  * `outcome` is present exactly once the chain wrote its terminal row, and it is a fact about
  * the CHAIN rather than about the run (the row's own note): a failed run whose analysis and
- * curation both succeeded reads `done`.
+ * curation both succeeded reads `complete` (444 D-36: the served view's word, not the stored one).
  */
 export interface RunDigestChainOutcomes {
   analysis: PostProcessingChipStatus
   curation: PostProcessingChipStatus
-  outcome?: RunNotificationOutcome
+  outcome?: RunNotificationViewStatus
   /**
    * The `runs.postprocessing` exclusion fact verbatim (425 D-08), so a machine reader of the
    * digest never re-derives from `pending` chips what the read op already knows. A sibling of
@@ -172,7 +173,7 @@ export const RunDigestMarkChangeSchema = z.object({
 export const RunDigestChainOutcomesSchema = z.object({
   analysis: z.enum(POST_PROCESSING_CHIP_STATUSES),
   curation: z.enum(POST_PROCESSING_CHIP_STATUSES),
-  outcome: z.enum(['done', 'failed']).optional(),
+  outcome: z.enum(RUN_NOTIFICATION_VIEW_STATUSES).optional(),
   exclusion: PostProcessingExclusionSchema.optional(),
 }).strict() satisfies z.ZodType<RunDigestChainOutcomes>
 
