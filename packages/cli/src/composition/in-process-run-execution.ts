@@ -540,6 +540,9 @@ export async function runInProcessCliRun(
           config: produced.subscriberSeed?.configSnapshot,
           source: produced.subscriberSeed?.sourceSnapshot,
         },
+        ...(produced.subscriberSeed?.attributes === undefined
+          ? {}
+          : { attributes: produced.subscriberSeed.attributes }),
       })
       session.subscribe(REPLAY_FROM_START, record.handler)
       startedRecord = record

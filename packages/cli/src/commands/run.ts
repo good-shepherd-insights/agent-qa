@@ -871,6 +871,7 @@ export interface RunRecordHostBinding {
 
 export interface RunRecordAttach {
   readonly mask: MaskFn
+  readonly attributes?: RunAttributes
   readonly onMemberSnapshot?: (listener: RunArtifactSnapshotListener) => () => void
   readonly snapshots?: { readonly config?: unknown; readonly source?: unknown }
   readonly gateRun?: boolean
@@ -982,7 +983,13 @@ export function createRunRecord(input: {
       }
       const runId = openedFor
       const queued = input.host?.queueRun(runId)
-      const own = queued === undefined ? input.attributes : queued.attributes
+      // 2026-10-17 (443-14, GAP-D3): the queue's attributes win; else the producer's, under the
+      // door's trigger; else the door's own.
+      const own = queued !== undefined
+        ? queued.attributes
+        : attach.attributes === undefined
+          ? input.attributes
+          : { ...attach.attributes, [ATTR_TRIGGER]: input.attributes[ATTR_TRIGGER] }
       // 2026-10-17 (443-07, D-09): a verify run's row is marked from the run's own gate-run flag.
       const attributes = attach.gateRun === true
         ? { ...(own ?? db.getRun(runId)?.attributes), [ATTR_GATE_RUN]: 'true' }
