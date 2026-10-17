@@ -28,7 +28,7 @@ type Geometry = {
   texts: Text[]
   chipWords: string[]
   chipsState: string
-  excluded: string | null
+  skipped: string | null
 }
 
 const failures: Record<string, string> = {}
@@ -135,7 +135,7 @@ async function measure(page: Page, label: string) {
       innerWidth, dpr: devicePixelRatio, header: box(header), badge: box(badge), actions: box(actions), items, texts,
       chipWords: [...header.querySelectorAll('[data-chip]')].map(chip => (chip.textContent ?? '').trim()),
       chipsState: chips?.getAttribute('data-chips-state') ?? 'absent',
-      excluded: chips?.getAttribute('data-postprocessing-excluded') ?? null,
+      skipped: chips?.getAttribute('data-postprocessing-skipped') ?? null,
     }
   })
   geometries.push({ label, ...geometry } as unknown as Geometry)
@@ -147,12 +147,12 @@ describe('run header layout on the shipped bundle (425-10)', () => {
       fixture = await recordingFixture('header-layout')
       const origin = fixture.dashboard.origin
       // Let the post-run tail reach a terminal answer so the indicator words stop moving between
-      // geometries. A chain that was excluded never leaves `pending`, so the loop is bounded and
+      // geometries. A chain that was skipped never leaves `pending`, so the loop is bounded and
       // its outcome is recorded rather than thrown — the geometry does not depend on it.
       for (const deadline = Date.now() + 30_000; Date.now() < deadline;) {
         const response = await fetch(`${origin}/api/runs/${encodeURIComponent(fixture.drive.runId)}/post-processing`)
-        const body = await response.json() as { status?: { chips?: Record<string, string>; exclusion?: unknown } }
-        if (body.status?.exclusion || ['analysis', 'curation'].every(key => ['complete', 'failed'].includes(body.status?.chips?.[key] ?? ''))) {
+        const body = await response.json() as { status?: { chips?: Record<string, string>; skipped?: unknown } }
+        if (body.status?.skipped || ['analysis', 'curation'].every(key => ['complete', 'failed'].includes(body.status?.chips?.[key] ?? ''))) {
           settled = true
           break
         }
