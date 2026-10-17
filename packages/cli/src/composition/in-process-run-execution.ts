@@ -532,6 +532,13 @@ export async function runInProcessCliRun(
       // stdout, which is the protocol on the MCP stdio server and `fn --json`.
       const record = options.runRecord.subscriber({
         mask,
+        members: produced.members.map(({ name, testId, filePath, suiteId, suiteName }) => ({
+          name,
+          testId,
+          filePath,
+          ...(suiteId === undefined ? {} : { suiteId }),
+          ...(suiteName === undefined ? {} : { suiteName }),
+        })),
         gateRun: request.gateRun === true,
         ...(produced.onMemberSnapshot === undefined ? {} : { onMemberSnapshot: produced.onMemberSnapshot }),
         snapshots: {

@@ -25,7 +25,7 @@ import type {
   RunEventEnvelope,
   RunSession,
 } from '@vostride/agent-qa-schema'
-import type { DashboardDatabase } from '@vostride/agent-qa-dashboard'
+import type { DashboardDatabase, RunIdentityMember } from '@vostride/agent-qa-dashboard'
 import type { SecretStore, SecretRedactor, SecretRedactorPort, HookDefinition, NonActionToolMap, SandboxRunnerOptions } from '@vostride/agent-qa-runner'
 import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
 import type { TestResult, PlatformAdapter, PlatformConfig } from '@vostride/agent-qa-runner'
@@ -872,6 +872,7 @@ export interface RunRecordHostBinding {
 
 export interface RunRecordAttach {
   readonly mask: MaskFn
+  readonly members: readonly RunIdentityMember[]
   readonly attributes?: RunAttributes
   readonly onMemberSnapshot?: (listener: RunArtifactSnapshotListener) => () => void
   readonly snapshots?: { readonly config?: unknown; readonly source?: unknown }
@@ -1022,6 +1023,12 @@ export function createRunRecord(input: {
         runId,
         configSnapshot: mask(attach.snapshots?.config),
         sourceSnapshot: mask(attach.snapshots?.source),
+        members: attach.members.map((member) => ({
+          ...member,
+          name: attach.mask(member.name),
+          filePath: attach.mask(member.filePath),
+          ...(member.suiteName === undefined ? {} : { suiteName: attach.mask(member.suiteName) }),
+        })),
         ...(attributes === undefined ? {} : { attributes }),
         onRunCreated: (created) => { ownRow = created },
       })

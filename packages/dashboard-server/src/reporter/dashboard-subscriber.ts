@@ -16,6 +16,7 @@ import type {
   TestStartedPayload,
 } from '@vostride/agent-qa-schema'
 import type { DashboardDatabase } from '../db/database.js'
+import { runRowIdentity, type RunIdentityMember } from './run-row-identity.js'
 
 /**
  * `createDashboardRunIngest` — the dashboard's DB ingestion (RESEARCH Pitfall 1's
@@ -83,6 +84,8 @@ export interface DashboardRunIngestDeps {
   configSnapshot?: ConfigSnapshot
   /** Resolved test/suite source snapshot — the bus never carries it. */
   sourceSnapshot?: SourceSnapshot
+  // 2026-10-17 (444-02, D-07, D-44): the run row's name and ids come from these, once, at the claim.
+  members?: readonly RunIdentityMember[]
   /** Trusted run attributes, written to the run row + artifact metadata. */
   attributes?: RunAttributes
   /** Fired once the primary DB row exists (log correlation / live-view wiring). */
@@ -179,12 +182,9 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
   const configRecord = isRecord(configSnapshot) ? configSnapshot : undefined
   const configRuntime = isRecord(configRecord?.runtime) ? (configRecord!.runtime as ArtifactRecord) : undefined
 
-  const sourceName = readString(sourceRecord?.name)
-  const sourceFilePath = readString(sourceRecord?.filePath)
-  const sourceTestId = readString(sourceRecord?.testId)
-  const sourceSuiteId = readString(sourceRecord?.suiteId)
+  const identity = runRowIdentity(deps.members ?? [])
   const platform = readString(configRuntime?.platform) ?? 'web'
-  const suiteRun = sourceRecord?.kind === 'suite' || sourceSuiteId !== undefined
+  const suiteRun = sourceRecord?.kind === 'suite' || identity.suiteId !== undefined
   let suiteIdentityWritten = false
 
   /** The primary DB row id lifecycle status/finalize writes target. */
@@ -216,13 +216,13 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
     const startedAt = now()
     startedAtMs = Date.parse(startedAt) || Date.now()
     const claimed = db.claimRunningRow(deps.runId, {
-      ...(sourceName ? { name: sourceName } : {}),
-      filePath: sourceFilePath,
+      ...(deps.members && deps.members.length > 0 ? { name: identity.name } : {}),
+      filePath: identity.filePath,
       ...(attributes ? { attributes } : {}),
       startedAt,
       platform,
-      testId: sourceTestId,
-      suiteId: sourceSuiteId,
+      testId: identity.testId,
+      suiteId: identity.suiteId,
     })
     return claimed ? deps.runId : undefined
   }

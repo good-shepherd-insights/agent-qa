@@ -32,6 +32,7 @@ const MEMBERS = [
   { testId: 't_cart-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel', name: 'Automation Exercise cart smoke', filePath: 'tests/ae-cart.yaml' },
 ] as const
 const LAST = MEMBERS[2]
+const SUITE_MEMBERS = MEMBERS.map((member) => ({ ...member, suiteId: SUITE_ID, suiteName: SUITE_NAME }))
 
 function feedSuiteRun(ingest: DashboardRunIngest): void {
   ingest.handler(ev('runStarted', { memberTestCount: MEMBERS.length }))
@@ -67,6 +68,7 @@ const DOORS: Door[] = [
       const ingest = createDashboardRunIngest({
         db,
         runId,
+        members: SUITE_MEMBERS,
         now: () => '2026-10-04T00:00:00.000Z',
       })
       feedSuiteRun(ingest)
@@ -88,6 +90,7 @@ const DOORS: Door[] = [
           loadStatus: 'loaded',
         },
         configSnapshot: { runtime: { platform: 'web' } },
+        members: SUITE_MEMBERS,
         now: () => '2026-10-04T00:00:00.000Z',
       })
       feedSuiteRun(ingest)
@@ -133,12 +136,13 @@ describe('C433-SUITE-RUN-IDENTITY', () => {
   it('C433-SUITE-RUN-IDENTITY: a single-test run is unchanged', async () => {
     const runId = db.insertPendingRun({ name: 'tests/login.yaml', filePath: 'tests/login.yaml' })
     db.updateRunStatus(runId, 'running')
+    const testId = 't_login-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel'
     const ingest = createDashboardRunIngest({
       db,
       runId,
+      members: [{ testId, name: 'Login Test', filePath: 'tests/login.yaml' }],
       now: () => '2026-10-04T00:00:00.000Z',
     })
-    const testId = 't_login-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel'
     ingest.handler(ev('runStarted', { memberTestCount: 1 }))
     ingest.handler(ev('testStarted', { testId, testIndex: 0, name: 'Login Test', filePath: 'tests/login.yaml', totalSteps: 1 }))
     ingest.handler(ev('testFinished', { testId, testIndex: 0, outcome: 'passed', durationMs: 1200 }))

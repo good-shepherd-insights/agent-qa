@@ -179,6 +179,7 @@ describe('createDashboardRunIngest', () => {
     const ingest = createDashboardRunIngest({
       db,
       sourceSnapshot: testSource({ name: 'Adopted Test' }),
+      members: [{ testId: testSource().testId, name: 'Adopted Test', filePath: testSource().filePath }],
       attributes,
       runId,
       now: () => '2026-07-08T00:00:00.000Z',
@@ -750,6 +751,13 @@ describe('C443-INGEST-ID', () => {
       db,
       runId: builtWith,
       sourceSnapshot: { kind: 'suite', suiteId: 's_smoke', name: 'Smoke Suite', loadStatus: 'loaded' },
+      members: [0, 1].map((testIndex) => ({
+        testId: `t-${String(testIndex)}`,
+        name: `Member ${String(testIndex)}`,
+        filePath: 'tests/m.yaml',
+        suiteId: 's_smoke',
+        suiteName: 'Smoke Suite',
+      })),
       configSnapshot: testConfig(),
       attributes,
     })

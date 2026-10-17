@@ -371,7 +371,13 @@ describe('C443-RECORD-CLOSE', () => {
     const runId = generateRunId()
     await record.open({ runId, configDir })
     expect(record.db, 'the record did not use the lent handle').toBe(failing.db)
-    const subscriber = record.subscriber({ mask: (text) => text })
+    const subscriber = record.subscriber({
+      mask: (text) => text,
+      members: [
+        { testId: 't-a', name: 'Member A', filePath: 'tests/a.yaml' },
+        { testId: 't-b', name: 'Member B', filePath: 'tests/b.yaml' },
+      ],
+    })
     let seq = 0
     const send = (type: RunEventEnvelope['type'], payload: Record<string, unknown>): void => {
       seq += 1
