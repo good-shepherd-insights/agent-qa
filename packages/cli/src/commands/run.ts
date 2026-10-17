@@ -2171,6 +2171,7 @@ async function executeSuites(
               : { modelDeps: produced.getCurationModelDeps()! }),
             signal: curationAbortController.signal,
             log: curationTailLog,
+            executionContext,
           })
           return await runVerdictFirstCurationTail({
             exitCode: verdictExitCode,
@@ -5230,6 +5231,7 @@ export function createRunCommand(): Command {
                     : { modelDeps: produced.getCurationModelDeps()! }),
                   signal: curationAbortController.signal,
                   log: curationTailLog,
+                  executionContext: singleExecutionContext,
                 })
                 return await runVerdictFirstCurationTail({
                   exitCode,

@@ -19,13 +19,13 @@
 //
 // Import discipline (FUNC-02): a file written today may name only `agent`, `agent-local`,
 // `analytics` and `schema` across package boundaries, and the ledger only ever shrinks. This file
-// names `schema` for two types and nothing else; the mask arrives through relative modules that
-// are already ledgered for it.
+// names `schema` for types and nothing else; the mask arrives through relative modules that are
+// already ledgered for it.
 
 import { createCanaryAblationForHost } from '../gates/canary-ablation-host.js'
 import { resolve } from 'node:path'
 
-import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
+import type { ExecutionContext, RunEventEnvelope } from '@vostride/agent-qa-schema'
 
 import type { RunCurationTailOptions } from './curation-tail.js'
 import {
@@ -77,6 +77,8 @@ export interface ComposeCliPostRunTailInput {
   readonly relay?: (envelope: RunEventEnvelope) => void
   /** Focused test seam. Production callers omit it. */
   readonly operations?: Partial<PostRunTailOperations>
+  /** 444 D-22: picks the CI wording for a pending stage. */
+  readonly executionContext?: ExecutionContext
 }
 
 /**
@@ -103,5 +105,6 @@ export function composeCliPostRunTail(input: ComposeCliPostRunTailInput): PostRu
     ...(input.deadlineMs === undefined ? {} : { deadlineMs: input.deadlineMs }),
     ...(input.relay === undefined ? {} : { relay: input.relay }),
     ...(input.operations === undefined ? {} : { operations: input.operations }),
+    ...(input.executionContext === undefined ? {} : { executionContext: input.executionContext }),
   })
 }

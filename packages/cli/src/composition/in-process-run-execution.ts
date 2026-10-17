@@ -379,6 +379,17 @@ export function refuseUnhonourableRequestFields(request: RunsStartInput): void {
   if (refused.length > 0) throw new RunRequestFieldRefusedError(refused)
 }
 
+// 2026-10-18 (444-14, D-22): in `ci` and `cloud` the line states the resume limit, not a promise.
+export function preparationPendingWarning(
+  runId: string,
+  pendingPath: string | undefined,
+  executionContext: RunExecutionContext,
+): string {
+  return executionContext === 'ci' || executionContext === 'cloud'
+    ? `Run ${runId}: preparation pending; analysis is not yet queued. It resumes only if this workspace's .agent-qa/ is kept and a later run or the daemon picks it up. Durable intent: ${pendingPath}.`
+    : `Run ${runId}: preparation pending; analysis is not yet queued. Durable intent: ${pendingPath}. The next local run or daemon drain resumes eligible pending preparation.`
+}
+
 export async function runInProcessCliRun(
   options: InProcessCliRunExecutionOptions,
   request: RunsStartInput,
@@ -707,7 +718,9 @@ export async function runInProcessCliRun(
         } catch {}
         if (!preparationDisclosureOwnedByDoor && postVerdictHandoff?.completion !== undefined) {
           const handoff = postVerdictHandoff
-          if (handoff.enqueueState === undefined) warnByName(`Run ${runId}: preparation pending; analysis is not yet queued. Durable intent: ${handoff.pendingPath}. The next local run or daemon drain resumes eligible pending preparation.`)
+          if (handoff.enqueueState === undefined) {
+            warnByName(preparationPendingWarning(runId, handoff.pendingPath, options.executionContext))
+          }
           void handoff.completion!.then(() => {
             if (handoff.failureDetail !== undefined) warnByName(handoff.failureDetail)
           }, () => warnByName(`Run ${runId}: preparation/enqueue failed (preparation-or-enqueue-error). Durable intent: ${handoff.pendingPath}.`))

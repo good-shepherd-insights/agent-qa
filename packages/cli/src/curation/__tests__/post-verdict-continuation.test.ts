@@ -4,12 +4,12 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { asRecordId, computeBriefDigest, guardCompletedRunHandoff, canonicalJson, sha256hex } from '@vostride/agent-qa-schema'
 import type { RunSession, ServedBrief, StepEvidence } from '@vostride/agent-qa-schema'
-import { runInProcessCliRun } from '../../composition/in-process-run-execution.js'
+import { preparationPendingWarning, runInProcessCliRun } from '../../composition/in-process-run-execution.js'
 import { createInProcessFixture } from '../../composition/__tests__/in-process-run-fixture.js'
 import { composeCliLocalAgent } from '../../composition/local-agent-host.js'
 import { prepareMisdirectionEvidence } from '../misdirection-tail.js'
 import { readMisdirectionRunState } from '../misdirection-run-state.js'
-import { DRAIN_BUDGET_MS } from '@vostride/agent-qa-agent-local'
+import { DRAIN_BUDGET_MS, resolveRunExecutionContext } from '@vostride/agent-qa-agent-local'
 import { generateRunId } from '@vostride/agent-qa-ids'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { ownPostVerdictContinuation, postVerdictPendingPath } from '../post-verdict-continuation.js'
@@ -27,6 +27,11 @@ import * as tailComposition from '../post-run-tail-composition.js'
 import * as evalSession from '../../eval-session-composition.js'
 import { readRunCanaryPolicy } from '../canary-run-state.js'
 import { closeTestRunRecords, testRunRecord } from '../../composition/__tests__/in-process-run-fixture.js'
+
+// 2026-10-18 (444-14, D-22): the run command resolves its context from the environment, so a CI
+// runner reads the CI sentence.
+const preparationLine = (pendingPath: string): string =>
+  preparationPendingWarning('', pendingPath, resolveRunExecutionContext()).replace(/^Run : /u, '')
 
 // 2026-10-17 (443-08, D-22): every drive call carries a record; each cell closes the ones it opened.
 afterEach(() => { closeTestRunRecords() })
@@ -754,7 +759,7 @@ async function commandSignalFixture(mode: 'direct' | 'suite', timing: 'post-verd
       .toBe(timing === 'post-verdict' ? 1 : 130)
     if (timing === 'active-run') expect(outcome?.verdict).toBe('cancelled')
     else {
-      expect(output.mock.calls.flat().join('\n')).toContain(`preparation pending; analysis is not yet queued. Durable intent: ${pendingPath}`)
+      expect(output.mock.calls.flat().join('\n')).toContain(preparationLine(pendingPath))
       expect(existsSync(pendingPath)).toBe(true)
       expect(outcome?.settled).toBeDefined()
     }
@@ -864,7 +869,7 @@ it.each((['direct', 'suite'] as const).flatMap(mode =>
   if (state === 'pending' || state === 'late-failure') {
     expect(report, 'a pending producer has no enqueue disposition and no completed drain')
       .toEqual({ preparationPending: true, drain: 'not-attempted', jobsRun: 0 })
-    expect(lines).toContain(`preparation pending; analysis is not yet queued. Durable intent: ${pendingPath}. The next local run or daemon drain resumes eligible pending preparation.`)
+    expect(lines).toContain(preparationLine(pendingPath))
   } else if (state === 'failed') expect(report).toEqual({ enqueue: 'failed', drain: 'not-attempted', jobsRun: 0 })
   else if (state === 'skipped') {
     expect(report).toEqual({ enqueue: 'skipped', drain: 'not-attempted', jobsRun: 0 })

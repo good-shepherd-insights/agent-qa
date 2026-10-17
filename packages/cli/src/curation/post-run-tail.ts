@@ -55,6 +55,7 @@ import { DRAIN_BUDGET_MS, LOCAL_DAEMON_CAPABILITIES } from '@vostride/agent-qa-a
 import { recoverPendingPostVerdictContinuations } from './post-verdict-continuation.js'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import type {
+  ExecutionContext,
   PostProcessingChips,
   PostProcessingStatus,
   RunDigest,
@@ -434,6 +435,8 @@ export interface RunPostRunTailOptions extends Pick<
   relay?: (envelope: RunEventEnvelope) => void
   /** Focused test seam. Production callers omit it. */
   operations?: Partial<PostRunTailOperations>
+  /** 2026-10-18 (444-14, D-22): in `ci` and `cloud` a pending line states the resume limit. */
+  executionContext?: ExecutionContext
 }
 
 /**
@@ -966,7 +969,9 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
     async finish(input: { readonly detached?: boolean } = {}): Promise<void> {
       const actualEnqueue = enqueueOutcome()
       if (opts.postVerdict !== undefined && actualEnqueue === undefined) {
-        log.info?.(`Run ${opts.runId}: preparation pending; analysis is not yet queued. Durable intent: ${opts.postVerdict.pendingPath}. The next local run or daemon drain resumes eligible pending preparation.`)
+        log.info?.(isCiContext(opts.executionContext)
+          ? `Run ${opts.runId}: preparation pending; analysis is not yet queued. It resumes only if this workspace's .agent-qa/ is kept and a later run or the daemon picks it up. Durable intent: ${opts.postVerdict.pendingPath}.`
+          : `Run ${opts.runId}: preparation pending; analysis is not yet queued. Durable intent: ${opts.postVerdict.pendingPath}. The next local run or daemon drain resumes eligible pending preparation.`)
         if (!observingLateFailure && opts.postVerdict.completion !== undefined) {
           observingLateFailure = true
           void opts.postVerdict.completion.then(() => {
@@ -1115,7 +1120,12 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         // one copy-paste away); when it did, the digest prints one line down and a pointer
         // would be noise. EITHER/OR, one story.
         log.info?.(
-          renderPostProcessingSummaryLine(status, postureOf(drainOutcome), snapshot().disclosure)
+          renderPostProcessingSummaryLine(
+            status,
+            postureOf(drainOutcome),
+            snapshot().disclosure,
+            opts.executionContext,
+          )
           + (analyzeRunCompleted
             ? ''
             : renderDigestPointer(opts.runId, await readDigest(openedHost))),
@@ -1197,6 +1207,19 @@ const PENDING_POSTURE_SUFFIX: Record<StageDrainer, Record<PostRunPendingPosture,
   },
 }
 
+// 2026-10-18 (444-14, D-22): a CI workspace is usually thrown away, so in `ci` and `cloud` a pending
+// stage names the one condition under which its drainer can still reach it, whatever the posture.
+const CI_PENDING_SUFFIX: Record<StageDrainer, string> = {
+  'any-host':
+    " (resumes only if this workspace's .agent-qa/ is kept and a later run or the daemon picks it up)",
+  'masked-leg-only':
+    " (resumes only if this workspace's .agent-qa/ is kept and a later local run picks it up)",
+}
+
+function isCiContext(context: ExecutionContext | undefined): boolean {
+  return context === 'ci' || context === 'cloud'
+}
+
 /**
  * Total over the drain-outcome union, deliberately: a new outcome must choose its posture HERE
  * rather than inherit one from a fall-through — which is precisely how G-388-3 shipped.
@@ -1242,18 +1265,25 @@ function postureOf(outcome: PostRunDrainOutcome): PostRunPendingPosture {
  * 425 D-08 / 444 D-39: a THIRD rule, and it outranks both. A run whose chain was never enqueued
  * carries the op's `skipped` fact; both stages print `skipped (<reason word>)` from the one schema
  * map, as the digest and the dashboard do. Absent job rows never spell it.
+ *
+ * 444 D-22: in `ci` and `cloud` the execution context, never a status, picks a pending stage's
+ * suffix: its drainer's resume limit (`CI_PENDING_SUFFIX`).
  */
 export function renderPostProcessingSummaryLine(
   status: PostProcessingStatus,
   posture: PostRunPendingPosture,
   trustPriorDisclosure?: TrustPriorDisclosure,
+  executionContext?: ExecutionContext,
 ): string {
   const skipped = status.skipped
+  const pendingSuffix = (label: keyof PostProcessingChips): string => isCiContext(executionContext)
+    ? CI_PENDING_SUFFIX[STAGE_DRAINER[label]]
+    : PENDING_POSTURE_SUFFIX[STAGE_DRAINER[label]][posture]
   const stage = (label: keyof PostProcessingChips, chip: string): string => {
     if (skipped !== undefined) {
       return `${label}: skipped (${POST_PROCESSING_SKIP_REASON_WORDS[skipped.reason]})`
     }
-    const suffix = chip === 'pending' ? PENDING_POSTURE_SUFFIX[STAGE_DRAINER[label]][posture] : ''
+    const suffix = chip === 'pending' ? pendingSuffix(label) : ''
     return `${label}: ${chip}${suffix}`
   }
   return `post-processing — ${[
