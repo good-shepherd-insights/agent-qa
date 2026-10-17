@@ -6,6 +6,7 @@ import { MemoryRouter, Route, Routes } from "react-router"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import SuitesPage from "@/pages/suites"
+import TestViewerPage from "@/pages/test-viewer"
 import TestsPage from "@/pages/tests"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -15,6 +16,11 @@ vi.mock("@/hooks/use-page-title", () => ({ usePageTitle: () => {} }))
 vi.mock("@/hooks/use-run-config", () => ({
   useRunConfig: () => ({ defaultRunMode: "local", hasFarm: false, isLoading: false }),
 }))
+vi.mock("@/components/monaco-editor", () => ({ MonacoEditor: () => <div /> }))
+vi.mock("@/components/visual-builder", () => ({ VisualBuilder: () => <div /> }))
+vi.mock("@/components/test-navbar", () => ({ TestNavbar: () => <div /> }))
+vi.mock("@/components/pass-rate-chart", () => ({ PassRateChart: () => <div /> }))
+vi.mock("@/components/duration-chart", () => ({ DurationChart: () => <div /> }))
 
 interface Member {
   testId: string | null
@@ -78,6 +84,26 @@ function member(test: typeof LOGIN, outcome: string | null, suiteId: string | nu
 
 let served: { tests: unknown[]; suites: unknown[]; runs: unknown[] } = { tests: [], suites: [], runs: [] }
 
+const VIEWED = {
+  path: "tests/checkout.yaml",
+  testId: "t_checkout",
+  content: "name: Checkout flow\ntest-id: t_checkout\nsteps:\n  - open the cart\n",
+}
+let analyticsRuns: unknown[] = []
+const analyticsRequests: URL[] = []
+
+function analyticsDetail() {
+  return {
+    name: "Checkout flow",
+    runs: analyticsRuns,
+    total: analyticsRuns.length,
+    trends: { passRate: 0.5, avgDuration: 1000, totalRuns: analyticsRuns.length, daily: [] },
+    isFlaky: false,
+    flakyScore: 0,
+    scope: { configured: false, predicates: [], scopedCount: 0, totalCount: analyticsRuns.length },
+  }
+}
+
 function json(body: unknown) {
   return Promise.resolve({ ok: true, status: 200, statusText: "OK", json: () => Promise.resolve(body) })
 }
@@ -87,13 +113,18 @@ function fakeServer(input: string) {
   if (url.pathname === "/api/tests") return json({ files: served.tests, targets: [] })
   if (url.pathname === "/api/suites") return json({ files: served.suites })
   if (url.pathname === "/api/runs") return json({ runs: served.runs, total: served.runs.length, targets: [] })
+  if (url.pathname === `/api/tests/${VIEWED.testId}`) return json(VIEWED)
+  if (url.pathname.startsWith("/api/analytics/tests/")) {
+    analyticsRequests.push(url)
+    return json(analyticsDetail())
+  }
   return json({})
 }
 
 let container: HTMLDivElement | null = null
 let root: Root | null = null
 
-async function renderPage(path: "/tests" | "/suites") {
+async function renderPage(path: string) {
   container = document.createElement("div")
   document.body.appendChild(container)
   root = createRoot(container)
@@ -103,6 +134,7 @@ async function renderPage(path: "/tests" | "/suites") {
         <Routes>
           <Route path="/tests" element={<TestsPage />} />
           <Route path="/suites" element={<SuitesPage />} />
+          <Route path="/test/:t_id" element={<TestViewerPage />} />
         </Routes>
       </MemoryRouter>,
     )
@@ -129,6 +161,8 @@ function historyOf(name: string) {
 
 beforeEach(() => {
   served = { tests: [], suites: [], runs: [] }
+  analyticsRuns = []
+  analyticsRequests.length = 0
   vi.stubGlobal("fetch", vi.fn((input: string) => fakeServer(input)))
 })
 
@@ -210,5 +244,30 @@ describe("C444-SUITE-HISTORY", () => {
     expect(historyOf("Checkout suite")).toEqual({ passRate: "100%1/1", lastRunHref: "/runs/r_span", lastStatus: expect.stringContaining("Healed") })
     expect(historyOf("Account suite")).toEqual({ passRate: "50%1/2", lastRunHref: "/runs/r_later", lastStatus: expect.stringContaining("timeout") })
     expect(historyOf("Idle suite").lastRunHref).toBeNull()
+  })
+})
+
+describe("C444-TEST-VIEWER", () => {
+  it("the test viewer asks for its test by id and path", async () => {
+    await renderPage(`/test/${VIEWED.testId}`)
+
+    expect(analyticsRequests.length, "an analytics request").toBeGreaterThan(0)
+    const request = analyticsRequests[analyticsRequests.length - 1]!
+    expect(decodeURIComponent(request.pathname)).toBe("/api/analytics/tests/Checkout flow")
+    expect(request.searchParams.get("testId")).toBe(VIEWED.testId)
+    expect(request.searchParams.get("filePath")).toBe(VIEWED.path)
+  })
+
+  it("the test viewer's run list shows each run's member outcome", async () => {
+    analyticsRuns = [
+      { ...run("r_multi", "passed", "2026-10-17T12:00:00.000Z", [member(SEARCH, "passed"), { testId: VIEWED.testId, filePath: VIEWED.path, suiteId: null, name: "Checkout flow", outcome: "failed" }]), memberOutcome: "failed" },
+      { ...run("r_solo", "passed", "2026-10-17T11:00:00.000Z", [{ testId: VIEWED.testId, filePath: VIEWED.path, suiteId: null, name: "Checkout flow", outcome: "passed" }]), memberOutcome: "passed" },
+    ]
+    await renderPage(`/test/${VIEWED.testId}`)
+
+    const rowOf = (runId: string) => container?.querySelector(`a[href="/runs/${runId}"]`)?.closest("tr")?.textContent ?? null
+    expect(rowOf("r_multi"), "the multi-test run's row").toContain("Failed")
+    expect(rowOf("r_multi")).not.toContain("Passed")
+    expect(rowOf("r_solo"), "the single-test run's row").toContain("Passed")
   })
 })
