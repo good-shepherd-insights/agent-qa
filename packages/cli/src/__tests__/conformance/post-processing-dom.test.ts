@@ -445,7 +445,7 @@ async function readChain(origin: string, runId: string): Promise<ReadBody> {
 /** The door's own terminal rule, restated over a read body the way the client restates it. */
 function chainTerminal(body: ReadBody): boolean {
   if (body.status.notification !== undefined) return true
-  const settled = (chip: string | undefined): boolean => chip === 'done' || chip === 'failed'
+  const settled = (chip: string | undefined): boolean => chip === 'complete' || chip === 'failed'
   return settled(body.status.chips.analysis) && settled(body.status.chips.curation)
 }
 
@@ -514,7 +514,7 @@ async function drivePushPollArm(fx: DrainFixture): Promise<PushPollArm> {
   while (pollSettledAt === undefined && Date.now() < pollDeadline) {
     pollReads += 1
     const chip = (await readChain(fx.dashboard.origin, runId)).status.chips.analysis
-    if (chip === 'done' || chip === 'failed') { pollSettledAt = Date.now(); break }
+    if (chip === 'complete' || chip === 'failed') { pollSettledAt = Date.now(); break }
     await new Promise<void>((tick) => { setTimeout(tick, POLL_MS) })
   }
   abort.abort()
@@ -963,7 +963,7 @@ async function driveInProcessArm(
           Array.from(document.querySelectorAll('[data-chip]'))
             .map((element) => element.getAttribute('data-chip-status') ?? '?'),
         )
-        return painted.length === 2 && painted.every((word) => word === 'done' || word === 'failed')
+        return painted.length === 2 && painted.every((word) => word === 'complete' || word === 'failed')
       },
       `the page to paint both chips terminal for ${runId}`,
       POLL_MS * 3,
@@ -1054,7 +1054,7 @@ beforeAll(async () => {
               Array.from(document.querySelectorAll('[data-chip]'))
                 .map((element) => element.getAttribute('data-chip-status') ?? '?'),
             )
-            return painted.length === 2 && painted.every((word) => word === 'done' || word === 'failed')
+            return painted.length === 2 && painted.every((word) => word === 'complete' || word === 'failed')
           },
           `the return visit to paint ${terminalRunId} terminal`,
           POLL_MS,
@@ -1175,7 +1175,7 @@ beforeAll(async () => {
             Array.from(document.querySelectorAll('[data-chip]'))
               .map((element) => element.getAttribute('data-chip-status') ?? '?'),
           )
-          return painted.length === 2 && painted.every((word) => word === 'done' || word === 'failed')
+          return painted.length === 2 && painted.every((word) => word === 'complete' || word === 'failed')
         },
         `the handed-off page to paint both chips terminal`,
         POLL_MS * 4,
@@ -1331,8 +1331,8 @@ describePosix('D-19 on the built bundle behind the shipped dashboard (LIFE-03 / 
         arm.painted,
         `arm ${String(index)} (${arm.runId}) did not paint two terminal chips. html: ${arm.html.slice(0, 400)}`,
       ).toEqual({
-        analysis: expect.stringMatching(/^(?:done|failed)$/u),
-        curation: expect.stringMatching(/^(?:done|failed)$/u),
+        analysis: expect.stringMatching(/^(?:complete|failed)$/u),
+        curation: expect.stringMatching(/^(?:complete|failed)$/u),
       })
     }
   }, 60_000)
@@ -1418,7 +1418,7 @@ describePosix('D-19 on the built bundle behind the shipped dashboard (LIFE-03 / 
         + 'only channel there is, so a page that disagrees with the store has invented something',
       ).toEqual(arm.durableChips)
       expect(
-        Object.values(arm.painted).every((word) => word === 'done' || word === 'failed'),
+        Object.values(arm.painted).every((word) => word === 'complete' || word === 'failed'),
         `arm ${String(index)} (${arm.runId}) never reached terminal words at all: ${JSON.stringify(arm.painted)}`,
       ).toBe(true)
       const lags = movingTransitions(arm)
@@ -1459,7 +1459,7 @@ describePosix('D-19 on the built bundle behind the shipped dashboard (LIFE-03 / 
     expect(
       handed!.painted,
       `the daemon-drained chain did not settle on the page. html: ${handed!.html.slice(0, 400)}`,
-    ).toEqual({ analysis: 'failed', curation: 'done' })
+    ).toEqual({ analysis: 'failed', curation: 'complete' })
     console.log(
       `[404-08] (3) handedOff ${handed!.runId} — reads ${String(handed!.requests.filter(isRead).length)}, `
       + `streams ${String(handed!.requests.filter(isStream).length)}, `
@@ -1558,8 +1558,8 @@ describePosix('D-19 on the built bundle behind the shipped dashboard (LIFE-03 / 
       'and no push channel: the first read was terminal, so there is nothing a frame could say',
     ).toBe(0)
     expect(visit!.painted).toEqual({
-      analysis: expect.stringMatching(/^(?:done|failed)$/u),
-      curation: expect.stringMatching(/^(?:done|failed)$/u),
+      analysis: expect.stringMatching(/^(?:complete|failed)$/u),
+      curation: expect.stringMatching(/^(?:complete|failed)$/u),
     })
     console.log(
       `[404-08] (4) return visit ${visit!.runId} — reads ${String(visit!.requests.filter(isRead).length)}, `

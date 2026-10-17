@@ -222,7 +222,7 @@ describe('423 curation tail snapshot', () => {
       expect(row, 'no bundle-committed checkpoint').toBeDefined()
       expect(JSON.parse(String(row!.payload_json)).value).toEqual({ runId: zeroRun, curated: 0, deprecated: 0, curationSnapshot: ZERO_SNAPSHOT })
     } finally { db.close() }
-    expect(served.chips.curation).toBe('done')
+    expect(served.chips.curation).toBe('complete')
     expect(served.curationSnapshot).toEqual(ZERO_SNAPSHOT)
     expect(served).not.toHaveProperty('curationSnapshotWithheld')
     expect(served.notification?.stages.curation.curationSnapshot).toEqual(ZERO_SNAPSHOT)

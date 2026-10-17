@@ -611,7 +611,7 @@ describe('the user-facing post-run lines (D-07 / D-08 / D-09)', () => {
     expect(JSON.stringify(status)).not.toContain('daemon will drain')
   })
 
-  it('renders D-08\'s own example when the stages actually differ (analysis done, curation queued)',
+  it('renders D-08\'s own example when the stages actually differ (analysis complete, curation queued)',
     async () => {
       const f = fixture({ stopAfterFirstJob: true })
       // First tail: the budget is spent the instant `analyze-run` lands, so the chain stops
@@ -637,11 +637,11 @@ describe('the user-facing post-run lines (D-07 / D-08 / D-09)', () => {
       // The stages DIFFER, so a line fabricated from the tail's own posture cannot coincide
       // with the durable one — which is what makes the token-equality claim below load-bearing.
       expect(status.chips).toEqual({
-        analysis: 'done',
+        analysis: 'complete',
         curation: 'pending',
       })
       expect(f.info.mock.calls.map(([message]) => String(message))).toEqual([
-        'post-processing — analysis: done · curation: pending (deferred to a later local run)'
+        'post-processing — analysis: complete · curation: pending (deferred to a later local run)'
         // 389 D-12: the SECOND tail completed nothing in-process (the first one authored the
         // analysis), so its exit line still points at the fetch command rather than printing
         // sentences it never drained.

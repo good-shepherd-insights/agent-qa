@@ -152,7 +152,7 @@ describe('run header layout on the shipped bundle (425-10)', () => {
       for (const deadline = Date.now() + 30_000; Date.now() < deadline;) {
         const response = await fetch(`${origin}/api/runs/${encodeURIComponent(fixture.drive.runId)}/post-processing`)
         const body = await response.json() as { status?: { chips?: Record<string, string>; exclusion?: unknown } }
-        if (body.status?.exclusion || ['analysis', 'curation'].every(key => ['done', 'failed'].includes(body.status?.chips?.[key] ?? ''))) {
+        if (body.status?.exclusion || ['analysis', 'curation'].every(key => ['complete', 'failed'].includes(body.status?.chips?.[key] ?? ''))) {
           settled = true
           break
         }

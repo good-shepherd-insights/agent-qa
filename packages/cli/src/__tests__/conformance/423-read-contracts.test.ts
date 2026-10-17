@@ -438,7 +438,7 @@ const READ_SCENARIOS: readonly ReadScenario[] = [
       envelope: result => ({ status: result, failures: {} }) },
     expectPositive(result, scene) {
       const parsed = PostProcessingStatusSchema.parse(result)
-      expect(parsed.chips).toEqual({ analysis: 'done', curation: 'done' })
+      expect(parsed.chips).toEqual({ analysis: 'complete', curation: 'complete' })
       expect(parsed).toMatchObject({ stageDetails: { analysis: { attempts: 1 }, curation: { attempts: 2 }, proposals: { attempts: 1 } } })
       expect(parsed).toHaveProperty('curationSnapshot', durable(scene).snapshot)
       expect(parsed).not.toHaveProperty('notification')

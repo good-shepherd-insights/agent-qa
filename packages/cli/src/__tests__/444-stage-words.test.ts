@@ -5,6 +5,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
+import { createMcpHandler } from '@modelcontextprotocol/server'
 import {
   createFunctionRegistry,
   invokeFunction,
@@ -25,7 +27,8 @@ import type {
   RunDigest,
   RunNotification,
 } from '@vostride/agent-qa-schema'
-import { describe, expect, it } from 'vitest'
+import { buildAgentQaMcpServer } from '@vostride/agent-qa-mcp'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import { renderChainTerminalLine, renderPostProcessingSummaryLine } from '../curation/post-run-tail.js'
 
@@ -177,6 +180,24 @@ function finishedChain(notification: RunNotification): PostProcessingChainState 
 
 const HANDOFF = { runId: RUN_ID } as unknown as CompletedRunHandoff
 
+const openClients: Client[] = []
+
+afterEach(async () => {
+  for (const client of openClients.splice(0)) await client.close()
+})
+
+async function mcpClient(deps: FunctionDeps): Promise<Client> {
+  const registry = createFunctionRegistry({ deps })
+  const caller: FunctionCaller = { surface: 'mcp', origin: 'agent' }
+  const handler = createMcpHandler(() => buildAgentQaMcpServer({ registry, caller, maskText: (text: string) => text }))
+  const client = new Client({ name: 'agent-qa-444-10', version: '0.0.0' })
+  openClients.push(client)
+  await client.connect(new StreamableHTTPClientTransport(new URL('http://stage-words.local/mcp'), {
+    fetch: ((url: URL | string, init?: RequestInit) => handler.fetch(new Request(url, init))) as typeof fetch,
+  }))
+  return client
+}
+
 describe('C444-STAGE-WORDS', () => {
   it('the CLI exit line prints complete', async () => {
     const status = await served({
@@ -186,6 +207,16 @@ describe('C444-STAGE-WORDS', () => {
     const line = renderPostProcessingSummaryLine(status, 'none')
     expect(line).toContain('analysis: complete · curation: complete')
     expect(line).not.toMatch(/\bdone\b/u)
+  })
+
+  it("the MCP digest tool's output carries complete", async () => {
+    const client = await mcpClient(depsWith(finishedChain(storedNotification()), HANDOFF))
+    const result = await client.callTool({ name: 'agent_qa_get_run_digest', arguments: { runId: RUN_ID } })
+    expect(result.isError, JSON.stringify(result.content)).not.toBe(true)
+    const digest = result.structuredContent as RunDigest
+    expect(digest.chain).toEqual({ analysis: 'complete', curation: 'complete', outcome: 'complete' })
+    expect(digest.lines).toContain('chain — analysis: complete · curation: complete · chain complete')
+    expect(JSON.stringify(result)).not.toMatch(/\bdone\b/u)
   })
 
   it('no renderer spells done as a stage word', () => {

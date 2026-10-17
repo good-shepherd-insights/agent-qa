@@ -24,7 +24,7 @@
 // THE GREEN CONTROL ASSERTS COMPLETION AND ABSENCE, NEVER A SENTENCE. `resolveRunVerdicts` filters
 // `passed | skipped | cancelled`, so a run with nothing to explain answers an empty `verdicts[]` by
 // construction. A cell that looked for a sentence on green would be asserting the product's own
-// definition back at it; what green is FOR here is that the chain still terminates `done` and the
+// definition back at it; what green is FOR here is that the chain still terminates `complete` and the
 // page paints no block — the shape a regression that started explaining passing tests would break.
 //
 // TWO MEMBERS PER RUN, AND THE SECOND ONE IS NOT SYMMETRY. `showMemberChrome` is
@@ -570,7 +570,7 @@ async function readChain(origin: string, runId: string): Promise<ChainBody | und
 function chainTerminal(body: ChainBody | undefined): boolean {
   if (body === undefined) return false
   if (body.status.notification !== undefined) return true
-  const settled = (chip: string | undefined): boolean => chip === 'done' || chip === 'failed'
+  const settled = (chip: string | undefined): boolean => chip === 'complete' || chip === 'failed'
   return settled(body.status.chips.analysis) && settled(body.status.chips.curation)
 }
 
@@ -1079,7 +1079,7 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
     expect(
       page.markers,
       'the block carries a lifecycle marker on a TERMINAL chain. `markerFor` answers nothing for '
-      + '`done`; a marker here means the page is keyed off something other than the chip word.'
+      + '`complete`; a marker here means the page is keyed off something other than the chip word.'
       + `${context()}`,
     ).toEqual([])
 
@@ -1182,7 +1182,7 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
 
   // ---- (2) THE GREEN CONTROL --------------------------------------------------------------------
 
-  it('(2a) green: the chain still terminates and the analysis chip on the page reads `done`', () => {
+  it('(2a) green: the chain still terminates and the analysis chip on the page reads `complete`', () => {
     const page = harvestOf('greenHarvest')
     expect(
       recorded.green?.finished,
@@ -1190,14 +1190,14 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
     ).toBe(true)
     expect(
       recorded.greenChips?.analysis,
-      'the green run\'s analysis chip is not `done` on the read route. A run with nothing to explain '
+      'the green run\'s analysis chip is not `complete` on the read route. A run with nothing to explain '
       + 'must still complete its chain — `failed` here would be the chain breaking on the very runs '
       + `that used to work.${context()}`,
-    ).toBe('done')
+    ).toBe('complete')
     expect(
       page.chips,
       `the page did not paint the analysis chip terminal.${context()}`,
-    ).toContain('analysis=done')
+    ).toContain('analysis=complete')
   })
 
   it('(2b) green: every member wears its own PASSED outcome, and there is nothing to explain', () => {

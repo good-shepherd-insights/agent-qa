@@ -424,10 +424,10 @@ describe('the chip trail is scoped to the run whose tail is draining (ANLZ-05, D
     // guard would have been a refusal to do the work rather than a refusal to CLAIM it.
     const statusA = await readStatusThroughTheOp(f.agentQaRoot, RUN_A)
     const statusB = await readStatusThroughTheOp(f.agentQaRoot, RUN_B)
-    expect(statusA.chips.analysis).toBe('done')
-    expect(statusA.chips.curation).toBe('done')
-    expect(statusB.chips.analysis).toBe('done')
-    expect(statusB.chips.curation).toBe('done')
+    expect(statusA.chips.analysis).toBe('complete')
+    expect(statusA.chips.curation).toBe('complete')
+    expect(statusB.chips.analysis).toBe('complete')
+    expect(statusB.chips.curation).toBe('complete')
     // …and each answers about the run it was ASKED about, with its own notification row.
     expect(statusA.notification?.runId).toBe(RUN_A)
     expect(statusB.notification?.runId).toBe(RUN_B)

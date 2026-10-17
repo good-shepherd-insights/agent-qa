@@ -21,7 +21,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
-import type { RunNotification } from '@vostride/agent-qa-schema'
+import { toRunNotificationView } from '@vostride/agent-qa-schema'
+import type { RunNotification, RunNotificationView } from '@vostride/agent-qa-schema'
 import { afterAll, afterEach, describe, expect, test } from 'vitest'
 
 import { daemonRegistrationPath } from '../daemon/registration.js'
@@ -121,7 +122,7 @@ describePosix('post-processing status survives a closed socket (SC4, ANLZ-05)', 
       // Analysis is durably terminal; curation is durably claimed by a live host. Two different
       // words, from two different rows, in one read.
       expect(midChain.chips).toEqual({
-        analysis: 'done',
+        analysis: 'complete',
         curation: 'running',
       })
       expect('notification' in midChain).toBe(false)
@@ -146,20 +147,22 @@ describePosix('post-processing status survives a closed socket (SC4, ANLZ-05)', 
         RUN_ID,
       )
       expect(afterExit.chips).toEqual({
-        analysis: 'done',
-        curation: 'done',
+        analysis: 'complete',
+        curation: 'complete',
       })
-      // The attached record is the SAME record the terminal transaction wrote, compared whole:
-      // a projection that assembled a plausible notification of its own would fail here.
+      // The attached record is the view of the SAME record the terminal transaction wrote,
+      // compared whole: a projection that assembled a plausible notification of its own would
+      // fail here. The stored row keeps its own words (444 D-36).
       const rows = await readNotifications(paths.agentQaRoot, paths.knowledgeRoot)
       expect(rows).toHaveLength(1)
-      expect(afterExit.notification).toEqual(rows[0]!.payload)
-      expect(afterExit.notification as RunNotification).toMatchObject({
+      expect(afterExit.notification).toEqual(toRunNotificationView(rows[0]!.payload as RunNotification))
+      expect((rows[0]!.payload as RunNotification).outcome).toBe('done')
+      expect(afterExit.notification as RunNotificationView).toMatchObject({
         runId: RUN_ID,
-        outcome: 'done',
+        outcome: 'complete',
         stages: {
           curation: {
-            status: 'done',
+            status: 'complete',
             curated: FIXTURE_CURATION_COUNTS.curated,
             deprecated: FIXTURE_CURATION_COUNTS.deprecated,
           },
