@@ -691,6 +691,11 @@ export async function runInProcessCliRun(
         ]))
         return { runId, verdict, exitCode: finalExitCode, settled: detachedTail }
       } finally {
+        // 2026-10-17 (443-14, GAP-D2): the record closes out on every path; after the success
+        // path's flush this is the record's own no-op, and a failure here never replaces the run's.
+        try {
+          await startedRecord?.flush()
+        } catch {}
         if (!preparationDisclosureOwnedByDoor && postVerdictHandoff?.completion !== undefined) {
           const handoff = postVerdictHandoff
           if (handoff.enqueueState === undefined) warnByName(`Run ${runId}: preparation pending; analysis is not yet queued. Durable intent: ${handoff.pendingPath}. The next local run or daemon drain resumes eligible pending preparation.`)
