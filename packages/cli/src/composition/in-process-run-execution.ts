@@ -699,8 +699,9 @@ export async function runInProcessCliRun(
         ]))
         return { runId, verdict, exitCode: finalExitCode, settled: detachedTail }
       } finally {
-        // 2026-10-17 (443-14, GAP-D2): the record flushes on every path and closes its row when it saw a
-        // verdict or a failed write; a repeat flush is a no-op, and a failure here never replaces the run's.
+        // 2026-10-17 (443-14, GAP-D2; 444-09, D-16): the record flushes on every path and closes its own
+        // row when it saw no verdict or a failed write; a repeat flush is a no-op, and a failure here
+        // never replaces the run's.
         try {
           await startedRecord?.flush()
         } catch {}

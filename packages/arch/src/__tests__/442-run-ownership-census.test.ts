@@ -17,7 +17,9 @@
  *                                               [C442-NO-RUNNING-SWEEP]
  *   cli/src/commands/run.ts, the action's       every running row marked failed or cancelled, each
  *   crash catch                                 id printed -> one compare-and-set on the own row
- *                                               (442-03) [C442-NO-RUNNING-SWEEP]
+ *                                               (442-03) -> no write; the record's flush closes a
+ *                                               verdictless own row (444-09)
+ *                                               [C442-NO-RUNNING-SWEEP]
  *   dashboard-server/src/server/server.ts,      every running row marked failed as a server restart
  *   the startup loop                            -> only rows whose owner is provably gone, through
  *                                               the orphan compare-and-set (442-04)
@@ -268,9 +270,8 @@ const w = (file: string, call: string, classification: Classification, why: stri
 
 const WRITERS: readonly Writer[] = [
   w(RUN_TS, 'finalizeOwnRun', 'own', 'forced exit, only the running row this process claimed'),
-  w(RUN_TS, 'finalizeOwnRun', 'own', 'crash catch, its own row only'),
+  w(RUN_TS, 'finalizeOwnRun', 'own', 'record flush, a run that ended with no verdict'),
   w(RUN_TS, 'closeOwnRun', 'own', 'record flush, the row its own claim stamped, after a failed write'),
-  w(RUN_TS, 'finalizeRunArtifact', 'own', 'crash catch, only after its own CAS wrote'),
   w(RUN_TS, 'finalizeRunArtifact', 'own', 'direct parse-error validation row'),
   w(RUN_TS, 'insertRun', 'own', "suite preparation failure, under the run's own id"),
   w(RUN_TS, 'insertRun', 'own', 'direct parse-error validation row'),
@@ -289,7 +290,7 @@ const WRITERS: readonly Writer[] = [
   w(JOB_QUEUE, 'finalizeOrphanRun', 'orphan', 'cancel of a running row whose owner is gone'),
   w(DATABASE, 'finalizeRunArtifact', 'orphan', 'inside finalizeOrphanRun, after its CAS wrote'),
 ]
-const WRITER_FLOOR = 21
+const WRITER_FLOOR = 20
 
 function argumentOf(text: string, open: number): string {
   let depth = 0

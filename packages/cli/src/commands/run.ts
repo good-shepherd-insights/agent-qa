@@ -1068,11 +1068,25 @@ export function createRunRecord(input: {
             }
           }
           stopped = true
+          // 2026-10-17 (444-09, D-16): no verdict closes the own row as failed, guessing no cause.
+          if (verdict === undefined && ownRow !== undefined) {
+            try {
+              const startedMs = Date.parse(handle.getRun(runId)?.startedAt ?? '')
+              handle.finalizeOwnRun(runId, {
+                status: 'failed',
+                endedAt: new Date().toISOString(),
+                ...(Number.isNaN(startedMs) ? {} : { duration: Math.max(0, Date.now() - startedMs) }),
+                failureSummary: 'The run ended before it reached a verdict.',
+              })
+            } catch {
+              // A runs.db that will not take the close leaves the row to orphan cleanup.
+            }
+          }
           if (incompleteReason === undefined) return
           // 2026-10-17 (443-05, D-27): the verdict stands; the run's own row is closed once, best effort.
-          if (ownRow !== undefined) {
+          if (verdict !== undefined && ownRow !== undefined) {
             try {
-              handle.closeOwnRun(runId, { status: verdict ?? 'failed', endedAt: new Date().toISOString() })
+              handle.closeOwnRun(runId, { status: verdict, endedAt: new Date().toISOString() })
             } catch {
               // The warning below already says the record is incomplete.
             }
@@ -4719,7 +4733,7 @@ export function createRunCommand(): Command {
       'exclude this run from the outcome projection: no flake counters, no exemplar ranking, no quarantine window (D-14 §6)',
     )
     .action(async (patterns: string[], opts: RunOptions, command: Command) => {
-      // 2026-10-17 (443-08, D-02): the direct path's record; its own row is the only row it finalizes.
+      // 2026-10-17 (443-08, D-02; 444-09): the direct path's record, so the catch can close it.
       let _crashRecord: RunRecord | undefined
       let _crashSecretRedactor: SecretRedactor | undefined
       // 433-35 (G-433-11): the run this invocation started, so a framework error names the id it recorded.
@@ -5292,48 +5306,10 @@ export function createRunCommand(): Command {
           process.exit(2)
         }
         const errMsg = err instanceof Error ? err.message : String(err)
-        const errStack = err instanceof Error ? err.stack ?? '' : ''
-        const formattedError = formatFrameworkError(errMsg)
         console.error(pc.red(frameworkErrorTerminalLine(errMsg, _crashSecretRedactor)))
 
-        const _crashDb = _crashRecord?.db
-        const _ownRunRowId = _crashRecord?.ownRowId()
-        if (_crashDb !== undefined && _ownRunRowId !== undefined) {
-          const fullError = `${errMsg}\n${errStack}`
-          const isBrowserClose = fullError.includes('Target page, context or browser has been closed')
-            || fullError.includes('browser has been closed')
-            || fullError.includes('Browser closed')
-          const finalStatus = isBrowserClose ? 'cancelled' : 'failed'
-          const failureSummary = isBrowserClose
-            ? 'Browser closed by user'
-            : redactSecretValue(formattedError.failureSummary, _crashSecretRedactor)
-          try {
-            const ownRow = _crashDb.getRun(_ownRunRowId)
-            const startedAt = ownRow?.startedAt
-            const duration = startedAt ? Date.now() - new Date(startedAt).getTime() : 0
-            const finalized = _crashDb.finalizeOwnRun(_ownRunRowId, {
-              status: finalStatus,
-              duration,
-              endedAt: new Date().toISOString(),
-              failureSummary,
-            })
-            if (finalized) {
-              printRunAttributes(ownRow?.attributes)
-              const artifact = _crashDb.getRunArtifact(_ownRunRowId)
-              if (artifact && !artifact.finalizedAt) {
-                _crashDb.finalizeRunArtifact(_ownRunRowId, {
-                  runtime: { status: finalStatus, duration },
-                  errors: [{
-                    code: isBrowserClose ? 'browser-disconnect' : 'process-close',
-                    phase: 'process-close',
-                    message: failureSummary,
-                  }],
-                })
-              }
-            }
-          } catch { /* best-effort cleanup */ }
-        }
-
+        // 2026-10-17 (444-09, D-19): no cause is guessed and no row is written here; the record's
+        // flush already closed a verdictless own row (D-16).
         // The run already recorded its verdict and the cause (433-35), so the id is how to read it.
         if (_startedRunId !== undefined) printRunId(_startedRunId)
 
