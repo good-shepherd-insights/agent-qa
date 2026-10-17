@@ -1381,10 +1381,7 @@ export async function resolveRunInvocationInputs(
   const configDir = workspacePaths.configDir
 
   const cliVars = parseVarFlags(request.varFlags === undefined ? undefined : [...request.varFlags])
-  const inheritedContextRunId = process.env.AGENT_QA_RUN_ID
-    ?? process.env.AGENT_QA_SUITE_QUEUE_ID
-    ?? process.env.AGENT_QA_PARENT_RUN_ID
-  const inheritedRunAttributes = inheritedContextRunId
+  const inheritedRunAttributes = process.env.AGENT_QA_RUN_ID
     ? readRunAttributesFromEnv()
     : undefined
   let userRunAttributes: RunAttributes
@@ -3107,7 +3104,6 @@ export async function produceSuiteRunMembers(
     // composition root and composed per-member at the CLI (Phase 363). The suite-level orchestration
     // (setup hooks + adapter.setup + nav / teardown + auth capture) runs from the lazy lifecycle
     // hooks the shell drives (suiteSetup/suiteTeardown below).
-    const preparedSuiteRunId = process.env.AGENT_QA_SUITE_QUEUE_ID ?? runId
     const preparedSuiteArtifact = (suiteConfig.artifactContext as { artifact?: Record<string, unknown> } | undefined)?.artifact
       ?? (suiteConfig.artifactContext as Record<string, unknown> | undefined)
     const initialSuiteSandboxOptions = suiteConfig.sandboxOptions && suiteConfig.platformConfig.authState
@@ -3123,7 +3119,7 @@ export async function produceSuiteRunMembers(
       curationModelDeps: { profile: plannerProfile, auth: plannerAuth },
       testEntries,
       suiteMembers,
-      suiteRunId: preparedSuiteRunId,
+      suiteRunId: runId,
       suiteArtifact: preparedSuiteArtifact,
       product: resolvedTarget?.product,
       testFileContents: suiteMembers.map((m) => (typeof m.rawYaml === 'string' ? m.rawYaml : '')),

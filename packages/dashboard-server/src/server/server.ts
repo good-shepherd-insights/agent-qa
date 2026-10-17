@@ -424,12 +424,11 @@ export async function startServer(opts: StartServerOptions): Promise<{
         // 2026-08-23 (Phase 401 plan 07, D-12): THE RETRY-CHILD CLASSIFICATION IS RETIRED WITH
         // THE MACHINERY THAT CREATED THE CHILDREN.
         //
-        // Retry children were minted by the RUNNER PROCESS, off `AGENT_QA_PARENT_RUN_ID` /
-        // `AGENT_QA_MAX_RETRIES` — two variables the queue put in a child's environment. There is
-        // no child, so there is no environment to put them in, and nothing mints a retry child any
-        // more. The ~60 lines that stood here folded those children into a `flaky` / `passed` /
-        // `cancelled` verdict on the parent; with no children to fold they could only ever have
-        // been dead code that read as live policy.
+        // Retry children were minted by the RUNNER PROCESS, off variables the queue put in a
+        // child's environment. There is no child, and nothing mints a retry child any more. The
+        // ~60 lines that stood here folded those children into a `flaky` / `passed` / `cancelled`
+        // verdict on the parent; with no children to fold they could only ever have been dead
+        // code that read as live policy.
         //
         // WHERE RETRY-ON-FAILURE LIVES NOW: the runner's own re-run machinery (runner.md §7). It is
         // the runner's concern and always was — a queue that re-spawns a process is retrying the

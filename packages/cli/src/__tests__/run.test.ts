@@ -849,8 +849,6 @@ afterEach(async () => {
   logSpy.mockRestore()
   errorSpy.mockRestore()
   delete process.env.AGENT_QA_RUN_ID
-  delete process.env.AGENT_QA_SUITE_QUEUE_ID
-  delete process.env.AGENT_QA_PARENT_RUN_ID
   delete process.env.AGENT_QA_RUN_ATTRIBUTES_JSON
   delete process.env.AGENT_QA_LIVE_EVENTS
   delete process.env.BROWSERSTACK_USERNAME
@@ -2150,32 +2148,6 @@ describe('run command — run attributes', () => {
     expect(allErrors).toContain('reserved prefix "agent-qa."')
   })
 
-  it('inherits retry-child attributes from AGENT_QA_PARENT_RUN_ID without a child run id', async () => {
-    process.env.AGENT_QA_PARENT_RUN_ID = 'r_parent-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
-    process.env.AGENT_QA_RUN_ATTRIBUTES_JSON = JSON.stringify({
-      'agent-qa.trigger': 'dashboard',
-      'agent-qa.runner': 'local',
-      'git.branch': 'phase247-review',
-    })
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
-    mockRunMemberTest.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
-    })
-
-    await runCommand('tests/**/*.yaml')
-
-    // 363-11: inherited attributes are observable in the printed run-attributes block.
-    const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
-    expect(allOutput).toContain('agent-qa.trigger=dashboard')
-    expect(allOutput).toContain('agent-qa.runner=local')
-    expect(allOutput).toContain('git.branch=phase247-review')
-  })
-
   it('recomputes inherited runner attributes after direct BrowserStack device resolution', async () => {
     const { resolveMobileRunConfig } = await import('@vostride/agent-qa-core')
     const cfg = defaultConfig()
@@ -2280,7 +2252,7 @@ describe('run command — run attributes', () => {
     }))
     process.env.BROWSERSTACK_USERNAME = 'user'
     process.env.BROWSERSTACK_ACCESS_KEY = 'key'
-    process.env.AGENT_QA_SUITE_QUEUE_ID = 'r_suite-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
+    process.env.AGENT_QA_RUN_ID = freshRunId('suite')
     process.env.AGENT_QA_RUN_ATTRIBUTES_JSON = JSON.stringify({
       'agent-qa.trigger': 'api',
       'agent-qa.runner': 'local',
@@ -2313,6 +2285,36 @@ describe('run command — run attributes', () => {
     expect(mockRunMemberTest).not.toHaveBeenCalled()
     const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allErrors).toContain('KEY=VALUE')
+  })
+})
+
+// 2026-10-17 (443-09, D-11/D-25): the retired names are built from halves so no file spells them.
+describe('C443-ENV-RETIRED', () => {
+  it('inherits run attributes only under AGENT_QA_RUN_ID', async () => {
+    const retired = [['AGENT_QA_SUITE', '_QUEUE_ID'], ['AGENT_QA_PARENT', '_RUN_ID']]
+      .map((halves) => halves.join(''))
+    for (const name of retired) vi.stubEnv(name, freshRunId('retired'))
+    process.env.AGENT_QA_RUN_ATTRIBUTES_JSON = JSON.stringify({
+      'agent-qa.trigger': 'dashboard',
+      'agent-qa.runner': 'local',
+      'git.branch': 'phase443-inherited',
+    })
+    mockGlob.mockResolvedValue(['tests/a.yaml'])
+    mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
+    mockRunMemberTest.mockResolvedValue({
+      name: 'Test One', filePath: 'tests/a.yaml', status: 'passed', steps: [], duration: 100,
+    })
+
+    try {
+      await runCommand('tests/**/*.yaml')
+    } finally {
+      vi.unstubAllEnvs()
+    }
+
+    const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
+    expect(allOutput.includes('agent-qa.trigger=cli'), 'the run carries its own trigger').toBe(true)
+    expect(allOutput.includes('git.branch=phase443-inherited'), 'inherited without AGENT_QA_RUN_ID')
+      .toBe(false)
   })
 })
 

@@ -1051,8 +1051,8 @@ export const DEBRIS_SURFACES: readonly DebrisSurface[] = [
     disposition: 'delete',
     sites: [],
     why: 'Already producer-less before 402-09 — 401-07 (D-12) retired the machinery that set '
-      + 'AGENT_QA_PARENT_RUN_ID, so nothing could reach this mode. "Anything the one-run model '
-      + 'leaves producer-less goes too" (D-11).',
+      + 'the retired parent-run variable, so nothing could reach this mode. "Anything the '
+      + 'one-run model leaves producer-less goes too" (D-11).',
   },
 ]
 

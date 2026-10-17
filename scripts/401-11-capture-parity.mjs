@@ -259,8 +259,6 @@ async function runCli(fixture, args) {
   // An inherited run id would attach this run to another run's directory, and an EMPTY string is
   // not absence: `?? generateRunId()` keeps `''`, which slugs to a run dir called `default`.
   delete env.AGENT_QA_RUN_ID
-  delete env.AGENT_QA_SUITE_QUEUE_ID
-  delete env.AGENT_QA_PARENT_RUN_ID
   delete env.AGENT_QA_BUILD_TAG
   delete env.AGENT_QA_LIVE_EVENTS
 

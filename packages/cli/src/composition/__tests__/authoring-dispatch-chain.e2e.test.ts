@@ -65,11 +65,10 @@
 // implementation: an overlay that granted everybody passes the first, and one that granted nobody
 // passes the second.
 //
-// HOW THE MOMENT IS HELD, and why it is not a sleep. `runBridge.subscribers` is a shipped seam —
-// the drive awaits `flush()` at the end of a run — so the first gate run's `flush` parks on a
-// promise this test body resolves. The dispatch is therefore blocked INSIDE its own tree while both
-// probes are taken, and `openScopes` is asserted at both. Nothing about the grant path is faked by
-// this: `flush` neither supplies nor forwards a reader, it only holds the frame still.
+// HOW THE MOMENT WAS HELD, and why it was not a sleep. The run bridge then carried a door's own
+// subscribers (removed in 443-05, D-01), and the first gate run's `flush` parked on a promise this
+// test body resolved. The dispatch was therefore blocked INSIDE its own tree while both probes were
+// taken. Nothing about the grant path was faked by this: `flush` only held the frame still.
 //
 // A DENIAL AND A NEVER-GOT-THERE LOOK IDENTICAL, so the gate is asserted REACHED — a `run:start`
 // row that EXISTS and carries a real `riskTier` — before any verdict claim is made about it.

@@ -235,9 +235,8 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
   // ONE run row with member handles (402-04's per-member handle addressing), no child runs, no
   // parent kind.
   //
-  // The retry half was already unreachable: 401-07 (D-12) retired the queue re-spawn that set
-  // `AGENT_QA_PARENT_RUN_ID`, so nothing could put the process in retry mode. The suite half was
-  // live and is the deliberate cost recorded in DELETION-INVENTORY.md — a dashboard suite run's
+  // The retry half was already unreachable once 401-07 (D-12) retired the queue re-spawn. The
+  // suite half was live and is the deliberate cost recorded in DELETION-INVENTORY.md — a dashboard suite run's
   // per-member rows are replaced by handle addressing when 405 rebuilds the run detail.
 
   function stageRuntime(id: string, runtime: ArtifactRecord): void {
