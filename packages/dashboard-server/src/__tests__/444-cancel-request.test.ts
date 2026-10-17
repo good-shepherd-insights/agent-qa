@@ -333,3 +333,118 @@ describe('C444-CANCEL-REQUEST', () => {
     expect(settled).toEqual(['cancelled'])
   })
 })
+
+function finishOwnRow(id: string, status: string): void {
+  reader.updateRun(id, {
+    status,
+    endedAt: '2026-10-17T12:00:09.000Z',
+    duration: 4321,
+  })
+}
+
+describe('C444-CANCEL-ANSWERS', () => {
+  it('a pending run answers 200 cancelled before it started', async () => {
+    const backend = new RecordingBackend(true)
+    const { origin } = await startDashboard(backend as unknown as ExecutionBackend)
+    const first = await enqueueOver(origin, 'Holds the queue')
+    const second = await enqueueOver(origin, 'Waits its turn')
+    await waitFor(() => reader.getRun(first)?.status === 'running', 'the first run to start')
+    expect(reader.getRun(second)?.status).toBe('pending')
+
+    expect(await cancelOver(origin, second)).toEqual({
+      status: 200,
+      body: { outcome: 'cancelled', message: 'Run cancelled before it started.' },
+    })
+    expect(reader.getRun(second)?.status).toBe('cancelled')
+    expect(backend.killed).toEqual([])
+  })
+
+  it('a running run here answers 202 stop requested', async () => {
+    const backend = new RecordingBackend(true)
+    const { origin } = await startDashboard(backend as unknown as ExecutionBackend)
+    const id = seedOwnRunning('Own run')
+    const before = snapshotOf(id)
+
+    expect(await cancelOver(origin, id)).toEqual({
+      status: 202,
+      body: { outcome: 'stop-requested', message: 'Stop requested. The run will end with its own verdict.' },
+    })
+    expect(backend.killed).toEqual([id])
+    expect(snapshotOf(id)).toBe(before)
+  })
+
+  it('a running run this dashboard cannot reach answers 409 and writes nothing', async () => {
+    const backend = new RecordingBackend(false)
+    const { origin } = await startDashboard(backend as unknown as ExecutionBackend)
+    const id = seedOwnRunning('Own run started by POST /run')
+    const before = snapshotOf(id)
+
+    expect(await cancelOver(origin, id)).toEqual({
+      status: 409,
+      body: {
+        error: "This run can't be stopped from the dashboard. Stop it where it was started.",
+        reason: 'not-stoppable-here',
+      },
+    })
+    expect(backend.killed).toEqual([id])
+    expect(snapshotOf(id)).toBe(before)
+    expect(reader.getRun(id)?.status).toBe('running')
+  })
+
+  it('a finished run answers 200 with its verdict and writes nothing', async () => {
+    const backend = new RecordingBackend(true)
+    const { origin } = await startDashboard(backend as unknown as ExecutionBackend)
+    const id = seedOwnRunning('Own run that passed')
+    finishOwnRow(id, 'passed')
+    const before = snapshotOf(id)
+    const row = reader.getRun(id)!
+    expect([row.status, row.endedAt, row.duration, row.failureSummary ?? null])
+      .toEqual(['passed', '2026-10-17T12:00:09.000Z', 4321, null])
+
+    expect(await cancelOver(origin, id)).toEqual({
+      status: 200,
+      body: { outcome: 'finished', status: 'passed', message: 'This run already finished: passed.' },
+    })
+    expect(backend.killed).toEqual([])
+    expect(snapshotOf(id)).toBe(before)
+  })
+})
+
+describe('C444-NO-CAUSE-GUESS', () => {
+  it('a settled run whose output says the browser closed is written failed, never cancelled', async () => {
+    const backend = new RecordingBackend(true)
+    await startDashboard(backend as unknown as ExecutionBackend)
+    const lines = [
+      'Error: page.click: Target page, context or browser has been closed',
+      'Error: Browser closed by user',
+    ]
+    const ids = lines.map((line) => {
+      const id = seedOwnRunning(`Closed browser: ${line}`)
+      backend.emit('run-settled', id, 'failed', { output: ['debug line', line] })
+      return id
+    })
+
+    expect(ids.map((id) => {
+      const row = reader.getRun(id)!
+      return { status: row.status, failureSummary: row.failureSummary }
+    })).toEqual(lines.map((line) => ({ status: 'failed', failureSummary: line })))
+    for (const id of ids) {
+      expect(reader.getRunArtifact(id)?.payload.errors?.map((error) => error.code))
+        .toEqual(['process-close'])
+    }
+  })
+
+  it('the settle handler never rewrites a row the run already finished', async () => {
+    const backend = new RecordingBackend(true)
+    await startDashboard(backend as unknown as ExecutionBackend)
+    const id = seedOwnRunning('Own run the run cancelled itself')
+    finishOwnRow(id, 'cancelled')
+    const before = snapshotOf(id)
+
+    backend.emit('run-settled', id, 'cancelled', { output: [] })
+
+    expect(snapshotOf(id)).toBe(before)
+    const row = reader.getRun(id)!
+    expect([row.status, row.endedAt, row.duration]).toEqual(['cancelled', '2026-10-17T12:00:09.000Z', 4321])
+  })
+})
