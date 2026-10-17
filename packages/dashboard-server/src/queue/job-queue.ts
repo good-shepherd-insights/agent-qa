@@ -39,6 +39,7 @@ export class JobQueue extends EventEmitter {
   private activePlatforms = new Set<string>()
   private activeRuns = new Map<string, { platform: string }>()
   private requestStop: ((runId: string) => boolean) | undefined
+  private stopped = false
 
   constructor(opts: {
     db: DashboardDatabase
@@ -52,11 +53,15 @@ export class JobQueue extends EventEmitter {
   }
 
   start(intervalMs = 1000): void {
-    this.pollInterval = setInterval(() => this.processNext(), intervalMs)
+    this.stopped = false
+    this.pollInterval = setInterval(() => this.dispatchReported('a poll'), intervalMs)
     this.on('enqueued', () => this.processNext())
   }
 
+  // 2026-10-17 (444-16, D-50): the server closes the database after this; a run that settles later
+  // still frees its slot, and nothing reads the closed database.
   stop(): void {
+    this.stopped = true
     if (this.pollInterval) {
       clearInterval(this.pollInterval)
       this.pollInterval = null
@@ -105,7 +110,7 @@ export class JobQueue extends EventEmitter {
   }
 
   processNext(): void {
-    if (this.isProcessing) return
+    if (this.stopped || this.isProcessing) return
     this.isProcessing = true
     try {
       while (true) {
@@ -146,7 +151,16 @@ export class JobQueue extends EventEmitter {
       this.activePlatforms.delete(info.platform)
     }
     this.activeRuns.delete(runId)
-    this.processNext()
+    this.dispatchReported(`run ${runId} finished`)
+  }
+
+  private dispatchReported(trigger: string): void {
+    try {
+      this.processNext()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`Queue could not dispatch the next run after ${trigger}: ${message}`)
+    }
   }
 
   getActiveCount(): number {
