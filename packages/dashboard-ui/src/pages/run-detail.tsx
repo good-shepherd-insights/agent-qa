@@ -46,7 +46,7 @@ import {
 import { projectPostProcessingView } from "@/lib/post-processing-view"
 import { bannerRung, projectKnowledgeView, type StepAddress, type StepRefContext } from "@/lib/knowledge-view"
 import { projectAnalysisView, type OnMark, type MarkDenial } from "@/lib/analysis-view"
-import { shouldRouteRunToLive } from "@/lib/status"
+import { runStatusClass, shouldRouteRunToLive } from "@/lib/status"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { RunNotice } from '@/components/run-detail/run-notice'
 import { isPreMilestoneRun } from '@/lib/run-notice-view'
@@ -1169,7 +1169,7 @@ export default function RunDetailPage() {
           // is also the excluded run's reading, since a chain that was never enqueued produced no
           // verdicts. The header stays a focusable span in every one of those cases rather than
           // growing a control that would do nothing.
-          onOpenVerdict={run.status === 'failed' && analysisView.size > 0 ? openVerdict : undefined}
+          onOpenVerdict={runStatusClass(run.status) === 'fail' && analysisView.size > 0 ? openVerdict : undefined}
           retrievalRung={bannerRung(knowledgeRead)}
           feedbackEntry={feedback.headerEntry}
           hasPostProcessing
@@ -1219,11 +1219,11 @@ export default function RunDetailPage() {
                 </div>
               ) : null}
 
-              {run.status === 'failed' && run.failureSummary && (
+              {runStatusClass(run.status) === 'fail' && run.failureSummary && (
                 <FailureBanner summary={run.failureSummary} />
               )}
 
-              {run.status === 'failed' && run.errorLog && (
+              {runStatusClass(run.status) === 'fail' && run.errorLog && (
                 <Collapsible className="mx-2 mt-1">
                   <CollapsibleTrigger className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors group w-full">
                     <ChevronRight className="h-3 w-3 transition-transform group-data-[state=open]:rotate-90" />
