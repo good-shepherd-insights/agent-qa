@@ -43,6 +43,7 @@ import {
   WAITING_GAVE_UP_LABEL,
   WAITING_GAVE_UP_TEXT,
 } from '@/lib/live-preview'
+import { getRunStatusFaviconHref } from '@/hooks/use-run-status-favicon'
 import { DID_NOT_RUN_NOTE } from '@/lib/run-stream-reducer'
 
 import type { RunEventEnvelope, RunEventPayload, RunEventType } from '@vostride/agent-qa-schema'
@@ -58,6 +59,8 @@ const SENTINEL_REASONING = 'SENTINEL-REASONING-7f3a'
 const SENTINEL_ACTION = 'SENTINEL-ACTION-9c1e'
 
 const RUN_ID = 'r1'
+const STOP_REQUESTED = 'Stop requested. The run will end with its own verdict.'
+const NOT_STOPPABLE = "This run can't be stopped from the dashboard. Stop it where it was started."
 // Concatenated so this file cannot satisfy the phase's deletion census by matching itself.
 const TICKS_LABEL_ATTR = 'data-step-ticks' + '-label'
 const BASE_TIME = 1_700_000_000_000
@@ -359,7 +362,7 @@ beforeEach(() => {
     stream: { kind: 'cdp-screencast' },
   }))
   classifyRunStreamCloseMock.mockResolvedValue({ kind: 'lost' })
-  cancelRunMock.mockResolvedValue({ cancelled: true })
+  cancelRunMock.mockResolvedValue({ outcome: 'stop-requested', message: STOP_REQUESTED })
 })
 
 afterEach(() => {
@@ -717,6 +720,7 @@ describe('the header is the title, the file path, Cancel and view run detail (42
 
 const REFUSAL = 'This run belongs to another agent-qa process (pid 4242). Stop it there with Ctrl+C.'
 const ORPHAN = 'The process running this run (pid 4242) ended before it finished.'
+const CANCELLED_BEFORE_START = 'Run cancelled before it started.'
 const CANCEL_TOAST = { id: `cancel-${RUN_ID}` }
 
 async function pressCancel(): Promise<void> {
@@ -756,9 +760,9 @@ describe('C442-CANCEL-SENTENCE', () => {
     expect(vi.mocked(toast.info).mock.calls).toEqual([[ORPHAN, CANCEL_TOAST]])
 
     vi.mocked(toast.info).mockClear()
-    cancelRunMock.mockResolvedValueOnce({ cancelled: true })
+    cancelRunMock.mockResolvedValueOnce({ outcome: 'cancelled', message: CANCELLED_BEFORE_START })
     await clickCancel()
-    expect(vi.mocked(toast.success).mock.calls).toEqual([['Run cancelled', CANCEL_TOAST]])
+    expect(vi.mocked(toast.success).mock.calls).toEqual([[CANCELLED_BEFORE_START, CANCEL_TOAST]])
     expect(vi.mocked(toast.info)).not.toHaveBeenCalled()
     expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
   })
@@ -773,9 +777,9 @@ describe('C442-CANCEL-TOAST', () => {
     expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
 
     vi.mocked(toast.info).mockClear()
-    cancelRunMock.mockResolvedValueOnce({ cancelled: true })
+    cancelRunMock.mockResolvedValueOnce({ outcome: 'cancelled', message: CANCELLED_BEFORE_START })
     await clickCancel()
-    expect(vi.mocked(toast.success).mock.calls).toEqual([['Run cancelled', CANCEL_TOAST]])
+    expect(vi.mocked(toast.success).mock.calls).toEqual([[CANCELLED_BEFORE_START, CANCEL_TOAST]])
     expect(vi.mocked(toast.info)).not.toHaveBeenCalled()
   })
 
@@ -812,6 +816,72 @@ describe('C442-CANCEL-TOAST', () => {
       [REFUSAL, CANCEL_TOAST],
       [REFUSAL, CANCEL_TOAST],
     ])
+  })
+})
+
+const faviconHref = (): string | null =>
+  document.querySelector('link[rel="icon"][type="image/svg+xml"]')?.getAttribute('href') ?? null
+
+describe('C444-CANCEL-ANSWERS', () => {
+  it("the live-run page shows a stop request as an info toast and keeps the run's status", async () => {
+    cancelRunMock.mockResolvedValueOnce({ outcome: 'stop-requested', message: STOP_REQUESTED })
+    await mount()
+    await open()
+    await emit(runStarted(), testStarted(0, 'the member', 1), stepStarted())
+    const runningIcon = faviconHref()
+    expect(runningIcon).toBe(getRunStatusFaviconHref('running'))
+    await pressCancel()
+
+    expect(vi.mocked(toast.info).mock.calls).toEqual([[STOP_REQUESTED, CANCEL_TOAST]])
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+    expect({
+      icon: faviconHref(),
+      cancelButton: qa('button').some((one) => one.textContent === 'Cancel'),
+      terminalBand: q('[data-terminal-state]'),
+      navigated: navigateMock.mock.calls.length,
+    }).toEqual({ icon: runningIcon, cancelButton: true, terminalBand: null, navigated: 0 })
+
+    await emit(testFinished(0, 'cancelled'), verdict('cancelled'))
+    expect(navigateMock.mock.calls).toEqual([
+      [`/runs/${RUN_ID}`, { replace: true, state: { arrivedOnVerdict: 'cancelled' } }],
+    ])
+    expect(faviconHref()).toBe(getRunStatusFaviconHref('cancelled'))
+  })
+
+  it("the live-run page shows a pending run's cancel as a success toast with the route's sentence", async () => {
+    cancelRunMock.mockResolvedValueOnce({ outcome: 'cancelled', message: CANCELLED_BEFORE_START })
+    await clickCancel()
+    expect(vi.mocked(toast.success).mock.calls).toEqual([[CANCELLED_BEFORE_START, CANCEL_TOAST]])
+    expect(vi.mocked(toast.info)).not.toHaveBeenCalled()
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+  })
+
+  it("the live-run page shows a finished run's answer as an info toast", async () => {
+    const finished = 'This run already finished: passed.'
+    cancelRunMock.mockResolvedValueOnce({ outcome: 'finished', status: 'passed', message: finished })
+    await clickCancel()
+    expect(vi.mocked(toast.info).mock.calls).toEqual([[finished, CANCEL_TOAST]])
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+  })
+
+  it('the live-run page reads an answer with no sentence as a failed cancel, never a cancel', async () => {
+    cancelRunMock.mockResolvedValueOnce({ cancelled: true })
+    await clickCancel()
+    expect(vi.mocked(toast.error).mock.calls).toEqual([['Failed to cancel run', CANCEL_TOAST]])
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+    expect(vi.mocked(toast.info)).not.toHaveBeenCalled()
+  })
+
+  it("a 409 not-stoppable answer shows the route's sentence as an error toast", async () => {
+    cancelRunMock.mockRejectedValueOnce(
+      new ApiError(409, 'Conflict', { error: NOT_STOPPABLE, reason: 'not-stoppable-here' }),
+    )
+    await clickCancel()
+    expect(vi.mocked(toast.error).mock.calls).toEqual([[NOT_STOPPABLE, CANCEL_TOAST]])
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+    expect(vi.mocked(toast.info)).not.toHaveBeenCalled()
   })
 })
 
