@@ -344,7 +344,7 @@ describe('GET /api/runs/:id/detail — the 405 tracer (D-01/D-03/D-14)', () => {
     expect(body.steps).toHaveLength(1)
     expect(body.steps[0].briefDigest, 'the served brief digest travels, never the brief').toBe(BRIEF_DIGEST)
     expect(body.steps[0].cacheStatus).toBe('miss')
-    expect(body.steps[0].status, "the payload's own word, never toRunStatus").toBe('passed')
+    expect(body.steps[0].status, "the payload's own word").toBe('passed')
     expect(body.steps[0].stepText).toBe('Save the record')
     expect(body.subActions[0].plan).toBe('Click the Save button')
     // D-02/RESEARCH D2: screen CONTEXT on this bus is the hash pair and nothing else.

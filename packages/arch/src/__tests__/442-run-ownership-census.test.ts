@@ -372,14 +372,14 @@ describe('C442-CENSUS — no path finalizes runs it does not own (442 D-05)', ()
     }
   })
 
-  it('C442-OWNER-REQUIRED: the v5 runs table requires an owner on every running row', () => {
+  it('C442-OWNER-REQUIRED: the runs table requires an owner on every running row', () => {
     const schema = bytesOf(SCHEMA)
-    expect(code(SCHEMA)).toMatch(/\bexport const SCHEMA_VERSION = 5\b/)
+    expect(code(SCHEMA)).toMatch(/\bexport const SCHEMA_VERSION = 6\b/)
     const migrations = schema.indexOf('export const MIGRATIONS')
     const start = schema.indexOf('CREATE TABLE IF NOT EXISTS runs (')
     expect(migrations, `${SCHEMA} declares no MIGRATIONS`).toBeGreaterThan(-1)
     expect(start, 'the runs DDL is not inside MIGRATIONS').toBeGreaterThan(migrations)
-    expect(schema.slice(migrations, start)).toMatch(/version: 5,/)
+    expect(schema.slice(migrations, start)).toMatch(/version: 6,/)
     const ddl = schema.slice(start, schema.indexOf('`', start))
     const parts = ['owner_pid INTEGER', 'owner_incarnation TEXT', 'owner_host TEXT', RUNNING_CHECK]
     for (const part of parts) {
@@ -399,9 +399,13 @@ describe('C442-CENSUS — no path finalizes runs it does not own (442 D-05)', ()
           .toThrow(/CHECK constraint failed/)
         insert.run('owned', 'raw', 'running', 4242, 'ps-lstart:fixed', 'census-host')
         insert.run('queued', 'raw', 'pending', null, null, null)
+        insert.run('healed', 'raw', 'healed', null, null, null)
+        expect(() => insert.run('skipped', 'raw', 'skipped', null, null, null))
+          .toThrow(/CHECK constraint failed/)
         const flip = db.prepare(cat('UPDATE ru', "ns SET status = 'running' WHERE id = ?"))
         expect(() => flip.run('queued')).toThrow(/CHECK constraint failed/)
         expect(db.prepare('SELECT id, status FROM runs ORDER BY id').all()).toEqual([
+          { id: 'healed', status: 'healed' },
           { id: 'owned', status: 'running' },
           { id: 'queued', status: 'pending' },
         ])

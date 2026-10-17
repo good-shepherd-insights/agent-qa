@@ -288,7 +288,7 @@ describe('GET /api/stats', () => {
 describe('GET /api/analytics/breakdowns', () => {
   it('returns ranked summary rows for dimension=test instead of raw runs', async () => {
     insertRun({ id: randomUUID(), name: 'Checkout flow', status: 'passed', duration: 1200 })
-    insertRun({ id: randomUUID(), name: 'Checkout flow', status: 'flaky', duration: 1400 })
+    insertRun({ id: randomUUID(), name: 'Checkout flow', status: 'healed', duration: 1400 })
     insertRun({ id: randomUUID(), name: 'Login flow', status: 'failed', duration: 2200 })
 
     const res = await invokeRoute('/api/analytics/breakdowns?dimension=test&limit=1')

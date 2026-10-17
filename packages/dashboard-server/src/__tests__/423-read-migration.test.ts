@@ -281,7 +281,7 @@ it('ARIA-MEMBER-PROXY: real member preserves child extras through buffering and 
 
 it('HISTORICAL-USAGE-ABSENT: rows with only scalar token columns retain only their recorded token facts', async () => {
   const dbPath = join(dir, 'usage-history.db')
-  seedHistoricalRowsIntoV5(dbPath)
+  seedHistoricalRowsIntoCurrent(dbPath)
   const db = new DashboardDatabase({ dbPath })
   try {
     for (const id of ['old', 'old-null']) {
@@ -377,8 +377,8 @@ function seedV2(db: DashboardSqliteDatabase): void {
     PRAGMA foreign_keys = ON;
   `)
 }
-// 2026-10-16 (442-01, D-03): no older file is upgraded, so historical rows are seeded into v5.
-function seedHistoricalRowsIntoV5(dbPath: string, extraSql = ''): void {
+// 2026-10-16 (442-01, D-03): no older file is upgraded, so historical rows are seeded into the current version.
+function seedHistoricalRowsIntoCurrent(dbPath: string, extraSql = ''): void {
   new DashboardDatabase({ dbPath }).close()
   const raw = createDashboardSqliteDatabase(dbPath)
   try { raw.exec(HISTORICAL_ROWS + extraSql) } finally { raw.close() }
@@ -399,10 +399,10 @@ function nullableColumns(db: DashboardSqliteDatabase): void {
     for (const name of names) expect(columns.find(column => column.name === name)).toMatchObject({ name, type: 'TEXT', notnull: 0, dflt_value: null })
   }
 }
-it('MIGRATION-FRESH: creates complete nullable v5 directly on a SQLite file', () => {
+it('MIGRATION-FRESH: creates the complete nullable current version directly on a SQLite file', () => {
   const db = open('fresh.db')
   runSqliteMigrations(db, MIGRATIONS, SCHEMA_VERSION)
-  expect(db.pragma('user_version', { simple: true })).toBe(5)
+  expect(db.pragma('user_version', { simple: true })).toBe(6)
   nullableColumns(db)
   expect(Object.keys(MIGRATIONS[0]!).sort()).toEqual(['sql', 'version'])
   expect(db.pragma('foreign_keys', { simple: true })).toBe(1)
@@ -457,7 +457,7 @@ it('EVID-V2-HISTORY: refuses v2 untouched; historical NULLs and new subscriber f
   expect({ data: data(raw), schema: schema(raw) }).toEqual(before)
   expect(raw.pragma('user_version', { simple: true })).toBe(2)
   // A valid historical action, independent of new producer payloads.
-  seedHistoricalRowsIntoV5(join(dir, 'evidence.db'),
+  seedHistoricalRowsIntoCurrent(join(dir, 'evidence.db'),
     `UPDATE run_sub_actions SET planned_action = '{"type":"navigate","to":"url","url":"https://example.invalid"}';`)
   const db = new DashboardDatabase({ dbPath: join(dir, 'evidence.db') })
   const { step, child } = recorded()
@@ -574,7 +574,7 @@ it('MIGRATION-V2-HISTORY: refuses v2 by name without changing schema, data or ve
   expect({ data: data(db), schema: schema(db) }).toEqual(before)
   expect(db.pragma('user_version', { simple: true })).toBe(2)
 })
-it('MIGRATION-REOPEN: a published v5 file reopens without executing DDL', () => {
+it('MIGRATION-REOPEN: a published current-version file reopens without executing DDL', () => {
   const db = open('reopen.db')
   runSqliteMigrations(db, MIGRATIONS, SCHEMA_VERSION)
   db.exec(HISTORICAL_ROWS)
@@ -587,7 +587,7 @@ it('MIGRATION-REOPEN: a published v5 file reopens without executing DDL', () => 
   expect(data(reopened)).toEqual(before)
   nullableColumns(reopened)
 })
-for (const [name, version] of [['V1', 1], ['FUTURE', 6], ['FUTURE', 17]] as const) {
+for (const [name, version] of [['V1', 1], ['FUTURE', 7], ['FUTURE', 17]] as const) {
   it(`MIGRATION-${name}-REFUSE: names unsupported version ${version} and leaves schema/data untouched`, () => {
     const db = open(`refuse-${version}.db`)
     seedV2(db)

@@ -80,8 +80,8 @@ describe('DashboardDatabase', () => {
     // a chain — it is the ONE terminal entry stamped at `SCHEMA_VERSION`, because no database is
     // ever migrated from an older shape (an older one is refused by name), so a chain of
     // intermediate versions would be sql nothing can ever walk.
-    it('SCHEMA_VERSION is 5', () => {
-      expect(SCHEMA_VERSION).toBe(5)
+    it('SCHEMA_VERSION is 6', () => {
+      expect(SCHEMA_VERSION).toBe(6)
     })
 
     it('MIGRATIONS is exactly one entry, stamped at the current schema version', () => {
@@ -1051,19 +1051,6 @@ describe('DashboardDatabase', () => {
   })
 
   describe('flaky detection', () => {
-    it('insertRun with status flaky succeeds', () => {
-      const id = db.insertRun({
-        name: 'Flaky Test',
-        status: 'flaky',
-        duration: 5000,
-        startedAt: '2026-03-01T10:00:00Z',
-        endedAt: '2026-03-01T10:00:05Z',
-      })
-      const run = db.getRun(id)
-      expect(run).toBeDefined()
-      expect(run!.status).toBe('flaky')
-    })
-
     // 2026-08-27 (405-07, D-02): four cells stood here over the parent/child run tree — an
     // ordered child read, two "excludes child runs" filters and a retry-info writer. Nothing has
     // written a child run row since 402-09, so all four exercised a shape no producer could
@@ -1071,11 +1058,21 @@ describe('DashboardDatabase', () => {
     // is the pin that the index is GONE, so re-adding the column reddens here.
     it('counts every run, because every run is top-level now', () => {
       insertSampleRun({ name: 'Normal', status: 'passed', startedAt: '2026-03-01T10:00:00Z' })
-      insertSampleRun({ name: 'Flaky One', status: 'flaky', startedAt: '2026-03-01T10:00:00Z' })
+      const flakyOne = insertSampleRun({ name: 'Flaky One', status: 'passed', startedAt: '2026-03-01T10:00:00Z' })
+      db.insertRunStep({
+        runId: flakyOne,
+        testIndex: 0,
+        stepIndex: 0,
+        cacheStatus: 'miss',
+        verifierVerdict: { pass: true, reasoning: 'ok' },
+        selfHealOccurred: true,
+        briefDigest: 'retry tap',
+        status: 'passed',
+      })
 
       const stats = db.getStats()
       expect(stats.totalRuns).toBe(2)
-      expect(stats.passed).toBe(2) // flaky counts as passed
+      expect(stats.passed).toBe(2) // a self-healed run counts as passed
       expect(stats.flaky).toBe(1)
     })
 
@@ -1092,8 +1089,8 @@ const STAMPED_OWNER = { pid: 4242, incarnation: 'proc-starttime:7', host: 'h' }
 const inertProbe = { isAlive: () => true, incarnationOf: () => undefined }
 
 describe('C442-SCHEMA-V5', () => {
-  it('a fresh runs database opens at version 5 with the owner columns', () => {
-    expect(db['db'].pragma('user_version', { simple: true })).toBe(5)
+  it('a fresh runs database opens at the current version with the owner columns', () => {
+    expect(db['db'].pragma('user_version', { simple: true })).toBe(6)
     const columns = columnNames('runs')
     for (const name of ['owner_pid', 'owner_incarnation', 'owner_host']) expect(columns).toContain(name)
   })

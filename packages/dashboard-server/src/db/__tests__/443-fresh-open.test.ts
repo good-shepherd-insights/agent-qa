@@ -253,7 +253,7 @@ describe('C443-FRESH-OPEN', () => {
       }
       okOpens += outcomes.filter((outcome) => outcome.ok).length
       const file = readFile(dbPath)
-      expect(file.version, `trial ${trial} user_version`).toBe(5)
+      expect(file.version, `trial ${trial} user_version`).toBe(6)
       const inserted = outcomes
         .flatMap((outcome) => (outcome.id === undefined ? [] : [outcome.id]))
         .sort()
@@ -273,7 +273,7 @@ describe('C443-FRESH-OPEN', () => {
     const [first, second] = outcomes.map((outcome) => outcome.id!)
     expect(first).not.toBe(second)
     const file = readFile(dbPath)
-    expect(file.version).toBe(5)
+    expect(file.version).toBe(6)
     expect(file.ids).toEqual([first, second].sort())
     expect(file.owners.get(first)).toBe(7101)
     expect(file.owners.get(second)).toBe(7102)
@@ -320,7 +320,7 @@ describe('C443-FRESH-OPEN', () => {
     second.close()
     first.close()
 
-    expect(readFile(dbPath).version).toBe(5)
+    expect(readFile(dbPath).version).toBe(6)
     const schema = schemaOf(dbPath)
     expect(JSON.parse(schema).length).toBeGreaterThan(0)
     expect(schema).toBe(schemaOf(referencePath))

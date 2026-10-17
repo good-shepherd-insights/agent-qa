@@ -65,13 +65,13 @@ function writeV1Database(dbPath: string): void {
   }
 }
 
-describe('a fresh dashboard database opens at v5 (442 D-03)', () => {
-  it('stamps user_version 5 and creates the three bus-shaped projection tables', () => {
+describe('a fresh dashboard database opens at the current version (444 D-03)', () => {
+  it('stamps user_version 6 and creates the three bus-shaped projection tables', () => {
     const db = new DashboardDatabase({ dbPath: join(workDir, 'fresh.db') })
     try {
       const raw = db as unknown as { db: { pragma(q: string, o?: { simple?: boolean }): unknown; prepare(sql: string): { all(): unknown[] } } }
-      expect(raw.db.pragma('user_version', { simple: true })).toBe(5)
-      expect(SCHEMA_VERSION).toBe(5)
+      expect(raw.db.pragma('user_version', { simple: true })).toBe(6)
+      expect(SCHEMA_VERSION).toBe(6)
 
       const tables = (raw.db
         .prepare("SELECT name FROM sqlite_master WHERE type='table'")
@@ -141,17 +141,34 @@ describe('an older or newer database is refused BY NAME, never migrated (D-02)',
     }
   })
 
-  it('still refuses a database from a FUTURE build with the not-compatible message', () => {
-    const dbPath = join(workDir, 'future-v6.db')
+  it('refuses a v5 database by name with the remove-the-database message', () => {
+    const dbPath = join(workDir, 'older-v5.db')
     const seed = createDashboardSqliteDatabase(dbPath)
     try {
-      seed.exec('PRAGMA user_version = 6')
+      seed.exec("CREATE TABLE runs (id TEXT PRIMARY KEY, status TEXT); INSERT INTO runs VALUES ('r_old', 'flaky')")
+      seed.exec('PRAGMA user_version = 5')
+    } finally {
+      seed.close()
+    }
+
+    expect(() => new DashboardDatabase({ dbPath })).toThrow(RunsDatabaseVersionRefusedError)
+    expect(() => new DashboardDatabase({ dbPath })).toThrow(
+      `${dbPath} was written by an older agent-qa (runs database version 5). `
+        + 'Delete it and run again; agent-qa creates a new one.',
+    )
+  })
+
+  it('still refuses a database from a FUTURE build with the not-compatible message', () => {
+    const dbPath = join(workDir, 'future-v7.db')
+    const seed = createDashboardSqliteDatabase(dbPath)
+    try {
+      seed.exec('PRAGMA user_version = 7')
     } finally {
       seed.close()
     }
 
     expect(() => new DashboardDatabase({ dbPath }))
-      .toThrow(/user_version 6 is not compatible with schema version 5/)
+      .toThrow(/user_version 7 is not compatible with schema version 6/)
     expect(() => new DashboardDatabase({ dbPath })).toThrow(`${dbPath}: `)
   })
 })

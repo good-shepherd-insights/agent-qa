@@ -9820,7 +9820,7 @@
     {
       "runner": "vitest",
       "file": "packages/dashboard-server/src/__tests__/database.test.ts",
-      "fullName": "C442-SCHEMA-V5 a fresh runs database opens at version 5 with the owner columns",
+      "fullName": "C442-SCHEMA-V5 a fresh runs database opens at the current version with the owner columns",
       "origin": "442 D-03"
     },
     {
@@ -10048,7 +10048,7 @@
     {
       "runner": "vitest",
       "file": "packages/arch/src/__tests__/442-run-ownership-census.test.ts",
-      "fullName": "C442-CENSUS — no path finalizes runs it does not own (442 D-05) C442-OWNER-REQUIRED: the v5 runs table requires an owner on every running row",
+      "fullName": "C442-CENSUS — no path finalizes runs it does not own (442 D-05) C442-OWNER-REQUIRED: the runs table requires an owner on every running row",
       "origin": "442 D-05"
     },
     {

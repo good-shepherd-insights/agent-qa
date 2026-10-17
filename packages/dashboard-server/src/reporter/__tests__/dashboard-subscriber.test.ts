@@ -150,7 +150,7 @@ describe('createDashboardRunIngest', () => {
     expect(db.readRunDetailRows(runId)?.steps).toHaveLength(1)
   })
 
-  it('healed outcome maps to a passed run row while the step keeps its healed status', () => {
+  it('a healed verdict is stored as healed on the run row and the step keeps its healed status', () => {
     const runId = 'r_healed-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
     const ingest = createDashboardRunIngest({
       db,
@@ -167,10 +167,8 @@ describe('createDashboardRunIngest', () => {
     expect(db.getRun(runId)?.status).toBe('running')
     ingest.handler(ev('run-bus', 'verdict', { verdict: 'healed' }))
 
-    expect(db.getRun(runId)?.status).toBe('passed')
-    // 405-01 D-01: `toRunStatus` collapses `healed` to `passed` for the `runs.status` CHECK and
-    // for NOTHING ELSE. The step row keeps the payload's own word, which is what makes "this step
-    // self-healed" readable at all.
+    // 2026-10-17 (444-04, D-03): runs.db v6 stores the verdict's own word.
+    expect(db.getRun(runId)?.status).toBe('healed')
     expect(db.readRunDetailRows(runId)?.steps[0].status).toBe('healed')
     expect(db.readRunDetailRows(runId)?.members[0].outcome).toBe('healed')
   })

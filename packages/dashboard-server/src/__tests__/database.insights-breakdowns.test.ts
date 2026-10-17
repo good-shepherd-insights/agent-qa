@@ -76,7 +76,7 @@ async function getBreakdown(
 describe('DashboardDatabase insights breakdown aggregates', () => {
   it('keeps overview stats aligned with the same success, flake, and duration semantics', () => {
     insertRun({ name: 'Checkout flow', status: 'passed', duration: 1000, startedAt: '2026-04-01T10:00:00Z' })
-    insertRun({ name: 'Checkout flow', status: 'flaky', duration: 3000, startedAt: '2026-04-01T11:00:00Z' })
+    insertHealedStep(insertRun({ name: 'Checkout flow', status: 'passed', duration: 3000, startedAt: '2026-04-01T11:00:00Z' }))
     const healedRunId = insertRun({ name: 'Checkout flow', status: 'passed', duration: 2000, startedAt: '2026-04-01T12:00:00Z' })
     insertHealedStep(healedRunId)
 
@@ -96,7 +96,7 @@ describe('DashboardDatabase insights breakdown aggregates', () => {
 
   it('ranks test rows and normalizes pass rate, flake rate, and avg duration semantics', async () => {
     insertRun({ name: 'Checkout flow', status: 'passed', duration: 1000 })
-    insertRun({ name: 'Checkout flow', status: 'flaky', duration: 3000 })
+    insertHealedStep(insertRun({ name: 'Checkout flow', status: 'passed', duration: 3000 }))
     const healedRunId = insertRun({ name: 'Checkout flow', status: 'passed', duration: 2000 })
     insertHealedStep(healedRunId)
     insertRun({ name: 'Login flow', status: 'failed', duration: 4000 })

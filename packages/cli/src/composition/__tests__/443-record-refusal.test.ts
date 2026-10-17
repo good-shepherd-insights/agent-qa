@@ -284,7 +284,7 @@ describe('C443-RECORD-INCOMPLETE', () => {
       .map((line) => JSON.parse(line) as { type: string; payload?: { verdict?: string } })
     const verdict = events.find((event) => event.type === 'verdict')?.payload?.verdict
     expect(verdict, 'the run published no verdict').toBeDefined()
-    expect(real.getRun(runId!)?.status).toBe(verdict === 'healed' ? 'passed' : verdict === 'timeout' ? 'failed' : verdict)
+    expect(real.getRun(runId!)?.status).toBe(verdict)
     const incomplete = warned.flatMap((line) => line.split('\n')).filter((line) => line.includes('but its dashboard record is incomplete'))
     expect(incomplete.length, `incomplete-record lines: ${incomplete.join(' | ')}`).toBe(1)
   }, RUN_BUDGET_MS)
@@ -342,7 +342,7 @@ describe('C443-RECORD-CLOSE', () => {
     expect(failing.reached(), 'the failing write was never reached').toBe(true)
     const verdict = verdictOf(project, runId!)
     expect(verdict, 'the run published no verdict').toBeDefined()
-    expect(real.getRun(runId!)?.status).toBe(verdict === 'healed' ? 'passed' : verdict === 'timeout' ? 'failed' : verdict)
+    expect(real.getRun(runId!)?.status).toBe(verdict)
     expect(real.readRunOwner(runId!)?.pid, 'the row is not owned by this process').toBe(process.pid)
     const incomplete = warned.flatMap((line) => line.split('\n')).filter((line) => line.includes('but its dashboard record is incomplete'))
     expect(incomplete.length, `incomplete-record lines: ${incomplete.join(' | ')}`).toBe(1)

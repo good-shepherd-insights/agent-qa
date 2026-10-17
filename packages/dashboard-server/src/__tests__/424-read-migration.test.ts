@@ -192,10 +192,10 @@ function nullableColumns(db: DashboardSqliteDatabase): void {
   }
 }
 
-it('MIGRATION-FRESH: creates v5 directly on an empty SQLite file', () => {
+it('MIGRATION-FRESH: creates the current version directly on an empty SQLite file', () => {
   const db = open('fresh.db')
   runSqliteMigrations(db, MIGRATIONS, SCHEMA_VERSION)
-  expect(db.pragma('user_version', { simple: true })).toBe(5)
+  expect(db.pragma('user_version', { simple: true })).toBe(6)
   nullableColumns(db)
   expect(db.pragma('foreign_keys', { simple: true })).toBe(1)
 })
@@ -206,7 +206,7 @@ it('MIGRATION-COLUMNS-NULLABLE: both recording columns have no defaults or const
   nullableColumns(db)
 })
 
-it('MIGRATION-REOPEN: a published v5 file reopens without DDL or data changes', () => {
+it('MIGRATION-REOPEN: a published current-version file reopens without DDL or data changes', () => {
   const db = open('reopen.db')
   runSqliteMigrations(db, MIGRATIONS, SCHEMA_VERSION)
   db.exec(`
@@ -223,7 +223,7 @@ it('MIGRATION-REOPEN: a published v5 file reopens without DDL or data changes', 
 })
 
 for (const [name, version] of [
-  ['V1-REFUSE', 1], ['FUTURE-REFUSE', 6], ['FUTURE-REFUSE', 17], ['V2-DISPOSITION', 2],
+  ['V1-REFUSE', 1], ['FUTURE-REFUSE', 7], ['FUTURE-REFUSE', 17], ['V2-DISPOSITION', 2],
 ] as const) {
   it(`MIGRATION-${name}: names unsupported version ${version} without changing schema or data`, () => {
     const db = open(`refuse-${version}.db`)
@@ -284,7 +284,7 @@ describe('C442-SCHEMA-V5', () => {
   it('a newer file is refused naming the file', () => {
     const path = join(dir, 'newer.db')
     const db = createDashboardSqliteDatabase(path)
-    try { db.exec('PRAGMA user_version = 6') } finally { db.close() }
+    try { db.exec('PRAGMA user_version = 7') } finally { db.close() }
     const before = sha256(path)
     expect(() => new DashboardDatabase({ dbPath: path })).toThrow(RunsDatabaseVersionRefusedError)
     expect(() => new DashboardDatabase({ dbPath: path })).toThrow(path)
