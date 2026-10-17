@@ -1,6 +1,6 @@
 // 2026-10-17 (443-08, D-03/D-05/D-26): `agent-qa run` records every run it starts in runs.db,
 // whatever the config holds, refuses a run it cannot record, and files a failure under the id it
-// prints.
+// prints. 443-09 (D-03/D-20): the reporter list never decides the row or screenshot capture.
 
 import { createHash } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -9,15 +9,49 @@ import { DatabaseSync } from 'node:sqlite'
 
 import { DashboardDatabase } from '@vostride/agent-qa-dashboard'
 import { generateRunId } from '@vostride/agent-qa-ids'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import {
+  produceDirectRunMembers,
+  resolveRunInvocationInputs,
+} from '../../commands/run.js'
+import type { RunOptions } from '../../commands/run.js'
+import { runInProcessCliRun } from '../../composition/in-process-run-execution.js'
+import {
   CountingTarget,
+  closeTestRunRecords,
   createInProcessFixture,
+  testRunRecord,
 } from '../../composition/__tests__/in-process-run-fixture.js'
 import type { InProcessFixture } from '../../composition/__tests__/in-process-run-fixture.js'
 import { refuseWithoutPosixRunLifecycle, startCliRun } from './442-run-fixture.js'
 import type { CliRunExit } from './442-run-fixture.js'
+
+const memberConfigs = vi.hoisted(() => [] as Array<{ captureScreenshots?: boolean }>)
+
+vi.mock('@vostride/agent-qa-runner', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@vostride/agent-qa-runner')>()
+  return {
+    ...original,
+    runMemberTest: async (...args: Parameters<typeof original.runMemberTest>) => {
+      memberConfigs.push({ captureScreenshots: args[1].captureScreenshots })
+      return { name: args[0].name, filePath: '', status: 'failed', steps: [], duration: 0, failureSummary: 'capture probe' }
+    },
+  }
+})
+
+vi.mock('@vostride/agent-qa-web', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@vostride/agent-qa-web')>(),
+  WebPlatformAdapter: class {
+    platform = 'web' as const
+    recording = { start: async () => ({}), stop: async () => undefined }
+    async setup() {}
+    async cleanup() {}
+    async navigate() {}
+    async observe() { return {} }
+    async execute() { return { success: true } }
+  },
+}))
 
 const CELL_BUDGET_MS = 300_000
 const NOT_STARTED = 'The run was not started.'
@@ -266,5 +300,69 @@ describe('C443-HANDED-ROW', () => {
     expect(exit.stderr.includes('that id already names a run'), `stderr carries the in-use sentence: ${flat(exit.stderr)}`).toBe(true)
     expect(rawRow(path, runId) === before, 'the other process row changed').toBe(true)
     expect(runDirectories(at).join(','), 'run directories').toBe('')
+  }, CELL_BUDGET_MS)
+})
+
+async function memberCaptureFor(flags: Partial<RunOptions>): Promise<string> {
+  const at = project()
+  appendFileSync(at.configPath, 'services:\n  dashboard: {}\n')
+  vi.stubEnv('PLAYWRIGHT_BROWSERS_PATH', join(at.project, 'no-browsers'))
+  vi.stubEnv('AGENT_QA_RUN_ID', undefined)
+  memberConfigs.length = 0
+  try {
+    await runInProcessCliRun({
+      configPath: at.configPath,
+      agentQaRoot: at.agentQaRoot,
+      executionContext: 'local-headless',
+      runRecord: testRunRecord(),
+      produceMembers: async ({ runId }) => {
+        const inputs = await resolveRunInvocationInputs({ configPath: at.configPath, patterns: [at.testPattern] })
+        const { parseAllTestBindings } = await import('@vostride/agent-qa-core')
+        const parsed = await parseAllTestBindings([...inputs.discovered.tests])
+        return produceDirectRunMembers({ inputs, bindings: parsed.bindings, runId, opts: flags as RunOptions })
+      },
+    }, { patterns: [at.testPattern] })
+  } catch {
+    // The member fails without a browser; the config it was handed is what this reads.
+  }
+  return memberConfigs.map((config) => String(config.captureScreenshots)).join(',')
+}
+
+describe('C443-REPORTER', () => {
+  afterEach(() => {
+    closeTestRunRecords()
+    vi.unstubAllEnvs()
+  })
+
+  it('--reporter dashboard is an unknown reporter', async () => {
+    const at = project()
+
+    const exit = await run(at, ['run', at.testPattern, '--reporter', 'dashboard'])
+
+    expect(exit.code, `exit code; stderr: ${flat(exit.stderr)}`).toBe(2)
+    expect(
+      exit.stderr.includes('Unknown reporter "dashboard". Supported reporters: console, junit, stdout-live'),
+      `stderr carries the unknown-reporter sentence: ${flat(exit.stderr)}`,
+    ).toBe(true)
+    expect(runDirectories(at).join(','), 'run directories').toBe('')
+    const recorded = existsSync(runsDbOf(at)) ? rows(at) : []
+    expect(recorded.map((row) => row.id).join(','), 'the rows under runs.db').toBe('')
+  }, CELL_BUDGET_MS)
+
+  it('a run still records its row under the default reporters', async () => {
+    const at = project()
+
+    const exit = await run(at, ['run', at.testPattern])
+
+    const ids = namedRunIds(exit)
+    expect(ids.length, `printed run ids: ${flat(exit.stdout)} | ${flat(exit.stderr)}`).toBe(1)
+    expect(existsSync(runsDbOf(at)), `no runs.db after the run: ${flat(exit.stderr)}`).toBe(true)
+    expect(rows(at).map((row) => row.id).join(','), 'the rows under runs.db').toBe(ids[0])
+  }, CELL_BUDGET_MS)
+
+  it('screenshot capture follows only its own flags', async () => {
+    expect(await memberCaptureFor({}), 'capture with neither flag').toBe('false')
+    expect(await memberCaptureFor({ screenshotMode: 'every-step' }), 'capture with --screenshot-mode every-step').toBe('true')
+    expect(await memberCaptureFor({ screenshotDir: './shots' }), 'capture with --screenshot-dir').toBe('true')
   }, CELL_BUDGET_MS)
 })

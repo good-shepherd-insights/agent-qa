@@ -188,7 +188,7 @@ describe('the in-process run path refuses inputs instead of terminating its host
 
   it('an unsupported reporter is a typed refusal with exit code 2', async () => {
     const refusal = await refusalFrom(async () => {
-      requireReporterSelection({ reporter: ['not-a-reporter'] } as unknown as RunOptions, false)
+      requireReporterSelection({ reporter: ['not-a-reporter'] } as unknown as RunOptions)
     })
     expect(plain(refusal.lines)[0]).toContain('Error:')
     expect(refusal.exitCode).toBe(2)

@@ -2965,8 +2965,7 @@ describe('run command — reporter integration', () => {
   // 363-09 (D-01 clean cut): the CLI no longer constructs v1 core Reporters (ConsoleReporter /
   // JUnitReporter / StdoutLiveReporter / DashboardReporter). Reporter rendering is unit-tested in
   // src/__tests__/reporters/*.test.ts; here we pin that the selection is HONORED — v1 reporters are
-  // never constructed, the accepted selection reaches execution, and dashboard selection wires the
-  // Plan-08 bus ingest (createDashboardRunIngest) rather than the deleted DashboardReporter.
+  // never constructed and the accepted selection reaches execution.
   it('never constructs v1 core reporters for a default direct run (bus subscribers replace them)', async () => {
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
@@ -2996,21 +2995,6 @@ describe('run command — reporter integration', () => {
     // The v1 core reporters no longer exist to construct (363-11).
     expect(mockRunMemberTest).toHaveBeenCalled()
     expect(exitSpy).toHaveBeenCalledWith(0)
-  })
-
-  it('wires the dashboard bus ingest (not the v1 DashboardReporter) for dashboard selection', async () => {
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
-    mockRunMemberTest.mockResolvedValue({
-      name: 'Test One', filePath: 'tests/a.yaml', status: 'passed', steps: [], duration: 100,
-    })
-
-    await runCommand('tests/**/*.yaml', '--reporter', 'dashboard')
-
-    expect(mockDashboardDatabase).toHaveBeenCalled()
-    expect(mockCreateDashboardRunIngest).toHaveBeenCalled()
-    expect(mockDashboardReporter).not.toHaveBeenCalled()
-    expect(mockDashboardRunIngestInstance.finalize).toHaveBeenCalled()
   })
 
   it('fails unknown reporter selection before execution', async () => {
@@ -3623,8 +3607,9 @@ describe('run command — DashboardReporter wiring', () => {
     // 363-09: dashboard history is written by the Plan-08 bus ingest, not the deleted v1 DashboardReporter.
     expect(mockCreateDashboardRunIngest).toHaveBeenCalled()
     expect(mockDashboardReporter).not.toHaveBeenCalled()
+    // 2026-10-17 (443-09, D-20): a dashboard block no longer turns screenshot capture on.
     expect(mockRunMemberTest.mock.calls[0][1]).toEqual(expect.objectContaining({
-      captureScreenshots: true,
+      captureScreenshots: false,
     }))
   })
 

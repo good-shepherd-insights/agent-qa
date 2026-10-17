@@ -664,14 +664,13 @@ export function resolveRunConcurrencyConfig(
   }
 }
 
-const SUPPORTED_REPORTERS = ['console', 'junit', 'stdout-live', 'dashboard'] as const
+const SUPPORTED_REPORTERS = ['console', 'junit', 'stdout-live'] as const
 type ReporterName = typeof SUPPORTED_REPORTERS[number]
 
 interface ReporterSelection {
   console: boolean
   junit: boolean
   stdoutLive: boolean
-  dashboard: boolean
 }
 
 export interface SecretsFileArtifactMetadata {
@@ -772,8 +771,7 @@ function printRunAttributes(attributes: RunAttributes | undefined): void {
   if (block) console.log(block)
 }
 
-function resolveReporterSelection(opts: RunOptions, dashboardConfigured: boolean): { selection?: ReporterSelection; error?: string } {
-  const requiredDashboard = Boolean(process.env.AGENT_QA_RUN_ID || process.env.AGENT_QA_SUITE_QUEUE_ID)
+function resolveReporterSelection(opts: RunOptions): { selection?: ReporterSelection; error?: string } {
   const requested = opts.reporter
     ?.flatMap((name) => name.split(','))
     .map((name) => name.trim())
@@ -785,7 +783,6 @@ function resolveReporterSelection(opts: RunOptions, dashboardConfigured: boolean
         console: true,
         junit: Boolean(opts.junitOutput),
         stdoutLive: process.env.AGENT_QA_LIVE_EVENTS === 'true',
-        dashboard: dashboardConfigured || requiredDashboard,
       },
     }
   }
@@ -806,7 +803,6 @@ function resolveReporterSelection(opts: RunOptions, dashboardConfigured: boolean
       console: selected.has('console'),
       junit: selected.has('junit'),
       stdoutLive: selected.has('stdout-live'),
-      dashboard: selected.has('dashboard') || requiredDashboard,
     },
   }
 }
@@ -1274,11 +1270,8 @@ export function refuseZeroRunnableTests(
  * its own subscribers and never reaches this. What changed is the failure shape: the refusal is a
  * value the caller decides about, so no module on this path terminates its host.
  */
-export function requireReporterSelection(
-  opts: RunOptions,
-  dashboardConfigured: boolean,
-): ReporterSelection {
-  const result = resolveReporterSelection(opts, dashboardConfigured)
+export function requireReporterSelection(opts: RunOptions): ReporterSelection {
+  const result = resolveReporterSelection(opts)
   if (result.error) {
     throw new CliRunInputError([pc.red(`Error: ${result.error}`)], 2)
   }
@@ -1984,6 +1977,7 @@ async function executeSuites(
   const executionContext = resolveRunExecutionContext()
   let exitCode: number
   try {
+    const reporterSelection = requireReporterSelection(opts)
     const produced = await produceSuiteRunMembers({
       resolveTrustPriors: trustPriors?.resolve,
       suiteFiles,
@@ -2001,7 +1995,6 @@ async function executeSuites(
       ...(hooksContext === undefined ? {} : { hooksContext }),
       ...(analytics === undefined ? {} : { analytics }),
     })
-    const reporterSelection = requireReporterSelection(opts, Boolean(config.services?.dashboard))
     printPlannerLimits(produced.plannerLimits)
     const members = produced.members
     const executor = produced.executor
@@ -2204,7 +2197,6 @@ export interface PatternMemberProductionContext {
   /** The run's record; the suite half opens it after its own production refusal (443-08, D-05). */
   readonly runRecord?: RunRecord
   readonly opts?: RunOptions
-  readonly reporterSelection?: ReporterSelection
   readonly analytics?: () => Promise<CliAnalyticsHost>
   /**
    * An Appium a HOST already leased for this run (401-07, D-01/D-12 — INVK-01 truth 5).
@@ -2272,7 +2264,6 @@ export async function produceMembersFromPatterns(
       runId: context.runId,
       ...(product === undefined ? {} : { product }),
       ...(context.opts === undefined ? {} : { opts: context.opts }),
-      ...(context.reporterSelection === undefined ? {} : { reporterSelection: context.reporterSelection }),
       ...(context.analytics === undefined ? {} : { analytics: context.analytics }),
       ...(context.resolveAppiumUrl === undefined ? {} : { resolveAppiumUrl: context.resolveAppiumUrl }),
     })
@@ -2297,7 +2288,6 @@ export async function produceMembersFromPatterns(
       loadPlugins: context.inputs.loadPlugins,
       ...(context.runRecord === undefined ? {} : { runRecord: context.runRecord }),
       ...(context.opts === undefined ? {} : { opts: context.opts }),
-      ...(context.reporterSelection === undefined ? {} : { reporterSelection: context.reporterSelection }),
       variableContext: {
         envFileVars: context.inputs.envFileVars,
         inlineVars: context.inputs.inlineVars,
@@ -2503,7 +2493,6 @@ export interface SuiteRunMemberProductionInput {
   /** The run's identity, minted by the door — a run's id is never a producer's to invent. */
   readonly runId: string
   readonly opts?: RunOptions
-  readonly reporterSelection?: ReporterSelection
   readonly variableContext?: SuiteVariableContext
   readonly hooksContext?: { resolvedHooks: Map<string, HookDefinition>; sandboxOptions: SandboxRunnerOptions }
   readonly analytics?: () => Promise<CliAnalyticsHost>
@@ -2589,7 +2578,6 @@ export async function produceSuiteRunMembers(
   void activeRunSession
   const suiteSnapshots = createRunArtifactSnapshotChannel()
 
-  const reporterSelection = requireReporterSelection(opts, Boolean(config.services?.dashboard))
   // 2026-10-17 (443-08, D-26): a preparation failure is filed under this run's own id, once.
   const recordPreparationFailure = (row: {
     name: string
@@ -3027,7 +3015,7 @@ export async function produceSuiteRunMembers(
     // runner-local (validate:arch storageNeutral); the runner loop records only { name, fingerprint }.
     const suiteStorageState = await buildStorageStateStore(configDir)
 
-    const captureScreenshots = reporterSelection.dashboard || opts.screenshotMode === 'every-step' || Boolean(opts.screenshotDir)
+    const captureScreenshots = opts.screenshotMode === 'every-step' || Boolean(opts.screenshotDir)
 
     const suiteArtifactContext = buildRunArtifactContext({
       // 402-09 (D-11): an ordinary run artifact. The suite identity survives in the run row's
@@ -3690,10 +3678,6 @@ export interface DirectRunMemberProductionInput {
   readonly product?: string
   /** The door's flags. A programmatic door has none, and the empty object is the honest default. */
   readonly opts?: RunOptions
-  /** Which reporters this door selected — read only for the screenshot-capture decision. */
-  readonly reporterSelection?: ReporterSelection
-  /** The dashboard database, when the door opened one, as the log manager's storage. */
-  readonly logStorage?: unknown
   /** The invocation's memoised analytics host. Absent ⇒ no analytics, the daemon's posture. */
   readonly analytics?: () => Promise<CliAnalyticsHost>
   /**
@@ -3847,11 +3831,6 @@ export async function produceDirectRunMembers(
   } = input.inputs
   const resolveTrustPriors = input.resolveTrustPriors ?? trustPriorsForHost({ configPath: configFilePath }).resolve
   const opts: RunOptions = input.opts ?? ({} as RunOptions)
-  const reporterSelection: ReporterSelection = input.reporterSelection
-    ?? { console: false, junit: false, stdoutLive: false, dashboard: false }
-  // `any` because the log manager's storage port is `@vostride/agent-qa-core` vocabulary and this
-  // input is what a door hands over — a dashboard database or nothing.
-  const logStorage: any = input.logStorage
   const analytics = input.analytics
   const onMemberRunId = input.onMemberRunId
   const producedRunId = input.runId
@@ -3868,7 +3847,6 @@ export async function produceDirectRunMembers(
   // Kept for the producer interface; a framework error no longer cancels the run (433-35).
   let activeRunSession: { cancel(): void } | undefined
   void activeRunSession
-  const dashboardEnabled = reporterSelection.dashboard
 
   // 401-04: `startRun` is NOT among these. BOTH of this door's paths reach it through
   // `createRunInvocationCore`, and a binding held here would be a second way in.
@@ -3893,18 +3871,13 @@ export async function produceDirectRunMembers(
   // `.agent-qa` dir (the FsActionCache rooting idiom); threaded into the loop's storageState port.
   const singleStorageState = await buildStorageStateStore(configDir)
 
-  // 363-09/363-11 (D-01 clean cut, CLI side): the v1 Reporter constructions are GONE. The bus
-  // subscribers (console, junit and wire print masked payloads; dashboard ingest; analytics)
-  // attach in the core's `onSession` hook below via `attachRunSubscribers`. No reporter is
-  // threaded into the run path.
-  const captureScreenshots = reporterSelection.dashboard || opts.screenshotMode === 'every-step' || Boolean(opts.screenshotDir)
+  const captureScreenshots = opts.screenshotMode === 'every-step' || Boolean(opts.screenshotDir)
 
   const { LogManager } = await import('@vostride/agent-qa-core')
 
   const logger = new LogManager({
     runId: process.env.AGENT_QA_RUN_ID || undefined,
     displayLevel: effectiveLogLevel as any,
-    storage: logStorage,
     ndjson: process.env.AGENT_QA_LIVE_EVENTS === 'true',
     redactor: runtimeSecrets.secretRedactor,
     // WINDOWS #233: the composition root owns every reach into the world, this one included —
@@ -4822,7 +4795,7 @@ export function createRunCommand(): Command {
         // Handle suite execution (early return)
         if (discoveredSuiteFiles.length > 0 && discoveredTestFiles.length === 0) {
           const exitCode = await executeSuites(discoveredSuiteFiles, opts, config, globalOpts, configContent, effectiveLogLevel, trustPriors, { envFileVars, inlineVars, cliVars, rawEnvFileContent, resolvedEnvFilePath, userRunAttributes, inheritedRunAttributes, ...runtimeSecrets }, resolvedHooks && sandboxOptions ? { resolvedHooks, sandboxOptions } : undefined, analytics, inputs.loadPlugins)
-          const suiteReporterSelection = resolveReporterSelection(opts, Boolean(config.services?.dashboard)).selection
+          const suiteReporterSelection = resolveReporterSelection(opts).selection
           if (suiteReporterSelection) {
             await maybePrintPostRunUpdateNotice({
               reporterSelection: suiteReporterSelection,
@@ -4863,7 +4836,7 @@ export function createRunCommand(): Command {
             }))
           : undefined
 
-        const reporterSelection = requireReporterSelection(opts, Boolean(config.services?.dashboard))
+        const reporterSelection = requireReporterSelection(opts)
         let currentRunId: string | undefined
         // 2026-10-17 (443-08, D-03/D-05): one record for this path, written whatever the config holds.
         const record = createRunRecord({
@@ -5054,7 +5027,6 @@ export function createRunCommand(): Command {
           runId: singleRunId,
           ...(directRunProduct === undefined ? {} : { product: directRunProduct }),
           opts,
-          reporterSelection,
           analytics,
           onMemberRunId: (memberRunId) => { currentRunId = memberRunId },
         })

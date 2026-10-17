@@ -971,7 +971,7 @@ describe('BUILT-CLI-RUN-READS: the shipped binary answers the run reads', () => 
       '--test', '0', '--step', '0', '--kind', 'console', '--json'])
     expect(document.code).toBe(1)
     expect(document.stderr).toContain('No completed run recorded for id')
-    expect(document.stderr).toContain('in the runs database, which holds only runs recorded with the dashboard reporter')
+    expect(document.stderr).toContain('in the runs database')
     expect(document.stderr).not.toContain('not bound')
     expect(readdirSync(p.agentQaRoot).filter((name) => name.startsWith('runs.db'))).toEqual([])
   }, 60_000)
@@ -1047,8 +1047,7 @@ describe('RUN-DETAIL-LATE-DATABASE: one stdio agent-qa mcp session reads a runs 
     const earlyDocument = await call('agent_qa_get_run_evidence', consoleArgs)
     expect(earlyDocument.isError, why(earlyDocument)).toBe(true)
     expect(textOf(earlyDocument), why(earlyDocument)).toContain('No completed run recorded for id')
-    expect(textOf(earlyDocument), why(earlyDocument))
-      .toContain('in the runs database, which holds only runs recorded with the dashboard reporter')
+    expect(textOf(earlyDocument), why(earlyDocument)).toContain('in the runs database')
     expect(textOf(earlyDocument), why(earlyDocument)).not.toContain('not bound')
     expect(databaseEntries()).toEqual([])
 

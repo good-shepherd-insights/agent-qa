@@ -405,7 +405,7 @@ describe('(iii) every failure door answers with a value, and none of them kills 
     try {
       let caught: unknown
       try {
-        requireReporterSelection({ reporter: ['nope'] } as unknown as RunOptions, false)
+        requireReporterSelection({ reporter: ['nope'] } as unknown as RunOptions)
       } catch (err) {
         caught = err
       }

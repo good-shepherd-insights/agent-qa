@@ -32,12 +32,8 @@ export class RunNotFoundError extends Error {
   }
 }
 
-/**
- * Where `runs.detail` and `runs.evidence` looked. A run `runs.list` lists can still be missing
- * there, because only a run recorded with the dashboard reporter or by `agent-qa dashboard` is.
- */
-export const IN_RUNS_DATABASE = ' in the runs database, which holds only runs recorded with the dashboard '
-  + 'reporter or by agent-qa dashboard'
+/** Where `runs.detail` and `runs.evidence` looked. */
+export const IN_RUNS_DATABASE = ' in the runs database'
 
 
 function toRunTestDetail(
