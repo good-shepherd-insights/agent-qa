@@ -156,9 +156,6 @@ const PINNED_RUN_TS_IMPORTS = [
   // 401-20 (CR-04): the mint's inverse. `isMintedRunId` is a REQUIRED core option with no default,
   // and it travels the same relative route the mint does — a shape check invented in `agent-local`
   // would be a second spelling of a run's identity.
-  // 2026-10-17 (443-08, D-22): `createInProcessCliRunExecution` builds one record per run.
-  'createRunRecord',
-  'doorRunAttributes',
   'isMintedCliRunId',
   'mintCliRunId',
   'produceMembersFromPatterns',

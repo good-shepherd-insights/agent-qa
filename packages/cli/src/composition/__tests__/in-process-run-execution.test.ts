@@ -287,10 +287,7 @@ import {
 import { RunDeniedError } from '@vostride/agent-qa-agent-local'
 import type { RunSession } from '@vostride/agent-qa-schema'
 
-import {
-  createInProcessCliRunExecution,
-  runInProcessCliRun,
-} from '../in-process-run-execution.js'
+import { runInProcessCliRun } from '../in-process-run-execution.js'
 import type { CliRunOutcome } from '../in-process-run-execution.js'
 import { PLANTED_SECRET_NAME, auditRows, buildOrdinalsExist, eventTypes, runDirs } from './in-process-run-fixture.js'
 import { parseTestFile } from '@vostride/agent-qa-core'
@@ -346,12 +343,6 @@ describe('a door holding only a RunsStartInput gets a policy-gated run, in proce
     try {
       const fixture = createInProcessFixture({ origin: target.origin, environment: 'local' })
       let session: RunSession | undefined
-      const port = createInProcessCliRunExecution({
-        ...fixtureOptions(fixture),
-        // THE POSTURE TRAVELS EXPLICITLY (D-07). No CLI option is named anywhere in this call.
-        executionContext: 'local-headless',
-        onSession: (started) => { session = started },
-      })
 
       // The member fails downstream of `startRun` (no browser binaries), and the drive re-surfaces
       // that framework error exactly as the shipped door does. The run still HAPPENED, which is
@@ -359,7 +350,16 @@ describe('a door holding only a RunsStartInput gets a policy-gated run, in proce
       // the seam and not about the fixture's failure mode.
       let denial: unknown
       try {
-        await port.execute({ patterns: [fixture.testPattern] })
+        await runInProcessCliRun(
+          {
+            runRecord: testRunRecord(),
+            ...fixtureOptions(fixture),
+            // THE POSTURE TRAVELS EXPLICITLY (D-07). No CLI option is named anywhere in this call.
+            executionContext: 'local-headless',
+            onSession: (started) => { session = started },
+          },
+          { patterns: [fixture.testPattern] },
+        )
       } catch (err) {
         denial = err
       }
@@ -397,15 +397,18 @@ describe('a door holding only a RunsStartInput gets a policy-gated run, in proce
     try {
       const fixture = createInProcessFixture({ origin: target.origin, environment: 'production' })
       let session: RunSession | undefined
-      const port = createInProcessCliRunExecution({
-        ...fixtureOptions(fixture),
-        executionContext: 'local-headless',
-        onSession: (started) => { session = started },
-      })
 
       let denial: unknown
       try {
-        await port.execute({ patterns: [fixture.testPattern] })
+        await runInProcessCliRun(
+          {
+            runRecord: testRunRecord(),
+            ...fixtureOptions(fixture),
+            executionContext: 'local-headless',
+            onSession: (started) => { session = started },
+          },
+          { patterns: [fixture.testPattern] },
+        )
       } catch (err) {
         denial = err
       }

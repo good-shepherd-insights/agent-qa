@@ -77,8 +77,6 @@ import {
 } from '../curation/post-verdict-step.js'
 import { REPLAY_FROM_START, attachRunSubscribers } from '../run-session-composition.js'
 import {
-  createRunRecord,
-  doorRunAttributes,
   isMintedCliRunId,
   mintCliRunId,
   produceMembersFromPatterns,
@@ -714,33 +712,6 @@ export async function runInProcessCliRun(
       }
     },
   )
-}
-
-/**
- * The `RunExecutionPort` a door composes.
- *
- * It narrows the drive's outcome to `{ runId }`, which is that port's whole contract — and the
- * shape `createLocalRunInvocation`'s evidence check (read the run's own event log back, refuse an
- * empty one) binds over unchanged.
- */
-export function createInProcessCliRunExecution(
-  options: Omit<InProcessCliRunExecutionOptions, 'runRecord'>,
-): { execute(request: RunsStartInput): Promise<{ runId: string }> } {
-  return {
-    async execute(request: RunsStartInput): Promise<{ runId: string }> {
-      // 2026-10-17 (443-08, D-22): one record per run, closed by the port that built it.
-      const runRecord = createRunRecord({
-        attributes: doorRunAttributes('cli'),
-        warn: (line) => console.warn(line),
-      })
-      try {
-        const outcome = await runInProcessCliRun({ ...options, runRecord }, request)
-        return { runId: outcome.runId }
-      } finally {
-        runRecord.close()
-      }
-    },
-  }
 }
 
 /**
