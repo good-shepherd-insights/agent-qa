@@ -272,9 +272,9 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
     const id = claimPrimary()
     if (id === undefined) return
     runId = id
+    onRunCreated?.(id)
     insertArtifact(id, 'test')
     for (const held of heldSnapshots.splice(0)) applySnapshots(id, held)
-    onRunCreated?.(id)
   }
 
   function handleTestStarted(payload: TestStartedPayload): void {

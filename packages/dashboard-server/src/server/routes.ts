@@ -1622,6 +1622,8 @@ const RUN_READS_WITHOUT_ROWS: ReadonlySet<string> = new Set([
   // 2026-10-16 (442-01, D-04): compare-and-set writes that return a boolean.
   'finalizeOrphanRun',
   'finalizeOwnRun',
+  // 2026-10-17 (443-13, GAP-D1): a compare-and-set write that returns a boolean, no run metadata.
+  'closeOwnRun',
   // 2026-10-17 (443-02, D-07): a compare-and-set write that returns a boolean, no run metadata.
   'claimRunningRow',
   'stageRunArtifact',

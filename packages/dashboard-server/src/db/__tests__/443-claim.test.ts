@@ -238,3 +238,49 @@ describe('C443-OWN-FINALIZE', () => {
     expect(own.getRuns({ limit: 10 }).map((run) => run.status).sort()).toEqual([...statuses].sort())
   })
 })
+
+describe('C443-RECORD-CLOSE', () => {
+  const OTHER: RunOwner = { pid: 5151, incarnation: 'proc-starttime:9', host: 'h' }
+  const endedAt = '2026-10-17T00:20:00.000Z'
+
+  it('the closing write lands the verdict status after a member status write', () => {
+    const own = handleFor(SELF)
+    const id = 'r_member_wrote'
+    expect(own.claimRunningRow(id, claimFields())).toBe(true)
+    own.updateRun(id, { status: 'passed', endedAt: '2026-10-17T00:15:00.000Z' })
+    expect(own.finalizeOwnRun(id, { status: 'failed', endedAt })).toBe(false)
+    expect(own.getRun(id)?.status).toBe('passed')
+
+    expect(own.closeOwnRun(id, { status: 'failed', endedAt })).toBe(true)
+
+    expect(own.getRun(id)).toMatchObject({ status: 'failed', endedAt })
+    expect(own.readRunOwner(id)?.pid).toBe(SELF.pid)
+
+    const quiet = 'r_no_member'
+    expect(own.claimRunningRow(quiet, claimFields())).toBe(true)
+    expect(own.closeOwnRun(quiet, { status: 'passed', endedAt })).toBe(true)
+    expect(own.getRun(quiet)).toMatchObject({ status: 'passed', endedAt })
+    expect(own.readRunOwner(quiet)?.pid).toBe(SELF.pid)
+  })
+
+  it('the closing write never touches a row another process stamped', () => {
+    const own = handleFor(SELF)
+    const other = handleFor(OTHER)
+    const foreign = 'r_foreign'
+    expect(other.claimRunningRow(foreign, claimFields())).toBe(true)
+    const pending = own.insertPendingRun({ name: 'Queued elsewhere' })
+    const rows = [foreign, pending]
+    const before = rows.map((id) => byteSnapshot(own, id))
+    for (const snapshot of before) expect(JSON.parse(snapshot)).toHaveLength(1)
+
+    for (const id of rows) {
+      expect(own.closeOwnRun(id, { status: 'failed', endedAt })).toBe(false)
+    }
+
+    expect(rows.map((id) => byteSnapshot(own, id))).toEqual(before)
+    expect(own.getRun(foreign)?.status).toBe('running')
+    expect(own.readRunOwner(foreign)?.pid).toBe(OTHER.pid)
+    expect(own.getRun(pending)?.status).toBe('pending')
+    expect(own.readRunOwner(pending)).toBeUndefined()
+  })
+})

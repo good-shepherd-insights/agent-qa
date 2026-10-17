@@ -1118,6 +1118,22 @@ export class DashboardDatabase {
     return true
   }
 
+  // 2026-10-17 (443-13, GAP-D1): no status condition, because a member's status write already
+  // moved the row off running; the owner columns alone decide whose row it is.
+  closeOwnRun(id: string, updates: {
+    status: 'passed' | 'failed' | 'skipped' | 'cancelled'
+    endedAt: string
+  }): boolean {
+    const stamp = this.ownStamps.get(id) ?? this.readOwnStamp()
+    const result = this.db.prepare(`
+      UPDATE runs SET status = ?, ended_at = ?
+      WHERE id = ? AND owner_pid = ? AND owner_incarnation IS ? AND owner_host = ?
+    `).run(updates.status, updates.endedAt, id, stamp.pid, stamp.incarnation, stamp.host)
+    if (Number(result.changes) !== 1) return false
+    this.ownStamps.delete(id)
+    return true
+  }
+
   // 2026-10-16 (442-15, GAP-D2): own is the stamp this handle wrote, so a NULL start time here is
   // this handle's own write, never an inference about another process.
   isOwnStamp(id: string, owner: RunOwner): boolean {
