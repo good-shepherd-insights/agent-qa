@@ -21,6 +21,9 @@ interface EnqueueOptions {
 
 export type RunCancelOutcome =
   | { kind: 'cancelled' }
+  | { kind: 'stop-requested' }
+  | { kind: 'not-stoppable-here' }
+  | { kind: 'finished'; status: string }
   | { kind: 'orphan-finalized'; message: string }
   | { kind: 'owned-elsewhere'; message: string; ownerPid: number }
   | { kind: 'not-cancellable' }
@@ -35,11 +38,17 @@ export class JobQueue extends EventEmitter {
   private activeCount = 0
   private activePlatforms = new Set<string>()
   private activeRuns = new Map<string, { platform: string }>()
+  private requestStop: ((runId: string) => boolean) | undefined
 
-  constructor(opts: { db: DashboardDatabase; concurrency?: number }) {
+  constructor(opts: {
+    db: DashboardDatabase
+    concurrency?: number
+    requestStop?: (runId: string) => boolean
+  }) {
     super()
     this.db = opts.db
     this.concurrency = opts.concurrency ?? cpus().length
+    this.requestStop = opts.requestStop
   }
 
   start(intervalMs = 1000): void {
@@ -150,46 +159,42 @@ export class JobQueue extends EventEmitter {
 
   // 2026-10-16 (442-05, D-06 to D-08): only the owner cancels a running row; gone is an orphan.
   // 442-15 (GAP-D2): own is the stamp this handle wrote, or equal non-null start times.
+  // 2026-10-17 (444-06, D-11): a running row is never written here; the run answers with its verdict.
   cancel(runId: string): RunCancelOutcome {
     const run = this.db.getRun(runId)
     if (!run) return NOT_CANCELLABLE
-    const now = new Date().toISOString()
     if (run.status === 'pending') {
-      this.db.updateRun(runId, { status: 'cancelled', endedAt: now })
+      this.db.updateRun(runId, { status: 'cancelled', endedAt: new Date().toISOString() })
       this.db.finalizeRunArtifact(runId, {
         errors: [{ code: 'cancelled', phase: 'queue', message: 'Run cancelled before execution' }],
         runtime: { status: 'cancelled' },
       })
       return { kind: 'cancelled' }
     }
-    if (run.status !== 'running') return NOT_CANCELLABLE
+    if (run.status !== 'running') return { kind: 'finished', status: run.status }
     const owner = this.db.readRunOwner(runId)
     if (owner === undefined) return NOT_CANCELLABLE
     const own = this.db.isOwnStamp(runId, owner)
     switch (own ? 'self' : classifyRunOwner(owner, this.db.runOwnership)) {
       case 'self':
-        this.db.updateRun(runId, { status: 'cancelled', endedAt: now })
-        try {
-          const artifact = this.db.getRunArtifact(runId)
-          if (artifact && !artifact.finalizedAt) {
-            this.db.finalizeRunArtifact(runId, {
-              errors: [
-                { code: 'cancelled', phase: 'queue', message: 'Run cancellation requested' },
-              ],
-              runtime: { status: 'cancelled' },
-            })
-          }
-        } catch { /* cancellation still proceeds */ }
-        this.emit('cancel-running', runId)
-        return { kind: 'cancelled' }
+        return this.requestStop?.(runId) === true
+          ? { kind: 'stop-requested' }
+          : { kind: 'not-stoppable-here' }
       case 'gone':
         return this.db.finalizeOrphanRun(runId, owner)
           ? { kind: 'orphan-finalized', message: orphanSummary(owner.pid) }
-          : NOT_CANCELLABLE
+          : this.finishedOrMissing(runId)
       case 'alive':
       case 'unknown':
         return { kind: 'owned-elsewhere', message: ownedElsewhere(owner.pid), ownerPid: owner.pid }
     }
+  }
+
+  private finishedOrMissing(runId: string): RunCancelOutcome {
+    const run = this.db.getRun(runId)
+    return run && run.status !== 'running' && run.status !== 'pending'
+      ? { kind: 'finished', status: run.status }
+      : NOT_CANCELLABLE
   }
 
   // 2026-08-24 (Phase 402 plan 09, D-11): THE CHILD-RUN CANCELLATION FAN-OUT IS DELETED WITH THE

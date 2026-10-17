@@ -286,12 +286,10 @@ const WRITERS: readonly Writer[] = [
   w(JOB_QUEUE, 'updateRunStatus', 'own-queue', 'pending to running, stamped with this dashboard'),
   w(JOB_QUEUE, 'updateRun', 'own-queue', 'cancel of a pending row'),
   w(JOB_QUEUE, 'finalizeRunArtifact', 'own-queue', 'cancel of a pending row'),
-  w(JOB_QUEUE, 'updateRun', 'own-queue', 'cancel of a running row this dashboard owns'),
-  w(JOB_QUEUE, 'finalizeRunArtifact', 'own-queue', 'cancel of a running row this dashboard owns'),
   w(JOB_QUEUE, 'finalizeOrphanRun', 'orphan', 'cancel of a running row whose owner is gone'),
   w(DATABASE, 'finalizeRunArtifact', 'orphan', 'inside finalizeOrphanRun, after its CAS wrote'),
 ]
-const WRITER_FLOOR = 25
+const WRITER_FLOOR = 23
 
 function argumentOf(text: string, open: number): string {
   let depth = 0

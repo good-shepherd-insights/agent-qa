@@ -48,7 +48,7 @@ afterEach(() => {
 
 function ev(runId: string, type: RunEventType, payload: Record<string, unknown> = {}): RunEventEnvelope {
   seq += 1
-  return { seq, ts: new Date().toISOString(), runId, type, payload } as RunEventEnvelope
+  return { seq, ts: Date.now(), runId, type, payload } as RunEventEnvelope
 }
 
 class HeldSession {
@@ -250,12 +250,12 @@ describe('C444-CANCEL-REQUEST', () => {
     expect(answer.status).toBe(202)
     expect(live.sessions.get(runId)!.cancels).toBe(1)
     await waitFor(() => reader.getRun(runId)?.status !== 'running', 'the run to reach its verdict')
+    expect(reader.getRun(runId)?.endedAt).toBe(RUN_ENDED_AT)
     live.releases.get(runId)!()
     await waitFor(() => live.settled.length === 1, 'the run to settle')
 
     const row = reader.getRun(runId)!
     expect(row.status).toBe('cancelled')
-    expect(row.endedAt).toBe(RUN_ENDED_AT)
     expect(row.failureSummary ?? null).toBeNull()
     expect(live.settled).toEqual([{ runId, status: 'cancelled' }])
     const errors = reader.getRunArtifact(runId)?.payload.errors ?? []

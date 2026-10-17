@@ -2377,24 +2377,19 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         json(res, { error: 'invalid_run_id' }, 400)
         return
       }
-      // 2026-10-16 (442-05, D-06/D-07): cancel metadata is written only for this dashboard's runs.
       const outcome = jobQueue.cancel(runId)
       switch (outcome.kind) {
         case 'cancelled':
-          try {
-            const run = db.getRun(runId)
-            if (run && run.status === 'cancelled') {
-              const duration = run.startedAt
-                ? Date.now() - new Date(run.startedAt).getTime()
-                : 0
-              db.updateRun(runId, {
-                duration,
-                endedAt: new Date().toISOString(),
-                failureSummary: 'Test cancelled by user',
-              })
-            }
-          } catch { /* best-effort */ }
           json(res, { cancelled: true })
+          return
+        case 'stop-requested':
+          json(res, { outcome: 'stop-requested' }, 202)
+          return
+        case 'not-stoppable-here':
+          json(res, { reason: 'not-stoppable-here' }, 409)
+          return
+        case 'finished':
+          json(res, { outcome: 'finished', status: outcome.status })
           return
         case 'orphan-finalized':
           json(res, { cancelled: false, message: outcome.message })

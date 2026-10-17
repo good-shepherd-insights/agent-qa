@@ -500,7 +500,11 @@ export async function startServer(opts: StartServerOptions): Promise<{
   // The persistent RUN QUEUE — all run triggers route through this. Named per D-21: it is not
   // the curation queue and not the agent job queue. The `JobQueue` class name is v1 vocabulary
   // that D-21 leaves unrenamed; only what an operator reads carries the qualifier.
-  const jobQueue = new JobQueue({ db, concurrency })
+  const jobQueue = new JobQueue({
+    db,
+    concurrency,
+    requestStop: (runId) => executionBackend?.kill(runId) ?? false,
+  })
   console.log(`Run queue started with ${concurrency} concurrency slot(s)`)
   console.log('Appium lifecycle manager initialized (auto-start on first mobile test)')
 
@@ -560,11 +564,6 @@ export async function startServer(opts: StartServerOptions): Promise<{
       // argument, because there is no child to carry an environment.
       ...(isMobile ? { appiumUrl: appiumManager.getUrl() } : {}),
     })
-  })
-
-  // Wire cancellation — a running job is aborted at its session, not signalled at a process.
-  jobQueue.on('cancel-running', (runId: string) => {
-    executionBackend?.kill(runId)
   })
 
   // Start the queue polling loop

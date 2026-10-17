@@ -176,7 +176,7 @@ interface RunHandle {
    */
   testName?: string
   completionReason?: string
-  /** Set the moment a cancel is requested, so the settle path cannot overwrite it with a verdict. */
+  /** Set the moment a cancel or a timeout is requested, so a session named later is still cancelled. */
   cancelRequested: boolean
   timeoutTimer?: ReturnType<typeof setTimeout>
 }
@@ -240,7 +240,8 @@ export class InProcessExecutionBackend extends EventEmitter implements Execution
           // when the door names the session.
           session.subscribe(REPLAY_FROM_START, (envelope) => {
             const mapped = runStatusFromEnvelope(envelope)
-            if (mapped !== undefined && !handle.cancelRequested) handle.status = mapped
+            // 2026-10-17 (444-06, D-11, D-43): a cancel leaves the status to the run's own verdict.
+            if (mapped !== undefined && handle.status !== 'timeout') handle.status = mapped
             // 405-07 (D-19 · RESEARCH D7): the ONE fact this subscription still derives. The
             // envelope type is `testStarted` and its `payload.name` is the member's name — read
             // here, on the session's own frames, rather than by scanning a buffer of them later.
@@ -264,8 +265,6 @@ export class InProcessExecutionBackend extends EventEmitter implements Execution
     const handle = this.handles.get(runId)
     if (!handle || handle.status !== 'running') return false
     handle.cancelRequested = true
-    handle.status = 'cancelled'
-    handle.completionReason = 'cancelled'
     handle.session?.cancel()
     return true
   }
@@ -274,8 +273,6 @@ export class InProcessExecutionBackend extends EventEmitter implements Execution
     for (const handle of this.handles.values()) {
       if (handle.status !== 'running') continue
       handle.cancelRequested = true
-      handle.status = 'cancelled'
-      handle.completionReason = 'cancelled'
       handle.session?.cancel()
     }
   }
