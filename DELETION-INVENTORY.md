@@ -5310,17 +5310,22 @@ agent-qa on `version-0.2` and signed. Every new cell is listed in
 at `03a489165`, which are unchanged and in order (Registered gate rows, below).
 
 **How it is measured.** Baseline `03a489165` (Phase 443's first final SHA, 443-11's inventory
-commit). Closing SHA `ab17e4817` (443-19's gate list commit, the parent of this subsection's
-commit). `git -C agent-qa diff --shortstat 03a489165 ab17e4817`: 22 files changed, 1,155
-insertions, 113 deletions (under `packages/`: 21 files, +1,029/−113). `--diff-filter=D`: no file
-deleted. `--diff-filter=A`: 3 files added, every one a test file (`443-record-drive.test.ts`,
-`443-record-open.test.ts`, `443-wal-retry.test.ts`). 21 commits, every one signed (`%G?` = `G`):
-the round's tests-only RED commits (443-12 `7995fa803`, 443-14 `f0ba79dd3`, 443-15 `43b6bc0c6`,
-443-16 `6b3614e90`, 443-18 `86e563685`), its fixes and removals (443-13 `f8c438dda`,
-`c910ee7f3`; 443-14 `c768dc05e`, `cef467aa4`; 443-15 `d28a58eb9`; 443-16 `0cde406f4`,
-`83fc08836`; 443-18 `22b6405be`), 443-17's two test-harness commits (`8df542972`, `a569603ee`),
-the round review's five (`a1b702a71` RED and `79a85f252` for IN-07, `7a2c0126f` for IN-09's
-comment, `3a2d30de2` for WR-06, `e80181c1e` for IN-11) and 443-19's gate list (`ab17e4817`).
+commit). Closing SHA `3048788cc` (443-19's census fix, the parent of the commit that completes
+this subsection). `git -C agent-qa diff --shortstat 03a489165 3048788cc`: 24 files changed, 1,296
+insertions, 116 deletions (under `packages/`: 22 files, +1,032/−116; the other two are
+`regressions.json` and this file). `--diff-filter=D`: no file deleted. `--diff-filter=A`: 3 files
+added, every one a test file (`443-record-drive.test.ts`, `443-record-open.test.ts`,
+`443-wal-retry.test.ts`). 23 commits, every one signed (`%G?` = `G`): the round's tests-only RED
+commits (443-12 `7995fa803`, 443-14 `f0ba79dd3`, 443-15 `43b6bc0c6`, 443-16 `6b3614e90`, 443-18
+`86e563685`), its fixes and removals (443-13 `f8c438dda`, `c910ee7f3`; 443-14 `c768dc05e`,
+`cef467aa4`; 443-15 `d28a58eb9`; 443-16 `0cde406f4`, `83fc08836`; 443-18 `22b6405be`), 443-17's
+two test-harness commits (`8df542972`, `a569603ee`), the round review's five (`a1b702a71` RED and
+`79a85f252` for IN-07, `7a2c0126f` for IN-09's comment, `3a2d30de2` for WR-06, `e80181c1e` for
+IN-11), and 443-19's three: the gate list (`ab17e4817`), this subsection's first commit
+(`7561cc17a`) and the census fix (`3048788cc`). The record gate at `7561cc17a` was red on one
+registered cell, `the INVK-06 consumer census is frozen and self-checking (D-15) THE MARKER SCAN EQUALS THE FROZEN CENSUS — n in, n classified, no silent drops`:
+443-16's removal of the builder's gate-run option left `core/src/run-attributes.ts` naming no
+marker, while the census still classified it (Registered gate rows, below).
 Production files changed: `cli/src/commands/run.ts`,
 `cli/src/composition/in-process-run-execution.ts`, `core/src/run-attributes.ts`,
 `dashboard-server/src/db/database.ts`, `dashboard-server/src/reporter/dashboard-subscriber.ts`,
@@ -5336,6 +5341,7 @@ transcribed from a summary. Line numbers are at `03a489165`.
 | `buildInternalRunAttributes`' `gateRun?: true` option (`core/src/run-attributes.ts:141`) and its conditional spread `...(input.gateRun === true ? { [ATTR_GATE_RUN]: 'true' } : {})` (`:146`) | a second spelling of the gate-run mark; the record's own `{ ...own, [ATTR_GATE_RUN]: 'true' }` spread is the one production writes (IN-01) | `0cde406f4` (443-16) | `C443-DEAD-SURFACE the internal attribute builder takes no gate-run option` |
 | `export function createInProcessCliRunExecution(…)` and its doc block (`The RunExecutionPort a door composes. …`) (`cli/src/composition/in-process-run-execution.ts:711-736`), with the drive module's value imports of `createRunRecord` and `doorRunAttributes` from `../commands/run.js` (`:80-81`) | the drive module's run-execution port; no door composed it (IN-01). The drive is now called only by `agent-qa run` (twice), the shared host and the daemon | `83fc08836` (443-16) | `C443-ONE-RECORD every drive call passes a record from the one builder, and the scan saw every door` (four pinned sites; a fifth caller reds it by name); `git -C agent-qa grep -n createInProcessCliRunExecution -- packages` prints nothing |
 | the port's pins: `'createRunRecord'` and `'doorRunAttributes'` in `PINNED_RUN_TS_IMPORTS` and the dated 443-08 line above them (`cli/src/composition/__tests__/in-process-exit-census.test.ts:159-161`); the census's drive-call floor of 5 (`arch/src/__tests__/443-one-record-census.test.ts:410`, now 4, with `DRIVE_CALLS`) | counted the port as a drive caller and an importer of the builder | `83fc08836` (443-16, the pins); `6b3614e90` (443-16 RED, the floor and `DRIVE_CALLS`) | the exit census's `ROUTE 2` set-equality cell (not listed in the gate); `C443-ONE-RECORD every drive call passes a record from the one builder, and the scan saw every door` |
+| the INVK-06 marker census's entry `'packages/core/src/run-attributes.ts': 'carrier'` (`knowledge-local/src/projection/__tests__/gate-run-exclusion.e2e.test.ts:195`) | classified core's builder as a carrier of the gate-run marker; after `0cde406f4` the file names neither marker, so the census's equality failed | `3048788cc` (443-19) | `the INVK-06 consumer census is frozen and self-checking (D-15) THE MARKER SCAN EQUALS THE FROZEN CENSUS — n in, n classified, no silent drops` (a `gateRun` returning to core reds it as unclassified) |
 | the record flush's running-only close-out call `handle.finalizeOwnRun(runId, { status: finalRunStatus(verdict), endedAt: … })` (`run.ts:1044`) | closed the run's own row only while it still read `running`, so a member's status write before the failed write turned it into a no-op (WR-03), and a row the record had not yet learned it owned was never reached (WR-02) | `c910ee7f3` (443-13), replaced by `handle.closeOwnRun(…)` with the same arguments (GR-2) | `C443-RECORD-CLOSE a two-member run whose second member's write fails ends at the run's verdict status`; `C443-RECORD-CLOSE an artifact write that fails right after the claim still closes the row with the verdict status` |
 | the `"agent-qa.gate-run"` entry of the Runs list's `INTERNAL_ATTRIBUTE_ORDER` (`dashboard-ui/src/components/runs-table.tsx:81`), and with it the mark's line in `AttributeSummary` (`:131`, the summary built from every sorted entry) | listed the mark a second time as a raw `agent-qa.gate-run=true` in the Attributes cell, its `+N more` count, its tooltip and its `aria-label`, beside the badge (UI review warning 2) | `22b6405be` (443-18); `AttributeSummary` now drops `GATE_RUN_ATTRIBUTE` after sorting, and nothing reads the order entry | `C443-VERIFY-BADGE the attributes cell does not list the gate-run mark again` |
 
@@ -5373,6 +5379,12 @@ its plan's summary or the round review's fix report:
 - `C442-CENSUS — no path finalizes runs it does not own (442 D-05) C442-STATUS-WRITERS-CLASSIFIED: every runs.status writer is listed with whose row it writes`
   (443-13): `WRITER_CALL` names `closeOwnRun`, and the record flush's writer row is
   `closeOwnRun`, `own`; `WRITER_FLOOR` stays 26.
+- `the INVK-06 consumer census is frozen and self-checking (D-15) THE MARKER SCAN EQUALS THE FROZEN CENSUS — n in, n classified, no silent drops`
+  (`packages/knowledge-local/src/projection/__tests__/gate-run-exclusion.e2e.test.ts`, 443-19
+  `3048788cc`): its `MARKER_CENSUS` no longer lists `packages/core/src/run-attributes.ts` as a
+  `carrier`, because since `0cde406f4` that file names neither marker; the census's own rule
+  removes a member the tree no longer contains rather than relaxing the equality. The drive and
+  `run.ts` stay listed as carriers.
 
 #### What was RETAINED, and why
 
