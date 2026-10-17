@@ -676,10 +676,10 @@ type InsightsRunCuration = 'read' | 'unreadable' | 'failed' | 'unfinished'
 
 /**
  * `pending` is ambiguous: the chain may be queued, or it was never enqueued because the run was
- * excluded by design (a gate run, an excluded outcome). Only the post-processing read can tell,
- * and only its `exclusion` is used.
+ * skipped by design (a gate run, an excluded outcome). Only the post-processing read can tell,
+ * and only its `skipped` fact is used.
  */
-async function isExcludedFromPostProcessing(host: AgentHost, runId: string): Promise<boolean> {
+async function isPostProcessingSkipped(host: AgentHost, runId: string): Promise<boolean> {
   const parsed = RunsPostProcessingInputSchema.safeParse({ runId })
   if (!parsed.success) return false
   try {
@@ -689,7 +689,7 @@ async function isExcludedFromPostProcessing(host: AgentHost, runId: string): Pro
       parsed.data,
       host.caller,
     ) as PostProcessingStatus
-    return status?.exclusion !== undefined
+    return status?.skipped !== undefined
   } catch {
     return false
   }
@@ -699,14 +699,14 @@ async function isExcludedFromPostProcessing(host: AgentHost, runId: string): Pro
  * Tally the window's knowledge changes by kind, one `runs.knowledge` read per settled run
  * (433-30, 433-42).
  *
- * A run is read only when its curation finished (`done`), or when its curation reads `pending`
- * because the run was excluded from post-processing by design, so there was nothing to curate.
+ * A run is read only when its curation finished (`complete`), or when its curation reads `pending`
+ * because the run's post-processing was skipped by design, so there was nothing to curate.
  * Only read runs' changes are counted. Every other run is counted apart and never as a run that
  * changed nothing:
  * - unreadable: the read was refused or threw, the handoff is gone (`evidence-incomplete`), or the
  *   store scan behind its changes was incomplete;
  * - curation failed: `failed`;
- * - curation unfinished: `running`, or `pending` with no exclusion (or an unreadable exclusion).
+ * - curation unfinished: `running`, or `pending` with no skipped fact (or an unreadable one).
  * Runs still queued or running are not read at all; they are counted as in flight. The latest
  * {@link INSIGHTS_KNOWLEDGE_RUN_CAP} settled runs are read; a larger window says so.
  */
@@ -729,7 +729,7 @@ async function readInsightsKnowledgeChanges(
     let state: InsightsRunCuration
     if (curation === 'complete') state = 'read'
     else if (curation === 'failed') state = 'failed'
-    else if (curation === 'pending' && await isExcludedFromPostProcessing(host, runId)) state = 'read'
+    else if (curation === 'pending' && await isPostProcessingSkipped(host, runId)) state = 'read'
     else state = 'unfinished'
     if (state === 'read') {
       for (const change of outcome.body.learned.changes) {

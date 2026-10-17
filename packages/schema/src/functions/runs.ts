@@ -22,7 +22,7 @@ import {
   CurationSnapshotWithheldSchema,
   POST_PROCESSING_CHIP_STATUSES,
   POST_PROCESSING_DETAIL_STAGES,
-  PostProcessingExclusionSchema,
+  PostProcessingSkippedSchema,
   PostProcessingStageDetailSchema,
 } from '../notification/post-processing-status'
 import type { PostProcessingChips, PostProcessingStatus } from '../notification/post-processing-status'
@@ -379,8 +379,8 @@ export const PostProcessingStatusSchema = z.object({
   curationSnapshot: CurationSnapshotSchema.optional(),
   /** A recorded snapshot that could not be projected safely (423 D-15); never beside curationSnapshot. */
   curationSnapshotWithheld: CurationSnapshotWithheldSchema.optional(),
-  /** The run's chain was never enqueued (425 D-08); folded from the durable handoff markers. */
-  exclusion: PostProcessingExclusionSchema.optional(),
+  /** The run's chain was never enqueued (425 D-08, 444 D-39); folded from the durable handoff markers. */
+  skipped: PostProcessingSkippedSchema.optional(),
   notification: RunNotificationViewSchema.optional(),
 }).strict() satisfies z.ZodType<PostProcessingStatus>
 

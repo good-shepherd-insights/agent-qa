@@ -30,7 +30,7 @@ import type {
   CompletedRunHandoff,
   PostProcessingChipStatus,
   PostProcessingChips,
-  PostProcessingExclusionReason,
+  PostProcessingSkipReason,
   PostProcessingStatus,
   PostProcessingDetailStage,
   PostProcessingStageDetail,
@@ -106,17 +106,17 @@ export function projectPostProcessingChips(
 }
 
 /**
- * THE exclusion fold: the run's durable record → why its chain was never enqueued (425 D-08).
+ * THE skipped fold: the run's durable record → why its chain was never enqueued (425 D-08, 444 D-39).
  *
  * Read from the SAME two markers the post-verdict enqueue skip reads, in the same
  * short-circuit order, so the reason a surface renders is the reason the chain was actually
  * skipped for. Never from the absence of job rows: a chain polled a second after its verdict
- * has no rows either, and calling that an exclusion would tell a user their run was dropped.
+ * has no rows either, and calling that skipped would tell a user their run was dropped.
  * An absent document is an absent fact, never a refusal.
  */
-export function projectPostProcessingExclusion(
+export function projectPostProcessingSkipped(
   document: CompletedRunHandoff | undefined,
-): { reason: PostProcessingExclusionReason } | undefined {
+): { reason: PostProcessingSkipReason } | undefined {
   if (document?.gateRun === true) return { reason: 'gate-run' }
   if (document?.excludedFromOutcomes === true) return { reason: 'outcome-excluded' }
   return undefined
@@ -282,8 +282,8 @@ export const runsPostProcessingSpec: FunctionSpec<RunsPostProcessingInput, PostP
     // Through the REQUIRED runs port, and with no refusal on absence. The not-found throw
     // `runs.get` and `runs.digest` raise is theirs: each NAMES a run, while a chain can
     // legitimately be polled before its handoff lands (the skip runs after the write). An
-    // absent document simply carries no exclusion fact.
-    const exclusion = projectPostProcessingExclusion(await deps.runs.get(input.runId))
+    // absent document simply carries no skipped fact.
+    const skipped = projectPostProcessingSkipped(await deps.runs.get(input.runId))
     let projected: ReturnType<typeof projectMasked>
     try {
       projected = projectMasked(state, deps.secretMask)
@@ -304,7 +304,7 @@ export const runsPostProcessingSpec: FunctionSpec<RunsPostProcessingInput, PostP
       ...(stageDetails === undefined ? {} : { stageDetails }),
       ...(curationSnapshot === undefined ? {} : { curationSnapshot }),
       ...(snapshots.kind === 'withheld' ? { curationSnapshotWithheld: { reason: snapshots.reason } } : {}),
-      ...(exclusion === undefined ? {} : { exclusion }),
+      ...(skipped === undefined ? {} : { skipped }),
       // Absence is spread away rather than padded (the `runs-get.ts` idiom): a chain in flight
       // has no record yet, and a rendered `null` would be a second spelling of what a missing
       // key already says.

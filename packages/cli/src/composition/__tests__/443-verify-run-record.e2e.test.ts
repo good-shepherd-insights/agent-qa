@@ -100,8 +100,8 @@ describe('C443-VERIFY-RUN', () => {
           'runs.postprocessing',
           { runId },
           CLI_FUNCTION_CALLER,
-        ) as { readonly exclusion?: { readonly reason: string } }
-        expect(status.exclusion?.reason, `post-processing exclusion of ${runId}`).toBe('gate-run')
+        ) as { readonly skipped?: { readonly reason: string } }
+        expect(status.skipped?.reason, `post-processing skipped reason of ${runId}`).toBe('gate-run')
         const attributes = rowAttributes(runId)
         expect(attributes, `runs.db row for ${runId}`).toBeDefined()
         expect(attributes?.[GATE_RUN_KEY], `the verify-run mark on ${runId}`).toBe('true')
@@ -131,8 +131,8 @@ describe('C443-VERIFY-RUN', () => {
         'runs.postprocessing',
         { runId },
         CLI_FUNCTION_CALLER,
-      ) as { readonly exclusion?: { readonly reason: string } }
-      expect(status.exclusion, 'the ordinary run has no exclusion').toBeUndefined()
+      ) as { readonly skipped?: { readonly reason: string } }
+      expect(status.skipped, 'the ordinary run is not skipped').toBeUndefined()
       const attributes = rowAttributes(runId)
       expect(attributes, `runs.db row for ${runId}`).toBeDefined()
       expect(attributes?.['agent-qa.trigger'], 'the ordinary row is a recorded cli run').toBe('cli')

@@ -109,19 +109,25 @@ export const CurationSnapshotWithheldSchema = z.object({
  * Why a run's post-run chain was never enqueued (425 D-08). A gate run and an
  * outcome-excluded run both skip the whole chain (404 D-08), so their chips would otherwise
  * read `pending` forever. The fact is a SIBLING of the chip words, never a fifth word: the
- * four-word vocabulary above stays closed, and a surface that knows about the exclusion
- * renders it beside the chips rather than instead of a status it invented.
+ * four-word vocabulary above stays closed, and a surface renders it beside the chips.
+ * 2026-10-17 (444-11, D-39): renamed from the exclusion fact; every surface prints `skipped (<word>)`.
  */
-export type PostProcessingExclusionReason = 'gate-run' | 'outcome-excluded'
+export type PostProcessingSkipReason = 'gate-run' | 'outcome-excluded'
 
-export const POST_PROCESSING_EXCLUSION_REASONS = [
+export const POST_PROCESSING_SKIP_REASONS = [
   'gate-run',
   'outcome-excluded',
-] as const satisfies readonly PostProcessingExclusionReason[]
+] as const satisfies readonly PostProcessingSkipReason[]
 
-export const PostProcessingExclusionSchema = z.object({
-  reason: z.enum(POST_PROCESSING_EXCLUSION_REASONS),
-}).strict() satisfies z.ZodType<{ reason: PostProcessingExclusionReason }>
+export const PostProcessingSkippedSchema = z.object({
+  reason: z.enum(POST_PROCESSING_SKIP_REASONS),
+}).strict() satisfies z.ZodType<{ reason: PostProcessingSkipReason }>
+
+/** The one spelling of each reason every renderer prints inside `skipped (…)`. */
+export const POST_PROCESSING_SKIP_REASON_WORDS: Readonly<Record<PostProcessingSkipReason, string>> = {
+  'gate-run': 'gate run',
+  'outcome-excluded': 'outcome-excluded',
+}
 
 export interface PostProcessingStatus {
   runId: string
@@ -139,7 +145,7 @@ export interface PostProcessingStatus {
    * Present iff the run's durable record carries a gate-run or outcome-excluded marker; never
    * derived from missing job rows, from the run's status or from a pushed frame.
    */
-  exclusion?: { reason: PostProcessingExclusionReason }
+  skipped?: { reason: PostProcessingSkipReason }
   /**
    * Present only once the chain reached its terminal and wrote its one row (D-09). Absent is
    * the ordinary state of a chain still in flight — never rendered as a failure.

@@ -425,7 +425,7 @@ describe("run detail owns the chip client, and hands the navbar its projection",
   it("PAGE-EXCLUDED-READ: hands the navbar the excluded view, reason included, off the read", async () => {
     await renderPage()
     await act(async () => {
-      onReadOf()(statusRead("pending", "pending", {}, { exclusion: { reason: "gate-run" } }))
+      onReadOf()(statusRead("pending", "pending", {}, { skipped: { reason: "gate-run" } }))
     })
     expect(lastNavbarView()).toMatchObject({
       kind: "chips",

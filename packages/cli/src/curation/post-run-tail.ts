@@ -93,7 +93,11 @@ import { buildPromotionPostureResolver, promotionPostureResolverForHost } from '
 import { resolveRunCurationContext } from './run-curation-context.js'
 import { LOCAL_CURATION_CAPABILITIES, latestBuildOrdinal } from '@vostride/agent-qa-agent-local'
 import { createReplayGatePortForHost, type ReplayGateClaimAuthority } from '../gates/replay-gate-host.js'
-import { CURATION_BREAKDOWN_BUCKETS, type ScopeKey } from '@vostride/agent-qa-schema'
+import {
+  CURATION_BREAKDOWN_BUCKETS,
+  POST_PROCESSING_SKIP_REASON_WORDS,
+  type ScopeKey,
+} from '@vostride/agent-qa-schema'
 import {
   buildTrustPriorsResolver,
   TrustPriorsRefusedError,
@@ -1235,21 +1239,20 @@ function postureOf(outcome: PostRunDrainOutcome): PostRunPendingPosture {
  * `pending` are the ones somebody will drain, and a stage that already finished must not be
  * annotated with a future.
  *
- * 425 D-08: a THIRD rule, and it outranks both. A run the invocation core never enqueued a chain
- * for reads `pending` on both chips forever, so the posture parenthetical would promise a drain
- * nobody is going to perform. When the op minted the exclusion fact from the run's durable
- * handoff, both stages render that fact and its reason instead — the same words
- * `runs.digest`'s chain line prints and the dashboard paints, so the three surfaces say one
- * thing (law 6). The arm is keyed on the FACT alone: absent job rows never spell it.
+ * 425 D-08 / 444 D-39: a THIRD rule, and it outranks both. A run whose chain was never enqueued
+ * carries the op's `skipped` fact; both stages print `skipped (<reason word>)` from the one schema
+ * map, as the digest and the dashboard do. Absent job rows never spell it.
  */
 export function renderPostProcessingSummaryLine(
   status: PostProcessingStatus,
   posture: PostRunPendingPosture,
   trustPriorDisclosure?: TrustPriorDisclosure,
 ): string {
-  const excluded = status.exclusion
+  const skipped = status.skipped
   const stage = (label: keyof PostProcessingChips, chip: string): string => {
-    if (excluded !== undefined) return `${label}: excluded (${excluded.reason})`
+    if (skipped !== undefined) {
+      return `${label}: skipped (${POST_PROCESSING_SKIP_REASON_WORDS[skipped.reason]})`
+    }
     const suffix = chip === 'pending' ? PENDING_POSTURE_SUFFIX[STAGE_DRAINER[label]][posture] : ''
     return `${label}: ${chip}${suffix}`
   }

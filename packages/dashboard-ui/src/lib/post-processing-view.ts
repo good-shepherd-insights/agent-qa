@@ -25,7 +25,7 @@ import type {
   CurationSnapshotWithheldReason,
   PostProcessingChipStatus,
   PostProcessingDisposition,
-  PostProcessingExclusionReason,
+  PostProcessingSkipReason,
   PostProcessingStageDetail,
   VerdictClass,
 } from '@vostride/agent-qa-schema'
@@ -256,7 +256,7 @@ export type PostProcessingView =
        * a fifth one: the four-word vocabulary stays closed and the raw words survive underneath, so
        * a surface that does not know about the exclusion still renders exactly what the store said.
        */
-      readonly excluded?: { readonly reason: PostProcessingExclusionReason }
+      readonly excluded?: { readonly reason: PostProcessingSkipReason }
     }
   | { readonly kind: 'unavailable'; readonly error: string; readonly reason?: string }
 
@@ -725,13 +725,13 @@ export function projectPostProcessingView(read: PostProcessingRead): PostProcess
   // enqueue skip reads — so the CLI exit line, the digest and this header say ONE thing. Nothing
   // else may reach this branch: not the absence of job rows (a chain polled before its first
   // enqueue looks identical), not the run's status, not a pushed frame.
-  const exclusion = read.status.exclusion
-  if (exclusion !== undefined) {
+  const skipped = read.status.skipped
+  if (skipped !== undefined) {
     return {
       kind: 'chips',
       analysis: excludedChipView('analysis', read),
       curation: excludedChipView('curation', read),
-      excluded: { reason: exclusion.reason },
+      excluded: { reason: skipped.reason },
     }
   }
 

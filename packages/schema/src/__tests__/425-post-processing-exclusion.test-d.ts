@@ -1,10 +1,14 @@
 import { describe, expectTypeOf, test } from 'vitest'
 import type { z } from 'zod'
 
-import { POST_PROCESSING_EXCLUSION_REASONS, PostProcessingExclusionSchema } from '../index'
+import {
+  POST_PROCESSING_SKIP_REASON_WORDS,
+  POST_PROCESSING_SKIP_REASONS,
+  PostProcessingSkippedSchema,
+} from '../index'
 import type {
   PostProcessingChipStatus,
-  PostProcessingExclusionReason,
+  PostProcessingSkipReason,
   PostProcessingStatus,
   RunDigestChainOutcomes,
 } from '../index'
@@ -15,48 +19,51 @@ type ExactlyEqual<A, B> =
 
 // Independent literal union; the never-bar fails to compile the moment either side grows.
 describe('C425-EXCLUSION-REASONS-EXACT', () => {
-  test('pins exactly two exclusion reasons in both directions through both barrels', () => {
+  test('pins exactly two skip reasons in both directions through both barrels', () => {
     const listMatchesUnion: ExactlyEqual<
-      (typeof POST_PROCESSING_EXCLUSION_REASONS)[number],
-      PostProcessingExclusionReason
+      (typeof POST_PROCESSING_SKIP_REASONS)[number],
+      PostProcessingSkipReason
     > = true
     expectTypeOf(listMatchesUnion).toEqualTypeOf<true>()
-    expectTypeOf<PostProcessingExclusionReason>().toEqualTypeOf<'gate-run' | 'outcome-excluded'>()
-    expectTypeOf<(typeof POST_PROCESSING_EXCLUSION_REASONS)[number]>().toEqualTypeOf<
+    expectTypeOf<PostProcessingSkipReason>().toEqualTypeOf<'gate-run' | 'outcome-excluded'>()
+    expectTypeOf<(typeof POST_PROCESSING_SKIP_REASONS)[number]>().toEqualTypeOf<
       'gate-run' | 'outcome-excluded'
     >()
     expectTypeOf<
-      Exclude<PostProcessingExclusionReason, (typeof POST_PROCESSING_EXCLUSION_REASONS)[number]>
+      Exclude<PostProcessingSkipReason, (typeof POST_PROCESSING_SKIP_REASONS)[number]>
     >().toEqualTypeOf<never>()
     expectTypeOf<
-      Exclude<(typeof POST_PROCESSING_EXCLUSION_REASONS)[number], PostProcessingExclusionReason>
+      Exclude<(typeof POST_PROCESSING_SKIP_REASONS)[number], PostProcessingSkipReason>
     >().toEqualTypeOf<never>()
-    expectTypeOf<Notification.PostProcessingExclusionReason>().toEqualTypeOf<
-      PostProcessingExclusionReason
+    expectTypeOf<Notification.PostProcessingSkipReason>().toEqualTypeOf<
+      PostProcessingSkipReason
     >()
-    expectTypeOf<z.infer<typeof PostProcessingExclusionSchema>>().toEqualTypeOf<{
+    expectTypeOf<z.infer<typeof PostProcessingSkippedSchema>>().toEqualTypeOf<{
       reason: 'gate-run' | 'outcome-excluded'
     }>()
   })
 
   test('refuses a third reason at the type boundary', () => {
-    // @ts-expect-error a third reason is not a member of the closed exclusion set
-    const third: PostProcessingExclusionReason = 'excluded'
-    expectTypeOf(third).toEqualTypeOf<PostProcessingExclusionReason>()
-    expectTypeOf<Extract<PostProcessingExclusionReason, 'excluded'>>().toEqualTypeOf<never>()
+    // @ts-expect-error a third reason is not a member of the closed skip set
+    const third: PostProcessingSkipReason = 'excluded'
+    expectTypeOf(third).toEqualTypeOf<PostProcessingSkipReason>()
+    expectTypeOf<Extract<PostProcessingSkipReason, 'excluded'>>().toEqualTypeOf<never>()
   })
 
   test('rides beside the untouched chip words on both DTOs', () => {
-    expectTypeOf<PostProcessingStatus['exclusion']>().toEqualTypeOf<
-      { reason: PostProcessingExclusionReason } | undefined
+    expectTypeOf<PostProcessingStatus['skipped']>().toEqualTypeOf<
+      { reason: PostProcessingSkipReason } | undefined
     >()
-    expectTypeOf<RunDigestChainOutcomes['exclusion']>().toEqualTypeOf<
-      { reason: PostProcessingExclusionReason } | undefined
+    expectTypeOf<RunDigestChainOutcomes['skipped']>().toEqualTypeOf<
+      { reason: PostProcessingSkipReason } | undefined
     >()
     expectTypeOf<PostProcessingChipStatus>().toEqualTypeOf<
       'pending' | 'running' | 'complete' | 'failed'
     >()
     expectTypeOf<Extract<PostProcessingChipStatus, 'excluded'>>().toEqualTypeOf<never>()
     expectTypeOf<RunDigestChainOutcomes['analysis']>().toEqualTypeOf<PostProcessingChipStatus>()
+    expectTypeOf<Extract<keyof PostProcessingStatus, 'exclusion'>>().toEqualTypeOf<never>()
+    expectTypeOf<Extract<keyof RunDigestChainOutcomes, 'exclusion'>>().toEqualTypeOf<never>()
+    expectTypeOf<keyof typeof POST_PROCESSING_SKIP_REASON_WORDS>().toEqualTypeOf<PostProcessingSkipReason>()
   })
 })

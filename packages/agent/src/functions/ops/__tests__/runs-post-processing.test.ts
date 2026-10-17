@@ -45,7 +45,7 @@ import type {
 import {
   RUNS_POST_PROCESSING_FUNCTION_ID,
   projectPostProcessingChips,
-  projectPostProcessingExclusion,
+  projectPostProcessingSkipped,
 } from '../runs-post-processing.js'
 
 const RUN_ID = 'run-388-chips'
@@ -372,10 +372,10 @@ describe('the runs.postProcessing op (D-14/D-15)', () => {
 })
 
 // ------------------------------------------------------------------------------------------
-// The EXCLUSION fact (Phase 425, D-08). A gate run and an outcome-excluded run skip the whole
-// post-run chain, so their chip words stay `pending` and the op has to say WHY from the run's
-// durable record. The markers are the same two the enqueue skip reads — never the absence of
-// job rows, never the run's status.
+// The SKIPPED fact (Phase 425, D-08; renamed 444 D-39). A gate run and an outcome-excluded run
+// skip the whole post-run chain, so their chip words stay `pending` and the op has to say WHY
+// from the run's durable record. The markers are the same two the enqueue skip reads — never
+// the absence of job rows, never the run's status.
 // ------------------------------------------------------------------------------------------
 
 function handoff(overrides: Partial<CompletedRunHandoff> = {}): CompletedRunHandoff {
@@ -425,34 +425,35 @@ async function statusWithHandoff(
 
 describe('EXCLUSION-FROM-HANDOFF', () => {
   it('folds the fact from the two durable markers and from nothing else', () => {
-    expect(projectPostProcessingExclusion(undefined)).toBeUndefined()
-    expect(projectPostProcessingExclusion(handoff())).toBeUndefined()
-    expect(projectPostProcessingExclusion(handoff({ gateRun: true })))
+    expect(projectPostProcessingSkipped(undefined)).toBeUndefined()
+    expect(projectPostProcessingSkipped(handoff())).toBeUndefined()
+    expect(projectPostProcessingSkipped(handoff({ gateRun: true })))
       .toEqual({ reason: 'gate-run' })
-    expect(projectPostProcessingExclusion(handoff({ excludedFromOutcomes: true })))
+    expect(projectPostProcessingSkipped(handoff({ excludedFromOutcomes: true })))
       .toEqual({ reason: 'outcome-excluded' })
   })
 
   it('answers gate-run when both markers are set, in the enqueue skip order', () => {
-    expect(projectPostProcessingExclusion(handoff({ gateRun: true, excludedFromOutcomes: true })))
+    expect(projectPostProcessingSkipped(handoff({ gateRun: true, excludedFromOutcomes: true })))
       .toEqual({ reason: 'gate-run' })
   })
 
   it('never reads the fact off a failed run or off a finished chain', () => {
-    expect(projectPostProcessingExclusion(handoff({ aggregateVerdict: 'failed' })))
+    expect(projectPostProcessingSkipped(handoff({ aggregateVerdict: 'failed' })))
       .toBeUndefined()
   })
 })
 
 describe('EXCLUSION-OP-READS-RUNS-PORT', () => {
-  it('serves the exclusion beside untouched pending chips for a run with no job rows', async () => {
+  it('serves the skipped fact beside untouched pending chips for a run with no job rows', async () => {
     const { status, askedFor } = await statusWithHandoff(
       undefined,
       handoff({ excludedFromOutcomes: true }),
     )
 
     expect(status.chips).toEqual({ analysis: 'pending', curation: 'pending' })
-    expect(status.exclusion).toEqual({ reason: 'outcome-excluded' })
+    expect(status.skipped).toEqual({ reason: 'outcome-excluded' })
+    expect('exclusion' in status).toBe(false)
     expect(askedFor).toEqual([RUN_ID])
   })
 
@@ -463,13 +464,13 @@ describe('EXCLUSION-OP-READS-RUNS-PORT', () => {
       runId: RUN_ID,
       chips: { analysis: 'pending', curation: 'pending' },
     })
-    expect('exclusion' in status).toBe(false)
+    expect('skipped' in status).toBe(false)
     expect(askedFor).toEqual([RUN_ID])
   })
 
   it('omits the key for an ordinary run whose handoff carries neither marker', async () => {
     const { status } = await statusWithHandoff({ analyzeRun: row('done') }, handoff())
 
-    expect('exclusion' in status).toBe(false)
+    expect('skipped' in status).toBe(false)
   })
 })

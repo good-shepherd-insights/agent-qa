@@ -45,7 +45,7 @@ import { analysisGetSpec } from './analysis-get.js'
 import { RunNotFoundError } from './runs-get.js'
 import {
   projectPostProcessingChips,
-  projectPostProcessingExclusion,
+  projectPostProcessingSkipped,
   runsPostProcessingSpec,
 } from './runs-post-processing.js'
 
@@ -115,7 +115,7 @@ function renderDigestLines(digest: Omit<RunDigest, 'lines'>): string[] {
   // `pending` forever. The fact replaces them — in the same words the CLI exit line prints and
   // the dashboard paints — while the outcome clause keeps its own behaviour, because a row that
   // somehow carries both is still entitled to say what became of it.
-  const excluded = digest.chain.exclusion
+  const excluded = digest.chain.skipped
   lines.push(`chain — ${[
     ...(excluded === undefined
       ? [`analysis: ${digest.chain.analysis}`, `curation: ${digest.chain.curation}`]
@@ -198,13 +198,13 @@ export const runsDigestSpec: FunctionSpec<RunsDigestInput, RunDigest> = {
     const curation = status?.notification?.stages.curation
     // ONE FOLD, ONE PRODUCER (law 6). On the bound path the fact is minted once, by the fold
     // inside `runs.postprocessing`, and the digest publishes what that read carried rather than
-    // deriving it again — an ordinary run's status carries no exclusion key, so a `??` fallback
+    // deriving it again — an ordinary run's status carries no skipped key, so a `??` fallback
     // here would re-derive on every ordinary run. The unbound arm is the one composition where no
     // fold ran: there the digest answers from the handoff it already loaded for its own refusal,
     // never from an empty chain, which is also what an in-flight run's chain looks like.
-    const exclusion = status === undefined
-      ? projectPostProcessingExclusion(document)
-      : status.exclusion
+    const skipped = status === undefined
+      ? projectPostProcessingSkipped(document)
+      : status.skipped
 
     const sections: Omit<RunDigest, 'lines'> = {
       runId,
@@ -219,7 +219,7 @@ export const runsDigestSpec: FunctionSpec<RunsDigestInput, RunDigest> = {
         ...(status?.notification === undefined
           ? {}
           : { outcome: status.notification.outcome }),
-        ...(exclusion === undefined ? {} : { exclusion }),
+        ...(skipped === undefined ? {} : { skipped }),
       },
       ...(markChanges === undefined ? {} : { markChanges }),
       candidates: {

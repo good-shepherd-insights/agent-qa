@@ -143,7 +143,7 @@ describe('DIGEST-CHAIN-EXCLUDED', () => {
     expect(digest.chain).toEqual({
       analysis: 'pending',
       curation: 'pending',
-      exclusion: { reason: 'outcome-excluded' },
+      skipped: { reason: 'outcome-excluded' },
     })
     expect(chainLine(digest))
       .toBe('chain — analysis: excluded (outcome-excluded) · curation: excluded (outcome-excluded)')
@@ -152,7 +152,7 @@ describe('DIGEST-CHAIN-EXCLUDED', () => {
   it('renders the gate-run reason as itself, so the word is not a constant', async () => {
     const digest = await digestFor(handoff({ gateRun: true } as never))
 
-    expect(digest.chain).toHaveProperty('exclusion', { reason: 'gate-run' })
+    expect(digest.chain).toHaveProperty('skipped', { reason: 'gate-run' })
     expect(chainLine(digest))
       .toBe('chain — analysis: excluded (gate-run) · curation: excluded (gate-run)')
   })
@@ -162,7 +162,7 @@ describe('DIGEST-CHAIN-EXCLUDED', () => {
       const digest = await digestFor(handoff())
 
       expect(digest.chain).toEqual({ analysis: 'pending', curation: 'pending' })
-      expect('exclusion' in digest.chain).toBe(false)
+      expect('skipped' in digest.chain).toBe(false)
       expect(chainLine(digest)).toBe('chain — analysis: pending · curation: pending')
     })
 })
@@ -186,7 +186,7 @@ describe('DIGEST-EXCLUSION-FROM-THE-STATUS', () => {
       digest.chain,
       'two derivations of one fact can disagree, and law 6 is the claim that only one of them is '
         + 'published: the chain arm must carry the fold `runs.postprocessing` made',
-    ).toEqual({ analysis: 'pending', curation: 'pending', exclusion: { reason: 'gate-run' } })
+    ).toEqual({ analysis: 'pending', curation: 'pending', skipped: { reason: 'gate-run' } })
     expect(chainLine(digest))
       .toBe('chain — analysis: excluded (gate-run) · curation: excluded (gate-run)')
   })
@@ -200,7 +200,7 @@ describe('DIGEST-EXCLUSION-WITHOUT-A-READER', () => {
     const gate = handoff({ gateRun: true } as never)
     const digest = await digestOver({ get: () => gate, list: [gate], postProcessing: false })
 
-    expect(digest.chain).toHaveProperty('exclusion', { reason: 'gate-run' })
+    expect(digest.chain).toHaveProperty('skipped', { reason: 'gate-run' })
     expect(chainLine(digest))
       .toBe('chain — analysis: excluded (gate-run) · curation: excluded (gate-run)')
   })
@@ -210,7 +210,7 @@ describe('DIGEST-EXCLUSION-WITHOUT-A-READER', () => {
     const digest = await digestOver({ get: () => plain, list: [plain], postProcessing: false })
 
     expect(digest.chain).toEqual({ analysis: 'pending', curation: 'pending' })
-    expect('exclusion' in digest.chain).toBe(false)
+    expect('skipped' in digest.chain).toBe(false)
     expect(chainLine(digest)).toBe('chain — analysis: pending · curation: pending')
   })
 })

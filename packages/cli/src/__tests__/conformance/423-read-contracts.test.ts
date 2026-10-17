@@ -237,7 +237,7 @@ async function openDurableScene() {
   const runId = db.insertRun({ name: 'Read contract fixture', status: 'failed', duration: 1,
     startedAt: new Date(0).toISOString(), endedAt: new Date(1).toISOString() })
   // 425 D-08: a SECOND run on the same scene — outcome-excluded, and with no job rows at all, so
-  // the exclusion fact is read over the same four doors as the ordinary chain above. Its chip
+  // the skipped fact is read over the same four doors as the ordinary chain above. Its chip
   // words stay `pending`; the fact rides beside them rather than replacing either of them.
   const excludedRunId = db.insertRun({ name: 'Excluded run fixture', status: 'passed', duration: 1,
     startedAt: new Date(0).toISOString(), endedAt: new Date(1).toISOString() })
@@ -442,13 +442,13 @@ const READ_SCENARIOS: readonly ReadScenario[] = [
       expect(parsed).toMatchObject({ stageDetails: { analysis: { attempts: 1 }, curation: { attempts: 2 }, proposals: { attempts: 1 } } })
       expect(parsed).toHaveProperty('curationSnapshot', durable(scene).snapshot)
       expect(parsed).not.toHaveProperty('notification')
-      // 425 D-08: an ordinary run answers NO exclusion key. The fact is minted from the durable
+      // 425 D-08: an ordinary run answers NO skipped key. The fact is minted from the durable
       // handoff markers alone, so a run that carries neither carries no key to render.
-      expect(parsed).not.toHaveProperty('exclusion')
+      expect(parsed).not.toHaveProperty('skipped')
     },
   },
   {
-    name: 'runs.postprocessing excluded run answers the exclusion fact with untouched chip words',
+    name: 'runs.postprocessing excluded run answers the skipped fact with untouched chip words',
     opId: 'runs.postprocessing', scene: 'durable',
     input: scene => ({ runId: durable(scene).excludedRunId }),
     http: { method: 'GET', path: input => `${run(input)}/post-processing`, machine: false,
@@ -456,7 +456,8 @@ const READ_SCENARIOS: readonly ReadScenario[] = [
     expectPositive(result) {
       const parsed = PostProcessingStatusSchema.parse(result)
       expect(parsed.chips).toEqual({ analysis: 'pending', curation: 'pending' })
-      expect(parsed).toHaveProperty('exclusion', { reason: 'outcome-excluded' })
+      expect(parsed).toHaveProperty('skipped', { reason: 'outcome-excluded' })
+      expect(parsed).not.toHaveProperty('exclusion')
       expect(parsed).not.toHaveProperty('notification')
     },
   },

@@ -13,7 +13,7 @@
 // daemon" and a lie. Blank is a lie by omission; `pending` is a lie outright.
 
 import { describe, expect, it } from 'vitest'
-import { POST_PROCESSING_EXCLUSION_REASONS, VERDICT_CLASSES } from '@vostride/agent-qa-schema'
+import { POST_PROCESSING_SKIP_REASONS, VERDICT_CLASSES } from '@vostride/agent-qa-schema'
 import type { CurationBreakdown, PostProcessingStatus } from '@vostride/agent-qa-schema'
 
 import type { PostProcessingRead } from '@/lib/api'
@@ -475,16 +475,16 @@ describe('C444-STAGE-WORDS', () => {
 
 // THE EXCLUDED STATE COMES FROM THE READ'S OWN FIELD (425-08 · D-08, T-425-08-01).
 //
-// The op folds `exclusion` from the run's durable `gateRun` / `excludedFromOutcomes` markers — the
+// The op folds `skipped` from the run's durable `gateRun` / `excludedFromOutcomes` markers — the
 // same markers the post-verdict enqueue skip reads — so the dashboard, the CLI exit line and the
 // digest say ONE thing (law 6). The projection therefore reads the FIELD and nothing else: not the
 // absence of job rows, not the run's own status, not a settled chip word. The negative arm below is
 // the half that matters, because a fold that guessed would still pass every positive assertion.
 describe('a skipped chain reads excluded because the read said so, never because rows are missing (D-08)', () => {
   it('EXCLUDED-FROM-FIELD: paints BOTH indicators excluded while the chip words stay verbatim', () => {
-    for (const reason of POST_PROCESSING_EXCLUSION_REASONS) {
+    for (const reason of POST_PROCESSING_SKIP_REASONS) {
       const view = chips(projectPostProcessingView(read({
-        status: status('pending', 'pending', undefined, { exclusion: { reason } }),
+        status: status('pending', 'pending', undefined, { skipped: { reason } }),
       })))
 
       expect(view.excluded).toEqual({ reason })
@@ -511,7 +511,7 @@ describe('a skipped chain reads excluded because the read said so, never because
   it('EXCLUDED-FROM-FIELD: outranks the chip words — a settled read carrying the field is still excluded', () => {
     const view = chips(projectPostProcessingView(read({
       status: status('complete', 'complete', notification({ status: 'complete' }, { total: 0, byClass: {} }), {
-        exclusion: { reason: 'gate-run' },
+        skipped: { reason: 'gate-run' },
       }),
       disposition: 'drained',
     })))
@@ -544,7 +544,7 @@ describe('a skipped chain reads excluded because the read said so, never because
 describe('the projection is pure and total (PXH-RUN-03)', () => {
   it('PROJECTION-IDEMPOTENT: the same read projects deep-equal twice, and is never mutated', () => {
     const reads: PostProcessingRead[] = [
-      read({ status: status('pending', 'pending', undefined, { exclusion: { reason: 'outcome-excluded' } }) }),
+      read({ status: status('pending', 'pending', undefined, { skipped: { reason: 'outcome-excluded' } }) }),
       read({ status: status('failed', 'failed'), disposition: 'handedOff', failures: {} }),
       read({
         status: status('complete', 'complete', notification({ status: 'complete' }, { total: 0, byClass: {} }), {
@@ -674,7 +674,7 @@ describe('a card times the stage from the job row, and never from a clock of its
   it('STAGE-TIMING-LINE: an excluded run is never timed — nothing was ever enqueued to time', () => {
     const view = chips(projectPostProcessingView(read({
       status: status('pending', 'pending', undefined, {
-        exclusion: { reason: 'gate-run' },
+        skipped: { reason: 'gate-run' },
         stageDetails: { analysis: { ...STORED, attempts: 1 } },
       }),
     })))

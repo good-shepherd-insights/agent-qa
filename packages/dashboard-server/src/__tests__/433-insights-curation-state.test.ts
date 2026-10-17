@@ -1,5 +1,5 @@
 // C433-INSIGHTS-CURATION (433-42, G-433-13, CR-02, WR-04). A run counts as read only when its
-// curation finished, or when it was excluded from post-processing by design. Curation that failed
+// curation finished, or when its post-processing was skipped by design. Curation that failed
 // or has not finished is counted on its own, and runs still queued or running are counted as in
 // flight. None of them is folded into "read, nothing changed".
 
@@ -45,7 +45,7 @@ function insertQueuedRun(id: string): string {
 
 type CurationWord = 'pending' | 'running' | 'complete' | 'failed'
 type KnowledgeAnswer = 'throw' | 'incomplete' | { curation: CurationWord; changes?: readonly string[] }
-type PostProcessingAnswer = 'throw' | { exclusion?: 'gate-run' | 'outcome-excluded' }
+type PostProcessingAnswer = 'throw' | { skipped?: 'gate-run' | 'outcome-excluded' }
 
 function plantHost(
   knowledge: Record<string, KnowledgeAnswer>,
@@ -77,7 +77,7 @@ function plantHost(
           stageDetails: {
             curation: { attempts: 1, lastFailureKind: 'planted', lastFailureReason: 'planted failure text' },
           },
-          ...(answer.exclusion === undefined ? {} : { exclusion: { reason: answer.exclusion } }),
+          ...(answer.skipped === undefined ? {} : { skipped: { reason: answer.skipped } }),
         })
       }
       if (functionId !== KNOWLEDGE_ID) {
@@ -225,9 +225,9 @@ describe('C433-INSIGHTS-CURATION: curation state', () => {
     expect(planted.runIdsFor(POST_PROCESSING_ID)).toEqual(['r_curation_queued'])
   })
 
-  it('C433-INSIGHTS-CURATION: a run excluded from post-processing reads as complete', async () => {
+  it('C433-INSIGHTS-CURATION: a run whose post-processing was skipped reads as complete', async () => {
     insertRun('r_gate', '2026-04-01T10:00:00.000Z')
-    const planted = plantHost({ r_gate: { curation: 'pending' } }, { r_gate: { exclusion: 'gate-run' } })
+    const planted = plantHost({ r_gate: { curation: 'pending' } }, { r_gate: { skipped: 'gate-run' } })
 
     const body = await readWindow(planted)
 
@@ -290,7 +290,7 @@ describe('C433-INSIGHTS-CURATION: curation state', () => {
         r_curation_queued: { curation: 'pending', changes: ['added'] },
         r_pruned: 'incomplete',
       },
-      { r_excluded: { exclusion: 'outcome-excluded' }, r_curation_queued: {} },
+      { r_excluded: { skipped: 'outcome-excluded' }, r_curation_queued: {} },
     )
 
     const body = await readWindow(planted)
@@ -310,7 +310,7 @@ describe('C433-INSIGHTS-CURATION: curation state', () => {
     expect(body.byKind.confirmed).toBe(2)
     const keys = collectKeys(body)
     for (const forbidden of [
-      'summary', 'body', 'recordId', 'changes', 'exclusion', 'stageDetails', 'lastFailureReason', 'lastFailureKind',
+      'summary', 'body', 'recordId', 'changes', 'skipped', 'stageDetails', 'lastFailureReason', 'lastFailureKind',
     ]) {
       expect(keys.has(forbidden)).toBe(false)
     }

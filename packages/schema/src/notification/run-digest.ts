@@ -31,8 +31,8 @@ import type { AnalysisClusterView } from '../functions/analysis-get'
 import { MARK_FIX_KINDS, MarkAppliedChangeSchema } from '../functions/feedback'
 import type { MarkAppliedChange, MarkFixKind } from '../functions/feedback'
 import { runIdSchema } from '../run/run-id'
-import { POST_PROCESSING_CHIP_STATUSES, PostProcessingExclusionSchema } from './post-processing-status'
-import type { PostProcessingChipStatus, PostProcessingExclusionReason } from './post-processing-status'
+import { POST_PROCESSING_CHIP_STATUSES, PostProcessingSkippedSchema } from './post-processing-status'
+import type { PostProcessingChipStatus, PostProcessingSkipReason } from './post-processing-status'
 import { RUN_NOTIFICATION_VIEW_STATUSES } from './run-notification'
 import type { RunNotificationViewStatus } from './run-notification'
 
@@ -74,11 +74,11 @@ export interface RunDigestChainOutcomes {
   curation: PostProcessingChipStatus
   outcome?: RunNotificationViewStatus
   /**
-   * The `runs.postprocessing` exclusion fact verbatim (425 D-08), so a machine reader of the
+   * The `runs.postprocessing` skipped fact verbatim (425 D-08, 444 D-39), so a machine reader of the
    * digest never re-derives from `pending` chips what the read op already knows. A sibling of
    * the two chip arms rather than a fifth word on either of them.
    */
-  exclusion?: { reason: PostProcessingExclusionReason }
+  skipped?: { reason: PostProcessingSkipReason }
 }
 
 /**
@@ -174,7 +174,7 @@ export const RunDigestChainOutcomesSchema = z.object({
   analysis: z.enum(POST_PROCESSING_CHIP_STATUSES),
   curation: z.enum(POST_PROCESSING_CHIP_STATUSES),
   outcome: z.enum(RUN_NOTIFICATION_VIEW_STATUSES).optional(),
-  exclusion: PostProcessingExclusionSchema.optional(),
+  skipped: PostProcessingSkippedSchema.optional(),
 }).strict() satisfies z.ZodType<RunDigestChainOutcomes>
 
 export const RunDigestCandidateReportSchema = z.object({
