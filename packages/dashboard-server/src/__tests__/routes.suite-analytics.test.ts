@@ -28,8 +28,9 @@ let suiteFileManager: SuiteFileManager
 let testFileManager: TestFileManager
 let workspacePaths: ResolvedWorkspacePaths
 
+// 2026-10-17 (444-05, D-41): a suite's history reads member suite ids, so each suite run seeds its member.
 function insertSuiteRun(overrides: Record<string, unknown> = {}) {
-  return db.insertRun({
+  const run = {
     name: 'Alpha Suite',
     filePath: 'suites/alpha.suite.yaml',
     status: 'passed',
@@ -39,7 +40,10 @@ function insertSuiteRun(overrides: Record<string, unknown> = {}) {
     platform: 'web',
     suiteId: 's_alpha',
     ...overrides,
-  })
+  }
+  const runId = db.insertRun(run)
+  db.upsertRunMember({ runId, testIndex: 0, testId: 't_alpha', name: 'Alpha Test', suiteId: run.suiteId, outcome: run.status })
+  return runId
 }
 
 function seedSuiteAnalyticsRuns() {
@@ -82,7 +86,7 @@ function seedSuiteAnalyticsRuns() {
     testId: 't_alpha-standalone',
   })
 
-  db.insertRun({
+  insertSuiteRun({
     id: 'suite-beta-1',
     name: 'Beta Suite',
     filePath: 'suites/beta.suite.yaml',

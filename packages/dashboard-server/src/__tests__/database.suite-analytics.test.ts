@@ -29,8 +29,9 @@ type SuiteAnalyticsDatabase = DashboardDatabase & {
 
 let db: DashboardDatabase
 
+// 2026-10-17 (444-05, D-41): a suite's history reads member suite ids, so each suite run seeds its member.
 function insertSampleRun(overrides: Record<string, unknown> = {}) {
-  return db.insertRun({
+  const run = {
     name: 'Alpha Suite',
     filePath: 'suites/alpha.suite.yaml',
     status: 'passed',
@@ -40,7 +41,10 @@ function insertSampleRun(overrides: Record<string, unknown> = {}) {
     platform: 'web',
     suiteId: 's_alpha',
     ...overrides,
-  })
+  }
+  const runId = db.insertRun(run)
+  db.upsertRunMember({ runId, testIndex: 0, testId: 't_alpha', name: 'Alpha Test', suiteId: run.suiteId, outcome: run.status })
+  return runId
 }
 
 function seedSuiteAnalyticsFixture() {
@@ -85,7 +89,7 @@ function seedSuiteAnalyticsFixture() {
     testId: 't_alpha-standalone',
   })
 
-  db.insertRun({
+  insertSampleRun({
     id: 'suite-beta-1',
     name: 'Beta Suite',
     filePath: 'suites/beta.suite.yaml',

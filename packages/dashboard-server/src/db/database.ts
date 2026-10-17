@@ -38,6 +38,9 @@ import {
 
 const DASHBOARD_DB_PATH_FALLBACK = DEFAULT_AGENT_QA_RUNS_DB_PATH || '.agent-qa/runs.db'
 
+// 2026-10-17 (444-05, D-41): a suite's history is every run with a member in that suite.
+const MEMBER_SUITE_CONDITION = 'id IN (SELECT run_id FROM run_members WHERE suite_id = ?)'
+
 export interface RunRow {
   id: string
   name: string
@@ -61,6 +64,16 @@ export interface RunRow {
   llmProvider: string | null
   parallel: boolean
   createdAt: string
+  members?: RunMemberSummary[]
+}
+
+export interface RunMemberSummary {
+  testIndex: number
+  testId: string | null
+  filePath: string | null
+  suiteId: string | null
+  name: string | null
+  outcome: string | null
 }
 
 export interface RunArtifactRow {
@@ -1061,14 +1074,49 @@ export class DashboardDatabase {
       params.push(opts.to)
     }
 
-    return this.queryRunsWithAttributePredicates({
+    return this.withMemberSummaries(this.queryRunsWithAttributePredicates({
       conditions,
       params,
       attributePredicates: opts.attributePredicates,
       orderBy: 'ORDER BY created_at DESC',
       limit: opts.limit,
       offset: opts.offset,
-    })
+    }))
+  }
+
+  // 2026-10-17 (444-05, D-09): one batched member read per 400 returned rows, after pagination.
+  private withMemberSummaries(runs: RunRow[]): RunRow[] {
+    for (let offset = 0; offset < runs.length; offset += 400) {
+      const batch = runs.slice(offset, offset + 400)
+      const rows = this.db.prepare(`
+        SELECT run_id, test_index, test_id, file_path, suite_id, name, outcome FROM run_members
+        WHERE run_id IN (${batch.map(() => '?').join(',')})
+        ORDER BY run_id, test_index
+      `).all(...batch.map(run => run.id)) as Array<{
+        run_id: string
+        test_index: number
+        test_id: string | null
+        file_path: string | null
+        suite_id: string | null
+        name: string | null
+        outcome: string | null
+      }>
+      const byId = new Map<string, RunMemberSummary[]>()
+      for (const row of rows) {
+        const members = byId.get(row.run_id) ?? []
+        members.push({
+          testIndex: row.test_index,
+          testId: row.test_id,
+          filePath: row.file_path,
+          suiteId: row.suite_id,
+          name: row.name,
+          outcome: row.outcome,
+        })
+        byId.set(row.run_id, members)
+      }
+      for (const run of batch) run.members = byId.get(run.id) ?? []
+    }
+    return runs
   }
 
   readRunOwner(id: string): RunOwner | undefined {
@@ -1823,7 +1871,7 @@ export class DashboardDatabase {
 
   getRunsBySuiteId(suiteId: string, opts?: { limit?: number; offset?: number; attributePredicates?: AttributePredicate[] }): RunRow[] {
     return this.queryRunsWithAttributePredicates({
-      conditions: ['suite_id = ?'],
+      conditions: [MEMBER_SUITE_CONDITION],
       params: [suiteId],
       attributePredicates: opts?.attributePredicates,
       orderBy: 'ORDER BY started_at DESC',
@@ -1839,7 +1887,7 @@ export class DashboardDatabase {
     const row = this.db.prepare(`
       SELECT COUNT(*) as cnt
       FROM runs
-      WHERE suite_id = ?
+      WHERE ${MEMBER_SUITE_CONDITION}
     `).get(suiteId) as { cnt: number }
     return row.cnt
   }
@@ -1850,7 +1898,7 @@ export class DashboardDatabase {
     totalRuns: number
     avgDuration: number
   } {
-    const conditions = ['suite_id = ?']
+    const conditions = [MEMBER_SUITE_CONDITION]
     const params: unknown[] = [suiteId]
     if (opts?.from) {
       conditions.push('started_at >= ?')
