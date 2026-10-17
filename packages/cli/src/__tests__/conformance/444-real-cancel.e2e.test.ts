@@ -174,7 +174,8 @@ function handoffVerdictOf(project: PopulatedRunProject, runId: string): unknown 
 function readRowFresh(project: PopulatedRunProject, runId: string): RowView | undefined {
   const dbPath = resolveDashboardDbPath({ configDir: project.root })
   if (!existsSync(dbPath)) return undefined
-  const db = new DatabaseSync(dbPath, { readOnly: true })
+  // The run writes runs.db from another process; a read waits out its write lock, never throws on it.
+  const db = new DatabaseSync(dbPath, { readOnly: true, timeout: 5_000 })
   try {
     const row = db.prepare('SELECT status, ended_at, duration, failure_summary FROM runs WHERE id = ?')
       .get(runId) as
@@ -198,11 +199,19 @@ function watchRow(rig: Rig, runId: string): {
   const samples: RowSample[] = []
   let seenAt: number | undefined
   let abortedThen: number | undefined
+  // A tick runs on a timer, so a read that still fails is recorded as a sample the assertions
+  // reject, never thrown where nothing catches it.
   const tick = (): void => {
-    const row = readRowFresh(rig.project, runId)
+    let row: RowView | undefined
+    let unreadable: string | undefined
+    try {
+      row = readRowFresh(rig.project, runId)
+    } catch (error) {
+      unreadable = `unreadable: ${error instanceof Error ? error.message : String(error)}`
+    }
     const verdict = loggedEvents(rig.project, runId).some((event) => event.type === 'verdict')
     const at = Date.now()
-    samples.push({ at, status: row?.status ?? 'absent', endedAt: row?.endedAt ?? null, verdict })
+    samples.push({ at, status: unreadable ?? row?.status ?? 'absent', endedAt: row?.endedAt ?? null, verdict })
     if (verdict && seenAt === undefined) {
       seenAt = at
       abortedThen = rig.model.held.aborted()
