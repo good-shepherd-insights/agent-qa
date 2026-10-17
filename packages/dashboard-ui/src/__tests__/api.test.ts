@@ -66,9 +66,9 @@ describe('fetchRuns', () => {
 
   it('builds query string from filter options', async () => {
     mockFetch.mockReturnValue(ok({ runs: [], total: 0 }))
-    await fetchRuns({ status: 'failed', name: 'login', limit: 10, offset: 5 })
+    await fetchRuns({ statuses: ['failed', 'timeout'], name: 'login', limit: 10, offset: 5 })
     const url = mockFetch.mock.calls[0][0] as string
-    expect(url).toContain('status=failed')
+    expect(url).toContain('status=failed&status=timeout')
     expect(url).toContain('name=login')
     expect(url).toContain('limit=10')
     expect(url).toContain('offset=5')
