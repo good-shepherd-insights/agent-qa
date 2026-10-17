@@ -337,3 +337,133 @@ describe('C444-SUITE-HISTORY', () => {
     expect(two.body.trends).toMatchObject({ totalRuns: 1, passRate: 0 })
   })
 })
+
+function seedMemberRun(
+  id: string,
+  status: string,
+  startedAt: string,
+  members: ReadonlyArray<{ testId: string | null; name: string; filePath: string; outcome?: string }>,
+): string {
+  const runId = seedRun(status, {
+    id,
+    name: members.length === 1 ? members[0]!.name : members.map((member) => member.name).join(' · '),
+    startedAt,
+    ...(members.length === 1 && members[0]!.testId ? { testId: members[0]!.testId, filePath: members[0]!.filePath } : {}),
+  })
+  for (const [testIndex, member] of members.entries()) {
+    db.upsertRunMember({
+      runId,
+      testIndex,
+      ...(member.testId ? { testId: member.testId } : {}),
+      name: member.name,
+      filePath: member.filePath,
+      ...(member.outcome ? { outcome: member.outcome } : {}),
+    })
+  }
+  return runId
+}
+
+const A = { testId: 't_a', name: 'A', filePath: 'tests/a.yaml' }
+const B = { testId: 't_b', name: 'B', filePath: 'tests/b.yaml' }
+const C = { testId: 't_c', name: 'C', filePath: 'tests/c.yaml' }
+
+describe('C444-TEST-VIEWER', () => {
+  it('the test viewer lists every run that ran the test, with that member\'s outcome', async () => {
+    const multi = seedMemberRun('run_444-abc', 'failed', '2026-10-01T10:00:00.000Z', [
+      { ...A, outcome: 'passed' },
+      { ...B, outcome: 'failed' },
+      { ...C, outcome: 'passed' },
+    ])
+    const single = seedMemberRun('run_444-b', 'passed', '2026-10-01T11:00:00.000Z', [{ ...B, outcome: 'passed' }])
+    seedMemberRun('run_444-a', 'passed', '2026-10-01T12:00:00.000Z', [{ ...A, outcome: 'passed' }])
+
+    const origin = await startDashboard()
+    const { status, body } = await getJson(`${origin}/api/analytics/tests/B?testId=t_b`)
+    expect(status).toBe(200)
+    expect(body.name).toBe('B')
+    expect(body.total).toBe(2)
+    expect((body.runs as Array<{ id: string; memberOutcome: string | null }>).map((run) => [run.id, run.memberOutcome]))
+      .toEqual([[single, 'passed'], [multi, 'failed']])
+  })
+
+  it('pass rate and trends count member outcomes', async () => {
+    seedMemberRun('run_444-ab', 'cancelled', '2026-10-01T10:00:00.000Z', [
+      { ...A, outcome: 'passed' },
+      { ...B, outcome: 'timeout' },
+    ])
+    seedMemberRun('run_444-b', 'passed', '2026-10-01T11:00:00.000Z', [{ ...B, outcome: 'passed' }])
+
+    const trends = db.getTestTrends({ testId: 't_b' })
+    expect(trends).toMatchObject({ totalRuns: 2, passRate: 0.5 })
+    expect(trends.daily).toEqual([expect.objectContaining({ date: '2026-10-01', passed: 1, failed: 1, total: 2 })])
+
+    const origin = await startDashboard()
+    const { status, body } = await getJson(`${origin}/api/analytics/tests/B?testId=t_b`)
+    expect(status).toBe(200)
+    expect(body.trends).toMatchObject({ totalRuns: 2, passRate: 0.5 })
+    expect(body.trends.daily).toEqual([expect.objectContaining({ passed: 1, failed: 1, total: 2 })])
+    expect(body.flakyScore).toBe(1)
+  })
+
+  it('a test is found by its path when no id is given', async () => {
+    const multi = seedMemberRun('run_444-ab', 'failed', '2026-10-01T10:00:00.000Z', [
+      { ...A, outcome: 'passed' },
+      { testId: null, name: 'B', filePath: 'tests/b.yaml', outcome: 'failed' },
+    ])
+    const single = seedMemberRun('run_444-b', 'passed', '2026-10-01T11:00:00.000Z', [{ ...B, outcome: 'passed' }])
+    seedMemberRun('run_444-other', 'passed', '2026-10-01T12:00:00.000Z', [
+      { testId: 't_b2', name: 'B', filePath: 'tests/other/b.yaml', outcome: 'passed' },
+    ])
+
+    expect(db.getRunsByTestCount({ filePath: 'tests/b.yaml' })).toBe(2)
+
+    const origin = await startDashboard()
+    const { status, body } = await getJson(`${origin}/api/analytics/tests/B?filePath=${encodeURIComponent('tests/b.yaml')}`)
+    expect(status).toBe(200)
+    expect(body.total).toBe(2)
+    expect((body.runs as Array<{ id: string; memberOutcome: string | null }>).map((run) => [run.id, run.memberOutcome]))
+      .toEqual([[single, 'passed'], [multi, 'failed']])
+  })
+
+  it('a request naming neither a test id nor a path is refused with 400', async () => {
+    seedMemberRun('run_444-b', 'passed', '2026-10-01T11:00:00.000Z', [{ ...B, outcome: 'passed' }])
+
+    const origin = await startDashboard()
+    const { status, body } = await getJson(`${origin}/api/analytics/tests/B`)
+    expect(status).toBe(400)
+    expect(body).toEqual({ error: 'testId or filePath is required' })
+  })
+
+  it('flaky tests are grouped by member file path and count healed as a pass', async () => {
+    const outcomes = ['passed', 'failed', 'healed', 'failed'] as const
+    for (const [index, outcome] of outcomes.entries()) {
+      seedMemberRun(`run_444-flaky-${String(index)}`, outcome, `2026-10-0${String(index + 1)}T10:00:00.000Z`, [
+        { ...A, outcome: 'passed' },
+        { ...B, name: index === outcomes.length - 1 ? 'B' : 'B (old name)', outcome },
+      ])
+    }
+    seedMemberRun('run_444-flaky-cancelled', 'cancelled', '2026-10-09T10:00:00.000Z', [{ ...B, outcome: 'cancelled' }])
+    seedMemberRun('run_444-flaky-skipped', 'passed', '2026-10-09T11:00:00.000Z', [{ ...B, outcome: 'skipped' }])
+
+    const origin = await startDashboard()
+    const { status, body } = await getJson(`${origin}/api/analytics/tests?minRuns=3`)
+    expect(status).toBe(200)
+    const tests = body.tests as Array<{ name: string; filePath: string; totalRuns: number; passRate: number; flakyScore: number; isFlaky: boolean }>
+    expect(tests.map((test) => test.filePath).sort()).toEqual(['tests/a.yaml', 'tests/b.yaml'])
+    expect(tests.find((test) => test.filePath === 'tests/b.yaml')).toEqual({
+      name: 'B',
+      filePath: 'tests/b.yaml',
+      totalRuns: 4,
+      passRate: 0.5,
+      flakyScore: 1,
+      isFlaky: true,
+    })
+    expect(tests.find((test) => test.filePath === 'tests/a.yaml')).toMatchObject({
+      name: 'A',
+      totalRuns: 4,
+      passRate: 1,
+      flakyScore: 0,
+      isFlaky: false,
+    })
+  })
+})
