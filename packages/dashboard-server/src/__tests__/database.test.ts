@@ -1058,21 +1058,11 @@ describe('DashboardDatabase', () => {
     // is the pin that the index is GONE, so re-adding the column reddens here.
     it('counts every run, because every run is top-level now', () => {
       insertSampleRun({ name: 'Normal', status: 'passed', startedAt: '2026-03-01T10:00:00Z' })
-      const flakyOne = insertSampleRun({ name: 'Flaky One', status: 'passed', startedAt: '2026-03-01T10:00:00Z' })
-      db.insertRunStep({
-        runId: flakyOne,
-        testIndex: 0,
-        stepIndex: 0,
-        cacheStatus: 'miss',
-        verifierVerdict: { pass: true, reasoning: 'ok' },
-        selfHealOccurred: true,
-        briefDigest: 'retry tap',
-        status: 'passed',
-      })
+      insertSampleRun({ name: 'Flaky One', status: 'healed', startedAt: '2026-03-01T10:00:00Z' })
 
       const stats = db.getStats()
       expect(stats.totalRuns).toBe(2)
-      expect(stats.passed).toBe(2) // a self-healed run counts as passed
+      expect(stats.passed).toBe(2) // a healed run counts as passed
       expect(stats.flaky).toBe(1)
     })
 
