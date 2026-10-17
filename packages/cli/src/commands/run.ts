@@ -2068,6 +2068,7 @@ async function executeSuites(
       loadPlugins,
       runRecord: record,
       terminal: RUN_TERMINAL,
+      hostOwnsSignals: true,
       ...(variableContext === undefined ? {} : { variableContext }),
       ...(hooksContext === undefined ? {} : { hooksContext }),
       ...(analytics === undefined ? {} : { analytics }),
@@ -2585,6 +2586,8 @@ export interface SuiteRunMemberProductionInput {
   /** The run's record, opened after this producer's production refusal and before its plugins. */
   readonly runRecord?: RunRecord
   readonly terminal?: RunTerminal
+  // 2026-10-17 (444-22, D-46): only agent-qa run passes this; its controller owns SIGINT/SIGTERM.
+  readonly hostOwnsSignals?: true
 }
 
 export interface SuiteVariableContext {
@@ -2604,6 +2607,7 @@ export async function produceSuiteRunMembers(
   input: SuiteRunMemberProductionInput,
 ): Promise<ProducedCliRunMembers> {
   const suiteFiles = [...input.suiteFiles]
+  const hostSignals = input.hostOwnsSignals === true ? { hostOwnsSignals: true as const } : {}
   const config = input.config
   const configDir = input.configDir
   const configFilePath = input.configFilePath
@@ -2959,7 +2963,7 @@ export async function produceSuiteRunMembers(
       }
     }
 
-    const adapter = await createPlatformAdapter(suitePlatform)
+    const adapter = await createPlatformAdapter(suitePlatform, hostSignals)
 
     const resolvedTarget = suite.target
       ? resolveTarget(config, suite.target)
@@ -3171,7 +3175,7 @@ export async function produceSuiteRunMembers(
             failureSummary: formatAuthStateCaptureFailure(suiteAuthStateCapturePaths),
           }
         : undefined,
-      createAdapter: () => createPlatformAdapter(suitePlatform),
+      createAdapter: () => createPlatformAdapter(suitePlatform, hostSignals),
       resolveUrl: (targetName: string) => {
         try { return resolveTarget(config, targetName).url } catch { return undefined }
       },
