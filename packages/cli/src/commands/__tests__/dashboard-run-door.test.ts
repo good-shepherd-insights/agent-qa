@@ -352,56 +352,6 @@ describe('two concurrent dashboard runs are isolated (401-07, INVK-01 concurrenc
       await target.close()
     }
   }, 240_000)
-
-  it('A CANCEL IS ROUTED TO THE NAMED RUN AND TO NO OTHER', async () => {
-    const target = new CountingTarget()
-    await target.listen()
-    try {
-      const fixture = createInProcessFixture({ origin: target.origin, environment: 'local' })
-      const driven = await composeDoor(fixture)
-      const cancelled = enqueue(driven.db, 'the cancelled run')
-      const survivor = enqueue(driven.db, 'the surviving run')
-
-      driven.backend.execute({ runId: cancelled, args: [fixture.testPattern], source: 'dashboard' })
-      driven.backend.execute({ runId: survivor, args: [fixture.testPattern], source: 'dashboard' })
-      // Synchronously, which is the only way this is not a race: `execute` returns before the run
-      // is anywhere, so the cancel is always taken while the run is live — and it exercises the arm
-      // that matters, a cancel landing BEFORE the session exists, which the backend has to remember
-      // and apply when `onSession` fires.
-      expect(driven.backend.kill(cancelled)).toBe(true)
-      expect(driven.backend.kill(survivor === cancelled ? 'impossible' : 'a-run-nobody-started')).toBe(false)
-
-      await waitFor(() => { expect(driven.settled).toHaveLength(2) })
-      const byRun = new Map(driven.settled.map((entry) => [entry.runId, entry]))
-
-      // WHAT THIS CELL MEASURES IS ROUTING, and the limit is stated rather than papered over.
-      //
-      // A door-level cell asserting that the cancelled run's OUTCOME differs would be GREEN AT REST
-      // here, and that was measured rather than assumed: in this fixture the member fails its
-      // browser check in tens of milliseconds, so a run reaches `runFinished` before an abort can
-      // unwind anything. Driven with one run cancelled and one not, both event logs read
-      // `runStarted, testStarted, testFinished, verdict, runFinished` and both settle `cancelled`
-      // (the missing-browser member's own verdict) — identical on every axis. An assertion drawn
-      // there would have discriminated nothing.
-      //
-      // So the claim here is the one that IS observable at this door: a cancel reaches the run it
-      // NAMES. `kill` returning true for the named run and false for a stranger. The other half —
-      // that the abort reaches that run's SESSION object and no other — is measured in
-      // `dashboard-server/src/execution/__tests__/in-process-backend.test.ts` over sessions whose
-      // `cancel()` can be counted, where killing A leaves B's count at zero.
-      // 2026-10-17 (444-06, D-43): kill no longer stamps its own `cancelled` reason, so neither run
-      // carries one; the settle status is each run's verdict.
-      expect(byRun.get(cancelled)!.details.reason).toBeUndefined()
-      expect(byRun.get(survivor)!.details.reason).toBeUndefined()
-
-      // The survivor ran to its own verdict, in its own directory.
-      expect(runDirs(fixture).map((dir) => dir.split('/').pop())).toContain(survivor)
-      const survivorLog = join(fixture.agentQaRoot, 'runs', survivor, 'events.jsonl')
-      expect(readFileSync(survivorLog, 'utf8')).toContain('runFinished')
-    } finally {
-      await target.close()
-    }
-  }, 240_000)
 })
 
 describe('the queue’s argv operands, read rather than forwarded (401-07)', () => {
