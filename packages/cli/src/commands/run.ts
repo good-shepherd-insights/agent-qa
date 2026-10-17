@@ -886,7 +886,6 @@ export interface RunRecord {
     flush(): Promise<void>
   }
   ownRowId(): string | undefined
-  incomplete(): string | undefined
   close(): void
 }
 
@@ -1071,7 +1070,6 @@ export function createRunRecord(input: {
       }
     },
     ownRowId: () => ownRow,
-    incomplete: () => incompleteReason,
     close() {
       if (ownsDb) db?.close()
       ownsDb = false

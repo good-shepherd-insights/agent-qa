@@ -138,12 +138,10 @@ export function parseRunAttrFlags(flags: string[] | undefined): ParsedRunAttrFla
 export function buildInternalRunAttributes(input: {
   trigger: RunAttributeTrigger
   runner: RunAttributeRunner
-  gateRun?: true
 }): RunAttributes {
   return {
     [ATTR_TRIGGER]: input.trigger,
     [ATTR_RUNNER]: input.runner,
-    ...(input.gateRun === true ? { [ATTR_GATE_RUN]: 'true' } : {}),
   }
 }
 

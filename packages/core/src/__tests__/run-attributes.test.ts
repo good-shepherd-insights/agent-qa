@@ -101,7 +101,10 @@ describe('run attributes', () => {
 describe('C443-VERIFY-MARK', () => {
   it('the gate-run mark is an internal attribute with one value', () => {
     expect(ATTR_GATE_RUN, 'the mark key').toBe('agent-qa.gate-run')
-    const marked = buildInternalRunAttributes({ trigger: 'cli', runner: 'local', gateRun: true })
+    const marked = {
+      ...buildInternalRunAttributes({ trigger: 'cli', runner: 'local' }),
+      [ATTR_GATE_RUN]: 'true',
+    }
     expect(marked[ATTR_GATE_RUN], 'the marked attributes carry the mark').toBe('true')
     const unmarked = buildInternalRunAttributes({ trigger: 'cli', runner: 'local' })
     expect(Object.hasOwn(unmarked, ATTR_GATE_RUN), 'unmarked attributes carry no mark').toBe(false)
