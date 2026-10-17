@@ -250,8 +250,8 @@ const sweepOffenses = (label: string, text: string): string[] => [
 // ---------------------------------------------------------------------------------------------
 
 const WRITER_CALL: Halves = [
-  '\\.(claimRunningRow|updateRun|updateRunStatus|insertRun|insertPendingRun|finalizeOwnRun|finalizeOrphan',
-  'Run|finalizeRunArtifact)\\s*\\(',
+  '\\.(claimRunningRow|updateRun|updateRunStatus|insertRun|insertPendingRun|finalizeOwnRun|closeOwnRun',
+  '|finalizeOrphanRun|finalizeRunArtifact)\\s*\\(',
 ]
 // updateRun and insertRun write a status only when their argument names one.
 const STATUS_OPTIONAL = new Set(['updateRun', 'insertRun'])
@@ -268,7 +268,7 @@ const WRITERS: readonly Writer[] = [
   w(RUN_TS, 'finalizeOwnRun', 'own', 'suite first signal, the id its ingest reported'),
   w(RUN_TS, 'finalizeOwnRun', 'own', 'direct first signal, the id its ingest reported'),
   w(RUN_TS, 'finalizeOwnRun', 'own', 'crash catch, its own row only'),
-  w(RUN_TS, 'finalizeOwnRun', 'own', 'record flush, its own row after a failed write'),
+  w(RUN_TS, 'closeOwnRun', 'own', 'record flush, the row its own claim stamped, after a failed write'),
   w(RUN_TS, 'finalizeRunArtifact', 'own', 'crash catch, only after its own CAS wrote'),
   w(RUN_TS, 'finalizeRunArtifact', 'own', 'direct parse-error validation row'),
   w(RUN_TS, 'insertRun', 'own', "suite preparation failure, under the run's own id"),

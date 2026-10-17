@@ -1041,7 +1041,7 @@ export function createRunRecord(input: {
           // 2026-10-17 (443-05, D-27): the verdict stands; the run's own row is closed once, best effort.
           if (ownRow !== undefined) {
             try {
-              handle.finalizeOwnRun(runId, { status: finalRunStatus(verdict), endedAt: new Date().toISOString() })
+              handle.closeOwnRun(runId, { status: finalRunStatus(verdict), endedAt: new Date().toISOString() })
             } catch {
               // The warning below already says the record is incomplete.
             }
