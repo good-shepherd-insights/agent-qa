@@ -1,6 +1,16 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -18,8 +28,51 @@ const CORE_DIST = join(
   'dist',
   'index.js',
 )
+const DASHBOARD_SRC = join(PACKAGE_ROOT, 'src')
+const CORE_SRC = resolve(PACKAGE_ROOT, '../core/src')
 const PROCESSES = 8
 const TRIALS = 10
+
+// 2026-10-17 (443-17, GAP-D4): the children run the built dists, so a stale one tests old code.
+function newestProductSource(sourceRoot: string) {
+  let newest: string | undefined
+  let mtimeMs = -Infinity
+  let count = 0
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === '__tests__' || entry.name === 'node_modules') continue
+      const full = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        walk(full)
+        continue
+      }
+      if (!entry.isFile() || !entry.name.endsWith('.ts')) continue
+      if (/\.test(?:-d)?\.ts$/.test(entry.name)) continue
+      count += 1
+      const stat = statSync(full)
+      if (stat.mtimeMs > mtimeMs) {
+        newest = full
+        mtimeMs = stat.mtimeMs
+      }
+    }
+  }
+  if (existsSync(sourceRoot)) walk(sourceRoot)
+  return { newest, mtimeMs, count }
+}
+
+function buildStaleness(artifact: string, sourceRoot: string) {
+  if (!existsSync(artifact)) return `${artifact} is missing`
+  const { newest, mtimeMs } = newestProductSource(sourceRoot)
+  if (newest === undefined) return `${sourceRoot} holds no product source`
+  if (mtimeMs > statSync(artifact).mtimeMs) return `${newest} is newer than ${artifact}`
+  return undefined
+}
+
+function requireFreshBuild(artifact: string, sourceRoot: string) {
+  const reason = buildStaleness(artifact, sourceRoot)
+  if (reason !== undefined)
+    throw new Error(`${reason}; run pnpm build in agent-qa before this file`)
+}
 
 const CHILD_SCRIPT = `
 import { existsSync } from 'node:fs'
@@ -75,11 +128,8 @@ function requirePosix(): void {
 
 beforeAll(() => {
   requirePosix()
-  for (const entry of [DASHBOARD_DIST, CORE_DIST]) {
-    if (!existsSync(entry)) {
-      throw new Error(`${entry} is missing; run pnpm build in agent-qa before this file`)
-    }
-  }
+  requireFreshBuild(DASHBOARD_DIST, DASHBOARD_SRC)
+  requireFreshBuild(CORE_DIST, CORE_SRC)
   root = mkdtempSync(join(tmpdir(), 'agent-qa-443-fresh-open-'))
   childScript = join(root, 'fresh-open-child.mjs')
   writeFileSync(childScript, CHILD_SCRIPT)
@@ -273,5 +323,55 @@ describe('C443-FRESH-OPEN', () => {
     const schema = schemaOf(dbPath)
     expect(JSON.parse(schema).length).toBeGreaterThan(0)
     expect(schema).toBe(schemaOf(referencePath))
+  })
+})
+
+describe('C443-FRESH-BUILD', () => {
+  it('a dist older than its source is refused with a rebuild instruction', () => {
+    const pkg = join(root, 'fresh-build', 'pkg')
+    const src = join(pkg, 'src')
+    const product = join(src, 'a.ts')
+    const testFile = join(src, '__tests__', 'b.test.ts')
+    const dist = join(pkg, 'dist', 'index.js')
+    mkdirSync(join(src, '__tests__'), { recursive: true })
+    mkdirSync(dirname(dist), { recursive: true })
+    writeFileSync(product, 'export const a = 1\n')
+    writeFileSync(testFile, 'export {}\n')
+    writeFileSync(dist, 'export const a = 1\n')
+    const base = 1_700_000_000
+    utimesSync(product, base, base)
+    utimesSync(testFile, base, base)
+    utimesSync(dist, base + 100, base + 100)
+
+    expect(() => requireFreshBuild(dist, src)).not.toThrow()
+
+    utimesSync(testFile, base + 200, base + 200)
+    expect(() => requireFreshBuild(dist, src)).not.toThrow()
+
+    utimesSync(product, base + 300, base + 300)
+    expect(() => requireFreshBuild(dist, src)).toThrow(
+      /a\.ts is newer than .*index\.js; run pnpm build in agent-qa before this file$/,
+    )
+
+    rmSync(dist)
+    expect(() => requireFreshBuild(dist, src)).toThrow(
+      /index\.js is missing; run pnpm build in agent-qa before this file$/,
+    )
+
+    const testsOnly = join(root, 'fresh-build', 'tests-only')
+    const testsOnlyDist = join(testsOnly, 'dist', 'index.js')
+    mkdirSync(join(testsOnly, 'src', '__tests__'), { recursive: true })
+    mkdirSync(dirname(testsOnlyDist), { recursive: true })
+    writeFileSync(join(testsOnly, 'src', '__tests__', 'b.test.ts'), 'export {}\n')
+    writeFileSync(testsOnlyDist, 'export {}\n')
+    expect(() => requireFreshBuild(testsOnlyDist, join(testsOnly, 'src'))).toThrow(
+      /no product source; run pnpm build in agent-qa before this file$/,
+    )
+  })
+
+  it('the dashboard and core builds these cells import are current', () => {
+    expect(() => requireFreshBuild(DASHBOARD_DIST, DASHBOARD_SRC)).not.toThrow()
+    expect(() => requireFreshBuild(CORE_DIST, CORE_SRC)).not.toThrow()
+    expect(newestProductSource(DASHBOARD_SRC).count).toBeGreaterThan(20)
   })
 })
