@@ -159,12 +159,10 @@ export function createQueueCommand(): Command {
           process.exit(1)
         }
 
-        // 2026-10-16 (442-18, IN-02): refused/missing exit 1 on stderr; cancelled/orphan exit 0.
+        // 2026-10-17 (444-07, D-31): a 2xx prints the route's message; refusals exit 1 on stderr.
         if (response.ok) {
-          const data = await response.json() as { cancelled?: boolean; message?: string }
-          if (data.cancelled) {
-            console.log(pc.green(`✓ Cancelled job ${runId}`))
-          } else if (typeof data.message === 'string') {
+          const data = await response.json() as { message?: string }
+          if (typeof data.message === 'string') {
             console.log(data.message)
           } else {
             console.log(pc.red('Failed to cancel: Unknown error'))
