@@ -789,7 +789,8 @@ export interface StubModelServerOptions {
    * `OUTPUT_CONTRACT` object instead, so the persisted verdict carries `producer: 'analyze-run'`
    * and the failure view has an authored sentence to render.
    */
-  readonly analysisOutcome?: 'floor' | 'authored'
+  // 2026-10-18 (444-18, D-15): `'error'` refuses that one request shape with a 400.
+  readonly analysisOutcome?: 'floor' | 'authored' | 'error'
   // 2026-10-14 (441-06, D-22): record each request's whole body beside the bounded one.
   readonly fullBodies?: boolean
   // 2026-10-17 (444-01, D-12): a planning turn whose prompt carries this text is not answered until
@@ -971,6 +972,11 @@ export async function startStubModelServer(
         return
       }
 
+      if (analysisOutcome === 'error' && prompt.includes(ANALYSIS_PROMPT_MARKER)) {
+        record('analysis', 400)
+        refuse('the populated-run stub refuses the analyze-run author on purpose')
+        return
+      }
       record('text', 200)
       respond(chatCompletion(
         model,
