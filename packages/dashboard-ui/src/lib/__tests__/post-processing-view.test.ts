@@ -513,6 +513,30 @@ describe('C444-STAGE-SKIPPED', () => {
   })
 })
 
+describe('C444-NO-VERDICT', () => {
+  it('the dashboard reads Analysis skipped and Curation skipped with the no-verdict sentence', () => {
+    expect(POST_PROCESSING_SKIP_REASONS).toContain('no-verdict')
+    const view = chips(projectPostProcessingView(read({
+      status: status('pending', 'pending', undefined, { skipped: { reason: 'no-verdict' } }),
+      disposition: 'handedOff',
+    })))
+    expect(view.skipped).toEqual({ reason: 'no-verdict' })
+    expect(view.analysis).toEqual({
+      status: 'pending',
+      state: 'skipped',
+      word: 'Analysis skipped',
+      card: { outcome: 'Analysis skipped — the run ended before it reached a verdict' },
+    })
+    expect(view.curation).toEqual({
+      status: 'pending',
+      state: 'skipped',
+      word: 'Curation skipped',
+      card: { outcome: 'Curation skipped — the run ended before it reached a verdict' },
+    })
+    expect(JSON.stringify(view)).not.toContain(PENDING_POSTURE_TEXT.handedOff)
+  })
+})
+
 // THE SKIPPED STATE COMES FROM THE READ'S OWN FIELD (425-08 · D-08, T-425-08-01; 444 D-39).
 //
 // The op folds `skipped` from the run's durable `gateRun` / `excludedFromOutcomes` markers — the
