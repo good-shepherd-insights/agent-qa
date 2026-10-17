@@ -163,6 +163,9 @@ describe('createDashboardRunIngest', () => {
     ingest.handler(ev('run-bus', 'testStarted', { testIndex: 0 }))
     ingest.handler(ev('run-bus', 'stepFinalized', stepFinalized({ status: 'healed', durationMs: 90 })))
     ingest.handler(ev('run-bus', 'testFinished', { testId: 't-1', testIndex: 0, outcome: 'healed', durationMs: 1000 }))
+    // 2026-10-17 (444-02, D-06): the row takes the run's verdict, never the member's outcome.
+    expect(db.getRun(runId)?.status).toBe('running')
+    ingest.handler(ev('run-bus', 'verdict', { verdict: 'healed' }))
 
     expect(db.getRun(runId)?.status).toBe('passed')
     // 405-01 D-01: `toRunStatus` collapses `healed` to `passed` for the `runs.status` CHECK and

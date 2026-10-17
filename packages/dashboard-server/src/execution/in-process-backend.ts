@@ -70,11 +70,10 @@ export type InProcessRunStatus = 'running' | 'completed' | 'failed' | 'cancelled
 type TerminalProcessStatus = 'completed' | 'failed' | 'cancelled'
 
 /**
- * Map a bus `testFinished.outcome` / `verdict` / `runFinished.aggregateVerdict` value (the frozen
- * §2.2 envelope vocabulary) onto the run-status ground truth the dashboard's db reconciliation
- * reads. `passed`/`healed` → completed, `cancelled` → cancelled, `failed`/`timeout` → failed.
- * `skipped` (a member-only outcome) is ignored — an all-skipped run is vacuously passed at the
- * aggregate level (D-15). Anything else returns undefined, so the caller leaves the status alone.
+ * Map a bus `verdict` / `runFinished.aggregateVerdict` value (the frozen §2.2 envelope vocabulary)
+ * onto the run-status ground truth the dashboard's db reconciliation reads. `passed`/`healed` →
+ * completed, `cancelled` → cancelled, `failed`/`timeout` → failed. Anything else returns
+ * undefined, so the caller leaves the status alone.
  *
  * CARRIED VERBATIM FROM `test-runner.ts`. It is a bus-vocabulary reading and always was; the scrape
  * was only how the envelope reached it.
@@ -94,17 +93,11 @@ function mapOutcomeToRunStatus(outcome: unknown): TerminalProcessStatus | undefi
   }
 }
 
-/**
- * Derive the run-status ground truth from one envelope. `testFinished.outcome` is the per-member
- * signal; `verdict.verdict` and `runFinished.aggregateVerdict` are authoritative at the run level
- * and arrive last, so last-writer-wins yields the aggregate. Every other type — `heartbeat`,
- * `stepFinalized`, hooks, anything unrecognised — returns undefined.
- */
+// 2026-10-17 (444-02, D-43): the run-level outcome only (`verdict`, `runFinished`); a member's
+// finish leaves the handle running, so the active list and `kill` hold for the whole run.
 export function runStatusFromEnvelope(envelope: RunEventEnvelope): TerminalProcessStatus | undefined {
   const payload = envelope.payload as Record<string, unknown> | undefined
   switch (envelope.type) {
-    case 'testFinished':
-      return mapOutcomeToRunStatus(payload?.outcome)
     case 'verdict':
       return mapOutcomeToRunStatus(payload?.verdict)
     case 'runFinished':

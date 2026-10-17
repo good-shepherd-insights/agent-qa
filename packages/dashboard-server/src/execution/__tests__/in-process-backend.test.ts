@@ -300,9 +300,9 @@ describe('the bus subscription answers the active list (405-07, D-19 · RESEARCH
   })
 
   it('THE RUN-LEVEL STATUS IS LAST-WRITER-WINS OVER THE WHOLE SUBSCRIPTION', async () => {
-    // The fixture says `testFinished: failed` at seq 6 and `verdict: passed` at seq 7 precisely so
-    // a bridge that stopped at the first terminal envelope is discriminated from one that reads
-    // them all. Six of the eight are published before the attach, so this ranges the replay too.
+    // The fixture says `testFinished: failed` at seq 6 and `verdict: passed` at seq 7: a member's
+    // finish does not move the handle (444-02, D-43), the run-level outcome does. Six of the eight
+    // are published before the attach, so this ranges the replay too.
     const drive = await driveOneRun({ preAttach: 6 })
     expect(drive.settled[0]!.status).toBe('completed')
   })

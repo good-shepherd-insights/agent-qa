@@ -274,7 +274,6 @@ const WRITERS: readonly Writer[] = [
   w(RUN_TS, 'insertRun', 'own', "suite preparation failure, under the run's own id"),
   w(RUN_TS, 'insertRun', 'own', 'direct parse-error validation row'),
   w(SHUTDOWN, 'finalizeOwnRun', 'own', 'first-signal dep, bound by run.ts to its own row'),
-  w(SUBSCRIBER, 'updateRun', 'own', 'member outcome on its own row'),
   w(SUBSCRIBER, 'updateRun', 'own', 'runFinished aggregate verdict'),
   w(SUBSCRIBER, 'updateRun', 'own', 'verdict envelope'),
   w(SUBSCRIBER, 'claimRunningRow', 'own', 'ingest claims its own run row'),
@@ -292,7 +291,7 @@ const WRITERS: readonly Writer[] = [
   w(JOB_QUEUE, 'finalizeOrphanRun', 'orphan', 'cancel of a running row whose owner is gone'),
   w(DATABASE, 'finalizeRunArtifact', 'orphan', 'inside finalizeOrphanRun, after its CAS wrote'),
 ]
-const WRITER_FLOOR = 26
+const WRITER_FLOOR = 25
 
 function argumentOf(text: string, open: number): string {
   let depth = 0

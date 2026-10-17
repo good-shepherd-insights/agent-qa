@@ -357,9 +357,10 @@ describe('C443-RECORD-CLOSE', () => {
       runOwnership: composeRunOwnership(),
     })
     opened.push(() => real.close())
-    let statusWrites = 0
+    // 2026-10-17 (444-02, D-06): a member's write is its duration, never a status.
+    let memberWrites = 0
     const failing = failOn(real, 'updateRun', ([, updates]) => (
-      (updates as { status?: unknown } | undefined)?.status !== undefined && ++statusWrites === 2
+      (updates as { duration?: unknown } | undefined)?.duration !== undefined && ++memberWrites === 2
     ))
     const warned: string[] = []
     const record = createRunRecord({
@@ -387,7 +388,8 @@ describe('C443-RECORD-CLOSE', () => {
     send('runStarted', { memberTestCount: 2 })
     send('testStarted', { testId: 't-a', testIndex: 0, name: 'Member A', filePath: 'tests/a.yaml' })
     send('testFinished', { testId: 't-a', testIndex: 0, outcome: 'passed', durationMs: 10 })
-    expect(real.getRun(runId)?.status, "the first member's status write did not land").toBe('passed')
+    expect(real.getRun(runId)?.duration, "the first member's write did not land").toBe(10)
+    expect(real.getRun(runId)?.status, 'a member moved the row off running').toBe('running')
     send('testStarted', { testId: 't-b', testIndex: 1, name: 'Member B', filePath: 'tests/b.yaml' })
     send('testFinished', { testId: 't-b', testIndex: 1, outcome: 'failed', durationMs: 10 })
     send('verdict', { verdict: 'failed' })

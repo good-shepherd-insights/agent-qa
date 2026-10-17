@@ -178,14 +178,11 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
   const now = deps.now ?? (() => new Date().toISOString())
 
 
-  const sourceRecord = isRecord(sourceSnapshot) ? sourceSnapshot : undefined
   const configRecord = isRecord(configSnapshot) ? configSnapshot : undefined
   const configRuntime = isRecord(configRecord?.runtime) ? (configRecord!.runtime as ArtifactRecord) : undefined
 
   const identity = runRowIdentity(deps.members ?? [])
   const platform = readString(configRuntime?.platform) ?? 'web'
-  const suiteRun = sourceRecord?.kind === 'suite' || identity.suiteId !== undefined
-  let suiteIdentityWritten = false
 
   /** The primary DB row id lifecycle status/finalize writes target. */
   let runId: string | undefined
@@ -277,30 +274,10 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
     for (const held of heldSnapshots.splice(0)) applySnapshots(id, held)
   }
 
+  // 2026-10-17 (444-02, D-06): a member writes only its own member row; the run row's identity is
+  // the claim's.
   function handleTestStarted(payload: TestStartedPayload): void {
-    // 433-27 (G-433-3, F-433-12): a suite run's row is titled and filed as the suite, once. Member
-    // identity lives on `run_members` only; writing it here let the last member to start rename
-    // the run and claim it for its own test history while the suite's history read empty.
-    if (runId) {
-      const memberSuiteId = readString(payload.suiteId)
-      if (memberSuiteId !== undefined || suiteRun) {
-        if (!suiteIdentityWritten && memberSuiteId !== undefined) {
-          suiteIdentityWritten = true
-          const suiteName = readString(payload.suiteName)
-          db.updateRun(runId, {
-            suiteId: memberSuiteId,
-            ...(suiteName ? { name: suiteName } : {}),
-          })
-        }
-      } else {
-        const name = readString(payload.name)
-        db.updateRun(runId, {
-          ...(name ? { name } : {}),
-          ...(readString(payload.testId) ? { testId: readString(payload.testId) } : {}),
-        })
-      }
-    }
-    // 405 D-01: AND the member row, keyed by the handle. This is the per-member split 402-09
+    // 405 D-01: the member row, keyed by the handle. This is the per-member split 402-09
     // deleted with the child run rows, restored from 402-04's handles rather than from a second
     // `runs` row — the identity half; `testFinished` supplies the outcome half.
     const id = targetForTest(payload)
@@ -351,25 +328,20 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
     } catch {
       // Non-darkening: a member row that will not write must not change the run row below.
     }
-    const status = toRunStatus(payload.outcome)
     memberDurations.set(payload.testIndex, payload.durationMs)
-    const measured = [...memberDurations.values()]
-    const duration = measured.every(value => typeof value === 'number' && Number.isFinite(value) && value >= 0)
-      ? measured.reduce<number>((sum, value) => sum + value!, 0)
-      : Date.now() - startedAtMs // Preserve the legacy fallback when execution timing is missing.
-    const endedAt = now()
+    // 2026-10-17 (444-02, D-06): no status and no end time; the row reads `running` until the
+    // verdict.
     db.updateRun(id, {
-      status,
-      duration,
-      endedAt,
+      duration: runDuration(),
       ...(readString(payload.failureSummary) ? { failureSummary: payload.failureSummary } : {}),
     })
-    stageRuntime(id, {
-      status,
-      duration,
-      endedAt,
-      failureSummary: payload.failureSummary ?? null,
-    })
+  }
+
+  function runDuration(): number {
+    const measured = [...memberDurations.values()]
+    return measured.every(value => typeof value === 'number' && Number.isFinite(value) && value >= 0)
+      ? measured.reduce<number>((sum, value) => sum + value!, 0)
+      : Date.now() - startedAtMs // Preserve the legacy fallback when execution timing is missing.
   }
 
   function stepNameKey(testIndex: number, stepIndex: number): string {
@@ -518,11 +490,14 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
   }
 
   function handleRunFinished(aggregateVerdict?: string): void {
-    // The aggregate verdict is authoritative at the run level. The PRIMARY run_artifact
-    // is deliberately left open here — finalize() lands the out-of-band runtime section
-    // (the bus never carries it) and finalizes last (Pitfall 6 flush idiom).
+    // The aggregate verdict is authoritative at the run level, and the run's runtime is staged
+    // once here (444-02). The PRIMARY run_artifact is deliberately left open — finalize() lands
+    // any out-of-band runtime section and finalizes last (Pitfall 6 flush idiom).
+    if (!runId) return
+    const status = toRunStatus(aggregateVerdict)
     const endedAt = now()
-    if (runId) db.updateRun(runId, { status: toRunStatus(aggregateVerdict), endedAt })
+    db.updateRun(runId, { status, endedAt })
+    stageRuntime(runId, { status, duration: runDuration(), endedAt })
   }
 
   return {
@@ -557,7 +532,10 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
           // 402-09: the suite carve-out went with the suite mode. There is one run row, and the
           // aggregate verdict is its status; `runFinished` re-states it and performs the sweep.
           if (runId) {
-            db.updateRun(runId, { status: toRunStatus((envelope.payload as VerdictLike).verdict) })
+            db.updateRun(runId, {
+              status: toRunStatus((envelope.payload as VerdictLike).verdict),
+              endedAt: now(),
+            })
           }
           break
         case 'runFinished':
