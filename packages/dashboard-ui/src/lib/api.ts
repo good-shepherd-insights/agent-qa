@@ -54,6 +54,17 @@ export interface RunRow {
   createdAt: string
   targetName?: string | null
   tests?: RunRow[]
+  members?: RunMemberSummary[]
+  memberOutcome?: string | null
+}
+
+export interface RunMemberSummary {
+  testIndex: number
+  testId: string | null
+  filePath: string | null
+  suiteId: string | null
+  name: string | null
+  outcome: string | null
 }
 
 export interface AttributePredicate {
@@ -102,7 +113,7 @@ export interface Stats {
 }
 
 export interface RunsFilter {
-  status?: string
+  statuses?: readonly string[]
   name?: string
   platform?: string
   target?: string
@@ -309,8 +320,10 @@ function appendAttributePredicateQueryParts(parts: string[], predicates: Attribu
 
 function buildRunsQuery(opts: RunsFilter): string {
   const parts: string[] = []
+  for (const status of opts.statuses ?? []) {
+    parts.push(`status=${encodeURIComponent(status)}`)
+  }
   for (const [key, val] of Object.entries({
-    status: opts.status,
     name: opts.name,
     platform: opts.platform,
     target: opts.target,

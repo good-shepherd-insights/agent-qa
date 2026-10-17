@@ -32,12 +32,18 @@ import { useSelectionQueue } from "@/hooks/use-selection-queue"
 import { useRunConfig } from "@/hooks/use-run-config"
 import { ShortcutLegend } from "@/components/shortcut-hints"
 
-const TAB_STATUS_MAP: Record<string, string> = {
-  all: '',
-  running: 'running',
-  queued: 'pending',
-  completed: 'passed',
-  failed: 'failed',
+const NO_STATUSES: readonly string[] = []
+
+const TAB_STATUS_MAP: Record<string, readonly string[]> = {
+  all: NO_STATUSES,
+  running: ['running'],
+  queued: ['pending'],
+  completed: ['passed', 'healed', 'failed', 'timeout', 'cancelled'],
+  failed: ['failed', 'timeout'],
+}
+
+function showsLiveRuns(statuses: readonly string[]) {
+  return statuses.length === 0 || (statuses.length === 1 && statuses[0] === 'running')
 }
 
 function matchesSyntheticRunSearch(
@@ -88,11 +94,11 @@ export default function RunsPage() {
   const mergeActiveExecutions = useCallback(async (
     dbRuns: RunRow[],
     dbTotal: number,
-    statusFilter: string,
+    statuses: readonly string[],
     searchValue: string,
   ) => {
     try {
-      if (statusFilter && statusFilter !== 'running') {
+      if (!showsLiveRuns(statuses)) {
         setRuns(dbRuns)
         setTotal(dbTotal)
         return
@@ -143,7 +149,7 @@ export default function RunsPage() {
 
   const buildFilter = useCallback((opts: {
     name: string
-    status: string
+    statuses: readonly string[]
     platform: string
     target: string
     attributes: typeof attributePredicates
@@ -152,18 +158,18 @@ export default function RunsPage() {
     limit: 50,
     offset: (opts.page - 1) * 50,
     name: opts.name || undefined,
-    status: opts.status || undefined,
+    statuses: opts.statuses.length > 0 ? opts.statuses : undefined,
     platform: opts.platform || undefined,
     target: opts.target || undefined,
     attributes: opts.attributes,
   }), [])
 
-  const apiStatus = TAB_STATUS_MAP[tab] ?? ''
+  const apiStatuses = TAB_STATUS_MAP[tab] ?? NO_STATUSES
 
   const loadRuns = useCallback(async (opts: {
     page: number
     name: string
-    status: string
+    statuses: readonly string[]
     platform: string
     target: string
     attributes: typeof attributePredicates
@@ -176,7 +182,7 @@ export default function RunsPage() {
       ])
       setQueueStatus(qs)
       setTargetOptions(data.targets ?? [])
-      await mergeActiveExecutions(data.runs, data.total, opts.status, opts.name)
+      await mergeActiveExecutions(data.runs, data.total, opts.statuses, opts.name)
     } catch {
       toast.error("Failed to load runs")
     } finally {
@@ -188,7 +194,7 @@ export default function RunsPage() {
   const refreshRuns = useCallback(async (opts: {
     page: number
     name: string
-    status: string
+    statuses: readonly string[]
     platform: string
     target: string
     attributes: typeof attributePredicates
@@ -200,7 +206,7 @@ export default function RunsPage() {
       ])
       setQueueStatus(qs)
       setTargetOptions(data.targets ?? [])
-      await mergeActiveExecutions(data.runs, data.total, opts.status, opts.name)
+      await mergeActiveExecutions(data.runs, data.total, opts.statuses, opts.name)
     } catch {
       // Silent failure on background refresh
     }
@@ -209,11 +215,11 @@ export default function RunsPage() {
   const requestState = useMemo(() => ({
     page,
     name: search,
-    status: apiStatus,
+    statuses: apiStatuses,
     platform,
     target,
     attributes: attributePredicates,
-  }), [page, search, apiStatus, platform, target, attributePredicates])
+  }), [page, search, apiStatuses, platform, target, attributePredicates])
 
   useEffect(() => {
     loadRuns(requestState)
