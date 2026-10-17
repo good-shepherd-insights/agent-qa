@@ -5099,3 +5099,196 @@ No migration and no compatibility code (D-03).
 The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
 verdict are recorded in `.planning/phases/442-run-ownership-and-production-refusal/442-RECORD.md`
 § Gate and the SHA in § Final SHA, rather than quoted here, so no agent-qa commit follows it.
+
+## 2026-10-17 — Phase 443: One run through every door (V2-RUN-02)
+
+This section appends to the register and rewrites no earlier section. Phase 443 made one rule
+true: every run writes its row to the project's runs.db through one record builder, whichever door
+starts it, stamped with the process that runs it, so every id a door hands out resolves in
+`agent-qa runs overview`, MCP `agent_qa_get_run_overview` and the dashboard. The phase owner's
+rule for it was a hard removal with no backward compatibility (D-01): "pls don't do any backward
+compatiblity etc, do a hard removal of things as there are no users". What the one record made
+obsolete was deleted outright: the `dashboard` reporter name, the `services.dashboard` gate on
+writing a row, both warn-and-continue paths, the ingest's environment correlation and its id-less
+insert, the bridge's subscriber member, the daemon's no-record rule, the dead log storage, the
+five arms that took over a handed row, and the suite-queue and parent-run environment variables.
+The section follows the 2026-10-16 Phase 442 shape. Dated 2026-10-17; written by 443-11.
+
+### The ruling
+
+> V2-RUN-02: A run started through any existing door reaches the same durable run store and
+> dashboard ingestion through the shared run bridge, with no new execution path.
+
+From `.planning/REQUIREMENTS.md`. The phase's decisions are in
+`.planning/phases/443-one-run-through-every-door/443-CONTEXT.md`: one record builder on every
+door, no replay (D-02, D-22); a row for every run, whatever the config holds (D-03); a run that
+cannot be recorded does not start (D-05); the process that executes a run stamps its row (D-06);
+a `running` write never takes over another live process's row (D-07, review IN-04); a run naming
+another config writes that config's runs.db (D-08); verify runs are marked (D-09); each row records
+its door in `agent-qa.trigger` (D-10); the suite-queue variable is removed and WINDOWS #557 is
+unsupported (D-11, D-25); the ingest takes the run's own id (D-12).
+
+### How this inventory is measured
+
+| Instrument | What it claims | Where |
+|---|---|---|
+| the census | `C443-ONE-RECORD`: the CLI constructs the ingest only inside `createRunRecord`; five drive calls, each passing a record from that builder, and the scan saw every door; no door gains an execution path; every runs.db handle the CLI opens names its owner; the dashboard bridge has no subscriber member; a planted-positive and a self-match cell. `C443-ENV-RETIRED no production source or script names a retired run-id input` (the two variables, the ingest's old correlation type, field, suite spelling and reader). 8 cells, in `validate:arch`. | `packages/arch/src/__tests__/443-one-record-census.test.ts` (443-10 `cd6770b5b`) |
+| the type cells | `src/composition/__tests__/443-run-record-option.test-d.ts C443-ONE-RECORD the drive's runRecord option is required and never undefined` and `… the CLI host's run bridge has no subscriber member` | `packages/cli/src/composition/__tests__/443-run-record-option.test-d.ts` (443-10 `cd6770b5b`) |
+| the 442 census | `C442-STATUS-WRITERS-CLASSIFIED` lists every `runs.status` writer; `WRITER_FLOOR` went 35 to 26 across the phase (443-04 −2, 443-05 +1, 443-08 −8) | `packages/arch/src/__tests__/442-run-ownership-census.test.ts` |
+| the door matrix | ten doors (the eight V2-RUN-02 doors, the standalone MCP server as stdio and HTTP, the dashboard Run control as control row), one project, one runs.db, real headless Chromium: each run has an owner-stamped row and its trigger, the three readers agree on member, verdict and decision screenshots, and the run-detail page never shows "Run not found" (43 cells) | `packages/cli/src/__tests__/conformance/443-door-matrix.test.ts` (443-01 `d0df05373`, instrument corrected in 443-10 `c23df3c18`) |
+| the gate list | 120 `C443-` cells listed in `scripts/gate/inputs/regressions.json` after the 1859 rows listed at `3e4f9fcc9` (unchanged and in order), each with its `443 D-NN` origin, so `gate:local` must execute and pass every one | `scripts/gate/inputs/regressions.json` (443-11 `77a273980`) |
+
+**Both ends of the derivation, stated so it can be re-run.** Baseline `3e4f9fcc9` (agent-qa
+`version-0.2`, Phase 442's final SHA and 443-01's base). Closing SHA `77a273980` (443-11's gate list
+commit, the parent of this section's commit). `git -C agent-qa diff --shortstat 3e4f9fcc9
+77a273980`: 70 files changed, 5,588 insertions, 896 deletions (under `packages/`: 67 files,
++4,867/−893). `--diff-filter=D`: no file deleted. `--diff-filter=A`: 11 files added, every one a
+test file (`443-one-record-census.test.ts`, `443-cli-record.test.ts`, `443-debug-stdout.test.ts`,
+`443-door-matrix.test.ts`, `443-door-trigger.test.ts`, `443-record-refusal.test.ts`,
+`443-run-record-option.test-d.ts`, `443-run-record.test.ts`, `443-verify-run-record.e2e.test.ts`,
+`443-claim.test.ts`, `443-fresh-open.test.ts`); no production module was added, because the
+builder lives in `cli/src/commands/run.ts`, the CLI's only file the surface-firewall ledger lets
+name the dashboard package. 23 commits, every one signed (`%G?` = `G`): 22 from 443-01 to 443-11's
+orchestrator-directed fix, and 443-11's gate list. The removed lines below are read from each
+deleting commit's diff (`git -C agent-qa show <sha>`) and the plan summaries, not transcribed from
+memory. Line numbers are at `3e4f9fcc9`.
+
+### What was deleted
+
+#### Members removed from surviving files
+
+| Member (file at `3e4f9fcc9`) | What it did | Deleting commit | The cell that notices its return |
+|---|---|---|---|
+| `'dashboard'` in `SUPPORTED_REPORTERS` (`cli/src/commands/run.ts:665`) | let `--reporter dashboard` select the runs.db ingest | `0917b5bae` (443-09) | `C443-REPORTER --reporter dashboard is an unknown reporter` (the existing "Unknown reporter" refusal, exit 2, no run directory, no row) |
+| `ReporterSelection.dashboard` (`run.ts:672`), `AgentQaUpdateNoticeReporterSelection.dashboard` (`cli/src/version-notice.ts:10`), and the producers' `reporterSelection` inputs with their pass-throughs (`PatternMemberProductionContext`, `SuiteRunMemberProductionInput`, `DirectRunMemberProductionInput`; the default `{ …, dashboard: false }` at `run.ts:3819`) | carried the selection into the producers, where only the capture decision read it | `0917b5bae` (443-09) | `C443-REPORTER screenshot capture follows only its own flags` |
+| the `services.dashboard` row gate: `resolveReporterSelection`'s and `requireReporterSelection`'s `dashboardConfigured` argument (`run.ts:773`, `:786`, `:1152-1156`, the callers at `:1867` and `:4791`) and the `dashboardEnabled` checks that decided whether a runs.db handle opened (`run.ts:2462-2467`, `:3839`, `:4835-4840`) | wrote a row only when the config held a dashboard block | `84ad1f6f6` (443-08, direct), `b05533644` (443-08, suite), `0917b5bae` (443-09, the argument and the dead `dashboardEnabled`) | `C443-CLI-ROW a single-test run with no dashboard block writes its row under the printed id`; `C443-CLI-ROW a suite run with no dashboard block writes one row under the printed id` |
+| `requiredDashboard` (`run.ts:774`, `:786`, `:807`) | forced the dashboard selection on whenever `AGENT_QA_RUN_ID` or the suite-queue variable was set | `0917b5bae` (443-09) | the field it forced is gone (`C443-REPORTER --reporter dashboard is an unknown reporter`); the variable's name is a needle of `C443-ENV-RETIRED no production source or script names a retired run-id input` |
+| both `Warning: Could not load dashboard reporter: …` paths (`run.ts:2477`, suite; `:4851`, direct) | warned and ran on without a record when runs.db could not be opened | `84ad1f6f6` (443-08, direct), `b05533644` (443-08, suite) | `C443-RECORD-REFUSAL agent-qa run refuses a run whose runs.db cannot be opened, exit 2, no id`; `C443-RECORD-REFUSAL a suite run whose runs.db cannot be opened is refused before its plugins load`; for the runs.start doors, the `C443-RECORD-REFUSAL` version-4, unwritable and corrupt cells |
+| the direct path's eager `DashboardDatabase` open before the refusal (`run.ts:4834-4849`: the handle, `logStorage`, `dashboardEnabled` and the "Product preflight above is intentionally before dashboard creation" comment) | opened runs.db before the production refusal and before the drive | `84ad1f6f6` (443-08) | `C443-RECORD-REFUSAL a refused production agent-qa run creates no runs.db file` |
+| `buildDashboardIngestSubscriber`, its `DashboardIngestAttach` interface and its comment (`run.ts:836-878`), with the direct path's `singleDashboardIngest` (`:5083`, `:5139-5141`) and the suite's run-level ingest (`runLevelDashboardDb`, `suiteDashboardIngest`, `ownSuiteRow`; `:1882-1895`) | the CLI's second ingest builder, and its catch that warned and continued | `84ad1f6f6` (443-08, direct caller), `b05533644` (443-08, the builder and the suite caller) | `C443-ONE-RECORD the CLI constructs the ingest only inside createRunRecord` |
+| `createSuiteDashboardResources` (the per-suite open, `run.ts:2466-2480`), `closeSuiteDashboardDb` (`:2482-2485`) and its teardown call, `PreparedSuite.dashboardDb` (`:2534`), `subscriberSeed.dashboardDb`, and `createSuiteRunId` (`:982-984`) | opened one handle per suite and minted a suite id from the environment | `b05533644` (443-08) | `C443-CLI-ROW a suite run with no dashboard block writes one row under the printed id`; `C443-ONE-RECORD every runs.db handle the CLI opens names its owner` |
+| `readDashboardCorrelationEnv` and its comment (`run.ts:816-825`), `buildDashboardIngestSubscriber`'s `runCorrelation` input and its environment-first precedence | read the run's dashboard id from the environment | `1aaf0fce9` (443-04) | `C443-ENV-RETIRED no production source or script names a retired run-id input` (the reader's name is a needle) |
+| `DashboardRunIngestCorrelationEnv` (`dashboard-server/src/reporter/dashboard-subscriber.ts:84-97`) and its export (`reporter/index.ts:6`, so the package barrel), `DashboardRunIngestDeps.correlationEnv` (`:107`) and its read (`:195`), and the `suiteQueueId` second spelling of the run id (`:96`, `:237`) | let the ingest file a row under an id other than the one it was built with | `1aaf0fce9` (443-04) | `C443-INGEST-ID every row the ingest writes is filed under the id it was built with`; `C443-INGEST-ID an ingest built for a suite files the suite run under the same id`; the needles of `C443-ENV-RETIRED no production source or script names a retired run-id input` |
+| the ingest's id-less `insertRun` that minted a row id of its own (`dashboard-subscriber.ts:269-280`) | wrote a row whose id no door had handed out (F-433-20) | `1aaf0fce9` (443-04) | `C443-INGEST-ID every row the ingest writes is filed under the id it was built with` (it also holds the type claim that a construction without `runId` does not compile) |
+| the ingest's adopt arm that rewrote any existing row as `running` through `updateRun`, and its explicit-id `insertRun` arm (`dashboard-subscriber.ts:234-266`) | took over a row another live process owned (review IN-04) | `30e2dea0d` (443-04), replaced by one `claimRunningRow` | `C443-CLAIM an ingest for an id another live process owns writes nothing under it`; `C443-CLAIM a running row another process owns is refused and left as it was` |
+| `updateRun`'s `running` write and its owner stamp (`dashboard-server/src/db/database.ts:513`) | let any caller flip a row to `running` and stamp it | `30e2dea0d` (443-04), now a throw | `C442-OWNER-STAMP the queue flip stamps the dashboard` (asserts the `updateRun` form throws); `C442-CENSUS … C442-STATUS-WRITERS-CLASSIFIED` |
+| the dashboard bridge's `subscribers` member and its no-row path (`cli/src/commands/dashboard.ts:607-624`, `if (entry === undefined) return undefined`), the queue entry's own `createDashboardRunIngest` construction (`:670-676`) and `DashboardRunEntry.ingest` (`:490`), and the bridge's `cliRunSubscribers` deferred import and ingest destructure (`:574`, `:580`) | recorded only the dashboard's own queued runs; `POST /run` and the co-hosted MCP endpoint wrote no row | `8dd69102f` (443-05) | `C443-ONE-RECORD the dashboard bridge has no subscriber member of its own`; `C443-RUN-RECORD a POST /run run gets a row through the dashboard's own handle`; `C443-RUN-RECORD a queued dashboard run keeps its one row and its routes' attributes`; `C443-ONE-RECORD the CLI constructs the ingest only inside createRunRecord` |
+| `runBridge.subscribers` and its pass-through to the drive (`cli/src/composition/local-agent-host.ts:363-365`, `:574-575`), the header sentence that a host asking for no subscribers keeps no record (`:282`), and the `subscribers` option doc's "Absent ⇒ none … the typed bus event log is the run's record" (`in-process-run-execution.ts:233-236`) | let a host decide whether its runs had a record | `8dd69102f` (443-05) | `src/composition/__tests__/443-run-record-option.test-d.ts C443-ONE-RECORD the CLI host's run bridge has no subscriber member`; `C443-RUN-RECORD a runs.start through the shared host writes one row under the returned id, stamped with this process` |
+| the daemon's "no subscribers" rule, the comment `NO \`subscribers\` either — D-04. The typed bus event log is the run's record; …` (`cli/src/daemon/host.ts:727-728`) | kept the daemon's runs out of runs.db | `368cc9a2d` (443-06) | `C443-DAEMON-RECORD a run the daemon dispatches writes its row, stamped with the daemon, trigger cli`; `C443-ONE-RECORD every drive call passes a record from the one builder, and the scan saw every door` |
+| the shared host's fixed `doorRunAttributes('cli')` | labelled every runs.start row `cli` | `4d2216079` (443-06), now the resolved door | the six `C443-DOOR-TRIGGER` cells; the ten `C443-DOOR-MATRIX <row>: the row records its door in agent-qa.trigger` cells |
+| the `logStorage` plumbing (D-21): `createSuiteDashboardResources().logStorage` (`run.ts:2466`, `:2475`, `:2553`), the suite `LogManager`'s `storage: logStorage` (`:2930`), `DirectRunMemberProductionInput.logStorage` (`:3662`), its local (`:3822`), the direct `LogManager`'s `storage:` (`:3875`), and the direct door's pass (`:4834`, `:4848`, `:5046`) | handed runs.db to a log storage whose `flush()` has no production caller and whose `insertLogs` the store never had | `84ad1f6f6` (443-08, the direct door's source), `b05533644` (443-08, the suite source), `0917b5bae` (443-09, the input and the direct storage) | not pinned by a cell; `git -C agent-qa grep -n logStorage -- packages/cli/src` prints nothing at this section's commit |
+| the five "row handed to this process" arms (D-26): the direct parse-error arm that adopted the `AGENT_QA_RUN_ID` row (`updateRun(existingRunId, …)` and `artifactRunId`) and the four suite-preparation arms that adopted an `AGENT_QA_RUN_ID` or suite-queue row (`run.ts:2571-2585`, `:2621`, `:2656`, `:2702`) | the last paths where an environment-named row was taken over | `84ad1f6f6` (443-08, direct), `b05533644` (443-08, the four suite arms; now one `insertRun` under the run's own id through `recordPreparationFailure`) | `C443-HANDED-ROW a parse error writes one failed row under the printed id`; `C443-HANDED-ROW a suite preparation failure writes one failed row under the printed id`; `C443-HANDED-ROW an AGENT_QA_RUN_ID naming another process's row is refused and the row is untouched`; `C442-CENSUS … C442-STATUS-WRITERS-CLASSIFIED` (the ten census rows went) |
+| `_crashDb` and `_ownRunRowId` (`run.ts:4661`, `:5279-5319`) | the direct path's crash-catch handle | `84ad1f6f6` (443-08), replaced by `_crashRecord` (the record's handle and its own row id) | the five `C442-OWN-RUN-ONLY` cells |
+| `runRecord?` as an optional drive option | let a drive call run with no record | `b05533644` (443-08) | `src/composition/__tests__/443-run-record-option.test-d.ts C443-ONE-RECORD the drive's runRecord option is required and never undefined` |
+| the two run-id environment variables (D-11, D-25): the suite-queue variable's reads (`run.ts:774`, `:823`, `:983`, `:1267`, `:2573`, `:2621`, `:2656`, `:2702`, `:3088`, among them `preparedSuiteRunId`) and the parent-run variable's read (`:1268`) in the inherited-attributes check; their cleanup lines (`scripts/401-11-capture-parity.mjs:262-263`, `cli/src/__tests__/run.test.ts`); their names in history comments (`dashboard-subscriber.ts:88-94`, `:292`; `dashboard-server/src/server/server.ts:427`) | named a run id or a parent run from the environment; nothing in agent-qa or any other caller has set either since the dashboard stopped spawning child runs (402, 433) | `1aaf0fce9` (443-04, the ingest's read), `b05533644` (443-08, the handed-row arms and `createSuiteRunId`), `0917b5bae` (443-09, `requiredDashboard`), `347c11aec` (443-09, the rest) | `C443-ENV-RETIRED no production source or script names a retired run-id input`; `C443-ENV-RETIRED inherits run attributes only under AGENT_QA_RUN_ID` |
+| "suite queue" in the run-command rule (`cli/AGENTS.md:41`, D-28) | asked run changes to keep the variable's behaviour | `347c11aec` (443-09), in the same commit as the variable | read from the file; not pinned by a cell |
+| the `reporterSelection.dashboard ||` term of both `captureScreenshots` lines (`run.ts:2996`, suite; `:3868`, direct; D-20) and the "363-09/363-11 … dashboard ingest …" comment above the direct one | turned on the after-step `Buffer` that nothing outside tests reads | `0917b5bae` (443-09) | `C443-REPORTER screenshot capture follows only its own flags` |
+| the runs-database sentence `… which holds only runs recorded with the dashboard reporter or by agent-qa dashboard` and its doc line (`agent/src/functions/ops/runs-get.ts:39`) | told a reader that most doors' runs were never recorded | `0917b5bae` (443-09); `IN_RUNS_DATABASE` is `' in the runs database'` | the two not-found assertions in `cli/src/__tests__/431-knowledge-run-reads.test.ts` (not listed in the gate) |
+| the producers' direct prints on every door: `produceSuiteRunMembers`' four preparation-failure arms' `printRunId(runId)` / `printRunAttributes(…)`, `suiteTeardown`'s `printRunAttributes(prepared.suiteAttributes)`, `produceDirectRunMembers`' two `printRunAttributes(testAttributes)` calls | wrote `Run ID:` and `Run attributes:` lines into the MCP stdio server's JSON-RPC stream and ahead of `fn --json`'s document | `5f72b4509` (443-10), now through `RunTerminal`, which only `agent-qa run` passes | `C443-DOOR-MATRIX the stdio MCP door's stdout stays JSON-RPC through its run`; `C443-SUITE-PREP-STDOUT a suite preparation failure through fn --json leaves stdout one JSON document and files its row` |
+| `produceDirectRunMembers`' two debug-level `console.log` lines, `  Platform: …` and `  Model: …` | printed on a protocol door's stdout when the project's config set `services.logging.level: debug` | `610b14d50` (443-11, orchestrator-directed; RED `ceadf152a`), now `RunTerminal.printDebugLine` | `C443-DEBUG-STDOUT fn --json on a project at debug log level leaves stdout one JSON document through its run` |
+
+No file was deleted. Test cells deleted with their subject, none listed in `regressions.json`:
+`createDashboardRunIngest correlation env — a suiteQueueId is just another spelling of runId`
+(`dashboard-subscriber.test.ts`, `1aaf0fce9`, D-12); `run command — DashboardReporter wiring does
+not create DashboardReporter when services.dashboard is absent` and `run command — DashboardReporter
+wiring warns but continues when dashboard-server import fails` (`run.test.ts`, `84ad1f6f6`, D-03 and
+D-05); `run command — reporter integration wires the dashboard bus ingest (not the v1
+DashboardReporter) for dashboard selection` (`0917b5bae`, D-03) and `run command — run attributes
+inherits retry-child attributes from AGENT_QA_PARENT_RUN_ID without a child run id` (`347c11aec`,
+D-25), both in `run.test.ts`. The test mock `mockCreateDashboardRunIngest` (`dashboard.test.ts`)
+went in `8dd69102f`. The cells re-spelled in place, titles kept except the unregistered
+`dashboard door (suiteQueueId)` label (443-04), are listed in each plan's summary.
+
+#### Registered gate rows
+
+The 1859 rows listed at `3e4f9fcc9` are still listed, unchanged and in order; none was renamed,
+removed or moved. These registered cells were re-spelled under their kept names, each named in its
+plan's summary: `C442-OWNER-STAMP the ingest stamps its own row`, `C442-OWNER-STAMP the queue flip
+stamps the dashboard` and `C442-ORPHAN exactly one finalizer wins a race` (443-04); the three
+`in-process-run-execution.test.ts` `C441-RUN-RECORDS` cells (443-08, a record on every drive call);
+`the INVK-06 consumer census is frozen and self-checking (D-15) THE MARKER SCAN EQUALS THE FROZEN
+CENSUS — n in, n classified, no silent drops` (443-07, two carrier rows); `C442-CENSUS … 
+C442-STATUS-WRITERS-CLASSIFIED` (443-04, 443-05, 443-08, the writer rows and floor); and the
+`C442-DOOR-TABLE … refuses a declared production run before any effect, plugin loading included`
+cells and `C442-ABSENCE no door asks, requires a token or scope, or offers an inbox` (443-10: every
+door now writes its row, and a refused run leaves no runs.db file).
+
+### What was RETAINED, and why
+
+| Item | Where (at this section's commit) | Why kept | What pins it |
+|---|---|---|---|
+| `AGENT_QA_RUN_ID` | `cli/src/commands/run.ts` | the one way to choose a run id from the environment (D-11); its shape and unused-id refusals stay, and it now gives the row and the run directory one id on both paths | `C433-RUN-ONE-ID: AGENT_QA_RUN_ID is still the run's id` (in `433-run-identity.test.ts`, not listed in the gate); `C443-HANDED-ROW an AGENT_QA_RUN_ID naming another process's row is refused and the row is untouched`; `C443-ENV-RETIRED inherits run attributes only under AGENT_QA_RUN_ID` |
+| reporter selection for `console`, `junit` and `stdout-live` | `run.ts` (`SUPPORTED_REPORTERS`, `resolveReporterSelection(opts)`) | they print or write files; none decides the row (D-03) | `C443-REPORTER a run still records its row under the default reporters`; the `in-process-run-execution.test.ts` unsupported-reporter cell |
+| `services.dashboard`'s other keys (`port`, `dbPath`, `artifactsDir` and the entity-card URL keys) | `core/src/schema/services-schema.ts` | `dbPath` now names where every run's row goes (D-03, D-08); the block only stopped deciding whether a row is written | `C443-RECORD-PATH a run naming another config writes that config's runs.db` |
+| core's `LogStorage` and `LogManager.flush` | `core/src/logging/` | a core public export (agent-qa AGENTS.md: preserve public exports); only the CLI's dead plumbing went (D-21) | `git diff 3e4f9fcc9 HEAD -- packages/core/src/logging` is empty |
+| `insertRun`'s fresh `running` insert, stamped with the handle's owner | `dashboard-server/src/db/database.ts` | an insert under an existing id fails on the primary key, so it cannot take a row over; tests seed rows through it | `C442-CENSUS … C442-STATUS-WRITERS-CLASSIFIED` |
+| `InProcessCliRunExecutionOptions.subscribers` | `cli/src/composition/in-process-run-execution.ts` | `agent-qa run` still attaches its console, junit, stdout-live and analytics subscribers through it; the record is attached by the drive, never through it (its wire reporter can print to stdout) | `C443-ONE-RECORD every drive call passes a record from the one builder, and the scan saw every door` |
+| the `--config-debug` block's `console.log` lines in the direct producer | `run.ts` | it reads a door flag only `agent-qa run` sets, so no protocol door reaches it | read from code; not pinned by a cell |
+
+### What degrades, stated plainly
+
+- **Every run writes `.agent-qa/runs.db`.** `agent-qa run` with no `services.dashboard` block, and
+  every `runs.start` door, now creates and writes the project's runs.db (or `services.dashboard.dbPath`
+  of the run's own config). A run whose runs.db cannot be opened (an older version, an unwritable
+  folder, a corrupt file) is refused before any effect with a plain sentence, exit 2 on
+  `agent-qa run`, and no run id; it no longer runs on without a record.
+- **Runs from before 443 have no rows.** Nothing replays `events.jsonl` (D-02): a run directory
+  written by a `runs.start` door, the daemon or `agent-qa run` without a dashboard block before this
+  phase stays absent from the dashboard and reads "Run not found" there.
+- **`--reporter dashboard` is refused** with `Unknown reporter "dashboard". Supported reporters:
+  console, junit, stdout-live`, exit 2. No alias or message names a replacement (D-01).
+- **The owner's local miniwob bench driver is refused until it drops the name.** The local
+  checkout beside `agent-qa/` (`agent-qa-miniwob-bench/src/agent_qa_miniwob_bench/product.py`)
+  appends `--reporter console stdout-live dashboard` when it publishes artifacts; from `0917b5bae`
+  those runs end with the unknown-reporter refusal. It belongs to neither repository and was not
+  edited.
+
+### Persisted values the narrowed contract governs
+
+No schema bump, no migration and no compatibility code (D-01).
+
+| Persisted value | Disposition | Evidence |
+|---|---|---|
+| `runs.attributes` key `agent-qa.gate-run` | **New, value `'true'` only**, written by the record's subscriber from the request's gate-run flag (authoring verify and repair gate runs); an unmarked run has no such key, never `'false'`. Refused as a user attribute by the reserved `agent-qa.` prefix. | `C443-VERIFY-MARK the gate-run mark is an internal attribute with one value`; `C443-VERIFY-RUN a verify run started through authoring keeps its flag and exclusion and has a marked row`; `C443-VERIFY-RUN an ordinary run in the same project has no mark` |
+| `runs.attributes` key `agent-qa.trigger` | **Now the door**, with the four existing values: `cli` (`agent-qa run`, `fn`, `ask`, `chat`, the daemon), `mcp` (the standalone server over stdio and HTTP, the co-hosted endpoint), `api` (`POST /run`), and the queue's own value for queued runs. | the six `C443-DOOR-TRIGGER` cells; the ten `C443-DOOR-MATRIX <row>: the row records its door in agent-qa.trigger` cells |
+| a `running` row another live process owns | **Never taken over**: the claim inserts a fresh row or adopts this handle's own, and the queue flips only `pending` rows. | the twelve `C443-CLAIM` cells; the four `C443-QUEUE-FLIP` cells |
+| a fresh `.agent-qa/runs.db` opened by many processes at once | **Created once, by whichever opener wins**: a bounded `SQLITE_BUSY` retry on the WAL switch and a `BEGIN IMMEDIATE` migration that re-reads `user_version` (D-23). An older file is still refused before anything touches it. | the four `C443-FRESH-OPEN` cells |
+
+### The instruments that notice a return
+
+- **`pnpm validate:arch`** runs `C443-ONE-RECORD` and `C443-ENV-RETIRED` beside the 442 census. A
+  second ingest construction, a drive call without the builder's record, a new execution path, an
+  owner-less runs.db handle, a bridge subscriber member, or a returning run-id variable, correlation
+  type, field, suite spelling or reader reds by name on the commit that adds it.
+- **The 434 gate** (`pnpm run gate:local`) must execute and pass all 120 listed `C443-` cells, each
+  with its `443 D-NN` origin: `C443-DOOR-MATRIX` 43 (`443 D-13` 12, `443 D-06` 10, `443 D-10` 10,
+  `443 D-20` 10, `443 D-14` 1), `C443-CLAIM` 12, `C443-QUEUE-FLIP` 4, `C443-OWN-FINALIZE` 1,
+  `C443-FRESH-OPEN` 4, `C443-INGEST-ID` 2, `C443-RUN-RECORD` 3, `C443-RECORD-PATH` 2,
+  `C443-RECORD-REFUSAL` 10, `C443-RECORD-INCOMPLETE` 1, `C443-DAEMON-RECORD` 2,
+  `C443-DOOR-TRIGGER` 6, `C443-VERIFY-RUN` 2, `C443-VERIFY-MARK` 5, `C443-CLI-ROW` 2,
+  `C443-HANDED-ROW` 3, `C443-REPORTER` 3, `C443-ENV-RETIRED` 2, `C443-ONE-RECORD` 9,
+  `C443-SUITE-PREP-STDOUT` 2 (`443 D-26`) and `C443-DEBUG-STDOUT` 2 (`443 D-13`).
+- **Not spelled by any needle:** the names `requiredDashboard`, `createSuiteDashboardResources`,
+  `closeSuiteDashboardDb`, `createSuiteRunId`, `singleDashboardIngest` and `logStorage`. Their
+  behaviour returning is caught by the cells in the table above, except the log storage's, which no
+  cell observes; the names alone returning are not.
+
+### Not observed, stated as such
+
+- **win32 was not run.** No Windows host ran the new writers or the matrix; the cells that spawn
+  processes throw `POSIX run lifecycle required; never skip` there, as 442 recorded.
+- **No live model ran.** Every cell uses a stub model or none.
+- **No user workspace was inspected.** The degrade statements are what the cells and the code show.
+
+### Reconciliation
+
+None needed. V2-RUN-02 was built as written, and WINDOWS #557's door is recorded as unsupported, as
+the requirement's ownership line allows ("#557 → V2-RUN-02, if its door is supported"), so
+`.planning/REQUIREMENTS.md` was not edited.
+
+### Gate at the time of writing
+
+The record gate runs on Phase 443's final agent-qa SHA, the commit that adds this section, which
+`.planning/phases/443-one-run-through-every-door/443-RECORD.md` § Final SHA names. Its legs, counts
+and verdict are recorded in that file's § Gate rather than quoted here, so no agent-qa commit
+follows the gate run.
