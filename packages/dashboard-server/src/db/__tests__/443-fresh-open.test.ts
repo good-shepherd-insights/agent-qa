@@ -68,10 +68,11 @@ function buildStaleness(artifact: string, sourceRoot: string) {
   return undefined
 }
 
+// 2026-10-17 (443-review, WR-06): --force, because a turbo cache hit leaves an mtime-stale dist untouched.
 function requireFreshBuild(artifact: string, sourceRoot: string) {
   const reason = buildStaleness(artifact, sourceRoot)
   if (reason !== undefined)
-    throw new Error(`${reason}; run pnpm build in agent-qa before this file`)
+    throw new Error(`${reason}; run pnpm build --force in agent-qa before this file`)
 }
 
 const CHILD_SCRIPT = `
@@ -350,12 +351,12 @@ describe('C443-FRESH-BUILD', () => {
 
     utimesSync(product, base + 300, base + 300)
     expect(() => requireFreshBuild(dist, src)).toThrow(
-      /a\.ts is newer than .*index\.js; run pnpm build in agent-qa before this file$/,
+      /a\.ts is newer than .*index\.js; run pnpm build --force in agent-qa before this file$/,
     )
 
     rmSync(dist)
     expect(() => requireFreshBuild(dist, src)).toThrow(
-      /index\.js is missing; run pnpm build in agent-qa before this file$/,
+      /index\.js is missing; run pnpm build --force in agent-qa before this file$/,
     )
 
     const testsOnly = join(root, 'fresh-build', 'tests-only')
@@ -365,7 +366,7 @@ describe('C443-FRESH-BUILD', () => {
     writeFileSync(join(testsOnly, 'src', '__tests__', 'b.test.ts'), 'export {}\n')
     writeFileSync(testsOnlyDist, 'export {}\n')
     expect(() => requireFreshBuild(testsOnlyDist, join(testsOnly, 'src'))).toThrow(
-      /no product source; run pnpm build in agent-qa before this file$/,
+      /no product source; run pnpm build --force in agent-qa before this file$/,
     )
   })
 
