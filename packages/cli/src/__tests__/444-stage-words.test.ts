@@ -411,6 +411,7 @@ describe('C444-STAGE-SKIPPED', () => {
     expect(POST_PROCESSING_SKIP_REASON_WORDS).toEqual({
       'gate-run': 'gate run',
       'outcome-excluded': 'outcome-excluded',
+      'no-verdict': 'no verdict',
     })
     expect(POST_PROCESSING_SKIP_REASONS.length).toBeGreaterThan(0)
     expect(Object.keys(POST_PROCESSING_SKIP_REASON_WORDS).sort()).toEqual([...POST_PROCESSING_SKIP_REASONS].sort())
@@ -469,7 +470,10 @@ describe('C444-NO-VERDICT', () => {
     const agentQaRoot = join(root, '.agent-qa')
     mkdirSync(agentQaRoot, { recursive: true })
     const configPath = join(root, 'agent-qa.config.yaml')
-    writeFileSync(configPath, 'workspace:\n  testMatch: [tests/**/*.yaml]\n  secretsFile: .env.secrets.local\n')
+    writeFileSync(configPath, 'workspace:\n  testMatch: [tests/**/*.yaml]\n  suiteMatch: [suites/**/*.suite.yaml]\n'
+      + '  hooksFile: hooks.yaml\n  envFile: .env\n  secretsFile: .env.secrets.local\nuse:\n  mobile:\n    appState: preserve\n')
+    writeFileSync(join(root, 'hooks.yaml'), 'hooks: []\n')
+    writeFileSync(join(root, '.env'), '')
     writeFileSync(join(root, '.env.secrets.local'), '')
     const runsDb = join(agentQaRoot, 'runs.db')
     const runId = generateRunId()

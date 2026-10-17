@@ -1,7 +1,7 @@
 // The dashboard's run-detail READ ADAPTER (Phase 405 plan 01, D-03).
 //
-// One method over `DashboardDatabase.readRunDetailRows`, handed to the CLI composition so the
-// function layer's `runs.detail` op can answer without this package ever seeing a registry.
+// Reads over `DashboardDatabase.readRunDetailRows` and `getRun`, handed to the CLI composition so
+// the function layer's ops can answer without this package ever seeing a registry.
 //
 // THE PORT TYPE IS DECLARED HERE, LOCALLY, AND THAT IS NOT A CONVENIENCE.
 // `packages/dashboard-server` may not import `@vostride/agent-qa-agent` — `validate:arch` forbids
@@ -24,12 +24,14 @@ import type { DashboardDatabase } from '../db/database.js'
 /**
  * What a run-detail reader is, spelled in this package's own vocabulary.
  *
- * ONE METHOD. Absence is a RESULT — `undefined` means no run is recorded under that id — and it
+ * Absence is a RESULT — `undefined` means no run is recorded under that id — and it
  * is deliberately not a refusal: turning it into one is the op's job, so the "not found" word is
  * minted once, in the layer every surface shares, rather than once per adapter.
  */
 export interface DashboardRunDetailReader {
   read(runId: RunId): Promise<RunDetailRows | undefined>
+  // 2026-10-18 (444-12, D-14): the row's stored status only, read through the response-safe getRun.
+  readRecord(runId: RunId): Promise<{ status: string } | undefined>
 }
 
 /**
@@ -47,6 +49,10 @@ export function createDashboardRunDetailReader(db: DashboardDatabase): Dashboard
   return {
     read(runId: RunId): Promise<RunDetailRows | undefined> {
       return Promise.resolve(db.readRunDetailRows(String(runId)))
+    },
+    readRecord(runId: RunId): Promise<{ status: string } | undefined> {
+      const row = db.getRun(String(runId))
+      return Promise.resolve(row === undefined ? undefined : { status: row.status })
     },
   }
 }

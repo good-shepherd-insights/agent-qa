@@ -122,8 +122,9 @@ export const ANALYSIS_COMPLETE_NO_ISSUES_TEXT = 'Analysis complete — no issues
  * What a run the chain never enqueued says, per reason and stage (D-08/D-13; 444 D-39).
  *
  * NEUTRAL, NOT A FAILURE. A gate run or a run excluded from outcomes skipped the whole post-run
- * chain by design (404 D-08), so its stages did not fail and are not queued. The sentence states
- * the rule for that kind of run. Total over the reasons, so a new reason fails to compile here.
+ * chain by design (404 D-08), and a run that ended with no verdict never reached it (444 D-14), so
+ * its stages did not fail and are not queued. Total over the reasons, so a new reason fails to
+ * compile here.
  */
 export const STAGE_SKIPPED_TEXT: Record<
   PostProcessingSkipReason,
@@ -136,6 +137,10 @@ export const STAGE_SKIPPED_TEXT: Record<
   'outcome-excluded': {
     analysis: 'Analysis skipped — runs excluded from outcomes are not analysed',
     curation: 'Curation skipped — runs excluded from outcomes are not curated',
+  },
+  'no-verdict': {
+    analysis: 'Analysis skipped — the run ended before it reached a verdict',
+    curation: 'Curation skipped — the run ended before it reached a verdict',
   },
 }
 

@@ -111,8 +111,11 @@ line and the digest's chain line print it in place of both chip words as `skippe
 `skipped (outcome-excluded)`, and the dashboard's indicators read `Analysis skipped` and `Curation
 skipped`. It is a sibling of the four chip words and never a fifth one, and it is never inferred
 from missing rows: a chain polled a second after its verdict has no rows either, and calling that
-skipped would tell a user their run was dropped. The dashboard's stage indicators and the cards they
-open render these fields and nothing else.
+skipped would tell a user their run was dropped. A run that ended before it reached a verdict has no
+handoff at all; it answers the same fact with the reason `no-verdict`, printed `skipped (no verdict)`,
+only when its runs.db row is finished and its event log holds no `verdict`. A row still `running` or
+`pending` never reads skipped. The dashboard's stage indicators and the cards they open render these
+fields and nothing else.
 
 There are two doors onto the same facts outside the dashboard, and the first is the run digest.
 `agent-qa digest <runId>` prints the digest op's own rendered lines — the `chain —` line carrying
@@ -130,9 +133,9 @@ the same sentence read here are one rendering rather than two that agree until o
 Knowing where a field comes from is what lets a reader tell a recorded absence from a value. The
 chip words and every `stageDetails` field come from the agent job row; the curated counts and the
 chain outcome come from the terminal notification the chain wrote; and the skipped fact comes from
-the run's own completed-run handoff, the same document the enqueue skip reads. A field none of those
-three recorded is simply absent from the answer — never a zero, and never a word invented to fill
-the slot.
+the run's own completed-run handoff, the same document the enqueue skip reads, or, for `no-verdict`,
+from the run's runs.db row and event log. A field none of those recorded is simply absent from the
+answer — never a zero, and never a word invented to fill the slot.
 
 ## What is deliberately *not* renamed
 

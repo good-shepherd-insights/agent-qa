@@ -111,12 +111,14 @@ export const CurationSnapshotWithheldSchema = z.object({
  * read `pending` forever. The fact is a SIBLING of the chip words, never a fifth word: the
  * four-word vocabulary above stays closed, and a surface renders it beside the chips.
  * 2026-10-17 (444-11, D-39): renamed from the exclusion fact; every surface prints `skipped (<word>)`.
+ * 2026-10-18 (444-12, D-14): `no-verdict` is a finished row with no handoff and no logged verdict.
  */
-export type PostProcessingSkipReason = 'gate-run' | 'outcome-excluded'
+export type PostProcessingSkipReason = 'gate-run' | 'outcome-excluded' | 'no-verdict'
 
 export const POST_PROCESSING_SKIP_REASONS = [
   'gate-run',
   'outcome-excluded',
+  'no-verdict',
 ] as const satisfies readonly PostProcessingSkipReason[]
 
 export const PostProcessingSkippedSchema = z.object({
@@ -127,6 +129,7 @@ export const PostProcessingSkippedSchema = z.object({
 export const POST_PROCESSING_SKIP_REASON_WORDS: Readonly<Record<PostProcessingSkipReason, string>> = {
   'gate-run': 'gate run',
   'outcome-excluded': 'outcome-excluded',
+  'no-verdict': 'no verdict',
 }
 
 export interface PostProcessingStatus {

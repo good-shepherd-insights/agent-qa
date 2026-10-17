@@ -38,6 +38,7 @@ import type {
   RunsPostProcessingInput,
   CurationSnapshot,
   CurationSnapshotWithheldReason,
+  RunId,
   RunNotification,
 } from '@vostride/agent-qa-schema'
 
@@ -45,6 +46,7 @@ import { chainJobIdsForRun } from '../../jobs/chain-identity.js'
 import { FunctionNotBoundError } from '../spec.js'
 import type {
   ClauseVerdict,
+  FunctionDeps,
   FunctionSpec,
   PostProcessingChainState,
   PostProcessingJobRow,
@@ -120,6 +122,30 @@ export function projectPostProcessingSkipped(
   if (document?.gateRun === true) return { reason: 'gate-run' }
   if (document?.excludedFromOutcomes === true) return { reason: 'outcome-excluded' }
   return undefined
+}
+
+const IN_FLIGHT_ROW_STATUSES: ReadonlySet<string> = new Set(['running', 'pending'])
+
+/**
+ * 2026-10-18 (444-12, D-14): a run with no handoff reads `no-verdict` only when its own row is
+ * finished and its log holds no `verdict` envelope. The bus logs before it delivers, so a row the
+ * ingest finished from a verdict always has that verdict logged. A host without `readRecord`, an
+ * absent row, an unreadable log or a failed read derives nothing: absence is not a status.
+ */
+async function readNoVerdictSkipped(
+  runId: RunId,
+  deps: FunctionDeps,
+): Promise<{ reason: PostProcessingSkipReason } | undefined> {
+  const runDetail = deps.runDetail
+  if (runDetail?.readRecord === undefined) return undefined
+  try {
+    const record = await runDetail.readRecord(runId)
+    if (record === undefined || IN_FLIGHT_ROW_STATUSES.has(record.status)) return undefined
+    const events = await deps.runs.readEvents(runId, 1)
+    return events.some(event => event.type === 'verdict') ? undefined : { reason: 'no-verdict' }
+  } catch {
+    return undefined
+  }
 }
 
 /** Copy only recorded DTO facts; queue state and cancellation requests are not detail fields. */
@@ -282,8 +308,10 @@ export const runsPostProcessingSpec: FunctionSpec<RunsPostProcessingInput, PostP
     // Through the REQUIRED runs port, and with no refusal on absence. The not-found throw
     // `runs.get` and `runs.digest` raise is theirs: each NAMES a run, while a chain can
     // legitimately be polled before its handoff lands (the skip runs after the write). An
-    // absent document simply carries no skipped fact.
-    const skipped = projectPostProcessingSkipped(await deps.runs.get(input.runId))
+    // absent document carries no handoff marker; only the run's own record can say no-verdict.
+    const handoff = await deps.runs.get(input.runId)
+    const skipped = projectPostProcessingSkipped(handoff)
+      ?? (handoff === undefined ? await readNoVerdictSkipped(input.runId, deps) : undefined)
     let projected: ReturnType<typeof projectMasked>
     try {
       projected = projectMasked(state, deps.secretMask)

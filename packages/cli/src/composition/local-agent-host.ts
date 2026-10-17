@@ -1963,19 +1963,27 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
   // Bound whenever the config parses; a read before the runs database exists answers not recorded in it and opens or creates nothing.
   let projectRunDetail: ReturnType<typeof import('../commands/dashboard.js').openProjectRunDetailReader> | undefined
   const runsDbPath = input.runDetail === undefined ? projectRunsDbPath(input.configPath) : undefined
+  const openRunDetail = (dbPath: string): NonNullable<typeof projectRunDetail> | undefined => {
+    if (projectRunDetail === undefined) {
+      if (!existsSync(dbPath)) return undefined
+      // A failed open is not remembered: the next read tries again.
+      const pending = import('../commands/dashboard.js')
+        .then(({ openProjectRunDetailReader }) => openProjectRunDetailReader(dbPath))
+      projectRunDetail = pending
+      pending.catch(() => { if (projectRunDetail === pending) projectRunDetail = undefined })
+    }
+    return projectRunDetail
+  }
   const runDetail: ComposeCliLocalAgentInput['runDetail'] = input.runDetail
     ?? (runsDbPath !== undefined
       ? {
           read: async (runId) => {
-            if (projectRunDetail === undefined) {
-              if (!existsSync(runsDbPath)) return undefined
-              // A failed open is not remembered: the next read tries again.
-              const pending = import('../commands/dashboard.js')
-                .then(({ openProjectRunDetailReader }) => openProjectRunDetailReader(runsDbPath))
-              projectRunDetail = pending
-              pending.catch(() => { if (projectRunDetail === pending) projectRunDetail = undefined })
-            }
-            return (await projectRunDetail).reader.read(runId)
+            const opened = openRunDetail(runsDbPath)
+            return opened === undefined ? undefined : (await opened).reader.read(runId)
+          },
+          readRecord: async (runId) => {
+            const opened = openRunDetail(runsDbPath)
+            return opened === undefined ? undefined : (await opened).reader.readRecord(runId)
           },
         }
       : undefined)

@@ -835,6 +835,11 @@ export interface PostProcessingReaderPort {
 export interface RunDetailReaderPort {
   /** One run's projected rows, or `undefined` when the runs database holds no such run or does not exist yet. */
   read(runId: RunId): Promise<RunDetailRows | undefined>
+  /**
+   * 2026-10-18 (444-12, D-14): the run's own row status, or `undefined` when no row is recorded.
+   * Optional: a host without it derives no `no-verdict` fact, because absence is not a status.
+   */
+  readRecord?(runId: RunId): Promise<{ status: string } | undefined>
 }
 
 /**

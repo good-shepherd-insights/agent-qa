@@ -14,7 +14,7 @@ const legacy = { runId: 'skipped-fixture', chips: { analysis: 'pending', curatio
 
 describe('EXCLUSION-SCHEMA-ROUNDTRIP', () => {
   test('round-trips each reason beside the untouched chip words', () => {
-    for (const reason of ['gate-run', 'outcome-excluded']) {
+    for (const reason of ['gate-run', 'outcome-excluded', 'no-verdict']) {
       const payload = { ...legacy, skipped: { reason } }
       const parsed = PostProcessingStatusSchema.safeParse(payload)
       expect(parsed.success).toBe(true)
@@ -42,8 +42,8 @@ describe('EXCLUSION-SCHEMA-ROUNDTRIP', () => {
 
 describe('C425-EXCLUSION-REASONS-EXACT', () => {
   test('pins the reason list to an independent exact vocabulary through both barrels', () => {
-    expect(POST_PROCESSING_SKIP_REASONS).toEqual(['gate-run', 'outcome-excluded'])
-    expect(POST_PROCESSING_SKIP_REASONS).toHaveLength(2)
+    expect(POST_PROCESSING_SKIP_REASONS).toEqual(['gate-run', 'outcome-excluded', 'no-verdict'])
+    expect(POST_PROCESSING_SKIP_REASONS).toHaveLength(3)
     expect(notification.POST_PROCESSING_SKIP_REASONS).toBe(POST_PROCESSING_SKIP_REASONS)
     expect(notification.PostProcessingSkippedSchema).toBe(PostProcessingSkippedSchema)
     expect(notification.POST_PROCESSING_SKIP_REASON_WORDS).toBe(POST_PROCESSING_SKIP_REASON_WORDS)
@@ -51,6 +51,7 @@ describe('C425-EXCLUSION-REASONS-EXACT', () => {
     expect(POST_PROCESSING_SKIP_REASON_WORDS).toEqual({
       'gate-run': 'gate run',
       'outcome-excluded': 'outcome-excluded',
+      'no-verdict': 'no verdict',
     })
   })
 
@@ -59,8 +60,8 @@ describe('C425-EXCLUSION-REASONS-EXACT', () => {
     expect(POST_PROCESSING_CHIP_STATUSES).toHaveLength(4)
   })
 
-  test('accepts each hand-spelled reason and rejects a third reason or an extra key', () => {
-    for (const reason of ['gate-run', 'outcome-excluded']) {
+  test('accepts each hand-spelled reason and rejects an unknown reason or an extra key', () => {
+    for (const reason of ['gate-run', 'outcome-excluded', 'no-verdict']) {
       expect(PostProcessingSkippedSchema.safeParse({ reason }).success).toBe(true)
     }
     expect(PostProcessingSkippedSchema.safeParse({ reason: 'excluded' }).success).toBe(false)

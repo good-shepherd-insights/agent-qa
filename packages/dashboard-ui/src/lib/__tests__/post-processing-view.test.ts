@@ -482,6 +482,10 @@ const SKIPPED_SENTENCES = {
     analysis: 'Analysis skipped — runs excluded from outcomes are not analysed',
     curation: 'Curation skipped — runs excluded from outcomes are not curated',
   },
+  'no-verdict': {
+    analysis: 'Analysis skipped — the run ended before it reached a verdict',
+    curation: 'Curation skipped — the run ended before it reached a verdict',
+  },
 } as const
 
 describe('C444-STAGE-SKIPPED', () => {

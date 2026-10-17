@@ -19,15 +19,15 @@ type ExactlyEqual<A, B> =
 
 // Independent literal union; the never-bar fails to compile the moment either side grows.
 describe('C425-EXCLUSION-REASONS-EXACT', () => {
-  test('pins exactly two skip reasons in both directions through both barrels', () => {
+  test('pins exactly three skip reasons in both directions through both barrels', () => {
     const listMatchesUnion: ExactlyEqual<
       (typeof POST_PROCESSING_SKIP_REASONS)[number],
       PostProcessingSkipReason
     > = true
     expectTypeOf(listMatchesUnion).toEqualTypeOf<true>()
-    expectTypeOf<PostProcessingSkipReason>().toEqualTypeOf<'gate-run' | 'outcome-excluded'>()
+    expectTypeOf<PostProcessingSkipReason>().toEqualTypeOf<'gate-run' | 'outcome-excluded' | 'no-verdict'>()
     expectTypeOf<(typeof POST_PROCESSING_SKIP_REASONS)[number]>().toEqualTypeOf<
-      'gate-run' | 'outcome-excluded'
+      'gate-run' | 'outcome-excluded' | 'no-verdict'
     >()
     expectTypeOf<
       Exclude<PostProcessingSkipReason, (typeof POST_PROCESSING_SKIP_REASONS)[number]>
@@ -39,14 +39,14 @@ describe('C425-EXCLUSION-REASONS-EXACT', () => {
       PostProcessingSkipReason
     >()
     expectTypeOf<z.infer<typeof PostProcessingSkippedSchema>>().toEqualTypeOf<{
-      reason: 'gate-run' | 'outcome-excluded'
+      reason: 'gate-run' | 'outcome-excluded' | 'no-verdict'
     }>()
   })
 
-  test('refuses a third reason at the type boundary', () => {
-    // @ts-expect-error a third reason is not a member of the closed skip set
-    const third: PostProcessingSkipReason = 'excluded'
-    expectTypeOf(third).toEqualTypeOf<PostProcessingSkipReason>()
+  test('refuses an unknown reason at the type boundary', () => {
+    // @ts-expect-error an unknown reason is not a member of the closed skip set
+    const invented: PostProcessingSkipReason = 'excluded'
+    expectTypeOf(invented).toEqualTypeOf<PostProcessingSkipReason>()
     expectTypeOf<Extract<PostProcessingSkipReason, 'excluded'>>().toEqualTypeOf<never>()
   })
 
