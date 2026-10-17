@@ -269,10 +269,15 @@ export function startRun(config: RunConfig): RunSession {
       const quarantineMarker = quarantined ? (true as const) : undefined
 
       // Run aborted (cancel or budget) — skip the rest without invoking the executor (D-03).
+      // 2026-10-17 (444-08, D-34): published like the fail-fast skip, so every surface lists it.
       if (runController.signal.aborted) {
-        outcomeSlots[i] = skippedPerTestOutcome(member, testIndex, quarantineMarker)
+        const skip = skippedPerTestOutcome(member, testIndex, quarantineMarker)
+        outcomeSlots[i] = skip
         memberOutcomeSlots[i] = 'skipped'
         memberQuarantinedSlots[i] = quarantined
+        bus.publish('testFinished', projectTestFinished(skip, mask, {
+          recording: { state: 'absent', reason: 'not-captured' },
+        }))
         return
       }
 

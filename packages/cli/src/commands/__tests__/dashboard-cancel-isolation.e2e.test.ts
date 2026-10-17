@@ -244,10 +244,11 @@ describe('cancelling one of two concurrently executing dashboard runs (401 UAT 1
       // ---- (6) THE CANCELLED RUN'S LOG IS TRUNCATED, NOT MERELY PRESENT ----------------------
       //
       // Both runs ran the SAME two-member suite, and both `runStarted` envelopes promise two
-      // members. The cancelled run's log carries ONE member's events and stops; the survivor's
+      // members. The cancelled run's log carries ONE member's run and stops; the survivor's
       // carries the member-0 failure, the `runWarning` that failure raised, and member 1's
       // fail-fast `testFinished`. Every event the cancelled run is missing is work the survivor
       // did — which is the claim, stated as a subset rather than as "both logs are non-empty".
+      // 2026-10-17 (444-08, D-34): the member the cancel skipped is published as `skipped`.
       //
       // 2026-08-26 (404 D-06): the run's log now continues PAST `runFinished`. This door drains
       // its own post-processing chain in-process, so the chip envelopes the drain emits land in
@@ -257,7 +258,9 @@ describe('cancelling one of two concurrently executing dashboard runs (401 UAT 1
       // `runFinished`) and the post-processing tail is asserted separately as what it is.
       const cancelledTypes = runScopedTypes(fixture, cancelled)
       const survivorTypes = runScopedTypes(fixture, survivor)
-      expect(cancelledTypes).toEqual(['runStarted', 'testStarted', 'testFinished', 'verdict', 'runFinished'])
+      expect(cancelledTypes).toEqual([
+        'runStarted', 'testStarted', 'testFinished', 'testFinished', 'verdict', 'runFinished',
+      ])
       expect(survivorTypes).toEqual([
         'runStarted', 'testStarted', 'runWarning', 'testFinished', 'testFinished', 'verdict', 'runFinished',
       ])
@@ -279,14 +282,16 @@ describe('cancelling one of two concurrently executing dashboard runs (401 UAT 1
         expect(started.payload!['memberTestCount']).toBe(2)
       }
       // Named, so a regression that swapped one event type for another cannot pass on length.
-      expect(cancelledTypes.filter((type) => type === 'testFinished')).toHaveLength(1)
+      expect(cancelledTypes.filter((type) => type === 'testFinished')).toHaveLength(2)
       expect(survivorTypes.filter((type) => type === 'testFinished')).toHaveLength(2)
       expect(cancelledTypes).not.toContain('runWarning')
       const cancelledEvents = loggedEnvelopes(fixture, cancelled)
       const survivorEvents = loggedEnvelopes(fixture, survivor)
       expect(cancelledEvents.find((event) => event.type === 'verdict')!.payload!['verdict']).toBe('cancelled')
       expect(survivorEvents.find((event) => event.type === 'verdict')!.payload!['verdict']).toBe('failed')
-      expect(cancelledEvents.find((event) => event.type === 'testFinished')!.payload!['outcome']).toBe('cancelled')
+      expect(
+        cancelledEvents.filter((event) => event.type === 'testFinished').map((event) => event.payload!['outcome']),
+      ).toEqual(['cancelled', 'skipped'])
       // The survivor's own failure is the browser stand-in it was allowed to reach, which is the
       // second half of "released": the member RAN and reported, rather than being unwound.
       expect(survivorEvents.find((event) => event.type === 'runWarning')!.payload!['code'])
