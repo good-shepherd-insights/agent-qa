@@ -11874,6 +11874,132 @@
       "file": "packages/cli/src/__tests__/conformance/443-debug-stdout.test.ts",
       "fullName": "C443-DEBUG-STDOUT agent-qa run on a project at debug log level still prints its Platform and Model lines",
       "origin": "443 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/reporter/__tests__/dashboard-subscriber.test.ts",
+      "fullName": "C443-RECORD-CLOSE an ingest whose artifact write fails after its claim still reports the claimed row",
+      "origin": "443 GAP-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-record-refusal.test.ts",
+      "fullName": "C443-RECORD-CLOSE an artifact write that fails right after the claim still closes the row with the verdict status",
+      "origin": "443 GAP-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-record-refusal.test.ts",
+      "fullName": "C443-RECORD-CLOSE a two-member run whose second member's write fails ends at the run's verdict status",
+      "origin": "443 GAP-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/443-claim.test.ts",
+      "fullName": "C443-RECORD-CLOSE the closing write lands the verdict status after a member status write",
+      "origin": "443 GAP-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/443-claim.test.ts",
+      "fullName": "C443-RECORD-CLOSE the closing write never touches a row another process stamped",
+      "origin": "443 GAP-D1"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-record-drive.test.ts",
+      "fullName": "C443-RECORD-FLUSH a run that rejects after its session started still finalizes its record",
+      "origin": "443 GAP-D2"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-record-drive.test.ts",
+      "fullName": "C443-RECORD-FLUSH a rejected run whose write failed leaves no running row it owns",
+      "origin": "443 GAP-D2"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-record-drive.test.ts",
+      "fullName": "C443-RECORD-RUNNER a suite whose producer resolved a BrowserStack runner records browserstack under the door's trigger",
+      "origin": "443 GAP-D3"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-record-drive.test.ts",
+      "fullName": "C443-RECORD-RUNNER a queued run keeps its routes' attributes over the producer's",
+      "origin": "443 GAP-D3"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-record-open.test.ts",
+      "fullName": "C443-RECORD-OPEN a record whose open failed refuses the same run again",
+      "origin": "443 GAP-D5"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-record-open.test.ts",
+      "fullName": "C443-RECORD-OPEN a record shares the host's handle when the two paths name one file through a symlink",
+      "origin": "443 GAP-D5"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-record-open.test.ts",
+      "fullName": "C443-RECORD-OPEN two concurrent opens of one record share one handle",
+      "origin": "443 GAP-D5"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/443-wal-retry.test.ts",
+      "fullName": "C443-WAL-BUSY a fresh open retries the WAL switch on an extended busy code",
+      "origin": "443 GAP-D5"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/443-wal-retry.test.ts",
+      "fullName": "C443-WAL-BUSY a WAL switch that fails for another reason is not retried",
+      "origin": "443 GAP-D5"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/__tests__/run-attributes.test.ts",
+      "fullName": "C443-DEAD-SURFACE the internal attribute builder takes no gate-run option",
+      "origin": "443 GAP-D6"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-record-open.test.ts",
+      "fullName": "C443-DEAD-SURFACE a run record has no incomplete reader",
+      "origin": "443 GAP-D6"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/443-fresh-open.test.ts",
+      "fullName": "C443-FRESH-BUILD a dist older than its source is refused with a rebuild instruction",
+      "origin": "443 GAP-D4"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/443-fresh-open.test.ts",
+      "fullName": "C443-FRESH-BUILD the dashboard and core builds these cells import are current",
+      "origin": "443 GAP-D4"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/__tests__/runs-table.test.tsx",
+      "fullName": "C443-VERIFY-BADGE the Verify run badge explains itself and takes keyboard focus",
+      "origin": "443 GAP-D7"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/__tests__/runs-table.test.tsx",
+      "fullName": "C443-VERIFY-BADGE the attributes cell does not list the gate-run mark again",
+      "origin": "443 GAP-D7"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/__tests__/runs-table.test.tsx",
+      "fullName": "C443-VERIFY-BADGE the badge lines up with the first line of a wrapped name",
+      "origin": "443 GAP-D7"
     }
   ]
 }
