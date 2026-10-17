@@ -222,7 +222,7 @@ describe('C443-OWN-FINALIZE', () => {
     const own = handleFor(SELF)
     const other = handleFor(OTHER)
     const endedAt = '2026-10-17T00:10:00.000Z'
-    const statuses = ['passed', 'failed', 'skipped', 'cancelled'] as const
+    const statuses = ['passed', 'healed', 'failed', 'timeout', 'cancelled'] as const
     for (const status of statuses) {
       const id = `r_final_${status}`
       expect(own.claimRunningRow(id, claimFields())).toBe(true)

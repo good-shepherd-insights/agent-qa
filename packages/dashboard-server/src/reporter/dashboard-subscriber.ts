@@ -10,12 +10,15 @@ import type {
   RunArtifactTestSourceSnapshot,
   RunArtifactTestsSourceSnapshot,
   RunEventEnvelope,
+  RunFinishedPayload,
+  RunStatus,
   StepFinalizedPayload,
   StepStartedPayload,
   SubActionRecordedPayload,
   TestFinishedPayload,
   TestRetryScheduledPayload,
   TestStartedPayload,
+  VerdictPayload,
 } from '@vostride/agent-qa-schema'
 import type { DashboardDatabase } from '../db/database.js'
 import { runRowIdentity, type RunIdentityMember } from './run-row-identity.js'
@@ -46,8 +49,8 @@ import { runRowIdentity, type RunIdentityMember } from './run-row-identity.js'
  * (D-18: a thin member whose stream begins with a terminal event still gets a row), `run_steps`
  * carrying the WHOLE `stepFinalized` payload with `status` stored as the payload's own word, and
  * `run_sub_actions` carrying the whole `subActionRecorded` payload with its nested objects
- * stringified verbatim. `toRunStatus` survives for exactly one job — the `runs.status` CHECK
- * constraint — and is applied nowhere else (D-01: no field is re-interpreted on the way in).
+ * stringified verbatim (D-01: no field is re-interpreted on the way in). Since runs.db v6 (444-04,
+ * D-03) the run row stores the verdict's own word too.
  *
  * `testRetryScheduled` now drops only THAT HANDLE's rows (D-17). It used to call the v1
  * whole-run step delete, which wiped every step of the RUN — so in a suite, one member's
@@ -130,17 +133,6 @@ export interface DashboardRunIngest {
 // other six could not be written even in principle, and nothing could tell you that by reading the
 // arm. The arms below take the SCHEMA'S OWN payload types, so a payload that grows a field is a
 // compile error here rather than a silent hole in the page.
-//
-// The two below survive because they are genuinely narrow reads of one word each off a terminal
-// envelope, and neither feeds a projection row.
-
-interface VerdictLike {
-  verdict?: string
-}
-
-interface RunFinishedLike {
-  aggregateVerdict?: string
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -155,31 +147,6 @@ function samePath(memberPath: string, snapshotPath: string | undefined): boolean
   const member = memberPath.replace(/\\/g, '/')
   const snapshot = snapshotPath.replace(/\\/g, '/')
   return member === snapshot || snapshot.endsWith(`/${member}`) || member.endsWith(`/${snapshot}`)
-}
-
-/**
- * Map a member/aggregate outcome to a value the `runs.status` CHECK constraint accepts
- * (`passed|failed|skipped|running|cancelled|pending|flaky`). `healed` runs are `passed`
- * at the run level (the healed marker lives on the step row); `timeout` collapses to
- * `failed`. The `steps.status` CHECK is a superset that keeps `healed`, so step rows
- * carry the projection value verbatim.
- */
-function toRunStatus(outcome: string | undefined): string {
-  switch (outcome) {
-    case 'passed':
-      return 'passed'
-    case 'healed':
-      return 'passed'
-    case 'failed':
-    case 'timeout':
-      return 'failed'
-    case 'cancelled':
-      return 'cancelled'
-    case 'skipped':
-      return 'skipped'
-    default:
-      return 'failed'
-  }
 }
 
 export function createDashboardRunIngest(deps: DashboardRunIngestDeps): DashboardRunIngest {
@@ -480,7 +447,7 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
   /**
    * 405 D-01: the WHOLE `StepFinalizedPayload`, passed through verbatim.
    *
-   * `status` IS THE PAYLOAD'S OWN WORD and never `toRunStatus(...)`. A step that healed is
+   * `status` IS THE PAYLOAD'S OWN WORD. A step that healed is
    * `healed` on its row; collapsing it to `passed` here is precisely the re-interpretation D-01
    * forbids, and the reason the v1 row could not tell a reader that a step self-healed.
    *
@@ -612,15 +579,14 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
     }
   }
 
-  function handleRunFinished(aggregateVerdict?: string): void {
+  function handleRunFinished(aggregateVerdict: RunStatus): void {
     // The aggregate verdict is authoritative at the run level, and the run's runtime is staged
     // once here (444-02). The PRIMARY run_artifact is deliberately left open — finalize() lands
     // any out-of-band runtime section and finalizes last (Pitfall 6 flush idiom).
     if (!runId) return
-    const status = toRunStatus(aggregateVerdict)
     const endedAt = now()
-    db.updateRun(runId, { status, endedAt })
-    stageRuntime(runId, { status, duration: runDuration(), endedAt })
+    db.updateRun(runId, { status: aggregateVerdict, endedAt })
+    stageRuntime(runId, { status: aggregateVerdict, duration: runDuration(), endedAt })
   }
 
   return {
@@ -656,13 +622,13 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
           // aggregate verdict is its status; `runFinished` re-states it and performs the sweep.
           if (runId) {
             db.updateRun(runId, {
-              status: toRunStatus((envelope.payload as VerdictLike).verdict),
+              status: (envelope.payload as VerdictPayload).verdict,
               endedAt: now(),
             })
           }
           break
         case 'runFinished':
-          handleRunFinished((envelope.payload as RunFinishedLike).aggregateVerdict)
+          handleRunFinished((envelope.payload as RunFinishedPayload).aggregateVerdict)
           break
         default:
           // Unknown/unhandled envelope types (hookStarted, heartbeats, chips) are ignored.

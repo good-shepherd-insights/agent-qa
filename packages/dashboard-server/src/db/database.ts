@@ -32,6 +32,7 @@ import {
   type RunArtifactKind,
   type RunArtifactPayload,
   type RunArtifactStageInput,
+  type RunStatus,
 } from '@vostride/agent-qa-schema'
 
 const DASHBOARD_DB_PATH_FALLBACK = DEFAULT_AGENT_QA_RUNS_DB_PATH || '.agent-qa/runs.db'
@@ -1096,7 +1097,7 @@ export class DashboardDatabase {
 
   // 2026-10-16 (442-01, D-04): one compare-and-set on the stamped owner; never read-then-write.
   finalizeOwnRun(id: string, updates: {
-    status: 'passed' | 'failed' | 'skipped' | 'cancelled'
+    status: RunStatus
     endedAt: string
     duration?: number
     failureSummary?: string
@@ -1119,10 +1120,10 @@ export class DashboardDatabase {
     return true
   }
 
-  // 2026-10-17 (443-13, GAP-D1): no status condition, because a member's status write already
+  // 2026-10-17 (443-13, GAP-D1; 444-04): no status condition, because the verdict may already have
   // moved the row off running; the owner columns alone decide whose row it is.
   closeOwnRun(id: string, updates: {
-    status: 'passed' | 'failed' | 'skipped' | 'cancelled'
+    status: RunStatus
     endedAt: string
   }): boolean {
     const stamp = this.ownStamps.get(id) ?? this.readOwnStamp()

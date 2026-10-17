@@ -23,7 +23,10 @@ import type {
   ModelCapabilities,
   QuarantineAppliedEntry,
   RunEventEnvelope,
+  RunFinishedPayload,
   RunSession,
+  RunStatus,
+  VerdictPayload,
 } from '@vostride/agent-qa-schema'
 import type { DashboardDatabase, RunIdentityMember } from '@vostride/agent-qa-dashboard'
 import type { SecretStore, SecretRedactor, SecretRedactorPort, HookDefinition, NonActionToolMap, SandboxRunnerOptions } from '@vostride/agent-qa-runner'
@@ -926,12 +929,6 @@ function namesOneRunsDb(a: string, b: string): boolean {
   }
 }
 
-function finalRunStatus(verdict: string | undefined): 'passed' | 'failed' | 'skipped' | 'cancelled' {
-  if (verdict === 'passed' || verdict === 'healed') return 'passed'
-  if (verdict === 'skipped' || verdict === 'cancelled') return verdict
-  return 'failed'
-}
-
 export function createRunRecord(input: {
   readonly attributes: RunAttributes
   readonly host?: RunRecordHostBinding
@@ -1036,14 +1033,14 @@ export function createRunRecord(input: {
       const handle = db
       let stopped = false
       let flushed = false
-      let verdict: string | undefined
+      let verdict: RunStatus | undefined
       const stop = (reason: string): void => {
         stopped = true
         incompleteReason ??= reason
       }
       return {
         handler(envelope) {
-          const payload = envelope.payload as { verdict?: unknown; aggregateVerdict?: unknown } | undefined
+          const payload = envelope.payload as Partial<VerdictPayload & RunFinishedPayload> | undefined
           if (envelope.type === 'verdict' && typeof payload?.verdict === 'string') verdict = payload.verdict
           if (envelope.type === 'runFinished' && typeof payload?.aggregateVerdict === 'string') {
             verdict = payload.aggregateVerdict
@@ -1075,7 +1072,7 @@ export function createRunRecord(input: {
           // 2026-10-17 (443-05, D-27): the verdict stands; the run's own row is closed once, best effort.
           if (ownRow !== undefined) {
             try {
-              handle.closeOwnRun(runId, { status: finalRunStatus(verdict), endedAt: new Date().toISOString() })
+              handle.closeOwnRun(runId, { status: verdict ?? 'failed', endedAt: new Date().toISOString() })
             } catch {
               // The warning below already says the record is incomplete.
             }

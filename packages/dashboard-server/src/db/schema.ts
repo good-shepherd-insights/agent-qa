@@ -29,7 +29,8 @@
 // the insights page — D-20's verdict, measured, not assumed), and the construction-data columns on
 // `runs` that the queue and the settle path write.
 // 2026-10-16 (442-01, D-03): v5 adds the run owner; v3 and v4 files are refused, never upgraded.
-export const SCHEMA_VERSION = 5
+// 2026-10-17 (444-04, D-03): v6 stores the verdict's own word; v5 files are refused by name.
+export const SCHEMA_VERSION = 6
 
 export interface DashboardMigration {
   version: number
@@ -38,13 +39,13 @@ export interface DashboardMigration {
 
 export const MIGRATIONS: DashboardMigration[] = [
   {
-    version: 5,
+    version: 6,
     sql: [
       `CREATE TABLE IF NOT EXISTS runs (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         file_path TEXT,
-        status TEXT NOT NULL CHECK(status IN ('passed','failed','skipped','running','cancelled','pending','flaky')),
+        status TEXT NOT NULL CHECK(status IN ('pending','running','passed','healed','failed','timeout','cancelled')),
         priority INTEGER NOT NULL DEFAULT 0,
         duration INTEGER NOT NULL DEFAULT 0,
         attributes TEXT NOT NULL DEFAULT '{}',
