@@ -1092,6 +1092,21 @@ export function createRunRecord(input: {
   }
 }
 
+// 2026-10-17 (444-08, D-30): only a forced exit closes a row, and only this process's still-running one.
+export function closeOwnRowAtForcedExit(record: RunRecord): void {
+  const id = record.ownRowId()
+  if (record.db === undefined || id === undefined) return
+  try {
+    record.db.finalizeOwnRun(id, {
+      status: 'cancelled',
+      endedAt: new Date().toISOString(),
+      failureSummary: 'The run was stopped before it reached a verdict.',
+    })
+  } catch {
+    // The process is exiting; a wedged runs.db must not stop it.
+  }
+}
+
 async function maybePrintPostRunUpdateNotice(context: AgentQaUpdateNoticeContext): Promise<void> {
   try {
     if (!shouldPrintAgentQaUpdateNotice(context)) return
@@ -1977,12 +1992,9 @@ async function executeSuites(
     ),
     warn: (line) => console.warn(pc.yellow(line)),
   })
-  // 2026-10-16 (442-03, D-05): the first signal cancels the row this process's ingest wrote, only.
-  const finalizeOwnRun = () => {
-    const ownRowId = record.ownRowId()
-    if (record.db === undefined || ownRowId === undefined) return
-    const endedAt = new Date().toISOString()
-    record.db.finalizeOwnRun(ownRowId, { status: 'cancelled', endedAt })
+  const forceExit = (code: number): never => {
+    closeOwnRowAtForcedExit(record)
+    process.exit(code)
   }
 
   // RUNX-02 / D1: route both signals through the controller so a SECOND Ctrl+C HARD force-exits
@@ -1993,15 +2005,14 @@ async function executeSuites(
       curationAbortController.abort()
       try { activeRunSession?.cancel() } catch { /* cancel is best-effort */ }
     },
-    exit: (code) => process.exit(code),
+    exit: forceExit,
     setExitCode: (code) => { shutdownRequested = true; process.exitCode = frozenExitCode ?? code },
     armGrace: () => {
       if (frozenExitCode !== undefined) return
-      const grace = setTimeout(() => process.exit(130), cancelGraceMs())
+      const grace = setTimeout(() => forceExit(130), cancelGraceMs())
       grace.unref?.()
       graceTimer = grace
     },
-    finalizeOwnRun,
   })
 
   // `on`, not `once`, so a repeated Ctrl+C reaches the controller's hard force-exit path.
@@ -5027,24 +5038,22 @@ export function createRunCommand(): Command {
         // RUNX-02 / D1: route both signals through the controller so a SECOND Ctrl+C HARD force-exits
         // (130) immediately, independent of the grace timer and of any wedged async `done`. The
         // grace-timer arming/unref/clear stays inline here so the 361-13 backstop anchors hold.
+        const forceExit = (code: number): never => {
+          closeOwnRowAtForcedExit(record)
+          process.exit(code)
+        }
         const shutdownController = createShutdownController({
           cancel: () => {
             curationAbortController.abort()
             try { activeRunSession?.cancel() } catch { /* cancel is best-effort */ }
           },
-          exit: (code) => process.exit(code),
+          exit: forceExit,
           setExitCode: (code) => { shutdownRequested = true; process.exitCode = frozenExitCode ?? code },
           armGrace: () => {
             if (frozenExitCode !== undefined) return
-            const grace = setTimeout(() => process.exit(130), cancelGraceMs())
+            const grace = setTimeout(() => forceExit(130), cancelGraceMs())
             grace.unref?.()
             graceTimer = grace
-          },
-          finalizeOwnRun: () => {
-            const ownRowId = record.ownRowId()
-            if (record.db === undefined || ownRowId === undefined) return
-            const endedAt = new Date().toISOString()
-            record.db.finalizeOwnRun(ownRowId, { status: 'cancelled', endedAt })
           },
         })
         // `on`, not `once`, so a repeated Ctrl+C reaches the controller's hard force-exit path.

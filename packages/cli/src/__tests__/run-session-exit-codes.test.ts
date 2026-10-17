@@ -168,8 +168,10 @@ describe('the suite path runs inside runSafetyScope and masks with its own redac
 // genuinely un-settleable run still exits 130 (live Ctrl+C can never hang) and a clean completion
 // never leaks the timer. Source-anchored per this file's convention.
 describe('both handleShutdown paths arm + clear a bounded force-exit backstop (SESSION-04)', () => {
+  // 2026-10-17 (444-08, D-30): the timer exits through forceExit, which closes this process's own
+  // still-running row first.
   it('arms a bounded process.exit(130) grace timer in both handleShutdown sites', () => {
-    expect(count(runSource, 'setTimeout(() => process.exit(130), cancelGraceMs())')).toBe(2)
+    expect(count(runSource, 'setTimeout(() => forceExit(130), cancelGraceMs())')).toBe(2)
   })
 
   it('unrefs the grace timer in both sites so it never keeps the loop alive on its own', () => {

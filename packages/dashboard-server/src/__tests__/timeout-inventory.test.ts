@@ -159,11 +159,11 @@ const timeoutInventory: TimeoutInventoryEntry[] = [
     id: 'cli-session04-cancel-force-exit-code',
     file: 'packages/cli/src/commands/run.ts',
     literal: '130',
-    contextIncludes: 'process.exit(130)',
+    contextIncludes: 'forceExit(130)',
     owner: 'CLI run shutdown',
     scope: 'SESSION-04 force-exit backstop exit code',
     lifecycleAffecting: true,
-    rationale: 'The SIGINT (130) exit code the bounded grace timer forces so a genuinely un-settleable run still exits; armed in both handleShutdown sites and cleared after session.done.',
+    rationale: 'The SIGINT (130) exit code the bounded grace timer forces so a genuinely un-settleable run still exits; armed in both handleShutdown sites and cleared after session.done. Since 444-08 the timer exits through forceExit, which first closes this process\'s own still-running row.',
     allowed: true,
   },
   {

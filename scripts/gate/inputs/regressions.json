@@ -10012,7 +10012,7 @@
     {
       "runner": "vitest",
       "file": "packages/cli/src/commands/__tests__/shutdown-controller.test.ts",
-      "fullName": "C442-OWN-RUN-ONLY the shutdown controller finalizes this process's own run once, on the first signal",
+      "fullName": "C442-OWN-RUN-ONLY the shutdown controller cancels this process's own run once, on the first signal",
       "origin": "442 D-05"
     },
     {

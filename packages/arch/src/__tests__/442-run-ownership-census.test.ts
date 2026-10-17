@@ -11,7 +11,9 @@
  *
  *   cli/src/commands/run.ts, the suite's        every running suite row marked cancelled on the
  *   first-signal sweep                          first signal -> the own-row finalizer on the id the
- *                                               suite ingest reported (442-03)
+ *                                               suite ingest reported (442-03) -> no write on the
+ *                                               first signal; a forced exit closes only its own
+ *                                               still-running row (444-08)
  *                                               [C442-NO-RUNNING-SWEEP]
  *   cli/src/commands/run.ts, the action's       every running row marked failed or cancelled, each
  *   crash catch                                 id printed -> one compare-and-set on the own row
@@ -265,15 +267,13 @@ const w = (file: string, call: string, classification: Classification, why: stri
   ({ file, call, classification, why })
 
 const WRITERS: readonly Writer[] = [
-  w(RUN_TS, 'finalizeOwnRun', 'own', 'suite first signal, the id its ingest reported'),
-  w(RUN_TS, 'finalizeOwnRun', 'own', 'direct first signal, the id its ingest reported'),
+  w(RUN_TS, 'finalizeOwnRun', 'own', 'forced exit, only the running row this process claimed'),
   w(RUN_TS, 'finalizeOwnRun', 'own', 'crash catch, its own row only'),
   w(RUN_TS, 'closeOwnRun', 'own', 'record flush, the row its own claim stamped, after a failed write'),
   w(RUN_TS, 'finalizeRunArtifact', 'own', 'crash catch, only after its own CAS wrote'),
   w(RUN_TS, 'finalizeRunArtifact', 'own', 'direct parse-error validation row'),
   w(RUN_TS, 'insertRun', 'own', "suite preparation failure, under the run's own id"),
   w(RUN_TS, 'insertRun', 'own', 'direct parse-error validation row'),
-  w(SHUTDOWN, 'finalizeOwnRun', 'own', 'first-signal dep, bound by run.ts to its own row'),
   w(SUBSCRIBER, 'updateRun', 'own', 'runFinished aggregate verdict'),
   w(SUBSCRIBER, 'updateRun', 'own', 'verdict envelope'),
   w(SUBSCRIBER, 'claimRunningRow', 'own', 'ingest claims its own run row'),
@@ -289,7 +289,7 @@ const WRITERS: readonly Writer[] = [
   w(JOB_QUEUE, 'finalizeOrphanRun', 'orphan', 'cancel of a running row whose owner is gone'),
   w(DATABASE, 'finalizeRunArtifact', 'orphan', 'inside finalizeOrphanRun, after its CAS wrote'),
 ]
-const WRITER_FLOOR = 23
+const WRITER_FLOOR = 21
 
 function argumentOf(text: string, open: number): string {
   let depth = 0
@@ -339,7 +339,7 @@ describe('C442-CENSUS — no path finalizes runs it does not own (442 D-05)', ()
     const files = scanned(REGIONS)
     for (const file of GUARDED) expect(files, `${file} is not scanned`).toContain(file)
     expect(memberCalls(code(RUN_TS), 'finalizeOwnRun'), `${RUN_TS} no longer finalizes its own row`)
-      .toBeGreaterThanOrEqual(3)
+      .toBeGreaterThanOrEqual(2)
     expect(memberCalls(code(SERVER), 'listRunningRunOwners'), `${SERVER} classifies no owner`).toBe(1)
     expect(memberCalls(code(SERVER), 'finalizeOrphanRun'), `${SERVER} no longer finalizes orphans`)
       .toBe(1)
