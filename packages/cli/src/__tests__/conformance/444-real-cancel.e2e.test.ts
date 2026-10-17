@@ -7,16 +7,20 @@
 // model client's own request timeout is far beyond the settle wait, so a cancel that does nothing
 // fails the leg.
 
+import { spawn } from 'node:child_process'
+import type { ChildProcess } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { ServerResponse } from 'node:http'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 import { resolveDashboardDbPath } from '@vostride/agent-qa-dashboard'
+import { generateRunId } from '@vostride/agent-qa-ids'
 import { afterAll, afterEach, describe, expect, it } from 'vitest'
 
 import {
   openDashboardScene,
+  printedRunIds,
   refuseWithoutRecordingTools,
   runStoreEvents,
   type DashboardScene,
@@ -33,13 +37,15 @@ import {
   type PopulatedRunProject,
   type StubModelServer,
 } from './populated-run-fixture.js'
-import { cleanupTempRoots } from './spawned-chat.js'
+import { CLI_ENTRY, cleanupTempRoots, hermeticEnv } from './spawned-chat.js'
 
 const CELL_BUDGET_MS = 300_000
 const HOLD_BUDGET_MS = 120_000
 const SETTLE_BUDGET_MS = 60_000
 const BROWSER_GONE_MS = 10_000
 const POLL_MS = 50
+const KILL_AFTER_MS = 90_000
+const FORCED_EXIT_SUMMARY = 'The run was stopped before it reached a verdict.'
 const HELD_STEP_RECORD = 'The run was cancelled before this step finished.'
 const HOLD_MARKER = 'once the operator lifts the hold'
 const HOLD_STEP_TEXT = `Click the ${POPULATED_BUTTON_LABEL} button ${HOLD_MARKER}.`
@@ -54,6 +60,7 @@ interface Rig {
   readonly project: PopulatedRunProject
   readonly model: StubModelServer
   readonly target: FixtureServer
+  child?: ChildProcess
 }
 
 interface Envelope {
@@ -117,6 +124,13 @@ interface DashboardFacts extends LegFacts {
   beforeSecond?: RowView
   second?: { status: number; body: unknown }
   afterSecond?: RowView
+}
+
+interface CliFacts extends LegFacts {
+  readonly signal: NodeJS.Signals
+  exit?: { code: number | null; signal: NodeJS.Signals | null }
+  printed?: boolean
+  output?: string
 }
 
 const rigs: Rig[] = []
@@ -434,8 +448,90 @@ async function driveDashboardLeg(): Promise<DashboardFacts> {
   }
 }
 
+function exited(child: ChildProcess): boolean {
+  return child.exitCode !== null || child.signalCode !== null
+}
+
+async function driveCliLeg(
+  leg: string,
+  label: string,
+  args: readonly string[],
+  signal: NodeJS.Signals,
+): Promise<CliFacts> {
+  const facts: CliFacts = { leg, signal }
+  let output = ''
+  try {
+    refuseWithoutRecordingTools()
+    refuseWithoutPosixRunLifecycle()
+    const rig = await openRig(label)
+    const runId = generateRunId()
+    facts.runId = runId
+    const child = spawn(process.execPath, [CLI_ENTRY, '--config', rig.project.configPath, ...args], {
+      cwd: rig.project.root,
+      env: {
+        ...hermeticEnv(rig.project.root),
+        ...populatedRunSpawnEnv(),
+        CI: 'true',
+        NO_COLOR: '1',
+        DO_NOT_TRACK: '1',
+        // Research Pitfall 4: the grace backstop's exit 130 can never stand in for the run's own.
+        AGENT_QA_CANCEL_GRACE_MS: '120000',
+        AGENT_QA_RUN_ID: runId,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    rig.child = child
+    child.stdout.on('data', (chunk: Buffer) => { output += chunk.toString('utf8') })
+    child.stderr.on('data', (chunk: Buffer) => { output += chunk.toString('utf8') })
+    const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((settle, fail) => {
+      child.once('error', fail)
+      child.once('close', (code, closeSignal) => { settle({ code, signal: closeSignal }) })
+    })
+    facts.reached = await untilHeld(rig.model, () => exited(child))
+    if (facts.reached !== 'held') return facts
+
+    noteCancel(facts, rig, runId)
+    facts.chromiumAtCancel = chromiumDescendants(child.pid!)
+    const watcher = watchRow(rig, runId)
+    facts.cancelledAt = Date.now()
+    child.kill(signal)
+    const kill = setTimeout(() => { child.kill('SIGKILL') }, KILL_AFTER_MS)
+    try {
+      facts.settled = await Promise.race([
+        closed.then(() => true),
+        new Promise<boolean>((settle) => { setTimeout(() => settle(false), SETTLE_BUDGET_MS) }),
+      ])
+      facts.exit = await closed
+    } finally {
+      clearTimeout(kill)
+    }
+    await noteSettled(facts, rig, runId, watcher)
+    facts.printed = printedRunIds(output).includes(runId)
+    return facts
+  } catch (error) {
+    facts.error = error instanceof Error ? error.message : String(error)
+    return facts
+  } finally {
+    facts.output = output.slice(-1_500)
+    report(facts)
+  }
+}
+
+// The CLI legs add the exit beside the verdict, never alone, and D-30: one signal stopped the run
+// and the row's `cancelled` is the verdict's, not the forced-exit close's.
+function expectCliCancelled(facts: CliFacts): void {
+  expectCancelledInPlace(facts)
+  const at = seen(facts)
+  expect(facts.exit, at).toEqual({ code: 130, signal: null })
+  expect(facts.row?.failureSummary, `the row was not closed by a forced exit\n${at}`).not.toBe(FORCED_EXIT_SUMMARY)
+  expect(facts.printed, `the run id was printed\n${at}`).toBe(true)
+}
+
 afterEach(async () => {
-  for (const rig of rigs) rig.model.held.release()
+  for (const rig of rigs) {
+    rig.model.held.release()
+    if (rig.child !== undefined && !exited(rig.child)) rig.child.kill('SIGKILL')
+  }
   for (const scene of scenes.splice(0)) await scene.close().catch(() => undefined)
   for (const rig of rigs.splice(0)) {
     await rig.model.close().catch(() => undefined)
@@ -466,5 +562,41 @@ describe('C444-REAL-CANCEL', () => {
     expect(facts.beforeSecond?.status, at).toBe('cancelled')
     expect(facts.second, at).toEqual({ status: 200, body: ALREADY_CANCELLED })
     expect(facts.afterSecond, `the second Cancel wrote nothing\n${at}`).toEqual(facts.beforeSecond)
+  }, CELL_BUDGET_MS)
+
+  it('SIGINT stops a parked direct run', async () => {
+    expectCliCancelled(await driveCliLeg(
+      'SIGINT direct',
+      '444-real-cancel-direct-sigint',
+      ['run', 'tests/populated.test.yaml'],
+      'SIGINT',
+    ))
+  }, CELL_BUDGET_MS)
+
+  it('SIGTERM stops a parked direct run', async () => {
+    expectCliCancelled(await driveCliLeg(
+      'SIGTERM direct',
+      '444-real-cancel-direct-sigterm',
+      ['run', 'tests/populated.test.yaml'],
+      'SIGTERM',
+    ))
+  }, CELL_BUDGET_MS)
+
+  it('SIGINT stops a parked suite run', async () => {
+    expectCliCancelled(await driveCliLeg(
+      'SIGINT suite',
+      '444-real-cancel-suite-sigint',
+      ['run', '--suite', 'suites/populated.suite.yaml'],
+      'SIGINT',
+    ))
+  }, CELL_BUDGET_MS)
+
+  it('SIGTERM stops a parked suite run', async () => {
+    expectCliCancelled(await driveCliLeg(
+      'SIGTERM suite',
+      '444-real-cancel-suite-sigterm',
+      ['run', '--suite', 'suites/populated.suite.yaml'],
+      'SIGTERM',
+    ))
   }, CELL_BUDGET_MS)
 })
