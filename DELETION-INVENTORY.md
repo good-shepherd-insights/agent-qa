@@ -5292,3 +5292,141 @@ The record gate runs on Phase 443's final agent-qa SHA, the commit that adds thi
 `.planning/phases/443-one-run-through-every-door/443-RECORD.md` § Final SHA names. Its legs, counts
 and verdict are recorded in that file's § Gate rather than quoted here, so no agent-qa commit
 follows the gate run.
+
+### Gap closure round 1 (443-12 to 443-18), 2026-10-17
+
+This subsection appends to the Phase 443 section; written by 443-19, which changed no earlier line.
+It follows `.planning/phases/443-one-run-through-every-door/443-VERIFICATION.md` (agent-qa
+`03a489165`, 43 of 44 truths). Its failed truth 20 is D-27's own-row close-out after a failed
+write: the record closed its own row only in the window between the artifact insert and the first
+member status write, so a write that failed right after the claim left the row `running` (review
+WR-02), and one that failed after a member had finished left the row at the member's status
+(review WR-03). The orchestrator decided the round, with the code review's WR-01 to WR-05 and
+IN-01 to IN-06 and the UI review's three badge warnings, as GAP-D1 to GAP-D8 on 2026-10-17, with
+the owner's delegation; the round's own code review (`443-REVIEW.md`, 0 critical, 1 warning, 5
+info) ran before 443-19, and its four fixes are in the range below. Every commit below is in
+agent-qa on `version-0.2` and signed. Every new cell is listed in
+`scripts/gate/inputs/regressions.json` with its `443 GAP-D<n>` origin, after the 1979 rows listed
+at `03a489165`, which are unchanged and in order (Registered gate rows, below).
+
+**How it is measured.** Baseline `03a489165` (Phase 443's first final SHA, 443-11's inventory
+commit). Closing SHA `ab17e4817` (443-19's gate list commit, the parent of this subsection's
+commit). `git -C agent-qa diff --shortstat 03a489165 ab17e4817`: 22 files changed, 1,155
+insertions, 113 deletions (under `packages/`: 21 files, +1,029/−113). `--diff-filter=D`: no file
+deleted. `--diff-filter=A`: 3 files added, every one a test file (`443-record-drive.test.ts`,
+`443-record-open.test.ts`, `443-wal-retry.test.ts`). 21 commits, every one signed (`%G?` = `G`):
+the round's tests-only RED commits (443-12 `7995fa803`, 443-14 `f0ba79dd3`, 443-15 `43b6bc0c6`,
+443-16 `6b3614e90`, 443-18 `86e563685`), its fixes and removals (443-13 `f8c438dda`,
+`c910ee7f3`; 443-14 `c768dc05e`, `cef467aa4`; 443-15 `d28a58eb9`; 443-16 `0cde406f4`,
+`83fc08836`; 443-18 `22b6405be`), 443-17's two test-harness commits (`8df542972`, `a569603ee`),
+the round review's five (`a1b702a71` RED and `79a85f252` for IN-07, `7a2c0126f` for IN-09's
+comment, `3a2d30de2` for WR-06, `e80181c1e` for IN-11) and 443-19's gate list (`ab17e4817`).
+Production files changed: `cli/src/commands/run.ts`,
+`cli/src/composition/in-process-run-execution.ts`, `core/src/run-attributes.ts`,
+`dashboard-server/src/db/database.ts`, `dashboard-server/src/reporter/dashboard-subscriber.ts`,
+`dashboard-server/src/server/routes.ts` and `dashboard-ui/src/components/runs-table.tsx`. The
+removed lines below are read from each deleting commit's diff (`git -C agent-qa show <sha>`), not
+transcribed from a summary. Line numbers are at `03a489165`.
+
+#### What was deleted
+
+| Member (file at `03a489165`) | What it did | Deleting commit | The cell that notices its return |
+|---|---|---|---|
+| `incomplete(): string \| undefined` on the `RunRecord` interface (`cli/src/commands/run.ts:887`) and its implementation `incomplete: () => incompleteReason` on the object `createRunRecord` returns (`run.ts:1057`) | exposed the record's incomplete reason to a caller; no production code called it (review IN-01). The reason stays private and still feeds the D-27 line | `0cde406f4` (443-16) | `C443-DEAD-SURFACE a run record has no incomplete reader` |
+| `buildInternalRunAttributes`' `gateRun?: true` option (`core/src/run-attributes.ts:141`) and its conditional spread `...(input.gateRun === true ? { [ATTR_GATE_RUN]: 'true' } : {})` (`:146`) | a second spelling of the gate-run mark; the record's own `{ ...own, [ATTR_GATE_RUN]: 'true' }` spread is the one production writes (IN-01) | `0cde406f4` (443-16) | `C443-DEAD-SURFACE the internal attribute builder takes no gate-run option` |
+| `export function createInProcessCliRunExecution(…)` and its doc block (`The RunExecutionPort a door composes. …`) (`cli/src/composition/in-process-run-execution.ts:711-736`), with the drive module's value imports of `createRunRecord` and `doorRunAttributes` from `../commands/run.js` (`:80-81`) | the drive module's run-execution port; no door composed it (IN-01). The drive is now called only by `agent-qa run` (twice), the shared host and the daemon | `83fc08836` (443-16) | `C443-ONE-RECORD every drive call passes a record from the one builder, and the scan saw every door` (four pinned sites; a fifth caller reds it by name); `git -C agent-qa grep -n createInProcessCliRunExecution -- packages` prints nothing |
+| the port's pins: `'createRunRecord'` and `'doorRunAttributes'` in `PINNED_RUN_TS_IMPORTS` and the dated 443-08 line above them (`cli/src/composition/__tests__/in-process-exit-census.test.ts:159-161`); the census's drive-call floor of 5 (`arch/src/__tests__/443-one-record-census.test.ts:410`, now 4, with `DRIVE_CALLS`) | counted the port as a drive caller and an importer of the builder | `83fc08836` (443-16, the pins); `6b3614e90` (443-16 RED, the floor and `DRIVE_CALLS`) | the exit census's `ROUTE 2` set-equality cell (not listed in the gate); `C443-ONE-RECORD every drive call passes a record from the one builder, and the scan saw every door` |
+| the record flush's running-only close-out call `handle.finalizeOwnRun(runId, { status: finalRunStatus(verdict), endedAt: … })` (`run.ts:1044`) | closed the run's own row only while it still read `running`, so a member's status write before the failed write turned it into a no-op (WR-03), and a row the record had not yet learned it owned was never reached (WR-02) | `c910ee7f3` (443-13), replaced by `handle.closeOwnRun(…)` with the same arguments (GR-2) | `C443-RECORD-CLOSE a two-member run whose second member's write fails ends at the run's verdict status`; `C443-RECORD-CLOSE an artifact write that fails right after the claim still closes the row with the verdict status` |
+| the `"agent-qa.gate-run"` entry of the Runs list's `INTERNAL_ATTRIBUTE_ORDER` (`dashboard-ui/src/components/runs-table.tsx:81`), and with it the mark's line in `AttributeSummary` (`:131`, the summary built from every sorted entry) | listed the mark a second time as a raw `agent-qa.gate-run=true` in the Attributes cell, its `+N more` count, its tooltip and its `aria-label`, beside the badge (UI review warning 2) | `22b6405be` (443-18); `AttributeSummary` now drops `GATE_RUN_ATTRIBUTE` after sorting, and nothing reads the order entry | `C443-VERIFY-BADGE the attributes cell does not list the gate-run mark again` |
+
+**Replaced behaviour, and what each became** (no member left; each read from its commit):
+
+| Before (file at `03a489165`) | After | Commit | The cell that pins it |
+|---|---|---|---|
+| the ingest fired `onRunCreated?.(id)` after the artifact insert and the snapshot replay (`dashboard-server/src/reporter/dashboard-subscriber.ts:277`) | fired directly after the claim succeeds, before any write that can throw (WR-02); a refused claim still fires nothing | `f8c438dda` (443-13) | `C443-RECORD-CLOSE an ingest whose artifact write fails after its claim still reports the claimed row`; `C443-CLAIM an ingest for an id another live process owns writes nothing under it` |
+| no closing write for a row a member status write had moved off `running` | `DashboardDatabase.closeOwnRun(id, { status, endedAt })`: one `UPDATE runs SET status = ?, ended_at = ? WHERE id = ? AND owner_pid = ? AND owner_incarnation IS ? AND owner_host = ?` against `this.ownStamps.get(id) ?? this.readOwnStamp()`, no status condition, the stamp dropped on success; `routes.ts` lists it in `RUN_READS_WITHOUT_ROWS` | `f8c438dda` (443-13) | `C443-RECORD-CLOSE the closing write lands the verdict status after a member status write`; `C443-RECORD-CLOSE the closing write never touches a row another process stamped`; `C442-CENSUS — no path finalizes runs it does not own (442 D-05) C442-STATUS-WRITERS-CLASSIFIED: every runs.status writer is listed with whose row it writes` |
+| the drive flushed the record only on its success path | the drive's `finally` first runs `try { await startedRecord?.flush() } catch {}`, so a run that rejects after its session started still finalizes its record and closes its own row after a failed write (WR-01); its comment was corrected by `7a2c0126f` (review IN-09) | `c768dc05e` (443-14) | `C443-RECORD-FLUSH a run that rejects after its session started still finalizes its record`; `C443-RECORD-FLUSH a rejected run whose write failed leaves no running row it owns` |
+| a row's attributes were `queued === undefined ? input.attributes : queued.attributes` (`run.ts:985`), so a suite recorded the door's `agent-qa.runner: local` whatever the producer resolved (WR-04, a 443-08 regression) | the queue's attributes win; else `RunRecordAttach.attributes` (the drive passes `produced.subscriberSeed.attributes`) with `agent-qa.trigger` taken from the door's own attributes; else the door's | `cef467aa4` (443-14) | `C443-RECORD-RUNNER a suite whose producer resolved a BrowserStack runner records browserstack under the door's trigger`; `C443-RECORD-RUNNER a queued run keeps its routes' attributes over the producer's` |
+| the record set `openedFor = runId` at the top of `open` (`run.ts:945`), before the handle opened, so a failed open left it marked open (IN-02) | set after `db = handle`; then (`79a85f252`, review IN-07) `open` keeps one in-flight open, `opening: { runId, done }`: a concurrent open of the same id joins it, another id is refused with the existing `belongs to` sentence, and a failed open clears it | `d28a58eb9` (443-15), `79a85f252` (round review) | `C443-RECORD-OPEN a record whose open failed refuses the same run again`; `C443-RECORD-OPEN two concurrent opens of one record share one handle` |
+| `host.db.dbPath === dbPath` (`run.ts:959`), a string compare that opened a second connection to the dashboard's own file under another spelling (IN-05) | `namesOneRunsDb(a, b)`: `realpathSync.native` of both, else the resolved strings | `d28a58eb9` (443-15) | `C443-RECORD-OPEN a record shares the host's handle when the two paths name one file through a symlink`; `C443-RECORD-PATH a run naming another config writes that config's runs.db` |
+| `errcode === SQLITE_BUSY` in `enableWalMode` (`dashboard-server/src/db/database.ts:409`) (IN-04) | `typeof errcode === 'number' && (errcode & 0xff) === SQLITE_BUSY`, so 261 and 517 retry within the same 5 s bound | `d28a58eb9` (443-15) | `C443-WAL-BUSY a fresh open retries the WAL switch on an extended busy code`; `C443-WAL-BUSY a WAL switch that fails for another reason is not retried` |
+| the badge `<Badge variant="secondary">Verify run</Badge>` inside an `items-center` name wrapper (`runs-table.tsx:903`, `:923`) | the `TooltipTrigger asChild` of `Started by authoring verify. Not used for learning.`, with `tabIndex={0}` and `mt-0.5`, inside an `items-start` wrapper; its condition reads `GATE_RUN_ATTRIBUTE` (UI review warnings 1 and 3) | `22b6405be` (443-18) | `C443-VERIFY-BADGE the Verify run badge explains itself and takes keyboard focus`; `C443-VERIFY-BADGE the badge lines up with the first line of a wrapped name` |
+| test harness: the fresh-open file checked only that the dashboard and core `dist` existed; the door matrix passed its preload to `NODE_OPTIONS` unquoted | `requireFreshBuild` refuses a missing or stale `dist` with `…; run pnpm build --force in agent-qa before this file` (WR-05; `--force` from `3a2d30de2`, review WR-06); `--require ${JSON.stringify(preload)}` (IN-06) | `8df542972`, `a569603ee` (443-17), `3a2d30de2` (round review) | `C443-FRESH-BUILD a dist older than its source is refused with a rebuild instruction`; `C443-FRESH-BUILD the dashboard and core builds these cells import are current`; `C443-DOOR-MATRIX the stdio MCP door's stdout stays JSON-RPC through its run` |
+
+No file was deleted and no test cell was removed. The round's 21 new cells, by area and origin:
+`C443-RECORD-CLOSE` 5 (`443 GAP-D1`), `C443-RECORD-FLUSH` 2 (`443 GAP-D2`), `C443-RECORD-RUNNER` 2
+(`443 GAP-D3`), `C443-RECORD-OPEN` 3 and `C443-WAL-BUSY` 2 (`443 GAP-D5`; the third
+`C443-RECORD-OPEN` cell is the round review's IN-07 cell), `C443-DEAD-SURFACE` 2 (`443 GAP-D6`),
+`C443-FRESH-BUILD` 2 (`443 GAP-D4`) and `C443-VERIFY-BADGE` 3 (`443 GAP-D7`).
+
+#### Registered gate rows
+
+The 1979 rows listed at `03a489165` are still listed, unchanged and in order; none was renamed,
+removed or moved. These registered cells were re-spelled under their kept names, each named in
+its plan's summary or the round review's fix report:
+- `C443-ONE-RECORD every drive call passes a record from the one builder, and the scan saw every door`
+  (443-16): `DRIVE_CALLS` is `[RUN_TS, RUN_TS, LOCAL_HOST, DAEMON_HOST]` and its floor is 4.
+- `C443-VERIFY-MARK the gate-run mark is an internal attribute with one value` (443-16, then
+  `e80181c1e` for review IN-11): it builds the marked attributes as the record does, and its first
+  assertion now passes them through `mergeRunAttributes` and `validateTrustedRunAttributes` and
+  compares the literal keys, instead of reading back the literal it had built.
+- `C442-CENSUS — no path finalizes runs it does not own (442 D-05) C442-STATUS-WRITERS-CLASSIFIED: every runs.status writer is listed with whose row it writes`
+  (443-13): `WRITER_CALL` names `closeOwnRun`, and the record flush's writer row is
+  `closeOwnRun`, `own`; `WRITER_FLOOR` stays 26.
+
+#### What was RETAINED, and why
+
+| Item | Why kept | What pins it |
+|---|---|---|
+| `subscriberSeed.attributes` on the suite producer's output (`run.ts`) | read again: the drive hands it to the record as the suite row's attributes (GAP-D3), so the row stores what the CLI prints as `Run attributes:` | `C443-RECORD-RUNNER a suite whose producer resolved a BrowserStack runner records browserstack under the door's trigger` |
+| `finalizeOwnRun` and its `status = 'running'` guard (`database.ts`) | the first-signal and crash finalizers need it: a late Ctrl+C must not mark a finished run cancelled (GR-2); only the record flush moved to `closeOwnRun`, and `run.ts` still holds at least three calls | `C443-OWN-FINALIZE the own-row finalizer writes each verdict status once`; the six `C442-OWN-RUN-ONLY` cells; `C442-CENSUS … C442-STATUS-WRITERS-CLASSIFIED` |
+| the D-27 line, `The run finished (<verdict>), but its dashboard record is incomplete: <reason>.`, word for word (GR-5), with the verdict and exit code untouched | the one line on stderr or the daemon's logger; no plan added a second reason | `C443-RECORD-INCOMPLETE a write that fails after the start leaves the verdict and says the record is incomplete`; `C443-RECORD-CLOSE a two-member run whose second member's write fails ends at the run's verdict status` |
+| `ATTR_GATE_RUN = 'agent-qa.gate-run'` and its `'true'`-only validator arm (core); `buildInternalRunAttributes` as a core export | the mark's one name (D-09); only the builder's second spelling went | `C443-VERIFY-MARK the gate-run mark is an internal attribute with one value`; `C443-VERIFY-RUN a verify run started through authoring keeps its flag and exclusion and has a marked row` |
+| `updateRun`'s stamp drop on a status write | keeping the stamp alive until close-out would grow the dashboard's long-lived handle by one stamp per run, because the normal path never reaches a close-out (GR-2) | `C443-RECORD-CLOSE the closing write lands the verdict status after a member status write` |
+| `agent-qa.gate-run` as a filterable key | the toolbar's attribute filter does not use the summary, so the key stays filterable; D-09 adds no Runs-list filter | `C443-VERIFY-MARK no filter is added` |
+
+#### What degrades, stated plainly
+
+- **A stale build fails the fresh-open file instead of passing it.** A dashboard-server or core
+  `dist` older than its newest product source now fails every `C443-FRESH-OPEN` cell and
+  `C443-FRESH-BUILD the dashboard and core builds these cells import are current` from
+  `beforeAll`. After a content-neutral source touch (an edit and its revert) a turbo cache hit
+  leaves `dist` untouched, so only `pnpm build --force` clears it, as the message says. The gate
+  builds in a fresh clone and is unaffected.
+- **The closing write can replace a `cancelled` status** this process wrote through the queue's
+  cancel or the CLI's interrupt, and it rewrites `ended_at`, but only when the record is also
+  incomplete (review IN-08, deferred to Phase 444, V2-RUN-03).
+- **A run that ends with no verdict and no failed write leaves its row `running`** under its own
+  stamp until the host exits (review IN-09's behaviour, deferred to Phase 444; latent under the
+  runner's D-13/D-17 invariant).
+- **A dashboard queue row flipped before this process read its start time** carries a NULL
+  incarnation; once a member write drops that stamp, `closeOwnRun` compares with the now-read
+  start time and writes nothing. The D-27 line still prints (GR-2's residual).
+- **A single-test BrowserStack run still records `agent-qa.runner: local`**: the direct producer
+  supplies no `subscriberSeed` (review IN-10; it predates 443, agent-qa `3e4f9fcc9`).
+- **A caller of the removed members breaks**, with no alias, shim or message naming a replacement
+  (D-01): `RunRecord.incomplete()`, `buildInternalRunAttributes({ gateRun })` and
+  `createInProcessCliRunExecution`. None had a production caller.
+
+#### Persisted values the narrowed contract governs
+
+No schema bump, no migration and no compatibility code (D-01).
+
+| Persisted value | Disposition | Evidence |
+|---|---|---|
+| `runs.status` (and `ended_at`) of a run's own row after a failed write | **The verdict's status in every window** (`healed` reads `passed`, `timeout` reads `failed`), written once by `closeOwnRun` on the owner columns, whatever a member wrote before; `ended_at` is the flush time. A row another process stamped, or a pending row, is never written. | the five `C443-RECORD-CLOSE` cells; `C443-RECORD-FLUSH a rejected run whose write failed leaves no running row it owns` |
+| a suite's `runs.attributes` | **The producer's resolved attributes** (`agent-qa.runner` among them) under the door's `agent-qa.trigger`; a queued run keeps its routes' attributes; a single-test row is unchanged. Stored values are not rewritten. | the two `C443-RECORD-RUNNER` cells |
+| `runs.attributes` key `agent-qa.gate-run` | unchanged, value `'true'` only; written only by the record's spread | `C443-VERIFY-MARK the gate-run mark is an internal attribute with one value`; `C443-DEAD-SURFACE the internal attribute builder takes no gate-run option` |
+
+#### The instruments that notice a return
+
+- **The 434 gate** must execute and pass the 21 cells above, each with its `443 GAP-D<n>` origin,
+  as well as the 1979 earlier rows.
+- **`pnpm validate:arch`** still runs `C443-ONE-RECORD` (four drive sites) and `C442-CENSUS`
+  (`closeOwnRun` classified `own`).
+
+**Gate**
+
+The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
+verdict are recorded in `.planning/phases/443-one-run-through-every-door/443-RECORD.md` § Gate and
+the SHA in § Final SHA, rather than quoted here, so no agent-qa commit follows it.
