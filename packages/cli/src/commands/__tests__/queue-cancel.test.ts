@@ -14,6 +14,8 @@ import { createQueueCommand } from '../queue.js'
 const RUN_ID = 'run-442-05'
 const REFUSAL = 'This run belongs to another agent-qa process (pid 4242). Stop it there with Ctrl+C.'
 const ORPHAN = 'The process running this run (pid 4242) ended before it finished.'
+const STOP_REQUESTED = 'Stop requested. The run will end with its own verdict.'
+const NOT_STOPPABLE = "This run can't be stopped from the dashboard. Stop it where it was started."
 
 let answer: { status: number; body: unknown }
 let asked: string[]
@@ -82,8 +84,11 @@ describe('C442-CANCEL-SENTENCE', () => {
   })
 
   it('queue cancel exits zero when the run was cancelled or finalized as an orphan', async () => {
-    const cancelled = await cancelWith(200, { cancelled: true })
-    expect(cancelled.printed).toContain(`Cancelled job ${RUN_ID}`)
+    const cancelled = await cancelWith(200, {
+      outcome: 'cancelled',
+      message: 'Run cancelled before it started.',
+    })
+    expect(cancelled.printed).toBe('Run cancelled before it started.')
     expect(cancelled.exits).toEqual([])
 
     asked = []
@@ -146,9 +151,52 @@ describe('C442-QUEUE-CANCEL-OUTPUT', () => {
 
   it('queue cancel encodes the run id in the URL', async () => {
     const odd = 'run a/b?c'
-    const result = await cancelApart(odd, 200, { cancelled: true })
+    const result = await cancelApart(odd, 202, {
+      outcome: 'stop-requested',
+      message: STOP_REQUESTED,
+    })
     expect(result.asked).toEqual(['POST /api/runs/run%20a%2Fb%3Fc/cancel'])
-    expect(result.stdout).toContain(`Cancelled job ${odd}`)
+    expect(result.stdout).toBe(STOP_REQUESTED)
     expect(result.exits).toEqual([])
+  })
+})
+
+describe('C444-CANCEL-ANSWERS', () => {
+  it('queue cancel prints a stop request and exits 0', async () => {
+    const result = await cancelApart(RUN_ID, 202, {
+      outcome: 'stop-requested',
+      message: STOP_REQUESTED,
+    })
+    expect(result.stdout).toBe(STOP_REQUESTED)
+    expect(result.stderr).toBe('')
+    expect(result.exits).toEqual([])
+  })
+
+  it("queue cancel prints a finished run's verdict and exits 0", async () => {
+    const result = await cancelApart(RUN_ID, 200, {
+      outcome: 'finished',
+      status: 'passed',
+      message: 'This run already finished: passed.',
+    })
+    expect(result.stdout).toBe('This run already finished: passed.')
+    expect(result.stderr).toBe('')
+    expect(result.exits).toEqual([])
+  })
+
+  it('queue cancel prints a not-stoppable answer to stderr and exits 1', async () => {
+    const result = await cancelApart(RUN_ID, 409, {
+      error: NOT_STOPPABLE,
+      reason: 'not-stoppable-here',
+    })
+    expect(result.stderr).toContain(NOT_STOPPABLE)
+    expect(result.stdout).toBe('')
+    expect(result.exits).toEqual([1])
+  })
+
+  it('queue cancel treats an answer with no sentence as a failure, never a cancel', async () => {
+    const result = await cancelApart(RUN_ID, 200, { cancelled: true })
+    expect(`${result.stdout}\n${result.stderr}`).toContain('Failed to cancel: Unknown error')
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain('Cancelled job')
+    expect(result.exits).toEqual([1])
   })
 })
