@@ -1,0 +1,229 @@
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
+import { fileURLToPath } from 'node:url'
+
+import { afterEach, describe, expect, it } from 'vitest'
+
+import { DashboardDatabase } from '@vostride/agent-qa-dashboard'
+import { generateRunId } from '@vostride/agent-qa-ids'
+import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
+
+import { composeRunOwnership } from '../../composition/run-owner-probe.js'
+import { createRunRecord, doorRunAttributes, type RunRecordHostBinding } from '../run.js'
+
+const NO_VERDICT = 'The run ended before it reached a verdict.'
+const RUN_SOURCE = readFileSync(fileURLToPath(new URL('../run.ts', import.meta.url)), 'utf8')
+
+const cleanups: Array<() => void> = []
+
+afterEach(() => {
+  for (const cleanup of cleanups.splice(0).reverse()) cleanup()
+})
+
+function configDir(): string {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'agent-qa-444-run-record-')))
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  mkdirSync(join(dir, '.agent-qa'), { recursive: true })
+  return dir
+}
+
+const runsDbOf = (dir: string): string => join(dir, '.agent-qa', 'runs.db')
+
+function ownDatabase(dir: string): DashboardDatabase {
+  const db = new DashboardDatabase({ dbPath: runsDbOf(dir), runOwnership: composeRunOwnership() })
+  cleanups.push(() => db.close())
+  return db
+}
+
+function failOn(real: DashboardDatabase, method: 'insertRunArtifact'): {
+  db: DashboardDatabase
+  reached: () => boolean
+} {
+  let thrown = false
+  const db = new Proxy(real, {
+    get(subject, property, receiver) {
+      const value = Reflect.get(subject, property, receiver) as unknown
+      if (property === method && typeof value === 'function') {
+        return () => {
+          thrown = true
+          throw new Error('disk I/O error')
+        }
+      }
+      return typeof value === 'function'
+        ? (value as (...rest: unknown[]) => unknown).bind(subject)
+        : value
+    },
+  })
+  return { db, reached: () => thrown }
+}
+
+async function attachedRecord(dir: string, host: RunRecordHostBinding, runId = generateRunId()) {
+  const warned: string[] = []
+  const record = createRunRecord({
+    attributes: doorRunAttributes('cli'),
+    host,
+    warn: (line) => { warned.push(line) },
+  })
+  cleanups.push(() => record.close())
+  await record.open({ runId, configDir: dir })
+  const subscriber = record.subscriber({
+    mask: (text) => text,
+    members: [{ testId: 't-a', name: 'Member A', filePath: 'tests/a.yaml' }],
+  })
+  let seq = 0
+  const send = (type: RunEventEnvelope['type'], payload: Record<string, unknown>): void => {
+    seq += 1
+    subscriber.handler({ seq, ts: seq, runId, type, payload } as RunEventEnvelope)
+  }
+  return { record, runId, send, subscriber, warned }
+}
+
+function rawRow(dbPath: string, runId: string): string {
+  const db = new DatabaseSync(dbPath)
+  try {
+    return JSON.stringify(db.prepare('SELECT * FROM runs WHERE id = ?').all(runId))
+  } finally {
+    db.close()
+  }
+}
+
+function crashCatch(): string {
+  const closeAt = RUN_SOURCE.indexOf('_crashRecord?.close()')
+  expect(closeAt, "run.ts no longer closes the crash path's record").toBeGreaterThan(-1)
+  const catchAt = RUN_SOURCE.lastIndexOf('} catch (err) {', closeAt)
+  const exitAt = RUN_SOURCE.indexOf('process.exit(2)', closeAt)
+  expect(catchAt, "the action's catch was not found").toBeGreaterThan(-1)
+  expect(exitAt, "the action's catch no longer exits 2").toBeGreaterThan(closeAt)
+  return RUN_SOURCE.slice(catchAt, exitAt + 'process.exit(2)'.length)
+}
+
+describe('C444-VERDICTLESS-CLOSE', () => {
+  it('a run that ends with no verdict closes its own row failed with the plain sentence', async () => {
+    const dir = configDir()
+    const real = ownDatabase(dir)
+    const { record, runId, send, subscriber, warned } = await attachedRecord(dir, {
+      db: real,
+      queueRun: () => undefined,
+    })
+    send('runStarted', { memberTestCount: 1 })
+    send('testStarted', { testId: 't-a', testIndex: 0, name: 'Member A', filePath: 'tests/a.yaml' })
+    expect(record.ownRowId(), 'the record claimed no row').toBe(runId)
+    expect(real.getRun(runId)?.status).toBe('running')
+    const owner = real.readRunOwner(runId)
+    expect(owner?.pid, 'the claim stamped no owner').toBe(process.pid)
+
+    await subscriber.flush()
+
+    const row = real.getRun(runId)
+    expect(row?.status).toBe('failed')
+    expect(row?.failureSummary).toBe(NO_VERDICT)
+    expect(row?.endedAt, 'the close wrote no end time').toBeTruthy()
+    expect(real.readRunOwner(runId), 'the owner columns moved').toEqual(owner)
+    expect(real.listRunningRunOwners()).toEqual([])
+    expect(warned, 'a complete record warned').toEqual([])
+  })
+
+  it('a run with a verdict is never closed by the no-verdict branch', async () => {
+    const dir = configDir()
+    const real = ownDatabase(dir)
+    const { runId, send, subscriber } = await attachedRecord(dir, { db: real, queueRun: () => undefined })
+    send('runStarted', { memberTestCount: 1 })
+    send('testStarted', { testId: 't-a', testIndex: 0, name: 'Member A', filePath: 'tests/a.yaml' })
+    send('testFinished', { testId: 't-a', testIndex: 0, outcome: 'passed', durationMs: 10 })
+    send('verdict', { verdict: 'passed' })
+    send('runFinished', { aggregateVerdict: 'passed', disposition: 'detached', finalSeq: 6 })
+
+    await subscriber.flush()
+
+    const row = real.getRun(runId)
+    expect(row?.status).toBe('passed')
+    expect(row?.failureSummary ?? undefined).toBeUndefined()
+  })
+
+  it('a row another process owns is untouched', async () => {
+    const dir = configDir()
+    const real = ownDatabase(dir)
+    const { record, runId, send, subscriber, warned } = await attachedRecord(dir, {
+      db: real,
+      queueRun: () => undefined,
+    })
+    const elsewhere = new DashboardDatabase({
+      dbPath: runsDbOf(dir),
+      runOwnership: {
+        self: { pid: 4343, incarnation: 'proc-starttime:elsewhere', host: 'elsewhere' },
+        probe: { isAlive: () => true, incarnationOf: () => undefined },
+      },
+    })
+    cleanups.push(() => elsewhere.close())
+    elsewhere.insertRun({
+      id: runId,
+      name: 'owned elsewhere',
+      status: 'running',
+      duration: 0,
+      startedAt: '2026-10-17T00:00:00.000Z',
+      endedAt: '2026-10-17T00:00:00.000Z',
+      platform: 'web',
+    })
+    const before = rawRow(runsDbOf(dir), runId)
+    send('runStarted', { memberTestCount: 1 })
+    send('testStarted', { testId: 't-a', testIndex: 0, name: 'Member A', filePath: 'tests/a.yaml' })
+    expect(record.ownRowId(), 'the record claimed a row another process owns').toBeUndefined()
+
+    await subscriber.flush()
+
+    expect(rawRow(runsDbOf(dir), runId)).toBe(before)
+    expect(real.getRun(runId)?.status).toBe('running')
+    expect(warned.length, `warnings: ${warned.join(' | ')}`).toBe(1)
+  })
+
+  it('an incomplete record with no verdict closes the same way and warns once', async () => {
+    const dir = configDir()
+    const real = ownDatabase(dir)
+    const failing = failOn(real, 'insertRunArtifact')
+    const { record, runId, send, subscriber, warned } = await attachedRecord(dir, {
+      db: failing.db,
+      queueRun: () => undefined,
+    })
+    send('runStarted', { memberTestCount: 1 })
+    send('testStarted', { testId: 't-a', testIndex: 0, name: 'Member A', filePath: 'tests/a.yaml' })
+    expect(failing.reached(), 'the failing write was never reached').toBe(true)
+    expect(record.ownRowId(), 'the record claimed no row').toBe(runId)
+
+    await subscriber.flush()
+    await subscriber.flush()
+
+    const row = real.getRun(runId)
+    expect(row?.status).toBe('failed')
+    expect(row?.failureSummary).toBe(NO_VERDICT)
+    expect(real.listRunningRunOwners()).toEqual([])
+    const incomplete = warned.filter((line) => line.includes('but its dashboard record is incomplete'))
+    expect(incomplete.length, `warnings: ${warned.join(' | ')}`).toBe(1)
+    expect(warned.length, `warnings: ${warned.join(' | ')}`).toBe(1)
+  })
+})
+
+describe('C444-CRASH-CATCH', () => {
+  it("agent-qa run's crash path guesses no cause and writes no row", () => {
+    const block = crashCatch()
+    for (const kept of [
+      'RunIdNotMintedError',
+      'RunIdAlreadyInUseError',
+      'RunRecordUnavailableError',
+      'frameworkErrorTerminalLine',
+      'printRunId',
+    ]) {
+      expect(block, `the crash catch lost ${kept}`).toContain(kept)
+    }
+    for (const gone of [
+      'finalizeOwnRun',
+      'finalizeRunArtifact',
+      'Browser closed',
+      'browser has been closed',
+      "'cancelled'",
+    ]) {
+      expect(block.includes(gone), `the crash catch still names ${gone}`).toBe(false)
+    }
+  })
+})
