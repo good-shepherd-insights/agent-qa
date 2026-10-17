@@ -1,7 +1,7 @@
 // 2026-10-17 (443-15, GAP-D5): a failed open stays refused, and a runs.db reached through a symlink is the host's file.
 
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -81,6 +81,41 @@ describe('C443-RECORD-OPEN', () => {
     expect(subject.db, 'the record opened a second handle on the host file').toBe(hostDb)
     subject.close()
     expect(hostDb.getRuns(), 'the host handle after the record closed').toEqual([])
+  })
+
+  // 2026-10-17 (443-review, IN-07): SQLite removes the -wal file only when the file's last handle closes.
+  it('two concurrent opens of one record share one handle', async () => {
+    const configDir = tempRoot()
+    const wal = join(configDir, '.agent-qa', 'runs.db-wal')
+    const runId = generateRunId()
+    const subject = record()
+
+    const seen = await Promise.all([
+      subject.open({ runId, configDir }).then(() => subject.db),
+      subject.open({ runId, configDir }).then(() => subject.db),
+    ])
+
+    expect(seen[0], 'the first open saw no handle').toBeInstanceOf(DashboardDatabase)
+    expect(seen[1], 'the two opens saw different handles').toBe(seen[0])
+    expect(existsSync(wal), 'no handle open before close').toBe(true)
+    subject.close()
+    expect(existsSync(wal), 'a second handle stayed open after the record closed').toBe(false)
+
+    const first = generateRunId()
+    const second = generateRunId()
+    const other = record()
+    const [bound, rebound] = await Promise.allSettled([
+      other.open({ runId: first, configDir }),
+      other.open({ runId: second, configDir }),
+    ])
+
+    expect(bound.status, 'the first open').toBe('fulfilled')
+    expect(rebound.status, 'the open for another run').toBe('rejected')
+    expect((rebound as PromiseRejectedResult).reason, 'the open for another run').toBeInstanceOf(Error)
+    expect(((rebound as PromiseRejectedResult).reason as Error).message).toBe(
+      `This run record belongs to ${first} and cannot open ${second}.`,
+    )
+    await expect(other.open({ runId: first, configDir }), 'the record after the refusal').resolves.toBeUndefined()
   })
 })
 
