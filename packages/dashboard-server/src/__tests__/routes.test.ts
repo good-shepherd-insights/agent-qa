@@ -69,7 +69,7 @@ function createMockDatabase() {
 
   function filterRuns(filters: Record<string, unknown> = {}): MockRun[] {
     const {
-      status,
+      statuses,
       name,
       tag,
       from,
@@ -82,8 +82,8 @@ function createMockDatabase() {
 
     let filtered = [...runs]
 
-    if (typeof status === 'string') {
-      filtered = filtered.filter((run) => run.status === status)
+    if (Array.isArray(statuses) && statuses.length > 0) {
+      filtered = filtered.filter((run) => statuses.includes(run.status))
     }
     if (typeof name === 'string') {
       filtered = filtered.filter((run) => run.name.includes(name))

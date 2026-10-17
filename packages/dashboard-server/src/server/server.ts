@@ -475,7 +475,7 @@ export async function startServer(opts: StartServerOptions): Promise<{
   }
 
   // Log any pending rows left from previous session (benign — picked up when queue starts)
-  const pendingOrphans = db.getRuns({ status: 'pending' })
+  const pendingOrphans = db.getRuns({ statuses: ['pending'] })
   if (pendingOrphans.length > 0) {
     console.log(`Found ${pendingOrphans.length} pending run(s) from previous session — will be processed when queue starts`)
   }

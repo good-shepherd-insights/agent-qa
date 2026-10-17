@@ -19,6 +19,7 @@ import {
   createDashboardSqliteDatabase,
   type DashboardSqliteDatabase,
 } from './sqlite.js'
+import { runStatusClass } from './run-status-class.js'
 import {
   RUN_ARTIFACT_SCHEMA_VERSION,
   ModelUsageSchema,
@@ -128,7 +129,7 @@ interface InsertExecutionLogInput {
 }
 
 interface RunsFilter {
-  status?: string
+  statuses?: readonly string[]
   name?: string
   platform?: string
   from?: string
@@ -1004,7 +1005,7 @@ export class DashboardDatabase {
     avgDuration: number
   } {
     const totalRuns = runs.length
-    const passedTotal = runs.filter((run) => this.isSuccessfulRunStatus(run.status)).length
+    const passedTotal = runs.filter((run) => runStatusClass(run.status) === 'pass').length
     const avgDuration = totalRuns > 0
       ? runs.reduce((sum, run) => sum + run.duration, 0) / totalRuns
       : 0
@@ -1023,8 +1024,8 @@ export class DashboardDatabase {
           const total = dayRuns.length
           return {
             date,
-            passed: dayRuns.filter((run) => this.isSuccessfulRunStatus(run.status)).length,
-            failed: dayRuns.filter((run) => run.status === 'failed').length,
+            passed: dayRuns.filter((run) => runStatusClass(run.status) === 'pass').length,
+            failed: dayRuns.filter((run) => runStatusClass(run.status) === 'fail').length,
             total,
             avgDuration: total > 0 ? dayRuns.reduce((sum, run) => sum + run.duration, 0) / total : 0,
           }
@@ -1039,9 +1040,9 @@ export class DashboardDatabase {
     const conditions: string[] = []
     const params: unknown[] = []
 
-    if (opts.status) {
-      conditions.push('status = ?')
-      params.push(opts.status)
+    if (opts.statuses && opts.statuses.length > 0) {
+      conditions.push(`status IN (${opts.statuses.map(() => '?').join(', ')})`)
+      params.push(...opts.statuses)
     }
     if (opts.name) {
       conditions.push('(name LIKE ? OR id LIKE ?)')
@@ -1364,10 +1365,6 @@ export class DashboardDatabase {
     return { artifact: this.getRunArtifact(runId) }
   }
 
-  private isSuccessfulRunStatus(status: string): boolean {
-    return status === 'passed' || status === 'flaky'
-  }
-
   /**
    * The runs a self-heal happened on (405-07, D-02).
    *
@@ -1396,9 +1393,9 @@ export class DashboardDatabase {
     healedRunIds: Set<string>,
   ) {
     const totalRuns = runs.length
-    const passed = runs.filter((run) => this.isSuccessfulRunStatus(run.status)).length
-    const failed = runs.filter((run) => run.status === 'failed').length
-    const flaky = runs.filter((run) => run.status === 'flaky' || healedRunIds.has(run.id)).length
+    const passed = runs.filter((run) => runStatusClass(run.status) === 'pass').length
+    const failed = runs.filter((run) => runStatusClass(run.status) === 'fail').length
+    const flaky = runs.filter((run) => run.status === 'healed' || healedRunIds.has(run.id)).length
     const totalDuration = runs.reduce((sum, run) => sum + run.duration, 0)
 
     return {
@@ -1494,7 +1491,7 @@ export class DashboardDatabase {
           date,
           passed: daySummary.passed,
           failed: daySummary.failed,
-          healed: dayHealedRunIds.size,
+          healed: daySummary.flaky,
           duration: daySummary.avgDuration,
         }
       })

@@ -164,7 +164,7 @@ describe('C444-RUNS-FILTER', () => {
     const ids = seedSevenWords()
     const finishedIds = FINISHED.map((word) => ids[word]).sort()
 
-    expect(db.getRuns({ statuses: FINISHED } as never).map((run) => run.id).sort()).toEqual(finishedIds)
+    expect(db.getRuns({ statuses: FINISHED }).map((run) => run.id).sort()).toEqual(finishedIds)
 
     const origin = await startDashboard()
     const query = FINISHED.map((word) => `status=${word}`).join('&')

@@ -512,7 +512,7 @@ describe('DashboardDatabase', () => {
       insertSampleRun({ name: 'Fail 1', status: 'failed' })
       insertSampleRun({ name: 'Pass 2', status: 'passed' })
 
-      const passed = db.getRuns({ status: 'passed' })
+      const passed = db.getRuns({ statuses: ['passed'] })
       expect(passed).toHaveLength(2)
       expect(passed.every(r => r.status === 'passed')).toBe(true)
     })
@@ -554,7 +554,7 @@ describe('DashboardDatabase', () => {
       insertSampleRun({ name: 'Wrong Status', status: 'failed', platform: 'web' })
       insertSampleRun({ name: 'Wrong Platform', status: 'passed', platform: 'android' })
 
-      const results = db.getRuns({ status: 'passed', platform: 'web' })
+      const results = db.getRuns({ statuses: ['passed'], platform: 'web' })
       expect(results).toHaveLength(1)
       expect(results[0].name).toBe('Match')
     })
@@ -749,7 +749,7 @@ describe('DashboardDatabase', () => {
       insertSampleRun({ name: 'Cancel 1', status: 'cancelled' })
       insertSampleRun({ name: 'Cancel 2', status: 'cancelled' })
 
-      const cancelled = db.getRuns({ status: 'cancelled' })
+      const cancelled = db.getRuns({ statuses: ['cancelled'] })
       expect(cancelled).toHaveLength(2)
       expect(cancelled.every(r => r.status === 'cancelled')).toBe(true)
     })

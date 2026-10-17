@@ -4,6 +4,7 @@ import { readFile, writeFile, stat, readdir, rm } from 'node:fs/promises'
 import { join, isAbsolute, basename, resolve, dirname } from 'node:path'
 
 import type { AttributePredicate, DashboardDatabase, InsightsBreakdownDimension, RunArtifactRow, RunRow } from '../db/database.js'
+import { isRunStatusWord, runStatusClass } from '../db/run-status-class.js'
 import type { ExecutionBackend } from '../execution/execution-backend.js'
 import type { JobQueue } from '../queue/job-queue.js'
 import { extractTestFileMetadata, type SupportedPlatform, type TestFileManager } from '../tests/test-file-manager.js'
@@ -923,8 +924,8 @@ async function readAnalyticsScopePredicates(configManager: ConfigManager | undef
 
 function calculateFlakyMetrics(runs: RunRow[]): { score: number; statusCount: number } {
   const statuses = runs
-    .filter(r => r.status === 'passed' || r.status === 'failed')
-    .map(r => r.status)
+    .map(r => runStatusClass(r.status))
+    .filter(c => c === 'pass' || c === 'fail')
   let alternations = 0
   for (let i = 1; i < statuses.length; i++) {
     if (statuses[i] !== statuses[i - 1]) alternations++
@@ -1649,7 +1650,6 @@ const RUN_MEMBERS_NOT_ON_THE_TYPE: ReadonlySet<string> = new Set([
   'buildTrendsFromRuns',
   'getHealedRunIds',
   'getRunAccessibilityEnabled',
-  'isSuccessfulRunStatus',
   'listRunsForInsights',
   'mapRunArtifactRow',
   'mapRunRow',
@@ -2187,7 +2187,12 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
     if (path === '/api/runs' && req.method === 'GET') {
       // THE SAME-SITE GUARD, FIRST (405 CR-01) — see `refuseCrossSiteDisplayRead`.
       if (refuseCrossSiteDisplayRead(req, res)) return
-      const status = url.searchParams.get('status') ?? undefined
+      const statuses = url.searchParams.getAll('status')
+      const unknownStatus = statuses.find((word) => !isRunStatusWord(word))
+      if (unknownStatus !== undefined) {
+        jsonNoCors(res, { error: `Unknown run status: ${unknownStatus}.` }, 400)
+        return
+      }
       const name = url.searchParams.get('name') ?? undefined
       const platform = url.searchParams.get('platform') ?? undefined
       const target = normalizeRunFilterValue(url.searchParams.get('target'))
@@ -2204,7 +2209,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
       void readTargetPlatformMap(configManager)
         .then((targetPlatforms) => {
           const allRuns = db.getRuns({
-            status,
+            statuses,
             name,
             from,
             to,
