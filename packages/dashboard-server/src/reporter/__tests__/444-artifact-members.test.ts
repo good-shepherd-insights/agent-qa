@@ -67,6 +67,39 @@ function startTwoTestRun(): DashboardRunIngest {
   return ingest
 }
 
+function suiteSnapshot(
+  suite: { id: string; name: string; target: string },
+  members: readonly RunIdentityMember[],
+) {
+  return {
+    config: {
+      rawConfigContent: 'targets: {}\n',
+      runtime: { platform: 'web', targetName: suite.target },
+      timeouts: { step: 20000 },
+    },
+    source: {
+      kind: 'suite' as const,
+      suiteId: suite.id,
+      name: suite.name,
+      filePath: `/work/suites/${suite.id}.suite.yaml`,
+      rawYaml: `name: ${suite.name}\nsuite-id: ${suite.id}\n`,
+      resolvedDefinition: { name: suite.name },
+      loadStatus: 'loaded' as const,
+      members: members.map((member, index) => ({
+        index,
+        ref: { test: member.filePath, id: member.testId },
+        filePath: `/work/${member.filePath}`,
+        testId: member.testId,
+        name: member.name,
+        target: null,
+        rawYaml: `name: ${member.name}\ntest-id: ${member.testId}\n`,
+        resolvedDefinition: { name: member.name },
+        loadStatus: 'loaded' as const,
+      })),
+    },
+  }
+}
+
 function storedPayload(): Record<string, any> {
   const artifact = db.getRunArtifact(RUN_ID)
   expect(artifact, 'the run has an artifact').not.toBeNull()
@@ -109,5 +142,83 @@ describe('C444-ARTIFACT-MEMBERS', () => {
     expect(members.map((member) => member.index)).toEqual([0, 1])
     expect(members.map((member) => member.rawYaml)).toEqual([LOGIN_YAML, CHECKOUT_YAML])
     expect(members.map((member) => member.config.runtime.targetName)).toEqual(['staging', 'shop'])
+  })
+
+  it("a run spanning two suites lists every member with its own suite's config and presents neither suite as the run's", () => {
+    const LOGIN_SUITE = { id: 's_login', name: 'Login suite', target: 'login-target' }
+    const CHECKOUT_SUITE = { id: 's_checkout', name: 'Checkout suite', target: 'checkout-target' }
+    const signIn = { name: 'Sign in', testId: 't_sign_in', filePath: 'tests/sign-in.yaml', suiteId: LOGIN_SUITE.id, suiteName: LOGIN_SUITE.name }
+    const signOut = { name: 'Sign out', testId: 't_sign_out', filePath: 'tests/sign-out.yaml', suiteId: LOGIN_SUITE.id, suiteName: LOGIN_SUITE.name }
+    const pay = { name: 'Pay', testId: 't_pay', filePath: 'tests/pay.yaml', suiteId: CHECKOUT_SUITE.id, suiteName: CHECKOUT_SUITE.name }
+    const loginSnapshot = suiteSnapshot(LOGIN_SUITE, [signIn, signOut])
+    const checkoutSnapshot = suiteSnapshot(CHECKOUT_SUITE, [pay])
+    const ingest = createDashboardRunIngest({
+      db,
+      runId: RUN_ID,
+      configSnapshot: loginSnapshot.config,
+      sourceSnapshot: loginSnapshot.source,
+      members: [signIn, signOut, pay],
+    })
+    ingest.handler(ev('runStarted', { memberTestCount: 3 }))
+    ingest.stageSnapshots(checkoutSnapshot)
+    ingest.stageSnapshots(loginSnapshot)
+
+    const payload = storedPayload()
+    expect(payload.source.kind).toBe('tests')
+    const members = payload.source.members as Array<Record<string, any>>
+    expect(members.length).toBe(3)
+    expect(members.map((member) => member.index)).toEqual([0, 1, 2])
+    expect(members.map((member) => member.name)).toEqual(['Sign in', 'Sign out', 'Pay'])
+    expect(members.map((member) => member.testId)).toEqual(['t_sign_in', 't_sign_out', 't_pay'])
+    expect(members.map((member) => member.rawYaml)).toEqual([
+      'name: Sign in\ntest-id: t_sign_in\n',
+      'name: Sign out\ntest-id: t_sign_out\n',
+      'name: Pay\ntest-id: t_pay\n',
+    ])
+    expect(members.map((member) => member.config.runtime.targetName)).toEqual([
+      'login-target',
+      'login-target',
+      'checkout-target',
+    ])
+    expect(payload.source.suiteId).toBeUndefined()
+    expect(payload.source.name).toBeUndefined()
+    expect(payload.source.rawYaml).toBeUndefined()
+    expect(payload.config).toBeUndefined()
+  })
+
+  it('a single-test run keeps its test source and config', () => {
+    const ingest = createDashboardRunIngest({ db, runId: RUN_ID, members: [LOGIN] })
+    ingest.handler(ev('runStarted', { memberTestCount: 1 }))
+    ingest.stageSnapshots(testSnapshot(LOGIN, LOGIN_YAML, 'staging'))
+
+    const payload = storedPayload()
+    expect(payload.source.kind).toBe('test')
+    expect(payload.source.rawYaml).toBe(LOGIN_YAML)
+    expect(payload.source.testId).toBe('t_login')
+    expect(payload.source.members).toBeUndefined()
+    expect(payload.config.runtime.targetName).toBe('staging')
+  })
+
+  it('a one-suite run keeps its suite source', () => {
+    const LOGIN_SUITE = { id: 's_login', name: 'Login suite', target: 'login-target' }
+    const signIn = { name: 'Sign in', testId: 't_sign_in', filePath: 'tests/sign-in.yaml', suiteId: LOGIN_SUITE.id, suiteName: LOGIN_SUITE.name }
+    const signOut = { name: 'Sign out', testId: 't_sign_out', filePath: 'tests/sign-out.yaml', suiteId: LOGIN_SUITE.id, suiteName: LOGIN_SUITE.name }
+    const snapshot = suiteSnapshot(LOGIN_SUITE, [signIn, signOut])
+    const ingest = createDashboardRunIngest({
+      db,
+      runId: RUN_ID,
+      configSnapshot: snapshot.config,
+      sourceSnapshot: snapshot.source,
+      members: [signIn, signOut],
+    })
+    ingest.handler(ev('runStarted', { memberTestCount: 2 }))
+    ingest.stageSnapshots(snapshot)
+
+    const payload = storedPayload()
+    expect(payload.source.kind).toBe('suite')
+    expect(payload.source.suiteId).toBe('s_login')
+    expect(payload.source.rawYaml).toBe('name: Login suite\nsuite-id: s_login\n')
+    expect((payload.source.members as Array<Record<string, any>>).map((member) => member.name)).toEqual(['Sign in', 'Sign out'])
+    expect(payload.config.runtime.targetName).toBe('login-target')
   })
 })
