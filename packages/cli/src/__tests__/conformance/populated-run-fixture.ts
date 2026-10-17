@@ -403,7 +403,7 @@ export interface RecordedStubRequest {
   readonly method: string
   readonly path: string
   /** Which arm answered it — the dispatch decision, recorded rather than re-derived. */
-  readonly kind: 'planner' | 'structured' | 'analysis' | 'text' | 'unknown'
+  readonly kind: 'planner' | 'held' | 'structured' | 'analysis' | 'text' | 'unknown'
   readonly status: number
   /** Whether the planner arm resolved a live `ref` out of the observation, or fell back. */
   readonly grounding?: 'ref' | 'descriptor'
@@ -437,6 +437,15 @@ export interface StubModelServer extends FixtureServer {
    * which is the honest empty `citedArtifacts` the validator also accepts.
    */
   citeEvidenceFrom(agentQaRoot: string): void
+  // 2026-10-17 (444-01, D-12): the planning turns `holdOnlyStepText` parked.
+  readonly held: StubHeldTurns
+}
+
+export interface StubHeldTurns {
+  arrived(): Promise<void>
+  count(): number
+  aborted(): number
+  release(): void
 }
 
 interface ChatCompletionsBody {
@@ -783,6 +792,9 @@ export interface StubModelServerOptions {
   readonly analysisOutcome?: 'floor' | 'authored'
   // 2026-10-14 (441-06, D-22): record each request's whole body beside the bounded one.
   readonly fullBodies?: boolean
+  // 2026-10-17 (444-01, D-12): a planning turn whose prompt carries this text is not answered until
+  // `held.release()`; like `failOnlyStepText`, it must survive the runner's secret redaction.
+  readonly holdOnlyStepText?: string
 }
 
 export async function startStubModelServer(
@@ -790,9 +802,15 @@ export async function startStubModelServer(
 ): Promise<StubModelServer> {
   const plannerOutcome = options.plannerOutcome ?? 'stepComplete'
   const analysisOutcome = options.analysisOutcome ?? 'floor'
-  const { failOnlyStepText } = options
+  const { failOnlyStepText, holdOnlyStepText } = options
   const requests: RecordedStubRequest[] = []
   let citedRoot: string | undefined
+  const parked: Array<{ readonly res: ServerResponse; readonly answer: () => void }> = []
+  let heldCount = 0
+  let abortedCount = 0
+  let released = false
+  let markArrived: () => void = () => undefined
+  const firstArrival = new Promise<void>((settle) => { markArrived = settle })
 
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     void (async () => {
@@ -857,34 +875,46 @@ export async function startStubModelServer(
         const targeting = ref === undefined
           ? { target: { role: 'button', name: POPULATED_BUTTON_LABEL } }
           : { ref }
+        const answerPlanner = (failing: boolean): void => {
+          const args = {
+            ...targeting,
+            elementDescription: POPULATED_BUTTON_LABEL,
+            reasoning: failing ? plannerFailureReasoning() : plannerReasoning(),
+            confidence: 0.95,
+            stepComplete: !failing,
+            ...(failing ? { stepFailed: true } : {}),
+            doesActionAdvanceUsTowardsGoal: !failing,
+          }
+          record('planner', 200, ref === undefined ? 'descriptor' : 'ref')
+          respond(chatCompletion(
+            model,
+            {
+              role: 'assistant',
+              content: null,
+              tool_calls: [{
+                id: 'call_405_09_click',
+                type: 'function',
+                function: { name: toolName, arguments: JSON.stringify(args) },
+              }],
+            },
+            'tool_calls',
+            { prompt: 1_311, completion: 87 },
+          ))
+        }
+        if (holdOnlyStepText !== undefined && !released && prompt.includes(holdOnlyStepText)) {
+          record('held', 0, ref === undefined ? 'descriptor' : 'ref')
+          heldCount += 1
+          res.once('close', () => {
+            if (!res.writableEnded) abortedCount += 1
+          })
+          parked.push({ res, answer: () => { answerPlanner(false) } })
+          markArrived()
+          return
+        }
         // The step-scoped narrowing (406-10), spelled where the outcome is decided rather than at
         // the option, so a turn the caller did not name is answered by the ORDINARY arm.
-        const failing = plannerOutcome === 'stepFailed'
-          && (failOnlyStepText === undefined || prompt.includes(failOnlyStepText))
-        const args = {
-          ...targeting,
-          elementDescription: POPULATED_BUTTON_LABEL,
-          reasoning: failing ? plannerFailureReasoning() : plannerReasoning(),
-          confidence: 0.95,
-          stepComplete: !failing,
-          ...(failing ? { stepFailed: true } : {}),
-          doesActionAdvanceUsTowardsGoal: !failing,
-        }
-        record('planner', 200, ref === undefined ? 'descriptor' : 'ref')
-        respond(chatCompletion(
-          model,
-          {
-            role: 'assistant',
-            content: null,
-            tool_calls: [{
-              id: 'call_405_09_click',
-              type: 'function',
-              function: { name: toolName, arguments: JSON.stringify(args) },
-            }],
-          },
-          'tool_calls',
-          { prompt: 1_311, completion: 87 },
-        ))
+        answerPlanner(plannerOutcome === 'stepFailed'
+          && (failOnlyStepText === undefined || prompt.includes(failOnlyStepText)))
         return
       }
 
@@ -967,6 +997,17 @@ export async function startStubModelServer(
     requests,
     citeEvidenceFrom: (agentQaRoot: string) => {
       citedRoot = agentQaRoot
+    },
+    held: {
+      arrived: () => firstArrival,
+      count: () => heldCount,
+      aborted: () => abortedCount,
+      release: () => {
+        released = true
+        for (const turn of parked.splice(0)) {
+          if (!turn.res.destroyed && !turn.res.writableEnded) turn.answer()
+        }
+      },
     },
     close: closer(server),
   }
