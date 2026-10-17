@@ -43,7 +43,7 @@ import type {
 import { renderAnalysisClusterBlock } from '../../analysis/render-cluster-block.js'
 import type { ClauseVerdict, FunctionDeps, FunctionSpec } from '../spec.js'
 import { analysisGetSpec } from './analysis-get.js'
-import { RunNotFoundError } from './runs-get.js'
+import { refuseMissingHandoff } from './runs-get.js'
 import {
   projectPostProcessingChips,
   projectPostProcessingSkipped,
@@ -178,9 +178,7 @@ export const runsDigestSpec: FunctionSpec<RunsDigestInput, RunDigest> = {
     // analysis composition below would have made a correctness property depend on an optional
     // dep's presence.
     const document = await deps.runs.get(input.runId)
-    if (document === undefined) {
-      throw new RunNotFoundError(runId)
-    }
+    if (document === undefined) return refuseMissingHandoff(input.runId, deps)
 
     // Each section is composed only where its dep is present. Explicit presence checks rather
     // than a try/catch around the invocations: swallowing would also swallow a real failure

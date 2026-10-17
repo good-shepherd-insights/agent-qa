@@ -91,7 +91,11 @@ export type { RunDetailReaderPort } from './functions/spec.js'
 export type { EvidenceBlobReaderPort } from './functions/spec.js'
 // Caller-facing refusals a surface may legitimately catch and report. Op-level errors live
 // with the op that throws them; only the error CLASS crosses the barrel, never the spec.
-export { RunNotFoundError } from './functions/ops/runs-get.js'
+export {
+  RunEndedWithoutVerdictError,
+  RunNotFinishedError,
+  RunNotFoundError,
+} from './functions/ops/runs-get.js'
 // 419 GATE3-01: publish identity DATA only; the spec's invoke must stay behind the gate.
 export { RUNS_MARK_FUNCTION_ID } from './functions/ops/runs-mark.js'
 // 423 D-19: identity only; the history spec stays behind invokeFunction.

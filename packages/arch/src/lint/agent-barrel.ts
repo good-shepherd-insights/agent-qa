@@ -288,6 +288,9 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // the one function that reads them there. Naming it by import is what makes a rename break that
   // binding's compile instead of leaving it pointing at a string nothing dispatches.
   'RUNS_START_FUNCTION_ID',
+  // 2026-10-18 (444-13, D-17): the verdictless refusals beside `RunNotFoundError`.
+  'RunEndedWithoutVerdictError',
+  'RunNotFinishedError',
   'RunNotFoundError',
   'RunNotRecordedError',
   // 392 plan 09, D-15 / CHAT-03: THE frozen corpus and its version. This is the ceiling's

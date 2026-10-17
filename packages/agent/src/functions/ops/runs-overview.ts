@@ -46,7 +46,7 @@ import type {
 import { FunctionNotBoundError } from '../spec.js'
 import type { ClauseVerdict, FunctionDeps, FunctionSpec } from '../spec.js'
 import { annotatePresence } from './evidence-presence.js'
-import { RunNotFoundError } from './runs-get.js'
+import { refuseMissingHandoff, RunNotFoundError } from './runs-get.js'
 import { runsKnowledgeSpec } from './runs-knowledge.js'
 import { requireSecretMask } from './secret-mask.js'
 
@@ -345,7 +345,7 @@ export const runsOverviewSpec: FunctionSpec<RunsOverviewInput, RunOverviewProjec
     if (port === undefined) throw new FunctionNotBoundError(RUNS_OVERVIEW_FUNCTION_ID)
 
     const document = await deps.runs.get(input.runId)
-    if (document === undefined) throw new RunNotFoundError(String(input.runId))
+    if (document === undefined) return refuseMissingHandoff(input.runId, deps)
     const runId = String(document.runId)
 
     const read = await port.read(input.runId)
