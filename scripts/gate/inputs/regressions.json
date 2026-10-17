@@ -11154,6 +11154,726 @@
       "file": "packages/dashboard-server/src/__tests__/442-cancel-ownership.test.ts",
       "fullName": "C442-CANCEL-RUN-ID a malformed run id is answered 400 and writes nothing",
       "origin": "442 GAP-D10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX every door ran once and returned an id, a pass and a fail among them",
+      "origin": "443 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX agent-qa run: the run has a runs.db row stamped with the process that ran it",
+      "origin": "443 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX agent-qa mcp over stdio: the run has a runs.db row stamped with the process that ran it",
+      "origin": "443 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX agent-qa mcp over HTTP: the run has a runs.db row stamped with the process that ran it",
+      "origin": "443 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX agent-qa fn: the run has a runs.db row stamped with the process that ran it",
+      "origin": "443 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX agent-qa ask: the run has a runs.db row stamped with the process that ran it",
+      "origin": "443 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX agent-qa chat: the run has a runs.db row stamped with the process that ran it",
+      "origin": "443 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX the daemon: the run has a runs.db row stamped with the process that ran it",
+      "origin": "443 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX dashboard POST /run: the run has a runs.db row stamped with the process that ran it",
+      "origin": "443 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX the co-hosted MCP endpoint: the run has a runs.db row stamped with the process that ran it",
+      "origin": "443 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX the dashboard Run control (control row): the run has a runs.db row stamped with the process that ran it",
+      "origin": "443 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX agent-qa run: the row records its door in agent-qa.trigger",
+      "origin": "443 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX agent-qa mcp over stdio: the row records its door in agent-qa.trigger",
+      "origin": "443 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX agent-qa mcp over HTTP: the row records its door in agent-qa.trigger",
+      "origin": "443 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX agent-qa fn: the row records its door in agent-qa.trigger",
+      "origin": "443 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX agent-qa ask: the row records its door in agent-qa.trigger",
+      "origin": "443 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX agent-qa chat: the row records its door in agent-qa.trigger",
+      "origin": "443 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX the daemon: the row records its door in agent-qa.trigger",
+      "origin": "443 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX dashboard POST /run: the row records its door in agent-qa.trigger",
+      "origin": "443 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX the co-hosted MCP endpoint: the row records its door in agent-qa.trigger",
+      "origin": "443 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX the dashboard Run control (control row): the row records its door in agent-qa.trigger",
+      "origin": "443 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX agent-qa run: the CLI overview, the MCP overview and the dashboard agree on its member and verdict",
+      "origin": "443 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX agent-qa mcp over stdio: the CLI overview, the MCP overview and the dashboard agree on its member and verdict",
+      "origin": "443 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX agent-qa mcp over HTTP: the CLI overview, the MCP overview and the dashboard agree on its member and verdict",
+      "origin": "443 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX agent-qa fn: the CLI overview, the MCP overview and the dashboard agree on its member and verdict",
+      "origin": "443 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX agent-qa ask: the CLI overview, the MCP overview and the dashboard agree on its member and verdict",
+      "origin": "443 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX agent-qa chat: the CLI overview, the MCP overview and the dashboard agree on its member and verdict",
+      "origin": "443 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX the daemon: the CLI overview, the MCP overview and the dashboard agree on its member and verdict",
+      "origin": "443 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX dashboard POST /run: the CLI overview, the MCP overview and the dashboard agree on its member and verdict",
+      "origin": "443 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX the co-hosted MCP endpoint: the CLI overview, the MCP overview and the dashboard agree on its member and verdict",
+      "origin": "443 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX the dashboard Run control (control row): the CLI overview, the MCP overview and the dashboard agree on its member and verdict",
+      "origin": "443 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX agent-qa run: every reader shows the same decision screenshots",
+      "origin": "443 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX agent-qa mcp over stdio: every reader shows the same decision screenshots",
+      "origin": "443 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX agent-qa mcp over HTTP: every reader shows the same decision screenshots",
+      "origin": "443 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX agent-qa fn: every reader shows the same decision screenshots",
+      "origin": "443 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX agent-qa ask: every reader shows the same decision screenshots",
+      "origin": "443 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX agent-qa chat: every reader shows the same decision screenshots",
+      "origin": "443 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX the daemon: every reader shows the same decision screenshots",
+      "origin": "443 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX dashboard POST /run: every reader shows the same decision screenshots",
+      "origin": "443 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX the co-hosted MCP endpoint: every reader shows the same decision screenshots",
+      "origin": "443 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX the dashboard Run control (control row): every reader shows the same decision screenshots",
+      "origin": "443 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX the run-detail page opens every door's run and never shows Run not found",
+      "origin": "443 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-door-matrix.test.ts",
+      "fullName": "C443-DOOR-MATRIX the stdio MCP door's stdout stays JSON-RPC through its run",
+      "origin": "443 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/443-claim.test.ts",
+      "fullName": "C443-CLAIM a claim on a fresh id inserts a running row stamped with this handle",
+      "origin": "443 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/443-claim.test.ts",
+      "fullName": "C443-CLAIM a second claim of the same id by the same handle adopts it and leaves one row",
+      "origin": "443 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/443-claim.test.ts",
+      "fullName": "C443-CLAIM the dashboard's own queue row is adopted once its flip stamped it",
+      "origin": "443 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/443-claim.test.ts",
+      "fullName": "C443-CLAIM a running row another process owns is refused and left as it was",
+      "origin": "443 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/443-claim.test.ts",
+      "fullName": "C443-CLAIM a pending row this handle did not flip is refused",
+      "origin": "443 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/443-claim.test.ts",
+      "fullName": "C443-CLAIM a finished row is refused",
+      "origin": "443 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/443-claim.test.ts",
+      "fullName": "C443-CLAIM a NULL own incarnation still matches itself",
+      "origin": "443 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/443-claim.test.ts",
+      "fullName": "C443-CLAIM a row this handle stamped before its start time was read is still adopted as its own",
+      "origin": "443 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/443-claim.test.ts",
+      "fullName": "C443-CLAIM a handle names its resolved file",
+      "origin": "443 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/reporter/__tests__/dashboard-subscriber.test.ts",
+      "fullName": "C443-CLAIM an ingest for an id another live process owns writes nothing under it",
+      "origin": "443 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/reporter/__tests__/dashboard-subscriber.test.ts",
+      "fullName": "C443-CLAIM the dashboard's queued row is adopted once the queue flipped it",
+      "origin": "443 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/reporter/__tests__/dashboard-subscriber.test.ts",
+      "fullName": "C443-CLAIM an ingest claims a fresh id under this process",
+      "origin": "443 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/job-queue.test.ts",
+      "fullName": "C443-QUEUE-FLIP the flip moves a pending row to running and stamps it",
+      "origin": "443 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/job-queue.test.ts",
+      "fullName": "C443-QUEUE-FLIP the flip refuses a row that is not pending",
+      "origin": "443 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/job-queue.test.ts",
+      "fullName": "C443-QUEUE-FLIP the queue does not dispatch a row it could not flip",
+      "origin": "443 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/job-queue.test.ts",
+      "fullName": "C443-QUEUE-FLIP the slot a refused flip reserved is free for the next row",
+      "origin": "443 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/443-claim.test.ts",
+      "fullName": "C443-OWN-FINALIZE the own-row finalizer writes each verdict status once",
+      "origin": "443 D-27"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/443-fresh-open.test.ts",
+      "fullName": "C443-FRESH-OPEN eight processes opening one fresh runs.db at once all succeed",
+      "origin": "443 D-23"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/443-fresh-open.test.ts",
+      "fullName": "C443-FRESH-OPEN two processes claiming different ids on one file each keep their own row",
+      "origin": "443 D-23"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/443-fresh-open.test.ts",
+      "fullName": "C443-FRESH-OPEN an older file is still refused before anything touches it",
+      "origin": "443 D-23"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/443-fresh-open.test.ts",
+      "fullName": "C443-FRESH-OPEN one process opening the same fresh file twice keeps one schema",
+      "origin": "443 D-23"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/reporter/__tests__/dashboard-subscriber.test.ts",
+      "fullName": "C443-INGEST-ID every row the ingest writes is filed under the id it was built with",
+      "origin": "443 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/reporter/__tests__/dashboard-subscriber.test.ts",
+      "fullName": "C443-INGEST-ID an ingest built for a suite files the suite run under the same id",
+      "origin": "443 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-run-record.test.ts",
+      "fullName": "C443-RUN-RECORD a runs.start through the shared host writes one row under the returned id, stamped with this process",
+      "origin": "443 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-run-record.test.ts",
+      "fullName": "C443-RUN-RECORD a queued dashboard run keeps its one row and its routes' attributes",
+      "origin": "443 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-run-record.test.ts",
+      "fullName": "C443-RUN-RECORD a POST /run run gets a row through the dashboard's own handle",
+      "origin": "443 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-run-record.test.ts",
+      "fullName": "C443-RECORD-PATH a run naming another config writes that config's runs.db",
+      "origin": "443 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-run-record.test.ts",
+      "fullName": "C443-RECORD-PATH a queued run keeps the dashboard's file when the dashboard holds another path",
+      "origin": "443 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-cli-record.test.ts",
+      "fullName": "C443-RECORD-REFUSAL agent-qa run refuses a run whose runs.db cannot be opened, exit 2, no id",
+      "origin": "443 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-cli-record.test.ts",
+      "fullName": "C443-RECORD-REFUSAL a refused production agent-qa run creates no runs.db file",
+      "origin": "443 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-cli-record.test.ts",
+      "fullName": "C443-RECORD-REFUSAL a suite run whose runs.db cannot be opened is refused before its plugins load",
+      "origin": "443 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-record-refusal.test.ts",
+      "fullName": "C443-RECORD-REFUSAL a version-4 runs.db refuses the run naming the file and leaves it untouched",
+      "origin": "443 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-record-refusal.test.ts",
+      "fullName": "C443-RECORD-REFUSAL an unwritable runs.db folder refuses the run in one plain sentence",
+      "origin": "443 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-record-refusal.test.ts",
+      "fullName": "C443-RECORD-REFUSAL a corrupt runs.db refuses the run in one plain sentence",
+      "origin": "443 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-record-refusal.test.ts",
+      "fullName": "C443-RECORD-REFUSAL a production run refused by the core creates no runs.db file",
+      "origin": "443 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-record-refusal.test.ts",
+      "fullName": "C443-RECORD-REFUSAL a run id whose row belongs to another process is refused before any effect",
+      "origin": "443 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-record-refusal.test.ts",
+      "fullName": "C443-RECORD-REFUSAL fn --json keeps stdout one JSON document while the run is recorded",
+      "origin": "443 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/in-process-run-execution.test.ts",
+      "fullName": "C443-RECORD-REFUSAL a runs.start whose pattern is a suite opens the record before preparing the suite",
+      "origin": "443 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-record-refusal.test.ts",
+      "fullName": "C443-RECORD-INCOMPLETE a write that fails after the start leaves the verdict and says the record is incomplete",
+      "origin": "443 D-27"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/daemon/__tests__/daemon-run-execution.test.ts",
+      "fullName": "C443-DAEMON-RECORD a run the daemon dispatches writes its row, stamped with the daemon, trigger cli",
+      "origin": "443 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/daemon/__tests__/daemon-run-execution.test.ts",
+      "fullName": "C443-DAEMON-RECORD a refused production run through the daemon opens no runs.db file",
+      "origin": "443 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-door-trigger.test.ts",
+      "fullName": "C443-DOOR-TRIGGER fn records cli",
+      "origin": "443 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-door-trigger.test.ts",
+      "fullName": "C443-DOOR-TRIGGER the standalone MCP host records mcp",
+      "origin": "443 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-door-trigger.test.ts",
+      "fullName": "C443-DOOR-TRIGGER dashboard POST /run records api",
+      "origin": "443 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-door-trigger.test.ts",
+      "fullName": "C443-DOOR-TRIGGER the co-hosted MCP endpoint records mcp",
+      "origin": "443 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-door-trigger.test.ts",
+      "fullName": "C443-DOOR-TRIGGER a queued run keeps its routes' trigger",
+      "origin": "443 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-door-trigger.test.ts",
+      "fullName": "C443-DOOR-TRIGGER a scope does not outlive its request",
+      "origin": "443 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-verify-run-record.e2e.test.ts",
+      "fullName": "C443-VERIFY-RUN a verify run started through authoring keeps its flag and exclusion and has a marked row",
+      "origin": "443 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-verify-run-record.e2e.test.ts",
+      "fullName": "C443-VERIFY-RUN an ordinary run in the same project has no mark",
+      "origin": "443 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/__tests__/run-attributes.test.ts",
+      "fullName": "C443-VERIFY-MARK the gate-run mark is an internal attribute with one value",
+      "origin": "443 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/__tests__/run-attributes.test.ts",
+      "fullName": "C443-VERIFY-MARK the mark is listed after the runner among the protected keys",
+      "origin": "443 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/__tests__/runs-table.test.tsx",
+      "fullName": "C443-VERIFY-MARK the Runs list shows Verify run beside a marked run's name",
+      "origin": "443 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/__tests__/runs-table.test.tsx",
+      "fullName": "C443-VERIFY-MARK no badge on an unmarked run",
+      "origin": "443 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/__tests__/runs-table.test.tsx",
+      "fullName": "C443-VERIFY-MARK no filter is added",
+      "origin": "443 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-cli-record.test.ts",
+      "fullName": "C443-CLI-ROW a single-test run with no dashboard block writes its row under the printed id",
+      "origin": "443 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-cli-record.test.ts",
+      "fullName": "C443-CLI-ROW a suite run with no dashboard block writes one row under the printed id",
+      "origin": "443 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-cli-record.test.ts",
+      "fullName": "C443-HANDED-ROW a parse error writes one failed row under the printed id",
+      "origin": "443 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-cli-record.test.ts",
+      "fullName": "C443-HANDED-ROW a suite preparation failure writes one failed row under the printed id",
+      "origin": "443 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-cli-record.test.ts",
+      "fullName": "C443-HANDED-ROW an AGENT_QA_RUN_ID naming another process's row is refused and the row is untouched",
+      "origin": "443 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-cli-record.test.ts",
+      "fullName": "C443-REPORTER --reporter dashboard is an unknown reporter",
+      "origin": "443 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-cli-record.test.ts",
+      "fullName": "C443-REPORTER a run still records its row under the default reporters",
+      "origin": "443 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-cli-record.test.ts",
+      "fullName": "C443-REPORTER screenshot capture follows only its own flags",
+      "origin": "443 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/443-one-record-census.test.ts",
+      "fullName": "C443-ENV-RETIRED no production source or script names a retired run-id input",
+      "origin": "443 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/run.test.ts",
+      "fullName": "C443-ENV-RETIRED inherits run attributes only under AGENT_QA_RUN_ID",
+      "origin": "443 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/443-one-record-census.test.ts",
+      "fullName": "C443-ONE-RECORD the CLI constructs the ingest only inside createRunRecord",
+      "origin": "443 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/443-one-record-census.test.ts",
+      "fullName": "C443-ONE-RECORD every drive call passes a record from the one builder, and the scan saw every door",
+      "origin": "443 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/443-one-record-census.test.ts",
+      "fullName": "C443-ONE-RECORD no door gains a new execution path",
+      "origin": "443 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/443-one-record-census.test.ts",
+      "fullName": "C443-ONE-RECORD every runs.db handle the CLI opens names its owner",
+      "origin": "443 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/443-one-record-census.test.ts",
+      "fullName": "C443-ONE-RECORD the dashboard bridge has no subscriber member of its own",
+      "origin": "443 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/443-one-record-census.test.ts",
+      "fullName": "C443-ONE-RECORD the predicate sees every acquisition form and ignores prose",
+      "origin": "443 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/443-one-record-census.test.ts",
+      "fullName": "C443-ONE-RECORD this file spells none of its needles and scans no test or built file",
+      "origin": "443 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-run-record-option.test-d.ts",
+      "fullName": "src/composition/__tests__/443-run-record-option.test-d.ts C443-ONE-RECORD the drive's runRecord option is required and never undefined",
+      "origin": "443 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/443-run-record-option.test-d.ts",
+      "fullName": "src/composition/__tests__/443-run-record-option.test-d.ts C443-ONE-RECORD the CLI host's run bridge has no subscriber member",
+      "origin": "443 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-cli-record.test.ts",
+      "fullName": "C443-SUITE-PREP-STDOUT a suite preparation failure through fn --json leaves stdout one JSON document and files its row",
+      "origin": "443 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-cli-record.test.ts",
+      "fullName": "C443-SUITE-PREP-STDOUT agent-qa run on a suite preparation failure still prints its Run ID line",
+      "origin": "443 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-debug-stdout.test.ts",
+      "fullName": "C443-DEBUG-STDOUT fn --json on a project at debug log level leaves stdout one JSON document through its run",
+      "origin": "443 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/443-debug-stdout.test.ts",
+      "fullName": "C443-DEBUG-STDOUT agent-qa run on a project at debug log level still prints its Platform and Model lines",
+      "origin": "443 D-13"
     }
   ]
 }
