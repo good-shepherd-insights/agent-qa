@@ -78,6 +78,9 @@ const COLUMN_WIDTHS: Partial<Record<string, string>> = {
   createdAt: "128px",
 }
 
+// 2026-10-17 (444-16, D-05): Attributes hides when the table's scroll wrapper is under 1200px.
+const HIDDEN_WHEN_NARROW = "@max-[1200px]/runs:hidden"
+
 const INTERNAL_ATTRIBUTE_ORDER = ["agent-qa.trigger", "agent-qa.runner"]
 const GATE_RUN_ATTRIBUTE = "agent-qa.gate-run"
 
@@ -165,6 +168,20 @@ function AttributeSummary({
             </div>
           ))}
         </div>
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+function TargetSummary({ run, className }: { run: RunRow; className: string }) {
+  const target = formatTarget(run)
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={cn("block truncate text-[13px] leading-snug", className)}>{target}</span>
+      </TooltipTrigger>
+      <TooltipContent side="top" align="start">
+        {target}
       </TooltipContent>
     </Tooltip>
   )
@@ -485,6 +502,10 @@ function stopRowClick(event: MouseEvent | KeyboardEvent) {
   event.stopPropagation()
 }
 
+function stopRowKeys(event: KeyboardEvent) {
+  if (event.key === "Enter" || event.key === " ") event.stopPropagation()
+}
+
 function getSelectAllState(ids: readonly string[], selectedIds: Set<string>): boolean | "indeterminate" {
   if (ids.length === 0) return false
   const selectedCount = ids.filter((id) => selectedIds.has(id)).length
@@ -504,9 +525,9 @@ function getHeadClassName(columnId: string) {
     "h-10 bg-background text-[13px] font-medium text-foreground/90",
     columnId === "select" && "w-11 px-2 text-center",
     columnId === "status" && "w-[136px] px-3",
-    columnId === "name" && "px-3",
+    columnId === "name" && "min-w-[280px] px-3",
     columnId === "target" && "w-[180px] px-3",
-    columnId === "attributes" && "w-[260px] px-3",
+    columnId === "attributes" && cn("w-[260px] px-3", HIDDEN_WHEN_NARROW),
     columnId === "duration" && "w-[104px] px-3 text-right",
     columnId === "createdAt" && "w-[128px] px-3 text-right",
   )
@@ -517,9 +538,9 @@ function getCellClassName(columnId: string, isChild: boolean) {
     "py-2 align-top",
     columnId === "select" && "w-11 px-2",
     columnId === "status" && "w-[136px] px-3",
-    columnId === "name" && cn("max-w-0 px-3", isChild && "pl-8"),
+    columnId === "name" && cn("min-w-[280px] max-w-0 px-3", isChild && "pl-8"),
     columnId === "target" && "w-[180px] max-w-0 px-3 text-muted-foreground",
-    columnId === "attributes" && "w-[260px] max-w-0 px-3",
+    columnId === "attributes" && cn("w-[260px] max-w-0 px-3", HIDDEN_WHEN_NARROW),
     columnId === "duration" && "w-[104px] px-3 text-right tabular-nums",
     columnId === "createdAt" && "w-[128px] px-3 text-right tabular-nums",
   )
@@ -823,11 +844,15 @@ export function RunsTable({
           </div>
         </div>
 
-        <ScrollArea data-tour-id="tour-runs-table" className="min-h-0 flex-1 rounded-md border">
+        <ScrollArea data-tour-id="tour-runs-table" className="@container/runs min-h-0 flex-1 rounded-md border">
           <Table className="min-w-full table-fixed">
             <colgroup>
               {visibleColumnIds.map((columnId) => (
-                <col key={columnId} style={getColumnWidthStyle(columnId)} />
+                <col
+                  key={columnId}
+                  style={getColumnWidthStyle(columnId)}
+                  className={columnId === "attributes" ? HIDDEN_WHEN_NARROW : undefined}
+                />
               ))}
             </colgroup>
 
@@ -907,11 +932,13 @@ export function RunsTable({
                             {isSuite && (
                               <button
                                 type="button"
+                                tabIndex={rowIsActive ? 0 : -1}
                                 className="rounded p-0.5 hover:bg-muted"
                                 onClick={(event) => {
                                   stopRowClick(event)
                                   onToggleSuite?.(run.id)
                                 }}
+                                onKeyDown={stopRowKeys}
                               >
                                 {isExpanded ? (
                                   <ChevronDown className="h-4 w-4 text-muted-foreground" />
@@ -926,7 +953,13 @@ export function RunsTable({
                             {run.attributes?.[GATE_RUN_ATTRIBUTE] === "true" && (
                               <Tooltip>
                                 <TooltipTrigger asChild>
-                                  <Badge variant="secondary" tabIndex={0} className="mt-0.5">
+                                  <Badge
+                                    variant="secondary"
+                                    data-slot="badge"
+                                    tabIndex={rowIsActive ? 0 : -1}
+                                    className="mt-0.5"
+                                    onKeyDown={stopRowKeys}
+                                  >
                                     Verify run
                                   </Badge>
                                 </TooltipTrigger>
@@ -939,9 +972,7 @@ export function RunsTable({
                         </TableCell>
 
                         <TableCell className={getCellClassName("target", false)}>
-                          <span className="block whitespace-normal break-words text-[13px] leading-snug text-muted-foreground/90">
-                            {formatTarget(run)}
-                          </span>
+                          <TargetSummary run={run} className="text-muted-foreground/90" />
                         </TableCell>
 
                         <TableCell className={getCellClassName("attributes", false)}>
@@ -999,9 +1030,7 @@ export function RunsTable({
                             </TableCell>
 
                             <TableCell className={getCellClassName("target", true)}>
-                              <span className="block whitespace-normal break-words text-[13px] leading-snug text-muted-foreground">
-                                {formatTarget(child)}
-                              </span>
+                              <TargetSummary run={child} className="text-muted-foreground" />
                             </TableCell>
 
                             <TableCell className={getCellClassName("attributes", true)}>
