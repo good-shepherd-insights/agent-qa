@@ -308,6 +308,36 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
     }
   }
 
+  function suiteMemberEntries(
+    source: Record<string, unknown>,
+    config: ConfigSnapshot | undefined,
+    taken: Set<number>,
+  ): RunArtifactSuiteMemberSnapshot[] {
+    const suiteId = readString(source.suiteId)
+    const pool = runMembers
+      .map((_, position) => position)
+      .filter((position) => suiteId === undefined || runMembers[position]!.suiteId === suiteId)
+    const entries = (Array.isArray(source.members) ? source.members : [])
+      .filter((entry): entry is Record<string, unknown> => isRecord(entry))
+      .sort((a, b) => (typeof a.index === 'number' ? a.index : 0) - (typeof b.index === 'number' ? b.index : 0))
+    const filed: RunArtifactSuiteMemberSnapshot[] = []
+    for (const entry of entries) {
+      const index = pickMember(
+        pool,
+        { testId: readString(entry.testId), name: readString(entry.name), filePath: readString(entry.filePath) },
+        taken,
+      )
+      if (index === undefined) continue
+      taken.add(index)
+      filed.push({
+        ...(entry as unknown as RunArtifactSuiteMemberSnapshot),
+        index,
+        ...(config === undefined ? {} : { config }),
+      })
+    }
+    return filed
+  }
+
   function applyMemberSnapshot(id: string, input: DashboardRunIngestSnapshots): void {
     const artifact = db.getRunArtifact(id)
     if (!artifact || artifact.finalizedAt) return
@@ -320,6 +350,9 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
     if (isRecord(input.source) && input.source.kind === 'test') {
       const entry = testMemberEntry(input.source, config, taken)
       if (entry !== undefined) added.push(entry)
+    }
+    if (isRecord(input.source) && input.source.kind === 'suite') {
+      added.push(...suiteMemberEntries(input.source, config, new Set(taken)))
     }
     if (added.length === 0) return
     const source: RunArtifactTestsSourceSnapshot = {
