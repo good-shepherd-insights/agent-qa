@@ -76,13 +76,11 @@ describe('C444-MEMBER-DURATION', () => {
   })
 
   it('a member whose executor throws after a hold reports at least its hold', async () => {
-    let hold = 0
-    let calls = 0
-    const executor: MemberTestExecutor = async () => {
-      calls++
+    const holds = new Map<string, number>()
+    const executor: MemberTestExecutor = async (member) => {
       const calledAt = performance.now()
       await new Promise((resolve) => setTimeout(resolve, HOLD_MS))
-      hold = performance.now() - calledAt
+      holds.set(member.testId, performance.now() - calledAt)
       throw new Error('executor broke')
     }
     const session = startRun(config(executor, 'run-444-member-duration-error')) as unknown as Session
@@ -90,9 +88,11 @@ describe('C444-MEMBER-DURATION', () => {
     session.subscribe(1, (event) => { events.push(event) })
     await session.done
 
-    expect(calls).toBe(2)
-    const [first] = finished(events)
-    expect([first?.testId, first?.outcome]).toEqual(['m1', 'failed'])
-    expect(first?.durationMs ?? 0, 'the failed member keeps the time it ran').toBeGreaterThanOrEqual(hold)
+    const published = finished(events)
+    expect(published.map((payload) => [payload.testId, payload.outcome])).toEqual([['m1', 'failed'], ['m2', 'failed']])
+    for (const payload of published) {
+      expect(payload.durationMs ?? 0, `${payload.testId} keeps the time it ran`)
+        .toBeGreaterThanOrEqual(holds.get(payload.testId) ?? Infinity)
+    }
   })
 })

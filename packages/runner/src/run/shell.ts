@@ -338,6 +338,9 @@ export function startRun(config: RunConfig): RunSession {
       // The `.then(onResolve, onReject)` mapping attaches a rejection handler to the executor promise
       // synchronously, so a member that settles (or rejects) AFTER the run raced past it can never
       // surface as an unhandled rejection — the swallow is structural, no extra `.catch` needed.
+      // 444-17 (D-52): the member's own clock, so a result the shell builds below keeps the time
+      // the member ran. Only members dispatched here have one; an abort-skipped member keeps 0.
+      const memberStartedAt = performance.now()
       const executorRaced: Promise<RaceOutcome> = config
         .executor(member, {
           runId: config.runId,
@@ -388,7 +391,7 @@ export function startRun(config: RunConfig): RunSession {
           filePath: `${member.testId}.test.ts`,
           status: 'failed',
           steps: [],
-          duration: 0,
+          duration: performance.now() - memberStartedAt,
         }
       } else {
         // Abort won the race — the member did not settle after run-level cancel/budget. Finalize it
@@ -401,7 +404,7 @@ export function startRun(config: RunConfig): RunSession {
           filePath: `${member.testId}.test.ts`,
           status: 'cancelled',
           steps: [],
-          duration: 0,
+          duration: performance.now() - memberStartedAt,
         }
       }
 
