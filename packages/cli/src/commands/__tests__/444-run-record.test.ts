@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -11,9 +11,12 @@ import { generateRunId } from '@vostride/agent-qa-ids'
 import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
 
 import { composeRunOwnership } from '../../composition/run-owner-probe.js'
+import * as runModule from '../run.js'
 import { createRunRecord, doorRunAttributes, type RunRecordHostBinding } from '../run.js'
 
 const NO_VERDICT = 'The run ended before it reached a verdict.'
+const CLOSED = 'This run record is closed.'
+const GATE_RUN = 'agent-qa.gate-run'
 const RUN_SOURCE = readFileSync(fileURLToPath(new URL('../run.ts', import.meta.url)), 'utf8')
 
 const cleanups: Array<() => void> = []
@@ -225,5 +228,96 @@ describe('C444-CRASH-CATCH', () => {
     ]) {
       expect(block.includes(gone), `the crash catch still names ${gone}`).toBe(false)
     }
+  })
+})
+
+type ResolveCliRunAttributes = (
+  user: Record<string, string>,
+  runner: 'local' | 'browserstack',
+  inherited?: Record<string, string>,
+) => Record<string, string>
+
+function resolveCliRunAttributes(): ResolveCliRunAttributes {
+  const resolve = (runModule as Record<string, unknown>).resolveCliRunAttributes
+  expect(typeof resolve, 'run.ts exports no resolveCliRunAttributes').toBe('function')
+  return resolve as ResolveCliRunAttributes
+}
+
+function ownRecord(attributes = doorRunAttributes('cli')) {
+  const record = createRunRecord({ attributes, warn: () => {} })
+  cleanups.push(() => record.close())
+  return record
+}
+
+describe('C444-RECORD-CLOSED', () => {
+  it('a record closed while its open is in flight releases the handle and refuses', async () => {
+    const control = configDir()
+    const opened = ownRecord()
+    await opened.open({ runId: generateRunId(), configDir: control })
+    expect(existsSync(`${runsDbOf(control)}-wal`), 'an open record holds no -wal file').toBe(true)
+    opened.close()
+    expect(existsSync(`${runsDbOf(control)}-wal`), 'a closed record left its -wal file').toBe(false)
+
+    const dir = configDir()
+    const record = ownRecord()
+    const opening = record.open({ runId: generateRunId(), configDir: dir })
+    record.close()
+
+    await expect(opening).rejects.toThrow(CLOSED)
+    expect(record.db, 'the record bound a handle after its close').toBeUndefined()
+    expect(existsSync(runsDbOf(dir)), 'the open never reached the runs.db file').toBe(true)
+    expect(existsSync(`${runsDbOf(dir)}-wal`), 'the late handle left its -wal file').toBe(false)
+  })
+
+  it('a closed record refuses a later open', async () => {
+    const dir = configDir()
+    const runId = generateRunId()
+    const record = ownRecord()
+    await record.open({ runId, configDir: dir })
+    record.close()
+
+    await expect(record.open({ runId, configDir: dir })).rejects.toThrow(CLOSED)
+    expect(existsSync(`${runsDbOf(dir)}-wal`), 'the refused open left a -wal file').toBe(false)
+
+    const never = ownRecord()
+    never.close()
+    await expect(never.open({ runId: generateRunId(), configDir: configDir() })).rejects.toThrow(CLOSED)
+  })
+})
+
+describe('C444-GATE-MARK', () => {
+  it('an inherited gate-run mark never reaches the row', async () => {
+    const resolved = resolveCliRunAttributes()({}, 'local', { [GATE_RUN]: 'true', team: 'x' })
+    expect(resolved.team).toBe('x')
+    expect(Object.keys(resolved), 'the inherited mark survived').not.toContain(GATE_RUN)
+
+    const dir = configDir()
+    const runId = generateRunId()
+    const record = ownRecord(resolved)
+    await record.open({ runId, configDir: dir })
+    const subscriber = record.subscriber({
+      mask: (text) => text,
+      members: [{ testId: 't-a', name: 'Member A', filePath: 'tests/a.yaml' }],
+    })
+    subscriber.handler({ seq: 1, ts: 1, runId, type: 'runStarted', payload: { memberTestCount: 1 } } as RunEventEnvelope)
+
+    const attributes = record.db?.getRun(runId)?.attributes
+    expect(attributes?.team, 'the row lost the inherited user attribute').toBe('x')
+    expect(Object.keys(attributes ?? {}), 'the row carries the inherited mark').not.toContain(GATE_RUN)
+  })
+
+  it("a verify run's own flag still marks its row", async () => {
+    const dir = configDir()
+    const runId = generateRunId()
+    const record = ownRecord()
+    await record.open({ runId, configDir: dir })
+    const subscriber = record.subscriber({
+      mask: (text) => text,
+      members: [{ testId: 't-a', name: 'Member A', filePath: 'tests/a.yaml' }],
+      gateRun: true,
+    })
+    subscriber.handler({ seq: 1, ts: 1, runId, type: 'runStarted', payload: { memberTestCount: 1 } } as RunEventEnvelope)
+
+    expect(record.db?.getRun(runId)?.attributes?.[GATE_RUN]).toBe('true')
   })
 })
