@@ -23,8 +23,8 @@
 // forgetting to rebuild before measuring) and does not pretend to survive somebody deliberately
 // touching a build output.
 //
-// TEST SOURCES ARE EXCLUDED FROM THE FRESHNESS SCAN ON PURPOSE. tsup's entries are `src/index.ts`
-// and `src/cli.ts`; nothing under `__tests__` is bundled into anything. Counting a test file's
+// TEST SOURCES ARE EXCLUDED FROM THE FRESHNESS SCAN ON PURPOSE. tsup's entries are `src/index.ts`,
+// `src/cli.ts` and `src/cli-main.ts`; nothing under `__tests__` is bundled into anything. Counting a test file's
 // mtime would make every edit to a test look like an unbuilt change to the product, which is the
 // kind of false alarm that gets a guard deleted. THIS FILE lives under `__tests__` for that exact
 // reason: it is instrument, not product, and it must not make the guard cry wolf on itself.
@@ -85,6 +85,8 @@ export const ANCHORED_BUILDS: readonly { readonly pkg: string; readonly artifact
     Object.freeze({ pkg: 'agent-local', artifact: join('dist', 'index.js') }),
     Object.freeze({ pkg: 'mcp', artifact: join('dist', 'index.js') }),
     Object.freeze({ pkg: 'cli', artifact: join('dist', 'cli.js') }),
+    // 2026-10-18 (444-14, D-47): the bin entry only loads this bundle, which holds the CLI.
+    Object.freeze({ pkg: 'cli', artifact: join('dist', 'cli-main.js') }),
   ])
 
 /** What a freshness reading found, as data — so a refusal names files rather than a boolean. */

@@ -1826,6 +1826,7 @@ skills/.staging/
         'exec',
         'tsup',
         'src/cli.ts',
+        'src/cli-main.ts',
         '--out-dir',
         bundleDir,
         '--format',
