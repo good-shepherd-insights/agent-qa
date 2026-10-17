@@ -940,51 +940,62 @@ export function createRunRecord(input: {
   let db: DashboardDatabase | undefined
   let ownsDb = false
   let openedFor: string | undefined
+  let opening: { readonly runId: string; readonly done: Promise<void> } | undefined
   let ownRow: string | undefined
   let incompleteReason: string | undefined
+
+  const openOnce = async ({ runId, configDir, configuredDbPath }: Parameters<RunRecord['open']>[0]) => {
+    const host = input.host
+    let dbPath = resolvePath(configDir, configuredDbPath?.trim() || DEFAULT_AGENT_QA_RUNS_DB_PATH)
+    let useHost = false
+    let handle: DashboardDatabase
+    let free: boolean
+    // 2026-10-17 (443-05, D-05): a runs.db that cannot be opened refuses the run before any effect.
+    try {
+      dashboard = await import('@vostride/agent-qa-dashboard')
+      dbPath = dashboard.resolveDashboardDbPath({
+        configDir,
+        ...(configuredDbPath === undefined ? {} : { configuredDbPath }),
+      })
+      useHost = host !== undefined
+        && (host.queueRun(runId) !== undefined || namesOneRunsDb(host.db.dbPath, dbPath))
+      handle = useHost && host !== undefined
+        ? host.db
+        : new dashboard.DashboardDatabase({ dbPath, runOwnership: composeRunOwnership() })
+    } catch (error) {
+      throw new RunRecordUnavailableError(dbPath, error)
+    }
+    try {
+      free = isOwnRunningRowOrFree(handle, runId)
+    } catch (error) {
+      if (!useHost) handle.close()
+      throw new RunRecordUnavailableError(dbPath, error)
+    }
+    if (!free) {
+      if (!useHost) handle.close()
+      throw new RunIdAlreadyInUseError(runId)
+    }
+    db = handle
+    openedFor = runId
+    ownsDb = !useHost
+  }
 
   return {
     get db() {
       return db
     },
-    async open({ runId, configDir, configuredDbPath }) {
-      if (openedFor !== undefined) {
-        if (openedFor === runId) return
-        throw new Error(`This run record belongs to ${openedFor} and cannot open ${runId}.`)
+    async open(args) {
+      if (opening !== undefined) {
+        if (opening.runId === args.runId) return opening.done
+        throw new Error(`This run record belongs to ${opening.runId} and cannot open ${args.runId}.`)
       }
-      const host = input.host
-      let dbPath = resolvePath(configDir, configuredDbPath?.trim() || DEFAULT_AGENT_QA_RUNS_DB_PATH)
-      let useHost = false
-      let handle: DashboardDatabase
-      let free: boolean
-      // 2026-10-17 (443-05, D-05): a runs.db that cannot be opened refuses the run before any effect.
-      try {
-        dashboard = await import('@vostride/agent-qa-dashboard')
-        dbPath = dashboard.resolveDashboardDbPath({
-          configDir,
-          ...(configuredDbPath === undefined ? {} : { configuredDbPath }),
-        })
-        useHost = host !== undefined
-          && (host.queueRun(runId) !== undefined || namesOneRunsDb(host.db.dbPath, dbPath))
-        handle = useHost && host !== undefined
-          ? host.db
-          : new dashboard.DashboardDatabase({ dbPath, runOwnership: composeRunOwnership() })
-      } catch (error) {
-        throw new RunRecordUnavailableError(dbPath, error)
-      }
-      try {
-        free = isOwnRunningRowOrFree(handle, runId)
-      } catch (error) {
-        if (!useHost) handle.close()
-        throw new RunRecordUnavailableError(dbPath, error)
-      }
-      if (!free) {
-        if (!useHost) handle.close()
-        throw new RunIdAlreadyInUseError(runId)
-      }
-      db = handle
-      openedFor = runId
-      ownsDb = !useHost
+      // 2026-10-17 (443-review, IN-07): a concurrent open joins the one in flight; a failed one binds nothing.
+      const done = openOnce(args).catch((error: unknown) => {
+        opening = undefined
+        throw error
+      })
+      opening = { runId: args.runId, done }
+      return done
     },
     subscriber(attach) {
       if (db === undefined || dashboard === undefined || openedFor === undefined) {
