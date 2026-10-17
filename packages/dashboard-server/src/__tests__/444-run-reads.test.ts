@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+import { resolveWorkspacePaths, type ResolvedWorkspacePaths } from '@vostride/agent-qa-core'
 
 import { DashboardDatabase } from '../db/database.js'
 import type { ExecutionBackend } from '../execution/execution-backend.js'
@@ -83,18 +85,70 @@ function seedSevenWords(): Record<(typeof SEVEN)[number], string> {
   return ids
 }
 
-async function startDashboard(): Promise<string> {
+async function startDashboard(workspacePaths?: ResolvedWorkspacePaths): Promise<string> {
   vi.spyOn(console, 'log').mockImplementation(() => undefined)
   const handle = await startServer({
     declaredSecretMask: (text) => text,
     db: new DashboardDatabase({ dbPath }),
     port: 0,
     configPath,
+    ...(workspacePaths ? { workspacePaths } : {}),
     executionBackend: new IdleBackend() as unknown as ExecutionBackend,
   })
   started.push(handle)
   const { port } = handle.server.address() as AddressInfo
   return `http://127.0.0.1:${String(port)}`
+}
+
+function writeSuiteWorkspace(suites: ReadonlyArray<{ suiteId: string; name: string }>): ResolvedWorkspacePaths {
+  mkdirSync(join(dir, 'tests'), { recursive: true })
+  mkdirSync(join(dir, 'suites'), { recursive: true })
+  writeFileSync(
+    join(dir, 'tests', 'a.yaml'),
+    ['name: A', 'test-id: t_a', 'target: web', 'steps: []', ''].join('\n'),
+  )
+  for (const suite of suites) {
+    writeFileSync(
+      join(dir, 'suites', `${suite.suiteId}.suite.yaml`),
+      [
+        `suite-id: ${suite.suiteId}`,
+        `name: ${suite.name}`,
+        'target: web',
+        'tests:',
+        '  - test: tests/a.yaml',
+        '    id: t_a',
+        '',
+      ].join('\n'),
+    )
+  }
+  return resolveWorkspacePaths({
+    config: {
+      workspace: {
+        testMatch: ['tests/*.yaml'],
+        suiteMatch: ['suites/*.suite.yaml'],
+        hooksFile: 'hooks.yaml',
+        envFile: '.env',
+        secretsFile: '.env.secrets.local',
+      },
+      knowledge: { dir: 'agent-qa-knowledge', commitArtifacts: 'none' },
+    },
+    configPath,
+  })
+}
+
+type Member = {
+  testIndex: number
+  testId: string | null
+  filePath: string | null
+  suiteId: string | null
+  name: string | null
+  outcome: string | null
+}
+
+function rowOf(body: any, id: string): { id: string; members?: Member[] } {
+  const row = (body.runs as Array<{ id: string; members?: Member[] }>).find((run) => run.id === id)
+  expect(row, `the /api/runs page lists ${id}`).toBeDefined()
+  return row!
 }
 
 async function getJson(url: string): Promise<{ status: number; body: any }> {
@@ -193,5 +247,93 @@ describe('C444-RUNS-FILTER', () => {
     const { status, body } = await getJson(`${origin}/api/runs?status=passed&status=flaky`)
     expect(status).toBe(400)
     expect(body).toEqual({ error: 'Unknown run status: flaky.' })
+  })
+})
+
+describe('C444-MEMBER-HISTORY', () => {
+  it('each run row lists its members with their test ids, paths, suites and outcomes', async () => {
+    const id = seedRun('failed', { id: 'run_444-three', name: 'A · B +1 more' })
+    db.upsertRunMember({ runId: id, testIndex: 2, testId: 't_c', name: 'C', filePath: 'tests/c.yaml', outcome: 'healed' })
+    db.upsertRunMember({ runId: id, testIndex: 0, testId: 't_a', name: 'A', filePath: 'tests/a.yaml', suiteId: 's_one', outcome: 'passed' })
+    db.upsertRunMember({ runId: id, testIndex: 1, testId: 't_b', name: 'B', filePath: 'tests/b.yaml', suiteId: 's_one', outcome: 'failed' })
+
+    const origin = await startDashboard()
+    const { status, body } = await getJson(`${origin}/api/runs`)
+    expect(status).toBe(200)
+    expect(rowOf(body, id).members).toEqual([
+      { testIndex: 0, testId: 't_a', filePath: 'tests/a.yaml', suiteId: 's_one', name: 'A', outcome: 'passed' },
+      { testIndex: 1, testId: 't_b', filePath: 'tests/b.yaml', suiteId: 's_one', name: 'B', outcome: 'failed' },
+      { testIndex: 2, testId: 't_c', filePath: 'tests/c.yaml', suiteId: null, name: 'C', outcome: 'healed' },
+    ])
+  })
+
+  it('a running member with no outcome reads null', async () => {
+    const id = seedRun('running', { id: 'run_444-live', name: 'A · B' })
+    db.upsertRunMember({ runId: id, testIndex: 0, testId: 't_a', name: 'A', filePath: 'tests/a.yaml', outcome: 'passed' })
+    db.upsertRunMember({ runId: id, testIndex: 1, testId: 't_b', name: 'B', filePath: 'tests/b.yaml' })
+
+    const origin = await startDashboard()
+    const { body } = await getJson(`${origin}/api/runs?status=running`)
+    expect(rowOf(body, id).members).toEqual([
+      { testIndex: 0, testId: 't_a', filePath: 'tests/a.yaml', suiteId: null, name: 'A', outcome: 'passed' },
+      { testIndex: 1, testId: 't_b', filePath: 'tests/b.yaml', suiteId: null, name: 'B', outcome: null },
+    ])
+  })
+
+  it("a page of runs is listed with every run's members", async () => {
+    const count = 450
+    for (let index = 0; index < count; index++) {
+      const id = seedRun('passed', {
+        id: `run_444-page-${String(index).padStart(3, '0')}`,
+        startedAt: new Date(Date.UTC(2026, 9, 1, 0, 0, index)).toISOString(),
+      })
+      db.upsertRunMember({ runId: id, testIndex: 0, testId: `t_${String(index)}`, name: `T${String(index)}`, outcome: 'passed' })
+    }
+
+    const all = db.getRuns()
+    expect(all).toHaveLength(count)
+    for (const run of all) {
+      expect(run.members?.map((member) => member.testId)).toEqual([`t_${String(Number(run.id.slice(-3)))}`])
+    }
+
+    const origin = await startDashboard()
+    const { body } = await getJson(`${origin}/api/runs?limit=200&offset=0`)
+    expect(body.total).toBe(count)
+    const page = body.runs as Array<{ id: string; members?: Member[] }>
+    expect(page).toHaveLength(200)
+    for (const run of page) {
+      expect(run.members?.map((member) => member.testId)).toEqual([`t_${String(Number(run.id.slice(-3)))}`])
+    }
+  })
+})
+
+describe('C444-SUITE-HISTORY', () => {
+  it("a run spanning two suites is listed under each suite's history", async () => {
+    const spanning = seedRun('failed', { id: 'run_444-two-suites', name: 'One · Two', startedAt: '2026-10-01T11:00:00.000Z' })
+    db.upsertRunMember({ runId: spanning, testIndex: 0, testId: 't_a', name: 'A', suiteId: 's_one', suiteName: 'One', outcome: 'passed' })
+    db.upsertRunMember({ runId: spanning, testIndex: 1, testId: 't_a', name: 'A', suiteId: 's_two', suiteName: 'Two', outcome: 'failed' })
+    const single = seedRun('passed', { id: 'run_444-one-suite', name: 'One', suiteId: 's_one', startedAt: '2026-10-01T10:00:00.000Z' })
+    db.upsertRunMember({ runId: single, testIndex: 0, testId: 't_a', name: 'A', suiteId: 's_one', suiteName: 'One', outcome: 'passed' })
+    seedRun('passed', { id: 'run_444-no-suite', name: 'A', testId: 't_a' })
+
+    expect(db.getRunsBySuiteId('s_one').map((run) => run.id)).toEqual([spanning, single])
+    expect(db.getRunsBySuiteIdCount('s_one')).toBe(2)
+    expect(db.getRunsBySuiteId('s_two').map((run) => run.id)).toEqual([spanning])
+    expect(db.getRunsBySuiteIdCount('s_two')).toBe(1)
+
+    const origin = await startDashboard(writeSuiteWorkspace([
+      { suiteId: 's_one', name: 'One' },
+      { suiteId: 's_two', name: 'Two' },
+    ]))
+    const one = await getJson(`${origin}/api/analytics/suites/s_one`)
+    expect(one.status).toBe(200)
+    expect(one.body.total).toBe(2)
+    expect((one.body.runs as Array<{ id: string }>).map((run) => run.id)).toEqual([spanning, single])
+    expect(one.body.trends).toMatchObject({ totalRuns: 2 })
+    const two = await getJson(`${origin}/api/analytics/suites/s_two`)
+    expect(two.status).toBe(200)
+    expect(two.body.total).toBe(1)
+    expect((two.body.runs as Array<{ id: string }>).map((run) => run.id)).toEqual([spanning])
+    expect(two.body.trends).toMatchObject({ totalRuns: 1, passRate: 0 })
   })
 })
