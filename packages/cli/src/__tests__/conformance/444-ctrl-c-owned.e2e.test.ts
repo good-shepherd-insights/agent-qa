@@ -262,4 +262,22 @@ describe('C444-CTRL-C-OWNED', () => {
       'SIGINT',
     ))
   }, CELL_BUDGET_MS)
+
+  it("one SIGINT ends a held suite run through agent-qa run's own path", async () => {
+    expectOwnPath(await signalHeldRun(
+      'suite SIGINT',
+      '444-ctrl-c-suite-sigint',
+      ['run', '--suite', 'suites/populated.suite.yaml'],
+      'SIGINT',
+    ))
+  }, CELL_BUDGET_MS)
+
+  it("one SIGTERM ends a held direct run through agent-qa run's own path", async () => {
+    expectOwnPath(await signalHeldRun(
+      'direct SIGTERM',
+      '444-ctrl-c-direct-sigterm',
+      ['run', 'tests/populated.test.yaml'],
+      'SIGTERM',
+    ))
+  }, CELL_BUDGET_MS)
 })
