@@ -1,5 +1,6 @@
 // 2026-10-17 (444-10, D-13/D-36): one stage vocabulary on every surface. A finished stage reads
 // `complete`; `done` stays only as agent-jobs.db's own job and notification words.
+// 2026-10-17 (444-11, D-13/D-39): a run whose chain was never enqueued reads `skipped (<reason>)`.
 
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -17,6 +18,8 @@ import type { FunctionDeps, PostProcessingChainState } from '@vostride/agent-qa-
 import {
   asJobId,
   CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
+  POST_PROCESSING_SKIP_REASON_WORDS,
+  POST_PROCESSING_SKIP_REASONS,
   PostProcessingStatusSchema,
   RunDigestSchema,
 } from '@vostride/agent-qa-schema'
@@ -42,6 +45,10 @@ const RENDERERS = [
   'dashboard-ui/src/lib/api.ts',
   'dashboard-ui/src/lib/analysis-view.ts',
   'dashboard-ui/src/lib/knowledge-view.ts',
+] as const
+
+const SKIP_WORD_READERS = [
+  'cli/src/curation/post-run-tail.ts',
 ] as const
 
 const RUN_ID = 'run-444-stage-words'
@@ -116,7 +123,7 @@ function doneLiteralLines(code: string): string[] {
   return code.split('\n').filter(line => DONE_LITERAL.test(line)).map(line => line.trim())
 }
 
-function depsWith(state: PostProcessingChainState, handoff?: CompletedRunHandoff): FunctionDeps {
+function depsWith(state: PostProcessingChainState | undefined, handoff?: CompletedRunHandoff): FunctionDeps {
   return {
     runs: {
       list: () => Promise.resolve([]),
@@ -146,9 +153,12 @@ function depsWith(state: PostProcessingChainState, handoff?: CompletedRunHandoff
   }
 }
 
-async function served(state: PostProcessingChainState): Promise<PostProcessingStatus> {
+async function served(
+  state: PostProcessingChainState | undefined,
+  handoff?: CompletedRunHandoff,
+): Promise<PostProcessingStatus> {
   return await invokeFunction(
-    createFunctionRegistry({ deps: depsWith(state) }),
+    createFunctionRegistry({ deps: depsWith(state, handoff) }),
     RUNS_POST_PROCESSING_FUNCTION_ID,
     { runId: RUN_ID },
     CALLER,
@@ -179,6 +189,8 @@ function finishedChain(notification: RunNotification): PostProcessingChainState 
 }
 
 const HANDOFF = { runId: RUN_ID } as unknown as CompletedRunHandoff
+const GATE_RUN_HANDOFF = { runId: RUN_ID, gateRun: true } as unknown as CompletedRunHandoff
+const OUTCOME_EXCLUDED_HANDOFF = { runId: RUN_ID, excludedFromOutcomes: true } as unknown as CompletedRunHandoff
 
 const openClients: Client[] = []
 
@@ -308,5 +320,51 @@ describe('C444-NOTIFICATION-VIEW', () => {
     expect(RunDigestSchema.parse(digest)).toEqual(digest)
     expect(RunDigestSchema.safeParse({ ...digest, chain: { ...digest.chain, outcome: 'done' } }).success)
       .toBe(false)
+  })
+})
+
+describe('C444-STAGE-SKIPPED', () => {
+  it("a gate run's read carries skipped with reason gate-run and no exclusion field", async () => {
+    const status = await served(undefined, GATE_RUN_HANDOFF)
+    expect(status.skipped).toEqual({ reason: 'gate-run' })
+    expect(status).not.toHaveProperty('exclusion')
+    expect(status.chips).toEqual({ analysis: 'pending', curation: 'pending' })
+    expect(PostProcessingStatusSchema.parse(status)).toEqual(status)
+    expect(PostProcessingStatusSchema.safeParse({ ...status, exclusion: { reason: 'gate-run' } }).success)
+      .toBe(false)
+    expect('skipped' in await served(undefined, HANDOFF)).toBe(false)
+  })
+
+  it('the CLI exit line prints skipped (gate run) for both stages', async () => {
+    const line = renderPostProcessingSummaryLine(await served(undefined, GATE_RUN_HANDOFF), 'handed-off')
+    expect(line).toContain('analysis: skipped (gate run) · curation: skipped (gate run)')
+    expect(line).not.toContain('excluded')
+    expect(line).not.toContain('daemon will drain')
+  })
+
+  it('the CLI exit line prints skipped (outcome-excluded) for an outcome-excluded run', async () => {
+    const line = renderPostProcessingSummaryLine(
+      await served(undefined, OUTCOME_EXCLUDED_HANDOFF),
+      'handed-off',
+    )
+    expect(line).toContain('analysis: skipped (outcome-excluded) · curation: skipped (outcome-excluded)')
+    expect(line).not.toMatch(/\bexcluded \(/u)
+  })
+
+  it("every renderer reads the reason's word from one map", () => {
+    expect(POST_PROCESSING_SKIP_REASON_WORDS).toEqual({
+      'gate-run': 'gate run',
+      'outcome-excluded': 'outcome-excluded',
+    })
+    expect(POST_PROCESSING_SKIP_REASONS.length).toBeGreaterThan(0)
+    expect(Object.keys(POST_PROCESSING_SKIP_REASON_WORDS).sort()).toEqual([...POST_PROCESSING_SKIP_REASONS].sort())
+    for (const reason of POST_PROCESSING_SKIP_REASONS) {
+      expect(POST_PROCESSING_SKIP_REASON_WORDS[reason].length, reason).toBeGreaterThan(0)
+    }
+    for (const file of SKIP_WORD_READERS) {
+      const path = join(PACKAGES_ROOT, file)
+      expect(existsSync(path), `${file} is missing; the census cannot read it`).toBe(true)
+      expect(stripComments(readFileSync(path, 'utf8')), file).toContain('POST_PROCESSING_SKIP_REASON_WORDS[')
+    }
   })
 })
