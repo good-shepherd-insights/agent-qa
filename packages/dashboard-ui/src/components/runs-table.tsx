@@ -78,7 +78,8 @@ const COLUMN_WIDTHS: Partial<Record<string, string>> = {
   createdAt: "128px",
 }
 
-const INTERNAL_ATTRIBUTE_ORDER = ["agent-qa.trigger", "agent-qa.runner", "agent-qa.gate-run"]
+const INTERNAL_ATTRIBUTE_ORDER = ["agent-qa.trigger", "agent-qa.runner"]
+const GATE_RUN_ATTRIBUTE = "agent-qa.gate-run"
 
 function formatPlatform(platform: string) {
   return platform === "ios"
@@ -128,7 +129,9 @@ function AttributeSummary({
   attributes: Record<string, string> | null | undefined
   activeKeys: readonly string[]
 }) {
-  const entries = sortAttributeEntries(attributes, activeKeys)
+  const entries = sortAttributeEntries(attributes, activeKeys).filter(
+    ([key]) => key !== GATE_RUN_ATTRIBUTE,
+  )
   if (entries.length === 0) {
     return <span className="text-[12px] text-muted-foreground">No attributes</span>
   }
@@ -900,7 +903,7 @@ export function RunsTable({
                         </TableCell>
 
                         <TableCell className={getCellClassName("name", false)}>
-                          <div className="flex min-w-0 items-center gap-2.5">
+                          <div className="flex min-w-0 items-start gap-2.5">
                             {isSuite && (
                               <button
                                 type="button"
@@ -920,8 +923,17 @@ export function RunsTable({
                             <span className="block whitespace-normal break-words text-sm font-medium leading-snug text-foreground">
                               {run.name}
                             </span>
-                            {run.attributes?.["agent-qa.gate-run"] === "true" && (
-                              <Badge variant="secondary">Verify run</Badge>
+                            {run.attributes?.[GATE_RUN_ATTRIBUTE] === "true" && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Badge variant="secondary" tabIndex={0} className="mt-0.5">
+                                    Verify run
+                                  </Badge>
+                                </TooltipTrigger>
+                                <TooltipContent side="top">
+                                  Started by authoring verify. Not used for learning.
+                                </TooltipContent>
+                              </Tooltip>
                             )}
                           </div>
                         </TableCell>
