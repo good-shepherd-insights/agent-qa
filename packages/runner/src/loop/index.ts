@@ -170,7 +170,8 @@ function unprovenHealNote(reason: 'absent' | 'not-unique'): string {
     + `same (role, exact name and row: ${found}), so nothing was sent.`
 }
 
-const CANCELLED_MESSAGE = 'Step cancelled by user'
+// 444 D-51: a cancel can come from any door, so the record names no cause.
+export const CANCELLED_MESSAGE = 'The run was cancelled before this step finished.'
 
 // Provisional fallbacks used only until the composition root supplies model-derived numbers
 // (380 D-02/D-15/D-17). They are deliberately not config keys; the loop consumes plain budgets.

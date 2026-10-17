@@ -712,7 +712,7 @@ describe('C436-BULK-AND-BOUNDS', () => {
       makeStepContext(),
     )
     expect(cancelled.status).toBe('cancelled')
-    expect(cancelled.error).toBe('Step cancelled by user')
+    expect(cancelled.error).toBe('The run was cancelled before this step finished.')
     expect(cancelled.evidence?.limitStop).toBeUndefined()
   })
 

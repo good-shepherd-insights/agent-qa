@@ -254,7 +254,7 @@ describe('C442-CANCEL-ORPHAN', () => {
       body: { cancelled: false, message: orphanSummary(GONE.pid) },
     })
     for (const id of [byQueue, byRoute]) expectOrphanFinalized(id, GONE.pid)
-    expect(reader.getRun(byRoute)?.failureSummary).not.toBe('Test cancelled by user')
+    expect(reader.getRun(byRoute)?.failureSummary).not.toBe('The run was cancelled before this test finished.')
     expect(stopRequests).toEqual([])
     expect(dashboard.backend.killed).toEqual([])
   })

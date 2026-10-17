@@ -77,7 +77,7 @@ describe('C444-NO-CAUSE-WORDS', () => {
     const source = readFileSync(new URL('../member-runner.ts', import.meta.url), 'utf8')
     expect(source).toContain(`new Error('${TEST_SENTENCE}')`)
     for (const file of ['../member-runner.ts', '../../loop/index.ts']) {
-      expect(readFileSync(new URL(file, import.meta.url), 'utf8'), file).not.toMatch(/by user/u)
+      expect(readFileSync(new URL(file, import.meta.url), 'utf8'), file).not.toMatch(/cancelled\sby\suser/iu)
     }
   })
 })

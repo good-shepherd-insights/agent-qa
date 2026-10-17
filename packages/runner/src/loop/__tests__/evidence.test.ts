@@ -493,7 +493,7 @@ describe('C437-NO-INPUT', () => {
       stateBefore: makeScreenState(),
       result: skippedTap,
     })
-    const cancelled: VerifierVerdict = { pass: false, reasoning: 'Step cancelled by user' }
+    const cancelled: VerifierVerdict = { pass: false, reasoning: 'The run was cancelled before this step finished.' }
     const [trace] = projectLegacyTrace(recorder.finalize(cancelled, 0, 'turn Wi-Fi on'))
     expect(trace!.result).toBe('no-input')
     expect('error' in trace!).toBe(false)

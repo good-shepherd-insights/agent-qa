@@ -56,7 +56,7 @@ import type { HookDefinition } from '../hooks/types.js'
 import { VariableStore } from '../variables/store.js'
 import { interpolateVariables, interpolateVariablesWithProvenance, findUnresolvedTemplates } from '../variables/interpolate.js'
 import { createExtractor } from '../variables/extractor.js'
-import { executeStep as defaultExecuteStep } from '../loop/index.js'
+import { CANCELLED_MESSAGE, executeStep as defaultExecuteStep } from '../loop/index.js'
 import { withAbort, createTimeoutAbortReason, getTimeoutAbortReason } from '../loop/abort.js'
 import { redactSecretValue } from '../loop/secrets.js'
 import { parseHookInline, stripHookInline, parseRunJSInline, parseAppiumInline } from './inline-steps.js'
@@ -333,7 +333,7 @@ function createAbortedStepResult(
   if (!signal.aborted) return undefined
   const plannedAction = action ?? ({ type: 'waitFor', on: 'text', text: '', timeoutMs: 0 } as unknown as Action)
   const timeoutReason = getTimeoutAbortReason(signal)
-  const error = timeoutReason?.message ?? 'Step cancelled by user'
+  const error = timeoutReason?.message ?? CANCELLED_MESSAGE
   return {
     name,
     status: timeoutReason ? 'failed' : 'cancelled',
@@ -506,7 +506,7 @@ async function runMemberAttempt(
     const deadlineTimers: ReturnType<typeof setTimeout>[] = []
     const abortStepWithTestReason = () => {
       if (!stepAbortController.signal.aborted) {
-        stepAbortController.abort(testAbortController.signal.reason ?? new Error('Test cancelled by user'))
+        stepAbortController.abort(testAbortController.signal.reason ?? new Error('The run was cancelled before this test finished.'))
       }
     }
     const abortForTimeout = (scope: 'test' | 'step', timeoutMs: number) => {

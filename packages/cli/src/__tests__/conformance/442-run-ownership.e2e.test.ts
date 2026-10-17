@@ -388,8 +388,8 @@ describe('C442-CANCEL-OWNER', () => {
     }
 
     at.browsers.release(0)
-    await expectFinishesOnItsOwn(at, a, 'Test cancelled by user')
-    expect(readRow(at.project, a.id).failureSummary ?? '').not.toContain('Test cancelled by user')
+    await expectFinishesOnItsOwn(at, a, 'The run was cancelled before this test finished.')
+    expect(readRow(at.project, a.id).failureSummary ?? '').not.toContain('The run was cancelled before this test finished.')
     expect(JSON.stringify(at.project.db.getRunArtifact(a.id)!.payload))
       .not.toContain('Run cancellation requested')
   }, CELL_BUDGET_MS)

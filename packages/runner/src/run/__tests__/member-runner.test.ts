@@ -264,7 +264,7 @@ describe('runMemberTest — timeout & cancellation', () => {
 
   it('returns a cancelled result when the external abort signal is already aborted', async () => {
     const ac = new AbortController()
-    ac.abort(new Error('Test cancelled by user'))
+    ac.abort(new Error('The run was cancelled before this test finished.'))
     const rec = recordingExecuteStep([stepResult()])
     const result = await runMemberTest(
       member({ steps: ['Click OK'] }),

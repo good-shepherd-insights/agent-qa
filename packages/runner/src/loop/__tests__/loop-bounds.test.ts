@@ -72,7 +72,7 @@ describe('loop bounds (LOOP-02 / 436 D-10)', () => {
       makeStepContext(),
     )
     expect(result.status).toBe('cancelled')
-    expect(result.error).toBe('Step cancelled by user')
+    expect(result.error).toBe('The run was cancelled before this step finished.')
     expect(planCalls).toBe(0)
   })
 
