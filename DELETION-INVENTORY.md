@@ -5442,3 +5442,267 @@ No schema bump, no migration and no compatibility code (D-01).
 The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
 verdict are recorded in `.planning/phases/443-one-run-through-every-door/443-RECORD.md` § Gate and
 the SHA in § Final SHA, rather than quoted here, so no agent-qa commit follows it.
+
+## 2026-10-17 — Phase 444: Truthful lifecycle (V2-RUN-03)
+
+This section appends to the register and rewrites no earlier section. Phase 444 made a run read
+the same on every surface from its start to its end: runs.db stores the verdict's own word, a
+multi-test run is titled once at its claim and no member writes its row, a cancel is a request
+the run answers with its own verdict, a run that ends without a verdict closes its own row and
+says so, post-processing uses one vocabulary (`pending · running · complete · failed` with
+`skipped (reason)`), and under `CI=true` with no terminal a run prints truthful lines. The phase
+owner's rule is carried from 443 (D-01): no backward compatibility, so what the phase retired was
+removed outright, with no alias, migration, fallback or message naming a replacement. The section
+follows the 2026-10-17 Phase 443 shape. Dated 2026-10-17, the phase's date; written by 444-21 on
+2026-10-18.
+
+### The ruling
+
+> V2-RUN-03: Completed views include failed and cancelled runs as well as passed runs.
+
+From `.planning/REQUIREMENTS.md`; the spec of record is `spec/v2/release-readiness.md` §2.2. The
+phase's decisions are in `.planning/phases/444-truthful-lifecycle/444-CONTEXT.md`: D-01 to D-45
+settled at discussion and planning, and D-46 to D-58 settled during execution under the owner's
+delegation. The removals below come from D-03 (runs.db v6), D-06 (no member writes the run row),
+D-11 and D-31 (a cancel writes nothing), D-13, D-36 and D-39 (the stage words), D-16 and D-19
+(the verdictless close and the crash path's guess), D-26 (the verify-run mark), D-30 (the first
+signal), D-32 and D-53 (the browser-closed guesses), D-51 (the cancel's cause words), D-52 (a
+cancelled member's zero duration) and D-55 (the skipped run's sentence).
+
+### How this inventory is measured
+
+| Instrument | What it claims | Where |
+|---|---|---|
+| the 442 census | `C442-STATUS-WRITERS-CLASSIFIED` lists every `runs.status` writer; `WRITER_FLOOR` went 26 to 20 across the phase (444-02 −1, 444-06 −2, 444-08 −3 +1, 444-09 −2 +1); `C442-UNIVERSE-FLOORS`' `run.ts` `finalizeOwnRun` floor went from 3 to 2; `C442-OWNER-REQUIRED` executes the v6 DDL | `packages/arch/src/__tests__/442-run-ownership-census.test.ts` |
+| the renderer censuses | `C444-STAGE-WORDS no renderer spells done as a stage word` and `C444-STAGE-SKIPPED no renderer prints excluded as a stage word` strip comments with a string-aware scanner and fail on a quoted `done` or `excluded` literal in the renderer files; `C444-STAGE-SKIPPED every renderer reads the reason's word from one map` | `packages/cli/src/__tests__/444-stage-words.test.ts` |
+| the real-process cells | the parked-run cancels (`C444-REAL-CANCEL`, `C444-CANCEL-RANKING`), the Ctrl+C ownership (`C444-CTRL-C-OWNED`), crash, pending-at-exit and resume (`C444-CRASH`, `C444-PENDING-AT-EXIT`, `C444-RESUME`), the completed views, independence and exit 2 (`C444-COMPLETED-VIEWS`, `C444-VERDICT-INDEPENDENCE`, `C444-EXIT-TWO`) and the CI posture (`C444-CI-HEADLESS`, `C444-CI-PROPOSE-ONLY`, `C444-CI-RECIPE`, `C444-CI-UPLOAD`), on the shipped bin, a stub model and real headless Chromium | `packages/cli/src/__tests__/conformance/444-*.test.ts` |
+| the gate list | 217 `C444-` cells in 53 areas listed in `scripts/gate/inputs/regressions.json` after the 2000 rows listed at `e424b0bd0` (unchanged and in order, except three renamed in place; § Registered gate rows), each with its area's `444 D-NN` origin, so `gate:local` must execute and pass every one | `scripts/gate/inputs/regressions.json` (444-21 `d34b0a658`) |
+
+**Both ends of the derivation, stated so it can be re-run.** Baseline `e424b0bd0` (agent-qa
+`version-0.2`, Phase 443's final SHA and 444-01's base). Closing SHA `d34b0a658` (444-21's gate
+list commit, the parent of this section's commit). `git -C agent-qa diff --shortstat e424b0bd0
+d34b0a658`: 220 files changed, 15,770 insertions, 1,774 deletions (under `packages/`: 215 files,
++14,297/−1,758; the other five are `docs/ci.md`, `docs/queues.md`, `README.md`, `regressions.json`
+and this file, whose two D-26 sentences 444-09 corrected). `--diff-filter=D`: no file deleted.
+`--diff-filter=A`: 49 files added, 43 of them under `__tests__` (the C444 test files and the
+`444-process-tree.ts` witness) and six not: `docs/ci.md`, `cli/src/cli-main.ts` (the former
+`cli.ts` body, byte-identical to `cli.ts` at `e424b0bd0`, D-47), `cli/src/color-posture.ts`,
+`cli/src/curation/resume-limit.ts`, `dashboard-server/src/db/run-status-class.ts` and
+`dashboard-server/src/reporter/run-row-identity.ts`. 64 production files changed. 102 commits,
+every one signed (`%G?` = `G`): 101 from 444-01 to 444-20 and 444-22, and 444-21's gate list.
+The removed lines below are read from each deleting commit's diff (`git -C agent-qa show <sha>`)
+and the plan summaries, not transcribed from memory. Names are at `e424b0bd0`.
+
+### What was deleted
+
+#### Members removed from surviving files
+
+| Member (file at `e424b0bd0`) | What it did | Deleting commit | The cell that notices its return |
+|---|---|---|---|
+| runs.db v5's status set: `'skipped'` and `'flaky'` in the `runs.status` CHECK, and `SCHEMA_VERSION = 5` (`dashboard-server/src/db/schema.ts`) | let a row hold two words no writer used after D-06 (`skipped`) or that only readers named (`flaky`) | `37baaf89f` (444-04) | `C444-SCHEMA-V6 the runs table admits exactly the seven status words`; `C444-SCHEMA-V6 a fresh runs database opens at version 6`; `C444-SCHEMA-V6 a version 5 file is refused naming the file and left untouched`; `C442-CENSUS — no path finalizes runs it does not own (442 D-05) C442-OWNER-REQUIRED: the runs table requires an owner on every running row` |
+| `toRunStatus` and its doc block (`dashboard-server/src/reporter/dashboard-subscriber.ts`), with the local `VerdictLike` and `RunFinishedLike` interfaces | collapsed `healed` to `passed` and `timeout` to `failed` before the row was written | `37baaf89f` (444-04) | `C444-SCHEMA-V6 a healed verdict and a timeout verdict are stored as their own words` |
+| `finalRunStatus` (`cli/src/commands/run.ts`) | the record's own collapse (`healed` to `passed`, `skipped` allowed) | `37baaf89f` (444-04) | `C444-SCHEMA-V6 an incomplete record closes its own row with the verdict's own word` |
+| the own-row unions `'passed' \| 'failed' \| 'skipped' \| 'cancelled'` of `finalizeOwnRun` and `closeOwnRun` (`dashboard-server/src/db/database.ts`) | typed the own-row writers with the v5 words | `37baaf89f` (444-04), now the schema's `RunStatus` | `C443-OWN-FINALIZE the own-row finalizer writes each verdict status once` (it iterates the five verdict words); `pnpm typecheck` |
+| the claim's four `sourceSnapshot` identity reads (`sourceName`, `sourceFilePath`, `sourceTestId`, `sourceSuiteId`) (`dashboard-subscriber.ts`) | titled and filed the row from whichever source snapshot arrived | `c6be6c153` (444-02), now `runRowIdentity` over the member list | `C444-RUN-TITLE a multi-test run is titled at the claim and carries no test id or file path`; `C444-SINGLE-TITLE a single-test run is titled, identified and filed by its test at the claim` |
+| the suite identity state `sourceRecord`, `suiteRun` and `suiteIdentityWritten` (`dashboard-subscriber.ts`) | wrote the suite's name and id onto the row when its first member started | `955ed5c3b` (444-02) | `C444-SUITE-TITLE a one-suite run keeps the suite's name and id`; `C444-SUITE-TITLE a run spanning two suites is titled by the suite names and carries no suite id` |
+| `handleTestStarted`'s two run-row `updateRun` calls (the suite arm's name and suite id; the non-suite arm's name and test id) | renamed the run after each member as it started (WINDOWS #549) | `955ed5c3b` (444-02) | `C444-NO-MEMBER-WRITES a member's start writes nothing on the run row`; `C444-PRE-FIX a three-test run keeps one name and stays running until its verdict, with every member listed (WINDOWS #549)` |
+| `handleTestFinished`'s `status` and `endedAt` keys and its per-member `stageRuntime` (`dashboard-subscriber.ts`) | moved the run row to each member's outcome, so a multi-test run left the Running tab after member 1 | `955ed5c3b` (444-02) | `C444-NO-MEMBER-WRITES a member's finish leaves the row running with its claim's end time`; `C444-NO-MEMBER-WRITES the verdict alone moves the row off running` |
+| `runStatusFromEnvelope`'s `testFinished` arm (`dashboard-server/src/execution/in-process-backend.ts`) | ended a run's handle at member 1, so `kill()` returned false and a later Cancel was lost (D-43) | `955ed5c3b` (444-02) | `C444-BACKEND-RUN-STATUS the active list and kill survive member 1 finishing`; `C444-BACKEND-RUN-STATUS a handle takes its status from the run-level outcome only` |
+| `isSuccessfulRunStatus` (`passed \|\| flaky`) and its `RUN_MEMBERS_NOT_ON_THE_TYPE` entry (`database.ts`, `server/routes.ts`); the `'flaky'` reads in `summarizeAnalyticsRuns` and the `=== 'failed'` counts in trends and the summary; `calculateFlakyMetrics`' `passed \|\| failed` row filter (`routes.ts`) | counted runs by the v5 words, so a stored `healed` run was neither a pass nor a fail | `9b154a10b` (444-05), now `runStatusClass` | `C444-STATUS-CLASS the classifier sorts the seven words into pass, fail, cancelled and live`; `C444-STATUS-CLASS healed counts as a pass and timeout as a fail in trends and the insights summary`; `C444-STATUS-CLASS the insights flaky count reads the stored healed word` |
+| `RunsFilter.status` (one word, `status = ?`) (`database.ts`) | the single-status filter behind a one-word Completed tab | `9b154a10b` (444-05), now `statuses` and `status IN (…)` | `C444-RUNS-FILTER repeated status parameters list every run in any of those words`; `C444-RUNS-FILTER an unknown status word is refused with 400` |
+| `getRunsByTestName`, `getRunsByTestNameCount` and the by-name `getTestTrends(name)` with their registry entries (`database.ts`, `routes.ts`); `getFlakyTests`' grouping by `runs.name` over `status IN ('passed','failed')` | the by-name test readers: a test's history held only runs whose row carried its name | `0b0f2cc06` (444-05), now `getRunsByTest({ testId, filePath })` over `run_members` | `C444-TEST-VIEWER the test viewer lists every run that ran the test, with that member's outcome`; `C444-TEST-VIEWER a request naming neither a test id nor a path is refused with 400`; `C444-TEST-VIEWER flaky tests are grouped by member file path and count healed as a pass` |
+| the `runs.suite_id` predicate of `getRunsBySuiteId`, `getRunsBySuiteIdCount` and `getSuiteTrends` (`database.ts`) | filed a run under one suite only | `afb6b4f3d` (444-05), now member suite ids | `C444-SUITE-HISTORY a run spanning two suites is listed under each suite's history` |
+| the queue's running-row cancel write `updateRun({ status: 'cancelled', endedAt })` and its artifact finalize (`Run cancellation requested`) (`dashboard-server/src/queue/job-queue.ts`) | pre-wrote `cancelled` on a run this dashboard owned before the run stopped (D-11) | `b515c5d57` (444-06) | `C444-CANCEL-REQUEST a cancel on this dashboard's running run asks it to stop and writes nothing`; `C444-PRE-FIX a dashboard cancel leaves the row running until the run's verdict (the queue's pre-written cancel)` |
+| the `cancel-running` event (its emit in `job-queue.ts`) and its listener `executionBackend?.kill(runId)` (`server/server.ts`) | carried the stop to the backend without telling the queue whether it landed | `b515c5d57` (444-06), now the injected `requestStop(runId): boolean` | `C444-CANCEL-REQUEST a cancel on this dashboard's running run asks it to stop and writes nothing`; `C442-CANCEL-OWNER the dashboard still cancels its own queued and running runs` |
+| `kill`/`killAll`'s `status = 'cancelled'` and `completionReason = 'cancelled'` (`in-process-backend.ts`) | settled a killed run as cancelled whatever its verdict | `b515c5d57` (444-06) | `C444-CANCEL-REQUEST the backend's kill leaves the handle's status to the run`; `C444-CANCEL-REQUEST a run that reached passed before the stop landed keeps passed` |
+| the cancel route's post-write: duration, `endedAt` and the failure summary `Test cancelled by user` (`routes.ts`) | rewrote the row after the queue's answer | `b515c5d57` (444-06) | `C444-CANCEL-ANSWERS a running run here answers 202 stop requested`; `C444-REAL-CANCEL a dashboard Cancel stops a run parked in its first step` |
+| the route's `{ cancelled: true }` body and its 404 for a finished row (`routes.ts`) | answered a request as a done cancel, and a finished run as not found | `b515c5d57` (finished), `91f2dc0fb` (pending body) (444-06), now D-31's four answers | `C444-CANCEL-ANSWERS a pending run answers 200 cancelled before it started`; `C444-CANCEL-ANSWERS a finished run answers 200 with its verdict and writes nothing`; `C444-REAL-CANCEL a Cancel after the verdict answers that the run already finished` |
+| the settle handler's `\|\| run.status === 'cancelled'` condition and `explicitCancellation`'s rewrite of an already-cancelled row (`server.ts`) | rewrote a finished row's `ended_at` and duration on `run-settled` | `91f2dc0fb` (444-06) | `C444-NO-CAUSE-GUESS the settle handler never rewrites a row the run already finished` |
+| the settle handler's browser-closed arm, `isBrowserDisconnect` and the `browser-disconnect` artifact code (`server.ts`) | turned a run whose output said the browser closed into `cancelled` (D-32) | `91f2dc0fb` (444-06) | `C444-NO-CAUSE-GUESS a settled run whose output says the browser closed is written failed, never cancelled` |
+| `agent-qa queue cancel`'s `data.cancelled` success arm, its `✓ Cancelled job <id>` line and the `cancelled?: boolean` field of its answer cast (`cli/src/commands/queue.ts`) | the queue cancel's old success line, printed for any answer that said `cancelled` | `c80446c62` (444-07), now the route's own `message` | `C444-CANCEL-ANSWERS queue cancel treats an answer with no sentence as a failure, never a cancel`; `C444-CANCEL-ANSWERS queue cancel prints a stop request and exits 0`; `C442-QUEUE-CANCEL-OUTPUT queue cancel encodes the run id in the URL` |
+| `cancelRun`'s `{ cancelled: boolean; message?: string }` answer type (`dashboard-ui/src/lib/api.ts`); `handleCancel`'s `result.cancelled` branch, its `toast.success('Run cancelled')` and the `'Run cancelled'` info fallback (`dashboard-ui/src/pages/live-run.tsx`) | the live-run page's own cancel claim | `435e45e5f` (444-07), now `CancelRunAnswer` keyed on `outcome` | `C444-CANCEL-ANSWERS the live-run page reads an answer with no sentence as a failed cancel, never a cancel`; `C444-CANCEL-ANSWERS the live-run page shows a stop request as an info toast and keeps the run's status` |
+| the shutdown controller's row dependency `ShutdownControllerDeps.finalizeOwnRun?` and its first-signal call with its try/catch (`cli/src/commands/shutdown-controller.ts`) | wrote `cancelled` on the first Ctrl+C, before the run stopped | `4ac59ee1a` (444-08) | `C444-SIGNAL-ASKS the first signal cancels the session and arms the grace timer, and nothing else`; `C442-OWN-RUN-ONLY the shutdown controller cancels this process's own run once, on the first signal` |
+| the two first-signal closures in `run.ts`: the suite site's `const finalizeOwnRun = () => { … record.db.finalizeOwnRun(ownRowId, { status: 'cancelled', endedAt }) }` with its pass-through, and the direct site's inline `finalizeOwnRun: () => { … }`; both sites' `exit: (code) => process.exit(code)` and `setTimeout(() => process.exit(130), cancelGraceMs())` | the first-signal row writes (D-30), and exits that skipped the forced-exit close | `4ac59ee1a` (444-08), now `forceExit` through `closeOwnRowAtForcedExit` | `C444-SIGNAL-ASKS both agent-qa run sites force-exit through the close`; `C444-REAL-CANCEL SIGINT stops a parked direct run`; `C444-REAL-CANCEL SIGINT stops a parked suite run` |
+| the shell's silent abort skip: a member a run-level cancel skipped had no `testFinished` (`runner/src/run/shell.ts`) | left the skipped members off every surface that lists members | `014a3b6af` (444-08) | `C444-ABORT-SKIPPED members a run-level cancel skips are published as skipped, in member order`; `C444-ABORT-SKIPPED the published members agree with the handoff` |
+| the crash catch's cause guess: `fullError` and `isBrowserClose` (matching `Target page, context or browser has been closed`, `browser has been closed`, `Browser closed`), the guessed `finalStatus` (`cancelled` on a browser close) and `failureSummary` (`Browser closed by user`) (`run.ts`, `agent-qa run`'s action catch) | read a crashed headless browser as a user cancel (D-19) | `062931373` (444-09) | `C444-CRASH-CATCH agent-qa run's crash path guesses no cause and writes no row` |
+| the crash catch's own-row finalize: `_crashDb.finalizeOwnRun(_ownRunRowId, { status, duration, endedAt, failureSummary })` with its `getRun` read and try/catch, the `printRunAttributes(ownRow?.attributes)` after it, and its artifact write `_crashDb.finalizeRunArtifact(…, { errors: [{ code: 'browser-disconnect' \| 'process-close', … }] })` with its `getRunArtifact` check; the variables only it used (`errStack`, `formattedError`, `_crashDb`, `_ownRunRowId`) | closed the run's row from the catch (dead once D-16's flush closes it on every path) | `062931373` (444-09) | `C444-CRASH-CATCH agent-qa run's crash path guesses no cause and writes no row`; `C444-EXIT-TWO its row reads failed and no running row is left`; `C442-CENSUS — no path finalizes runs it does not own (442 D-05) C442-STATUS-WRITERS-CLASSIFIED: every runs.status writer is listed with whose row it writes` |
+| the record flush's `verdict ?? 'failed'` fallback in `closeOwnRun` (`run.ts`, `createRunRecord`) | closed a verdictless row `failed` with no sentence | `062931373` (444-09), now D-16's close | `C444-VERDICTLESS-CLOSE an incomplete record with no verdict closes the same way and warns once`; `C444-VERDICTLESS-CLOSE a run that ends with no verdict closes its own row failed with the plain sentence` |
+| an inherited `agent-qa.gate-run` passing through `AGENT_QA_RUN_ATTRIBUTES_JSON` into the CLI's resolved attributes (`resolveCliRunAttributes`, `run.ts`) | let an environment badge a learning run "Verify run" (D-26) | `2fa6c7430` (444-09) | `C444-GATE-MARK an inherited gate-run mark never reaches the row`; `C444-GATE-MARK a verify run's own flag still marks its row` |
+| a closed run record re-binding a handle (an open that landed after `close()`, and a later `open()` returning the cached success) (`run.ts`, `createRunRecord`) | could reopen runs.db after the record closed (D-25) | `2fa6c7430` (444-09) | `C444-RECORD-CLOSED a record closed while its open is in flight releases the handle and refuses`; `C444-RECORD-CLOSED a closed record refuses a later open` |
+| `done` as a chip word: a member of `POST_PROCESSING_CHIP_STATUSES` and `PostProcessingChipStatus` (`schema/src/notification/post-processing-status.ts`), and every renderer arm that read it; `LearnedState`'s `'done'` member (`dashboard-ui/src/lib/knowledge-view.ts`) | printed `done` for a finished stage | `09e0ebcb2` (444-10) | `C444-STAGE-WORDS the producer answers complete for a finished stage`; `C444-STAGE-WORDS no renderer spells done as a stage word`; `C444-STAGE-WORDS the CLI exit line prints complete` |
+| `done` as the served notification word: `PostProcessingStatus.notification.outcome` and its stage statuses, the wire schema's `z.enum(['done', 'failed'])` (four of them) and `RunDigestChainOutcomes.outcome` (`schema/src/functions/runs.ts`, `schema/src/notification/run-digest.ts`) | served the stored notification's `done` on `runs.postprocessing`, `runs.digest`, the chain line and MCP | `972346295` (444-10), now `toRunNotificationView` | `C444-NOTIFICATION-VIEW the served output validates against the functions' output schema`; `C444-NOTIFICATION-VIEW the stored notification keeps done and the served view reads complete`; `C444-NOTIFICATION-VIEW the digest's chain line prints complete` |
+| the export `RunNotificationSchema` (`schema/src/functions/runs.ts`), renamed `RunNotificationViewSchema` with no alias | validated the stored bytes on the wire | `972346295` (444-10) | `C444-NOTIFICATION-VIEW the served output validates against the functions' output schema`; `pnpm typecheck` (an importer of the old name fails to compile) |
+| the exclusion names: `PostProcessingExclusionReason`, `POST_PROCESSING_EXCLUSION_REASONS` and `PostProcessingExclusionSchema` (schema, both barrels); `PostProcessingStatus.exclusion` and the strict schema's `exclusion` key; `RunDigestChainOutcomes.exclusion`; `projectPostProcessingExclusion` (agent); `isExcludedFromPostProcessing` (dashboard-server `routes.ts`, renamed `isPostProcessingSkipped`) | the fact D-39 renamed `skipped: { reason }`, hard cut | `b19a2fd6c` (444-11) | `C444-STAGE-SKIPPED a gate run's read carries skipped with reason gate-run and no exclusion field`; `C444-STAGE-SKIPPED every renderer reads the reason's word from one map` |
+| the CLI exit line's `excluded (<reason id>)` print (`b19a2fd6c`) and the digest chain line's (`9f81ec983`) | printed `excluded` and the raw reason id | `b19a2fd6c`, `9f81ec983` (444-11) | `C444-STAGE-SKIPPED the CLI exit line prints skipped (gate run) for both stages`; `C444-STAGE-SKIPPED the digest's chain line prints skipped (gate run)`; `C444-STAGE-SKIPPED no renderer prints excluded as a stage word` |
+| the dashboard's `excluded` presentation state (`StagePresentationState`, `STAGE_PRESENTATION_STATES`, `STAGE_INDICATOR_WORDS.*.excluded`, `INDICATOR_LOOK.excluded`), `STAGE_EXCLUDED_TEXT` and its sentences (`Analysis excluded — benchmark and gate runs are not analysed`, `Curation excluded — …`), `excludedChipView`, the view's `excluded` field and the chip attribute `data-postprocessing-excluded` | the dashboard's `excluded` words | `9f81ec983` (444-11) | `C444-STAGE-SKIPPED the dashboard indicator reads Analysis skipped with the reason's own sentence`; `C444-STAGE-SKIPPED no renderer prints excluded as a stage word` |
+| the UI's `RunsFilter.status`, `TAB_STATUS_MAP`'s one-word values (`completed: 'passed'`, `failed: 'failed'`, `all: ''`) and `buildFilter`'s `status` (`dashboard-ui/src/lib/api.ts`, `pages/runs.tsx`) | the Completed tab that listed passed runs only (WINDOWS #519) | `7932443fb` (444-15) | `C444-COMPLETED-TAB the Completed tab asks for the five finished words`; `C444-COMPLETED-TAB the Completed tab lists a passed, a failed and a cancelled run`; `C444-PRE-FIX the Completed tab lists a finished passed, failed and cancelled run (WINDOWS #519)` |
+| the pages' local status sets `PASS_STATUSES` and `COMPLETED_RUN_STATUSES` (with `flaky`, without `timeout`) (`pages/tests.tsx`, `pages/suites.tsx`); the runs table's `status === "passed"` count and the command palette's `passed`/`failed` colour test | classified runs by the v5 words on the UI | `dfbe5a017` (444-15), now the UI's `runStatusClass` | `C444-STATUS-CLASS the UI classifier sorts the seven words as the server does`; `C444-MEMBER-HISTORY a healed member counts as a pass and a timed-out one as a fail` |
+| the Tests page's history join on `run.filePath`, and the Suites page's join on `run.suiteId` with its `run.name === suite.name` fallback | counted a multi-test run toward one test and a multi-suite run toward one suite | `dfbe5a017` (444-15) | `C444-MEMBER-HISTORY a three-test run updates all three tests on the Tests page`; `C444-SUITE-HISTORY a run spanning two suites counts once in each suite's history` |
+| `fetchTestAnalytics(name, { limit, offset, from })`'s by-name-only request, and the test viewer's badges reading `run.status` | asked for a test by name and showed the run's word for the member's | `28678076c` (444-15) | `C444-TEST-VIEWER the test viewer asks for its test by id and path`; `C444-TEST-VIEWER the test viewer's run list shows each run's member outcome` |
+| the Verify run badge's unconditional `tabIndex={0}`, the Target cell's wrapping `whitespace-normal break-words` span (`ce00996f0`), and the fixed `136px` Status and `180px` Target widths (`0c742e4c1`) (`dashboard-ui/src/components/runs-table.tsx`) | put every in-row control on the tab order and squeezed the name column (443 UI-05) | `ce00996f0`, `0c742e4c1` (444-16) | `C444-RUNS-TABLE the badge and the chevron take the row's tab stop`; `C444-RUNS-TABLE Target and Attributes truncate with the full value in a tooltip, and Attributes carries the hide-below-1200 container class`; `C444-RUNS-TABLE at 1280px and 1024px the name column keeps about 280px and nothing overflows` |
+| `run.status === 'failed'` at the run detail page's verdict link, failure banner and error details (`dashboard-ui/src/pages/run-detail.tsx`) | hid a `timeout` run's failure summary once v6 stored `timeout` (D-49) | `ba4b34e62` (444-16) | `C444-RUN-DETAIL-CLASS a timed-out run shows its failure summary, error details and verdict link` |
+| the poll's and `onSlotFreed`'s direct `this.processNext()` calls (`job-queue.ts`) | read a closed database after `stop()` and escaped as an unhandled rejection (D-50) | `b72adf5c1` (444-16), now `dispatchReported` behind a `stopped` mark | `C444-STOPPED-QUEUE after stop(), onSlotFreed for an active run neither reads the database nor rejects`; `C444-STOPPED-QUEUE a dispatch from onSlotFreed that fails is reported, never thrown`; `C444-STOPPED-QUEUE a poll whose dispatch fails is reported, never thrown` |
+| the runner's cancel texts: `CANCELLED_MESSAGE = 'Step cancelled by user'` (`runner/src/loop/index.ts`), the member runner's step fallback `'Step cancelled by user'` and a test's default abort reason `new Error('Test cancelled by user')` (`runner/src/run/member-runner.ts`) | named a cause ("by user") a cancel cannot know (D-51) | `74a780787` (444-17), now `The run was cancelled before this step finished.` and `The run was cancelled before this test finished.` | `C444-NO-CAUSE-WORDS a cancelled step's record and a test's default abort reason carry no "by user"`; `C444-REAL-CANCEL a dashboard Cancel stops a run parked in its first step` (the held step's one `stepFinalized`) |
+| the shell's `duration: 0` for a member it started, in the "Abort won the race" arm and in the executor-error arm (`shell.ts`) | gave every cancelled member, and so its run's row, a duration of 0 (D-52) | `66e7a7b3c` (444-17), now `performance.now() - memberStartedAt` | `C444-MEMBER-DURATION a member held and then aborted reports at least its hold, and a member the abort skipped reports 0`; `C444-MEMBER-DURATION a member whose executor throws after a hold reports at least its hold`; every `C444-REAL-CANCEL` leg (`durationMs > 0`, row `duration > 0`) |
+| the member runner's disconnect-to-cancelled arm: `status: … isDisconnected ? 'cancelled' : …` and `failureSummary: 'Browser closed by user'` (`member-runner.ts`) | read a browser that closed with no cancel as a user cancel, exit 130 (D-53) | `9bf8bbb77` (444-17), now `failed` with `The browser closed before this test finished.` | `C444-NO-BROWSER-GUESS a browser that closes with no cancel fails the member and says the browser closed`; `C444-NO-BROWSER-GUESS a cancelled member stays cancelled with its cancel summary when the browser also closed` |
+| the post-run tail's early return on a skipped enqueue and its sentence `Run <id>: post-run analysis intentionally skipped.` (`cli/src/curation/post-run-tail.ts`, `finish()`) | kept a gate run and an outcome-excluded run from printing D-13's exit line (D-55) | `5f4dd96ac` (444-18) | `C444-SKIPPED-EXIT-LINE a gate run's tail prints skipped (gate run) for both stages and starts no drain`; `C444-SKIPPED-EXIT-LINE an outcome-excluded run's tail prints skipped (outcome-excluded) for both stages and starts no drain`; `C444-VERDICT-INDEPENDENCE a passed gate run reads skipped (gate run) and keeps passed and exit 0` |
+| the census rows `w(SUBSCRIBER, 'updateRun', 'own', 'member outcome on its own row')` (`955ed5c3b`); the two `JOB_QUEUE` rows for "cancel of a running row this dashboard owns" (`b515c5d57`); `w(SHUTDOWN, 'finalizeOwnRun', …)` and the two `RUN_TS` first-signal rows (`4ac59ee1a`); the two `RUN_TS` crash-catch rows (`062931373`) | classified writers that no longer exist | as listed | `C442-CENSUS — no path finalizes runs it does not own (442 D-05) C442-STATUS-WRITERS-CLASSIFIED: every runs.status writer is listed with whose row it writes` (a returning writer is `unlisted:`, a stale row is `stale:`) |
+
+**Replaced behaviour, and what each became** (no member left; each read from its commit):
+
+| Before (at `e424b0bd0`) | After | Commit | The cell that pins it |
+|---|---|---|---|
+| `src/cli.ts` held the CLI entry, and tsup inlined a first import into a bundle whose other static imports evaluated first, so picocolors read `CI` before any posture ran | `src/cli.ts` is a bootstrap: `import './color-posture.js'`, then `import('./cli-main.js')` through a variable specifier; `src/cli-main.ts` holds the former entry unchanged and is a third tsup entry; the bin path `dist/cli.js` and the package `exports` did not move (D-47) | `9b0cb07a5` (444-14) | `C444-CI-COLOUR the built bin entry loads no module before the posture runs`; `C444-CI-COLOUR the shipped bin under CI=true with stdout piped prints no colour code` |
+| in CI the curation outcome line read `… applied, … kept proposed (ci runs keep learned knowledge proposed)` | in `ci` and `cloud` it reads `curation: {N} learned change(s) recorded, {M} kept proposed (ci runs never promote learned knowledge)`, with `cloud` in cloud; local wording unchanged (D-57) | `cba70b430` (444-20) | `C444-CI-PROPOSE-WORDS in ci the outcome line says the changes were recorded and never promoted`; `C444-CI-PROPOSE-WORDS a local run still reports what it applied to the knowledge root` |
+| a propose-only downgrade of a same-anchor `Supersede` took the plain `Add`'s identity, so in CI it wrote onto the record it would supersede | the downgrade keeps the `Supersede`'s evidence token in its identity (`knowledge-local/src/curator/commit.ts`), so the candidate is separate, carries `proposed-supersession-of` → the victim, and the victim's files are byte-unchanged (D-58) | `84ca053f7` (444-20) | `C444-PROPOSED-SUPERSESSION in ci a same-anchor correction is a separate candidate and the victim stays byte-unchanged`; `C444-PROPOSED-SUPERSESSION the proposed candidate has the id a local Supersede of the same delta mints`; `C444-CI-PROPOSE-ONLY curation in CI keeps what it adds a candidate and what it supersedes proposed` |
+| eight lines that print in `ci` promised a resume ("The next local run or daemon drain resumes …", "… will resume on the next run …") | each reads its clause from `cli/src/curation/resume-limit.ts` and states that the work resumes only if this workspace's `.agent-qa/` is kept (D-22, D-48) | `60ded0ccd` (444-14), `db3805a45` (444-20) | the five `C444-CI-PENDING` cells and the eight `C444-CI-EVERY-DOOR` cells |
+| `agent-qa run` launched Chromium with Playwright's `handleSIGINT: true`, so Playwright's own listener called `process.exit(130)` on the first Ctrl+C, before `runFinished` and the record's flush | on the direct and suite paths the browser launches with `handleSIGINT: false` and `handleSIGTERM: false` through `hostOwnsSignals`, so D-30's controller owns the signal; every other door keeps Playwright's default (D-46) | `7e2177410`, `d5abab036` (444-22) | `C444-CTRL-C-OWNED one SIGINT ends a held direct run through agent-qa run's own path`; `C444-CTRL-C-OWNED one SIGINT ends a held suite run through agent-qa run's own path`; `C444-CTRL-C-OWNED only agent-qa run's two producer calls hand the browser's signals to the host` |
+
+No file was deleted. Test cells deleted with their subject, none listed in `regressions.json`:
+`DashboardDatabase flaky detection insertRun with status flaky succeeds` (`database.test.ts`,
+`3b2ba8988`, D-03); `JobQueue cancel cancels a running run and emits cancel-running event`
+(`job-queue.test.ts`, `b515c5d57`, D-11); `createShutdownController — first-vs-second-signal
+contract the suite-DB sweep is best-effort — a throwing sweep never escapes the handler` and `… the
+sweep is optional — a controller without a suite-DB sweep still runs the graceful path`
+(`shutdown-controller.test.ts`, `4ac59ee1a`, D-30); `run command — framework error handling prints
+run IDs for running rows finalized during framework crash cleanup` (`run.test.ts`, `076a5e6b4`,
+D-19); and the routing-only cell `A CANCEL IS ROUTED TO THE NAMED RUN AND TO NO OTHER`
+(`dashboard-run-door.test.ts`, `c2277de3e`, D-12, WINDOWS #214), replaced by the six
+`C444-REAL-CANCEL` cells. The cells re-spelled in place, titles kept except where a title named a
+retired word, are listed in each plan's summary and in `444-RECORD.md`.
+
+#### Registered gate rows
+
+The 2000 rows listed at `e424b0bd0` are still listed and in order. None was removed. Three were
+renamed in place, each in the commit that made its old title false, with the same position, file
+and origin:
+- `C442-SCHEMA-V5 a fresh runs database opens at version 5 with the owner columns` →
+  `C442-SCHEMA-V5 a fresh runs database opens at the current version with the owner columns`
+  (`3b2ba8988`, 444-04);
+- `C442-CENSUS — no path finalizes runs it does not own (442 D-05) C442-OWNER-REQUIRED: the v5 runs table requires an owner on every running row`
+  → `… C442-OWNER-REQUIRED: the runs table requires an owner on every running row` (`3b2ba8988`,
+  444-04);
+- `C442-OWN-RUN-ONLY the shutdown controller finalizes this process's own run once, on the first signal`
+  → `C442-OWN-RUN-ONLY the shutdown controller cancels this process's own run once, on the first signal`
+  (`4ac59ee1a`, 444-08). The Phase 442 section above still cites the old name in its
+  `sweepSuiteDbs` row; that line is left as written, and the cell it names is this one.
+
+These registered cells were re-spelled under their kept names, each named in its plan's summary:
+`C443-INGEST-ID an ingest built for a suite files the suite run under the same id` and
+`C443-RECORD-CLOSE a two-member run whose second member's write fails ends at the run's verdict status`
+(444-02, member lists); `C443-OWN-FINALIZE the own-row finalizer writes each verdict status once`,
+`C442-SCHEMA-V5 a newer file is refused naming the file`, three `C443-FRESH-OPEN` cells,
+`C443-RECORD-INCOMPLETE a write that fails after the start leaves the verdict and says the record is incomplete`
+and `C443-RECORD-CLOSE an artifact write that fails right after the claim still closes the row with the verdict status`
+(444-04, the v6 words); `C442-CANCEL-OWNER the dashboard still cancels its own queued and running runs`,
+two `C442-CANCEL-ORPHAN` cells, `C442-OWN-START-TIME the dashboard cancels its own run stamped with no start time`
+and `C442-CANCEL-RUN-ID a cancel on a run whose id needs encoding reaches that run` (444-06, D-31's
+answers); `C442-CANCEL-SENTENCE queue cancel exits zero when the run was cancelled or finalized as an orphan`,
+`C442-QUEUE-CANCEL-OUTPUT queue cancel encodes the run id in the URL`,
+`C442-CANCEL-SENTENCE an orphan answer's toast shows its sentence` and
+`C442-CANCEL-TOAST an orphan answer shows its sentence as an info toast, never success` (444-07);
+`C442-CENSUS … C442-STATUS-WRITERS-CLASSIFIED` and `… C442-UNIVERSE-FLOORS` (444-02, 06, 08, 09,
+the writer rows and floors); `C443-VERIFY-BADGE the Verify run badge explains itself and takes keyboard focus`
+(444-16, rendered on its active row); and the registered cells of `442-cancel-ownership.test.ts`
+and `442-run-ownership.e2e.test.ts` whose pinned or never-said texts named `Step cancelled by user`
+or `Browser closed by user` (444-17, D-51 and D-53).
+
+### What was RETAINED, and why
+
+| Item | Why kept | What pins it |
+|---|---|---|
+| agent-jobs.db's own `done` (job statuses, and the stored `RunNotification`) | durable job state, like job statuses (D-36); only the served view's words changed, and `chipFor`'s `row.status === 'done'` read is untouched | `C444-NOTIFICATION-VIEW the stored notification keeps done and the served view reads complete`; `C444-STAGE-WORDS the producer answers complete for a finished stage` |
+| `skipped` as a member outcome (`run_members.outcome`) and `flaky`/`skipped` as step and member badge words | they are member and step facts, not run words; `memberOutcomeClass` gives `skipped` its own class and `null` reads live | `C444-MEMBER-HISTORY a running member with no outcome reads null`; `C444-ABORT-SKIPPED members a run-level cancel skips are published as skipped, in member order` |
+| `finalizeOwnRun` and its `status = 'running'` guard (`database.ts`) | the two own-row closes that must not overwrite a verdict use it: the forced exit (`closeOwnRowAtForcedExit`) and the verdictless flush | `C444-SIGNAL-ASKS a forced exit after the verdict writes nothing`; `C444-SIGNAL-ASKS a forced exit never touches a row another process owns`; `C444-VERDICTLESS-CLOSE a run with a verdict is never closed by the no-verdict branch` |
+| `closeOwnRun` after a verdict on an incomplete record | the D-27 close-out of 443 GAP-D1, now always with the verdict's own word | `C444-SCHEMA-V6 an incomplete record closes its own row with the verdict's own word`; `C443-RECORD-CLOSE a two-member run whose second member's write fails ends at the run's verdict status` |
+| the queue's cancel of a `pending` row | the queue's own row, for which no verdict will come (D-11) | `C444-CANCEL-REQUEST a pending row is cancelled by the queue itself`; `C444-CANCEL-ANSWERS a pending run answers 200 cancelled before it started` |
+| the settle handler's write for a row still `running` (`process-close`) | a run whose process ended without a verdict envelope still needs its row closed; it no longer guesses a cause | `C444-NO-CAUSE-GUESS a settled run whose output says the browser closed is written failed, never cancelled` |
+| Playwright's default signal handling on every door other than `agent-qa run` | a host without its own SIGINT path (`chat` between turns) relies on it to close its browser; moving them needs the host audit D-46 defers | `C444-CTRL-C-OWNED a dashboard run still launches its browser with Playwright's signal handling`; `C444-CTRL-C-OWNED a browser launched without the option keeps Playwright's SIGINT, SIGTERM and SIGHUP listeners` |
+| `runs list` and `agent_qa_list_runs` listing completed runs only | D-17: a verdictless id gets a plain answer from the overview and digest instead | `C444-VERDICTLESS-READS the CLI and MCP lists do not list a verdictless run` |
+| exit 2 for a test that cannot start | the one named exception to "the exit code equals the verdict" (D-18): the harness could not run the test | `C444-EXIT-TWO a test that cannot start exits 2`; `C444-EXIT-TWO its verdict is failed with the could-not-start summary` |
+| the CLI's public `program` export | it moved with the entry body to `cli-main.ts`; no importer of `cli.ts`'s `program` exists in agent-qa (444-14's search), and the package `exports` (`dist/index.*`) did not move | `pnpm run validate:publish` |
+| `runs.overview`'s curation chip with no `skipped` fact | adding the fact moves a registered op's schema; D-13's surfaces do not name the overview (D-55, deferred) | `C444-VERDICT-INDEPENDENCE a passed gate run reads skipped (gate run) and keeps passed and exit 0` (asserts the chip the overview serves) |
+
+### What degrades, stated plainly
+
+- **Every existing runs.db must be deleted.** runs.db is version 6 and a version 5 file is refused
+  by name, before WAL and before any statement, with the existing plain message to delete
+  `.agent-qa/runs.db`; `agent-qa run` refuses it as `… The run was not started.` There is no
+  upgrade (D-03, D-01). Long-lived hosts (`agent-qa daemon`, `agent-qa dashboard`) keep their open
+  handle until they restart.
+- **A failure to load the CLI, or a synchronous throw that escapes `program.parse()`,** now prints
+  `Framework error: <message>` and exits 2, from the bootstrap entry (D-47). Before, Node printed a
+  stack and exited 1. No stack is printed.
+- **A headed user closing the browser window now reads `failed`,** with `The browser closed before
+  this test finished.`, not `cancelled`; the aggregate and exit code follow (1, not 130), unless
+  the run itself was cancelled (D-53).
+- **Cancelled members carry their real duration everywhere** (`testFinished.durationMs`, the
+  handoff, JUnit, the CLI and MCP overviews and the row), where every cancelled row read 0 (D-52).
+- **A multi-test or multi-suite row carries no test id, file path or suite id**; its history is
+  read through its members (D-07, D-08, D-09). `/api/analytics/tests/:name` answers 400 without
+  `testId` or `filePath`, and `/api/runs` answers 400 to a status word outside the seven.
+- **Callers of the removed members break,** with no alias, shim or message naming a replacement
+  (D-01): `RunNotificationSchema`, the `exclusion` field and its types, `done` as a chip or served
+  notification word, the cancel route's `{ cancelled: true }` body and `queue cancel`'s
+  `✓ Cancelled job` line, `getRunsByTestName`, and `RunsFilter.status` on both sides.
+- **In CI a proposed correction is a new candidate** (D-58), so a CI run's same-anchor correction
+  adds a record beside its victim instead of rewriting it.
+
+### Persisted values the narrowed contract governs
+
+No migration and no compatibility code (D-01). runs.db's schema moved once, to version 6.
+
+| Persisted value | Disposition | Evidence |
+|---|---|---|
+| `runs.status` | **The verdict's own word**: `pending`, `running`, `passed`, `healed`, `failed`, `timeout` or `cancelled`. `skipped` and `flaky` fail the CHECK; `healed` and `timeout` are no longer collapsed. A cancelled run's row takes the run's verdict, never a pre-written `cancelled`. | the six `C444-SCHEMA-V6` cells; `C444-CANCEL-REQUEST the row takes the run's own verdict after the stop` |
+| a multi-test run's `runs.name`, `test_id`, `file_path` and `suite_id` | **Titled once at the claim** ("Login · Checkout +1 more"), never renamed; no test id or file path; a multi-suite row has no suite id; a single-test or one-suite row keeps its own | the `C444-RUN-TITLE`, `C444-SUITE-TITLE` and `C444-SINGLE-TITLE` cells |
+| `run_artifacts`' `source` | **A `tests` member list** for a run of several tests or suites, each with its own YAML and config (additive kind); single-test and one-suite artifacts unchanged | the seven `C444-ARTIFACT-MEMBERS` cells |
+| `runs.failure_summary` of a run closed without a verdict | `The run ended before it reached a verdict.` (the flush, `failed`); `The run was stopped before it reached a verdict.` (a forced exit, `cancelled`); a cancel writes no summary of its own | `C444-VERDICTLESS-CLOSE a run that ends with no verdict closes its own row failed with the plain sentence`; `C444-SIGNAL-ASKS a forced exit closes this process's own running row as cancelled with the plain sentence` |
+| `runs.attributes` key `agent-qa.gate-run` | **Never inherited**: written only by the record's own spread, because `resolveCliRunAttributes` drops an inherited mark (D-26) | `C444-GATE-MARK an inherited gate-run mark never reaches the row`; `C444-GATE-MARK a verify run's own flag still marks its row` |
+| a cancelled step's record (`stepFinalized.error` in `events.jsonl`, the handoff) and a test's default abort reason | `The run was cancelled before this step finished.` and `The run was cancelled before this test finished.` (D-51) | `C444-NO-CAUSE-WORDS a cancelled step's record and a test's default abort reason carry no "by user"` |
+| a disconnected member's outcome and failure summary | `failed` with `The browser closed before this test finished.` when nothing cancelled (D-53) | `C444-NO-BROWSER-GUESS a browser that closes with no cancel fails the member and says the browser closed` |
+| a cancelled member's duration (`testFinished.durationMs`, the handoff, JUnit, `runs.duration`) | its elapsed time on the member runner's clock; a member the abort skipped keeps 0 (D-52) | the two `C444-MEMBER-DURATION` cells |
+| a CI run's proposed correction in the knowledge root | **A new `candidate`** with `proposed-supersession-of` → the victim, whose files are byte-unchanged (D-58). **Not migrated (D-01):** a record that an earlier CI run already rewrote in place stays as it is. | the two `C444-PROPOSED-SUPERSESSION` cells; `C444-CI-PROPOSE-ONLY curation in CI keeps what it adds a candidate and what it supersedes proposed` |
+| agent-jobs.db's stored `RunNotification` | **Unchanged**, still `done`; reads serve it through `toRunNotificationView` (D-36) | `C444-NOTIFICATION-VIEW the stored notification keeps done and the served view reads complete` |
+
+### The instruments that notice a return
+
+- **The 434 gate** (`pnpm run gate:local`) must execute and pass all 217 listed `C444-` cells, each
+  with its area's origin: `444 D-02` 4, `D-03` 10, `D-04` 4, `D-05` 6, `D-06` 4, `D-07` 10, `D-08`
+  2, `D-09` 6, `D-10` 4, `D-11` 5, `D-12` 6, `D-13` 5, `D-14` 9, `D-15` 5, `D-16` 4, `D-17` 11,
+  `D-18` 3, `D-19` 1, `D-20` 7, `D-21` 3, `D-22` 5, `D-23` 2, `D-24` 2, `D-25` 2, `D-26` 2, `D-28`
+  4, `D-30` 5, `D-31` 13, `D-32` 2, `D-34` 2, `D-35` 7, `D-36` 4, `D-37` 4, `D-38` 1, `D-39` 7,
+  `D-40` 3, `D-41` 2, `D-42` 5, `D-43` 2, `D-44` 1, `D-46` 7, `D-48` 8, `D-49` 3, `D-50` 3, `D-51`
+  1, `D-52` 2, `D-53` 2, `D-55` 2, `D-57` 3 and `D-58` 2.
+- **`pnpm validate:arch`** runs the 442 census at `WRITER_FLOOR` 20: a returning member-outcome
+  writer, queue cancel write, first-signal write or crash-catch write reds by name on the commit
+  that adds it.
+- **Not spelled by any needle:** the names `toRunStatus`, `finalRunStatus`, `cancel-running`,
+  `isSuccessfulRunStatus`, `getRunsByTestName` and `RunNotificationSchema`. Their behaviour
+  returning is caught by the cells in the table above; the names alone returning are not. At this
+  section's parent each of them, and the texts `Step cancelled by user`, `Test cancelled by user`,
+  `Browser closed by user`, `intentionally skipped` and `Cancelled job`, prints nothing under
+  `git -C agent-qa grep` in `packages/` outside `__tests__` and `dist/`.
+
+### Not observed, stated as such
+
+- **win32 was not run.** The cells that spawn processes throw `POSIX run lifecycle required; never
+  skip` there, as 442 and 443 recorded.
+- **No live model ran.** Every cell uses a stub model or none.
+- **No user workspace was inspected,** and no hosted CI ran `docs/ci.md`'s job; its commands and
+  paths are checked against the shipped CLI by `C444-CI-RECIPE` and `C444-CI-UPLOAD`.
+
+### Reconciliation
+
+Reconciliation 25 in `.planning/REQUIREMENTS.md` (dated 2026-10-17) records the stage words
+`pending · running · complete · failed` with `skipped (gate run | outcome-excluded | no verdict)`
+against `spec/v2/live-view.md` §4.1's `pending|running|done|failed`, and exit 2 for a test that
+could not start as the one named exception to "the exit code equals the verdict". `spec/` is not
+edited.
+
+### Gate at the time of writing
+
+The record gate runs on Phase 444's final agent-qa SHA, the commit that adds this section, which
+`.planning/phases/444-truthful-lifecycle/444-RECORD.md` § Final SHA names. Its legs, counts and
+verdict are recorded in that file's § Gate rather than quoted here, so no agent-qa commit follows
+the gate run.
