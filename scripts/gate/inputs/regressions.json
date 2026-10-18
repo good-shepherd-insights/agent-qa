@@ -13584,6 +13584,102 @@
       "file": "packages/dashboard-server/src/__tests__/444-enqueue-reported.test.ts",
       "fullName": "C444-ENQUEUE-REPORTED a dispatch that throws on enqueue is reported and enqueue still returns the queued run",
       "origin": "444 D-62"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/444-hangup-once.test.ts",
+      "fullName": "C444-HANGUP-ONCE a second SIGHUP gives one cancel, one grace timer and no exit",
+      "origin": "444 D-63"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/444-hangup-once.test.ts",
+      "fullName": "C444-HANGUP-ONCE a SIGHUP after a SIGINT gives no exit",
+      "origin": "444 D-63"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/444-hangup-once.test.ts",
+      "fullName": "C444-HANGUP-ONCE a SIGINT or a SIGTERM after a SIGHUP still exits 130",
+      "origin": "444 D-63"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/444-hangup-once.test.ts",
+      "fullName": "C444-HANGUP-ONCE a second SIGINT still exits 130",
+      "origin": "444 D-63"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-ctrl-c-owned.e2e.test.ts",
+      "fullName": "C444-CTRL-C-OWNED two SIGHUPs 1 ms apart end a held direct run through agent-qa run's own path",
+      "origin": "444 D-46"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-rate-window.test.ts",
+      "fullName": "C444-RATE-WINDOW a test reads one rate from the batch read and from its viewer at 200 runs and past 200",
+      "origin": "444 D-64"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-rate-window.test.ts",
+      "fullName": "C444-RATE-WINDOW a test's last run is the first run its viewer lists, even when all its runs are past the 200-run page",
+      "origin": "444 D-64"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-rate-window.test.ts",
+      "fullName": "C444-RATE-WINDOW a suite reads one rate from the batch read and from its viewer at 200 runs and past 200",
+      "origin": "444 D-64"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-rate-window.test.ts",
+      "fullName": "C444-RATE-WINDOW a suite's last run, target and platform come from its own history, even when all its runs are past the 200-run page",
+      "origin": "444 D-64"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-rate-window.test.ts",
+      "fullName": "C444-RATE-WINDOW with a pass-rate scope configured, each batch read rates a row over the scoped runs its viewer opens on and keeps its last run unscoped",
+      "origin": "444 D-64"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-rate-window.test.tsx",
+      "fullName": "C444-RATE-WINDOW the Tests page reads each test's rate from one batch read, not from its 200-run page",
+      "origin": "444 D-64"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-rate-window.test.tsx",
+      "fullName": "C444-RATE-WINDOW the Tests page prints a server rate as the test viewer prints it",
+      "origin": "444 D-64"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-rate-window.test.tsx",
+      "fullName": "C444-RATE-WINDOW the Tests page reads each test's last run from the batch read, and No runs means no run at all",
+      "origin": "444 D-64"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-rate-window.test.tsx",
+      "fullName": "C444-RATE-WINDOW the Suites page reads each suite's rate from one batch read, not from its 200-run page",
+      "origin": "444 D-64"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-rate-window.test.tsx",
+      "fullName": "C444-RATE-WINDOW the Suites page prints a server rate as the suite viewer prints it",
+      "origin": "444 D-64"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-rate-window.test.tsx",
+      "fullName": "C444-RATE-WINDOW the Suites page reads each suite's last run, target and platform from the batch read, and No runs means no run at all",
+      "origin": "444 D-64"
     }
   ]
 }
