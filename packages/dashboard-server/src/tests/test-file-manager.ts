@@ -49,6 +49,25 @@ function normalizePlatform(value: unknown): SupportedPlatform | null {
   return value
 }
 
+// 2026-10-18 (444-36, D-67): a key's value is read from its own line, and a blank one is no value.
+function valueOnLine(match: RegExpMatchArray | null): string | null {
+  if (match === null) return null
+  const value = normalizeQuotedString(match[1])
+  return value.trim() === '' ? null : value
+}
+
+// 2026-10-18 (444-36, D-67): a blank id key is filled in place; otherwise the id line goes after a
+// leading --- marker, so the file stays one YAML document, or on the first line.
+export function withIdLine(content: string, key: 'test-id' | 'suite-id', id: string): string {
+  const line = `${key}: ${id}`
+  const blankKey = new RegExp(`^${key}:[ \\t]*(?:(["'])[ \\t]*\\1)?[ \\t]*$`, 'm')
+  if (blankKey.test(content)) return content.replace(blankKey, () => line)
+  const marker = content.match(/^---[ \t]*(?:#[^\r\n]*)?(?:\r?\n|$)/)
+  if (marker === null) return `${line}\n${content}`
+  const head = marker[0].endsWith('\n') ? marker[0] : `${marker[0]}\n`
+  return `${head}${line}\n${content.slice(marker[0].length)}`
+}
+
 export function extractTestFileMetadata(content: string): TestFileMetadata {
   let parsed: Record<string, unknown> | null = null
 
@@ -70,29 +89,23 @@ export function extractTestFileMetadata(content: string): TestFileMetadata {
     ? use as Record<string, unknown>
     : null
 
-  const nameMatch = content.match(/^name:\s*(.+)$/m)
-  const targetMatch = content.match(/^\s*target:\s*(.+)$/m)
-  const testIdMatch = content.match(/^test-id:\s*(.+)$/m)
-  const platformMatch = content.match(/^\s*platform:\s*(web|android|ios)\s*$/m)
-  const parallelMatch = content.match(/^\s*parallel:\s*(true|false)\s*$/m)
+  const nameMatch = content.match(/^name:[ \t]*(\S.*)$/m)
+  const targetMatch = content.match(/^[ \t]*target:[ \t]*(\S.*)$/m)
+  const testIdMatch = content.match(/^test-id:[ \t]*(\S.*)$/m)
+  const platformMatch = content.match(/^[ \t]*platform:[ \t]*(web|android|ios)[ \t]*$/m)
+  const parallelMatch = content.match(/^[ \t]*parallel:[ \t]*(true|false)[ \t]*$/m)
 
   const name = typeof parsed?.name === 'string' && parsed.name.trim().length > 0
     ? parsed.name.trim()
-    : nameMatch
-      ? normalizeQuotedString(nameMatch[1])
-      : null
+    : valueOnLine(nameMatch)
 
   const targetName = typeof parsed?.target === 'string' && parsed.target.trim().length > 0
     ? parsed.target.trim()
-    : targetMatch
-      ? normalizeQuotedString(targetMatch[1])
-      : null
+    : valueOnLine(targetMatch)
 
   const testId = typeof parsed?.['test-id'] === 'string' && parsed['test-id'].trim().length > 0
     ? parsed['test-id'].trim()
-    : testIdMatch
-      ? normalizeQuotedString(testIdMatch[1])
-      : null
+    : valueOnLine(testIdMatch)
 
   const platform = normalizePlatform(parsed?.platform)
     ?? normalizePlatform(parsedConfig?.platform)
@@ -152,7 +165,7 @@ export class TestFileManager {
                 // 2026-10-18 (444-35, IN-20): an empty file may be an outside save mid-write; it is never minted.
                 if (content.trim() === '') return current
                 const minted = generateTestId()
-                await replaceFileAtomic(record.absolutePath, `test-id: ${minted}\n${content}`)
+                await replaceFileAtomic(record.absolutePath, withIdLine(content, 'test-id', minted))
                 return { ...current, testId: minted }
               }))
             }
