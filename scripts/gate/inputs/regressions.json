@@ -13722,6 +13722,48 @@
       "file": "packages/dashboard-server/src/__tests__/444-rate-window.test.ts",
       "fullName": "C444-RATE-WINDOW the suite batch read counts a healed run as a pass and a timed-out one as a fail, and a cancelled run, a still-running run and a run whose member has no outcome in neither, as its viewer does",
       "origin": "444 D-64"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-list-write-safe.test.ts",
+      "fullName": "C444-LIST-WRITE-SAFE with another list read in flight, a test or suite the editor just saved opens by its id, and a suite naming a test saved a moment earlier saves",
+      "origin": "444 D-65"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-list-write-safe.test.ts",
+      "fullName": "C444-LIST-WRITE-SAFE with a listing still in flight, the next list, find and validate calls on both managers see every save and delete that has finished",
+      "origin": "444 D-65"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-list-write-safe.test.ts",
+      "fullName": "C444-LIST-WRITE-SAFE an empty name lists the file name and an empty target lists no target",
+      "origin": "444 D-65"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-list-write-safe.test.ts",
+      "fullName": "C444-LIST-WRITE-SAFE a zero-byte or whitespace-only file is listed with no id and nothing is written to it",
+      "origin": "444 D-65"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-list-write-safe.test.ts",
+      "fullName": "C444-LIST-WRITE-SAFE a test or suite file whose name is 250 bytes long is minted and saved whole, with no temp file left",
+      "origin": "444 D-65"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-list-write-safe.test.ts",
+      "fullName": "C444-LIST-WRITE-SAFE an id-less test or suite that opens with a --- marker gets its id inside that document, so it still parses as one document and validates, and the listed id is the one on disk and opens",
+      "origin": "444 D-65"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-list-write-safe.test.ts",
+      "fullName": "C444-LIST-WRITE-SAFE a key is read from its own line: a bare or blank name lists the file name, a bare target lists no target, and a bare id key counts as no id and is filled in place",
+      "origin": "444 D-65"
     }
   ]
 }
