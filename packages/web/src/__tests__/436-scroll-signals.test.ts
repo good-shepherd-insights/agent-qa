@@ -112,6 +112,16 @@ const frameDecoy = (wrapper: string): string =>
   `<div style="${wrapper}"><iframe srcdoc="<button>Delete account</button>" style="width:400px;height:150px"></iframe></div>`
 const DECOY_FRAME_OPACITY = decoyPage('frame opacity', frameDecoy('opacity:0'))
 const DECOY_FRAME_HIDDEN = decoyPage('frame hidden', frameDecoy('visibility:hidden'))
+// review3-probe-misjudge.mjs: on-screen text in a display:contents holder or host, and a card
+// title under a transparent stretched-link overlay.
+const CONTENTS = page('contents',
+  '<h1>Checkout</h1><div style="display:contents">Pay now</div><p>Short page</p><div style="height:1200px"></div><p>End</p>')
+const CONTENTS_HOST = page('host', `<h1>Checkout</h1><pay-button>Pay now</pay-button><div style="height:1200px"></div><p>End</p>
+<script>customElements.define('pay-button', class extends HTMLElement { constructor() { super(); this.attachShadow({ mode: 'open' }).innerHTML = '<style>:host{display:contents}</style><button><slot></slot></button>' } })</script>`)
+const CARD = page('card', `<style>.card{position:relative;width:300px;border:1px solid #ccc;padding:12px}.stretched::after{content:"";position:absolute;inset:0;z-index:1}</style>
+<div class="card"><h5>Premium plan</h5><p>All features</p><a class="stretched" href="#plan">Choose</a></div>`)
+const CONTENTS_EMPTY = page('contents empty',
+  '<h1>Toolbar</h1><div style="display:contents" title="Open menu"></div><div style="height:1200px"></div>')
 const POSITIONED_FIXED = page('fixed', `
   <div style="overflow:hidden;height:10px"><button style="position:fixed;bottom:20px;right:20px">Chat with us</button></div>
   <div style="height:2000px">Tail</div>`)
@@ -138,6 +148,10 @@ const PAGES: Record<string, string | ((port: number) => string)> = {
   '/decoy-overlay': DECOY_OVERLAY,
   '/decoy-frame-opacity': DECOY_FRAME_OPACITY,
   '/decoy-frame-hidden': DECOY_FRAME_HIDDEN,
+  '/contents': CONTENTS,
+  '/host': CONTENTS_HOST,
+  '/card': CARD,
+  '/contents-empty': CONTENTS_EMPTY,
   '/positioned-fixed': POSITIONED_FIXED,
   '/positioned-absolute': POSITIONED_ABSOLUTE,
   '/pointer-none': POINTER_NONE,
@@ -864,6 +878,29 @@ describe('C436-SCROLL-DECOYS', () => {
 
   it('an iframe copy under a visibility hidden ancestor never ends found at zero swipes', async () => {
     await frameDecoyNeverEndsTheSearch('/decoy-frame-hidden')
+  }, 60_000)
+
+  it('a display contents holder is found at zero swipes', async () => {
+    const { web } = await open('/contents')
+    const result = await web.execute(untilVisible('Pay now', 3))
+    expect(result.metadata?.scrollUntilVisible).toEqual(ZERO_SWIPES_FOUND)
+  }, 60_000)
+
+  it('a display contents custom element host is found at zero swipes', async () => {
+    const { web } = await open('/host')
+    const result = await web.execute(untilVisible('Pay now', 3))
+    expect(result.metadata?.scrollUntilVisible).toEqual(ZERO_SWIPES_FOUND)
+  }, 60_000)
+
+  it('a title under a transparent stretched link overlay is found at zero swipes', async () => {
+    const { web } = await open('/card')
+    const result = await web.execute(untilVisible('Premium plan', 3))
+    expect(result.metadata?.scrollUntilVisible).toEqual(ZERO_SWIPES_FOUND)
+  }, 60_000)
+
+  it('a display contents holder with no text of its own reads unknown, never hidden', async () => {
+    const { tab } = await open('/contents-empty')
+    expect(await buildScrollPrimitives(tab, {}, 720).probeTargetVisible!('Open menu')).toBe('unknown')
   }, 60_000)
 })
 
