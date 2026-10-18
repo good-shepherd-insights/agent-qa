@@ -108,6 +108,10 @@ const DECOY_SR_ONLY = decoyPage('sr-only', `<a href="#real" style="${SR_ONLY}">D
 const DECOY_OPACITY = decoyPage('opacity', '<div style="opacity:0">Delete account</div>')
 const DECOY_OVERLAY = decoyPage('overlay',
   '<p>Delete account</p><div style="position:fixed;inset:0;background:rgba(0,0,0,0.3)"></div>')
+const frameDecoy = (wrapper: string): string =>
+  `<div style="${wrapper}"><iframe srcdoc="<button>Delete account</button>" style="width:400px;height:150px"></iframe></div>`
+const DECOY_FRAME_OPACITY = decoyPage('frame opacity', frameDecoy('opacity:0'))
+const DECOY_FRAME_HIDDEN = decoyPage('frame hidden', frameDecoy('visibility:hidden'))
 const POSITIONED_FIXED = page('fixed', `
   <div style="overflow:hidden;height:10px"><button style="position:fixed;bottom:20px;right:20px">Chat with us</button></div>
   <div style="height:2000px">Tail</div>`)
@@ -132,6 +136,8 @@ const PAGES: Record<string, string | ((port: number) => string)> = {
   '/decoy-sr-only': DECOY_SR_ONLY,
   '/decoy-opacity': DECOY_OPACITY,
   '/decoy-overlay': DECOY_OVERLAY,
+  '/decoy-frame-opacity': DECOY_FRAME_OPACITY,
+  '/decoy-frame-hidden': DECOY_FRAME_HIDDEN,
   '/positioned-fixed': POSITIONED_FIXED,
   '/positioned-absolute': POSITIONED_ABSOLUTE,
   '/pointer-none': POINTER_NONE,
@@ -850,5 +856,23 @@ describe('C436-SCROLL-DECOYS', () => {
       expect(await innerScrollTop(tab)).toBeGreaterThan(0)
       expect(await primitives.probeTargetVisible!('Slot item 25')).toBe('visible')
     }
+  }, 60_000)
+
+  it('an iframe copy under an opacity 0 ancestor never ends found at zero swipes', async () => {
+    const { web, tab } = await open('/decoy-frame-opacity')
+    const result = await web.execute(untilVisible('Delete account', 10))
+    const meta = result.metadata?.scrollUntilVisible as { swipes: number } | undefined
+    expect(meta).toMatchObject({ outcome: 'found', endedBy: 'target-visible' })
+    expect(meta!.swipes).toBeGreaterThanOrEqual(1)
+    expect(await realButtonOnScreen(tab)).toBe(true)
+  }, 60_000)
+
+  it('an iframe copy under a visibility hidden ancestor never ends found at zero swipes', async () => {
+    const { web, tab } = await open('/decoy-frame-hidden')
+    const result = await web.execute(untilVisible('Delete account', 10))
+    const meta = result.metadata?.scrollUntilVisible as { swipes: number } | undefined
+    expect(meta).toMatchObject({ outcome: 'found', endedBy: 'target-visible' })
+    expect(meta!.swipes).toBeGreaterThanOrEqual(1)
+    expect(await realButtonOnScreen(tab)).toBe(true)
   }, 60_000)
 })
