@@ -13680,6 +13680,48 @@
       "file": "packages/dashboard-ui/src/pages/__tests__/444-rate-window.test.tsx",
       "fullName": "C444-RATE-WINDOW the Suites page reads each suite's last run, target and platform from the batch read, and No runs means no run at all",
       "origin": "444 D-64"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-list-write-safe.test.ts",
+      "fullName": "C444-LIST-WRITE-SAFE the Tests and Suites page reads sent together leave every id-less file whole under one id line, and every listed id opens",
+      "origin": "444 D-65"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-list-write-safe.test.ts",
+      "fullName": "C444-LIST-WRITE-SAFE two list calls at once on one manager name the same id for each file, and the file holds one id line",
+      "origin": "444 D-65"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-list-write-safe.test.ts",
+      "fullName": "C444-LIST-WRITE-SAFE a reader during an id write never sees an empty or partial file",
+      "origin": "444 D-65"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-list-write-safe.test.ts",
+      "fullName": "C444-LIST-WRITE-SAFE an id write goes through a symlink to its target and keeps the file mode, and a file it may not write keeps its bytes and gets no id",
+      "origin": "444 D-65"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-list-write-safe.test.ts",
+      "fullName": "C444-LIST-WRITE-SAFE a save sent with the list reads keeps exactly the saved body under one id line, a delete stays deleted, and no reader sees a partial file",
+      "origin": "444 D-65"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-rate-window.test.ts",
+      "fullName": "C444-RATE-WINDOW the test batch read counts a healed member as a pass and a timed-out one as a fail, and a cancelled, a still-running and an outcome-less member in neither, as its viewer does",
+      "origin": "444 D-64"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-rate-window.test.ts",
+      "fullName": "C444-RATE-WINDOW the suite batch read counts a healed run as a pass and a timed-out one as a fail, and a cancelled run, a still-running run and a run whose member has no outcome in neither, as its viewer does",
+      "origin": "444 D-64"
     }
   ]
 }
