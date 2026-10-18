@@ -21,7 +21,11 @@ import {
 import { TabKnowledge } from "@/components/run-detail/tab-knowledge"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import {
+  ATTRIBUTION_PENDING_TEXT,
+  ATTRIBUTION_SKIPPED_TEXT,
   CHANGES_PENDING_TEXT,
+  EFFECT_NOTHING_MEASURED_TEXT,
+  EFFECT_SENTENCES,
   projectKnowledgeView,
   type KnowledgeView,
 } from "@/lib/knowledge-view"
@@ -40,6 +44,9 @@ afterEach(() => {
 })
 
 function mount(element: ReactElement): HTMLElement {
+  // A cell that mounts a second world unmounts the first, so only one tab is ever in the document.
+  if (root !== undefined) act(() => { root?.unmount() })
+  container?.remove()
   container = document.createElement("div")
   document.body.append(container)
   root = createRoot(container)
@@ -199,4 +206,49 @@ describe("C444-KNOWLEDGE-TAB-SKIPPED", () => {
     expect(section.getAttribute("data-learned-state")).toBe("pending")
     expect(section.querySelector("[data-learned-sentence]")?.textContent).toBe(CHANGES_PENDING_TEXT)
   })
+
+  it("a gate run's canary line reads attribution skipped in Retrieval details", () => {
+    const skippedLine = canaryLine(mountOpened(world({ reason: "gate-run" })))
+    expect(skippedLine.getAttribute("data-canary-outcome")).toBe("skipped")
+    expect(skippedLine.textContent).toContain(ATTRIBUTION_SKIPPED_TEXT)
+
+    // Rows win (407-22): a served attribution row is the line's answer on a skipped run too.
+    const servedLine = canaryLine(mountOpened(world({ reason: "gate-run", canaryAttributions: [attribution("confirmed")] })))
+    expect(servedLine.getAttribute("data-canary-outcome")).toBe("confirmed")
+  })
+
+  it("a gate run's Effect section counts its canary as unmeasured, not on trial", () => {
+    const tabView = view(world({ reason: "gate-run" }))
+    const effect = mount(<TabKnowledge view={tabView} />).querySelector('[data-knowledge-section="effect"]')
+
+    expect(effect).not.toBeNull()
+    expect(effect?.querySelector("[data-effect-entry]")).toBeNull()
+    expect(effect?.querySelector("[data-section-absence]")?.textContent).toBe(EFFECT_NOTHING_MEASURED_TEXT)
+    if (tabView.state !== "ready") throw new Error("the view must be ready")
+    expect("uncounted" in tabView.effect).toBe(false)
+  })
+
+  it("a gate run's tab reads pending nowhere", () => {
+    const pendingAttributes = [
+      '[data-learned-state="pending"]',
+      '[data-canary-outcome="pending"]',
+      '[data-effect-outcome="pending"]',
+    ]
+    const pendingTexts = [CHANGES_PENDING_TEXT, ATTRIBUTION_PENDING_TEXT, EFFECT_SENTENCES.pending.tail]
+
+    // The control world, with no skipped key, shows every pending mark, so the probe can see them.
+    const control = mountOpened(world())
+    for (const selector of pendingAttributes) expect(control.querySelector(selector), selector).not.toBeNull()
+    for (const text of pendingTexts) expect(control.textContent, text).toContain(text)
+
+    const gate = mountOpened(world({ reason: "gate-run" }))
+    for (const selector of pendingAttributes) expect(gate.querySelector(selector), selector).toBeNull()
+    for (const text of pendingTexts) expect(gate.textContent, text).not.toContain(text)
+  })
 })
+
+function canaryLine(tab: HTMLElement): HTMLElement {
+  const line = tab.querySelector<HTMLElement>('li[data-served-channel="1"][data-served-as-canary="true"]')
+  if (line === null) throw new Error("no canary line in the expanded step row")
+  return line
+}
