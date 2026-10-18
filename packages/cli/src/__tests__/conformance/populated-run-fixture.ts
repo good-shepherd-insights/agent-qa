@@ -403,7 +403,15 @@ export interface RecordedStubRequest {
   readonly method: string
   readonly path: string
   /** Which arm answered it — the dispatch decision, recorded rather than re-derived. */
-  readonly kind: 'planner' | 'held' | 'held-analysis' | 'structured' | 'analysis' | 'text' | 'unknown'
+  readonly kind:
+    | 'planner'
+    | 'held'
+    | 'held-analysis'
+    | 'structured'
+    | 'analysis'
+    | 'curator'
+    | 'text'
+    | 'unknown'
   readonly status: number
   /** Whether the planner arm resolved a live `ref` out of the observation, or fell back. */
   readonly grounding?: 'ref' | 'descriptor'
@@ -610,6 +618,24 @@ function plannerFailureReasoning(): string {
  */
 export const ANALYSIS_PROMPT_MARKER = 'analyze-run: authoring root-cause verdicts'
 
+// 2026-10-18 (444-20, D-57): the curator author's own first instruction line
+// (`cli/src/curation/curator-author.ts`, `authoringInstructions`).
+export const CURATOR_PROMPT_MARKER = 'You are the agent-qa Curator.'
+
+// The first neighbor a curator prompt presents, read from `renderNeighbor`'s lines.
+function firstPresentedNeighbor(
+  prompt: string,
+): { alias: number; kind: string; subtype?: string; anchors: unknown } | undefined {
+  const match = /^Alias (\d+)\nkind: ([a-z]+)(?:\/([a-z]+))?\nsummary: .*\nanchors: (.+)$/mu.exec(prompt)
+  if (match === null) return undefined
+  return {
+    alias: Number(match[1]),
+    kind: match[2]!,
+    ...(match[3] === undefined ? {} : { subtype: match[3] }),
+    anchors: JSON.parse(match[4]!) as unknown,
+  }
+}
+
 /**
  * The grounding quote the scripted verdict cites.
  *
@@ -802,6 +828,9 @@ export interface StubModelServerOptions {
   // 2026-10-18 (444-19, D-56): the analyze-run author's request (the `ANALYSIS_PROMPT_MARKER` arm)
   // is parked with the held turns; `held.release()` answers it through the analysis arms below.
   readonly holdAnalysis?: boolean
+  // 2026-10-18 (444-20, D-57): a curator request (the `CURATOR_PROMPT_MARKER` arm) that presents a
+  // neighbor is answered with a Supersede of the first one; one presenting none gets the prose.
+  readonly curatorOutcome?: 'supersede-first'
 }
 
 export async function startStubModelServer(
@@ -993,6 +1022,34 @@ export async function startStubModelServer(
         if (analysisOutcome === 'error' && prompt.includes(ANALYSIS_PROMPT_MARKER)) {
           record('analysis', 400)
           refuse('the populated-run stub refuses the analyze-run author on purpose')
+          return
+        }
+        const victim = options.curatorOutcome === 'supersede-first'
+          && prompt.includes(CURATOR_PROMPT_MARKER)
+          ? firstPresentedNeighbor(prompt)
+          : undefined
+        if (victim !== undefined) {
+          record('curator', 200)
+          respond(chatCompletion(
+            model,
+            {
+              role: 'assistant',
+              content: JSON.stringify({
+                kind: 'Supersede',
+                citedAliases: [victim.alias],
+                victimAlias: victim.alias,
+                newBundle: {
+                  kind: victim.kind,
+                  ...(victim.subtype === undefined ? {} : { subtype: victim.subtype }),
+                  anchors: victim.anchors,
+                  summary: `The "${POPULATED_BUTTON_LABEL}" button acknowledges the notice on this page.`,
+                  body: `Clicking "${POPULATED_BUTTON_LABEL}" changes the notice state.`,
+                },
+              }),
+            },
+            'stop',
+            { prompt: 1_024, completion: 96 },
+          ))
           return
         }
         record('text', 200)
