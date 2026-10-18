@@ -8,6 +8,8 @@
 // two producer calls name the option.
 // 2026-10-18 (444-25, D-60): a hang-up is a cancel on this door too, so one SIGHUP to a held direct
 // run must end through the same path; the dashboard door still keeps Playwright's default.
+// 2026-10-18 (444-30, D-63): a terminal close under zsh delivers SIGHUP twice about 1 ms apart, so
+// two SIGHUPs that far apart must end a held direct run once, through the same path.
 
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
@@ -79,6 +81,7 @@ interface SignalReport {
   verdict?: unknown
   row?: { status: string; failureSummary: string | null }
   printed?: boolean
+  secondSignal?: { sentAfterMs: number; aliveAtSend: boolean; delivered: boolean }
   output?: string
 }
 
@@ -170,6 +173,7 @@ async function signalHeldRun(
   label: string,
   args: readonly string[],
   signal: NodeJS.Signals,
+  repeat?: { readonly afterMs: number },
 ): Promise<SignalReport> {
   refuseWithoutRecordingTools()
   refuseWithoutPosixRunLifecycle()
@@ -186,6 +190,12 @@ async function signalHeldRun(
     facts.chromiumAtSignal = chromiumDescendants(run.child.pid!)
     const signalledAt = Date.now()
     run.child.kill(signal)
+    if (repeat !== undefined) {
+      await new Promise((tick) => setTimeout(tick, repeat.afterMs))
+      const aliveAtSend = !exited(run.child)
+      const sentAfterMs = Date.now() - signalledAt
+      facts.secondSignal = { sentAfterMs, aliveAtSend, delivered: run.child.kill(signal) }
+    }
     const kill = setTimeout(() => { run.child.kill('SIGKILL') }, KILL_AFTER_MS)
     try {
       facts.exit = await run.closed
@@ -423,6 +433,22 @@ describe('C444-CTRL-C-OWNED', () => {
       ['run', 'tests/populated.test.yaml'],
       'SIGHUP',
     ))
+  }, CELL_BUDGET_MS)
+
+  it("two SIGHUPs 1 ms apart end a held direct run through agent-qa run's own path", async () => {
+    const facts = await signalHeldRun(
+      'direct SIGHUP twice',
+      '444-ctrl-c-direct-sighup-twice',
+      ['run', 'tests/populated.test.yaml'],
+      'SIGHUP',
+      { afterMs: 1 },
+    )
+    const seen = JSON.stringify({ ...facts, output: facts.output?.slice(-1_500) }, null, 2)
+    expect(facts.reached, seen).toBe('held')
+    expect(facts.secondSignal?.aliveAtSend, `the second SIGHUP reached a live run\n${seen}`).toBe(true)
+    expect(facts.secondSignal?.delivered, `the second SIGHUP was delivered\n${seen}`).toBe(true)
+    expect(facts.secondSignal?.sentAfterMs ?? Infinity, seen).toBeLessThan(50)
+    expectOwnPath(facts)
   }, CELL_BUDGET_MS)
 
   it("a dashboard run still launches its browser with Playwright's signal handling", async () => {
