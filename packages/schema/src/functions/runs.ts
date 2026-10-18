@@ -1202,6 +1202,7 @@ export const RunKnowledgeProjectionSchema = z.discriminatedUnion('kind', [
         curated: z.number().int().nonnegative(),
         deprecated: z.number().int().nonnegative(),
       }).strict().optional(),
+      skipped: PostProcessingSkippedSchema.optional(),
     }).strict(),
     learned: z.object({
       changes: z.array(RunKnowledgeLearnedChangeSchema),

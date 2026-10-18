@@ -61,7 +61,11 @@ import type {
 
 import type { ClauseVerdict, FunctionDeps, FunctionSpec, KnowledgeReaderPort } from '../spec.js'
 import { knowledgeRecordsDiffSpec } from './knowledge-records-diff.js'
-import { projectPostProcessingChips, runsPostProcessingSpec } from './runs-post-processing.js'
+import {
+  projectPostProcessingChips,
+  projectPostProcessingSkipped,
+  runsPostProcessingSpec,
+} from './runs-post-processing.js'
 import { requireSecretMask } from './secret-mask.js'
 
 /**
@@ -544,6 +548,8 @@ export const runsKnowledgeSpec: FunctionSpec<RunsKnowledgeInput, RunKnowledgePro
       ...join.joinFor(row.recordId),
     }))
 
+    const skipped = projectPostProcessingSkipped(document)
+
     const sinceThen = curationSnapshot === undefined
       ? undefined
       : joinedChanges.filter((row) => !recordedBySnapshot(row, curationSnapshot, mask))
@@ -567,6 +573,9 @@ export const runsKnowledgeSpec: FunctionSpec<RunsKnowledgeInput, RunKnowledgePro
               },
             }
           : {}),
+        // 2026-10-18 (444-26, D-61): the run's own handoff says why its chain was never enqueued,
+        // by the fold runs.postprocessing calls, so it holds on a host with no queue database too.
+        ...(skipped === undefined ? {} : { skipped: { reason: skipped.reason } }),
       },
       learned: {
         changes: joinedChanges,
