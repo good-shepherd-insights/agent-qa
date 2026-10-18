@@ -358,15 +358,23 @@ describe('C444-LIST-WRITE-SAFE', () => {
     const modified = firstTests.map((file) => file.modified)
     expect(modified, '(a) newest modified first, as one list() gives').toEqual([...modified].sort().reverse())
     for (const file of firstTests) {
+      if (file.path === 'tests/blank.yaml') continue
       expect(file.testId, `(a) ${file.path} is listed with an id`).not.toBeNull()
       const disk = await readFile(join(a.dir, file.path), 'utf-8')
       expect(oneIdOver(disk, testBodies.get(file.path)!, 'test'), `(a) ${file.path}: ${describeFile(disk, 'test')}`).toBe(
         file.testId,
       )
     }
-    expect(await readFile(join(a.dir, 'tests/blank.yaml'), 'utf-8'), '(a) the whitespace survives byte for byte').toBe(
-      `test-id: ${firstTests.find((file) => file.path === 'tests/blank.yaml')!.testId!}\n  \n\t\n`,
-    )
+    for (const [label, listing] of [['first', firstTests], ['second', secondTests]] as const) {
+      expect(
+        listing.find((file) => file.path === 'tests/blank.yaml')?.testId,
+        `(a, IN-20) the ${label} listing names no id for tests/blank.yaml, which holds only whitespace`,
+      ).toBeNull()
+    }
+    expect(
+      await readFile(join(a.dir, 'tests/blank.yaml'), 'utf-8'),
+      '(a, IN-20) the whitespace survives byte for byte, with no id line',
+    ).toBe('  \n\t\n')
 
     // (b) the suite manager
     const b = await workspace('b')
@@ -419,8 +427,11 @@ describe('C444-LIST-WRITE-SAFE', () => {
     const dBodies = new Map<string, string>()
     for (let index = 0; index < 10; index++) dBodies.set(`tests/t${pad(index)}.yaml`, smallTest(index))
     for (const [path, body] of dBodies) await writeFile(join(d.dir, path), body)
-    const before = new Map<string, bigint>()
-    for (const path of dBodies.keys()) before.set(path, (await stat(join(d.dir, path), { bigint: true })).mtimeNs)
+    const before = new Map<string, { ino: bigint; mtimeNs: bigint }>()
+    for (const path of dBodies.keys()) {
+      const s = await stat(join(d.dir, path), { bigint: true })
+      before.set(path, { ino: s.ino, mtimeNs: s.mtimeNs })
+    }
     const dTests = new TestFileManager(d.paths)
     const snapshot = new Map<string, { ino: bigint; mtimeNs: bigint; bytes: string }>()
     const [dFirst, dSecond] = await dTests.list().then(async (first) => {
@@ -442,7 +453,8 @@ describe('C444-LIST-WRITE-SAFE', () => {
       expect(oneIdOver(bytes, body, 'test'), `(d) ${path} holds one id line over its body`).toBe(
         dFirst.find((file) => file.path === path)?.testId,
       )
-      expect(was.mtimeNs > before.get(path)!, `(d) the mint moved ${path}'s mtime`).toBe(true)
+      expect(was.ino, `(d) the mint replaced ${path}`).not.toBe(before.get(path)!.ino)
+      expect(was.mtimeNs >= before.get(path)!.mtimeNs, `(d) ${path}'s mtime did not go back`).toBe(true)
     }
 
     // (e) a workspace with no test or suite files

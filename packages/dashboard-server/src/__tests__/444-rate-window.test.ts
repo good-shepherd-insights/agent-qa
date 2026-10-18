@@ -330,10 +330,23 @@ const COUNTING_RUNS = [
 ] as const
 const COUNTING_CLASSES = [...COUNTING_RUNS.map((run) => run.name), 'mixed'] as const
 type CountingClass = (typeof COUNTING_CLASSES)[number]
+// 2026-10-18 (444-35, IN-14): an outcome-less member under a run that counts, with no suite and no mixed member.
+const UNRECORDED_RUNS = [
+  { name: 'unrecorded-pass', status: 'passed' },
+  { name: 'unrecorded-fail', status: 'failed' },
+] as const
+const UNRECORDED_CLASSES = UNRECORDED_RUNS.map((run) => run.name)
+type TestCountingClass = CountingClass | (typeof UNRECORDED_RUNS)[number]['name']
 
-async function seedCountingClasses(): Promise<{ origin: string; tests: Record<CountingClass, Seeded> }> {
+async function seedCountingClasses(): Promise<{ origin: string; tests: Record<TestCountingClass, Seeded> }> {
   mkdirSync(join(dir, 'tests'), { recursive: true })
   mkdirSync(join(dir, 'suites'), { recursive: true })
+  for (const name of UNRECORDED_CLASSES) {
+    writeFileSync(
+      join(dir, 'tests', `count-${name}.yaml`),
+      [`name: Count ${name}`, `test-id: t_count_${name}`, 'steps: []', ''].join('\n'),
+    )
+  }
   for (const name of COUNTING_CLASSES) {
     writeFileSync(
       join(dir, 'tests', `count-${name}.yaml`),
@@ -379,8 +392,8 @@ async function seedCountingClasses(): Promise<{ origin: string; tests: Record<Co
   const listed = await read(`${origin}/api/tests`)
   expect(listed.status, 'GET /api/tests').toBe(200)
   const files = listed.body.files as Array<{ path: string; name: string; testId: string | null }>
-  const tests = {} as Record<CountingClass, Seeded>
-  for (const name of COUNTING_CLASSES) {
+  const tests = {} as Record<TestCountingClass, Seeded>
+  for (const name of [...COUNTING_CLASSES, ...UNRECORDED_CLASSES]) {
     const file = files.find((candidate) => candidate.path === `tests/count-${name}.yaml`)
     expect(file, `GET /api/tests lists tests/count-${name}.yaml`).toBeDefined()
     expect(file!.testId, `tests/count-${name}.yaml's test id`).toBe(`t_count_${name}`)
@@ -408,6 +421,17 @@ async function seedCountingClasses(): Promise<{ origin: string; tests: Record<Co
         ...(run.outcome === undefined ? {} : { outcome: run.outcome }),
       })
     }
+  }
+  for (const [index, run] of UNRECORDED_RUNS.entries()) {
+    const startedAt = new Date(Date.UTC(2026, 9, 3, 0, COUNTING_RUNS.length + index)).toISOString()
+    const id = db.insertRun({ name: tests[run.name].name, status: run.status, duration: 1000, startedAt, endedAt: startedAt })
+    db.upsertRunMember({
+      runId: id,
+      testIndex: 0,
+      testId: tests[run.name].testId,
+      name: tests[run.name].name,
+      filePath: tests[run.name].filePath,
+    })
   }
   return { origin, tests }
 }
@@ -647,7 +671,9 @@ describe('C444-RATE-WINDOW', () => {
 
   it('the test batch read counts a healed member as a pass and a timed-out one as a fail, and a cancelled, a still-running and an outcome-less member in neither, as its viewer does', async () => {
     const { origin, tests } = await seedCountingClasses()
-    const expected: Record<CountingClass, { figures: object; lastRun: object }> = {
+    const expected: Record<TestCountingClass, { figures: object; lastRun: object }> = {
+      'unrecorded-pass': { figures: { passRate: null, passed: 0, decided: 0 }, lastRun: { status: 'passed', memberOutcome: null } },
+      'unrecorded-fail': { figures: { passRate: null, passed: 0, decided: 0 }, lastRun: { status: 'failed', memberOutcome: null } },
       healed: { figures: { passRate: 1, passed: 1, decided: 1 }, lastRun: { status: 'healed', memberOutcome: 'healed' } },
       timeout: { figures: { passRate: 0, passed: 0, decided: 1 }, lastRun: { status: 'timeout', memberOutcome: 'timeout' } },
       bare: { figures: { passRate: null, passed: 0, decided: 0 }, lastRun: { status: 'cancelled', memberOutcome: null } },
@@ -658,7 +684,7 @@ describe('C444-RATE-WINDOW', () => {
 
     const batch = await read(`${origin}/api/analytics/test-summaries`)
     const window = { origin } as RateWindow
-    for (const name of COUNTING_CLASSES) {
+    for (const name of [...UNRECORDED_CLASSES, ...COUNTING_CLASSES]) {
       const test = tests[name]
       const row = batchRow(batch, 'tests', test.filePath)
       expect(row, `${test.name}'s batch figures`).toMatchObject({ testId: test.testId, ...expected[name].figures })
