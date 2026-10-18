@@ -13302,6 +13302,288 @@
       "file": "packages/knowledge-local/src/curator/__tests__/444-proposed-supersession.test.ts",
       "fullName": "C444-PROPOSED-SUPERSESSION the proposed candidate has the id a local Supersede of the same delta mints",
       "origin": "444 D-58"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-timeout-badge.test.tsx",
+      "fullName": "C444-TIMEOUT-BADGE the Tests page shows a timed-out last run as a destructive Timed out badge",
+      "origin": "444 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-timeout-badge.test.tsx",
+      "fullName": "C444-TIMEOUT-BADGE the Tests page's Failed filter lists a test whose last run timed out",
+      "origin": "444 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-timeout-badge.test.tsx",
+      "fullName": "C444-TIMEOUT-BADGE the Tests page's Passed filter lists a test whose last run healed",
+      "origin": "444 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-timeout-badge.test.tsx",
+      "fullName": "C444-TIMEOUT-BADGE the Suites page shows a timed-out last run as a destructive Timed out badge",
+      "origin": "444 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-timeout-badge.test.tsx",
+      "fullName": "C444-TIMEOUT-BADGE the Suites page's Failed filter lists a suite whose last run timed out",
+      "origin": "444 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-timeout-badge.test.tsx",
+      "fullName": "C444-TIMEOUT-BADGE the Suites page's Passed filter lists a suite whose last run healed",
+      "origin": "444 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-timeout-badge.test.tsx",
+      "fullName": "C444-TIMEOUT-BADGE the test viewer shows a timed-out member outcome as a destructive Timed out badge",
+      "origin": "444 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-timeout-badge.test.tsx",
+      "fullName": "C444-TIMEOUT-BADGE the suite viewer shows a timed-out run as a destructive Timed out badge",
+      "origin": "444 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-timeout-badge.test.tsx",
+      "fullName": "C444-TIMEOUT-BADGE no page keeps its own status badge switch",
+      "origin": "444 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/lib/__tests__/status.test.ts",
+      "fullName": "C444-TIMEOUT-BADGE both run status helpers label timeout Timed out",
+      "origin": "444 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/lib/__tests__/status.test.ts",
+      "fullName": "C444-TIMEOUT-BADGE a run word flaky reads unknown while a step and a member keep flaky",
+      "origin": "444 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-pass-rate.e2e.test.ts",
+      "fullName": "C444-PASS-RATE a test that passed once and was abort-skipped once reads 100% on the Tests page and in its viewer",
+      "origin": "444 D-59"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-pass-rate.e2e.test.ts",
+      "fullName": "C444-PASS-RATE a test whose only outcome is cancelled reads an em dash in its viewer",
+      "origin": "444 D-59"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-pass-rate.e2e.test.ts",
+      "fullName": "C444-PASS-RATE a test whose only outcome is cancelled reads an em dash on the Tests page",
+      "origin": "444 D-59"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-run-reads.test.ts",
+      "fullName": "C444-PASS-RATE a test's rate counts only pass and fail member outcomes",
+      "origin": "444 D-59"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-run-reads.test.ts",
+      "fullName": "C444-PASS-RATE a test with no pass or fail outcome has no rate",
+      "origin": "444 D-59"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-run-reads.test.ts",
+      "fullName": "C444-PASS-RATE a suite's rate leaves cancelled and live runs out",
+      "origin": "444 D-59"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-run-reads.test.ts",
+      "fullName": "C444-PASS-RATE the insights breakdown rates a group over its passed and failed runs only",
+      "origin": "444 D-59"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-pass-rate.test.tsx",
+      "fullName": "C444-PASS-RATE the test viewer shows an em dash for a test with no rate",
+      "origin": "444 D-59"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-pass-rate.test.tsx",
+      "fullName": "C444-PASS-RATE the suite viewer shows an em dash for a suite with no rate",
+      "origin": "444 D-59"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-pass-rate.test.tsx",
+      "fullName": "C444-PASS-RATE the insights breakdown shows an em dash for a group with no rate",
+      "origin": "444 D-59"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-pass-rate.test.tsx",
+      "fullName": "C444-PASS-RATE the viewers' chart rates a day by its passes and failures only",
+      "origin": "444 D-59"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-pass-rate.test.tsx",
+      "fullName": "C444-PASS-RATE the Tests page rates a test over its pass and fail outcomes only",
+      "origin": "444 D-59"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-pass-rate.test.tsx",
+      "fullName": "C444-PASS-RATE the Suites page rates a suite over its passed and failed runs only",
+      "origin": "444 D-59"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-pass-rate.test.tsx",
+      "fullName": "C444-PASS-RATE the insights summary rates the window over its passed and failed runs only",
+      "origin": "444 D-59"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-ctrl-c-owned.e2e.test.ts",
+      "fullName": "C444-CTRL-C-OWNED one SIGHUP ends a held direct run through agent-qa run's own path",
+      "origin": "444 D-46"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-process-identity.test.ts",
+      "fullName": "C444-PROCESS-IDENTITY a recorded process whose command line no longer matches is never killed",
+      "origin": "444 D-62"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-process-identity.test.ts",
+      "fullName": "C444-PROCESS-IDENTITY a recorded process that is still the same process is killed",
+      "origin": "444 D-62"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-overview-skipped.test.ts",
+      "fullName": "C444-OVERVIEW-SKIPPED a gate run's overview carries skipped with reason gate-run beside its curation chip",
+      "origin": "444 D-61"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-overview-skipped.test.ts",
+      "fullName": "C444-OVERVIEW-SKIPPED an outcome-excluded run's overview carries skipped with reason outcome-excluded",
+      "origin": "444 D-61"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-overview-skipped.test.ts",
+      "fullName": "C444-OVERVIEW-SKIPPED an ordinary run's overview carries no skipped key",
+      "origin": "444 D-61"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-overview-skipped.test.ts",
+      "fullName": "C444-OVERVIEW-SKIPPED the overview text prints curation skipped (gate run)",
+      "origin": "444 D-61"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-overview-skipped.test.ts",
+      "fullName": "C444-KNOWLEDGE-SKIPPED a gate run's knowledge carries skipped with reason gate-run beside its curation chip",
+      "origin": "444 D-61"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-overview-skipped.test.ts",
+      "fullName": "C444-KNOWLEDGE-SKIPPED an ordinary run's knowledge carries no skipped key",
+      "origin": "444 D-61"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-overview-skipped.test.ts",
+      "fullName": "C444-KNOWLEDGE-SKIPPED the knowledge text prints curation skipped (gate run)",
+      "origin": "444 D-61"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/run-detail/__tests__/444-knowledge-tab-skipped.test.tsx",
+      "fullName": "C444-KNOWLEDGE-TAB-SKIPPED a gate run's Memory changes reads the gate run's curation-skipped sentence, not pending",
+      "origin": "444 D-61"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/run-detail/__tests__/444-knowledge-tab-skipped.test.tsx",
+      "fullName": "C444-KNOWLEDGE-TAB-SKIPPED an outcome-excluded run's Memory changes reads the outcome-excluded sentence",
+      "origin": "444 D-61"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/run-detail/__tests__/444-knowledge-tab-skipped.test.tsx",
+      "fullName": "C444-KNOWLEDGE-TAB-SKIPPED a skipped run's attributed rows are painted with the skip stated beside them",
+      "origin": "444 D-61"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/run-detail/__tests__/444-knowledge-tab-skipped.test.tsx",
+      "fullName": "C444-KNOWLEDGE-TAB-SKIPPED a run with no skipped fact still reads its pending chip",
+      "origin": "444 D-61"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/run-detail/__tests__/444-knowledge-tab-skipped.test.tsx",
+      "fullName": "C444-KNOWLEDGE-TAB-SKIPPED a gate run's canary line reads attribution skipped in Retrieval details",
+      "origin": "444 D-61"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/run-detail/__tests__/444-knowledge-tab-skipped.test.tsx",
+      "fullName": "C444-KNOWLEDGE-TAB-SKIPPED a gate run's Effect section counts its canary as unmeasured, not on trial",
+      "origin": "444 D-61"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/run-detail/__tests__/444-knowledge-tab-skipped.test.tsx",
+      "fullName": "C444-KNOWLEDGE-TAB-SKIPPED a gate run's tab reads pending nowhere",
+      "origin": "444 D-61"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-bootstrap-stack.test.ts",
+      "fullName": "C444-BOOTSTRAP-STACK a CLI that throws while loading prints the framework line, then its stack, and exits 2",
+      "origin": "444 D-62"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-bootstrap-stack.test.ts",
+      "fullName": "C444-BOOTSTRAP-STACK a thrown non-error prints the framework line alone",
+      "origin": "444 D-62"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-unknown-outcome.test.ts",
+      "fullName": "C444-UNKNOWN-OUTCOME a member outcome outside the vocabulary is skipped by every history reader",
+      "origin": "444 D-62"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-unknown-outcome.test.ts",
+      "fullName": "C444-UNKNOWN-OUTCOME the tests analytics routes answer 200 beside a stray outcome",
+      "origin": "444 D-62"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-enqueue-reported.test.ts",
+      "fullName": "C444-ENQUEUE-REPORTED a dispatch that throws on enqueue is reported and enqueue still returns the queued run",
+      "origin": "444 D-62"
     }
   ]
 }
