@@ -940,11 +940,15 @@ export function commitCurationDelta(
       const identityDelta =
         disposed.kind === 'downgraded'
         && disposed.original.kind === 'Supersede'
-        && draft.kind === 'fact'
-        && draft.subtype === 'measurement'
-          // D-02 propose-only keeps the replacement candidate distinct from its active victim.
-          // The downgraded Add still represents a new validity window, so retain the original
-          // code-derived evidence token in the measurement discriminant without mutating state.
+        && (
+          disposed.reason === 'propose-only'
+          || (draft.kind === 'fact' && draft.subtype === 'measurement')
+        )
+          // D-02 propose-only keeps the replacement candidate distinct from its victim. The
+          // downgraded Add is still the Supersede's new validity window, so it keeps the
+          // original evidence token in its discriminant (D-58): a same-anchor correction never
+          // lands on the victim's id, and a later acceptance converges on the id a local
+          // Supersede of the same delta mints.
           ? disposed.original
           : delta
       const renderInput: RenderBundlePartsInput = {
