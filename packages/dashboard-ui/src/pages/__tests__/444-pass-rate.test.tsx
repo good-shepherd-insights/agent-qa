@@ -118,11 +118,28 @@ type Stats = {
   runs: Array<{ date: string; passed: number; failed: number; healed: number; duration: number }>
 }
 
-let served: { tests: unknown[]; suites: unknown[]; runs: unknown[]; stats: Stats | null } = {
+let served: { tests: unknown[]; suites: unknown[]; runs: unknown[]; stats: Stats | null; testSummaries: unknown[] } = {
   tests: [],
   suites: [],
   runs: [],
   stats: null,
+  testSummaries: [],
+}
+
+type Run = ReturnType<typeof run>
+
+// The batch read's row for a test, with the figures the server gives for its seeded runs.
+function testSummary(test: typeof STEADY, passRate: number | null, passed: number, decided: number, last: Run | null, outcome: string | null) {
+  return {
+    path: test.path,
+    testId: test.testId,
+    passRate,
+    passed,
+    decided,
+    lastRun: last === null
+      ? null
+      : { id: last.id, status: last.status, startedAt: last.startedAt, createdAt: last.createdAt, duration: last.duration, memberOutcome: outcome },
+  }
 }
 
 function analytics() {
@@ -150,6 +167,7 @@ function fakeServer(input: string) {
   if (url.pathname === "/api/tests") return json({ files: served.tests, targets: [] })
   if (url.pathname === "/api/suites") return json({ files: served.suites })
   if (url.pathname === "/api/runs") return json({ runs: served.runs, total: served.runs.length, targets: [] })
+  if (url.pathname === "/api/analytics/test-summaries") return json({ tests: served.testSummaries })
   if (url.pathname === "/api/stats") return json(served.stats)
   if (url.pathname === "/api/token-events/stats") {
     return json({ byModel: [], bySource: {}, totals: { promptTokens: 0, completionTokens: 0 } })
@@ -252,7 +270,7 @@ function everyCell(): string[] {
 }
 
 beforeEach(() => {
-  served = { tests: [], suites: [], runs: [], stats: null }
+  served = { tests: [], suites: [], runs: [], stats: null, testSummaries: [] }
   trends = { passRate: null, totalRuns: 2, avgDuration: 1000, daily: [] }
   suiteAnalyticsFails = false
   chartData.length = 0
@@ -333,14 +351,24 @@ describe('C444-PASS-RATE', () => {
     }
   })
 
+  // 2026-10-18 (444-31, D-64): the page prints the server's pass ÷ (pass + fail) for this seeded
+  // history, which its cancelled, skipped and in-flight runs don't move.
   it("the Tests page rates a test over its pass and fail outcomes only", async () => {
     served.tests = [STEADY, PARKED, MIXED].map(testFile)
+    const live = run("r_live", "running", "2026-10-17T13:00:00.000Z", [member(STEADY, null)])
+    const skip = run("r_skip", "cancelled", "2026-10-17T12:00:00.000Z", [member(PARKED, "cancelled"), member(STEADY, "skipped")])
+    const pass = run("r_pass", "passed", "2026-10-17T10:00:00.000Z", [member(STEADY, "passed"), member(MIXED, "passed")])
     served.runs = [
-      run("r_live", "running", "2026-10-17T13:00:00.000Z", [member(STEADY, null)]),
-      run("r_skip", "cancelled", "2026-10-17T12:00:00.000Z", [member(PARKED, "cancelled"), member(STEADY, "skipped")]),
+      live,
+      skip,
       run("r_cancel", "cancelled", "2026-10-17T11:00:00.000Z", [member(STEADY, "cancelled"), member(PARKED, "skipped")]),
-      run("r_pass", "passed", "2026-10-17T10:00:00.000Z", [member(STEADY, "passed"), member(MIXED, "passed")]),
+      pass,
       run("r_timeout", "timeout", "2026-10-17T09:30:00.000Z", [member(MIXED, "timeout")]),
+    ]
+    served.testSummaries = [
+      testSummary(STEADY, 1, 1, 1, live, null),
+      testSummary(PARKED, null, 0, 0, skip, "cancelled"),
+      testSummary(MIXED, 0.5, 1, 2, pass, "passed"),
     ]
     await renderPage("/tests")
 

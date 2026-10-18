@@ -14,6 +14,7 @@ const LONG_TEST_NAME = "This is a deliberately long test name that should wrap a
 const {
   fetchTestFilesMock,
   fetchRunsMock,
+  fetchTestSummariesMock,
   triggerRunMock,
   purgeCacheMock,
   deleteTestFileMock,
@@ -22,6 +23,7 @@ const {
 } = vi.hoisted(() => ({
   fetchTestFilesMock: vi.fn(),
   fetchRunsMock: vi.fn(),
+  fetchTestSummariesMock: vi.fn(),
   triggerRunMock: vi.fn(),
   purgeCacheMock: vi.fn(),
   deleteTestFileMock: vi.fn(),
@@ -32,6 +34,7 @@ const {
 vi.mock("@/lib/api", () => ({
   fetchTestFiles: fetchTestFilesMock,
   fetchRuns: fetchRunsMock,
+  fetchTestSummaries: fetchTestSummariesMock,
   triggerRun: triggerRunMock,
   purgeCache: purgeCacheMock,
   deleteTestFile: deleteTestFileMock,
@@ -297,6 +300,25 @@ function singleMember(filePath: string, outcome: string) {
   return { testIndex: 0, testId: null, filePath, suiteId: null, name: filePath, outcome }
 }
 
+// The batch read's row for a test file, with the figures the server gives for its seeded runs.
+function testSummary(
+  path: string,
+  testId: string,
+  passRate: number | null,
+  passed: number,
+  decided: number,
+  lastRun: { id: string; status: string; createdAt: string; memberOutcome: string } | null,
+) {
+  return {
+    path,
+    testId,
+    passRate,
+    passed,
+    decided,
+    lastRun: lastRun === null ? null : { startedAt: null, duration: 0, ...lastRun },
+  }
+}
+
 let container: HTMLDivElement | null = null
 let root: Root | null = null
 
@@ -412,6 +434,7 @@ async function clickSelectValue(value: string) {
 beforeEach(() => {
   fetchTestFilesMock.mockReset()
   fetchRunsMock.mockReset()
+  fetchTestSummariesMock.mockReset()
   triggerRunMock.mockReset()
   purgeCacheMock.mockReset()
   deleteTestFileMock.mockReset()
@@ -427,6 +450,14 @@ beforeEach(() => {
     platform: "web",
   }))
 
+  fetchTestSummariesMock.mockResolvedValue({
+    tests: [
+      testSummary("tests/web/login.yaml", "test_login", 0.5, 1, 2, { id: "run_login_latest", status: "failed", createdAt: "2026-04-18T04:00:00.000Z", memberOutcome: "failed" }),
+      testSummary("tests/android/signup.yaml", "test_signup", 1, 1, 1, { id: "run_signup_latest", status: "passed", createdAt: "2026-04-18T03:00:00.000Z", memberOutcome: "passed" }),
+      testSummary("tests/web/very-long-name.yaml", "test_long_name", null, 0, 0, null),
+      ...files.map((file) => testSummary(file.path, file.testId, null, 0, 0, null)),
+    ],
+  })
   fetchTestFilesMock.mockResolvedValue({
     files: [
       {
@@ -660,6 +691,12 @@ describe("TestsPage", () => {
     fetchRunsMock.mockResolvedValueOnce({
       runs: [
         { id: "run_web_login_latest", filePath: "tests/web/login.yaml", status: "passed", createdAt: "2026-04-18T04:00:00.000Z", members: [singleMember("tests/web/login.yaml", "passed")] },
+      ],
+    })
+    fetchTestSummariesMock.mockResolvedValueOnce({
+      tests: [
+        testSummary("tests/web/login.yaml", "test_web_login", 1, 1, 1, { id: "run_web_login_latest", status: "passed", createdAt: "2026-04-18T04:00:00.000Z", memberOutcome: "passed" }),
+        testSummary("tests/mobile/login.yaml", "test_mobile_login", null, 0, 0, null),
       ],
     })
 

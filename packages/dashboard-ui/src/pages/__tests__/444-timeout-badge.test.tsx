@@ -110,7 +110,22 @@ let served: {
   runs: Array<ReturnType<typeof run>>
   testAnalyticsRuns: unknown[]
   suiteAnalyticsRuns: unknown[]
-} = { tests: [], suites: [], runs: [], testAnalyticsRuns: [], suiteAnalyticsRuns: [] }
+  testSummaries: unknown[]
+} = { tests: [], suites: [], runs: [], testAnalyticsRuns: [], suiteAnalyticsRuns: [], testSummaries: [] }
+
+type Run = ReturnType<typeof run>
+
+// The batch read's row for a test, with the figures the server gives for its seeded runs.
+function testSummary(test: TestDef, passRate: number | null, passed: number, decided: number, last: Run, outcome: string | null) {
+  return {
+    path: test.path,
+    testId: test.testId,
+    passRate,
+    passed,
+    decided,
+    lastRun: { id: last.id, status: last.status, startedAt: last.startedAt, createdAt: last.createdAt, duration: last.duration, memberOutcome: outcome },
+  }
+}
 
 function analytics(runs: unknown[]) {
   return {
@@ -130,6 +145,7 @@ function json(body: unknown) {
 function fakeServer(input: string) {
   const url = new URL(input, "http://dashboard.test")
   if (url.pathname === "/api/tests") return json({ files: served.tests, targets: [] })
+  if (url.pathname === "/api/analytics/test-summaries") return json({ tests: served.testSummaries })
   if (url.pathname === "/api/suites") return json({ files: served.suites })
   if (url.pathname === `/api/tests/${VIEWED_TEST.testId}`) return json(VIEWED_TEST)
   if (url.pathname === `/api/suites/${VIEWED_SUITE.suiteId}`) return json(VIEWED_SUITE)
@@ -208,7 +224,7 @@ function pageSource(file: string): string {
 }
 
 beforeEach(() => {
-  served = { tests: [], suites: [], runs: [], testAnalyticsRuns: [], suiteAnalyticsRuns: [] }
+  served = { tests: [], suites: [], runs: [], testAnalyticsRuns: [], suiteAnalyticsRuns: [], testSummaries: [] }
   vi.stubGlobal("fetch", vi.fn((input: string) => fakeServer(input)))
 })
 
@@ -227,6 +243,10 @@ describe('C444-TIMEOUT-BADGE', () => {
       run("r_slow", "timeout", "2026-10-17T11:00:00.000Z", [member(SLOW, "timeout")]),
       run("r_quick", "passed", "2026-10-17T10:00:00.000Z", [member(QUICK, "passed")]),
     ]
+    served.testSummaries = [
+      testSummary(SLOW, 0, 0, 1, served.runs[0]!, "timeout"),
+      testSummary(QUICK, 1, 1, 1, served.runs[1]!, "passed"),
+    ]
     await renderPage("/tests")
 
     expect(lastRunBadge(QUICK.name)).toEqual({ variant: "default", text: "Passed" })
@@ -240,6 +260,11 @@ describe('C444-TIMEOUT-BADGE', () => {
       run("r_quick", "passed", "2026-10-17T10:30:00.000Z", [member(QUICK, "passed")]),
       run("r_broken", "failed", "2026-10-17T10:00:00.000Z", [member(BROKEN, "failed")]),
     ]
+    served.testSummaries = [
+      testSummary(SLOW, 0, 0, 1, served.runs[0]!, "timeout"),
+      testSummary(QUICK, 1, 1, 1, served.runs[1]!, "passed"),
+      testSummary(BROKEN, 0, 0, 1, served.runs[2]!, "failed"),
+    ]
     await renderPage("/tests?status=failed")
 
     expect(listedTests()).toEqual([SLOW.name, BROKEN.name])
@@ -251,6 +276,11 @@ describe('C444-TIMEOUT-BADGE', () => {
       run("r_slow", "timeout", "2026-10-17T11:00:00.000Z", [member(SLOW, "timeout")]),
       run("r_quick", "passed", "2026-10-17T10:30:00.000Z", [member(QUICK, "passed")]),
       run("r_mended", "healed", "2026-10-17T10:00:00.000Z", [member(MENDED, "healed")]),
+    ]
+    served.testSummaries = [
+      testSummary(SLOW, 0, 0, 1, served.runs[0]!, "timeout"),
+      testSummary(QUICK, 1, 1, 1, served.runs[1]!, "passed"),
+      testSummary(MENDED, 1, 1, 1, served.runs[2]!, "healed"),
     ]
     await renderPage("/tests?status=passed")
 

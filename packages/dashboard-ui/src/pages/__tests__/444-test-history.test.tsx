@@ -82,7 +82,28 @@ function member(test: typeof LOGIN, outcome: string | null, suiteId: string | nu
   return { testId: test.testId, filePath: test.path, suiteId, name: test.name, outcome }
 }
 
-let served: { tests: unknown[]; suites: unknown[]; runs: unknown[] } = { tests: [], suites: [], runs: [] }
+let served: { tests: unknown[]; suites: unknown[]; runs: unknown[]; testSummaries: unknown[] } = {
+  tests: [],
+  suites: [],
+  runs: [],
+  testSummaries: [],
+}
+
+type Run = ReturnType<typeof run>
+
+// The batch read's row for a test, with the figures the server gives for its seeded runs.
+function testSummary(test: typeof LOGIN, passRate: number | null, passed: number, decided: number, last: Run | null, outcome: string | null) {
+  return {
+    path: test.path,
+    testId: test.testId,
+    passRate,
+    passed,
+    decided,
+    lastRun: last === null
+      ? null
+      : { id: last.id, status: last.status, startedAt: last.startedAt, createdAt: last.createdAt, duration: last.duration, memberOutcome: outcome },
+  }
+}
 
 const VIEWED = {
   path: "tests/checkout.yaml",
@@ -113,6 +134,7 @@ function fakeServer(input: string) {
   if (url.pathname === "/api/tests") return json({ files: served.tests, targets: [] })
   if (url.pathname === "/api/suites") return json({ files: served.suites })
   if (url.pathname === "/api/runs") return json({ runs: served.runs, total: served.runs.length, targets: [] })
+  if (url.pathname === "/api/analytics/test-summaries") return json({ tests: served.testSummaries })
   if (url.pathname === `/api/tests/${VIEWED.testId}`) return json(VIEWED)
   if (url.pathname.startsWith("/api/analytics/tests/")) {
     analyticsRequests.push(url)
@@ -160,7 +182,7 @@ function historyOf(name: string) {
 }
 
 beforeEach(() => {
-  served = { tests: [], suites: [], runs: [] }
+  served = { tests: [], suites: [], runs: [], testSummaries: [] }
   analyticsRuns = []
   analyticsRequests.length = 0
   vi.stubGlobal("fetch", vi.fn((input: string) => fakeServer(input)))
@@ -177,12 +199,16 @@ afterEach(() => {
 describe("C444-MEMBER-HISTORY", () => {
   it("a three-test run updates all three tests on the Tests page", async () => {
     served.tests = [LOGIN, CART, SEARCH].map((test) => testFile(test.name, test.path, test.testId))
-    served.runs = [
-      run("r_three", "failed", "2026-10-17T10:00:00.000Z", [
-        member(LOGIN, "passed"),
-        member(CART, "failed"),
-        member(SEARCH, "passed"),
-      ]),
+    const three = run("r_three", "failed", "2026-10-17T10:00:00.000Z", [
+      member(LOGIN, "passed"),
+      member(CART, "failed"),
+      member(SEARCH, "passed"),
+    ])
+    served.runs = [three]
+    served.testSummaries = [
+      testSummary(LOGIN, 1, 1, 1, three, "passed"),
+      testSummary(CART, 0, 0, 1, three, "failed"),
+      testSummary(SEARCH, 1, 1, 1, three, "passed"),
     ]
     await renderPage("/tests")
 
@@ -197,10 +223,16 @@ describe("C444-MEMBER-HISTORY", () => {
 
   it("a healed member counts as a pass and a timed-out one as a fail", async () => {
     served.tests = [LOGIN, CART].map((test) => testFile(test.name, test.path, test.testId))
+    const loginTimeout = run("r_timeout", "timeout", "2026-10-17T11:00:00.000Z", [member(LOGIN, "timeout")], { filePath: LOGIN.path, testId: LOGIN.testId })
+    const cartTimeout = run("r_cart_timeout", "timeout", "2026-10-17T10:30:00.000Z", [member(CART, "timeout")], { filePath: CART.path, testId: CART.testId })
     served.runs = [
-      run("r_timeout", "timeout", "2026-10-17T11:00:00.000Z", [member(LOGIN, "timeout")], { filePath: LOGIN.path, testId: LOGIN.testId }),
+      loginTimeout,
       run("r_healed", "healed", "2026-10-17T10:00:00.000Z", [member(LOGIN, "healed")], { filePath: LOGIN.path, testId: LOGIN.testId }),
-      run("r_cart_timeout", "timeout", "2026-10-17T10:30:00.000Z", [member(CART, "timeout")], { filePath: CART.path, testId: CART.testId }),
+      cartTimeout,
+    ]
+    served.testSummaries = [
+      testSummary(LOGIN, 0.5, 1, 2, loginTimeout, "timeout"),
+      testSummary(CART, 0, 0, 1, cartTimeout, "timeout"),
     ]
     await renderPage("/tests")
 
@@ -211,8 +243,11 @@ describe("C444-MEMBER-HISTORY", () => {
 
   it("a running run's member with no outcome shows running", async () => {
     served.tests = [LOGIN, CART].map((test) => testFile(test.name, test.path, test.testId))
-    served.runs = [
-      run("r_live", "running", "2026-10-17T12:00:00.000Z", [member(LOGIN, "passed"), member(CART, null)]),
+    const live = run("r_live", "running", "2026-10-17T12:00:00.000Z", [member(LOGIN, "passed"), member(CART, null)])
+    served.runs = [live]
+    served.testSummaries = [
+      testSummary(LOGIN, 1, 1, 1, live, "passed"),
+      testSummary(CART, null, 0, 0, live, null),
     ]
     await renderPage("/tests")
 

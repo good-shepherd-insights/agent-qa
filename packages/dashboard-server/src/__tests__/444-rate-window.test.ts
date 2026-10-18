@@ -1,0 +1,366 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { EventEmitter } from 'node:events'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import type { AddressInfo } from 'node:net'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { resolveWorkspacePaths } from '@vostride/agent-qa-core'
+
+import { DashboardDatabase } from '../db/database.js'
+import type { ExecutionBackend } from '../execution/execution-backend.js'
+import { extractTestFileMetadata } from '../tests/test-file-manager.js'
+import { startServer } from '../server/server.js'
+
+// 2026-10-18 (444-31, D-64): the list pages read each row's rate and last run from the server's
+// batch read, which must agree with the row's viewer at exactly 200 runs and past 200.
+
+class IdleBackend extends EventEmitter {
+  execute = (): void => undefined
+  kill = (): boolean => false
+  killAll = (): void => undefined
+  getActiveExecutions = (): [] => []
+}
+
+let dir: string
+let dbPath: string
+let configPath: string
+let db: DashboardDatabase
+const started: Array<{ close: () => void }> = []
+
+beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), 'agent-qa-444-rate-window-'))
+  dbPath = join(dir, 'runs.db')
+  configPath = join(dir, 'agent-qa.config.yaml')
+  writeFileSync(configPath, 'testDir: tests\n')
+  db = new DashboardDatabase({ dbPath })
+})
+
+afterEach(() => {
+  while (started.length > 0) started.pop()?.close()
+  db.close()
+  vi.restoreAllMocks()
+  rmSync(dir, { recursive: true, force: true })
+})
+
+type Answer = { status: number; body: any }
+
+async function read(url: string): Promise<Answer> {
+  const response = await fetch(url)
+  const type = response.headers.get('content-type') ?? ''
+  return { status: response.status, body: type.includes('application/json') ? await response.json() : await response.text() }
+}
+
+function batchRow(answer: Answer, key: 'tests' | 'suites', path: string): any {
+  const rows = answer.body !== null && typeof answer.body === 'object' && Array.isArray(answer.body[key])
+    ? (answer.body[key] as Array<{ path: string }>)
+    : null
+  const row = rows?.find((candidate) => candidate.path === path)
+  expect(row, `the ${key} batch read (status ${String(answer.status)}) names ${path}`).toBeDefined()
+  return row
+}
+
+const TESTS = {
+  A: { file: 'tests/window-a.yaml', name: 'Window A', testId: 't_window_a' },
+  B: { file: 'tests/window-b.yaml', name: 'Window B', testId: 't_window_b' },
+  C: { file: 'tests/window-c.yaml', name: 'Window C', testId: 't_window_c' },
+  D: { file: 'tests/window-d.yaml', name: 'Window D', testId: 't_window_d' },
+  E: { file: 'tests/window-e.yaml', name: 'Window E', testId: 't_window_e' },
+} as const
+type TestKey = keyof typeof TESTS
+
+const SUITES = {
+  s_window: { file: 'suites/window.suite.yaml', name: 'Window suite', test: 'A' },
+  s_unrated: { file: 'suites/unrated.suite.yaml', name: 'Unrated suite', test: 'C' },
+  s_old: { file: 'suites/old.suite.yaml', name: 'Old suite', test: 'E' },
+  s_idle: { file: 'suites/idle.suite.yaml', name: 'Idle suite', test: 'D' },
+} as const
+type SuiteId = keyof typeof SUITES
+
+const E_RUN_CONTENT = ['name: Window E', 'test-id: t_window_e', 'target: staging', 'steps: []', ''].join('\n')
+
+type Seeded = { testId: string; filePath: string; name: string }
+
+interface RateWindow {
+  origin: string
+  tests: Record<TestKey, Seeded>
+  secondOne: string[]
+  secondTwo: string[]
+  secondThree: string[]
+  eRun: string
+  aPasses: string[]
+  addSecondThree: () => Promise<void>
+}
+
+const clockSecond = (): string => new Date().toISOString().slice(0, 19).replace('T', ' ')
+
+async function waitPastSecond(ids: string[]): Promise<void> {
+  const newest = ids.map((id) => db.getRun(id)!.createdAt).sort().at(-1)!
+  const deadline = Date.now() + 3000
+  while (clockSecond() <= newest) {
+    if (Date.now() > deadline) {
+      throw new Error(`the clock did not pass the seeded second ${newest} within 3 s (now ${clockSecond()})`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+}
+
+async function seedRateWindow(): Promise<RateWindow> {
+  mkdirSync(join(dir, 'tests'), { recursive: true })
+  mkdirSync(join(dir, 'suites'), { recursive: true })
+  for (const test of Object.values(TESTS)) {
+    writeFileSync(join(dir, test.file), [`name: ${test.name}`, `test-id: ${test.testId}`, 'steps: []', ''].join('\n'))
+  }
+  for (const [suiteId, suite] of Object.entries(SUITES)) {
+    const test = TESTS[suite.test]
+    writeFileSync(
+      join(dir, suite.file),
+      [`suite-id: ${suiteId}`, `name: ${suite.name}`, 'tests:', `  - test: ${test.file}`, `    id: ${test.testId}`, ''].join('\n'),
+    )
+  }
+  const workspacePaths = resolveWorkspacePaths({
+    config: {
+      workspace: {
+        testMatch: ['tests/*.yaml'],
+        suiteMatch: ['suites/*.suite.yaml'],
+        hooksFile: 'hooks.yaml',
+        envFile: '.env',
+        secretsFile: '.env.secrets.local',
+      },
+      knowledge: { dir: 'agent-qa-knowledge', commitArtifacts: 'none' },
+    },
+    configPath,
+  })
+  vi.spyOn(console, 'log').mockImplementation(() => undefined)
+  const handle = await startServer({
+    declaredSecretMask: (text) => text,
+    db: new DashboardDatabase({ dbPath }),
+    port: 0,
+    configPath,
+    workspacePaths,
+    executionBackend: new IdleBackend() as unknown as ExecutionBackend,
+  })
+  started.push(handle)
+  const origin = `http://127.0.0.1:${String((handle.server.address() as AddressInfo).port)}`
+
+  const listed = await read(`${origin}/api/tests`)
+  expect(listed.status, 'GET /api/tests').toBe(200)
+  const files = listed.body.files as Array<{ path: string; name: string; testId: string | null }>
+  const tests = {} as Record<TestKey, Seeded>
+  for (const [key, test] of Object.entries(TESTS) as Array<[TestKey, (typeof TESTS)[TestKey]]>) {
+    const file = files.find((candidate) => candidate.path === test.file)
+    expect(file, `GET /api/tests lists ${test.file}`).toBeDefined()
+    expect(file!.testId, `${test.file}'s test id`).toBe(test.testId)
+    tests[key] = { testId: file!.testId!, filePath: file!.path, name: file!.name }
+  }
+
+  let minute = 0
+  const nextStart = (): string => new Date(Date.UTC(2026, 9, 1, 0, minute++)).toISOString()
+  const seed = (
+    status: string,
+    members: ReadonlyArray<{ test: TestKey; outcome: string; suiteId?: SuiteId }>,
+    extra: { platform?: string; testFileContent?: string } = {},
+  ): string => {
+    const startedAt = nextStart()
+    const id = db.insertRun({
+      name: members.map((member) => tests[member.test].name).join(' · '),
+      status,
+      duration: 1000,
+      startedAt,
+      endedAt: startedAt,
+      ...extra,
+    })
+    for (const [testIndex, member] of members.entries()) {
+      db.upsertRunMember({
+        runId: id,
+        testIndex,
+        testId: tests[member.test].testId,
+        name: tests[member.test].name,
+        filePath: tests[member.test].filePath,
+        outcome: member.outcome,
+        ...(member.suiteId ? { suiteId: member.suiteId, suiteName: SUITES[member.suiteId].name } : {}),
+      })
+    }
+    return id
+  }
+
+  expect(extractTestFileMetadata(E_RUN_CONTENT).targetName, "E's run content names its target").toBe('staging')
+
+  // Second 1: ten failures of A in s_window; the newest also carries E's only run, in s_old.
+  const secondOne: string[] = []
+  for (let index = 0; index < 9; index++) {
+    secondOne.push(seed('failed', [{ test: 'A', outcome: 'failed', suiteId: 's_window' }]))
+  }
+  const eRun = seed(
+    'failed',
+    [{ test: 'A', outcome: 'failed', suiteId: 's_window' }, { test: 'E', outcome: 'passed', suiteId: 's_old' }],
+    { platform: 'android', testFileContent: E_RUN_CONTENT },
+  )
+  secondOne.push(eRun)
+  await waitPastSecond(secondOne)
+
+  // Second 2: A's five passes, C's two runs and 183 passes of B, which make exactly 200 runs.
+  const secondTwo: string[] = []
+  const aPasses: string[] = []
+  for (let index = 0; index < 190; index++) {
+    if (index % 40 === 5) {
+      const id = seed('passed', [{ test: 'A', outcome: 'passed', suiteId: 's_window' }])
+      aPasses.push(id)
+      secondTwo.push(id)
+    } else if (index === 100) {
+      secondTwo.push(seed('cancelled', [{ test: 'C', outcome: 'cancelled', suiteId: 's_unrated' }]))
+    } else if (index === 150) {
+      secondTwo.push(seed('cancelled', [{ test: 'B', outcome: 'cancelled' }, { test: 'C', outcome: 'skipped' }]))
+    } else {
+      secondTwo.push(seed('passed', [{ test: 'B', outcome: 'passed' }]))
+    }
+  }
+  expect(aPasses, "A's passes in second 2").toHaveLength(5)
+  await waitPastSecond(secondTwo)
+
+  const secondThree: string[] = []
+  return {
+    origin,
+    tests,
+    secondOne,
+    secondTwo,
+    secondThree,
+    eRun,
+    aPasses,
+    addSecondThree: async () => {
+      for (let index = 0; index < 10; index++) secondThree.push(seed('passed', [{ test: 'B', outcome: 'passed' }]))
+    },
+  }
+}
+
+type PageRun = {
+  id: string
+  status: string
+  platform: string
+  targetName: string | null
+  members?: Array<{ testId: string | null; filePath: string | null; suiteId: string | null; outcome: string | null }>
+}
+
+// The precondition every cell asserts first: what the 200-run page holds at each checkpoint.
+async function windowAt(window: RateWindow, total: 200 | 210): Promise<PageRun[]> {
+  const page = await read(`${window.origin}/api/runs?limit=200`)
+  expect(page.status, 'GET /api/runs?limit=200').toBe(200)
+  expect(page.body.total, 'the workspace run count').toBe(total)
+  const runs = page.body.runs as PageRun[]
+  expect(runs, 'the 200-run page').toHaveLength(200)
+
+  const created = (ids: string[]) => ids.map((id) => db.getRun(id)!.createdAt).sort()
+  const [one, two, three] = [created(window.secondOne), created(window.secondTwo), created(window.secondThree)]
+  expect(one.at(-1)! < two[0]!, `second 1 (${one.at(-1)!}) is before second 2 (${two[0]!})`).toBe(true)
+  if (three.length > 0) {
+    expect(two.at(-1)! < three[0]!, `second 2 (${two.at(-1)!}) is before second 3 (${three[0]!})`).toBe(true)
+  }
+
+  const onPage = new Set(runs.map((run) => run.id))
+  expect(window.aPasses.every((id) => onPage.has(id)), "all of A's passes are on the 200-run page").toBe(true)
+  if (total === 210) {
+    expect(window.secondOne.filter((id) => onPage.has(id)), 'second 1 runs on the 200-run page').toEqual([])
+    const named = runs.filter((run) =>
+      (run.members ?? []).some((member) => member.testId === window.tests.E.testId || member.suiteId === 's_old'))
+    expect(named.map((run) => run.id), 'runs on the 200-run page with a member of E or s_old').toEqual([])
+  }
+  return runs
+}
+
+const PASS = new Set(['passed', 'healed'])
+const FAIL = new Set(['failed', 'timeout'])
+
+// For comparison only: the fold the list pages used to make over the 200-run page.
+function pageFoldOfTest(runs: PageRun[], test: Seeded): { passed: number; decided: number } {
+  let passed = 0
+  let decided = 0
+  for (const run of runs) {
+    const member = (run.members ?? []).find((candidate) => candidate.testId === test.testId || candidate.filePath === test.filePath)
+    if (!member?.outcome) continue
+    if (PASS.has(member.outcome)) { passed++; decided++ }
+    if (FAIL.has(member.outcome)) decided++
+  }
+  return { passed, decided }
+}
+
+async function testViewer(window: RateWindow, test: Seeded): Promise<any> {
+  const file = await read(`${window.origin}/api/tests/${encodeURIComponent(test.testId)}`)
+  expect(file.status, `GET /api/tests/${test.testId}`).toBe(200)
+  const query = `testId=${encodeURIComponent(file.body.testId)}&filePath=${encodeURIComponent(file.body.path)}`
+  const viewer = await read(`${window.origin}/api/analytics/tests/${encodeURIComponent(test.name)}?${query}`)
+  expect(viewer.status, `the ${test.name} viewer route`).toBe(200)
+  return viewer.body
+}
+
+function lastRunFields(run: any, withOutcome: boolean): Record<string, unknown> {
+  return {
+    id: run.id,
+    status: run.status,
+    startedAt: run.startedAt,
+    createdAt: run.createdAt,
+    duration: run.duration,
+    ...(withOutcome ? { memberOutcome: run.memberOutcome ?? null } : {}),
+  }
+}
+
+describe('C444-RATE-WINDOW', () => {
+  it('a test reads one rate from the batch read and from its viewer at 200 runs and past 200', async () => {
+    const window = await seedRateWindow()
+    const { A, C, D, E } = window.tests
+
+    for (const total of [200, 210] as const) {
+      if (total === 210) await window.addSecondThree()
+      const page = await windowAt(window, total)
+
+      const viewerA = await testViewer(window, A)
+      expect(viewerA.trends.passRate, `A's viewer rate at ${String(total)}`).toBeCloseTo(1 / 3)
+      expect(pageFoldOfTest(page, A), `the 200-run page's fold of A at ${String(total)}`)
+        .toEqual(total === 200 ? { passed: 5, decided: 15 } : { passed: 5, decided: 5 })
+      const viewerC = await testViewer(window, C)
+      const viewerD = await testViewer(window, D)
+      const viewerE = await testViewer(window, E)
+      expect(viewerC.trends.passRate, `C's viewer rate at ${String(total)}`).toBeNull()
+      expect(viewerD.trends.passRate, `D's viewer rate at ${String(total)}`).toBeNull()
+      expect(viewerE.trends.passRate, `E's viewer rate at ${String(total)}`).toBe(1)
+
+      const batch = await read(`${window.origin}/api/analytics/test-summaries`)
+      const rowA = batchRow(batch, 'tests', A.filePath)
+      expect(rowA, `A's batch row at ${String(total)}`).toMatchObject({ testId: A.testId, passed: 5, decided: 15 })
+      expect(rowA.passRate, `A's batch rate at ${String(total)}`).toBeCloseTo(1 / 3)
+      expect(rowA.passRate, `A's batch rate equals its viewer's at ${String(total)}`).toBe(viewerA.trends.passRate)
+      expect(batchRow(batch, 'tests', C.filePath), `C at ${String(total)}`).toMatchObject({ passRate: null, passed: 0, decided: 0 })
+      expect(batchRow(batch, 'tests', D.filePath), `D at ${String(total)}`).toMatchObject({ passRate: null, passed: 0, decided: 0 })
+      expect(batchRow(batch, 'tests', E.filePath), `E at ${String(total)}`).toMatchObject({ passRate: 1, passed: 1, decided: 1 })
+      expect(batchRow(batch, 'tests', E.filePath).passRate).toBe(viewerE.trends.passRate)
+    }
+  })
+
+  it("a test's last run is the first run its viewer lists, even when all its runs are past the 200-run page", async () => {
+    const window = await seedRateWindow()
+    const { A, B, C, D, E } = window.tests
+
+    for (const total of [200, 210] as const) {
+      if (total === 210) await window.addSecondThree()
+      await windowAt(window, total)
+
+      const viewers = new Map<Seeded, any>()
+      for (const test of [A, B, C, D, E]) viewers.set(test, await testViewer(window, test))
+      expect(viewers.get(D).runs, `D's viewer lists no run at ${String(total)}`).toEqual([])
+      expect(viewers.get(E).runs[0]?.id, `E's viewer lists its second-1 run first at ${String(total)}`).toBe(window.eRun)
+      expect(viewers.get(A).runs[0]?.id, `A's viewer lists its newest pass first at ${String(total)}`).toBe(window.aPasses.at(-1))
+
+      const batch = await read(`${window.origin}/api/analytics/test-summaries`)
+      for (const test of [A, B, C, E]) {
+        const row = batchRow(batch, 'tests', test.filePath)
+        expect(row.lastRun, `${test.name}'s last run at ${String(total)}`).not.toBeNull()
+        expect(lastRunFields(row.lastRun, true), `${test.name}'s last run equals its viewer's runs[0] at ${String(total)}`)
+          .toEqual(lastRunFields(viewers.get(test).runs[0], true))
+      }
+      expect(batchRow(batch, 'tests', D.filePath).lastRun, `D's last run at ${String(total)}`).toBeNull()
+      expect(batchRow(batch, 'tests', E.filePath).lastRun, `E's last run at ${String(total)}`)
+        .toMatchObject({ id: window.eRun, status: 'failed', memberOutcome: 'passed' })
+      expect(batchRow(batch, 'tests', A.filePath).lastRun, `A's last run at ${String(total)}`)
+        .toMatchObject({ id: window.aPasses.at(-1), status: 'passed', memberOutcome: 'passed' })
+    }
+  })
+})

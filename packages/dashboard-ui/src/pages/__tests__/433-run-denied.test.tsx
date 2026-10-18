@@ -92,6 +92,12 @@ vi.mock('@/lib/api', async () => {
       targets: ['local-web', 'example-web'],
     }),
     fetchRuns: vi.fn().mockResolvedValue({ runs: [], total: 0 }),
+    fetchTestSummaries: vi.fn().mockResolvedValue({
+      tests: [
+        { path: 'tests/web/login.yaml', testId: 'test_login', passRate: null, passed: 0, decided: 0, lastRun: null },
+        { path: fixture.productionPath, testId: 'test_production', passRate: null, passed: 0, decided: 0, lastRun: null },
+      ],
+    }),
     deleteTestFile: vi.fn(),
   }
 })
