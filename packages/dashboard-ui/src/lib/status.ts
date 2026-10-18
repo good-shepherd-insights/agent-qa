@@ -274,6 +274,10 @@ export function statusBadgeLook(status: string): StatusBadgeLook {
     // already assigns this status.
     case 'timeout':
       return { label: 'Timed out', variant: 'destructive' }
+    case 'running':
+      return { label: 'Running', className: 'bg-blue-500/15 text-blue-500 border-blue-500/20 animate-pulse' }
+    case 'pending':
+      return { label: 'Pending', variant: 'outline' }
     default:
       return { label: status, variant: 'outline' }
   }
