@@ -5716,3 +5716,186 @@ The record gate runs on Phase 444's final agent-qa SHA, the commit that complete
 which `.planning/phases/444-truthful-lifecycle/444-RECORD.md` § Final SHA names. Its legs, counts
 and verdict are recorded in that file's § Gate rather than quoted here, so no agent-qa commit
 follows the gate run.
+
+### Gap closure round (444-23 to 444-29), 2026-10-18
+
+This subsection appends to the Phase 444 section; written by 444-28, which changed no earlier line.
+It follows `.planning/phases/444-truthful-lifecycle/444-VERIFICATION.md` (agent-qa `d5d6dbcae`,
+9 of 13 truths). Its four gaps: a stored `timeout` read as not-failed on four dashboard pages
+(gap 1); a test's pass rate read differently on the test viewer and the Tests page (gap 2, review
+WR-03); a hang-up on `agent-qa run` was left to Playwright (gap 3, review WR-02); and a gate run's
+curation read `pending` on the CLI and MCP overview (gap 4). The orchestrator settled the round on
+2026-10-18 under the owner's delegation, in `444-CONTEXT.md` § Settled at verification: the timeout
+badge, D-59 (one pass-rate rule), D-60 (SIGHUP is a cancel, amending D-46), D-61 (the overview,
+`runs.knowledge` and the dashboard's Knowledge tab carry the skipped fact, reversing D-55's "Not
+this phase") and D-62 (the code review's WR-01, IN-05, IN-06, IN-07 and IN-08). Every commit below
+is in agent-qa on `version-0.2` and signed. Every new cell is listed in
+`scripts/gate/inputs/regressions.json` with its area's `444 D-NN` origin, after the 2217 rows
+listed at `d5d6dbcae`, which are unchanged and in order (Registered gate rows, below).
+
+**How it is measured.** Baseline `d5d6dbcae` (Phase 444's first final SHA, 444-21's inventory
+commit). Closing SHA `bca2f3744` (444-28's gate list, the parent of the commit that completes this
+subsection). `git -C agent-qa diff --shortstat d5d6dbcae bca2f3744`: 49 files changed, 2,749
+insertions, 370 deletions (under `packages/`: 47 files, +2,456/−369; the other two are `docs/ci.md`,
++11/−1, and `regressions.json`, +282). `--diff-filter=D`: no file deleted. `--diff-filter=A`: 10
+files added, nine of them test files (`444-overview-skipped.test.ts`, `444-bootstrap-stack.test.ts`,
+`444-pass-rate.e2e.test.ts`, `444-process-identity.test.ts`, `444-enqueue-reported.test.ts`,
+`444-unknown-outcome.test.ts`, `444-knowledge-tab-skipped.test.tsx`, `444-pass-rate.test.tsx` and
+`444-timeout-badge.test.tsx`) and one not: `dashboard-ui/src/components/run-status-badge.tsx`, the
+one render site of `statusBadgeLook`. 35 commits, every one signed (`%G?` = `G`): 444-23's six
+(`8dfe54ed5`, `6f2eacfb0`, `58144f71c`, `4af5e3594`, `c5b466633`, `a556208d7`), 444-24's six
+(`dfe2bf6d9`, `375625f91`, `7eb4c63b2`, `a84939075`, `ea16dc494`, `130ac1e7e`), 444-25's five
+(`af67c1937`, `7ac745d4f`, `dab660b63`, `60547c8f0`, `828836836`), 444-26's seven (`05089e69f`,
+`0ba1bba31`, `b9b6219f9`, `07fbd353f`, `0fe6ad6f9`, `48011f169`, `9f368cd33`), 444-27's six
+(`88ddd1366`, `21679c6d1`, `60f88861b`, `40de76e51`, `1c404c819`, `953999e69`), 444-29's four
+(`7de0239e9`, `e719a9643`, `f626a06b9`, `f5338065c`) and 444-28's gate list (`bca2f3744`). 25
+production files changed: `agent/src/functions/ops/runs-knowledge.ts`, `runs-overview.ts`;
+`cli/src/cli.ts`, `commands/run.ts`, `commands/runs-read.ts`, `commands/shutdown-controller.ts`;
+`dashboard-server/src/db/database.ts`, `db/run-status-class.ts`, `queue/job-queue.ts`,
+`server/routes.ts`; `dashboard-ui/src/components/insights/insights-breakdown-table.tsx`,
+`components/run-detail/knowledge-brief-line.tsx`, `components/run-status-badge.tsx`,
+`hooks/use-run-status-favicon.ts`, `lib/api.ts`, `lib/knowledge-view.ts`, `lib/status.ts`,
+`pages/insights.tsx`, `suite-viewer.tsx`, `suites.tsx`, `test-viewer.tsx`, `tests.tsx`;
+`schema/src/functions/runs-overview.ts`, `runs.ts`; and `web/src/adapter.ts`. The golden ledger
+(`cli/src/__tests__/conformance/golden-registry.json`) moved by exactly two lines, the
+`outputSchemaDigest` of `runs.overview` (`0ba1bba31`) and of `runs.knowledge` (`07fbd353f`), each
+minted by `scripts/397-regen-golden.sh` unaided; the capability catalog did not move. The removed
+lines below are read from each deleting commit's diff (`git -C agent-qa show <sha>`), not
+transcribed from a summary. Names are at `d5d6dbcae`.
+
+#### What was deleted
+
+| Member (file at `d5d6dbcae`) | What it did | Deleting commit | The cell that notices its return |
+|---|---|---|---|
+| the page-local `function StatusBadge({ status })` switch (arms `passed`, `failed`, `healed`, `flaky`, `running`, `cancelled`, and a default that painted the raw word in `outline`) in `dashboard-ui/src/pages/tests.tsx` | painted the Tests page's last-run badge with a private palette that had no `timeout` arm, so a timed-out run read as a neutral lowercase `timeout` (gap 1) | `6f2eacfb0` (444-23) | `C444-TIMEOUT-BADGE the Tests page shows a timed-out last run as a destructive Timed out badge`; `C444-TIMEOUT-BADGE no page keeps its own status badge switch` |
+| the same switch in `pages/suites.tsx`, `pages/test-viewer.tsx` and `pages/suite-viewer.tsx` | the same private palette on the Suites page, the test viewer's member outcome and the suite viewer's run history | `4af5e3594` (444-23) | `C444-TIMEOUT-BADGE the Suites page shows a timed-out last run as a destructive Timed out badge`; `C444-TIMEOUT-BADGE the test viewer shows a timed-out member outcome as a destructive Timed out badge`; `C444-TIMEOUT-BADGE the suite viewer shows a timed-out run as a destructive Timed out badge`; `C444-TIMEOUT-BADGE no page keeps its own status badge switch` |
+| the Tests page's word-equality status filter, `result.filter((row) => row.lastRunStatus === status)` (`tests.tsx`), behind its Failed, Passed and Running choices | kept a row only when its last run's word equalled the choice, so Failed missed a `timeout` and Passed missed a `healed` run | `6f2eacfb0` (444-23); the choice is classified once (`const chosen = runStatusClass(status)`) and a row is kept when `chosen !== undefined && runStatusClass(row.lastRunStatus ?? "") === chosen` | `C444-TIMEOUT-BADGE the Tests page's Failed filter lists a test whose last run timed out`; `C444-TIMEOUT-BADGE the Tests page's Passed filter lists a test whose last run healed` (the Running choice, class `live`, lists what it listed before and has no cell of its own) |
+| the Suites page's word-equality status filter, `result.filter(d => d.lastRunStatus === status)` (`suites.tsx`), behind the same three choices | the same defect on the Suites page (the 2026-10-18 amendment) | `4af5e3594` (444-23) | `C444-TIMEOUT-BADGE the Suites page's Failed filter lists a suite whose last run timed out`; `C444-TIMEOUT-BADGE the Suites page's Passed filter lists a suite whose last run healed` |
+| `getRunStatusDescriptor`'s capital-O label, `label: 'Timed Out'` (`dashboard-ui/src/lib/status.ts`) | a second label for one status beside `statusBadgeLook`'s `Timed out` | `a556208d7` (444-23) | `C444-TIMEOUT-BADGE both run status helpers label timeout Timed out` |
+| the run-level `flaky`: the `'flaky'` member of `NormalizedRunStatus`, `normalizeRunStatus`'s `case 'flaky'`, and the `flaky` arms of `getRunStatusDescriptor` and `finalStepStatusForRun` (`lib/status.ts`), with `getRunFaviconState`'s `flaky` arm (`hooks/use-run-status-favicon.ts`) | arms no v6 run word can reach (runs.db v6 admits seven words, none of them `flaky`) | `a556208d7` (444-23) | `C444-TIMEOUT-BADGE a run word flaky reads unknown while a step and a member keep flaky` |
+| `buildTrendsFromRuns`' every-run denominator, `passRate: totalRuns > 0 ? passedTotal / totalRuns : 0`, and its `0` for no rate (`dashboard-server/src/db/database.ts`) | divided a test's or a suite's passes by every run, `skipped`, live and cancelled members included, so one test read 50% on its viewer and 100% on the Tests page (gap 2) | `375625f91` (444-24), now passes ÷ (passes + failures), `null` when neither | `C444-PASS-RATE a test's rate counts only pass and fail member outcomes`; `C444-PASS-RATE a test with no pass or fail outcome has no rate`; `C444-PASS-RATE a suite's rate leaves cancelled and live runs out`; `C444-PASS-RATE a test that passed once and was abort-skipped once reads 100% on the Tests page and in its viewer` |
+| `summarizeAnalyticsRuns`' every-run denominator, `passRate: totalRuns > 0 ? passed / totalRuns : 0` (`database.ts`) | the insights breakdowns' rate over every run (the 2026-10-18 amendment) | `375625f91` (444-24) | `C444-PASS-RATE the insights breakdown rates a group over its passed and failed runs only` |
+| the Tests page's finished-class denominator (`sortedHistory.filter((entry) => isFinishedStatus(entry.status))`, which counted cancelled entries) and `isFinishedStatus` itself (`tests.tsx`); the Suites page's `completedRuns` denominator, which counted cancelled runs (`suites.tsx`) | rated a test or a suite over passes, failures and cancels | `130ac1e7e` (444-24) | `C444-PASS-RATE the Tests page rates a test over its pass and fail outcomes only`; `C444-PASS-RATE the Suites page rates a suite over its passed and failed runs only`; `C444-PASS-RATE a test whose only outcome is cancelled reads an em dash on the Tests page` |
+| the insights summary's rate over every run, `stats.passed / stats.totalRuns` with `0` for no rate, and its description `… runs out of ${stats.totalRuns}.` (`pages/insights.tsx`) | the `Pass Rate` metric counted cancelled and in-flight runs | `130ac1e7e` (444-24) | `C444-PASS-RATE the insights summary rates the window over its passed and failed runs only` |
+| the `0` for a day with no pass or fail, and the `passed / total` day rate, in the test viewer's, the suite viewer's and the insights page's pass-rate charts (`test-viewer.tsx`, `suite-viewer.tsx`, `insights.tsx`) | plotted a day with no decided outcome as 0% and divided a day by every run | `a84939075` (444-24, the viewers), `130ac1e7e` (444-24, insights) | `C444-PASS-RATE the viewers' chart rates a day by its passes and failures only`; `C444-PASS-RATE the insights summary rates the window over its passed and failed runs only` (it pins the chart's points) |
+| the viewers' unconditional `Math.round(passRate * 100)%` (two sites in each viewer) and the suite viewer's empty-analytics `passRate: 0`; the breakdown table's unconditional `toPercent(row.passRate)%` (both layouts, `components/insights/insights-breakdown-table.tsx`) | printed `0%` for a test, suite or group with no rate | `a84939075` (444-24) | `C444-PASS-RATE the test viewer shows an em dash for a test with no rate`; `C444-PASS-RATE the suite viewer shows an em dash for a suite with no rate`; `C444-PASS-RATE the insights breakdown shows an em dash for a group with no rate`; `C444-PASS-RATE a test whose only outcome is cancelled reads an em dash in its viewer` |
+| the no-rate `No runs` line in the Tests and Suites pages' rate cell (the last-run cell keeps its own) | printed `No runs` above `0 completed` for a test or suite that had runs | `130ac1e7e` (444-24), now `—` | `C444-MEMBER-HISTORY a running run's member with no outcome shows running` (re-spelled, below); `C444-PASS-RATE a test whose only outcome is cancelled reads an em dash on the Tests page` |
+| the Ctrl+C cell's local process helpers `chromiumUnder`, `aliveOf` and `aliveAfter`, its `CHROMIUM_COMMAND` regex and its `spawnSync` import (`cli/src/__tests__/conformance/444-ctrl-c-owned.e2e.test.ts`) | a second copy of the phase's browser witness (review IN-08); the file now imports `chromiumDescendants`, `livePids` and `livePidsAfter` from `444-process-tree.ts` | `dab660b63` (444-25) | no cell; `git -C agent-qa grep -nE "function (chromiumUnder\|aliveOf\|aliveAfter)" -- packages` prints nothing |
+| the crash cell's three kill-by-number loops, `process.kill(pid, 'SIGKILL')` over the Chromium left after the killed run, over the daemon's leftovers and over `livePids([...strayChromium])` in `afterAll`, with the `strayChromium` pid set (`444-crash-pending-resume.e2e.test.ts`) | killed by pid alone, so a reused pid could be killed (review IN-07); the three sites now go through `killRecorded`, which signals a recorded process only while its command line still matches | `828836836` (444-25) | `C444-PROCESS-IDENTITY a recorded process whose command line no longer matches is never killed`; `C444-PROCESS-IDENTITY a recorded process that is still the same process is killed`; `grep -c "process.kill(pid, 'SIGKILL')"` over the crash file prints 0 |
+| the bootstrap's message-only load-failure handler (`Framework error: <message>`, then exit 2, with no stack) (`cli/src/cli.ts`) | dropped the stack of every load-time or synchronous CLI failure (review WR-01, a D-47 side effect) | `21679c6d1` (444-27); the handler now prints `error.stack` after the unchanged line when the value is an `Error` with a stack | `C444-BOOTSTRAP-STACK a CLI that throws while loading prints the framework line, then its stack, and exits 2`; `C444-BOOTSTRAP-STACK a thrown non-error prints the framework line alone` |
+| `memberOutcomeClass`'s throw on an unknown word, its fall-through `return runStatusClass(outcome)` (`dashboard-server/src/db/run-status-class.ts`) | one stray `run_members.outcome` word (the column has no CHECK) made `/api/analytics/tests` and the test viewer answer 500 (review IN-05) | `40de76e51` (444-27); an unknown word is now `undefined` and every member-history reader skips it | `C444-UNKNOWN-OUTCOME a member outcome outside the vocabulary is skipped by every history reader`; `C444-UNKNOWN-OUTCOME the tests analytics routes answer 200 beside a stray outcome` |
+| the queue's bare `enqueued` dispatch, `this.on('enqueued', () => this.processNext())` (`dashboard-server/src/queue/job-queue.ts`) | the one dispatch D-50 left unguarded, so a failing dispatch escaped `enqueue()` after the row was written (review IN-06) | `953999e69` (444-27); now `this.on('enqueued', () => this.dispatchReported('an enqueue'))` | `C444-ENQUEUE-REPORTED a dispatch that throws on enqueue is reported and enqueue still returns the queued run` |
+
+**Replaced behaviour, and what each became** (no member left; each read from its commit):
+
+| Before (file at `d5d6dbcae`) | After | Commit | The cell that pins it |
+|---|---|---|---|
+| on `agent-qa run`, a host-owned launch passed `{ handleSIGINT: false, handleSIGTERM: false }` and `run.ts` routed only SIGINT and SIGTERM to the shutdown controller, so a SIGHUP went to Playwright's handler, which closed the browser while the run kept going (gap 3) | the launch also passes `handleSIGHUP: false`, and `executeSuites` and `createRunCommand` each register `process.on('SIGHUP', shutdownController.handleSignal)` and remove it at teardown (D-60) | `7ac745d4f` (444-25) | `C444-CTRL-C-OWNED one SIGHUP ends a held direct run through agent-qa run's own path`; `C444-CTRL-C-OWNED a browser launched for a host that owns its signals adds no Playwright SIGINT or SIGTERM listener`; `C444-CTRL-C-OWNED only agent-qa run's two producer calls hand the browser's signals to the host` |
+| `runs.overview`'s `learned.curation` was the chip alone, `{ status }` | `{ status, skipped?: { reason } }`, the fact from `projectPostProcessingSkipped` over the run's own handoff, spread only when present (D-61) | `0ba1bba31` (444-26) | `C444-OVERVIEW-SKIPPED a gate run's overview carries skipped with reason gate-run beside its curation chip`; `C444-OVERVIEW-SKIPPED an outcome-excluded run's overview carries skipped with reason outcome-excluded`; `C444-OVERVIEW-SKIPPED an ordinary run's overview carries no skipped key` |
+| `runs.knowledge`'s ready arm carried `curation: { status, counts }` | `curation: { status, counts, skipped?: { reason } }`, from the same fold (D-61 as amended) | `07fbd353f` (444-26) | `C444-KNOWLEDGE-SKIPPED a gate run's knowledge carries skipped with reason gate-run beside its curation chip`; `C444-KNOWLEDGE-SKIPPED an ordinary run's knowledge carries no skipped key` |
+| `agent-qa runs overview`'s Learned line and `runs knowledge`'s header printed the chip, `curation pending`, for a gate run | one `curationWord` helper in `cli/src/commands/runs-read.ts` prints `skipped (<reason word>)` from `POST_PROCESSING_SKIP_REASON_WORDS` | `48011f169` (444-26) | `C444-OVERVIEW-SKIPPED the overview text prints curation skipped (gate run)`; `C444-KNOWLEDGE-SKIPPED the knowledge text prints curation skipped (gate run)`; `C444-STAGE-SKIPPED every renderer reads the reason's word from one map` |
+| the dashboard's Knowledge tab read `projection.curation.status` at four sites (`changeLedgerViews`, `learnedView`, `effectSectionView`, the step rows), so a gate run read `pending` in Memory changes, on its canary line and as an on-trial Effect entry | one `curationWord(projection)` helper in `lib/knowledge-view.ts`; `LearnedState` and `CanaryOutcomeWord` gain `skipped`; Memory changes prints `STAGE_SKIPPED_TEXT[reason].curation`; the canary line reads `attribution skipped` (`ATTRIBUTION_SKIPPED_TEXT`); a skipped canary counts among the unmeasured records (D-61 as amended at super-repo `9d771ec51`) | `e719a9643`, `f5338065c` (444-29) | the seven `C444-KNOWLEDGE-TAB-SKIPPED` cells, among them `C444-KNOWLEDGE-TAB-SKIPPED a gate run's tab reads pending nowhere` |
+
+No file was deleted and no registered cell was removed. Two pins went with their subject: the
+run-level `flaky` descriptor and step pins in `status.test.ts`'s unregistered cell `dashboard status normalization normalizes success, failure, and flaky terminal statuses`
+(`c5b466633`). The round's 47 new cells, by area and origin:
+`C444-TIMEOUT-BADGE` 11 (`444 D-03`), `C444-PASS-RATE` 14 (`444 D-59`), `C444-CTRL-C-OWNED` 1 (`444
+D-46`, amended by D-60), `C444-PROCESS-IDENTITY` 2 (`444 D-62`), `C444-OVERVIEW-SKIPPED` 4,
+`C444-KNOWLEDGE-SKIPPED` 3 and `C444-KNOWLEDGE-TAB-SKIPPED` 7 (`444 D-61`), and
+`C444-BOOTSTRAP-STACK` 2, `C444-UNKNOWN-OUTCOME` 2 and `C444-ENQUEUE-REPORTED` 1 (`444 D-62`).
+
+#### Registered gate rows
+
+The 2217 rows listed at `d5d6dbcae` are still listed, unchanged and in order; none was renamed,
+removed or moved. These registered cells were re-spelled under their kept names, each named in its
+plan's summary:
+- `C444-SUITE-HISTORY a run spanning two suites counts once in each suite's history` (444-23
+  `58144f71c`): the Account suite's last status reads `Timed out`, not the raw `timeout`.
+- `C444-STATUS-CLASS healed counts as a pass and timeout as a fail in trends and the insights summary`
+  (444-24 `dfe2bf6d9`): the suite and platform rates are 2/4, not 2/7; its counts are unchanged.
+- `C444-MEMBER-HISTORY a running run's member with no outcome shows running` (444-24 `ea16dc494`):
+  the rate cell reads `—0 completed`, not `No runs0 completed`.
+- `C444-CTRL-C-OWNED a browser launched for a host that owns its signals adds no Playwright SIGINT or SIGTERM listener`
+  (444-25 `af67c1937`): it pins 0 SIGHUP listeners, where it pinned at least 1.
+- `C444-CTRL-C-OWNED only agent-qa run's two producer calls hand the browser's signals to the host`
+  (444-25 `dab660b63`): its option pattern includes `handleSIGHUP`, and it counts the SIGHUP route
+  and its removal once in each of the two sites.
+- `C444-STAGE-SKIPPED every renderer reads the reason's word from one map` (444-26 `0fe6ad6f9`):
+  `cli/src/commands/runs-read.ts` joins the listed renderers.
+- The five `C444-VERDICT-INDEPENDENCE` cells (444-26 `9f368cd33`): beside the unchanged chip and
+  verdict, the two gate legs assert `skipped` = `{ reason: 'gate-run' }` on `runs overview --json`
+  and `agent_qa_get_run_overview`, and the detached and analysis-failed legs assert no key.
+
+The other C444-CTRL-C-OWNED cells moved to the shared witness, and the eleven C444-CRASH,
+C444-PENDING-AT-EXIT and C444-RESUME cells moved their cleanup to `killRecorded`, with assertions and
+names unchanged.
+
+**Earlier lines this round supersedes** (each left as written above, per the no-rewrite rule):
+- The Phase 444 section's RETAINED row "`runs.overview`'s curation chip with no `skipped` fact" no
+  longer holds: D-61 added the fact (`0ba1bba31`, `07fbd353f`).
+- Its degrade "A failure to load the CLI, or a synchronous throw that escapes `program.parse()` …
+  No stack is printed." no longer holds: the stack follows the line (`21679c6d1`).
+- D-46's "SIGHUP stays default" is amended by D-60 on the `agent-qa run` door; the RETAINED row for
+  Playwright's default on every other door still holds.
+
+#### What was RETAINED, and why
+
+| Item | Why kept | What pins it |
+|---|---|---|
+| the member and step `flaky` arms (`statusBadgeLook`'s `flaky` and `skipped`, `normalizeStepStatus`'s own `flaky` check, the `NormalizedStepStatus` union) | `flaky` is a step and member fact (444-15), not a run word | `C444-TIMEOUT-BADGE a run word flaky reads unknown while a step and a member keep flaky` |
+| the server's `runStatusClass` refusal of an unknown run word | `runs.status` has a CHECK, so an unknown word there is corruption; only `memberOutcomeClass`, over a column with no CHECK, now skips | `C444-STATUS-CLASS the classifier sorts the seven words into pass, fail, cancelled and live` (it expects `runStatusClass('flaky')` to throw) |
+| Playwright's default hang-up handling on every door other than `agent-qa run` | a host without its own signal path relies on it to close its browser; moving those doors needs the host audit D-46 defers | `C444-CTRL-C-OWNED a dashboard run still launches its browser with Playwright's signal handling`; `C444-CTRL-C-OWNED a browser launched without the option keeps Playwright's SIGINT, SIGTERM and SIGHUP listeners` |
+| `Total Runs`, the flake rate and the durations over every run (`buildTrendsFromRuns`' `totalRuns`, `summarizeAnalyticsRuns`' `totalRuns`, `flakeRate` and `avgDuration`, the insights page's `Total Runs` and `Flake Rate`) | they count runs, not pass evidence; only the pass rate's denominator moved (D-59) | `C444-STATUS-CLASS healed counts as a pass and timeout as a fail in trends and the insights summary` (`totalRuns` 7); `C444-PASS-RATE a test's rate counts only pass and fail member outcomes` (`totalRuns` 6) |
+| the overview's and the knowledge read's curation chip, unchanged beside the new `skipped` fact | the chip is the queue's state; the fact says why nothing will run (D-39's shape) | `C444-OVERVIEW-SKIPPED a gate run's overview carries skipped with reason gate-run beside its curation chip`; `C444-KNOWLEDGE-SKIPPED a gate run's knowledge carries skipped with reason gate-run beside its curation chip`; the five `C444-VERDICT-INDEPENDENCE` cells |
+| the Knowledge tab's chip-driven arms (`pending`, `running`, `failed` and settled), unchanged for a run with no `skipped` fact | an ordinary run still reads its chain's state | `C444-KNOWLEDGE-TAB-SKIPPED a run with no skipped fact still reads its pending chip`; `C444-KNOWLEDGE-TAB-SKIPPED a gate run's tab reads pending nowhere` (its control world) |
+| `EffectOutcome`, `EFFECT_OUTCOMES`, `EFFECT_TONE_OF` and `EFFECT_GLYPHS` | a skipped canary is unmeasured, not a new effect outcome | `C444-KNOWLEDGE-TAB-SKIPPED a gate run's Effect section counts its canary as unmeasured, not on trial` |
+
+#### What degrades, stated plainly
+
+- **A test, suite, insights group or insights window with no pass or fail outcome shows an em
+  dash** (`—`) where `0%` showed, on the Tests and Suites pages, both viewers, the breakdown table
+  and the insights `Pass Rate`. The wire value is `passRate: null`, where it was `0`, on
+  `getTestTrends`, `getSuiteTrends` and the insights breakdown rows; a known suite with no matching
+  runs answers `passRate: null` in its zero state.
+- **A hand-typed status filter word the classifier has no class for lists nothing** on the Tests
+  and Suites pages (for example `?status=skipped`). Every offered choice (Passed, Failed, Running,
+  No runs) has a class or its own branch.
+- **`nohup agent-qa run` never kept a run alive, and still does not:** Node 24 resets SIGHUP to its
+  default at startup, so a bare `nohup node` exits 129 on a hang-up, and nothing that worked before
+  stops working. What changed: a hung-up run used to lose its browser to Playwright's handler and
+  then hang on its held request; it now ends `cancelled`, exit 130, in about 0.2 s (444-25,
+  measured). `docs/ci.md` names `setsid` or a process manager to outlive a terminal.
+- **A failing dispatch on enqueue no longer reaches the route:** `enqueue()` returns the queued
+  run, and the failure is logged as `Queue could not dispatch the next run after an enqueue:
+  <message>` (IN-06). 444-16's note that the route still sees it no longer holds.
+- **A load-time CLI failure prints its message twice on stderr:** the `Framework error: <message>`
+  line, then the stack, which Node begins with `Error: <message>`. The first line and exit 2 are
+  unchanged (WR-01).
+- **A caller of the removed members breaks,** with no alias, shim or message naming a replacement
+  (D-01): the run-level `flaky` member of `NormalizedRunStatus` (a run word `flaky` now reads
+  `unknown`, its favicon `default`) and the `Timed Out` label.
+
+#### Persisted values the narrowed contract governs
+
+No persisted value moves, no schema bump, no migration and no compatibility code (D-01). runs.db
+stays version 6 (`git -C agent-qa diff --quiet d5d6dbcae bca2f3744 --
+packages/dashboard-server/src/db/schema.ts` exits 0), and agent-jobs.db, the handoff and the
+knowledge root are unchanged. Two served shapes gain an optional field (`runs.overview`'s
+`learned.curation.skipped`, `runs.knowledge`'s ready-arm `curation.skipped`, both
+`PostProcessingSkippedSchema`), read from the handoff's own gate-run and outcome-excluded markers,
+so their golden digests moved; and the dashboard's `passRate` reads `number | null`.
+
+#### The instruments that notice a return
+
+- **The 434 gate** must execute and pass the 47 cells above, each with its area's origin, as well
+  as the 2217 earlier rows (2264 in all).
+- **`pnpm validate:arch`** is unchanged by the round (577 cells).
+- **The golden and catalog freshness cells** in the CLI suite red a schema move in `runs.overview`
+  or `runs.knowledge` that is not re-minted.
+
+**Gate**
+
+The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
+verdict are recorded in `.planning/phases/444-truthful-lifecycle/444-RECORD.md` § Gap-closure round
+(`### Gate (gap-closure round)`) and the SHA in its `### Final SHA (gap-closure round)`, rather
+than quoted here, so no agent-qa commit follows it.
