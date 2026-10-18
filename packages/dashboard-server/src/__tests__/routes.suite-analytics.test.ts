@@ -290,7 +290,7 @@ describe('GET /api/analytics/suites/:suiteId', () => {
       total: 0,
       trends: {
         daily: [],
-        passRate: 0,
+        passRate: null,
         totalRuns: 0,
         avgDuration: 0,
       },

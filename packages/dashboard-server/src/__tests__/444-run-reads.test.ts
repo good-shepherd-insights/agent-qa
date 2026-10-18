@@ -186,14 +186,14 @@ describe('C444-STATUS-CLASS', () => {
 
     const trends = db.getSuiteTrends('s_seven')
     expect(trends.totalRuns).toBe(7)
-    expect(trends.passRate).toBeCloseTo(2 / 7)
+    expect(trends.passRate).toBeCloseTo(2 / 4)
     expect(trends.daily).toEqual([
       expect.objectContaining({ date: '2026-10-01', passed: 2, failed: 2, total: 7 }),
     ])
 
     const [platform] = db.getInsightsBreakdown('platform')
     expect(platform).toMatchObject({ key: 'web', runs: 7, passed: 2, failed: 2 })
-    expect(platform!.passRate).toBeCloseTo(2 / 7)
+    expect(platform!.passRate).toBeCloseTo(2 / 4)
   })
 
   it('the insights flaky count reads the stored healed word', () => {
@@ -465,5 +465,105 @@ describe('C444-TEST-VIEWER', () => {
       flakyScore: 0,
       isFlaky: false,
     })
+  })
+})
+
+const RATED = { testId: 't_rate', name: 'Rate', filePath: 'tests/rate.yaml' }
+
+describe('C444-PASS-RATE', () => {
+  it("a test's rate counts only pass and fail member outcomes", async () => {
+    const outcomes: ReadonlyArray<[string, string | undefined]> = [
+      ['passed', 'passed'],
+      ['healed', 'healed'],
+      ['timeout', 'timeout'],
+      ['cancelled', 'cancelled'],
+      ['cancelled', 'skipped'],
+      ['running', undefined],
+    ]
+    for (const [index, [status, outcome]] of outcomes.entries()) {
+      seedMemberRun(`run_444-rate-${String(index)}`, status, `2026-10-01T1${String(index)}:00:00.000Z`, [
+        { ...RATED, ...(outcome === undefined ? {} : { outcome }) },
+      ])
+    }
+
+    const trends = db.getTestTrends({ testId: RATED.testId })
+    expect(trends.totalRuns).toBe(6)
+    expect(trends.passRate).toBeCloseTo(2 / 3)
+    expect(trends.daily).toEqual([expect.objectContaining({ date: '2026-10-01', passed: 2, failed: 1, total: 6 })])
+
+    const origin = await startDashboard()
+    const { status, body } = await getJson(`${origin}/api/analytics/tests/Rate?testId=${RATED.testId}`)
+    expect(status).toBe(200)
+    expect(body.trends).toEqual(JSON.parse(JSON.stringify(trends)))
+    expect(body.trends.passRate).toBeCloseTo(2 / 3)
+  })
+
+  it('a test with no pass or fail outcome has no rate', async () => {
+    const outcomes: ReadonlyArray<[string, string | undefined]> = [
+      ['cancelled', 'cancelled'],
+      ['cancelled', 'skipped'],
+      ['running', undefined],
+    ]
+    for (const [index, [status, outcome]] of outcomes.entries()) {
+      seedMemberRun(`run_444-unrated-${String(index)}`, status, `2026-10-01T1${String(index)}:00:00.000Z`, [
+        { ...RATED, ...(outcome === undefined ? {} : { outcome }) },
+      ])
+    }
+
+    const trends = db.getTestTrends({ testId: RATED.testId })
+    expect(trends.totalRuns).toBe(3)
+    expect(trends.passRate).toBeNull()
+
+    const origin = await startDashboard()
+    const { status, body } = await getJson(`${origin}/api/analytics/tests/Rate?testId=${RATED.testId}`)
+    expect(status).toBe(200)
+    expect(body.trends.totalRuns).toBe(3)
+    expect(body.trends.passRate === null, `trends.passRate is ${JSON.stringify(body.trends.passRate)}`).toBe(true)
+  })
+
+  it("a suite's rate leaves cancelled and live runs out", () => {
+    for (const [index, status] of ['passed', 'failed', 'cancelled', 'running'].entries()) {
+      const id = seedRun(status, {
+        id: `run_444-suite-rate-${status}`,
+        name: 'Rated suite',
+        startedAt: `2026-10-01T1${String(index)}:00:00.000Z`,
+        suiteId: 's_rate',
+      })
+      db.upsertRunMember({
+        runId: id,
+        testIndex: 0,
+        testId: RATED.testId,
+        name: RATED.name,
+        filePath: RATED.filePath,
+        suiteId: 's_rate',
+        ...(status === 'running' ? {} : { outcome: status }),
+      })
+    }
+
+    const trends = db.getSuiteTrends('s_rate')
+    expect(trends.totalRuns).toBe(4)
+    expect(trends.passRate).toBeCloseTo(1 / 2)
+  })
+
+  it('the insights breakdown rates a group over its passed and failed runs only', async () => {
+    for (const [index, status] of ['passed', 'failed', 'cancelled', 'running'].entries()) {
+      seedRun(status, { id: `run_444-rated-${status}`, name: 'Rated', startedAt: `2026-10-01T1${String(index)}:00:00.000Z` })
+    }
+    for (const [index, status] of ['cancelled', 'pending'].entries()) {
+      seedRun(status, { id: `run_444-unrated-${status}`, name: 'Unrated', startedAt: `2026-10-02T1${String(index)}:00:00.000Z` })
+    }
+
+    const rows = db.getInsightsBreakdown('test')
+    expect(rows.map((row) => row.key)).toEqual(['Rated', 'Unrated'])
+    expect(rows[0]).toMatchObject({ key: 'Rated', runs: 4, passed: 1, failed: 1 })
+    expect(rows[0]!.passRate).toBeCloseTo(1 / 2)
+    expect(rows[1]).toMatchObject({ key: 'Unrated', runs: 2, passed: 0, failed: 0 })
+    expect(rows[1]!.passRate).toBeNull()
+
+    const origin = await startDashboard()
+    const { status, body } = await getJson(`${origin}/api/analytics/breakdowns?dimension=test`)
+    expect(status).toBe(200)
+    expect(body.rows).toEqual(JSON.parse(JSON.stringify(rows)))
+    expect(body.rows[1].passRate === null, `the Unrated row's passRate is ${JSON.stringify(body.rows[1]?.passRate)}`).toBe(true)
   })
 })
