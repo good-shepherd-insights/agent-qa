@@ -16,10 +16,16 @@ import {
   RUNS_LIST_FUNCTION_ID,
   RUNS_OVERVIEW_FUNCTION_ID,
 } from '@vostride/agent-qa-agent'
-import { EVIDENCE_KINDS, RUNS_LIST_MAX_LIMIT, RunsListInputSchema } from '@vostride/agent-qa-schema'
+import {
+  EVIDENCE_KINDS,
+  POST_PROCESSING_SKIP_REASON_WORDS,
+  RUNS_LIST_MAX_LIMIT,
+  RunsListInputSchema,
+} from '@vostride/agent-qa-schema'
 import type {
   EvidenceKind,
   RunKnowledgeProjection,
+  RunOverviewLearned,
   RunOverviewProjection,
   RunOverviewStep,
   RunSummary,
@@ -209,6 +215,13 @@ function firstPresentKind(step: RunOverviewStep): string | undefined {
     .find((kind) => evidence[kind].state === 'present')
 }
 
+// 2026-10-18 (444-26, D-61): a chain that was never enqueued reads skipped (<reason>), not its chip.
+function curationWord(curation: Pick<RunOverviewLearned['curation'], 'status' | 'skipped'>): string {
+  return curation.skipped === undefined
+    ? curation.status
+    : `skipped (${POST_PROCESSING_SKIP_REASON_WORDS[curation.skipped.reason]})`
+}
+
 export function renderRunOverview(overview: RunOverviewProjection): string {
   const runId = overview.runId
   const target = overview.recordedTargets.status === 'recorded' && overview.recordedTargets.names.length > 0
@@ -268,7 +281,7 @@ export function renderRunOverview(overview: RunOverviewProjection): string {
     for (const row of learned.snapshot.rows) lines.push(`  ${row.bucket} ${row.recordId}`)
   } else {
     lines.push('', `Learned: snapshot ${learned.snapshot.state === 'withheld'
-      ? `withheld (${learned.snapshot.reason})` : 'not recorded'} · curation ${learned.curation.status}`)
+      ? `withheld (${learned.snapshot.reason})` : 'not recorded'} · curation ${curationWord(learned.curation)}`)
     for (const change of learned.changes) lines.push(`  ${change.change} ${change.recordId} @${String(change.atOrdinal)}`)
   }
   const next = (candidates.find((candidate) => candidate.failing) ?? candidates[0])?.lines ?? []
@@ -284,7 +297,7 @@ export function renderRunKnowledge(projection: RunKnowledgeProjection): string {
   }
   const lines = [
     `Run ${projection.runId} knowledge · build ${String(projection.buildOrdinal)} · store ${projection.knowledgeStore}`
-      + ` · curation ${projection.curation.status}`,
+      + ` · curation ${curationWord(projection.curation)}`,
   ]
   const records = new Set<string>()
   for (const step of projection.steps) {
