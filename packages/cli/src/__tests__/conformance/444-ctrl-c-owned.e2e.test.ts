@@ -6,6 +6,8 @@
 // can pass (research Pitfall 4). Every other door keeps Playwright's handling: a dashboard run in
 // this process gains Playwright's listeners while its browser is open, and only `agent-qa run`'s
 // two producer calls name the option.
+// 2026-10-18 (444-25, D-60): a hang-up is a cancel on this door too, so one SIGHUP to a held direct
+// run must end through the same path; the dashboard door still keeps Playwright's default.
 
 import { spawn, spawnSync } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
@@ -447,6 +449,15 @@ describe('C444-CTRL-C-OWNED', () => {
       '444-ctrl-c-direct-sigterm',
       ['run', 'tests/populated.test.yaml'],
       'SIGTERM',
+    ))
+  }, CELL_BUDGET_MS)
+
+  it("one SIGHUP ends a held direct run through agent-qa run's own path", async () => {
+    expectOwnPath(await signalHeldRun(
+      'direct SIGHUP',
+      '444-ctrl-c-direct-sighup',
+      ['run', 'tests/populated.test.yaml'],
+      'SIGHUP',
     ))
   }, CELL_BUDGET_MS)
 
