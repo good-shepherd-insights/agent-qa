@@ -859,20 +859,27 @@ describe('C436-SCROLL-DECOYS', () => {
   }, 60_000)
 
   it('an iframe copy under an opacity 0 ancestor never ends found at zero swipes', async () => {
-    const { web, tab } = await open('/decoy-frame-opacity')
-    const result = await web.execute(untilVisible('Delete account', 10))
-    const meta = result.metadata?.scrollUntilVisible as { swipes: number } | undefined
-    expect(meta).toMatchObject({ outcome: 'found', endedBy: 'target-visible' })
-    expect(meta!.swipes).toBeGreaterThanOrEqual(1)
-    expect(await realButtonOnScreen(tab)).toBe(true)
+    await frameDecoyNeverEndsTheSearch('/decoy-frame-opacity')
   }, 60_000)
 
   it('an iframe copy under a visibility hidden ancestor never ends found at zero swipes', async () => {
-    const { web, tab } = await open('/decoy-frame-hidden')
-    const result = await web.execute(untilVisible('Delete account', 10))
-    const meta = result.metadata?.scrollUntilVisible as { swipes: number } | undefined
-    expect(meta).toMatchObject({ outcome: 'found', endedBy: 'target-visible' })
-    expect(meta!.swipes).toBeGreaterThanOrEqual(1)
-    expect(await realButtonOnScreen(tab)).toBe(true)
+    await frameDecoyNeverEndsTheSearch('/decoy-frame-hidden')
   }, 60_000)
 })
+
+// The native rung searches the main frame only, so it may bring the real button on screen at zero
+// swipes; the swipe search from the top shows the iframe copy never ends it.
+async function frameDecoyNeverEndsTheSearch(path: string): Promise<void> {
+  const { web, tab } = await open(path)
+  const result = await web.execute(untilVisible('Delete account', 10))
+  expect(result.metadata?.scrollUntilVisible).toMatchObject({ outcome: 'found', endedBy: 'target-visible' })
+  expect(await realButtonOnScreen(tab), 'the real button is on screen').toBe(true)
+  await tab.evaluate('window.scrollTo(0, 0)')
+  const { nativeSearchScroll: _native, ...swipesOnly } = buildScrollPrimitives(tab, {}, 720)
+  const { meta } = await runUntilVisibleLoop(swipesOnly, {
+    target: 'Delete account', direction: 'down', maxSwipes: 10, retryOpposite: false,
+  })
+  expect(meta).toMatchObject({ outcome: 'found', endedBy: 'target-visible' })
+  expect(meta.swipes).toBeGreaterThanOrEqual(1)
+  expect(await realButtonOnScreen(tab), 'the real button is on screen after the swipes').toBe(true)
+}
