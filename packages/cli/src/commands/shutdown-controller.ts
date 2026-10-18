@@ -7,15 +7,14 @@
 // and arms the unref'd force-exit backstop (owned by the caller, so the 361-13 anchors stay in
 // run.ts). It writes nothing and never force-exits; a clean settle exits through the verdict map.
 //
-// A SECOND (and any further) signal is a HARD force-exit: it calls `exit(130)` immediately,
-// independent of the grace timer and of any wedged async `done`. Once the block from 364-02 is gone
-// the event loop is free, so a repeated Ctrl+C is always effective the instant it is dispatched —
-// the user never has to wait out the grace window on a genuinely un-settleable run.
+// A second (and any further) SIGINT or SIGTERM is a HARD force-exit: it calls `exit(130)` at once,
+// independent of the grace timer, so a repeated Ctrl+C is always effective. 2026-10-18 (444-30,
+// D-63): a SIGHUP after the first signal never counts, because a terminal close delivers it twice.
 
 export interface ShutdownControllerDeps {
   /** Route the abort into the active RunSession (`activeRunSession?.cancel()`). Best-effort. */
   cancel: () => void
-  /** Hard force-exit. Used ONLY on the second-and-further signal, immediately. */
+  /** Hard force-exit. Used ONLY on a second-and-further SIGINT or SIGTERM, immediately. */
   exit: (code: number) => void
   /** Mark the graceful exit code + shutdown-requested state on the first signal (`process.exitCode = code`). */
   setExitCode: (code: number) => void
@@ -25,7 +24,7 @@ export interface ShutdownControllerDeps {
 
 export interface ShutdownController {
   /** The single SIGINT, SIGTERM and SIGHUP handler registered via `process.on` at both run sites. */
-  handleSignal: () => void
+  handleSignal: (signal?: NodeJS.Signals) => void
   /** Detach at teardown so a late signal after `session.done` is inert (mirrors removeListener). */
   dispose: () => void
 }
@@ -34,8 +33,9 @@ export function createShutdownController(deps: ShutdownControllerDeps): Shutdown
   let signalCount = 0
   let disposed = false
 
-  const handleSignal = (): void => {
+  const handleSignal = (signal?: NodeJS.Signals): void => {
     if (disposed) return
+    if (signal === 'SIGHUP' && signalCount >= 1) return
     signalCount += 1
 
     if (signalCount >= 2) {
