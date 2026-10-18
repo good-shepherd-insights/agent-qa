@@ -13764,6 +13764,24 @@
       "file": "packages/dashboard-server/src/__tests__/444-list-write-safe.test.ts",
       "fullName": "C444-LIST-WRITE-SAFE a key is read from its own line: a bare or blank name lists the file name, a bare target lists no target, and a bare id key counts as no id and is filled in place",
       "origin": "444 D-65"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-list-write-safe.test.ts",
+      "fullName": "C444-LIST-WRITE-SAFE every test file in the layout corpus is read from its parsed YAML, and listing it leaves its old mapping with one id that opens, in its own line endings, or leaves it byte-identical with no id; none stops parsing",
+      "origin": "444 D-65"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-list-write-safe.test.ts",
+      "fullName": "C444-LIST-WRITE-SAFE every suite file in the layout corpus is read from its parsed YAML, and listing it leaves its old mapping with one id that opens, in its own line endings, or leaves it byte-identical with no id; none stops parsing",
+      "origin": "444 D-65"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-list-write-safe.test.ts",
+      "fullName": "C444-LIST-WRITE-SAFE a test create or save whose target holds a shown marker in a mapping value or on an indented target line is refused and nothing is written",
+      "origin": "444 D-65"
     }
   ]
 }
