@@ -922,7 +922,7 @@ async function readAnalyticsScopePredicates(configManager: ConfigManager | undef
   return parseAnalyticsScopePredicates(parsedConfig.data as Record<string, unknown>)
 }
 
-function calculateFlakyMetrics(classes: ReadonlyArray<RunStatusClass | 'skipped'>): { score: number; statusCount: number } {
+function calculateFlakyMetrics(classes: ReadonlyArray<RunStatusClass | 'skipped' | undefined>): { score: number; statusCount: number } {
   const statuses = classes.filter(c => c === 'pass' || c === 'fail')
   let alternations = 0
   for (let i = 1; i < statuses.length; i++) {

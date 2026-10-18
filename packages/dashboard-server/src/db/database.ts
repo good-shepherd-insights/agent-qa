@@ -1029,7 +1029,7 @@ export class DashboardDatabase {
 
   private buildTrendsFromRuns(
     runs: RunRow[],
-    classOf: (run: RunRow) => RunStatusClass | 'skipped' = (run) => runStatusClass(run.status),
+    classOf: (run: RunRow) => RunStatusClass | 'skipped' | undefined = (run) => runStatusClass(run.status),
   ): {
     daily: { date: string; passed: number; failed: number; total: number; avgDuration: number }[]
     passRate: number | null
