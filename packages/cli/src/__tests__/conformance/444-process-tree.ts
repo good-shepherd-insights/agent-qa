@@ -65,3 +65,37 @@ export async function livePidsAfter(pids: readonly number[], budgetMs: number): 
     await new Promise((tick) => setTimeout(tick, 100))
   }
 }
+
+// 2026-10-18 (444-25, D-62 IN-07): a cell kills a process only by the identity it recorded. A pid
+// is signalled only while its current entry runs the exact command line recorded at capture, so a
+// pid the system has reused for another process is never killed.
+export interface RecordedProcess {
+  readonly pid: number
+  readonly command: string
+}
+
+export function recordProcesses(pids: readonly number[]): RecordedProcess[] {
+  refuseWithoutPosix()
+  const live = new Map(processTable().filter((entry) => !entry.zombie).map((entry) => [entry.pid, entry]))
+  return pids.flatMap((pid) => {
+    const entry = live.get(pid)
+    return entry === undefined ? [] : [{ pid, command: entry.command }]
+  })
+}
+
+export function killRecorded(recorded: readonly RecordedProcess[]): number[] {
+  refuseWithoutPosix()
+  if (recorded.length === 0) return []
+  const live = new Map(processTable().filter((entry) => !entry.zombie).map((entry) => [entry.pid, entry.command]))
+  const killed: number[] = []
+  for (const entry of recorded) {
+    if (live.get(entry.pid) !== entry.command) continue
+    try {
+      process.kill(entry.pid, 'SIGKILL')
+      killed.push(entry.pid)
+    } catch {
+      /* gone since the read */
+    }
+  }
+  return killed
+}

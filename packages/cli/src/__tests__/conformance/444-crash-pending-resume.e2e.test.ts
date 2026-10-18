@@ -21,7 +21,13 @@ import {
   refuseWithoutRecordingTools,
   type DashboardScene,
 } from './433-door-fixture.js'
-import { chromiumDescendants, livePids, livePidsAfter } from './444-process-tree.js'
+import {
+  chromiumDescendants,
+  killRecorded,
+  livePidsAfter,
+  recordProcesses,
+  type RecordedProcess,
+} from './444-process-tree.js'
 import {
   ANALYSIS_PROMPT_MARKER,
   POPULATED_BUTTON_LABEL,
@@ -113,6 +119,7 @@ interface CrashFacts {
   eventsAtKill?: string[]
   rowAtKill?: RowView | string
   chromiumAtKill?: number[]
+  chromiumRecordedAtKill?: RecordedProcess[]
   exit?: { code: number | null; signal: NodeJS.Signals | null }
   chromiumSelfExit?: { boundMs: number; aliveAfterBound: number[]; goneAfterMs?: number }
   chromiumKilledByCell?: number[]
@@ -206,12 +213,14 @@ interface DaemonLeg {
   reached?: 'complete' | 'exited' | 'timeout'
   analysisCompleteAfterMs?: number
   descendantsAtStop?: number[]
+  recordedAtStop?: RecordedProcess[]
   jobsAtStop?: JobRow[] | string
   stop?: { code: number | null; stdout: string; stderr: string }
   exit?: { code: number | null; signal: NodeJS.Signals | null }
   stoppedAfterMs?: number
   killedByCell?: boolean
   aliveAfterStop?: number[]
+  killedAfterStop?: number[]
   tmpdirRemoved?: boolean
   agentQaBefore?: string[]
   agentQaAfter?: string[]
@@ -253,7 +262,7 @@ interface Shared {
 let shared: Shared | undefined
 const children: ChildProcess[] = []
 const scenes: DashboardScene[] = []
-const strayChromium = new Set<number>()
+const strayChromium: RecordedProcess[] = []
 
 function isTruthy(value: string | undefined): boolean {
   const normalized = value?.trim().toLowerCase()
@@ -518,6 +527,7 @@ async function untilHeld(model: StubModelServer, already: number, ended: () => b
 
 // A SIGKILLed CLI cannot close its browser. Whether Chromium leaves on its own (its pipe closed) is
 // measured within a bound and recorded; whatever is left is killed here, so none outlives the cell.
+// 2026-10-18 (444-25, D-62 IN-07): only by the identity recorded at the kill, never by pid alone.
 async function measureChromiumAfterKill(facts: CrashFacts): Promise<void> {
   const pids = facts.chromiumAtKill ?? []
   const killedAt = Date.now()
@@ -527,11 +537,9 @@ async function measureChromiumAfterKill(facts: CrashFacts): Promise<void> {
     aliveAfterBound: alive,
     ...(alive.length === 0 ? { goneAfterMs: Date.now() - killedAt } : {}),
   }
-  for (const pid of alive) {
-    strayChromium.add(pid)
-    try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
-  }
-  facts.chromiumKilledByCell = alive
+  const left = (facts.chromiumRecordedAtKill ?? []).filter((entry) => alive.includes(entry.pid))
+  strayChromium.push(...left)
+  facts.chromiumKilledByCell = killRecorded(left)
   facts.chromiumAliveAtCellEnd = await livePidsAfter(pids, 5_000)
 }
 
@@ -553,6 +561,7 @@ async function driveCrash(): Promise<void> {
   crash.eventsAtKill = loggedEvents(project, runId).map((event) => event.type)
   crash.rowAtKill = readRow(project, runId)
   crash.chromiumAtKill = chromiumDescendants(run.child.pid!)
+  crash.chromiumRecordedAtKill = recordProcesses(crash.chromiumAtKill)
   run.child.kill('SIGKILL')
   const ended = await run.closed
   crash.exit = { code: ended.code, signal: ended.signal }
@@ -750,6 +759,7 @@ async function driveDaemon(): Promise<void> {
     await new Promise((tick) => setTimeout(tick, POLL_MS))
   }
   leg.descendantsAtStop = exited(daemon.child) ? [] : descendantsOf(daemon.child.pid!)
+  leg.recordedAtStop = exited(daemon.child) ? [] : recordProcesses([daemon.child.pid!, ...leg.descendantsAtStop])
   leg.jobsAtStop = jobRows(project, detached.runId)
   const stopAt = Date.now()
   if (!exited(daemon.child)) {
@@ -769,9 +779,8 @@ async function driveDaemon(): Promise<void> {
   leg.stoppedAfterMs = Date.now() - stopAt
   leg.output = `${ended.stdout}\n${ended.stderr}`.slice(-3_000)
   leg.aliveAfterStop = await livePidsAfter([daemon.child.pid!, ...leg.descendantsAtStop], 5_000)
-  for (const pid of leg.aliveAfterStop) {
-    try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
-  }
+  const aliveAfterStop = leg.aliveAfterStop
+  leg.killedAfterStop = killRecorded(leg.recordedAtStop.filter((entry) => aliveAfterStop.includes(entry.pid)))
   rmSync(tmpdir, { recursive: true, force: true })
   leg.tmpdirRemoved = !existsSync(tmpdir)
   leg.agentQaAfter = agentQaEntries(project)
@@ -904,9 +913,7 @@ afterAll(async () => {
   shared?.model.held.release()
   for (const child of children) if (!exited(child)) child.kill('SIGKILL')
   for (const scene of scenes.splice(0)) await scene.close().catch(() => undefined)
-  for (const pid of livePids([...strayChromium])) {
-    try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
-  }
+  killRecorded(strayChromium)
   await shared?.model.close().catch(() => undefined)
   await shared?.target.close().catch(() => undefined)
   cleanupTempRoots()
