@@ -40,6 +40,16 @@ failed job is the one whose evidence you most need.
 | `130` | The run was cancelled, for example by Ctrl+C or a signal from the CI runner. |
 | `2` | The harness could not run the test. A test that could not start (no browser, a setup error) exits 2, and so does a run that was refused, a pattern that matched nothing, or a CLI that failed to load or threw before a run started (`Framework error: …`). |
 
+A hang-up (SIGHUP, for example when the terminal or SSH session that started the run closes) cancels
+the run like Ctrl+C: it ends with the `cancelled` verdict and exits 130. So `nohup agent-qa run` does
+not survive a hang-up. Node.js puts the hang-up signal back to its default when it starts, and
+`agent-qa run` listens for it, so `nohup`'s ignore never takes effect. Measured with
+`nohup agent-qa run` sent SIGHUP during a step: the run was cancelled and exited 130 in about
+0.2 seconds. In earlier versions the same signal closed the browser and the run hung until it was
+killed. To keep a run going after its terminal closes, start it with `setsid` or run it under a
+process manager. `--detach` only shortens the window: it skips the post-run tail, so the process
+exits as soon as the run has its verdict and queues the post-run work for a later process.
+
 Analysis and curation never change the exit code. A run whose curation is still pending exits with
 its verdict's code, exactly as one whose curation finished.
 

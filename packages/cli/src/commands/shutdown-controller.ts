@@ -1,6 +1,7 @@
-// SESSION-04 / RUNX-02 (D1): the CLI's run-level SIGINT/SIGTERM controller. Extracted from the
-// inline `handleShutdown` in run.ts so the first-vs-second-signal contract is unit-testable in
-// isolation with plain injected seams (no real signals, no real timers).
+// SESSION-04 / RUNX-02 (D1): the CLI's run-level SIGINT, SIGTERM and SIGHUP controller (SIGHUP
+// since 444-25, D-60). Extracted from the inline `handleShutdown` in run.ts so the
+// first-vs-second-signal contract is unit-testable in isolation with plain injected seams (no real
+// signals, no real timers).
 //
 // The FIRST signal asks: it marks exit code 130, routes the abort into the active RunSession cancel
 // and arms the unref'd force-exit backstop (owned by the caller, so the 361-13 anchors stay in
@@ -23,7 +24,7 @@ export interface ShutdownControllerDeps {
 }
 
 export interface ShutdownController {
-  /** The single SIGINT/SIGTERM handler registered via `process.on` at both run sites. */
+  /** The single SIGINT, SIGTERM and SIGHUP handler registered via `process.on` at both run sites. */
   handleSignal: () => void
   /** Detach at teardown so a late signal after `session.done` is inert (mirrors removeListener). */
   dispose: () => void

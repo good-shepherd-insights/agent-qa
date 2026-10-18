@@ -9,7 +9,7 @@
 // 2026-10-18 (444-25, D-60): a hang-up is a cancel on this door too, so one SIGHUP to a held direct
 // run must end through the same path; the dashboard door still keeps Playwright's default.
 
-import { spawn, spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
@@ -27,6 +27,7 @@ import {
   type DashboardScene,
 } from './433-door-fixture.js'
 import { refuseWithoutPosixRunLifecycle } from './442-run-fixture.js'
+import { chromiumDescendants, livePids, livePidsAfter } from './444-process-tree.js'
 import {
   POPULATED_BUTTON_LABEL,
   populatedRunFixtureProject,
@@ -47,11 +48,12 @@ const BROWSER_GONE_MS = 10_000
 const HOLD_MARKER = 'once the operator lifts the hold'
 const HOLD_STEP_TEXT = `Click the ${POPULATED_BUTTON_LABEL} button ${HOLD_MARKER}.`
 const FORCED_EXIT_SUMMARY = 'The run was stopped before it reached a verdict.'
-const CHROMIUM_COMMAND = /chrom|headless_shell/i
 const RUN_FINISHED_MS = 60_000
 const PACKAGES_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..')
 const RUN_TS = join(PACKAGES_ROOT, 'cli', 'src', 'commands', 'run.ts')
 const OWNED_SIGNALS = ['SIGINT', 'SIGTERM'] as const
+const SIGHUP_ON = "process.on('SIGHUP', shutdownController.handleSignal)"
+const SIGHUP_OFF = "process.removeListener('SIGHUP', shutdownController.handleSignal)"
 type OwnedSignal = (typeof OWNED_SIGNALS)[number]
 type Listener = (...args: unknown[]) => void
 
@@ -71,6 +73,7 @@ interface SignalReport {
   elapsedMs?: number
   exit?: { code: number | null; signal: NodeJS.Signals | null }
   walAfterExit?: boolean
+  aliveAtExit?: number[]
   aliveAfterExit?: number[]
   events?: string[]
   verdict?: unknown
@@ -136,46 +139,6 @@ async function untilHeld(model: StubModelServer, child: ChildProcess): Promise<'
   }
 }
 
-function chromiumUnder(pid: number): number[] {
-  const listed = spawnSync('ps', ['-A', '-o', 'pid=,ppid=,command='], { encoding: 'utf8' }).stdout
-  const children = new Map<number, Array<{ pid: number; command: string }>>()
-  for (const line of listed.split('\n')) {
-    const match = /^\s*(\d+)\s+(\d+)\s+(.*)$/u.exec(line)
-    if (match === null) continue
-    const parent = Number(match[2])
-    children.set(parent, [...(children.get(parent) ?? []), { pid: Number(match[1]), command: match[3]! }])
-  }
-  const found: number[] = []
-  const walk = (at: number): void => {
-    for (const child of children.get(at) ?? []) {
-      if (CHROMIUM_COMMAND.test(child.command)) found.push(child.pid)
-      walk(child.pid)
-    }
-  }
-  walk(pid)
-  return found
-}
-
-function aliveOf(pids: readonly number[]): number[] {
-  const listed = spawnSync('ps', ['-A', '-o', 'pid=,stat='], { encoding: 'utf8' }).stdout
-  const alive = new Set<number>()
-  for (const line of listed.split('\n')) {
-    const [pid, stat] = line.trim().split(/\s+/u)
-    if (pid === undefined || stat === undefined || stat.startsWith('Z')) continue
-    alive.add(Number(pid))
-  }
-  return pids.filter((pid) => alive.has(pid))
-}
-
-async function aliveAfter(pids: readonly number[]): Promise<number[]> {
-  const deadline = Date.now() + BROWSER_GONE_MS
-  for (;;) {
-    const alive = aliveOf(pids)
-    if (alive.length === 0 || Date.now() >= deadline) return alive
-    await new Promise((tick) => setTimeout(tick, 100))
-  }
-}
-
 function readRow(project: PopulatedRunProject, runId: string): SignalReport['row'] {
   const dbPath = resolveDashboardDbPath({ configDir: project.root })
   if (!existsSync(dbPath)) return undefined
@@ -220,7 +183,7 @@ async function signalHeldRun(
       facts.output = run.output()
       return facts
     }
-    facts.chromiumAtSignal = chromiumUnder(run.child.pid!)
+    facts.chromiumAtSignal = chromiumDescendants(run.child.pid!)
     const signalledAt = Date.now()
     run.child.kill(signal)
     const kill = setTimeout(() => { run.child.kill('SIGKILL') }, KILL_AFTER_MS)
@@ -230,8 +193,9 @@ async function signalHeldRun(
       clearTimeout(kill)
     }
     facts.elapsedMs = Date.now() - signalledAt
+    facts.aliveAtExit = livePids(facts.chromiumAtSignal)
     facts.walAfterExit = existsSync(`${resolveDashboardDbPath({ configDir: rig.project.root })}-wal`)
-    facts.aliveAfterExit = await aliveAfter(facts.chromiumAtSignal)
+    facts.aliveAfterExit = await livePidsAfter(facts.chromiumAtSignal, BROWSER_GONE_MS)
     const events = loggedEvents(rig.project, runId)
     facts.events = events.map((event) => event.type)
     facts.verdict = events.find((event) => event.type === 'verdict')?.payload
@@ -482,7 +446,11 @@ describe('C444-CTRL-C-OWNED', () => {
       createRunCommand: occurrences(body('createRunCommand'), 'hostOwnsSignals: true'),
       produceMembersFromPatterns: occurrences(body('produceMembersFromPatterns'), 'hostOwnsSignals'),
       optionFiles: sourcesNaming(/hostOwnsSignals/u),
-      playwrightOptionFiles: sourcesNaming(/handleSIGINT|handleSIGTERM/u),
+      playwrightOptionFiles: sourcesNaming(/handleSIGINT|handleSIGTERM|handleSIGHUP/u),
+      hangUpRoute: Object.fromEntries(['executeSuites', 'createRunCommand'].map((name) => [name, {
+        on: occurrences(body(name), SIGHUP_ON),
+        off: occurrences(body(name), SIGHUP_OFF),
+      }])),
     }, null, 2)
     expect([...naming].sort(), facts).toEqual([
       'DirectRunMemberProductionInput',
@@ -498,6 +466,10 @@ describe('C444-CTRL-C-OWNED', () => {
     expect(occurrences(body('createRunCommand'), 'hostOwnsSignals: true'), facts).toBe(1)
     expect(occurrences(body('produceMembersFromPatterns'), 'hostOwnsSignals'), facts).toBe(0)
     expect(sourcesNaming(/hostOwnsSignals/u), facts).toEqual(['cli/src/commands/run.ts', 'web/src/adapter.ts'])
-    expect(sourcesNaming(/handleSIGINT|handleSIGTERM/u), facts).toEqual(['web/src/adapter.ts'])
+    for (const name of ['executeSuites', 'createRunCommand']) {
+      expect(occurrences(body(name), SIGHUP_ON), `${name} routes SIGHUP to the controller\n${facts}`).toBe(1)
+      expect(occurrences(body(name), SIGHUP_OFF), `${name} removes its SIGHUP route\n${facts}`).toBe(1)
+    }
+    expect(sourcesNaming(/handleSIGINT|handleSIGTERM|handleSIGHUP/u), facts).toEqual(['web/src/adapter.ts'])
   })
 })
