@@ -42,18 +42,17 @@ failed job is the one whose evidence you most need.
 
 A hang-up (SIGHUP, for example when the terminal or SSH session that started the run closes) cancels
 the run like Ctrl+C: it ends with the `cancelled` verdict and exits 130. Closing a terminal can
-deliver the hang-up twice (interactive zsh, the macOS default shell, sends it twice about 1 ms
-apart), and the run still ends once, as `cancelled`, with exit 130. A second Ctrl+C, or a SIGTERM,
-after the first signal still stops the run at once, with exit 130, even before the run reaches its
-verdict.
-So `nohup agent-qa run` does
-not survive a hang-up. Node.js puts the hang-up signal back to its default when it starts, and
+deliver the hang-up twice (interactive zsh, the macOS default shell, delivers it twice about 1 ms
+apart), and the run still ends once, as `cancelled`, with exit 130. So `nohup agent-qa run` does not
+survive a hang-up. Node.js puts the hang-up signal back to its default when it starts, and
 `agent-qa run` listens for it, so `nohup`'s ignore never takes effect. Measured with
-`nohup agent-qa run` sent SIGHUP during a step: the run was cancelled and exited 130 in about
-0.2 seconds. In earlier versions the same signal closed the browser and the run hung until it was
+`nohup agent-qa run` sent SIGHUP during a step: the run was cancelled and exited 130 in about 0.2
+seconds. In earlier versions the same signal closed the browser and the run hung until it was
 killed. To keep a run going after its terminal closes, start it with `setsid` or run it under a
 process manager. `--detach` only shortens the window: it skips the post-run tail, so the process
-exits as soon as the run has its verdict and queues the post-run work for a later process.
+exits as soon as the run has its verdict and queues the post-run work for a later process. A second
+Ctrl+C, or a SIGTERM, after the first signal still stops the run at once, with exit 130, even before
+the run reaches its verdict.
 
 Analysis and curation never change the exit code. A run whose curation is still pending exits with
 its verdict's code, exactly as one whose curation finished.
