@@ -120,18 +120,10 @@ export function extractTestFileMetadata(content: string): TestFileMetadata {
 export class TestFileManager {
   constructor(private readonly workspace: ResolvedWorkspacePaths) {}
 
-  // 2026-10-18 (444-33, D-65): list calls share one read; each file is written whole and one writer at a time.
-  private inFlightList: Promise<TestFileInfo[]> | undefined
+  // 2026-10-18 (444-33, D-65; 444-35, D-66): each list call reads the workspace itself; each file is written whole and one writer at a time.
   private readonly underLock = createPathLock()
 
-  list(): Promise<TestFileInfo[]> {
-    this.inFlightList ??= this.listOnce().finally(() => {
-      this.inFlightList = undefined
-    })
-    return this.inFlightList.then((files) => [...files])
-  }
-
-  private async listOnce(): Promise<TestFileInfo[]> {
+  async list(): Promise<TestFileInfo[]> {
     const records = await discoverWorkspaceFiles({ workspace: this.workspace, kind: 'test' })
     const files: TestFileInfo[] = []
 

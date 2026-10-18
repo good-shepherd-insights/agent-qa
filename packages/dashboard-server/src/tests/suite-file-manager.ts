@@ -32,18 +32,10 @@ export class SuiteFileManager {
     this.testFileManager = testFileManager
   }
 
-  // 2026-10-18 (444-33, D-65): list calls share one read; each file is written whole and one writer at a time.
-  private inFlightList: Promise<SuiteFileInfo[]> | undefined
+  // 2026-10-18 (444-33, D-65; 444-35, D-66): each list call reads the workspace itself; each file is written whole and one writer at a time.
   private readonly underLock = createPathLock()
 
-  list(): Promise<SuiteFileInfo[]> {
-    this.inFlightList ??= this.listOnce().finally(() => {
-      this.inFlightList = undefined
-    })
-    return this.inFlightList.then((files) => [...files])
-  }
-
-  private async listOnce(): Promise<SuiteFileInfo[]> {
+  async list(): Promise<SuiteFileInfo[]> {
     const records = await discoverWorkspaceFiles({ workspace: this.workspace, kind: 'suite' })
     const files: SuiteFileInfo[] = []
 
