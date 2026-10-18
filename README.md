@@ -127,6 +127,7 @@ JSON fields you actually read, not on line ordering between the two writers.
 - [Dashboard](https://vostride.com/docs/agent-qa/dashboard)
 - [Configuration](https://vostride.com/docs/agent-qa/configuration)
 - [The three queues](docs/queues.md) — run queue, curation queue, agent job queue
+- [Running agent-qa in CI](docs/ci.md) — what to upload, and what resuming pending work needs
 - [The authed run service](docs/run-service.md) — where the dashboard binds, and how to declare a run-service credential
 - [License](LICENSE.md)
 - [Notice](NOTICE.md)
