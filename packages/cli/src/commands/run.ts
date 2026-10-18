@@ -2044,6 +2044,7 @@ async function executeSuites(
   // `on`, not `once`, so a repeated Ctrl+C reaches the controller's hard force-exit path.
   process.on('SIGINT', shutdownController.handleSignal)
   process.on('SIGTERM', shutdownController.handleSignal)
+  process.on('SIGHUP', shutdownController.handleSignal)
 
 
   // 401-11 (D-01/D-02): the suite half's members and executor come from the ONE producer that owns
@@ -2212,6 +2213,7 @@ async function executeSuites(
     shutdownController.dispose()
     process.removeListener('SIGINT', shutdownController.handleSignal)
     process.removeListener('SIGTERM', shutdownController.handleSignal)
+    process.removeListener('SIGHUP', shutdownController.handleSignal)
     record.close()
   }
 
@@ -2586,7 +2588,8 @@ export interface SuiteRunMemberProductionInput {
   /** The run's record, opened after this producer's production refusal and before its plugins. */
   readonly runRecord?: RunRecord
   readonly terminal?: RunTerminal
-  // 2026-10-17 (444-22, D-46): only agent-qa run passes this; its controller owns SIGINT/SIGTERM.
+  // 2026-10-17 (444-22, D-46; 2026-10-18 444-25, D-60): only agent-qa run passes this; its
+  // controller owns SIGINT, SIGTERM and SIGHUP.
   readonly hostOwnsSignals?: true
 }
 
@@ -3769,7 +3772,8 @@ export interface DirectRunMemberProductionInput {
   /** Reports each member's own run id. The command uses it to keep its crash-finalizer honest. */
   readonly onMemberRunId?: (runId: string) => void
   readonly terminal?: RunTerminal
-  // 2026-10-17 (444-22, D-46): only agent-qa run passes this; its controller owns SIGINT/SIGTERM.
+  // 2026-10-17 (444-22, D-46; 2026-10-18 444-25, D-60): only agent-qa run passes this; its
+  // controller owns SIGINT, SIGTERM and SIGHUP.
   readonly hostOwnsSignals?: true
   /**
    * An Appium a HOST already leased for this run (401-07, D-01/D-12 — INVK-01 truth 5).
@@ -5093,6 +5097,7 @@ export function createRunCommand(): Command {
         // `on`, not `once`, so a repeated Ctrl+C reaches the controller's hard force-exit path.
         process.on('SIGINT', shutdownController.handleSignal)
         process.on('SIGTERM', shutdownController.handleSignal)
+        process.on('SIGHUP', shutdownController.handleSignal)
 
 
         // 401-11 (D-01/D-02): ONE members/executor assembly on this door, and this path is a
@@ -5261,6 +5266,7 @@ export function createRunCommand(): Command {
           shutdownController.dispose()
           process.removeListener('SIGINT', shutdownController.handleSignal)
           process.removeListener('SIGTERM', shutdownController.handleSignal)
+          process.removeListener('SIGHUP', shutdownController.handleSignal)
         }
 
         releaseAppium()

@@ -161,7 +161,8 @@ function decodeBase64(data: string): Uint8Array {
 }
 
 export interface WebPlatformAdapterOptions {
-  // 2026-10-17 (444-22, D-46): only a host with its own SIGINT/SIGTERM path (agent-qa run) sets this.
+  // 2026-10-17 (444-22, D-46; 2026-10-18 444-25, D-60): only a host with its own SIGINT, SIGTERM
+  // and SIGHUP path (agent-qa run) sets this.
   readonly hostOwnsSignals?: true
 }
 
@@ -223,7 +224,9 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
       this.browser = await launcher.launch({
         headless,
         ...(browserName === 'chromium' ? { args: ['--disable-blink-features=AutomationControlled'] } : {}),
-        ...(this.options.hostOwnsSignals === true ? { handleSIGINT: false, handleSIGTERM: false } : {}),
+        ...(this.options.hostOwnsSignals === true
+          ? { handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false }
+          : {}),
       })
     } catch (error) {
       if (isPlaywrightMissingBrowserError(error)) {
