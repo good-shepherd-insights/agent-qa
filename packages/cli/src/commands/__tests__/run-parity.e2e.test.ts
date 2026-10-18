@@ -57,8 +57,13 @@
 // 418 CR-02 additionally requires one strict originating-run canary-policy.json per
 // produced handoff. The capture helper checks its exact contents and run identity;
 // the inventory below adds its explicit cardinality, without filtering the file.
+// Phase 444-14 D-22: in the `ci` and `cloud` contexts each pending stage on the exit line states
+// its resume limit. The golden is a local reading and the capture inherits the caller's `CI`, so
+// the two affected stderr fields are read with that suffix in the context the run resolves (444-21);
+// the historical capture was not regenerated, and every comparison remains byte-exact.
 
 import { existsSync, readFileSync } from 'node:fs'
+import { resolveRunExecutionContext } from '@vostride/agent-qa-agent-local'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -87,6 +92,26 @@ function goldenFor(id: string): ParityReading {
   const reading = golden.readings.find((entry) => entry.id === id)
   if (reading === undefined) throw new Error(`no golden reading for "${id}"`)
   return reading
+}
+
+const CI_RESUME_LIMIT = {
+  analysis: " (resumes only if this workspace's .agent-qa/ is kept and a later run or the daemon picks it up)",
+  curation: " (resumes only if this workspace's .agent-qa/ is kept and a later local run picks it up)",
+}
+
+function stderrInRunContext(stderr: string): string {
+  const context = resolveRunExecutionContext()
+  if (context !== 'ci' && context !== 'cloud') return stderr
+  return stderr
+    .split('\n')
+    .map((line) =>
+      line.startsWith('post-processing — ')
+        ? line
+            .replace('analysis: pending · ', `analysis: pending${CI_RESUME_LIMIT.analysis} · `)
+            .replace('curation: pending · ', `curation: pending${CI_RESUME_LIMIT.curation} · `)
+        : line,
+    )
+    .join('\n')
 }
 
 /**
@@ -135,7 +160,7 @@ describe('agent-qa run parity across the in-process extraction (401-11)', () => 
         // alone is satisfiable by two different worlds); here the reporter transcript comes first
         // because it is the axis a person actually reads.
         expect(actual.stdout).toBe(expected.stdout)
-        expect(actual.stderr).toBe(expected.stderr)
+        expect(actual.stderr).toBe(stderrInRunContext(expected.stderr))
         expect(actual.eventTypes).toEqual([...expected.eventTypes])
         expect(actual.targetHits).toEqual([...expected.targetHits])
         // THE ONE FILTERED AXIS — see the header. Subtracted from BOTH sides, so a removal from
