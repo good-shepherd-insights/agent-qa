@@ -433,7 +433,9 @@ describe("RunsTable", () => {
 
     expect(view.textContent).toContain("Cancelled")
     expect(view.textContent).toContain("Failed")
-    expect(view.textContent).not.toContain("Timed Out")
+    const badgeTexts = Array.from(view.querySelectorAll('[data-slot="badge"]')).map((element) => element.textContent)
+    expect(badgeTexts).toContain("Failed")
+    expect(badgeTexts).not.toContain("Timed out")
 
     const failedBadge = Array.from(view.querySelectorAll('[data-slot="badge"]')).find(
       (element) => element.textContent === "Failed",

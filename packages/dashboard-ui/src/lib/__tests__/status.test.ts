@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
+import { getRunFaviconState } from '@/hooks/use-run-status-favicon'
 import {
   finalStepStatusForRun,
   getRunStatusDescriptor,
   getStatusBadgeClassName,
   isTerminalRunStatus,
+  normalizeRunStatus,
+  normalizeStepStatus,
   shouldRouteRunToLive,
   statusBadgeLook,
 } from '@/lib/status'
@@ -14,13 +17,13 @@ describe('dashboard status normalization', () => {
   it('keeps timeout distinct while treating it as a failed terminal run', () => {
     expect(getRunStatusDescriptor('timeout')).toMatchObject({
       normalized: 'timeout',
-      label: 'Timed Out',
+      label: 'Timed out',
       terminal: true,
       tone: 'danger',
     })
     expect(getRunStatusDescriptor('timed_out')).toMatchObject({
       normalized: 'timeout',
-      label: 'Timed Out',
+      label: 'Timed out',
       terminal: true,
       tone: 'danger',
     })
@@ -51,13 +54,6 @@ describe('dashboard status normalization', () => {
       terminal: true,
       tone: 'danger',
     })
-    expect(getRunStatusDescriptor('flaky')).toMatchObject({
-      normalized: 'flaky',
-      label: 'Flaky',
-      terminal: true,
-      tone: 'warning',
-    })
-    expect(finalStepStatusForRun('flaky')).toBe('flaky')
   })
 
   it('routes only active runs to live execution', () => {
@@ -115,5 +111,21 @@ describe('dashboard status normalization', () => {
 
     expect(getStatusBadgeClassName('outline')).toContain('border-border')
     expect(getStatusBadgeClassName('outline')).toContain('bg-transparent')
+  })
+})
+
+describe('C444-TIMEOUT-BADGE', () => {
+  it('both run status helpers label timeout Timed out', () => {
+    expect(getRunStatusDescriptor('timeout')).toMatchObject({ label: 'Timed out', tone: 'danger' })
+    expect(getRunStatusDescriptor('timed_out')).toMatchObject({ label: 'Timed out', tone: 'danger' })
+    expect(statusBadgeLook('timeout').label).toBe('Timed out')
+  })
+
+  it('a run word flaky reads unknown while a step and a member keep flaky', () => {
+    expect(normalizeRunStatus('flaky')).toBe('unknown')
+    expect(getRunStatusDescriptor('flaky').normalized).toBe('unknown')
+    expect(getRunFaviconState('flaky')).toBe('default')
+    expect(normalizeStepStatus('flaky')).toBe('flaky')
+    expect(statusBadgeLook('flaky').label).toBe('Flaky')
   })
 })
