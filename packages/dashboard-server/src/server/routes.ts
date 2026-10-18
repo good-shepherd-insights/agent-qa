@@ -3546,8 +3546,14 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         json(res, { error: 'Test file management not configured' }, 501)
         return
       }
-      testFileManager.list()
-        .then((files) => {
+      Promise.all([testFileManager.list(), readAnalyticsScopePredicates(configManager)])
+        .then(([files, scopeResult]) => {
+          if (!scopeResult.ok) {
+            json(res, { error: scopeResult.error }, 400)
+            return
+          }
+          // The rate is the figure the viewer opens on; the last run stays unscoped, as its run list is.
+          const scope = scopeResult.predicates.length > 0 ? { attributePredicates: scopeResult.predicates } : undefined
           const tests = files.map((file) => {
             const test = { ...(file.testId ? { testId: file.testId } : {}), filePath: file.path }
             const [last] = db.getRunsByTest(test, { limit: 1 })
@@ -3555,7 +3561,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             return {
               path: file.path,
               testId: file.testId,
-              ...passRateOf(db.getTestTrends(test)),
+              ...passRateOf(db.getTestTrends(test, scope)),
               lastRun: lastRun ? { ...lastRun, memberOutcome: last?.memberOutcome ?? null } : null,
             }
           })
@@ -3571,8 +3577,13 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         json(res, { error: 'Suite file management not configured' }, 501)
         return
       }
-      Promise.all([suiteFileManager.list(), readTargetPlatformMap(configManager)])
-        .then(([files, targetPlatforms]) => {
+      Promise.all([suiteFileManager.list(), readTargetPlatformMap(configManager), readAnalyticsScopePredicates(configManager)])
+        .then(([files, targetPlatforms, scopeResult]) => {
+          if (!scopeResult.ok) {
+            json(res, { error: scopeResult.error }, 400)
+            return
+          }
+          const scope = scopeResult.predicates.length > 0 ? { attributePredicates: scopeResult.predicates } : undefined
           const suites = files.map((file) => {
             if (!file.suiteId) {
               return { path: file.path, suiteId: null, passRate: null, passed: 0, decided: 0, lastRun: null, platform: null, targetName: null }
@@ -3581,7 +3592,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             return {
               path: file.path,
               suiteId: file.suiteId,
-              ...passRateOf(db.getSuiteTrends(file.suiteId)),
+              ...passRateOf(db.getSuiteTrends(file.suiteId, scope)),
               lastRun: lastRunOf(runs[0]),
               ...suiteTargetOf(runs, targetPlatforms),
             }
