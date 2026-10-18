@@ -4,22 +4,30 @@
 
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
+import { DRAIN_BUDGET_MS } from '@vostride/agent-qa-agent-local'
 import { orphanSummary, resolveDashboardDbPath } from '@vostride/agent-qa-dashboard'
 import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
 import { POST_PROCESSING_SKIP_REASON_WORDS } from '@vostride/agent-qa-schema'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import { openDashboardScene, refuseWithoutRecordingTools, type DashboardScene } from './433-door-fixture.js'
+import {
+  openDashboardScene,
+  printedRunIds,
+  refuseWithoutRecordingTools,
+  type DashboardScene,
+} from './433-door-fixture.js'
 import { chromiumDescendants, livePids, livePidsAfter } from './444-process-tree.js'
 import {
   POPULATED_BUTTON_LABEL,
   POPULATED_FAILURE_STEP_MARKER,
   POPULATED_FAILURE_STEP_TEXT,
   POPULATED_PASSING_STEP_TEXT,
+  POPULATED_SECOND_TEST_PATH,
   POPULATED_TARGET_NAME,
   populatedRunFixtureProject,
   populatedRunSpawnEnv,
@@ -36,6 +44,11 @@ const SPAWN_BUDGET_MS = 240_000
 const HOLD_BUDGET_MS = 120_000
 const BROWSER_SELF_EXIT_MS = 10_000
 const POLL_MS = 50
+const PENDING_BUDGET_MS = 600_000
+// The stalled leg refuses its held author once the tail's budget has passed since the request
+// arrived; the bound is a ceiling on that wait, never the wait itself.
+const STALL_BOUND_MS = DRAIN_BUDGET_MS + 60_000
+const EXIT_AFTER_REFUSAL_BOUND_MS = 30_000
 
 // The child's execution context is resolved from the environment this file builds for it (stdio
 // is piped, so never a TTY): `CI` is forwarded from this process and nothing else is.
@@ -45,6 +58,16 @@ const CHILD_CONTEXT = isTruthy(FORWARDED_CI) ? 'ci' : 'local-headless'
 const CRASH_TEST_PATH = 'tests/444-crash.test.yaml'
 const CRASH_HOLD_MARKER = 'once the operator lifts the crash hold'
 const BROWSER_CLOSED_SENTENCE = 'The browser closed before this test finished.'
+const PENDING_FILE = 'post-verdict-pending.json'
+
+// D-22, `post-run-tail.ts`'s `CI_PENDING_SUFFIX` and `STAGE_DRAINER`. Outside `ci` the suffix comes
+// from the drain's posture, and `detached`, `retry-scheduled` and `budget-exhausted` all map to `none`.
+const CI_PENDING_SUFFIX = {
+  'any-host': " (resumes only if this workspace's .agent-qa/ is kept and a later run or the daemon picks it up)",
+  'masked-leg-only': " (resumes only if this workspace's .agent-qa/ is kept and a later local run picks it up)",
+} as const
+const STAGE_DRAINER = { analysis: 'any-host', curation: 'masked-leg-only' } as const
+type Stage = keyof typeof STAGE_DRAINER
 // The Completed tab's request (D-02): every finished word.
 const FINISHED_WORDS = ['passed', 'healed', 'failed', 'timeout', 'cancelled'] as const
 
@@ -102,6 +125,60 @@ interface CrashFacts {
   error?: string
 }
 
+interface FileHash {
+  readonly path: string
+  readonly sha256: string
+  readonly bytes: number
+}
+
+interface RunSnapshot {
+  readonly label: string
+  readonly runDir?: string
+  readonly files: FileHash[]
+  readonly pendingPreparation: boolean
+  readonly eventsThroughRunFinished?: { readonly lines: number; readonly sha256: string }
+  readonly row: RowView | string
+}
+
+interface JobRow {
+  readonly kind: string
+  readonly status: string
+  readonly attempts: number
+  readonly lastFailureKind: string | null
+}
+
+interface PostProcessingRead {
+  readonly status: number
+  readonly body: unknown
+}
+
+interface PendingLeg {
+  readonly key: 'stalled' | 'detached'
+  readonly runId: string
+  readonly testPath: string
+  readonly flags: readonly string[]
+  startedAt?: number
+  reached?: 'held' | 'ended' | 'timeout'
+  heldAt?: number
+  refuseAt?: number
+  refusedAt?: number
+  refused?: number
+  aliveAtRefuse?: boolean
+  analysisRequestsAtRefuse?: Array<{ kind: string; status: number }>
+  exitedAt?: number
+  exit?: { code: number | null; signal: NodeJS.Signals | null }
+  exitLines?: string[]
+  exitLineStreams?: string[]
+  printed?: boolean
+  recordedVerdict?: unknown
+  analysisRequestsAtExit?: Array<{ kind: string; status: number }>
+  jobsAtExit?: JobRow[] | string
+  atExit?: RunSnapshot
+  postProcessingAtExit?: PostProcessingRead
+  output?: string
+  error?: string
+}
+
 interface Shared {
   readonly project: PopulatedRunProject
   readonly model: StubModelServer
@@ -131,6 +208,7 @@ async function sharedProject(): Promise<Shared> {
     plannerOutcome: 'stepFailed',
     failOnlyStepText: POPULATED_FAILURE_STEP_MARKER,
     holdOnlyStepText: CRASH_HOLD_MARKER,
+    holdAnalysis: true,
   })
   const project = populatedRunFixtureProject('444-crash-pending-resume', {
     modelBaseUrl: model.baseUrl,
@@ -244,6 +322,102 @@ async function overview(project: PopulatedRunProject, runId: string): Promise<Ov
   return { code: read.code, stdout: read.stdout, stderr: read.stderr.trim() }
 }
 
+function sha256(bytes: Buffer | string): string {
+  return createHash('sha256').update(bytes).digest('hex')
+}
+
+function byName(a: { name: string }, b: { name: string }): number {
+  return a.name < b.name ? -1 : a.name > b.name ? 1 : 0
+}
+
+function listFiles(dir: string, prefix = ''): FileHash[] {
+  const files: FileHash[] = []
+  for (const entry of readdirSync(dir, { withFileTypes: true }).sort(byName)) {
+    const path = prefix === '' ? entry.name : `${prefix}/${entry.name}`
+    const full = join(dir, entry.name)
+    if (entry.isDirectory()) {
+      files.push(...listFiles(full, path))
+    } else if (entry.isFile()) {
+      const bytes = readFileSync(full)
+      files.push({ path, sha256: sha256(bytes), bytes: bytes.length })
+    } else {
+      files.push({ path, sha256: 'not a regular file', bytes: -1 })
+    }
+  }
+  return files
+}
+
+function eventsThroughRunFinished(dir: string): RunSnapshot['eventsThroughRunFinished'] {
+  const lines = readFileSync(join(dir, 'events.jsonl'), 'utf8').split('\n')
+  const index = lines.findIndex((line) => {
+    try { return (JSON.parse(line) as Envelope).type === 'runFinished' } catch { return false }
+  })
+  if (index < 0) return undefined
+  return { lines: index + 1, sha256: sha256(`${lines.slice(0, index + 1).join('\n')}\n`) }
+}
+
+// Every file under the run's directory with its sha256, the log through `runFinished` and the
+// row; whether preparation was still pending is read beside them (D-37's precondition).
+function snapshotRun(project: PopulatedRunProject, runId: string, label: string): RunSnapshot {
+  const dir = runDirOf(project, runId)
+  if (dir === undefined) return { label, files: [], pendingPreparation: false, row: readRow(project, runId) }
+  return {
+    label,
+    runDir: dir.slice(project.agentQaRoot.length + 1),
+    files: listFiles(dir),
+    pendingPreparation: existsSync(join(dir, PENDING_FILE)),
+    eventsThroughRunFinished: eventsThroughRunFinished(dir),
+    row: readRow(project, runId),
+  }
+}
+
+function jobRows(project: PopulatedRunProject, runId: string): JobRow[] | string {
+  const path = join(project.agentQaRoot, 'agent-jobs.db')
+  if (!existsSync(path)) return 'absent: no agent-jobs.db'
+  try {
+    const db = new DatabaseSync(path, { readOnly: true, timeout: 5_000 })
+    try {
+      const rows = db.prepare(
+        `SELECT kind, status, attempts, last_failure_kind FROM jobs
+         WHERE json_extract(payload, '$.runId') = ? ORDER BY created_at, kind`,
+      ).all(runId) as Array<{ kind: string; status: string; attempts: number; last_failure_kind: string | null }>
+      return rows.map((row) => ({
+        kind: row.kind,
+        status: row.status,
+        attempts: Number(row.attempts),
+        lastFailureKind: row.last_failure_kind,
+      }))
+    } finally {
+      db.close()
+    }
+  } catch (error) {
+    return `unreadable: ${message(error)}`
+  }
+}
+
+function analysisRequests(model: StubModelServer, from: number): Array<{ kind: string; status: number }> {
+  return model.requests.slice(from)
+    .filter((request) => request.kind === 'held-analysis' || request.kind === 'analysis')
+    .map(({ kind, status }) => ({ kind, status }))
+}
+
+async function postProcessingReads(
+  project: PopulatedRunProject,
+  runIds: readonly string[],
+): Promise<PostProcessingRead[]> {
+  const scene = await openDashboardScene(project)
+  scenes.push(scene)
+  try {
+    const reads: PostProcessingRead[] = []
+    for (const runId of runIds) {
+      reads.push(await getJson(`${scene.origin}/api/runs/${encodeURIComponent(runId)}/post-processing`))
+    }
+    return reads
+  } finally {
+    await scene.close()
+  }
+}
+
 async function getJson(url: string): Promise<{ status: number; body: unknown }> {
   const response = await fetch(url)
   const text = await response.text()
@@ -336,6 +510,113 @@ async function driveCrash(): Promise<void> {
     await scene.close()
   }
   crash.overviewAfterCleanup = await overview(project, runId)
+}
+
+const pending: { stalled?: PendingLeg; detached?: PendingLeg; error?: string } = {}
+
+function pendingLeg(key: PendingLeg['key'], testPath: string, flags: readonly string[]): PendingLeg {
+  return { key, runId: generateRunId(), testPath, flags }
+}
+
+function readExit(project: PopulatedRunProject, leg: PendingLeg, ended: Spawned): void {
+  leg.exit = { code: ended.code, signal: ended.signal }
+  const exitLine = (line: string): boolean => line.startsWith('post-processing — ')
+  leg.exitLines = [...ended.stdout.split('\n'), ...ended.stderr.split('\n')].filter(exitLine)
+  leg.exitLineStreams = [
+    ...ended.stdout.split('\n').filter(exitLine).map(() => 'stdout'),
+    ...ended.stderr.split('\n').filter(exitLine).map(() => 'stderr'),
+  ]
+  const output = `${ended.stdout}\n${ended.stderr}`
+  leg.printed = printedRunIds(output).includes(leg.runId)
+  leg.recordedVerdict = loggedEvents(project, leg.runId).find((event) => event.type === 'verdict')?.payload
+  leg.jobsAtExit = jobRows(project, leg.runId)
+  leg.atExit = snapshotRun(project, leg.runId, 'at exit')
+  leg.output = output.slice(-3_000)
+}
+
+// D-56: a failed run whose analyze-run author is held. Once the tail's budget has passed since the
+// request arrived, the request is refused; attempt 1 becomes a retry and the tail starts nothing more.
+async function driveStalled(): Promise<void> {
+  const { project, model } = await sharedProject()
+  const leg = pendingLeg('stalled', project.testPath, [])
+  pending.stalled = leg
+  const held = model.held.count()
+  const fromRequest = model.requests.length
+  leg.startedAt = Date.now()
+  const run = startCli(project, ['run', leg.testPath, ...leg.flags], leg.runId)
+  leg.reached = await untilHeld(model, held, () => exited(run.child))
+  if (leg.reached !== 'held') {
+    readExit(project, leg, await run.closed)
+    return
+  }
+  leg.heldAt = model.requests.slice(fromRequest).filter((request) => request.kind === 'held-analysis').at(-1)?.at
+  if (leg.heldAt === undefined) throw new Error('the held turn is not the analyze-run author')
+  leg.refuseAt = leg.heldAt + DRAIN_BUDGET_MS
+  while (Date.now() <= leg.refuseAt) {
+    if (exited(run.child)) break
+    if (Date.now() >= leg.heldAt + STALL_BOUND_MS) throw new Error('the stall bound passed before the refusal')
+    await new Promise((tick) => setTimeout(tick, 25))
+  }
+  leg.aliveAtRefuse = !exited(run.child)
+  leg.analysisRequestsAtRefuse = analysisRequests(model, fromRequest)
+  leg.refusedAt = Date.now()
+  leg.refused = model.held.refuse()
+  const ended = await run.closed
+  leg.exitedAt = Date.now()
+  leg.analysisRequestsAtExit = analysisRequests(model, fromRequest)
+  readExit(project, leg, ended)
+  ;[leg.postProcessingAtExit] = await postProcessingReads(project, [leg.runId])
+}
+
+async function driveDetached(): Promise<void> {
+  const { project, model } = await sharedProject()
+  const leg = pendingLeg('detached', POPULATED_SECOND_TEST_PATH, ['--detach'])
+  pending.detached = leg
+  const fromRequest = model.requests.length
+  leg.startedAt = Date.now()
+  const ended = await cli(project, ['run', leg.testPath, ...leg.flags], leg.runId)
+  leg.exitedAt = Date.now()
+  leg.analysisRequestsAtExit = analysisRequests(model, fromRequest)
+  readExit(project, leg, ended)
+  ;[leg.postProcessingAtExit] = await postProcessingReads(project, [leg.runId])
+}
+
+function pendingWord(stage: Stage): string {
+  return `pending${CHILD_CONTEXT === 'ci' ? CI_PENDING_SUFFIX[STAGE_DRAINER[stage]] : ''}`
+}
+
+function stageWords(line: string | undefined): { analysis?: string; curation?: string } {
+  return {
+    analysis: /analysis: ([a-z-]+)/u.exec(line ?? '')?.[1],
+    curation: /curation: ([a-z-]+)/u.exec(line ?? '')?.[1],
+  }
+}
+
+function chipsOf(read: PostProcessingRead | undefined): unknown {
+  return (read?.body as { status?: { chips?: unknown } } | undefined)?.status?.chips
+}
+
+function hasSkipped(read: PostProcessingRead | undefined): boolean {
+  const status = (read?.body as { status?: Record<string, unknown> } | undefined)?.status
+  return status !== undefined && 'skipped' in status
+}
+
+function expectPendingAtExit(leg: PendingLeg | undefined, verdict: 'passed' | 'failed', at: string): PendingLeg {
+  expect(pending.error, at).toBeUndefined()
+  expect(leg, at).toBeDefined()
+  const run = leg as PendingLeg
+  expect(run.error, at).toBeUndefined()
+  expect(run.recordedVerdict, `${run.key}'s verdict\n${at}`).toEqual({ verdict })
+  expect(run.exit, `${run.key} exits with its verdict's code\n${at}`)
+    .toEqual({ code: verdict === 'passed' ? 0 : 1, signal: null })
+  expect(run.printed, `${run.key}'s run id was printed\n${at}`).toBe(true)
+  expect(run.exitLines?.length, `${run.key}'s one exit line\n${at}`).toBe(1)
+  expect(run.exitLines?.[0]?.startsWith(
+    `post-processing — analysis: ${pendingWord('analysis')} · curation: ${pendingWord('curation')} · `,
+  ), `${run.key}'s exit line (${CHILD_CONTEXT})\n${at}`).toBe(true)
+  expect(run.postProcessingAtExit?.status, at).toBe(200)
+  expect(hasSkipped(run.postProcessingAtExit), `${run.key} has no skipped fact\n${at}`).toBe(false)
+  return run
 }
 
 function seen(facts: unknown): string {
@@ -445,5 +726,68 @@ describe('C444-CRASH', () => {
       stdout: '',
       stderr: `agent-qa runs overview: Run ${runId} ended before it reached a verdict. Its record is in the dashboard.`,
     })
+  })
+})
+
+describe('C444-PENDING-AT-EXIT', () => {
+  beforeAll(async () => {
+    refuseWithoutRecordingTools()
+    if (process.platform === 'win32') throw new Error('POSIX run lifecycle required; never skip')
+    try {
+      await driveStalled()
+      await driveDetached()
+    } catch (error) {
+      pending.error = message(error)
+    }
+    console.info(`C444-PENDING-AT-EXIT (${CHILD_CONTEXT}): ${JSON.stringify(pending)}`)
+  }, PENDING_BUDGET_MS)
+
+  it("a stalled drainer's run exits with its verdict's code and reports its stages as durable state does", () => {
+    const at = seen(pending)
+    const run = expectPendingAtExit(pending.stalled, 'failed', at)
+    expect(run.reached, `the analyze-run author was held\n${at}`).toBe('held')
+    // The refusal came only once the tail's budget had passed since the request arrived, with the
+    // run still waiting on it.
+    expect(run.aliveAtRefuse, at).toBe(true)
+    expect(run.refusedAt! > run.heldAt! + DRAIN_BUDGET_MS, at).toBe(true)
+    expect(run.analysisRequestsAtRefuse, at).toEqual([{ kind: 'held-analysis', status: 0 }])
+    expect(run.refused, `exactly the held author was refused\n${at}`).toBe(1)
+    // Attempt 1 became a retry and the tail started nothing more: one refused request, and the
+    // run left promptly.
+    expect(run.analysisRequestsAtExit, at).toEqual([{ kind: 'held-analysis', status: 0 }, { kind: 'analysis', status: 400 }])
+    expect(run.exitedAt! - run.refusedAt!, at).toBeLessThan(EXIT_AFTER_REFUSAL_BOUND_MS)
+    expect(Array.isArray(run.jobsAtExit), at).toBe(true)
+    expect((run.jobsAtExit as JobRow[]).filter((job) => job.kind === 'analyze-run'), at).toEqual([
+      { kind: 'analyze-run', status: 'queued', attempts: 1, lastFailureKind: 'retry' },
+    ])
+    // The CLI line's words are the dashboard's post-exit read, and neither is a finished word.
+    const words = stageWords(run.exitLines?.[0])
+    expect(chipsOf(run.postProcessingAtExit), at).toEqual(words)
+    for (const word of [words.analysis, words.curation]) {
+      expect(['complete', 'failed'], at).not.toContain(word)
+    }
+    expect(words, at).toEqual({ analysis: 'pending', curation: 'pending' })
+  })
+
+  it('a detached run exits with its verdict\'s code and reads pending on the CLI and the dashboard', () => {
+    const at = seen(pending)
+    const run = expectPendingAtExit(pending.detached, 'passed', at)
+    expect(run.analysisRequestsAtExit, `a detached run spends nothing on its chain\n${at}`).toEqual([])
+    expect(chipsOf(run.postProcessingAtExit), at).toEqual({ analysis: 'pending', curation: 'pending' })
+    expect(Array.isArray(run.jobsAtExit), at).toBe(true)
+    expect((run.jobsAtExit as JobRow[]).filter((job) => job.kind === 'analyze-run'), at).toEqual([
+      { kind: 'analyze-run', status: 'queued', attempts: 0, lastFailureKind: null },
+    ])
+  })
+
+  it('neither run left preparation pending at exit', () => {
+    const at = seen(pending)
+    expect(pending.error, at).toBeUndefined()
+    for (const run of [pending.stalled, pending.detached]) {
+      expect(run?.atExit?.runDir, at).toBeDefined()
+      expect(run?.atExit?.pendingPreparation, `${run?.key}: ${PENDING_FILE} absent at exit\n${at}`).toBe(false)
+      expect(run?.atExit?.files.map((file) => file.path), at).not.toContain(PENDING_FILE)
+      expect(run?.atExit?.files.map((file) => file.path), at).toContain('handoff.json')
+    }
   })
 })

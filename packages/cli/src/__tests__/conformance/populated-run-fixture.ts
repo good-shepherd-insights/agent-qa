@@ -403,7 +403,7 @@ export interface RecordedStubRequest {
   readonly method: string
   readonly path: string
   /** Which arm answered it — the dispatch decision, recorded rather than re-derived. */
-  readonly kind: 'planner' | 'held' | 'structured' | 'analysis' | 'text' | 'unknown'
+  readonly kind: 'planner' | 'held' | 'held-analysis' | 'structured' | 'analysis' | 'text' | 'unknown'
   readonly status: number
   /** Whether the planner arm resolved a live `ref` out of the observation, or fell back. */
   readonly grounding?: 'ref' | 'descriptor'
@@ -446,6 +446,9 @@ export interface StubHeldTurns {
   count(): number
   aborted(): number
   release(): void
+  // 2026-10-18 (444-19, D-56): answer every turn still parked with a 400 and keep the hold armed;
+  // returns how many turns it refused.
+  refuse(): number
 }
 
 interface ChatCompletionsBody {
@@ -796,6 +799,9 @@ export interface StubModelServerOptions {
   // 2026-10-17 (444-01, D-12): a planning turn whose prompt carries this text is not answered until
   // `held.release()`; like `failOnlyStepText`, it must survive the runner's secret redaction.
   readonly holdOnlyStepText?: string
+  // 2026-10-18 (444-19, D-56): the analyze-run author's request (the `ANALYSIS_PROMPT_MARKER` arm)
+  // is parked with the held turns; `held.release()` answers it through the analysis arms below.
+  readonly holdAnalysis?: boolean
 }
 
 export async function startStubModelServer(
@@ -806,7 +812,11 @@ export async function startStubModelServer(
   const { failOnlyStepText, holdOnlyStepText } = options
   const requests: RecordedStubRequest[] = []
   let citedRoot: string | undefined
-  const parked: Array<{ readonly res: ServerResponse; readonly answer: () => void }> = []
+  const parked: Array<{
+    readonly res: ServerResponse
+    readonly answer: () => void
+    readonly refuse: () => void
+  }> = []
   let heldCount = 0
   let abortedCount = 0
   let released = false
@@ -908,7 +918,14 @@ export async function startStubModelServer(
           res.once('close', () => {
             if (!res.writableEnded) abortedCount += 1
           })
-          parked.push({ res, answer: () => { answerPlanner(false) } })
+          parked.push({
+            res,
+            answer: () => { answerPlanner(false) },
+            refuse: () => {
+              record('planner', 400)
+              refuse('the populated-run stub refuses a held planning turn on purpose')
+            },
+          })
           markArrived()
           return
         }
@@ -955,35 +972,56 @@ export async function startStubModelServer(
         return
       }
 
-      // The FOURTH arm (406-07 · D-14), between `structured` and the prose fallback. It is
-      // reached only when the caller asked for it AND the prompt carries the author's own
-      // `agent_context` line, so every other plain-text call still lands on the fallback below.
-      if (analysisOutcome === 'authored' && prompt.includes(ANALYSIS_PROMPT_MARKER)) {
-        record('analysis', 200)
+      const answerText = (): void => {
+        // The FOURTH arm (406-07 · D-14), between `structured` and the prose fallback. It is
+        // reached only when the caller asked for it AND the prompt carries the author's own
+        // `agent_context` line, so every other plain-text call still lands on the fallback below.
+        if (analysisOutcome === 'authored' && prompt.includes(ANALYSIS_PROMPT_MARKER)) {
+          record('analysis', 200)
+          respond(chatCompletion(
+            model,
+            {
+              role: 'assistant',
+              content: authoredVerdictAnswer(decisionScreenshotRefs(citedRoot)),
+            },
+            'stop',
+            { prompt: 3_402, completion: 196 },
+          ))
+          return
+        }
+
+        if (analysisOutcome === 'error' && prompt.includes(ANALYSIS_PROMPT_MARKER)) {
+          record('analysis', 400)
+          refuse('the populated-run stub refuses the analyze-run author on purpose')
+          return
+        }
+        record('text', 200)
         respond(chatCompletion(
           model,
-          {
-            role: 'assistant',
-            content: authoredVerdictAnswer(decisionScreenshotRefs(citedRoot)),
-          },
+          { role: 'assistant', content: 'The populated conformance run acknowledged one notice.' },
           'stop',
-          { prompt: 3_402, completion: 196 },
+          { prompt: 208, completion: 12 },
         ))
-        return
       }
 
-      if (analysisOutcome === 'error' && prompt.includes(ANALYSIS_PROMPT_MARKER)) {
-        record('analysis', 400)
-        refuse('the populated-run stub refuses the analyze-run author on purpose')
+      if (options.holdAnalysis === true && !released && prompt.includes(ANALYSIS_PROMPT_MARKER)) {
+        record('held-analysis', 0)
+        heldCount += 1
+        res.once('close', () => {
+          if (!res.writableEnded) abortedCount += 1
+        })
+        parked.push({
+          res,
+          answer: answerText,
+          refuse: () => {
+            record('analysis', 400)
+            refuse('the populated-run stub refuses the held analyze-run author on purpose')
+          },
+        })
+        markArrived()
         return
       }
-      record('text', 200)
-      respond(chatCompletion(
-        model,
-        { role: 'assistant', content: 'The populated conformance run acknowledged one notice.' },
-        'stop',
-        { prompt: 208, completion: 12 },
-      ))
+      answerText()
     })().catch(() => {
       // A stub that threw mid-response would hang the run rather than fail it. The refusal is the
       // honest answer and the recorded trail carries the shape that produced it.
@@ -1013,6 +1051,15 @@ export async function startStubModelServer(
         for (const turn of parked.splice(0)) {
           if (!turn.res.destroyed && !turn.res.writableEnded) turn.answer()
         }
+      },
+      refuse: () => {
+        let refused = 0
+        for (const turn of parked.splice(0)) {
+          if (turn.res.destroyed || turn.res.writableEnded || turn.res.socket?.destroyed === true) continue
+          turn.refuse()
+          refused += 1
+        }
+        return refused
       },
     },
     close: closer(server),
