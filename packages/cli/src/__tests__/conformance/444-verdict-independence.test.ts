@@ -75,9 +75,11 @@ interface Drain {
 interface Reads {
   overviewVerdict?: string
   overviewCuration?: string
+  overviewSkipped?: unknown
   digestChainLines?: string[]
   mcpOverviewVerdict?: string
   mcpOverviewCuration?: string
+  mcpOverviewSkipped?: unknown
   mcpDigestChain?: unknown
   mcpDigestChainLines?: string[]
   dashboardStatus?: string
@@ -85,10 +87,13 @@ interface Reads {
   errors: string[]
 }
 
-// `runs.overview` carries the verdict and, in its Learned half, the curation chip only.
+// `runs.overview` carries the verdict and, in its Learned half, the curation chip and, for a chain
+// that was never enqueued, the skipped fact beside it (2026-10-18, 444-26, D-61).
 interface OverviewDocument {
   readonly aggregateVerdict?: string
-  readonly learned?: { readonly curation?: { readonly status?: string } }
+  readonly learned?: {
+    readonly curation?: { readonly status?: string; readonly skipped?: { readonly reason?: string } }
+  }
 }
 
 interface Leg {
@@ -302,6 +307,7 @@ async function readLeg(project: PopulatedRunProject, leg: Leg, mcp: Client, dash
     const document = JSON.parse(overview.stdout) as OverviewDocument
     reads.overviewVerdict = document.aggregateVerdict
     reads.overviewCuration = document.learned?.curation?.status
+    reads.overviewSkipped = document.learned?.curation?.skipped
   } catch (error) {
     reads.errors.push(`runs overview: exit ${String(overview.code)} ${message(error)} ${overview.stderr.slice(0, 500)}`)
   }
@@ -317,6 +323,7 @@ async function readLeg(project: PopulatedRunProject, leg: Leg, mcp: Client, dash
     const document = result.structuredContent as OverviewDocument
     reads.mcpOverviewVerdict = document.aggregateVerdict
     reads.mcpOverviewCuration = document.learned?.curation?.status
+    reads.mcpOverviewSkipped = document.learned?.curation?.skipped
   } catch (error) {
     reads.errors.push(`agent_qa_get_run_overview: ${message(error)}`)
   }
@@ -452,6 +459,7 @@ function expectLeg(
     readonly exitLine: StageWords
     readonly chain: StageWords & { readonly skipped?: { reason: string } }
     readonly chainLine: string
+    readonly overviewSkipped: { reason: string } | undefined
   },
 ): void {
   expect(scene.error, seen()).toBeUndefined()
@@ -474,6 +482,9 @@ function expectLeg(
   expect(reads?.overviewCuration, `${key}'s runs overview curation chip\n${seen()}`).toBe(expected.chain.curation)
   expect(reads?.mcpOverviewCuration, `${key}'s agent_qa_get_run_overview curation chip\n${seen()}`)
     .toBe(expected.chain.curation)
+  expect(reads?.overviewSkipped, `${key}'s runs overview skipped fact\n${seen()}`).toEqual(expected.overviewSkipped)
+  expect(reads?.mcpOverviewSkipped, `${key}'s agent_qa_get_run_overview skipped fact\n${seen()}`)
+    .toEqual(expected.overviewSkipped)
   expect(reads?.postProcessing?.status, `${key}'s post-processing read\n${seen()}`).toBe(200)
   const body = (reads?.postProcessing?.body as { status?: { chips?: unknown; skipped?: unknown } } | undefined)?.status
   expect(body?.chips, `${key}'s dashboard chips\n${seen()}`)
@@ -509,6 +520,7 @@ function expectGateLeg(key: string): void {
     exitLine: { analysis: skipped, curation: skipped },
     chain: { analysis: 'pending', curation: 'pending', skipped: { reason: 'gate-run' } },
     chainLine: `chain — analysis: ${skipped} · curation: ${skipped}`,
+    overviewSkipped: { reason: 'gate-run' },
   })
 }
 
@@ -517,6 +529,7 @@ function expectDetachedLeg(key: string): void {
     exitLine: { analysis: pendingWord('analysis'), curation: pendingWord('curation') },
     chain: { analysis: 'pending', curation: 'pending' },
     chainLine: 'chain — analysis: pending · curation: pending',
+    overviewSkipped: undefined,
   })
 }
 
@@ -570,6 +583,7 @@ describe('C444-VERDICT-INDEPENDENCE', () => {
       exitLine: { analysis: pendingWord('analysis'), curation: pendingWord('curation') },
       chain: { analysis: 'failed', curation: 'pending' },
       chainLine: 'chain — analysis: failed · curation: pending',
+      overviewSkipped: undefined,
     })
   })
 
