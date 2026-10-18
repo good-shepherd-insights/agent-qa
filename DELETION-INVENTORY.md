@@ -5899,3 +5899,139 @@ The round's record gate measures agent-qa HEAD after this subsection lands. Its 
 verdict are recorded in `.planning/phases/444-truthful-lifecycle/444-RECORD.md` § Gap-closure round
 (`### Gate (gap-closure round)`) and the SHA in its `### Final SHA (gap-closure round)`, rather
 than quoted here, so no agent-qa commit follows it.
+
+### Gap closure round 2 (444-30 to 444-32), 2026-10-18
+
+This subsection appends to the Phase 444 section, after the first round's subsection; written by
+444-32, which changed no earlier line. It follows the re-verification,
+`.planning/phases/444-truthful-lifecycle/444-VERIFICATION.md` (agent-qa `57ed2ea7f`, 11 of 13
+truths). Its two gaps are the code review's WR-04 and WR-05: a terminal hang-up under interactive
+zsh delivers SIGHUP twice, about 1 ms apart, and the shutdown controller took the second delivery
+as a repeated Ctrl+C and force-exited before `runFinished` and the run id (the SC3 gap); and the
+Tests and Suites pages rated a test or a suite over the workspace's 200 most recent runs while its
+viewer rated it over its whole history, so past 200 runs one test read two rates (the D-59 gap).
+The orchestrator settled the round on 2026-10-18 under the owner's delegation, in `444-CONTEXT.md`
+§ Settled at re-verification: D-63 (a hang-up is one cancel however many SIGHUPs arrive, amending
+D-60) and D-64 (a test's and a suite's pass rate cover one set of runs on every surface, amending
+D-59, with its two amendments: the last run comes from the same read, and a refused scope empties
+the cells with one toast). Every commit below is in agent-qa on `version-0.2` and signed. Every new
+cell is listed in `scripts/gate/inputs/regressions.json` with its area's `444 D-NN` origin, after
+the 2264 rows listed at `57ed2ea7f`, which are unchanged and in order (Registered gate rows, below).
+
+**How it is measured.** Baseline `57ed2ea7f` (the first round's final SHA, 444-28's inventory
+commit). Closing SHA `1430e7ec1` (444-32's gate list, the parent of the commit that completes this
+subsection). `git -C agent-qa diff --shortstat 57ed2ea7f 1430e7ec1`: 18 files changed, 1,818
+insertions, 180 deletions (under `packages/`: 16 files, +1,716/−179; the other two are
+`docs/ci.md`, +6/−1, and `regressions.json`, +96). `--diff-filter=D`: no file deleted.
+`--diff-filter=A`: 3 files added, all test files (`cli/src/commands/__tests__/444-hangup-once.test.ts`,
+`dashboard-server/src/__tests__/444-rate-window.test.ts` and
+`dashboard-ui/src/pages/__tests__/444-rate-window.test.tsx`). 11 commits, every one signed (`%G?` =
+`G`): 444-30's three (`728b4227d`, `df6559029`, `170948852`), 444-31's six (`ba041e466`,
+`c0ec64b5f`, `8814d48de`, `aff572569`, `5fb185a6e`, `45679fcad`) and 444-32's two (`994def984`,
+the `docs/ci.md` correction, and `1430e7ec1`, the gate list). 5 production files changed:
+`cli/src/commands/shutdown-controller.ts`; `dashboard-server/src/server/routes.ts`;
+`dashboard-ui/src/lib/api.ts`, `pages/suites.tsx` and `pages/tests.tsx`. `dashboard-server`'s
+`db/database.ts` and `db/schema.ts` are unchanged; no database member was added. The golden ledger
+(`cli/src/__tests__/conformance/golden-registry.json`) and the capability catalog
+(`cli/capability-catalog/capability-catalog.json`) did not move, and `scripts/397-regen-golden.sh`
+and `scripts/398-regen-catalog.sh`, run unaided, print `nothing to change`. The removed lines below
+are read from each deleting commit's diff (`git -C agent-qa show <sha>`), not transcribed from a
+summary. Names are at `57ed2ea7f`.
+
+#### What was deleted
+
+| Member (file at `57ed2ea7f`) | What it did | Deleting commit | The cell that notices its return |
+|---|---|---|---|
+| the Tests page's client-side rate fold: `decided` (the history entries whose status classifies `pass` or `fail`), `passCount` over it and `passRate = Math.round((passCount / decided.length) * 100)`, over each test's `sortedHistory` (`dashboard-ui/src/pages/tests.tsx`) | rated a test over its members on the workspace's 200 most recent runs, so past 200 runs it read 100% (5/5) where its viewer read 33% (5/15) (WR-05) | `c0ec64b5f` (444-31); the rate is the batch row's `passRate`, `passed` and `decided`, from the viewer's `getTestTrends` fold | `C444-RATE-WINDOW the Tests page reads each test's rate from one batch read, not from its 200-run page`; `C444-RATE-WINDOW the Tests page prints a server rate as the test viewer prints it` |
+| the Suites page's client-side rate fold: `decidedRuns` (the suite's runs whose status classifies `pass` or `fail`), `passCount` over it and `passRate` (`pages/suites.tsx`) | the same window on the Suites page | `aff572569` (444-31); from the batch row's `getSuiteTrends` fold | `C444-RATE-WINDOW the Suites page reads each suite's rate from one batch read, not from its 200-run page`; `C444-RATE-WINDOW the Suites page prints a server rate as the suite viewer prints it` |
+| the Tests page's client-side last-run selection over the 200-run page: the member-history maps `historyByExactPath` and `historyByStrippedPath` (the path-without-first-segment fallback through `stripDisplayPrefix`), `appendEntry`, `MemberHistoryEntry`, `sortedHistory` and its `sortedHistory[0]`, and `getRunTimestamp` with its `endedAt` fallback (`tests.tsx`) | picked each test's last run, badge, link and time from the 200-run page, so a test whose runs had all left it read `No runs` | `c0ec64b5f` (444-31); the last run is the batch row's `lastRun`, the viewer's first listed run (`getRunsByTest(ref, { limit: 1 })`) with its member outcome | `C444-RATE-WINDOW the Tests page reads each test's last run from the batch read, and No runs means no run at all` |
+| the Suites page's client-side last-run selection over the 200-run page: the run-to-suite map `runsBySuiteId`, `sortedRuns` and its `sortedRuns[0]`, and `latestTargetedRun`, which chose the row's target and platform (`suites.tsx`) | picked each suite's last run, target and platform from the 200-run page, so a suite whose runs had all left it read `No runs` and `No target` | `aff572569` (444-31); from the batch row's `lastRun` (`getRunsBySuiteId(suiteId)[0]`), `targetName` and `platform` (`enrichRunRow` over the suite's own history) | `C444-RATE-WINDOW the Suites page reads each suite's last run, target and platform from the batch read, and No runs means no run at all` |
+| the Tests page's `fetchRuns({ limit: 200 })` read and its `runs` state (`tests.tsx`) | the one source of every per-row figure on the page | `c0ec64b5f` (444-31) | the three Tests-page `C444-RATE-WINDOW` cells (each counts no `/api/runs` request and one batch request); `git -C agent-qa grep -n fetchRuns -- packages/dashboard-ui/src/pages/tests.tsx` prints nothing |
+| the Suites page's `fetchRuns({ limit: 200 })` read and its `runs` state (`suites.tsx`) | the same on the Suites page | `aff572569` (444-31) | the three Suites-page `C444-RATE-WINDOW` cells; `git -C agent-qa grep -n fetchRuns -- packages/dashboard-ui/src/pages/suites.tsx` prints nothing |
+
+**Changed with no member deleted** (each read from its commit):
+
+| Before (file at `57ed2ea7f`) | After | Commit | The cell that pins it |
+|---|---|---|---|
+| `createShutdownController`'s `handleSignal` took no signal name and counted every signal, so the second delivery of a terminal's hang-up force-exited 130 before `runFinished` and the run id (`cli/src/commands/shutdown-controller.ts`) | `handleSignal(signal?: NodeJS.Signals)`; a SIGHUP after the first signal returns before it is counted, so it never cancels again, arms the grace timer again or force-exits. A second SIGINT or SIGTERM still force-exits 130, and a call with no name still counts (D-63) | `df6559029` (444-30) | the four `C444-HANGUP-ONCE` cells; `C444-CTRL-C-OWNED two SIGHUPs 1 ms apart end a held direct run through agent-qa run's own path` |
+| `docs/ci.md`'s hang-up paragraph promised `cancelled` and exit 130 for a terminal close, which held for one SIGHUP only | it says a terminal close may deliver the hang-up twice and the run still ends once, as `cancelled`, with exit 130; and that a second Ctrl+C or a SIGTERM still stops the run at once, with exit 130, even before the run reaches its verdict | `170948852` (444-30), corrected by `994def984` (444-32), which replaced "with exit 130 and no verdict" | `C444-CI-RECIPE` and `C444-CI-UPLOAD` (no fence added, no reporter flag named) |
+| every per-row figure on the Tests and Suites pages came from the 200-run page | the rate, the last run with its badge, link and time, the status and No-runs filters, the Last run sort and the Suites page's platform and target all come from `GET /api/analytics/test-summaries` and `GET /api/analytics/suite-summaries` (`dashboard-server/src/server/routes.ts`, `dashboard-ui/src/lib/api.ts`), one request per page load; the rate is the viewer's fold under `analytics.passRateScope` exactly as the viewer's headline, and the last run is unscoped, as the viewer's run list is. `No runs` now means the test or suite has no run at all (D-64 as amended) | `c0ec64b5f`, `aff572569`, `45679fcad` (444-31) | the eleven `C444-RATE-WINDOW` cells |
+| a row with no run on the 200-run page read `No runs` and an em dash | a row the batch read has not named, or every row after a failed read, renders empty rate, last-run and target cells and sits under no status filter; the em dash only means no rate and `No runs` only means no run | `c0ec64b5f`, `aff572569` (444-31) | `C444-RATE-WINDOW the Tests page reads each test's last run from the batch read, and No runs means no run at all`; `C444-RATE-WINDOW the Suites page reads each suite's last run, target and platform from the batch read, and No runs means no run at all` |
+
+No file was deleted and no registered cell was removed. The round's 16 new cells, by area and
+origin: `C444-HANGUP-ONCE` 4 (`444 D-63`), `C444-CTRL-C-OWNED` 1 (`444 D-46`, amended by D-63, as
+D-60 amended it) and `C444-RATE-WINDOW` 11 (`444 D-64`: 5 server cells, 6 page cells).
+
+#### Registered gate rows
+
+The 2264 rows listed at `57ed2ea7f` are still listed, unchanged and in order; none was renamed,
+removed or moved. 444-30 re-spelled no registered cell. 444-31 re-spelled the doubles of twelve
+registered cells, keeping each title and expected string: each now answers the batch read with the
+server's figures for its seeded runs, beside the 200-run fixture it mirrors, which stays:
+- `C444-PASS-RATE the Tests page rates a test over its pass and fail outcomes only` (`ba041e466`)
+  and `C444-PASS-RATE the Suites page rates a suite over its passed and failed runs only`
+  (`8814d48de`), in `444-pass-rate.test.tsx`;
+- `C444-MEMBER-HISTORY a three-test run updates all three tests on the Tests page`,
+  `C444-MEMBER-HISTORY a healed member counts as a pass and a timed-out one as a fail` and
+  `C444-MEMBER-HISTORY a running run's member with no outcome shows running` (`ba041e466`), and
+  `C444-SUITE-HISTORY a run spanning two suites counts once in each suite's history`
+  (`8814d48de`), in `444-test-history.test.tsx`;
+- the six list-page `C444-TIMEOUT-BADGE` cells in `444-timeout-badge.test.tsx`: the three Tests-page
+  cells (`ba041e466`) and the three Suites-page cells (`8814d48de`).
+
+`444-RECORD.md` § Gap-closure round 2 (`### Registered rows re-spelled`) names each by its exact full
+name, with its old and new double.
+
+#### What was RETAINED, and why
+
+| Item | Why kept | What pins it |
+|---|---|---|
+| `memberStatus` (`dashboard-ui/src/lib/status.ts`) as the one member-status rule | the Tests page now applies it to the batch row's last run and member outcome, as it applied it to the 200-run page | `C444-TIMEOUT-BADGE the Tests page's Passed filter lists a test whose last run healed`; `C444-MEMBER-HISTORY a running run's member with no outcome shows running` |
+| the status filter's words (Passed, Failed, Running, No runs) and their classes | only their source moved; the filters still classify through `runStatusClass` | the six list-page `C444-TIMEOUT-BADGE` cells |
+| `stripDisplayPrefix` (`tests.tsx`) for the path cell's display | it shortens the shown path; it no longer joins a member to a test | no cell of its own |
+| a second SIGINT's and a SIGTERM's force-exit, 130, at once | a repeated Ctrl+C must stay effective on a run that cannot settle; only a repeated SIGHUP stopped counting (D-63) | `C444-HANGUP-ONCE a SIGINT or a SIGTERM after a SIGHUP still exits 130`; `C444-HANGUP-ONCE a second SIGINT still exits 130`; `shutdown-controller.test.ts`'s `second signal HARD force-exits with 130 immediately, independent of the grace timer` |
+| the grace timer (`armGrace` on the first signal) | it still bounds a wedged run, hang-up or not | `C444-HANGUP-ONCE a second SIGHUP gives one cancel, one grace timer and no exit`; `C442-OWN-RUN-ONLY the shutdown controller cancels this process's own run once, on the first signal` |
+| the viewer routes and pages (`/api/tests/:id`, `/api/analytics/tests/:name`, `/api/analytics/suites/:suiteId`, `test-viewer.tsx`, `suite-viewer.tsx`) | the batch reads call their reads; the viewers are unchanged (`git -C agent-qa diff --quiet 57ed2ea7f 1430e7ec1 -- packages/dashboard-ui/src/pages/test-viewer.tsx packages/dashboard-ui/src/pages/suite-viewer.tsx` exits 0) | the server `C444-RATE-WINDOW` cells read both the batch row and the viewer |
+| `buildTrendsFromRuns` (`database.ts`) as the one fold | `getTestTrends` and `getSuiteTrends` fold through it for the viewer and the batch read alike | `C444-RATE-WINDOW a test reads one rate from the batch read and from its viewer at 200 runs and past 200`; `C444-RATE-WINDOW a suite reads one rate from the batch read and from its viewer at 200 runs and past 200`; the `C444-PASS-RATE` cells |
+| `getRunsByTest` and `getRunsBySuiteId` as the one last-run order (`started_at DESC`) | the batch row's last run is the viewer's first listed run | `C444-RATE-WINDOW a test's last run is the first run its viewer lists, even when all its runs are past the 200-run page`; `C444-RATE-WINDOW a suite's last run, target and platform come from its own history, even when all its runs are past the 200-run page`; `C444-TEST-VIEWER` and `C444-SUITE-HISTORY` in `444-run-reads.test.ts` |
+
+#### What degrades, stated plainly
+
+- **Each Tests or Suites page load reads every listed test's and suite's full history:** for each
+  test, its `getTestTrends` fold and its newest run; for each suite, its `getSuiteTrends` fold and
+  its whole run list, for its last run and its target. One request per page, at the per-row cost
+  the viewer routes already pay, over the local runs.db and its 5 s busy timeout.
+- **A scope config the viewers refuse now also empties the list pages:** both batch reads answer
+  400, as the viewers do, so the rate, last-run and target cells stay empty, with one `Failed to load
+  run history` toast; the file lists still load.
+- **A member is matched to a test by test id or exact path only,** as its viewer matches it. The
+  path-without-first-segment fallback is gone, so a test with no id whose members were recorded
+  under a differently-prefixed path reads `No runs` on the list and in its viewer alike.
+- **A caller of the removed members breaks,** with no alias, shim or message naming a replacement
+  (D-01). None was exported.
+
+#### Persisted values the narrowed contract governs
+
+No persisted value moves, no schema bump, no migration and no compatibility code (D-01). runs.db
+stays version 6 (`git -C agent-qa diff --quiet 57ed2ea7f 1430e7ec1 --
+packages/dashboard-server/src/db/schema.ts packages/dashboard-server/src/db/database.ts` exits 0),
+and agent-jobs.db, the handoff and the knowledge root are unchanged. No golden or catalog line
+moves: the two new routes are dashboard routes, not ops, and the golden's 44 op rows hold no
+dashboard route. The served shapes added are the two batch reads' answers.
+
+#### The instruments that notice a return
+
+- **The 434 gate** must execute and pass the 16 cells above, each with its area's origin, as well
+  as the 2264 earlier rows (2280 in all).
+- **The page `C444-RATE-WINDOW` cells** count requests by path, so a return of a 200-run read or a
+  per-row request on either list page reds them, and each pins the batch figures over a
+  disagreeing 200-run page.
+- **The golden and catalog freshness cells** in the CLI suite red a schema move that is not
+  re-minted.
+
+**Gate**
+
+The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
+verdict are recorded in `.planning/phases/444-truthful-lifecycle/444-RECORD.md` § Gap-closure round
+2 (`### Gate (gap-closure round 2)`) and the SHA in its `### Final SHA (gap-closure round 2)`,
+rather than quoted here, so no agent-qa commit follows it.
