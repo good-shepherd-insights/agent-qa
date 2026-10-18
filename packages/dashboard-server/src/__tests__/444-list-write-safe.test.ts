@@ -482,28 +482,44 @@ describe('C444-LIST-WRITE-SAFE', () => {
     const partial: string[] = []
     let partialCount = 0
     const readsInFlight = new Map<string, number>()
+    const readsDuringIdWrite = new Map<string, number>()
+    const idWriteInProgress = (path: string): boolean =>
+      [...fileWrites.inProgress.keys()].some((key) => key.endsWith(path))
     const lists = Promise.all([tests.list(), suites.list()]).finally(() => {
       settled = true
     })
     const readers = files.map(async (file) => {
       while (!settled) {
-        readsInFlight.set(file.path, (readsInFlight.get(file.path) ?? 0) + 1)
         const text = await readFile(join(ws.dir, file.path), 'utf-8')
+        if (idWriteInProgress(file.path)) readsDuringIdWrite.set(file.path, (readsDuringIdWrite.get(file.path) ?? 0) + 1)
+        if (!settled) readsInFlight.set(file.path, (readsInFlight.get(file.path) ?? 0) + 1)
         if (text !== file.body && oneIdOver(text, file.body, file.kind) === null) {
           partialCount++
           if (partial.length < 40) partial.push(`${file.path}: ${String(text.length)} bytes`)
         }
       }
     })
-    await lists
-    await Promise.all(readers)
+    const outcomes = await Promise.allSettled([lists, ...readers])
 
+    expect(
+      outcomes.flatMap((outcome) => (outcome.status === 'rejected' ? [String(outcome.reason)] : [])),
+      'neither list call nor any reader rejected',
+    ).toEqual([])
     expect({ partialCount, partial }, 'no read was neither the whole body nor one id line over it').toEqual({
       partialCount: 0,
       partial: [],
     })
     for (const file of files) {
       expect(readsInFlight.get(file.path) ?? 0, `${file.path} was read while the lists ran`).toBeGreaterThan(0)
+    }
+    for (const kind of ['test', 'suite'] as const) {
+      const during = files.filter((file) => file.kind === kind).map((file) => readsDuringIdWrite.get(file.path) ?? 0)
+      expect(
+        during.reduce((sum, count) => sum + count, 0),
+        `a ${kind} file was read while its own id write was in progress (per file: ${during.join(', ')})`,
+      ).toBeGreaterThan(0)
+    }
+    for (const file of files) {
       const disk = await readFile(join(ws.dir, file.path), 'utf-8')
       expect(oneIdOver(disk, file.body, file.kind), `${file.path}: ${describeFile(disk, file.kind)}`).not.toBeNull()
     }
@@ -514,15 +530,35 @@ describe('C444-LIST-WRITE-SAFE', () => {
     posixOnly()
     const ws = await workspace('link-mode')
     await mkdir(join(ws.dir, 'real'))
+    await writeFile(join(ws.dir, 'umask-probe'), 'probe\n', { mode: 0o666 })
+    const probeMode = (await stat(join(ws.dir, 'umask-probe'))).mode & 0o777
+    if (probeMode === 0o666) throw new Error('the mode leg needs a umask that changes 0o666; never skip')
     const bodies = {
-      test: { locked: bigTest('Locked', 2_000), private: bigTest('Private', 2_000), linked: bigTest('Linked', 2_000) },
-      suite: { locked: bigSuite('Locked', 2_000), private: bigSuite('Private', 2_000), linked: bigSuite('Linked', 2_000) },
+      test: {
+        locked: bigTest('Locked', 2_000),
+        private: bigTest('Private', 2_000),
+        shared: bigTest('Shared', 2_000),
+        linked: bigTest('Linked', 2_000),
+      },
+      suite: {
+        locked: bigSuite('Locked', 2_000),
+        private: bigSuite('Private', 2_000),
+        shared: bigSuite('Shared', 2_000),
+        linked: bigSuite('Linked', 2_000),
+      },
     }
     const where = {
-      test: { locked: 'tests/locked.yaml', private: 'tests/private.yaml', linked: 'tests/linked.yaml', real: 'real/linked.yaml' },
+      test: {
+        locked: 'tests/locked.yaml',
+        private: 'tests/private.yaml',
+        shared: 'tests/shared.yaml',
+        linked: 'tests/linked.yaml',
+        real: 'real/linked.yaml',
+      },
       suite: {
         locked: 'suites/locked.suite.yaml',
         private: 'suites/private.suite.yaml',
+        shared: 'suites/shared.suite.yaml',
         linked: 'suites/linked.suite.yaml',
         real: 'real/linked.suite.yaml',
       },
@@ -534,6 +570,8 @@ describe('C444-LIST-WRITE-SAFE', () => {
       await chmod(join(ws.dir, where[kind].locked), 0o444)
       await writeFile(join(ws.dir, where[kind].private), bodies[kind].private)
       await chmod(join(ws.dir, where[kind].private), 0o640)
+      await writeFile(join(ws.dir, where[kind].shared), bodies[kind].shared)
+      await chmod(join(ws.dir, where[kind].shared), 0o666)
       await writeFile(join(ws.dir, where[kind].real), bodies[kind].linked)
       await symlink(`../${where[kind].real}`, join(ws.dir, where[kind].linked))
       writable.set(
@@ -561,16 +599,12 @@ describe('C444-LIST-WRITE-SAFE', () => {
       const path = where[kind].locked
       const disk = await readFile(join(ws.dir, path), 'utf-8')
       const mode = (await stat(join(ws.dir, path))).mode & 0o777
-      if (!writable.get(kind)) {
-        expect(disk, `(1) ${path}, which this process may not write, keeps its bytes`).toBe(bodies[kind].locked)
-        expect(mode, `(1) ${path} keeps mode 0o444`).toBe(0o444)
-        expect(listedId(kind, path), `(1) ${path}, which this process may not write, is listed with no id`).toBeNull()
-      } else {
-        expect(oneIdOver(disk, bodies[kind].locked, kind), `(1) ${path}: ${describeFile(disk, kind)}`).toBe(
-          listedId(kind, path),
-        )
-        expect(mode, `(1) ${path} keeps mode 0o444`).toBe(0o444)
+      if (writable.get(kind)) {
+        throw new Error(`${path} is writable by this process, so the read-only leg cannot run; run the cell unprivileged; never skip`)
       }
+      expect(disk, `(1) ${path}, which this process may not write, keeps its bytes`).toBe(bodies[kind].locked)
+      expect(mode, `(1) ${path} keeps mode 0o444`).toBe(0o444)
+      expect(listedId(kind, path), `(1) ${path}, which this process may not write, is listed with no id`).toBeNull()
     }
 
     // (2) the symlinks
@@ -596,6 +630,19 @@ describe('C444-LIST-WRITE-SAFE', () => {
       const id = listedId(kind, path)
       expect(id, `(3) ${path} is listed with an id`).not.toBeNull()
       expect(oneIdOver(disk, bodies[kind].private, kind), `(3) ${path}: ${describeFile(disk, kind)}`).toBe(id)
+    }
+
+    // (3) the 0o666 files, whose mode the umask would change
+    for (const kind of kinds) {
+      const path = where[kind].shared
+      expect(
+        (await stat(join(ws.dir, path))).mode & 0o777,
+        `(3) ${path} keeps mode 0o666 (a file created with 0o666 here reads 0o${probeMode.toString(8)})`,
+      ).toBe(0o666)
+      const disk = await readFile(join(ws.dir, path), 'utf-8')
+      const id = listedId(kind, path)
+      expect(id, `(3) ${path} is listed with an id`).not.toBeNull()
+      expect(oneIdOver(disk, bodies[kind].shared, kind), `(3) ${path}: ${describeFile(disk, kind)}`).toBe(id)
     }
 
     // (4) no temp file
@@ -662,15 +709,22 @@ describe('C444-LIST-WRITE-SAFE', () => {
         }
         return replies
       })()
-      const saves = await Promise.all([
+      const sent = Promise.all([
         send(`${origin}/api/tests/${encodeURIComponent(keptId)}`, 'PUT', { content: saved[KEPT].body }),
         send(`${origin}/api/tests`, 'POST', { path: BARE, content: saved[BARE].body }),
         send(`${origin}/api/tests`, 'POST', { path: FRESH, content: saved[FRESH].body }),
       ]).finally(() => {
         saving = false
       })
-      const replies = await listReads
-      await Promise.all(readers)
+      const [savesOutcome, listOutcome, ...readerOutcomes] = await Promise.allSettled([sent, listReads, ...readers])
+      expect(
+        [savesOutcome, listOutcome, ...readerOutcomes].flatMap((outcome) =>
+          outcome.status === 'rejected' ? [String(outcome.reason)] : [],
+        ),
+        `round ${String(round)}: no save, list read or raw reader rejected`,
+      ).toEqual([])
+      const saves = savesOutcome.status === 'fulfilled' ? savesOutcome.value : []
+      const replies = listOutcome.status === 'fulfilled' ? listOutcome.value : []
       partial.push(...roundPartial)
 
       expect(
@@ -704,26 +758,53 @@ describe('C444-LIST-WRITE-SAFE', () => {
     expect(lastMisnamed, "(h) the last answer names each file's saved id").toEqual([])
     expect({ partialCount, partial }, '(h) no raw read saw a partial file').toEqual({ partialCount: 0, partial: [] })
 
-    // (m) an id-less save and a delete beside list(), on both managers
     for (const kind of ['test', 'suite'] as const) {
       const ws = await workspace(`managers-${kind}`)
       const bare = kind === 'test' ? BARE : 'suites/bare.suite.yaml'
       const gone = kind === 'test' ? 'tests/gone.yaml' : 'suites/gone.suite.yaml'
       const make = kind === 'test' ? bigTest : bigSuite
-      await writeFile(join(ws.dir, bare), make('Bare old', SAVE_BYTES))
-      await writeFile(join(ws.dir, gone), make('Gone', 2_000))
       const tests = new TestFileManager(ws.paths)
-      const manager = kind === 'test' ? tests : new SuiteFileManager(ws.paths, tests)
+      const suites = new SuiteFileManager(ws.paths, tests)
+      const manager = kind === 'test' ? tests : suites
+
+      // (m1) an id-less save beside two list() calls
+      await writeFile(join(ws.dir, bare), make('Bare old', SAVE_BYTES))
       const newBody = make('Bare new', SAVE_BYTES)
-      await Promise.all([manager.write(bare, newBody), manager.delete(gone), manager.list(), manager.list()])
+      await Promise.all([manager.write(bare, newBody), manager.list(), manager.list()])
       const lastListing: Array<{ path: string; testId?: string | null; suiteId?: string | null }> = await manager.list()
       const disk = await readFile(join(ws.dir, bare), 'utf-8')
       const id = oneIdOver(disk, newBody, kind)
-      expect(id, `(m) ${bare} holds one id line over the new body: ${describeFile(disk, kind)}`).not.toBeNull()
+      expect(id, `(m1) ${bare} holds one id line over the new body: ${describeFile(disk, kind)}`).not.toBeNull()
       const row = lastListing.find((candidate) => candidate.path === bare)
-      expect(kind === 'test' ? row?.testId : row?.suiteId, `(m) the last ${kind} list names ${bare}'s id`).toBe(id)
-      expect(existsSync(join(ws.dir, gone)), `(m) ${gone} stays deleted`).toBe(false)
-      expect(await tmpFilesUnder(ws.dir), `(m) no temp file is left in the ${kind} workspace`).toEqual([])
+      expect(kind === 'test' ? row?.testId : row?.suiteId, `(m1) the last ${kind} list names ${bare}'s id`).toBe(id)
+      expect(await tmpFilesUnder(ws.dir), `(m1) no temp file is left in the ${kind} workspace`).toEqual([])
+
+      // (m2) a delete sent while a mint of the same file is held inside that file's lock
+      await writeFile(join(ws.dir, gone), make('Gone', 2_000))
+      fileWrites.lockAsks.length = 0
+      const hold = holdReplace(gone)
+      const listing = manager.list()
+      await hold.reached
+      const deletion = manager.delete(gone)
+      await waitUntil(
+        () => asksFor(gone) >= 2 || !existsSync(join(ws.dir, gone)),
+        `(m2) the delete asks for ${gone}'s lock or ${gone} is removed`,
+        5_000,
+      )
+      hold.release()
+      const settled = await Promise.allSettled([listing, deletion])
+      expect(
+        settled.flatMap((outcome) => (outcome.status === 'rejected' ? [String(outcome.reason)] : [])),
+        `(m2) the listing and the delete of ${gone} both settle`,
+      ).toEqual([])
+      expect(existsSync(join(ws.dir, gone)), `(m2) ${gone} stays deleted`).toBe(false)
+      expect(await tmpFilesUnder(ws.dir), `(m2) no temp file is left in the ${kind} workspace`).toEqual([])
+      const fresh: Array<{ path: string }> = await manager.list()
+      expect(fresh.map((file) => file.path), `(m2) a list after the delete does not list ${gone}`).not.toContain(gone)
+      const heldId = hold.content === null ? null : splitIdLine(hold.content, kind).id
+      expect(heldId, `(m2) the held mint of ${gone} wrote an id line`).not.toBeNull()
+      const found = kind === 'test' ? await tests.findByTestId(heldId!) : await suites.findBySuiteId(heldId!)
+      expect(found, `(m2) no answer after the delete names ${gone}'s held id`).toBeNull()
     }
   })
 
