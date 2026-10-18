@@ -1,10 +1,11 @@
-import { readFile, writeFile, mkdir, stat, rm } from 'node:fs/promises'
+import { readFile, mkdir, stat, rm } from 'node:fs/promises'
 import { dirname, basename } from 'node:path'
 import { generateSuiteId } from '@vostride/agent-qa-ids'
 import { parse as parseYaml } from 'yaml'
 import { discoverWorkspaceFiles, resolveWorkspaceFileTarget, SuiteDefinitionSchema } from '@vostride/agent-qa-core'
 import type { ResolvedWorkspacePaths, SuiteDefinition } from '@vostride/agent-qa-core'
 import type { TestFileManager } from './test-file-manager.js'
+import { createPathLock, replaceFileAtomic } from './replace-file-atomic.js'
 
 interface SuiteFileInfo {
   path: string
@@ -31,8 +32,9 @@ export class SuiteFileManager {
     this.testFileManager = testFileManager
   }
 
-  // 2026-10-18 (444-33, D-65): concurrent list calls share one read, so an id is minted once.
+  // 2026-10-18 (444-33, D-65): list calls share one read; each file is written whole and one writer at a time.
   private inFlightList: Promise<SuiteFileInfo[]> | undefined
+  private readonly underLock = createPathLock()
 
   list(): Promise<SuiteFileInfo[]> {
     this.inFlightList ??= this.listOnce().finally(() => {
@@ -53,19 +55,25 @@ export class SuiteFileManager {
           let testCount = 0
           let platform: string | null = null
           let suiteId: string | null = null
-          try {
-            let content = await readFile(record.absolutePath, 'utf-8')
+          const take = (content: string): string | null => {
             const parsed = parseYaml(content)
-            if (parsed?.name) suiteName = parsed.name
-            if (Array.isArray(parsed?.tests)) testCount = parsed.tests.length
+            suiteName = parsed?.name ? parsed.name : basename(record.workspaceRelativePath)
+            testCount = Array.isArray(parsed?.tests) ? parsed.tests.length : 0
             platform = parsed?.config?.platform ?? null
             const suiteIdMatch = content.match(/^suite-id:\s*(.+)$/m)
-            if (suiteIdMatch) {
-              suiteId = suiteIdMatch[1].trim().replace(/^["'](.*)["']$/, '$1')
-            } else {
-              suiteId = generateSuiteId()
-              content = `suite-id: ${suiteId}\n${content}`
-              await writeFile(record.absolutePath, content, 'utf-8')
+            return suiteIdMatch ? suiteIdMatch[1].trim().replace(/^["'](.*)["']$/, '$1') : null
+          }
+          try {
+            suiteId = take(await readFile(record.absolutePath, 'utf-8'))
+            if (suiteId === null) {
+              suiteId = await this.underLock(record.absolutePath, async () => {
+                const content = await readFile(record.absolutePath, 'utf-8')
+                const current = take(content)
+                if (current !== null) return current
+                const minted = generateSuiteId()
+                await replaceFileAtomic(record.absolutePath, `suite-id: ${minted}\n${content}`)
+                return minted
+              })
             }
           } catch { /* fall back to filename */ }
           files.push({
@@ -117,12 +125,12 @@ export class SuiteFileManager {
   async write(relativePath: string, content: string): Promise<void> {
     const target = await this.resolveTarget(relativePath, false)
     await mkdir(dirname(target.absolutePath), { recursive: true })
-    await writeFile(target.absolutePath, content, 'utf-8')
+    await this.underLock(target.absolutePath, () => replaceFileAtomic(target.absolutePath, content))
   }
 
   async delete(relativePath: string): Promise<void> {
     const target = await this.resolveTarget(relativePath, true)
-    await rm(target.absolutePath)
+    await this.underLock(target.absolutePath, () => rm(target.absolutePath))
   }
 
   async validate(content: string): Promise<SuiteValidationResult> {

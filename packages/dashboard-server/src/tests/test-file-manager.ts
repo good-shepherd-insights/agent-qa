@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, rm, stat } from 'node:fs/promises'
+import { readFile, mkdir, rm, stat } from 'node:fs/promises'
 import { dirname, basename } from 'node:path'
 import { generateTestId } from '@vostride/agent-qa-ids'
 import { parse as parseYaml } from 'yaml'
@@ -7,6 +7,7 @@ import {
   resolveWorkspaceFileTarget,
   type ResolvedWorkspacePaths,
 } from '@vostride/agent-qa-core'
+import { createPathLock, replaceFileAtomic } from './replace-file-atomic.js'
 
 export interface TestFileInfo {
   path: string
@@ -119,8 +120,9 @@ export function extractTestFileMetadata(content: string): TestFileMetadata {
 export class TestFileManager {
   constructor(private readonly workspace: ResolvedWorkspacePaths) {}
 
-  // 2026-10-18 (444-33, D-65): concurrent list calls share one read, so an id is minted once.
+  // 2026-10-18 (444-33, D-65): list calls share one read; each file is written whole and one writer at a time.
   private inFlightList: Promise<TestFileInfo[]> | undefined
+  private readonly underLock = createPathLock()
 
   list(): Promise<TestFileInfo[]> {
     this.inFlightList ??= this.listOnce().finally(() => {
@@ -141,18 +143,24 @@ export class TestFileManager {
           let platform: string | null = null
           let targetName: string | null = null
           let testId: string | null = null
+          const take = (metadata: TestFileMetadata): void => {
+            testName = metadata.name ?? basename(record.workspaceRelativePath)
+            targetName = metadata.targetName
+            platform = metadata.platform
+            testId = metadata.testId
+          }
           try {
-            let content = await readFile(record.absolutePath, 'utf-8')
-            const metadata = extractTestFileMetadata(content)
-            if (metadata.name) testName = metadata.name
-            if (metadata.targetName) targetName = metadata.targetName
-            if (metadata.platform) platform = metadata.platform
-            if (metadata.testId) {
-              testId = metadata.testId
-            } else {
-              testId = generateTestId()
-              content = `test-id: ${testId}\n${content}`
-              await writeFile(record.absolutePath, content, 'utf-8')
+            const first = extractTestFileMetadata(await readFile(record.absolutePath, 'utf-8'))
+            take(first)
+            if (!first.testId) {
+              take(await this.underLock(record.absolutePath, async () => {
+                const content = await readFile(record.absolutePath, 'utf-8')
+                const current = extractTestFileMetadata(content)
+                if (current.testId) return current
+                const minted = generateTestId()
+                await replaceFileAtomic(record.absolutePath, `test-id: ${minted}\n${content}`)
+                return { ...current, testId: minted }
+              }))
             }
           } catch { /* fall back to filename */ }
           files.push({
@@ -189,12 +197,12 @@ export class TestFileManager {
   async write(relativePath: string, content: string): Promise<void> {
     const target = await this.resolveTarget(relativePath, false)
     await mkdir(dirname(target.absolutePath), { recursive: true })
-    await writeFile(target.absolutePath, content, 'utf-8')
+    await this.underLock(target.absolutePath, () => replaceFileAtomic(target.absolutePath, content))
   }
 
   async delete(relativePath: string): Promise<void> {
     const target = await this.resolveTarget(relativePath, true)
-    await rm(target.absolutePath)
+    await this.underLock(target.absolutePath, () => rm(target.absolutePath))
   }
 
   async validate(content: string): Promise<TestValidationResult> {
