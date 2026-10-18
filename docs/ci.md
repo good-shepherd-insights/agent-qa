@@ -38,7 +38,7 @@ failed job is the one whose evidence you most need.
 | `0` | The run passed or healed. |
 | `1` | The run failed or timed out. A file the run needs that is missing or unreadable (a test file, `.env`, the hooks file or the secrets file) also exits 1, with an `Error:` line and no verdict. |
 | `130` | The run was cancelled, for example by Ctrl+C or a signal from the CI runner. |
-| `2` | The harness could not run the test. A test that could not start (no browser, a setup error) exits 2, and so does a run that was refused, a pattern that matched nothing, or a CLI that failed to load or threw before a run started (`Framework error: …`). |
+| `2` | The harness could not run the test. A test that could not start (no browser, a setup error) exits 2, and so does a run that was refused, a pattern that matched nothing, or a CLI that failed to load or threw before a run started (`Framework error: …`, followed by the error's stack on stderr). |
 
 A hang-up (SIGHUP, for example when the terminal or SSH session that started the run closes) cancels
 the run like Ctrl+C: it ends with the `cancelled` verdict and exits 130. So `nohup agent-qa run` does
