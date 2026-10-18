@@ -31,7 +31,17 @@ export class SuiteFileManager {
     this.testFileManager = testFileManager
   }
 
-  async list(): Promise<SuiteFileInfo[]> {
+  // 2026-10-18 (444-33, D-65): concurrent list calls share one read, so an id is minted once.
+  private inFlightList: Promise<SuiteFileInfo[]> | undefined
+
+  list(): Promise<SuiteFileInfo[]> {
+    this.inFlightList ??= this.listOnce().finally(() => {
+      this.inFlightList = undefined
+    })
+    return this.inFlightList.then((files) => [...files])
+  }
+
+  private async listOnce(): Promise<SuiteFileInfo[]> {
     const records = await discoverWorkspaceFiles({ workspace: this.workspace, kind: 'suite' })
     const files: SuiteFileInfo[] = []
 

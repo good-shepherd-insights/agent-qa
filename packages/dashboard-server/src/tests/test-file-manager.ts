@@ -119,7 +119,17 @@ export function extractTestFileMetadata(content: string): TestFileMetadata {
 export class TestFileManager {
   constructor(private readonly workspace: ResolvedWorkspacePaths) {}
 
-  async list(): Promise<TestFileInfo[]> {
+  // 2026-10-18 (444-33, D-65): concurrent list calls share one read, so an id is minted once.
+  private inFlightList: Promise<TestFileInfo[]> | undefined
+
+  list(): Promise<TestFileInfo[]> {
+    this.inFlightList ??= this.listOnce().finally(() => {
+      this.inFlightList = undefined
+    })
+    return this.inFlightList.then((files) => [...files])
+  }
+
+  private async listOnce(): Promise<TestFileInfo[]> {
     const records = await discoverWorkspaceFiles({ workspace: this.workspace, kind: 'test' })
     const files: TestFileInfo[] = []
 
