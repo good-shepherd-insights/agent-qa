@@ -2,14 +2,14 @@
 // retained-state resume on real `agent-qa` processes in one project, so every resume runs in the
 // workspace its run left behind.
 
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-import { DRAIN_BUDGET_MS } from '@vostride/agent-qa-agent-local'
+import { DRAIN_BUDGET_MS, UNCLAIMABLE_BY_PROSE_POSTURE } from '@vostride/agent-qa-agent-local'
 import { orphanSummary, resolveDashboardDbPath } from '@vostride/agent-qa-dashboard'
 import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
 import { POST_PROCESSING_SKIP_REASON_WORDS } from '@vostride/agent-qa-schema'
@@ -23,6 +23,7 @@ import {
 } from './433-door-fixture.js'
 import { chromiumDescendants, livePids, livePidsAfter } from './444-process-tree.js'
 import {
+  ANALYSIS_PROMPT_MARKER,
   POPULATED_BUTTON_LABEL,
   POPULATED_FAILURE_STEP_MARKER,
   POPULATED_FAILURE_STEP_TEXT,
@@ -49,6 +50,12 @@ const PENDING_BUDGET_MS = 600_000
 // arrived; the bound is a ceiling on that wait, never the wait itself.
 const STALL_BOUND_MS = DRAIN_BUDGET_MS + 60_000
 const EXIT_AFTER_REFUSAL_BOUND_MS = 30_000
+const RESUME_BUDGET_MS = 600_000
+const DAEMON_BOUND_MS = 120_000
+const DAEMON_STOP_BOUND_MS = 30_000
+// D-56: the hermetic TMPDIR is too deep for the daemon's socket path, so the daemon gets its own
+// short root under /tmp, removed once it has stopped.
+const DAEMON_TMP_PREFIX = '/tmp/aq444-'
 
 // The child's execution context is resolved from the environment this file builds for it (stdio
 // is piped, so never a TTY): `CI` is forwarded from this process and nothing else is.
@@ -179,6 +186,64 @@ interface PendingLeg {
   error?: string
 }
 
+interface LocalRun {
+  readonly runId: string
+  readonly testPath: string
+  startedAt?: number
+  exitedAt?: number
+  exit?: { code: number | null; signal: NodeJS.Signals | null }
+  exitLines?: string[]
+  printed?: boolean
+  recordedVerdict?: unknown
+  analysisRequests?: Array<{ kind: string; status: number }>
+  output?: string
+}
+
+interface DaemonLeg {
+  tmpdir?: string
+  pid?: number
+  startedAt?: number
+  reached?: 'complete' | 'exited' | 'timeout'
+  analysisCompleteAfterMs?: number
+  descendantsAtStop?: number[]
+  jobsAtStop?: JobRow[] | string
+  stop?: { code: number | null; stdout: string; stderr: string }
+  exit?: { code: number | null; signal: NodeJS.Signals | null }
+  stoppedAfterMs?: number
+  killedByCell?: boolean
+  aliveAfterStop?: number[]
+  tmpdirRemoved?: boolean
+  agentQaBefore?: string[]
+  agentQaAfter?: string[]
+  output?: string
+}
+
+interface DurableRead {
+  readonly postProcessing: PostProcessingRead
+  readonly digestChainLines: string[]
+  readonly digestCode: number | null
+}
+
+interface ResumeFacts {
+  resumeRun?: LocalRun
+  releasedAt?: number
+  stalledJobsAfterResumeRun?: JobRow[] | string
+  stalledAfterResumeRun?: RunSnapshot
+  detachedJobsBeforeDaemon?: JobRow[] | string
+  daemon?: DaemonLeg
+  detachedJobsAfterDaemon?: JobRow[] | string
+  detachedAfterDaemon?: RunSnapshot
+  detachedReadAfterDaemon?: DurableRead
+  curationRun?: LocalRun
+  detachedJobsAfterCurationRun?: JobRow[] | string
+  stalledJobsFinal?: JobRow[] | string
+  stalledFinal?: RunSnapshot
+  detachedFinal?: RunSnapshot
+  stalledFinalRead?: DurableRead
+  detachedFinalRead?: DurableRead
+  error?: string
+}
+
 interface Shared {
   readonly project: PopulatedRunProject
   readonly model: StubModelServer
@@ -209,6 +274,8 @@ async function sharedProject(): Promise<Shared> {
     failOnlyStepText: POPULATED_FAILURE_STEP_MARKER,
     holdOnlyStepText: CRASH_HOLD_MARKER,
     holdAnalysis: true,
+    // The author's requests are told apart by its own marker, whichever arm answered them.
+    fullBodies: true,
   })
   const project = populatedRunFixtureProject('444-crash-pending-resume', {
     modelBaseUrl: model.baseUrl,
@@ -239,13 +306,18 @@ function childEnv(project: PopulatedRunProject, runId?: string): NodeJS.ProcessE
   return env
 }
 
-function startCli(project: PopulatedRunProject, args: readonly string[], runId?: string): {
+function startCli(
+  project: PopulatedRunProject,
+  args: readonly string[],
+  runId?: string,
+  extraEnv: Readonly<Record<string, string>> = {},
+): {
   readonly child: ChildProcess
   readonly closed: Promise<Spawned>
 } {
   const child = spawn(process.execPath, [CLI_ENTRY, '--config', project.configPath, ...args], {
     cwd: project.root,
-    env: childEnv(project, runId),
+    env: { ...childEnv(project, runId), ...extraEnv },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   children.push(child)
@@ -264,8 +336,13 @@ function startCli(project: PopulatedRunProject, args: readonly string[], runId?:
   return { child, closed }
 }
 
-async function cli(project: PopulatedRunProject, args: readonly string[], runId?: string): Promise<Spawned> {
-  return startCli(project, args, runId).closed
+async function cli(
+  project: PopulatedRunProject,
+  args: readonly string[],
+  runId?: string,
+  extraEnv: Readonly<Record<string, string>> = {},
+): Promise<Spawned> {
+  return startCli(project, args, runId, extraEnv).closed
 }
 
 function exited(child: ChildProcess): boolean {
@@ -397,7 +474,8 @@ function jobRows(project: PopulatedRunProject, runId: string): JobRow[] | string
 
 function analysisRequests(model: StubModelServer, from: number): Array<{ kind: string; status: number }> {
   return model.requests.slice(from)
-    .filter((request) => request.kind === 'held-analysis' || request.kind === 'analysis')
+    .filter((request) => request.kind === 'held-analysis'
+      || (request.fullBody ?? request.body).includes(ANALYSIS_PROMPT_MARKER))
     .map(({ kind, status }) => ({ kind, status }))
 }
 
@@ -581,6 +659,193 @@ async function driveDetached(): Promise<void> {
   ;[leg.postProcessingAtExit] = await postProcessingReads(project, [leg.runId])
 }
 
+const resume: ResumeFacts = {}
+const daemonTmpdirs: string[] = []
+
+async function localRun(testPath: string): Promise<LocalRun> {
+  const { project, model } = await sharedProject()
+  const run: LocalRun = { runId: generateRunId(), testPath }
+  const fromRequest = model.requests.length
+  run.startedAt = Date.now()
+  const ended = await cli(project, ['run', testPath], run.runId)
+  run.exitedAt = Date.now()
+  run.exit = { code: ended.code, signal: ended.signal }
+  const output = `${ended.stdout}\n${ended.stderr}`
+  run.exitLines = output.split('\n').filter((line) => line.startsWith('post-processing — '))
+  run.printed = printedRunIds(output).includes(run.runId)
+  run.recordedVerdict = loggedEvents(project, run.runId).find((event) => event.type === 'verdict')?.payload
+  run.analysisRequests = analysisRequests(model, fromRequest)
+  run.output = output.slice(-3_000)
+  return run
+}
+
+// D-56: the held author is released, and one later local run's tail drains every queued chain,
+// oldest first, so the stalled run's analysis and curation finish there.
+async function driveResumeByRun(): Promise<void> {
+  const { project, model } = await sharedProject()
+  const stalled = pending.stalled
+  if (stalled?.atExit === undefined) throw new Error('the stalled leg left no exit snapshot')
+  resume.releasedAt = Date.now()
+  model.held.release()
+  resume.resumeRun = await localRun(POPULATED_SECOND_TEST_PATH)
+  resume.stalledJobsAfterResumeRun = jobRows(project, stalled.runId)
+  resume.stalledAfterResumeRun = snapshotRun(project, stalled.runId, 'after the resume run')
+}
+
+function agentQaEntries(project: PopulatedRunProject): string[] {
+  return readdirSync(project.agentQaRoot).sort()
+}
+
+function descendantsOf(pid: number): number[] {
+  const listed = spawnSync('ps', ['-A', '-o', 'pid=,ppid=,stat='], { encoding: 'utf8' })
+  if (listed.status !== 0) throw new Error(`ps failed: ${listed.stderr}`)
+  const children = new Map<number, number[]>()
+  for (const line of listed.stdout.split('\n')) {
+    const match = /^\s*(\d+)\s+(\d+)\s+(\S+)/u.exec(line)
+    if (match === null || match[3]!.startsWith('Z')) continue
+    const parent = Number(match[2])
+    children.set(parent, [...(children.get(parent) ?? []), Number(match[1])])
+  }
+  const found: number[] = []
+  const walk = (at: number): void => {
+    for (const child of children.get(at) ?? []) {
+      found.push(child)
+      walk(child)
+    }
+  }
+  walk(pid)
+  return found.sort((a, b) => a - b)
+}
+
+function analyzeRunStatus(rows: JobRow[] | string): string | undefined {
+  return Array.isArray(rows) ? rows.find((row) => row.kind === 'analyze-run')?.status : undefined
+}
+
+// D-56: `agent-qa daemon` in the same workspace, with a short TMPDIR. It is stopped once the
+// detached run's analysis reads complete, and the cell confirms it and its children are gone.
+async function driveDaemon(): Promise<void> {
+  const { project } = await sharedProject()
+  const detached = pending.detached
+  if (detached?.atExit === undefined) throw new Error('the detached leg left no exit snapshot')
+  resume.detachedJobsBeforeDaemon = jobRows(project, detached.runId)
+  const leg: DaemonLeg = {}
+  resume.daemon = leg
+  leg.agentQaBefore = agentQaEntries(project)
+  const tmpdir = mkdtempSync(DAEMON_TMP_PREFIX)
+  daemonTmpdirs.push(tmpdir)
+  leg.tmpdir = tmpdir
+  const env = { TMPDIR: tmpdir }
+  leg.startedAt = Date.now()
+  const daemon = startCli(project, ['daemon'], undefined, env)
+  leg.pid = daemon.child.pid
+  const deadline = Date.now() + DAEMON_BOUND_MS
+  for (;;) {
+    if (analyzeRunStatus(jobRows(project, detached.runId)) === 'done') {
+      leg.reached = 'complete'
+      leg.analysisCompleteAfterMs = Date.now() - leg.startedAt
+      break
+    }
+    if (exited(daemon.child)) { leg.reached = 'exited'; break }
+    if (Date.now() >= deadline) { leg.reached = 'timeout'; break }
+    await new Promise((tick) => setTimeout(tick, POLL_MS))
+  }
+  leg.descendantsAtStop = exited(daemon.child) ? [] : descendantsOf(daemon.child.pid!)
+  leg.jobsAtStop = jobRows(project, detached.runId)
+  const stopAt = Date.now()
+  if (!exited(daemon.child)) {
+    const stopped = await cli(project, ['daemon', 'stop'], undefined, env)
+    leg.stop = { code: stopped.code, stdout: stopped.stdout.slice(-1_000), stderr: stopped.stderr.slice(-1_000) }
+  }
+  const outcome = await Promise.race([
+    daemon.closed,
+    new Promise<undefined>((settle) => setTimeout(() => { settle(undefined) }, DAEMON_STOP_BOUND_MS)),
+  ])
+  if (outcome === undefined) {
+    leg.killedByCell = true
+    daemon.child.kill('SIGKILL')
+  }
+  const ended = await daemon.closed
+  leg.exit = { code: ended.code, signal: ended.signal }
+  leg.stoppedAfterMs = Date.now() - stopAt
+  leg.output = `${ended.stdout}\n${ended.stderr}`.slice(-3_000)
+  leg.aliveAfterStop = await livePidsAfter([daemon.child.pid!, ...leg.descendantsAtStop], 5_000)
+  for (const pid of leg.aliveAfterStop) {
+    try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
+  }
+  rmSync(tmpdir, { recursive: true, force: true })
+  leg.tmpdirRemoved = !existsSync(tmpdir)
+  leg.agentQaAfter = agentQaEntries(project)
+
+  resume.detachedJobsAfterDaemon = jobRows(project, detached.runId)
+  resume.detachedAfterDaemon = snapshotRun(project, detached.runId, 'after the daemon')
+  resume.detachedReadAfterDaemon = (await durableReads(project, [detached.runId]))[0]
+}
+
+async function durableReads(project: PopulatedRunProject, runIds: readonly string[]): Promise<DurableRead[]> {
+  const processing = await postProcessingReads(project, runIds)
+  const reads: DurableRead[] = []
+  for (const [index, runId] of runIds.entries()) {
+    const digest = await cli(project, ['digest', runId])
+    reads.push({
+      postProcessing: processing[index]!,
+      digestChainLines: digest.stdout.split('\n').filter((line) => line.startsWith('chain — ')),
+      digestCode: digest.code,
+    })
+  }
+  return reads
+}
+
+// D-20's masked-leg rule: only a local run's tail claims curation, so a last local run finishes
+// the detached run's chain.
+async function driveCurationRun(): Promise<void> {
+  const { project } = await sharedProject()
+  const stalled = pending.stalled!
+  const detached = pending.detached!
+  resume.curationRun = await localRun(POPULATED_SECOND_TEST_PATH)
+  resume.detachedJobsAfterCurationRun = jobRows(project, detached.runId)
+  resume.stalledJobsFinal = jobRows(project, stalled.runId)
+  resume.stalledFinal = snapshotRun(project, stalled.runId, 'final')
+  resume.detachedFinal = snapshotRun(project, detached.runId, 'final')
+  ;[resume.stalledFinalRead, resume.detachedFinalRead] = await durableReads(project, [stalled.runId, detached.runId])
+}
+
+// D-37's byte-identical set: the handoff, the artifact snapshot, every blob, the log through
+// `runFinished`, and the row's status, end time and duration.
+function d37View(snapshot: RunSnapshot | undefined): unknown {
+  const row = snapshot?.row
+  return {
+    files: (snapshot?.files ?? []).filter((file) =>
+      file.path === 'handoff.json' || file.path === 'artifact.json' || file.path.startsWith('blobs/')),
+    eventsThroughRunFinished: snapshot?.eventsThroughRunFinished,
+    row: typeof row === 'object' ? { status: row.status, endedAt: row.endedAt, duration: row.duration } : row,
+  }
+}
+
+function expectD37Precondition(snapshot: RunSnapshot | undefined, at: string): void {
+  expect(snapshot?.runDir, at).toBeDefined()
+  expect(snapshot?.pendingPreparation, `${PENDING_FILE} absent at exit (D-37)\n${at}`).toBe(false)
+  const paths = snapshot?.files.map((file) => file.path) ?? []
+  expect(paths, at).toContain('handoff.json')
+  expect(paths, at).toContain('artifact.json')
+  expect(paths.filter((path) => path.startsWith('blobs/')).length, `the run recorded evidence\n${at}`).toBeGreaterThan(0)
+  expect(snapshot?.eventsThroughRunFinished, `the log reaches runFinished\n${at}`).toBeDefined()
+  expect(typeof snapshot?.row, `a readable row\n${at}`).toBe('object')
+}
+
+function chipsAre(read: DurableRead | undefined, analysis: string, curation: string, at: string): void {
+  expect(read?.postProcessing.status, at).toBe(200)
+  expect(chipsOf(read?.postProcessing), at).toEqual({ analysis, curation })
+  expect(hasSkipped(read?.postProcessing), at).toBe(false)
+  expect(read?.digestCode, at).toBe(0)
+  // The digest names the chain's outcome only once its notification records one.
+  const outcome = analysis === 'complete' && curation === 'complete' ? ' · chain complete' : ''
+  expect(read?.digestChainLines, at).toEqual([`chain — analysis: ${analysis} · curation: ${curation}${outcome}`])
+}
+
+function statusesOf(rows: JobRow[] | string | undefined): Record<string, string> | string | undefined {
+  return Array.isArray(rows) ? Object.fromEntries(rows.map((row) => [row.kind, row.status])) : rows
+}
+
 function pendingWord(stage: Stage): string {
   return `pending${CHILD_CONTEXT === 'ci' ? CI_PENDING_SUFFIX[STAGE_DRAINER[stage]] : ''}`
 }
@@ -734,7 +999,14 @@ describe('C444-PENDING-AT-EXIT', () => {
     refuseWithoutRecordingTools()
     if (process.platform === 'win32') throw new Error('POSIX run lifecycle required; never skip')
     try {
+      // D-56's leg order: the queue claims oldest first, so the detached run is made only after the
+      // resume run has drained the stalled run's chain.
       await driveStalled()
+      try {
+        await driveResumeByRun()
+      } catch (error) {
+        resume.error = message(error)
+      }
       await driveDetached()
     } catch (error) {
       pending.error = message(error)
@@ -789,5 +1061,111 @@ describe('C444-PENDING-AT-EXIT', () => {
       expect(run?.atExit?.files.map((file) => file.path), at).not.toContain(PENDING_FILE)
       expect(run?.atExit?.files.map((file) => file.path), at).toContain('handoff.json')
     }
+  })
+})
+
+describe('C444-RESUME', () => {
+  beforeAll(async () => {
+    refuseWithoutRecordingTools()
+    if (process.platform === 'win32') throw new Error('POSIX run lifecycle required; never skip')
+    try {
+      if (resume.error !== undefined) throw new Error(`the resume run failed: ${resume.error}`)
+      await driveDaemon()
+      await driveCurationRun()
+    } catch (error) {
+      resume.error = message(error)
+    }
+    const files = (snapshot?: RunSnapshot): unknown => snapshot === undefined
+      ? undefined
+      : { ...snapshot, files: snapshot.files.map((file) => `${file.path} ${String(file.bytes)} ${file.sha256}`) }
+    console.info(`C444-RESUME (${CHILD_CONTEXT}): ${JSON.stringify({
+      ...resume,
+      stalledAtExit: files(pending.stalled?.atExit),
+      stalledAfterResumeRun: files(resume.stalledAfterResumeRun),
+      stalledFinal: files(resume.stalledFinal),
+      detachedAtExit: files(pending.detached?.atExit),
+      detachedAfterDaemon: files(resume.detachedAfterDaemon),
+      detachedFinal: files(resume.detachedFinal),
+    })}`)
+  }, RESUME_BUDGET_MS)
+
+  afterAll(() => {
+    for (const dir of daemonTmpdirs) rmSync(dir, { recursive: true, force: true })
+  })
+
+  it("a later run completes the stalled run's post-processing", () => {
+    const at = seen({ pending, resume })
+    expect(pending.error, at).toBeUndefined()
+    expect(resume.error, at).toBeUndefined()
+    const run = resume.resumeRun
+    expect(run?.recordedVerdict, at).toEqual({ verdict: 'passed' })
+    expect(run?.exit, at).toEqual({ code: 0, signal: null })
+    expect(run?.printed, at).toBe(true)
+    // The released author was answered inside the resume run's tail (attempt 2 of the stalled run),
+    // by the stub's default prose arm, and nothing was held after the release.
+    expect((run?.analysisRequests ?? []).length, at).toBeGreaterThan(0)
+    for (const request of run?.analysisRequests ?? []) expect(request, at).toEqual({ kind: 'text', status: 200 })
+    const jobs = resume.stalledJobsAfterResumeRun
+    expect(Array.isArray(jobs), at).toBe(true)
+    expect((jobs as JobRow[]).find((job) => job.kind === 'analyze-run'), at)
+      .toMatchObject({ status: 'done', attempts: 2 })
+    expect((jobs as JobRow[]).every((job) => job.status === 'done'), `every stage of the stalled chain finished\n${at}`)
+      .toBe(true)
+    expect(statusesOf(resume.stalledJobsFinal), at).toEqual(statusesOf(jobs))
+    chipsAre(resume.stalledFinalRead, 'complete', 'complete', at)
+  })
+
+  it("the daemon completes the detached run's analysis and leaves curation to a later local run", () => {
+    const at = seen({ pending, resume })
+    expect(resume.error, at).toBeUndefined()
+    // Before the daemon the detached run's chain was untouched.
+    expect(statusesOf(resume.detachedJobsBeforeDaemon), at).toEqual({ 'analyze-run': 'queued' })
+    const daemon = resume.daemon
+    expect(daemon?.reached, `the daemon completed the analysis\n${at}`).toBe('complete')
+    expect(daemon?.stop?.code, `agent-qa daemon stop\n${at}`).toBe(0)
+    expect(daemon?.killedByCell, `the daemon stopped on its own\n${at}`).toBeUndefined()
+    expect(daemon?.aliveAfterStop, `the daemon and its children are gone\n${at}`).toEqual([])
+    expect(daemon?.tmpdirRemoved, at).toBe(true)
+    // The daemon folds with no declared mask, so curate-memory is not claimable there (WR-09).
+    expect(UNCLAIMABLE_BY_PROSE_POSTURE['no-masker'], at).toContain('curate-memory')
+    const afterDaemon = resume.detachedJobsAfterDaemon as JobRow[]
+    expect(Array.isArray(afterDaemon), at).toBe(true)
+    expect(afterDaemon.find((job) => job.kind === 'analyze-run'), at).toMatchObject({ status: 'done' })
+    expect(afterDaemon.find((job) => job.kind === 'curate-memory'), at)
+      .toMatchObject({ status: 'queued', attempts: 0 })
+    // The durable reads carry no suffix; only the run's own exit line did (D-56).
+    chipsAre(resume.detachedReadAfterDaemon, 'complete', 'pending', at)
+    expect(stageWords(pending.detached?.exitLines?.[0]).curation, at).toBe('pending')
+    expect(pending.detached?.exitLines?.[0], at).toContain(`curation: ${pendingWord('curation')} · `)
+
+    const curation = resume.curationRun
+    expect(curation?.recordedVerdict, at).toEqual({ verdict: 'passed' })
+    expect(curation?.exit, at).toEqual({ code: 0, signal: null })
+    const final = resume.detachedJobsAfterCurationRun
+    expect(Array.isArray(final), at).toBe(true)
+    expect((final as JobRow[]).every((job) => job.status === 'done'), `every stage of the detached chain finished\n${at}`)
+      .toBe(true)
+    expect((final as JobRow[]).map((job) => job.kind), at).toContain('curate-memory')
+    chipsAre(resume.detachedFinalRead, 'complete', 'complete', at)
+  })
+
+  it("the stalled run's handoff, evidence, log and row are byte-identical after resume", () => {
+    const at = seen({ pending, resume })
+    expect(resume.error, at).toBeUndefined()
+    const atExit = pending.stalled?.atExit
+    expectD37Precondition(atExit, at)
+    expect(d37View(resume.stalledAfterResumeRun), `after the resume run\n${at}`).toEqual(d37View(atExit))
+    expect(d37View(resume.stalledFinal), `after every later leg\n${at}`).toEqual(d37View(atExit))
+    chipsAre(resume.stalledFinalRead, 'complete', 'complete', at)
+  })
+
+  it("the detached run's handoff, evidence, log and row are byte-identical after both resumes", () => {
+    const at = seen({ pending, resume })
+    expect(resume.error, at).toBeUndefined()
+    const atExit = pending.detached?.atExit
+    expectD37Precondition(atExit, at)
+    expect(d37View(resume.detachedAfterDaemon), `after the daemon\n${at}`).toEqual(d37View(atExit))
+    expect(d37View(resume.detachedFinal), `after the local curation run\n${at}`).toEqual(d37View(atExit))
+    chipsAre(resume.detachedFinalRead, 'complete', 'complete', at)
   })
 })
