@@ -7,6 +7,8 @@ import { toast } from "sonner"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { formatDate } from "@/lib/utils"
+import SuiteViewerPage from "@/pages/suite-viewer"
+import SuitesPage from "@/pages/suites"
 import TestViewerPage from "@/pages/test-viewer"
 import TestsPage from "@/pages/tests"
 
@@ -119,11 +121,47 @@ const A_PASSES = [5, 4, 3, 2, 1].map((day) =>
 const C_CANCEL = run("r_c_cancel", "cancelled", "2026-10-13T09:00:00.000Z", [member(C, "cancelled")])
 const E_OLD = run("r_old", "failed", "2026-10-14T10:00:00.000Z", [member(A, "failed"), member(E, "passed")])
 
+function suiteFile(name: string, path: string, suiteId: string) {
+  return { path, name, suiteId, testCount: 1, platform: null, modified: "2026-10-10T09:00:00.000Z" }
+}
+
+function suiteSummary(
+  suite: ReturnType<typeof suiteFile>,
+  passRate: number | null,
+  passed: number,
+  decided: number,
+  last: Run | null,
+  platform: string | null,
+  targetName: string | null,
+) {
+  return { path: suite.path, suiteId: suite.suiteId, passRate, passed, decided, lastRun: last === null ? null : lastRunOf(last), platform, targetName }
+}
+
+const WINDOW_SUITE = suiteFile("Window suite", "suites/window.suite.yaml", "s_window")
+const UNRATED_SUITE = suiteFile("Unrated suite", "suites/unrated.suite.yaml", "s_unrated")
+const OLD_SUITE = suiteFile("Old suite", "suites/old.suite.yaml", "s_old")
+const IDLE_SUITE = suiteFile("Idle suite", "suites/idle.suite.yaml", "s_idle")
+const FRESH_SUITE = suiteFile("Fresh suite", "suites/fresh.suite.yaml", "s_fresh")
+
+const VIEWED_WINDOW_SUITE = {
+  path: WINDOW_SUITE.path,
+  suiteId: WINDOW_SUITE.suiteId,
+  content: `suite-id: ${WINDOW_SUITE.suiteId}\nname: ${WINDOW_SUITE.name}\ntests:\n  - test: ${A.path}\n`,
+}
+
+const WINDOW_PASSES = [5, 4, 3, 2, 1].map((day) =>
+  run(`r_window_pass_${String(day)}`, "passed", `2026-10-1${String(day)}T10:00:00.000Z`, [member(A, "passed", "s_window")]))
+const UNRATED_CANCEL = run("r_unrated_cancel", "cancelled", "2026-10-13T09:00:00.000Z", [member(C, "cancelled", "s_unrated")])
+const OLD_RUN = run("r_old", "failed", "2026-10-14T10:00:00.000Z", [member(A, "failed", "s_window"), member(E, "passed", "s_old")])
+
 let served: {
   tests: unknown[]
+  suites: unknown[]
   runs: unknown[]
   testSummaries: unknown[]
   testSummariesStatus: number
+  suiteSummaries: unknown[]
+  suiteSummariesStatus: number
   viewerPassRate: number | null
 }
 
@@ -147,6 +185,25 @@ function fakeServer(input: string) {
     return served.testSummariesStatus === 200
       ? json({ tests: served.testSummaries })
       : json({ error: "Failed to read run summaries" }, served.testSummariesStatus)
+  }
+  if (url.pathname === "/api/suites") return json({ files: served.suites })
+  if (url.pathname === "/api/analytics/suite-summaries") {
+    return served.suiteSummariesStatus === 200
+      ? json({ suites: served.suiteSummaries })
+      : json({ error: "Failed to read run summaries" }, served.suiteSummariesStatus)
+  }
+  if (url.pathname === `/api/suites/${VIEWED_WINDOW_SUITE.suiteId}`) return json(VIEWED_WINDOW_SUITE)
+  if (url.pathname.startsWith("/api/analytics/suites/")) {
+    const trends = { passRate: served.viewerPassRate, totalRuns: 3, avgDuration: 1000, daily: [] }
+    return json({
+      suiteId: VIEWED_WINDOW_SUITE.suiteId,
+      runs: [],
+      total: 3,
+      trends,
+      isFlaky: false,
+      flakyScore: 0,
+      scope: { configured: false, predicates: [], scopedCount: 0, totalCount: 3 },
+    })
   }
   if (url.pathname === `/api/tests/${VIEWED_A.testId}`) return json(VIEWED_A)
   if (url.pathname.startsWith("/api/analytics/tests/")) {
@@ -181,6 +238,8 @@ async function renderPage(path: string) {
         <Routes>
           <Route path="/tests" element={<TestsPage />} />
           <Route path="/test/:t_id" element={<TestViewerPage />} />
+          <Route path="/suites" element={<SuitesPage />} />
+          <Route path="/suite/:suite-id" element={<SuiteViewerPage />} />
         </Routes>
       </MemoryRouter>,
     )
@@ -255,6 +314,14 @@ function ratesBesideLabel(): string[] {
     .map((next) => next.textContent?.trim() ?? "")
 }
 
+function expectEmpty(name: string, labels: string[], what: string) {
+  for (const label of labels) {
+    const cell = cellOf(name, label)
+    expect(cell.textContent, `${name}'s ${label} cell ${what}`).toBe("")
+    expect(cell.querySelector("a"), `${name}'s ${label} link ${what}`).toBeNull()
+  }
+}
+
 function expectUnknown(name: string, what: string) {
   for (const label of ["Pass rate", "Last run"]) {
     const cell = cellOf(name, label)
@@ -266,7 +333,16 @@ function expectUnknown(name: string, what: string) {
 }
 
 beforeEach(() => {
-  served = { tests: [], runs: [], testSummaries: [], testSummariesStatus: 200, viewerPassRate: null }
+  served = {
+    tests: [],
+    suites: [],
+    runs: [],
+    testSummaries: [],
+    testSummariesStatus: 200,
+    suiteSummaries: [],
+    suiteSummariesStatus: 200,
+    viewerPassRate: null,
+  }
   requests.length = 0
   vi.mocked(toast.error).mockClear()
   vi.stubGlobal("fetch", vi.fn((input: string) => fakeServer(input)))
@@ -360,6 +436,94 @@ describe("C444-RATE-WINDOW", () => {
 
     await renderPage("/tests?sort=lastRun&order=asc")
     expect(rowOrder([A.name, E.name]), "oldest last run first").toEqual([E.name, A.name])
+    unmount()
+
+    expect(requestsTo("/api/runs"), "no 200-run read").toBe(0)
+  })
+
+  it("the Suites page reads each suite's rate from one batch read, not from its 200-run page", async () => {
+    served.suites = [WINDOW_SUITE, UNRATED_SUITE]
+    served.runs = [...WINDOW_PASSES, UNRATED_CANCEL]
+    served.suiteSummaries = [
+      suiteSummary(WINDOW_SUITE, 1 / 3, 5, 15, WINDOW_PASSES[0]!, "web", null),
+      suiteSummary(UNRATED_SUITE, null, 0, 0, UNRATED_CANCEL, "web", null),
+    ]
+    await renderPage("/suites")
+
+    expect(rateOf(WINDOW_SUITE.name), "the Window suite over its whole history").toBe("33%5/15")
+    expect(rateOf(UNRATED_SUITE.name), "the unrated suite with no pass or fail").toBe(`${EM_DASH}0 completed`)
+    expect(lastRunOfRow(WINDOW_SUITE.name)).toMatchObject({ href: `/runs/${WINDOW_PASSES[0]!.id}`, badge: "Passed" })
+    expect(lastRunOfRow(UNRATED_SUITE.name)).toMatchObject({ href: `/runs/${UNRATED_CANCEL.id}`, badge: "Cancelled" })
+    expect(requestsTo("/api/analytics/suite-summaries"), "one batch request").toBe(1)
+    expect(requestsTo("/api/runs"), "no 200-run read").toBe(0)
+    expect(requests.filter((url) => url.pathname.startsWith("/api/analytics/suites/")), "no per-row viewer read").toEqual([])
+    unmount()
+
+    served.suiteSummariesStatus = 500
+    await renderPage("/suites")
+
+    for (const suite of [WINDOW_SUITE, UNRATED_SUITE]) {
+      expectEmpty(suite.name, ["Pass rate", "Last run", "Target"], "after a failed batch read")
+    }
+    expect(vi.mocked(toast.error).mock.calls).toEqual([["Failed to load run history"]])
+  })
+
+  it("the Suites page prints a server rate as the suite viewer prints it", async () => {
+    served.suites = [WINDOW_SUITE]
+    for (const [rate, passed, decided, printed] of [
+      [1 / 3, 1, 3, "33%"],
+      [2 / 3, 2, 3, "67%"],
+      [1, 1, 1, "100%"],
+      [0, 0, 1, "0%"],
+      [null, 0, 0, EM_DASH],
+    ] as const) {
+      served.suiteSummaries = [suiteSummary(WINDOW_SUITE, rate, passed, decided, null, null, null)]
+      served.viewerPassRate = rate
+      await renderPage("/suites")
+      const listPage = rateLineOf(WINDOW_SUITE.name)
+      unmount()
+      await renderPage(`/suite/${WINDOW_SUITE.suiteId}`)
+      const viewer = ratesBesideLabel()
+      unmount()
+
+      expect(listPage, `the Suites page at ${String(rate)}`).toBe(printed)
+      expect(viewer, `the suite viewer at ${String(rate)}`).toEqual([printed])
+    }
+  })
+
+  it("the Suites page reads each suite's last run, target and platform from the batch read, and No runs means no run at all", async () => {
+    served.suites = [WINDOW_SUITE, OLD_SUITE, IDLE_SUITE, FRESH_SUITE]
+    served.runs = [WINDOW_PASSES[0]!]
+    served.suiteSummaries = [
+      suiteSummary(WINDOW_SUITE, 1, 1, 1, WINDOW_PASSES[0]!, "web", null),
+      suiteSummary(OLD_SUITE, 0, 0, 1, OLD_RUN, "android", "staging"),
+      suiteSummary(IDLE_SUITE, null, 0, 0, null, null, null),
+    ]
+    const names = [WINDOW_SUITE.name, OLD_SUITE.name, IDLE_SUITE.name, FRESH_SUITE.name]
+
+    await renderPage("/suites")
+    const old = lastRunOfRow(OLD_SUITE.name)
+    expect(old, "the Old suite's run fell off the 200-run page").toMatchObject({ href: "/runs/r_old", badge: "Failed" })
+    expect(old.text).toContain(formatDate(OLD_RUN.createdAt))
+    expect(old.text).not.toContain("No runs")
+    expect(cellOf(OLD_SUITE.name, "Target").textContent, "the Old suite's target").toBe("staging")
+    expect(cellOf(OLD_SUITE.name, "Platform").textContent, "the Old suite's platform").toBe("Android")
+    expect(lastRunOfRow(IDLE_SUITE.name).text, "the Idle suite never ran").toBe("No runs")
+    expect(cellOf(IDLE_SUITE.name, "Target").textContent, "the Idle suite's target").toBe("No target")
+    expectEmpty(FRESH_SUITE.name, ["Pass rate", "Last run", "Target"], "for a file the answer does not name")
+    expect(vi.mocked(toast.error), "no toast for an unnamed file").not.toHaveBeenCalled()
+    unmount()
+
+    await renderPage("/suites?status=no-runs")
+    expect(listed(names), "the No runs filter").toEqual([IDLE_SUITE.name])
+    unmount()
+
+    await renderPage("/suites?status=failed")
+    expect(listed(names), "the Failed filter").toEqual([OLD_SUITE.name])
+    unmount()
+
+    await renderPage("/suites?platform=android")
+    expect(listed(names), "the Android filter").toEqual([OLD_SUITE.name])
     unmount()
 
     expect(requestsTo("/api/runs"), "no 200-run read").toBe(0)

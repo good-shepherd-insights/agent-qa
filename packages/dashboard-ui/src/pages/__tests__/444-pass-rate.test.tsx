@@ -118,12 +118,20 @@ type Stats = {
   runs: Array<{ date: string; passed: number; failed: number; healed: number; duration: number }>
 }
 
-let served: { tests: unknown[]; suites: unknown[]; runs: unknown[]; stats: Stats | null; testSummaries: unknown[] } = {
+let served: {
+  tests: unknown[]
+  suites: unknown[]
+  runs: unknown[]
+  stats: Stats | null
+  testSummaries: unknown[]
+  suiteSummaries: unknown[]
+} = {
   tests: [],
   suites: [],
   runs: [],
   stats: null,
   testSummaries: [],
+  suiteSummaries: [],
 }
 
 type Run = ReturnType<typeof run>
@@ -139,6 +147,31 @@ function testSummary(test: typeof STEADY, passRate: number | null, passed: numbe
     lastRun: last === null
       ? null
       : { id: last.id, status: last.status, startedAt: last.startedAt, createdAt: last.createdAt, duration: last.duration, memberOutcome: outcome },
+  }
+}
+
+// The batch read's row for a suite, with the figures the server gives for its seeded runs.
+function suiteSummary(
+  path: string,
+  suiteId: string,
+  passRate: number | null,
+  passed: number,
+  decided: number,
+  last: Run | null,
+  platform: string | null,
+  targetName: string | null,
+) {
+  return {
+    path,
+    suiteId,
+    passRate,
+    passed,
+    decided,
+    lastRun: last === null
+      ? null
+      : { id: last.id, status: last.status, startedAt: last.startedAt, createdAt: last.createdAt, duration: last.duration },
+    platform,
+    targetName,
   }
 }
 
@@ -168,6 +201,7 @@ function fakeServer(input: string) {
   if (url.pathname === "/api/suites") return json({ files: served.suites })
   if (url.pathname === "/api/runs") return json({ runs: served.runs, total: served.runs.length, targets: [] })
   if (url.pathname === "/api/analytics/test-summaries") return json({ tests: served.testSummaries })
+  if (url.pathname === "/api/analytics/suite-summaries") return json({ suites: served.suiteSummaries })
   if (url.pathname === "/api/stats") return json(served.stats)
   if (url.pathname === "/api/token-events/stats") {
     return json({ byModel: [], bySource: {}, totals: { promptTokens: 0, completionTokens: 0 } })
@@ -270,7 +304,7 @@ function everyCell(): string[] {
 }
 
 beforeEach(() => {
-  served = { tests: [], suites: [], runs: [], stats: null, testSummaries: [] }
+  served = { tests: [], suites: [], runs: [], stats: null, testSummaries: [], suiteSummaries: [] }
   trends = { passRate: null, totalRuns: 2, avgDuration: 1000, daily: [] }
   suiteAnalyticsFails = false
   chartData.length = 0
@@ -377,15 +411,23 @@ describe('C444-PASS-RATE', () => {
     expect(passRateOf(MIXED.name), "passed and timed out").toBe("50%1/2")
   })
 
+  // 2026-10-18 (444-31, D-64): the page prints the server's pass ÷ (pass + fail) for this seeded
+  // history, which its cancelled runs don't move.
   it("the Suites page rates a suite over its passed and failed runs only", async () => {
     served.suites = [
       suiteFile("Rated suite", "suites/rated.yaml", "s_rated"),
       suiteFile("Unrated suite", "suites/unrated.yaml", "s_unrated"),
     ]
+    const ratedCancel = run("r_rated_cancel", "cancelled", "2026-10-17T11:00:00.000Z", [member(STEADY, "cancelled", "s_rated")])
+    const unratedCancel = run("r_unrated_cancel", "cancelled", "2026-10-17T09:00:00.000Z", [member(PARKED, "cancelled", "s_unrated")])
     served.runs = [
-      run("r_rated_cancel", "cancelled", "2026-10-17T11:00:00.000Z", [member(STEADY, "cancelled", "s_rated")]),
+      ratedCancel,
       run("r_rated_pass", "passed", "2026-10-17T10:00:00.000Z", [member(STEADY, "passed", "s_rated")]),
-      run("r_unrated_cancel", "cancelled", "2026-10-17T09:00:00.000Z", [member(PARKED, "cancelled", "s_unrated")]),
+      unratedCancel,
+    ]
+    served.suiteSummaries = [
+      suiteSummary("suites/rated.yaml", "s_rated", 1, 1, 1, ratedCancel, "web", null),
+      suiteSummary("suites/unrated.yaml", "s_unrated", null, 0, 0, unratedCancel, "web", null),
     ]
     await renderPage("/suites")
 

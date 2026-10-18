@@ -22,6 +22,12 @@ vi.mock('@/lib/api', () => ({
     ],
   }),
   fetchRuns: vi.fn().mockResolvedValue({ runs: [] }),
+  fetchSuiteSummaries: vi.fn().mockResolvedValue({
+    suites: [
+      { path: 'a.suite.yaml', suiteId: 's_alpha-one', passRate: null, passed: 0, decided: 0, lastRun: null, platform: null, targetName: null },
+      { path: 'b.suite.yaml', suiteId: null, passRate: null, passed: 0, decided: 0, lastRun: null, platform: null, targetName: null },
+    ],
+  }),
   deleteSuiteFile: vi.fn(),
   triggerRun: vi.fn(),
 }))

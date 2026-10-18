@@ -82,11 +82,12 @@ function member(test: typeof LOGIN, outcome: string | null, suiteId: string | nu
   return { testId: test.testId, filePath: test.path, suiteId, name: test.name, outcome }
 }
 
-let served: { tests: unknown[]; suites: unknown[]; runs: unknown[]; testSummaries: unknown[] } = {
+let served: { tests: unknown[]; suites: unknown[]; runs: unknown[]; testSummaries: unknown[]; suiteSummaries: unknown[] } = {
   tests: [],
   suites: [],
   runs: [],
   testSummaries: [],
+  suiteSummaries: [],
 }
 
 type Run = ReturnType<typeof run>
@@ -102,6 +103,31 @@ function testSummary(test: typeof LOGIN, passRate: number | null, passed: number
     lastRun: last === null
       ? null
       : { id: last.id, status: last.status, startedAt: last.startedAt, createdAt: last.createdAt, duration: last.duration, memberOutcome: outcome },
+  }
+}
+
+// The batch read's row for a suite, with the figures the server gives for its seeded runs.
+function suiteSummary(
+  path: string,
+  suiteId: string,
+  passRate: number | null,
+  passed: number,
+  decided: number,
+  last: Run | null,
+  platform: string | null,
+  targetName: string | null,
+) {
+  return {
+    path,
+    suiteId,
+    passRate,
+    passed,
+    decided,
+    lastRun: last === null
+      ? null
+      : { id: last.id, status: last.status, startedAt: last.startedAt, createdAt: last.createdAt, duration: last.duration },
+    platform,
+    targetName,
   }
 }
 
@@ -135,6 +161,7 @@ function fakeServer(input: string) {
   if (url.pathname === "/api/suites") return json({ files: served.suites })
   if (url.pathname === "/api/runs") return json({ runs: served.runs, total: served.runs.length, targets: [] })
   if (url.pathname === "/api/analytics/test-summaries") return json({ tests: served.testSummaries })
+  if (url.pathname === "/api/analytics/suite-summaries") return json({ suites: served.suiteSummaries })
   if (url.pathname === `/api/tests/${VIEWED.testId}`) return json(VIEWED)
   if (url.pathname.startsWith("/api/analytics/tests/")) {
     analyticsRequests.push(url)
@@ -182,7 +209,7 @@ function historyOf(name: string) {
 }
 
 beforeEach(() => {
-  served = { tests: [], suites: [], runs: [], testSummaries: [] }
+  served = { tests: [], suites: [], runs: [], testSummaries: [], suiteSummaries: [] }
   analyticsRuns = []
   analyticsRequests.length = 0
   vi.stubGlobal("fetch", vi.fn((input: string) => fakeServer(input)))
@@ -263,16 +290,20 @@ describe("C444-SUITE-HISTORY", () => {
       suiteFile("Account suite", "suites/account.yaml", "s_account"),
       suiteFile("Idle suite", "suites/idle.yaml", "s_idle"),
     ]
-    served.runs = [
-      run("r_later", "timeout", "2026-10-17T11:00:00.000Z", [member(SEARCH, "timeout", "s_account")], {
-        suiteId: "s_account",
-        name: "Account suite",
-      }),
-      run("r_span", "healed", "2026-10-17T10:00:00.000Z", [
-        member(LOGIN, "passed", "s_checkout"),
-        member(CART, "healed", "s_checkout"),
-        member(SEARCH, "passed", "s_account"),
-      ], { name: "Checkout suite · Account suite" }),
+    const later = run("r_later", "timeout", "2026-10-17T11:00:00.000Z", [member(SEARCH, "timeout", "s_account")], {
+      suiteId: "s_account",
+      name: "Account suite",
+    })
+    const span = run("r_span", "healed", "2026-10-17T10:00:00.000Z", [
+      member(LOGIN, "passed", "s_checkout"),
+      member(CART, "healed", "s_checkout"),
+      member(SEARCH, "passed", "s_account"),
+    ], { name: "Checkout suite · Account suite" })
+    served.runs = [later, span]
+    served.suiteSummaries = [
+      suiteSummary("suites/checkout.yaml", "s_checkout", 1, 1, 1, span, "web", null),
+      suiteSummary("suites/account.yaml", "s_account", 0.5, 1, 2, later, "web", null),
+      suiteSummary("suites/idle.yaml", "s_idle", null, 0, 0, null, null, null),
     ]
     await renderPage("/suites")
 

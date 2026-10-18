@@ -283,6 +283,23 @@ function pageFoldOfTest(runs: PageRun[], test: Seeded): { passed: number; decide
   return { passed, decided }
 }
 
+function pageFoldOfSuite(runs: PageRun[], suiteId: string): { passed: number; decided: number } {
+  let passed = 0
+  let decided = 0
+  for (const run of runs) {
+    if (!(run.members ?? []).some((member) => member.suiteId === suiteId)) continue
+    if (PASS.has(run.status)) { passed++; decided++ }
+    if (FAIL.has(run.status)) decided++
+  }
+  return { passed, decided }
+}
+
+async function suiteViewer(window: RateWindow, suiteId: SuiteId): Promise<any> {
+  const viewer = await read(`${window.origin}/api/analytics/suites/${encodeURIComponent(suiteId)}?limit=50`)
+  expect(viewer.status, `the ${suiteId} viewer route`).toBe(200)
+  return viewer.body
+}
+
 async function testViewer(window: RateWindow, test: Seeded): Promise<any> {
   const file = await read(`${window.origin}/api/tests/${encodeURIComponent(test.testId)}`)
   expect(file.status, `GET /api/tests/${test.testId}`).toBe(200)
@@ -361,6 +378,72 @@ describe('C444-RATE-WINDOW', () => {
         .toMatchObject({ id: window.eRun, status: 'failed', memberOutcome: 'passed' })
       expect(batchRow(batch, 'tests', A.filePath).lastRun, `A's last run at ${String(total)}`)
         .toMatchObject({ id: window.aPasses.at(-1), status: 'passed', memberOutcome: 'passed' })
+    }
+  })
+
+  it('a suite reads one rate from the batch read and from its viewer at 200 runs and past 200', async () => {
+    const window = await seedRateWindow()
+
+    for (const total of [200, 210] as const) {
+      if (total === 210) await window.addSecondThree()
+      const page = await windowAt(window, total)
+
+      const viewers = new Map<SuiteId, any>()
+      for (const suiteId of Object.keys(SUITES) as SuiteId[]) viewers.set(suiteId, await suiteViewer(window, suiteId))
+      expect(viewers.get('s_window').trends.passRate, `s_window's viewer rate at ${String(total)}`).toBeCloseTo(1 / 3)
+      expect(pageFoldOfSuite(page, 's_window'), `the 200-run page's fold of s_window at ${String(total)}`)
+        .toEqual(total === 200 ? { passed: 5, decided: 15 } : { passed: 5, decided: 5 })
+      expect(viewers.get('s_unrated').trends.passRate, `s_unrated's viewer rate at ${String(total)}`).toBeNull()
+      expect(viewers.get('s_idle').trends.passRate, `s_idle's viewer rate at ${String(total)}`).toBeNull()
+      expect(viewers.get('s_old').trends.passRate, `s_old's viewer rate at ${String(total)}`).toBe(0)
+
+      const batch = await read(`${window.origin}/api/analytics/suite-summaries`)
+      const rowWindow = batchRow(batch, 'suites', SUITES.s_window.file)
+      expect(rowWindow, `s_window's batch row at ${String(total)}`).toMatchObject({ suiteId: 's_window', passed: 5, decided: 15 })
+      expect(rowWindow.passRate, `s_window's batch rate at ${String(total)}`).toBeCloseTo(1 / 3)
+      expect(rowWindow.passRate, `s_window's batch rate equals its viewer's at ${String(total)}`)
+        .toBe(viewers.get('s_window').trends.passRate)
+      for (const suiteId of ['s_unrated', 's_idle'] as const) {
+        expect(batchRow(batch, 'suites', SUITES[suiteId].file), `${suiteId} at ${String(total)}`)
+          .toMatchObject({ suiteId, passRate: null, passed: 0, decided: 0 })
+      }
+      const rowOld = batchRow(batch, 'suites', SUITES.s_old.file)
+      expect(rowOld, `s_old at ${String(total)}`).toMatchObject({ suiteId: 's_old', passRate: 0, passed: 0, decided: 1 })
+      expect(rowOld.passRate, `s_old's batch rate equals its viewer's at ${String(total)}`).toBe(viewers.get('s_old').trends.passRate)
+    }
+  })
+
+  it("a suite's last run, target and platform come from its own history, even when all its runs are past the 200-run page", async () => {
+    const window = await seedRateWindow()
+    let pagePlatformOfE: string | undefined
+
+    for (const total of [200, 210] as const) {
+      if (total === 210) await window.addSecondThree()
+      const page = await windowAt(window, total)
+      if (total === 200) {
+        const eOnPage = page.find((run) => run.id === window.eRun)
+        expect(eOnPage, "E's run on the 200-run page at 200").toBeDefined()
+        expect(eOnPage!.targetName, "the target GET /api/runs gives E's run").toBe('staging')
+        pagePlatformOfE = eOnPage!.platform
+        expect(pagePlatformOfE, "the platform GET /api/runs gives E's run").toBe('android')
+      }
+
+      const viewers = new Map<SuiteId, any>()
+      for (const suiteId of Object.keys(SUITES) as SuiteId[]) viewers.set(suiteId, await suiteViewer(window, suiteId))
+      expect(viewers.get('s_idle').runs, `s_idle's viewer lists no run at ${String(total)}`).toEqual([])
+      expect(viewers.get('s_old').runs[0]?.id, `s_old's viewer lists E's run first at ${String(total)}`).toBe(window.eRun)
+
+      const batch = await read(`${window.origin}/api/analytics/suite-summaries`)
+      for (const suiteId of ['s_window', 's_unrated', 's_old'] as const) {
+        const row = batchRow(batch, 'suites', SUITES[suiteId].file)
+        expect(row.lastRun, `${suiteId}'s last run at ${String(total)}`).not.toBeNull()
+        expect(lastRunFields(row.lastRun, false), `${suiteId}'s last run equals its viewer's runs[0] at ${String(total)}`)
+          .toEqual(lastRunFields(viewers.get(suiteId).runs[0], false))
+      }
+      expect(batchRow(batch, 'suites', SUITES.s_idle.file), `s_idle at ${String(total)}`)
+        .toMatchObject({ lastRun: null, targetName: null, platform: null })
+      expect(batchRow(batch, 'suites', SUITES.s_old.file), `s_old's target and platform at ${String(total)}`)
+        .toMatchObject({ lastRun: { id: window.eRun, status: 'failed' }, targetName: 'staging', platform: pagePlatformOfE })
     }
   })
 })

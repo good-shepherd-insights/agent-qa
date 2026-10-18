@@ -111,7 +111,8 @@ let served: {
   testAnalyticsRuns: unknown[]
   suiteAnalyticsRuns: unknown[]
   testSummaries: unknown[]
-} = { tests: [], suites: [], runs: [], testAnalyticsRuns: [], suiteAnalyticsRuns: [], testSummaries: [] }
+  suiteSummaries: unknown[]
+} = { tests: [], suites: [], runs: [], testAnalyticsRuns: [], suiteAnalyticsRuns: [], testSummaries: [], suiteSummaries: [] }
 
 type Run = ReturnType<typeof run>
 
@@ -124,6 +125,20 @@ function testSummary(test: TestDef, passRate: number | null, passed: number, dec
     passed,
     decided,
     lastRun: { id: last.id, status: last.status, startedAt: last.startedAt, createdAt: last.createdAt, duration: last.duration, memberOutcome: outcome },
+  }
+}
+
+// The batch read's row for a suite, with the figures the server gives for its seeded runs.
+function suiteSummary(suite: ReturnType<typeof suiteFile>, passRate: number | null, passed: number, decided: number, last: Run) {
+  return {
+    path: suite.path,
+    suiteId: suite.suiteId,
+    passRate,
+    passed,
+    decided,
+    lastRun: { id: last.id, status: last.status, startedAt: last.startedAt, createdAt: last.createdAt, duration: last.duration },
+    platform: "web",
+    targetName: null,
   }
 }
 
@@ -146,6 +161,7 @@ function fakeServer(input: string) {
   const url = new URL(input, "http://dashboard.test")
   if (url.pathname === "/api/tests") return json({ files: served.tests, targets: [] })
   if (url.pathname === "/api/analytics/test-summaries") return json({ tests: served.testSummaries })
+  if (url.pathname === "/api/analytics/suite-summaries") return json({ suites: served.suiteSummaries })
   if (url.pathname === "/api/suites") return json({ files: served.suites })
   if (url.pathname === `/api/tests/${VIEWED_TEST.testId}`) return json(VIEWED_TEST)
   if (url.pathname === `/api/suites/${VIEWED_SUITE.suiteId}`) return json(VIEWED_SUITE)
@@ -224,7 +240,7 @@ function pageSource(file: string): string {
 }
 
 beforeEach(() => {
-  served = { tests: [], suites: [], runs: [], testAnalyticsRuns: [], suiteAnalyticsRuns: [], testSummaries: [] }
+  served = { tests: [], suites: [], runs: [], testAnalyticsRuns: [], suiteAnalyticsRuns: [], testSummaries: [], suiteSummaries: [] }
   vi.stubGlobal("fetch", vi.fn((input: string) => fakeServer(input)))
 })
 
@@ -293,6 +309,10 @@ describe('C444-TIMEOUT-BADGE', () => {
       run("r_slow_suite", "timeout", "2026-10-17T11:00:00.000Z", [member(SLOW, "timeout", SLOW_SUITE.suiteId)]),
       run("r_quick_suite", "passed", "2026-10-17T10:00:00.000Z", [member(QUICK, "passed", QUICK_SUITE.suiteId)]),
     ]
+    served.suiteSummaries = [
+      suiteSummary(SLOW_SUITE, 0, 0, 1, served.runs[0]!),
+      suiteSummary(QUICK_SUITE, 1, 1, 1, served.runs[1]!),
+    ]
     await renderPage("/suites")
 
     expect(lastRunBadge(QUICK_SUITE.name)).toEqual({ variant: "default", text: "Passed" })
@@ -306,6 +326,11 @@ describe('C444-TIMEOUT-BADGE', () => {
       run("r_quick_suite", "passed", "2026-10-17T10:30:00.000Z", [member(QUICK, "passed", QUICK_SUITE.suiteId)]),
       run("r_broken_suite", "failed", "2026-10-17T10:00:00.000Z", [member(BROKEN, "failed", BROKEN_SUITE.suiteId)]),
     ]
+    served.suiteSummaries = [
+      suiteSummary(SLOW_SUITE, 0, 0, 1, served.runs[0]!),
+      suiteSummary(QUICK_SUITE, 1, 1, 1, served.runs[1]!),
+      suiteSummary(BROKEN_SUITE, 0, 0, 1, served.runs[2]!),
+    ]
     await renderPage("/suites?status=failed")
 
     expect(listedSuites()).toEqual([SLOW_SUITE.name, BROKEN_SUITE.name])
@@ -317,6 +342,11 @@ describe('C444-TIMEOUT-BADGE', () => {
       run("r_slow_suite", "timeout", "2026-10-17T11:00:00.000Z", [member(SLOW, "timeout", SLOW_SUITE.suiteId)]),
       run("r_quick_suite", "passed", "2026-10-17T10:30:00.000Z", [member(QUICK, "passed", QUICK_SUITE.suiteId)]),
       run("r_mended_suite", "healed", "2026-10-17T10:00:00.000Z", [member(MENDED, "healed", MENDED_SUITE.suiteId)]),
+    ]
+    served.suiteSummaries = [
+      suiteSummary(SLOW_SUITE, 0, 0, 1, served.runs[0]!),
+      suiteSummary(QUICK_SUITE, 1, 1, 1, served.runs[1]!),
+      suiteSummary(MENDED_SUITE, 1, 1, 1, served.runs[2]!),
     ]
     await renderPage("/suites?status=passed")
 
