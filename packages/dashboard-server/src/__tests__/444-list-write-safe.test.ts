@@ -17,8 +17,9 @@ import {
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { parseAllDocuments } from 'yaml'
+import { parseAllDocuments, parse as parseYaml } from 'yaml'
 import {
   parseSuiteFile,
   parseTestFile,
@@ -36,6 +37,7 @@ import { TestFileManager } from '../tests/test-file-manager.js'
 // 2026-10-18 (444-33, D-65): reading the test or suite list never damages a file or a save racing it.
 // 2026-10-18 (444-35, D-66): a read after a save or delete sees it; empty, unnamed and long-named files list truthfully.
 // 2026-10-18 (444-36, D-67): an id write keeps a ---led file one document, and a key's value is read from its own line.
+// 2026-10-19 (444-37, D-68): a file that parses is read from its mapping, and an id write lands only if it parses to the old mapping plus the id.
 
 type Hold = { suffix: string; content: string | null; reach: () => void; gate: Promise<void>; release: () => void }
 
@@ -272,6 +274,187 @@ function otherTab(url: string): { settled: () => boolean; answer: Promise<Answer
 }
 
 const asksFor = (suffix: string): number => fileWrites.lockAsks.filter((key) => key.endsWith(suffix)).length
+
+type LayoutRow = {
+  row: string
+  path: string
+  text: string
+  outcome: 'minted' | 'kept' | 'left'
+  expected: (id: string) => string
+  held: string | null
+  name: string
+  target: string | null
+}
+
+function layoutCorpus(kind: Kind, namedId: string): LayoutRow[] {
+  const key = kind === 'test' ? 'test-id' : 'suite-id'
+  const fileOf = (row: string): string => (kind === 'test' ? `tests/${row}.yaml` : `suites/${row}.suite.yaml`)
+  const nameOf = (row: string): string => (kind === 'test' ? `${row}.yaml` : `${row}.suite.yaml`)
+  const base = (row: string): string =>
+    kind === 'test'
+      ? `name: Layout ${row}\ntarget: web\nsteps:\n  - Click a\n`
+      : `name: Layout ${row}\ntarget: web\ntests:\n  - test: tests/named.yaml\n    id: ${namedId}\n`
+  const crlf = (text: string): string => text.replace(/\n/g, '\r\n')
+  const heldId = (): string => (kind === 'test' ? generateTestId() : generateSuiteId())
+  const rows: LayoutRow[] = []
+  const minted = (row: string, head: string, before: string, after: string, body = base(row)): void => {
+    rows.push({
+      row,
+      path: fileOf(row),
+      text: `${head}${body}`,
+      outcome: 'minted',
+      expected: (id) => `${before}${key}: ${id}${after}${body}`,
+      held: null,
+      name: `Layout ${row}`,
+      target: 'web',
+    })
+  }
+  const fixed = (row: string, text: string, outcome: 'kept' | 'left', held: string | null, named: boolean, target: string | null): void => {
+    rows.push({
+      row,
+      path: fileOf(row),
+      text,
+      outcome,
+      expected: () => text,
+      held,
+      name: named ? `Layout ${row}` : nameOf(row),
+      target,
+    })
+  }
+  minted('bom', '﻿', '﻿', '\n')
+  minted('bom-marker', '﻿---\n', '﻿---\n', '\n')
+  minted('blank-marker', '\n---\n', '\n---\n', '\n')
+  minted('comment-marker', '# header\n---\n', '# header\n---\n', '\n')
+  minted('directive-marker', '%YAML 1.2\n---\n', '%YAML 1.2\n---\n', '\n')
+  minted('marker-comment', '--- # doc\n', '--- # doc\n', '\n')
+  minted('marker-spaces', '---   \n', '---   \n', '\n')
+  minted('comment-id', `${key}: # fill later\n`, '', '\n')
+  minted('empty-quoted-id', kind === 'test' ? `${key}: ""\n` : `${key}: ''\n`, '', '\n')
+  const nextLine = heldId()
+  fixed('next-line-id', `${key}:\n  ${nextLine}\n${base('next-line-id')}`, 'kept', nextLine, true, 'web')
+  const commented = heldId()
+  const commentBody = base('comment-name')
+    .replace('name: Layout comment-name', 'name: # TODO')
+    .replace('target: web', kind === 'test' ? 'target: # TODO' : 'target: web')
+  fixed('comment-name', `${key}: ${commented}\n${commentBody}`, 'kept', commented, false, kind === 'test' ? null : 'web')
+  fixed('quoted-key', `"${key}": ""\n${base('quoted-key')}`, 'left', null, true, 'web')
+  fixed('spaced-key', `${key} : \n${base('spaced-key')}`, 'left', null, true, 'web')
+  fixed(
+    'explicit-null',
+    `${key}: ${kind === 'test' ? 'null' : '~'}\n${base('explicit-null').replace('name: Layout explicit-null', 'name: ~')}`,
+    'left',
+    null,
+    false,
+    'web',
+  )
+  minted('crlf', '', '', '\r\n', crlf(base('crlf')))
+  minted('crlf-marker', '---\r\n', '---\r\n', '\r\n', crlf(base('crlf-marker')))
+  minted('plain', '', '', '\n')
+  return rows
+}
+
+async function checkLayoutCorpus(kind: Kind): Promise<{ rows: number; findings: string[] }> {
+  const ws = await workspace(`layout-${kind}`)
+  const findings: string[] = []
+  const namedId = generateTestId()
+  await writeFile(join(ws.dir, 'tests/named.yaml'), idTest(namedId, 'Named'))
+  const corpus = layoutCorpus(kind, namedId)
+  const key = kind === 'test' ? 'test-id' : 'suite-id'
+  const route = kind === 'test' ? 'tests' : 'suites'
+  for (const row of corpus) {
+    await writeFile(join(ws.dir, row.path), row.text)
+    const old: unknown = parseYaml(row.text)
+    expect(old !== null && typeof old === 'object' && !Array.isArray(old), `fixture ${row.row} parses to a mapping`).toBe(true)
+  }
+  const tests = new TestFileManager(ws.paths)
+  const suites = new SuiteFileManager(ws.paths, tests)
+  const listOnce = async (): Promise<Array<{ path: string; name: string; id: string | null; target: string | null }>> =>
+    kind === 'test'
+      ? (await tests.list()).map((file) => ({ path: file.path, name: file.name, id: file.testId, target: file.targetName }))
+      : (await suites.list()).map((file) => ({ path: file.path, name: file.name, id: file.suiteId, target: null }))
+  const first = await listOnce()
+  const second = await listOnce()
+  const origin = await startDashboard(ws)
+  const served = rowsOf(await read(`${origin}/api/${route}`), 'files')
+
+  let rows = 0
+  for (const row of corpus) {
+    rows++
+    const say = (text: string): void => {
+      findings.push(`(${row.row}) ${text}`)
+    }
+    const listed = first.find((file) => file.path === row.path)
+    const again = second.find((file) => file.path === row.path)
+    const id = listed?.id ?? null
+    const disk = await readFile(join(ws.dir, row.path), 'utf-8')
+    if (listed === undefined) say('the first list does not name the file')
+    if ((again?.id ?? null) !== id) say(`the second list names ${JSON.stringify(again?.id ?? null)}, the first ${JSON.stringify(id)}`)
+    if (listed !== undefined && listed.name !== row.name) say(`listed the name ${JSON.stringify(listed.name)}, not ${JSON.stringify(row.name)}`)
+    if (kind === 'test' && listed !== undefined && listed.target !== row.target) {
+      say(`listed the target ${JSON.stringify(listed.target)}, not ${JSON.stringify(row.target)}`)
+    }
+    const servedId = served.find((file) => file.path === row.path)?.[idField(kind)] ?? null
+
+    if (row.outcome === 'left') {
+      if (id !== null) say(`listed the id ${JSON.stringify(id)}, not null`)
+      if (servedId !== null) say(`GET /api/${route} listed the id ${JSON.stringify(servedId)}, not null`)
+      if (disk !== row.text) say(`was written: reads ${JSON.stringify(disk.slice(0, 80))}`)
+      continue
+    }
+
+    const want = row.outcome === 'kept' ? row.held : id
+    if (id === null) say('listed no id')
+    if (row.outcome === 'kept' && id !== row.held) say(`listed the id ${JSON.stringify(id)}, not the held ${JSON.stringify(row.held)}`)
+    if (servedId !== want) say(`GET /api/${route} listed the id ${JSON.stringify(servedId)}, not ${JSON.stringify(want)}`)
+    if (want === null) continue
+    const expected = row.expected(want)
+    if (disk !== expected) say(`reads ${JSON.stringify(disk.slice(0, 80))}, not ${JSON.stringify(expected.slice(0, 80))}`)
+    let parsed: unknown
+    try {
+      parsed = parseYaml(disk)
+    } catch (err) {
+      say(`stopped parsing: ${(err as Error).message.split('\n')[0]}`)
+    }
+    if (row.outcome === 'minted') {
+      const old = parseYaml(row.text) as Record<string, unknown>
+      if (!isDeepStrictEqual(parsed, { ...old, [key]: want })) say(`parses to ${JSON.stringify(parsed)}, not the old mapping plus the id`)
+      const documents = parseAllDocuments(disk).length
+      if (documents !== 1) say(`holds ${String(documents)} YAML documents`)
+      if (row.text.includes('\r\n') ? /(?<!\r)\n/.test(disk) : disk.includes('\r')) say('mixes line endings')
+    }
+    if (row.outcome === 'minted' || row.row === 'next-line-id') {
+      if (kind === 'test') {
+        const product = parseTestFile(disk, row.path)
+        if (product.errors.length > 0 || product.tests.length !== 1 || product.tests[0]['test-id'] !== want) {
+          say(
+            `parseTestFile read ${String(product.tests.length)} tests and ${String(product.errors.length)} errors${product.errors.length > 0 ? `, first: ${product.errors[0].message.split('\n')[0]}` : ''}`,
+          )
+        }
+      } else {
+        try {
+          const suite = (await parseSuiteFile(join(ws.dir, row.path))) as Record<string, unknown>
+          if (suite['suite-id'] !== want) say(`parseSuiteFile read the id ${String(suite['suite-id'])}`)
+        } catch (err) {
+          say(`parseSuiteFile refused it: ${(err as Error).message.replace(ws.dir, '<ws>').replace(/\s+/g, ' ').slice(0, 160)}`)
+        }
+      }
+    }
+    const found = kind === 'test' ? await tests.findByTestId(want) : await suites.findBySuiteId(want)
+    if (found?.path !== row.path) say(`find by ${want} answered ${JSON.stringify(found?.path ?? null)}`)
+    const opened = await read(`${origin}/api/${route}/${encodeURIComponent(want)}`)
+    if (opened.status !== 200 || opened.body?.path !== row.path) say(`GET /api/${route}/:id answered ${String(opened.status)}`)
+  }
+  for (const row of corpus.filter((entry) => entry.outcome === 'left')) {
+    const after = await readFile(join(ws.dir, row.path), 'utf-8')
+    if (after !== row.text) findings.push(`(${row.row}) was written by the time the ids were opened: reads ${JSON.stringify(after.slice(0, 80))}`)
+    try {
+      parseYaml(after)
+    } catch (err) {
+      findings.push(`(${row.row}) stopped parsing: ${(err as Error).message.split('\n')[0]}`)
+    }
+  }
+  return { rows, findings }
+}
 
 describe('C444-LIST-WRITE-SAFE', () => {
   it('the Tests and Suites page reads sent together leave every id-less file whole under one id line, and every listed id opens', async () => {
@@ -1333,6 +1516,41 @@ describe('C444-LIST-WRITE-SAFE', () => {
         suiteBlankName: 'blank-name.suite.yaml',
       },
       findings: [],
+    })
+  })
+
+  it('every test file in the layout corpus is read from its parsed YAML, and listing it leaves its old mapping with one id that opens, in its own line endings, or leaves it byte-identical with no id; none stops parsing', async () => {
+    expect(await checkLayoutCorpus('test'), 'each test layout is minted whole, kept, or left byte-identical with no id').toEqual({ rows: 17, findings: [] })
+  })
+
+  it('every suite file in the layout corpus is read from its parsed YAML, and listing it leaves its old mapping with one id that opens, in its own line endings, or leaves it byte-identical with no id; none stops parsing', async () => {
+    expect(await checkLayoutCorpus('suite'), 'each suite layout is minted whole, kept, or left byte-identical with no id').toEqual({ rows: 17, findings: [] })
+  })
+
+  it('a test create or save whose target holds a shown marker in a mapping value or on an indented target line is refused and nothing is written', async () => {
+    const ws = await workspace('marker-guard')
+    const marker = '[secret:X]-web'
+    const savedId = generateTestId()
+    const saved = idTest(savedId, 'Guard')
+    await writeFile(join(ws.dir, 'tests/guard.yaml'), saved)
+    const origin = await startDashboard(ws)
+    const bodies = {
+      mapping: `name: Guard\ntarget: {name: '${marker}'}\nsteps:\n  - Click a\n`,
+      indented: `name: Guard\nsteps:\n  - click:\n      target: '${marker}'\n`,
+    }
+    const answers: Record<string, unknown> = {}
+    for (const [shape, content] of Object.entries(bodies)) {
+      const created = await send(`${origin}/api/tests`, 'POST', { path: `tests/new-${shape}.yaml`, content })
+      answers[`POST ${shape}`] = { status: created.status, error: created.body?.error ?? null, written: existsSync(join(ws.dir, `tests/new-${shape}.yaml`)) }
+      const put = await send(`${origin}/api/tests/${encodeURIComponent(savedId)}`, 'PUT', { content: `test-id: ${savedId}\n${content}` })
+      answers[`PUT ${shape}`] = { status: put.status, error: put.body?.error ?? null, written: (await readFile(join(ws.dir, 'tests/guard.yaml'), 'utf-8')) !== saved }
+    }
+    const refused = { status: 422, error: 'marker_written_back', written: false }
+    expect(answers, 'a shown marker in a mapping target or on an indented target line is refused on create and save').toEqual({
+      'POST mapping': refused,
+      'PUT mapping': refused,
+      'POST indented': refused,
+      'PUT indented': refused,
     })
   })
 })
