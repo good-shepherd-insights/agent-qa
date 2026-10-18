@@ -18,7 +18,13 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { resolveWorkspacePaths, type ResolvedWorkspacePaths } from '@vostride/agent-qa-core'
+import { parseAllDocuments } from 'yaml'
+import {
+  parseSuiteFile,
+  parseTestFile,
+  resolveWorkspacePaths,
+  type ResolvedWorkspacePaths,
+} from '@vostride/agent-qa-core'
 import { generateSuiteId, generateTestId } from '@vostride/agent-qa-ids'
 
 import { DashboardDatabase } from '../db/database.js'
@@ -29,6 +35,7 @@ import { TestFileManager } from '../tests/test-file-manager.js'
 
 // 2026-10-18 (444-33, D-65): reading the test or suite list never damages a file or a save racing it.
 // 2026-10-18 (444-35, D-66): a read after a save or delete sees it; empty, unnamed and long-named files list truthfully.
+// 2026-10-18 (444-36, D-67): an id write keeps a ---led file one document, and a key's value is read from its own line.
 
 type Hold = { suffix: string; content: string | null; reach: () => void; gate: Promise<void>; release: () => void }
 
@@ -1180,5 +1187,152 @@ describe('C444-LIST-WRITE-SAFE', () => {
     if (temps.length > 0) findings.push(`(3) temp files left: ${temps.map((temp) => `${String(temp.length)}-byte path`).join(', ')}`)
 
     expect(findings, 'a 250-byte file name is minted and saved whole, with no temp file left').toEqual([])
+  })
+
+  it('an id-less test or suite that opens with a --- marker gets its id inside that document, so it still parses as one document and validates, and the listed id is the one on disk and opens', async () => {
+    const ws = await workspace('doc-marker')
+    const findings: string[] = []
+    const namedId = generateTestId()
+    await writeFile(join(ws.dir, 'tests/named.yaml'), idTest(namedId, 'Named'))
+    const docs = {
+      test: { path: 'tests/doc.yaml', body: '---\nname: Doc test\ntarget: web\nsteps:\n  - Click a\n' },
+      suite: {
+        path: 'suites/doc.suite.yaml',
+        body: `---\nname: Doc suite\ntarget: web\ntests:\n  - test: tests/named.yaml\n    id: ${namedId}\n`,
+      },
+    }
+    for (const kind of ['test', 'suite'] as const) await writeFile(join(ws.dir, docs[kind].path), docs[kind].body)
+    const origin = await startDashboard(ws)
+    const tests = new TestFileManager(ws.paths)
+    const suites = new SuiteFileManager(ws.paths, tests)
+
+    for (const kind of ['test', 'suite'] as const) {
+      const { path, body } = docs[kind]
+      const route = kind === 'test' ? 'tests' : 'suites'
+      const key = kind === 'test' ? 'test-id' : 'suite-id'
+      const listings: Array<string | null> = []
+      for (let call = 0; call < 2; call++) {
+        const reply = await read(`${origin}/api/${route}`)
+        if (reply.status !== 200) findings.push(`(${kind}) GET /api/${route} call ${String(call + 1)} answered ${String(reply.status)}`)
+        listings.push(rowsOf(reply, 'files').find((row) => row.path === path)?.[idField(kind)] ?? null)
+      }
+      const listed = listings[0]
+      if (listed === null) findings.push(`(${kind}) the first GET /api/${route} names no id for ${path}`)
+      if (listings[1] !== listed) {
+        findings.push(`(${kind}) the second GET /api/${route} names ${String(listings[1])} for ${path}, the first ${String(listed)}`)
+      }
+
+      const disk = await readFile(join(ws.dir, path), 'utf-8')
+      const expected = listed === null ? null : `---\n${key}: ${listed}\n${body.slice('---\n'.length)}`
+      if (disk !== expected) findings.push(`(${kind}) ${path} reads ${JSON.stringify(disk.slice(0, 72))}, not its body with the listed id line after the marker`)
+      const documents = parseAllDocuments(disk).length
+      if (documents !== 1) findings.push(`(${kind}) ${path} holds ${String(documents)} YAML documents`)
+
+      if (kind === 'test') {
+        const parsed = parseTestFile(disk, path)
+        if (parsed.errors.length > 0 || parsed.tests.length !== 1 || parsed.tests[0]['test-id'] !== listed) {
+          findings.push(
+            `(test) parseTestFile read ${String(parsed.tests.length)} tests and ${String(parsed.errors.length)} errors${parsed.errors.length > 0 ? `, first: ${parsed.errors[0].message.split('\n')[0]}` : ''}`,
+          )
+        }
+      } else {
+        try {
+          const suite = (await parseSuiteFile(join(ws.dir, path))) as Record<string, unknown>
+          if (suite['suite-id'] !== listed) findings.push(`(suite) parseSuiteFile read the id ${String(suite['suite-id'])}, the list ${String(listed)}`)
+        } catch (err) {
+          findings.push(`(suite) parseSuiteFile refused ${path}: ${(err as Error).message.split('\n')[0]}`)
+        }
+      }
+      const validation = kind === 'test' ? await tests.validate(disk) : await suites.validate(disk)
+      if (!validation.valid) {
+        findings.push(`(${kind}) validate() refused ${path}: ${validation.errors.map((error) => error.message.split('\n')[0]).join('; ')}`)
+      }
+
+      if (listed !== null) {
+        const found = kind === 'test' ? await tests.findByTestId(listed) : await suites.findBySuiteId(listed)
+        if (found?.path !== path) findings.push(`(${kind}) find by the listed id answered ${JSON.stringify(found?.path ?? null)}`)
+        const opened = await read(`${origin}/api/${route}/${encodeURIComponent(listed)}`)
+        if (opened.status !== 200 || opened.body?.path !== path) {
+          findings.push(`(${kind}) GET /api/${route}/:id of the listed id answered ${String(opened.status)}`)
+        }
+      }
+    }
+
+    expect(findings, 'a ---led file stays one document with its id inside it, and the listed id is on disk and opens').toEqual([])
+  })
+
+  it('a key is read from its own line: a bare or blank name lists the file name, a bare target lists no target, and a bare id key counts as no id and is filled in place', async () => {
+    const ws = await workspace('own-line')
+    const findings: string[] = []
+    const lines = (...parts: string[]): string => `${parts.join('\n')}\n`
+    const namedId = generateTestId()
+    await writeFile(join(ws.dir, 'tests/named.yaml'), idTest(namedId, 'Named'))
+    const suiteTail = ['target: web', 'tests:', '  - test: tests/named.yaml', `    id: ${namedId}`]
+    const steps = ['steps:', '  - Click a']
+    await writeFile(join(ws.dir, 'tests/bare-name.yaml'), lines(`test-id: ${generateTestId()}`, 'name:', 'target: web', ...steps))
+    await writeFile(join(ws.dir, 'tests/blank-name.yaml'), lines(`test-id: ${generateTestId()}`, 'name: "  "', 'target: web', ...steps))
+    await writeFile(join(ws.dir, 'tests/bare-target.yaml'), lines(`test-id: ${generateTestId()}`, 'name: Bare target', 'target:', ...steps))
+    await writeFile(join(ws.dir, 'suites/bare-name.suite.yaml'), lines(`suite-id: ${generateSuiteId()}`, 'name:', ...suiteTail))
+    await writeFile(join(ws.dir, 'suites/blank-name.suite.yaml'), lines(`suite-id: ${generateSuiteId()}`, 'name: "  "', ...suiteTail))
+    const bare = {
+      test: { path: 'tests/bare-id.yaml', body: lines('test-id:', 'name: Bare id', 'target: web', ...steps) },
+      suite: { path: 'suites/bare-id.suite.yaml', body: lines('suite-id:', 'name: Bare id suite', ...suiteTail) },
+    }
+    for (const kind of ['test', 'suite'] as const) await writeFile(join(ws.dir, bare[kind].path), bare[kind].body)
+    const tests = new TestFileManager(ws.paths)
+    const suites = new SuiteFileManager(ws.paths, tests)
+    const testRows = await tests.list()
+    const suiteRows = await suites.list()
+    const testShown = (path: string): { name: string; targetName: string | null } | undefined => {
+      const row = testRows.find((file) => file.path === path)
+      return row === undefined ? undefined : { name: row.name, targetName: row.targetName }
+    }
+    const names = {
+      bareName: testShown('tests/bare-name.yaml'),
+      blankName: testShown('tests/blank-name.yaml'),
+      bareTarget: testShown('tests/bare-target.yaml'),
+      suiteBareName: suiteRows.find((file) => file.path === 'suites/bare-name.suite.yaml')?.name,
+      suiteBlankName: suiteRows.find((file) => file.path === 'suites/blank-name.suite.yaml')?.name,
+    }
+
+    for (const kind of ['test', 'suite'] as const) {
+      const { path, body } = bare[kind]
+      const key = kind === 'test' ? 'test-id' : 'suite-id'
+      const idOf = (rows: Array<{ path: string; testId?: string | null; suiteId?: string | null }>): string | null => {
+        const row = rows.find((file) => file.path === path)
+        return (kind === 'test' ? row?.testId : row?.suiteId) ?? null
+      }
+      const listed = idOf(kind === 'test' ? testRows : suiteRows)
+      const again = idOf(kind === 'test' ? await tests.list() : await suites.list())
+      const disk = await readFile(join(ws.dir, path), 'utf-8')
+      const expected = listed === null ? null : `${key}: ${listed}\n${body.slice(`${key}:\n`.length)}`
+      if (listed === null) findings.push(`(${kind}) the first list names no id for ${path}`)
+      if (disk !== expected) {
+        findings.push(`(${kind}) ${path} reads ${JSON.stringify(disk.slice(0, 72))} with ${String(splitIdLine(disk, kind).idLines)} id lines, listed ${JSON.stringify(listed)}`)
+      }
+      if (again !== listed) findings.push(`(${kind}) the second list names ${JSON.stringify(again)} for ${path}, the first ${JSON.stringify(listed)}`)
+      const validation = kind === 'test' ? await tests.validate(disk) : await suites.validate(disk)
+      if (!validation.valid) {
+        findings.push(`(${kind}) validate() refused ${path}: ${validation.errors.map((error) => error.message.split('\n')[0]).join('; ')}`)
+      }
+      if (listed !== null) {
+        const found = kind === 'test' ? await tests.findByTestId(listed) : await suites.findBySuiteId(listed)
+        if (found?.path !== path) findings.push(`(${kind}) find by the listed id answered ${JSON.stringify(found?.path ?? null)}`)
+      }
+    }
+
+    expect(
+      { names, findings },
+      "a bare or blank name falls back to the file name, a bare target to none, and a bare id key is filled in place with one id",
+    ).toEqual({
+      names: {
+        bareName: { name: 'bare-name.yaml', targetName: 'web' },
+        blankName: { name: 'blank-name.yaml', targetName: 'web' },
+        bareTarget: { name: 'Bare target', targetName: null },
+        suiteBareName: 'bare-name.suite.yaml',
+        suiteBlankName: 'blank-name.suite.yaml',
+      },
+      findings: [],
+    })
   })
 })
