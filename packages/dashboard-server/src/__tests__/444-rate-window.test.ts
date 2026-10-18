@@ -446,4 +446,110 @@ describe('C444-RATE-WINDOW', () => {
         .toMatchObject({ lastRun: { id: window.eRun, status: 'failed' }, targetName: 'staging', platform: pagePlatformOfE })
     }
   })
+
+  it('with a pass-rate scope configured, each batch read rates a row over the scoped runs its viewer opens on and keeps its last run unscoped', async () => {
+    const scopeConfig = (branch: string) => [
+      'workspace:',
+      '  testMatch:',
+      '    - tests/*.yaml',
+      '  suiteMatch:',
+      '    - suites/*.suite.yaml',
+      '  hooksFile: hooks.yaml',
+      '  envFile: .env',
+      '  secretsFile: .env.secrets.local',
+      'use:',
+      '  mobile:',
+      '    appState: preserve',
+      'analytics:',
+      '  passRateScope:',
+      '    attributes:',
+      `      git.branch: ${JSON.stringify(branch)}`,
+      '',
+    ].join('\n')
+    writeFileSync(configPath, scopeConfig('main'))
+    mkdirSync(join(dir, 'tests'), { recursive: true })
+    mkdirSync(join(dir, 'suites'), { recursive: true })
+    writeFileSync(join(dir, 'tests', 'scope-s.yaml'), ['name: Scope S', 'test-id: t_scope_s', 'steps: []', ''].join('\n'))
+    writeFileSync(
+      join(dir, 'suites', 'scope.suite.yaml'),
+      ['suite-id: s_scope', 'name: Scope suite', 'tests:', '  - test: tests/scope-s.yaml', '    id: t_scope_s', ''].join('\n'),
+    )
+    const workspacePaths = resolveWorkspacePaths({
+      config: {
+        workspace: {
+          testMatch: ['tests/*.yaml'],
+          suiteMatch: ['suites/*.suite.yaml'],
+          hooksFile: 'hooks.yaml',
+          envFile: '.env',
+          secretsFile: '.env.secrets.local',
+        },
+        knowledge: { dir: 'agent-qa-knowledge', commitArtifacts: 'none' },
+      },
+      configPath,
+    })
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const handle = await startServer({
+      declaredSecretMask: (text) => text,
+      db: new DashboardDatabase({ dbPath }),
+      port: 0,
+      configPath,
+      workspacePaths,
+      executionBackend: new IdleBackend() as unknown as ExecutionBackend,
+    })
+    started.push(handle)
+    const origin = `http://127.0.0.1:${String((handle.server.address() as AddressInfo).port)}`
+
+    const listed = await read(`${origin}/api/tests`)
+    const file = (listed.body.files as Array<{ path: string; name: string; testId: string }>).find((candidate) => candidate.path === 'tests/scope-s.yaml')
+    expect(file, 'GET /api/tests lists tests/scope-s.yaml').toBeDefined()
+    const scoped: Seeded = { testId: file!.testId, filePath: file!.path, name: file!.name }
+    for (const [minute, status, branch] of [[0, 'passed', 'main'], [1, 'failed', 'dev'], [2, 'passed', 'main'], [3, 'failed', 'dev']] as const) {
+      const startedAt = new Date(Date.UTC(2026, 9, 2, 0, minute)).toISOString()
+      const id = db.insertRun({ name: scoped.name, status, duration: 1000, startedAt, endedAt: startedAt, attributes: { 'git.branch': branch } })
+      db.upsertRunMember({
+        runId: id,
+        testIndex: 0,
+        testId: scoped.testId,
+        name: scoped.name,
+        filePath: scoped.filePath,
+        suiteId: 's_scope',
+        suiteName: 'Scope suite',
+        outcome: status,
+      })
+    }
+
+    const window = { origin } as RateWindow
+    const viewer = await testViewer(window, scoped)
+    expect(viewer.scope?.configured, "the test viewer's scope is configured").toBe(true)
+    expect(viewer.trends.passRate, "the test viewer's all-runs rate").toBe(0.5)
+    expect(viewer.scopedTrends?.passRate, "the test viewer's scoped rate").toBe(1)
+    expect(viewer.runs[0]?.id, "the viewer's newest run differs from its newest scoped run").not.toBe(viewer.scopedRuns?.[0]?.id)
+    const suite = await read(`${origin}/api/analytics/suites/s_scope?limit=50`)
+    expect(suite.status, 'the s_scope viewer route').toBe(200)
+    expect(suite.body.scopedTrends?.passRate, "the suite viewer's scoped rate").toBe(1)
+    expect(suite.body.trends.passRate, "the suite viewer's all-runs rate").toBe(0.5)
+
+    const tests = await read(`${origin}/api/analytics/test-summaries`)
+    const testRow = batchRow(tests, 'tests', scoped.filePath)
+    expect(testRow, "S's batch row reads its viewer's scoped figure").toMatchObject({ passRate: 1, passed: 2, decided: 2 })
+    expect(testRow.passRate).toBe(viewer.scopedTrends.passRate)
+    expect(lastRunFields(testRow.lastRun, true), "S's last run is its viewer's unscoped runs[0]")
+      .toEqual(lastRunFields(viewer.runs[0], true))
+    const suites = await read(`${origin}/api/analytics/suite-summaries`)
+    const suiteRow = batchRow(suites, 'suites', 'suites/scope.suite.yaml')
+    expect(suiteRow, "s_scope's batch row reads its viewer's scoped figure").toMatchObject({ passRate: 1, passed: 2, decided: 2 })
+    expect(suiteRow.passRate).toBe(suite.body.scopedTrends.passRate)
+    expect(lastRunFields(suiteRow.lastRun, false), "s_scope's last run is its viewer's unscoped runs[0]")
+      .toEqual(lastRunFields(suite.body.runs[0], false))
+
+    writeFileSync(configPath, scopeConfig(''))
+    const query = `testId=${encodeURIComponent(scoped.testId)}&filePath=${encodeURIComponent(scoped.filePath)}`
+    const refused = await read(`${origin}/api/analytics/tests/${encodeURIComponent(scoped.name)}?${query}`)
+    expect(refused.status, 'the test viewer refuses the empty scope value').toBe(400)
+    expect(refused.body.error, "the test viewer's refusal").toMatch(/passRateScope/)
+    const refusedSuite = await read(`${origin}/api/analytics/suites/s_scope?limit=50`)
+    expect(refusedSuite, 'the suite viewer refuses it the same way').toEqual(refused)
+    expect(await read(`${origin}/api/analytics/test-summaries`), 'the test batch read refuses it the same way').toEqual(refused)
+    expect(await read(`${origin}/api/analytics/suite-summaries`), 'the suite batch read refuses it the same way').toEqual(refused)
+  })
 })
