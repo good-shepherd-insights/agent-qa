@@ -65,6 +65,7 @@ import {
   runSafetyScope,
 } from '@vostride/agent-qa-agent-local'
 import { waitForPostVerdictContinuation } from '../curation/post-verdict-continuation.js'
+import { ciResumeClause } from '../curation/resume-limit.js'
 import type { RunExecutionContext } from '@vostride/agent-qa-agent-local'
 
 import { assembleCliRun } from './run-assembly.js'
@@ -385,8 +386,9 @@ export function preparationPendingWarning(
   pendingPath: string | undefined,
   executionContext: RunExecutionContext,
 ): string {
-  return executionContext === 'ci' || executionContext === 'cloud'
-    ? `Run ${runId}: preparation pending; analysis is not yet queued. It resumes only if this workspace's .agent-qa/ is kept and a later run or the daemon picks it up. Durable intent: ${pendingPath}.`
+  const resumeClause = ciResumeClause(executionContext, 'any-host')
+  return resumeClause !== undefined
+    ? `Run ${runId}: preparation pending; analysis is not yet queued. It ${resumeClause}. Durable intent: ${pendingPath}.`
     : `Run ${runId}: preparation pending; analysis is not yet queued. Durable intent: ${pendingPath}. The next local run or daemon drain resumes eligible pending preparation.`
 }
 
@@ -589,6 +591,7 @@ export async function runInProcessCliRun(
           ? {}
           : { misdirection: options.postProcessing.misdirection }),
         log: { warn: options.warn ?? (() => { /* a door with no renderer drops the line */ }) },
+        executionContext: options.executionContext,
       })
       postVerdictHandoff = step.handoff
       return step.port
@@ -701,10 +704,14 @@ export async function runInProcessCliRun(
           postVerdictHandoff?.completion,
           options.postRunTail(verdictContext)
           .catch((error: unknown) => {
+            // 444 D-48: in `ci` and `cloud` the line states the resume limit, not a promise.
+            const resumeClause = ciResumeClause(options.executionContext, 'any-host')
             warnByName(
               `Run ${runId}: the post-run tail did not complete (`
               + `${error instanceof Error ? error.message : String(error)}`
-              + '); queued work will resume on the next run or when the daemon drains it.',
+              + (resumeClause !== undefined
+                ? `); queued work ${resumeClause}.`
+                : '); queued work will resume on the next run or when the daemon drains it.'),
             )
           }),
         ]))

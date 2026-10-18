@@ -167,6 +167,10 @@ describe('418 v4 canary receipt contract', () => {
   })
 })
 
+// 2026-10-18 (444-20, D-48): these fixtures' handoffs are `ci` runs, so an incomplete fold states
+// curation's resume limit instead of promising the next run.
+const CI_CURATION_RESUME = /resumes only if this workspace's \.agent-qa\/ is kept and a later local run picks it up\.$/u
+
 function handoff(executionContext: CompletedRunHandoff['executionContext'] = 'ci') {
   return { executionContext, runId } as CompletedRunHandoff
 }
@@ -1077,7 +1081,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
       ).resolves.toBeUndefined()
       expect(warn).toHaveBeenCalledOnce()
       expect(warn.mock.calls[0]?.[0]).toMatch(/curation incomplete/i)
-      expect(warn.mock.calls[0]?.[0]).toMatch(/next run/i)
+      expect(warn.mock.calls[0]?.[0]).toMatch(CI_CURATION_RESUME)
     },
   )
 
@@ -1149,7 +1153,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
     ).resolves.toBeUndefined()
 
     expect(writeCurationTailReceipt).not.toHaveBeenCalled()
-    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/resume on the next run/i))
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(CI_CURATION_RESUME))
     const diagnostic = {
       'candidate-refused': 'candidate-refused=1',
       'candidate-cap-exceeded': 'candidate-cap-exceeded=1',
@@ -1237,7 +1241,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
       log: { warn },
     }))
     expect(receipts.has(oldDir)).toBe(false)
-    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/resume on the next run/i))
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(CI_CURATION_RESUME))
 
     completedRunDirs = [oldDir, newDir]
     await runCurationTail(baseOptions(operations, {

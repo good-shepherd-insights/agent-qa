@@ -140,6 +140,8 @@ import { dirname, join, resolve } from 'node:path'
 import { canonicalJson } from '@vostride/agent-qa-schema'
 import { ownPostVerdictContinuation, postVerdictPendingPath, PostVerdictContinuationRefused } from './post-verdict-continuation.js'
 import { writeRunConfigRecord } from './run-curation-context.js'
+import { ciResumeClause } from './resume-limit.js'
+import type { ExecutionContext } from '@vostride/agent-qa-schema'
 
 /**
  * The capability table, stubbable per cell.
@@ -264,6 +266,8 @@ export interface PostVerdictStepOptions {
    */
   readonly misdirection?: MisdirectionPreparationCapabilities
   readonly log: { warn(message: string): void }
+  /** 444 D-48: the run's context, so a line about unfinished work never promises a CI resume. */
+  readonly executionContext?: ExecutionContext
   /** Focused test seam. Production callers omit it. */
   readonly operations?: Partial<PostVerdictStepOperations>
 }
@@ -487,10 +491,19 @@ async function matchingAnalysisAlreadyQueued(options: PostVerdictStepOptions, op
  * needs, so that path IS the manual re-queue path — there is no retry file and no reconciliation
  * sweep in this build (D-07), by decision.
  */
-function enqueueFailureWarning(runId: string, handoffPath: string, detail: string): string {
+function enqueueFailureWarning(
+  runId: string,
+  handoffPath: string,
+  detail: string,
+  executionContext: ExecutionContext | undefined,
+): string {
+  // 444 D-48: in `ci` and `cloud` the drive's preparation sentence states the resume limit.
+  const resumeClause = ciResumeClause(executionContext, 'any-host')
   return `Run ${runId}: preparation/enqueue failed or was refused (${detail}); post-run analysis was not queued. The verdict and exit code are unaffected. `
     + `Handoff: ${handoffPath}. Durable intent, if publication succeeded: ${join(dirname(handoffPath), 'post-verdict-pending.json')}. `
-    + 'The next local run or daemon drain resumes eligible pending preparation; conflicting or unsafe state remains refused.'
+    + (resumeClause !== undefined
+      ? `It ${resumeClause}; conflicting or unsafe state remains refused.`
+      : 'The next local run or daemon drain resumes eligible pending preparation; conflicting or unsafe state remains refused.')
 }
 
 /**
@@ -591,6 +604,7 @@ export function dispositionOf(input: {
   readonly writerAuthority?: CurationWriterAuthority
   readonly probe?: WriterLeaseProbe
   readonly leaseSkipped: boolean
+  readonly executionContext?: ExecutionContext
 }): PostVerdictOutcome {
   if (input.enqueue === 'failed') {
     return {
@@ -620,14 +634,17 @@ export function dispositionOf(input: {
   if (input.leaseSkipped) return { disposition: 'detached' }
   const probe = input.probe
   if (probe === undefined) {
+    const resumeClause = ciResumeClause(input.executionContext, 'any-host')
     return {
       disposition: 'detached',
       warning: {
         code: POST_PROCESSING_UNBOUND,
         message:
           'No writer-lease capability is composed on this host, so this run\'s post-processing '
-          + 'chain will not be drained from this process. The next local run or `agent-qa daemon` '
-          + 'drains it.',
+          + 'chain will not be drained from this process. '
+          + (resumeClause !== undefined
+            ? `It ${resumeClause}.`
+            : 'The next local run or `agent-qa daemon` drains it.'),
       },
     }
   }
@@ -774,6 +791,7 @@ export function createPostVerdictStep(options: PostVerdictStepOptions): {
           options.runId,
           completedRunHandoffPath(options.agentQaRoot, options.runId),
           safePreparationFailure(error),
+          options.executionContext,
         )
       }
 

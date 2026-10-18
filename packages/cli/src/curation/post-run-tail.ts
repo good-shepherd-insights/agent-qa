@@ -92,6 +92,7 @@ import {
 import { createPostRunChipEmitter } from './post-run-chip-emitter.js'
 import { buildPromotionPostureResolver, promotionPostureResolverForHost } from './promotion-posture.js'
 import { resolveRunCurationContext } from './run-curation-context.js'
+import { ciResumeClause, isCiContext, resumeLimitClause } from './resume-limit.js'
 import { LOCAL_CURATION_CAPABILITIES, latestBuildOrdinal } from '@vostride/agent-qa-agent-local'
 import { createReplayGatePortForHost, type ReplayGateClaimAuthority } from '../gates/replay-gate-host.js'
 import {
@@ -740,6 +741,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
           agentQaRoot: opts.agentQaRoot, configPath: opts.configPath, knowledgeRoot: root,
           deadlineMs: drainDeadlineMs, log,
           ...(opts.signal === undefined ? {} : { signal: opts.signal }),
+          ...(opts.executionContext === undefined ? {} : { executionContext: opts.executionContext }),
         })
         preparationRecoveryPending = recovery.some((result) => result.pending)
         resolvePromotionPosture = await preparePromotionPosture()
@@ -748,7 +750,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         // those reads throws must not send the exception past `runVerdictFirstCurationTail` into
         // the command's framework catch (JOBQ-06).
         drainOutcome = 'not-attempted'
-        log.warn(drainFailureWarning(opts.runId, error))
+        log.warn(drainFailureWarning(opts.runId, error, opts.executionContext))
         return
       }
       let acquiredLeaseId: string | undefined
@@ -939,7 +941,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         // modules will not compose ATTEMPTED nothing. Read off `openedHost` rather than off a
         // second flag, because that variable already records exactly the fact being asked about.
         drainOutcome = openedHost === undefined ? 'not-attempted' : 'threw'
-        log.warn(drainFailureWarning(opts.runId, error))
+        log.warn(drainFailureWarning(opts.runId, error, opts.executionContext))
       } finally {
         heldAuthority = undefined
         // THE ONE RELEASE, ON EVERY PATH OUT (CR-01). `acquiredLeaseId` is set in the same breath
@@ -969,8 +971,9 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
     async finish(input: { readonly detached?: boolean } = {}): Promise<void> {
       const actualEnqueue = enqueueOutcome()
       if (opts.postVerdict !== undefined && actualEnqueue === undefined) {
-        log.info?.(isCiContext(opts.executionContext)
-          ? `Run ${opts.runId}: preparation pending; analysis is not yet queued. It resumes only if this workspace's .agent-qa/ is kept and a later run or the daemon picks it up. Durable intent: ${opts.postVerdict.pendingPath}.`
+        const resumeClause = ciResumeClause(opts.executionContext, 'any-host')
+        log.info?.(resumeClause !== undefined
+          ? `Run ${opts.runId}: preparation pending; analysis is not yet queued. It ${resumeClause}. Durable intent: ${opts.postVerdict.pendingPath}.`
           : `Run ${opts.runId}: preparation pending; analysis is not yet queued. Durable intent: ${opts.postVerdict.pendingPath}. The next local run or daemon drain resumes eligible pending preparation.`)
         if (!observingLateFailure && opts.postVerdict.completion !== undefined) {
           observingLateFailure = true
@@ -1210,14 +1213,8 @@ const PENDING_POSTURE_SUFFIX: Record<StageDrainer, Record<PostRunPendingPosture,
 // 2026-10-18 (444-14, D-22): a CI workspace is usually thrown away, so in `ci` and `cloud` a pending
 // stage names the one condition under which its drainer can still reach it, whatever the posture.
 const CI_PENDING_SUFFIX: Record<StageDrainer, string> = {
-  'any-host':
-    " (resumes only if this workspace's .agent-qa/ is kept and a later run or the daemon picks it up)",
-  'masked-leg-only':
-    " (resumes only if this workspace's .agent-qa/ is kept and a later local run picks it up)",
-}
-
-function isCiContext(context: ExecutionContext | undefined): boolean {
-  return context === 'ci' || context === 'cloud'
+  'any-host': ` (${resumeLimitClause('any-host')})`,
+  'masked-leg-only': ` (${resumeLimitClause('masked-leg-only')})`,
 }
 
 /**
@@ -1569,8 +1566,16 @@ function summaryFailureWarning(runId: string, error: unknown): string {
     + 'unaffected and is readable later through the runs post-processing status.'
 }
 
-function drainFailureWarning(runId: string, error: unknown): string {
+function drainFailureWarning(
+  runId: string,
+  error: unknown,
+  executionContext: ExecutionContext | undefined,
+): string {
   const detail = error instanceof Error ? error.message : String(error)
+  const resumeClause = ciResumeClause(executionContext, 'any-host')
+  if (resumeClause !== undefined) {
+    return `Post-run processing stopped early for ${runId} (${detail}); queued work ${resumeClause}.`
+  }
   return `Post-run processing stopped early for ${runId} (${detail}); queued work will resume `
     + 'on the next run or when the daemon drains it.'
 }

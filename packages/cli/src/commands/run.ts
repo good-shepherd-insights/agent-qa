@@ -91,6 +91,7 @@ import { composeAnalyticsHost } from '../composition/analytics-host.js'
 import type { CliAnalyticsHost } from '../composition/analytics-host.js'
 import {
   runVerdictFirstCurationTail,
+  unexpectedCurationTailWarning,
   type CurationTailModelDeps,
 } from '../curation/curation-tail.js'
 import { composeCliPostRunTail } from '../curation/post-run-tail-composition.js'
@@ -2192,9 +2193,7 @@ async function executeSuites(
             // 388-04 D-08: the close-out line runs on BOTH paths, --detach included.
             finish: (input) => postRunTail.finish(input),
             onUnexpectedError: () => {
-              curationTailLog.warn(
-                'Post-verdict knowledge curation incomplete; it will resume on the next run.',
-              )
+              curationTailLog.warn(unexpectedCurationTailWarning(executionContext))
             },
           })
         },
@@ -5244,9 +5243,7 @@ export function createRunCommand(): Command {
                   // 388-04 D-08: the close-out line runs on BOTH paths, --detach included.
                   finish: (input) => postRunTail.finish(input),
                   onUnexpectedError: () => {
-                    curationTailLog.warn(
-                      'Post-verdict knowledge curation incomplete; it will resume on the next run.',
-                    )
+                    curationTailLog.warn(unexpectedCurationTailWarning(singleExecutionContext))
                   },
                 })
               },

@@ -10,6 +10,7 @@ import { completedRunHandoffPath, defaultCurationTailOperations } from './curati
 import { runSafetyScope } from '@vostride/agent-qa-agent-local'
 import type { PostVerdictHandoff, PostVerdictStepOptions } from './post-verdict-step.js'
 import { readRunCanaryPolicy } from './canary-run-state.js'
+import { ciResumeClause } from './resume-limit.js'
 
 export const POST_VERDICT_PENDING_FILE = 'post-verdict-pending.json'
 const digest = z.string().regex(/^[a-f0-9]{64}$/)
@@ -277,6 +278,8 @@ export interface RecoverPendingPostVerdictOptions {
   readonly onEnqueued?: () => void
   /** Trusted host capability, the same seam as a normal run; never read from the intent. */
   readonly misdirection?: PostVerdictStepOptions['misdirection']
+  /** 444 D-48: the recovering process's context, so a retry line never promises a CI resume. */
+  readonly executionContext?: PostVerdictStepOptions['executionContext']
 }
 
 export interface PendingPostVerdictRecovery {
@@ -341,7 +344,9 @@ export async function recoverPendingPostVerdictContinuations(input: RecoverPendi
       const disclose = () => {
         if (handoff?.enqueueState === 'enqueued' || handoff?.enqueueState === 'deduped') input.onEnqueued?.()
         if (handoff?.enqueueState === 'failed' || handoff?.enqueueState === 'unbound') {
-          input.log.warn(`Run ${runId}: preparation/enqueue failed or was refused (${handoff.failureDetail ?? 'recovery-error'}). Intent: ${path}; the next local run or daemon drain retries eligible pending work.`)
+          const resumeClause = ciResumeClause(input.executionContext, 'any-host')
+          input.log.warn(`Run ${runId}: preparation/enqueue failed or was refused (${handoff.failureDetail ?? 'recovery-error'}). Intent: ${path}; `
+            + (resumeClause !== undefined ? `it ${resumeClause}.` : 'the next local run or daemon drain retries eligible pending work.'))
         }
       }
       if (settled) { await completion; disclose() }

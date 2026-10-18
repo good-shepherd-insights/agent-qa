@@ -349,6 +349,9 @@ function createComposedRunExecution(input: {
         warn,
       })
 
+      // 444 D-48: resolved once, so the run and its tail's exit line read the same context.
+      const executionContext =
+        (input.resolveExecutionContext?.() ?? resolveRunExecutionContext()) as RunExecutionContext
       let startedRunId: string | undefined
       try {
         const outcome = await runInProcessCliRun(
@@ -356,8 +359,7 @@ function createComposedRunExecution(input: {
             resolveTrustPriors: trustPriors.resolve,
             configPath,
             agentQaRoot: input.agentQaRoot,
-            executionContext:
-              (input.resolveExecutionContext?.() ?? resolveRunExecutionContext()) as RunExecutionContext,
+            executionContext,
             // 422-14 (D-18): the pre-analysis circularity arbiter, composed from the ONE builder
             // the daemon composes from too. Parity is a property of there being a single
             // construction site rather than a claim a reviewer re-derives by reading two literals
@@ -431,6 +433,7 @@ function createComposedRunExecution(input: {
                 // quarantine warning uses, so nothing this door serves can have its channel
                 // corrupted by a post-run line.
                 log: { warn, info: warn },
+                executionContext,
                 ...(input.runBridge?.chipRelay === undefined
                   ? {}
                   : { relay: input.runBridge.chipRelay }),

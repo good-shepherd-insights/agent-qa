@@ -54,6 +54,7 @@ import { renderPromotionLine } from './promotion-posture.js'
 import { readRunCanaryPolicy } from './canary-run-state.js'
 import type { ResolveTrustPriors } from './trust-priors.js'
 import { resolveRunCurationContext } from './run-curation-context.js'
+import { ciResumeClause } from './resume-limit.js'
 
 export const CURATION_TAIL_RECEIPT_FILE = 'curation-tail-receipt.json'
 /**
@@ -440,9 +441,25 @@ export function curationOutcomeLine(input: {
 const SNAPSHOT_NOT_RECORDED_WARNING =
   'curation snapshot could not be validated and was not recorded; committed bundles are unaffected'
 
-function incompleteWarning(runId: string, details?: string): string {
+// 444 D-48: the context is the run's persisted one (SAFE-01); in `ci` and `cloud` the line states
+// curation's resume limit instead of promising the next run.
+function incompleteWarning(
+  runId: string,
+  executionContext: ExecutionContext | undefined,
+  details?: string,
+): string {
   const diagnostic = details === undefined ? '' : ` (${details})`
-  return `Post-verdict knowledge curation incomplete for ${runId}${diagnostic}; it will resume on the next run.`
+  const resumeClause = ciResumeClause(executionContext, 'masked-leg-only')
+  return `Post-verdict knowledge curation incomplete for ${runId}${diagnostic}; `
+    + (resumeClause !== undefined ? `it ${resumeClause}.` : 'it will resume on the next run.')
+}
+
+/** 444 D-48: the run command's own line when its curation tail throws unexpectedly. */
+export function unexpectedCurationTailWarning(executionContext: ExecutionContext | undefined): string {
+  const resumeClause = ciResumeClause(executionContext, 'masked-leg-only')
+  return resumeClause !== undefined
+    ? `Post-verdict knowledge curation incomplete; it ${resumeClause}.`
+    : 'Post-verdict knowledge curation incomplete; it will resume on the next run.'
 }
 
 /** The author `drainQueue` accepts, named off the capability so no second import declares it. */
@@ -865,7 +882,7 @@ export async function curateCompletedRun(
   )
 
   if (!complete || completedReceipt === undefined) {
-    input.log.warn(incompleteWarning(receiptIdentity.runId, incompleteDetails))
+    input.log.warn(incompleteWarning(receiptIdentity.runId, input.handoff.executionContext, incompleteDetails))
     return {
       curated,
       deprecated,
@@ -936,7 +953,7 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
       currentRunDir,
     ])].sort()
   } catch {
-    opts.log.warn(incompleteWarning(String(currentHandoff.runId)))
+    opts.log.warn(incompleteWarning(String(currentHandoff.runId), currentHandoff.executionContext))
     return
   }
 
@@ -1064,7 +1081,7 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
         continue
       }
     } catch {
-      opts.log.warn(incompleteWarning(receiptIdentity.runId))
+      opts.log.warn(incompleteWarning(receiptIdentity.runId, currentHandoff.executionContext))
       if (opts.signal?.aborted === true) return
     }
   }
