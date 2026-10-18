@@ -202,7 +202,7 @@ export interface InsightsBreakdownRow {
   key: string
   label: string
   runs: number
-  passRate: number
+  passRate: number | null
   flakeRate: number
   avgDuration: number
   passed: number
@@ -1032,12 +1032,17 @@ export class DashboardDatabase {
     classOf: (run: RunRow) => RunStatusClass | 'skipped' = (run) => runStatusClass(run.status),
   ): {
     daily: { date: string; passed: number; failed: number; total: number; avgDuration: number }[]
-    passRate: number
+    passRate: number | null
     totalRuns: number
     avgDuration: number
   } {
     const totalRuns = runs.length
-    const passedTotal = runs.filter((run) => classOf(run) === 'pass').length
+    // 2026-10-18 (444-24, D-59): the rate is pass ÷ (pass + fail); no pass or fail outcome is no rate.
+    const decided = runs.filter((run) => {
+      const runClass = classOf(run)
+      return runClass === 'pass' || runClass === 'fail'
+    })
+    const passedTotal = decided.filter((run) => classOf(run) === 'pass').length
     const avgDuration = totalRuns > 0
       ? runs.reduce((sum, run) => sum + run.duration, 0) / totalRuns
       : 0
@@ -1062,7 +1067,7 @@ export class DashboardDatabase {
             avgDuration: total > 0 ? dayRuns.reduce((sum, run) => sum + run.duration, 0) / total : 0,
           }
         }),
-      passRate: totalRuns > 0 ? passedTotal / totalRuns : 0,
+      passRate: decided.length > 0 ? passedTotal / decided.length : null,
       totalRuns,
       avgDuration,
     }
@@ -1470,7 +1475,8 @@ export class DashboardDatabase {
       passed,
       failed,
       flaky,
-      passRate: totalRuns > 0 ? passed / totalRuns : 0,
+      // 2026-10-18 (444-24, D-59): a group's rate is passed ÷ (passed + failed); neither is no rate.
+      passRate: passed + failed > 0 ? passed / (passed + failed) : null,
       flakeRate: totalRuns > 0 ? flaky / totalRuns : 0,
       avgDuration: totalRuns > 0 ? totalDuration / totalRuns : 0,
     }
@@ -1874,7 +1880,7 @@ export class DashboardDatabase {
 
   getTestTrends(test: TestRef, opts?: { from?: string; attributePredicates?: AttributePredicate[] }): {
     daily: { date: string; passed: number; failed: number; total: number; avgDuration: number }[]
-    passRate: number
+    passRate: number | null
     totalRuns: number
     avgDuration: number
   } {
@@ -1936,7 +1942,7 @@ export class DashboardDatabase {
 
   getSuiteTrends(suiteId: string, opts?: { from?: string; attributePredicates?: AttributePredicate[] }): {
     daily: { date: string; passed: number; failed: number; total: number; avgDuration: number }[]
-    passRate: number
+    passRate: number | null
     totalRuns: number
     avgDuration: number
   } {
@@ -2014,7 +2020,7 @@ export class DashboardDatabase {
     rows.sort((left, right) =>
       right.runs - left.runs ||
       right.flakeRate - left.flakeRate ||
-      left.passRate - right.passRate ||
+      (left.passRate ?? Number.POSITIVE_INFINITY) - (right.passRate ?? Number.POSITIVE_INFINITY) ||
       left.label.localeCompare(right.label),
     )
 
