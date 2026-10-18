@@ -33,6 +33,10 @@ function toPercent(value: number) {
   return Math.round(normalized * 10) / 10
 }
 
+function formatPassRate(value: number | null) {
+  return value === null ? "\u2014" : `${toPercent(value)}%`
+}
+
 function renderCells(dimension: InsightsBreakdownDimension, row: InsightsBreakdownRow) {
   if (dimension === "platform") {
     return (
@@ -41,7 +45,7 @@ function renderCells(dimension: InsightsBreakdownDimension, row: InsightsBreakdo
         <TableCell className="px-4 py-2 text-right font-mono tabular-nums">{row.runs}</TableCell>
         <TableCell className="px-4 py-2 text-right font-mono tabular-nums">{row.passed ?? 0}</TableCell>
         <TableCell className="px-4 py-2 text-right font-mono tabular-nums">{row.failed ?? 0}</TableCell>
-        <TableCell className="px-4 py-2 text-right font-mono tabular-nums">{toPercent(row.passRate)}%</TableCell>
+        <TableCell className="px-4 py-2 text-right font-mono tabular-nums">{formatPassRate(row.passRate)}</TableCell>
       </>
     )
   }
@@ -50,7 +54,7 @@ function renderCells(dimension: InsightsBreakdownDimension, row: InsightsBreakdo
     <>
       <TableCell className="px-4 py-2 font-medium">{row.label}</TableCell>
       <TableCell className="px-4 py-2 text-right font-mono tabular-nums">{row.runs}</TableCell>
-      <TableCell className="px-4 py-2 text-right font-mono tabular-nums">{toPercent(row.passRate)}%</TableCell>
+      <TableCell className="px-4 py-2 text-right font-mono tabular-nums">{formatPassRate(row.passRate)}</TableCell>
       <TableCell className="px-4 py-2 text-right font-mono tabular-nums">{toPercent(row.flakeRate)}%</TableCell>
       <TableCell className="px-4 py-2 text-right font-mono tabular-nums">{formatDuration(row.avgDuration)}</TableCell>
     </>

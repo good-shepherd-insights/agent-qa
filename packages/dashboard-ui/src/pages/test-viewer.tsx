@@ -55,6 +55,10 @@ import {
 } from "@/lib/viewer-url-state"
 import { formatDuration, formatDate, formatDateShort, normalizeTimestamp } from "@/lib/utils"
 
+function formatPassRate(rate: number | null): string {
+  return rate === null ? "\u2014" : `${Math.round(rate * 100)}%`
+}
+
 function formatRelativeCompact(iso: string): string {
   if (!iso) return ''
   const date = new Date(normalizeTimestamp(iso))
@@ -236,11 +240,12 @@ export default function TestViewerPage() {
 
   const passRateData = useMemo(() => {
     if (!selectedTrends?.daily) return []
-    return selectedTrends.daily.map((d) => ({
-      date: d.date,
-      passRate:
-        d.total > 0 ? Math.round((d.passed / d.total) * 1000) / 10 : 0,
-    }))
+    return selectedTrends.daily
+      .filter((d) => d.passed + d.failed > 0)
+      .map((d) => ({
+        date: d.date,
+        passRate: Math.round((d.passed / (d.passed + d.failed)) * 1000) / 10,
+      }))
   }, [selectedTrends])
 
   const durationData = useMemo(() => {
@@ -417,7 +422,7 @@ export default function TestViewerPage() {
         <InsightsLineCell className="flex flex-col gap-0.5 px-3 py-2">
           <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Pass Rate</span>
           <span className="text-xl font-semibold text-foreground">
-            {Math.round((selectedTrends ?? analyticsData.trends).passRate * 100)}%
+            {formatPassRate((selectedTrends ?? analyticsData.trends).passRate)}
           </span>
         </InsightsLineCell>
         <InsightsLineCell className="flex flex-col gap-0.5 px-3 py-2">
@@ -594,7 +599,7 @@ export default function TestViewerPage() {
                   <InsightsLineCell className="border-b border-border md:border-b-0 md:border-r">
                     <div>
                         <p className="text-sm text-muted-foreground">Pass Rate</p>
-                        <p className="text-2xl font-semibold mt-0.5">{Math.round((selectedTrends ?? analyticsData.trends).passRate * 100)}%</p>
+                        <p className="text-2xl font-semibold mt-0.5">{formatPassRate((selectedTrends ?? analyticsData.trends).passRate)}</p>
                     </div>
                   </InsightsLineCell>
                   <InsightsLineCell>

@@ -592,7 +592,7 @@ export interface InsightsBreakdownRow {
   key: string
   label: string
   runs: number
-  passRate: number
+  passRate: number | null
   flakeRate: number
   avgDuration: number
   passed: number
@@ -1082,7 +1082,7 @@ export interface TestAnalyticsEntry {
 
 export interface TestTrends {
   daily: { date: string; passed: number; failed: number; total: number; avgDuration: number }[]
-  passRate: number
+  passRate: number | null
   totalRuns: number
   avgDuration: number
 }

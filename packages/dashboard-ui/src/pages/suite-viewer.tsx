@@ -78,11 +78,15 @@ function createEmptySuiteAnalytics(suiteId: string): SuiteAnalyticsDetail {
     runs: [],
     trends: {
       daily: [],
-      passRate: 0,
+      passRate: null,
       totalRuns: 0,
       avgDuration: 0,
     },
   }
+}
+
+function formatPassRate(rate: number | null): string {
+  return rate === null ? "\u2014" : `${Math.round(rate * 100)}%`
 }
 
 function formatRelativeCompact(iso: string): string {
@@ -261,10 +265,12 @@ export default function SuiteViewerPage() {
     : analyticsData.runs
 
   const passRateData = useMemo(() => {
-    return selectedTrends.daily.map((day) => ({
-      date: day.date,
-      passRate: day.total > 0 ? Math.round((day.passed / day.total) * 1000) / 10 : 0,
-    }))
+    return selectedTrends.daily
+      .filter((day) => day.passed + day.failed > 0)
+      .map((day) => ({
+        date: day.date,
+        passRate: Math.round((day.passed / (day.passed + day.failed)) * 1000) / 10,
+      }))
   }, [selectedTrends])
 
   const durationData = useMemo(() => {
@@ -427,7 +433,7 @@ export default function SuiteViewerPage() {
         <InsightsLineCell className="flex flex-col gap-0.5 px-3 py-2">
           <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Pass Rate</span>
           <span className="text-xl font-semibold text-foreground">
-            {Math.round(selectedTrends.passRate * 100)}%
+            {formatPassRate(selectedTrends.passRate)}
           </span>
         </InsightsLineCell>
         <InsightsLineCell className="flex flex-col gap-0.5 px-3 py-2">
@@ -566,7 +572,7 @@ export default function SuiteViewerPage() {
                 <InsightsLineCell className="border-b border-border md:border-b-0 md:border-r">
                   <div>
                     <p className="text-sm text-muted-foreground">Pass Rate</p>
-                    <p className="mt-0.5 text-2xl font-semibold">{Math.round(selectedTrends.passRate * 100)}%</p>
+                    <p className="mt-0.5 text-2xl font-semibold">{formatPassRate(selectedTrends.passRate)}</p>
                   </div>
                 </InsightsLineCell>
                 <InsightsLineCell>
