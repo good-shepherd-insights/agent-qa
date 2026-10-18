@@ -91,11 +91,6 @@ interface MemberHistoryEntry {
   status: string
 }
 
-function isFinishedStatus(word: string): boolean {
-  const statusClass = runStatusClass(word)
-  return statusClass !== undefined && statusClass !== "live"
-}
-
 function getHeaderClassName(columnId: string) {
   return cn(
     "h-10 bg-background text-[13px] font-medium text-foreground/90",
@@ -212,7 +207,7 @@ const columns: ColumnDef<TestRow>[] = [
       if (row.original.passRate === null) {
         return (
           <div className="space-y-0.5 text-right">
-            <div className="text-sm font-medium text-foreground">No runs</div>
+            <div className="text-sm font-medium text-foreground">{"\u2014"}</div>
             <div className="text-xs tabular-nums text-muted-foreground">0 completed</div>
           </div>
         )
@@ -361,10 +356,13 @@ export default function TestsPage() {
       const sortedHistory = [...history].sort((left, right) =>
         getRunTimestamp(right.run).localeCompare(getRunTimestamp(left.run)),
       )
-      const completed = sortedHistory.filter((entry) => isFinishedStatus(entry.status))
-      const passCount = completed.filter((entry) => runStatusClass(entry.status) === "pass").length
-      const passRate = completed.length > 0
-        ? Math.round((passCount / completed.length) * 100)
+      const decided = sortedHistory.filter((entry) => {
+        const statusClass = runStatusClass(entry.status)
+        return statusClass === "pass" || statusClass === "fail"
+      })
+      const passCount = decided.filter((entry) => runStatusClass(entry.status) === "pass").length
+      const passRate = decided.length > 0
+        ? Math.round((passCount / decided.length) * 100)
         : null
       const last = sortedHistory[0] ?? null
 
@@ -378,7 +376,7 @@ export default function TestsPage() {
         lastRun: last?.run ?? null,
         passRate,
         passCount,
-        completedRunCount: completed.length,
+        completedRunCount: decided.length,
       }
     })
   }, [files, runs])

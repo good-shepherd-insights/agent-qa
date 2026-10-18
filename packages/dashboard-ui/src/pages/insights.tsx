@@ -189,7 +189,8 @@ export default function InsightsPage() {
   if (isInitialLoading) return <ChartSkeleton />
 
   const hasRuns = Boolean(stats && stats.totalRuns > 0)
-  const passRate = stats && stats.totalRuns > 0 ? Math.round((stats.passed / stats.totalRuns) * 100) : 0
+  const decidedRuns = stats ? stats.passed + stats.failed : 0
+  const passRate = stats && decidedRuns > 0 ? Math.round((stats.passed / decidedRuns) * 100) : null
   const breakdownCopy = BREAKDOWN_OPTIONS.find((option) => option.value === breakdown) ?? BREAKDOWN_OPTIONS[0]
   const avgRunsPerDay = stats && stats.runs.length > 0 ? Math.round(stats.totalRuns / stats.runs.length) : 0
   const showFatalError = hasWindowError && !stats
@@ -294,8 +295,8 @@ export default function InsightsPage() {
                   <InsightsMetricCell
                     className="border-b border-border"
                     label="Pass Rate"
-                    value={`${passRate}%`}
-                    description={`${stats.passed} successful ${scopeActive ? "scoped " : ""}runs out of ${stats.totalRuns}.`}
+                    value={passRate === null ? "\u2014" : `${passRate}%`}
+                    description={`${stats.passed} successful ${scopeActive ? "scoped " : ""}runs out of ${decidedRuns} that passed or failed.`}
                   />
                   <InsightsMetricCell
                     className="border-b border-border sm:border-b-0 sm:border-r"
@@ -317,13 +318,12 @@ export default function InsightsPage() {
                   <p className="text-sm text-muted-foreground">Trend for successful outcomes across the selected window.</p>
                 </div>
                 <PassRateChart
-                  data={stats.runs.map((run) => {
-                    const total = run.passed + run.failed
-                    return {
+                  data={stats.runs
+                    .filter((run) => run.passed + run.failed > 0)
+                    .map((run) => ({
                       date: run.date,
-                      passRate: total > 0 ? Math.round((run.passed / total) * 1000) / 10 : 0,
-                    }
-                  })}
+                      passRate: Math.round((run.passed / (run.passed + run.failed)) * 1000) / 10,
+                    }))}
                   className={cn("mt-4 h-[200px]", isWindowRefreshing && "opacity-70")}
                 />
               </InsightsLineCell>

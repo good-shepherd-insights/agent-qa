@@ -168,13 +168,13 @@ export default function SuitesPage() {
       const sortedRuns = [...matchingRuns].sort((left, right) =>
         getRunTimestamp(right).localeCompare(getRunTimestamp(left)),
       )
-      const completedRuns = sortedRuns.filter((run) => {
+      const decidedRuns = sortedRuns.filter((run) => {
         const statusClass = runStatusClass(run.status)
-        return statusClass !== undefined && statusClass !== "live"
+        return statusClass === "pass" || statusClass === "fail"
       })
-      const passCount = completedRuns.filter((run) => runStatusClass(run.status) === "pass").length
-      const passRate = completedRuns.length > 0
-        ? Math.round((passCount / completedRuns.length) * 100)
+      const passCount = decidedRuns.filter((run) => runStatusClass(run.status) === "pass").length
+      const passRate = decidedRuns.length > 0
+        ? Math.round((passCount / decidedRuns.length) * 100)
         : null
       const lastRun = sortedRuns[0] ?? null
       const latestTargetedRun = sortedRuns.find((run) => run.targetName?.trim()) ?? null
@@ -189,7 +189,7 @@ export default function SuitesPage() {
         targetName: latestTargetedRun?.targetName?.trim() ?? lastRun?.targetName?.trim() ?? null,
         passRate,
         passCount,
-        completedRunCount: completedRuns.length,
+        completedRunCount: decidedRuns.length,
       }
     })
   }, [suiteFiles, runs])
@@ -311,7 +311,7 @@ export default function SuitesPage() {
         if (row.original.passRate === null) {
           return (
             <div className="space-y-0.5 text-right">
-              <div className="text-sm font-medium text-foreground">No runs</div>
+              <div className="text-sm font-medium text-foreground">{"\u2014"}</div>
               <div className="text-xs tabular-nums text-muted-foreground">0 completed</div>
             </div>
           )
